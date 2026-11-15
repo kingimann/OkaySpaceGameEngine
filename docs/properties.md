@@ -269,9 +269,9 @@ More of the builder:
 ### How to try it
 
 1. Open the editor and use **File > Open** on `examples/property_registry/registry_try.okayscene`.
-2. Select **Pause Menu**. The Inspector shows the Pause Menu properties, among them **Hint**
-   ("Saved with this scene since the fix"), **Show Restart** (on), **Show Volume** (off) and **Restart Scene**.
-   Before this branch these four were reset on every save.
+2. Select **Pause Menu**. The Inspector's Pause Menu panel now also shows **Restart button** (on), **Restart Scene**
+   (`registry_try.okayscene`), **Volume sliders** (off) and **Hint** ("Saved with this scene since the fix"). Before
+   this branch these four were reset on every save, and the panel did not show them at all.
 3. Change **Hint**, then press **Ctrl+Z**: it goes back. Press **Ctrl+Y** to redo.
 4. Press **Ctrl+D** to duplicate the object: the copy has the same hint and switches.
 5. Save the scene (**Ctrl+S**), close it and open it again: the values are still there.

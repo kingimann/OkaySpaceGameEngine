@@ -31130,6 +31130,18 @@ void DrawInspector(EditorState& ed) {
             char mbuf[200]; std::snprintf(mbuf, sizeof(mbuf), "%s", pm->mainMenuScene.c_str());
             if (ImGui::InputText("Main Menu Scene##pm", mbuf, sizeof(mbuf))) { pm->mainMenuScene = mbuf; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Optional .okayscene to load from a 'Main Menu' button (blank = no button).");
+            // Saved with the scene since the pausemenu record was fixed (they were lost on every save before).
+            if (ImGui::Checkbox("Restart button##pm", &pm->showRestart)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A Restart button that loads the Restart Scene (needs one set).");
+            char rbuf[200]; std::snprintf(rbuf, sizeof(rbuf), "%s", pm->restartScene.c_str());
+            if (ImGui::InputText("Restart Scene##pm", rbuf, sizeof(rbuf))) { pm->restartScene = rbuf; ed.dirty = true; }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(".okayscene the Restart button loads (blank = no button).");
+            if (ImGui::Checkbox("Volume sliders##pm", &pm->showVolume)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Volume, Music and Effects sliders on the menu.");
+            char hbuf[200]; std::snprintf(hbuf, sizeof(hbuf), "%s", pm->hint.c_str());
+            if (!pmLoc && ImGui::InputText("Hint##pm", hbuf, sizeof(hbuf))) { pm->hint = hbuf; ed.dirty = true; }
+            if (!pmLoc && ImGui::IsItemHovered()) ImGui::SetTooltip("Small line at the bottom of the menu (blank = none).");
+            ImGui::TextDisabled("Buttons, sliders and the hint are made with the menu UI: to see a change on an existing\nmenu, delete 'PauseMenu UI' and press Create Editable Menu UI.");
             float dc[4] = {pm->dimColor.r, pm->dimColor.g, pm->dimColor.b, pm->dimColor.a};
             if (ImGui::ColorEdit4("Backdrop##pm", dc)) { pm->dimColor = {dc[0],dc[1],dc[2],dc[3]}; ed.dirty = true; }
             oked::FieldTip("Backdrop##pm");

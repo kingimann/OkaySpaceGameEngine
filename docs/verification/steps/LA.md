@@ -155,3 +155,43 @@ Format: see the top of `scripts/gen_verify_checklist.py`. Bold names must exist 
   2. Read what it lists (it shows editor crashes found on disk).
 - **See:** an empty list when nothing crashed, or a card per crash. A toast "The editor crashed" appears after a real crash.
 - **Partial:** we cannot make the editor crash on purpose here, so only the empty state is likely to be seen.
+
+### V-LA-016 Friends page
+- **Map:** 17.3
+- **Where:** `OkaySpace.exe`, signed in
+- **Steps:**
+  1. Open the **Friends** page from the sidebar.
+  2. Look at the friend list and any requests; try **Add friend** on a profile.
+- **See:** your friends with online status, or an empty state ("Add friends first"); signed out it asks you to sign in.
+- **Partial:** needs a signed-in account (and a second one to see a real friend); smoke level only.
+- **Grounded:** no
+
+### V-LA-017 Forums page
+- **Map:** 17.5
+- **Where:** `OkaySpace.exe`, signed in
+- **Steps:**
+  1. Open the **Forums** page from the sidebar.
+  2. Open a category or thread, if any exist.
+- **See:** forum categories and threads, or an empty list.
+- **Partial:** depends on the live server; smoke level only.
+- **Grounded:** no
+
+### V-LA-018 Marketplace page
+- **Map:** 17.6
+- **Where:** `OkaySpace.exe`
+- **Steps:**
+  1. Open the **Market** page from the sidebar.
+  2. Search and open an item.
+- **See:** a list of published games or assets with a search box.
+- **Partial:** depends on the live server; smoke level only.
+- **Grounded:** no
+
+### V-LA-019 Admin page
+- **Map:** 17.9
+- **Where:** `OkaySpace.exe`, signed in as moderator, staff or admin
+- **Steps:**
+  1. Open the **Admin** page (only those roles get it).
+  2. Look through its tabs (Overview, Players, Marketplace, Forums, Bans, Audit log, Reports, Official game, Anti-cheat).
+- **See:** the tabs open; ordinary accounts do not see the page at all.
+- **Partial:** needs an admin account; smoke level only.
+- **Grounded:** no

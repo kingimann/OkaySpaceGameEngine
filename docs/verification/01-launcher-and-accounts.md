@@ -145,6 +145,38 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
   - **You should see (expected, not yet seen on Windows):** an empty list when nothing crashed, or a card per crash. A toast "The editor crashed" appears after a real crash.
   - **Known partial:** we cannot make the editor crash on purpose here, so only the empty state is likely to be seen.
 
+- [ ] **V-LA-016** Friends page (steps unverified)
+  - **Map:** 17.3. **Where:** `OkaySpace.exe`, signed in
+  - **Steps:** (steps unverified: could not be confirmed against the code)
+    1. Open the **Friends** page from the sidebar.
+    2. Look at the friend list and any requests; try **Add friend** on a profile.
+  - **You should see (expected, not yet seen on Windows):** your friends with online status, or an empty state ("Add friends first"); signed out it asks you to sign in.
+  - **Known partial:** needs a signed-in account (and a second one to see a real friend); smoke level only.
+
+- [ ] **V-LA-017** Forums page (steps unverified)
+  - **Map:** 17.5. **Where:** `OkaySpace.exe`, signed in
+  - **Steps:** (steps unverified: could not be confirmed against the code)
+    1. Open the **Forums** page from the sidebar.
+    2. Open a category or thread, if any exist.
+  - **You should see (expected, not yet seen on Windows):** forum categories and threads, or an empty list.
+  - **Known partial:** depends on the live server; smoke level only.
+
+- [ ] **V-LA-018** Marketplace page (steps unverified)
+  - **Map:** 17.6. **Where:** `OkaySpace.exe`
+  - **Steps:** (steps unverified: could not be confirmed against the code)
+    1. Open the **Market** page from the sidebar.
+    2. Search and open an item.
+  - **You should see (expected, not yet seen on Windows):** a list of published games or assets with a search box.
+  - **Known partial:** depends on the live server; smoke level only.
+
+- [ ] **V-LA-019** Admin page (steps unverified)
+  - **Map:** 17.9. **Where:** `OkaySpace.exe`, signed in as moderator, staff or admin
+  - **Steps:** (steps unverified: could not be confirmed against the code)
+    1. Open the **Admin** page (only those roles get it).
+    2. Look through its tabs (Overview, Players, Marketplace, Forums, Bans, Audit log, Reports, Official game, Anti-cheat).
+  - **You should see (expected, not yet seen on Windows):** the tabs open; ordinary accounts do not see the page at all.
+  - **Known partial:** needs an admin account; smoke level only.
+
 - [ ] **V-LA-S17** Area 17: Launcher & platform (smoke test, steps unverified)
   - **Map:** [17](../feature_map/17-launcher-platform.md), 17 sub-areas, 17 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
@@ -166,23 +198,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     - 17.16 Crash reports (launcher side) [Works]. Where: the editor writes the reports (15.9)
     - 17.17 Platform layer ('okay::platform') and the own backend [Works].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 17.1: split 'launcher/main.cpp' (1.5 MB, see 19.4 and ROADMAP "Later"); the update index ('versions.json') is not signed (17.11); the updater itself...
-    - 17.2: the default Supabase project URL and publishable key are hardcoded in 'CMakeLists.txt' (old map: remove them; the release workflow deliberately no...
-    - 17.3: no test for follows or the SQL; 'parties.sql' and 'follows.sql' must be run once or the features hide
-    - 17.4: most of the 24.8k lines of 'main.cpp' are chat code and untested (split, see 19.4); 'chat_extras.sql' and 'group_chats.sql' are optional and degrade...
-    - 17.5: no test; staff tools live in 17.9
-    - 17.6: possible bug: two different structs named 'okay::WorkshopItem' exist ('Platform/Workshop.hpp' and 'Platform/Steam/SteamService.hpp'); including both...
-    - 17.7: achievement cloud sync is "layered on later" per the header; no tests for 'Achievements' or 'Profiles'
-    - 17.8: no mute, no invite expiry or revoke; moderation needs 'member_moderation.sql' applied by the owner (until then the buttons answer "not set up"); the...
-    - 17.9: create test servers without a game (old map). Needs a definition of "test server" from the owner first (see docs/unfinished_launcher.md)
-    - 17.10: 'release.yml' does not set 'STEAMWORKS_SDK_PATH', so the GitHub release exes use the simulation backend; PlayFab client has no test; Steam upload kit...
-    - 17.11: sign the launcher, editor and player downloads (ed25519 as the anti-cheat manifest does) and verify before swapping; the SEC1 plan text is not in the...
-    - 17.12: project templates are static scene templates; project migration across engine versions is planned (area 25)
-    - 17.13: none recorded
-    - 17.14: keep 'publish-official-game.sh' rules in step with 'CheckPublish' by hand (the script header says so); the release workflow does not publish the...
-    - 17.15: none recorded; invites need the friends and chat tables (17.3, 17.4)
-    - 17.17: editor and launcher windows, events and GL still use SDL, and they draw through 'SDL_Renderer' / ImGui's SDL backends, which need an 'SDL_Window'...
+  - **Known gaps:** see [docs/feature_map/17-launcher-platform.md](../feature_map/17-launcher-platform.md) (area 17, sections 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 17.8, 17.9, 17.10, 17.11, 17.12, 17.13, 17.14, 17.15, 17.16, 17.17): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a Tips card for the new feature", "the launcher says up to date but a newer release exists"
 
 - [ ] **V-LA-S25** Area 25: Project management (High) (smoke test, steps unverified)
@@ -192,10 +208,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     - 25.2 Project settings [Partial]. Where: Project Settings window, Build Settings dialog
     - 25.3 Migration [Partial].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 25.1: template list is hard-coded in the launcher (and must match the editor's list "exactly" per a comment); no template versioning.
-    - 25.2: 'project.okayproj' is loaded from the current directory, so opening a project from elsewhere depends on the working directory; fixed buffers ('char...
-    - 25.3: no policy yet on how long old formats stay readable; 'MigrateThroughEngine' drops records this build does not know and gives id-less objects new ids...
+  - **Known gaps:** see [docs/feature_map/20-35-planned.md](../feature_map/20-35-planned.md) (area 25, sections 25.1, 25.2, 25.3): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "let users save their project as a template"; "add a Roguelike template to the Create page"
   - **Not built yet (skip):** 25.4
 
@@ -204,8 +217,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 48.1 Crash reports [Partial]. Where: View > Crash Log
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 48.1: first step: reuse the editor's handler in the player (report next to the game, plus last Console lines); then an optional upload (see 48.3 consent...
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 48, sections 48.1): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a crash handler and report file to the player"; "add a Send report button with the last log lines"
   - **Not built yet (skip):** 48.2, 48.3, 48.4
 
@@ -216,9 +228,6 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     - 49.2 Leaderboards [Partial].
     - 49.3 Achievements sync [Partial].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 49.1: first step: 'ISaveSync' backends for Steam Cloud and PlayFab user data, with "newest wins" and a conflict prompt; size limits per service.
-    - 49.2: first step: a small 'Leaderboards' interface with the three as backends and a UI list component.
-    - 49.3: first step: one 'Unlock(id)' that writes local, calls Steam when present and queues an upload when signed in.
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 49, sections 49.1, 49.2, 49.3): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "sync save slots to Steam Cloud"
   - **Not built yet (skip):** 49.4

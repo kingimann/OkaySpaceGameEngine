@@ -70,6 +70,17 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
   - **You should see (expected, not yet seen on Windows):** the feet are placed on the steps instead of floating or sinking.
   - **Known partial:** "feet slide on slopes" is a listed symptom in map 5; report if seen.
 
+- [ ] **V-CH-008** OBJ texture path hardening (steps unverified)
+  - **Map:** 3. **Where:** editor, File menu
+  - **Needs:** a release that ships the `examples` folder (PR #887, not merged when this was written)
+  - **Steps:** (steps unverified: could not be confirmed against the code)
+    1. Choose **File > Import Model...** and pick `examples/obj_texture_paths/cube_ok.obj`.
+    2. Import `examples/obj_texture_paths/cube_outside.obj` (its texture is outside the allowed folders).
+    3. Import `examples/obj_texture_paths/cube_network.obj` (its texture is a network path; the editor must not wait for a network).
+  - **You should see (expected, not yet seen on Windows):** the first cube shows the grid texture; the other two are plain white cubes and the editor stays responsive. No Console message says a texture was refused.
+  - **Known partial:** what Import does with the texture after import was not checked; unverified in a real window.
+  - **More:** [../../try_it.md](../../try_it.md)
+
 - [ ] **V-CH-S3** Area 3: 3D modeling & import (smoke test, steps unverified)
   - **Map:** [3](../feature_map/03-modeling-import.md), 10 sub-areas, 10 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
@@ -84,17 +95,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     - 3.9 Generate and whole-mesh operations [Works]. Where: Modeling window > Generate and Edit tabs
     - 3.10 Add library and procedural props [Works]. Where: Modeling window > Add (filter box, categories) and Shape tab; GameObject > 3D Object > Nature / Props /...
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 3.1: tools that rebuild triangles outside the polygon core (the classic Extrude) fall back to one UV per vertex where they touch (per docs); possible doc...
-    - 3.2: Bevel needs edges with a face on both sides; Bridge works on open borders only and does not remove faces first; Edge slide does not adjust UVs so a...
-    - 3.3: Subdivision refuses a result above 1.5 million faces; Boolean is voxel based so cost and detail depend on voxel size (per docs); the modifier list is...
-    - 3.4: UV convention is v = 0 at the top of the image (documented); tools that rebuild triangles outside the polygon core fall back to one UV per vertex
-    - 3.5: M5b per-face materials: PolyFace has a material slot but Mesh has no per-triangle slot; old map says Sphere, Cylinder, Cone, Tube, Torus, TorusKnot...
-    - 3.6: our Collada, 3DS and BVH readers are off by default and were checked on one outside corpus only ('docs/model_corpus.md'; Collada has no morphs and...
-    - 3.7: old map: one-click humanoid import on any rig; auto-rig expects an upright model facing +Z in a T/A pose; a model with fewer than 8 of the 15...
-    - 3.8: no per-vertex weight or texture painting; paint colours are per face only
-    - 3.9: none known
-    - 3.10: none known
+  - **Known gaps:** see [docs/feature_map/03-modeling-import.md](../feature_map/03-modeling-import.md) (area 3, sections 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "make G snap to the grid while Ctrl is held"; "Extrude Faces leaves the collider behind"
 
 - [ ] **V-CH-S4** Area 4: Characters & cameras (smoke test, steps unverified)
@@ -113,19 +114,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     - 4.11 Seats and sitting [Works]. Where: Seat inspector panel
     - 4.12 Premade players [Works]. Where: GameObject > Player submenu
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 4.1: #554 landed on 2026-11-10: the controller panel's animation setup status, and the head and walk jitter work, are on main (tests 'test_anim_jitter'...
-    - 4.2: old map: verify prone on first and third person; hands-on-ledge Limb IK is not wired (Traversal.hpp comment); dive, hit, vault and emote actions are...
-    - 4.3: old map: improve the 2.5D controller (no specifics recorded); the 2.5D controller keeps its own ledge motion and only sets the 'hanging' animation...
-    - 4.4: none recorded; the fall-back for animation is the shared Character locomotion (5.3, 4.9)
-    - 4.5: no script or visual-script access to seats; seat state is not replicated over the network; no sit animation; torque-based body dynamics are a roadmap...
-    - 4.6: #554 landed on 2026-11-10 with the head and walk jitter work (tests 'test_anim_jitter', 'test_head_stability'); the turning-character stutter (render...
-    - 4.7: old map: Blocky Character arms in first person; the hand is one block with no finger bones, finger joints are never posed (per docs); none of the...
-    - 4.8: the player and editor still draw only the main camera; looping their render path over 'CameraStack()' with ClearPlan, viewport rect and culling mask...
-    - 4.9: old map: more customization options; no cloth, morph or secondary-motion for the blocky body (searched for cloth, jiggle, spring bone); creator UI is...
-    - 4.10: none recorded; GPU culling uses the camera frustum (2.8)
-    - 4.11: there is no shared interact key (first-person lean-right is also E); death does not teleport to the exit point
-    - 4.12: the two Mixamo samples rely on a third-party URL and an external curl process (possible fragility)
+  - **Known gaps:** see [docs/feature_map/04-characters-cameras.md](../feature_map/04-characters-cameras.md) (area 4, sections 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "make the view switch faster"; "the player stops too slowly when I release the key"
 
 - [ ] **V-CH-S5** Area 5: Animation & IK (smoke test, steps unverified)
@@ -145,20 +134,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     - 5.12 Built-in action clips [Works]. Where: Animator inspector "Add built-in actions"; Preview on each state
     - 5.13 Player animation setup [In flight]. Where: controller panel "setup status" (in flight)
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 5.1: possible doc bug: docs/animation.md gives crossfades of 0.2, 0.1 and 0.08 s but GaitCrossfades defaults (Stance.hpp) are 0.28, 0.22, 0.12 and 0.24 s...
-    - 5.2: possible doc gap: 'docs/animation.md' is the only description of the '.okayanim' format; an imported clip once changed shape after save and reopen...
-    - 5.3: in flight in #554 (Grok): the slot editor under Model Animator > Locomotion (Fill empty slots from names, Use, Preview) and its docs; "two components...
-    - 5.4: old map "retargeting by avatar slot": hand mapping of a rig's bones landed (#522, git log); clips from a differently proportioned rig transfer...
-    - 5.5: bones beyond about 256 per mesh fall back to CPU skinning (per docs); GPU skinning and culling code live in the renderers (2.8)
-    - 5.6: old map "IK rewrite plan" appears done (git log shows plan PRs 1-7); possible doc gap: the solve-order table in docs/ik.md omits IK Target (70) and...
-    - 5.7: in flight in #554 (Grok): small edits to IK Target (4 lines) and Pose Capture (19 lines); head and animation jitter stated there as not fixed
-    - 5.8: no cloth, spring-bone or secondary motion exists (searched for cloth, jiggle, spring bone); animated hit and death clips are separate, see 5.12
-    - 5.9: old map: holding PRs 3-4: body adjust is done (#389), multiplayer sync (PR 4, branch 'claude/holding-net') and grip editor (PR 5, branch...
-    - 5.10: none recorded
-    - 5.11: a played clip holds until stop_clip, movement-driven animation waits
-    - 5.12: in flight in #554 (Grok): a 'netActionParam' after the look fields (dodge direction or swim speed) and a roll-left check; dive, hit, vault and emotes...
-    - 5.13: per the PR body: head and walk jitter are not fixed; Play-cursor retest on the box; its body lists the 'localization' test (missing font) as the one...
+  - **Known gaps:** see [docs/feature_map/05-animation-ik.md](../feature_map/05-animation-ik.md) (area 5, sections 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.11, 5.12, 5.13): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add an attack layer on the upper body"; "why does the hit state not interrupt Walk"
 
 - [ ] **V-CH-S30** Area 30: Character creator (Medium) (smoke test, steps unverified)
@@ -169,9 +145,5 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     - 30.3 Clothing [Partial]. Where: Character Inspector, Inventory/Equipment components
     - 30.4 Morph targets [Partial]. Where: Blend Shapes Inspector section
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 30.1: the part rig and the single-mesh rig are two build paths for one component (see 4.9).
-    - 30.2: rigid weights tear at joints; animation and IK code belong to Grok's sessions.
-    - 30.3: no layered clothing, cloth physics (see 52).
-    - 30.4: shapes are stored sparse and applied to the bind pose; large faces with many shapes cost CPU each frame (not measured).
+  - **Known gaps:** see [docs/feature_map/20-35-planned.md](../feature_map/20-35-planned.md) (area 30, sections 30.1, 30.2, 30.3, 30.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a character creator screen to the game"; "save the player's look in the save file"

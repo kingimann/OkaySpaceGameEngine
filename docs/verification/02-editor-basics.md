@@ -174,22 +174,7 @@ Areas: 15, 22, 23, 24, 34, 54, 55. Rows ids start `V-ED-`. `V-ED-S<area>` rows a
     - 15.14 Scene settings, project settings and help windows [Works]. Where: each window
     - 15.15 Editor shell, startup and lifecycle [Works]. Where: whole window
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 15.1: polish (carried from the earlier map); #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active state, FindByPath...
-    - 15.2: polish (carried from the earlier map); 'DrawInspector' is one 9.8k-line function (a splitting candidate, 15.10); values edited during Play are...
-    - 15.3: world-space canvases show only in the Game view (12.6); Scene view 3D render does a GPU-to-CPU readback each frame (the code comments call it the...
-    - 15.4: colour labels are still the editor's own list ('.okaylabels'), separate from the tags in '.okaymeta'; changes made outside the editor show up on the...
-    - 15.5: possible overlap: the Animation tab (~3.5k lines in 'main.cpp') and 'AnimatorWindow' both edit state machines or clips; splitting the Animation tab...
-    - 15.6: Modeling and UV Editor still live in 'main.cpp'. The Localization window calls the translation grid, the missing-key and placeholder report, the...
-    - 15.7: the Android and Web targets export a project that still needs outside tools (Emscripten, NDK) per 'docs/editor.md'; about 1.5k lines of build code...
-    - 15.8: 'editor_plugins' runs the examples against its own fake editor, so the real 'RegisterPluginBuiltins' is not under test (possible drift); the planned...
-    - 15.9: audit in 'docs/editor_undo.md'; each Undo rebuilds the whole scene (no per-object or per-property commands); moving an asset the scene uses clears...
-    - 15.10: no PR for the next split found (#577 changed about 280 lines of 'main.cpp' for the layouts, the Script Editor find and replace bar and the Visual...
-    - 15.11: planned area 23 still wants a CPU and GPU timeline window, memory tracking and a frame debugger
-    - 15.12: none found
-    - 15.13: none found; candidates for the split (15.10); planned area 26 adds a real material editor with live preview and shader graphs
-    - 15.14: a full project settings window with migration and package management is planned (area 25); the Lighting window mixes sky, fog and UI font settings...
-    - 15.15: the launcher update flow (17.1) and the editor's updater are separate code paths; no test for the single-instance or multi-window logic found
+  - **Known gaps:** see [docs/feature_map/15-editor.md](../feature_map/15-editor.md) (area 15, sections 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.9, 15.10, 15.11, 15.12, 15.13, 15.14, 15.15): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "work on 15.1.1, hide and lock toggles in the Hierarchy"; "Paste as Child puts the object at the wrong place"
 
 - [ ] **V-ED-S22** Area 22: Undo/redo & recovery (Critical) (smoke test, steps unverified)
@@ -200,11 +185,7 @@ Areas: 15, 22, 23, 24, 34, 54, 55. Rows ids start `V-ED-`. `V-ED-S<area>` rows a
     - 22.3 Crash recovery [Partial]. Where: "Recover Autosave" dialog, View > Crash Log
     - 22.4 Backups [Partial]. Where: Visual Script > Graph > Restore previous version (the last 5 saves of that graph, via 'BackupManager')
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 22.1: per-object commands ('ObjectOps', Guid) would avoid the rebuild and keep Inspector state; asset moves clear the scene history; several stacks remain...
-    - 22.2: a leftover '.autosave' from an older editor can still sit beside the scene until it is recovered or discarded; a project under git may pick that file...
-    - 22.3: the report format is only parsed by the launcher; no upload; the player has no handler.
-    - 22.4: a scene save still keeps one '.bak' beside the scene, and a leftover '.autosave' from an older editor may too; a project under git may pick them up.
+  - **Known gaps:** see [docs/feature_map/20-35-planned.md](../feature_map/20-35-planned.md) (area 22, sections 22.1, 22.2, 22.3, 22.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "make delete / reparent per-object undo commands"; "keep the scene history when an asset is moved"
 
 - [ ] **V-ED-S23** Area 23: Profiling & debugging (Critical) (smoke test, steps unverified)
@@ -215,11 +196,7 @@ Areas: 15, 22, 23, 24, 34, 54, 55. Rows ids start `V-ED-`. `V-ED-S<area>` rows a
     - 23.3 Frame debugger [Partial].
     - 23.4 Error console [Works]. Where: Console tab; Problems tab; status-bar Problems count
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 23.1: the "GPU" number is CPU wall time around the render call; the ring is only 4 seconds at 60 fps; 'FrameHistory' keeps 600 frames by default...
-    - 23.2: no platform memory numbers (process working set); heap hooks off by default.
-    - 23.3: each renderer (software, GL, D3D11, D3D12) draws differently, so four hooks are needed.
-    - 23.4: categories are taken from a leading '[tag]' on the message; subsystems that never write one do not appear in the dropdown.
+  - **Known gaps:** see [docs/feature_map/20-35-planned.md](../feature_map/20-35-planned.md) (area 23, sections 23.1, 23.2, 23.3, 23.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add an Export Chrome Trace button to the Profiler"; "show real GPU time per render pass"
 
 - [ ] **V-ED-S24** Area 24: Plugin & extension system (Critical) (smoke test, steps unverified)
@@ -228,9 +205,7 @@ Areas: 15, 22, 23, 24, 34, 54, 55. Rows ids start `V-ED-`. `V-ED-S<area>` rows a
     - 24.2 Editor extensions [Works]. Where: Plugins menu, Plugin Manager window
     - 24.4 Plugin SDK [Partial]. Where: Plugins menu
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 24.2: objects are found by name, so duplicates are ambiguous; every plugin runs in the editor process with full file access (OkayScript builtins include...
-    - 24.4: versioning rule for the engine ABI is undecided (see 25.3).
+  - **Known gaps:** see [docs/feature_map/20-35-planned.md](../feature_map/20-35-planned.md) (area 24, sections 24.2, 24.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "let plugins add an Inspector section"; "add toolbar buttons from a plugin"
   - **Not built yet (skip):** 24.1, 24.3
 
@@ -241,10 +216,7 @@ Areas: 15, 22, 23, 24, 34, 54, 55. Rows ids start `V-ED-`. `V-ED-S<area>` rows a
     - 34.2 Live object inspector [Partial]. Where: Hierarchy, Inspector, Variables during Play
     - 34.3 Hot reload [Partial]. Where: Script Editor "Reload from disk"; Plugins reload automatically
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 34.1: objects created or destroyed in Play have no edit-scene counterpart to keep changes on; the registry does not cover controllers, scripts, navigation...
-    - 34.2: no per-object runtime counters; the live view relies on the same redraw as the edit view.
-    - 34.3: in-place replacement happens inside 'Pump()', so readers must be on that thread; a failed half-written file keeps the old data and retries.
+  - **Known gaps:** see [docs/feature_map/20-35-planned.md](../feature_map/20-35-planned.md) (area 34, sections 34.1, 34.2, 34.3): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "ask me to keep changes made during Play when I press Stop"
 
 - [ ] **V-ED-S54** Area 54: Debug draw, gizmos, dev console and cheats (smoke test, steps unverified)
@@ -254,10 +226,7 @@ Areas: 15, 22, 23, 24, 34, 54, 55. Rows ids start `V-ED-`. `V-ED-S<area>` rows a
     - 54.2 Gizmos for components [Basic]. Where: Scene view
     - 54.3 In-game dev console [Partial].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 54.1: first step: 'Debug::DrawLine/Box/Sphere/Text(position, color, seconds)' in C++ plus 'draw_line' and 'draw_sphere' script builtins, collected per...
-    - 54.2: first step: a 'OnDrawGizmos(DebugDraw&)' virtual on 'Component', drawn only in the editor through the 54.1 API.
-    - 54.3: first step: a backtick-toggled console component using 'Console::History/Lines/Complete', and engine cvars ('r.shadows', 'debug.overlay'...
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 54, sections 54.1, 54.2, 54.3): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a debug draw API and draw_line script builtin"
   - **Not built yet (skip):** 54.4
 
@@ -268,8 +237,5 @@ Areas: 15, 22, 23, 24, 34, 54, 55. Rows ids start `V-ED-`. `V-ED-S<area>` rows a
     - 55.2 Watch and call stack [Partial]. Where: Variables window
     - 55.3 Script profiler [Basic]. Where: Profiler window shows the Scripts category
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 55.1: first step: a line hook in the OkayScript VM and the typed-script interpreter ('engine/src/Script/Interpreter.cpp') that calls a debug callback...
-    - 55.2: first step: expose the interpreter's frame and locals read-only to the editor while paused.
-    - 55.3: first step: a profile scope named after the script around each 'ScriptComponent::Update' (off unless the profiler window is open).
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 55, sections 55.1, 55.2, 55.3): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add breakpoints and stepping to OkayScript in the script editor"

@@ -95,15 +95,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     - 6.7 Collision layers and trigger filters [Works]. Where: collider inspectors (layer, trigger tag); layer matrix editing is in the scene settings (area 1.3)
     - 6.8 Forces, explosions and body push-out [Works].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 6.1: no dedicated physics doc; 2D joints are the Joint2D component (6.3), solved inside Physics2D::Step
-    - 6.2: the header says bodies must be top-level (un-parented) Transforms; the navmesh bake still treats a MeshCollider3D as its bounds box; no dedicated...
-    - 6.3: Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints...
-    - 6.4: a body moved by game code jumps with no blending (by design, per the header)
-    - 6.5: no physics doc, so the query list is only in the headers and 'docs/engine_api.md'; 3D shape casts skip triggers by default while rays include them...
-    - 6.6: destruction works only on BlockBuilder-style cube grids tagged 'blockTag'; no fracture for arbitrary meshes; no test file of its own for Projectile3D...
-    - 6.7: the matrix itself, its presets and its scene-file record are owned by area 1.3 (#570, #586); this page only covers how the solvers use it
-    - 6.8: ResolvePlayerBody approximates the body as one sphere
+  - **Known gaps:** see [docs/feature_map/06-physics.md](../feature_map/06-physics.md) (area 6, sections 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "make a one-way platform you can jump up through"; "why does my 2D ball not bounce off the wall?"
 
 - [ ] **V-PH-S9** Area 9: AI & navigation (smoke test, steps unverified)
@@ -116,13 +108,7 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     - 9.5 NPCs and perception [Works]. Where: Add Component > Gameplay > NPC Controller; Inspector groups for movement, perception, aggression, combat
     - 9.6 Nav areas and off-mesh links [Works]. Where: Add Component > Gameplay > Nav Mesh Modifier and Nav Mesh Link; Nav Mesh Agent > Area Mask; Navigation window...
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 9.1: per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; obstacle carving is 9.2.5 (area...
-    - 9.2: agents only avoid each other and obstacles locally; there is no crowd-wide planner; carving is run time only (the editor previews the footprint), is...
-    - 9.3: 2D grid only; a start or goal on a wall returns no path; a grid over 'Pathfinding::kMaxCells' (4096 x 4096) returns no path; smoothing does not...
-    - 9.4: no step-over or step-into (a breakpoint pauses Play, and the toolbar step runs one frame); Start Dialogue is the only task that links to story...
-    - 9.5: health is a built-in 'health' field here, separate from HealthStat and Stats (11.4, 11.8); no group tactics beyond separation radius. Visual-script...
-    - 9.6: area costs and masks apply to the baked mesh only (not the grid fallback, NPC or click-to-move controllers); crossings are not checked against...
+  - **Known gaps:** see [docs/feature_map/09-ai-navigation.md](../feature_map/09-ai-navigation.md) (area 9, sections 9.1, 9.2, 9.3, 9.4, 9.5, 9.6): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "bake a navmesh for my level"; "my guard will not walk through the narrow door"
 
 - [ ] **V-PH-S52** Area 52: Simulation extras (cloth, soft bodies, fluids, destruction, crowds) (smoke test, steps unverified)
@@ -132,9 +118,6 @@ Areas: 6, 9, 52. Rows ids start `V-PH-`. `V-PH-S<area>` rows are smoke tests bui
     - 52.4 Destruction [Partial]. Where: Destructible Inspector section
     - 52.5 Crowds [Basic]. Where: NavMeshAgent Inspector section
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 52.3: first step: shallow-water ripples reacting to objects entering the water.
-    - 52.4: first step: pre-fractured meshes (a mesh authored as pieces) with a break threshold and impulse.
-    - 52.5: first step: measure 200 agents in a play-test (#572) and add a spatial hash for neighbour search; then flow fields for large groups.
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 52, sections 52.3, 52.4, 52.5): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "make objects create ripples in the Water surface"
   - **Not built yet (skip):** 52.1, 52.2

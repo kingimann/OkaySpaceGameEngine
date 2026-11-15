@@ -165,17 +165,9 @@ def smoke_row(code, a):
         lines.append('  - **Steps:** nothing is built in this area yet, so there is nothing to try.')
     lines.append('  - **You should see:** each listed thing opens and does what its name says '
                  '(expected, not yet seen on Windows).')
-    opens = []
-    for s in built:
-        o = s['f'].get('Open', '').strip()
-        if o and o not in ('-', 'none', 'None'):
-            opens.append(f"{s['id']}: {one_line(o, 150)}")
-    if opens:
-        lines.append('  - **Known partial (Open notes):**')
-        for o in opens:
-            lines.append(f"    - {o}")
-    else:
-        lines.append('  - **Known partial (Open notes):** none listed.')
+    secs = ', '.join(s['id'] for s in built)
+    lines.append(f"  - **Known gaps:** see [docs/feature_map/{a['page']}](../feature_map/{a['page']}) (area {a['num']}, sections {secs or 'none built'}): "
+                 'the Open line of each section. Not copied here so it cannot go stale.')
     ask_src = [s['f'].get('Ask me like', '') for s in built if s['f'].get('Ask me like')]
     if ask_src:
         lines.append(f"  - **Ask me like:** {one_line(ask_src[0], 130)}")
@@ -234,7 +226,7 @@ def readme_text(files):
            'Where a step could not be matched to the code it says `(steps unverified)`.', '',
            '## How to use it', '',
            '1. Install the release (`OkaySpace-Setup.exe` or the zip). Start `OkaySpace.exe`; the editor is `Tools\\OkayEngine.exe`, '
-           'the player is `Tools\\OkaySpacePlayer.exe`. [try_it.md](../try_it.md) (if present in your checkout) says where the example '
+           'the player is `Tools\\OkaySpacePlayer.exe`. [try_it.md](../try_it.md) (this file arrives with PR #887; the link is dangling until it merges) says where the example '
            'scenes are and how to switch the own-code options on.',
            '2. Open a checklist below (or its GitHub issue). Go row by row. Each row has a stable id such as `V-ED-012`.',
            '3. Do the **Steps**. Compare with **You should see**.',
@@ -259,8 +251,8 @@ def readme_text(files):
         out.append(f"| [{title}]({stem}.md) | {nrows} | {nhand} | {nsmoke} |")
     out += ['', '## Keeping it in sync', '',
             'Add or change a row by editing `docs/verification/steps/<GROUP>.md` (hand-written rows) or the feature map (smoke rows), then run '
-            '`python3 scripts/gen_verify_checklist.py`. `--check` fails when a file is stale (the ctest `verify_checklist` runs it); '
-            '`--check-labels` fails when a step names a menu item, variable or path that is no longer in the source (ctest `verify_checklist_labels`). '
+            '`python3 scripts/gen_verify_checklist.py`. these are manual commands, not part of CI: run `python3 scripts/gen_verify_checklist.py --check-labels` before editing a checklist, and run the generator after big feature-map changes. '
+            '`--check` reports a stale file; `--check-labels` reports a step that names a menu item, variable or path that is no longer in the source. '
             'Every new feature must add its row here, as well as to [try_it.md](../try_it.md) and the feature map (CLAUDE.md rule 5).', '']
     return '\n'.join(out)
 

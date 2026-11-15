@@ -91,12 +91,15 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
   - **More:** [../../crypto.md](../../crypto.md)
 
 - [ ] **V-OC-010** Own script editor (OkayUI CodeEdit) (steps unverified)
-  - **Map:** 40, 13. **Where:** none yet
+  - **Map:** 40, 13. **Where:** `Tools\OkayEngine.exe`, Script Editor window
   - **Steps:** (steps unverified: could not be confirmed against the code)
-    1. Nothing to try: the OkayUI code editor widget is built and tested headless but the editor still draws its script editor with the vendored text editor.
-  - **You should see (expected, not yet seen on Windows):** `View > Editors & Tools > Script Editor` looks the same with `OKAY_UI_BACKEND=okayui` (expected: no change).
-  - **Known partial:** not wired in (docs/own_ui_code_editor.md).
-  - **More:** [../../own_ui_code_editor.md](../../own_ui_code_editor.md)
+    1. Run `set OKAY_UI_BACKEND=okayui` then `Tools\OkayEngine.exe` (or, with `OKAY_DEV=1` set, open **View > Rendering & Performance > UI backend** and pick OkayUI (preview)). The script view follows the UI backend.
+    2. Put a script in a project and double-click it in the **Project** panel: it opens in the **Script Editor** tab.
+    3. Type, press Enter after a `{`, Tab and Shift+Tab, Ctrl+Z and Ctrl+Y, and click the narrow column left of the line numbers.
+    4. To go back run with `OKAY_UI_BACKEND=imgui`.
+  - **You should see (expected, not yet seen on Windows):** colours for keywords, strings, numbers and comments; Enter keeps the indent; the click toggles a blue breakpoint mark; a script error shows a red mark. The Console and Help > About OkaySpace line "Script editor: our own code editor (OkayUI backend, preview)" needs the next release (it is on branch claude/own-code-editor, PR pending).
+  - **Known partial:** never run in a real window; one caret only; no folding, no word wrap. Console and About lines also draw the Console, Crash Log and Audio Mixer with OkayUI.
+  - **More:** [own_code_editor.md](https://github.com/kingimann/OkaySpaceGameEngine/blob/claude/own-code-editor/docs/own_code_editor.md)
 
 - [ ] **V-OC-S40** Area 40: OkayUI standalone library (smoke test, steps unverified)
   - **Map:** [40](../feature_map/40-okayui-library.md), 7 sub-areas, 7 built.
@@ -109,12 +112,5 @@ Areas: 40. Rows ids start `V-OC-`. `V-OC-S<area>` rows are smoke tests built fro
     - 40.6 Headless software backend and test harness [Works].
     - 40.7 Draw list, cursor, item state and disabled blocks [Works].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 40.1: see "Not done" in 'docs/own_ui_toolkit.md' (no window z-order, no 'BeginGroup', no '##' label hiding, no public draw-list API, no cursor and...
-    - 40.2: possible duplication: the Slate palette lives in three places ('OkayUI::SlateTheme', 'UITemplates::slate' for scene UI, 'shared/OkayTheme.hpp' for...
-    - 40.3: no test of the D3D11 path found, and it still draws only vertices and indices (no clip rectangles, no atlas texture: it should use 'DrawCmd' like the...
-    - 40.4: the web player links only the engine per the CMake comment, so 'ui_*' calls there need a bridge from somewhere else (not verified); 'ui_*' calls do...
-    - 40.5: confusing names: header path 'okay/UI/' holds both 'okayui/include/okay/UI/OkayUI.hpp' and the engine's 'UI/*' headers; "OkayUI markup" in...
-    - 40.6: the behaviour 'okay::imui' had that OkayUI lacks is listed under "Not done" in 'docs/own_ui_toolkit.md' (window z-order, key repeat, 'BeginGroup'...
-    - 40.7: the remaining gaps are ranked in 'docs/own_ui_toolkit.md' section 4; the Direct3D 11 backend still ignores clip spans, so draw-list clipping does not...
+  - **Known gaps:** see [docs/feature_map/40-okayui-library.md](../feature_map/40-okayui-library.md) (area 40, sections 40.1, 40.2, 40.3, 40.4, 40.5, 40.6, 40.7): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "work on 40.1.4, add keyboard navigation to OkayUI"; "OkayUI InputText loses focus on click"

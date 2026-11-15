@@ -76,11 +76,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     - 10.3 Quests and story variables [Works]. Where: Quests tab of the Dialogue window; Add Component > Gameplay > Quest Log and Quest Trigger; Story State...
     - 10.4 Story UI: dialogue box, quest tracker and journal [Works]. Where: Dialogue Runner and Quest Log inspectors (draw UI, tracker, journal key, notifications)
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 10.1: per docs, playback state is not saved and in multiplayer every client plays its own copy (start from an RPC); subtitles are drawn by the sequence...
-    - 10.2: per docs, dialogues are local to each client in multiplayer and a conversation in progress is not saved; the speaker dropdown list is kept per graph...
-    - 10.3: in multiplayer the server's quest log and story are the truth and clients hold copies (16.8.9; per-player quests advance only through the server...
-    - 10.4: per docs the boxes are drawn in one fixed launcher look through the OkayUI bridge; restyling means turning 'drawUI' off and drawing your own from the...
+  - **Known gaps:** see [docs/feature_map/10-story-cinematics.md](../feature_map/10-story-cinematics.md) (area 10, sections 10.1, 10.2, 10.3, 10.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "make an intro cutscene with two camera shots and a fade"; "let the player skip the cutscene with Escape"
 
 - [ ] **V-GP-S11** Area 11: Gameplay systems (smoke test, steps unverified)
@@ -99,19 +95,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     - 11.11 World drag and drop [Works]. Where: Add Component rows "Draggable (item)" and "Drop Zone (item)"
     - 11.12 Volumes and zones [Works]. Where: GameObject > Volume; Scene Overlays > Volumes; Add Component > Gameplay > Volume rows; Inspector "Volume...
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 11.1: ROADMAP "Unturned-style inventory improvements" and inventory plan items 6-9 are listed open there (gameplay features, scripting, UI polish...
-    - 11.2: no separate doc page that spells the '.okayitems' or '.okayloot' text format out line by line; unknown item names become "loose" definitions that are...
-    - 11.3: 'docs/npcs_and_crafting.md' predates the shared recipe book and craft queue and does not describe them
-    - 11.4: three separate health models exist: HealthStat, SurvivalStats' own health and the older RPG 'Stats' (11.9) plus 'NPCController''s own 'health' (9.5)...
-    - 11.5: per 'docs/build_mode.md' "Not covered yet": building is 3D only (multiplayer building is server checked and synced, 16.8.8; door and mover state is...
-    - 11.6: Spawner has no object pooling hook (see pooling in area 1.4); the minimap is a flat top-down picture (no tilted or perspective view)
-    - 11.7: dodge and dive still have no test of their own. Melee now hits Health, survival health, RPG stats and NPCs, and only during its hit window and arc or...
-    - 11.8: no tests or docs; depends on the anti-cheat RPC checks (16.6); interaction with ROADMAP inventory item 9 (networking) status unknown: ask before...
-    - 11.9: a fourth health model next to HealthStat, SurvivalStats and NPCController (possible duplication, see 11.4); no skill tree, buff stacking or save...
-    - 11.10: the Lifetime header says it counts from when the scene starts running (ambiguous for objects spawned later; not checked); no easing or path motion...
-    - 11.11: no doc; world-space only (the UI version, 'UIDraggable', is area 12); 2D orthographic camera only
-    - 11.12: no per-scene post settings beyond fog and vignette, no navigation-area volume, no convex region shape; Force reaches Rigidbody 3D bodies only (not...
+  - **Known gaps:** see [docs/feature_map/11-gameplay-systems.md](../feature_map/11-gameplay-systems.md) (area 11, sections 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 11.8, 11.9, 11.10, 11.11, 11.12): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a backpack with a grid inventory"; "make a chest the player can loot"
 
 - [ ] **V-GP-S35** Area 35: Save game framework (High) (smoke test, steps unverified)
@@ -122,11 +106,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     - 35.3 Serialization [Works]. Where: Add Component > Saveable (keep when saving); Inspector: save id, New id, what to save, property picker
     - 35.4 Versioned save data [Works].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 35.1: possible duplicate: 'SaveGame' ('.okaygame') and the framework ('.okayslot') are separate formats and separate lists; nothing converts between them...
-    - 35.2: AutoSave writes one slot, so a corrupt moment is overwritten; wait for the framework decision (35.1).
-    - 35.3: the two systems (whole scene vs saveable state) overlap; streamed worlds not covered.
-    - 35.4: migrations operate on text; no tool to inspect a save.
+  - **Known gaps:** see [docs/feature_map/20-35-planned.md](../feature_map/20-35-planned.md) (area 35, sections 35.1, 35.2, 35.3, 35.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "make the Save Slots screen show a screenshot"; "sync saves to Steam Cloud"
 
 - [ ] **V-GP-S42** Area 42: Examples, samples & sandbox (smoke test, steps unverified)
@@ -140,28 +120,21 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     - 42.6 Standalone player runtime [Works]. Where: File > Build Settings builds the folder that contains it (18.6); Play in the editor is a different code path
     - 42.7 Starter assets [Basic]. Where: Project panel (Assets/Textures, Assets/Fonts after install)
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 42.1: none; it exercises only 2D console rendering, not 3D or the editor
-    - 42.2: uses the avatar API rather than NetworkSync or authoritative movement, so it doesn't show prediction or lag compensation (16.2)
-    - 42.3: 2D only; no 3D physics example
-    - 42.4: possible issues: no request-size cap or rate limit, tokens are lost on restart; a compiled '__pycache__/server.cpython-311.pyc' is committed (19.6)...
-    - 42.5: only two examples; no sample of a plugin that reacts to selection
-    - 42.6: 2,674 lines in one file, with UI drawing, matchmaking windows and server startup mixed in (19.4); behaviour differs slightly from Play in the editor...
-    - 42.7: no sample project, sample scenes or sample audio ship in the repo; the starter templates are in code (1.6)
+  - **Known gaps:** see [docs/feature_map/42-examples-samples.md](../feature_map/42-examples-samples.md) (area 42, sections 42.1, 42.2, 42.3, 42.4, 42.5, 42.6, 42.7): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "run the sandbox for 300 frames", "make the sandbox ship fire"
 
 - [ ] **V-GP-S46** Area 46: Replay system (smoke test, steps unverified)
   - **Map:** [46](../feature_map/43-proposals.md), 3 sub-areas, 0 built.
   - **Steps:** nothing is built in this area yet, so there is nothing to try.
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):** none listed.
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 46, sections none built): the Open line of each section. Not copied here so it cannot go stale.
   - **Not built yet (skip):** 46.1, 46.2, 46.3
 
 - [ ] **V-GP-S47** Area 47: Mod support (smoke test, steps unverified)
   - **Map:** [47](../feature_map/43-proposals.md), 3 sub-areas, 0 built.
   - **Steps:** nothing is built in this area yet, so there is nothing to try.
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):** none listed.
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 47, sections none built): the Open line of each section. Not copied here so it cannot go stale.
   - **Not built yet (skip):** 47.1, 47.2, 47.3
 
 - [ ] **V-GP-S51** Area 51: Onboarding, tutorials and samples (smoke test, steps unverified)
@@ -172,9 +145,5 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     - 51.3 Welcome screen and tips [Basic]. Where: startup splash
     - 51.4 Contextual help [Basic]. Where: Help menu, node help panel
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 51.1: first step: each template gets a short "What to look at" note shown when it opens (which objects, scripts and settings matter); a "Samples" tab in...
-    - 51.2: first step: a lesson format (a text file of steps, each with a highlighted window or button and a check such as "an object named Player exists") and...
-    - 51.3: first step: a dismissible "Getting started" panel in an empty project with three links (open a sample, run the first lesson, read the docs).
-    - 51.4: first step: a "?" button on each component header that opens its docs page (a table from component name to page).
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 51, sections 51.1, 51.2, 51.3, 51.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a What to look at note to each template"

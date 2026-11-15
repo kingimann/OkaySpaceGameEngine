@@ -6,7 +6,7 @@ You asked for a way to go through every feature and check it works on the releas
 
 ## How to use it
 
-1. Install the release (`OkaySpace-Setup.exe` or the zip). Start `OkaySpace.exe`; the editor is `Tools\OkayEngine.exe`, the player is `Tools\OkaySpacePlayer.exe`. [try_it.md](../try_it.md) (if present in your checkout) says where the example scenes are and how to switch the own-code options on.
+1. Install the release (`OkaySpace-Setup.exe` or the zip). Start `OkaySpace.exe`; the editor is `Tools\OkayEngine.exe`, the player is `Tools\OkaySpacePlayer.exe`. [try_it.md](../try_it.md) (this file arrives with PR #887; the link is dangling until it merges) says where the example scenes are and how to switch the own-code options on.
 2. Open a checklist below (or its GitHub issue). Go row by row. Each row has a stable id such as `V-ED-012`.
 3. Do the **Steps**. Compare with **You should see**.
 4. If it works, tick the box. If it does not, leave the box empty and comment on the issue with the row id and what happened.
@@ -41,10 +41,10 @@ Screenshots help. One comment per row. The row id is how we find the feature in 
 
 | File | Rows | Of which written steps | Smoke tests |
 |---|---|---|---|
-| [Launcher and accounts](01-launcher-and-accounts.md) | 19 | 15 | 4 |
+| [Launcher and accounts](01-launcher-and-accounts.md) | 23 | 19 | 4 |
 | [Editor basics](02-editor-basics.md) | 24 | 17 | 7 |
 | [Scene and components](03-scene-and-components.md) | 15 | 9 | 6 |
-| [Characters and animation](04-characters-and-animation.md) | 11 | 7 | 4 |
+| [Characters and animation](04-characters-and-animation.md) | 12 | 8 | 4 |
 | [Physics, vehicles and navigation](05-physics-vehicles-navigation.md) | 11 | 8 | 3 |
 | [Rendering and post-processing](06-rendering-and-post-processing.md) | 18 | 9 | 9 |
 | [Audio and input](07-audio-and-input.md) | 7 | 5 | 2 |
@@ -56,4 +56,4 @@ Screenshots help. One comment per row. The row id is how we find the feature in 
 
 ## Keeping it in sync
 
-Add or change a row by editing `docs/verification/steps/<GROUP>.md` (hand-written rows) or the feature map (smoke rows), then run `python3 scripts/gen_verify_checklist.py`. `--check` fails when a file is stale (the ctest `verify_checklist` runs it); `--check-labels` fails when a step names a menu item, variable or path that is no longer in the source (ctest `verify_checklist_labels`). Every new feature must add its row here, as well as to [try_it.md](../try_it.md) and the feature map (CLAUDE.md rule 5).
+Add or change a row by editing `docs/verification/steps/<GROUP>.md` (hand-written rows) or the feature map (smoke rows), then run `python3 scripts/gen_verify_checklist.py`. these are manual commands, not part of CI: run `python3 scripts/gen_verify_checklist.py --check-labels` before editing a checklist, and run the generator after big feature-map changes. `--check` reports a stale file; `--check-labels` reports a step that names a menu item, variable or path that is no longer in the source. Every new feature must add its row here, as well as to [try_it.md](../try_it.md) and the feature map (CLAUDE.md rule 5).

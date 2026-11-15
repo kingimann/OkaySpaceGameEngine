@@ -79,15 +79,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 18.7 Dedicated server export and Linux server build [Works]. Where: File > Build Settings > Platform: Server
     - 18.8 Steam release (SteamPipe) [Basic].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 18.1: "Stop committing dist binaries" (old map): 'dist/' still holds June 2026 exes and a 'VERSION.txt' of 2.412.0; 'build-windows-exe.sh' copies the...
-    - 18.2: the Build Settings tooltip says "Export an Android Studio project" but the code writes assets and a README only (possible mismatch); the web build...
-    - 18.3: possible gaps: the Ubuntu job installs no libsodium-dev, so encryption tests may run their stub branch (the ASan job builds with sodium off on...
-    - 18.4: the header comment says the manual run releases "the version in dist/VERSION.txt" but the code uses 'build-win-dist/VERSION.txt' (stale comment...
-    - 18.5: remove the hardcoded Supabase URL and key from CMake (old map); possible bug: the script looks for '$DIST_DIR/CHANGELOG.txt' but...
-    - 18.6: the build code lives inside the huge 'editor/main.cpp' (split, see 15.10); the export check covers visual scripts and one mesh, not UI, audio or...
-    - 18.7: no test of 'BuildServer'; no Windows server runtime job
-    - 18.8: needs a Steamworks builder account and Valve's one-time review before the first public release; the GitHub release does not build the real Steamworks...
+  - **Known gaps:** see [docs/feature_map/18-build-export-release.md](../feature_map/18-build-export-release.md) (area 18, sections 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "build the Windows folder locally", "why does the installer skip the folder question?"
 
 - [ ] **V-BX-S19** Area 19: Docs, tests & code health (smoke test, steps unverified)
@@ -100,13 +92,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 19.6 Repository hygiene [Basic].
     - 19.7 Compiler warnings and sanitizers [Works].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 19.1: 'docs/README.md' links none of ten newer pages ('asset_database.md', 'asset_manager.md', 'core_audit_notes.md', 'layers_tags_cameras.md'...
-    - 19.2: possible gaps: nothing is grouped or labelled ('ctest -L' has no labels), no TSan job for 'net_races', tests that need SDL2 or a pty silently...
-    - 19.3: the workflow needs two cloud sessions and a scheduled message each way (cloud sessions cannot message each other)
-    - 19.5: the anti-cheat hardening list still shows items 5, 6, 8, 9, 10, 12, 13, 14 as open, although 'git log' has #350, #360, #363, #365, #368, #376, #384...
-    - 19.6: delete the stray files and add them to '.gitignore', stop committing 'dist/' binaries (old map item), drop the '.pyc', add '__pycache__/' to...
-    - 19.7: no ThreadSanitizer job even though 'net_races' is written for it; only a subset of tests run under sanitizers
+  - **Known gaps:** see [docs/feature_map/19-docs-tests-health.md](../feature_map/19-docs-tests-health.md) (area 19, sections 19.1, 19.2, 19.3, 19.5, 19.6, 19.7): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "which doc explains the relay?", "add the missing pages to the docs index"
   - **Not built yet (skip):** 19.4
 
@@ -117,10 +103,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 28.2 Diffs [Partial].
     - 28.4 Merge conflict tools [Partial]. Where: File > Merge Scene into Current, Project panel "Add to Open Scene"
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 28.1: no automated test; no conflict handling after a pull (see 28.4); shelling out to git means errors come back as text only.
-    - 28.2: no UI and no tool call these yet; a file without ids pairs objects by name path, so a rename there looks like a removal plus an addition; component...
-    - 28.4: the library only merges text of files at one format version; ours and theirs at different versions are not merged; possible duplicate naming with the...
+  - **Known gaps:** see [docs/feature_map/20-35-planned.md](../feature_map/20-35-planned.md) (area 28, sections 28.1, 28.2, 28.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a Git panel to the editor"; "generate a .gitignore for new projects"
   - **Not built yet (skip):** 28.3
 
@@ -131,10 +114,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 33.2 Scene validation [Works]. Where: Problems panel (15.11.8) updates in edit mode; Build blocks on errors and lists warnings; Console output at...
     - 33.3 Regression testing [Partial].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 33.1: a script that reads the wall clock or uses threads makes a play-test non-deterministic (stated in 'docs/automated_testing.md'); one 'PlayTest' may be...
-    - 33.2: no CI step walks the sample scenes.
-    - 33.3: compilers round shading slightly differently, so goldens need a tolerance; the software renderer draws mesh renderers only (no sprites, UI...
+  - **Known gaps:** see [docs/feature_map/20-35-planned.md](../feature_map/20-35-planned.md) (area 33, sections 33.1, 33.2, 33.3): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "write a play-test that checks the door opens"; "add a Test Runner window"
 
 - [ ] **V-BX-S41** Area 41: Build, tools & infrastructure (smoke test, steps unverified)
@@ -152,18 +132,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 41.10 Dependencies and pinned versions [Works].
     - 41.11 Own-stack dogfood switch and startup line [Works]. Where: Help > About OkaySpace (the stack line)
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 41.1: the default Supabase URL and publishable key are written in 'CMakeLists.txt' (old map: remove; release CI deliberately doesn't override them); two...
-    - 41.2: no test checks the generated resource; the toolchain's pthread workaround falls back silently
-    - 41.3: 'launch.sh' and 'launch.bat' say "update from GitHub, build, and run" but only build and run (stale comment); 'build.sh' places 'build/' in the repo...
-    - 41.4: no doc page for the tools; nothing checks the generated files stay in sync with the generators
-    - 41.5: the Docker build copies the whole repository ('COPY . .') and builds without libsodium on purpose; no health check or log shipping; no CI job builds...
-    - 41.6: no migration tracking (re-run by hand); 15 of 18 SQL files have no test; the Edge function is not deployed and its self-test is not in CI; run order...
-    - 41.7: see 18.8
-    - 41.8: see 18.3 and 18.4 for the gaps (no libsodium in the Ubuntu job, no TSan, no tests in the release); action versions are pinned by tag, not by commit
-    - 41.9: 'dist/VERSION.txt' is stale and 'release.yml''s comment still points at it (19.6); the changelog is hand-written
-    - 41.10: the ImGui tag is duplicated in two files and must be changed together; configuring the editor, launcher or Assimp needs network access (offline...
-    - 41.11: the line cannot know a UI backend saved in a developer build's settings at the top of 'main()'; the readers' automatic fallback to the old reader is...
+  - **Known gaps:** see [docs/feature_map/41-build-tools-infra.md](../feature_map/41-build-tools-infra.md) (area 41, sections 41.1, 41.2, 41.3, 41.4, 41.5, 41.6, 41.7, 41.8, 41.9, 41.10, 41.11): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "which CMake flag builds the editor?", "add my new source file to the engine build"
 
 - [ ] **V-BX-S56** Area 56: Platform targets and store packaging (smoke test, steps unverified)
@@ -173,10 +142,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 56.2 Mobile packaging [Basic]. Where: Build Settings (Android option), phone and tablet emulation in the Game view
     - 56.3 Web export [Partial]. Where: Build Settings
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 56.1: first step: Linux AppImage or tarball for exported games from the same Build dialog; macOS app bundle later (needs a macOS build machine).
-    - 56.2: first step: a CI job that builds a sample APK from the guide so the guide is known to work.
-    - 56.3: first step: package the web build as a zip ready for itch.io from the editor when emscripten is installed.
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 56, sections 56.1, 56.2, 56.3): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a Linux AppImage export to Build Game"
   - **Not built yet (skip):** 56.4
 
@@ -187,10 +153,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 57.2 Generated API reference [Partial]. Where: Scripting Reference window
     - 57.3 Docs inside the editor [Basic]. Where: Help menu
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 57.1: first step: a static site generator over 'docs/' with a CI job publishing to GitHub Pages; docs/archive is out of scope.
-    - 57.2: first step: generate 'scripting_reference.md' from the same builtin table the editor window uses so they cannot drift.
-    - 57.3: first step: open 'docs/*.md' pages in an editor window (the Markdown subset used is small).
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 57, sections 57.1, 57.2, 57.3): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "publish the docs folder as a searchable site"
 
 - [ ] **V-BX-S58** Area 58: Performance budgets and CI perf tests (smoke test, steps unverified)
@@ -199,8 +162,6 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 58.2 Benchmark scenes [Basic].
     - 58.4 Build size and load-time report [Partial]. Where: Build result popup
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known partial (Open notes):**
-    - 58.2: first step: benchmark scenes for 10k meshes, 100 lights, 200 agents and 1000 particles, run headless with the software renderer for repeatability.
-    - 58.4: first step: log scene load time and asset decode time (the async loader in #570 reports progress) in the Profiler.
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 58, sections 58.2, 58.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add benchmark scenes for objects, lights and agents"
   - **Not built yet (skip):** 58.1, 58.3

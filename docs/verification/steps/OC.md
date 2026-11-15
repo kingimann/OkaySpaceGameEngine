@@ -97,10 +97,13 @@ How to set a variable (Windows Command Prompt): `cd %LOCALAPPDATA%\OkaySpace`, `
 
 ### V-OC-010 Own script editor (OkayUI CodeEdit)
 - **Map:** 40, 13
-- **Where:** none yet
+- **Where:** `Tools\OkayEngine.exe`, Script Editor window
 - **Steps:**
-  1. Nothing to try: the OkayUI code editor widget is built and tested headless but the editor still draws its script editor with the vendored text editor.
-- **See:** `View > Editors & Tools > Script Editor` looks the same with `OKAY_UI_BACKEND=okayui` (expected: no change).
-- **Partial:** not wired in (docs/own_ui_code_editor.md).
-- **Link:** [../../own_ui_code_editor.md](../../own_ui_code_editor.md)
+  1. Run `set OKAY_UI_BACKEND=okayui` then `Tools\OkayEngine.exe` (or, with `OKAY_DEV=1` set, open **View > Rendering & Performance > UI backend** and pick OkayUI (preview)). The script view follows the UI backend.
+  2. Put a script in a project and double-click it in the **Project** panel: it opens in the **Script Editor** tab.
+  3. Type, press Enter after a `{`, Tab and Shift+Tab, Ctrl+Z and Ctrl+Y, and click the narrow column left of the line numbers.
+  4. To go back run with `OKAY_UI_BACKEND=imgui`.
+- **See:** colours for keywords, strings, numbers and comments; Enter keeps the indent; the click toggles a blue breakpoint mark; a script error shows a red mark. The Console and Help > About OkaySpace line "Script editor: our own code editor (OkayUI backend, preview)" needs the next release (it is on branch claude/own-code-editor, PR pending).
+- **Partial:** never run in a real window; one caret only; no folding, no word wrap. Console and About lines also draw the Console, Crash Log and Audio Mixer with OkayUI.
+- **Link:** [own_code_editor.md](https://github.com/kingimann/OkaySpaceGameEngine/blob/claude/own-code-editor/docs/own_code_editor.md)
 - **Grounded:** no

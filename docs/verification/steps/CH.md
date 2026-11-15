@@ -71,3 +71,16 @@
   2. Press Play and walk over stairs (**GameObject > 3D Object > Stairs**) or a slope.
 - **See:** the feet are placed on the steps instead of floating or sinking.
 - **Partial:** "feet slide on slopes" is a listed symptom in map 5; report if seen.
+
+### V-CH-008 OBJ texture path hardening
+- **Map:** 3
+- **Where:** editor, File menu
+- **Needs:** a release that ships the `examples` folder (PR #887, not merged when this was written)
+- **Steps:**
+  1. Choose **File > Import Model...** and pick `examples/obj_texture_paths/cube_ok.obj`.
+  2. Import `examples/obj_texture_paths/cube_outside.obj` (its texture is outside the allowed folders).
+  3. Import `examples/obj_texture_paths/cube_network.obj` (its texture is a network path; the editor must not wait for a network).
+- **See:** the first cube shows the grid texture; the other two are plain white cubes and the editor stays responsive. No Console message says a texture was refused.
+- **Partial:** what Import does with the texture after import was not checked; unverified in a real window.
+- **Link:** [../../try_it.md](../../try_it.md)
+- **Grounded:** no

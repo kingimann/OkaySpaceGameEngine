@@ -12,17 +12,17 @@
 - **Grounded:** no
 
 ### V-NW-002 Join by address from the launcher
-- **Map:** 16, 17.9
+- **Map:** 16, 17.15
 - **Where:** `OkaySpace.exe`, Servers or Play page
 - **Steps:**
   1. With a game hosting on your PC open the launcher's multiplayer (server browser) page.
   2. Press **Connect to server...** and type the address, or use the **LAN** tab.
 - **See:** the game starts and joins; the **LAN** tab lists games on your network by itself.
-- **Partial:** the Internet list needs the live Supabase server (map 17.9).
+- **Partial:** the Internet list needs the live Supabase server (map 17.15).
 - **Link:** [launcher-multiplayer.md](../../launcher-multiplayer.md)
 
 ### V-NW-003 Quick Play and invites
-- **Map:** 17.9, 16
+- **Map:** 17.15, 16
 - **Where:** `OkaySpace.exe`, signed in
 - **Steps:**
   1. Host a match in a game, then in the launcher press **Invite friends**.

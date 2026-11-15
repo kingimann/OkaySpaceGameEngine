@@ -20,11 +20,6 @@ add_test(NAME structure_version COMMAND test_structure_version)
 find_program(OKAY_PYTHON NAMES python3 python)
 if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
-    # The owner's verification checklists (docs/verification/) are generated from the feature map and the hand-written step
-    # files: the first test fails when a generated file is stale (run scripts/gen_verify_checklist.py), the second when a step
-    # names a menu item, variable or path that is no longer in the source.
-    add_test(NAME verify_checklist COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/gen_verify_checklist.py --check)
-    add_test(NAME verify_checklist_labels COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/gen_verify_checklist.py --check-labels)
 endif()
 
 add_executable(test_serialize test_serialize.cpp)

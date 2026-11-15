@@ -32,9 +32,16 @@ public:
 };
 
 bool QFinite(const Quat& q) { return std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z) && std::isfinite(q.w); }
+// Angle between two rotations in degrees. Done in double on purpose: with float, acos() of a dot product that is
+// 1 minus a rounding error (6e-8) gives about 0.04 degrees even for identical rotations, which is what made this test
+// fail on the CI machine (0.0396 deg) but not on the one it was written on.
 float AngleBetween(const Quat& a, const Quat& b) {
-    float d = std::fabs(Quat::Dot(a.Normalized(), b.Normalized()));
-    return 2.0f * std::acos(d > 1.0f ? 1.0f : d) * 57.29578f;
+    const double ax = a.x, ay = a.y, az = a.z, aw = a.w, bx = b.x, by = b.y, bz = b.z, bw = b.w;
+    const double na = std::sqrt(ax * ax + ay * ay + az * az + aw * aw);
+    const double nb = std::sqrt(bx * bx + by * by + bz * bz + bw * bw);
+    double d = std::fabs(ax * bx + ay * by + az * bz + aw * bw) / (na * nb);
+    if (d > 1.0) d = 1.0;
+    return (float)(2.0 * std::acos(d) * 57.29577951308232);
 }
 
 // Drawn distance moved per render frame, in metres, for a body at 4.5 m/s.

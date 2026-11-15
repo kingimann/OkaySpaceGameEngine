@@ -52,7 +52,13 @@ Tests: `tests/test_ui_input_guard.cpp` (lean, top-down fire), `tests/test_invent
 * **Networked slot <-> grid moves.** `ToGrid` / `FromGrid` are local operations: they send no `inv/*` request. A client must not use them against a host-owned bag until a request for them exists in `NetInventory`.
 * **Scripts and visual scripts** cannot call `ToGrid` / `FromGrid`. Scripts already have `inv_move`; a script function and a visual-script node ("Move Item To Grid" with slot, grid, x, y, rotated, amount) are still to be added (the visual-script core is owned by another change, so no node was added here).
 * **Worn weight and enforced weight.** `Equipment::Unequip` into a bag that enforces its weight limit is checked while the worn item is still counted in `wornWeight`, so it can be refused a little early near the limit.
-* **Durability use.** Durability is stored and carried, but nothing wears it down (tools, weapons, armor) or repairs it; no "broken item" rule.
+* **Durability: the rules exist; wiring them to gameplay does not.** `okay/Inventory/Durability.hpp` (test `item_durability`):
+  - **Settings**, on the item definition's custom fields (no format change): `maxDurability` (a number above 0; missing or 0 = the item has no durability) and `breakAction` (`keep`, the default, or `destroy`). An item never worn has no stored value and counts as full.
+  - **`durability::Wear(inv, slot, amount)`** wears one item down (a stack is split first so only one wears; refused when there is no free slot). At 0 the item is broken: scripts get `on_item_broken(item)`, and with `breakAction destroy` it is removed.
+  - **`durability::Repair(inv, slot, amount, cost)`** repairs by an amount or to full (`amount` 0). The `cost` materials are taken from the same bag all or nothing, and never from the item being repaired (another of the same item can pay).
+  - **Worn pieces:** `WearEquipped` / `RepairEquipped` on an `Equipment` slot.
+  - **Broken items:** `InventoryOps::Use` refuses them (reason "broken"), and a broken worn piece gives no armor or defense bonus until repaired.
+  - **Not done:** nothing calls `Wear` on its own yet (a weapon hit, a tool swing, armor taking damage: game code decides and calls it); no script functions or visual-script nodes for wear and repair yet; the UI shows the number (`Durability 40`) but no bar or "broken" tint; a repair station component.
 * **Container-in-container rules, locked and owned containers, item cooldowns, hotbar-bound ability slots, and a "stack count" prompt in the drag UI** are not built.
 * **Slot bag weight in the UI** shows a bar only where the screen already did; no per-item "too heavy" message beyond the result reason (`InvResult::reason`).
 * **Multiplayer sync** of `enforceWeight` as a setting is just a scene value; nothing syncs it live.

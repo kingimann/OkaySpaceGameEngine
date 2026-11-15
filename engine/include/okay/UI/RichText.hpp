@@ -4,7 +4,11 @@
 //   "Found the [color=#ffcc33]golden key[/color] and [b]one[/b] [i]coin[/i]."
 //
 // Tags: [color=#rgb] [color=#rrggbb] [color=#rrggbbaa] [color=name] ... [/color], [b] ... [/b], [i] ... [/i],
-// [size=N] ... [/size] (N is a percent of the text's size, 25 to 400; nested sizes multiply).
+// [size=N] ... [/size] (N is a percent of the text's size, 25 to 400; nested sizes multiply, and the result is held to
+// 25 to 400 percent too).
+// Limits, so hostile text stays cheap even when it is parsed every frame (world text): text longer than
+// kRichTextMaxBytes is not parsed at all (shown as written, tags included), and at most kRichTextMaxDepth tags may be
+// open at once (a deeper opening tag is shown as text).
 // Colour names: white black red green blue yellow orange gold cyan magenta purple pink gray.
 // A tag that is not one of these (or has a bad colour) is shown as ordinary text. "[[" shows a "[".
 // Tags nest; a closing tag with nothing open is shown as text.
@@ -35,6 +39,10 @@ struct RichText {
     std::string plain;
     std::vector<RichStyle> styles;
 };
+
+constexpr std::size_t kRichTextMaxBytes = 2000;
+constexpr int kRichTextMaxDepth = 16;
+constexpr float kRichTextMinSize = 0.25f, kRichTextMaxSize = 4.0f;
 
 namespace richtext_detail {
 inline int Hex(char c) {
@@ -78,6 +86,14 @@ inline RichText ParseRichText(const std::string& marked) {
     using namespace richtext_detail;
     RichText out;
     out.plain.reserve(marked.size());
+    if (marked.size() > kRichTextMaxBytes) {   // too long to parse: shown as written, one default style per character
+        out.plain = marked;
+        for (std::size_t i = 0; i < marked.size(); ++i) {
+            const char c = marked[i];
+            if (c != ' ' && c != '\t' && c != '\n' && ((unsigned char)c & 0xC0) != 0x80) out.styles.push_back(RichStyle());
+        }
+        return out;
+    }
     struct Scope { char kind; RichStyle colour; };   // kind: 'c' colour, 'b' bold, 'i' italic, 's' size (colour.size)
     std::vector<Scope> open;
     RichStyle cur;
@@ -89,6 +105,7 @@ inline RichText ParseRichText(const std::string& marked) {
             else if (sc.kind == 's') cur.size *= sc.colour.size;
             else cur.italic = true;
         }
+        cur.size = cur.size < kRichTextMinSize ? kRichTextMinSize : (cur.size > kRichTextMaxSize ? kRichTextMaxSize : cur.size);
     };
     for (std::size_t i = 0; i < marked.size();) {
         const char c = marked[i];
@@ -98,7 +115,9 @@ inline RichText ParseRichText(const std::string& marked) {
             if (close != std::string::npos && close - i <= 24) {
                 const std::string tag = marked.substr(i + 1, close - i - 1);
                 bool ok = false;
-                if (tag.rfind("color=", 0) == 0) {
+                const bool room = (int)open.size() < kRichTextMaxDepth;   // a deeper opening tag is shown as text
+                if (!room && tag[0] != '/') {
+                } else if (tag.rfind("color=", 0) == 0) {
                     RichStyle col;
                     if (ParseColor(tag.substr(6), col)) { open.push_back({'c', col}); ok = true; }
                 } else if (tag.rfind("size=", 0) == 0) {
@@ -139,7 +158,8 @@ struct RichRun {
     int line = 0;          ///< 0 for the first line
     std::string text;      ///< plain text of the run (no tags, no line break)
     RichStyle style;
-    std::string before;    ///< the plain text of the line before this run (for placing it)
+    std::string before;    ///< for the first run of a line, the text of the line before it (leading spaces); empty for the
+                           ///< others, which start where the run before them ends
 };
 
 /// Split rich text into runs of one style, line by line, so a host without its own rich-text drawing (the
@@ -158,7 +178,8 @@ inline std::vector<RichRun> RichTextRuns(const RichText& rt) {
         bool have = false;
         auto flush = [&](std::size_t end) {
             if (!have || end <= runStart) return;
-            out.push_back(RichRun{line, ln.substr(runStart, end - runStart), runStyle, ln.substr(0, runStart)});
+            const bool first = out.empty() || out.back().line != line;   // only the first run copies what is before it
+            out.push_back(RichRun{line, ln.substr(runStart, end - runStart), runStyle, first ? ln.substr(0, runStart) : std::string()});
         };
         for (std::size_t i = 0; i < ln.size(); ++i) {
             const char c = ln[i];

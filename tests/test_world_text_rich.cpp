@@ -6,6 +6,7 @@
 #include <Okay.hpp>
 #include "okay/UI/RichText.hpp"
 #include "okay/UI/UIRenderer.hpp"
+#include <chrono>
 #include <climits>
 #include <cstdint>
 #include <vector>
@@ -73,6 +74,37 @@ int main() {
             CHECK(StripRichText(bad) == std::string(bad));                  // not a tag: shown as text
         CHECK(StripRichText("[/size]x") == "[/size]x");                      // nothing open: text
         CHECK(StripRichText("[size=150][b]x[/size][/b]") == "x");           // crossing tags still resolve
+        // nested sizes are held to 25..400 percent
+        std::string deep;
+        for (int k = 0; k < 10; ++k) deep += "[size=400]";
+        RichText big = ParseRichText(deep + "x");
+        CHECK(big.styles.size() == 1 && big.styles[0].size == kRichTextMaxSize);
+        std::string tiny;
+        for (int k = 0; k < 10; ++k) tiny += "[size=25]";
+        RichText small = ParseRichText(tiny + "x");
+        CHECK(small.styles.size() == 1 && small.styles[0].size == kRichTextMinSize);
+        // at most kRichTextMaxDepth tags open: a deeper one is shown as text
+        std::string many;
+        for (int k = 0; k < kRichTextMaxDepth + 3; ++k) many += "[b]";
+        CHECK(StripRichText(many + "x") == "[b][b][b]x");
+    }
+
+    {   // hostile text stays cheap: over the length limit nothing is parsed; inside it, work is bounded
+        const auto t0 = std::chrono::steady_clock::now();
+        std::string huge;
+        huge.reserve(1u << 20);
+        while (huge.size() < (1u << 20)) huge += "[b][size=400][color=red]a[/b";
+        RichText h = ParseRichText(huge);
+        CHECK(h.plain == huge);                                              // over the limit: shown as written
+        std::string edge;
+        while (edge.size() + 3 <= kRichTextMaxBytes) edge += "[b]";
+        for (int k = 0; k < 200; ++k) { RichText e = ParseRichText(edge); (void)e; RichTextRuns(e); }
+        std::string flips;                                                   // a style change every character
+        while (flips.size() + 20 <= kRichTextMaxBytes) flips += "[color=red]a[/color]b";
+        for (int k = 0; k < 200; ++k) { RichText f = ParseRichText(flips); CHECK(!RichTextRuns(f).empty()); }
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("  1 MiB hostile string plus 400 parses at the limit: %.1f ms\n", ms);
+        CHECK(ms < 2000.0);
     }
 
     {   // runs: one style each, spaces join the run they sit in, one list per line
@@ -80,10 +112,10 @@ int main() {
         CHECK(runs.size() == 5);
         if (runs.size() == 5) {
             CHECK(runs[0].line == 0 && runs[0].text == "ab " && !runs[0].style.hasColor && runs[0].before.empty());
-            CHECK(runs[1].line == 0 && runs[1].text == "cd " && runs[1].style.hasColor && runs[1].before == "ab ");
+            CHECK(runs[1].line == 0 && runs[1].text == "cd " && runs[1].style.hasColor && runs[1].before.empty());
             CHECK(runs[2].line == 0 && runs[2].text == "e" && !runs[2].style.hasColor);
             CHECK(runs[3].line == 1 && runs[3].text == "f" && runs[3].style.size == 2.0f && runs[3].before.empty());
-            CHECK(runs[4].line == 1 && runs[4].text == "g" && runs[4].style.size == 1.0f && runs[4].before == "f");
+            CHECK(runs[4].line == 1 && runs[4].text == "g" && runs[4].style.size == 1.0f && runs[4].before.empty());
         }
     }
 

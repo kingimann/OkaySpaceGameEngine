@@ -95,7 +95,11 @@ On a font file (TTF) italic really slants every glyph (the quads are sheared abo
 thickens the strokes with a three-tap smear; the built-in pixel font leans for italic and draws twice for bold.
 It works on screen-space text and on **world text** (a Text with Screen Space off, which the 2D player and the
 editor's 2D Scene view draw at its place in the world): the player draws world text through
-`ui2d::DrawWorldText`, which reads the same tags, and the shadow and outline follow the runs. A sized run sits on
+`ui2d::DrawWorldText`, which reads the same tags, and the shadow and outline follow the runs (with the text's own
+bold and italic). With Rich Text **off**, world text looks exactly as before (italic is not drawn on world text, bold
+is a second copy one step to the right). With it **on**, the Text's own Italic now slants world text too. Limits for
+every rich text: text over 2,000 bytes is not parsed (shown as written), at most 16 tags may be open at once, and
+nested sizes are held to 25..400 percent. A sized run sits on
 the same bottom line as the rest of its line and pushes what follows to the right; the line height stays the
 text's own, and centring and wrapping still measure the plain text at its own size (so a centred line with a big
 run leans right). The tooltip's own `<b>` and `#rrggbb` tags are unchanged. Tests: `runtime_ui` (screen text),

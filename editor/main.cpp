@@ -42196,8 +42196,8 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
                            o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, 0, fnt);
-        DrawBitmapText(dl, tr->text, o.x, o.y, px, col, 0, 0, tr->italic, false, 0, fnt);
-        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + (fnt ? 1.0f : px), o.y, px, col, 0, 0, tr->italic, false, 0, fnt);  // faux-bold
+        DrawBitmapText(dl, tr->text, o.x, o.y, px, col, 0, 0, false, false, 0, fnt);
+        if (tr->bold) DrawBitmapText(dl, tr->text, o.x + (fnt ? 1.0f : px), o.y, px, col, 0, 0, false, false, 0, fnt);  // faux-bold
     }
 
     // 2D collider wireframes, Scene view only.

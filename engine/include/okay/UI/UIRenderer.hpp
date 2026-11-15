@@ -91,8 +91,10 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
                 TtfFont* ttf = nullptr, bool bold = false);
 
 /// Draw a world-anchored TextRenderer (screenSpace off) at screen point (`x`, `y`) with font pixel `px`: its
-/// shadow, outline, bold and italic, and, when `richText` is on, its colour, bold, italic and size tags
-/// (okay/UI/RichText.hpp). `opacity` multiplies every colour's alpha. The player's 2D world-text pass uses it.
+/// shadow and outline, and, when `richText` is on, its colour, bold, italic and size tags (okay/UI/RichText.hpp), with
+/// the text's own bold and italic on every run, shadow and outline included. With rich text off it draws exactly as
+/// world text always did (italic is not drawn, bold is a second copy one step to the right). `opacity` multiplies
+/// every colour's alpha. The player's 2D world-text pass uses it.
 void DrawWorldText(Painter& p, const TextRenderer& tr, float x, float y, float px, float opacity = 1.0f);
 
 } // namespace ui2d

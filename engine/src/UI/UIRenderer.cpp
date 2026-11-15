@@ -736,7 +736,7 @@ void DrawWorldText(Painter& p, const TextRenderer& tr, float x, float y, float p
     const float fo = fnt ? 1.0f : px;   // TTF: about one screen pixel, not a whole font pixel
     const RGBA none{0, 0, 0, 0};
     if (tr.shadow) {
-        if (rich) DrawRichRuns(p, shown, rt.styles, x + tr.shadowOffset.x * px, y + tr.shadowOffset.y * px, px, rgba(tr.shadowColor), 0, 0, false, false, fo, fnt);
+        if (rich) DrawRichRuns(p, shown, rt.styles, x + tr.shadowOffset.x * px, y + tr.shadowOffset.y * px, px, rgba(tr.shadowColor), 0, 0, tr.italic, tr.bold, fo, fnt);
         else DrawUIText(p, shown, x + tr.shadowOffset.x * px, y + tr.shadowOffset.y * px, px, rgba(tr.shadowColor), 0, 0, false, false, none, fnt);
     }
     if (tr.outline) {
@@ -746,12 +746,16 @@ void DrawWorldText(Painter& p, const TextRenderer& tr, float x, float y, float p
                 // The outline keeps the outline colour: strip the colours, keep sizes and weights.
                 std::vector<okay::RichStyle> st = rt.styles;
                 for (auto& s : st) s.hasColor = false;
-                DrawRichRuns(p, shown, st, x + dx[k], y + dy[k], px, rgba(tr.outlineColor), 0, 0, false, false, fo, fnt);
+                DrawRichRuns(p, shown, st, x + dx[k], y + dy[k], px, rgba(tr.outlineColor), 0, 0, tr.italic, tr.bold, fo, fnt);
             } else DrawUIText(p, shown, x + dx[k], y + dy[k], px, rgba(tr.outlineColor), 0, 0, false, false, none, fnt);
         }
     }
     if (rich) DrawRichRuns(p, shown, rt.styles, x, y, px, rgba(tr.color), 0, 0, tr.italic, tr.bold, fo, fnt);
-    else DrawUIText(p, shown, x, y, px, rgba(tr.color), 0, 0, tr.italic, false, none, fnt, tr.bold);
+    else {
+        // Rich text off: exactly the look world text always had (no italic; bold is a second copy one step right).
+        DrawUIText(p, shown, x, y, px, rgba(tr.color), 0, 0, false, false, none, fnt);
+        if (tr.bold) DrawUIText(p, shown, x + fo, y, px, rgba(tr.color), 0, 0, false, false, none, fnt);
+    }
 }
 
 namespace {

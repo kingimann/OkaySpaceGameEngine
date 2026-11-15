@@ -25,13 +25,16 @@ then this file gets updated. Keep this file short and true.
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something
    done, ready or green when it is not. A failing test is reported with its output.
-4a. **The owner must be able to try everything.** (Owner rule, 2026-11-15: "everything that's being made I should be
-    able to test; if I can't test it out it's useless".) Every PR and every release note says how to try the change,
-    in plain steps: what to open or run, what to click or press, and what you should see. Visual work comes with
-    screenshots (headless renders are fine, say they are). Something switched off by default (our own readers, own
-    WAV decoder and so on) comes with the exact switch, a sample file to use, and how to tell it is on (the startup
-    stack line or a log line). Test scenes and samples live in `examples/`. If a feature cannot be tried yet, the PR
-    says so at the top and says what is missing; do not call it done.
+4a. **The owner must be able to try everything.** (Owner rule, 2026-11-15: "everything that's being made I should be able
+    to test; if I can't test it out it's useless".) Every PR and every release note says how to try the change, in
+    plain steps: what to open or run, what to click or press, and what you should see. It must be reachable in the
+    Windows release the owner runs (launcher, editor, player, installer, zip): a menu, a template, a shipped example
+    scene (`examples/`, copied by `scripts/build-windows-dist.sh`), a setting or an environment variable. The steps go
+    in `docs/try_it.md` and in the PR's "How to try it" section. Visual work comes with screenshots (headless renders
+    are fine, say they are). Something switched off by default (our own readers, own WAV decoder and so on) comes
+    with the exact switch, a sample file to use, and how to tell it is on (the startup stack line or a log line). If
+    a feature cannot be tried yet, the PR says so at the top and says what is missing, and builds that way in; a
+    feature nobody can reach is not done.
 5. **Update the docs as you go**, in the same change as the code: the matching guide, the feature map
    (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, and `docs/UNFINISHED.md` rows.
 

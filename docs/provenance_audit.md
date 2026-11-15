@@ -200,3 +200,15 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 ## Addendum: batch E readers (Q3D, RAW), branch `claude/readers-e2`
 
 `engine/src/Render/Q3dReader.cpp` and `engine/src/Render/RawReader.cpp` were written from the format descriptions only: Paul Bourke's "Quick3D Object File" page (header, chunk types, field lists) and his "POV-Ray RAW triangle format" page (nine numbers per triangle, the colour and texture-name variants, group identifiers). **No importer source was read**: not Assimp's, not any other project's, and no code snippet from the web. Where a description was silent (the Q3D byte order, a few Q3D fields, RAW comments) the choice made is written down in `docs/own_q3d_reader.md` and `docs/own_raw_reader.md`. No sample file was available for either, so no output was compared with another reader. The SIB reader (`docs/own_sib_reader.md`) was **not written** because no public description or sample could be found; a reader written from memory of another importer would have broken rule 19a.
+
+## Addendum (batch E3 readers: IQM, COB, NDO)
+
+Date: 2026-11-15, branch `claude/readers-e3`. Checked by hand when written; **not** run through `scripts/provenance_scan.py`.
+
+| Reader | Where each fact came from | Not used |
+|---|---|---|
+| `IqmReader.cpp` | **My memory** of the IQM specification text (`iqm.txt`): header, record layouts, vertex-array types and formats, the frame-channel rule. The spec was not fetched or re-read during the work. Every layout detail was then checked against a hex dump of the one real file `mrfixit.iqm` (record sizes, offsets, quaternion lengths) | Any importer or engine source |
+| `CobReader.cpp` | **From memory**: the chunk names and the ASCII keywords. **Settled by a hex dump / text view of the 8 sample files**: all byte layouts (chunk header, object chunk, face record, `Mat1`, `ShBx` type codes 3, 6, 7, 10, the `file name` parameter, the 48-byte centre-and-axes block before the matrix, that matrices are world matrices). Guesses, not seen in any file: shader type code 4 as an integer, hole meaning of face flags. No citable document exists | Any importer source |
+| `NdoReader.cpp` | Nothing but the header text `nendo `. It reads no geometry. A web search for a specification returned an importer-based summary whose passing facts (the `nendo 1.x` header, big endian, a count-width change at 1.2) were **seen** and are disclosed in `docs/own_ndo_reader.md`; only the header text is used | The importer source itself (never opened) |
+
+**The Assimp test tree was open in the scratchpad while this work was done.** Only its data files (`test/models/COB/*.cob`, `test/models/IQM/mrfixit.iqm`) were copied to a private folder and read; none of its source folders was opened, listed for content or searched. The shared helpers the readers use (`BinReader.hpp`, `ReaderCommon.hpp`, `PolygonTriangulate.hpp`, `TextReaderUtil.hpp`, `SceneRefPath.hpp`) are the project's own earlier files. The test files are hand-built from the structure; no real file is committed.

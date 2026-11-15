@@ -46,7 +46,7 @@ int main() {
     // ---- the templates: one list, and the launcher and editor agree with it -----------------------------------
     {
         const auto& all = Templates();
-        CHECK(all.size() == 21);
+        CHECK(all.size() == 22);
         std::set<std::string> titles;
         for (const TemplateInfo& t : all) {
             CHECK(titles.insert(t.title).second);                                  // no title twice

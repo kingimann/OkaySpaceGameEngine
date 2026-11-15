@@ -194,6 +194,10 @@ Recent additions (v2.12–2.14):
   *How to try it:* open any scene, Ctrl+click three cubes in the Hierarchy,
   press Ctrl+X (all three go), then Ctrl+V: all three come back, selected.
   Ctrl+Z once removes the paste, Ctrl+Z again brings the three originals back.
+  ![Three cubes cut and pasted back, all selected](images/editor/cut_paste_three_objects.png)
+  (Linux, headless: `OKAY_UI_CUTPASTE="CubeRed,CubeGreen,CubeBlue"` selects the three, cuts and
+  pastes them as the shortcuts do. 5 objects, not 8: the originals are gone, and CubeBlue is at
+  2.5, 1.0 instead of 2, 0.5, so this is the pasted copy.)
 - **Project** — the same selection model: **Ctrl+click** to toggle,
   **Shift+click** for a range, **Ctrl+A** for everything shown. **Ctrl+C/X/V**
   copy, cut and paste whole multi-selections between folders, and **Delete**

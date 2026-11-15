@@ -27,6 +27,7 @@ int main() {
     GameObject* body = s.CreateGameObject("Spinner");
     auto* rb = body->AddComponent<Rigidbody3D>();
     rb->gravityScale = 0.0f;
+    rb->freezeRotation = false;   // on by default, and then a torque does nothing (the node's help says so)
     body->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
     auto* vc = body->AddComponent<VisualScriptComponent>();
     const char* graph =

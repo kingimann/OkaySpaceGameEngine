@@ -46,6 +46,8 @@
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Components/CraftingStation.hpp"
+#include "okay/Components/UIListView.hpp"
+#include "okay/Components/UISlotGrid.hpp"
 #include "okay/Math/Easing.hpp"
 
 namespace okay {
@@ -903,6 +905,39 @@ void RegisterCraftingStation() {
     b.Commit();
 }
 
+// UIListView (record "uilist"). The item list is a list; scroll is play state.
+void RegisterUIListView() {
+    PropertyBuilder<UIListView> b("UIListView", "uilist", "UI");
+    b.AddVec2("position", &UIListView::position).Range(-kBig, kBig, 1).Tooltip("Pixels from the anchor")
+     .AddVec2("size", &UIListView::size).Range(-kBig, kBig, 1).Tooltip("Width and height in pixels")
+     .AddEnum("anchor", &UIListView::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddColor("background", &UIListView::background).Range(0, 1, 0.01).Tooltip("List background colour")
+     .AddColor("barColor", &UIListView::barColor).Range(0, 1, 0.01).Tooltip("Scroll bar colour")
+     .AddFloat("itemHeight", &UIListView::itemHeight).Range(1, 1e4, 1).Tooltip("Row height in pixels")
+     .AddFloat("spacing", &UIListView::spacing).Range(0, 1e3, 1).Tooltip("Pixels between rows")
+     .AddInt("itemCount", &UIListView::itemCount).Range(0, 1000000, 1).Tooltip("Number of rows when the item list is empty")
+     .AddInt("selected", &UIListView::selected).Range(-1, 1000000, 1).Tooltip("Selected row (-1 = none)")
+     .AddFloat("wheelSpeed", &UIListView::wheelSpeed).Range(0, 1e4, 1).Tooltip("Pixels scrolled per wheel step");
+    b.Commit();
+}
+
+// UISlotGrid (record "uislotgrid"). The labels are a list. textColor and
+// numberEmptySlots are not saved by the record, so they are not properties yet.
+void RegisterUISlotGrid() {
+    PropertyBuilder<UISlotGrid> b("UISlotGrid", "uislotgrid", "UI");
+    b.AddVec2("position", &UISlotGrid::position).Range(-kBig, kBig, 1).Tooltip("Pixels from the anchor")
+     .AddEnum("anchor", &UISlotGrid::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddInt("columns", &UISlotGrid::columns).Range(1, 256, 1).Tooltip("Slots across")
+     .AddInt("rows", &UISlotGrid::rows).Range(1, 256, 1).Tooltip("Slots down")
+     .AddVec2("cell", &UISlotGrid::cell).Range(0, 1e4, 1).Tooltip("Slot size in pixels")
+     .AddFloat("gap", &UISlotGrid::gap).Range(0, 1e3, 1).Tooltip("Pixels between slots")
+     .AddInt("value", &UISlotGrid::value).Range(-1, 65535, 1).Tooltip("Selected slot (-1 = none)")
+     .AddColor("color", &UISlotGrid::color).Range(0, 1, 0.01).Tooltip("Slot colour")
+     .AddColor("selectedColor", &UISlotGrid::selectedColor).Range(0, 1, 0.01).Tooltip("Selected slot colour")
+     .AddColor("hoverColor", &UISlotGrid::hoverColor).Range(0, 1, 0.01).Tooltip("Colour of the slot under the pointer");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -1188,6 +1223,8 @@ void RegisterUIProperties() {
     RegisterInventoryUI();
     RegisterGridInventoryUI();
     RegisterCraftingStation();
+    RegisterUIListView();
+    RegisterUISlotGrid();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

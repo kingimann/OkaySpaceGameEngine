@@ -1848,6 +1848,16 @@ void RegisterNPCController() {
     b.Commit();
 }
 
+// Spline (record "spline"). The points are a list (splinept records).
+void RegisterSpline() {
+    PropertyBuilder<Spline> b("Spline", "spline", "Rendering");
+    b.AddEnum("type", &Spline::type, {"Bezier", "CatmullRom"}).Tooltip("Curve kind: Bezier uses the handles, Catmull-Rom passes through the points")
+     .AddBool("closed", &Spline::closed).Tooltip("Join the last point back to the first")
+     .AddEnum("upMode", &Spline::upMode, {"Minimal", "World"}).Tooltip("How the up direction is carried along the curve")
+     .AddInt("resolution", &Spline::resolution).Range(4, 256, 1).Tooltip("Length samples per segment");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2497,6 +2507,7 @@ void RegisterGameplayProperties() {
     RegisterSplineMesh();
     RegisterSplineInstancer();
     RegisterNPCController();
+    RegisterSpline();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

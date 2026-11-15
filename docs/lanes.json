@@ -167,6 +167,11 @@
       ]
     }
   ],
+  "_append_only": "Shared files that nearly every pull request adds a row or a section to (CLAUDE.md rules 4a and 5, releases). The edits are small and at the end, so two branches merge in a minute. A claim that names one of these files never blocks another branch and is never refused for it, a branch that edits one never fails branch-lint for it, and the claim-overlap and shared-file rules skip them. The collision report still lists them as information. Real code files keep full protection. Read by scripts/collab_lib.py (is_append_only).",
+  "append_only": [
+    "docs/try_it.md", "docs/UNFINISHED.md", "docs/unfinished_engine.md", "docs/FEATURE_MAP.md", "docs/feature_map/**",
+    "tests/CMakeLists.txt", "ROADMAP.md", "dist/CHANGELOG.txt", "docs/README.md"
+  ],
   "generated": [
     {
       "file": "docs/FEATURE_MAP.md",

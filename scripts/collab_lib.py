@@ -90,6 +90,18 @@ def owner_of(path, lanes):
     return "open"
 
 
+def is_append_only(path, lanes):
+    """True for a shared file that nearly every pull request adds a row or a section to (docs/lanes.json, "append_only"). A claim
+    that names one never blocks another branch and a branch that edits one is never refused for it. Works on a path and on a claim
+    glob: a glob counts when it lies inside the list ("docs/feature_map/**" does, "docs/**" does not)."""
+    return any(glob_match(path, g) for g in lanes.get("append_only", []))
+
+
+def claim_globs(claim, lanes):
+    """The Files globs of a claim without the append-only ones (those take no part in lane checks or claim overlaps)."""
+    return [g for g in claim.get("files", []) if not is_append_only(g, lanes)]
+
+
 def lane_of_branch(name):
     n = name[len("origin/"):] if name.startswith("origin/") else name
     if n.startswith("claude2/"): return "claude2"
@@ -132,9 +144,20 @@ def split_globs(s):
     return [p.strip("*_.") if not p.endswith("*") else p.strip("_") for p in parts if re.search(r"[A-Za-z0-9_*]/|\.[a-z]{1,4}$|\*", p)]
 
 
+def agreed_branches(events):
+    """Branches with a standing 'Agree: <branch>', from the events parse_claims returns (oldest first). The Agree does not need a
+    Claim of the same branch and it does not matter whether the Agree or the Claim came first. A later 'Release: <branch>' clears it."""
+    out = set()
+    for kind, br, *_ in events:
+        if kind == "agree": out.add(br)
+        elif kind == "release": out.discard(br)
+    return out
+
+
 def parse_claims(comments):
-    """comments: list of {body, created_at, html_url, user?}. Returns (claims dict branch->claim, events list).
-    A later Release removes a claim; Agree marks the claim as agreed by the other lane. Oldest first."""
+    """comments: list of {body, created_at, html_url, user?}. Returns (claims dict branch->claim, events list), oldest comment first.
+    A later Release removes a claim and its agreement. A claim is 'agreed' when its branch has a standing Agree (agreed_branches),
+    whether the Agree came before or after the Claim or there is no other claim at all."""
     claims, events = {}, []
     for c in sorted(comments, key=lambda x: x.get("created_at", "")):
         body = c.get("body") or ""
@@ -155,8 +178,9 @@ def parse_claims(comments):
                               "kind": f.get("kind", "").strip(" *_`.").lower()}
             elif kind == "release":
                 claims.pop(br, None)
-            elif kind == "agree" and br in claims:
-                claims[br]["agreed"] = True
+    agreed = agreed_branches(events)
+    for br, c in claims.items():
+        c["agreed"] = br in agreed
     return claims, events
 
 
@@ -181,7 +205,8 @@ def claim_status(claim, last_push, now=None):
 
 
 def check_claim_rules(claim, lanes, other_claims, files=None):
-    """Problems that make a claim refused (docs/collaboration.md, claim protocol)."""
+    """Problems that make a claim refused (docs/collaboration.md, claim protocol). A claim counts as agreed when its branch has a
+    standing Agree (parse_claims sets claim['agreed']). Append-only files (docs/lanes.json) are never a problem and never overlap."""
     probs = []
     lane = lane_of_branch(claim["branch"])
     if not claim.get("has_fields"):
@@ -190,7 +215,8 @@ def check_claim_rules(claim, lanes, other_claims, files=None):
         for k, label in (("existing", "Existing"), ("gap", "Gap"), ("files", "Files"), ("test_first", "Test-first"), ("try_it", "Try-it")):
             if not claim.get(k):
                 probs.append(f"missing {label}")
-    for g in claim.get("files", []):
+    mine = claim_globs(claim, lanes)
+    for g in mine:
         # a glob is cross-lane when any sample of the rules owner for its literal prefix is the other lane
         sample = re.split(r"[*?\[]", g)[0]
         o = owner_of(sample if sample == g else sample + "x", lanes)
@@ -202,8 +228,9 @@ def check_claim_rules(claim, lanes, other_claims, files=None):
     for oc in other_claims:
         if oc["branch"] == claim["branch"]:
             continue
-        for a in claim.get("files", []):
-            hit = next((b for b in oc.get("files", []) if globs_overlap(a, b, files)), None)
+        theirs = claim_globs(oc, lanes)
+        for a in mine:
+            hit = next((b for b in theirs if globs_overlap(a, b, files)), None)
             if hit and not claim.get("agreed"):
                 probs.append(f"{a} overlaps {oc['branch']} ({hit}); release or agree first")
                 break

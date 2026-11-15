@@ -110,6 +110,99 @@ class Lib(unittest.TestCase):
         c2 = dict(c, files=["engine/src/Components/Foo.cpp"], agreed=False)
         self.assertTrue(any("overlaps claude2/y" in p for p in L.check_claim_rules(c2, lanes, [other])))
 
+    # ---- append-only shared files ("append_only" in docs/lanes.json) ----
+
+    def test_append_only_list(self):
+        lanes = L.load_lanes(ROOT)
+        for p in ("docs/try_it.md", "docs/UNFINISHED.md", "docs/unfinished_engine.md", "docs/FEATURE_MAP.md", "docs/README.md",
+                  "docs/feature_map/04-characters-cameras.md", "docs/feature_map/_index_az.md", "tests/CMakeLists.txt", "ROADMAP.md",
+                  "dist/CHANGELOG.txt"):
+            self.assertTrue(L.is_append_only(p, lanes), p)
+        for p in ("engine/src/Scene/SceneSerializer.cpp", "engine/CMakeLists.txt", "CMakeLists.txt", "CLAUDE.md", "docs/collaboration.md",
+                  "docs/lanes.json", "tests/test_foo.cpp", "scripts/collab_lib.py", "dist/versions.json", "docs/scripting.md"):
+            self.assertFalse(L.is_append_only(p, lanes), p)
+        # a claim glob counts when it lies inside the list, not when it is wider than the list
+        self.assertTrue(L.is_append_only("docs/feature_map/**", lanes))
+        self.assertFalse(L.is_append_only("docs/**", lanes)); self.assertFalse(L.is_append_only("tests/*", lanes))
+
+    def claim_dict(self, branch, files, **kw):
+        return dict({"branch": branch, "has_fields": True, "existing": "e", "gap": "g", "files": files, "test_first": "t", "try_it": "s", "agreed": False}, **kw)
+
+    def test_claim_rules_ignore_append_only_files(self):
+        lanes = L.load_lanes(ROOT)
+        names = ["docs/try_it.md", "tests/CMakeLists.txt", "dist/CHANGELOG.txt", "docs/feature_map/04-characters-cameras.md"]
+        mine = self.claim_dict("claude2/x", names)          # dist/ is the coordinator lane, but the file is append-only
+        other = self.claim_dict("claude/y", names + ["docs/feature_map/**"])
+        self.assertEqual(L.check_claim_rules(mine, lanes, [other]), [])
+        self.assertEqual(L.check_claim_rules(other, lanes, [mine]), [])
+        # a real code file next to them is still checked, and it is the one that gets reported (an "open" file, so no lane rule applies)
+        both_a = self.claim_dict("claude2/x", ["docs/try_it.md", "engine/include/okay/Core/Time.hpp"])
+        both_b = self.claim_dict("claude2/y", ["docs/try_it.md", "engine/include/okay/Core/Time.hpp"])
+        probs = L.check_claim_rules(both_a, lanes, [both_b])
+        self.assertEqual(len(probs), 1); self.assertIn("engine/include/okay/Core/Time.hpp", probs[0]); self.assertNotIn("try_it", probs[0])
+        # a glob wider than the list is not exempt
+        wide = self.claim_dict("claude2/z", ["docs/**"])
+        self.assertTrue(any("overlaps" in p for p in L.check_claim_rules(wide, lanes, [self.claim_dict("claude2/w", ["docs/**"])])))
+
+    def test_claim_rules_keep_real_shared_files(self):
+        lanes = L.load_lanes(ROOT)
+        a = self.claim_dict("claude2/a", ["engine/src/Scene/SceneSerializer.cpp"])
+        b = self.claim_dict("claude/b", ["engine/src/Scene/SceneSerializer.cpp"])
+        self.assertTrue(any("overlaps claude/b" in p for p in L.check_claim_rules(a, lanes, [b])))
+        self.assertTrue(any("overlaps claude2/a" in p for p in L.check_claim_rules(b, lanes, [a])))
+        # a claim of the other lane's code is still refused (append-only files next to it do not help)
+        c = self.claim_dict("claude2/c", ["docs/try_it.md", "scripts/foo.py"])
+        self.assertTrue(any("coordinator lane" in p for p in L.check_claim_rules(c, lanes, [])))
+
+    # ---- a bare "Agree: <branch>" ----
+
+    @staticmethod
+    def thread(*texts):
+        return [{"created_at": f"2026-11-15T{10 + i:02d}:00:00Z", "body": t} for i, t in enumerate(texts)]
+
+    CLAIM_X = "Claim: claude/x\nExisting: e\nGap: g\nFiles: scripts/a.py\nTest-first: t\nTry-it: s"
+
+    def test_bare_agree_counts_without_a_claim(self):
+        claims, events = L.parse_claims(self.thread("Agree: claude/some-branch"))
+        self.assertEqual(claims, {})
+        self.assertEqual(L.agreed_branches(events), {"claude/some-branch"})
+        for text in ("**Agree:** claude/x", "agree: `claude/x`.", "Agree: origin/claude/x", "> Agree: claude/x"):
+            self.assertEqual(L.agreed_branches(L.parse_claims(self.thread(text))[1]), {"claude/x"}, text)
+        self.assertEqual(L.agreed_branches(L.parse_claims(self.thread("Agree: claude/a\nAgree: claude/b"))[1]), {"claude/a", "claude/b"})
+
+    def test_agree_before_or_after_the_claim_and_list_order(self):
+        for texts in ((self.CLAIM_X, "Agree: claude/x"), ("Agree: claude/x", self.CLAIM_X)):
+            for comments in (self.thread(*texts), self.thread(*texts)[::-1]):   # the comment times decide, not the list order
+                claims, events = L.parse_claims(comments)
+                self.assertTrue(claims["claude/x"]["agreed"], texts)
+                self.assertEqual(L.agreed_branches(events), {"claude/x"})
+        claims, _ = L.parse_claims(self.thread(self.CLAIM_X, "Agree: claude/other"))
+        self.assertFalse(claims["claude/x"]["agreed"])
+
+    def test_release_clears_the_agreement_too(self):
+        claims, events = L.parse_claims(self.thread(self.CLAIM_X, "Agree: claude/x", "Release: claude/x"))
+        self.assertEqual(claims, {}); self.assertEqual(L.agreed_branches(events), set())
+        # the same without a Claim, and with the Agree first
+        self.assertEqual(L.agreed_branches(L.parse_claims(self.thread("Agree: claude/x", "Release: claude/x"))[1]), set())
+        # a new Claim after the Release starts without the old agreement
+        claims, _ = L.parse_claims(self.thread("Agree: claude/x", "Release: claude/x", self.CLAIM_X))
+        self.assertFalse(claims["claude/x"]["agreed"])
+        claims, _ = L.parse_claims(self.thread(self.CLAIM_X, "Agree: claude/x", "Release: claude/x", self.CLAIM_X))
+        self.assertFalse(claims["claude/x"]["agreed"])
+        # an Agree after the Release counts again, with the Claim before or after it
+        claims, _ = L.parse_claims(self.thread("Release: claude/x", "Agree: claude/x", self.CLAIM_X))
+        self.assertTrue(claims["claude/x"]["agreed"])
+
+    def test_agree_is_honoured_by_check_claim_rules(self):
+        lanes = L.load_lanes(ROOT)
+        claim = "Claim: claude2/x\nExisting: e\nGap: g\nFiles: scripts/foo.py\nTest-first: t\nTry-it: s"   # scripts/ is the coordinator lane
+        claims, _ = L.parse_claims(self.thread(claim))
+        self.assertTrue(any("coordinator lane" in p for p in L.check_claim_rules(claims["claude2/x"], lanes, [])))
+        claims, _ = L.parse_claims(self.thread("Agree: claude2/x", claim))      # a bare Agree posted before the Claim
+        self.assertEqual(L.check_claim_rules(claims["claude2/x"], lanes, []), [])
+        claims, _ = L.parse_claims(self.thread("Agree: claude2/x", "Release: claude2/x", claim))
+        self.assertTrue(any("coordinator lane" in p for p in L.check_claim_rules(claims["claude2/x"], lanes, [])))
+
 
 class Find(unittest.TestCase):
     def test_tokens(self):
@@ -189,6 +282,101 @@ class Collisions(unittest.TestCase):
         self.assertTrue(rep2["claims"][0]["agreed"])
         rep3 = self.rep([{"body": body.replace("claude2/theirs", "claude2/old"), "created_at": ancient}])
         self.assertEqual(rep3["claims"][0]["status"], "stale"); self.assertEqual(rep3["claim_conflicts"], [])
+
+    # ---- append-only shared files and a bare Agree (docs/collaboration.md; PRs #913 and #917 were refused for these) ----
+
+    APPEND_ONLY = {"docs/try_it.md": "# try\nrow\n", "docs/UNFINISHED.md": "| row |\n", "ROADMAP.md": "| row |\n", "dist/CHANGELOG.txt": "1.0\n",
+                   "tests/CMakeLists.txt": "add_executable(test_foo test_foo.cpp)\nadd_test(NAME foo COMMAND test_foo)\nadd_test(NAME mine COMMAND test_foo)\n",
+                   "docs/feature_map/04-characters-cameras.md": "# Page\nmore\n"}
+    CLAIM_FILES = "engine/src/Components/Foo.cpp, docs/try_it.md, docs/UNFINISHED.md, ROADMAP.md, dist/CHANGELOG.txt, tests/CMakeLists.txt, docs/feature_map/**"
+
+    def ago(self, minutes): return (self.now - datetime.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def claim(self, branch, files, minutes=60):
+        return {"body": f"Claim: {branch}\nExisting: a / Gap: b / Files: {files} / Test-first: t / Try-it: s", "created_at": self.ago(minutes)}
+
+    def say(self, text, minutes): return {"body": text, "created_at": self.ago(minutes)}
+
+    def mine(self, with_code=False, **more):
+        """claude/mine (the coordinator lane) adds its own script and a row to every append-only file; with_code also edits Foo.cpp."""
+        files = dict(self.APPEND_ONLY, **{"scripts/own_tool.py": "print(1)\n"}, **more)
+        if with_code: files["engine/src/Components/Foo.cpp"] = self.r.edited(5, "mine")
+        self.r.branch("claude/mine", files)
+
+    def test_append_only_files_never_fail_a_branch(self):
+        self.mine()
+        for focus in (None, "claude/mine"):                    # the full report and the quick one branch-lint runs
+            rep = self.rep([self.claim("claude2/own-step0-visible", self.CLAIM_FILES)], only_branch=focus)
+            self.assertEqual(rep["claim_conflicts"], [], focus)
+            self.assertEqual(CC.fails_for_branch(rep, "claude/mine"), [], focus)
+
+    def test_real_code_file_in_the_claim_still_fails_and_is_the_only_one_named(self):
+        self.mine(with_code=True)
+        for focus in (None, "claude/mine"):
+            rep = self.rep([self.claim("claude2/theirs", self.CLAIM_FILES)], only_branch=focus)
+            self.assertEqual([(c["files"], c["count"], c["cross_lane"]) for c in rep["claim_conflicts"]], [(["engine/src/Components/Foo.cpp"], 1, True)], focus)
+            msgs = CC.fails_for_branch(rep, "claude/mine")
+            self.assertEqual(len(msgs), 1, focus)
+            self.assertIn("engine/src/Components/Foo.cpp", msgs[0]); self.assertNotIn("try_it", msgs[0]); self.assertNotIn("ROADMAP", msgs[0])
+
+    def test_real_shared_file_is_still_protected(self):
+        self.r.branch("claude/mine", {"engine/src/Scene/SceneSerializer.cpp": "x\n", "docs/try_it.md": "y\n"})
+        rep = self.rep([self.claim("claude2/theirs", "engine/src/Scene/SceneSerializer.cpp, docs/try_it.md")])
+        self.assertEqual([c["files"] for c in rep["claim_conflicts"]], [["engine/src/Scene/SceneSerializer.cpp"]])
+        self.assertEqual(len(CC.fails_for_branch(rep, "claude/mine")), 1)
+
+    def test_claim_naming_only_append_only_files_is_not_refused_and_blocks_nobody(self):
+        self.mine()
+        rep = self.rep([self.claim("claude2/docs-only", "docs/try_it.md, tests/CMakeLists.txt, dist/CHANGELOG.txt", 90),
+                        self.claim("claude/also", "docs/try_it.md, tests/CMakeLists.txt, ROADMAP.md", 30)])
+        self.assertEqual({c["branch"]: c["problems"] for c in rep["claims"]}, {"claude2/docs-only": [], "claude/also": []})
+        self.assertEqual(rep["claim_overlaps"], [])
+        self.assertEqual(rep["claim_conflicts"], [])
+        self.assertEqual(CC.fails_for_branch(rep, "claude/mine"), [])
+
+    def test_append_only_files_are_still_shown_as_information(self):
+        self.mine()
+        self.r.branch("claude2/b", {"docs/try_it.md": "# try\nother row\n", "dist/CHANGELOG.txt": "2.0\n"})
+        rep = self.rep([self.claim("claude2/theirs", self.CLAIM_FILES)])
+        note = next(n for n in rep["append_only_notes"] if n["branch"] == "claude/mine")
+        self.assertEqual(note["claim"], "claude2/theirs"); self.assertIn("docs/try_it.md", note["files"])
+        shared = {s["file"]: s for s in rep["shared_files"]}
+        self.assertTrue(shared["docs/try_it.md"]["append_only"]); self.assertTrue(shared["dist/CHANGELOG.txt"]["append_only"])
+        self.assertEqual(rep["out_of_lane"], [])                # claude2/b's CHANGELOG line is not "outside its lane"
+        md = CC.to_markdown(rep)
+        self.assertIn("append-only", md); self.assertIn("`docs/try_it.md`", md); self.assertIn("claude2/theirs", md)
+        self.assertNotIn("handshake needed", md)                # only append-only files are shared here, so no handshake table
+        json.dumps(rep, default=str)
+
+    def test_bare_agree_counts_with_no_claim_and_before_or_after_the_claim(self):
+        self.r.branch("claude/mine", {"engine/src/Components/Foo.cpp": self.r.edited(5, "mine")})
+        theirs, mine_claim = self.claim("claude2/theirs", "engine/src/Components/**", 120), self.claim("claude/mine", "engine/src/Components/Foo.cpp", 30)
+        cases = {"no Claim at all": [theirs, self.say("Agree: claude/mine", 20)],
+                 "Agree after its Claim": [theirs, mine_claim, self.say("Agree: claude/mine", 20)],
+                 "Agree before its Claim": [theirs, self.say("Agree: claude/mine", 50), mine_claim],
+                 "Agree before everything": [self.say("**Agree:** `claude/mine`", 200), theirs, mine_claim]}
+        for name, comments in cases.items():
+            for focus in (None, "claude/mine"):
+                with self.subTest(name, focus=focus):
+                    rep = self.rep(comments, only_branch=focus)
+                    self.assertEqual(CC.fails_for_branch(rep, "claude/mine"), [])
+                    self.assertEqual([(c["cross_lane"], c["agreed"]) for c in rep["claim_conflicts"]], [(False, True)])
+                    self.assertEqual(rep["agreed"], ["claude/mine"])
+                    self.assertTrue(all(c["problems"] == [] for c in rep["claims"] if c["branch"] == "claude/mine"))
+        # an Agree for another branch does not help this one, and the board line names who is agreed
+        rep = self.rep([theirs, self.say("Agree: claude/other", 20)])
+        self.assertEqual(len(CC.fails_for_branch(rep, "claude/mine")), 1)
+        rep = self.rep(cases["no Claim at all"])
+        self.assertIn("`claude/mine`", CC.claims_markdown(rep)); self.assertIn("agreed", CC.to_markdown(rep))
+
+    def test_release_clears_the_agreement_in_the_report(self):
+        self.r.branch("claude/mine", {"engine/src/Components/Foo.cpp": self.r.edited(5, "mine")})
+        theirs = self.claim("claude2/theirs", "engine/src/Components/**", 120)
+        agree, release = self.say("Agree: claude/mine", 50), self.say("Release: claude/mine", 40)
+        rep = self.rep([theirs, agree, release])
+        self.assertEqual(len(CC.fails_for_branch(rep, "claude/mine")), 1); self.assertEqual(rep["agreed"], [])
+        rep = self.rep([theirs, agree, release, self.say("Agree: claude/mine", 10)])        # a newer Agree counts again
+        self.assertEqual(CC.fails_for_branch(rep, "claude/mine"), [])
 
     def test_markdown_and_json(self):
         self.r.branch("claude2/a", {"engine/src/Components/Foo.cpp": self.r.edited(10, "a")})

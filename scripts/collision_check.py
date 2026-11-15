@@ -9,6 +9,9 @@ For every claude/* and claude2/* branch (and every open PR) it takes the files c
   5. generated files edited without their source (by hand)
   6. two branches adding a test of the same name, the same test file or the same CMake target (or one already on main)
   7. branches far behind main
+Append-only shared files (the "append_only" list in docs/lanes.json: try_it.md, UNFINISHED.md, the feature map, tests/CMakeLists.txt,
+ROADMAP.md, dist/CHANGELOG.txt ...) are listed as information and never fail anything. A bare "Agree: <branch>" comment on the claim
+issue counts even when the branch has no Claim of its own; a later "Release: <branch>" clears it.
 Output: Markdown (default) or JSON (--json). Standard library and git only.
 
   python3 scripts/collision_check.py                       use the local remote refs, fetch claims from issue #422
@@ -75,6 +78,7 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
     cache = L.DiffCache(root, base, use_disk_cache)
     all_files = set(L.git(root, "ls-tree", "-r", "--name-only", base).splitlines())
     claims, events = L.parse_claims(claims_comments or [])
+    agreed = L.agreed_branches(events)  # a bare 'Agree: <branch>' counts, with or without a Claim of that branch
     pr_branches = {p["head"]["ref"]: p for p in (prs or []) if p.get("head")}
     brs = L.branches(root)
     if extra_branches:
@@ -107,7 +111,8 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
     cache.save()
     rep = {"base": base, "generated": now.strftime("%Y-%m-%d %H:%M UTC"), "branches": len(info), "overlaps": [], "shared_files": [],
            "unclaimed": [], "claims": [], "out_of_lane": [], "generated_by_hand": [], "duplicate_tests": [],
-           "behind": [], "claim_overlaps": [], "claim_conflicts": []}
+           "behind": [], "claim_overlaps": [], "claim_conflicts": [], "append_only_notes": [],
+           "agreed": sorted(b for b in agreed if b in info or b in claims)}
 
     names = sorted(info)
     focus = only_branch
@@ -123,7 +128,7 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
         plain, rng = [], []
         for f in common:
             o = L.owner_of(f, lanes)
-            if o == "shared" or L.generated_entry(f, lanes):
+            if o == "shared" or L.generated_entry(f, lanes) or L.is_append_only(f, lanes):
                 shared_hits.setdefault(f, set()).update((a, b))
                 continue
             plain.append(f)
@@ -139,7 +144,8 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
     rep["overlaps"].sort(key=lambda o: (o["severity"] != "high", -len(o["line_overlaps"]), -len(o["files"])))
     for f, bs in sorted(shared_hits.items(), key=lambda kv: -len(kv[1])):
         if focus and focus not in bs: continue
-        rep["shared_files"].append({"file": f, "branches": sorted(bs), "generated": bool(L.generated_entry(f, lanes))})
+        rep["shared_files"].append({"file": f, "branches": sorted(bs), "generated": bool(L.generated_entry(f, lanes)),
+                                    "append_only": L.is_append_only(f, lanes)})
 
     # 3. claims and branches without one
     active = {}
@@ -160,18 +166,23 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
         for p in probs:
             if "overlaps" in p:
                 rep["claim_overlaps"].append({"branch": br, "problem": p})
-    # a branch that changes files another branch's active claim covers
+    # a branch that changes files another branch's active claim covers. Append-only files (docs/lanes.json) are never a conflict,
+    # they are only listed as information; an 'Agree: <branch>' (with or without a Claim of that branch) lifts the cross-lane flag.
     for n in names:
         if focus and n != focus: continue
         i = info[n]
-        mine = claims.get(n)
         for br, c in active.items():
             if br == n or not c.get("files"): continue
-            hit = sorted({f for f in i["files"] for g in c["files"] if L.glob_match(f, g)})
+            named = sorted({f for f in i["files"] for g in c["files"] if L.glob_match(f, g)})
+            soft = [f for f in named if L.is_append_only(f, lanes)]
+            hit = [f for f in named if f not in soft]
             if hit:
                 cross = bool(i["lane"] and L.lane_of_branch(br) and i["lane"] != L.lane_of_branch(br))
-                if mine and mine.get("agreed"): cross = False
-                rep["claim_conflicts"].append({"branch": n, "claim": br, "files": hit[:8], "count": len(hit), "cross_lane": cross, "url": c.get("url")})
+                if n in agreed: cross = False
+                rep["claim_conflicts"].append({"branch": n, "claim": br, "files": hit[:8], "count": len(hit), "cross_lane": cross,
+                                               "agreed": n in agreed, "url": c.get("url")})
+            if soft:
+                rep["append_only_notes"].append({"branch": n, "claim": br, "files": soft[:8], "count": len(soft), "url": c.get("url")})
     for n in names:
         i = info[n]
         if focus and n != focus: continue
@@ -183,7 +194,8 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
         if focus and n != focus: continue
         i = info[n]
         if i["lane"]:
-            bad = [f for f in i["files"] if not f.startswith("docs/") and L.owner_of(f, lanes) in ("claude2", "coordinator") and L.owner_of(f, lanes) != i["lane"]]
+            bad = [f for f in i["files"] if not f.startswith("docs/") and L.owner_of(f, lanes) in ("claude2", "coordinator") and L.owner_of(f, lanes) != i["lane"]
+                   and not L.is_append_only(f, lanes)]
             if bad:
                 rep["out_of_lane"].append({"branch": n, "lane": i["lane"], "files": bad[:12], "count": len(bad)})
         for f in i["files"]:
@@ -213,12 +225,14 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
 
 
 def fails_for_branch(rep, branch):
-    """Reasons branch-lint fails a push: the branch changes files covered by an open claim of the OTHER lane."""
+    """Reasons branch-lint fails a push: the branch changes files covered by an open claim of the OTHER lane, and has no
+    'Agree: <branch>'. Append-only files (docs/lanes.json) never appear in claim_conflicts, so they never fail a push."""
     out = []
     for c in rep["claim_conflicts"]:
         if c["branch"] == branch and c["cross_lane"]:
             out.append(f"{branch} changes {', '.join(c['files'][:4])} ({c['count']} files) which the open claim of {c['claim']} (other lane) covers. "
-                       f"Ask on issue #422 for 'Agree: {branch}', or wait for 'Release: {c['claim']}'.")
+                       f"Ask on issue #422 for 'Agree: {branch}' (one comment is enough, the branch needs no Claim of its own), "
+                       f"or wait for 'Release: {c['claim']}'.")
     return out
 
 
@@ -243,11 +257,16 @@ def to_markdown(rep, brief=False, title_level=2):
             out.append(f"| `{o['a']}` + `{o['b']}` | {files} | {ranges} | {'CROSS-LANE' if o['cross_lane'] else 'same lane'} |")
         if len(rep["overlaps"]) > len(ov): out.append(f"\n... and {len(rep['overlaps']) - len(ov)} more pairs (run the script for all).")
         out.append("")
-    if rep["shared_files"]:
+    hand = [s for s in rep["shared_files"] if not s.get("append_only")]
+    soft = [s for s in rep["shared_files"] if s.get("append_only")]
+    if hand:
         out += [f"{h}# Shared and generated files touched by several branches (handshake needed)", "", "| File | Branches |", "|---|---|"]
-        for s in rep["shared_files"][:10 if brief else 40]:
+        for s in hand[:10 if brief else 40]:
             out.append(f"| `{s['file']}`{' (generated)' if s['generated'] else ''} | {len(s['branches'])}: " + ", ".join(f"`{b}`" for b in s["branches"][:5]) + (" ..." if len(s["branches"]) > 5 else "") + " |")
         out.append("")
+    if soft:
+        out += [f"{h}# Append-only files several branches add to (information only: no handshake, never a failure)", "",
+                ", ".join(f"`{s['file']}` ({len(s['branches'])} branches)" for s in soft[:12]) + (f" ... (+{len(soft) - 12})" if len(soft) > 12 else ""), ""]
     if rep["duplicate_tests"]:
         out += [f"{h}# Same test name, test file or CMake target in more than one place", ""]
         for d in rep["duplicate_tests"][:15]:
@@ -256,7 +275,14 @@ def to_markdown(rep, brief=False, title_level=2):
     if rep["claim_conflicts"]:
         out += [f"{h}# Branches changing files that another branch's open claim covers", ""]
         for c in rep["claim_conflicts"][:15]:
-            out.append(f"- `{c['branch']}` changes {', '.join('`' + short(f) + '`' for f in c['files'][:3])} covered by the claim of `{c['claim']}`" + (" (**other lane**)" if c["cross_lane"] else " (same lane)"))
+            out.append(f"- `{c['branch']}` changes {', '.join('`' + short(f) + '`' for f in c['files'][:3])} covered by the claim of `{c['claim']}`"
+                       + (" (**other lane**)" if c["cross_lane"] else " (agreed)" if c.get("agreed") else " (same lane)"))
+        out.append("")
+    if rep.get("append_only_notes"):
+        out += [f"{h}# Branches adding to append-only files that another branch's claim names (information only, never a failure)", ""]
+        for n in rep["append_only_notes"][:15]:
+            out.append(f"- `{n['branch']}` adds to {', '.join('`' + short(f) + '`' for f in n['files'][:3])}" + (f" +{n['count'] - 3}" if n["count"] > 3 else "")
+                       + f", named by the claim of `{n['claim']}`")
         out.append("")
     if rep["out_of_lane"]:
         out += [f"{h}# Branches touching files outside their lane", ""]
@@ -283,8 +309,10 @@ def to_markdown(rep, brief=False, title_level=2):
 def claims_markdown(rep, title_level=2):
     h = "#" * title_level
     out = [f"{h} Claims (issue #{L.CLAIM_ISSUE})", ""]
+    ag = ["Standing `Agree:` replies (a bare `Agree: <branch>` counts, before or after the claim; `Release: <branch>` clears it): "
+          + ", ".join(f"`{b}`" for b in rep["agreed"]), ""] if rep.get("agreed") else []
     if not rep["claims"]:
-        return "\n".join(out + ["No `Claim:` comments found (or GitHub was not reachable).", ""]) + "\n"
+        return "\n".join(out + ["No `Claim:` comments found (or GitHub was not reachable).", ""] + ag) + "\n"
     out += ["| Branch | Lane | Status | Files | Problems |", "|---|---|---|---|---|"]
     for c in sorted(rep["claims"], key=lambda c: (c["status"] != "active", c["branch"])):
         link = f"[`{c['branch']}`]({c['url']})" if c.get("url") else f"`{c['branch']}`"
@@ -292,7 +320,7 @@ def claims_markdown(rep, title_level=2):
         st = c["status"] + ("" if c["has_branch"] else ", no branch pushed yet")
         out.append(f"| {link} | {c['lane'] or '?'} | {st} | {files} | {'; '.join(c['problems'])[:140] or '-'} |")
     out.append("")
-    return "\n".join(out) + "\n"
+    return "\n".join(out + ag) + "\n"
 
 
 def main():

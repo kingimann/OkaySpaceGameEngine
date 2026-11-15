@@ -28,6 +28,7 @@ match wins. Short version:
 | **Claude 2** | Bug fixes (any file, see below) and our own replacements for third-party code: model and image readers, WAV and audio decoders, HTTP, crypto (rule 18), the platform layer, the UI toolkit `okayui/`, the text editor, the ufbx and Assimp replacements, and their tests and docs |
 | **Coordinator** | Unfinished features: gameplay components, in-game UI, editor features, rendering features, visual scripting features, inventory, vehicles, the launcher, examples, tests and docs of those; plus releases, CI and packaging (`.github/`, `scripts/`, `cmake/`, `dist/`), `shared/` (except the own-code headers), reviews |
 | **Shared (handshake)** | `engine/src/Scene/SceneSerializer.cpp`, `tests/CMakeLists.txt`, `engine/CMakeLists.txt`, the feature map and every generated file, `CLAUDE.md`, `engine/src/Scripting/OkayScriptVM.cpp`, `examples/visual_script/playground/coverage.okayvs`, `docs/UNFINISHED.md`, roadmap and registry-style docs |
+| **Append-only** (the exception to Shared: no handshake) | `docs/try_it.md`, `docs/UNFINISHED.md`, `docs/unfinished_engine.md`, `docs/FEATURE_MAP.md`, `docs/feature_map/**`, `tests/CMakeLists.txt`, `ROADMAP.md`, `dist/CHANGELOG.txt`, `docs/README.md`: nearly every pull request adds a row or a section to these (CLAUDE.md rules 4a and 5), so nobody has to ask first |
 | **Open** | Everything else (for example `engine/include/okay/Core`): either lane may claim it |
 
 How the lanes work in practice:
@@ -36,6 +37,11 @@ How the lanes work in practice:
   owner answers `Agree: <your branch>` or says no. Until then the branch-lint check fails the push.
 - **Shared files need a handshake.** Only one open claim at a time may name a shared file. Keep your edit small and at the
   end of the file or in its own block, so a second branch can merge. Never rewrite a whole generated file by hand.
+- **Append-only files are the exception.** The list is `append_only` in `docs/lanes.json`. Add your row or section to them
+  whenever you need to. A claim that names one of them never blocks another branch and is never refused for it, and a branch
+  that edits one never fails branch-lint. The collision report still lists them, as information. Write your own `Files:` line
+  without them, or with them, as you like: it makes no difference. Everything else keeps full protection: if your branch
+  also changes a real code file that another lane's open claim covers, the push is refused for that file only.
 - **Generated files are regenerated, never edited.** `docs/FEATURE_MAP.md` and `docs/feature_map/_index_*.md` come from
   `python3 scripts/gen_feature_map.py` (check: `--check`); `editor/VisualScriptNodeDocs.inc` from
   `scripts/gen_vs_node_docs.py`. Edit the source pages, then regenerate. If the file conflicts when merging main,
@@ -78,13 +84,27 @@ Try-it: examples/visual_script/tween_ease.okayvs, press Play, the box eases in a
 1. **A claim is one comment** starting `Claim: <branch>`, with `Existing`, `Gap`, `Files` (globs), `Test-first` (the
    failing test you will write first) and `Try-it` (the scene or steps the owner will use).
 2. **Refused** until the other side releases or agrees: a claim whose `Files` are in the other lane, or that overlap an open
-   claim. The work board shows the refusal reason in the claims table. A refused claim is not started.
+   claim. The work board shows the refusal reason in the claims table. A refused claim is not started. Append-only files
+   (section 1) never count for this, in either direction.
 3. **Claims expire after 24 hours without a push** to the branch. A stale claim stops blocking others and shows as stale on
    the board.
 4. **Release** with a comment `Release: <branch>` when the work is merged, handed over or dropped. A result report is not a
    release.
-5. **Agree** with a comment `Agree: <branch>` from the lane that owns the files (or the owner of the overlapping claim).
+5. **Agree** with a comment `Agree: <branch>` from the lane that owns the files (or the owner of the overlapping claim). A bare
+   `Agree: <branch>` is enough: the branch does not need a `Claim:` of its own, and it does not matter whether the Agree or the
+   Claim came first. It stands until a `Release: <branch>`, which clears the claim and the agreement together. The work board
+   lists the standing agreements under the claims table, so you can see that yours was read.
 6. Work posted without a claim (a branch with no claim and no PR) shows up on the board as unclaimed. Claim it.
+
+**Answering a refused claim or a red "Claims" step** (the owner of the files, or the coordinator). The message names the branch,
+the files and the claim in the way. Reply on issue #422 with one line:
+
+- `Agree: <branch>`: the branch may touch those files. Use this when the change is fine.
+- `Release: <other branch>`: the owner of the claim in the way gives it up (work merged, handed over or dropped).
+- Or say no in a comment. The branch then drops those files from its change and its claim.
+
+Nothing to answer when the only files named are append-only. Branch-lint runs the scripts of the branch it checks, so a branch
+started before this rule still has the old check: merge `main` into it once and push again.
 
 ## 4. Readiness checklist (before the coordinator reads a branch)
 
@@ -115,7 +135,7 @@ stale rules. The coordinator uses this for its own agents and posts the same bri
 |---|---|---|
 | Forbidden thread includes in Windows code (rule 21a) | `branch-lint` on every push to `claude/**`, `claude2/**` | yes |
 | Secrets (private keys, `sk-`, `ghp_`, `AKIA`, long key strings) | `branch-lint` | yes |
-| Push into the other lane's open claim | `branch-lint` (`collision_check.py --branch`) | yes |
+| Push into the other lane's open claim (append-only files and `Agree:`-ed branches are not counted) | `branch-lint` (`collision_check.py --branch`) | yes |
 | Code changed with no docs changed | `branch-lint` | warning |
 | Feature map not regenerated | `branch-lint` | warning |
 | MinGW `-fsyntax-only` of changed engine files | `branch-lint` (installs MinGW only when engine files changed) | warning |
@@ -134,7 +154,8 @@ python3 scripts/tests/test_collab.py      # the scripts' own tests (also ctest: 
 ```
 
 `collision_check.py` knows only what the remote refs hold: run `git fetch origin` first. Its report means: *file overlaps*
-(two branches change the same file; docs and shared files are listed apart because they merge by hand), *same lines* (the same
+(two branches change the same file; docs and shared files are listed apart because they merge by hand, and append-only files
+are listed apart again as information only), *same lines* (the same
 line ranges in one file; "approx" when the two branches started from different commits of main, so line numbers may have
 moved), *cross-lane*, *no claim and no PR*, *stale claims*, *out of lane*, *generated files edited by hand*, *same test or
 CMake target name in two branches*, and *far behind main*. A branch that was only built on top of another (one is an ancestor
@@ -175,6 +196,7 @@ lanes. (Known today: `Sha256` in `Crypto/Crypto.hpp` and in `Platform/Account/Ac
 - The coordinator posts `Agree:` and `Release:` answers and settles a refused claim.
 - Someone runs the weekly dedupe audit and files the findings on #888.
 - Reviews of design and of "does this really match the claim". The scripts only catch the cheap, mechanical cases.
-- Keeping `docs/lanes.json` true when new directories appear (it falls back to "open", which is safe).
+- Keeping `docs/lanes.json` true when new directories appear (it falls back to "open", which is safe). Keep its `append_only`
+  list short: only files that nearly every pull request adds a row or a section to, never code.
 - Claim comments written before this protocol have no `Existing`/`Gap`/`Files` lines; the board marks them and they should be
   reposted in the new format when next touched.

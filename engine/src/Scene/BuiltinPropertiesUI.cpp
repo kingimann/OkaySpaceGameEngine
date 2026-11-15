@@ -45,6 +45,7 @@
 #include "okay/Components/CraftingMenu.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/GridInventoryUI.hpp"
+#include "okay/Components/CraftingStation.hpp"
 #include "okay/Math/Easing.hpp"
 
 namespace okay {
@@ -874,6 +875,34 @@ void RegisterGridInventoryUI() {
     b.Commit();
 }
 
+// CraftingStation (record "craftingstation"). The recipes are a list; `open` is play state.
+void RegisterCraftingStation() {
+    PropertyBuilder<CraftingStation> b("CraftingStation", "craftingstation", "UI");
+    b.Section("Station")
+     .AddKey("toggleKey", &CraftingStation::toggleKey).Tooltip("Opens and closes the station when in range")
+     .AddFloat("range", &CraftingStation::range).Range(0, kBig, 0.1).Tooltip("How close the player must be (0 = any distance)")
+     .AddString("playerName", &CraftingStation::playerName).Tooltip("Who counts as the player (empty = the default player)")
+     .AddAssetPath("recipeBook", &CraftingStation::recipeBook, "file").Tooltip("Optional .okayrecipes file")
+     .AddString("stationTag", &CraftingStation::stationTag).Tooltip("Bench kind (workbench, forge ...): book recipes that need it show here")
+     .AddString("title", &CraftingStation::title).Tooltip("Heading of the window")
+     .AddBool("closeWhenCrafted", &CraftingStation::closeWhenCrafted).Tooltip("Close after a successful craft")
+     .Section("Style")
+     .AddFloat("rowHeight", &CraftingStation::rowHeight).Range(1, 1e3, 1).Tooltip("Recipe row height in pixels")
+     .AddFloat("width", &CraftingStation::width).Range(1, 1e4, 1).Tooltip("Window width in pixels")
+     .AddFloat("marginX", &CraftingStation::marginX).Range(-1e5, 1e5, 1).Tooltip("Sideways nudge in pixels")
+     .AddFloat("marginY", &CraftingStation::marginY).Range(-1e5, 1e5, 1).Tooltip("Up and down nudge in pixels")
+     .AddFloat("cornerRadius", &CraftingStation::cornerRadius).Range(0, 1e3, 0.5).Tooltip("Corner radius")
+     .AddString("iconFolder", &CraftingStation::iconFolder).Tooltip("Folder the item icons are loaded from")
+     .AddColor("panelColor", &CraftingStation::panelColor).Range(0, 1, 0.01).Tooltip("Window colour")
+     .AddColor("titleBar", &CraftingStation::titleBar).Range(0, 1, 0.01).Tooltip("Title bar colour")
+     .AddColor("rowColor", &CraftingStation::rowColor).Range(0, 1, 0.01).Tooltip("Row colour")
+     .AddColor("canColor", &CraftingStation::canColor).Range(0, 1, 0.01).Tooltip("Row tint when it can be crafted")
+     .AddColor("cantColor", &CraftingStation::cantColor).Range(0, 1, 0.01).Tooltip("Row tint when items are missing")
+     .AddColor("textColor", &CraftingStation::textColor).Range(0, 1, 0.01).Tooltip("Text colour")
+     .AddColor("hoverColor", &CraftingStation::hoverColor).Range(0, 1, 0.01).Tooltip("Tint on the row under the pointer");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -1158,6 +1187,7 @@ void RegisterUIProperties() {
     RegisterCraftingMenu();
     RegisterInventoryUI();
     RegisterGridInventoryUI();
+    RegisterCraftingStation();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

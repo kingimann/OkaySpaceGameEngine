@@ -99,18 +99,29 @@ editor's 2D Scene view draw at its place in the world): the player draws world t
 `ui2d::DrawWorldText`, which reads the same tags, and the shadow and outline follow the runs (with the text's own
 bold and italic). With Rich Text **off**, world text looks exactly as before (italic is not drawn on world text, bold
 is a second copy one step to the right). With it **on**, the Text's own Italic now slants world text too. Limits for
-every rich text: text over 2,000 bytes is not parsed (shown as written), at most 16 tags may be open at once, and
-nested sizes are held to 25..400 percent. **A line is as tall as the largest size on it**: a sized run sits on the
-bottom of its line and pushes what follows to the right, the line below it starts under the big run (it used to
-start at the plain line height and the big letters climbed into the line above), and a line made only of small text
-is a small line. `TextRenderer::PixelHeight()` counts it, so centring and Best Fit see the real height. The Line
+every rich text, on screen and in the world alike: text over 2,000 bytes is not parsed but shown as written, tags
+included (so a long dialogue line over 2,000 bytes shows its `[color=...]` tags; split it into shorter texts), at most
+16 tags may be open at once, and nested sizes are held to 25..400 percent. **A line is as tall as the largest size on
+it**: a sized run sits on the bottom of its line and pushes what follows to the right, the line below it starts under the
+big run (it used to start at the plain line height and the big letters climbed into the line above, and a big run on the
+first line reached above the text's top), and a line made only of small text is a small line.
+`TextRenderer::PixelHeight()` counts it, so centring and Best Fit see the real height. The Line
 Spacing setting is added once per line, never multiplied. Text with no `[size]` lays out exactly as before. The
 **width** of a line is still measured at the text's own size, so wrapping is not changed by `[size]` and a centred
 line with a big run leans right. The tooltip's own `<b>` and `#rrggbb` tags are unchanged. Tests: `runtime_ui`
-(screen text), `world_text_rich` (the size tag, runs, world text colours, sizes, shadow and outline, and the line
-heights drawn and measured). World text is drawn by the **flat (2D) player pass and the editor's 2D views only**:
+(screen text), `world_text_rich` (the size tag, runs, world text colours, sizes, shadow and outline, a sized run that
+must not overlap the line above or reach above the text's top, and the line heights drawn and measured). World text is
+drawn by the **flat (2D) player pass and the editor's 2D views only**:
 a 3D scene does not draw a Text whose Screen Space is off (use a Text under a World Space UI object there); the font
 is the 8x8 bitmap font unless the Text has a font file.
+
+How to try it (world text): add a Text, turn its **Screen Space** off so it is drawn in the world, turn on **Rich Text** and type
+`Hello [color=#ffcc33]gold[/color] [size=150]big[/size] [b]bold[/b]`. The Scene view and Play show the gold word, the
+bigger word sitting on the same line, and the bold one; turn Rich Text off and the tags show as written.
+
+![Rich world text as the player draws it: gold, a 250% run that moves its line down instead of covering the line above, bold](images/world_text/world_text_rich.png)
+
+(Painted from exactly what `ui2d::DrawWorldText` draws, by test `world_text_rich` with `OKAY_SHOT_DIR=<folder>`.)
 
 **Readable in every look.** The themes promise a contrast of at least 3 to 1 between a button's label and
 what it sits on, for all 12 looks and all 7 roles. A Ghost or Outline button uses the accent for its label when

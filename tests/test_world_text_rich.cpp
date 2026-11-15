@@ -8,6 +8,9 @@
 #include "okay/UI/UIRenderer.hpp"
 #include <chrono>
 #include <climits>
+#include <string>
+#include <cstdlib>
+#include "okay/Graphics/Image.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -160,6 +163,27 @@ int main() {
         CHECK(std::abs((b2.y1 - b2.y0) - (b1.y1 - b1.y0)) <= 1);            // B itself kept its size
     }
 
+    {   // review: a line with a bigger run is moved down so the run does not overlap the line above, and a big run on
+        // the first line does not reach above the text's top (before, sized runs grew upward over the line above)
+        tr->shadow = false; tr->outline = false;
+        tr->text = "AB\n[size=300][color=#ff0000]C[/color][/size]D";
+        RecordPainter two;
+        ui2d::DrawWorldText(two, *tr, 0.0f, 100.0f, 2.0f);
+        const auto green = two.Of(0, 255, 0), red = two.Of(255, 0, 0);
+        int line1Bottom = INT_MIN;
+        for (const auto& f : two.fills) if (f.r == 0 && f.g == 255 && f.b == 0 && f.y < 100 + 9 * 2) line1Bottom = std::max(line1Bottom, f.y + f.h);
+        std::printf("  line 1 bottom %d, big C top %d\n", line1Bottom, red.y0);
+        CHECK(green.n > 0 && red.n > 0);
+        CHECK(red.y0 >= line1Bottom);                                       // no overlap with the line above
+        tr->text = "[size=300][color=#ff0000]A[/color][/size]B";
+        RecordPainter first;
+        ui2d::DrawWorldText(first, *tr, 0.0f, 100.0f, 2.0f);
+        CHECK(first.Of(255, 0, 0).y0 >= 100);                               // not above the text's own top
+        // Still one bottom line: the character cells end together. The visible ink differs by the glyph's empty bottom
+        // row, which is 3 x 2 = 6 px tall at size 300 against 2 px at size 100, so allow those 4 px.
+        CHECK(std::abs(first.Of(255, 0, 0).y1 - first.Of(0, 255, 0).y1) <= 4);
+    }
+
     {   // shadow and outline follow the runs and keep their own colours
         tr->text = "[color=#ff0000]A[/color]B";
         tr->shadow = true; tr->shadowColor = Color::FromBytes(0, 0, 255);
@@ -248,5 +272,23 @@ int main() {
         CHECK(tr->PixelHeight() == 9 + 8);                                       // no [size]: the old height, exactly
     }
 
+    if (const char* dir = std::getenv("OKAY_SHOT_DIR"); dir && *dir) {   // a picture of what the player draws
+        tr->shadow = false; tr->outline = false; tr->color = Color::FromBytes(235, 235, 240);
+        tr->text = "Rich world text\n[color=#ffcc33]gold[/color] [size=250][color=#ff5555]BIG[/color][/size] [b]bold[/b]\nthe next line is clear";
+        RecordPainter rp;
+        ui2d::DrawWorldText(rp, *tr, 16.0f, 16.0f, 3.0f);
+        const int w = 700, h = 170;
+        std::vector<std::uint8_t> px((std::size_t)w * h * 4, 0);
+        for (std::size_t i = 0; i < px.size(); i += 4) { px[i] = 30; px[i + 1] = 34; px[i + 2] = 44; px[i + 3] = 255; }
+        for (const auto& f : rp.fills)
+            for (int y = std::max(0, f.y); y < std::min(h, f.y + f.h); ++y)
+                for (int x = std::max(0, f.x); x < std::min(w, f.x + f.w); ++x) {
+                    std::uint8_t* p = &px[((std::size_t)y * w + x) * 4];
+                    p[0] = f.r; p[1] = f.g; p[2] = f.b; p[3] = 255;
+                }
+        Image img;
+        img.Set(w, h, std::move(px));
+        img.SavePNG(std::string(dir) + "/world_text_rich.png");
+    }
     TEST_MAIN_RESULT();
 }

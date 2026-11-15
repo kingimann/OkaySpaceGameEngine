@@ -85,6 +85,7 @@ int main() {
     CHECK(Enabled(true, nullptr) && Enabled(true, "1") && !Enabled(false, nullptr) && !Enabled(true, "0") && !Enabled(false, "1"));   // the variable can only turn it off
     CHECK(StatusLine(true, nullptr).find("On:") == 0 && StatusLine(false, nullptr).find("turned it off") != std::string::npos && StatusLine(true, "0").find("OKAY_CRASH_UPLOAD") != std::string::npos);
     CHECK(std::string(DisclosureLine()).find("last 200 Console lines") != std::string::npos);
+    CHECK(StatusLine(true, nullptr).find("public GitHub issues") != std::string::npos && StatusLine(true, nullptr).find("from while it was off") != std::string::npos);
     {   // the words the person reads next to the switch (and in the one-time notice): what is sent, that it becomes PUBLIC, what the server sees
         const std::string d = DisclosureLine();
         CHECK(d.find("PUBLIC issue on GitHub") != std::string::npos && d.find("anyone can read it") != std::string::npos);

@@ -64,7 +64,7 @@ inline bool Enabled(bool settingOn, const char* envValue) { return settingOn && 
 inline std::string StatusLine(bool settingOn, const char* envValue) {
     if (EnvDisabled(envValue)) return "Off: the environment variable OKAY_CRASH_UPLOAD is 0.";
     if (!settingOn) return "Off: you turned it off. Reports stay on this computer.";
-    return "On: new crash reports are sent soon after they happen. Reports from before it was switched on stay on this computer.";
+    return "On: new crash reports are sent soon after they happen and become public GitHub issues. Reports from before it was switched on, or from while it was off, stay on this computer.";
 }
 // What is sent and where it ends up, in plain words: shown next to the switch in Settings and again in the one-time notice.
 inline const char* DisclosureLine() {

@@ -14,11 +14,14 @@
 //   * Windows: the full report with raw "module + offset" frames is on disk before dbghelp is even loaded. Function names are a second
 //     pass that replaces the file only if it works, so a hang or a fault in dbghelp costs the names, not the report.
 //   * A fault inside the handler ends the process (one guard flag), it never loops.
+//   * The report holds the scene's name and the Console, so on Linux and macOS the files are private (0600) and are never opened through a
+//     symbolic link planted where they go (O_NOFOLLOW; a link is removed and the file made fresh). On Windows the folder's own permissions apply.
 //   * No <mutex>, <thread>, condition_variable or call_once (CLAUDE.md rule 21a: the Windows build cannot compile them).
 //
 // Written from the Windows exception-filter and x64 unwind documentation (RtlLookupFunctionEntry / RtlVirtualUnwind) and from
 // signal-safety(7) / sigaction(2); the previous handler in editor/main.cpp is the only code this replaces.
 #include <atomic>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -118,6 +121,11 @@ inline void TerminateText(char* out, std::size_t cap) {
     o.S("C++ exception (std::terminate): ").S(what);
 }
 
+// Windows second pass: the history entry the first pass appended is replaced from the file size the first pass found. If the first pass could not
+// open the file there is no entry of ours to replace, and the start is "none", never 0: a replace from 0 would cut the whole history away.
+constexpr unsigned long long kNoHistoryStart = (unsigned long long)-1;
+inline bool CanReplaceHistory(unsigned long long histStart) { return histStart != kNoHistoryStart; }
+
 // The history file only ever grows (every crash appends a report of up to ~60 KB with the Console in it). At startup, not in the handler:
 // above `maxBytes` it is cut to roughly the newest `keepBytes`, starting at a report boundary. Anything that goes wrong leaves it alone.
 inline void TrimHistory(const std::filesystem::path& file, std::uintmax_t maxBytes = 8u << 20, std::uintmax_t keepBytes = 4u << 20) {
@@ -143,6 +151,8 @@ inline void TrimHistory(const std::filesystem::path& file, std::uintmax_t maxByt
             out.flush();
             if (!out) { out.close(); std::filesystem::remove(tmp, ec); return; }
         }
+        std::filesystem::permissions(tmp, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, std::filesystem::perm_options::replace, ec);   // (private, like the file it replaces)
+        ec.clear();
         std::filesystem::rename(tmp, file, ec);
         if (ec) std::filesystem::remove(tmp, ec);
     } catch (...) {
@@ -256,7 +266,7 @@ struct Pending {
     bool exactFirst;
     wchar_t crashPath[1300], logPath[1300];
     char mark[160];
-    unsigned long long histStart;
+    unsigned long long histStart;   // where the first pass's history entry starts, or kNoHistoryStart
 };
 inline Pending g_pending;
 inline std::atomic<unsigned long> g_handlingThread{0};   // the thread that owns the crash being reported
@@ -341,7 +351,8 @@ inline DWORD WINAPI SymbolPass(LPVOID) {
     WriteFileAt(p.crashPath, g_buf, len, false);
     static char entry[sizeof(g_buf) + 256];
     const std::size_t en = HistoryEntry(entry, sizeof(entry), p);
-    WriteFileAt(p.logPath, entry, en, true, p.histStart);
+    // Replace the first pass's entry; if the first pass could not open the history there is none of ours: append, and never cut from 0.
+    WriteFileAt(p.logPath, entry, en, true, CanReplaceHistory(p.histStart) ? p.histStart : (unsigned long long)-1);
     return 0;
 }
 
@@ -358,8 +369,8 @@ inline void WriteReport(const Details& d, const CONTEXT* from, std::size_t skip,
 
     const std::size_t len = Compose(p.f, p.pcs, p.n, false, exactFirst);
     WriteFileAt(p.crashPath, g_buf, len, false);
-    p.histStart = 0;
-    {   // history: appended; where it started is kept so the second pass can replace it
+    p.histStart = kNoHistoryStart;
+    {   // history: appended; where it started is kept so the second pass can replace it (it stays "none" when the file could not be opened)
         static char entry[sizeof(g_buf) + 256];
         const std::size_t en = HistoryEntry(entry, sizeof(entry), p);
         WriteFileAt(p.logPath, entry, en, true, (unsigned long long)-1, &p.histStart);
@@ -524,6 +535,24 @@ inline bool WriteAll(int fd, const char* p, std::size_t n) {
     return true;
 }
 
+// Open a report file for writing: private (0600), and never through a symbolic link planted where the file goes (the folder may be shared). A link
+// is removed (the link itself, not what it points to) and the file made fresh; if that fails too there is no file. open, unlink and fchmod are all
+// async-signal-safe.
+inline int OpenPrivate(const char* path, int flags) {
+    int fd;
+#if defined(O_NOFOLLOW)
+    fd = ::open(path, flags | O_NOFOLLOW, 0600);
+    if (fd < 0 && errno == ELOOP && (flags & O_CREAT)) {
+        if (::unlink(path) != 0) return -1;
+        fd = ::open(path, flags | O_NOFOLLOW | O_EXCL, 0600);
+    }
+#else
+    fd = ::open(path, flags, 0600);
+#endif
+    if (fd >= 0) ::fchmod(fd, 0600);   // a file an older version made world-readable becomes private
+    return fd;
+}
+
 // Small integer / text readers over a file (open, read, close: all async-signal-safe).
 inline long long ReadStatmRssMb() {
     int fd = ::open("/proc/self/statm", O_RDONLY);
@@ -569,7 +598,7 @@ inline void WriteReport(const char* exception, void** frames, int nframes, bool 
     for (const char* p = g_cfg.exe; *p; ++p) if (*p == '/') exeName = p + 1;
     ctx::Fault f; char when[40];
     FillFault(f, when, sizeof(when), exception, exeName, nullptr);
-    const int fd = ::open(crashPath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    const int fd = OpenPrivate(crashPath, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd >= 0) {
         ctx::Out head(g_buf, sizeof(g_buf));
         ctx::ComposeHead(head, f);
@@ -580,8 +609,12 @@ inline void WriteReport(const char* exception, void** frames, int nframes, bool 
         WriteAll(fd, tail.data(), tail.size());
         ::close(fd);
     }
+#if defined(O_NOFOLLOW)
+    const int rd = ::open(crashPath, O_RDONLY | O_NOFOLLOW);
+#else
     const int rd = ::open(crashPath, O_RDONLY);
-    const int hist = rd >= 0 ? ::open(logPath, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
+#endif
+    const int hist = rd >= 0 ? OpenPrivate(logPath, O_WRONLY | O_CREAT | O_APPEND) : -1;
     if (rd >= 0 && hist >= 0) {
         char mark[160];
         { ctx::Out m(mark, sizeof(mark)); m.S("\n========== crash @ ").S(when).S(" (v").S(g_cfg.version).S(") ==========\n"); }

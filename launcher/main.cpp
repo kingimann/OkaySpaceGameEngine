@@ -2231,6 +2231,8 @@ void RemoveNotif(const std::string& key) {
 // shows them in Settings > Crash reports and raises one notification per new crash.
 std::vector<okaycrash::Report> g_crashes;   // newest first
 bool g_crashUpload = true;   // send crash reports automatically (Settings > Crash reports; ON unless the person turns it off; OKAY_CRASH_UPLOAD=0 overrides it)
+bool g_crashNoticeSeen = false;   // the one-time notice (what is sent, that it becomes a public GitHub issue, how to turn it off) has been shown and answered; saved as crash_notice=1
+static bool g_crashNoticeReq = false;   // the pump asks the main loop to show that notice; nothing is sent before it has been answered
 static const char* const kCrashRepo = "kingimann/OkaySpaceGameEngine";   // where "Report on GitHub" opens a new issue
 static bool CrashUploadOn() { return okaycrash::upload::Enabled(g_crashUpload, std::getenv("OKAY_CRASH_UPLOAD")); }
 static fs::path CrashDir() {
@@ -4636,6 +4638,7 @@ void LoadPrefs() {
         else if (k == "anticheat") g_antiCheatMode = (int)okayac::ParseMode(v);
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
         else if (k == "crash_upload") g_crashUpload = (v != "0");
+        else if (k == "crash_notice") g_crashNoticeSeen = (v == "1");
         else if (k == "link_previews") g_linkPreviews = (v != "0");
         else if (k == "voice_speed") g_voiceSpeed = std::clamp(std::atoi(v.c_str()), 0, 2);
         else if (k == "tenor_key") g_tenorKey = v;
@@ -4755,6 +4758,7 @@ void SavePrefs() {
     if (g_antiCheatMode) f << "anticheat=" << okayac::ModeName(okayac::Mode(g_antiCheatMode)) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
     f << "crash_upload=" << (g_crashUpload ? 1 : 0) << "\n";
+    f << "crash_notice=" << (g_crashNoticeSeen ? 1 : 0) << "\n";
     f << "voice_speed=" << g_voiceSpeed << "\n";
     f << "link_previews=" << (g_linkPreviews ? 1 : 0) << "\n";
     if (!g_tenorKey.empty()) f << "tenor_key=" << g_tenorKey << "\n";
@@ -5908,15 +5912,18 @@ static void PumpCrashUpload() {
     const fs::path dir = CrashDir();
     if (dir.empty()) return;
     std::error_code ec;
-    {   // The moment sending starts: the first run on this computer (no ledger yet) or the switch just turned on. Reports from before it are never sent.
+    {   // The ledger follows the switch: the first run on this computer (no ledger yet) and the switch just turned on both start "from now"; while sending is off
+        // (the Settings switch or OKAY_CRASH_UPLOAD=0) the ledger is marked paused, and the first look after it comes back on moves "since" to now. Reports from
+        // before that moment are never sent.
         const std::string ledgerFile = (dir / okaycrash::upload::kLedgerName).string();
-        if (g_crashUpResetSince || !fs::exists(ledgerFile, ec)) {
-            okaycrash::upload::Ledger l;
-            okaycrash::upload::LoadLedger(ledgerFile, l);   // (what was already sent is kept)
-            l.SetSince(LocalNowText());
-            okaycrash::upload::SaveLedger(ledgerFile, l);
-            g_crashUpResetSince = false;
-        }
+        okaycrash::upload::Ledger l;
+        okaycrash::upload::LoadLedger(ledgerFile, l);   // (what was already sent is kept)
+        const std::string nowText = LocalNowText();
+        bool changed = false;
+        if (g_crashUpResetSince || !fs::exists(ledgerFile, ec)) { l.SetSince(nowText); l.SetPaused(false); changed = true; }
+        if (okaycrash::upload::FollowSwitch(l, CrashUploadOn(), nowText)) changed = true;
+        if (changed) okaycrash::upload::SaveLedger(ledgerFile, l);
+        g_crashUpResetSince = false;
     }
     if (!CrashUploadOn() || g_pollCfgDir.empty() || g_crashes.empty()) return;
     const fs::path hist = fs::exists(dir / "okay_crashlog.txt", ec) ? dir / "okay_crashlog.txt" : dir / "okay_crash.txt";
@@ -5926,8 +5933,12 @@ static void PumpCrashUpload() {
     okaycrash::upload::LoadLedger((dir / okaycrash::upload::kLedgerName).string(), ledger);
     okaycrash::upload::Options o;
     o.now = (long)std::time(nullptr);
-    if (ledger.RetryAfter() > o.now) return;
-    if (okaycrash::upload::Pending(g_crashes, ledger, o).empty()) return;
+    if (ledger.Paused() || ledger.RetryAfter() > o.now) return;
+    switch (okaycrash::upload::NextStep(CrashUploadOn(), g_crashNoticeSeen, okaycrash::upload::Pending(g_crashes, ledger, o).size())) {
+        case okaycrash::upload::Step::Idle: return;
+        case okaycrash::upload::Step::ShowNotice: g_crashNoticeReq = true; return;   // the main loop shows the notice; the first report goes after it has been answered
+        case okaycrash::upload::Step::Send: break;
+    }
     auto* job = new CrashUpJob;
     job->reports = g_crashes;
     job->ledgerPath = (dir / okaycrash::upload::kLedgerName).string();
@@ -18612,6 +18623,29 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndPopup();
             }
+        }
+
+        // ---- Crash reports: the one-time notice (shared/CrashUpload.hpp NoticeText) ----
+        // Sending is on by default, so before the FIRST report leaves this computer the person is told, once, what is sent, that it becomes a public
+        // GitHub issue and how to turn it off. Nothing is sent until this has been answered (the pump waits for g_crashNoticeSeen).
+        if (g_crashNoticeReq && !g_crashNoticeSeen && !ImGui::IsPopupOpen("Crash reports##notice")) ImGui::OpenPopup("Crash reports##notice");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Crash reports##notice", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::TextUnformatted(okaycrash::upload::NoticeTitle());
+            ImGui::Dummy(ImVec2(0, 4));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 540.0f);
+            ImGui::TextWrapped("%s", okaycrash::upload::NoticeText().c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(0, 8));
+            if (ImGui::Button("OK, keep sending", ImVec2(180, 32))) {
+                g_crashNoticeSeen = true; g_crashNoticeReq = false; SavePrefs(); ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Turn it off", ImVec2(140, 32))) {
+                g_crashUpload = false; g_crashNoticeSeen = true; g_crashNoticeReq = false; g_crashUpNote.clear(); SavePrefs(); ImGui::CloseCurrentPopup();
+                Toast("Crash reports will not be sent. They stay on this computer.", 1);
+            }
+            ImGui::EndPopup();
         }
 
         // ---- "Close the editor first" (exit / update while the editor is open) ----

@@ -16,6 +16,7 @@
 // same parser the launcher uses. Windows has its own handler (compiled, not run, on this machine: see docs/crash_reports.md), so this
 // test only runs where there are signals.
 #if defined(__unix__) || defined(__APPLE__)
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <csignal>
@@ -200,6 +201,7 @@ int main() {
         const auto reports = okaycrash::ParseLog(kept);
         CHECK(!reports.empty() && reports.front().version == "1.0.119" && reports.back().version.size() >= 5);   // newest first; the newest report is whole
         CHECK(!fs::exists(dir / "okay_crashlog.txt.tmp"));
+        { struct stat st; CHECK(::stat(hist.c_str(), &st) == 0 && (st.st_mode & 0077) == 0); }   // the trimmed copy is private too
         const std::string before = Slurp(hist);
         handler::TrimHistory(hist);                                    // a small file is left alone
         CHECK(Slurp(hist) == before);
@@ -208,6 +210,36 @@ int main() {
         handler::TrimHistory(dir / "noboundary.txt");                  // no report boundary to cut at: left alone
         CHECK(fs::file_size(dir / "noboundary.txt") == (9u << 20));
     }
+
+    // ---- The report files are private (0600), and a symbolic link planted where a file goes is not followed -----------------------------
+    {
+        const fs::path dir = base / "private"; fs::create_directories(dir);
+        CHECK(RunChild(dir, Kind::Segv, "Render3D:gl", 5) == SIGSEGV);
+        struct stat st;
+        CHECK(::stat((dir / "okay_crash.txt").c_str(), &st) == 0 && (st.st_mode & 0777) == 0600);        // the report holds the scene's name and the Console: not for other users
+        CHECK(::stat((dir / "okay_crashlog.txt").c_str(), &st) == 0 && (st.st_mode & 0777) == 0600);
+        // files an older version made world-readable become private when the next crash is written
+        ::chmod((dir / "okay_crash.txt").c_str(), 0644); ::chmod((dir / "okay_crashlog.txt").c_str(), 0644);
+        CHECK(RunChild(dir, Kind::Segv, "Play.Tick", 5) == SIGSEGV);
+        CHECK(::stat((dir / "okay_crash.txt").c_str(), &st) == 0 && (st.st_mode & 0777) == 0600);
+        CHECK(::stat((dir / "okay_crashlog.txt").c_str(), &st) == 0 && (st.st_mode & 0777) == 0600);
+        CHECK(okaycrash::Load(dir).size() == 2);
+    }
+    {
+        const fs::path dir = base / "symlink"; fs::create_directories(dir);
+        const fs::path victim = dir / "victim.txt", victim2 = dir / "victim2.txt";
+        std::ofstream(victim) << "precious"; std::ofstream(victim2) << "also precious";
+        fs::create_symlink(victim, dir / "okay_crash.txt");           // somebody planted links where the handler writes
+        fs::create_symlink(victim2, dir / "okay_crashlog.txt");
+        CHECK(RunChild(dir, Kind::Segv, "Render3D:gl", 5) == SIGSEGV);
+        CHECK(Slurp(victim) == "precious" && Slurp(victim2) == "also precious");                         // nothing was written through them
+        CHECK(!fs::is_symlink(dir / "okay_crash.txt") && Slurp(dir / "okay_crash.txt").find("OkaySpace crash report") == 0);   // and the report was still written
+        CHECK(!fs::is_symlink(dir / "okay_crashlog.txt") && okaycrash::Load(dir).size() == 1);
+    }
+
+    // ---- The history file is replaced from where the first pass started, and never from 0 by accident (Windows second pass) ----------------
+    CHECK(!handler::CanReplaceHistory(handler::kNoHistoryStart) && handler::CanReplaceHistory(0) && handler::CanReplaceHistory(4096));
+    CHECK(handler::kNoHistoryStart == (unsigned long long)-1);
 
     // ---- A folder that does not exist: the report goes beside the program instead of being lost (here: nothing to check but no crash) ----
     // (OKAY_CRASH_DIR that is not a directory is ignored: covered by the dir check in Install.)

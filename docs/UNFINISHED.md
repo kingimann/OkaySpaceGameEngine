@@ -43,7 +43,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | Steamworks backend | Off by default | Needs Valve's proprietary SDK |
 | Glass UI theme | Visible, no real blur | The shared draw path cannot read the framebuffer back |
 | Rich text tags | Screen-space UI text only | World (3D) text ignores them; italic and bold are approximations |
-| UI nameplate | Health bar bound | Name and level are plain text, not bound to data |
+| UI nameplate | Name, level and health bar bound to the character it is a child of (`owner.` keys in UI Text Bind / UI Bar Bind; `ui_nameplate_bound`) | Not networked beyond what the character's own data replicates; no mana bar or status icons; the name is the object name (no separate display-name field) |
 | UI Dropdown | Scrolls with wheel, keys and by dragging the open list (mouse or finger; a tap still picks, a drag never does) | Scrolls whole rows only, no momentum; touch is tested through the pointer the finger drives, not on a real touch screen |
 | Inventory screen | Shows the bag, drags and splits stacks, moves between chest, hotbar, backpack and grid bags | Networked and scripted slot-to-grid moves, durability wear and repair; own-code arbiter for wheel and use key (only lean and bag-key clashes are handled), item names cut by measured width and icon file re-check are not ported; see [inventory.md](inventory.md) |
 | Mixamo Soldier and Xbot samples | Removed | |

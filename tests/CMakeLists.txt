@@ -3541,3 +3541,7 @@ add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
+
+add_executable(test_ui_nameplate_bound test_ui_nameplate_bound.cpp)
+target_link_libraries(test_ui_nameplate_bound PRIVATE okay::engine)
+add_test(NAME ui_nameplate_bound COMMAND test_ui_nameplate_bound)

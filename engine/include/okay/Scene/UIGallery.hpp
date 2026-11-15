@@ -20,6 +20,7 @@
 #include "okay/Components/UIInventoryBind.hpp"
 #include "okay/Components/UISafeArea.hpp"
 #include "okay/Components/UIBarBind.hpp"
+#include "okay/Components/UITextBind.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include <string>
 
@@ -181,22 +182,32 @@ inline GameObject* AddWindow(Scene& scene, GameObject* parent, const char* name,
     return win;
 }
 
-/// Make a nameplate's health bar live: it fills from the `healthFrac` value that a Health Stat
-/// publishes (the player's health), so it moves as the character takes damage or heals.
+/// Make a nameplate's health bar live: it fills from the health of the character the nameplate belongs to
+/// (`owner.healthFrac`: the nearest parent with a Health Stat, Stats, Survival Stats or NPC Controller), so it moves
+/// as that character takes damage or heals. With no such parent it follows the `healthFrac` value the player's
+/// Health Stat publishes.
 inline void BindNameplateHealth(GameObject* bar) {
     if (!bar) return;
     auto* b = bar->AddComponent<UIBarBind>();
-    b->var = "healthFrac"; b->min = 0.0f; b->max = 1.0f;
+    b->var = "owner.healthFrac"; b->min = 0.0f; b->max = 1.0f;
 }
 
-/// A nameplate: a name, a level badge and a thin health bar that follows the Health Stat. Add it as a
-/// world-space UI object and make it a child of the character: it follows and faces the camera.
+/// A nameplate: a name, a level badge and a thin health bar, all bound to the character it belongs to (UIOwnerData:
+/// the nearest parent with health, stats or a Character). Add it as a world-space UI object and make it a child of
+/// the character: it follows, faces the camera and shows that character's name, Stats level and health. Without
+/// such a parent it shows "Goblin", "Lv 1" (or the global `name` and `level` variables) and the player's health, as a preview. A
+/// character with no Stats shows level 1.
 inline GameObject* AddNameplate(Scene& scene, bool inWorld) {
     GameObject* root = inWorld ? scene.CreateGameObject("Nameplate") : Child(scene, EnsureCanvas(scene), "Nameplate");
     if (inWorld) root->AddComponent<WorldSpaceUI>();
     GameObject* card = Panel(scene, root, "SwatchPlate", UIAnchor::TopLeft, {0, 0}, {180, 46}, Color::FromBytes(16, 18, 24, 190), 10.0f);
-    Text(scene, card, "Name", "Goblin", UIAnchor::TopLeft, {10, 4}, {110, 22}, 15.0f, slate::Text(), 0, true);
-    Badge(scene, card, "SwatchLevel", "Lv 7", UIAnchor::TopRight, {-8, 4}, slate::Warning());
+    GameObject* name = Text(scene, card, "Name", "Goblin", UIAnchor::TopLeft, {10, 4}, {110, 22}, 15.0f, slate::Text(), 0, true);
+    name->AddComponent<UITextBind>()->format = "{owner.name|Goblin}";
+    GameObject* badge = Badge(scene, card, "SwatchLevel", "Lv 7", UIAnchor::TopRight, {-8, 4}, slate::Warning());
+    if (badge && badge->transform)
+        for (Transform* t : badge->transform->Children())
+            if (t && t->gameObject && t->gameObject->GetComponent<TextRenderer>())
+                t->gameObject->AddComponent<UITextBind>()->format = "Lv {owner.level|1}";
     BindNameplateHealth(gx::Bar(scene, card, "Health", {10, 30}, {160, 8}, 0.72f, slate::Danger(), (int)UITheme::Variant::Danger));
     return root;
 }

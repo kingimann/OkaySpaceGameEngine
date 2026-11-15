@@ -390,7 +390,7 @@ int main() {
     }
 
     // --- THE MAIN PROOF: load the real sample scene file from disk and play it --------
-    // examples/vehicle/vehicle_test.okayscene is a hand-kept copy of Templates::VehicleSeats3D (not in the editor chooser; open it with File > Open).
+    // examples/vehicle/vehicle_test.okayscene is a hand-kept copy of Templates::VehicleSeats3D (also the "Vehicle (get in and drive)" template in the editor chooser; shipped in the Windows zip and installer as examples/vehicle/).
     {
         Scene s("sample");
         std::string err;

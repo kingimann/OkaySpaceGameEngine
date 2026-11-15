@@ -698,20 +698,20 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net_browser_refresh` | `Fn.net_browser_refresh` |
 | `net_budget` | `Fn.net_budget` |
 | `net_chat` | `Fn.net_chat` |
-| `net_connected` | `Fn.net_connected` |
+| `net_connected` | `Fn.net_connected` (run as a node: `vs_net_nodes`) |
 | `net_despawn` | `Fn.net_despawn` |
-| `net_disconnect` | `Fn.net_disconnect` |
+| `net_disconnect` | `Fn.net_disconnect` (run as a node: `vs_net_nodes`) |
 | `net_encrypt` | `Fn.net_encrypt` |
 | `net_encrypted` | `Fn.net_encrypted` |
 | `net_get` | `Fn.net_get` |
 | `net_hit` | `Fn.net_hit` |
-| `net_host` | `Fn.net_host` |
+| `net_host` | `Fn.net_host` (run as a node: `vs_net_nodes`) |
 | `net_host_relay` | `Fn.net_host_relay` |
-| `net_id` | `Fn.net_id` |
+| `net_id` | `Fn.net_id` (run as a node: `vs_net_nodes`) |
 | `net_invite_friends` | `Fn.net_invite_friends` |
-| `net_is_client` | `Fn.net_is_client` |
-| `net_is_server` | `Fn.net_is_server` |
-| `net_join` | `Fn.net_join` |
+| `net_is_client` | `Fn.net_is_client` (run as a node: `vs_net_nodes`) |
+| `net_is_server` | `Fn.net_is_server` (run as a node: `vs_net_nodes`) |
+| `net_join` | `Fn.net_join` (run as a node: `vs_net_nodes`) |
 | `net_join_link` | `Fn.net_join_link` |
 | `net_join_relay` | `Fn.net_join_relay` |
 | `net_kick` | `Fn.net_kick` |
@@ -722,10 +722,10 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net_match_started` | `Fn.net_match_started` |
 | `net_match_status` | `Fn.net_match_status` |
 | `net_max_speed` | `Fn.net_max_speed` |
-| `net_msg_channel` | `Fn.net_msg_channel` |
-| `net_msg_data` | `Fn.net_msg_data` |
-| `net_msg_from` | `Fn.net_msg_from` |
-| `net_name` | `Fn.net_name` |
+| `net_msg_channel` | `Fn.net_msg_channel` (run as a node: `vs_net_nodes`) |
+| `net_msg_data` | `Fn.net_msg_data` (run as a node: `vs_net_nodes`) |
+| `net_msg_from` | `Fn.net_msg_from` (run as a node: `vs_net_nodes`) |
+| `net_name` | `Fn.net_name` (run as a node: `vs_net_nodes`) |
 | `net_obj_id` | `Fn.net_obj_id` |
 | `net_obj_owned` | `Fn.net_obj_owned` |
 | `net_obj_rpc` | `Fn.net_obj_rpc` |
@@ -736,10 +736,10 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net_obj_rpc_reliable` | `Fn.net_obj_rpc_reliable` |
 | `net_obj_rpc_to` | `Fn.net_obj_rpc_to` |
 | `net_peer_name` | `Fn.net_peer_name` |
-| `net_peers` | `Fn.net_peers` |
+| `net_peers` | `Fn.net_peers` (run as a node: `vs_net_nodes`) |
 | `net_pin_host` | `Fn.net_pin_host` |
-| `net_ping` | `Fn.net_ping` |
-| `net_poll` | `Fn.net_poll` |
+| `net_ping` | `Fn.net_ping` (run as a node: `vs_net_nodes`) |
+| `net_poll` | `Fn.net_poll` (run as a node: `vs_net_nodes`) |
 | `net_queue_accept` | `Fn.net_queue_accept` |
 | `net_queue_auto` | `Fn.net_queue_auto` |
 | `net_queue_cancel` | `Fn.net_queue_cancel` |
@@ -753,12 +753,12 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net_ready` | `Fn.net_ready` |
 | `net_ready_count` | `Fn.net_ready_count` |
 | `net_relay_ready` | `Fn.net_relay_ready` |
-| `net_room` | `Fn.net_room` |
+| `net_room` | `Fn.net_room` (run as a node: `vs_net_nodes`) |
 | `net_roster_count` | `Fn.net_roster_count` |
 | `net_roster_id` | `Fn.net_roster_id` |
 | `net_rpc` | `Fn.net_rpc` |
 | `net_score` | `Fn.net_score` |
-| `net_send` | `Fn.net_send` |
+| `net_send` | `Fn.net_send` (run as a node: `vs_net_nodes`) |
 | `net_send_reliable` | `Fn.net_send_reliable` |
 | `net_send_reliable_to` | `Fn.net_send_reliable_to` |
 | `net_send_to` | `Fn.net_send_to` |

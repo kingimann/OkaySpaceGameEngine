@@ -225,7 +225,7 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **API:** `NetworkManager::Send`, `SendTo`, `SendReliable`, `Rpc`, `OnRpc`, `SetVar`, `GetVar`, `Chat`, `Kick`, scripts `net_send`, `net_rpc`, `net_poll`, `net_set`, `net_get`, `net_chat`, `net_kick`, `net_syncvar_set`, `net_obj_rpc`
 - **Editor:** Inspector: Network Manager; View > Panels > Services (Multiplayer section: host, join, a chat box); visual-script net nodes
 - **Docs:** `docs/scripting_reference.md` (networking), `docs/launcher-multiplayer.md`
-- **Tests:** `net_rpc`, `script_net`, `net_sync`, `net_spawn`
+- **Tests:** `net_rpc`, `script_net`, `net_sync`, `net_spawn`, `vs_net_nodes` (host, join, send, poll and state nodes run as nodes)
 - **Status:** Works - `net_rpc` covers RPC dispatch and chat fan-out; `script_net` drives a host and a client from two scripts
 - **Open:** `NetworkManager.hpp` is 1,101 lines with all of 16.1 to 16.12 in one class (split candidate)
 - **Related:** 16.3, 16.6, 13.6

@@ -63,6 +63,7 @@ option(OKAY_OWN_OGRE     "Read .mesh.xml (OGRE XML meshes) with our own OGRE rea
 option(OKAY_OWN_XGL      "Read .xgl / .zgl (XGL scenes) with our own XGL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_XGL=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_IRR      "Read .irr (Irrlicht scenes) with our own IRR reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRR=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_NFF      "Read .nff / .enff (Neutral File Format) with our own NFF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NFF=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_GLTF1    "Read glTF 1.0 files (.gltf / .glb of version 1) with our own glTF 1.0 reader by default (without it they are refused; run-time env OKAY_OWN_GLTF1=0/1 and SetImportBackend(\".gltf1\") override)" OFF)
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 

@@ -302,6 +302,9 @@ bool ReadGltf1Buffer(const std::string& bytes, const std::string& baseDir, Impor
 bool ReadGltf1File(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 /// True for the first bytes of a binary glTF 1.0 file ("glTF" then version 1). A JSON .gltf is told by its asset.version.
 bool IsGltf1(const std::string& bytesOrPrefix);
+/// True when the file at `path` is glTF 1.0: a binary version-1 header, or JSON whose asset.version starts with "1" (or,
+/// with no version, whose meshes / nodes / accessors are objects keyed by id). Reads and parses the file.
+bool GltfFileIsVersion1(const std::string& path);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

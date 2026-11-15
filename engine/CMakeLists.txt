@@ -263,6 +263,7 @@ add_library(okay_engine
     src/Render/XglReader.cpp
     src/Render/IrrSceneReader.cpp
     src/Render/NffReader.cpp
+    src/Render/Gltf1Reader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -643,6 +644,13 @@ foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
     endif()
 endforeach()
+
+# Our own glTF 1.0 reader (docs/own_gltf1_reader.md), same opt-in rules as 3DS: default OFF. Written out on its own (not in a
+# loop) so a merge cannot drop it silently; tests/test_own_gltf1_default.cpp fails if -DOKAY_OWN_GLTF1=ON stops working.
+if(OKAY_OWN_GLTF1)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_GLTF1_DEFAULT)
+    message(STATUS "OkaySpace: model import reads glTF 1.0 with the built-in glTF 1.0 reader first")
+endif()
 
 # Friendly alias so subprojects can link okay::engine.
 add_library(okay::engine ALIAS okay_engine)

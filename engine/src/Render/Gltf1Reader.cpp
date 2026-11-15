@@ -533,6 +533,23 @@ bool ReadGltf1File(const std::string& path, ImportedModel& out, std::string* err
     return ReadGltf1Buffer(bytes, baseDir, out, err);
 }
 
+bool GltfFileIsVersion1(const std::string& path) {
+    std::string bytes;
+    if (!detail::txt::ReadFileCapped(path, gltf1::kMaxFileBytes, bytes, nullptr)) return false;
+    if (bytes.size() >= 4 && std::memcmp(bytes.data(), "glTF", 4) == 0) return IsGltf1(bytes);
+    if (bytes.size() >= 3 && (unsigned char)bytes[0] == 0xEF && (unsigned char)bytes[1] == 0xBB && (unsigned char)bytes[2] == 0xBF) bytes.erase(0, 3);
+    if (!gltf1::NestingWithin(bytes, gltf1::kMaxJsonDepth)) return false;
+    gltf_detail::JParser jp(bytes);
+    const gltf_detail::JVal root = jp.Parse();
+    if (!jp.ok || root.type != gltf_detail::JVal::Obj) return false;
+    if (const gltf_detail::JVal* asset = root.Find("asset")) if (const gltf_detail::JVal* v = asset->Find("version"))
+        if (v->type == gltf_detail::JVal::Str && !v->str.empty()) return v->str[0] == '1';
+    // No version: glTF 1.0 keeps its collections in objects keyed by id, 2.0 in arrays.
+    for (const char* c : {"meshes", "nodes", "accessors"})
+        if (const gltf_detail::JVal* col = root.Find(c)) return col->type == gltf_detail::JVal::Obj;
+    return false;
+}
+
 bool IsGltf1(const std::string& bytesOrPrefix) {
     const unsigned char* b = reinterpret_cast<const unsigned char*>(bytesOrPrefix.data());
     if (bytesOrPrefix.size() >= 8 && std::memcmp(b, "glTF", 4) == 0) return gltf1::U32(b + 4) == 1;

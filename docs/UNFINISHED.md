@@ -4,7 +4,7 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **123** rows that are Partial or Planned.
+The feature map currently has **124** rows that are Partial or Planned.
 
 ## Audits
 
@@ -470,6 +470,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [58.1](feature_map/43-proposals.md#581-performance-budgets) | Performance budgets | Planned | first step: a `budgets.okaybudget` text file (frame ms, draw calls, triangles, texture MB per scene) and a command that reports... |
+| [58.2](feature_map/43-proposals.md#582-benchmark-scenes) | Benchmark scenes | Partial | `tests/bench_frame.cpp` runs six scenes as whole frames on the software renderer (log: `docs/perf_log.md`); next: an agents scene and a particles scene, a GPU path, and CI storing its output (58.3). |
 | [58.3](feature_map/43-proposals.md#583-performance-regression-guard-in-ci) | Performance regression guard in CI | Planned | first step: store the benchmark output as a CI artifact and print a table in the job summary before gating anything. |
 | [58.4](feature_map/43-proposals.md#584-build-size-and-load-time-report) | Build size and load-time report | Partial | first step: log scene load time and asset decode time (the async loader in #570 reports progress) in the Profiler. |
 

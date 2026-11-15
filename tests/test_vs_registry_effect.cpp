@@ -365,6 +365,8 @@ static std::vector<Fix> BuildFixes() {
     { Fix x{"Respawn"}; x.wireTarget = true; x.setup = [](Scene& s, GameObject*) { Find(s, "Other")->GetComponent<HealthStat>()->Damage(100000.0f); }; add(x); }
     { Fix x{"Revive"}; x.setup = [](Scene&, GameObject* me) { me->GetComponent<AnimStateMachine>()->SetBool("dead", true); }; add(x); }
     { Fix x{"CheckpointSave"}; add(x); }
+    // The typed-script Inventory class (engine/src/Script/ApiInventory.cpp): Clear empties a bag that has something in it.
+    { Fix x{"Inventory.Clear/0"}; x.setup = [](Scene&, GameObject* me) { me->GetComponent<Inventory>()->Add("apple", 2); }; add(x); }
     { Fix x{"StopSound"}; x.setup = [](Scene&, GameObject* me) { auto* au = me->GetComponent<AudioSource>(); if (auto c = LoadAudioFile(g_wav)) au->clip = *c; au->loop = true; au->Play(); }; add(x); }
     for (const char* t : {"AllSucceed", "FlipOutcome", "AlwaysSucceed", "RepeatUntilFail", "LbRunAndCheck", "LbTrySeveral"}) {
         Fix x{t}; x.graph = nullptr; add(x);

@@ -174,6 +174,8 @@ eight Create categories.
 | Move to Top / Up / Down / Bottom | `Order >` with the four | Greyed at the ends, with the reason. |
 | Empty space: Create, Paste, Expand All, Collapse All, Select All | Create Empty / Sprite / Cube / Camera / Light, 3D Object (5 shapes), UI (about 30 widgets), Paste, Select All, Deselect, Expand/Collapse All, Sort A-Z | Create is now the full shared list. The five quick creators are inside the categories (Sprite in 2D Object, Cube in 3D Object, Camera, Light). |
 | Create Empty Child | existed, **not undoable** | Now uses the editor's own create (one undo step). |
+| [+] button | Empty, Sprite, Camera, Cube, Group Selected, UI Button, UI Text, 3D UI (in-world) | Create Empty, Create Empty Child, Group Selected and the same eight categories. Sprite, Cube, Camera, UI Button, UI Text and 3D UI are inside them (2D Object, 3D Object, Camera, UI > Basic, UI > 3D UI). |
+| Delete (row menu) | destroyed the object at once, while the rows below it were still being drawn from it | Deferred until the tree is drawn, like Cut and Delete Children. |
 
 ## 3. The audit: the old menu bar
 
@@ -289,6 +291,24 @@ eight Create categories.
 | GameObject > Create Empty Child / Parent | Hierarchy items "Create Empty Child", "Create Parent" | not in the menu bar |
 | GameObject > Audio > Audio Source, Music Player | Inspector > Add Component > Audio has both (the same line builds the object) | no way to create a sound object from the menu |
 | Help > Documentation (online), Report a Bug... | About > GitHub button (`extide::RevealInFiles`); the Crash Log panel | no direct route to the docs or the issue page |
+
+## 3b. Screenshots
+
+These are **headless renders of a small test window, not of the editor**: the real menu lists (`MenuBarModel.hpp`,
+`HierarchyContextModel.hpp`) drawn by the real drawer (`MenuEntriesUI.hpp`) with Dear ImGui under a virtual display (Xvfb), the mouse moved
+by `xdotool`. What a click does, and the lists that depend on live data (Open Recent, the Create categories' items), are stubbed and show a
+placeholder line. They show the order, the shortcuts, the plural labels and the reasons on hover. The folder is `docs/images/editor_menus/`.
+
+| Screenshot | What it shows |
+|---|---|
+| [file.png](images/editor_menus/file.png) | File: one Examples, the groups, Open Recent greyed with its reason on hover |
+| [file_play_save_greyed.png](images/editor_menus/file_play_save_greyed.png) | File while the game runs: Save Scene and Save Scene As greyed, "Stop Play first ..." |
+| [edit_three_selected_cut_reason.png](images/editor_menus/edit_three_selected_cut_reason.png) | Edit with three objects selected: "Duplicate 3 Objects", "Delete 3 Objects", Cut greyed with the reason |
+| [view_editors_and_tools.png](images/editor_menus/view_editors_and_tools.png) | View: Panels, Editors & Tools, Layout, Frame / Isolate / UI Editing Mode, overlays, rendering |
+| [help.png](images/editor_menus/help.png) | Help |
+| [hierarchy_row_three_selected.png](images/editor_menus/hierarchy_row_three_selected.png) | Hierarchy row menu with three selected: plural labels, Group 3 Objects, Cut reason |
+| [hierarchy_create_child.png](images/editor_menus/hierarchy_create_child.png) | Hierarchy row menu, Create Child with the eight categories |
+| [hierarchy_empty_space.png](images/editor_menus/hierarchy_empty_space.png) | Hierarchy empty space: Create Empty, the categories, Paste greyed with its reason |
 
 ## 4. How it is built and tested
 

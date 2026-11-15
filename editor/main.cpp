@@ -19717,7 +19717,7 @@ static oked::hiermenu::EmptyState HierEmptyState(EditorState& ed) {
 }
 
 // What a row menu asks the panel to do after the tree is drawn (the rows below are still being walked).
-struct HierRowResult { bool cut = false, deleteChildren = false, revealSelection = false; };
+struct HierRowResult { bool cut = false, deleteSelection = false, deleteChildren = false, revealSelection = false; };
 
 // Parent To >: every object that is not inside this one (so no cycle), world pose kept.
 static void HierParentToSlot(EditorState& ed, GameObject* node) {
@@ -19798,7 +19798,7 @@ static void HierRowAction(EditorState& ed, GameObject* node, const std::string& 
         g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
     }
     else if (id == "h.duplicate") { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
-    else if (id == "h.delete") { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+    else if (id == "h.delete") out.deleteSelection = true;   // deleted after the tree is drawn: the rows below still use this object this frame
     else if (id == "h.deletechildren") out.deleteChildren = true;   // empties a container, keeps the object
     else if (id == "h.emptychild") {
         GameObject* child = ed.CreateEmpty("Child");   // takes its own undo step
@@ -20054,6 +20054,7 @@ void DrawHierarchy(EditorState& ed) {
     std::vector<GameObject*> visRows;       // visible rows in draw order (arrow-key nav)
     GameObject* rangeClick = nullptr;       // Shift+click target — resolved after the draw
     bool cutPending = false;                // menu Cut: delete the selection after the draw
+    bool deletePending = false;             // menu Delete: the same
     bool deleteKidsPending = false;         // menu Delete Children: done after the draw (the rows below are still being walked)
     std::string curSceneSection = "\x01";   // sentinel distinct from any real value (incl. "")
     // The selection changed this frame: open its parents once so it's visible.
@@ -20330,6 +20331,7 @@ void DrawHierarchy(EditorState& ed) {
                 };
                 oked::menubar::DrawEntries(oked::hiermenu::RowMenu(rowState), rowHost);
                 if (rowResult.cut) cutPending = true;                       // deleted after the tree is drawn
+                if (rowResult.deleteSelection) deletePending = true;
                 if (rowResult.deleteChildren) deleteKidsPending = true;
                 if (rowResult.revealSelection) s_revealFor = nullptr;       // open their parents so they show
                 ImGui::EndPopup();
@@ -20350,6 +20352,7 @@ void DrawHierarchy(EditorState& ed) {
     g_hierOpenNode = nullptr;   // the arrow expand/collapse request was applied above
     if (g_hierDropOpenSeen) { g_hierDropOpen = nullptr; g_hierDropOpenSeen = false; }
     if (cutPending) { ed.DeleteSelected(); ConsoleLog("Cut to the clipboard (Ctrl+V to paste)"); }
+    else if (deletePending) { ed.DeleteSelected(); ConsoleLog("Deleted"); }
     if (deleteKidsPending) {
         const int n = ed.DeleteChildrenOfSelected();
         ConsoleLog("Deleted " + std::to_string(n) + " child" + (n == 1 ? "" : "ren") + " (and everything below them)");

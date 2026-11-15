@@ -21,13 +21,14 @@ below were made by counting those files by extension; where I could not check so
 | Importers batch D adds (AC3D, XGL / ZGL, Irrlicht scene, NFF, and OGRE **for the XML form only**) | 5 (**29** of the 45 switched on; OGRE counts as half: its binary `.mesh` / `.skeleton` and the `.skeleton.xml` are row 1 below) |
 | Terragen (`.ter`, `docs/own_terragen_reader.md`), after batch D | 1 (**30** of the 45 switched on) |
 | Importers batch E adds (MDC, HMP, CSM; `docs/own_mdc_reader.md`, `own_hmp_reader.md`, `own_csm_reader.md`) | 3 (**33** of the 45 switched on, with Terragen) |
-| Switched on in our build and still **without an own reader** | **12** (rows 2 to 17 below, except rows 10 to 13: CSM, MDC, HMP, Terragen) plus OGRE's half |
+| Importers batch E adds (Q3D and RAW, written from public format descriptions, unverified against real files; SIB was not written, see row 9) | 2 (**35** of the 45 switched on, with Terragen and MDC, HMP, CSM) |
+| Switched on in our build and still **without an own reader** | **10** (rows 2 to 17 below, except rows 8, 10 to 14: Q3D, CSM, MDC, HMP, Terragen, RAW) plus OGRE's half |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
-tree. **Nothing was flipped.** Which formats the 30 (33 with batch E) are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
+tree. **Nothing was flipped.** Which formats the 35 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
 COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x,
-AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF, Terragen, and in batch E MDC, HMP and CSM. How the batch D readers compare with Assimp on the real files is in
+AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF, Terragen, and in batch E MDC, HMP, CSM, Q3D and RAW. How the batch D readers compare with Assimp on the real files is in
 `docs/model_corpus.md` and in each reader's own page (`docs/own_ac3d_reader.md`, `own_ogre_reader.md`, `own_xgl_reader.md`,
 `own_irr_reader.md`, `own_nff_reader.md`).
 
@@ -48,13 +49,13 @@ none were invented.
 | 5 | **COB** (`.cob`) | Caligari trueSpace; binary and ASCII | low (old) | medium | 8 (dwarf, molecule, spider: binary and ASCII) | yes |
 | 6 | **LWS / MOT** (`.lws` `.mot`) | LightWave **scene** (objects by reference, cameras, lights, motion curves) | low-medium | medium (our LWO reader covers the objects it names) | 15 (envelopes, pre/post behaviours) | yes |
 | 7 | **MMD / PMX** (`.pmx`) | MikuMikuDance models: binary, bones, morphs, materials | medium in its community | medium | 1 (`Alicia_blade.pmx`) | yes |
-| 8 | **Q3D** (`.q3o` `.q3s`) | Quick3D | very low | easy | 4 | yes |
-| 9 | **SIB** (`.sib`) | Silo | very low | easy | 1 (`heffalump.sib`) | yes |
+| 8 | ~~**Q3D** (`.q3o` `.q3s`)~~ **done, off by default** (`docs/own_q3d_reader.md`, unverified against real files) | Quick3D | very low | easy | 4 | yes |
+| 9 | **SIB** (`.sib`): **not written**: no public description of the format and no sample file were available (`docs/own_sib_reader.md`) | Silo | very low | easy once a description or the sample is at hand | 1 (`heffalump.sib`) | yes |
 | 10 | **CSM** (`.csm`): **own reader written, off by default** (`OKAY_OWN_CSM`, `docs/own_csm_reader.md`) | CharacterStudio motion capture (markers only, like BVH) | very low | easy | 1 (read; checked against numbers from the file, not against Assimp) | yes |
 | 11 | **MDC** (`.mdc`): **own reader written, off by default** (`OKAY_OWN_MDC`, `docs/own_mdc_reader.md`) | Return to Castle Wolfenstein models (MD3 with compressed frames) | very low | easy (MD3 is done) | 1 (`spider.mdc`, read; not compared with Assimp) | yes |
 | 12 | **HMP** (`.hmp`): **own reader written for HMP7 only, off by default** (`OKAY_OWN_HMP`, `docs/own_hmp_reader.md`) | 3D GameStudio terrain | very low | easy | 2 (both are HMP7 and read; not compared with Assimp; other HMP versions are refused) | yes |
 | 13 | **Terragen** (`.ter`): **own reader written, off by default** (`OKAY_OWN_TER`, `docs/own_terragen_reader.md`) | Terragen heightfield | low | easy | 2 (both read and equal Assimp) | yes |
-| 14 | **RAW** (`.raw`) | plain triangle list | very low | easy | 4 (one empty) | yes |
+| 14 | ~~**RAW** (`.raw`)~~ **done, off by default** (`docs/own_raw_reader.md`; text form only, unverified against real files) | plain triangle list | very low | easy | 4 (one empty) | yes |
 | 15 | **Quake III BSP** (`.bsp` in `.pk3`) | Quake 3 map in a zip | low | medium-hard (faces, patches, shaders) | 1 (`SGDTT3.pk3`) | yes |
 | 16 | **Nendo** (`.ndo`) | Nendo modeller | almost none | easy-medium | **0: no file in the tree, so it cannot be checked against Assimp** | yes |
 | 17 | **glTF 1.0** (`.gltf`, `.glb`) | the old glTF; our glTF reader reads 2.0 only | low (legacy, but real models exist) | medium | 7 (inside the 54 glTF files of the corpus, they fail in our reader on purpose) | yes |

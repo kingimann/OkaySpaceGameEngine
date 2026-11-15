@@ -414,6 +414,27 @@ Anything on Windows. The NSIS installer and the zip.
 Built and run two ways: a direct `g++` build of the okayui library against an engine library borrowed from another build tree (fast, used while working, and for the sanitizer runs), and the real CMake build with `ninja -j1` of the okayui test targets and `test_script_editor_sample` followed by `ctest`:
 `test_okayui_codeedit_parity` (1,098 checks), `test_okayui_codeedit` (407), `test_okayui_codeedit_fuzz` (36), `test_okayui_script_adapter` (69), `test_okayui_values` (389), `test_okayui_widgets` (14,484), `test_okayui_host` (50) and `test_text_buffer` (83,050): 0 failures, also with `-fsanitize=address,undefined,float-cast-overflow`. The okayui ctest set (25 tests, without the EGL one), `text_buffer` and `script_editor_sample` ran through the CMake build too: 27 of 27 passed. `tests/test_script_editor_sample.cpp` (14 checks): the sample scene loads, carries the same text as `highlight_sample.okay`, compiles, and Play logs `Script sample is ready, speed 5` with no error. The `examples` copy block of `scripts/build-windows-dist.sh` copies `examples/script_editor` (2 files). `editor/main.cpp` was checked with `g++ -fsyntax-only` against the pinned Dear ImGui and SDL2 headers; the editor was not linked or run. **Not run:** the editor window, Windows, GitHub CI.
 
+## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
+
+Owner request 2026-11-15: "for console allow user to collapse the same log."
+
+1. Open the editor (`Tools\OkayEngine.exe` or Open from the launcher) and show **View > Console**.
+2. Make a log repeat. Easiest: press **Play** on a scene whose script logs every frame (for example a script that calls
+   `print` in `update`), or use any scene that logs the same warning many times.
+3. In the Console toolbar, to the right of the three count pills (Messages, Warnings, Errors), click **Collapse**.
+   Hover it: the tooltip says "Merge identical messages into one row with a count".
+4. You should see one row per distinct message, with `x37` (the count) in front of the text and the time of the newest
+   copy. The count keeps growing while Play runs. Click the row to see the details (count, first and newest time).
+5. Click **Collapse** again: every line is back. Close and reopen the editor: the button keeps its last state
+   (stored as `consolecollapse` in `okay_settings.txt`). It is off the first time.
+6. Search, the category dropdown and the pills still work while collapsed, and Clear empties everything.
+
+Rule: two lines merge only if level, category (the leading `[tag]`) and text are exactly the same, even when they are not
+next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still count every line, not rows.
+
+**Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
+`editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

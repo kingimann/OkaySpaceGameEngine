@@ -20,17 +20,24 @@ v2.875.0
     environment variable OKAY_UPDATE_ON_LAUNCH=0.
 
   Download
-  - The examples folder (including the vehicle test scene and the sample
-    files for our own readers) is now part of the Windows download, and there
-    is a "Vehicle (get in and drive)" template and a plain how-to-try-it
-    guide (docs/try_it.md).
+  - The examples folder is now part of the Windows download. It has the
+    vehicle test scene, three tiny sample model files for our older own
+    readers (examples/own_readers: cube.off, cube.3ds, skinned_strip.dae) and
+    one sound sample for our own WAV reader (examples/own_wav). There is also
+    a "Vehicle (get in and drive)" template and a plain how-to-try-it guide
+    (docs/try_it.md).
 
   Our own code, off by default (nothing changes unless you switch it on)
-  - Twelve more of our own model readers (Terragen, MDC, HMP, CSM, Q3D, SIB
-    marker, RAW, IQM, COB, Nendo marker, PMX, LWS). Each has an environment
-    variable OKAY_OWN_<FORMAT>=1 and a sample file in examples/own_readers.
-  - The launcher voice clips can load through our own WAV reader. Switch:
-    OKAY_OWN_WAV=1. Sample: examples/own_wav.
+  - Ten more of our own model readers: Terragen, MDC, HMP, CSM, Q3D, RAW,
+    IQM, COB, PMX and LWS. Switch one on with its own environment variable,
+    for example OKAY_OWN_IQM=1 (OKAY_OWN_STACK=1 does not turn these ten on,
+    and the startup line does not list them, so the only proof is an import
+    that works). There are no sample files for these ten in the download
+    yet. Q3D, RAW, PMX and LWS could not be checked against a real file.
+    SIB (Silo) and Nendo files still have no own reader.
+  - Our own WAV reader can load the launcher's sound clips and the engine's
+    whole-file sounds. Switch: OKAY_OWN_WAV=1. Sample: examples/own_wav
+    (open own_wav_test.okayscene and press Play).
 
   Team tooling
   - New checks that stop two people building the same thing and catch common

@@ -6330,7 +6330,7 @@ static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, tb * 0.3f);
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-    const ImU32 ic = IM_COL32(221, 221, 221, 235);
+    const ImU32 ic = off1x ? IM_COL32(245, 245, 245, 240) : ImGui::GetColorU32(ImGuiCol_Text, 0.92f);   // white on the amber "not 1x" fill, the look's text otherwise
     auto centre = [] { const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
                        return ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f); };
     // Slower: two triangles pointing left (rewind).
@@ -7217,7 +7217,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     {
         ImVec2 c = iconC(); float s = tb * 0.2f, w = tb * 0.075f;
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImU32 col = playing || g_paused ? kIconWhite : ImGui::GetColorU32(ImGuiCol_Text, 0.78f);
+        ImU32 col = g_paused ? kIconWhite : ImGui::GetColorU32(ImGuiCol_Text, playing ? 1.0f : 0.78f);   // (white only on the amber Paused button; the look's text colour otherwise, so Light shows it too)
         dl->AddRectFilled(ImVec2(c.x - w * 2.4f, c.y - s), ImVec2(c.x - w * 0.6f, c.y + s), col, 1.0f);
         dl->AddRectFilled(ImVec2(c.x + w * 0.6f, c.y - s), ImVec2(c.x + w * 2.4f, c.y + s), col, 1.0f);
         // A Step or "Run N frames" that has not run yet: its count sits on the button's corner, counting down.

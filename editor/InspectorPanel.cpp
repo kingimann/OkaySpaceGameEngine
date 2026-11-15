@@ -905,9 +905,9 @@ void DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go) {
 
 void DrawPlayModeNote(okay::editor::EditorState& ed) {
     if (!ed.isPlaying()) return;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.32f, 0.22f, 0.06f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ThemeIsLight() ? ImVec4(0.99f, 0.92f, 0.72f, 1.0f) : ImVec4(0.32f, 0.22f, 0.06f, 1.0f));   // a pale amber note on the Light look
     ImGui::BeginChild("##playnote", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
-    ImGui::TextColored(ImVec4(1.0f, 0.78f, 0.35f, 1.0f), "Playing");
+    ImGui::TextColored(StatusCol(1), "Playing");
     ImGui::SameLine();
     ImGui::TextWrapped("Changes made here are not saved. They go away when you press Stop.");
     ImGui::EndChild();

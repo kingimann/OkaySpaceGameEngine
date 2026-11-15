@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2239 properties on 166 types, as `property_registry` counts them ("covered 166 component types, 2239 properties"; a number before a slash counts the authored ones; the rest are
+2287 properties on 167 types, as `property_registry` counts them ("covered 167 component types, 2287 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -322,6 +322,7 @@ has `enabled`.
 | IKTarget, NetValidator, DialogueRunner, LogicTarget | 4, 7, 13, 13 | IK limb, character, weight and blend; RPC limits (size, rate, cooldown, budget); dialogue file, start, key, prompt, typewriter and UI switches; logic target kind and mode, door/mover travel, light, spawner and event |
 | LogicSource, QuestLog, Saveable, SpriteAnimator | 13, 7, 8, 6 | logic source kind, button, timer and zone (links are lists); quest file and UI switches (records and the tracked quest are play state); save key, prefab and what to store (property paths are a list); sprite speed, loop and sheet layout (frames and clips are lists) |
 | VirtualCamera, CinemachineBrain, DollyPath | 34, 2, 1 | virtual camera priority, targets, offsets, damping, shake, free look, dolly and confiner (the confiner box allows +-1e9, its "no limit" default); brain blend; dolly path loop (the waypoints are a list) |
+| Minimap | 48 | layout, view, blips, grid, view cone, rings, north mark, labels, route line, map image, full-screen map and zoom keys. The markers and map shapes are lists; the placed waypoint is play state |
 
 How the new types are described, so a tool can rely on it:
 

@@ -8,6 +8,8 @@ headers the script really sends, the JSON it reads back, the count header, and w
 The fakes follow the PostgREST and GitHub REST documentation for the few calls the script makes; they are not the real services, so this
 shows the script's side of the conversation is well formed, not that the real servers accept it (that is checked by the first real run:
 Actions > Crash reports to issues > Run workflow with 'dry run' ticked)."""
+import contextlib
+import datetime
 import io
 import json
 import os
@@ -28,7 +30,7 @@ os.environ["NO_PROXY"] = "127.0.0.1,localhost"
 
 SERVICE_KEY = "sb_secret_localtestkey0123456789"  # lint-allow: secret (made up; a non-JWT key goes in apikey only)
 GH_TOKEN = "ghs_localtesttoken_not_real_0123456789"  # lint-allow: secret (made up)
-SIG_A, SIG_B = "0123456789abcdef", "fedcba9876543210"
+SIG_A, SIG_B, SIG_C = "0123456789abcdef", "fedcba9876543210", "aaaaaaaaaaaaaaaa"
 
 
 def serve(handler_cls):
@@ -40,7 +42,9 @@ def serve(handler_cls):
 class FakeSupabase(BaseHTTPRequestHandler):
     rows = []          # shared per test (reset in setUp)
     calls = []         # (method, path, headers dict)
-    deleted_before = []
+    deleted = []       # the query of every DELETE, as {"processed_at": "lt.<time>"} or {"created_at": "lt.<time>"}
+    no_table = False   # answer like PostgREST does when the table has not been created
+    really_delete = False   # only the test that checks the filters against real dates lets a DELETE remove rows (the other rows have fixed dates)
 
     def log_message(self, *a):
         pass
@@ -62,6 +66,9 @@ class FakeSupabase(BaseHTTPRequestHandler):
         if self.headers.get("Authorization"):   # a non-JWT secret key must never be sent as a bearer token
             self._send(401, {"message": "Invalid JWT"})
             return False
+        if FakeSupabase.no_table:
+            self._send(404, {"code": "PGRST205", "message": "Could not find the table 'public.crash_reports' in the schema cache"})
+            return False
         return True
 
     def do_GET(self):
@@ -76,7 +83,7 @@ class FakeSupabase(BaseHTTPRequestHandler):
         if "signature" in q:
             rows = [r for r in rows if "eq.%s" % r["signature"] == q["signature"][0]]
         total = len(rows)
-        rows.sort(key=lambda r: r["created_at"])
+        rows.sort(key=lambda r: r["created_at"], reverse=q.get("order") == ["created_at.desc"])
         rows = rows[: int(q.get("limit", ["1000"])[0])]
         hdr = {"Content-Range": "0-%d/%d" % (max(len(rows) - 1, 0), total)} if self.headers.get("Prefer") == "count=exact" else {}
         self._send(200, rows, hdr)
@@ -85,10 +92,11 @@ class FakeSupabase(BaseHTTPRequestHandler):
         if not self._auth():
             return
         u = urllib.parse.urlsplit(self.path)
-        m = re.match(r"^in\.\((.*)\)$", urllib.parse.parse_qs(u.query)["id"][0])
+        idq = urllib.parse.parse_qs(u.query)["id"][0]
+        m = re.match(r"^in\.\((.*)\)$", idq) or re.match(r"^eq\.(.*)$", idq)
         ids = m.group(1).split(",")
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        assert set(body) == {"processed_at", "issue_number"}, body
+        assert set(body) in ({"processed_at", "issue_number"}, {"attempts"}), body
         for r in FakeSupabase.rows:
             if r["id"] in ids:
                 r.update(body)
@@ -97,8 +105,12 @@ class FakeSupabase(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if not self._auth():
             return
-        q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        FakeSupabase.deleted_before.append(q["processed_at"][0])
+        q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).items()}
+        assert len(q) == 1 and next(iter(q)) in ("processed_at", "created_at") and next(iter(q.values())).startswith("lt."), q   # never an unfiltered delete
+        FakeSupabase.deleted.append(q)
+        col, cutoff = next(iter(q.items()))
+        if FakeSupabase.really_delete:
+            FakeSupabase.rows = [r for r in FakeSupabase.rows if not (r.get(col) and r[col] < cutoff[3:])]
         self._send(204)
 
 
@@ -156,7 +168,8 @@ class FakeGitHub(BaseHTTPRequestHandler):
                 self._send(500, {"message": "boom"})
                 return
             n = 100 + len(FakeGitHub.issues) + 1
-            FakeGitHub.issues.append({"number": n, "title": body["title"], "body": body["body"], "state": "open", "labels": body["labels"]})
+            FakeGitHub.issues.append({"number": n, "title": body["title"], "body": body["body"], "state": "open", "labels": body["labels"],
+                                      "created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
             self._send(201, {"number": n})
         else:
             m = re.match(r"^/repos/o/r/issues/(\d+)/comments$", self.path)
@@ -185,7 +198,7 @@ class Pipeline(unittest.TestCase):
         cls.gh.shutdown()
 
     def setUp(self):
-        FakeSupabase.rows, FakeSupabase.calls, FakeSupabase.deleted_before = [], [], []
+        FakeSupabase.rows, FakeSupabase.calls, FakeSupabase.deleted, FakeSupabase.no_table, FakeSupabase.really_delete = [], [], [], False, False
         FakeGitHub.issues, FakeGitHub.comments, FakeGitHub.labels_posted, FakeGitHub.calls, FakeGitHub.fail_issue_create = [], [], [], [], False
         self.env = {"SUPABASE_SERVICE_KEY": SERVICE_KEY, "SUPABASE_URL": "http://127.0.0.1:%d" % self.sb.server_address[1], "GITHUB_TOKEN": GH_TOKEN,
                     "GITHUB_REPOSITORY": "o/r", "GITHUB_API_URL": "http://127.0.0.1:%d" % self.gh.server_address[1]}
@@ -208,13 +221,14 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(len(FakeGitHub.comments), 1)                     # the second report of the first crash
         self.assertEqual(FakeGitHub.comments[0][0], first["number"])
         self.assertIn("1 new report of this crash", FakeGitHub.comments[0][1])
-        self.assertIn("2 in total so far", FakeGitHub.comments[0][1])      # the count header was read back
+        self.assertIn("2 in the last 7 days", FakeGitHub.comments[0][1])   # the count header was read back
         self.assertIn("`2.875.0` x1", FakeGitHub.comments[0][1])
         self.assertTrue(all(r["processed_at"] for r in FakeSupabase.rows))   # every row marked
         self.assertEqual(sorted(r["issue_number"] for r in FakeSupabase.rows if r["signature"] == SIG_A), [first["number"]] * 2)
         self.assertEqual(FakeGitHub.labels_posted, ["crash"])             # the label is created first
-        self.assertEqual(len(FakeSupabase.deleted_before), 1)             # old processed rows are pruned (90 days)
-        self.assertRegex(FakeSupabase.deleted_before[0], r"^lt\.\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")   # PostgREST filter: processed_at=lt.<time>
+        self.assertEqual(sorted(next(iter(q)) for q in FakeSupabase.deleted), ["created_at", "processed_at"])   # old rows are pruned: processed 7 days, unprocessed 14
+        for q in FakeSupabase.deleted:
+            self.assertRegex(next(iter(q.values())), r"^lt\.\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")   # PostgREST filter: processed_at=lt.<time>
         for method, path, hdr in FakeSupabase.calls:                       # the key travels in apikey only, never as a bearer token
             self.assertEqual(hdr.get("apikey"), SERVICE_KEY)
             self.assertNotIn("authorization", hdr)
@@ -243,7 +257,7 @@ class Pipeline(unittest.TestCase):
         self.assertNotIn(SERVICE_KEY, out)
         self.assertNotIn(GH_TOKEN, out)
         self.assertIsNone(FakeSupabase.rows[0]["processed_at"])           # not marked: it is retried
-        self.assertEqual(FakeSupabase.deleted_before, [])                 # and nothing is pruned after a failed run
+        self.assertEqual(len(FakeSupabase.deleted), 2)                    # the pruning ran first, before the work that failed
         FakeGitHub.fail_issue_create = False
         self.assertEqual(self.run_main()[0], 0)
         self.assertEqual(len(FakeGitHub.issues), 1)
@@ -254,7 +268,7 @@ class Pipeline(unittest.TestCase):
         code, out = self.run_main("--dry-run")
         self.assertEqual(code, 0)
         self.assertIn("would create issue", out)
-        self.assertEqual((FakeGitHub.issues, FakeGitHub.comments, FakeGitHub.labels_posted, FakeSupabase.deleted_before), ([], [], [], []))
+        self.assertEqual((FakeGitHub.issues, FakeGitHub.comments, FakeGitHub.labels_posted, FakeSupabase.deleted), ([], [], [], []))
         self.assertIsNone(FakeSupabase.rows[0]["processed_at"])
         self.assertFalse([m for m, _ in FakeGitHub.calls if m == "POST"])
 
@@ -272,6 +286,165 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(len(FakeGitHub.issues), 3)
         self.assertEqual(len([r for r in FakeSupabase.rows if r["processed_at"] is None]), 4)
         self.assertIn("deferred 4", out)
+
+
+    # ---- storage and spam (review findings 2 and 6) ------------------------------------------------------------------------------
+    def test_the_newest_rows_are_read_first_so_a_junk_backlog_cannot_starve_a_real_report(self):
+        junk = [row(i, "%016x" % (0x1000 + i), "2026-11-10T%02d:%02d:00+00:00" % (i // 60, i % 60)) for i in range(1, 251)]   # 250 older rows, 250 signatures
+        real = row(900, SIG_A, "2026-11-15T09:00:00+00:00")
+        FakeSupabase.rows = junk + [real]
+        code, out = self.run_main("--max-new", "5")
+        self.assertEqual(code, 0, out)
+        self.assertTrue([i for i in FakeGitHub.issues if "<!-- okay-crash-signature: %s -->" % SIG_A in i["body"]], "the real crash got no issue")
+        self.assertEqual(len(FakeGitHub.issues), 5)                                  # the cap still holds
+        read = [path for method, path, _ in FakeSupabase.calls if method == "GET" and "processed_at=is.null" in path][0]
+        self.assertIn("order=created_at.desc", read)
+        self.assertIn("limit=200", read)
+        self.assertEqual(len([r for r in FakeSupabase.rows if r["processed_at"] is None]), 246)   # the other 245 junk rows and none of the real one wait
+
+    def test_the_prune_runs_before_the_work_and_deletes_at_7_and_14_days(self):
+        FakeSupabase.rows = [row(1, SIG_A, "2026-11-15T10:00:00+00:00")]
+        FakeGitHub.fail_issue_create = True      # the run fails ...
+        code, out = self.run_main()
+        self.assertEqual(code, 1)
+        first_delete = min(i for i, (m, _, _) in enumerate(FakeSupabase.calls) if m == "DELETE")
+        first_read = min(i for i, (m, p_, _) in enumerate(FakeSupabase.calls) if m == "GET" and "processed_at=is.null" in p_)
+        self.assertLess(first_delete, first_read)                                  # ... but the old rows were already deleted, before anything else
+        now = datetime.datetime.now(datetime.timezone.utc)
+        ages = {}
+        for q in FakeSupabase.deleted:
+            col, cutoff = next(iter(q.items()))
+            ages[col] = (now - datetime.datetime.strptime(cutoff[3:], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)).total_seconds() / 86400
+        self.assertAlmostEqual(ages["processed_at"], 7, delta=0.01)
+        self.assertAlmostEqual(ages["created_at"], 14, delta=0.01)
+
+    def test_old_rows_really_go(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        def ago(days):
+            return (now - datetime.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        old_done = dict(row(1, SIG_A, ago(30)), processed_at=ago(8), issue_number=5)     # processed 8 days ago: gone (7)
+        recent_done = dict(row(4, SIG_A, ago(30)), processed_at=ago(6), issue_number=5)  # processed 6 days ago: kept
+        old_waiting = row(2, SIG_B, ago(15))                                              # waited 15 days: gone (14)
+        young_waiting = row(5, SIG_B, ago(13))                                            # waited 13 days: kept (and then turned into an issue)
+        fresh = row(3, SIG_C, ago(0))
+        FakeSupabase.rows = [old_done, recent_done, old_waiting, young_waiting, fresh]
+        FakeSupabase.really_delete = True
+        code, out = self.run_main("--dry-run")      # a dry run deletes nothing
+        self.assertEqual((code, len(FakeSupabase.rows)), (0, 5))
+        code, out = self.run_main()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(sorted(r["id"] for r in FakeSupabase.rows), sorted([recent_done["id"], young_waiting["id"], fresh["id"]]))
+
+    def test_a_daily_cap_on_new_issues(self):
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        FakeGitHub.issues = [{"number": 1 + i, "title": "t", "body": "<!-- okay-crash-signature: %016x -->" % (0x7000 + i), "state": "open", "labels": ["crash"],
+                              "created_at": today} for i in range(19)]
+        FakeSupabase.rows = [row(i, "%016x" % i, "2026-11-15T10:%02d:00+00:00" % i) for i in range(1, 6)]
+        code, out = self.run_main("--max-new", "5")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(FakeGitHub.issues), 20)                              # 19 were already made today: one more, then the day's budget is spent
+        self.assertEqual(len([r for r in FakeSupabase.rows if r["processed_at"] is None]), 4)
+
+    def test_a_poison_row_is_quarantined_and_never_read_again(self):
+        bad = row(1, SIG_A, "2026-11-15T10:00:00+00:00")
+        bad["report"] = bad["report"].replace("boom", "POISONPOISONPOISON")
+        good = row(2, SIG_B, "2026-11-15T11:00:00+00:00")
+        FakeSupabase.rows = [bad, good]
+        real = c.scrub
+
+        def fake(text):
+            if "POISONPOISONPOISON" in str(text):
+                raise ValueError("a bug triggered by this row")
+            return real(text)
+        c.scrub = fake
+        try:
+            for run in range(3):
+                code, out = self.run_main("--max-attempts", "3")
+                self.assertEqual(code, 0, out)                                    # a bad row does not turn the job red
+                self.assertNotIn("POISONPOISONPOISON", out)
+        finally:
+            c.scrub = real
+        self.assertEqual(len(FakeGitHub.issues), 1)                               # the good row's issue, once
+        self.assertTrue(FakeSupabase.rows[0]["processed_at"])                     # quarantined: marked processed, no issue
+        self.assertEqual(FakeSupabase.rows[0]["issue_number"], 0)
+        self.assertIn("quarantined", out)
+        reads = [p_ for m, p_, _ in FakeSupabase.calls if m == "GET" and "processed_at=is.null" in p_]
+        self.assertEqual(len(reads), 3)
+        code, out = self.run_main()
+        self.assertIn("0 unprocessed", out)                                       # the next run does not see it at all
+
+    def test_a_missing_table_says_what_to_do(self):
+        FakeSupabase.no_table = True
+        code, out = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("docs/sql/crash_reports.sql", out)
+        self.assertNotIn(SERVICE_KEY, out)
+
+
+class Spy(BaseHTTPRequestHandler):
+    seen = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        Spy.seen.append({k.lower(): v for k, v in self.headers.items()})
+        raw = b"[]"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+
+class Redirector(BaseHTTPRequestHandler):
+    target = ""
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        if self.path.startswith("/same"):   # to another page of the same server
+            self.send_response(301)
+            self.send_header("Location", "/landed")
+        elif self.path.startswith("/landed"):
+            raw = b"[]"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        else:
+            self.send_response(302)
+            self.send_header("Location", Redirector.target)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+
+class Redirects(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.spy, cls.redir = serve(Spy), serve(Redirector)
+        Redirector.target = "http://127.0.0.1:%d/rest/v1/crash_reports" % cls.spy.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.spy.shutdown()
+        cls.redir.shutdown()
+
+    def test_keys_are_not_sent_to_another_host_after_a_redirect(self):
+        Spy.seen = []
+        url = "http://127.0.0.1:%d/anything" % self.redir.server_address[1]
+        with self.assertRaises(RuntimeError) as cm:
+            c._http("GET", url, {"apikey": SERVICE_KEY, "Authorization": "Bearer " + GH_TOKEN})
+        self.assertIn("302", str(cm.exception))
+        self.assertNotIn(SERVICE_KEY, str(cm.exception))
+        self.assertEqual(Spy.seen, [], "the redirect was followed to another host")       # nothing reached it, so no header did either
+
+    def test_a_redirect_inside_the_same_host_is_followed(self):
+        url = "http://127.0.0.1:%d/same" % self.redir.server_address[1]
+        status, body, _ = c._http("GET", url, {"apikey": SERVICE_KEY})
+        self.assertEqual((status, body), (200, []))
 
 
 if __name__ == "__main__":

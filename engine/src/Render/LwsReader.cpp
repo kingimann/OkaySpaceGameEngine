@@ -125,12 +125,12 @@ static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, Im
                 else if (Is(line, tk[0], "LWMO")) isMotion = true;
                 else return Fail(err, "not a LightWave scene or motion file (no \"LWSC\" or \"LWMO\" first line)");
                 gotMagic = true;
-                if (n >= 2) { double v; if (!Num(line, tk[1], v)) return Fail(err, "bad version number"); version = (int)v; break; }
+                if (n >= 2) { double v; if (!Num(line, tk[1], v) || v != std::floor(v)) return Fail(err, "bad version number"); version = v < 0 || v > 1000 ? -1 : (int)v; break; }
                 continue;
             }
             double v;
             if (!Num(line, tk[0], v) || v != std::floor(v)) return Fail(err, "bad version line");
-            version = (int)v;
+            version = v < 0 || v > 1000 ? -1 : (int)v;   // not cast first: a huge value is undefined behaviour
             break;
         }
         if (!gotMagic) return Fail(err, "the file is empty");

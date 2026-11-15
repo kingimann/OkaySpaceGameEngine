@@ -128,6 +128,9 @@ int main() {
         CHECK(Refused("LWSC\n9\nAddNullObject A\n", "scene version 9"));
         CHECK(Refused("LWSC\n0\nAddNullObject A\n", "scene version 0"));
         CHECK(Refused("LWSC\nabc\nAddNullObject A\n", "bad version"));
+        CHECK(Refused("LWSC\n1e15\nAddNullObject A\n", "scene version"));   // not cast to int before the range check
+        CHECK(Refused("LWSC\n-1e15\nAddNullObject A\n", "scene version"));
+        CHECK(Refused("LWSC 1e15\nAddNullObject A\n", "scene version"));
         CHECK(Refused("LWSC\n3.5\nAddNullObject A\n", "bad version"));
         CHECK(Refused("LWSC\n3\n", "no object, camera, light or bone"));
         { ImportedModel m; std::string err; CHECK(!ReadLwsBuffer("LWSC", "", m, &err)); }

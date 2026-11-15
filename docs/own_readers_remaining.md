@@ -19,7 +19,8 @@ below were made by counting those files by extension; where I could not check so
 | Importers we covered **before batch C** (including Blender, merged as #829, off by default) | 19 |
 | Importers batch C added (MD2, MD3, Irrlicht mesh, B3D, DirectX .x) | 5 (24) |
 | Importers batch D adds (AC3D, XGL / ZGL, Irrlicht scene, NFF, and OGRE **for the XML form only**) | 5 (**29** of the 45 switched on; OGRE counts as half: its binary `.mesh` / `.skeleton` and the `.skeleton.xml` are row 1 below) |
-| Switched on in our build and still **without an own reader** | **16** (rows 2 to 17 below) plus OGRE's half |
+| Importers batch E5 adds (LWS / MOT, PMX), off by default, **no real file to check them against** | 2 (**31**; this branch only: the counts of the other branches' batches add to it on merge) |
+| Switched on in our build and still **without an own reader** | **14** (rows 2 to 5 and 8 to 17 below; rows 6 and 7 are done) plus OGRE's half |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
@@ -44,8 +45,8 @@ none were invented.
 | 3 | **MDL** (`.mdl`): Quake 1, Half-Life 1, 3D GameStudio MDL3/4/5/7 | four unrelated binary formats under one extension | medium (HL1 models are common) | Quake 1: easy; HL1: medium (bones, embedded textures); 3DGS: medium to hard (7 has skins and animation) | 43 (HL1, MDL3, MDL5, MDL7, alpha tests) | yes |
 | 4 | **IQM** (`.iqm`) | Inter-Quake Model: binary, skeleton, animation; used by Cube 2, Sauerbraten, open engines | low-medium | medium | 1 (`mrfixit.iqm`, skinned and animated) | yes |
 | 5 | **COB** (`.cob`) | Caligari trueSpace; binary and ASCII | low (old) | medium | 8 (dwarf, molecule, spider: binary and ASCII) | yes |
-| 6 | **LWS / MOT** (`.lws` `.mot`) | LightWave **scene** (objects by reference, cameras, lights, motion curves) | low-medium | medium (our LWO reader covers the objects it names) | 15 (envelopes, pre/post behaviours) | yes |
-| 7 | **MMD / PMX** (`.pmx`) | MikuMikuDance models: binary, bones, morphs, materials | medium in its community | medium | 1 (`Alicia_blade.pmx`) | yes |
+| 6 | ~~**LWS / MOT** (`.lws` `.mot`)~~ **done, batch E5, off by default** (`docs/own_lws_reader.md`) | LightWave **scene** (objects by reference, cameras, lights, motion curves) | low-medium | medium (our LWO reader covers the objects it names) | 15 (envelopes, pre/post behaviours) **not in this repository: unverified against real files** | yes |
+| 7 | ~~**MMD / PMX** (`.pmx`)~~ **done, batch E5, off by default** (`docs/own_pmx_reader.md`) | MikuMikuDance models: binary, bones, morphs, materials | medium in its community | medium | 1 (`Alicia_blade.pmx`) **not in this repository: unverified against real files** | yes |
 | 8 | **Q3D** (`.q3o` `.q3s`) | Quick3D | very low | easy | 4 | yes |
 | 9 | **SIB** (`.sib`) | Silo | very low | easy | 1 (`heffalump.sib`) | yes |
 | 10 | **CSM** (`.csm`) | CharacterStudio motion capture (markers only, like BVH) | very low | easy | 1 | yes |
@@ -63,7 +64,7 @@ none were invented.
 | 22 | **Assbin** (`.assbin`) | Assimp's own dump of its scene | none outside Assimp | not worth a reader; it can simply go | 0 in the tree | no |
 | 23 | **Cinema 4D** (`.c4d`) | Maxon's format; Assimp's importer needs the non-free Maxon SDK and is off in every normal build | medium | the format is proprietary and undocumented: writing our own means reverse engineering | 0 in the tree | no (and not buildable without the SDK) |
 
-Rows 1 to 17 are what is left of the 45 importers our Windows build switches on (row 1 is the half of OGRE; glTF 1.0 is row 17); rows 18 to 23 are not switched
+Rows 1 to 17 (rows 6 and 7 are done, see their pages) are what was left of the 45 importers our Windows build switches on (row 1 is the half of OGRE; glTF 1.0 is row 17); rows 18 to 23 are not switched
 on, so removing Assimp does not remove anything a user has today for them.
 
 ## Proposed order for the next readers
@@ -74,7 +75,7 @@ Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real
 
 1. **Ogre, the rest**: `.skeleton.xml` (bones, bind pose, animations, vertex weights) on the XML reader, then the binary `.mesh` and `.skeleton`: many real game assets.
 2. **MDL**, in this order: Quake 1, then Half-Life 1, then 3D GameStudio 3/5/7 (43 real files).
-3. **IQM**, **OpenGEX**, **COB**, **LWS**, **PMX**: one real file or a handful each; each is a few days.
+3. **IQM**, **OpenGEX**, **COB**: one real file or a handful each; each is a few days. (**LWS / MOT** and **PMX** are written, off by default, unverified on real files: the next step for them is a comparison on Assimp's `test/models` files, especially the radians and bank-first assumptions in the LWS reader.)
 4. The tiny ones in one batch: **Q3D, SIB, CSM, MDC, HMP, Terragen, RAW, Unreal**.
 5. **Quake III BSP** and **glTF 1.0**: medium; glTF 1.0 is the one with the largest real-file count (7) after MDL.
 6. **Nendo**: last, and only from a published description, because no file exists to check it against; honest status "unverified".
@@ -82,8 +83,8 @@ Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real
 
 ## How far this is from removing Assimp
 
-See the last section of `docs/own_code_roadmap.md` (the Assimp row) and `docs/model_corpus.md` ("Flip readiness"). In short: 16 importers
-our build still switches on have no own reader and OGRE has half of one; the 29 that have one are all off by default; none was checked on real Windows (only
+See the last section of `docs/own_code_roadmap.md` (the Assimp row) and `docs/model_corpus.md` ("Flip readiness"). In short: 14 importers
+our build still switches on have no own reader and OGRE has half of one; the 31 that have one are all off by default; none was checked on real Windows (only
 MinGW under wine for the first batch); no default may be flipped without the owner's approval; and the release note that announces
 the dropped formats one release ahead is not written. The remaining formats are almost all small; the real cost is the
 hostile-input work and the real-file comparison for each, about the same per format as the ten done in batches C and D.

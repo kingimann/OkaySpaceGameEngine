@@ -389,7 +389,8 @@ static void TestRegistryBasics() {
         "HoldableObject", "LookAtIK", "FootIK", "LimbIK",
         "NetInventory", "RootMotion", "TerrainDigger", "VoxelDigger", "WorldStreamer", "Consumables",
         "UITextBind", "UIBarBind", "UIAnimation", "AimOffset", "SequencePlayer",
-        "ProceduralObjectHolding", "BuildPiece", "BuilderMode", "PoseCapture", "CraftingMenu"};
+        "ProceduralObjectHolding", "BuildPiece", "BuilderMode", "PoseCapture", "CraftingMenu",
+        "BehaviorTreeRunner", "SplineMesh", "SplineInstancer"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

@@ -20,6 +20,8 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/BehaviorTreeRunner.hpp"
+#include "okay/Components/SplineMesh.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/BuildPiece.hpp"
 #include "okay/Components/BuilderMode.hpp"
@@ -1735,6 +1737,63 @@ void RegisterPoseCapture() {
     b.Commit();
 }
 
+// BehaviorTreeRunner (record "btrunner"). The blackboard overrides are a list.
+void RegisterBehaviorTreeRunner() {
+    PropertyBuilder<BehaviorTreeRunner> b("BehaviorTreeRunner", "btrunner", "Gameplay");
+    b.AddAssetPath("treePath", &BehaviorTreeRunner::treePath, "file").Tooltip("The .okaybt behaviour tree")
+     .AddFloat("tickRate", &BehaviorTreeRunner::tickRate).Range(0, 1e4, 0.5).Tooltip("Ticks per second (0 = every frame)")
+     .AddBool("runOnStart", &BehaviorTreeRunner::runOnStart).Tooltip("Start the tree when the scene starts")
+     .AddBool("debug", &BehaviorTreeRunner::debug).Tooltip("Log every node that finishes")
+     .AddBool("homeOverride", &BehaviorTreeRunner::homeOverride).Tooltip("Use the home point instead of the start position")
+     .AddVec3("homePoint", &BehaviorTreeRunner::homePoint).Range(-kBig, kBig, 0.1).Tooltip("Home position when the override is on");
+    b.Commit();
+}
+
+// SplineMesh (record "splinemesh"). The custom profile is a list; meshAxis has the
+// values 0 and 2, which the enum builder cannot map yet.
+void RegisterSplineMesh() {
+    PropertyBuilder<SplineMesh> b("SplineMesh", "splinemesh", "Rendering");
+    b.AddString("spline", &SplineMesh::spline).Tooltip("Object holding the Spline (empty = this object)")
+     .AddEnum("mode", &SplineMesh::mode, {"Extrude", "Repeat"}).Tooltip("Sweep a profile along the curve, or repeat a mesh")
+     .Section("Extrude")
+     .AddEnum("profile", &SplineMesh::profile, {"Road", "Strip", "Tube", "Rail", "Custom"}).Tooltip("Cross-section shape")
+     .AddFloat("width", &SplineMesh::width).Range(0, kBig, 0.05).Tooltip("Cross-section width")
+     .AddFloat("height", &SplineMesh::height).Range(0, kBig, 0.01).Tooltip("Cross-section height")
+     .AddInt("sides", &SplineMesh::sides).Range(3, 256, 1).Tooltip("Tube roundness")
+     .AddBool("closedProfile", &SplineMesh::closedProfile).Tooltip("Custom: join the last point back to the first")
+     .AddBool("capEnds", &SplineMesh::capEnds).Tooltip("Close the open ends")
+     .AddFloat("segmentLength", &SplineMesh::segmentLength).Range(0.01, kBig, 0.05).Tooltip("Spacing of the cross-sections along the curve")
+     .AddFloat("uvTileLength", &SplineMesh::uvTileLength).Range(0.001, kBig, 0.1).Tooltip("The texture repeats every this many units")
+     .Section("Repeat")
+     .AddString("sourceMesh", &SplineMesh::sourceMesh).Tooltip("Built-in mesh name or a .obj / .okaymesh file")
+     .AddFloat("spacing", &SplineMesh::spacing).Range(0, kBig, 0.05).Tooltip("Gap between copies")
+     .AddVec3("meshScale", &SplineMesh::meshScale).Range(0, kBig, 0.05).Tooltip("Scale of each copy")
+     .AddBool("stretchToFit", &SplineMesh::stretchToFit).Tooltip("Stretch the copies a little to fill the whole length")
+     .AddBool("generateCollider", &SplineMesh::generateCollider).Tooltip("Keep a Mesh Collider on the object");
+    b.Commit();
+}
+
+// SplineInstancer (record "splineinstancer"). seed is an unsigned int; not a property yet.
+void RegisterSplineInstancer() {
+    PropertyBuilder<SplineInstancer> b("SplineInstancer", "splineinstancer", "Rendering");
+    b.AddString("spline", &SplineInstancer::spline).Tooltip("Object holding the Spline (empty = this object)")
+     .AddString("templateName", &SplineInstancer::templateName).Tooltip("Scene object to copy (wins over the others)")
+     .AddAssetPath("prefabPath", &SplineInstancer::prefabPath, "prefab").Tooltip("Or a prefab file")
+     .AddString("meshName", &SplineInstancer::meshName).Tooltip("Or a built-in mesh")
+     .AddFloat("spacing", &SplineInstancer::spacing).Range(0.01, kBig, 0.1).Tooltip("Distance between items along the curve")
+     .AddFloat("startOffset", &SplineInstancer::startOffset).Range(0, kBig, 0.1).Tooltip("The first item is this far along")
+     .AddFloat("sideOffset", &SplineInstancer::sideOffset).Range(-kBig, kBig, 0.1).Tooltip("Distance across the curve (negative = the other side)")
+     .AddBool("bothSides", &SplineInstancer::bothSides).Tooltip("Mirror every item to the other side")
+     .AddFloat("jitter", &SplineInstancer::jitter).Range(0, kBig, 0.05).Tooltip("Random offset along and across the curve")
+     .AddFloat("rotationJitter", &SplineInstancer::rotationJitter).Range(0, 360, 1).Tooltip("Random turn about the up axis in degrees")
+     .AddFloat("scaleMin", &SplineInstancer::scaleMin).Range(0, 1e3, 0.05).Tooltip("Smallest random scale")
+     .AddFloat("scaleMax", &SplineInstancer::scaleMax).Range(0, 1e3, 0.05).Tooltip("Largest random scale")
+     .AddEnum("align", &SplineInstancer::align, {"Upright", "Curve"}).Tooltip("Keep items upright, or tilt them with the curve")
+     .AddVec3("rotationOffset", &SplineInstancer::rotationOffset).Range(-360, 360, 1).Tooltip("Extra turn of every item in degrees")
+     .AddInt("maxCount", &SplineInstancer::maxCount).Range(0, 1000000, 1).Tooltip("Most items placed");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2380,6 +2439,9 @@ void RegisterGameplayProperties() {
     RegisterBuildPiece();
     RegisterBuilderMode();
     RegisterPoseCapture();
+    RegisterBehaviorTreeRunner();
+    RegisterSplineMesh();
+    RegisterSplineInstancer();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

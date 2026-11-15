@@ -313,7 +313,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   4. S - Recover prompt also covers script and graph buffers. Depends on: 22.2 package 4.
 - **Open:** the player has no handler; the Windows handler has never run on a real Windows machine (compiled with MinGW only); a stripped release gives offsets and mangled names, not file and line (docs/crash_reports.md). Sending is in 17.16 and 48.1.
 - **Related:** 22.2, 22.4, 15.9, 17.1, 48.1
-- **Words:** crash recovery, Recover Autosave, crash log, okay_crash.txt, okay_crashlog.txt, OKAY_TRACE, unclean shutdown, crash reports
+- **Words:** crash recovery, Recover Autosave, crash log, okay_crash.txt, okay_crashlog.txt, OKAY_BREADCRUMB, OKAY_TEST_CRASH, OKAY_TEST_CRASH_LATE, OKAY_CRASH_DIR, unclean shutdown, crash reports
 - **Seen as:** editor closed by itself and I want my scene back; "OkaySpace crashed" box; launcher says the editor crashed
 - **Ask me like:** "list every recoverable autosave after a crash"; "add a crash handler to the player"
 

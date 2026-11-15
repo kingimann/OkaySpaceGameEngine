@@ -394,7 +394,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Suggested priority:** High - a player-side report is the cheapest way to learn what breaks on real machines.
 - **Open:** first step: reuse `okaycrash::handler::Install` in the player (report next to the game, plus last Console lines) and let the launcher send those too; file and line numbers for a stripped release need the release's `OkayEngine.debug` keyed by build id (proposal in docs/crash_reports.md); a real Windows crash is unverified.
 - **Related:** 22.3, 17.1, 18.4, 23.4
-- **Words:** crash report, crash handler, okay_crash.txt, backtrace, minidump, bug report, crash log, last step, OKAY_TRACE
+- **Words:** crash report, crash handler, okay_crash.txt, backtrace, minidump, bug report, crash log, last step, OKAY_BREADCRUMB, OKAY_TEST_CRASH_LATE, OKAY_CRASH_UPLOAD, send crash reports
 - **Seen as:** a player says "it crashed" and I have nothing; the launcher shows editor crashes only
 - **Ask me like:** "add a crash handler and report file to the player"; "add a Send report button with the last log lines"
 

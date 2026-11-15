@@ -56,6 +56,8 @@ exception has the same few frames whatever caused it, so for those the last step
   one go), so it can run when the program is in a bad state. A fault inside the handler ends the program; it never loops.
 * On Windows the full report with raw `module + offset` frames is on disk **before** dbghelp is loaded. Function names are a second pass that
   replaces the file only if it works, so a hang or a fault inside dbghelp costs the names, not the report.
+* On Windows the report files are written with Unicode (UTF-16) paths, so a user name outside the ANSI code page (the installer puts the editor
+  under `%LOCALAPPDATA%\<user name>`) does not stop the report being written.
 * A stack overflow is reported too: on Windows the work (and the message box) runs on a thread with its own stack, on Linux on an alternate
   signal stack (set up for the thread that starts the handlers).
 * If two threads fault at the same moment, the first writes the report and the second waits (up to 20 seconds) instead of ending the

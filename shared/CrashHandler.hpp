@@ -65,8 +65,11 @@ namespace okaycrash {
 namespace handler {
 
 struct Config {
-    char dir[1100];        // where the reports go, with a trailing separator
-    char exe[1100];        // full path of the program
+    char dir[1100];        // where the reports go, with a trailing separator (POSIX; UTF-8)
+#if defined(_WIN32)
+    wchar_t dirW[1100];    // the same on Windows, in UTF-16: a user name outside the ANSI code page must not stop the report being written
+#endif
+    char exe[1100];        // full path of the program (UTF-8)
     char version[32];
     long utcOffset;        // seconds east of UTC for "When:" (POSIX; fixed at startup)
     bool dialog;           // Windows: show the "OkaySpace crashed" box
@@ -165,9 +168,9 @@ inline std::size_t Unwind(const CONTEXT* start, unsigned long long* pcs, std::si
 #endif
 }
 
-inline bool WriteFileAt(const char* path, const char* data, std::size_t n, bool append, unsigned long long truncateTo = (unsigned long long)-1,
+inline bool WriteFileAt(const wchar_t* path, const char* data, std::size_t n, bool append, unsigned long long truncateTo = (unsigned long long)-1,
                         unsigned long long* endBefore = nullptr) {
-    HANDLE h = CreateFileA(path, append ? FILE_APPEND_DATA | FILE_WRITE_DATA : GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+    HANDLE h = CreateFileW(path, append ? FILE_APPEND_DATA | FILE_WRITE_DATA : GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                            append ? OPEN_ALWAYS : CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
     if (append) {
@@ -192,6 +195,14 @@ inline bool WriteFileAt(const char* path, const char* data, std::size_t n, bool 
     return ok;
 }
 
+// "<dir><name>" in UTF-16.
+inline void PathInW(wchar_t* out, std::size_t cap, const wchar_t* name) {
+    std::size_t n = 0;
+    for (const wchar_t* d = g_cfg.dirW; *d && n + 1 < cap; ++d) out[n++] = *d;
+    for (const wchar_t* d = name; *d && n + 1 < cap; ++d) out[n++] = *d;
+    out[n] = L'\0';
+}
+
 // The text of a fault (everything that is not the backtrace itself).
 struct Details {
     char exception[512];
@@ -209,7 +220,8 @@ struct Pending {
     unsigned long long pcs[48];
     std::size_t n;
     bool exactFirst;
-    char crashPath[1300], logPath[1300], mark[160];
+    wchar_t crashPath[1300], logPath[1300];
+    char mark[160];
     unsigned long long histStart;
 };
 inline Pending g_pending;
@@ -306,8 +318,8 @@ inline void WriteReport(const Details& d, const CONTEXT* from, std::size_t skip,
     p.n = from ? Unwind(from, p.pcs, 48, skip) : 0;
     p.exactFirst = exactFirst;
     FillFault(p);
-    PathIn(p.crashPath, sizeof(p.crashPath), kCrashFile);
-    PathIn(p.logPath, sizeof(p.logPath), kLogFile);
+    PathInW(p.crashPath, sizeof(p.crashPath) / sizeof(wchar_t), L"okay_crash.txt");
+    PathInW(p.logPath, sizeof(p.logPath) / sizeof(wchar_t), L"okay_crashlog.txt");
     { ctx::Out m(p.mark, sizeof(p.mark)); m.S("\n========== crash @ ").S(p.when).S(" (v").S(g_cfg.version).S(") ==========\n"); }
 
     const std::size_t len = Compose(p.f, p.pcs, p.n, false, exactFirst);
@@ -437,19 +449,22 @@ inline void BuildId(char* out, std::size_t cap, const char* stamp) {
 }
 
 inline void InstallPlatform(const char* buildStamp) {
-    char exe[MAX_PATH] = "";
-    GetModuleFileNameA(nullptr, exe, MAX_PATH);
-    CopyStr(g_cfg.exe, sizeof(g_cfg.exe), exe);
-    CopyStr(g_cfg.dir, sizeof(g_cfg.dir), exe);
-    char* slash = std::strrchr(g_cfg.dir, '\\');
-    if (slash) slash[1] = '\0'; else g_cfg.dir[0] = '\0';
-    if (const char* dev = std::getenv("OKAY_CRASH_DIR"); dev && *dev) {
-        const DWORD a = GetFileAttributesA(dev);
+    wchar_t exeW[MAX_PATH] = L"";
+    GetModuleFileNameW(nullptr, exeW, MAX_PATH);
+    // UTF-8 for the report's "Exe:" line; UTF-16 for the files (the ANSI code page cannot hold every user name).
+    WideCharToMultiByte(CP_UTF8, 0, exeW, -1, g_cfg.exe, (int)sizeof(g_cfg.exe), nullptr, nullptr);
+    g_cfg.exe[sizeof(g_cfg.exe) - 1] = '\0';
+    std::size_t n = 0;
+    for (; exeW[n] && n + 1 < sizeof(g_cfg.dirW) / sizeof(wchar_t); ++n) g_cfg.dirW[n] = exeW[n];
+    g_cfg.dirW[n] = L'\0';
+    while (n > 0 && g_cfg.dirW[n - 1] != L'\\' && g_cfg.dirW[n - 1] != L'/') g_cfg.dirW[--n] = L'\0';   // keep the folder and its trailing separator
+    if (const wchar_t* dev = _wgetenv(L"OKAY_CRASH_DIR"); dev && *dev) {
+        const DWORD a = GetFileAttributesW(dev);
         if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY)) {
-            ctx::Out o(g_cfg.dir, sizeof(g_cfg.dir));
-            o.S(dev);
-            const std::size_t n = std::strlen(dev);
-            if (n && dev[n - 1] != '\\' && dev[n - 1] != '/') o.C('\\');
+            std::size_t k = 0;
+            for (; dev[k] && k + 2 < sizeof(g_cfg.dirW) / sizeof(wchar_t); ++k) g_cfg.dirW[k] = dev[k];
+            if (k && dev[k - 1] != L'\\' && dev[k - 1] != L'/') g_cfg.dirW[k++] = L'\\';
+            g_cfg.dirW[k] = L'\0';
         }
     }
     g_cfg.mainThread = GetCurrentThreadId();

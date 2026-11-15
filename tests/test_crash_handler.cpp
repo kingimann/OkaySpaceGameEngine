@@ -126,7 +126,7 @@ int main() {
     CHECK(loaded.size() == 1 && loaded[0].signature == r.signature && loaded[0].frames == r.frames);
     CHECK(loaded[0].console.size() == 200);
 
-    // What the launcher would send for this real report: scrubbed (the program's folder stands in for the user's home), within 100 KB, valid columns.
+    // What the launcher would send for this real report: scrubbed (the program's folder stands in for the user's home), within 64 KB, valid columns.
     {
         const std::string exeDir = fs::path(r.Info("Exe")).parent_path().string();
         okaycrash::ScrubContext sc; sc.homeDirs = {exeDir};

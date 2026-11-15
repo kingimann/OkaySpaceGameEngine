@@ -394,9 +394,9 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [48.1](feature_map/43-proposals.md#481-crash-reports) | Crash reports | Partial | the editor writes detailed reports and the launcher sends them (scrubbed, default on) and makes GitHub issues once the owner runs the table SQL; next: reuse the handler in the player; file and line for a stripped release... |
+| [48.1](feature_map/43-proposals.md#481-crash-reports) | Crash reports | Partial | the editor writes detailed reports and the launcher sends them (scrubbed, default on, after a one-time notice) and makes GitHub issues once the owner runs the table SQL and sets the repository variable `CRASH_ISSUES_ENABLED`; next: reuse the handler in the player; file and line for a stripped release... |
 | [48.2](feature_map/43-proposals.md#482-opt-in-analytics-events) | Opt-in analytics events | Planned | first step: an `Analytics::Event(name, fields)` API that does nothing unless consent is on, writes to a local file first, and a... |
-| [48.3](feature_map/43-proposals.md#483-consent-and-privacy) | Consent and privacy | Partial | crash reports have a switch (on by default) with a disclosure and a preview; no first-run dialog, no switch for analytics events. |
+| [48.3](feature_map/43-proposals.md#483-consent-and-privacy) | Consent and privacy | Partial | crash reports have a switch (on by default) with a disclosure, a one-time notice before the first send and a preview; no general consent dialog component, no switch for analytics events. |
 | [48.4](feature_map/43-proposals.md#484-collection-backend-and-dashboards) | Collection backend and dashboards | Partial | the `crash_reports` table (insert-only) is written and tested locally, not yet on the real project; the `events` table and a web view are not built. | |
 
 ### 49. Cloud services

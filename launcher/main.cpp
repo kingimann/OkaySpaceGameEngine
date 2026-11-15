@@ -5850,7 +5850,7 @@ static void PumpPrivacy(okay::account::AccountService& account) {
 }
 // ---- Sending crash reports (docs/crash_reports.md, shared/CrashUpload.hpp) ----
 // A new report in okay_crashlog.txt is scrubbed and sent as one row of the Supabase table crash_reports by a worker thread. The rules (the
-// Settings switch and OKAY_CRASH_UPLOAD=0, at most 5 a day, never twice, retry after a pause, 100 KB, the anon key may only insert) are
+// Settings switch and OKAY_CRASH_UPLOAD=0, at most 5 a day, never twice, retry after a pause, 64 KB, the notice before the first send, the anon key may only insert) are
 // shared/CrashUpload.hpp's and are tested there; this part only runs them. The sent / refused ids are kept in okay_crash_sent.txt next to
 // the reports. State is touched on the UI thread only; the worker hands its answer over under g_crashUpMutex.
 static std::string g_crashUpNote;                        // the last result, one plain sentence, shown on the Crash reports page

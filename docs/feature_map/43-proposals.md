@@ -383,14 +383,14 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 48.1.2 Crash Log tab - `editor/main.cpp` - View > Crash Log shows past reports with a copy button for support
   - 48.1.3 Launcher crash page - `shared/CrashReports.hpp`, `launcher/main.cpp` - Settings > Crash reports parses the log, names the exception (for example "Access violation") and notifies once per new crash
   - 48.1.4 Player crash handler - `player/main.cpp` - no crash handler found in the player (`okaycrash::handler::Install` is written to be reused there)
-  - 48.1.5 Sending and issues - `shared/CrashScrub.hpp`, `shared/CrashUpload.hpp`, `scripts/crash_to_issue.py`, `docs/sql/crash_reports.sql` - scrubbed upload to an insert-only table, a GitHub job that makes one issue per crash signature, a Report on GitHub button (17.16); consent switch on by default, `OKAY_CRASH_UPLOAD=0`
+  - 48.1.5 Sending and issues - `shared/CrashScrub.hpp`, `shared/CrashUpload.hpp`, `scripts/crash_to_issue.py`, `docs/sql/crash_reports.sql` - scrubbed upload to an insert-only table, a GitHub job (opt-in by the repository variable `CRASH_ISSUES_ENABLED`) that makes one issue per crash signature, a Report on GitHub button (17.16); consent switch on by default with a one-time notice, `OKAY_CRASH_UPLOAD=0`
 - **Code:** `editor/main.cpp`, `shared/CrashHandler.hpp`, `shared/CrashContext.hpp`, `shared/CrashReports.hpp`, `shared/CrashScrub.hpp`, `shared/CrashUpload.hpp`, `launcher/main.cpp`, `scripts/crash_to_issue.py`, `player/main.cpp`
 - **API:** `OKAY_BREADCRUMB("step")`, `okaycrash::handler::Install`, `okaycrash::ParseLog`, `okaycrash::Load`, `okaycrash::ExceptionName`, `okaycrash::Signature`, `okaycrash::Scrub`, `okaycrash::upload::Run`
 - **Editor:** View > Crash Log
 - **Docs:** `docs/crash_reports.md`, `docs/editor.md`, `docs/launcher-multiplayer.md`
 - **Tests:** `crash_reports`; `crash_context`; `crash_handler`; `crash_scrub`; `crash_upload`
-- **Status:** Partial - the editor records detailed crashes and the launcher can send them (default on, scrubbed) and make GitHub issues from them once the owner has run the table SQL; the shipped player records nothing.
-- **Exists today:** All Parts except the player handler. The server half needs the one-time setup in docs/crash_reports.md; none of it has run on real Windows or against the real project.
+- **Status:** Partial - the editor records detailed crashes and the launcher can send them (default on, scrubbed, after a one-time notice) and make GitHub issues from them once the owner has run the table SQL and set the repository variable; the shipped player records nothing.
+- **Exists today:** All Parts except the player handler. The server half needs the two one-time steps in docs/crash_reports.md; none of it has run on real Windows or against the real project. An independent security review (2026-11-15) was answered in code and tests.
 - **Suggested priority:** High - a player-side report is the cheapest way to learn what breaks on real machines.
 - **Open:** first step: reuse `okaycrash::handler::Install` in the player (report next to the game, plus last Console lines) and let the launcher send those too; file and line numbers for a stripped release need the release's `OkayEngine.debug` keyed by build id (proposal in docs/crash_reports.md); a real Windows crash is unverified.
 - **Related:** 22.3, 17.1, 18.4, 23.4
@@ -422,14 +422,14 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **What:** Ask before anything is collected or sent, explain what, and let the player change their mind.
 - **Parts:**
   - 48.3.1 Prefs and settings screens - `Core/Prefs`, `Components/SettingsScreen` - a place to store a consent flag and show a toggle
-  - 48.3.2 Consent dialog and policy text - `-` - not built
-  - 48.3.3 Crash report switch - `launcher/main.cpp`, `shared/CrashUpload.hpp` - Settings > Crash reports > Send crash reports automatically (on by default, the owner's choice), a one-line disclosure of exactly what is sent, a preview, `OKAY_CRASH_UPLOAD=0`
+  - 48.3.2 Consent dialog and policy text - `launcher/main.cpp`, `shared/CrashUpload.hpp` - not built as a shared component; the crash report notice (48.3.3) is the only one (`NoticeText`, `NextStep`)
+  - 48.3.3 Crash report switch - `launcher/main.cpp`, `shared/CrashUpload.hpp` - Settings > Crash reports > Send crash reports automatically (on by default, the owner's choice), a disclosure of exactly what is sent and that it becomes a public GitHub issue, a one-time notice window before the first send, a preview, `OKAY_CRASH_UPLOAD=0`
 - **Code:** `Core/Prefs`, `Components/SettingsScreen`, `launcher/main.cpp`, `shared/CrashUpload.hpp`
 - **API:** `Prefs::SetBool`
 - **Editor:** none
 - **Docs:** `docs/game_ui.md`
 - **Tests:** `prefs`, `pausemenu`
-- **Status:** Partial - the launcher has a consent switch for crash reports (on by default, with a disclosure and a preview); there is no first-run dialog and no switch for analytics events.
+- **Status:** Partial - the launcher has a consent switch for crash reports (on by default, with a disclosure, a one-time notice before the first send and a preview); there is no general consent dialog component and no switch for analytics events.
 - **Exists today:** A settings screen and typed Prefs, and the crash report switch.
 - **Suggested priority:** Low - required before 48.2 or an upload in 48.1 ships.
 - **Open:** first step: a first-run consent dialog component and a settings toggle bound to one Prefs key that all senders check.
@@ -443,12 +443,12 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 - **Parts:**
   - 48.4.1 SQL for the existing backend - `docs/sql/*` - accounts, social and match tables for Supabase
   - 48.4.2 Dashboards - `-` - not built
-  - 48.4.3 Crash reports table - `docs/sql/crash_reports.sql` - insert-only for the public key (nine columns, checked), read and prune only for the service role, 300 rows an hour cap; a GitHub job reads it (17.16)
+  - 48.4.3 Crash reports table - `docs/sql/crash_reports.sql` - insert-only for the public key (nine columns, checked, 64 KB), read and prune only for the service role, 60 rows an hour and 32 MB in all with an advisory lock, deletes its own old rows; a GitHub job reads it (17.16)
 - **Code:** `docs/sql/social.sql`, `docs/sql/matches.sql`, `docs/sql/crash_reports.sql`
 - **API:** none
 - **Editor:** none
 - **Docs:** `docs/supabase-backend.md`, `docs/crash_reports.md`
-- **Tests:** `publish_supabase_checks`; `tests/scripts/test_crash_reports_sql.sh` (CI `sql-tests`)
+- **Tests:** `publish_supabase_checks`; `tests/scripts/test_crash_reports_sql.sh` (CI `sql-tests`: includes 30 senders at once and the upgrade of the first version)
 - **Status:** Partial - a `crash_reports` table with row-level security is written and tested against a local PostgreSQL; it is not on the real project until the owner runs it. No events table, no dashboard.
 - **Exists today:** A Supabase backend for other features, and the crash table's SQL.
 - **Suggested priority:** Low.

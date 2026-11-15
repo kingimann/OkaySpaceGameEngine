@@ -3308,6 +3308,11 @@ okay_e3_reader_test(ndo NdoReader.cpp)
 # The import seam routes the batch-E3 formats (slots 34 to 36) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_e3 test_own_dispatch_e3.cpp)
 target_link_libraries(test_own_dispatch_e3 PRIVATE okay::engine)
+foreach(_f IQM COB)   # -DOKAY_OWN_<FMT>=ON: the off-by-default checks are skipped for that format
+    if(OKAY_OWN_${_f})
+        target_compile_definitions(test_own_dispatch_e3 PRIVATE OKAY_EXPECT_OWN_${_f})
+    endif()
+endforeach()
 add_test(NAME own_dispatch_e3 COMMAND test_own_dispatch_e3 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Fails when OKAY_OWN_IQM / OKAY_OWN_COB / OKAY_OWN_NDO is ON but the engine did not get the matching OKAY_OWN_<FMT>_DEFAULT (see engine/CMakeLists.txt).

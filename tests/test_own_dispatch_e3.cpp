@@ -73,7 +73,15 @@ int main() {
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         UnsetEnv(c.env);
         // off by default; without Assimp the format cannot be read and the message names the switch
-        if (!AssimpAvailable()) {
+        // (skipped for a format whose CMake option is ON in this build: its default is then own)
+        bool defaultOn = false;
+#ifdef OKAY_EXPECT_OWN_IQM
+        if (std::string(c.env) == "OKAY_OWN_IQM") defaultOn = true;
+#endif
+#ifdef OKAY_EXPECT_OWN_COB
+        if (std::string(c.env) == "OKAY_OWN_COB") defaultOn = true;
+#endif
+        if (!AssimpAvailable() && !defaultOn) {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             ImportedModel d; std::string e2;
             CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find(c.env) != std::string::npos);

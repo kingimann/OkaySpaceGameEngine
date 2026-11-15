@@ -375,7 +375,7 @@ void TestEveryRegisteredKind() {
     RUN_SUITE("every registered kind: the verdict matches what the scene file saves");
     RegisterTestKinds();
     int kinds = 0, enabled = 0, onceOnly = 0, inexact = 0, unsavedKinds = 0;
-    std::vector<std::string> bad, inexactKinds, enabledKinds, notTwo;
+    std::vector<std::string> bad, inexactKinds, enabledKinds, notTwo, tooBigKinds;
     for (const auto& info : PropertyRegistry::All()) {
         if (!info || !info->add || info->objectLevel || info->properties.empty()) continue;
         if (info->name == "HalfRegistered" || info->name == "OneRecord") continue;   // made by this test, checked in TestCopyExactness
@@ -393,7 +393,9 @@ void TestEveryRegisteredKind() {
         Component* copy = info->add(*g2);
         if (copy) { PasteComponentValues(CopyComponentValues(*a), *copy); copy->enabled = a->enabled; }
         const bool sameText = copy && Saved(*g) == Saved(*g2);
-        if (verdict.exact != sameText) bad.push_back(info->name + " (verdict exact=" + std::to_string(verdict.exact) + " but saved text equal=" + std::to_string(sameText) + "): " + verdict.note);
+        const bool tooBig = !verdict.exact && verdict.note.find("too big") != std::string::npos;   // the menu does not compare an object whose text is over 1 MB
+        if (tooBig) tooBigKinds.push_back(info->name);
+        else if (verdict.exact != sameText) bad.push_back(info->name + " (verdict exact=" + std::to_string(verdict.exact) + " but saved text equal=" + std::to_string(sameText) + "): " + verdict.note);
         if (!verdict.exact) inexactKinds.push_back(info->name + ": " + verdict.note);
         // (1) what the menu says.
         std::string why;
@@ -430,6 +432,7 @@ void TestEveryRegisteredKind() {
     std::cout << "\n";
     for (const std::string& n : inexactKinds) std::cout << "  not exact: " << n << "\n";
     for (const std::string& n : notTwo) std::cout << "  not reloaded as two: " << n << "\n";
+    for (const std::string& n : tooBigKinds) std::cout << "  saved text too big to compare (Duplicate is refused for it): " << n << "\n";
     CHECK(kinds > 80);
     CHECK(onceOnly > 60);                                           // nearly everything is a kind the browser hides once present
     CHECK(enabled >= 1);

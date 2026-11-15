@@ -1593,6 +1593,28 @@ target_link_libraries(test_vs_script_coverage PRIVATE okay::engine)
 target_compile_definitions(test_vs_script_coverage PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_script_coverage COMMAND test_vs_script_coverage)
 
+# Online and engine-API visual-script nodes run as nodes (vs_net_nodes, vs_api_silent, vs_net_link_pin) and the Online demo of the
+# Node Playground (vs_online_playground). Kept here, not at the end of the file, so a branch that appends there merges cleanly.
+add_executable(test_vs_net_nodes test_vs_net_nodes.cpp)
+target_link_libraries(test_vs_net_nodes PRIVATE okay::engine)
+add_test(NAME vs_net_nodes COMMAND test_vs_net_nodes)
+
+add_executable(test_vs_api_silent test_vs_api_silent.cpp)
+target_link_libraries(test_vs_api_silent PRIVATE okay::engine)
+add_test(NAME vs_api_silent COMMAND test_vs_api_silent)
+
+add_executable(test_vs_net_link_pin test_vs_net_link_pin.cpp)
+target_link_libraries(test_vs_net_link_pin PRIVATE okay::engine)
+add_test(NAME vs_net_link_pin COMMAND test_vs_net_link_pin)
+
+# The Online demo of the visual-script Node Playground (examples/visual_script/playground/online.*): the shipped scene
+# played from disk, then its graph in two scenes (a host and a guest) joining by link.
+add_executable(test_vs_online_playground test_vs_online_playground.cpp)
+target_include_directories(test_vs_online_playground PRIVATE ${CMAKE_SOURCE_DIR}/editor)   # editor/VsPlayground.hpp (no ImGui needed)
+target_link_libraries(test_vs_online_playground PRIVATE okay::engine)
+target_compile_definitions(test_vs_online_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_online_playground COMMAND test_vs_online_playground)
+
 add_executable(test_ui_animation test_ui_animation.cpp)
 target_link_libraries(test_ui_animation PRIVATE okay::engine)
 add_test(NAME ui_animation COMMAND test_ui_animation)
@@ -3553,23 +3575,3 @@ add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
-
-add_executable(test_vs_net_nodes test_vs_net_nodes.cpp)
-target_link_libraries(test_vs_net_nodes PRIVATE okay::engine)
-add_test(NAME vs_net_nodes COMMAND test_vs_net_nodes)
-
-add_executable(test_vs_api_silent test_vs_api_silent.cpp)
-target_link_libraries(test_vs_api_silent PRIVATE okay::engine)
-add_test(NAME vs_api_silent COMMAND test_vs_api_silent)
-
-add_executable(test_vs_net_link_pin test_vs_net_link_pin.cpp)
-target_link_libraries(test_vs_net_link_pin PRIVATE okay::engine)
-add_test(NAME vs_net_link_pin COMMAND test_vs_net_link_pin)
-
-# The Online demo of the visual-script Node Playground (examples/visual_script/playground/online.*): the shipped scene
-# played from disk, then its graph in two scenes (a host and a guest) joining by link.
-add_executable(test_vs_online_playground test_vs_online_playground.cpp)
-target_include_directories(test_vs_online_playground PRIVATE ${CMAKE_SOURCE_DIR}/editor)   # editor/VsPlayground.hpp (no ImGui needed)
-target_link_libraries(test_vs_online_playground PRIVATE okay::engine)
-target_compile_definitions(test_vs_online_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-add_test(NAME vs_online_playground COMMAND test_vs_online_playground)

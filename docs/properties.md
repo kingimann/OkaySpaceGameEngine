@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2371 properties on 171 types, as `property_registry` counts them ("covered 171 component types, 2371 properties"; a number before a slash counts the authored ones; the rest are
+2419 properties on 177 types, as `property_registry` counts them ("covered 177 component types, 2419 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -326,6 +326,7 @@ has `enabled`.
 | HoldableObject, LookAtIK | 23, 12 | hold style, hands, weight, socket, the custom / first-person / third-person placement and both hand grips (`leftGripCurl` and so on); look target, axis, weight, limits, eyes and distance fade (the bone chain, per-bone weights and eye bones are lists) |
 | FootIK | 31 | bone names, planting (weight, rays, pelvis, knee bend), foot axes and probes, foot lock. The hip and knee limits and the unsigned `groundMask` are not properties yet |
 | LimbIK | 18 | bone names, goal (target, rotation, blend), bend (pole, pole mode, bend limits) and solve settings. The upper and lower joint limits are not properties yet |
+| NetInventory, RootMotion, TerrainDigger, VoxelDigger, WorldStreamer, Consumables | 6, 5, 11, 9, 8, 3 | net inventory limits; root motion mode and options; terrain and voxel brush settings (the record does not save `VoxelDigger.removeFloaters`, so it is not a property yet); world streaming cells and files; consumable switches (the recipes are a list) |
 
 How the new types are described, so a tool can rely on it:
 

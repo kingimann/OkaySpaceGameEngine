@@ -1,3 +1,4 @@
+#include "okay/Inventory/Durability.hpp"
 #include "okay/Components/Equipment.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/ItemPickup.hpp"
@@ -222,12 +223,14 @@ GameObject* Equipment::Shown(int slot) const {
 
 float Equipment::ArmorBonus() const {
     float a = 0.0f;
-    for (const auto& s : slots) if (!s.item.empty()) a += CustomF(ItemDatabase::Get().Find(s.item), "armor");
+    for (const auto& s : slots)   // a broken piece protects nothing (Durability.hpp)
+        if (!s.item.empty() && !durability::Broken(s.item, s.data)) a += CustomF(ItemDatabase::Get().Find(s.item), "armor");
     return a;
 }
 int Equipment::DefenseBonus() const {
     float d = 0.0f;
-    for (const auto& s : slots) if (!s.item.empty()) d += CustomF(ItemDatabase::Get().Find(s.item), "defense");
+    for (const auto& s : slots)
+        if (!s.item.empty() && !durability::Broken(s.item, s.data)) d += CustomF(ItemDatabase::Get().Find(s.item), "defense");
     return (int)d;
 }
 float Equipment::WeightWorn() const {

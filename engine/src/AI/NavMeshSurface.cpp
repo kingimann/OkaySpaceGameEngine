@@ -47,6 +47,9 @@ namespace {
 // What a bake was made from, as plain numbers: equal keys mean equal bake input, bit for bit.
 void PutF(std::vector<std::uint32_t>& k, float f) { std::uint32_t u; std::memcpy(&u, &f, 4); k.push_back(u); }
 void PutV(std::vector<std::uint32_t>& k, const Vec3& v) { PutF(k, v.x); PutF(k, v.y); PutF(k, v.z); }
+// TODO(play-start-hitch): NavBakeInput::meshes (Mesh Collider triangles) is NOT hashed here yet. When
+// claude/navmesh-mesh-collider is on main, add the mesh corners, area, twoSided, maxMeshTriangles and
+// maxMeshColumnVisits to the key, or editing a Mesh Collider would be skipped as "unchanged".
 std::vector<std::uint32_t> BakeKey(const NavBakeInput& in, const NavMeshBuildSettings& s) {
     std::vector<std::uint32_t> k;
     PutF(k, s.agentRadius); PutF(k, s.agentHeight); PutF(k, s.maxSlope); PutF(k, s.maxStep); PutF(k, s.cellSize); PutF(k, s.cellHeight);

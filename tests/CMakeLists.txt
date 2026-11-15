@@ -3563,6 +3563,22 @@ add_executable(test_inspector_clipboard_rules test_inspector_clipboard_rules.cpp
 target_include_directories(test_inspector_clipboard_rules PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 add_test(NAME inspector_clipboard_rules COMMAND test_inspector_clipboard_rules)
 
+# What depends on Dear ImGui itself, in a window-less ImGui context (mouse input simulated): which right-click menu opens (the field's, or the empty space's,
+# never both) and that two components of one kind do not share widget ids. It compiles the four core ImGui sources of the same ImGui the editor uses
+# (the copy fetched above for a tests-only configure, or the editor's own) and links nothing else.
+if(TARGET okay_imgui)
+    FetchContent_GetProperties(imgui SOURCE_DIR OKED_IMGUI_SRC)
+else()
+    set(OKED_IMGUI_SRC ${imgui_SOURCE_DIR})
+endif()
+if(OKED_IMGUI_SRC AND EXISTS "${OKED_IMGUI_SRC}/imgui.cpp")
+    set(OKED_IMGUI_CORE ${OKED_IMGUI_SRC}/imgui.cpp ${OKED_IMGUI_SRC}/imgui_draw.cpp ${OKED_IMGUI_SRC}/imgui_tables.cpp ${OKED_IMGUI_SRC}/imgui_widgets.cpp)
+    add_executable(test_inspector_imgui test_inspector_imgui.cpp ${OKED_IMGUI_CORE})
+    target_include_directories(test_inspector_imgui PRIVATE ${PROJECT_SOURCE_DIR}/editor ${OKED_IMGUI_SRC})
+    set_source_files_properties(${OKED_IMGUI_CORE} PROPERTIES COMPILE_OPTIONS "-w")   # third-party code: its warnings are not ours
+    add_test(NAME inspector_imgui COMMAND test_inspector_imgui)
+endif()
+
 # "Only one per object": the one table the Add Component browser, Duplicate and Paste As New share (editor/AddComponentRules.hpp), checked against the browser's sources.
 add_executable(test_add_component_rules test_add_component_rules.cpp)
 target_include_directories(test_add_component_rules PRIVATE ${PROJECT_SOURCE_DIR}/editor)

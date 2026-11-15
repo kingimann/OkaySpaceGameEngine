@@ -529,7 +529,8 @@ CopyCheck CheckCopyIsExact(const GameObject& go, const Component& c) {
     struct Loaded { GameObject* object = nullptr; Component* comp = nullptr; };
     const auto load = [&](Scene& scene) {
         Loaded l;
-        l.object = SceneSerializer::InstantiateFromText(scene, text);
+        std::vector<std::string> quiet;   // kept here so a warning is not printed to the console for a scratch copy
+        l.object = SceneSerializer::InstantiateFromText(scene, text, nullptr, &quiet);
         if (!l.object) return l;
         int n = 0;
         for (const auto& up : l.object->Components())

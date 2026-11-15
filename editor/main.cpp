@@ -73,6 +73,7 @@
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
 #include "AddComponentRules.hpp"        // the kinds Add Component offers once per object (Duplicate and Paste As New obey the same table)
+#include "ComponentIdScope.hpp"           // widget ids of one component's card are its own (two components of one kind never share them)
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
@@ -29290,7 +29291,7 @@ void DrawInspector(EditorState& ed) {
         if (!curComp || curComp == go->transform) continue;
         // Every widget of this component's card gets an id of its own (the component's address is mixed into the id stack), so two
         // components of one kind (a duplicate, a second collider ...) never share a "Size##bc": a drag on the copy cannot drive the original.
-        struct ComponentIdScope { explicit ComponentIdScope(const void* c) { ImGui::PushID(c); } ~ComponentIdScope() { ImGui::PopID(); } } componentIdScope(curComp);
+        const oked::ComponentIdScope componentIdScope(curComp);
         oked::SetTipComponent(curComp);   // a card that never calls CompHeader still binds its fields (tooltips, right-click menu) to THIS component, never the previous one's
         sManagedNote = ManagedNoteFor(ed, go, curComp); sManagedFor = curComp;
         const float fbCursorY = ImGui::GetCursorPosY();   // unchanged at the end = no hand-written Inspector drew this one

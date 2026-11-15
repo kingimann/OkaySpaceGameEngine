@@ -1335,7 +1335,10 @@ static void FieldMark(const char* label, const PropertyDesc* knownDesc, const fl
             const ctx::Rect row = ctx::FieldRowRect(ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x,
                                                     ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x, *wholeRowTopY,
                                                     ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().y, ImGui::GetStyle().FramePadding.y);
-            opens = s_router.FieldOpensInRow(frame, click, ImGui::IsWindowHovered(), row, hasMenu);
+            // The window must be under the mouse and the mouse inside its visible part (a row scrolled half out of view must not answer on the title bar).
+            const ImRect& visible = ImGui::GetCurrentWindow()->InnerClipRect;
+            const bool windowHot = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(visible.Min, visible.Max, false);
+            opens = s_router.FieldOpensInRow(frame, click, windowHot, row, hasMenu);
         } else {
             opens = s_router.FieldOpens(frame, click, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled), hasMenu);
         }

@@ -113,6 +113,8 @@ public:
         Fire();
     }
 
+    /// True while a press in an open scrolling list has become a drag.
+    bool IsDragScrolling() const { return m_dragging; }
     bool IsHovered() const { return m_hover; }
     int  HoveredOption() const { return m_hoverOption; }   // -1 = none
 
@@ -261,7 +263,39 @@ public:
                                               m.y <= lo.y + ls.y * (float)(1 + OpenRowCount()));
             if (wheel != 0.0f && overList) { ScrollBy(wheel > 0.0f ? -1 : 1); m_hoverOption = OptionAt(m); }
         }
-        if (Input::GetMouseButtonDown(0)) {
+        // Drag-to-scroll (mouse, or a finger: touch drives the same pointer). A press on an
+        // option of a scrolling list only arms a pick; moving past kTouchDragPixels turns it into
+        // a scroll, and the pick happens on release over the same row (a tap). A drag never picks.
+        if (open && Scrolls() && Input::GetMouseButtonDown(0) && !m_hover && m_hoverOption >= 0) {
+            m_pressOption = m_hoverOption; m_pressStartY = m.y; m_pressScroll = ScrollOffset();
+            m_pressing = true; m_dragging = false;
+            ClaimClick(gameObject);
+        }
+        if (m_pressing) {
+            if (!open || !Scrolls()) { m_pressing = false; m_dragging = false; }
+            else if (Input::GetMouseButton(0)) {
+                const float dy = m.y - m_pressStartY;
+                if (!m_dragging && (dy > Input::kTouchDragPixels || dy < -Input::kTouchDragPixels)) m_dragging = true;
+                if (m_dragging) {
+                    Vec2 ro, rs; HeaderBox(ro, rs);
+                    if (rs.y > 0.0f) {
+                        const float rows = -dy / rs.y;   // finger up -> list moves up -> later rows
+                        m_scroll = m_pressScroll + (int)(rows < 0.0f ? rows - 0.5f : rows + 0.5f);
+                        m_scroll = ScrollOffset();
+                        m_hoverOption = OptionAt(m);
+                    }
+                }
+            }
+        }
+        const bool pressUp = m_pressing && !Input::GetMouseButton(0);
+        if (pressUp) {
+            m_pressing = false;
+            const bool tap = !m_dragging && m_hoverOption >= 0 && m_hoverOption == m_pressOption;
+            m_dragging = false;
+            if (tap) { SetValue(m_hoverOption); open = false; m_filter.clear(); }
+        } else if (m_pressing) {
+            // finger / button still down: nothing else reacts to this press
+        } else if (Input::GetMouseButtonDown(0)) {
             if (m_hover) {
                 open = !open;                       // toggle the list
                 if (open) EnsureVisible(value);     // opens with the chosen option on screen
@@ -321,6 +355,11 @@ private:
     bool m_hover = false;
     bool m_focused = false;
     int  m_hoverOption = -1;
+    bool m_pressing = false;   // runtime only: a press on a scrolling list's option is being decided (tap or drag)
+    bool m_dragging = false;
+    int  m_pressOption = -1;
+    int  m_pressScroll = 0;
+    float m_pressStartY = 0.0f;
     int  m_scroll = 0;       // runtime only: first match shown in a capped list
     std::string m_filter;   // runtime only; cleared when the list closes
 

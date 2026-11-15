@@ -81,7 +81,14 @@ int main() {
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         TestUnsetEnv(c.env);
         // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
-        if (!AssimpAvailable()) {
+        bool builtOn = false;   // -DOKAY_OWN_<FMT>=ON makes our reader the default, so the off-by-default checks do not apply
+#ifdef OKAY_EXPECT_OWN_PMX
+        if (std::string(c.ext) == ".pmx") builtOn = true;
+#endif
+#ifdef OKAY_EXPECT_OWN_LWS
+        if (std::string(c.ext) == ".lws" || std::string(c.ext) == ".mot") builtOn = true;
+#endif
+        if (!AssimpAvailable() && !builtOn) {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
             ImportedModel d; std::string e2;
@@ -93,11 +100,15 @@ int main() {
         SetImportBackend("*", ImportBackend::Default);
         TestSetEnv("OKAY_OWN_LWS", "1");
         CHECK(EffectiveImportBackend(".lws") == ImportBackend::Own && EffectiveImportBackend(".mot") == ImportBackend::Own && EffectiveImportBackend(".LWS") == ImportBackend::Own);
+        TestSetEnv("OKAY_OWN_PMX", "0");   // pinned off so that a -DOKAY_OWN_PMX=ON build still has PMX off here
         CHECK(EffectiveImportBackend(".pmx") != ImportBackend::Own);
+        TestUnsetEnv("OKAY_OWN_PMX");
         TestUnsetEnv("OKAY_OWN_LWS");
         TestSetEnv("OKAY_OWN_PMX", "1");
+        TestSetEnv("OKAY_OWN_LWS", "0");
         CHECK(EffectiveImportBackend(".pmx") == ImportBackend::Own && EffectiveImportBackend(".lws") != ImportBackend::Own && EffectiveImportBackend(".nff") != ImportBackend::Own && EffectiveImportBackend(".obj") == ImportBackend::Own);
         TestUnsetEnv("OKAY_OWN_PMX");
+        TestUnsetEnv("OKAY_OWN_LWS");
     }
     // a format is not absorbed by a neighbour's reader
     {

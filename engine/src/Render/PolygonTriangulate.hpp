@@ -17,11 +17,12 @@ namespace detail {
 inline constexpr std::size_t kMaxEarCorners = 256;
 
 // Triangles as indices into `p` (0 .. p.size()-1), winding kept as the polygon's own.
-inline void TriangulatePolygon(const std::vector<Vec3>& p, std::vector<std::array<int, 3>>& tris) {
+// `earLimit`: polygons with more corners than this are fanned (ear clipping costs up to n^3); a reader facing hostile files passes a small one.
+inline void TriangulatePolygon(const std::vector<Vec3>& p, std::vector<std::array<int, 3>>& tris, std::size_t earLimit = kMaxEarCorners) {
     const int n = (int)p.size();
     tris.clear();
     auto fan = [&]() { for (int i = 1; i + 1 < n; ++i) tris.push_back({0, i, i + 1}); };
-    if (n <= 3 || (std::size_t)n > kMaxEarCorners) { fan(); return; }
+    if (n <= 3 || (std::size_t)n > earLimit) { fan(); return; }
     // Newell normal, dominant axis dropped
     double nx = 0, ny = 0, nz = 0;
     for (int i = 0; i < n; ++i) {

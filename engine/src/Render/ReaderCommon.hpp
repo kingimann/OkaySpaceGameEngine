@@ -268,6 +268,17 @@ inline void ApplyUpAxis(ImportedModel& m, bool zUp, bool flatten) {
     }
 }
 
+// True when the upper 3x3 of `a` cannot be inverted (a zero or nearly zero scale on some axis, or axes that lie flat): Mat4::Inverse() would
+// hand back the identity for it without saying so. Scale independent: the determinant is compared with the product of the axis lengths.
+inline bool Singular3(const Mat4& a) {
+    const double c0[3] = {a.m[0], a.m[1], a.m[2]}, c1[3] = {a.m[4], a.m[5], a.m[6]}, c2[3] = {a.m[8], a.m[9], a.m[10]};
+    auto len = [](const double* v) { return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]); };
+    const double l0 = len(c0), l1 = len(c1), l2 = len(c2);
+    if (!(l0 > 1e-9) || !(l1 > 1e-9) || !(l2 > 1e-9)) return true;
+    const double det = c0[0] * (c1[1] * c2[2] - c2[1] * c1[2]) - c1[0] * (c0[1] * c2[2] - c2[1] * c0[2]) + c2[0] * (c0[1] * c1[2] - c1[1] * c0[2]);
+    return !(std::fabs(det) > 1e-6 * l0 * l1 * l2);
+}
+
 inline bool PartInRange(const ImportedPart& p) {
     for (const Vec3& v : p.mesh.vertices) if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) return false;
     for (const Vec3& v : p.mesh.normals) if (!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) return false;

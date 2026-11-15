@@ -95,9 +95,13 @@ struct ComponentMenuState {
     std::string neededBy;               ///< name of a component on this object that needs this one ("" = none)
     bool hasValues = false;             ///< the property registry knows this component: copy / paste / reset / duplicate work
     bool canAddAnother = true;          ///< a second one of this kind may be added (it can be made, and is not "only one per object")
+    std::string noAnotherReason;        ///< why not, when canAddAnother is false ("" = the kind is only allowed once per object)
+    bool copyExact = true;              ///< a copy made from the registered values saves as the same scene text as this component
+    std::string copyNote;               ///< when not: what such a copy would leave out ("its colour gradient and curves"), plain words
     bool prefabChanged = false;         ///< changed from its prefab: the prefab rows go here
     std::string clipType;               ///< kind of component the clipboard holds ("" = nothing)
-    bool clipCanAdd = false;            ///< "Paste As New Component" can add that kind to this object
+    bool clipCanAdd = false;            ///< "Paste As New Component" can add that kind to at least one selected object
+    int pasteNewObjects = 1;            ///< how many selected objects Paste As New would really add a component to (not how many have this kind)
     std::string clipBlockedReason;      ///< why not, when clipCanAdd is false and the clipboard holds something
     bool hasScriptFile = false;         ///< Script / Visual Script: the script is a file in the project
 };
@@ -136,13 +140,20 @@ inline std::vector<Item> ComponentMenu(const ComponentMenuState& s) {
         else if (!s.hasValues)
             m.push_back(Off(dup, "The editor cannot copy the values of this kind of component yet."));
         else if (!s.canAddAnother)
-            m.push_back(Off(dup, "An object can hold only one " + s.typeName + "."));
+            m.push_back(Off(dup, s.noAnotherReason.empty()
+                                     ? "Only one per object: the Add Component list does not offer a second " + s.typeName + " either."
+                                     : s.noAnotherReason));
+        else if (!s.copyExact)
+            m.push_back(Off(dup, "A copy would not be the same as this " + s.typeName + ": " +
+                                     (s.copyNote.empty() ? std::string("part of what it saves is not one of its copyable values.") : s.copyNote)));
         else
             m.push_back(dup);
 
         const std::string noValues = "The editor cannot copy the values of this kind of component yet.";
         Item cp = Row("comp.copy", "Copy Values");
-        cp.tip = "Copy every value of this component. Paste Values and Paste As New Component use it.";
+        cp.tip = "Copy the values of this component that its property list holds (what scripts and Custom Actions can read and write). "
+                 "Paste Values and Paste As New Component use them." +
+                 (s.copyExact ? std::string() : " Not copied: " + (s.copyNote.empty() ? std::string("part of what it saves.") : s.copyNote));
         m.push_back(s.hasValues ? cp : Off(cp, noValues));
 
         Item ps = Row("comp.paste", Many("Paste Values", s.selectionCount));
@@ -152,7 +163,8 @@ inline std::vector<Item> ComponentMenu(const ComponentMenuState& s) {
         else if (s.clipType != s.typeName) m.push_back(Off(ps, "The copied values belong to a " + s.clipType + ", not a " + s.typeName + "."));
         else m.push_back(ps);
 
-        Item pn = Row("comp.pasteNew", Many(s.clipType.empty() ? std::string("Paste As New Component") : "Paste As New " + s.clipType, s.selectionCount));
+        // The count is the objects the new component goes to (every selected object that can take it), not the ones that have this kind.
+        Item pn = Row("comp.pasteNew", Many(s.clipType.empty() ? std::string("Paste As New Component") : "Paste As New " + s.clipType, s.pasteNewObjects));
         pn.tip = "Add a new component of the copied kind, with the copied values.";
         if (s.clipType.empty()) m.push_back(Off(pn, "Copy a component's values first."));
         else if (!s.clipCanAdd) m.push_back(Off(pn, s.clipBlockedReason.empty() ? "That kind of component cannot be added here." : s.clipBlockedReason));
@@ -202,17 +214,47 @@ inline std::vector<Item> ComponentMenu(const ComponentMenuState& s) {
 struct TransformMenuState {
     int selectionCount = 1;
     bool clipValid = false;      ///< a Transform has been copied
-    bool scaleLocked = false;    ///< a camera: its scale is not editable
-    bool atDefault = false;      ///< position 0, no rotation, scale 1 (on every selected object)
+    int cameraCount = 0;         ///< selected objects that are cameras: a camera's scale is not editable, so the scale rows skip them
+    bool scaleLocked = false;    ///< every selected object is a camera: there is no scale to change
+    bool posAtDefault = false;   ///< position 0 on every selected object
+    bool rotAtDefault = false;   ///< no rotation on every selected object
+    bool scaleAtDefault = false; ///< scale 1 on every selected object whose scale can be changed (true when there is none)
+};
+
+/// What the menu needs to know about each selected object.
+struct TransformObjectState {
+    bool camera = false;
     bool posAtDefault = false, rotAtDefault = false, scaleAtDefault = false;
 };
+
+/// The Transform menu's state for a selection. Position and rotation count every object; the scale answer counts only the objects
+/// whose scale can change, so a camera among them neither greys Reset Scale for the others nor makes the scale look "not default".
+inline TransformMenuState TransformStateFor(const std::vector<TransformObjectState>& objs, bool clipValid) {
+    TransformMenuState st;
+    st.selectionCount = (int)objs.size() < 1 ? 1 : (int)objs.size();
+    st.clipValid = clipValid;
+    st.posAtDefault = st.rotAtDefault = st.scaleAtDefault = true;
+    int scalable = 0;
+    for (const TransformObjectState& o : objs) {
+        st.posAtDefault = st.posAtDefault && o.posAtDefault;
+        st.rotAtDefault = st.rotAtDefault && o.rotAtDefault;
+        if (o.camera) { ++st.cameraCount; continue; }
+        ++scalable;
+        st.scaleAtDefault = st.scaleAtDefault && o.scaleAtDefault;
+    }
+    st.scaleLocked = !objs.empty() && scalable == 0;
+    return st;
+}
 
 inline std::vector<Item> TransformMenu(const TransformMenuState& s) {
     using namespace detail;
     std::vector<Item> m;
+    const bool mixed = s.cameraCount > 0 && !s.scaleLocked;   // some are cameras, some are not
+    const std::string keeps = std::to_string(s.cameraCount) + (s.cameraCount == 1 ? " selected camera keeps" : " selected cameras keep") + " its scale (a camera cannot be scaled).";
     m.push_back(Tip(Row("xform.copy", "Copy Transform Values"), "Copy position, rotation and scale (relative to the parent)."));
     const std::string needClip = "Copy the Transform of an object first.";
     Item ps = Row("xform.paste", Many("Paste Transform Values", s.selectionCount));
+    if (mixed) ps.tip = "Writes position, rotation and scale. " + keeps;
     m.push_back(s.clipValid ? ps : Off(ps, needClip));
     Item only = Row("", "Paste Only");
     only.submenu = "xform.pasteOnly";
@@ -221,12 +263,15 @@ inline std::vector<Item> TransformMenu(const TransformMenuState& s) {
 
     const std::string cam = "A camera cannot be scaled.";
     Item all = Row("xform.resetAll", Many("Reset Transform", s.selectionCount));
-    all.tip = s.scaleLocked ? "Position to 0 and no rotation. The camera's scale stays as it is." : "Position to 0, no rotation, scale 1.";
-    const bool allDone = s.scaleLocked ? (s.posAtDefault && s.rotAtDefault) : s.atDefault;
+    all.tip = s.scaleLocked ? "Position to 0 and no rotation. The camera's scale stays as it is."
+              : mixed       ? "Position to 0, no rotation, scale 1. " + keeps
+                            : "Position to 0, no rotation, scale 1.";
+    const bool allDone = s.posAtDefault && s.rotAtDefault && (s.scaleLocked || s.scaleAtDefault);
     m.push_back(allDone ? Off(all, "Already at the default.") : all);
     Item rp = Row("xform.resetPos", "Reset Position");
     Item rr = Row("xform.resetRot", "Reset Rotation");
     Item rsc = Row("xform.resetScale", "Reset Scale");
+    if (mixed) rsc.tip = keeps;
     m.push_back(s.posAtDefault ? Off(rp, "Position is already 0.") : rp);
     m.push_back(s.rotAtDefault ? Off(rr, "There is no rotation already.") : rr);
     m.push_back(s.scaleLocked ? Off(rsc, cam) : s.scaleAtDefault ? Off(rsc, "Scale is already 1.") : rsc);
@@ -245,6 +290,8 @@ inline std::vector<Item> SubmenuItems(const std::string& id, const TransformMenu
         m.push_back(Row("xform.pastePos", "Position"));
         m.push_back(Row("xform.pasteRot", "Rotation"));
         Item sc = Row("xform.pasteScale", "Scale");
+        if (s.cameraCount > 0 && !s.scaleLocked)
+            sc.tip = std::to_string(s.cameraCount) + (s.cameraCount == 1 ? " selected camera keeps" : " selected cameras keep") + " its scale (a camera cannot be scaled).";
         m.push_back(s.scaleLocked ? Off(sc, "A camera cannot be scaled.") : sc);
     }
     return m;
@@ -266,7 +313,12 @@ struct PropertyMenuState {
     bool readOnly = false;
     bool hasDefault = false;            ///< the value of a new component is known
     bool atDefault = false;             ///< every selected object already holds it
-    bool clipboardFits = false;         ///< the text on the clipboard reads as this kind of value
+    bool clipboardFits = false;         ///< the text on the clipboard reads as this kind of value and the field would accept it
+    std::string clipPreview;            ///< the clipboard text as it would be pasted ("1.6 0.6 3", cut short when long); the tip of Paste Value
+    std::string clipRefusal;            ///< why the clipboard text cannot be pasted here when clipboardFits is false ("" = it is not this kind of value)
+    bool clipIsSame = false;            ///< the clipboard holds what the field already has on every selected object: pasting would change nothing
+    int skippedCount = 0;               ///< selected objects the write leaves out (the cameras, for a scale)
+    std::string skippedWhy;             ///< ... and why ("a camera cannot be scaled")
     bool hasRange = false;
     double rangeMin = 0, rangeMax = 0;
     bool valueEmpty = false;            ///< String / Asset / Object: nothing set
@@ -278,7 +330,13 @@ inline std::vector<Item> PropertyMenu(const PropertyMenuState& s) {
     using namespace detail;
     std::vector<Item> m;
     const std::string ro = "This value is read-only.";
-    auto write = [&](Item it) { return s.readOnly ? Off(std::move(it), ro) : it; };
+    // Objects left out of a write (cameras, for a scale) are named on every row that writes, so "(2 objects)" is not a surprise.
+    const std::string skip = s.skippedCount > 0
+        ? "Skips " + std::to_string(s.skippedCount) + (s.skippedCount == 1 ? " selected object" : " selected objects") +
+          (s.skippedWhy.empty() ? std::string(".") : ": " + s.skippedWhy + ".")
+        : std::string();
+    auto withSkip = [&](Item it) { if (!skip.empty()) it.tip = it.tip.empty() ? skip : it.tip + " " + skip; return it; };
+    auto write = [&](Item it) { return s.readOnly ? Off(std::move(it), ro) : withSkip(std::move(it)); };
 
     if (s.overridden) { Item slot; slot.id = kPrefabSlot; m.push_back(slot); m.push_back(Sep()); }
 
@@ -287,16 +345,20 @@ inline std::vector<Item> PropertyMenu(const PropertyMenuState& s) {
     if (s.readOnly) m.push_back(Off(rs, ro));
     else if (!s.hasDefault) m.push_back(Off(rs, "The editor does not know the default of this value."));
     else if (s.atDefault) m.push_back(Off(rs, "Already at its default."));
-    else m.push_back(rs);
+    else m.push_back(withSkip(rs));
     m.push_back(Sep());
 
     Item cp = Row("prop.copy", "Copy Value");
     cp.tip = "Copy " + s.name + " as text. It can be pasted into another field of the same kind.";
     m.push_back(cp);
     Item pv = Row("prop.paste", Many("Paste Value", s.selectionCount));
+    if (!s.clipPreview.empty()) pv.tip = "Paste " + s.clipPreview;
     if (s.readOnly) m.push_back(Off(pv, ro));
-    else if (!s.clipboardFits) m.push_back(Off(pv, "The clipboard does not hold a value this field can take. Use Copy Value on a field of the same kind."));
-    else m.push_back(pv);
+    else if (!s.clipboardFits)
+        m.push_back(Off(pv, !s.clipRefusal.empty() ? s.clipRefusal
+                                                   : "The clipboard does not hold a value this field can take. Use Copy Value on a field of the same kind."));
+    else if (s.clipIsSame) m.push_back(Off(pv, "The field already holds the copied value."));
+    else m.push_back(withSkip(pv));
     Item path = Row("prop.copyPath", "Copy Property Path");
     path.tip = "Copy \"" + s.path + "\": the name scripts, the visual script and Custom Actions use for this value.";
     m.push_back(path);
@@ -351,7 +413,8 @@ struct ObjectMenuState {
     std::string clipObjectName;         ///< ... from this object
     int componentCount = 0;             ///< components after the Transform
     std::string clipType;               ///< kind of component on the component clipboard ("" = none), for Paste As New
-    bool clipCanAdd = false;
+    bool clipCanAdd = false;            ///< Paste As New can add that kind to at least one selected object
+    int pasteNewObjects = 1;            ///< how many selected objects it would really add a component to
     std::string clipBlockedReason;
 };
 
@@ -390,7 +453,7 @@ inline std::vector<Item> BackgroundMenu(const ObjectMenuState& s) {
     using namespace detail;
     std::vector<Item> m;
     m.push_back(Row("obj.addComponent", "Add Component..."));
-    Item pn = Row("comp.pasteNew", Many(s.clipType.empty() ? std::string("Paste As New Component") : "Paste As New " + s.clipType, s.selectionCount));
+    Item pn = Row("comp.pasteNew", Many(s.clipType.empty() ? std::string("Paste As New Component") : "Paste As New " + s.clipType, s.pasteNewObjects));
     pn.tip = "Add a new component of the copied kind, with the copied values.";
     if (s.clipType.empty()) m.push_back(Off(pn, "Copy a component's values first."));
     else if (!s.clipCanAdd) m.push_back(Off(pn, s.clipBlockedReason.empty() ? "That kind of component cannot be added here." : s.clipBlockedReason));

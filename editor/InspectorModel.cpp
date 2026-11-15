@@ -1,4 +1,5 @@
 #include "InspectorModel.hpp"
+#include "AddComponentRules.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -431,24 +432,28 @@ std::string NeededByName(const GameObject& go, const Component& c) {
     return by ? ComponentDisplayName(*by) : std::string();
 }
 
-bool CanAddAnother(const Component& c, std::string* why) {
-    auto info = PropertyRegistry::FindFor(c);
-    if (!info || !info->add) { if (why) *why = "The editor cannot make another of this kind of component."; return false; }
-    if (ComponentRules::IsUnique(info->type)) { if (why) *why = "An object can hold only one " + TypeDisplayName(info->name) + "."; return false; }
-    return true;
+namespace {
+
+std::string OnlyOneReason(const std::string& typeName) {
+    return "Only one per object: a second " + TypeDisplayName(typeName) + " cannot be added (the Add Component list does not offer one either).";
 }
 
-namespace {
+// Is the kind "only one per object": the Add Component browser's table, or a project rule (ComponentRules::SetUnique).
+bool OnePerObject(const ComponentTypeInfo& info) {
+    return IsOnePerObject(info.type) || ComponentRules::IsUnique(info.type);
+}
+
 int IndexInComponents(const GameObject& go, const Component& c) {
     int i = 0;
     for (const auto& up : go.Components()) { if (up.get() == &c) return i; ++i; }
     return -1;
 }
-}   // namespace
 
-Component* DuplicateComponent(GameObject& go, Component& source) {
-    if (!CanAddAnother(source)) return nullptr;
+// A new component of `source`'s kind on `go`, holding the registered values of `source` and its on / off state, right below it.
+// No rule is asked here (CanAddAnother / CanPasteAsNew do that); CheckCopyIsExact uses it on scratch objects to see what a copy keeps.
+Component* CloneByValues(GameObject& go, Component& source) {
     auto info = PropertyRegistry::FindFor(source);
+    if (!info || !info->add) return nullptr;
     const ComponentClip clip = CopyComponentValues(source);   // taken first: adding can add required siblings
     Component* fresh = info->add(go);
     if (!fresh || fresh == &source) return nullptr;
@@ -460,16 +465,136 @@ Component* DuplicateComponent(GameObject& go, Component& source) {
     return fresh;
 }
 
+// The lines of a scene text that hold a component's settings: not the ones that only say which component is switched off or
+// where it stands in the list (those name positions, which differ between an original and its copy by design).
+std::vector<std::string> SettingLines(const std::string& text) {
+    std::vector<std::string> out;
+    for (std::size_t at = 0; at < text.size();) {
+        std::size_t nl = text.find('\n', at);
+        if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(at, nl - at);
+        at = nl + 1;
+        std::size_t b = 0;
+        while (b < line.size() && line[b] == ' ') ++b;
+        std::size_t e = b;
+        while (e < line.size() && line[e] != ' ') ++e;
+        const std::string word = line.substr(b, e - b);
+        if (word.empty() || word == "compoff" || word == "comporder") continue;
+        out.push_back(std::move(line));
+    }
+    return out;
+}
+
+// The lines of `a` that `b` does not have, counting repeats (a multiset difference).
+std::vector<std::string> LinesNotIn(const std::vector<std::string>& a, const std::vector<std::string>& b) {
+    std::unordered_map<std::string, int> have;
+    for (const std::string& l : b) ++have[l];
+    std::vector<std::string> out;
+    for (const std::string& l : a) {
+        auto it = have.find(l);
+        if (it != have.end() && it->second > 0) --it->second;
+        else out.push_back(l);
+    }
+    return out;
+}
+
+std::string FirstWord(const std::string& line) {
+    std::size_t b = 0;
+    while (b < line.size() && line[b] == ' ') ++b;
+    std::size_t e = b;
+    while (e < line.size() && line[e] != ' ') ++e;
+    return line.substr(b, e - b);
+}
+
+}   // namespace
+
+bool CanAddAnother(const Component& c, std::string* why) {
+    auto info = PropertyRegistry::FindFor(c);
+    if (!info || !info->add) { if (why) *why = "The editor cannot make another of this kind of component."; return false; }
+    if (OnePerObject(*info)) { if (why) *why = OnlyOneReason(info->name); return false; }
+    return true;
+}
+
+CopyCheck CheckCopyIsExact(const GameObject& go, const Component& c) {
+    CopyCheck r;
+    auto info = PropertyRegistry::FindFor(c);
+    if (!info || !info->add) { r.exact = false; r.note = "the editor cannot make another of this kind"; return r; }
+    // The object alone (its children are not part of the question), as the scene file would write it.
+    const std::string text = SceneSerializer::SerializeObject(go, false);
+    constexpr std::size_t kMaxText = std::size_t(1) << 20;   // a menu must open at once: a bigger object is not checked
+    if (text.size() > kMaxText) { r.exact = false; r.note = "its saved text is too big to compare here"; return r; }
+    const int idx = ComponentIndexOf(go, c);
+    // Scratch copies of the object, loaded from that text (so they hold what the file keeps, nothing more): in one a copy is added,
+    // from the other the component is removed. The records that appear are what a copy saves; the ones that go are what the original saves.
+    struct Loaded { GameObject* object = nullptr; Component* comp = nullptr; };
+    const auto load = [&](Scene& scene) {
+        Loaded l;
+        l.object = SceneSerializer::InstantiateFromText(scene, text);
+        if (!l.object) return l;
+        int n = 0;
+        for (const auto& up : l.object->Components())
+            if (up && PropertyRegistry::FindFor(*up) == info) { if (n++ == idx) { l.comp = up.get(); break; } }
+        return l;
+    };
+    Scene withCopy("copy check a"), withoutOriginal("copy check b");
+    const Loaded a = load(withCopy);
+    if (!a.object) { r.exact = false; r.note = "its saved text does not load back"; return r; }
+    if (!a.comp) { r.saved = false; return r; }   // the scene file does not keep this kind at all: nothing is saved, so nothing can be lost
+    const Loaded b = load(withoutOriginal);
+    if (!b.comp) { r.exact = false; r.note = "its saved text does not load back as the same object"; return r; }
+
+    const std::vector<std::string> before = SettingLines(SceneSerializer::SerializeObject(*a.object, false));
+    if (!CloneByValues(*a.object, *a.comp)) { r.exact = false; r.note = "the editor could not add another"; return r; }
+    const std::vector<std::string> added = LinesNotIn(SettingLines(SceneSerializer::SerializeObject(*a.object, false)), before);
+
+    b.object->RemoveComponent(b.comp);
+    const std::vector<std::string> own = LinesNotIn(before, SettingLines(SceneSerializer::SerializeObject(*b.object, false)));
+
+    if (own.empty() && added.empty()) { r.saved = false; return r; }   // the kind saves nothing
+    if (own.empty()) { r.exact = false; r.note = "the copy would save settings the original does not"; return r; }
+    if (added.empty()) {
+        r.exact = false;
+        r.note = "the scene file keeps only one " + TypeDisplayName(info->name) + " per object, so a second one would not be saved";
+        return r;
+    }
+    std::vector<std::string> addedSorted = added, ownSorted = own;
+    std::sort(addedSorted.begin(), addedSorted.end());
+    std::sort(ownSorted.begin(), ownSorted.end());
+    if (addedSorted == ownSorted) return r;
+    // Name the first saved record that the copy lacks (or has differently).
+    const std::vector<std::string> lacking = LinesNotIn(own, added);
+    const std::vector<std::string> extra = LinesNotIn(added, own);
+    const std::string word = FirstWord(!lacking.empty() ? lacking.front() : extra.front());
+    r.exact = false;
+    r.note = "its saved \"" + word + "\" settings are not all part of its copyable values (the property list does not hold them)";
+    return r;
+}
+
+bool CanDuplicate(const GameObject& go, const Component& source, std::string* why) {
+    if (!CanAddAnother(source, why)) return false;
+    const CopyCheck check = CheckCopyIsExact(go, source);
+    if (!check.exact) { if (why) *why = "A copy would not be the same as the original: " + check.note + "."; return false; }
+    return true;
+}
+
+Component* DuplicateComponent(GameObject& go, Component& source) {
+    if (!CanDuplicate(go, source)) return nullptr;
+    return CloneByValues(go, source);
+}
+
 bool CanPasteAsNew(const GameObject& go, const ComponentClip& clip, std::string* why) {
     if (!clip.Valid()) { if (why) *why = "Copy a component's values first."; return false; }
     auto info = PropertyRegistry::FindByName(clip.type);
     if (!info || !info->add) { if (why) *why = "The editor cannot add a " + TypeDisplayName(clip.type) + " by itself."; return false; }
-    if (ComponentRules::IsUnique(info->type)) {
-        for (const auto& up : go.Components())
-            if (up && PropertyRegistry::FindFor(*up) == info) {
-                if (why) *why = "This object already has a " + TypeDisplayName(info->name) + ", and only one is allowed.";
-                return false;
-            }
+    if (!clip.exact) {
+        if (why) *why = "A new " + TypeDisplayName(info->name) + " made from the copied values would not be the same as the original: " +
+                        (clip.inexactNote.empty() ? std::string("part of what it saves is not one of its copyable values") : clip.inexactNote) + ".";
+        return false;
+    }
+    if (OnePerObject(*info)) {
+        bool has = HasOnePerObjectKind(go, info->type);
+        for (const auto& up : go.Components()) if (up && PropertyRegistry::FindFor(*up) == info) has = true;
+        if (has) { if (why) *why = "Only one per object: this object already has a " + TypeDisplayName(info->name) + "."; return false; }
     }
     return true;
 }
@@ -481,6 +606,17 @@ Component* PasteComponentAsNew(GameObject& go, const ComponentClip& clip) {
     if (!fresh) return nullptr;
     PasteComponentValues(clip, *fresh);
     return fresh;
+}
+
+int PasteAsNewTargets(const std::vector<GameObject*>& objs, const ComponentClip& clip, std::string* firstWhy) {
+    int n = 0;
+    for (GameObject* g : objs) {
+        if (!g) continue;
+        std::string why;
+        if (CanPasteAsNew(*g, clip, &why)) ++n;
+        else if (firstWhy && firstWhy->empty()) *firstWhy = why;
+    }
+    return n;
 }
 
 ObjectClip CopyObjectValues(const GameObject& go) {
@@ -499,9 +635,27 @@ ObjectClip CopyObjectValues(const GameObject& go) {
 
 int PasteObjectValues(const ObjectClip& clip, GameObject& target) {
     int changed = 0;
-    for (const PropertySnapshot::Entry& e : clip.values.entries)   // by kind and position among that kind ("Light#1.intensity"); a value that already matches counts nothing
+    const bool lockScale = ScaleIsLocked(target);   // a camera cannot be scaled: the pasted scale skips it, as every other write to a scale does
+    for (const PropertySnapshot::Entry& e : clip.values.entries) {   // by kind and position among that kind ("Light#1.intensity"); a value that already matches counts nothing
+        if (lockScale && e.component == "Transform" && e.property == "scale") continue;
         if (PropertyRegistry::WriteProperty(target, e.Path(), e.value).changed) ++changed;
+    }
     return changed;
+}
+
+bool ScaleIsLocked(const GameObject& go) { return go.GetComponent<Camera>() != nullptr; }
+
+std::vector<GameObject*> WriteTargets(const std::vector<GameObject*>& objs, const std::string& typeName, const PropertyDesc& desc, int* skipped) {
+    const bool scale = typeName == "Transform" && desc.name == "scale";
+    std::vector<GameObject*> out;
+    int left = 0;
+    for (GameObject* g : objs) {
+        if (!g) continue;
+        if (scale && ScaleIsLocked(*g)) { ++left; continue; }
+        out.push_back(g);
+    }
+    if (skipped) *skipped = left;
+    return out;
 }
 
 PropertyValue DefaultValueOf(const ComponentTypeInfo& info, const PropertyDesc& desc) {
@@ -527,6 +681,73 @@ int ResetField(const std::vector<GameObject*>& objs, const std::string& typeName
     if (!info) return 0;
     const PropertyValue v = DefaultValueOf(*info, desc);
     return v.IsValid() ? WriteField(objs, typeName, index, desc, v) : 0;
+}
+
+namespace {
+
+// What a field of this kind takes, as a phrase after "not" ("the clipboard text is not a number").
+std::string KindPhrase(PropertyType t) {
+    switch (t) {
+        case PropertyType::Bool:      return "a true / false value";
+        case PropertyType::Int:       return "a whole number";
+        case PropertyType::Float:     return "a number";
+        case PropertyType::Vec2:      return "2 numbers";
+        case PropertyType::Vec3:      return "3 numbers";
+        case PropertyType::Vec4:      return "4 numbers";
+        case PropertyType::Quat:      return "4 numbers (a rotation)";
+        case PropertyType::Color:     return "a colour (4 numbers, or #RRGGBB)";
+        case PropertyType::Enum:      return "one of this field's choices";
+        case PropertyType::AssetPath: return "a file path";
+        case PropertyType::ObjectRef: return "an object id";
+        default:                      return "a value of this kind";
+    }
+}
+
+// Why the registry would not take a value that did read as the right kind.
+std::string RefusalFor(const PropertyDesc& d, const PropertyValue& v) {
+    auto finite = [](float f) { return std::isfinite(f); };
+    switch (d.type) {
+        case PropertyType::Float:
+            if (!finite(v.AsFloat())) return "A number that is nan or infinite cannot be pasted.";
+            break;
+        case PropertyType::Vec2: { const Vec2 a = v.AsVec2(); if (!finite(a.x) || !finite(a.y)) return "A number that is nan or infinite cannot be pasted."; break; }
+        case PropertyType::Vec3: { const Vec3 a = v.AsVec3(); if (!finite(a.x) || !finite(a.y) || !finite(a.z)) return "A number that is nan or infinite cannot be pasted."; break; }
+        case PropertyType::Vec4: { const Vec4 a = v.AsVec4(); if (!finite(a.x) || !finite(a.y) || !finite(a.z) || !finite(a.w)) return "A number that is nan or infinite cannot be pasted."; break; }
+        case PropertyType::Quat: { const Quat a = v.AsQuat(); if (!finite(a.x) || !finite(a.y) || !finite(a.z) || !finite(a.w)) return "A number that is nan or infinite cannot be pasted."; if (a.x == 0 && a.y == 0 && a.z == 0 && a.w == 0) return "A rotation of four zeros is not a rotation."; break; }
+        case PropertyType::Color: { const Color a = v.AsColor(); if (!finite(a.r) || !finite(a.g) || !finite(a.b) || !finite(a.a)) return "A number that is nan or infinite cannot be pasted."; break; }
+        case PropertyType::ObjectRef: return "An object id is made of the letters a to f, digits and dashes (up to 64 characters). The clipboard text is not one.";
+        case PropertyType::String:
+        case PropertyType::AssetPath: return "This field takes one line of text without control characters.";
+        case PropertyType::Enum: return "That number is not one of this field's choices.";
+        default: break;
+    }
+    if (d.hasRange && d.rejectOutOfRange) return "The value is outside the range this field takes.";
+    return "This field does not accept that value.";
+}
+
+}   // namespace
+
+PasteCheck CheckPaste(const PropertyDesc& desc, const inspectorctx::ClipboardText& clip, const FieldState& current, const std::string& projectDir) {
+    PasteCheck r;
+    const bool multiLine = desc.type == PropertyType::String && desc.multiline;
+    const inspectorctx::GateResult gate = inspectorctx::GateClipboard(clip, multiLine);
+    if (gate.gate != inspectorctx::PasteGate::Ok) { r.reason = gate.reason; return r; }
+    PropertyValue parsed;
+    if (!desc.ParseText(gate.text, parsed)) {
+        r.reason = "The clipboard text is not " + KindPhrase(desc.type) + ". Use Copy Value on a field of the same kind.";
+        return r;
+    }
+    if (desc.type == PropertyType::AssetPath) {
+        const inspectorctx::PathVerdict path = inspectorctx::CheckAssetPath(parsed.AsString(), projectDir);
+        if (!path.Ok()) { r.reason = path.reason; return r; }
+    }
+    PropertyValue norm;
+    if (!desc.Normalize(parsed, norm)) { r.reason = RefusalFor(desc, parsed); return r; }
+    r.ok = true;
+    r.value = norm;
+    r.preview = inspectorctx::PreviewText(desc.FormatText(norm));
+    r.same = current.have > 0 && !current.mixed && current.value == norm;
+    return r;
 }
 
 const PropertyDesc* FindPropertyForLabel(const ComponentTypeInfo& info, const std::string& label) {
@@ -558,13 +779,16 @@ void ResetTransform(GameObject& go, unsigned parts) {
     if (!t) return;
     if (parts & kTransformPosition) t->localPosition = {0, 0, 0};
     if (parts & kTransformRotation) t->localRotation = Quat::Identity;
-    if ((parts & kTransformScale) && !go.GetComponent<Camera>()) t->localScale = {1, 1, 1};
+    if ((parts & kTransformScale) && !ScaleIsLocked(go)) t->localScale = {1, 1, 1};
 }
 
 unsigned TransformAtDefault(const Transform& t) {
     unsigned at = 0;
     if (t.localPosition.x == 0.0f && t.localPosition.y == 0.0f && t.localPosition.z == 0.0f) at |= kTransformPosition;
-    if (std::fabs(t.localRotation.w) > 0.999999f) at |= kTransformRotation;   // q and -q are the same rotation
+    // "No rotation": the turn part of the quaternion is zero (down to float noise, about a hundred-thousandth of a degree) and w is 1 or -1
+    // (q and -q are the same rotation). The old test (|w| > 0.999999) counted every turn up to 0.16 degrees as none and greyed Reset Rotation.
+    const Quat& q = t.localRotation;
+    if (std::fabs(q.x) <= 1e-7f && std::fabs(q.y) <= 1e-7f && std::fabs(q.z) <= 1e-7f && std::fabs(std::fabs(q.w) - 1.0f) <= 1e-6f) at |= kTransformRotation;
     if (t.localScale.x == 1.0f && t.localScale.y == 1.0f && t.localScale.z == 1.0f) at |= kTransformScale;
     return at;
 }

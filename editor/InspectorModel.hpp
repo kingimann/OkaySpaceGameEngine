@@ -6,6 +6,7 @@
 // right-click menus (duplicate / paste as new / move / reset one value ...; the menu rules themselves are in
 // InspectorContextModel.hpp).
 #include <Okay.hpp>
+#include "InspectorClipboardRules.hpp"
 #include "InspectorContextModel.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
@@ -102,6 +103,11 @@ int PropagateComponentEdit(const std::vector<okay::GameObject*>& selection, okay
 struct ComponentClip {
     std::string type;   ///< registry type name; empty = nothing copied
     okay::PropertySnapshot values;
+    /// A component made from these values saves as the same scene text as the one they were copied from (CheckCopyIsExact). False: the
+    /// kind saves something that is not one of its registered values (a particle system's colour gradient), so Paste As New would
+    /// make a different component. Paste Values (into a component that exists) is not affected: it only writes the registered values.
+    bool exact = true;
+    std::string inexactNote;   ///< when not exact: what a copy leaves out, in plain words
     bool Valid() const { return !type.empty(); }
 };
 ComponentClip CopyComponentValues(const okay::Component& c);
@@ -127,16 +133,37 @@ std::string ComponentDisplayName(const okay::Component& c);
 std::string TypeDisplayName(const std::string& registryTypeName);
 /// A component on `go` that needs `c` (RequireComponent) and would be left without it, as shown; "" when removing `c` is fine.
 std::string NeededByName(const okay::GameObject& go, const okay::Component& c);
-/// True when another component of `c`'s kind may be added to its object: the registry can make one, and the kind is not
-/// "only one per object". `why` gets the reason when not.
+/// True when another component of `c`'s kind may be added to its object: the registry can make one, and the kind is not "only one
+/// per object". "Only one per object" is exactly what the Add Component browser enforces (it hides the row once the object has one:
+/// editor/AddComponentRules.hpp, one table for both), plus any okay::ComponentRules::SetUnique rule. `why` gets the reason when not.
 bool CanAddAnother(const okay::Component& c, std::string* why = nullptr);
+
+/// What a copy of one component would lose, found by trying it: the object's saved text is loaded into a scratch scene, a copy is made
+/// the way Duplicate and Paste As New make one (a new component of the kind with the registered values and the on / off state), and
+/// what the scene file saves for the copy is compared with what it saves for the original, record by record. A kind whose saved text
+/// holds more than its registered values (a particle system's colour gradient and curves) comes out `exact` false, with the name of
+/// the saved record that is not copied in `note`. Nothing in the real scene is touched. Costs a few loads of one object's text:
+/// call it when a menu opens, not every frame.
+struct CopyCheck {
+    bool exact = true;    ///< the copy saves as the same records as the original
+    bool saved = true;    ///< false: the scene file keeps nothing of this kind (it is run-time only), so there was nothing to compare
+    std::string note;     ///< not exact: what the copy leaves out, in plain words
+};
+CopyCheck CheckCopyIsExact(const okay::GameObject& go, const okay::Component& c);
+
+/// True when `source` may be duplicated: CanAddAnother says yes and the copy would be exact (CheckCopyIsExact). `why` gets the reason.
+bool CanDuplicate(const okay::GameObject& go, const okay::Component& source, std::string* why = nullptr);
 /// Add a second component of `source`'s kind to `go` with the same values (the ones Copy Values copies) and the same on / off
-/// state, placed right after `source`. Null when it cannot be done (CanAddAnother says why).
+/// state, placed right after `source`. Null when it cannot be done (CanDuplicate says why).
 okay::Component* DuplicateComponent(okay::GameObject& go, okay::Component& source);
-/// True when the clipboard's kind can be added to `go`. `why` gets the reason when not.
+/// True when the clipboard's kind can be added to `go`: the clipboard holds a component, its copy is exact (ComponentClip::exact), the
+/// registry can make one, and `go` does not already have one when the kind is "only one per object". `why` gets the reason when not.
 bool CanPasteAsNew(const okay::GameObject& go, const ComponentClip& clip, std::string* why = nullptr);
 /// Add a new component of the clipboard's kind to `go` and paste the copied values into it. Null when it cannot be done.
 okay::Component* PasteComponentAsNew(okay::GameObject& go, const ComponentClip& clip);
+/// How many of `objs` Paste As New can really add the clipboard's kind to (the number a menu names). `firstWhy` gets the reason the
+/// first object that cannot take it gives, so a menu with no taker can say why.
+int PasteAsNewTargets(const std::vector<okay::GameObject*>& objs, const ComponentClip& clip, std::string* firstWhy = nullptr);
 
 // ---- Right-click menu actions: a whole object --------------------------------------------------
 /// The component values of one object, without its name, tag, layer or place in the Hierarchy (Transform.parent is left out).
@@ -147,7 +174,8 @@ struct ObjectClip {
 };
 ObjectClip CopyObjectValues(const okay::GameObject& go);
 /// Write the copied values into the components `target` has of the same kinds (matched by kind and position among that
-/// kind); components it lacks are skipped. Returns how many values were written.
+/// kind); components it lacks are skipped, and so is a camera's scale (a camera cannot be scaled, see ScaleIsLocked).
+/// Returns how many values were written.
 int PasteObjectValues(const ObjectClip& clip, okay::GameObject& target);
 
 // ---- Right-click menu actions: one value -------------------------------------------------------
@@ -157,6 +185,29 @@ okay::PropertyValue DefaultValueOf(const okay::ComponentTypeInfo& info, const ok
 int ResetField(const std::vector<okay::GameObject*>& objs, const std::string& typeName, int index, const okay::PropertyDesc& desc);
 /// The property of `info` that a field drawn with this label shows ("Spot Angle##light" -> spotAngle), or null.
 const okay::PropertyDesc* FindPropertyForLabel(const okay::ComponentTypeInfo& info, const std::string& label);
+/// A camera's scale is not editable (scaling warps the view): the Inspector greys its Scale row out, and every edit that reaches
+/// several objects leaves cameras out of a scale.
+bool ScaleIsLocked(const okay::GameObject& go);
+/// The objects a write to this property reaches: all of `objs`, except the cameras for Transform's scale. `skipped` gets how many
+/// were left out. Use it for every field-menu write (Reset to Default, Paste Value, Set to Zero ...), so a multi-selection with a
+/// camera in it never scales the camera.
+std::vector<okay::GameObject*> WriteTargets(const std::vector<okay::GameObject*>& objs, const std::string& typeName,
+                                            const okay::PropertyDesc& desc, int* skipped = nullptr);
+
+/// What Paste Value would do with the text the clipboard held when the menu opened, for one field.
+struct PasteCheck {
+    bool ok = false;               ///< the text is a value this field takes, and may be pasted
+    okay::PropertyValue value;     ///< ok: what would be written, as the field stores it
+    std::string preview;           ///< ok: that value as short text for the tooltip
+    std::string reason;            ///< not ok: why, in plain words ("" never: there is always a reason)
+    bool same = false;             ///< ok, but every selected object already holds it: pasting would change nothing
+};
+/// Decide Paste Value for `desc`. In order: the clipboard has text of a sensible size on one line (InspectorClipboardRules.hpp), the
+/// text reads as this kind of value (PropertyDesc::ParseText), a file path stays inside the project (`projectDir`), and the registry
+/// accepts the value (PropertyDesc::Normalize: not nan or infinite, in range, no control characters, a real object id). `current` is
+/// the field as it stands on the selected objects, to tell "already holds it".
+PasteCheck CheckPaste(const okay::PropertyDesc& desc, const okay::inspectorctx::ClipboardText& clip, const FieldState& current,
+                      const std::string& projectDir);
 
 // ---- Right-click menu actions: the Transform ---------------------------------------------------
 /// Position, rotation and scale relative to the parent, as Copy Transform Values keeps them.

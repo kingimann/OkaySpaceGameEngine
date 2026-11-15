@@ -28,6 +28,10 @@ PCM 8 (unsigned), 16, 24, 32 bit and any bit depth from 1 to 32 stored left-just
 
 Input over 1 GiB, more than 32 channels, a rate over 768,000 Hz or 0, more than 4,096 chunks, and a decoded size over 2^27 samples (512 MiB of float) are refused with a message, before anything is allocated. A data chunk longer than the file (or 0xFFFFFFFF, as streaming writers leave it) is cut at the end of the file, a half frame at the end is dropped, and an IMA step index over 88 is clamped, each with an entry in `warnings`. ADPCM block sizes must fit their headers, an MS ADPCM predictor index outside the table is an error, positions are 64-bit so a chunk size near 2^32 cannot wrap. Nothing reads outside the input; the output size is bounded by the input size times a constant (ADPCM expands at most 4 samples per byte).
 
+## The playback seam (launcher voice clips)
+
+The launcher's only WAV load (`VoiceClipFor`, voice clips) goes through `okay::wav::LoadWavForSdl` in `shared/WavPlayback.hpp`. With the option off (default) it calls `SDL_LoadWAV` exactly as before and copies the samples out. With `-DOKAY_OWN_WAV=ON` or `OKAY_OWN_WAV=1` it calls `okay::wav::LoadForPlayback` (`engine/include/okay/Audio/WavPlayback.hpp`, no SDL in the header): `DecodeWav`, then our own conversion to the device format the call site plays: 32-bit float stays native float, every other encoding (PCM 8/24/32, A-law, mu-law, ADPCM) becomes native 16-bit via `ToS16`; channels and rate are kept. No `SDL_ConvertAudio`. PCM16 mono and stereo come out byte for byte the same as `SDL_LoadWAV`; 8-bit and 32-bit PCM arrive as 16-bit instead of U8/S32 (the call site converted them to 16-bit anyway). Failures (truncated, zero length, bad header, over budget, missing file) return false with a message and no samples. Written from the `okay::wav` output and the call site's needs only. `tests/check_wav_seam_wiring.cmake` (`ctest -R wav_seam_wiring`) fails if `SDL_LoadWAV` is called anywhere in launcher/, shared/, editor/, player/, engine/ or tools/ except that header. Tests: `ctest -R wav_playback` (own path, hostile and zero-length input, and with SDL2 present the option-off versus option-on equivalence). The test WAVs are built in memory (no WAV fixtures are checked in).
+
 ## Specifications used (rule 19a)
 
 Written from public format descriptions only: the Microsoft RIFF / WAVE format registration notes (WAVEFORMAT, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, the sub-format GUID base), ITU-T G.711 (the companding laws), the Microsoft ADPCM block layout and adaptation table, and the IMA Digital Audio Focus and Technical Working Group ADPCM description (the 89-entry step table and index adjust table). **No decoder source was read, copied or followed** (not SDL, libsndfile, dr_wav, ffmpeg or any other). The two ADPCM tables and the seven standard Microsoft coefficient pairs are standard constants from those descriptions, typed in from memory of the published tables and then checked against the independent decoder in Python's `audioop` (IMA, 120 random files) and by hand (MS ADPCM; see below).
@@ -46,7 +50,7 @@ Hand-computed expected values: every PCM width, left-justified 12-in-16, stereo 
 
 ## Not done
 
-- `launcher/main.cpp` still calls `SDL_LoadWAV` (the launcher is off limits for this change); switching that call to `wav::DecodeWav` + `ToS16` and then deleting the SDL call is the next step.
+- Deleting the `SDL_LoadWAV` call itself (in `shared/WavPlayback.hpp`) waits for the owner's approval of the default flip plus one release.
 - `AudioStream` (streamed WAV playback) still uses the old header parser; only whole-file loads (`AudioClip::LoadWAV`) use the own decoder. ADPCM streams are not supported there.
 - `RF64` / `BW64` (files over 4 GiB), `LIST` metadata, loop points (`smpl`) and cue points are not read. GSM, MP3-in-WAV and other tags are refused.
 - Not added to `OKAY_OWN_STACK`.

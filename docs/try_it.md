@@ -50,7 +50,8 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
-| 14 | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
+| 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
+| 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
 
 ---
 
@@ -62,19 +63,26 @@ Code: `VehicleSeat` and `VehicleController` (`docs/vehicle_controller.md`).
 **Steps (template).**
 1. Open the editor (`Tools\OkayEngine.exe`) or the launcher's Create page. Choose **New Project**, pick the template
    **Vehicle (get in and drive)** (group "Game kits"), give it a name, create it.
-2. The scene opens with a red car and a person standing at its left (driver) door. The Hierarchy shows `Car`,
-   `Passenger Seat`, `Player`, `Ground`.
+2. The scene opens on a two-lane road with a red car (about 4 m long) and a person standing at its driver door, which is
+   on the -X side: the car's right side seen from behind. Cones and crates are further down the road. The Hierarchy
+   shows `Car` (with its wheels, seats and glass as children), `Passenger Seat`, `Player`, `Road`, `Ground`.
 3. Press **Play**.
 
 **Steps (example file).** Same scene without making a project: **File > Open...**, paste
 `<install folder>\examples\vehicle\vehicle_test.okayscene`, press Play.
 
 **In play.**
-* Walk to the left side of the car with **W A S D** and the mouse (third person: the camera orbits behind you).
-* Within about two metres of the driver door a prompt says **Drive**. Press **E**: you sit in the car.
-* **W / S** gas and brake or reverse, **A / D** steer, **Space** handbrake. The chase camera follows the car.
-* Press **E** again: you get out at the driver's side and the car brakes to a stop and ignores the keys.
-* Walk to the right door, the prompt says **Ride**. Press **E**: you are carried along but the car does not drive.
+* Walk to the driver door (the side with the steering wheel) with **W A S D** and the mouse (third person: the camera orbits behind you).
+* Within about two metres of the driver door a prompt says **Drive**. Press **E**: you sit down in the driver seat (the
+  chair sit pose, hands forward near the wheel) and the camera swings behind and above the car.
+* **W / S** gas and brake or reverse, **A / D** steer (D turns right), **Space** handbrake. The wheels roll and the
+  front wheels turn. The chase camera follows the car. Weave through the cones.
+* Press **E** again: you stand up beside the car, the camera goes back to you, and the car brakes to a stop and ignores the keys.
+* Walk to the other door (+X side), the prompt says **Ride**. Press **E**: you sit in the passenger seat and are carried
+  along, but the car does not drive.
+* **First person:** press **V** before getting in. After **E** the camera sits at your eyes in the car.
+* **Moving a seat to another car** (a bug fix, see `docs/vehicle_controller.md`): add a second car, press Play, sit in
+  the car, drag the seat object onto the other car in the Hierarchy, press **E**. The first car must not drive by itself.
 
 **How you know it worked.** Before you press E the car does not move when you press W. After E, W moves the car and
 the prompt is gone. After the second E you are standing outside again and W moves you, not the car.
@@ -83,8 +91,8 @@ the prompt is gone. After the second E you are standing outside again and W move
 a player with a first or third person controller). To try it, select `Player`, remove the Third Person Controller and
 add a First Person Controller in the Inspector. Unverified in the editor.
 
-**Known rough.** From `docs/vehicle_controller.md`: the wheels are for looks and do not spin or turn; no sitting or
-steering animation on the character; no camera per seat; multiplayer does not replicate seats; no script or visual
+**Known rough.** From `docs/vehicle_controller.md`: hands do not hold the wheel (generic chair sit); the car is a stack
+of boxes; first person has no mouse look from the seat; the look was only checked in software-renderer screenshots; multiplayer does not replicate seats; no script or visual
 script node for enter and exit yet; a scene saved while someone sits stores the person standing free.
 
 **Tested on main:** the headless test `vehicle_seat` loads `examples/vehicle/vehicle_test.okayscene` from disk and plays
@@ -237,7 +245,7 @@ compiled or run on this machine).
 
 ---
 
-## 14. Add Node menu: 70 topics instead of 19
+## 7d. Add Node menu: 70 topics instead of 19
 
 **What it is.** The panel that opens when you add a node to a visual script (right-click the canvas, press Space, press
 Add node, or drop a wire on empty space). It had 19 topics, and one of them, Advanced, held 515 nodes. Now it has 70

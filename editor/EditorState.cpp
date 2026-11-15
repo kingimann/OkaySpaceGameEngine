@@ -823,7 +823,7 @@ void EditorState::NewVehicleSeats3D() {
     Templates::VehicleSeats3D(m_scene);
     m_suppressUndo = false;
     view3D = true;
-    camTarget = {0, 1, 0};
+    camTarget = {2.2f, 1, 0};   // the car in the template
     camDist = 12.0f;
     m_selected = m_scene.Find("Car");
     StartDocument();

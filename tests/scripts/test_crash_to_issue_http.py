@@ -42,7 +42,7 @@ def serve(handler_cls):
 class FakeSupabase(BaseHTTPRequestHandler):
     rows = []          # shared per test (reset in setUp)
     calls = []         # (method, path, headers dict)
-    deleted = []       # the query of every DELETE, as {"processed_at": "lt.<time>"} or {"created_at": "lt.<time>"}
+    deleted = []       # every DELETE as (kind, cutoff): ("processed", time) or ("unprocessed", time)
     no_table = False   # answer like PostgREST does when the table has not been created
     really_delete = False   # only the test that checks the filters against real dates lets a DELETE remove rows (the other rows have fixed dates)
 
@@ -106,11 +106,17 @@ class FakeSupabase(BaseHTTPRequestHandler):
         if not self._auth():
             return
         q = {k: v[0] for k, v in urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).items()}
-        assert len(q) == 1 and next(iter(q)) in ("processed_at", "created_at") and next(iter(q.values())).startswith("lt."), q   # never an unfiltered delete
-        FakeSupabase.deleted.append(q)
-        col, cutoff = next(iter(q.items()))
+        if set(q) == {"processed_at"} and q["processed_at"].startswith("lt."):
+            kind, cutoff = "processed", q["processed_at"][3:]       # processed rows older than this
+            hit = lambda r: bool(r.get("processed_at")) and r["processed_at"] < cutoff
+        elif set(q) == {"created_at", "processed_at"} and q["processed_at"] == "is.null" and q["created_at"].startswith("lt."):
+            kind, cutoff = "unprocessed", q["created_at"][3:]       # rows nobody processed, created before this
+            hit = lambda r: not r.get("processed_at") and r["created_at"] < cutoff
+        else:
+            raise AssertionError("an unfiltered or unexpected delete: %r" % q)
+        FakeSupabase.deleted.append((kind, cutoff))
         if FakeSupabase.really_delete:
-            FakeSupabase.rows = [r for r in FakeSupabase.rows if not (r.get(col) and r[col] < cutoff[3:])]
+            FakeSupabase.rows = [r for r in FakeSupabase.rows if not hit(r)]
         self._send(204)
 
 
@@ -226,9 +232,9 @@ class Pipeline(unittest.TestCase):
         self.assertTrue(all(r["processed_at"] for r in FakeSupabase.rows))   # every row marked
         self.assertEqual(sorted(r["issue_number"] for r in FakeSupabase.rows if r["signature"] == SIG_A), [first["number"]] * 2)
         self.assertEqual(FakeGitHub.labels_posted, ["crash"])             # the label is created first
-        self.assertEqual(sorted(next(iter(q)) for q in FakeSupabase.deleted), ["created_at", "processed_at"])   # old rows are pruned: processed 7 days, unprocessed 14
-        for q in FakeSupabase.deleted:
-            self.assertRegex(next(iter(q.values())), r"^lt\.\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")   # PostgREST filter: processed_at=lt.<time>
+        self.assertEqual(sorted(k for k, _ in FakeSupabase.deleted), ["processed", "unprocessed"])   # old rows are pruned: processed 7 days, unprocessed 14
+        for _, cutoff in FakeSupabase.deleted:
+            self.assertRegex(cutoff, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         for method, path, hdr in FakeSupabase.calls:                       # the key travels in apikey only, never as a bearer token
             self.assertEqual(hdr.get("apikey"), SERVICE_KEY)
             self.assertNotIn("authorization", hdr)
@@ -312,11 +318,10 @@ class Pipeline(unittest.TestCase):
         self.assertLess(first_delete, first_read)                                  # ... but the old rows were already deleted, before anything else
         now = datetime.datetime.now(datetime.timezone.utc)
         ages = {}
-        for q in FakeSupabase.deleted:
-            col, cutoff = next(iter(q.items()))
-            ages[col] = (now - datetime.datetime.strptime(cutoff[3:], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)).total_seconds() / 86400
-        self.assertAlmostEqual(ages["processed_at"], 7, delta=0.01)
-        self.assertAlmostEqual(ages["created_at"], 14, delta=0.01)
+        for kind, cutoff in FakeSupabase.deleted:
+            ages[kind] = (now - datetime.datetime.strptime(cutoff, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)).total_seconds() / 86400
+        self.assertAlmostEqual(ages["processed"], 7, delta=0.01)
+        self.assertAlmostEqual(ages["unprocessed"], 14, delta=0.01)
 
     def test_old_rows_really_go(self):
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -324,7 +329,7 @@ class Pipeline(unittest.TestCase):
         def ago(days):
             return (now - datetime.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         old_done = dict(row(1, SIG_A, ago(30)), processed_at=ago(8), issue_number=5)     # processed 8 days ago: gone (7)
-        recent_done = dict(row(4, SIG_A, ago(30)), processed_at=ago(6), issue_number=5)  # processed 6 days ago: kept
+        recent_done = dict(row(4, SIG_A, ago(10)), processed_at=ago(6), issue_number=5)  # processed 6 days ago: kept
         old_waiting = row(2, SIG_B, ago(15))                                              # waited 15 days: gone (14)
         young_waiting = row(5, SIG_B, ago(13))                                            # waited 13 days: kept (and then turned into an issue)
         fresh = row(3, SIG_C, ago(0))

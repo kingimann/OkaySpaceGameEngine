@@ -325,7 +325,7 @@ class Body(unittest.TestCase):
         self.assertIn(c.MARKER, hb)
 
     def test_oldest_console_lines_are_dropped_first(self):
-        console = ["[-%ds] I line number %d %s" % (i, i, "p" * 350) for i in range(200)]
+        console = ["[-%ds] I line number %d %s" % (i, i, "p" * 250) for i in range(200)]   # about 55 KB: the table takes 64 KB at most
         b = c.issue_body(row(report=report(console=console)), max_body=30000)
         self.assertLessEqual(len(b), 30000)
         self.assertIn("line number 199", b)

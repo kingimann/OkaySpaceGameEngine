@@ -1,5 +1,6 @@
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Physics/BodyPose.hpp"
+#include "okay/Physics/Broadphase.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/ConvexContact.hpp"
@@ -579,23 +580,26 @@ void Physics3D::Step(Scene& scene, float dt) {
                     (!r || (fin3(r->velocity) && fin3(r->angularVelocity)));
     }
 
+    // Broad phase: the pairs whose precomputed AABBs overlap (a NaN body, left out by `finite`, touches nothing), in
+    // the order the old all-pairs loop visited them: the solver applies impulses in pair order. The sweep (see
+    // Physics/Broadphase.hpp) finds them without comparing every collider with every other.
+    std::vector<broadphase::Box> boxes(nc);
     for (std::size_t i = 0; i < nc; ++i) {
-        for (std::size_t j = i + 1; j < nc; ++j) {
+        boxes[i].lo[0] = aabbMin[i].x; boxes[i].lo[1] = aabbMin[i].y; boxes[i].lo[2] = aabbMin[i].z;
+        boxes[i].hi[0] = aabbMax[i].x; boxes[i].hi[1] = aabbMax[i].y; boxes[i].hi[2] = aabbMax[i].z;
+    }
+    const broadphase::PairList candidatePairs = broadphase::Pairs(boxes, finite);
+    for (const auto& candidate : candidatePairs) {
+        {   // one candidate pair (the block keeps the old nesting depth, so this change stays a small diff)
+            const std::size_t i = candidate.first, j = candidate.second;
             Collider3D* a = colliders[i];
             Collider3D* b = colliders[j];
-            if (gone.Gone(a)) break;
+            if (gone.Gone(a)) continue;   // (the old loop broke out of this a's row: the same pairs are skipped)
             if (gone.Gone(b)) continue;
             if (!a->enabled || !b->enabled) continue;
             if (!a->gameObject->ActiveInHierarchy() || !b->gameObject->ActiveInHierarchy()) continue;
             if (a->gameObject == b->gameObject) continue;
-            if (!finite[i] || !finite[j]) continue;   // a NaN body touches nothing
             if (!LayersCollide(a->layer, b->layer)) continue;
-
-            // Broad phase: AABB reject (precomputed AABBs).
-            const Vec3 &aMin = aabbMin[i], &aMax = aabbMax[i], &bMin = aabbMin[j], &bMax = aabbMax[j];
-            if (aMax.x < bMin.x || aMin.x > bMax.x ||
-                aMax.y < bMin.y || aMin.y > bMax.y ||
-                aMax.z < bMin.z || aMin.z > bMax.z) continue;
 
             bool trigger = a->isTrigger || b->isTrigger;
             // Trigger tag / layer filters: a filtered-out object passes through

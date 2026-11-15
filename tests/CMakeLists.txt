@@ -842,6 +842,12 @@ if(NOT MSVC)
 endif()
 add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --warmup 1)
 
+# Physics broad phase: the sort-and-sweep pair finder gives the brute force pair list in the same order, and whole 2D and 3D
+# physics scenes move bit-for-bit the same with either one (docs/perf_log.md)
+add_executable(test_broadphase test_broadphase.cpp)
+target_link_libraries(test_broadphase PRIVATE okay::engine)
+add_test(NAME broadphase COMMAND test_broadphase)
+
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
 add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)

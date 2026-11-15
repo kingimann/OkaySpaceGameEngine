@@ -3396,6 +3396,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Project management (25)
 - Project panel (15.4, 15.4.1, 20.1)
 - Project panel and asset manager (15.4)
+- Project panel right-click menus (15.4.7)
 - Project Settings (15.14, 15.14.2, 25.2)
 - Project Settings window (25.2.1)
 - Project tag and layer lists (1.3.8)

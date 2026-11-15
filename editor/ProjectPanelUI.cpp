@@ -4,6 +4,8 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -119,6 +121,132 @@ void ShowReferenceProblems(okaypb::Browser& browser, std::function<void(const st
     g_prob.message.clear();
     FillProblems();
     g_prob.pending = true;
+}
+
+namespace {
+// "Move to..." picker
+struct PickState {
+    bool pending = false, active = false;
+    okaypb::Browser* browser = nullptr;
+    std::vector<std::string> items;
+    std::string selected;       // the folder chosen (absolute), "" until one is clicked
+    std::string reveal;         // a folder to show open on the first frame
+    bool firstFrame = false;
+    std::string root;
+    std::map<std::string, std::string> reasons;   // folder -> why the items cannot go there ("" = fine); asked once per folder, the items do not change while the window is open
+    std::function<void(const std::string&)> onPick;
+};
+PickState g_pick;
+
+// One folder of the picker and, when it is open, the folders in it.
+void PickNode(const std::string& dir, bool isRoot) {
+    const std::vector<okaypb::Browser::FolderRow> kids = g_pick.browser->SubFolders(dir);
+    auto known = g_pick.reasons.find(dir);
+    if (known == g_pick.reasons.end()) known = g_pick.reasons.emplace(dir, okaypb::ctx::MoveBlockedReason(g_pick.root, g_pick.items, dir)).first;
+    const std::string why = known->second;
+    const std::string label = isRoot ? std::string("Assets") : NameOf(dir);
+    ImGuiTreeNodeFlags f = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if (kids.empty()) f |= ImGuiTreeNodeFlags_Leaf;
+    if (isRoot) f |= ImGuiTreeNodeFlags_DefaultOpen;
+    if (g_pick.selected == dir) f |= ImGuiTreeNodeFlags_Selected;
+    if (g_pick.firstFrame && !g_pick.reveal.empty() && okaypb::IsInside(dir, g_pick.reveal) && okaypb::Slash(dir) != okaypb::Slash(g_pick.reveal)) ImGui::SetNextItemOpen(true);
+    if (!why.empty()) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    const bool open = ImGui::TreeNodeEx(dir.c_str(), f, "%s", label.c_str());
+    if (!why.empty()) ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered() && !why.empty()) ImGui::SetTooltip("%s", why.c_str());
+    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen() && why.empty()) g_pick.selected = dir;
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && why.empty()) g_pick.selected = dir;
+    if (open) {
+        for (const okaypb::Browser::FolderRow& k : kids) PickNode(k.path, false);
+        ImGui::TreePop();
+    }
+}
+
+// Properties window
+struct PropState {
+    bool pending = false, active = false;
+    std::vector<okaypb::ctx::Property> rows;
+    std::string title, copyPath;
+};
+PropState g_props;
+} // namespace
+
+void AskFolder(okaypb::Browser& browser, std::vector<std::string> items, std::string reveal, std::function<void(const std::string&)> onPick) {
+    browser.Sync();
+    g_pick.browser = &browser;
+    g_pick.items = std::move(items);
+    g_pick.reveal = std::move(reveal);
+    g_pick.root = browser.Root();
+    g_pick.selected.clear();
+    g_pick.reasons.clear();
+    g_pick.onPick = std::move(onPick);
+    g_pick.firstFrame = true;
+    g_pick.pending = true;
+}
+
+void ShowProperties(okaypb::Browser& browser, const std::string& pathIn, const PropertyExtras& extras) {
+    namespace fs = std::filesystem;
+    const std::string path = okaypb::Slash(pathIn);
+    okaypb::ctx::PropertyInput in;
+    std::error_code ec;
+    in.isFolder = fs::is_directory(fs::u8path(path), ec);
+    in.name = NameOf(path);
+    in.fullPath = path;
+    in.projectPath = okaypb::ctx::AssetsRelativeText(browser.ProjectDir(), path);
+    if (in.projectPath.empty()) in.projectPath = path;
+    in.favourite = extras.favourite;
+    in.colourLabel = extras.colourLabel;
+    in.startScene = extras.startScene;
+    in.now = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    if (in.isFolder) {
+        in.typeName = "Folder";
+        const okaypb::Browser::FolderStats st = browser.StatsOf(path);
+        in.files = st.files; in.folders = st.folders; in.bytes = st.bytes;
+        in.sizeText = okaypb::HumanSize(st.bytes);
+    } else {
+        const okaypb::Browser::AssetInfo info = browser.Info(path);
+        in.indexed = info.indexed;
+        const std::string ext = fs::u8path(path).extension().generic_u8string();
+        std::string lower = ext;
+        for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        in.typeName = info.indexed && !info.typeName.empty() ? info.typeName : okaypb::TypeLabel(lower, false);
+        in.bytes = info.indexed ? info.size : static_cast<std::uint64_t>(fs::is_regular_file(fs::u8path(path), ec) ? fs::file_size(fs::u8path(path), ec) : 0);
+        in.sizeText = okaypb::HumanSize(in.bytes);
+        in.modified = info.modified;
+        in.guid = info.guid.ToString();
+        in.hasMeta = info.hasMeta;
+        in.uses = info.uses; in.usesAll = info.usesAll; in.usedBy = info.usedBy;
+        in.missing = static_cast<int>(info.missing.size());
+        in.tags = info.labels;
+    }
+    g_props.rows = okaypb::ctx::PropertyRows(in);
+    g_props.title = in.name;
+    g_props.copyPath = in.projectPath;
+    g_props.pending = true;
+}
+
+std::string DrawContextMenu(const std::vector<okaypb::ctx::Item>& items) {
+    std::string chosen;
+    for (const okaypb::ctx::Item& it : items) {
+        if (it.separator) { ImGui::Separator(); continue; }
+        if (it.heading) { ImGui::TextDisabled("%s", it.label.c_str()); continue; }
+        if (!it.submenu.empty()) {
+            const bool open = ImGui::BeginMenu(it.label.c_str(), it.enabled);
+            if (!it.enabled && !it.reason.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", it.reason.c_str());
+            if (open) {
+                const std::string sub = DrawContextMenu(it.children);
+                if (!sub.empty()) chosen = sub;
+                ImGui::EndMenu();
+            }
+            continue;
+        }
+        if (ImGui::MenuItem(it.label.c_str(), it.shortcut.empty() ? nullptr : it.shortcut.c_str(), it.checked, it.enabled)) chosen = it.id;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            const std::string& tip = it.enabled ? it.tip : it.reason;
+            if (!tip.empty()) ImGui::SetTooltip("%s", tip.c_str());
+        }
+    }
+    return chosen;
 }
 
 void DrawDialogs() {
@@ -296,6 +424,69 @@ void DrawDialogs() {
             }
             ImGui::EndPopup();
         } else g_prob.active = false;
+    }
+
+    // ---- Move to... folder picker ---------------------------------------------------------------
+    if (g_pick.pending) { ImGui::OpenPopup("##projmove"); g_pick.pending = false; g_pick.active = true; }
+    if (g_pick.active) {
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(420, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("##projmove", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
+            if (g_pick.items.size() == 1) ImGui::Text("Move \"%s\" to...", NameOf(g_pick.items[0]).c_str());
+            else ImGui::Text("Move %d items to...", (int)g_pick.items.size());
+            ImGui::TextDisabled("Pick a folder. A name that is taken gets a number, and links to what moves are updated.");
+            ImGui::Spacing();
+            ImGui::BeginChild("##movetree", ImVec2(0, 260), true);
+            PickNode(g_pick.root, true);
+            ImGui::EndChild();
+            g_pick.firstFrame = false;
+            ImGui::TextDisabled("%s", g_pick.selected.empty() ? "No folder picked yet." : ("To: " + okaypb::ctx::AssetsRelativeText(g_pick.browser->ProjectDir(), g_pick.selected)).c_str());
+            ImGui::Spacing();
+            ImGui::BeginDisabled(g_pick.selected.empty());
+            const bool go = ImGui::Button("Move", ImVec2(110, 0));
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            const bool cancel = ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape);
+            if (go && !g_pick.selected.empty()) {
+                auto fn = std::move(g_pick.onPick);
+                const std::string dest = g_pick.selected;
+                g_pick.active = false; ImGui::CloseCurrentPopup();
+                if (fn) fn(dest);
+            } else if (cancel) { g_pick.active = false; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        } else g_pick.active = false;
+    }
+
+    // ---- Properties -------------------------------------------------------------------------------
+    if (g_props.pending) { ImGui::OpenPopup("##projprops"); g_props.pending = false; g_props.active = true; }
+    if (g_props.active) {
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(560, 0), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal("##projprops", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Properties: %s", g_props.title.c_str());
+            ImGui::Spacing();
+            if (ImGui::BeginTable("##proptable", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
+                ImGui::TableSetupColumn("##l", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+                ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
+                for (const okaypb::ctx::Property& p : g_props.rows) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextDisabled("%s", p.label.c_str());
+                    ImGui::TableSetColumnIndex(1);
+                    if (p.warn) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.72f, 0.25f, 1.0f));
+                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 400.0f);
+                    ImGui::TextWrapped("%s", p.value.c_str());
+                    ImGui::PopTextWrapPos();
+                    if (p.warn) ImGui::PopStyleColor();
+                }
+                ImGui::EndTable();
+            }
+            ImGui::Spacing();
+            if (ImGui::Button("Copy Path", ImVec2(110, 0))) ImGui::SetClipboardText(g_props.copyPath.c_str());
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) { g_props.active = false; ImGui::CloseCurrentPopup(); }
+            ImGui::EndPopup();
+        } else g_props.active = false;
     }
 }
 

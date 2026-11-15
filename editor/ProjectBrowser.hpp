@@ -12,6 +12,7 @@
 //   * the copy / cut / paste clipboard.
 // It sits on okay::AssetDatabase (GUIDs, dependency graph). See docs/project_panel.md.
 // Failure injection: SetFailureHook makes any file step fail, so tests can check nothing is lost.
+#include "ProjectContextModel.hpp"
 #include "okay/Core/AssetDatabase.hpp"
 #include "okay/Core/ThumbnailCache.hpp"
 
@@ -93,6 +94,10 @@ struct ListOptions {
 void SortEntries(std::vector<Entry>& entries, SortKey key, bool descending);
 /// True for names the panel never shows (starting with ".", .okaymeta, .tmp, .part, .bak, .swp).
 bool IsHiddenName(const std::string& fileName);
+/// Which right-click menu rules (ProjectContextModel.hpp) apply to a file or folder, from its extension and the asset
+/// database's own type table: pictures, models and audio are binary; scripts, scenes, prefabs, materials and the story,
+/// AI, cutscene and data files are text (so "Open in External Editor" is offered for them).
+ctx::Kind MenuKind(const std::string& path, bool isDir);
 
 // ---- references -------------------------------------------------------------------------------
 
@@ -186,8 +191,12 @@ public:
         int usesAll = 0;                    ///< everything it needs, through the whole graph
         std::vector<std::string> missing;   ///< references written in the file that point at nothing
         std::vector<std::string> labels;
+        std::int64_t modified = 0;          ///< seconds since the epoch (file clock), 0 when unknown (the Properties window)
     };
     AssetInfo Info(const std::string& path);
+    /// What a folder holds, below it too: files, folders and total bytes, from the database (no disk walk).
+    struct FolderStats { int files = 0; int folders = 0; std::uint64_t bytes = 0; };
+    FolderStats StatsOf(const std::string& absDir);
     /// References that point at nothing, and references that only work through the old path of an asset that was moved
     /// outside the editor (the database remembers the move). Both are read from the dependency graph.
     struct MissingRefRow { std::string referrer; std::string reference; };   ///< referrer: absolute path; reference: as written in it
@@ -212,6 +221,9 @@ public:
     bool SetImportSettings(const std::string& path, const okay::ImportSettings& settings, std::string* error = nullptr);
     /// Read a file again after it changed outside: forgets what was learned about it.
     bool Reimport(const std::string& path);
+    /// Reimport a folder: every asset inside it, below it too ("Reimport All" in the folder menu). Returns how many
+    /// assets were read again (0 for a path outside Assets or an empty folder). A file path reimports that one file.
+    int ReimportFolder(const std::string& path);
     // ---- thumbnails: the database's ThumbnailCache, keyed by GUID and content hash --------------------------
     /// The cache key of a file's thumbnail: the asset's GUID (a stable stand-in made from the path while it has no
     /// meta) and its content hash from the database; for a prefab, scene or material the hashes of everything it

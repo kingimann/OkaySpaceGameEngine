@@ -49,6 +49,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 
 ---
 
@@ -209,6 +210,60 @@ and your turn is drawn as you set it.
 **Status.** Tested on main: headless `turn_interpolation` and `controller_interpolation` tests (a real third person
 controller at 30, 60 and 144 fps; the test failed on the old code and passes now). Unverified: the feel in the editor.
 The before-and-after of the bug needs the old release to compare.
+
+## 14. Project panel right-click menus
+
+**What it is.** The right-click menus of the editor's Project panel were reworked and filled out: one list per place you can click
+(an asset, a folder, a folder in the tree on the left, a starred item, the empty space), with a tooltip on every item, greyed items that
+say why, and counts when several items are selected ("Delete 3 Items"). Full list of items: `docs/project_panel.md`, section
+"Right-click menus". Code: `editor/ProjectContextModel.hpp` (the lists), `editor/ProjectPanelUI.cpp` (drawing, the Move to...
+picker, Properties), `DrawProject` in `editor/main.cpp`.
+
+**Getting there.** Open the editor (`Tools\OkayEngine.exe`, or from the launcher). **File > New Project...**, pick any template and
+create it (a project is needed: with none open the menus grey out and say "Open a project first."). The **Project** panel shows an
+**Assets** folder; if it is hidden use **View > Panels > Project**. Put a few files in it: drag a picture, a sound or a model from your file
+manager onto the editor window, or use the Project panel's **Import** button.
+
+**Steps.**
+1. **An asset.** Right-click a picture. You should see Open (greyed for a picture; the tooltip says "No editor window opens this type. Use Open with Default App."), Rename (F2), Duplicate (Ctrl+D), Cut, Copy, Paste (greyed: "Nothing was
+   copied or cut yet."), **Move to...**, Delete, Find References, Show Dependencies, Reimport, Add to Favourites, Tags, Label, **Copy Text**,
+   Show in Explorer, **Properties...**, and **Open with Default App**. Hover an item for its tooltip.
+   * **Copy Text > Relative Path**, then paste into any text box (the Console filter, a script): `Assets/<your file>`.
+   * **Properties...** opens a window: type, folder, size, date in UTC with "N minutes ago", GUID, how many assets use it. **Close** closes it.
+   * **Open with Default App** opens the picture in your system's picture program.
+   * **Show in Explorer** opens the folder with the file selected.
+2. **Several items.** Click one file, Ctrl+click two more, right-click one of them. The first line says **3 items selected**; the items read
+   **Delete 3 Items**, **Duplicate 3 Items**, **Copy 3 Items**; Rename and Open are greyed with "Select one item first / to ...". **Copy Text > Relative Paths
+   (one per line)**, then paste into a multi-line box: one path per line.
+3. **Move to...** Right-click a file, **Move to...**, pick a folder in the window (your Assets folder and its folders; the file's own folder is greyed:
+   "It is already in that folder."), press **Move**. Ctrl+Z in the Project panel moves it back. Try it on a folder and pick that folder or a folder inside
+   it: they are greyed with "A folder can't be moved into itself."
+4. **A scene.** Right-click a `.okayscene` (File > New Scene, then save it into Assets): **Set as Start Scene** puts it first in Scenes In Build.
+   Check in **View > Panels > Scene Manager**: it shows "Start scene: <name>". Right-click it again: the item is greyed ("This scene already starts the game.").
+5. **A script or data file.** Right-click a script (Create > Script): **Open in External Editor** opens it in Visual Studio Code if you have it,
+   else in your system's text editor.
+6. **A folder.** Right-click a folder in the grid: **Create** (made inside that folder; the panel goes there), Paste Into, **Reimport All in Folder**, Expand /
+   Collapse. Right-click a folder in the **tree** on the left: the same list, and **Expand All Subfolders**, **Collapse All Subfolders**, **Collapse Other Folders**
+   change what the tree shows. Right-click **Assets** in the tree: Rename, Delete, Move and the others are greyed ("The Assets folder itself can't be changed.").
+7. **Favourites.** Add a file and a folder to Favourites. They appear under FAVOURITES on the left. Right-click one: **Show in Project** / **Open Folder**,
+   Remove from Favourites, Copy Text, Show in Explorer, Properties.
+8. **Empty space.** Right-click empty space in the grid. **Create** now also has **Dialogue**, **Quest File**, **Behavior Tree**, **Cutscene (Timeline)**:
+   each asks for a name, creates the file in the folder you are looking at and opens it in its own window (Dialogue, Dialogue > Quests tab, Behavior Tree, Timeline).
+   Also: **Paste** with a count, **Undo <what you did>**, **Import New Asset...** (the file picker), **Refresh** (F5), **Select All**, **View** (Grid, List, Small / Medium / Large
+   Tiles), **Sort By**, **Up One Folder**, **Open Project Folder in Explorer**, **Properties...** of the folder.
+9. **Smart view.** Click **All Models** (or another smart filter) on the left, then right-click empty space: Create, Paste, Import are greyed and say how to leave the view.
+
+**How you know it worked.** Each step names what you should see. Anything you right-click that does nothing, or an item that stays greyed without a reason in its
+tooltip, is a bug: tell us which item.
+
+**Left out on purpose.** Export Package (no package exporter exists), Select Dependencies, a Localization table and an Animation in Create: reasons in
+`docs/project_panel.md`.
+
+**Status.** The item lists, labels, greyed reasons, Copy Text, the Move to... rule, Set as Start Scene, the dates and the Properties rows are tested headlessly
+(`project_context_model`, `project_menu_ops`; they were run on Linux when this was written). The new story and AI files are read back with the engine's parsers
+in `project_menu_ops`. **Unverified:** everything you see in the real window (drawing, tooltips, the Move to... and Properties windows, the Explorer and default-app
+launches on Windows, the tree's expand and collapse). Nothing here was run on Windows. No screenshots yet unless a later note says so; the OkayUI panels have no Project
+panel, so there is no second copy of this menu to keep in step.
 
 ---
 

@@ -103,6 +103,30 @@ bool Exists(const std::string& path) {
 
 } // namespace
 
+ctx::Kind MenuKind(const std::string& path, bool isDir) {
+    using K = ctx::Kind;
+    if (isDir) return K::Folder;
+    std::string ext = okay::AssetExtension(path);
+    if (ext == "okay") return K::Script;   // OkayScript is not in the database's table
+    if (ext == "bin") return K::Other;     // listed as data there, but it is binary
+    switch (okay::AssetTypeFromExtension(ext)) {
+        case okay::AssetType::Texture: return K::Image;
+        case okay::AssetType::Model: case okay::AssetType::Mesh: return K::Model;
+        case okay::AssetType::Audio: return K::Audio;
+        case okay::AssetType::Material: return K::Material;
+        case okay::AssetType::Scene: return K::Scene;
+        case okay::AssetType::Prefab: return K::Prefab;
+        case okay::AssetType::Script: return K::Script;
+        case okay::AssetType::VisualScript: return K::VisualScript;
+        case okay::AssetType::Animation: case okay::AssetType::Dialogue: case okay::AssetType::Quest:
+        case okay::AssetType::BehaviorTree: case okay::AssetType::Sequence: case okay::AssetType::Data: return K::Data;
+        default: break;
+    }
+    static const char* kText[] = {"md", "xml", "csv", "ini", "cfg", "yml", "yaml", "html", "css", "js", "shader", "glsl", "hlsl", "log"};
+    for (const char* t : kText) if (ext == t) return K::Data;
+    return K::Other;
+}
+
 std::string Slash(const std::string& path) {
     std::string s = path;
     for (char& c : s) if (c == '\\') c = '/';
@@ -718,7 +742,20 @@ Browser::AssetInfo Browser::Info(const std::string& path) {
     auto mi = m_missing.find(rec->guid);
     if (mi != m_missing.end()) info.missing = mi->second;
     info.labels = rec->labels;
+    info.modified = rec->modified;
     return info;
+}
+
+Browser::FolderStats Browser::StatsOf(const std::string& absDirIn) {
+    FolderStats st;
+    if (!m_indexed && !Sync()) return st;
+    const std::string abs = Norm(absDirIn);
+    if (!UnderOrEqual(m_root, abs)) return st;
+    for (const okay::AssetRecord* r : m_db.All())
+        if (UnderOrEqual(abs, AbsOf(r->path))) { ++st.files; st.bytes += static_cast<std::uint64_t>(r->size < 0 ? 0 : r->size); }
+    for (const std::string& f : m_db.Folders())
+        if (Fold(AbsOf(f)) != Fold(abs) && UnderOrEqual(abs, AbsOf(f))) ++st.folders;
+    return st;
 }
 
 bool Browser::AddLabel(const std::string& path, const std::string& label, std::string* error) {
@@ -857,6 +894,25 @@ bool Browser::Reimport(const std::string& path) {
     ForgetThumb(p);
     ++m_revision;
     return true;
+}
+
+int Browser::ReimportFolder(const std::string& path) {
+    if (!m_indexed) Sync();
+    const std::string p = Norm(path);
+    if (!UnderOrEqual(m_root, p)) return 0;
+    std::error_code ec;
+    if (!fs::is_directory(P(p), ec)) return Exists(p) && Reimport(p) ? 1 : 0;
+    int n = 0;
+    std::vector<std::string> files;
+    for (const okay::AssetRecord* r : m_db.All())
+        if (UnderOrEqual(p, AbsOf(r->path))) files.push_back(AbsOf(r->path));
+    for (const std::string& f : files) {
+        if (const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(f))) m_db.RefreshFile(rec->path);
+        ForgetThumb(f);
+        ++n;
+    }
+    if (n > 0) ++m_revision;
+    return n;
 }
 
 // ---- thumbnails ----------------------------------------------------------------------------------

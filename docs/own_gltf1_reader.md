@@ -11,7 +11,7 @@ glTF 1.0 is the first version of Khronos's transmission format (2015). It was re
 - materials are a shader technique plus a dictionary of values;
 - the binary form (the `KHR_binary_glTF` extension) is a 20-byte header, one JSON block and one body, not 2.0's chunks.
 
-**Where it was written from.** The Khronos glTF 1.0 specification only: `specification/1.0/README.md` and its JSON schemas, and the `KHR_binary_glTF` and `KHR_materials_common` extension descriptions, all from the KhronosGroup/glTF repository. No importer source was read: not Assimp's, not any other program's (rule 19a). The JSON parser and the base64 decoder are the engine's own, the ones the glTF 2.0 reader uses. The comparison with Assimp below ran Assimp as a black box.
+**Where it was written from.** The Khronos glTF 1.0 specification only: `specification/1.0/README.md` and its JSON schemas, and the `KHR_binary_glTF` and `KHR_materials_common` extension descriptions, all from the KhronosGroup/glTF repository. No importer source was read: not Assimp's, not any other program's (rule 19a). The JSON parser and the base64 decoder are the engine's own, the ones the glTF 2.0 reader uses. **Assimp was used only as a black box for comparison**: built from its v5.4.3 sources with only its glTF importer and run on the real data files through its public C API, to compare counts, areas and bounding boxes. None of its source and none of its test code was read or used; its test directory supplied data files only (`docs/model_corpus.md`).
 
 | File | What |
 |---|---|
@@ -59,7 +59,13 @@ Not JSON; JSON nested more than 128 deep (the JSON parser is recursive, so this 
 
 ## Limits
 
-File 512 MiB; all buffers together 512 MiB; 50,000,000 elements in one accessor; 20,000,000 vertices and 20,000,000 triangles in the file; 100,000 nodes; 100,000 parts; JSON nesting 128. Counts and offsets are checked in 64-bit arithmetic before anything is read or allocated. A refused file holds almost nothing: the hostile test measured 20 KB for a 50-million-element accessor over a 12-byte view. A 1,000,000-triangle file reads in under a second with an 81 MB peak.
+File 512 MiB; all buffers together 512 MiB; 20,000,000 elements in one accessor; **64,000,000 accessor values decoded in the whole file** (attributes are decoded to 4-byte floats, indices to 32-bit integers; a node may list one mesh many times and each listing decodes it again, so this budget is for the file, and it is checked before anything is allocated); 20,000,000 vertices; 20,000,000 triangle slots, **degenerate triangles included** (so equal indices cannot make free work); 100,000 nodes; 100,000 primitives (skipped ones included). JSON nesting 128. Counts and offsets are checked in 64-bit arithmetic before anything is read or allocated.
+
+Measured by `gltf1_hostile` with a counting allocator:
+- A refused 50-million-element accessor over a 12-byte view: 20 KB.
+- One mesh listed 4 times, each with 20,000,000 equal (degenerate) indices: refused at 95 MB in 0.3 s. Before the fix: 324 MB.
+- A 20,000,000-element byte accessor of 4 components: refused before any allocation, at 76 MB, which is the copied body. Before the fix: 686 MB.
+- A 1,000,000-triangle file: read in under a second with a 58 MB peak.
 
 ## Tests and what was checked
 
@@ -78,7 +84,7 @@ File 512 MiB; all buffers together 512 MiB; 50,000,000 elements in one accessor;
   - the memory and time budget;
   - a mutation fuzz (8,000 by default).
 - **Mutation check:** each of these breaks makes a test fail: removing the accessor bounds check (heap overflow in the sanitized hostile test), removing the JSON nesting limit (stack overflow), and not alternating the strip winding (the reader test).
-- `own_gltf1_default`: passes with the option off. A build with `-DOKAY_OWN_GLTF1=ON` is reported in the branch's report on the coordination thread.
+- `own_gltf1_default`: passes with the option off. ON_BUILD_PLACEHOLDER **No CI job builds with `-DOKAY_OWN_GLTF1=ON`**, so in CI this test only checks the off case.
 
 ### Real files
 
@@ -90,5 +96,11 @@ Compared with Assimp v5.4.3, built from the same sources with only its glTF impo
 - **`CesiumMilkTruck`:** the same meshes, vertices (8,348), triangles (3,624), area (64.8164) and materials (4), and the same box except its lowest point (ours 0.001, Assimp -0.258).
   - **The difference is the wheels.** Their nodes have a translation (1.43, 0.43, 0) and a rotation of about -10 degrees round Z, given as (x, y, z, w) as the specification says. With them, the wheels (radius 0.428 around their own origin) touch the ground at y = 0.001 under the body, which starts at 0.267. Assimp's lowest point is -0.258, below the ground, which does not fit the model. This is our reading of why the two differ; we did not look into Assimp's code.
 
+
+Known limits (low severity, from the review of this branch):
+- **Escaped characters.** The shared JSON parser (`okay/Render/Gltf.hpp`, the glTF 2.0 one too) turns `\u` escapes into `?`. A non-ASCII uri or id written with escapes then names the wrong file or id.
+- **Material values.** They are matched by the names `diffuse`, `emission` and `shininess`. A technique that uses other parameter names (such as `u_diffuse`) loses its colour.
+- **Not read:** technique defaults and transparency, and embedded images (so a binary file's textures).
+- **The version check.** When the switch is on, `GltfFileIsVersion1` reads the whole file to see its version; it runs inside `RunReaderGuarded`, so a file too large for memory means "not version 1" instead of a crash.
 
 Not verified: glTF 1.0 files from exporters other than those in the corpus, skinned or animated 1.0 files beyond the milk truck's two animations (not read), a run on real Windows.

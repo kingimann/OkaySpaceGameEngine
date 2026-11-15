@@ -131,7 +131,9 @@ static void NormalizeImportedClips(GameObject* root) {
 // A .gltf / .glb file of version 1.0 that our own glTF 1.0 reader should read (only asked when that reader is switched on,
 // so a default import never parses the file twice).
 static bool Gltf1Wanted(const std::string& path) {
-    return EffectiveImportBackend(".gltf1") == ImportBackend::Own && GltfFileIsVersion1(path);
+    if (EffectiveImportBackend(".gltf1") != ImportBackend::Own) return false;
+    std::string why;   // reading and parsing the file can throw (bad_alloc on a huge file): a throw means "no"
+    return RunReaderGuarded([&]() -> bool { return GltfFileIsVersion1(path); }, why);
 }
 
 Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {

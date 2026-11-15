@@ -19,13 +19,14 @@ below were made by counting those files by extension; where I could not check so
 | Importers we covered **before batch C** (including Blender, merged as #829, off by default) | 19 |
 | Importers batch C added (MD2, MD3, Irrlicht mesh, B3D, DirectX .x) | 5 (24) |
 | Importers batch D adds (AC3D, XGL / ZGL, Irrlicht scene, NFF, and OGRE **for the XML form only**) | 5 (**29** of the 45 switched on; OGRE counts as half: its binary `.mesh` / `.skeleton` and the `.skeleton.xml` are row 1 below) |
-| Switched on in our build and still **without an own reader** | **16** (rows 2 to 17 below) plus OGRE's half |
+| glTF 1.0 (`docs/own_gltf1_reader.md`, on this branch; other branches add more, the coordinator sets the final totals when they merge) | 1 (**30** of the 45 switched on) |
+| Switched on in our build and still **without an own reader** | **15** (rows 2 to 16 below; row 17, glTF 1.0, now has one) plus OGRE's half |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
-tree. **Nothing was flipped.** Which formats the 29 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
+tree. **Nothing was flipped.** Which formats the 30 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
 COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x,
-AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF. How the batch D readers compare with Assimp on the real files is in
+AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF, and glTF 1.0. How the batch D readers compare with Assimp on the real files is in
 `docs/model_corpus.md` and in each reader's own page (`docs/own_ac3d_reader.md`, `own_ogre_reader.md`, `own_xgl_reader.md`,
 `own_irr_reader.md`, `own_nff_reader.md`).
 

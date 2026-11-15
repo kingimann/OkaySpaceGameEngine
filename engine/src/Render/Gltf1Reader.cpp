@@ -38,7 +38,10 @@ using gltf_detail::JVal;
 constexpr std::size_t   kMaxFileBytes     = 512u * 1024u * 1024u;   // the .gltf / binary file itself
 constexpr std::uint64_t kMaxBufferBytes   = 512ull * 1024u * 1024u; // all buffers together (external, data URIs, body)
 constexpr int           kMaxJsonDepth     = 128;                    // glTF 1.0 nests about 8 deep; anything far deeper is hostile
-constexpr std::uint64_t kMaxAccessorCount = 50000000;               // elements in one accessor
+constexpr std::uint64_t kMaxAccessorCount = 20000000;               // elements in one accessor
+constexpr std::uint64_t kMaxDecoded       = 64000000;               // accessor values decoded in the whole file (4 bytes each),
+                                                                    // counted before anything is allocated: a node may list one
+                                                                    // mesh many times, and each listing decodes it again
 constexpr std::uint64_t kMaxVertices      = 20000000;               // whole file
 constexpr std::uint64_t kMaxTriangles     = 20000000;               // whole file
 constexpr std::size_t   kMaxNodes         = 100000;
@@ -94,7 +97,8 @@ int BytesOf(std::uint64_t componentType) {
 }
 
 struct Accessor {
-    std::vector<double> values;   // count * components, row by row
+    std::vector<float> values;           // count * components, row by row (attributes)
+    std::vector<std::uint32_t> indices;  // count values (an indices accessor: decoded straight to integers)
     std::uint64_t count = 0;
     int components = 0;
     std::uint64_t componentType = 0;
@@ -109,7 +113,7 @@ struct Reader {
     JVal root;
     std::map<std::string, std::vector<std::uint8_t>> buffers;
     std::uint64_t bufferBytes = 0;
-    std::uint64_t vertices = 0, triangles = 0;
+    std::uint64_t vertices = 0, triangles = 0, decoded = 0, primitives = 0;
     std::map<std::string, int> materialIndex;
     std::size_t linePrims = 0, unknownModePrims = 0, droppedNormals = 0, droppedUvs = 0, degenerate = 0;
     std::size_t embeddedImages = 0, refusedImages = 0;
@@ -196,20 +200,33 @@ struct Reader {
         if (offset > bvLength || elem > bvLength - offset) return Fail("accessor '" + id + "' reads past the end of its bufferView");
         if (count - 1 > (bvLength - offset - elem) / stride) return Fail("accessor '" + id + "' reads past the end of its bufferView");
 
+        // The whole file's decode budget, checked before the vectors are allocated.
+        const std::uint64_t values = count * (std::uint64_t)comps;
+        if (values > kMaxDecoded - decoded) return Fail("the file decodes more than 64,000,000 accessor values (a mesh listed many times, or very large accessors)");
+        decoded += values;
+
         acc.count = count; acc.components = comps; acc.componentType = type;
-        acc.values.resize((std::size_t)(count * (std::uint64_t)comps));
         const unsigned char* base = buf->data() + bvOffset + offset;
+        if (indices) {   // integers, kept exact (a float holds whole numbers exactly only up to 2^24)
+            if (comps != 1 || (type != 5121 && type != 5123 && type != 5125)) return Fail("indices accessor '" + id + "' is not SCALAR unsigned byte, short or int");
+            acc.indices.resize((std::size_t)count);
+            for (std::uint64_t e = 0; e < count; ++e) {
+                const unsigned char* p = base + e * stride;
+                acc.indices[(std::size_t)e] = type == 5121 ? p[0] : type == 5123 ? (std::uint32_t)(p[0] | (p[1] << 8)) : U32(p);
+            }
+            return true;
+        }
+        acc.values.resize((std::size_t)values);
         for (std::uint64_t e = 0; e < count; ++e) {
             const unsigned char* p = base + e * stride;
             for (int c = 0; c < comps; ++c, p += bytes) {
-                double v = 0;
+                float v = 0;
                 switch (type) {
-                case 5120: v = (double)(std::int8_t)p[0]; break;
-                case 5121: v = (double)p[0]; break;
-                case 5122: v = (double)(std::int16_t)(std::uint16_t)(p[0] | (p[1] << 8)); break;
-                case 5123: v = (double)(std::uint16_t)(p[0] | (p[1] << 8)); break;
-                case 5125: v = (double)U32(p); break;
-                default: { const std::uint32_t u = U32(p); float f; std::memcpy(&f, &u, 4); v = f; break; }
+                case 5120: v = (float)(std::int8_t)p[0]; break;
+                case 5121: v = (float)p[0]; break;
+                case 5122: v = (float)(std::int16_t)(std::uint16_t)(p[0] | (p[1] << 8)); break;
+                case 5123: v = (float)(std::uint16_t)(p[0] | (p[1] << 8)); break;
+                default: { const std::uint32_t u = U32(p); std::memcpy(&v, &u, 4); break; }
                 }
                 if (!std::isfinite(v)) return Fail("accessor '" + id + "' holds a value that is not a finite number");
                 acc.values[(std::size_t)(e * (std::uint64_t)comps) + (std::size_t)c] = v;
@@ -237,6 +254,8 @@ struct Reader {
     // One primitive as a mesh part. false only for a hard error (a bad accessor); a primitive we skip returns true.
     bool Primitive(const JVal& prim, int node, ImportedModel& out) {
         std::uint64_t mode = 4;
+        // Every primitive counts, including those skipped below, so a file cannot make unbounded work out of them.
+        if (++primitives > kMaxParts) return Fail("the file has more than 100,000 primitives");
         if (prim.Find("mode") && !WholeNumber(prim.Find("mode"), 1000, mode)) return Fail("a primitive has a bad mode");
         if (mode <= 3) { ++linePrims; return true; }       // points, lines, line loop, line strip
         if (mode > 6) { ++unknownModePrims; return true; }
@@ -252,13 +271,14 @@ struct Reader {
 
         Mesh mesh;
         mesh.vertices.resize(n);
-        for (std::size_t i = 0; i < n; ++i) mesh.vertices[i] = Vec3{(float)pos.values[i * 3], (float)pos.values[i * 3 + 1], (float)pos.values[i * 3 + 2]};
+        for (std::size_t i = 0; i < n; ++i) mesh.vertices[i] = Vec3{pos.values[i * 3], pos.values[i * 3 + 1], pos.values[i * 3 + 2]};
+        pos.values = std::vector<float>();   // give the memory back before the next accessor
         if (const JVal* nr = attrs->Find("NORMAL")) {
             Accessor nor;
             if (!ReadAccessor(nr->Text(), nor, false)) return false;
             if (nor.components == 3 && nor.count == pos.count) {
                 mesh.normals.resize(n);
-                for (std::size_t i = 0; i < n; ++i) mesh.normals[i] = Vec3{(float)nor.values[i * 3], (float)nor.values[i * 3 + 1], (float)nor.values[i * 3 + 2]};
+                for (std::size_t i = 0; i < n; ++i) mesh.normals[i] = Vec3{nor.values[i * 3], nor.values[i * 3 + 1], nor.values[i * 3 + 2]};
             } else ++droppedNormals;
         }
         if (const JVal* tr = attrs->Find("TEXCOORD_0")) {
@@ -266,29 +286,26 @@ struct Reader {
             if (!ReadAccessor(tr->Text(), uv, false)) return false;
             if (uv.components == 2 && uv.count == pos.count) {
                 mesh.uvs.resize(n);
-                for (std::size_t i = 0; i < n; ++i) mesh.uvs[i] = Vec2{(float)uv.values[i * 2], (float)uv.values[i * 2 + 1]};
+                for (std::size_t i = 0; i < n; ++i) mesh.uvs[i] = Vec2{uv.values[i * 2], uv.values[i * 2 + 1]};
             } else ++droppedUvs;
         }
 
-        std::vector<std::uint64_t> idx;
+        std::vector<std::uint32_t> idx;
         if (const JVal* ir = prim.Find("indices")) {
             Accessor ia;
             if (!ReadAccessor(ir->Text(), ia, true)) return false;
-            if (ia.components != 1 || (ia.componentType != 5121 && ia.componentType != 5123 && ia.componentType != 5125))
-                return Fail("indices accessor '" + ir->Text() + "' is not SCALAR unsigned byte, short or int");
-            idx.resize((std::size_t)ia.count);
-            for (std::size_t i = 0; i < idx.size(); ++i) {
-                idx[i] = (std::uint64_t)ia.values[i];
-                if (idx[i] >= pos.count) return Fail("an index (" + std::to_string(idx[i]) + ") is past the primitive's " + std::to_string(pos.count) + " vertices");
-            }
+            idx = std::move(ia.indices);
+            for (std::uint32_t v : idx)
+                if (v >= pos.count) return Fail("an index (" + std::to_string(v) + ") is past the primitive's " + std::to_string(pos.count) + " vertices");
         } else {
             idx.resize(n);
-            for (std::size_t i = 0; i < n; ++i) idx[i] = i;
+            for (std::size_t i = 0; i < n; ++i) idx[i] = (std::uint32_t)i;
         }
-        auto tri = [&](std::uint64_t a, std::uint64_t b, std::uint64_t c) -> bool {
-            if (a == b || b == c || a == c) { ++degenerate; return true; }
-            if (triangles >= kMaxTriangles) return Fail("the file has more than 20,000,000 triangles");
+        auto tri = [&](std::uint32_t a, std::uint32_t b, std::uint32_t c) -> bool {
+            // Every triangle slot counts against the budget, a degenerate one too, so equal indices cannot make free work.
+            if (triangles >= kMaxTriangles) return Fail("the file has more than 20,000,000 triangles (degenerate ones included)");
             ++triangles;
+            if (a == b || b == c || a == c) { ++degenerate; return true; }
             mesh.triangles.push_back((int)a); mesh.triangles.push_back((int)b); mesh.triangles.push_back((int)c);
             return true;
         };

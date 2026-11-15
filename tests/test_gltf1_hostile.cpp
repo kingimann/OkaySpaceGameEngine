@@ -164,6 +164,46 @@ int main() {
 #endif
     }
 
+    // review fixes: one decode budget for the whole file, checked before allocating; degenerate triangles count
+    {   // (1) the same mesh listed four times, each primitive 20,000,000 equal (degenerate) byte indices over 3 vertices
+        const std::uint64_t n = 20000000;
+        std::string body;
+        for (int i = 0; i < 9; ++i) PutF(body, (float)(i % 3));   // 3 vertices
+        body.append((std::size_t)n, '\0');                        // indices, all 0
+        const std::string json = std::string("{ \"asset\": { \"version\": \"1.0\" }, \"scene\": \"s\", \"scenes\": { \"s\": { \"nodes\": [\"n\"] } }, ") +
+            "\"nodes\": { \"n\": { \"meshes\": [\"m\", \"m\", \"m\", \"m\"] } }, \"meshes\": { \"m\": { \"primitives\": [ { \"attributes\": { \"POSITION\": \"p\" }, \"indices\": \"i\", \"material\": \"x\" } ] } }, " +
+            "\"accessors\": { \"p\": { \"bufferView\": \"vp\", \"byteOffset\": 0, \"componentType\": 5126, \"count\": 3, \"type\": \"VEC3\" }, " +
+            "\"i\": { \"bufferView\": \"vi\", \"byteOffset\": 0, \"componentType\": 5121, \"count\": " + std::to_string(n) + ", \"type\": \"SCALAR\" } }, " +
+            "\"bufferViews\": { \"vp\": { \"buffer\": \"binary_glTF\", \"byteOffset\": 0, \"byteLength\": 36 }, \"vi\": { \"buffer\": \"binary_glTF\", \"byteOffset\": 36, \"byteLength\": " + std::to_string(n) + " } }, " +
+            "\"buffers\": { \"binary_glTF\": { \"uri\": \"data:,\" } } }";
+        const std::string bin = Binary(json, body);
+        bool ok = true; double secs = 0;
+        const std::size_t peak = PeakWhileReading(bin, ok, secs);
+        std::printf("  one mesh listed 4 times, 20,000,000 degenerate indices each: %s, peak %zu MB, %.2f s\n", ok ? "read" : "refused", peak >> 20, secs);
+        CHECK(!ok && peak < 192u * 1024u * 1024u);
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+        CHECK(secs < 60.0);
+#else
+        CHECK(secs < 5.0);
+#endif
+    }
+    {   // (2) a 20,000,000-element byte accessor of 4 components (80,000,000 values) is refused before anything is allocated
+        const std::uint64_t count = 20000000;
+        std::string body((std::size_t)(count * 4), '\1');
+        const std::string json = std::string("{ \"asset\": { \"version\": \"1.0\" }, \"scene\": \"s\", \"scenes\": { \"s\": { \"nodes\": [\"n\"] } }, ") +
+            "\"nodes\": { \"n\": { \"meshes\": [\"m\"] } }, \"meshes\": { \"m\": { \"primitives\": [ { \"attributes\": { \"POSITION\": \"p\" }, \"material\": \"x\" } ] } }, " +
+            "\"accessors\": { \"p\": { \"bufferView\": \"vp\", \"byteOffset\": 0, \"componentType\": 5120, \"count\": " + std::to_string(count) + ", \"type\": \"VEC4\" } }, " +
+            "\"bufferViews\": { \"vp\": { \"buffer\": \"binary_glTF\", \"byteOffset\": 0, \"byteLength\": " + std::to_string(count * 4) + " } }, " +
+            "\"buffers\": { \"binary_glTF\": { \"uri\": \"data:,\" } } }";
+        const std::string bin = Binary(json, body);
+        body = std::string();
+        bool ok = true; double secs = 0;
+        const std::size_t peak = PeakWhileReading(bin, ok, secs);
+        // the body is copied into the buffer table once (80 MB); nothing near the 320 MB of 80,000,000 floats is allocated
+        std::printf("  80,000,000-value byte accessor: %s, peak %zu MB\n", ok ? "read" : "refused", peak >> 20);
+        CHECK(!ok && peak < 96u * 1024u * 1024u);
+    }
+
     // ---------------- mutation fuzz ----------------
     {
         const long iters = Iters(8000);

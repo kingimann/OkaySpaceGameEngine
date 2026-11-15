@@ -2,6 +2,13 @@
 # one issue per crash signature, labelled `crash`; the same crash again adds a comment (count, versions, systems), never a second issue.
 # Details and the one-time setup: docs/crash_reports.md.
 #
+# This workflow is OPT-IN. Merging it does nothing until the owner has done two things, once, in the browser (no key is ever pasted in chat):
+#   1. Run docs/sql/crash_reports.sql in the Supabase SQL editor (it makes the table; until then every run would fail with "table not found").
+#   2. Set the repository variable CRASH_ISSUES_ENABLED to true (GitHub > Settings > Secrets and variables > Actions > Variables > New
+#      repository variable). Until it is "true" the 30-minute schedule skips this job (it shows as skipped, never red).
+# A manual run (Actions > Crash reports to issues > Run workflow) always works and is a DRY RUN unless you untick the box: it prints the issues
+# it would make and changes nothing, so it is the way to check the setup before step 2.
+#
 # Needs ONE secret that release.yml already uses: SUPABASE_SERVICE_KEY (the project's service_role key; Settings > Secrets and variables >
 # Actions in this repository). Without it this workflow does nothing and ends green, with a notice saying so. The issues are created
 # with the workflow's own GITHUB_TOKEN (issues: write): no GitHub token is in the launcher or the editor, and no key is in this file.
@@ -9,13 +16,13 @@ name: Crash reports to issues
 
 on:
   schedule:
-    - cron: "11,41 * * * *"      # every 30 minutes
+    - cron: "11,41 * * * *"      # every 30 minutes (skipped unless CRASH_ISSUES_ENABLED is "true")
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Print the issues that would be made; create nothing and mark nothing"
+        description: "Dry run: print the issues that would be made; create nothing, mark nothing, delete nothing (untick to do it for real)"
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -28,6 +35,7 @@ concurrency:
 jobs:
   crash-issues:
     name: Crash reports to issues
+    if: github.event_name == 'workflow_dispatch' || vars.CRASH_ISSUES_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -52,6 +60,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           # -I: no site or user packages and no current-directory imports; the script uses the standard library only.
+          # (A scheduled run has no inputs, so DRY_RUN is empty and the run is real. A manual run is a dry run unless the box was unticked.)
           if [ "$DRY_RUN" = "true" ]; then
             python3 -I scripts/crash_to_issue.py --dry-run
           else

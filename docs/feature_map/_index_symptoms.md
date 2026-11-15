@@ -138,6 +138,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a limb flips | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | a limb pops at full extension | [36.5](36-math-geometry.md#365-ik-math) IK math |
 | a line starting `[okay] stack:` in the log | [41.11](41-build-tools-infra.md#4111-own-stack-dogfood-switch-and-startup-line) Own-stack dogfood switch and startup line |
+| a line that is only 0 appears in a saved scene | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | a link stops working after loading | [11.5](11-gameplay-systems.md#115-building-build-mode-structure-builder-snapping) Building: build mode, structure builder, snapping |
 | a long list is slow or drops rows | [12.4](12-ingame-ui.md#124-lists-tabs-modals-context-menu-tooltips-scroll-views) Lists, tabs, modals, context menu, tooltips, scroll views |
 | a long song uses a lot of memory (tick Stream) | [7.2](07-audio.md#72-formats-and-clips) Formats and clips |
@@ -231,6 +232,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a scene is missing from a build | [15.12](15-editor.md#1512-scene-manager-panel) Scene Manager panel |
 | a scene of thousands of identical props is slow | [27.3](20-35-planned.md#273-batching) Batching |
 | a scene opens with missing textures and no warning | [1.17](01-core-scene.md#117-scene-hierarchy-search-and-validation) Scene hierarchy, search and validation |
+| a scene saved by Notepad (UTF-8 with BOM) says missing 'okayscene' header | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | a scene shows pink or empty after I moved a file | [20.2](20-35-planned.md#202-dependencies-and-references) Dependencies and references |
 | a score label stays at its first value | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
 | a script cannot find a widget by name | [12.13](12-ingame-ui.md#1213-data-binding-ui-animation-and-script-control) Data binding, UI animation and script control |
@@ -751,6 +753,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | other players slide without walking animation | [16.8](16-networking.md#168-network-player-spawning-and-avatar-motion) Network player spawning and avatar motion |
 | other players stutter or teleport | [16.2](16-networking.md#162-server-authority-prediction-lag-compensation) Server authority, prediction, lag compensation |
 | others can't see my showcase | [17.7](17-launcher-platform.md#177-profiles-badges-achievements) Profiles, badges, achievements |
+| Outline Width or another setting is back at its default after the feature was switched off and the scene reopened | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | paint colour is muddy because it multiplies with the material | [3.8](03-modeling-import.md#38-sculpt-and-paint-brushes) Sculpt and paint brushes |
 | particles show through walls in the editor | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
 | particles show through walls only with a GPU backend | [38.10](38-render-backends.md#3810-frame-and-present-path) Frame and present path |

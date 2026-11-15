@@ -112,8 +112,8 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 ### 1.5 Scene serializer
 - **What:** Reads and writes the human-readable `okayscene` text format (version 3), clones objects, merges scenes and records what a round trip keeps.
 - **Parts:**
-  - 1.5.1 Save and load - `Scene/SceneSerializer` - `Serialize`, `SaveToFile`, `Deserialize`, `LoadFromFile`; `kSceneFormatVersion = 3`; packed (obfuscated) files are unpacked on read
-  - 1.5.2 Safe loading - `Scene/SceneSerializer` - all-or-nothing: a bad or cut-short file leaves the live scene untouched; counts are bounded; records from a newer build are skipped with warnings
+  - 1.5.1 Save and load - `Scene/SceneSerializer` - `Serialize`, `SaveToFile`, `Deserialize`, `LoadFromFile`; `kSceneFormatVersion = 3`; packed (obfuscated) files are unpacked on read; a leading UTF-8 byte-order mark (Notepad's "UTF-8 with BOM") is dropped; the settings of a switched-off feature (outline, rim, toon and gradient, bump and AO strength, vehicle suspension) are saved too; a subnormal float reads under libc++ as well
+  - 1.5.2 Safe loading - `Scene/SceneSerializer` - all-or-nothing: a bad or cut-short file leaves the live scene untouched; counts are bounded; records from a newer build are skipped with warnings (a stray number is dropped, not kept: a record or field name starts with a letter)
   - 1.5.3 Merge and chunks - `Scene/SceneSerializer` - `MergeFromText/File` adds a scene next to the host, roots offset, objects tagged with `sourceScene`
   - 1.5.4 Stable ids and flags - `Scene/SceneSerializer` - `guid`, `sibling` order, `active`, per-component `compoff` records (see docs/scene_serializer.md)
   - 1.5.5 Component serializer registry - `Scene/ComponentSerializer` - register a record name with a writer and reader instead of growing the long if/else chain; `trailrenderer` is the first user
@@ -126,12 +126,12 @@ Everything is on main. 2.851.0 is live: it holds 2.850.0 (#574 tools wave 2, #57
 - **API:** `SceneSerializer::Serialize`, `SceneSerializer::LoadFromFile`, `SceneSerializer::MergeFromFile`, `ComponentSerializerRegistry::Register`, `SceneLoadJob`, `SceneText::Canonicalize`, `SceneDiff::Compute`, `SceneMerge::Merge`, `SceneMigration::MigrateToCurrent`
 - **Editor:** File menu Save/Open (15.9); the same serializer feeds undo snapshots, copy/paste and prefab files; no window uses the text tools (1.5.7-1.5.10) yet
 - **Docs:** `docs/scene_serializer.md`, `docs/prefabs.md`, `docs/scene_diff_merge.md`
-- **Tests:** `serialize`, `scene_safe_load`, `scene_records`, `scene_ids_prefabs`, `parent_cycles`, `assets`, `scene_canonical`, `scene_diff`, `scene_merge`, `scene_migration` (they share `tests/scene_text_testkit.hpp`, a seeded random scene generator)
+- **Tests:** `serialize`, `scene_safe_load`, `scene_records`, `scene_stray_number`, `switch_off_settings`, `scene_subnormal`, `scene_bom_load`, `scene_ids_prefabs`, `parent_cycles`, `assets`, `scene_canonical`, `scene_diff`, `scene_merge`, `scene_migration` (they share `tests/scene_text_testkit.hpp`, a seeded random scene generator)
 - **Status:** Works - merged in #553 and #570; read `SceneSerializer.hpp` and `ComponentSerializer.*`; the long `SceneSerializer.cpp` still carries most components in one if/else chain; covered by the tests below; the text tools of #578 are library code with tests that include random-scene and fuzz cases (per docs and test names). Every component instance on an object is saved and loaded, in stored order (two colliders, two lights, two sprites, and the rest); a file with one of each is unchanged, and an older file still loads
 - **Open:** file splitting (19.4); #575 added `ValidateFile`, shortest-round-trip floats and `gravity3` (1.17); no editor or command-line use of the diff, merge, canonical and migration tools (28)
 - **Related:** 1.4, 1.6, 1.14, 15.9, 19.4, 28
-- **Words:** okayscene, serializer, SceneSerializer, save scene, load scene, merge, text format, guid, ComponentSerializerRegistry, CollectAssetPaths, gravity, scene file, canonical form, Canonicalize, scene diff, three-way merge, merge conflict, scene migration, SceneText
-- **Seen as:** a scene file will not open or opens half-empty; a component's settings are lost after save and load; two scenes will not merge cleanly
+- **Words:** okayscene, serializer, SceneSerializer, save scene, load scene, merge, text format, guid, ComponentSerializerRegistry, CollectAssetPaths, gravity, scene file, byte-order mark, BOM, outlineoff, subnormal float, canonical form, Canonicalize, scene diff, three-way merge, merge conflict, scene migration, SceneText
+- **Seen as:** a scene file will not open or opens half-empty; a scene saved by Notepad (UTF-8 with BOM) says missing 'okayscene' header; a component's settings are lost after save and load; Outline Width or another setting is back at its default after the feature was switched off and the scene reopened; a line that is only 0 appears in a saved scene; two scenes will not merge cleanly
 - **Ask me like:** "Add my new component to the scene file without touching the big chain"; "Keep two colliders on one object through save and load"
 
 ### 1.6 Prefabs and templates

@@ -414,6 +414,50 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Scene files: four fixes from the Grok review (branch `claude/grok-stack`, not merged or released yet)
+
+Four bugs in how a scene file is read and written (issue #888; details in [scene_serializer.md](scene_serializer.md)). The
+example scenes are in the `examples\` folder next to `OkaySpace.exe` (see "Where the files are"). Open a scene in the editor
+(`Tools\OkayEngine.exe`) with **File > Open...**, type or paste its path and press Open.
+
+**1. A scene saved by Notepad as "UTF-8 with BOM" opens.** Before, it failed with `missing 'okayscene' header`.
+1. Open `examples\spatial_audio\spatial_audio.okayscene` in Notepad.
+2. **File > Save As...**. Set **Save as type** to **All files** (or Notepad adds `.txt`), **Encoding** to **UTF-8 with BOM**,
+   and save it in the same folder as `bom_test.okayscene` (the scene finds its sounds next to itself).
+3. In the editor, **File > Open...** and open `bom_test.okayscene`. It opens and the Hierarchy lists the objects
+   (Main Camera and the rest).
+
+**2. A stray number is not kept and written back by every save.** `gravity 0 -9.81 0` in the two examples had a third
+number the 2D `gravity` record does not read; the loader kept it as an "unknown record" and every save wrote a line `0`
+back. The two examples (`spatial_audio`, `own_wav`) are fixed, and the loader no longer keeps such a number.
+1. Copy `examples\spatial_audio\spatial_audio.okayscene` to `stray_test.okayscene` in the same folder. In Notepad change the
+   line `gravity 0 -9.81` back to `gravity 0 -9.81 0` and save (encoding "UTF-8").
+2. Open `stray_test.okayscene` in the editor, then **File > Save As...** `stray_out.okayscene`.
+3. Open `stray_out.okayscene` in Notepad. There is no line that is only `0`. Before the fix there was one.
+
+Behaviour change, on purpose: a line inside an object that starts with something other than a letter (a `#` note, for
+example) is dropped on load. It used to be kept and written back. None of the shipped scenes or prefabs has one.
+
+**3. Settings of a feature that is switched off are kept.** Before, switching a feature off and saving lost its settings.
+1. In the editor, select an object that has a **Mesh Renderer** (add a Cube if the scene has none).
+2. In the Inspector tick **Outline**, set **Outline Width** to 0.4, then untick **Outline** (the width field hides).
+3. **File > Save**, then **File > Open...** the same file again (or press **Ctrl+D** to duplicate the object).
+4. Select the object and tick **Outline**. The width is 0.4. Before the fix it was back at 0.03.
+   In Notepad, the saved file has a line `outlineoff 0.4 ...` under that object while the outline is off.
+
+The same fix keeps Rim Power and Rim Color (Rim 0), Cel Bands and the gradient colours (Standard shader), Bump Strength
+(no normal map), Occlusion (no AO map), and a vehicle's suspension tuning (**Raycast Suspension** off). A file written by an
+older build keeps `outlineoff` as an unknown record, so an outline that is on still wins when such a file is opened.
+
+**4. Very small numbers load in the browser build.** This cannot be tried in the Windows release. Windows is not affected:
+the bug was in libc++ (macOS and the WebGL build), which refused a number between about 1.4e-45 and 1.17e-38 (the scene
+then did not open there). It is covered by the test `scene_subnormal` on Linux, and by `scene_serializer_audit`, which
+failed two checks under libc++ before the fix (a clang + libc++ build on Linux; no WebGL build was run).
+
+**Status.** Logic tested headless on Linux (GCC, Release); the test names and counts are in the pull request. The
+editor Inspector steps in 3 and the Notepad and editor steps in 1 and 2 are unverified until you look: nothing here ran on
+Windows or opened a real editor window.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

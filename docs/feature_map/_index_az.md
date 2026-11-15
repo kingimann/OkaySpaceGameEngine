@@ -376,6 +376,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Body adjustment and carry animations (5.9.3)
 - Body control (9.4.3)
 - body pull (5.7)
+- BOM (1.5)
 - bone map (3.7, 5.4)
 - bone mask (15.5)
 - bone palette (38.9, 38.9.5)
@@ -493,6 +494,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - button door (11.5)
 - BVH (6.2)
 - byproduct (11.3)
+- byte-order mark (1.5)
 
 **C**
 
@@ -2977,6 +2979,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - outfit (30.3)
 - outline (2.2, 13.5)
 - Outline, snap and align (14.1.9)
+- outlineoff (1.5)
 - overdraw (23.3, 27.3, 38.11)
 - overflow (31.3)
 - overlap (6.5)
@@ -4581,6 +4584,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Subdivide, smooth, relax, fill, grid snap (3.9.3)
 - subdivision surface (3.2, 3.3)
 - subforum (17.5)
+- subnormal float (1.5)
 - subscribe (1.9)
 - SubscribeOnce (1.9)
 - subtitle (10.1)

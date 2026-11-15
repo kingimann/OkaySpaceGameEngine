@@ -420,7 +420,11 @@ def _http(method, url, headers, data=None, timeout=30):
 class Supabase:
     def __init__(self, url, key):
         self.base = url.rstrip("/")
-        self.h = {"apikey": key, "Authorization": "Bearer " + key}
+        self.h = {"apikey": key}
+        # The legacy service_role key is a JWT and goes in both headers. A newer "sb_secret_..." key is not a JWT: it goes in apikey only
+        # (Supabase rejects it as a bearer token).
+        if re.match(r"^eyJ[\w-]+\.[\w-]+\.[\w-]*$", key):
+            self.h["Authorization"] = "Bearer " + key
 
     def fetch_rows(self, limit=200):
         q = "select=*&processed_at=is.null&order=created_at.asc&limit=%d" % limit

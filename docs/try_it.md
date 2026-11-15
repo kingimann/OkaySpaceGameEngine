@@ -49,6 +49,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Crash reports: a detailed report, sent for you, turned into a GitHub issue | `OKAY_TEST_CRASH_LATE=Test.Step` crashes the editor on purpose; launcher Settings > Crash reports | Local half new; the server half needs the owner's one-time setup (see 14) |
 
 ---
 
@@ -211,6 +212,56 @@ controller at 30, 60 and 144 fps; the test failed on the old code and passes now
 The before-and-after of the bug needs the old release to compare.
 
 ---
+
+## 14. Crash reports: detailed report, sending, GitHub issues
+
+**What it is.** When the editor crashes it now writes a much fuller report (version and build, Windows version, CPU, memory, graphics card, the
+scene's name, the last 64 steps, the last 200 Console lines, a backtrace). The launcher shows it, lets you read exactly what would be sent
+(names, folders, emails and addresses removed), sends it for you (switch **on by default**), and a GitHub job turns it into an issue.
+Full story: [crash_reports.md](crash_reports.md).
+
+> **The server half (steps 8 and 9) cannot work until the owner has done the one-time setup:** run `docs/sql/crash_reports.sql` once in the
+> Supabase SQL editor, and make sure the GitHub secret `SUPABASE_SERVICE_KEY` exists (releases already use it). Steps 1 to 7 and 10 need
+> nothing.
+
+**Steps (Windows release).**
+1. Close the editor. Open **Command Prompt** in the folder with `OkaySpace.exe` (zip: the unzipped folder; installer:
+   `%LOCALAPPDATA%\OkaySpace`). To keep the files easy to find, first run: `set OKAY_CRASH_DIR=%TEMP%\crashtest` after
+   `mkdir %TEMP%\crashtest`.
+2. Run `set OKAY_TEST_CRASH_LATE=Test.Step` and then `OkaySpace.exe` (the launcher). The editor the launcher starts inherits both settings.
+3. In the launcher open the editor the way you normally do (it must be started from the launcher). After a couple of seconds, at the 120th frame, the editor crashes on purpose and the box
+   **OkaySpace crashed** appears. Click OK.
+   (`OKAY_TEST_CRASH=Test.Step` crashes before the window opens instead: the report then has no scene or graphics card yet.)
+4. **Where the report is:** `okay_crash.txt` (latest) and `okay_crashlog.txt` (all) in `%TEMP%\crashtest`, or, without `OKAY_CRASH_DIR`, next to
+   `OkayEngine.exe` (`Tools\`). Open it in Notepad: you should see `Version`, `Build`, `Last step: Test.Step`, `OS`, `CPU`, `GPU`, `Backtrace`, then
+   `--- Breadcrumbs`, `--- Console` (the last line says the crash was on purpose).
+5. In the launcher a notification "The editor crashed" appears. Open **Settings > Crash reports**. You should see a card "Access violation"
+   with the time and version and, after a dot, **waiting to be sent**.
+6. Click **What would be sent** on the card (or **Preview** in the SENDING CRASH REPORTS card). You should see the report with your folders
+   shown as `%USERPROFILE%` and your computer name as `<host>`, and the columns (report id, signature, version, ...). Nothing has been sent by looking.
+7. **Turn it off:** switch **Send crash reports automatically** off: the card says "not sent (sending is off)". (Or start the launcher with
+   `set OKAY_CRASH_UPLOAD=0`.) Switch it on again to continue.
+8. **Sending** (needs the one-time SQL): about 15 to 40 seconds after the crash the card changes to **sent** and a toast says "Crash report
+   sent. Thank you." If the table is missing, the page says "The server has no crash_reports table yet ... run docs/sql/crash_reports.sql" and the
+   report is kept. To see the row: Supabase > Table editor > `crash_reports` (or SQL editor:
+   `select created_at, signature, version, exception, top_frame, processed_at, issue_number from crash_reports order by created_at desc;`).
+9. **The issue** (needs the SQL and the secret): GitHub > Actions > **Crash reports to issues** > Run workflow (tick **dry run** first: the log
+   shows the issue text; then run it for real). Within 30 minutes of the next schedule an issue `Crash: Access violation in ...` appears with
+   label `crash`. Crash again the same way and send: the issue gets a **comment**, not a second issue. (The schedule only runs once this change is on `main`.)
+10. **Report on GitHub** (no server needed): on the card click **Report on GitHub**. Your browser opens GitHub's new-issue page with the title, a table
+    and the backtrace filled in, and the whole cleaned report is on your clipboard: paste it into the issue. Read it, then Submit or close the tab.
+
+**Try the issue text without Windows or any secret** (any machine with Python): `python3 scripts/crash_to_issue.py --rows-file
+tests/data/crash_rows_sample.json --dry-run` prints the two issues and one comment the three sample rows would make.
+
+**How you know it worked.** The report has the lines in step 4; the card says what its sending state is; the preview has no folder with your
+name in it; with sending off nothing is ever sent; one crash makes one issue, the same crash again a comment.
+
+**Status.** Verified here (Linux): the report builder, the parser and signature, the handler (a child process really faults: segmentation fault,
+divide by zero, abort, uncaught exception, stack overflow), the scrubber, the upload logic against a fake server, the SQL against a local PostgreSQL
+(insert-only, no reads, flood cap), the issue script (41 tests). **Unverified:** everything that needs Windows (the Windows handler, the message box,
+function names from dbghelp), the editor and launcher as running programs (they were only syntax-checked), the upload to the real Supabase, the
+GitHub workflow, the browser page of step 10, and `OKAY_TEST_CRASH_LATE` in a running editor.
 
 ## Switches that are off by default (own code)
 

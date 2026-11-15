@@ -314,21 +314,26 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Ask me like:** "add a Join button to my game's friend list", "why is the Internet tab empty?"
 
 ### 17.16 Crash reports (launcher side)
-- **What:** The launcher's Settings > Crash reports page that reads what the editor wrote when it closed unexpectedly (the latest report and a history), in one parser shared with the tests.
+- **What:** The launcher's Settings > Crash reports page: what the editor wrote when it closed unexpectedly (the latest report and a history), a switch (on by default) that sends a cleaned copy to our server, a preview of exactly what would be sent, and a button that opens a prefilled GitHub issue. One parser, one scrubber and one uploader are shared with the tests.
 - **Parts:**
-  - 17.16.1 Report parser - `shared/CrashReports.hpp` - reads `okay_crash.txt` and `okay_crashlog.txt` (Windows SEH and Linux or macOS signal format): when, version, last breadcrumb, exception, module
-  - 17.16.2 Crash page - `launcher/main.cpp` (L1793 data, L20945 page) - newest first, one notification per new crash, a Clear button; `OKAY_CRASH_DIR` points it at another folder
-- **Code:** `shared/CrashReports.hpp`
-- **API:** `okaycrash::Report`, parse functions
-- **Editor:** the editor writes the reports (15.9)
-- **Docs:** `docs/editor.md`
-- **Tests:** `crash_reports`
-- **Status:** Works - the parser is tested for both formats
-- **Open:** none
-- **Related:** 15.9, 22.3
-- **Words:** crash report, okay_crash.txt, okay_crashlog.txt, last step, exception, SIGSEGV
-- **Seen as:** the editor closed by itself; Crash reports page empty
-- **Ask me like:** "show me the latest editor crash"
+  - 17.16.1 Report parser and signature - `shared/CrashReports.hpp` - reads `okay_crash.txt` and `okay_crashlog.txt` (Windows SEH and Linux or macOS signal format, old and detailed): when, version, build, OS, last step, exception, module, the other header lines, backtrace, breadcrumbs, Console; a 16-hex crash signature (exception kind + the top three of the program's own frames) and a report id
+  - 17.16.2 Crash page - `launcher/main.cpp` (data near `g_crashes`, page under Settings category 9) - newest first, one notification per new crash, a Clear button, a card per report with its sending state (sent, waiting, refused, off); `OKAY_CRASH_DIR` points it at another folder
+  - 17.16.3 Scrubber - `shared/CrashScrub.hpp` - takes user folders, computer and login names, emails, IP addresses, keys and tokens out of a report before it leaves the computer; idempotent
+  - 17.16.4 Uploader - `shared/CrashUpload.hpp`, `launcher/main.cpp` (`PumpCrashUpload`) - one scrubbed row of at most 100 KB per report to the insert-only `crash_reports` table with the public key, newest first, 5 a day, never twice (`okay_crash_sent.txt`), retry with a growing wait; Settings switch `crash_upload` (default on), `OKAY_CRASH_UPLOAD=0` turns it off
+  - 17.16.5 Preview and Report on GitHub - `launcher/main.cpp`, `shared/CrashUpload.hpp` - "What would be sent" shows the scrubbed text and columns; "Report on GitHub" opens a new issue (address at most 3900 bytes) and copies the whole scrubbed report
+  - 17.16.6 Issue maker - `scripts/crash_to_issue.py`, `.github/workflows/crash-issues.yml` - every 30 minutes turns new rows into one issue per signature (label `crash`) or a comment on the existing one; needs the `SUPABASE_SERVICE_KEY` secret
+  - 17.16.7 Table - `docs/sql/crash_reports.sql` - row-level security: the anon key may insert nine columns and nothing else; checks on the row; 300 rows an hour cap
+- **Code:** `shared/CrashReports.hpp`, `shared/CrashScrub.hpp`, `shared/CrashUpload.hpp`, `launcher/main.cpp`, `scripts/crash_to_issue.py`, `docs/sql/crash_reports.sql`, `.github/workflows/crash-issues.yml`
+- **API:** `okaycrash::Report`, `okaycrash::ParseOne`, `okaycrash::ParseLog`, `okaycrash::Signature`, `okaycrash::Scrub`, `okaycrash::upload::BuildPayload`, `okaycrash::upload::Run`, `okaycrash::upload::IssueUrl`; `OKAY_CRASH_UPLOAD`, `OKAY_CRASH_DIR`
+- **Editor:** the editor writes the reports (15.9, 22.3.2)
+- **Docs:** `docs/crash_reports.md`, `docs/editor.md`, `docs/try_it.md` (section 14)
+- **Tests:** `crash_reports`, `crash_scrub`, `crash_upload`, `crash_context`, `crash_handler`; `tests/scripts/test_crash_reports_sql.sh`, `tests/scripts/test_crash_to_issue.py`
+- **Status:** Partial - the parser, scrubber, uploader, table SQL and issue script are tested; the launcher page and worker were only syntax-checked, and the server half does nothing until the owner runs the SQL (the secret is the one releases use)
+- **Open:** a real crash on Windows and an upload to the real project have not been run; function names for a stripped release need the release's `OkayEngine.debug` (see docs/crash_reports.md); no upload from the player (no player handler, 48.1)
+- **Related:** 15.9, 22.3, 48.1, 48.4
+- **Words:** crash report, okay_crash.txt, okay_crashlog.txt, last step, exception, SIGSEGV, send crash reports, OKAY_CRASH_UPLOAD, crash signature, scrub, preview what would be sent, Report on GitHub, crash_reports table
+- **Seen as:** the editor closed by itself; Crash reports page empty; "waiting to be sent" never changes; "The server has no crash_reports table yet"
+- **Ask me like:** "show me the latest editor crash"; "turn off sending crash reports"; "why did a crash not become an issue?"
 
 ### 17.17 Platform layer (`okay::platform`) and the own backend
 - **What:** The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and evdev through `dlopen`; Windows: Win32, compiles but untested; macOS: not written). Not the online services in the same `Platform/` folder. Timers, audio devices and game controllers of the editor, launcher and player go through it, and the player's window, event loop, keyboard and mouse state, GL context, base and save paths, locales, error boxes and logging do too (stage 2; the sdl2 backend behaves as before). The player's 2D drawing goes through `okay::platform::Painter` (stage 3): the sdl2 painter is the default and unchanged, a CPU software painter on the own backend is built but **off and not ready** (only reachable with `OKAY_PLATFORM_BACKEND=own` in the environment). The editor's and launcher's windows, event loops and drawing still call SDL directly (`SDL_Renderer`, ImGui's SDL backends), so the own backend cannot run them yet.

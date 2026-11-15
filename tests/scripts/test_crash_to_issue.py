@@ -357,6 +357,12 @@ class Main(unittest.TestCase):
             self.assertFalse(c.check_supabase_url(bad), bad)
         self.assertTrue(c.check_supabase_url("http://127.0.0.1:1", allow_any=True))
 
+    def test_key_headers(self):
+        jwt = c.Supabase("https://abc.supabase.co", "eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.c2ln").h   # lint-allow: secret (made up)
+        self.assertEqual(sorted(jwt), ["Authorization", "apikey"])
+        new = c.Supabase("https://abc.supabase.co", "sb_secret_abcdefghijklmnop").h   # lint-allow: secret (made up)
+        self.assertEqual(sorted(new), ["apikey"])   # a non-JWT key is never sent as a bearer token
+
     def test_default_url_comes_from_cmake(self):
         url = c.default_supabase_url(ROOT)
         self.assertTrue(c.check_supabase_url(url), url)

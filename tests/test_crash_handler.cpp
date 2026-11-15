@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include "CrashHandler.hpp"
 #include "CrashReports.hpp"
+#include "CrashUpload.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -119,6 +120,17 @@ int main() {
     const auto loaded = okaycrash::Load(d1);
     CHECK(loaded.size() == 1 && loaded[0].signature == r.signature && loaded[0].frames == r.frames);
     CHECK(loaded[0].console.size() == 200);
+
+    // What the launcher would send for this real report: scrubbed (the program's folder stands in for the user's home), within 100 KB, valid columns.
+    {
+        const std::string exeDir = fs::path(r.Info("Exe")).parent_path().string();
+        okaycrash::ScrubContext sc; sc.homeDirs = {exeDir};
+        sc.usernames = {"bob"};
+        CHECK(exeDir.size() >= 4 && text.find(exeDir) != std::string::npos);   // the raw report has the folder ...
+        const okaycrash::upload::Payload pl = okaycrash::upload::BuildPayload(r, sc);
+        CHECK(pl.ok && pl.report.find(exeDir) == std::string::npos && pl.report.find("Exe: ~") == 0 + pl.report.find("Exe: ~") && pl.report.find("Exe: ~") != std::string::npos);   // ... the row does not
+        CHECK(pl.json.size() <= okaycrash::upload::kMaxBodyBytes && pl.signature == r.signature && pl.topFrame == exe + "!CrashHereSegv" && pl.lastStep == "Render3D:gl");
+    }
 
     // The same crash again, from another step: same signature, and the history now has two entries.
     CHECK(RunChild(d1, Kind::Segv, "Play.Tick", 3) == SIGSEGV);

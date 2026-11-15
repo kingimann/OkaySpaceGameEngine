@@ -1095,6 +1095,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the server exits right away with a misconfigured error | [16.5](16-networking.md#165-dedicated-server-export-relay) Dedicated server, export, relay |
 | the server export misses a file | [15.7](15-editor.md#157-build-settings) Build Settings |
 | the server folder has no Docker files | [18.7](18-build-export-release.md#187-dedicated-server-export-and-linux-server-build) Dedicated server export and Linux server build |
+| The server has no crash_reports table yet | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
 | the server isn't in the browser | [16.5](16-networking.md#165-dedicated-server-export-relay) Dedicated server, export, relay |
 | the server list is empty | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
 | the server list window cannot be dragged | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
@@ -1198,6 +1199,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | vignette drawn twice | [2.5](02-rendering-world.md#25-post-processing) Post-processing |
 | Wait skips | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
+| waiting to be sent" never changes | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
 | walk hips snap at every footfall | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | walk-only file has no idle | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |
 | walking animation feels off, feet slide or the wrong speed | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |

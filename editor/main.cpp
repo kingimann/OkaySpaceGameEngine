@@ -7539,6 +7539,7 @@ void DrawCrashLog() {
     static bool loaded = false;
     static std::uint64_t revision = 0;   // raised whenever `text` changes (the OkayUI port re-reads it then)
     fs::path dir      = OkayExeDir();
+    if (const char* dev = std::getenv("OKAY_CRASH_DIR"); dev && *dev) { std::error_code de; if (fs::is_directory(dev, de)) dir = dev; }   // (dev/test: where the handler writes, see docs/crash_reports.md)
     fs::path histPath = dir / "okay_crashlog.txt";   // rolling history (all reports)
     fs::path lastPath = dir / "okay_crash.txt";       // most recent report
     auto readAll = [](const fs::path& p, std::string& out) -> bool {

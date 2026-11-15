@@ -1506,6 +1506,20 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
             Vec3 up = std::fabs(N.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
             Vec3 T = Vec3::Cross(up, N); { float l = T.Magnitude(); T = l > 1e-5f ? T * (1.0f / l) : Vec3{1, 0, 0}; }
             Vec3 B = Vec3::Cross(N, T);
+            // Turn the kernel about the normal by a different angle in each texel of a 4x4 tile. With one fixed
+            // kernel every texel at the same height on a wall hits the floor with the same samples, so the AO
+            // changed in steps (horizontal stripes) and each sample left its own copy of an edge (ghost lines).
+            // The 16 angles of a tile are spread evenly; the blur below averages a whole tile, so the stripes
+            // become a smooth gradient (8 samples x 16 angles). The tile order puts far-apart angles next to
+            // each other (an ordered-dither index built from the bits of x and y).
+            {
+                const unsigned tx = (unsigned)hx & 3u, ty = (unsigned)hy & 3u, d = tx ^ ty;
+                const unsigned idx = ((d & 1u) << 3) | ((ty & 1u) << 2) | (((d >> 1) & 1u) << 1) | ((ty >> 1) & 1u);
+                const float ang = ((float)idx + 0.5f) * (6.2831853f / 16.0f);
+                const float ca = std::cos(ang), sa = std::sin(ang);
+                const Vec3 T2 = T * ca + B * sa, B2 = B * ca - T * sa;
+                T = T2; B = B2;
+            }
             float occWeighted = 0.0f; int tot = 0;
             for (int k = 0; k < K; ++k) {
                 Vec3 sp = P + (T * kern[k].x + B * kern[k].y + N * kern[k].z) * radius;
@@ -1531,22 +1545,32 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
             }
         }
     });
-    // Blur the half-res AO (3x3 box) to kill the hemisphere-sampling noise — SSAO
-    // is inherently grainy and needs this smoothing pass. Cheap at half resolution.
+    // Blur the half-res AO over a 4x4 block (one whole rotation tile, so every texel averages all 16 kernel
+    // angles). Only neighbours on the same surface count: same facing (normals within about 25 degrees) and about
+    // the same distance from the eye. Without that the dark contact of a wall bled onto the floor as a grey halo.
     {
-        static std::vector<float> aob; aob = ao;
+        std::vector<float> aob = ao;
         ParallelRows(0, hh, [&](int ya, int yb) {
             for (int y = ya; y < yb; ++y)
             for (int x = 0; x < hw; ++x) {
+                const std::size_t ci = (std::size_t)(y * 2) * W + (std::size_t)(x * 2);
+                if (!r.gvalid[ci]) continue;
+                const Vec3 cn = r.gnrm[ci];
+                const float cd = (r.gpos[ci] - eye).Magnitude();
+                const float tol = 0.05f * cd + 0.02f;
                 float s = 0; int c = 0;
-                for (int dy = -1; dy <= 1; ++dy) {
+                for (int dy = -2; dy <= 1; ++dy) {
                     int ny = y + dy; if (ny < 0 || ny >= hh) continue;
-                    for (int dx = -1; dx <= 1; ++dx) {
+                    for (int dx = -2; dx <= 1; ++dx) {
                         int nx = x + dx; if (nx < 0 || nx >= hw) continue;
+                        const std::size_t ni = (std::size_t)(ny * 2) * W + (std::size_t)(nx * 2);
+                        if (!r.gvalid[ni]) continue;
+                        if (Vec3::Dot(cn, r.gnrm[ni]) < 0.9f) continue;
+                        if (std::fabs((r.gpos[ni] - eye).Magnitude() - cd) > tol) continue;
                         s += aob[(std::size_t)ny * hw + nx]; ++c;
                     }
                 }
-                ao[(std::size_t)y * hw + x] = c ? s / c : 1.0f;
+                if (c) ao[(std::size_t)y * hw + x] = s / c;
             }
         });
     }

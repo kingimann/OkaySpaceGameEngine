@@ -14,8 +14,9 @@
 //              its overlay), post.bloom and post.fxaa are read (PlanScenePost /
 //              ApplyScenePost); post.ssao drives ApplySSAO with the scene's radius, intensity and power. post.dof is not. Procedural sky colours come
 //              from EffectiveSkyColors; the disc, halo, clouds and stars are not
-//              drawn. ApplySSAO reads the process-wide switch only; ApplyBloom, ApplyFXAA
-//              and ApplyColorGrade also still read theirs. PerPixelLighting is
+//              drawn. ApplySSAO runs for the process-wide switch (SSAOEnabled) or the
+//              scene's post.ssao; ApplyBloom, ApplyFXAA and ApplyColorGrade
+//              also still read their process-wide switches. PerPixelLighting is
 //              read only here, and ShadowsUsePerPixel (default on) lights per
 //              pixel while a shadow map exists, so shadows show by default.
 //

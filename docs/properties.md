@@ -266,6 +266,18 @@ More of the builder:
    another one goes into `Companions()` in the test (the record names the writer needs).
 5. Add the type's name to `expected[]` in `TestRegistryBasics` and update the counts in this page.
 
+### How to try it
+
+1. Open the editor and use **File > Open** on `examples/property_registry/registry_try.okayscene`.
+2. Select **Pause Menu**. The Inspector shows the Pause Menu properties, among them **Hint**
+   ("Saved with this scene since the fix"), **Show Restart** (on), **Show Volume** (off) and **Restart Scene**.
+   Before this branch these four were reset on every save.
+3. Change **Hint**, then press **Ctrl+Z**: it goes back. Press **Ctrl+Y** to redo.
+4. Press **Ctrl+D** to duplicate the object: the copy has the same hint and switches.
+5. Save the scene (**Ctrl+S**), close it and open it again: the values are still there.
+6. Select **Player**: **Max Health** is 250000. Edit another Health field and undo it; Max Health stays 250000
+   (before `kBig` was raised it became 100000 the first time it went through the registry).
+
 ### Large values
 
 Every registry write (an Inspector edit, undo and redo, a Saveable's property paths on load, `tween_prop`, prefab

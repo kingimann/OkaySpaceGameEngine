@@ -68,37 +68,51 @@ int main() {
     CHECK(inventoryLines() == 1);
     CHECK(!lines.empty() && lines.back() == "inventory: Healing Potion is not ready: wait 2.0 s.");
     CHECK(InventoryOps::UseRefusalText(inv, "potion", "cooldown") == "Healing Potion is not ready: wait 2.0 s.");
+
+    // Asking again at once: the script is told every time, the log line is not repeated within a second (a held key or a
+    // networked client must not flood the log).
+    CHECK(!InventoryOps::Use(inv, 0, go).Ok());
+    CHECK(G("n").AsFloat() == 2.0f);
+    CHECK(inventoryLines() == 1);
     Time::Step(0.5f);
     CHECK(InventoryOps::UseRefusalText(inv, "potion", "cooldown") == "Healing Potion is not ready: wait 1.5 s.");   // the live number
+    CHECK(!InventoryOps::Use(inv, 0, go).Ok());
+    CHECK(G("n").AsFloat() == 3.0f);
+    CHECK(inventoryLines() == 1);
+    Time::Step(0.6f);                                                     // a second after the first line: it speaks again
+    CHECK(!InventoryOps::Use(inv, 0, go).Ok());
+    CHECK(G("n").AsFloat() == 4.0f);
+    CHECK(G("message").AsString() == "Healing Potion is not ready: wait 0.9 s.");
+    CHECK(inventoryLines() == 2);
 
     // An item nothing uses.
     const InvResult plank = InventoryOps::Use(inv, 2, go);
     CHECK(!plank.Ok() && plank.reason == "nothing uses it");
-    CHECK(G("n").AsFloat() == 2.0f);
+    CHECK(G("n").AsFloat() == 5.0f);
     CHECK(G("message").AsString() == "Plank can't be used (nothing uses it).");
-    CHECK(inventoryLines() == 2);
+    CHECK(inventoryLines() == 3);
 
     // An empty slot: refused, but nobody is told (pressing the Use key on nothing is not an event).
     const InvResult empty = InventoryOps::Use(inv, 3, go);
     CHECK(!empty.Ok() && empty.reason == "nothing to use");
-    CHECK(G("n").AsFloat() == 2.0f);
-    CHECK(inventoryLines() == 2);
+    CHECK(G("n").AsFloat() == 5.0f);
+    CHECK(inventoryLines() == 3);
 
     // A broken item.
     CHECK(durability::Wear(inv, 1, 3.0f).Ok());
     CHECK(durability::Broken("sword", inv->slots[1].data));
     const InvResult broken = InventoryOps::Use(inv, 1, go);
     CHECK(!broken.Ok() && broken.reason == "broken");
-    CHECK(G("n").AsFloat() == 3.0f);
+    CHECK(G("n").AsFloat() == 6.0f);
     CHECK(G("item").AsString() == "sword");
     CHECK(G("message").AsString() == "Iron Sword is broken: repair it first.");
-    CHECK(inventoryLines() == 3);
+    CHECK(inventoryLines() == 4);
 
     // Once the cooldown has passed the potion works again, and still says nothing.
     Time::Step(2.0f);
     CHECK(InventoryOps::Use(inv, 0, go).Ok());
-    CHECK(G("n").AsFloat() == 3.0f);
-    CHECK(inventoryLines() == 3);
+    CHECK(G("n").AsFloat() == 6.0f);
+    CHECK(inventoryLines() == 4);
     std::printf("  %d log lines from refused uses, last: %s\n", inventoryLines(), lines.empty() ? "" : lines.back().c_str());
 
     // A bag with no object (no one to tell) still refuses and still logs; nothing crashes.

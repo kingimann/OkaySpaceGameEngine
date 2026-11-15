@@ -299,6 +299,21 @@ float CooldownLeft(const Inventory* inv, const std::string& item) {
 
 void ResetCooldowns() { Cooldowns().clear(); }
 
+namespace {
+// One log line per item and reason per second of game time: a held key, or a networked client that asks again and again,
+// must not flood the log. (The script event is not limited.)
+bool RefusalLineDue(const std::string& item, const std::string& reason) {
+    static std::string lastKey;
+    static double lastAt = 0.0;
+    const std::string key = item + "|" + reason;
+    const double now = Time::ElapsedTimeD();
+    if (key == lastKey && now >= lastAt && now - lastAt < 1.0) return false;
+    lastKey = key;
+    lastAt = now;
+    return true;
+}
+} // namespace
+
 std::string UseRefusalText(const Inventory* inv, const std::string& item, const std::string& reason) {
     const ItemDefinition* def = ItemDatabase::Get().Find(item);
     const std::string name = def ? def->DisplayName() : item;
@@ -324,7 +339,7 @@ InvResult Use(Inventory* inv, int i, GameObject* user) {
         // A refused use is never silent: one log line for the developer, and on_item_use_refused(item, reason, message)
         // for scripts, so a game can show its own message (for example with toast_push). An empty slot says nothing.
         const std::string text = UseRefusalText(inv, item, r.reason);
-        Log::Info("inventory: ", text);
+        if (RefusalLineDue(item, r.reason)) Log::Info("inventory: ", text);
         InventoryEvents::Fire(inv->gameObject, "on_item_use_refused", nullptr,
                               {vs::VsValue(item), vs::VsValue(r.reason), vs::VsValue(text)});
     }

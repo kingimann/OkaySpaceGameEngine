@@ -1417,6 +1417,10 @@ int main(int argc, char** argv) {
             }
         }
     }
+    // OKAY_SOFTWARE_RENDER=1: draw 3D on the CPU whatever the build asked for, to look at the software renderer (its depth
+    // of field and ambient occlusion, docs/try_it.md). The window title says so.
+    const bool forceSoftware = [] { const char* e = std::getenv("OKAY_SOFTWARE_RENDER"); return e && e[0] && e[0] != '0'; }();
+    if (forceSoftware) cfg.gpu = false;
     // Register the build's scenes so scripts can load_scene_index / load_next.
     SceneManager::ClearScenes();
     for (const std::string& s : cfg.scenes) SceneManager::AddScene(baseDir + s);
@@ -1585,6 +1589,7 @@ int main(int argc, char** argv) {
 #endif
     if (!cfg.showCursor) pb->ShowCursor(false);
     std::string title = !cfg.title.empty() ? cfg.title : scene.Name();
+    if (forceSoftware) title += " [software renderer]";
     wd.title = title;
     // A zero or negative size in the config would make every backend refuse the window.
     cfg.width  = okay::platform::ValidWindowExtent(cfg.width, 960);

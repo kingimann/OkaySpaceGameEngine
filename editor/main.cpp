@@ -6669,6 +6669,11 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::MenuItem(label, nullptr, false);
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D is rendered on the GPU automatically — Direct3D 11 on Windows,\nOpenGL elsewhere — and falls back to software if no GPU is available.");
+            // The software renderer is the one the tests check, the web player uses, and a PC without a working GPU falls
+            // back to; this lets you look at it here (depth of field and ambient occlusion, docs/try_it.md). Not saved.
+            bool softwareNow = !(g_gpuRender && gpuAvail);
+            if (ImGui::MenuItem("Use the software renderer (CPU)", nullptr, softwareNow, gpuAvail)) g_gpuRender = softwareNow;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw the 3D views on the CPU instead of the GPU, to see what the software renderer shows:\nthe one the web player and a PC without a usable GPU use. Slower. Not remembered: the editor starts on the\nGPU again. Starting the editor with OKAY_SOFTWARE_RENDER=1 begins this way. The line above says which renderer is drawing.");
         }
 #ifdef OKAY_HAVE_OKAYUI
         // A developer demo panel, not a feature: only offered with OKAY_DEV set.
@@ -11887,18 +11892,22 @@ static void DrawLookSections(EditorState& ed) {
         }
         if (ImGui::Checkbox("Anti-aliasing (FXAA)", &post.fxaa)) ed.dirty = true;
         if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &post.ssao)) ed.dirty = true;
-        tip("Darkens creases and contacts where surfaces meet.\nIn the software renderer it only darkens meshes lit per pixel.");
+        tip("Darkens creases and contacts where surfaces meet: the foot of a wall, the floor under a box.\nTurn it off and on to compare. In the software renderer, meshes that are lit (not Unlit) are drawn per pixel while it is on.");
         DrawRendererNote(okay::RenderFeature::SceneSsao);
         if (post.ssao) {
             if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;
+            tip("How far from a crease the darkening reaches, in world units.");
             if (ImGui::SliderFloat("Intensity##ssao", &post.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
+            tip("How dark the creases get. 0 = nothing.");
             if (ImGui::SliderFloat("Power##ssao", &post.ssaoPower, 0.25f, 4.0f, "%.2f")) ed.dirty = true;
             tip("Shapes the shadow. 1 = the old look. Higher: only deep creases get dark, edges stay crisp.\nLower: a wider, lighter shadow.");
         }
         if (ImGui::Checkbox("Depth of Field", &post.dof)) ed.dirty = true;
+        tip("Blurs what is nearer or farther than the focus distance, like a camera lens.\nThings inside the focus range stay sharp. Turn it off and on to compare.");
         DrawRendererNote(okay::RenderFeature::DepthOfField);
         if (post.dof) {
             if (ImGui::DragFloat("Focus Distance", &post.dofFocus, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
+            tip("How far in front of the camera the sharpest point is, in world units.");
             if (ImGui::DragFloat("Focus Range", &post.dofRange, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
             tip("How far either side of the focus distance stays sharp.");
         }
@@ -12175,10 +12184,13 @@ void DrawSceneSettings(EditorState& ed) {
         }
 
         ImGui::Checkbox("Ambient occlusion (SSAO)", &SSAOEnabled());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Darkens creases and contacts where surfaces meet. This is the editor's own switch (not saved with the scene);\nthe scene's saved Ambient Occlusion, with Radius, Intensity and Power, is under Post-processing above.");
         DrawRendererNote(okay::RenderFeature::BuildSsao);
         if (SSAOEnabled()) {
             ImGui::SliderFloat("AO radius", &SSAORadius(), 0.05f, 2.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far from a crease the darkening reaches, in world units.");
             ImGui::SliderFloat("AO strength", &SSAOStrength(), 0.0f, 2.0f, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How dark the creases get. Above 1 darkens more in the software renderer.");
         }
 
         ImGui::Checkbox("Rim light (Fresnel)", &RimLightEnabled());
@@ -47759,6 +47771,8 @@ int main(int argc, char** argv) {
     // Headless shots default to the software rasterizer. OKAY_UI_GPU=1 keeps the
     // GPU backend so a screenshot can show per-pixel material maps.
     if (std::getenv("OKAY_UI_SHOT") && !std::getenv("OKAY_UI_GPU")) g_gpuRender = false;
+    // OKAY_SOFTWARE_RENDER=1: start with the software renderer (View > Rendering & Performance > Use the software renderer).
+    if (const char* sw = std::getenv("OKAY_SOFTWARE_RENDER"); sw && sw[0] && sw[0] != '0') g_gpuRender = false;
 
     // Project creation is driven by the launcher's Create tab:
     //   --new-project "<folder>"  create <folder>/Assets + the starting scene there

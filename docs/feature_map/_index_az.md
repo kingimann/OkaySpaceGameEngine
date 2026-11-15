@@ -4441,6 +4441,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - start maximized (37.1)
 - start page (51.3)
 - start update (13.1)
+- Start-up update screen (17.1.10)
 - StartClient (42.2)
 - starter (1.6, 4.12, 25.1)
 - Starter assets (41.4.3, 42.7)

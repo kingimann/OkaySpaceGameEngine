@@ -3391,6 +3391,12 @@ add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
 
+# The start-up update screen's decisions (shared/StartupUpdate.hpp): when the check runs, and what the panel shows. Docs: docs/updater.md.
+add_executable(test_startup_update test_startup_update.cpp)
+target_compile_features(test_startup_update PRIVATE cxx_std_17)
+target_include_directories(test_startup_update PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+add_test(NAME startup_update COMMAND test_startup_update)
+
 add_executable(test_navmesh_mesh_collider test_navmesh_mesh_collider.cpp)
 target_link_libraries(test_navmesh_mesh_collider PRIVATE okay::engine)
 add_test(NAME navmesh_mesh_collider COMMAND test_navmesh_mesh_collider)

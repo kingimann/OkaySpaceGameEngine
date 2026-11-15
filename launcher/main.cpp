@@ -12,6 +12,8 @@
 #include "AppIcon.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
+#include "LauncherDemo.hpp"   // okay::IsLauncherDemoMode(): the one list of demo / screenshot env variables
+#include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/updater.md)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
@@ -178,7 +180,21 @@ SDL_Thread* g_upThread = nullptr;
 // The editor has to close (with its project saved) before the launcher exits or
 // installs an update. A pending action waits for it: 1 = exit, 2 = update.
 static bool EditorRunning();
+static bool AnyProgramRunning();   // the editor or a game started from the launcher is running
 static int  g_afterEditor = 0;
+static long long g_suLastCheckEpoch = 0;   // when the last start-up check began (unix seconds, persisted: stops a restart loop)
+static bool g_suLocked = false;   // the start-up screen is installing an update: no editor or game may start (set each frame by StartupUpdateFrame)
+static SDL_atomic_t g_upCommitting;       // the worker is swapping the program files in right now: nothing may start
+static SDL_atomic_t g_programsRunning;    // the editor or a game is running (main thread writes each frame, the update worker reads before it swaps files)
+static SDL_atomic_t g_upReachedInstall;   // the worker got as far as downloading (set by the worker, so a fast Downloading -> Failed is never missed)
+static bool g_suRestartFailed = false;    // the restart helper could not start after the update
+void Toast(const std::string& m, int kind);
+// True while an update is being installed: starting the editor or a game now would put a program in the way of the file swap.
+static bool UpdateBlocksLaunch() {
+    if (!g_suLocked && !SDL_AtomicGet(&g_upCommitting)) return false;
+    Toast("An update is installing. Please wait a moment.", 1);
+    return true;
+}
 static bool g_afterEditorShowDialog = true;   // the update's showDialog, kept for later
 
 // Rich update progress, so the updater can show a real dialog (from/to version,
@@ -339,8 +355,8 @@ bool Download(const std::string& url, const fs::path& out) {
     }
     // argv, not a shell string, so the output path is not re-parsed by cmd.exe.
     const std::vector<std::string> curl = {
-        "curl", "-L", "-s", "-f", "-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache",
-        "-o", outUtf, u};
+        "curl", "-L", "-s", "-f", "--connect-timeout", "30", "--speed-limit", "1024", "--speed-time", "60",   // (a stalled transfer ends by itself)
+        "-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache", "-o", outUtf, u};
     if (okay::restart::RunAndWait(curl) == 0 && fs::exists(out)) return true;
 #if defined(_WIN32)
     auto psQuote = [](const std::string& s) {
@@ -743,28 +759,44 @@ long long RemoteSize(const std::string& url) {
 // the growing output file, publishing byte progress into the update globals so
 // the dialog can show a live MB / percentage bar.
 struct DlMonitor { std::string url; fs::path out; SDL_atomic_t done; SDL_atomic_t ok; };
+static SDL_atomic_t g_dlStalled;   // the last DownloadProgress gave up because no data came (worker thread writes, StageFile reads)
 int DlMonitorThread(void* p) {
-    DlMonitor* d = (DlMonitor*)p;
+    std::shared_ptr<DlMonitor>* keep = (std::shared_ptr<DlMonitor>*)p;   // (the thread owns a share: it may outlive a download that was given up on)
+    DlMonitor* d = keep->get();
     bool r = Download(d->url, d->out);
     SDL_AtomicSet(&d->ok, r ? 1 : 0);
     SDL_AtomicSet(&d->done, 1);
+    delete keep;
     return 0;
 }
 bool DownloadProgress(const std::string& url, const fs::path& out) {
+    SDL_AtomicSet(&g_dlStalled, 0);
     SDL_AtomicSet(&g_upBytesNow, 0);
-    SDL_AtomicSet(&g_upBytesTotal, (int)std::min<long long>(RemoteSize(url), 0x7fffffffll));   // 0 if unknown; clamp for the progress bar
-    DlMonitor d; d.url = url; d.out = out;
-    SDL_AtomicSet(&d.done, 0); SDL_AtomicSet(&d.ok, 0);
-    SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", &d);
-    while (SDL_AtomicGet(&d.done) == 0) {
+    const long long total = std::min<long long>(RemoteSize(url), 0x7fffffffll);
+    SDL_AtomicSet(&g_upBytesTotal, (int)total);   // 0 if unknown; clamp for the progress bar
+    auto d = std::make_shared<DlMonitor>(); d->url = url; d->out = out;
+    SDL_AtomicSet(&d->done, 0); SDL_AtomicSet(&d->ok, 0);
+    SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", new std::shared_ptr<DlMonitor>(d));
+    const Uint32 t0 = okay::platform::TicksMs32();
+    Uint32 lastGrow = t0; long long lastSize = -1;
+    while (SDL_AtomicGet(&d->done) == 0) {
         std::error_code ec; auto sz = fs::file_size(out, ec);
-        SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
+        const long long cur = ec ? 0 : (long long)sz;
+        SDL_AtomicSet(&g_upBytesNow, (int)cur);
+        const Uint32 now = okay::platform::TicksMs32();
+        if (cur != lastSize) { lastSize = cur; lastGrow = now; }
+        if (okay::startupupdate::DownloadShouldAbort((long long)(Uint32)(now - lastGrow), (long long)(Uint32)(now - t0), total)) {
+            SDL_AtomicSet(&g_dlStalled, 1);
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "download stalled, giving up: " + url);
+            SDL_DetachThread(th);   // the blocked transfer cannot be stopped from here; it ends on its own (curl has a speed limit) and frees itself
+            return false;
+        }
         okay::platform::DelayMs(90);
     }
     SDL_WaitThread(th, nullptr);
     std::error_code ec; auto sz = fs::file_size(out, ec);
     SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
-    return SDL_AtomicGet(&d.ok) == 1;
+    return SDL_AtomicGet(&d->ok) == 1;
 }
 
 std::string g_upFailReason;   // why the last update did not install, in plain words (worker thread only; "" = no failure)
@@ -779,7 +811,8 @@ bool StageFile(const std::string& name, const std::string& url, const fs::path& 
     const okayupdater::Outcome o = okayupdater::Stage(name, url, dest, check,
         [&](const std::string& u, const fs::path& to, std::string& err) {
             const bool got = progress ? DownloadProgress(u, to) : Download(u, to);
-            if (!got) err = "the server could not be reached or the file was not found";
+            if (!got) err = SDL_AtomicGet(&g_dlStalled) ? std::string(okay::startupupdate::kDownloadStalledReason)
+                                                       : std::string("the server could not be reached or the file was not found");
             return got;
         });
     if (!o.ok) UpFail(o.reason);
@@ -1065,6 +1098,7 @@ int RunUpdateCheck(void*) {
             return 0;
         }
     }
+    SDL_AtomicSet(&g_upReachedInstall, 1);
     SetState(Up_Downloading);
     bool ok = true;
     bool launcherOk = false;
@@ -1136,6 +1170,18 @@ int RunUpdateCheck(void*) {
             items.push_back({"OkaySpace.exe", selfExe, true});
         } else ok = false;
     }
+    // The editor or a game was started while this was downloading (the person pressed Skip, or the check ran long): replacing programs that
+    // are running would fail half way. Stop with a plain reason; nothing has been replaced yet.
+    // g_upCommitting goes up BEFORE the check, and launches look at it: a program started after this point is refused, one started before is seen.
+    bool recordFailure = true;   // (a refusal because programs are open, or a stalled connection, is not the release's fault: it must not count toward "failed 2 times")
+    if (ok) SDL_AtomicSet(&g_upCommitting, 1);
+    if (ok && SDL_AtomicGet(&g_programsRunning)) {
+        UpFail("The editor or a game is running, and an update replaces those programs. Close them, then use Retry. Nothing was installed and your current version is unchanged.");
+        recordFailure = okay::startupupdate::CountsTowardAutoRetry(okay::startupupdate::FailKind::ProgramsRunning);
+        SDL_AtomicSet(&g_upCommitting, 0);
+        ok = false;
+    }
+    if (!ok && SDL_AtomicGet(&g_dlStalled)) recordFailure = okay::startupupdate::CountsTowardAutoRetry(okay::startupupdate::FailKind::Network);
     if (!ok) {
         for (const Item& it : items) okayupdater::Discard(it.dest);   // nothing was replaced: the install is as it was
     } else {
@@ -1146,6 +1192,7 @@ int RunUpdateCheck(void*) {
         for (const Item& it : items) if (it.inUse) order.push_back({it.name, it.dest, true});
         for (const Item& it : items) if (!it.inUse) order.push_back({it.name, it.dest, false});
         const okayupdater::Outcome co = okayupdater::CommitAll(order, 100000);
+        SDL_AtomicSet(&g_upCommitting, 0);
         if (!co.ok) {
             UpFail(co.reason + " The launcher's own file could not be replaced while it is running (security software often locks it); your current version is unchanged.");
             ok = false;
@@ -1176,7 +1223,7 @@ int RunUpdateCheck(void*) {
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
         const std::string why = g_upFailReason.empty() ? std::string("The update did not install for an unknown reason. Your current version is unchanged.") : g_upFailReason;
-        if (newer) RecordSelfUpdate(local, latest, false, why);
+        if (newer && recordFailure) RecordSelfUpdate(local, latest, false, why);
         SetUpMsg("Update failed. " + why);
         SetUpStep("Update failed: nothing was changed", 0, kSteps);
         SetState(Up_Failed);
@@ -1191,10 +1238,101 @@ void StartUpdateCheck(bool showDialog = true) {
     // Updating replaces OkayEngine.exe: the editor must be closed (and saved) first.
     if (EditorRunning()) { g_afterEditor = 2; g_afterEditorShowDialog = showDialog; return; }
     g_upAutomatic = !showDialog;
+    SDL_AtomicSet(&g_upReachedInstall, 0);
     if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
     g_upThread = SDL_CreateThread(RunUpdateCheck, "okay-update", nullptr);
+}
+
+// ---- Start-up update screen (Steam-like) -------------------------------------
+// At launch: when the rules in shared/StartupUpdate.hpp say so, run the EXISTING update check without a dialog and show a small centred panel
+// ("Checking for updates", then "Downloading 2 of 3", "Installing", "Restarting") instead of the launcher. The install and its checksum /
+// signature checks are RunUpdateCheck's; this only starts it and draws its progress. It runs before any sign-in screen and needs no account.
+static bool g_suActive = false, g_suSkipped = false, g_suTimedOutShown = false, g_suFailHandled = false, g_suGaveUpRestart = false;
+static Uint32 g_suStartTicks = 0, g_suUpdatedTicks = 0;
+static bool g_suToastedFail = false;   // the offline notice was already given: the generic "Update check failed" toast stays quiet
+
+extern bool g_updateOnLaunch;   // (defined with the other preferences below)
+void SavePrefs();
+
+// Records when this start-up check began by editing just the `last_startup_check` line of launcher.cfg.
+static void SaveLastStartupCheck() {
+    const fs::path file = fs::path(g_exeDir) / "launcher.cfg";
+    std::vector<std::string> lines; std::string line;
+    { std::ifstream f(file); while (std::getline(f, line)) { if (line.rfind("last_startup_check=", 0) != 0) lines.push_back(line); } }
+    lines.push_back("last_startup_check=" + std::to_string(g_suLastCheckEpoch));
+    std::ofstream f(file, std::ios::trunc);
+    for (const std::string& l : lines) f << l << "\n";
+}
+
+static void StartupUpdateBegin() {
+    okay::startupupdate::StartInputs in;
+    in.settingOn = g_updateOnLaunch;
+    if (const char* e = std::getenv("OKAY_UPDATE_ON_LAUNCH")) in.envValue = e;
+    in.demoMode = okay::IsLauncherDemoMode();
+    in.editorRunning = EditorRunning();   // updating replaces OkayEngine.exe: never while the editor runs
+    in.verdictShown = g_upVerdictShown;
+    const long long now = (long long)std::time(nullptr);
+    in.msSinceLastStartupCheck = (g_suLastCheckEpoch > 0 && now >= g_suLastCheckEpoch) ? (now - g_suLastCheckEpoch) * 1000 : -1;
+    if (!okay::startupupdate::ShouldRunStartupCheck(in)) return;
+    StartUpdateCheck(false);
+    SDL_AtomicCAS(&g_upState, (int)Up_UpToDate, (int)Up_Checking);   // so the first frame already shows "Checking" (the worker sets it too)
+    g_suActive = true; g_suStartTicks = okay::platform::TicksMs32();
+    g_suLastCheckEpoch = now; SaveLastStartupCheck();   // (only that one line of launcher.cfg: SavePrefs this early could write back a default)
+}
+
+// Once per frame, last thing before the toasts: decides what the person sees and draws the panel. Sets g_suLocked while an install runs.
+static void StartupUpdateFrame() {
+    using namespace okay::startupupdate;
+    g_suLocked = false;
+    if (!g_suActive) return;
+    const UpState us = GetState();
+    ScreenInputs si;
+    si.phase = us == Up_Checking ? Phase::Checking : us == Up_Downloading ? Phase::Downloading : us == Up_Updated ? Phase::Updated
+             : us == Up_Failed ? Phase::Failed : us == Up_UpToDate ? Phase::UpToDate : Phase::Idle;
+    si.elapsedMs = (long long)(Uint32)(okay::platform::TicksMs32() - g_suStartTicks);
+    si.skipped = g_suSkipped; si.timedOutShown = g_suTimedOutShown; si.relaunchNeeded = g_upRelaunchNeeded; si.restartFailed = g_suRestartFailed || (us == Up_Updated && EditorRunning());
+    if (us == Up_Updated && g_suUpdatedTicks == 0) g_suUpdatedTicks = okay::platform::TicksMs32();
+    si.sinceUpdatedMs = (us == Up_Updated && g_suUpdatedTicks) ? (long long)(Uint32)(okay::platform::TicksMs32() - g_suUpdatedTicks) : 0;
+    si.step = SDL_AtomicGet(&g_upStepIdx); si.steps = SDL_AtomicGet(&g_upStepTotal);
+    si.installing = GetUpMsg().rfind("Installing", 0) == 0;
+    const ScreenView v = EvaluateScreen(si);
+    if (v.restartGaveUp && !g_suGaveUpRestart) {   // never a locked screen with no way out: say what to do, open the dialog that has "Restart now"
+        g_suGaveUpRestart = true; g_suActive = false;
+        Toast(okay::startupupdate::kRestartGaveUpText, 2);
+        g_upModalOpen = true;
+    }
+    if (v.giveUpNow) { g_suTimedOutShown = true; g_suToastedFail = true; Toast("Could not check for updates (offline)", 2); }   // (a slow check: still running in the background)
+    if (us == Up_Failed && !g_suFailHandled) {   // plain reason, then on into the launcher: the update dialog has Retry
+        g_suFailHandled = true;
+        if (SDL_AtomicGet(&g_upReachedInstall)) g_upModalOpen = true;   // an install that went wrong: the existing dialog says why and offers Retry
+        else if (!g_suTimedOutShown) { g_suToastedFail = true; Toast(okay::startupupdate::FailureToast(GetUpMsg()), 2); }   // the updater's own words (paused after failures, LTS ...)
+    }
+    if (us == Up_UpToDate || us == Up_Failed || (us == Up_Updated && !g_upRelaunchNeeded)) g_suActive = false;   // nothing more to show
+    g_suLocked = v.locked;
+    if (!v.visible) return;
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos); ImGui::SetNextWindowSize(vp->Size);
+    ImGui::SetNextWindowBgAlpha(1.0f);
+    ImGui::SetNextWindowFocus();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##startupupdate", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav);
+    const float w = 360.0f, h = 128.0f;
+    ImGui::SetCursorPos(ImVec2((vp->Size.x - w) * 0.5f, (vp->Size.y - h) * 0.5f));
+    ImGui::BeginChild("##suCard", ImVec2(w, h), true);
+    ImGui::TextUnformatted("OkaySpace");
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextUnformatted(v.text.c_str());
+    float frac = v.progress;
+    if (frac < 0.0f) frac = -1.0f * (float)ImGui::GetTime();   // ImGui's moving bar for "unknown"
+    ImGui::ProgressBar(frac, ImVec2(-1, 8), "");
+    if (v.canSkip) { ImGui::Dummy(ImVec2(0, 6)); if (ImGui::Button("Skip", ImVec2(80, 26))) g_suSkipped = true; }
+    ImGui::EndChild();
+    ImGui::End();
+    ImGui::PopStyleVar(2); ImGui::PopStyleColor();
 }
 
 // ---- Periodic "is a newer version out?" check -------------------------------
@@ -1294,6 +1432,7 @@ static std::string PlaytimeLabel(std::string s) {   // safe for the '|' file and
 }
 // Start `exe args` and track how long it runs. False if it couldn't start.
 static bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title) {
+    if (UpdateBlocksLaunch()) return false;   // an update is being installed
     PlayProc pp; pp.key = PlaytimeLabel(key); pp.title = PlaytimeLabel(title); pp.lastCredit = okay::platform::TicksMs32();
 #if defined(_WIN32)
     std::string cmd = "\"" + exe + "\"" + (args.empty() ? std::string() : " " + args);
@@ -1311,6 +1450,7 @@ static bool SpawnTracked(const std::string& exe, const std::string& args, const 
     pp.pid = pid;
 #endif
     g_playProcs.push_back(pp);
+    SDL_AtomicSet(&g_programsRunning, 1);   // seen at once by an update worker that is about to swap files
     return true;
 }
 // Once a second or so: credit running games, close out the ones that ended.
@@ -1336,6 +1476,7 @@ static void PumpPlaytime() {
         } else ++i;
     }
 }
+static bool AnyProgramRunning() { return !g_playProcs.empty(); }   // (finished ones are dropped by PumpPlaytime)
 static bool EditorRunning() {
     for (const auto& pp : g_playProcs) {
         if (pp.key != "editor") continue;
@@ -1437,6 +1578,7 @@ static bool AntiCheatAllowsSceneLaunch(const std::string& scene) {
 // game (the player with a scene) is tracked for playtime.
 void Launch(const std::string& exe, const std::string& arg = "") {
     if (exe.empty()) return;
+    if (exe != g_selfPath && UpdateBlocksLaunch()) return;   // an update is being installed
     if (!arg.empty() && exe != g_selfPath && !AntiCheatAllowsSceneLaunch(arg)) return;
     if (!arg.empty() && exe != g_selfPath) {
         const std::string title = GameTitleFromPath(arg);
@@ -1509,7 +1651,7 @@ std::string g_editorStartedVersion;
 void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
                   const std::string& newProjectDir = "", const std::string& openScene = "",
                   const std::string& projectVersion = "", int gpu = -1) {
-    if (exe.empty()) return;
+    if (exe.empty() || UpdateBlocksLaunch()) return;   // (an update is being installed)
     std::string args = "--launcher " + std::to_string(CurrentPid());
     // Every value is quoted for the platform's command line (spaces, quotes and `$` in a name or path stay one argument).
     if (!tmpl.empty()) args += " --template " + okayversions::QuoteArg(tmpl);
@@ -1833,7 +1975,7 @@ const AccentPreset kAccentPresets[] = {
     {"Rose",   ImVec4(0.96f, 0.42f, 0.56f, 1), ImVec4(0.70f, 0.30f, 0.41f, 1)},
 };
 int g_accentIndex = 0;            // current accent preset (persisted)
-bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
+bool g_updateOnLaunch = true;     // check for updates at startup, like Steam (persisted; default ON, a saved update_on_launch=0 is kept)
 bool g_officialAutoUpdate = true; // keep the installed official game up to date in the background (persisted)
 bool g_chatSounds = true;         // soft chime for new chat messages (persisted)
 bool g_linkPreviews = true;       // fetch title/image cards for links in chat (persisted)
@@ -4479,6 +4621,7 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "ui_backend") g_uiBackendSetting = okayuibackend::Normalize(v);   // "" for anything unreadable
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
+        else if (k == "last_startup_check") { try { g_suLastCheckEpoch = std::stoll(v); } catch (...) {} }
         else if (k == "official_auto_update") g_officialAutoUpdate = (v != "0");
         else if (k == "anticheat") g_antiCheatMode = (int)okayac::ParseMode(v);
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
@@ -4596,6 +4739,7 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     if (!g_uiBackendSetting.empty()) f << "ui_backend=" << g_uiBackendSetting << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
+    if (g_suLastCheckEpoch > 0) f << "last_startup_check=" << g_suLastCheckEpoch << "\n";
     okayversions::WriteSettings(okayversions::GlobalSettings(), f);
     f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
     if (g_antiCheatMode) f << "anticheat=" << okayac::ModeName(okayac::Mode(g_antiCheatMode)) << "\n";
@@ -18052,7 +18196,7 @@ int main(int argc, char** argv) {
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
-    if (g_updateOnLaunch && !g_upVerdictShown) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
+    StartupUpdateBegin();   // check at start-up (default on; OKAY_UPDATE_ON_LAUNCH=0 / the Settings toggle turn it off) and show the start-up screen
     if (std::getenv("OKAY_CHAT_DEMO")) g_chatWinOpen = true;   // dev screenshot hook: open the chat
     if (std::getenv("OKAY_CHAT_DOCKED")) g_chatSeparate = false;
     if (const char* vr = std::getenv("OKAY_VOICE_DEMO")) {   // dev hook: join a local test call (relay at $OKAY_VOICE_DEMO)
@@ -18065,6 +18209,7 @@ int main(int argc, char** argv) {
     bool running = true;
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
+        SDL_AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
         bool okayFrame = false;   // this frame has an OkayUI frame open (the OkayUI backend is on): closed after ImGui's draw data
         Uint64 frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing
@@ -18219,7 +18364,7 @@ int main(int argc, char** argv) {
                 if (us == (int)Up_Updated || us == (int)Up_Failed) okayversionsui::InvalidateInstalled();   // the update kept / pruned versions
                 if (us == (int)Up_Updated) Toast(g_upRelaunchNeeded ? "Updated — restarting..."
                                                                      : "Update installed", 1);
-                else if (us == (int)Up_Failed) Toast("Update check failed", 2);
+                else if (us == (int)Up_Failed) { if (!g_suToastedFail) Toast("Update check failed", 2); }
                 else if (us == (int)Up_UpToDate && lastUp == (int)Up_Checking) Toast("You're up to date", 1);
                 lastUp = us;
             }
@@ -18231,8 +18376,9 @@ int main(int argc, char** argv) {
             if (relaunchAt == 0) relaunchAt = okay::platform::TicksMs32() + 1600;
             else if (okay::platform::TicksMs32() >= relaunchAt) {
                 relaunchAt = 0xFFFFFFFFu;   // one attempt; a failure must not spawn a helper every frame
-                if (EditorRunning()) g_afterEditor = 3;
+                if (EditorRunning()) { g_afterEditor = 3; g_suRestartFailed = true; }
                 else if (BeginUpdatedRestart()) running = false;
+                else g_suRestartFailed = true;   // (it already said why) the start-up screen steps aside instead of staying up
             }
         }
 
@@ -22680,7 +22826,7 @@ int main(int argc, char** argv) {
                     cardEnd();
                 } else if (setCat == 3) {   // ---- Behavior ----
                     cardBegin("##sc_start", "STARTUP & UPDATES");
-                    settingRow("Check for updates when the launcher starts", "Looks for a new version in the background each time you open OkaySpace.", 40.0f, 22.0f, [&](float) {
+                    settingRow("Check for updates when the launcher starts", "Looks for a new version each time you open OkaySpace and installs it before you start (on by default).", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##uponlaunch", &g_updateOnLaunch)) SavePrefs();
                     });
                     rowDivider();
@@ -23018,7 +23164,7 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(2);
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
-                    g_updateOnLaunch = false; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
+                    g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
                     { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); }   // update settings (the versions themselves stay)
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
                     ApplyAccent(g_accentIndex);   // re-applies theme + accent
@@ -26628,6 +26774,7 @@ int main(int argc, char** argv) {
 
         if (!g_chatHost.shown) DrawIncomingCall();   // (shown in the chat window when that's open)
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
+        StartupUpdateFrame();   // the start-up "Checking for updates" panel (over everything, under the toasts)
         DrawToastOverlay();
 
 #ifdef OKAY_HAVE_OKAYUI

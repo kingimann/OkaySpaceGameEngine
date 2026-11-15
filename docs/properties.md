@@ -272,7 +272,7 @@ More of the builder:
 
 ## What is registered
 
-2687 properties on 193 types, as `property_registry` counts them ("covered 193 component types, 2687 properties"; a number before a slash counts the authored ones; the rest are
+2708 properties on 194 types, as `property_registry` counts them ("covered 194 component types, 2708 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -337,6 +337,7 @@ has `enabled`.
 | NPCController | 38 | behaviour and target, movement, senses, temper, wander and patrol, combat and animation switches. The waypoints are a list (`npcwp` records); current health is play state |
 | InventoryUI | 58 | hotbar and backpack, keys and clicks (sort mode as an enum), layout, text, panel and colours. The rarity rules are a list; open, scroll and the drag state are play state. The record does not save `gamepadNav`, so it is not a property yet |
 | GridInventoryUI | 42 | grid, containers (the nearby column and stacked bags), style and colours. The rarity rules are a list; the drag state and scroll are play state |
+| CraftingStation | 21 | key, range, player, recipe book, station tag, title and style. The recipes are a list; `open` is play state |
 
 How the new types are described, so a tool can rely on it:
 

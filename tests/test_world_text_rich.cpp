@@ -200,7 +200,7 @@ int main() {
         tr->text = "Rich world text\n[color=#ffcc33]gold[/color] [size=250][color=#ff5555]BIG[/color][/size] [b]bold[/b]\nthe next line is clear";
         RecordPainter rp;
         ui2d::DrawWorldText(rp, *tr, 16.0f, 16.0f, 3.0f);
-        const int w = 520, h = 220;
+        const int w = 700, h = 170;
         std::vector<std::uint8_t> px((std::size_t)w * h * 4, 0);
         for (std::size_t i = 0; i < px.size(); i += 4) { px[i] = 30; px[i + 1] = 34; px[i + 2] = 44; px[i + 3] = 255; }
         for (const auto& f : rp.fills)

@@ -2462,6 +2462,16 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // load back into a Player Controller.
     const auto playerControllers = go->GetComponents<PlayerController>();
     const auto* pcOwner = playerControllers.empty() ? nullptr : playerControllers.front();
+    // A bare First or Third Person controller on its own (no Player View, no Player Controller)
+    // is written the way the loader will hold it, as a Player Controller of that one view, so
+    // that saving the loaded scene gives the same text. Combinations with a Player View or both
+    // controllers keep the old records: the loader decides their View on load.
+    const auto bareFp = go->GetComponents<FirstPersonController>();
+    const auto bareTp = go->GetComponents<ThirdPersonController>();
+    const bool bareSingle = !pcOwner && go->GetComponents<PlayerView>().empty() &&
+                            bareFp.size() + bareTp.size() == 1;
+    const bool newForm = pcOwner || bareSingle;
+    if (bareSingle) out << "  playercontroller view=" << (bareFp.empty() ? 1 : 0) << "\n";
     for (const PlayerController* pc : playerControllers) {
         out << "  playercontroller";
         KvOut k{out};
@@ -2475,8 +2485,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    const char* fpName = pcOwner ? "pcfirst" : "fpctrl";
-    const char* tpName = pcOwner ? "pcthird" : "tpctrl";
+    const char* fpName = newForm ? "pcfirst" : "fpctrl";
+    const char* tpName = newForm ? "pcthird" : "tpctrl";
     for (auto* fp : go->GetComponents<FirstPersonController>()) {
         out << "  " << fpName << " " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
             << fp->mouseSensitivity << " " << (fp->canJump ? 1 : 0) << " " << (fp->driveAnimation ? 1 : 0)
@@ -2499,7 +2509,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     for (auto* fp : go->GetComponents<FirstPersonController>()) {
         // Feel / slide / hooks (separate record: older builds skip it).
-        out << "  " << (pcOwner ? "pcfirstfeel" : "fpfeel") << " " << fp->lookSmoothing << " " << fp->sprintFovBoost << " " << fp->fovLerp
+        out << "  " << (newForm ? "pcfirstfeel" : "fpfeel") << " " << fp->lookSmoothing << " " << fp->sprintFovBoost << " " << fp->fovLerp
             << " " << (fp->zoomWithRightMouse ? 1 : 0) << " " << fp->zoomFov << " " << fp->zoomSensitivity
             << " " << fp->landDip << " " << (fp->canSlide ? 1 : 0) << " " << fp->slideSpeed << " " << fp->slideTime
             << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0)
@@ -2511,7 +2521,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << fp->dodge.stamina << " " << (fp->dodge.iFrames ? 1 : 0)
             // Traversal flags. Older loaders do not skip these trailing ints.
             << " " << (fp->canVault ? 1 : 0) << " " << (fp->canMantle ? 1 : 0) << " " << (fp->canLedgeGrab ? 1 : 0) << "\n";
-        out << "  " << (pcOwner ? "pcfirststance" : "fpstance");
+        out << "  " << (newForm ? "pcfirststance" : "fpstance");
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
          ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
@@ -2551,7 +2561,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << tp->pivotDampingXZ << " " << tp->pivotDampingY << " " << tp->maxPivotLag
             << " " << tp->orbitSmoothing << " " << tp->cameraCollisionRadius << " " << tp->cameraCollisionMask
             << " " << tp->cameraCollisionPullIn << " " << tp->cameraCollisionRecover << "\n";
-        out << "  " << (pcOwner ? "pcthirdstance" : "tpstance");
+        out << "  " << (newForm ? "pcthirdstance" : "tpstance");
         KvOut k{out};
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
          ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
@@ -2562,7 +2572,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     for (auto* tp : go->GetComponents<ThirdPersonController>()) {
-        out << "  " << (pcOwner ? "pcthirdfeel" : "tpfeel") << " " << tp->lookSmoothing << " " << tp->sprintFovBoost << " " << tp->fovLerp
+        out << "  " << (newForm ? "pcthirdfeel" : "tpfeel") << " " << tp->lookSmoothing << " " << tp->sprintFovBoost << " " << tp->fovLerp
             << " " << (tp->aimWithRightMouse ? 1 : 0) << " " << tp->aimDistance << " " << tp->aimShoulder
             << " " << tp->aimFov << " " << tp->aimSensitivity << " " << tp->aimLerp
             << " " << (tp->autoRecenter ? 1 : 0) << " " << tp->recenterDelay << " " << tp->recenterSpeed

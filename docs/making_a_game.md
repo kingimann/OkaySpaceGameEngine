@@ -138,6 +138,10 @@ give Both, with the Player View's start view, key and toggle setting. A player
 with one controller and the toggle on becomes Both. Saving writes only the new
 `playercontroller` record, and its `pcfirst...` and `pcthird...` sections, so a
 build from before this change cannot open that scene.
+A lone First Person or Third Person Controller with no Player View (for
+example one added from code) is saved the same way, as a Player Controller
+with that one view, so saving a loaded scene again gives the same text. Older
+files with a bare `fpctrl` or `tpctrl` record still load as before.
 
 ## Controller movement extras
 

@@ -50,8 +50,12 @@ int main() {
         GameObject* b = Mob(s, "Orc Chief", 90.0f, 100.0f, 12);
         const Plate pa = PlateOf(PlateOn(s, a)), pb = PlateOf(PlateOn(s, b));
         CHECK(pa.name && pa.level && pa.bar && pb.name && pb.level && pb.bar);
+        s.Start();
+        // Health Stat fills health to the maximum when it starts: set the values to show after that.
+        a->GetComponent<HealthStat>()->health = 30.0f;
+        b->GetComponent<HealthStat>()->health = 90.0f;
         ActionList::Vars()["healthFrac"] = 0.9f;   // what the player's Health Stat would publish
-        s.Start(); Tick(s);
+        Tick(s);
         if (pa.name && pb.name && pa.level && pb.level && pa.bar && pb.bar) {
             CHECK(pa.name->text == "Goblin Scout");
             CHECK(pb.name->text == "Orc Chief");
@@ -84,9 +88,11 @@ int main() {
         GameObject* shade = s.CreateGameObject("Shade");
         shade->AddComponent<Character>();
         const Plate pn = PlateOf(PlateOn(s, npc)), ps = PlateOf(PlateOn(s, shade));
+        s.Start();
+        n->health = 20.0f;                                                    // after Start (it fills to the maximum)
         ActionList::Vars()["healthFrac"] = 0.9f;
         ActionList::Vars()["level"] = 30.0f;                                  // a global "level" must not leak in
-        s.Start(); Tick(s);
+        Tick(s);
         if (pn.name && pn.level && pn.bar && ps.name && ps.bar) {
             CHECK(pn.name->text == "Villager");
             CHECK(pn.level->text == "Lv 1");                                  // no Stats: level 1, not the global 30

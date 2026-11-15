@@ -101,7 +101,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **API:** `Scene::RenderSettings::PostSettings`, `PostActive`, `TonemapACES`, `ExposureScale`, `BloomEnabled()`, `SSAOEnabled()`, script `post_set`
 - **Editor:** View > Lighting panel: Post-processing section and Look Preset; "Rendering (Lighting & Post FX)" holds the editor's own process-wide switches
 - **Docs:** `docs/rendering.md`
-- **Tests:** `post_sky`, `dof_math`, `post_quality_math`, `ssao_math`
+- **Tests:** `post_sky`, `dof_math`, `post_quality_math`, `ssao_math`, `software_scene_ssao`
 - **Status:** Works - read `Atmosphere.hpp`, the post fields of `Scene.hpp` and the effect counts in the backends; settings round-trip per `post_sky`
 - **Open:** SSAO and depth of field on Direct3D 11 have never run on a GPU; Direct3D 12 and software differ in what they apply; the Lighting window, Build Settings and the Light Inspector name the switches a renderer ignores (`docs/rendering.md`); FXAA and per-pixel lighting switches only affect software; no motion blur, lens flare or colour LUT
 - **Related:** 2.4, 1.15, 38.2, 38.3, 38.5, 26

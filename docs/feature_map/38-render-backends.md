@@ -103,7 +103,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Docs:** `docs/rendering.md`, `docs/lighting.md`
 - **Tests:** `software_renderer`, `shadows`, `light_shadows`, `software_local_shadows`, `software_default_shadows`, `software_scene_post`, `ssao_math`, `shaders`, `lighting`, `frustum_culling`
 - **Status:** Works - read the header (1.9k lines, header-only) and tests such as the depth-test one
-- **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting (without shadows), SSAO and bloom are off by default; no procedural sky, clouds or DoF; the scene's SSAO switch is not read
+- **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting (without shadows), SSAO and bloom are off by default; no procedural sky, clouds or DoF; the scene's SSAO switch is read (`software_scene_ssao`)
 - **Related:** 38.1, 38.10, 2.3, 2.5, 2.8
 - **Words:** software renderer, Raster, RenderMeshes, RenderMeshesSS, CPU rasterizer, z-buffer, W-buffer, supersampling, fallback renderer, mip map
 - **Seen as:** 1 FPS with a large model; jagged edges; shadows missing after turning `ShadowsUsePerPixel` off

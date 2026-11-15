@@ -7,6 +7,7 @@
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/LocalShadowMath.hpp"
 #include "okay/Render/Atmosphere.hpp"
+#include "okay/Render/PostQualityMath.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -1464,6 +1465,7 @@ inline void LocalShadowFactors(const Vec3& wpos, const Vec3& n, float* perLight)
 inline bool&  SSAOEnabled()  { static bool v = false; return v; }     // off by default (perf); opt-in
 inline float& SSAORadius()   { static float v = 0.45f; return v; }  // world units
 inline float& SSAOStrength() { static float v = 0.6f; return v; }
+inline float& SSAOPower()    { static float v = 1.0f; return v; }   // 1 = the original curve (postq::ApplyPowered)
 
 /// Darken creases/contacts using the per-pixel world position + normal G-buffer:
 /// sample a hemisphere around each pixel and count how many samples are occluded
@@ -1516,7 +1518,9 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
                     if (w > 0.0f) occWeighted += w;
                 }
             }
-            if (tot > 0) { float a = 1.0f - strength * occWeighted / tot; ao[(std::size_t)hy * hw + hx] = a < 0 ? 0 : a; }
+            // colour *= 1 + (visibility^power - 1) * strength, the shared formula (PostQualityMath.hpp); with power 1
+            // this is 1 - strength * occlusion, as before.
+            if (tot > 0) { float a = postq::ApplyPowered(1.0f - occWeighted / tot, strength, SSAOPower()); ao[(std::size_t)hy * hw + hx] = a < 0 ? 0 : a; }
         }
     });
     // Blur the half-res AO (3x3 box) to kill the hemisphere-sampling noise — SSAO
@@ -1900,7 +1904,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     const visibility::Frame& vis = visibility::Build(scene, vp, eye, r.width, r.height, visibility::RenderViewFovY(), ignore);
     RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
     RenderLocalShadowMaps(scene, vp, eye);   // spot / point / area light shadow maps
-    if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
+    // The process-wide switch, or the scene's own Post-processing Ambient Occlusion switch (post.ssao).
+    if (SSAOEnabled() || rs.post.ssao) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;
         r.gpos.assign(n, Vec3{0, 0, 0}); r.gnrm.assign(n, Vec3{0, 0, 0});
         r.gvalid.assign(n, 0);
@@ -2310,6 +2315,12 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // Split the frame into horizontal bands across hardware threads.
     ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); });
     if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
+    else if (rs.post.ssao && !r.gvalid.empty()) {                    // the scene's own switch, with its settings
+        const float r0 = SSAORadius(), s0 = SSAOStrength(), p0 = SSAOPower();
+        SSAORadius() = rs.post.ssaoRadius; SSAOStrength() = rs.post.ssaoIntensity; SSAOPower() = rs.post.ssaoPower;
+        ApplySSAO(r, vp, eye);
+        SSAORadius() = r0; SSAOStrength() = s0; SSAOPower() = p0;
+    }
     if (rs.post.bloom && !BloomEnabled()) {                          // the scene's own Bloom switch
         BloomEnabled() = true;
         const float t0 = BloomThreshold(), i0 = BloomIntensity();

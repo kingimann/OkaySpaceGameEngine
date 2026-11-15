@@ -3412,3 +3412,7 @@ add_test(NAME own_dispatch_e2 COMMAND test_own_dispatch_e2 WORKING_DIRECTORY ${C
 # and here again from the outside so a change to that guard cannot remove the check silently.
 add_test(NAME own_reader_cmake_defaults
     COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_own_reader_defaults.cmake)
+
+add_executable(test_software_scene_ssao test_software_scene_ssao.cpp)
+target_link_libraries(test_software_scene_ssao PRIVATE okay::engine)
+add_test(NAME software_scene_ssao COMMAND test_software_scene_ssao)

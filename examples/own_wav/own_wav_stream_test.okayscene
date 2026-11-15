@@ -12,7 +12,7 @@ gameobject 1 "Instructions"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
-    text "Press Play. A clean steady 440 Hz tone means the own WAV decoder streamed this IMA ADPCM file (start the editor with OKAY_OWN_WAV=1). Silence, and an error in the Console, means the old streaming reader, which cannot read ADPCM. See docs/try_it.md." 1 0.96 0.82 1 2.15 1 18 16 0 1 0 0 0 0.72 1 1 0 0 0 0 0 1 0 1080 150 0 1 0.05 0.06 0.09 0.9 0 1.15 0 1
+    text "Press Play. A clean steady 440 Hz tone means the own WAV decoder streamed this IMA ADPCM file (start the editor with OKAY_OWN_WAV=1). Silence, and a warning in the Console (Audio Source: can't read ima_tone.wav), means the old streaming reader, which cannot read ADPCM. See docs/try_it.md." 1 0.96 0.82 1 2.15 1 18 16 0 1 0 0 0 0.72 1 1 0 0 0 0 0 1 0 1080 150 0 1 0.05 0.06 0.09 0.9 0 1.15 0 1
 end
 gameobject 2 "Streaming Speaker"
   active 1

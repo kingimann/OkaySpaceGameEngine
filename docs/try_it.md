@@ -294,8 +294,9 @@ Tested on main (Linux): the line format and that each variable changes it, by th
   `scripts/gen_own_wav_samples.py` from our own signal and our own encoder, no outside source) and the scene
   `own_wav_stream_test.okayscene`, whose speaker has the **Stream** box on (the 12th number of its `audio` line is `1`).
   1. Start the editor with no variable. **File > Open...** `examples\own_wav\own_wav_stream_test.okayscene`, Play. The old
-     streaming reader cannot read ADPCM, so you should hear **nothing**, and the Console should show an audio error for
-     `ima_tone.wav` (the exact wording was not checked on Windows).
+     streaming reader cannot read ADPCM, so you should hear **nothing**, and the Console should show the warning
+     `Audio Source: can't read ...ima_tone.wav (WAV, OGG, MP3 or FLAC)` (the wording is from the editor's source, `EditorState::Play`;
+     not seen on Windows).
   2. Close the editor, `set OKAY_OWN_WAV=1`, start it again, open the same scene, Play. You should hear the **clean steady
      tone**, now read in pieces while it plays. Silence versus tone is the proof the own streaming decoder is in use.
   * **Verified here (Linux):** `own_wav_sample` decodes the file to a 440 Hz sine (peak 0.5, worst error under 0.02, about 0.01

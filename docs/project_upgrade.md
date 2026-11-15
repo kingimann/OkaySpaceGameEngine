@@ -58,7 +58,9 @@ Answering is remembered for the session: once a project is upgraded, opened anyw
 1. The nearest folder called `Assets` above the scene: the project is the folder that holds it. On Windows any spelling counts
    (`assets`, `ASSETS`), because Windows folder names ignore case; elsewhere it must be `Assets` exactly. (The Windows rule is unverified:
    it is only compiled and run on Windows.)
-2. The scene's own folder, when it is a project (the old flat layout).
+2. The scene's own folder, when it is a project (the old flat layout). A folder is a project when it holds an `Assets` folder or a
+   `project.okayproj` file. A `.okay` folder alone does **not** count: the editor leaves one (autosave, the build list) next to any scene it
+   opened, project or not.
 3. Otherwise the nearest folder above the scene that holds `project.okayproj`, so a scene in `Levels/` or `Scenes/World1/` belongs to its
    project too. The editor's working folder is skipped here: while no project is open the editor keeps its settings in a
    `project.okayproj` there (the old shared file), and that must not turn every scene below it into a "project".
@@ -67,10 +69,21 @@ Answering is remembered for the session: once a project is upgraded, opened anyw
 Before issue #888 step 3 did not exist: a project's scene outside `Assets/` was treated as a loose file, so it opened with no version
 question, the safety net let it load, and File > Project Upgrade silently did nothing.
 
-**How to try it.** Make a project folder `Game` with a `project.okayproj` that says `engine_version=2.850.0` and a scene in
+Also before issue #888, a `.okay` folder alone made a folder a project (`IsProjectRoot`). Opening a loose scene such as
+`examples/vehicle/vehicle_test.okayscene` a second time (the first time left a `.okay` folder beside it) asked the "Unknown" version
+question, and choosing Upgrade would have copied the whole folder as a backup and written a `project.okayproj` into it.
+
+**How to try it (scene outside Assets).** Make a project folder `Game` with a `project.okayproj` that says `engine_version=2.850.0` and a scene in
 `Game/Levels/a.okayscene` (no `Assets` folder). Open `a.okayscene` in the editor (File > Open, or `--open`). You now see the "Upgrade project
 to v..." question for **Game**; before the fix it opened with no question. Choose Upgrade: the backup `Game (backup v2.850.0)` appears next
 to `Game`, and `Game/project.okayproj` now has the editor's version. File > Project Upgrade... on that scene works on `Game` too.
+
+**How to try it (loose scene folder).** Open `examples/vehicle/vehicle_test.okayscene` (File > Open), close the editor, and open it again.
+It opens straight away with no version question, also the second time when `examples/vehicle/.okay` exists; before the fix the second
+open asked "Upgrade project ... (no version recorded)". File > Project Upgrade does nothing for it, and no `vehicle (backup ...)` folder
+appears next to it. One thing is left (not changed here, it is in `editor/main.cpp`): when the editor's working folder has the old
+shared `project.okayproj`, opening a loose scene copies that file into the scene's folder, and a folder with `project.okayproj` is a
+project. Delete `examples/vehicle/project.okayproj` (if it is there) before you try this.
 
 ### Older: upgrade or keep
 
@@ -228,7 +241,7 @@ that version highlighted; a launcher that is already running is brought forward 
 `project_version` (parse and compare matrix, Decide table, the stamp line in text and in files, CRLF, BOM, read-only, release lines, the
 keep target, the Versions layout; links nothing), `project_upgrade` (the upgrade end to end, backup completeness, space refusal, the disk
 failing at every step in turn, damaged and read-only files, restore, the whole gate state machine, which folder is the project: a scene
-outside `Assets/`, the nearest `project.okayproj`, the working folder's shared file) and `editor_hooks` (`EditorState::Load` under the gate).
+outside `Assets/`, the nearest `project.okayproj`, the working folder's shared file, a bare `.okay` folder is no project) and `editor_hooks` (`EditorState::Load` under the gate).
 `upgrade_bug_project_upgrade` (`tests/test_upgrade_bugs.cpp`) holds the issue #888 known-bug checks; it only runs with
 `-DOKAY_RUN_KNOWN_BUG_TESTS=ON`.
 

@@ -26,11 +26,13 @@ namespace fs = std::filesystem;
 
 // ---- which folder is "the project" ------------------------------------------------------------------------------------
 
-/// True when `dir` looks like a project folder: it has Assets, project.okayproj or .okay in it.
+/// True when `dir` is a project folder: it has an Assets folder or a project.okayproj file in it. (A .okay folder alone
+/// does not count: the editor leaves one next to any scene it opened, project or not.)
 bool IsProjectRoot(const fs::path& dir);
-/// The project folder a scene belongs to, found the way EditorState::Load finds it (the folder that holds the nearest
-/// Assets folder above the scene); a scene that is not under an Assets folder belongs to the folder it is in when that
-/// is a project (the old flat layout). "" when the scene is not part of any project (a loose file).
+/// The project folder a scene belongs to: the folder that holds the nearest Assets folder above the scene (any case on
+/// Windows); else the scene's own folder when that is a project (the old flat layout); else the nearest folder above it
+/// that holds project.okayproj (a scene in Levels/ or Scenes/), the editor's working folder excepted (its project.okayproj
+/// is the old shared settings file). "" when the scene is not part of any project (a loose file).
 std::string ProjectRootForScene(const std::string& scene);
 /// A folder as a map key: absolute, normalized, no trailing separator, lower case on Windows.
 std::string RootKey(const std::string& root);

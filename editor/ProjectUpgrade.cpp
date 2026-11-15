@@ -111,7 +111,9 @@ std::string PathKey(const fs::path& p) {
 bool IsProjectRoot(const fs::path& dir) {
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) return false;
-    return fs::is_directory(dir / "Assets", ec) || fs::exists(dir / okayproj::SettingsFileName(), ec) || fs::is_directory(dir / ".okay", ec);
+    // A ".okay" folder alone is not enough: the editor leaves one (autosave, the build list) next to any scene it opened, so a
+    // loose scene folder would turn into a "project" that is asked about and copied whole by an upgrade (issue #888).
+    return fs::is_directory(dir / "Assets", ec) || fs::is_regular_file(dir / okayproj::SettingsFileName(), ec);
 }
 
 namespace {

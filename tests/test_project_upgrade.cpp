@@ -247,6 +247,44 @@ int main() {
 #endif
     }
 
+    // ---- a bare ".okay" folder does not make a project (issue #888, bug 2) ------------------------------------------------
+    // The editor leaves a .okay folder (autosave, build list) next to any scene it opened. That alone must not turn a loose scene
+    // folder such as examples/vehicle into a "project": no "Unknown" version question, and no upgrade that copies the whole folder.
+    {
+        TempDir td;
+        const fs::path dir = td.path / "examples" / "vehicle";
+        WriteFile(dir / "vehicle_test.okayscene", Current("V", 1));
+        WriteFile(dir / ".okay" / "autosave.txt", "x");
+        WriteFile(dir / ".okay" / "scene_build.txt", "1|vehicle_test.okayscene\n");
+        const std::string scene = (dir / "vehicle_test.okayscene").string();
+        std::cerr << "[bug2_bare_okay_folder] IsProjectRoot=" << IsProjectRoot(dir) << " root='" << ProjectRootForScene(scene) << "'\n";
+        CHECK(!IsProjectRoot(dir));
+        CHECK(ProjectRootForScene(scene).empty());
+        GateEnv env;
+        env.running = "2.855.0";
+        ProjectGate g(env);
+        int go = 0;
+        g.Open(scene, [&] { ++go; });
+        CHECK(go == 1 && !g.Busy());                                                             // opened with no question
+        std::string why;
+        CHECK(ProjectGate(env).MayLoad(scene, &why));
+        int done = 0;
+        g.Upgrade(scene, [&] { ++done; });                                                       // File > Project Upgrade: nothing to upgrade
+        CHECK(!g.Busy() && done == 0);
+        for (int i = 0; i < 100000 && g.prompt().kind == PromptKind::Working; ++i) g.Tick(std::chrono::milliseconds(0));   // (before the fix: the copy)
+        CHECK(Names(td.path / "examples") == std::set<std::string>{"vehicle"});                  // no backup copy of the folder was made
+        // project.okayproj or an Assets folder still make it a project
+        WriteFile(dir / "project.okayproj", "engine_version=2.850.0\n");
+        CHECK(IsProjectRoot(dir) && ProjectRootForScene(scene) == dir.string());
+        fs::remove(dir / "project.okayproj");
+        std::error_code ec;
+        fs::create_directories(dir / "Assets", ec);
+        CHECK(IsProjectRoot(dir) && ProjectRootForScene(scene) == dir.string());
+        fs::remove(dir / "Assets", ec);
+        fs::create_directories(dir / "project.okayproj", ec);                                   // a folder of that name is not the settings file
+        CHECK(!IsProjectRoot(dir) && ProjectRootForScene(scene).empty());
+    }
+
     // ---- the keys project.okayproj's writer owns ---------------------------------------------------------------------
     {
         const std::string generated = oked::WriteProjectSettings(oked::ProjectSettings{}, "tag=Enemy\nstrict_tags=1\nlayer_name_3=Walls\n");

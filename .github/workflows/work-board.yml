@@ -1,0 +1,39 @@
+# Live work board: rewrites WORK_BOARD.md on the bot branch `work-board` every 10 minutes from GitHub data (open PRs and
+# their CI state, recently merged PRs, claude/* and claude2/* branches, the latest comments on issue #422).
+# Read it at https://github.com/<owner>/<repo>/blob/work-board/WORK_BOARD.md
+# It only reads from GitHub and force-pushes one commit to the `work-board` branch (never main). The branch is
+# generated; do not edit it. Scheduled workflows run from the default branch, so this starts after it is merged.
+name: Live work board
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: read
+  issues: read
+  checks: read
+concurrency:
+  group: work-board
+  cancel-in-progress: true
+jobs:
+  board:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Generate the board
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/work_board.py --out WORK_BOARD.md
+      - name: Publish it to the work-board branch
+        run: |
+          set -e
+          mkdir /tmp/wb && cp WORK_BOARD.md /tmp/wb/
+          cd /tmp/wb
+          git init -q -b work-board
+          git config user.name "work-board bot"
+          git config user.email "work-board-bot@users.noreply.github.com"
+          git add WORK_BOARD.md
+          git commit -q -m "Live work board"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" work-board

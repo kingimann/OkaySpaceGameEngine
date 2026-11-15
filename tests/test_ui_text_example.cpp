@@ -64,15 +64,15 @@ void BuildExample(Scene& s) {
         c->main = true;
     }
     sprite("Ground", {0.0f, -3.9f}, {24.0f, 2.2f}, Color::FromBytes(74, 130, 66), 0);
-    sprite("Sign Post", {0.0f, -0.6f}, {0.5f, 3.3f}, Color::FromBytes(92, 60, 36), 0);
-    sprite("Sign Board", {0.0f, 2.4f}, {10.6f, 2.7f}, Color::FromBytes(70, 45, 28), 1);
+    sprite("Sign Post", {0.0f, -0.65f}, {0.5f, 4.3f}, Color::FromBytes(92, 60, 36), 0);   // stands on the ground
+    sprite("Sign Board", {0.0f, 2.7f}, {10.2f, 2.4f}, Color::FromBytes(70, 45, 28), 1);
     {
         GameObject* g = s.CreateGameObject("Sign Text");
-        g->transform->localPosition = {-4.9f, 3.5f, 0.0f};      // the top-left of the text
+        g->transform->localPosition = {-4.6f, 3.65f, 0.0f};     // the top-left of the text
         auto* tr = g->AddComponent<TextRenderer>();
         tr->screenSpace = false;                                  // world text: it sits on the sign
         tr->richText = true;
-        tr->pixelSize = 0.05f;                                    // world units per font pixel
+        tr->pixelSize = 0.045f;                                   // world units per font pixel
         tr->color = Color::FromBytes(245, 240, 225);
         tr->shadow = true; tr->shadowColor = Color::FromBytes(20, 12, 6, 220);
         tr->text = kSignText;
@@ -86,8 +86,8 @@ void BuildExample(Scene& s) {
         plate->transform->localPosition = {0.0f, size.y * 0.5f + 0.25f, 0.0f};
         return g;
     };
-    character("Goblin Scout", {-5.2f, -1.2f}, {1.5f, 2.0f}, Color::FromBytes(88, 166, 76), 3, 40.0f);
-    character("Orc Chief", {5.0f, -0.9f}, {2.2f, 2.6f}, Color::FromBytes(166, 84, 64), 12, 120.0f);
+    character("Goblin Scout", {-6.2f, -1.8f}, {1.5f, 2.0f}, Color::FromBytes(88, 166, 76), 3, 40.0f);
+    character("Orc Chief", {6.2f, -1.5f}, {2.2f, 2.6f}, Color::FromBytes(166, 84, 64), 12, 120.0f);
     {   // the key hints, on the screen
         GameObject* canvas = UITemplates::EnsureCanvas(s);
         GameObject* hint = UITemplates::detail::Text(s, canvas, "Hints", kHints, UIAnchor::BottomCenter, {0.0f, -14.0f}, {1200.0f, 30.0f},

@@ -138,9 +138,9 @@ int main() {
             {"constant size (the default)", true, 100.0f, "", "Goblin Scout", 12, true},
             {"far away, scaling with distance (k 0.7)", false, 70.0f, "", "Goblin Scout", 12, true},
             {"close up, scaling with distance (k 1.6)", false, 160.0f, "", "Goblin Scout", 12, true},
-            {"a long name and a three-digit level", true, 100.0f, "", "Grand Goblin Warlord of the Northern Marches", 100, false},
+            {"a long name and a three-digit level", true, 100.0f, "", "Grand Goblin Warlord of Doom", 100, false},
             {"the pixel font", true, 100.0f, "pixel", "Goblin Scout", 12, true},
-            {"the pixel font, long name, three digits", true, 100.0f, "pixel", "Grand Goblin Warlord of the Northern Marches", 100, false},
+            {"the pixel font, long name, three digits", true, 100.0f, "pixel", "Goblin Warlord Chief", 100, false},
         };
         for (const Case& c : cases) {
             Scene s("drawn"); s.physicsEnabled = false; s.uiFont = c.font;

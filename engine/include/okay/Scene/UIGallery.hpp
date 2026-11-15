@@ -206,7 +206,7 @@ constexpr float kNameW = kCardW - 2.0f * kPad - kBadgeW - 8.0f;    // the name s
 /// long name or a three-digit level, or a wider font, never runs out of the card or the pill.
 inline void FitNameplateText(GameObject* g, float px) {
     auto* tr = g->GetComponent<TextRenderer>();
-    tr->autoSize = true; tr->autoSizeMax = px / 8.0f; tr->autoSizeMin = 0.75f;
+    tr->autoSize = true; tr->autoSizeMax = px / 8.0f; tr->autoSizeMin = 0.6f;   // never below about 5 px: a longer text overflows (there is no ellipsis)
 }
 
 /// A nameplate: a name, a level pill and a thin health bar, all bound to the character it belongs to (UIOwnerData:

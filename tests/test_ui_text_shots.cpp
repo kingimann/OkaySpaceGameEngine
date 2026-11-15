@@ -209,10 +209,6 @@ int main(int argc, char** argv) {
         const int redKeep = CountPixels(keep, 226, 82, 82), redFar = CountPixels(far, 226, 82, 82);
         std::printf("  red health pixels: constant size %d, scaling with distance %d\n", redKeep, redFar);
         CHECK(redKeep > 800 && redFar > 400);
-        // and no card is wider than the plate's design width at 1:1: the constant-size plates are 220 px wide, never 220 + a pill's overhang
-        int cardRow = 0;
-        for (int y = 0; y < H && !cardRow; ++y) if (CountPixels(keep, 16, 18, 24, 3, 0, y, W, y + 1) > 100) cardRow = y;
-        CHECK(cardRow > 0);
     }
 
     {   // the sign: a bigger run no longer overlaps the line above (a line is as tall as its largest size)

@@ -269,7 +269,6 @@ italic words and a small line. Code: `UIOwnerData` (the `owner.` keys), `UIGalle
 8. Select `Sign Text`. In its **Text** section **Rich Text** is ticked (hover it for the tags). In the text box, wrap a word
    in `[size=250]` ... `[/size]` and look at the Scene or Game view: the lines under it move down and never overlap (before this
    change the big letters climbed into the line above).
-
 9. Make your own (optional): select any object that has a **Stats** component (**Add Component > Stats** on a new sprite or
    cube works), then **GameObject > UI > Prebuilt Screens > Nameplate (in the world)**. The new `Nameplate` becomes that
    object's child, above its head, and shows its name, level and health when you press Play. With nothing suitable

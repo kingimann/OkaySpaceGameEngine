@@ -52,7 +52,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
   - 6.3.1 Distance, spring and pin - `Components/Joint2D`, `Components/Joint3D` - rod, damped spring and weld solved by impulse plus position correction after contacts
   - 6.3.2 Hinge - `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit` - pins a point and lets the body spin; motor in both; angle limits in both (degrees from the start pose; the 3D stop uses `ClampHingeRotation`)
   - 6.3.3 Breakable joints - `Components/Joint2D`, `Components/Joint3D` - `breakable` and `breakForce` snap the joint when stretched, `broken` stops it
-- **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
+- **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/JointSpring` (per-step cap that keeps a light spring stable), `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
 - **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`, `useLimits`, `minAngle`, `maxAngle`
 - **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge)"; inspectors for all four modes, with Use Limits / Min Angle / Max Angle on a hinge
 - **Docs:** -

@@ -600,13 +600,43 @@ void CheckLayerHop(Ctx& c) {
     c.Expect(std::fabs(z2 - z0) < 0.3f, "pressing S did not hop back to the front layer (z " + Num(z0) + " -> " + Num(z2) + ")");
 }
 
-// Top-down shooter: Space dashes, the left mouse fires and the magazine drains.
+// Sandbox: look at the ground and the left mouse button digs, the right one fills.
+void CheckVoxelDig(Ctx& c) {
+    Session& s = c.s;
+    GameObject* t = s.Obj("Terrain");
+    auto* vox = t ? t->GetComponent<VoxelTerrain>() : nullptr;
+    c.Expect(vox != nullptr, "there is no voxel Terrain");
+    if (!vox) return;
+    s.mouse = {640.0f, 360.0f}; s.Frames(3);
+    for (int i = 1; i <= 15; ++i) { s.mouse = {640.0f, 360.0f + 12.0f * (float)i}; s.Frame(); }   // look down at the ground
+    const std::string before = vox->EncodeDensity();
+    s.buttons = 1; s.Frames(40); s.buttons = 0; s.Frames(3);
+    const std::string dug = vox->EncodeDensity();
+    c.Expect(dug != before, "holding the left mouse button did not dig the terrain");
+    s.buttons = 2; s.Frames(40); s.buttons = 0; s.Frames(3);
+    c.Expect(vox->EncodeDensity() != dug, "holding the right mouse button did not fill the terrain");
+    s.mouse = {640.0f, 360.0f}; s.Frames(3);
+}
+
+// Top-down shooter: the body turns to the mouse, Space dashes, the left mouse fires and the magazine drains.
 void CheckTopDownShooter(Ctx& c) {
     Session& s = c.s;
     GameObject* player = s.Obj("Player");
     auto* tds = player ? player->GetComponent<TopDownShooterController>() : nullptr;
     c.Expect(tds != nullptr, "the Player has no TopDownShooterController");
     if (!tds) return;
+    SettleBody(s, "Player");
+    // Aim: the pointer on the right of the screen, then on the left: the body turns to face it.
+    auto facing = [&] { const Vec3 f = player->transform->Forward(); return std::atan2(f.x, f.z) * 57.29578f; };
+    s.mouse = {1150.0f, 360.0f}; s.Frames(40);
+    const float toRight = facing();
+    s.mouse = {130.0f, 360.0f}; s.Frames(40);
+    const float toLeft = facing();
+    float turned = std::fabs(toRight - toLeft);
+    if (turned > 180.0f) turned = 360.0f - turned;
+    s.mouse = {640.0f, 360.0f}; s.Frames(10);
+    c.Fact("aim swung the body " + Num(turned, 0) + " degrees between the two sides of the screen");
+    c.Expect(turned > 60.0f, "the body does not turn to the mouse (it turned " + Num(turned, 0) + " degrees between the left and right of the screen)");
     SettleBody(s, "Player");
     const Vec3 p0 = s.Pos("Player");
     s.Hold({'a', ' '}, 12);
@@ -660,7 +690,7 @@ std::vector<Spec> MakeSpecs() {
         {"Vehicle (3D)",               true,  false, "Car",    "VehicleController", mover({"Car", {'w'}, true, false, 1.0f})},
         {"Vehicle (get in and drive)", true,  false, "Car",    "VehicleController", fixed(&DriveCarSeats)},
         {"Vehicle (2D)",               false, true,  "Car",    "VehicleController2D", mover({"Car", {'w'}, false, false, 1.0f})},
-        {"Sandbox",                    true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player")})},
+        {"Sandbox",                    true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player"), fixed(&CheckVoxelDig)})},
         {"Multiplayer",                false, true,  "Player", "ScriptComponent", fixed(&DriveMultiplayer)},
         {"Coin Collector",             false, true,  "Player", "ScriptComponent", fixed(&DriveCoinCollector)},
         {"Snake",                      false, true,  "Board",  "Tilemap", fixed(&DriveSnake)},

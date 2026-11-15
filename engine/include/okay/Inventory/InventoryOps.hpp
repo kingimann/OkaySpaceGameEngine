@@ -69,7 +69,14 @@ InvResult Drop(Inventory* inv, int i, int n = 1);
 /// An item whose definition has a custom "cooldown" (seconds of game time) can be used again from the same inventory
 /// only once that time has passed; until then Use refuses it with reason "cooldown". Cooldowns are runtime only (not
 /// saved) and pause with the game clock.
+/// A refused Use is never silent: it writes one log line ("inventory: Healing Potion is not ready: wait 3.2 s.") and
+/// fires the script event on_item_use_refused(item, reason, message) on the inventory's object, so a game can show the
+/// same sentence to the player (toast_push, a text). `reason` is "cooldown", "broken", "nothing uses it" or what the
+/// equip step says. An empty slot is not reported.
 InvResult Use(Inventory* inv, int i, GameObject* user);
+/// The sentence a refused Use reports for `item` and `reason` (see Use): "Healing Potion is not ready: wait 3.2 s.",
+/// "Rusty Sword is broken: repair it first.", else "Plank can't be used (nothing uses it).".
+std::string UseRefusalText(const Inventory* inv, const std::string& item, const std::string& reason);
 /// Seconds of game time before `item` can be used again from `inv` (0 = ready).
 float CooldownLeft(const Inventory* inv, const std::string& item);
 /// Forget every cooldown (a new game, a test).

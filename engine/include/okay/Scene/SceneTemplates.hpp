@@ -47,6 +47,11 @@
 #include "okay/Components/ChestInventory.hpp"
 #include "okay/Components/InventoryUI.hpp"
 #include "okay/Components/Inventory.hpp"
+#include "okay/Components/Consumables.hpp"
+#include "okay/Components/GridInventory.hpp"
+#include "okay/Components/GridInventoryUI.hpp"
+#include "okay/Components/UIToast.hpp"
+#include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Components/Canvas.hpp"
 #include "okay/Components/EventSystem.hpp"
 #include "okay/Components/Tilemap.hpp"
@@ -1194,11 +1199,116 @@ inline void MainMenu(Scene& scene) {
     quit->transform->SetParent(panel->transform, false);
 }
 
+/// The items the Inventory template shows (its project's items.okayitems), as the text of that file: a Healing
+/// Potion with a 5 second cooldown (custom field "cooldown") and an Iron Sword with durability 4 (custom fields
+/// "maxDurability", "breakAction"). Footprints are set so the grid bag shows different sizes. Wood, Stone, Torch and
+/// the rest stay undefined on purpose (loose items, as before). examples/inventory/items.okayitems is a copy of this
+/// text (the test inventory_sample checks it).
+inline std::string InventoryItems() {
+    ItemDatabase db;
+    auto add = [&db](const char* id, const char* name, const char* description, const char* category, int stack,
+                     int w, int h, float weight, const char* useAction, float useAmount,
+                     std::vector<std::pair<std::string, std::string>> custom) {
+        ItemDefinition d;
+        d.id = id; d.name = name; d.description = description; d.category = category;
+        d.maxStack = stack; d.gridW = w; d.gridH = h; d.weight = weight;
+        d.useAction = useAction; d.useAmount = useAmount; d.custom = std::move(custom);
+        db.Put(d);
+    };
+    add("Potion", "Healing Potion", "Heals 25. After one is used, the next one has to wait 5 seconds (custom field cooldown).",
+        "Consumable", 10, 1, 2, 0.3f, "Heal", 25.0f, {{"cooldown", "5"}});
+    add("Sword", "Iron Sword", "Wears down by 1 for every swing (key X). At 0 it is broken: using it is refused until it is repaired (key V).",
+        "Weapon", 1, 1, 3, 2.5f, "", 0.0f, {{"maxDurability", "4"}, {"breakAction", "keep"}});
+    return db.Serialize();
+}
+
+/// The Inventory template's script (on the Player): messages for refused uses and broken items, the keys that wear and
+/// repair the sword and move things between the bag and the grid bag, and the status line. Public so the shipped
+/// example and the test use the same text.
+inline const char* InventoryDemoScript() {
+    return R"OKAY(
+# Inventory demo. Q uses the selected slot (1-9 picks one), X swings the sword, V repairs it,
+# T puts the selected stack in the grid bag, Y takes the first grid item back, E opens the bag, I the grid bag.
+
+function slot_of(item) {
+    for (var i = 0; i < inv_capacity(); i = i + 1) {
+        var s = inv_slot(i);
+        if (s[0] == item) { return i; }
+    }
+    return -1;
+}
+
+# The engine tells the script when a use is refused (cooldown, broken, nothing uses it) and when an item breaks.
+function on_item_use_refused(item, reason, message) { toast_push("Can't use it", message, 2); }
+function on_item_used(item) { toast_push("Used", item_def(item, "name"), 1); }
+function on_item_broken(item) { toast_push("Broken", item_def(item, "name") + " broke. Press V to repair it.", 3); }
+
+function swing() {
+    var s = slot_of("Sword");
+    if (s < 0) { toast_push("Sword", "There is no sword in the bag.", 2); return 0; }
+    if (!inv_wear(s, 1)) { toast_push("Sword", "It is broken. Press V to repair it.", 2); }
+    return 0;
+}
+
+function repair() {
+    var s = slot_of("Sword");
+    if (s >= 0 && inv_repair(s)) { toast_push("Sword", "Repaired.", 1); }
+    else { toast_push("Sword", "Nothing to repair.", 2); }
+    return 0;
+}
+
+function to_grid() {
+    var item = inv_selected();
+    var slot = slot_of(item);
+    if (item == "" || slot < 0) { toast_push("Grid bag", "Pick a slot with an item (keys 1-9).", 2); return 0; }
+    for (var y = 0; y < 4; y = y + 1) {
+        for (var x = 0; x < 6; x = x + 1) {
+            if (inv_to_grid(slot, x, y)) { toast_push("Grid bag", "In the grid at " + x + "," + y + ". Press I to look.", 1); return 0; }
+        }
+    }
+    toast_push("Grid bag", "There is no room in the grid for that.", 2);
+    return 0;
+}
+
+function from_grid() {
+    if (inv_from_grid(0)) { toast_push("Grid bag", "The first grid item is back in the bag.", 1); }
+    else { toast_push("Grid bag", "Nothing to take out, or the bag is full.", 2); }
+    return 0;
+}
+
+function refresh_status() {
+    var p = "Potion: ready";
+    var wait = inv_cooldown("Potion");
+    if (wait > 0) { p = "Potion: wait " + (round(wait * 10) / 10) + " s"; }
+    var w = "Sword: not in the bag";
+    var s = slot_of("Sword");
+    if (s >= 0) {
+        w = "Sword: " + inv_durability(s) + " / " + item_def("Sword", "maxDurability");
+        if (inv_broken(s)) { w = "Sword: BROKEN (V repairs it)"; }
+    }
+    ui_set_text("Status", p + "   |   " + w);
+}
+
+function update(dt) {
+    if (key_down("x")) { swing(); }
+    if (key_down("v")) { repair(); }
+    if (key_down("t")) { to_grid(); }
+    if (key_down("y")) { from_grid(); }
+    refresh_status();
+}
+)OKAY";
+}
+
 /// A ready-made survival inventory on the real components: a 2D top-down Player
 /// (tagged "Player") carrying an Inventory, the Minecraft-style hotbar + backpack
 /// (E to open, 1-9 / wheel to pick), a loot chest (walk up, F) and a crafting bench
 /// (walk up, C) that crafts from the player's bag. A starting point for survival,
-/// RPG and crafting games — no scripting required.
+/// RPG and crafting games. It also shows three newer inventory features on the Player: a grid
+/// bag (I, with the scripted moves T and Y between it and the bag), a Healing Potion with a
+/// cooldown (Q uses the selected slot; a second use too soon is refused with a message) and an
+/// Iron Sword with durability (X wears it, V repairs it, a broken one is refused). The two
+/// items are defined by InventoryItems(): a new project from this template gets that as its
+/// items.okayitems. The messages come from the script InventoryDemoScript().
 inline void Inventory(Scene& scene) {
     scene.Clear();
     scene.SetName("Inventory");
@@ -1213,7 +1323,17 @@ inline void Inventory(Scene& scene) {
     player->tag = "Player";
     auto* bag = player->AddComponent<okay::Inventory>();
     bag->capacity = 36;   // = the UI's 9 hotbar + 27 backpack slots
+    bag->Add("Potion", 3); bag->Add("Sword", 1);
     bag->Add("Wood", 8); bag->Add("Stone", 4); bag->Add("Torch", 2);
+    // Something for the Potion to heal, and the link from items to it (the Use key).
+    auto* health = player->AddComponent<HealthStat>();
+    health->publishPrefs = false;
+    player->AddComponent<Consumables>();
+    // The grid bag: items take up cells (the Potion is 1x2, the Sword 1x3). Empty at the start.
+    auto* grid = player->AddComponent<GridInventory>();
+    grid->cols = 6; grid->rows = 4; grid->title = "Grid bag";
+    player->AddComponent<GridInventoryUI>();
+    player->AddComponent<ScriptComponent>("okayscript")->LoadSource(InventoryDemoScript());
 
     GameObject* canvas = scene.CreateGameObject("Canvas");
     auto* cv = canvas->AddComponent<Canvas>();
@@ -1221,8 +1341,17 @@ inline void Inventory(Scene& scene) {
     cv->scaleMode = Canvas::ScaleMode::ScaleWithScreenSize;
     scene.CreateGameObject("EventSystem")->AddComponent<EventSystem>();
     GameObject* hud = scene.CreateGameObject("InventoryUI");
-    hud->AddComponent<InventoryUI>()->inventoryTarget = "Player";
+    auto* ui = hud->AddComponent<InventoryUI>();
+    ui->inventoryTarget = "Player";
+    ui->useKey = 'q';   // E opens the bag, so the Use key is Q
     hud->transform->SetParent(canvas->transform, false);
+    // Messages ("Healing Potion is not ready: wait 3.2 s.") appear here.
+    GameObject* toasts = scene.CreateGameObject("Toasts");
+    auto* toast = toasts->AddComponent<UIToast>();
+    toast->corner = 0;
+    toast->duration = 4.0f;
+    toast->width = 620.0f;   // the sentences are long
+    toasts->transform->SetParent(canvas->transform, false);
 
     GameObject* chest = scene.CreateGameObject("Chest");
     chest->transform->localPosition = {3.0f, 0.0f, 0.0f};
@@ -1245,7 +1374,8 @@ inline void Inventory(Scene& scene) {
 
     GameObject* help = scene.CreateGameObject("Help");
     auto* ht = help->AddComponent<TextRenderer>();
-    ht->text = "WASD to move. E: bag. Walk to the chest and press F, to the bench and press C.";
+    ht->text = "WASD to move. 1-9 pick a slot, Q uses it, E opens the bag, I the grid bag. Slot 1 Healing Potion: use it twice in a row and the second is refused until its 5 second cooldown ends. "
+               "Slot 2 Iron Sword: X swings it (wears 1), V repairs it, a broken one is refused. T puts the selected stack in the grid bag, Y takes the first grid item back. Chest F, workbench C.";
     ht->screenSpace = true;
     ht->anchor = UIAnchor::StretchHorizontal;
     ht->screenPos = {16, kHudTop};
@@ -1255,6 +1385,22 @@ inline void Inventory(Scene& scene) {
     ht->pixelSize = 2.4f;
     ht->outline = true;
     ht->color = Color::FromBytes(235, 238, 245);
+
+    // One status line above the hotbar: the Potion's cooldown and the Sword's durability (the script writes it).
+    GameObject* status = scene.CreateGameObject("Status");
+    auto* st = status->AddComponent<TextRenderer>();
+    st->text = "Potion: ready   |   Sword: 4 / 4";
+    st->screenSpace = true;
+    st->anchor = UIAnchor::BottomCenter;
+    st->align = 1;
+    st->vcenter = true;
+    st->wrap = true;
+    st->screenPos = {0.0f, -104.0f};   // above the hotbar
+    st->size = {720.0f, 36.0f};
+    st->pixelSize = 2.4f;
+    st->outline = true;
+    st->shadow = true;
+    st->color = Color::FromBytes(255, 226, 150);
 }
 
 /// A complete, playable game of Snake — written entirely in OkayScript on a

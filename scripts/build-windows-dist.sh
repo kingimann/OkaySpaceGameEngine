@@ -153,7 +153,7 @@ fi
 # scenes are self-contained (every file a scene names sits beside it, and scenes find their files relative to
 # the scene file, so the folder works from any install path). About 0.5 MB. Left out on purpose: account-server
 # (a Python server), netdemo and physicsdemo (C++ sources), editor-plugins and visual_script (not scenes).
-EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls"
+EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls inventory"
 for d in $EXAMPLE_DIRS; do
     [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
     mkdir -p "$OUT_DIR/examples/$d"
@@ -162,6 +162,13 @@ for d in $EXAMPLE_DIRS; do
         [ -f "$f" ] && cp "$f" "$OUT_DIR/examples/$d/"
     done
 done
+# examples/inventory is a small project: its scene sits in Assets/ beside items.okayitems, which is how the editor finds
+# the item definitions (opening a scene in an Assets/ folder makes the parent folder the project). The loop above copies
+# only the files of each folder, so the Assets/ folder is copied here, and the packaging fails when either part is missing.
+mkdir -p "$OUT_DIR/examples/inventory/Assets"
+cp examples/inventory/Assets/*.okayscene "$OUT_DIR/examples/inventory/Assets/"
+[ -s "$OUT_DIR/examples/inventory/Assets/inventory_demo.okayscene" ] || { echo "error: examples/inventory/Assets/inventory_demo.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/inventory/items.okayitems" ] || { echo "error: examples/inventory/items.okayitems did not make it into the distribution" >&2; exit 1; }
 # The texture the obj_texture_paths cubes name (the same starter file that ships in Assets/Textures).
 cp assets/textures/grid.png "$OUT_DIR/examples/obj_texture_paths/"
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
@@ -189,7 +196,9 @@ Everything else lives in  Tools/:
 
 examples/ example scenes to try: in the editor use File > Open and pick
                         examples\vehicle\vehicle_test.okayscene, then press Play
-                        (get in the car with E). More in docs/try_it.md.
+                        (get in the car with E). The inventory example (a grid bag, a
+                        potion with a cooldown, a sword that wears out) is in the
+                        editor under File > Examples > Inventory. More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the
 launcher and a copy sits in Tools/. Don't separate an .exe from its SDL2.dll.

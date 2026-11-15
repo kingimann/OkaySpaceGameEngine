@@ -3561,3 +3561,20 @@ add_test(NAME item_cooldowns COMMAND test_item_cooldowns)
 add_executable(test_item_durability test_item_durability.cpp)
 target_link_libraries(test_item_durability PRIVATE okay::engine)
 add_test(NAME item_durability COMMAND test_item_durability)
+
+# Inventory finish: a refused use is never silent (log line + on_item_use_refused), and the Inventory template (a grid
+# bag, a Healing Potion with a cooldown, an Iron Sword with durability) with its shipped copy examples/inventory/.
+add_executable(test_inventory_refusals test_inventory_refusals.cpp)
+target_link_libraries(test_inventory_refusals PRIVATE okay::engine)
+add_test(NAME inventory_refusals COMMAND test_inventory_refusals)
+
+add_executable(test_inventory_sample test_inventory_sample.cpp)
+target_link_libraries(test_inventory_sample PRIVATE okay::engine)
+target_compile_definitions(test_inventory_sample PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME inventory_sample COMMAND test_inventory_sample)
+
+# Where the inventory nodes are in the Add Node menu (Objects > Items) and which typed-script inventory nodes it lists.
+add_executable(test_vs_inventory_palette test_vs_inventory_palette.cpp)
+target_include_directories(test_vs_inventory_palette PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_inventory_palette PRIVATE okay::engine)
+add_test(NAME vs_inventory_palette COMMAND test_vs_inventory_palette)

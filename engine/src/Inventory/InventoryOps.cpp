@@ -8,9 +8,11 @@
 #include "okay/Core/Random.hpp"
 #include "okay/Inventory/LootTable.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
+#include "okay/Core/Log.hpp"
 #include "okay/Core/Time.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <utility>
@@ -297,16 +299,34 @@ float CooldownLeft(const Inventory* inv, const std::string& item) {
 
 void ResetCooldowns() { Cooldowns().clear(); }
 
+std::string UseRefusalText(const Inventory* inv, const std::string& item, const std::string& reason) {
+    const ItemDefinition* def = ItemDatabase::Get().Find(item);
+    const std::string name = def ? def->DisplayName() : item;
+    if (reason == "cooldown") {
+        char secs[32];
+        std::snprintf(secs, sizeof(secs), "%.1f", CooldownLeft(inv, item));
+        return name + " is not ready: wait " + secs + " s.";
+    }
+    if (reason == "broken") return name + " is broken: repair it first.";
+    return name + " can't be used (" + reason + ").";
+}
+
 InvResult Use(Inventory* inv, int i, GameObject* user) {
     const std::string item = ValidSlot(inv, i) ? inv->slots[i].item : std::string();
     const ItemDefinition* def = item.empty() ? nullptr : ItemDatabase::Get().Find(item);
     const float cooldown = CooldownOf(def);
-    if (cooldown > 0.0f && CooldownLeft(inv, item) > 0.0f) return InvResult::No("cooldown");
-    const InvResult r = UseItem(inv, i, user);
+    const InvResult r = (cooldown > 0.0f && CooldownLeft(inv, item) > 0.0f) ? InvResult::No("cooldown") : UseItem(inv, i, user);
     if (r.Ok() && cooldown > 0.0f) Cooldowns()[{BagId(inv), item}] = Time::ElapsedTimeD() + cooldown;
     if (r.Ok()) {
         InventoryEvents::Fire(inv->gameObject, "on_item_used", "OnItemUsed", {vs::VsValue(item)});
         if (!def || def->equip == EquipSlot::None) NetInventory::NoticeUse(inv, i, true);
+    } else if (!item.empty()) {
+        // A refused use is never silent: one log line for the developer, and on_item_use_refused(item, reason, message)
+        // for scripts, so a game can show its own message (for example with toast_push). An empty slot says nothing.
+        const std::string text = UseRefusalText(inv, item, r.reason);
+        Log::Info("inventory: ", text);
+        InventoryEvents::Fire(inv->gameObject, "on_item_use_refused", nullptr,
+                              {vs::VsValue(item), vs::VsValue(r.reason), vs::VsValue(text)});
     }
     return r;
 }

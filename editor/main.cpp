@@ -6297,6 +6297,25 @@ static void StopAnimPreview();
 static void StopModelScenePreview(EditorState& ed);
 static void StopLivePreview(EditorState& ed);
 
+// File > Examples > Inventory: the shipped sample, examples/inventory/Assets/inventory_demo.okayscene (docs/try_it.md). Its
+// folder is a small project with an items.okayitems, so opening the scene loads the items too. It is looked for next to
+// the editor (the zip and the installer put the editor in Tools/ and examples/ beside it) and then relative to the folder
+// the editor was started from, the same places the Node Playground looks. Empty when it is not there.
+static std::string OkayExeDir();
+static std::string InventoryExampleScene() {
+    namespace fs = std::filesystem;
+    const fs::path exe = OkayExeDir();
+    const fs::path roots[] = {exe / ".." / "examples" / "inventory", exe / "examples" / "inventory",
+                              fs::path("examples") / "inventory", fs::path("..") / "examples" / "inventory",
+                              fs::path("..") / ".." / "examples" / "inventory"};
+    for (const fs::path& r : roots) {
+        std::error_code ec;
+        const fs::path scene = r / "Assets" / "inventory_demo.okayscene";
+        if (fs::is_regular_file(scene, ec)) return fs::absolute(scene, ec).lexically_normal().string();
+    }
+    return std::string();
+}
+
 // Open one Node Playground demo: the scene, its graph, and the object whose
 // pins should light up in Play. File > Examples and each node's Try it button
 // both come here.
@@ -6453,6 +6472,19 @@ void DrawMenuAndToolbar(EditorState& ed) {
                 }
                 ImGui::EndMenu();
             }
+            const std::string inventoryDemo = InventoryExampleScene();
+            if (ImGui::MenuItem("Inventory (grid bag, cooldown, durability)", nullptr, false, !inventoryDemo.empty())) {
+                RunAfterSavePrompt(ed, "opening an example", [&ed, inventoryDemo] {
+                    std::string err;
+                    if (ed.Load(inventoryDemo, &err)) {
+                        ConsoleLog("Inventory example opened. Press Play. 1-9 pick a slot, Q uses it (use the Healing Potion twice in a row), X swings the Iron Sword, V repairs it, I opens the grid bag, T and Y move things to and from it.");
+                        AddRecent(inventoryDemo);
+                    } else ConsoleLog("Couldn't open " + inventoryDemo + ": " + err, 2);
+                });
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("%s", inventoryDemo.empty() ? "examples/inventory was not found next to the editor."
+                                                              : "A bag, a grid bag, a Healing Potion with a cooldown and an Iron Sword with durability. Press Play.");
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -18928,6 +18960,7 @@ void DrawNewProjectPopup(EditorState& ed) {
     if (g_newProjectRoot.empty() && g_newProjectTemplate.empty()) return;
 
     const TplFn fn = TemplateFn(g_newProjectTemplate);
+    const bool inventoryTemplate = g_newProjectTemplate == "Inventory";   // it needs its item definitions (below)
     g_newProjectTemplate.clear();
     if (g_newProjectRoot.empty()) {           // template only: load it in place
         (ed.*fn)();
@@ -18952,7 +18985,7 @@ void DrawNewProjectPopup(EditorState& ed) {
     const int gpu = g_newProjectGpu;
     g_newProjectVersion.clear();
     g_newProjectGpu = -1;
-    auto writeFiles = [&folder, version, gpu](const std::string& rt, std::string& err) {
+    auto writeFiles = [&folder, version, gpu, inventoryTemplate](const std::string& rt, std::string& err) {
         ProjectSettings settings;
         if (!version.empty() && okayproj::CheckProjectVersion(version).empty())
             std::snprintf(settings.version, sizeof(settings.version), "%s", version.c_str());
@@ -18961,7 +18994,11 @@ void DrawNewProjectPopup(EditorState& ed) {
         live.productName = folder;
         live.outputDir = "build/" + folder;
         if (gpu == 0 || gpu == 1) live.settings.gpuRenderer = gpu == 1;
-        return okayproj::WriteTextAtomic(BuildLiveFile(rt), WriteBuildLive(live, ""), &err);
+        if (!okayproj::WriteTextAtomic(BuildLiveFile(rt), WriteBuildLive(live, ""), &err)) return false;
+        // The Inventory template's items (a Healing Potion with a cooldown, an Iron Sword with durability) are definitions,
+        // so they live in the project's items.okayitems; without the file they would be plain items with neither rule.
+        if (inventoryTemplate && !okayproj::WriteTextAtomic(rt + "/items.okayitems", okay::Templates::InventoryItems(), &err)) return false;
+        return true;
     };
     const EditorState::NewProjectResult r = ed.CreateProject(plan.root.string(), plan.folder, fn, writeFiles);
     if (!r.ok) {

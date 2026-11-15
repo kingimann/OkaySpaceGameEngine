@@ -881,11 +881,20 @@ void EditorState::NewBrickBreaker() {
 
 void EditorState::NewInventory() {
     NewScene();
+    // The template's items (a Healing Potion with a cooldown, an Iron Sword with durability) are definitions. A new
+    // project from this template gets them as its items.okayitems (written before this runs). Here they are added to
+    // the open project's table when it has no item of that name yet, never replacing one, so the scene works at once.
+    {
+        ItemDatabase wanted;
+        wanted.LoadText(Templates::InventoryItems());
+        for (const ItemDefinition& d : wanted.Items())
+            if (!ItemDatabase::Get().IsDefined(d.id)) ItemDatabase::Get().Put(d);
+    }
     m_suppressUndo = true;
     Templates::Inventory(m_scene);
     m_suppressUndo = false;
     view3D = false;
-    m_selected = m_scene.Find("Bag");
+    m_selected = m_scene.Find("Player");
     StartDocument();
 }
 

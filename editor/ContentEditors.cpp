@@ -578,6 +578,34 @@ void DrawItemTab(EditorState& ed) {
                 d->custom.push_back({"key", "value"});
                 CommitTab(ed, 0, before);
             }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("+ Known field...")) ImGui::OpenPopup("##knownfields");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fields the engine reads: the item's cooldown and its durability.");
+            if (ImGui::BeginPopup("##knownfields")) {
+                // The names InventoryOps::Use (cooldown) and okay/Inventory/Durability.hpp (the rest) look for.
+                struct Known { const char* key; const char* value; const char* what; };
+                static const Known known[] = {
+                    {"cooldown", "5", "Seconds a bag waits before it can use this item again. Using it too soon is refused with a message."},
+                    {"maxDurability", "100", "The item's full durability. It wears down and breaks. Missing or 0 means no durability."},
+                    {"breakAction", "keep", "keep: a broken item stays at 0 until it is repaired. destroy: it is removed when it breaks."},
+                    {"wearPerHit", "1", "Armor: durability lost each time the wearer is hit."},
+                    {"wearPerStrike", "1", "A Main Hand weapon: durability lost for each melee swing that lands."},
+                    {"wearPerShot", "1", "A Main Hand gun: durability lost for each shot fired."},
+                };
+                for (const Known& k : known) {
+                    bool have = false;
+                    for (const auto& kv : d->custom) if (kv.first == k.key) have = true;
+                    ImGui::BeginDisabled(have);
+                    if (ImGui::MenuItem(k.key)) {
+                        Snap before = CaptureTab(ed, 0);
+                        d->custom.push_back({k.key, k.value});
+                        CommitTab(ed, 0, before);
+                    }
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s%s", k.what, have ? "\n(Already on this item.)" : "");
+                }
+                ImGui::EndPopup();
+            }
             ImGui::TreePop();
         }
         if (d->loose) {

@@ -1,0 +1,59 @@
+# Turns the crash reports the launcher uploaded (Supabase table crash_reports, docs/sql/crash_reports.sql) into GitHub issues:
+# one issue per crash signature, labelled `crash`; the same crash again adds a comment (count, versions, systems), never a second issue.
+# Details and the one-time setup: docs/crash_reports.md.
+#
+# Needs ONE secret that release.yml already uses: SUPABASE_SERVICE_KEY (the project's service_role key; Settings > Secrets and variables >
+# Actions in this repository). Without it this workflow does nothing and ends green, with a notice saying so. The issues are created
+# with the workflow's own GITHUB_TOKEN (issues: write): no GitHub token is in the launcher or the editor, and no key is in this file.
+name: Crash reports to issues
+
+on:
+  schedule:
+    - cron: "11,41 * * * *"      # every 30 minutes
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the issues that would be made; create nothing and mark nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: crash-issues
+  cancel-in-progress: false      # a run that is making issues is never cut short; the next one waits
+
+jobs:
+  crash-issues:
+    name: Crash reports to issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+    steps:
+      - name: No secret, nothing to do
+        if: env.HAVE_KEY != 'true'
+        run: |
+          echo "::notice title=Crash reports::SUPABASE_SERVICE_KEY is not set in this repository's secrets, so there is nothing to read. Nothing was done (docs/crash_reports.md says how to add it)."
+          echo "### Crash reports" >> "$GITHUB_STEP_SUMMARY"
+          echo "No \`SUPABASE_SERVICE_KEY\` secret: skipped. See docs/crash_reports.md, section 'One-time setup'." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@v6
+        if: env.HAVE_KEY == 'true'
+
+      - name: Make issues from new crash reports
+        if: env.HAVE_KEY == 'true'
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # -I: no site or user packages and no current-directory imports; the script uses the standard library only.
+          if [ "$DRY_RUN" = "true" ]; then
+            python3 -I scripts/crash_to_issue.py --dry-run
+          else
+            python3 -I scripts/crash_to_issue.py
+          fi

@@ -272,7 +272,7 @@ More of the builder:
 
 ## What is registered
 
-2793 properties on 201 types, as `property_registry` counts them ("covered 201 component types, 2793 properties"; a number before a slash counts the authored ones; the rest are
+2874 properties on 205 types, as `property_registry` counts them ("covered 205 component types, 2874 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -341,6 +341,7 @@ has `enabled`.
 | UIListView, UISlotGrid, Spline | 10, 13, 4 | list layout, colours, row size and selection (the items are a list); slot grid layout, colours and selection, plus `fontScale`, `textColor` and `numberEmptySlots` from the shared `uix` record (the labels are a list); spline type, loop, up mode and resolution (the points are `splinept` records) |
 | UITabs | 32 | layout (style, sizing and shape as enums), colours and behaviour (keys, wrap, focus, animation). The tab names, pages, icons, badges and disabled flags are lists |
 | Inventory, Equipment, GridInventory | 7, 2, 10 | capacity, stack and weight limits and keep-on-load; equipment display and keep-on-load; grid size (1..64, the component's own cap), key, title, weight, stack, role and keep-on-load. Slots, items and overflow are lists |
+| BlockBuilder, StructureBuilder, BuildMode, UIColorPicker | 10, 22, 40, 5 | block size, reach, look and buttons (the record does not save `previewFree` or `previewBusy`); structure piece, sizes, buttons and resources (the record does not save `rotateKey`, `upgradeKey`, `repairKey`, `pieceHotkeys`, `previewFree` or `previewBusy`); build mode grid, reach, layers, colours and every key and pad binding (the palette is a list); colour picker layout and selection (the swatches are a list) |
 
 How the new types are described, so a tool can rely on it:
 

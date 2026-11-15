@@ -42,8 +42,17 @@ struct Rig {
         eye->transform->SetParent(player->transform, false);
         eye->transform->localPosition = {0, 1.6f, 0};
         scene.Start();
-        Tick({}, 20);
+        Settle();
     }
+    // Wait until the body is on the floor (at most 5 s of frames), not a fixed frame count, so a slow or loaded
+    // machine cannot start the checks mid-fall. Then a few more frames to let the contact settle.
+    void Settle() {
+        int n = 0;
+        while (!ctrl->IsGrounded() && n < 300) { Tick({}, 1); ++n; }
+        settled = ctrl->IsGrounded();
+        Tick({}, 5);
+    }
+    bool settled = false;
     void Tick(const std::vector<char>& keys, int frames) {
         for (int i = 0; i < frames; ++i) { Input::FeedKeys(keys); scene.Update(kDt); }
     }
@@ -60,6 +69,7 @@ template <typename Ctrl>
 void Check(const char* who) {
     Rig<Ctrl> r;
     using St = typename Ctrl::Stance;
+    CHECK(r.settled);                                                     // on the floor before anything is checked
     CHECK(r.ctrl->stance() == St::Stand);
     const float standH = r.box->size.y;
     r.Tap(r.ctrl->proneKey);

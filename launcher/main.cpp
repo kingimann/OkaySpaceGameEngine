@@ -10,6 +10,7 @@
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
+#include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
@@ -24,6 +25,7 @@
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
+#include "okay/Platform/NativeFetch.hpp"   // own HTTP client in front of curl for downloads, size probes and previews (only with OKAY_OWN_HTTP)
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
 #include "okay/Platform/Achievements.hpp"
 #include "okay/Platform/Friends.hpp"
@@ -442,6 +444,9 @@ void ProcKill(Proc* p) {
 // redirect chain reports the final resource's size).
 long long HeadSize(const std::string& url) {
     if (!ShellSafeUrl(url)) return 0;
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    { std::string own; if (okay::http::OwnHeadDump(url, "OkaySpace-Launcher", own)) return okay::netguard::ParseLastContentLength(own); }   // own client first; curl below is the fallback
+#endif
     std::error_code ec;
     fs::path hdr = fs::temp_directory_path(ec) / ("okay_dlhead_" + std::to_string(okay::platform::TicksMs32()) + ".txt");
 #if defined(_WIN32)
@@ -493,6 +498,23 @@ int DlWorker(void* data) {
 
     std::error_code ec; fs::remove(d->part, ec);
     if (!ShellSafeUrl(d->url)) { set([&]{ d->status = 3; }); return 0; }
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    if (okay::http::NativeAvailable()) {   // own client first (opt-in); anything unclear falls through to curl below
+        okay::http::OwnDownloadSpec sp;
+        sp.userAgent = "OkaySpace-Launcher"; sp.maxBytes = (uint64_t)kMaxDownloadBytes;
+        sp.onBytes = [&](uint64_t n) { set([&]{ d->received = (long long)n; }); };
+        sp.cancelled = [&] { bool c; SDL_LockMutex(g_dlMutex); c = d->cancelReq; SDL_UnlockMutex(g_dlMutex); return c; };
+        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(d->url, d->part, sp);
+        if (r.outcome != okay::http::OwnOutcome::NotHandled) {
+            if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(d->part, ec); set([&]{ d->status = 4; }); return 0; }
+            if (r.outcome == okay::http::OwnOutcome::Ok && r.bytes > 0) {
+                fs::remove(d->dest, ec); fs::rename(d->part, d->dest, ec);
+                set([&]{ d->received = (long long)r.bytes; if (d->total <= 0) d->total = (long long)r.bytes; d->status = ec ? 3 : 2; });
+            } else { fs::remove(d->part, ec); set([&]{ d->status = 3; }); }
+            return 0;
+        }
+    }
+#endif
     std::string cmd = "curl -L -s -f --max-filesize " + std::to_string(kMaxDownloadBytes) +
                       " -A \"OkaySpace-Launcher\" -o \"" + d->part + "\" \"" + d->url + "\"";
     Proc p = SpawnHidden(cmd);
@@ -693,6 +715,9 @@ long long RemoteSize(const std::string& url) {
     std::error_code ec;
     fs::path hf = fs::temp_directory_path(ec) / ("okay_head_" + std::to_string(okay::platform::TicksMs32()) + ".txt");
     std::string u = BustCache(url);
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    { std::string own; if (okay::http::OwnHeadDump(u, "", own)) return okay::netguard::ParseLastContentLength(own); }   // own client first; curl below is the fallback
+#endif
 #if defined(_WIN32)
     std::string c = "curl -sIL \"" + u + "\" -o \"" + hf.string() + "\"";
 #else
@@ -2968,6 +2993,16 @@ static int LinkPreviewWorker(void*) {
             std::error_code ec;
             const fs::path tmp = fs::temp_directory_path(ec) / ("okay_lp_" + std::to_string(std::hash<std::string>{}(url)) + ".html");
             fs::remove(tmp, ec);
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+            bool ownDone = false;   // own client first (opt-in); an unclear answer falls through to curl below
+            if (okay::http::NativeAvailable()) {
+                std::string ownHtml;
+                const okay::http::OwnOutcome o = okay::http::OwnFetchPrefix(url, "Mozilla/5.0 (compatible; OkaySpace link preview)", 3000000, 262143, 8000, ownHtml);
+                if (o == okay::http::OwnOutcome::Ok) { if (ownHtml.size() > 262144) ownHtml.resize(262144); lp = ParseLinkPreview(url, ownHtml); }
+                ownDone = o != okay::http::OwnOutcome::NotHandled;   // a clear refusal (404, too big) means no preview, as with curl -f
+            }
+            if (!ownDone) {
+#endif
             std::string cmd = "curl -L -s -f -m 8 --max-filesize 3000000 -r 0-262143 "
                               "-A \"Mozilla/5.0 (compatible; OkaySpace link preview)\" -o \"" + tmp.string() + "\" \"" + url + "\"";
 #if !defined(_WIN32)
@@ -2981,6 +3016,9 @@ static int LinkPreviewWorker(void*) {
                 lp = ParseLinkPreview(url, html);
             }
             f.close(); fs::remove(tmp, ec);
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+            }
+#endif
         }
         SDL_LockMutex(g_lpMutex); g_linkPrev[url] = lp; SDL_UnlockMutex(g_lpMutex);
     }
@@ -13018,6 +13056,7 @@ static std::string FormatDate(long t) {
 static int g_myRank = -1;                       // 3 admin, 2 staff, 1 moderator, 0 player, -1 unknown / not set up
 static okay::MyBanInfo g_myBan;                 // my own site ban, if any
 static volatile bool g_roleCheckBusy = false;
+static bool g_roleLastFailed = false;           // last check failed while I had a rank: keep the rank, retry sooner
 static SDL_mutex* g_roleMutex = nullptr;
 static int g_roleRankNew = -1; static okay::MyBanInfo g_roleBanNew; static bool g_roleReady = false;   // (guarded)
 static std::string g_roleSiteRelayNew;   // (guarded) app_config voice_relay
@@ -13026,6 +13065,7 @@ static int RoleCheckWorker(void*) {
     int rank = -1; okay::MyBanInfo ban; std::string siteRelay;
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        a.RefreshIfExpiring(600);   // a long-open launcher: renew an old token before asking
         okay::Admin ad(a);
         rank = ad.MyRank();
         if (rank >= 0) ban = ad.MyBan();
@@ -13071,13 +13111,20 @@ static void PumpRoleCheck(bool signedIn) {
     const Uint32 now = okay::platform::TicksMs32();
     if (!wasIn) { wasIn = true; next = 0; }
     if (now >= next && !g_roleCheckBusy && !g_pollCfgDir.empty()) {
-        next = now + 300000;
+        next = now + (g_roleLastFailed ? 60000u : 300000u);   // a failed check is retried after a minute
         g_roleCheckBusy = true;
         if (SDL_Thread* t = SDL_CreateThread(RoleCheckWorker, "okay-role", nullptr)) SDL_DetachThread(t);
         else g_roleCheckBusy = false;
     }
     SDL_LockMutex(g_roleMutex);
-    if (g_roleReady) { g_roleReady = false; g_myRank = g_roleRankNew; g_myBan = g_roleBanNew; g_siteVoiceRelay = g_roleSiteRelayNew; }
+    if (g_roleReady) {
+        g_roleReady = false;
+        // A failed check (token expired after hours open, network blip) comes back as -1. It must not take the
+        // Admin page away from someone who already has a rank: keep the last known rank and ban, retry soon.
+        g_roleLastFailed = g_roleRankNew < 0 && g_myRank >= 0;
+        if (!g_roleLastFailed) { g_myRank = g_roleRankNew; g_myBan = g_roleBanNew; }
+        if (!g_roleLastFailed) g_siteVoiceRelay = g_roleSiteRelayNew;
+    }
     if (g_siteRelaySaveResult) {
         if (g_siteRelaySaveResult == 1) { g_siteVoiceRelay = g_roleSiteRelayNew; Toast("Voice server saved for everyone", 1); }
         else Toast("Couldn't save the voice server (is docs/sql/app_config.sql set up?)", 2);
@@ -16558,6 +16605,21 @@ static bool OfficialFetchFile(const std::string& url, const fs::path& out, long 
     std::error_code ec;
     fs::remove(out, ec);
     if (!ShellSafeUrl(url)) return false;
+#if defined(OKAY_OWN_HTTP_ACTIVE)
+    if (okay::http::NativeAvailable()) {   // own client first (opt-in, retries like curl --retry 2); anything unclear falls through to curl below
+        okay::http::OwnDownloadSpec sp;
+        sp.userAgent = "OkaySpace-Launcher"; sp.retries = 2;
+        sp.onBytes = [&](uint64_t n) { OffLocked([&] { g_off.bytesNow = before + (long long)n; }); };
+        sp.cancelled = [] { return OfficialCancelled(); };
+        const okay::http::OwnDownloadResult r = okay::http::OwnDownload(url, out.string(), sp);
+        if (r.outcome == okay::http::OwnOutcome::Cancelled) { fs::remove(out, ec); return false; }
+        if (r.outcome == okay::http::OwnOutcome::Ok) return true;
+        if (r.outcome != okay::http::OwnOutcome::NotHandled) {   // a clear refusal: what curl -f reports; the launcher's Download() gets its turn, as after a curl failure
+            if (!Download(url, out.string())) { fs::remove(out, ec); return false; }
+            return fs::exists(out, ec);
+        }
+    }
+#endif
     int code = -1;
     Proc p = SpawnHidden("curl -L -s -f --retry 2 -A \"OkaySpace-Launcher\" -o \"" + out.string() + "\" \"" + url + "\"");
     if (p.valid()) {
@@ -17724,6 +17786,7 @@ int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     SDL_SetMainReady();
     {
         std::error_code ec;

@@ -122,14 +122,13 @@ jobs:
           echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
 
       - name: Fetch libsodium (MinGW prebuilt)
-        # Statically linked into the exes for authenticated packet encryption — no
-        # extra DLL ships. If this step is removed, the build is simply unencrypted.
+        # Statically linked into the exes for authenticated packet encryption. A release MUST have it: the download is pinned
+        # to a SHA-256 (scripts/libsodium-mingw.pin), the layout is checked, and the build passes -DOKAY_REQUIRE_SODIUM=ON
+        # (scripts/build-windows-dist.sh), so a missing or different libsodium fails the release instead of building without it
+        # (the code would fall back to our own, unreviewed okay::crypto; CLAUDE.md rule 18).
         run: |
-          bash scripts/fetch-tarball.sh libsodium-mingw.tar.gz \
-            "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-mingw.tar.gz"
-          mkdir -p libsodium-mingw
-          tar xzf libsodium-mingw.tar.gz -C libsodium-mingw
-          echo "OKAY_SODIUM_MINGW_PREFIX=$PWD/libsodium-mingw/libsodium-win64" >> "$GITHUB_ENV"
+          prefix="$(bash scripts/fetch-libsodium-mingw.sh "$PWD")"
+          echo "OKAY_SODIUM_MINGW_PREFIX=$prefix" >> "$GITHUB_ENV"
 
       - name: Restore compiler cache
         uses: actions/cache@v5
@@ -137,6 +136,13 @@ jobs:
           path: .ccache
           key: ccache-mingw-${{ github.sha }}
           restore-keys: ccache-mingw-
+
+      # A release never carries our own unreviewed crypto (OKAY_OWN_CRYPTO, OKAY_OWN_STACK_CRYPTO_TEST) or the own-stack
+      # dogfood switch (OKAY_OWN_STACK). Checked here on the environment, and again by build-windows-dist.sh on the cmake cache.
+      - name: Refuse own crypto and the own-stack switch
+        run: |
+          scripts/check_release_own_stack.sh
+          test -n "$OKAY_SODIUM_MINGW_PREFIX" && test -s "$OKAY_SODIUM_MINGW_PREFIX/lib/libsodium.a"
 
       - name: Build Windows distribution
         # The account server + public key are baked into the build as the CMake
@@ -273,8 +279,12 @@ jobs:
         run: |
           cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release \
                 -DOKAY_BUILD_PLAYER=ON -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_LAUNCHER=OFF \
-                -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_TOOLS=OFF
+                -DOKAY_BUILD_TESTS=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_TOOLS=OFF \
+                -DOKAY_REQUIRE_SODIUM=ON
+          scripts/check_release_own_stack.sh --cache build-linux
           cmake --build build-linux --target okay-player
+          # This binary runs on this runner: it must itself say crypto=libsodium (a build without libsodium says otherwise).
+          scripts/check_release_own_stack.sh --binary build-linux/bin/okay-player
           cp build-linux/bin/okay-player okay-server-linux-x64
           strip okay-server-linux-x64
           ./okay-server-linux-x64 --help | head -n 3

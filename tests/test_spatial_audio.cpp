@@ -60,7 +60,7 @@ std::vector<float> Render(Scene& scene, int frames) {
 }
 
 double TailOf(ReverbPreset preset) {
-    SchroederReverb rev;
+    RoomReverb rev;
     rev.Prepare(44100);
     rev.Configure(PresetSettings(preset));
     rev.BeginBlock();
@@ -162,7 +162,7 @@ int main() {
 
     // ---- Reverb impulse response --------------------------------------------------------------
     {
-        SchroederReverb rev;
+        RoomReverb rev;
         rev.Prepare(44100);
         rev.Clear();
         rev.Configure(PresetSettings(ReverbPreset::Hall));
@@ -200,6 +200,93 @@ int main() {
         CHECK(cave > 0.0 && outdoor > 0.0 && room > 0.0);
         CHECK(cave > outdoor * 2.0);           // a cave keeps its tail; outdoor dies away
         CHECK(std::fabs(room - cave) > 1.0e-4);
+    }
+
+    // ---- RoomReverb design checks (our own tuning; docs/audio.md "Reverb zones") ------------------------------------
+    {
+        auto isPrime = [](int n) { if (n < 2) return false; for (int d = 2; d * d <= n; ++d) if (n % d == 0) return false; return true; };
+        for (int rate : {8000, 22050, 44100, 48000, 96000, 192000}) {
+            RoomReverb rev;
+            rev.Prepare(rate);
+            int prev = 0;
+            for (int i = 0; i < RoomReverb::kLines; ++i) {
+                const int n = rev.LineLength(i);
+                CHECK(isPrime(n) && n > prev);
+                prev = n;
+            }
+            // first line about 22 ms, last about 41 ms (rounded up to primes)
+            CHECK(rev.LineLength(0) >= (int)std::lround(0.022 * rate) && rev.LineLength(0) < (int)std::lround(0.022 * rate) + 60);
+            CHECK(rev.LineLength(RoomReverb::kLines - 1) >= (int)std::lround(0.041 * rate) - 1 && rev.LineLength(RoomReverb::kLines - 1) < (int)std::lround(0.041 * rate) + 60);
+        }
+        // the settings mapping: 0.2 + 6.5 * room^2.5 seconds
+        RoomReverb rev;
+        rev.Prepare(48000);
+        for (float room : {0.0f, 0.42f, 0.8f, 1.0f}) {
+            ReverbSettings st; st.room = room;
+            rev.Configure(st);
+            CHECK_NEAR(rev.DecaySeconds(), 0.2 + 6.5 * std::pow((double)room, 2.5), 1e-4);
+        }
+        // the measured decay matches the asked decay: bright setting (damp 0), energy slope between 0.5 s and 2.5 s
+        for (float room : {0.6f, 0.9f}) {
+            ReverbSettings st; st.room = room; st.damp = 0.0f; st.wet = 1.0f; st.width = 1.0f;
+            rev.Clear();
+            rev.Configure(st);
+            const double rt60 = rev.DecaySeconds();
+            double e1 = 0, e2 = 0;
+            for (int i = 0; i < 48000 * 3; ++i) {
+                float l = 0, r = 0;
+                rev.Process(i == 0 ? 1.0f : 0.0f, l, r);
+                if (i >= 24000 && i < 48000) e1 += l * l + r * r;        // 0.5 .. 1.0 s
+                if (i >= 96000 && i < 120000) e2 += l * l + r * r;       // 2.0 .. 2.5 s
+            }
+            const double dbPerSecond = 10.0 * std::log10(e1 / e2) / 1.5;
+            const double measuredRt60 = 60.0 / dbPerSecond;
+            if (std::fabs(measuredRt60 - rt60) > 0.15 * rt60) std::printf("  room %.2f: asked %.2f s, measured %.2f s\n", room, rt60, measuredRt60);
+            CHECK(std::fabs(measuredRt60 - rt60) < 0.15 * rt60);
+        }
+        // width 1: the two sides are nearly uncorrelated; width 0: they are the same signal
+        for (float width : {1.0f, 0.0f}) {
+            ReverbSettings st; st.room = 0.8f; st.wet = 1.0f; st.width = width;
+            rev.Clear();
+            rev.Configure(st);
+            double lr = 0, ll = 0, rr = 0;
+            for (int i = 0; i < 96000; ++i) {
+                float l = 0, r = 0;
+                rev.Process(i == 0 ? 1.0f : 0.0f, l, r);
+                lr += (double)l * r; ll += (double)l * l; rr += (double)r * r;
+            }
+            const double corr = lr / std::sqrt(ll * rr);
+            if (width == 1.0f) CHECK(std::fabs(corr) < 0.15); else CHECK(corr > 0.999);
+        }
+        // level: the Room preset's tail over the first second, at 48 kHz, stays where it was calibrated: -23.2337 dB is
+        // what the reverb this replaced gave on the same measure (ours gives -23.2295), so the presets' wet values keep
+        // their meaning. 0.05 dB tolerance: a real change of level fails this.
+        rev.Clear();
+        rev.Configure(PresetSettings(ReverbPreset::Room));
+        double energy = 0;
+        for (int i = 0; i < 48000; ++i) { float l = 0, r = 0; rev.Process(i == 0 ? 1.0f : 0.0f, l, r); energy += l * l + r * r; }
+        CHECK(std::fabs(10.0 * std::log10(energy) - (-23.2337)) < 0.05);
+        // stability at the extremes: the longest, brightest setting stays finite and keeps decaying; bad input is ignored
+        ReverbSettings longest; longest.room = 1.0f; longest.damp = 0.0f; longest.wet = 1.0f;
+        rev.Clear();
+        rev.Configure(longest);
+        float peakLate = 0.0f;
+        bool finite = true;
+        for (int i = 0; i < 48000 * 30; ++i) {
+            float l = 0, r = 0;
+            rev.Process(i < 4800 ? ((i % 7) ? 1.0f : -1.0f) : (i == 9000 ? std::nanf("") : 0.0f), l, r);
+            if (!std::isfinite(l) || !std::isfinite(r)) finite = false;
+            if (i >= 48000 * 29) peakLate = std::max(peakLate, std::max(std::fabs(l), std::fabs(r)));
+        }
+        CHECK(finite);
+        CHECK(peakLate < 1.0e-3f);    // 6.7 s decay: about -260 dB after 29 s, far below this
+        // out-of-range settings are clamped
+        ReverbSettings wild; wild.room = 50.0f; wild.damp = -3.0f; wild.wet = std::nanf(""); wild.width = 9.0f;
+        rev.Configure(wild);
+        CHECK_NEAR(rev.DecaySeconds(), 6.7, 1e-4);
+        float l = 1, r = 1;
+        rev.Process(1.0f, l, r);
+        CHECK(l == 0.0f && r == 0.0f);   // wet NaN is treated as 0
     }
 
     // ---- Defaults leave a 3D source unchanged -------------------------------------------------

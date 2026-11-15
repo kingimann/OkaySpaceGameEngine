@@ -267,6 +267,12 @@ bool ReadIrrSceneBuffer(const std::string& text, const std::string& baseDir, Imp
 /// polygons by index with matid / texture / both, an `mtable` material file looked up in `baseDir`). Lights, the viewpoint,
 /// the background and the diffuse / specular / transmission coefficients are not read (reported in `out.notes`).
 bool ReadNffBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// Terragen terrain (.ter, binary): one mesh part, a regular grid of the file's XPTS by YPTS points (SIZE + 1 on a side when
+/// those are missing), in metres (SCAL, 30 m per terrain unit by default), heights BaseHeight + Elevation * HeightScale / 65536
+/// terrain units, curve mode 1 applied (draped over a sphere of radius CRAD), turned from Z-up to Y-up as (x, y, z) -> (x, z, -y).
+/// Normals come from the height grid, u and v run 0..1 along x and y. Grids above 2049 by 2049 points are refused.
+/// Unknown curve modes, a missing "EOF " marker and data after it are reported in `out.notes`.
+bool ReadTerragenBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -292,6 +298,7 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
 bool ReadXglFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadIrrSceneFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadTerragenFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

@@ -19,13 +19,14 @@ below were made by counting those files by extension; where I could not check so
 | Importers we covered **before batch C** (including Blender, merged as #829, off by default) | 19 |
 | Importers batch C added (MD2, MD3, Irrlicht mesh, B3D, DirectX .x) | 5 (24) |
 | Importers batch D adds (AC3D, XGL / ZGL, Irrlicht scene, NFF, and OGRE **for the XML form only**) | 5 (**29** of the 45 switched on; OGRE counts as half: its binary `.mesh` / `.skeleton` and the `.skeleton.xml` are row 1 below) |
-| Switched on in our build and still **without an own reader** | **16** (rows 2 to 17 below) plus OGRE's half |
+| Terragen (`.ter`, `docs/own_terragen_reader.md`), after batch D | 1 (**30** of the 45 switched on) |
+| Switched on in our build and still **without an own reader** | **15** (rows 2 to 17 below, except row 13, Terragen) plus OGRE's half |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
-tree. **Nothing was flipped.** Which formats the 29 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
+tree. **Nothing was flipped.** Which formats the 30 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
 COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x,
-AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF. How the batch D readers compare with Assimp on the real files is in
+AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF, and Terragen. How the batch D readers compare with Assimp on the real files is in
 `docs/model_corpus.md` and in each reader's own page (`docs/own_ac3d_reader.md`, `own_ogre_reader.md`, `own_xgl_reader.md`,
 `own_irr_reader.md`, `own_nff_reader.md`).
 
@@ -51,7 +52,7 @@ none were invented.
 | 10 | **CSM** (`.csm`) | CharacterStudio motion capture (markers only, like BVH) | very low | easy | 1 | yes |
 | 11 | **MDC** (`.mdc`) | Return to Castle Wolfenstein models (MD3 with compressed frames) | very low | easy (MD3 is done) | 1 (`spider.mdc`) | yes |
 | 12 | **HMP** (`.hmp`) | 3D GameStudio terrain | very low | easy | 2 | yes |
-| 13 | **Terragen** (`.ter`) | Terragen heightfield | low | easy | 2 | yes |
+| 13 | **Terragen** (`.ter`): **own reader written, off by default** (`OKAY_OWN_TER`, `docs/own_terragen_reader.md`) | Terragen heightfield | low | easy | 2 (both read and equal Assimp) | yes |
 | 14 | **RAW** (`.raw`) | plain triangle list | very low | easy | 4 (one empty) | yes |
 | 15 | **Quake III BSP** (`.bsp` in `.pk3`) | Quake 3 map in a zip | low | medium-hard (faces, patches, shaders) | 1 (`SGDTT3.pk3`) | yes |
 | 16 | **Nendo** (`.ndo`) | Nendo modeller | almost none | easy-medium | **0: no file in the tree, so it cannot be checked against Assimp** | yes |
@@ -75,7 +76,7 @@ Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real
 1. **Ogre, the rest**: `.skeleton.xml` (bones, bind pose, animations, vertex weights) on the XML reader, then the binary `.mesh` and `.skeleton`: many real game assets.
 2. **MDL**, in this order: Quake 1, then Half-Life 1, then 3D GameStudio 3/5/7 (43 real files).
 3. **IQM**, **OpenGEX**, **COB**, **LWS**, **PMX**: one real file or a handful each; each is a few days.
-4. The tiny ones in one batch: **Q3D, SIB, CSM, MDC, HMP, Terragen, RAW, Unreal**.
+4. The tiny ones in one batch: **Q3D, SIB, CSM, MDC, HMP, RAW, Unreal** (Terragen is done: `docs/own_terragen_reader.md`).
 5. **Quake III BSP** and **glTF 1.0**: medium; glTF 1.0 is the one with the largest real-file count (7) after MDL.
 6. **Nendo**: last, and only from a published description, because no file exists to check it against; honest status "unverified".
 7. Not in our build, so not needed to remove Assimp from the Windows distribution: **M3D, USD, IFC, Assbin, C4D**. If the owner wants them anyway: USD `usda` first, then `usdc`; IFC is a project of its own; Assbin can be dropped; C4D needs a decision about reverse engineering.

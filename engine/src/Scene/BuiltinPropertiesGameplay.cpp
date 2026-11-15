@@ -16,6 +16,8 @@
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalStats.hpp"
+#include "okay/Components/SurvivalAfflictions.hpp"
+#include "okay/Components/SurvivalSystems.hpp"
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/TurnManager.hpp"
@@ -976,6 +978,212 @@ void RegisterHealthStat() {
     b.Commit();
 }
 
+// HungerStat (record "stat_hunger")
+void RegisterHungerStat() {
+    PropertyBuilder<HungerStat> b("HungerStat", "stat_hunger", "Gameplay");
+    b.Section("Hunger")
+     .AddFloat("maxHunger", &HungerStat::maxHunger).Range(0, kBig, 1).Tooltip("Full stomach")
+     .AddFloat("drainPerSecond", &HungerStat::drainPerSecond).Range(0, kBig, 0.1).Tooltip("Hunger lost per second")
+     .AddFloat("sprintMultiplier", &HungerStat::sprintMultiplier).Range(0, kBig, 0.1).Tooltip("Drain multiplier while sprinting")
+     .AddFloat("lowThreshold", &HungerStat::lowThreshold).Range(0, kBig, 1).Tooltip("Below this the hunger counts as low")
+     .AddFloat("starveDamage", &HungerStat::starveDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost while empty (0 = off)")
+     .AddFloat("overeatMax", &HungerStat::overeatMax).Range(0, kBig, 1).Tooltip("Eating may stack this far above the maximum")
+     .AddBool("slowWhenStarving", &HungerStat::slowWhenStarving).Tooltip("Move slower as hunger runs out")
+     .AddFloat("minSpeedFactor", &HungerStat::minSpeedFactor).Range(0, 1, 0.01).Tooltip("Slowest movement multiplier when the stat is empty")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &HungerStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &HungerStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &HungerStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// ThirstStat (record "stat_thirst")
+void RegisterThirstStat() {
+    PropertyBuilder<ThirstStat> b("ThirstStat", "stat_thirst", "Gameplay");
+    b.Section("Thirst")
+     .AddFloat("maxThirst", &ThirstStat::maxThirst).Range(0, kBig, 1).Tooltip("Fully watered")
+     .AddFloat("drainPerSecond", &ThirstStat::drainPerSecond).Range(0, kBig, 0.1).Tooltip("Thirst lost per second")
+     .AddFloat("sprintMultiplier", &ThirstStat::sprintMultiplier).Range(0, kBig, 0.1).Tooltip("Drain multiplier while sprinting")
+     .AddFloat("lowThreshold", &ThirstStat::lowThreshold).Range(0, kBig, 1).Tooltip("Below this the thirst counts as low")
+     .AddFloat("dehydrateDamage", &ThirstStat::dehydrateDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost while empty (0 = off)")
+     .AddFloat("overdrinkMax", &ThirstStat::overdrinkMax).Range(0, kBig, 1).Tooltip("Drinking may stack this far above the maximum")
+     .AddBool("slowWhenDehydrated", &ThirstStat::slowWhenDehydrated).Tooltip("Move slower as water runs out")
+     .AddFloat("minSpeedFactor", &ThirstStat::minSpeedFactor).Range(0, 1, 0.01).Tooltip("Slowest movement multiplier when the stat is empty")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &ThirstStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &ThirstStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &ThirstStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// StaminaStat (record "stat_stamina")
+void RegisterStaminaStat() {
+    PropertyBuilder<StaminaStat> b("StaminaStat", "stat_stamina", "Gameplay");
+    b.Section("Stamina")
+     .AddFloat("maxStamina", &StaminaStat::maxStamina).Range(0, kBig, 1).Tooltip("Full stamina")
+     .AddFloat("regenPerSecond", &StaminaStat::regenPerSecond).Range(0, kBig, 0.1).Tooltip("Stamina regained per second")
+     .AddFloat("regenScale", &StaminaStat::regenScale).Range(0, kBig, 0.1).Tooltip("Multiplier on the regain (for example faster while resting)")
+     .AddFloat("regenDelay", &StaminaStat::regenDelay).Range(0, 1e6, 0.1).Tooltip("Seconds after use before regain starts")
+     .AddFloat("sprintCost", &StaminaStat::sprintCost).Range(0, kBig, 0.1).Tooltip("Stamina per second used while sprinting")
+     .AddFloat("jumpCost", &StaminaStat::jumpCost).Range(0, kBig, 0.1).Tooltip("Stamina used per jump")
+     .AddFloat("exhaustedUntil", &StaminaStat::exhaustedUntil).Range(0, kBig, 1).Tooltip("Once empty, stay exhausted until stamina is back to this")
+     .AddFloat("lowThreshold", &StaminaStat::lowThreshold).Range(0, kBig, 1).Tooltip("Below this the stamina counts as low")
+     .AddBool("slowWhenExhausted", &StaminaStat::slowWhenExhausted).Tooltip("Move slower while exhausted")
+     .AddFloat("minSpeedFactor", &StaminaStat::minSpeedFactor).Range(0, 1, 0.01).Tooltip("Slowest movement multiplier when the stat is empty")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &StaminaStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &StaminaStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &StaminaStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// OxygenStat (record "stat_oxygen")
+void RegisterOxygenStat() {
+    PropertyBuilder<OxygenStat> b("OxygenStat", "stat_oxygen", "Gameplay");
+    b.Section("Oxygen")
+     .AddFloat("maxOxygen", &OxygenStat::maxOxygen).Range(0, kBig, 1).Tooltip("Full lungs")
+     .AddFloat("drainPerSecond", &OxygenStat::drainPerSecond).Range(0, kBig, 0.1).Tooltip("Air lost per second under water")
+     .AddFloat("refillPerSecond", &OxygenStat::refillPerSecond).Range(0, kBig, 0.1).Tooltip("Air regained per second above water")
+     .AddFloat("lowThreshold", &OxygenStat::lowThreshold).Range(0, kBig, 1).Tooltip("Below this the air counts as low")
+     .AddFloat("drownDamage", &OxygenStat::drownDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost while out of air (0 = off)")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &OxygenStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &OxygenStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &OxygenStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// TemperatureStat (record "stat_temp")
+void RegisterTemperatureStat() {
+    PropertyBuilder<TemperatureStat> b("TemperatureStat", "stat_temp", "Gameplay");
+    b.Section("Warmth")
+     .AddFloat("maxWarmth", &TemperatureStat::maxWarmth).Range(0, kBig, 1).Tooltip("Fully warm")
+     .AddFloat("coldDrain", &TemperatureStat::coldDrain).Range(0, kBig, 0.1).Tooltip("Warmth lost per second in the cold")
+     .AddFloat("warmRegen", &TemperatureStat::warmRegen).Range(0, kBig, 0.1).Tooltip("Warmth regained per second near heat")
+     .AddFloat("lowThreshold", &TemperatureStat::lowThreshold).Range(0, kBig, 1).Tooltip("Below this the warmth counts as low")
+     .AddFloat("freezeDamage", &TemperatureStat::freezeDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost while frozen (0 = off)")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &TemperatureStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &TemperatureStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &TemperatureStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// SleepStat (record "stat_sleep")
+void RegisterSleepStat() {
+    PropertyBuilder<SleepStat> b("SleepStat", "stat_sleep", "Gameplay");
+    b.Section("Sleep")
+     .AddFloat("maxEnergy", &SleepStat::maxEnergy).Range(0, kBig, 1).Tooltip("Fully rested")
+     .AddFloat("drainPerSecond", &SleepStat::drainPerSecond).Range(0, kBig, 0.1).Tooltip("Energy lost per second awake")
+     .AddFloat("restPerSecond", &SleepStat::restPerSecond).Range(0, kBig, 0.1).Tooltip("Energy regained per second while resting")
+     .AddFloat("tiredThreshold", &SleepStat::tiredThreshold).Range(0, kBig, 1).Tooltip("Below this the character counts as tired")
+     .AddFloat("exhaustDamage", &SleepStat::exhaustDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost at zero energy (0 = off)")
+     .AddBool("slowWhenTired", &SleepStat::slowWhenTired).Tooltip("Move slower while tired")
+     .AddFloat("minSpeedFactor", &SleepStat::minSpeedFactor).Range(0, 1, 0.01).Tooltip("Slowest movement multiplier when the stat is empty")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &SleepStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &SleepStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &SleepStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// SanityStat (record "stat_sanity")
+void RegisterSanityStat() {
+    PropertyBuilder<SanityStat> b("SanityStat", "stat_sanity", "Gameplay");
+    b.Section("Sanity")
+     .AddFloat("maxSanity", &SanityStat::maxSanity).Range(0, kBig, 1).Tooltip("Fully sane")
+     .AddFloat("drainInDark", &SanityStat::drainInDark).Range(0, kBig, 0.1).Tooltip("Sanity lost per second in the dark")
+     .AddFloat("regenInLight", &SanityStat::regenInLight).Range(0, kBig, 0.1).Tooltip("Sanity regained per second in the light")
+     .AddFloat("lowThreshold", &SanityStat::lowThreshold).Range(0, kBig, 1).Tooltip("Below this the sanity counts as low")
+     .AddFloat("insaneDamage", &SanityStat::insaneDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost while insane (0 = off)")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &SanityStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &SanityStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &SanityStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// RadiationStat (record "stat_radiation")
+void RegisterRadiationStat() {
+    PropertyBuilder<RadiationStat> b("RadiationStat", "stat_radiation", "Gameplay");
+    b.Section("Radiation")
+     .AddFloat("maxRadiation", &RadiationStat::maxRadiation).Range(0, kBig, 1).Tooltip("Lethal dose")
+     .AddFloat("gainPerSecond", &RadiationStat::gainPerSecond).Range(0, kBig, 0.1).Tooltip("Absorbed per second inside a radiation zone")
+     .AddFloat("decayPerSecond", &RadiationStat::decayPerSecond).Range(0, kBig, 0.1).Tooltip("Shed per second outside one")
+     .AddFloat("sickThreshold", &RadiationStat::sickThreshold).Range(0, kBig, 1).Tooltip("Dose that starts hurting")
+     .AddFloat("damagePerSecond", &RadiationStat::damagePerSecond).Range(0, kBig, 0.1).Tooltip("Health per second lost above the threshold")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &RadiationStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &RadiationStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &RadiationStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// BleedingStat (record "stat_bleed")
+void RegisterBleedingStat() {
+    PropertyBuilder<BleedingStat> b("BleedingStat", "stat_bleed", "Gameplay");
+    b.Section("Bleeding")
+     .AddFloat("maxBleed", &BleedingStat::maxBleed).Range(0, kBig, 1).Tooltip("Heaviest bleed")
+     .AddFloat("damagePerSecond", &BleedingStat::damagePerSecond).Range(0, kBig, 0.1).Tooltip("Health per second at full bleed (scales with the level)")
+     .AddFloat("clotPerSecond", &BleedingStat::clotPerSecond).Range(0, kBig, 0.1).Tooltip("Natural clotting per second (0 = bleeds until bandaged)")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &BleedingStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &BleedingStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &BleedingStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// PoisonStat (record "stat_poison")
+void RegisterPoisonStat() {
+    PropertyBuilder<PoisonStat> b("PoisonStat", "stat_poison", "Gameplay");
+    b.Section("Poison")
+     .AddFloat("maxPoison", &PoisonStat::maxPoison).Range(0, kBig, 1).Tooltip("Strongest dose")
+     .AddFloat("damagePerSecond", &PoisonStat::damagePerSecond).Range(0, kBig, 0.1).Tooltip("Health per second at full dose (scales with the level)")
+     .AddFloat("decayPerSecond", &PoisonStat::decayPerSecond).Range(0, kBig, 0.1).Tooltip("Toxin worn off per second")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &PoisonStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &PoisonStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &PoisonStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// WetnessStat (record "stat_wet")
+void RegisterWetnessStat() {
+    PropertyBuilder<WetnessStat> b("WetnessStat", "stat_wet", "Gameplay");
+    b.Section("Wetness")
+     .AddFloat("maxWetness", &WetnessStat::maxWetness).Range(0, kBig, 1).Tooltip("Soaked through")
+     .AddFloat("soakPerSecond", &WetnessStat::soakPerSecond).Range(0, kBig, 0.1).Tooltip("Gained per second in water or rain")
+     .AddFloat("dryPerSecond", &WetnessStat::dryPerSecond).Range(0, kBig, 0.1).Tooltip("Lost per second in the open")
+     .AddFloat("chillPerSecond", &WetnessStat::chillPerSecond).Range(0, kBig, 0.1).Tooltip("Warmth drained per second while soaked (0 = off)")
+     .AddFloat("soakedThreshold", &WetnessStat::soakedThreshold).Range(0, kBig, 1).Tooltip("Above this the character counts as soaked")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &WetnessStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &WetnessStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &WetnessStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// CarryWeightStat (record "stat_carry")
+void RegisterCarryWeightStat() {
+    PropertyBuilder<CarryWeightStat> b("CarryWeightStat", "stat_carry", "Gameplay");
+    b.Section("Carry weight")
+     .AddFloat("maxLoad", &CarryWeightStat::maxLoad).Range(0, kBig, 1).Tooltip("Weight carried before being slowed")
+     .AddFloat("overStaminaDrain", &CarryWeightStat::overStaminaDrain).Range(0, kBig, 0.1).Tooltip("Stamina per second drained while over the limit")
+     .AddFloat("minSpeedFactor", &CarryWeightStat::minSpeedFactor).Range(0, 1, 0.01).Tooltip("Slowest movement multiplier when far over the limit")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &CarryWeightStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &CarryWeightStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &CarryWeightStat::sendMessages).Tooltip("Broadcast the low or critical message once");
+    b.Commit();
+}
+
+// StatusEffectStat (record "statuseffect")
+void RegisterStatusEffectStat() {
+    PropertyBuilder<StatusEffectStat> b("StatusEffectStat", "statuseffect", "Gameplay");
+    b.AddBool("sendMessages", &StatusEffectStat::sendMessages).Tooltip("Broadcast <name> when an effect starts and <name>_expired when it ends");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -1577,6 +1785,19 @@ void RegisterGameplayProperties() {
     RegisterLineRenderer();
     RegisterHealthStat();
     RegisterSurvivalStats();
+    RegisterHungerStat();
+    RegisterThirstStat();
+    RegisterStaminaStat();
+    RegisterOxygenStat();
+    RegisterTemperatureStat();
+    RegisterSleepStat();
+    RegisterSanityStat();
+    RegisterRadiationStat();
+    RegisterBleedingStat();
+    RegisterPoisonStat();
+    RegisterWetnessStat();
+    RegisterCarryWeightStat();
+    RegisterStatusEffectStat();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

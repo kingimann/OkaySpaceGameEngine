@@ -20,6 +20,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
+#include <iterator>
 #include <vector>
 #include <unordered_set>
 
@@ -453,45 +455,172 @@ bool TriggerAccepts(const Collider3D* trig, const Collider3D* other) {
 
 bool Alive(Collider3D* c) { return c->enabled && c->gameObject && c->gameObject->ActiveInHierarchy(); }
 
+// Tests defined further down, used by the vertical rays below.
+bool Passes(Collider3D* c, GameObject* ignore, std::uint32_t mask, bool queryTriggers);
+bool RaySlabs(const Vec3& o, const Vec3& d, const Vec3& mn, const Vec3& mx, float& tEnter, float& tExit);
+bool RayCollider(Collider3D* c, const Vec3& o, const Vec3& d, float maxT, float& t, Vec3& n);
+bool RayTerrain(Terrain* terr, const Vec3& origin, const Vec3& dir, float maxT, float& tOut, Vec3& nOut);
+bool TerrainPasses(Terrain* terr, GameObject* ignore, std::uint32_t mask);
+
+/// Downward rays for CatchTunneledFloor. That catch casts one vertical ray for every falling body, and Physics3D::Raycast
+/// measures every collider's world box for every ray: 500 falling bodies meant 250,000 box measurements in one step (38 percent
+/// of the frame in tests/bench_frame.cpp's bodies500 scene, docs/perf_log.md). The boxes do not move while the catch loop runs
+/// (except when it lifts a body, which drops the index), so they are measured once and put in a grid over the ground plane; a vertical
+/// ray then only looks at the colliders whose box covers its column. Cast() returns exactly what Raycast returns for the same downward
+/// ray: the same filters, the same box test arithmetic, the same shape tests, colliders tried in the same order (a tie goes to the later
+/// one), then the terrains. Colliders whose box the grid cannot place (not finite, very far out, covering many cells) are tried for every ray.
+struct DownRays {
+    std::vector<Collider3D*> colliders;          // what Raycast would walk, in its order
+    std::vector<Terrain*> terrains;
+    std::function<void()> fetch;                 // fills colliders and terrains; run at the first ray, so a step that casts none pays nothing
+    bool built = false;
+    std::vector<Vec3> mn, mx;                    // each collider's world box, as Raycast measures it
+    std::vector<int> always;                     // indices tried for every ray (ascending)
+    float cell = 1.0f, x0 = 0.0f, z0 = 0.0f;
+    int nx = 0, nz = 0;
+    std::vector<int> cellStart, cellItems;       // per cell, the collider indices that cover it (ascending)
+
+    static constexpr float kMargin = 0.05f;      // slack on every box so rounding at the cell edges never loses a collider
+    static constexpr int kMaxCellsPerBox = 24;
+
+    void Build() {
+        built = true;
+        const std::size_t n = colliders.size();
+        mn.assign(n, Vec3{}); mx.assign(n, Vec3{});
+        always.clear(); cellStart.clear(); cellItems.clear(); nx = nz = 0;
+        std::vector<char> placed(n, 0);
+        std::vector<float> extent;
+        float lox = 1e30f, loz = 1e30f, hix = -1e30f, hiz = -1e30f;
+        for (std::size_t i = 0; i < n; ++i) {
+            colliders[i]->WorldAABB(mn[i], mx[i]);
+            const float s6 = mn[i].x + mn[i].y + mn[i].z + mx[i].x + mx[i].y + mx[i].z;
+            const float big = std::fmax(std::fmax(std::fabs(mn[i].x), std::fabs(mx[i].x)), std::fmax(std::fabs(mn[i].z), std::fabs(mx[i].z)));
+            if (!std::isfinite(s6) || !(big < 1.0e5f)) { always.push_back((int)i); continue; }
+            placed[i] = 1;
+            lox = std::fmin(lox, mn[i].x - kMargin); hix = std::fmax(hix, mx[i].x + kMargin);
+            loz = std::fmin(loz, mn[i].z - kMargin); hiz = std::fmax(hiz, mx[i].z + kMargin);
+            extent.push_back(std::fmax(mx[i].x - mn[i].x, mx[i].z - mn[i].z));
+        }
+        if (extent.empty()) return;
+        std::nth_element(extent.begin(), extent.begin() + (long)(extent.size() / 2), extent.end());
+        cell = std::fmax(1.0f, 2.0f * extent[extent.size() / 2]);
+        cell = std::fmax(cell, std::fmax((hix - lox) / 200.0f, (hiz - loz) / 200.0f));   // at most about 200 x 200 cells
+        x0 = lox; z0 = loz;
+        nx = (int)((hix - lox) / cell) + 1; nz = (int)((hiz - loz) / cell) + 1;
+        auto range = [&](std::size_t i, int& cx0, int& cx1, int& cz0, int& cz1) {
+            cx0 = (int)std::floor((mn[i].x - kMargin - x0) / cell); cx1 = (int)std::floor((mx[i].x + kMargin - x0) / cell);
+            cz0 = (int)std::floor((mn[i].z - kMargin - z0) / cell); cz1 = (int)std::floor((mx[i].z + kMargin - z0) / cell);
+            cx0 = std::max(cx0, 0); cz0 = std::max(cz0, 0); cx1 = std::min(cx1, nx - 1); cz1 = std::min(cz1, nz - 1);
+        };
+        std::vector<int> count((std::size_t)nx * (std::size_t)nz + 1, 0);
+        std::vector<char> inGrid(n, 0);
+        for (std::size_t i = 0; i < n; ++i) {
+            if (!placed[i]) continue;
+            int cx0, cx1, cz0, cz1; range(i, cx0, cx1, cz0, cz1);
+            if (cx1 < cx0 || cz1 < cz0) continue;                                    // (cannot happen: the grid covers every box)
+            if ((cx1 - cx0 + 1) * (cz1 - cz0 + 1) > kMaxCellsPerBox) { always.push_back((int)i); continue; }
+            inGrid[i] = 1;
+            for (int cz = cz0; cz <= cz1; ++cz) for (int cx = cx0; cx <= cx1; ++cx) ++count[(std::size_t)cz * nx + cx + 1];
+        }
+        std::sort(always.begin(), always.end());
+        cellStart.assign(count.size(), 0);
+        for (std::size_t k = 1; k < count.size(); ++k) cellStart[k] = cellStart[k - 1] + count[k];
+        cellItems.assign((std::size_t)cellStart.back(), 0);
+        std::vector<int> fill(cellStart.begin(), cellStart.end() - 1);
+        for (std::size_t i = 0; i < n; ++i) {                                         // ascending: each cell's list comes out ascending
+            if (!inGrid[i]) continue;
+            int cx0, cx1, cz0, cz1; range(i, cx0, cx1, cz0, cz1);
+            for (int cz = cz0; cz <= cz1; ++cz) for (int cx = cx0; cx <= cx1; ++cx) cellItems[(std::size_t)fill[(std::size_t)cz * nx + cx]++] = (int)i;
+        }
+    }
+
+    RaycastHit3D Cast(const Vec3& origin, float maxDistance, GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
+        if (fetch) { fetch(); fetch = nullptr; }
+        if (!built) Build();
+        RaycastHit3D best;
+        best.distance = maxDistance;
+        const Vec3 dir = Vec3{0.0f, -1.0f, 0.0f}.Normalized();     // as Raycast normalises the direction it is given
+        // The colliders that can matter: those covering this column, and those tried for every ray, in collider order.
+        std::vector<int> candidates;
+        if (nx > 0) {
+            const int cx = (int)std::floor((origin.x - x0) / cell), cz = (int)std::floor((origin.z - z0) / cell);
+            if (cx >= 0 && cx < nx && cz >= 0 && cz < nz) {
+                const int a = cellStart[(std::size_t)cz * nx + cx], b = cellStart[(std::size_t)cz * nx + cx + 1];
+                candidates.assign(cellItems.begin() + a, cellItems.begin() + b);
+            }
+        }
+        if (!always.empty()) {
+            std::vector<int> merged;
+            merged.reserve(candidates.size() + always.size());
+            std::merge(candidates.begin(), candidates.end(), always.begin(), always.end(), std::back_inserter(merged));
+            candidates.swap(merged);
+        }
+        for (int idx : candidates) {
+            Collider3D* c = colliders[(std::size_t)idx];
+            if (!Passes(c, ignore, mask, queryTriggers)) continue;
+            const Vec3 pad = (mx[(std::size_t)idx] - mn[(std::size_t)idx]) * 1e-4f + Vec3(1e-3f, 1e-3f, 1e-3f);   // RayNearBounds, with the stored box
+            float t0, t1;
+            if (!(RaySlabs(origin, dir, mn[(std::size_t)idx] - pad, mx[(std::size_t)idx] + pad, t0, t1) && t1 >= 0.0f && t0 <= best.distance)) continue;
+            float t; Vec3 n;
+            if (RayCollider(c, origin, dir, best.distance, t, n) && t <= best.distance) {
+                best.hit = true; best.collider = c; best.gameObject = c->gameObject;
+                best.distance = t; best.point = origin + dir * t; best.normal = n;
+            }
+        }
+        for (Terrain* terr : terrains) {
+            if (!TerrainPasses(terr, ignore, mask)) continue;
+            float t; Vec3 n;
+            if (RayTerrain(terr, origin, dir, best.distance, t, n) && t <= best.distance) {
+                best.hit = true; best.collider = nullptr; best.gameObject = terr->gameObject;
+                best.distance = t; best.point = origin + dir * t; best.normal = n;
+            }
+        }
+        return best;
+    }
+};
+
 /// A fast fall or a low frame rate can step a body through a thin floor. The
 /// voxel and mesh paths already march their own probes; a box floor does not.
 /// If the feet dropped through a static surface they were just standing on,
 /// put them back on it. A miss (walked off the edge) and a jump that is still
 /// above the hit are left alone.
-void CatchTunneledFloor(Scene& scene, Rigidbody3D* rb) {
-    if (!rb || !rb->hasPrevPos || !rb->transform || !rb->gameObject) return;
-    if (!rb->enabled || !rb->gameObject->ActiveInHierarchy()) return;
-    if (rb->bodyType != Rigidbody3D::BodyType::Dynamic || rb->freezeY) return;
+bool CatchTunneledFloor(Scene& scene, Rigidbody3D* rb, DownRays* rays) {
+    if (!rb || !rb->hasPrevPos || !rb->transform || !rb->gameObject) return false;
+    if (!rb->enabled || !rb->gameObject->ActiveInHierarchy()) return false;
+    if (rb->bodyType != Rigidbody3D::BodyType::Dynamic || rb->freezeY) return false;
     Collider3D* col = rb->gameObject->GetComponent<Collider3D>();
-    if (!col || !col->enabled || col->isTrigger) return;
+    if (!col || !col->enabled || col->isTrigger) return false;
     Vec3 mn, mx;
     col->WorldAABB(mn, mx);
     const Vec3 pos = rb->transform->Position();
-    if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) return;
-    if (!std::isfinite(mn.y)) return;
+    if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) return false;
+    if (!std::isfinite(mn.y)) return false;
     float footOff = pos.y - mn.y;
     if (footOff < 0.0f) footOff = 0.0f;
     const float curFoot = mn.y;
     const float prevFoot = rb->prevPos.y - footOff;
-    if (!(curFoot < prevFoot - 1.0e-4f)) return;
+    if (!(curFoot < prevFoot - 1.0e-4f)) return false;
     const float startY = std::max(prevFoot, curFoot) + 1.25f;
     const float reach = startY - curFoot + 0.05f;
-    if (!(reach > 0.05f)) return;
+    if (!(reach > 0.05f)) return false;
     Physics3D::IgnoreHierarchy own(rb->gameObject);
-    const RaycastHit3D hit = scene.physics3D().Raycast(
-        scene, Vec3{pos.x, startY, pos.z}, Vec3{0.0f, -1.0f, 0.0f},
-        reach, rb->gameObject, scene.physics3D().CollisionMask(col->layer), /*queryTriggers=*/false);
-    if (!hit.hit || hit.normal.y <= 0.55f) return;
+    const RaycastHit3D hit = rays
+        ? rays->Cast(Vec3{pos.x, startY, pos.z}, reach, rb->gameObject, scene.physics3D().CollisionMask(col->layer), /*queryTriggers=*/false)
+        : scene.physics3D().Raycast(
+              scene, Vec3{pos.x, startY, pos.z}, Vec3{0.0f, -1.0f, 0.0f},
+              reach, rb->gameObject, scene.physics3D().CollisionMask(col->layer), /*queryTriggers=*/false);
+    if (!hit.hit || hit.normal.y <= 0.55f) return false;
     // A dynamic mesh with no convex hull is refused: never lift onto it.
     if (hit.collider && hit.collider->shape() == Collider3D::Shape::Mesh &&
-        static_cast<MeshCollider3D*>(hit.collider)->IsDynamicConflict()) return;
-    if (!(curFoot < hit.point.y - 0.02f)) return;
-    if (!(prevFoot >= hit.point.y - 0.35f)) return;
+        static_cast<MeshCollider3D*>(hit.collider)->IsDynamicConflict()) return false;
+    if (!(curFoot < hit.point.y - 0.02f)) return false;
+    if (!(prevFoot >= hit.point.y - 0.35f)) return false;
     const float lift = hit.point.y - curFoot;
-    if (!(lift > 0.0f && lift <= 2.5f)) return;
+    if (!(lift > 0.0f && lift <= 2.5f)) return false;
     MoveBodyWorld(rb->transform, Vec3{0.0f, lift, 0.0f});
     if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
     if (rb->sleeping) rb->WakeUp();
+    return true;   // the body moved: a ray index built before this is out of date
 }
 
 } // namespace
@@ -1209,9 +1338,12 @@ void Physics3D::Step(Scene& scene, float dt) {
 
     // A box floor has no swept catch of its own. Do this before prevPos is stored
     // so the next step sees the recovered feet.
+    DownRays rays;
+    const bool useRays = !broadphase::ForceBruteForce();   // (the switch also brings back the plain Raycast for each body)
+    rays.fetch = [this, &scene, &rays]() { const QueryCache& q = QueryLists(scene); rays.colliders = q.colliders; rays.terrains = q.terrains; };
     for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
         if (gone.Gone(rb)) continue;
-        CatchTunneledFloor(scene, rb);
+        if (CatchTunneledFloor(scene, rb, useRays ? &rays : nullptr)) rays.built = false;
     }
 
     // Record where every dynamic body ended up, for next step's swept collision.

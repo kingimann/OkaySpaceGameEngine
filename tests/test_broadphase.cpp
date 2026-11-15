@@ -4,6 +4,9 @@
 //    zero-size boxes, inverted boxes (min above max), one huge box over many small ones, boxes that must be ignored.
 //  - A 3D scene with piles, triggers and a static floor, and a 2D scene, stepped with the sweep and with the brute
 //    force switch: every body ends up at the exact same bits, and the contact callbacks fire the same number of times.
+//  - Fast bodies falling through a thin floor (the tunnelled floor catch casts a vertical ray per falling body): the
+//    grid of boxes that answers those rays must pick the same hit as Physics3D::Raycast (the brute force switch brings the
+//    plain Raycast back): same bits at the end, and no body is left under the floor (so the catch really ran).
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Physics/Broadphase.hpp"
@@ -109,6 +112,53 @@ Outcome Run3D(bool brute, int frames) {
     return o;
 }
 
+struct TunnelResult { std::uint64_t hash = 0; int below = 0, nearFloor = 0; };
+
+TunnelResult RunTunnel3D(bool brute, int steps) {
+    ForceBruteForce() = brute;
+    TunnelResult o;
+    Scene s("tunnel");
+    s.UseFixedStepPhysics(true);
+    s.SetPhysicsStepsPerSecond(30.0f);               // big steps: a fast body moves metres per step
+    Lcg r(4242);
+    GameObject* floor = s.CreateGameObject("ThinFloor");
+    floor->transform->localPosition = {0, 0, 0};
+    floor->AddComponent<BoxCollider3D>()->size = {60, 0.2f, 60};
+    floor->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
+    for (int i = 0; i < 120; ++i) {                  // static clutter on the floor: boxes of many sizes, some huge, one tilted
+        GameObject* g = s.CreateGameObject("Clutter");
+        g->transform->localPosition = {r.Range(-25, 25), 0.3f, r.Range(-25, 25)};
+        g->AddComponent<BoxCollider3D>()->size = {r.Range(0.5f, 3.0f), r.Range(0.2f, 0.6f), r.Range(0.5f, 3.0f)};
+    }
+    GameObject* slab = s.CreateGameObject("HugeSlab");
+    slab->transform->localPosition = {0, 30, 0};
+    slab->AddComponent<BoxCollider3D>()->size = {200, 0.2f, 200};
+    slab->GetComponent<BoxCollider3D>()->isTrigger = true;
+    std::vector<Rigidbody3D*> bodies;
+    for (int i = 0; i < 150; ++i) {
+        GameObject* g = s.CreateGameObject("Fast");
+        g->transform->localPosition = {r.Range(-24, 24), r.Range(4, 35), r.Range(-24, 24)};
+        if (i % 3 == 0) g->AddComponent<SphereCollider3D>()->radius = 0.4f;
+        else g->AddComponent<BoxCollider3D>()->size = {0.8f, 0.8f, 0.8f};
+        auto* rb = g->AddComponent<Rigidbody3D>();
+        rb->velocity = {r.Range(-3, 3), -r.Range(30, 120), r.Range(-3, 3)};
+        bodies.push_back(rb);
+    }
+    s.Start();
+    for (int f = 0; f < steps; ++f) s.Update(1.0f / 30.0f);
+    for (const auto& go : s.Objects()) {
+        Vec3 p = go->transform->Position();
+        o.hash = Fnv(o.hash ? o.hash : 1469598103934665603ULL, &p, sizeof(p));
+    }
+    for (Rigidbody3D* rb : bodies) {
+        const float y = rb->transform->Position().y;
+        if (y < -1.0f) ++o.below;
+        if (y > -1.0f && y < 3.0f) ++o.nearFloor;
+    }
+    ForceBruteForce() = false;
+    return o;
+}
+
 Outcome Run2D(bool brute, int frames) {
     ForceBruteForce() = brute;
     Outcome o;
@@ -191,6 +241,15 @@ int main() {
         CHECK(sweep.enters > 50 && sweep.stays > 500);   // the bodies really collided
         CHECK(sweep.trig > 0);                            // and fell through the trigger
         std::printf("  3D: %d enters, %d stays, %d exits, %d trigger enters\n", sweep.enters, sweep.stays, sweep.exits, sweep.trig);
+    }
+
+    RUN_SUITE("broadphase: fast bodies and a thin floor: the vertical rays of the floor catch pick the same hits");
+    {
+        const TunnelResult grid = RunTunnel3D(false, 90), plain = RunTunnel3D(true, 90);
+        CHECK(grid.hash == plain.hash);
+        CHECK(grid.below == plain.below && grid.nearFloor == plain.nearFloor);
+        std::printf("  %d of 150 bodies ended near the floor, %d under it (with the catch on)\n", grid.nearFloor, grid.below);
+        CHECK(grid.nearFloor > 60);        // the catch (or the contact) held most of them up: the rays were really cast and used
     }
 
     RUN_SUITE("broadphase: a 2D physics scene moves the same either way");

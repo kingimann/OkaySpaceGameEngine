@@ -3562,7 +3562,7 @@ if(OKAY_OWN_MDL)
 endif()
 add_test(NAME own_e4_default COMMAND test_own_e4_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# The sample files shipped in examples/own_readers (cube_spin.ogex, quake_quad.mdl, halflife_tri.mdl) import through the seam with the own backend,
+# The sample files shipped in examples/own_readers (cube_spin.ogex, quake_pyramid.mdl, halflife_tri.mdl) import through the seam with the own backend,
 # and the two .mdl files are still exactly the fixtures (docs/try_it.md section 8 tells the owner to open them in the editor).
 # `test_own_e4_samples --write <dir>` rewrites the two .mdl files.
 add_executable(test_own_e4_samples test_own_e4_samples.cpp)

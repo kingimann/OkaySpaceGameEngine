@@ -171,6 +171,40 @@ inline std::string QuakeMdl(QuakeOffsets* off = nullptr, bool groupFirst = false
     return b.s;
 }
 
+// A small pyramid for the sample file examples/own_readers/quake_pyramid.mdl (tests/test_own_e4_samples.cpp): one frame, 4 vertices, 4 triangles,
+// 2 units high and 2 wide, sitting on the ground when imported (Quake is Z-up; the reader turns it into Y-up). scale 1/128, origin (-1, -1, 0), so a
+// vertex byte b gives b / 128 - 1 (z: b / 128):   A (0,0,0) -> (-1, -1, 0)   B (255,0,0) -> (0.992, -1, 0)   C (128,255,0) -> (0, 0.992, 0)
+// and the apex D (128,100,255) -> (0, -0.219, 1.992). Every triangle faces front and lists its corners clockwise seen from outside, as Quake does:
+// base (A B C), then (A D B), (B D C), (C D A).
+inline std::string QuakePyramidMdl() {
+    Buf b;
+    b.StrAt(0, "IDPO", 4);
+    b.I32At(4, 6);
+    const float trans[3] = {-1, -1, 0};
+    for (int k = 0; k < 3; ++k) { b.F32At(8 + 4 * (std::size_t)k, 1.0f / 128.0f); b.F32At(20 + 4 * (std::size_t)k, trans[k]); }
+    b.F32At(32, 2.0f);
+    b.I32At(48, 1);    // numskins
+    b.I32At(52, 4);    // skinwidth
+    b.I32At(56, 2);    // skinheight
+    b.I32At(60, 4);    // numverts
+    b.I32At(64, 4);    // numtris
+    b.I32At(68, 1);    // numframes
+    std::size_t p = 84;
+    b.I32At(p, 0); p += 4;                  // single skin
+    b.Pad(p + 8); for (int i = 0; i < 8; ++i) b.U8At(p + (std::size_t)i, 10 + (unsigned)i); p += 8;   // 4 x 2 palette indices
+    const int sts[4][3] = {{0, 0, 0}, {0, 3, 0}, {0, 1, 1}, {0, 2, 1}};
+    for (const auto& v : sts) { for (int k = 0; k < 3; ++k) { b.I32At(p, v[k]); p += 4; } }
+    const int tr[4][4] = {{1, 0, 1, 2}, {1, 0, 3, 1}, {1, 1, 3, 2}, {1, 2, 3, 0}};
+    for (const auto& t : tr) { for (int k = 0; k < 4; ++k) { b.I32At(p, t[k]); p += 4; } }
+    b.I32At(p, 0); p += 4;                  // a simple frame
+    b.Pad(p + 8); p += 8;                   // bounding box
+    b.StrAt(p, "stand", 16); p += 16;
+    const int vb[4][3] = {{0, 0, 0}, {255, 0, 0}, {128, 255, 0}, {128, 100, 255}};
+    for (const auto& v : vb) { for (int k = 0; k < 3; ++k) b.U8At(p + (std::size_t)k, (unsigned)v[k]); b.U8At(p + 3, 0); p += 4; }
+    b.Pad(p);
+    return b.s;
+}
+
 // ---- Half-Life 1 MDL -----------------------------------------------------------------------------------------------------
 // Two bones: "root" at (1,2,3), "child" under it at (0,1,0) turned 90 degrees about Z (value[5] = pi/2); one 64 x 32 texture
 // "tex.bmp"; one body part with one model of one mesh holding one triangle strip of three vertices:

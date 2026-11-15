@@ -182,6 +182,25 @@ Multiplayer with zero code: a `Player` with an `OnKey` ActionList whose
 instruction is `net_host 45000`, and another whose instruction is
 `net_join 127.0.0.1 45000`, is a complete host/join setup.
 
+The same calls exist as graph nodes (`Fn.net_host`, `Fn.net_join`, `Fn.net_send`, `Fn.net_poll`, ...). The test
+`vs_net_nodes` runs 16 of them as nodes: a host graph and a guest graph join each other on this computer
+(127.0.0.1, a free port), send a message each way and leave. Each wait in the test is up to 5 seconds of real time,
+so a slow or busy computer still passes. The test `vs_api_silent` runs four engine-API nodes whose effect a scene
+cannot show (Input.DefineAction, Input.DefineDirection, Audio.SaveSettings, Rigidbody.AddTorque) and checks the
+input map, the saved settings and the body's spin; afterwards it puts the default input actions back.
+
+How to try it:
+
+1. Run the tests: build `test_vs_net_nodes` and `test_vs_api_silent`, then `ctest -R "vs_net_nodes|vs_api_silent"`.
+   Both should end with `0 failures`.
+2. In the editor, open two editors on the same computer. In the first, give an object a visual script:
+   **On Start > net_host** with port `45000`, then **On Update > net_peers > Print**. In the second:
+   **On Start > net_join** with `127.0.0.1` and `45000`, then **Print** its result. Press Play in the first, then in
+   the second: the second prints that the join worked (true) and the first starts printing `1` (one guest). These
+   editor steps were written from the test; they have not been run by hand.
+3. Add Node > **Rigidbody.AddTorque**: its help now says that nothing happens while Freeze Rotation is on (a new
+   Rigidbody has it on), which is why a spin did nothing.
+
 ### PlayFab (cloud login, leaderboards, saves) — no code
 
 The `playfab_*` instructions talk to Azure PlayFab over its REST API (no SDK

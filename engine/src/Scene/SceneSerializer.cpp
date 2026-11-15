@@ -299,17 +299,13 @@ private:
             if (in == end) err |= std::ios_base::eofbit;
             return in;
         }
-        const iter_type start = in;
         iter_type r = std::num_get<char>::do_get(in, end, str, err, v);
         // libc++ (clang on macOS, Emscripten for the WebGL build) sets failbit when strtof reports ERANGE for an
-        // underflow, although it stores the subnormal (or zero) value; libstdc++ does not. A scene holding a float
-        // between about 1.4e-45 and 1.17e-38 then failed to load in the browser only (Grok, issue #888 finding 4).
-        // Characters were read and the value is subnormal or zero: an underflow, not a malformed number, so it is
-        // kept. A malformed number reads no characters and still fails.
-        if ((err & std::ios_base::failbit) && r != start) {
-            const int cls = std::fpclassify(v);
-            if (cls == FP_SUBNORMAL || cls == FP_ZERO) err &= ~std::ios_base::failbit;
-        }
+        // underflow, although it stores the subnormal value; libstdc++ does not. A scene holding a float between about
+        // 1.4e-45 and 1.17e-38 then failed to load in the browser only (Grok, issue #888 finding 4). A stored subnormal
+        // can only come from such a number (a malformed one stores 0), so that failbit is cleared. (Comparing the
+        // iterators cannot tell whether characters were read: two non-end istreambuf_iterators always compare equal.)
+        if ((err & std::ios_base::failbit) && std::fpclassify(v) == FP_SUBNORMAL) err &= ~std::ios_base::failbit;
         if (neg && !(err & std::ios_base::failbit)) v = -v;
         return r;
     }

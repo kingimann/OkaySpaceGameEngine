@@ -58,6 +58,25 @@ int main() {
     CHECK(cgrid->items.empty());
     CHECK(inv->Count("rock") == 5 && inv->Count("log") == 0);
     CHECK(inv->slots[4].item == "rock" && inv->slots[4].count == 3);
+    {   // review: "any slot" skips a same-name stack the item cannot join (a unique item, different instance data) and
+        // takes an empty slot, instead of failing with "different item there"
+        Scene u("unique");
+        GameObject* p = u.CreateGameObject("P");
+        auto* bag = p->AddComponent<Inventory>();
+        bag->capacity = 4;
+        bag->slots.assign(4, Inventory::Slot{});
+        bag->slots[0] = {"rock", 3, {}};
+        auto* g = p->AddComponent<GridInventory>();
+        g->cols = 2; g->rows = 2;
+        GridItem gi; gi.name = "rock"; gi.count = 1; gi.data.uid = 77;    // a unique rock: never stacks with plain ones
+        g->items.push_back(gi);
+        auto* usc = p->AddComponent<ScriptComponent>("okayscript");
+        CHECK(usc->LoadSource("var m = -1;\nfunction start() { m = inv_from_grid(0); }\n"));
+        u.Start();
+        CHECK(usc->VM()->GetGlobal("m").AsFloat() == 1.0f);
+        CHECK(bag->slots[0].count == 3);                                  // the plain stack is untouched
+        CHECK(bag->slots[1].item == "rock" && bag->slots[1].data.uid == 77);
+    }
     ItemDatabase::Get().Clear();
     TEST_MAIN_RESULT();
 }

@@ -7285,7 +7285,8 @@ struct OkayScriptVM::Impl {
                 const int usable = InventoryOps::UsableSlots(*inv);
                 const int n = usable > 0 ? std::min(usable, (int)inv->slots.size()) : (int)inv->slots.size();
                 for (int k = 0; k < n && slot < 0; ++k)
-                    if (!Inventory::Empty(inv->slots[k]) && inv->slots[k].item == g->items[index].name) slot = k;
+                    if (!Inventory::Empty(inv->slots[k]) && inv->slots[k].item == g->items[index].name &&
+                        inv->slots[k].data.StacksWith(g->items[index].data)) slot = k;   // same item that can stack (not a unique one)
                 for (int k = 0; k < n && slot < 0; ++k) if (Inventory::Empty(inv->slots[k])) slot = k;
                 if (slot < 0 && (usable <= 0 || (int)inv->slots.size() < usable)) slot = (int)inv->slots.size();
             }

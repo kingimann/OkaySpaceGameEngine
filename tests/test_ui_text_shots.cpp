@@ -132,14 +132,17 @@ Image Plates3D(bool scaled) {
 }
 
 // ---- the rich-text sign (the lines of different sizes) ------------------------------------------------------------------------
-Image Sign() {
+// `coloured` gives the big word its own colour so a test can find its rows; the text is otherwise the same.
+Image Sign(bool coloured) {
     Scene s("sign");
     auto* tr = s.CreateGameObject("Sign")->AddComponent<TextRenderer>();
     tr->screenSpace = false;
     tr->color = Color::FromBytes(245, 240, 225);
     tr->shadow = true; tr->outline = false;
     tr->richText = true;
-    tr->text = "Welcome to [b]Okay Town[/b]\n[color=#ff5050]Danger:[/color] [i]wolves[/i] ahead\n[size=60]tiny[/size] and [size=150][color=#80ff80]larger[/color][/size] text\n[b][i][color=#ffd040]bold italic gold[/color][/i][/b]";
+    tr->text = coloured
+        ? "Welcome to [b]Okay Town[/b]\n[color=#ff5050]Danger:[/color] [i]wolves[/i] ahead\n[size=60]tiny[/size] and [size=150][color=#80ff80]larger[/color][/size] text\n[b][i][color=#ffd040]bold italic gold[/color][/i][/b]"
+        : "Welcome to [b]Okay Town[/b]\n[color=#ff5050]Danger:[/color] [i]wolves[/i] ahead\n[size=60]tiny[/size] and [size=150]larger[/size] text\n[b][i][color=#ffd040]bold italic gold[/color][/i][/b]";
     Canvas2D cv;
     Image empty(W, H);
     if (!cv.Ok()) return empty;
@@ -213,8 +216,9 @@ int main(int argc, char** argv) {
     }
 
     {   // the sign: a bigger run no longer overlaps the line above (a line is as tall as its largest size)
-        const Image sign = Sign();
-        CHECK(SavePicture(sign, dir, "world_text_sign.png"));
+        CHECK(SavePicture(Sign(false), dir, "world_text_sign.png"));       // the same text as the "before" picture (docs/images/ui_text)
+        const Image sign = Sign(true);                                       // the big word in its own colour, to measure
+        CHECK(SavePicture(sign, dir, "world_text_sign_measured.png"));
         // Three coloured parts, top to bottom: the red "Danger:" (line 2), the green "larger" at 150 percent (line 3) and the gold
         // line 4. Rows (y) where each colour appears inside the board.
         auto rows = [&](int r, int g, int b, int tol, int& top, int& bottom) {

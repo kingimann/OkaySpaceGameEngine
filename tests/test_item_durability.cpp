@@ -8,6 +8,8 @@
 #include "okay/Inventory/Durability.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
+#include "okay/Components/ScriptComponent.hpp"
+#include "okay/Scripting/OkayScriptVM.hpp"
 #include <cstdio>
 
 using namespace okay;
@@ -123,6 +125,38 @@ int main() {
         CHECK(durability::RepairEquipped(eq, head, 10.0f).Ok());
         CHECK(eq->ArmorBonus() == 5.0f && eq->DefenseBonus() == 3);
         CHECK(!durability::WearEquipped(eq, eq->Find("Feet"), 5.0f).Ok());   // nothing worn there
+    }
+    {   // the script functions: inv_durability, inv_broken, inv_wear, inv_repair (the visual-script Fn nodes too)
+        Scene ss("script");
+        GameObject* hero = ss.CreateGameObject("Hero");
+        auto* hinv = hero->AddComponent<Inventory>();
+        hinv->slots.assign(4, Inventory::Slot{});
+        hinv->slots[0] = {"pick", 1, {}};
+        hinv->slots[1] = {"stone", 1, {}};
+        GameObject* chest = ss.CreateGameObject("Chest");
+        auto* cinv = chest->AddComponent<Inventory>();
+        cinv->slots.assign(2, Inventory::Slot{});
+        cinv->slots[0] = {"pick", 1, {}};
+        auto* sc = hero->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "var full = 0; var none = 0; var empty = 0; var w1 = 0; var after = 0; var w_stone = 0; var broke = 0;\n"
+            "var is_broken = 0; var r1 = 0; var r_full = 0; var r_again = 0; var chest_w = 0; var chest_d = 0;\n"
+            "function start() {\n"
+            "  full = inv_durability(0); none = inv_durability(1); empty = inv_durability(3);\n"
+            "  w1 = inv_wear(0, 30); after = inv_durability(0); w_stone = inv_wear(1, 5);\n"
+            "  broke = inv_wear(0, 500); is_broken = inv_broken(0);\n"
+            "  r1 = inv_repair(0, 25); r_full = inv_repair(0); r_again = inv_repair(0);\n"
+            "  chest_w = inv_wear(0, 10, \"Chest\"); chest_d = inv_durability(0, \"Chest\");\n"
+            "}\n"));
+        ss.Start();
+        auto G = [&](const char* n) { return sc->VM()->GetGlobal(n).AsFloat(); };
+        CHECK(G("full") == 100.0f && G("none") == -1.0f && G("empty") == -1.0f);
+        CHECK(G("w1") == 1.0f && G("after") == 70.0f && G("w_stone") == 0.0f);
+        CHECK(G("broke") == 1.0f && G("is_broken") == 1.0f);
+        CHECK(G("r1") == 1.0f && G("r_full") == 1.0f && G("r_again") == 0.0f);
+        CHECK(hinv->slots[0].data.durability == 100.0f);
+        CHECK(G("chest_w") == 1.0f && G("chest_d") == 90.0f);
+        CHECK(cinv->slots[0].data.durability == 90.0f);
     }
     ItemDatabase::Get().Clear();
     TEST_MAIN_RESULT();

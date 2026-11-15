@@ -517,6 +517,10 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `inv_count` | `Fn.inv_count` |
 | `inv_has` | `Fn.inv_has` |
 | `inv_move` | `Fn.inv_move` |
+| `inv_durability` | `Fn.inv_durability` |
+| `inv_broken` | `Fn.inv_broken` |
+| `inv_wear` | `Fn.inv_wear` |
+| `inv_repair` | `Fn.inv_repair` |
 | `inv_remove` | `Fn.inv_remove` |
 | `inv_select` | `Fn.inv_select` |
 | `inv_selected` | `Fn.inv_selected` |

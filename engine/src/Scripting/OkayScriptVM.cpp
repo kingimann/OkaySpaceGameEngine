@@ -1,4 +1,5 @@
 #include "okay/Core/SafeCast.hpp"
+#include "okay/Inventory/Durability.hpp"
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
@@ -7148,6 +7149,31 @@ struct OkayScriptVM::Impl {
             Inventory* inv = invAt(a, 3);
             return Value{inv && InventoryOps::Move(inv, intArg(a, 0, -1), inv, intArg(a, 1, -1), intArg(a, 2, 0),
                                                    InventoryOps::UsableSlots(*inv)).Ok() ? 1.0f : 0.0f};
+        };
+        // Durability (okay/Inventory/Durability.hpp). Each takes the slot, then optional values, then an optional bag
+        // object name (default: this object's inventory).
+        b["inv_durability"] = [invAt, intArg](std::vector<Value>& a) {   // (slot, [bag]) -> current, -1 = none
+            Inventory* inv = invAt(a, 1);
+            const int i = intArg(a, 0, -1);
+            if (!inv || i < 0 || i >= (int)inv->slots.size() || Inventory::Empty(inv->slots[i])) return Value{-1.0f};
+            const auto& s = inv->slots[i];
+            return Value{durability::Tracked(s.item, s.data) ? durability::Current(s.item, s.data) : -1.0f};
+        };
+        b["inv_broken"] = [invAt, intArg](std::vector<Value>& a) {       // (slot, [bag]) -> 1 when broken
+            Inventory* inv = invAt(a, 1);
+            const int i = intArg(a, 0, -1);
+            if (!inv || i < 0 || i >= (int)inv->slots.size() || Inventory::Empty(inv->slots[i])) return Value{0.0f};
+            return Value{durability::Broken(inv->slots[i].item, inv->slots[i].data) ? 1.0f : 0.0f};
+        };
+        b["inv_wear"] = [invAt, intArg](std::vector<Value>& a) {         // (slot, amount, [bag]) -> 1 if it wore
+            Inventory* inv = invAt(a, 2);
+            const float amount = a.size() > 1 ? a[1].AsFloat() : 1.0f;
+            return Value{inv && durability::Wear(inv, intArg(a, 0, -1), amount).Ok() ? 1.0f : 0.0f};
+        };
+        b["inv_repair"] = [invAt, intArg](std::vector<Value>& a) {       // (slot, [amount, 0 = full], [bag]) -> 1 if repaired
+            Inventory* inv = invAt(a, 2);
+            const float amount = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+            return Value{inv && durability::Repair(inv, intArg(a, 0, -1), amount).Ok() ? 1.0f : 0.0f};
         };
         b["inv_transfer"] = [invAt, invHost, itemArg, intArg](std::vector<Value>& a) {   // (target, item, n) -> moved
             Inventory* src = invAt(a, 3);

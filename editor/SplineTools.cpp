@@ -3,6 +3,7 @@
 // and Add Component rows of the spline family and the line / trail renderers,
 // GameObject > Spline, edit-mode upkeep and the line / trail drawing.
 #include "SplineTools.hpp"
+#include "AddComponentRules.hpp"   // CanAddOne: the kinds Add Component offers once per object
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "EditorWidgets.hpp"    // AccentCol
 #include "MainShared.hpp"       // g_snap, g_snapSize, g_gizmoLocal, GetThumb
@@ -861,17 +862,17 @@ void DrawSplineInspector(EditorState& ed, GameObject* go, Component* comp, Compo
 void SplineAddComponentItems(EditorState& ed, GameObject* go, const std::function<bool(bool, const char*)>& item, bool rendering) {
     if (!go) return;
     if (rendering) {
-        if (item(!go->GetComponent<LineRenderer>(), "Line Renderer (lasers, ropes, arcs)")) {
+        if (item(oked::CanAddOne<LineRenderer>(*go), "Line Renderer (lasers, ropes, arcs)")) {
             ed.PushUndo();
             auto* lr = go->AddComponent<LineRenderer>();
             const Vec3 p = go->transform->Position();
             lr->positions = {p, p + go->transform->Forward() * 4.0f};
             ed.dirty = true;
         }
-        if (item(!go->GetComponent<TrailRenderer>(), "Trail Renderer (ribbon behind it)")) {
+        if (item(oked::CanAddOne<TrailRenderer>(*go), "Trail Renderer (ribbon behind it)")) {
             ed.PushUndo(); go->AddComponent<TrailRenderer>(); ed.dirty = true;
         }
-        if (item(!go->GetComponent<SplineMesh>(), "Spline Mesh (road, pipe, fence)")) {
+        if (item(oked::CanAddOne<SplineMesh>(*go), "Spline Mesh (road, pipe, fence)")) {
             ed.PushUndo();
             EnsureSpline(go);
             if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>(Mesh{})->color = Color::FromBytes(78, 80, 88);
@@ -880,17 +881,17 @@ void SplineAddComponentItems(EditorState& ed, GameObject* go, const std::functio
         }
         return;
     }
-    if (item(!go->GetComponent<Spline>(), "Spline (curve with handles)")) {
+    if (item(oked::CanAddOne<Spline>(*go), "Spline (curve with handles)")) {
         ed.PushUndo(); DefaultPoints(go->AddComponent<Spline>()); ed.dirty = true;
     }
-    if (item(!go->GetComponent<SplineFollower>(), "Spline Follower (move along a spline)")) {
+    if (item(oked::CanAddOne<SplineFollower>(*go), "Spline Follower (move along a spline)")) {
         ed.PushUndo();
         auto* f = go->AddComponent<SplineFollower>();
         for (const auto& up : ed.scene().Objects())   // the scene's first spline that isn't this object's
             if (up && up.get() != go && up->GetComponent<Spline>()) { f->spline = up->name; break; }
         ed.dirty = true;
     }
-    if (item(!go->GetComponent<SplineInstancer>(), "Spline Instancer (place objects along a spline)")) {
+    if (item(oked::CanAddOne<SplineInstancer>(*go), "Spline Instancer (place objects along a spline)")) {
         ed.PushUndo();
         EnsureSpline(go);
         go->AddComponent<SplineInstancer>()->Rebuild();

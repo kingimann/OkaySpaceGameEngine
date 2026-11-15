@@ -8,6 +8,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #endif
 #include "BehaviorTreeWindow.hpp"
+#include "AddComponentRules.hpp"   // CanAddOne: the kinds Add Component offers once per object
 #include "MainShared.hpp"               // g_paused: a breakpoint pauses Play
 #include "ConsolePanel.hpp"             // ConsoleLog
 #include "EditorWidgets.hpp"            // AccentCol
@@ -1918,7 +1919,7 @@ void DrawBehaviorTreeInspector(EditorState& ed, GameObject* go, Component* comp,
 
 void BehaviorTreeAddComponentItems(EditorState& ed, GameObject* go, const std::function<bool(bool, const char*)>& item) {
     if (!go) return;
-    if (item(!go->GetComponent<BehaviorTreeRunner>(), "Behavior Tree Runner (NPC AI from a tree)")) {
+    if (item(oked::CanAddOne<BehaviorTreeRunner>(*go), "Behavior Tree Runner (NPC AI from a tree)")) {
         ed.PushUndo();
         go->AddComponent<BehaviorTreeRunner>();
         ed.dirty = true;

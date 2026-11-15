@@ -3,6 +3,7 @@
 // send agents around for a test. The overlay draws the polygons above the meshes
 // like the onion skin does, plus every agent's path and corner and the obstacles.
 #include "NavigationWindow.hpp"
+#include "AddComponentRules.hpp"   // CanAddOne: the kinds Add Component offers once per object
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "EditorWidgets.hpp"    // AccentCol
 #include "okay/AI/NavMesh.hpp"
@@ -736,10 +737,10 @@ static NavMeshObstacle* AddObstacleTo(GameObject* go) {
 
 void NavigationAddComponentItems(EditorState& ed, GameObject* go, const std::function<bool(bool, const char*)>& item) {
     if (!go) return;
-    if (item(!go->GetComponent<NavMeshSurface>(), "Nav Mesh Surface (bake walkable polygons)")) {
+    if (item(oked::CanAddOne<NavMeshSurface>(*go), "Nav Mesh Surface (bake walkable polygons)")) {
         ed.PushUndo(); go->AddComponent<NavMeshSurface>(); ed.dirty = true; g_showNavigation = true;
     }
-    if (item(!go->GetComponent<NavMeshAgent>(), "Nav Mesh Agent (walks the navmesh)")) {
+    if (item(oked::CanAddOne<NavMeshAgent>(*go), "Nav Mesh Agent (walks the navmesh)")) {
         ed.PushUndo();
         NavMeshAgent* a = go->AddComponent<NavMeshAgent>();
         if (auto* mr = go->GetComponent<MeshRenderer>()) {   // a prop pivoted at its centre: feet are below the origin
@@ -750,13 +751,13 @@ void NavigationAddComponentItems(EditorState& ed, GameObject* go, const std::fun
         }
         ed.dirty = true;
     }
-    if (item(!go->GetComponent<NavMeshModifier>(), "Nav Mesh Modifier (mark water, road or blocked ground)")) {
+    if (item(oked::CanAddOne<NavMeshModifier>(*go), "Nav Mesh Modifier (mark water, road or blocked ground)")) {
         ed.PushUndo(); go->AddComponent<NavMeshModifier>(); ed.dirty = true;
     }
-    if (item(!go->GetComponent<NavMeshLink>(), "Nav Mesh Link (jump, drop or ladder between two points)")) {
+    if (item(oked::CanAddOne<NavMeshLink>(*go), "Nav Mesh Link (jump, drop or ladder between two points)")) {
         ed.PushUndo(); go->AddComponent<NavMeshLink>(); ed.dirty = true;
     }
-    if (item(!go->GetComponent<NavMeshObstacle>(), "Nav Mesh Obstacle (agents go around it; carves the mesh)")) {
+    if (item(oked::CanAddOne<NavMeshObstacle>(*go), "Nav Mesh Obstacle (agents go around it; carves the mesh)")) {
         ed.PushUndo();
         AddObstacleTo(go);
         ed.dirty = true;

@@ -72,6 +72,7 @@
 #include "InspectorPanel.hpp"           // reference fields, generic component card, undo for every field, prefab changes
 #include "PrefabEdit.hpp"               // prefab actions: revert / apply / variants / unpack, with undo
 #include "InspectorModel.hpp"           // Hierarchy filter, drag-drop reparenting, mixed values (ImGui-free)
+#include "AddComponentRules.hpp"        // the kinds Add Component offers once per object (Duplicate and Paste As New obey the same table)
 #include "UIRuntimeTools.hpp"            // UI themes + runtime UI widgets, File > Examples > UI Gallery
 #include "UIInspectorOverlay.hpp"       // modal / context menu / keybind inspectors
 #include "UIInspectorWidgetsMore.hpp"   // search, date, files, accordion, crumbs, pages, skeleton, sheet
@@ -26846,6 +26847,7 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
                              bool* owned) {
     *owned = okay::PlayerController::Of(go) != nullptr;
     if (!*owned) return CompHeader(label, part, toRemove);
+    oked::SetTipComponent(part);   // the fields of this section belong to the part, not to whichever component was drawn before it
     if (!sPlayerControllerOpen) return false;
     ImGui::PushID(part);
     ImGui::SetNextItemOpen(true, ImGuiCond_Once);
@@ -29286,6 +29288,10 @@ void DrawInspector(EditorState& ed) {
     for (Component* curComp : compSnap) {
         if (go->Components().size() != compCountAtDraw) break;
         if (!curComp || curComp == go->transform) continue;
+        // Every widget of this component's card gets an id of its own (the component's address is mixed into the id stack), so two
+        // components of one kind (a duplicate, a second collider ...) never share a "Size##bc": a drag on the copy cannot drive the original.
+        struct ComponentIdScope { explicit ComponentIdScope(const void* c) { ImGui::PushID(c); } ~ComponentIdScope() { ImGui::PopID(); } } componentIdScope(curComp);
+        oked::SetTipComponent(curComp);   // a card that never calls CompHeader still binds its fields (tooltips, right-click menu) to THIS component, never the previous one's
         sManagedNote = ManagedNoteFor(ed, go, curComp); sManagedFor = curComp;
         const float fbCursorY = ImGui::GetCursorPosY();   // unchanged at the end = no hand-written Inspector drew this one
         // With several objects selected, what a drawer changes on this component goes to the others too.
@@ -31900,7 +31906,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* rb2 = dynamic_cast<Rigidbody2D*>(curComp))
         if (CompHeader("Rigidbody2D", rb2, &toRemove)) {
-            auto* rb = go->GetComponent<Rigidbody2D>();
+            auto* rb = rb2;   // the component this card draws, not the object's first Rigidbody2D (a second one edits itself)
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
             if (ImGui::Combo("Body Type", &bt, types, 3)) rb->bodyType = (Rigidbody2D::BodyType)bt;
@@ -32047,7 +32053,7 @@ void DrawInspector(EditorState& ed) {
     }
     if (auto* rb3 = dynamic_cast<Rigidbody3D*>(curComp))
         if (CompHeader("Rigidbody3D", rb3, &toRemove)) {
-            auto* rb = go->GetComponent<Rigidbody3D>();
+            auto* rb = rb3;   // the component this card draws, not the object's first Rigidbody3D (a second one edits itself)
             int bt = (int)rb->bodyType;
             const char* types[] = {"Dynamic", "Kinematic", "Static"};
             if (ImGui::Combo("Body Type##rb3", &bt, types, 3)) rb->bodyType = (Rigidbody3D::BodyType)bt;
@@ -40127,72 +40133,72 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Rendering");
           if (o) {
-            if (item(!go->GetComponent<SpriteRenderer>(), "Sprite Renderer")) { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
-            if (item(!go->GetComponent<MeshRenderer>(), "Mesh Renderer (3D)")) { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
-            if (item(!go->GetComponent<LODGroup>(), "LOD Group")) {
+            if (item(oked::CanAddOne<SpriteRenderer>(*go), "Sprite Renderer")) { go->AddComponent<SpriteRenderer>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<MeshRenderer>(*go), "Mesh Renderer (3D)")) { go->AddComponent<MeshRenderer>(); ed.view3D = true; ed.dirty = true; }
+            if (item(oked::CanAddOne<LODGroup>(*go), "LOD Group")) {
                 if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>();
                 go->AddComponent<LODGroup>(); ed.view3D = true; ed.dirty = true;
             }
-            if (item(!go->GetComponent<Occluder>(), "Occluder")) { go->AddComponent<Occluder>(); ed.dirty = true; }
-            if (item(!go->GetComponent<okay::MeshModifiers>(), "Modifiers (non-destructive)")) {
+            if (item(oked::CanAddOne<Occluder>(*go), "Occluder")) { go->AddComponent<Occluder>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<okay::MeshModifiers>(*go), "Modifiers (non-destructive)")) {
                 if (!go->GetComponent<MeshRenderer>()) go->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
                 go->AddComponent<okay::MeshModifiers>(); ed.view3D = true; ed.dirty = true;
             }
-            if (item(!go->GetComponent<Character>(), "Character")) { go->AddComponent<Character>()->Apply(); HumanoidLibrary::EnsureAnimator(go); ed.view3D = true; ed.dirty = true; }
-            if (item(!go->GetComponent<TextRenderer>(), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
-            if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ParticleSystem>(), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
-            if (item(!go->GetComponent<TerrainDigger>(), "Terrain Digger")) { go->AddComponent<TerrainDigger>(); ed.dirty = true; }
-            if (item(!go->GetComponent<VoxelTerrain>(), "Voxel Terrain (diggable)")) { auto* v = go->AddComponent<VoxelTerrain>(); v->Generate(0.5f, 6.0f, 0.0f, 1u); v->Apply(); ed.view3D = true; ed.dirty = true; }
-            if (item(!go->GetComponent<VoxelDigger>(), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Water>(), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
-            if (item(!go->GetComponent<Flashlight>(), "Flashlight")) { go->AddComponent<Flashlight>(); ed.dirty = true; }
-            if (item(!go->GetComponent<FirstPersonHand>(), "Hand (legacy)")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
-            if (item(!go->GetComponent<FirstPersonHands>(), "First Person Hands")) { go->AddComponent<FirstPersonHands>(); ed.view3D = true; ed.dirty = true; }
-            if (item(!go->GetComponent<PauseMenu>(), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
-            if (item(!go->GetComponent<AutoSave>(), "Auto Save")) { go->AddComponent<AutoSave>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Saveable>(), "Saveable (keep when saving)")) { go->AddComponent<Saveable>()->EnsureId(); ed.dirty = true; }
-            if (item(!go->GetComponent<SaveConfig>(), "Save Settings (autosave)")) { go->AddComponent<SaveConfig>(); ed.dirty = true; }
-            if (item(!go->GetComponent<WorldStreamer>(), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Destructible>(), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Draggable>(), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
-            if (item(!go->GetComponent<DropZone>(), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Character>(*go), "Character")) { go->AddComponent<Character>()->Apply(); HumanoidLibrary::EnsureAnimator(go); ed.view3D = true; ed.dirty = true; }
+            if (item(oked::CanAddOne<TextRenderer>(*go), "Text")) { go->AddComponent<TextRenderer>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<SpriteAnimator>(*go), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<ParticleSystem>(*go), "Particle System")) { go->AddComponent<ParticleSystem>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<TerrainDigger>(*go), "Terrain Digger")) { go->AddComponent<TerrainDigger>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<VoxelTerrain>(*go), "Voxel Terrain (diggable)")) { auto* v = go->AddComponent<VoxelTerrain>(); v->Generate(0.5f, 6.0f, 0.0f, 1u); v->Apply(); ed.view3D = true; ed.dirty = true; }
+            if (item(oked::CanAddOne<VoxelDigger>(*go), "Voxel Digger")) { go->AddComponent<VoxelDigger>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Water>(*go), "Water")) { go->AddComponent<Water>()->Apply(); ed.view3D = true; ed.dirty = true; }
+            if (item(oked::CanAddOne<Flashlight>(*go), "Flashlight")) { go->AddComponent<Flashlight>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<FirstPersonHand>(*go), "Hand (legacy)")) { go->AddComponent<FirstPersonHand>(); ed.view3D = true; ed.dirty = true; }
+            if (item(oked::CanAddOne<FirstPersonHands>(*go), "First Person Hands")) { go->AddComponent<FirstPersonHands>(); ed.view3D = true; ed.dirty = true; }
+            if (item(oked::CanAddOne<PauseMenu>(*go), "Pause Menu")) { go->AddComponent<PauseMenu>()->EnsureBuilt(); ed.dirty = true; }
+            if (item(oked::CanAddOne<AutoSave>(*go), "Auto Save")) { go->AddComponent<AutoSave>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Saveable>(*go), "Saveable (keep when saving)")) { go->AddComponent<Saveable>()->EnsureId(); ed.dirty = true; }
+            if (item(oked::CanAddOne<SaveConfig>(*go), "Save Settings (autosave)")) { go->AddComponent<SaveConfig>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<WorldStreamer>(*go), "World Streamer (partition)")) { go->AddComponent<WorldStreamer>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Destructible>(*go), "Destructible (Chaos)")) { go->AddComponent<Destructible>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Draggable>(*go), "Draggable (item)")) { go->AddComponent<Draggable>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<DropZone>(*go), "Drop Zone (item)")) { go->AddComponent<DropZone>(); ed.dirty = true; }
             SplineAddComponentItems(ed, go, item, true);   // Line / Trail Renderer, Spline Mesh
             LevelAddComponentItems(ed, go, item);          // Foliage, Decal Projector, Cable
           } EndCat(o); }
 
         { bool o = BeginCat("Animation");
           if (o) {
-            if (item(!go->GetComponent<Animator>(), "Animator (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
-            if (item(!go->GetComponent<AnimStateMachine>(), "Animator (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
-            if (item(!go->GetComponent<SpriteAnimator>(), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
-            if (item(!go->GetComponent<AimIK>(), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
-            if (item(!go->GetComponent<IKTarget>(), "IK Target (a hand, foot, or the head reaches this)")) { go->AddComponent<IKTarget>(); ed.dirty = true; }
-            if (item(!go->GetComponent<AimOffset>(), "Aim Offset (spine/chest/arms + recoil)")) { go->AddComponent<AimOffset>(); ed.dirty = true; }
-            if (item(!go->GetComponent<PoseCapture>(), "Pose Capture (save the pose as a clip)")) { go->AddComponent<PoseCapture>(); ed.dirty = true; }
-            if (item(!go->GetComponent<LookAtIK>(), "Look-At IK (head/eye tracking)")) { go->AddComponent<LookAtIK>(); ed.dirty = true; }
-            if (item(!go->GetComponent<FootIK>(), "Foot IK (plant feet on ground)")) { go->AddComponent<FootIK>(); ed.dirty = true; }
-            if (item(!go->GetComponent<HumanoidRetarget>(), "Humanoid Retarget (built-in anims on an imported rig)")) {
+            if (item(oked::CanAddOne<Animator>(*go), "Animator (keyframes)")) { go->AddComponent<Animator>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<AnimStateMachine>(*go), "Animator (states + transitions)")) { go->AddComponent<AnimStateMachine>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<SpriteAnimator>(*go), "Sprite Animator")) { go->AddComponent<SpriteAnimator>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<AimIK>(*go), "Aim IK (point a bone at a target)")) { go->AddComponent<AimIK>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<IKTarget>(*go), "IK Target (a hand, foot, or the head reaches this)")) { go->AddComponent<IKTarget>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<AimOffset>(*go), "Aim Offset (spine/chest/arms + recoil)")) { go->AddComponent<AimOffset>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<PoseCapture>(*go), "Pose Capture (save the pose as a clip)")) { go->AddComponent<PoseCapture>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<LookAtIK>(*go), "Look-At IK (head/eye tracking)")) { go->AddComponent<LookAtIK>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<FootIK>(*go), "Foot IK (plant feet on ground)")) { go->AddComponent<FootIK>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<HumanoidRetarget>(*go), "Humanoid Retarget (built-in anims on an imported rig)")) {
                 go->AddComponent<HumanoidRetarget>();
                 if (auto* rch = go->GetComponent<Character>()) { rch->enabled = true; rch->driveExternal = true; }
                 ed.dirty = true;
             }
-            if (item(!go->GetComponent<LimbIK>(), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ChainIK>(), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
-            if (item(!go->GetComponent<FullBodyIK>(), "Full Body IK (hands, feet, head, body pull)")) {
+            if (item(oked::CanAddOne<LimbIK>(*go), "Limb IK (arm/leg reach + grab)")) { go->AddComponent<LimbIK>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<ChainIK>(*go), "Chain IK (FABRIK/CCD long chain)")) { go->AddComponent<ChainIK>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<FullBodyIK>(*go), "Full Body IK (hands, feet, head, body pull)")) {
                 auto* fb = go->AddComponent<FullBodyIK>();
                 int n = fb->MapBones(true);
                 ConsoleLog("Full Body IK: mapped " + std::to_string(n) + "/" + std::to_string((int)FullBodyIK::BoneCount) + " bones" +
                            (fb->MapProblem().empty() ? "" : " (not a humanoid: " + fb->MapProblem() + ")"), n >= 11 ? 0 : 1);
                 ed.dirty = true;
             }
-            if (item(!go->GetComponent<ProceduralObjectHolding>(), "Procedural Object Holding (pick up + hold with IK hands)")) {
+            if (item(oked::CanAddOne<ProceduralObjectHolding>(*go), "Procedural Object Holding (pick up + hold with IK hands)")) {
                 go->AddComponent<ProceduralObjectHolding>(); ed.dirty = true;
             }
-            if (item(!go->GetComponent<HoldPrompt>(), "Hold Prompt (E to pick up, E or G to drop)")) {
+            if (item(oked::CanAddOne<HoldPrompt>(*go), "Hold Prompt (E to pick up, E or G to drop)")) {
                 go->AddComponent<HoldPrompt>(); ed.dirty = true;
             }
-            if (item(!go->GetComponent<HoldableObject>(), "Holdable Object (grip points, style, weight)")) {
+            if (item(oked::CanAddOne<HoldableObject>(*go), "Holdable Object (grip points, style, weight)")) {
                 go->AddComponent<HoldableObject>(); ed.dirty = true;
             }
             if (item(true, "Tween Animation (move / scale / fade / punch / shake, no code)")) {
@@ -40204,44 +40210,44 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Physics 2D");
           if (o) {
-            if (item(!go->GetComponent<Rigidbody2D>(), "Rigidbody2D")) { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Joint2D>(), "Joint 2D (distance/spring/pin)")) { go->AddComponent<Joint2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<BoxCollider2D>(), "Box Collider 2D")) { go->AddComponent<BoxCollider2D>(); FitColliders(go); ed.dirty = true; }
-            if (item(!go->GetComponent<CircleCollider2D>(), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); FitColliders(go); ed.dirty = true; }
-            if (item(!go->GetComponent<CapsuleCollider2D>(), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); FitColliders(go); ed.dirty = true; }
-            if (item(!go->GetComponent<EdgeCollider2D>(), "Edge Collider 2D (polyline/one-way)")) { go->AddComponent<EdgeCollider2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<PolygonCollider2D>(), "Polygon Collider 2D")) { go->AddComponent<PolygonCollider2D>(); ed.dirty = true; }
-            if (item(go->GetComponent<Tilemap>() && !go->GetComponent<TilemapCollider2D>(), "Tilemap Collider 2D")) { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Rigidbody2D>(*go), "Rigidbody2D")) { go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Joint2D>(*go), "Joint 2D (distance/spring/pin)")) { go->AddComponent<Joint2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<BoxCollider2D>(*go), "Box Collider 2D")) { go->AddComponent<BoxCollider2D>(); FitColliders(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<CircleCollider2D>(*go), "Circle Collider 2D")) { go->AddComponent<CircleCollider2D>(); FitColliders(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<CapsuleCollider2D>(*go), "Capsule Collider 2D")) { go->AddComponent<CapsuleCollider2D>(); FitColliders(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<EdgeCollider2D>(*go), "Edge Collider 2D (polyline/one-way)")) { go->AddComponent<EdgeCollider2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<PolygonCollider2D>(*go), "Polygon Collider 2D")) { go->AddComponent<PolygonCollider2D>(); ed.dirty = true; }
+            if (item(go->GetComponent<Tilemap>() && oked::CanAddOne<TilemapCollider2D>(*go), "Tilemap Collider 2D")) { go->AddComponent<TilemapCollider2D>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Physics 3D");
           if (o) {
-            if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
-            if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
-            if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
-            if (item(!go->GetComponent<CylinderCollider3D>(), "Cylinder Collider 3D")) { go->AddComponent<CylinderCollider3D>(); FitColliders(go); ed.dirty = true; }
-            if (item(!go->GetComponent<MeshCollider3D>(), "Mesh Collider 3D")) { auto* m = go->AddComponent<MeshCollider3D>(); m->autoFit = true; FitColliders(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<Rigidbody3D>(*go), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Joint3D>(*go), "Joint 3D (distance/spring/pin/hinge)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<BoxCollider3D>(*go), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<SphereCollider3D>(*go), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<CapsuleCollider3D>(*go), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<CylinderCollider3D>(*go), "Cylinder Collider 3D")) { go->AddComponent<CylinderCollider3D>(); FitColliders(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<MeshCollider3D>(*go), "Mesh Collider 3D")) { auto* m = go->AddComponent<MeshCollider3D>(); m->autoFit = true; FitColliders(go); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Lighting");
           if (o) {
-            if (item(!go->GetComponent<Light>(), "Directional Light")) { go->AddComponent<Light>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Light>(*go), "Directional Light")) { go->AddComponent<Light>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Camera");
           if (o) {
-            if (item(!go->GetComponent<Camera>(), "Camera")) {
+            if (item(oked::CanAddOne<Camera>(*go), "Camera")) {
                 auto* cam = go->AddComponent<Camera>();
                 if (!ed.view3D) cam->projection = Camera::Projection::Orthographic;
                 ed.AdoptCamera(cam);   // the camera you add is the one the Game view uses
             }
-            if (item(!go->GetComponent<CameraFollow>(), "Camera Follow")) { go->AddComponent<CameraFollow>(); ed.dirty = true; }
-            if (item(!go->GetComponent<VirtualCamera>(), "Virtual Camera")) { go->AddComponent<VirtualCamera>(); ed.dirty = true; }
-            if (item(!go->GetComponent<CinemachineBrain>(), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
-            if (item(!go->GetComponent<DollyPath>(), "Dolly Path")) { go->AddComponent<DollyPath>(); ed.dirty = true; }
-            if (item(!go->GetComponent<DollyCart>(), "Dolly Cart")) { go->AddComponent<DollyCart>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<CameraFollow>(*go), "Camera Follow")) { go->AddComponent<CameraFollow>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<VirtualCamera>(*go), "Virtual Camera")) { go->AddComponent<VirtualCamera>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<CinemachineBrain>(*go), "Cinemachine Brain")) { go->AddComponent<CinemachineBrain>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<DollyPath>(*go), "Dolly Path")) { go->AddComponent<DollyPath>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<DollyCart>(*go), "Dolly Cart")) { go->AddComponent<DollyCart>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Scripts");
@@ -40292,85 +40298,85 @@ void DrawInspector(EditorState& ed) {
 
         { bool o = BeginCat("Audio");
           if (o) {
-            if (item(!go->GetComponent<AudioSource>(), "Audio Source")) { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
-            if (item(!go->GetComponent<MusicPlayer>(), "Music Player")) { go->AddComponent<MusicPlayer>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<AudioSource>(*go), "Audio Source")) { go->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f); ed.dirty = true; }
+            if (item(oked::CanAddOne<MusicPlayer>(*go), "Music Player")) { go->AddComponent<MusicPlayer>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("Gameplay");
           if (o) {
-            if (item(!go->GetComponent<CharacterController2D>(), "Character Controller 2D")) { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<CharacterController3D>(), "Character Controller 3D")) { ed.PushUndo(); go->AddComponent<CharacterController3D>(); SetupControllerBody(ed, go); ed.dirty = true; }
-            if (item(!PlayerController::Of(go) && !go->GetComponent<FirstPersonController>() && !go->GetComponent<ThirdPersonController>(),
+            if (item(oked::CanAddOne<CharacterController2D>(*go), "Character Controller 2D")) { go->AddComponent<CharacterController2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<CharacterController3D>(*go), "Character Controller 3D")) { ed.PushUndo(); go->AddComponent<CharacterController3D>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            if (item(oked::CanAddOne<PlayerController>(*go) && oked::CanAddOne<FirstPersonController>(*go) && oked::CanAddOne<ThirdPersonController>(*go),
                      "Player Controller (first / third person)")) {
                 ed.PushUndo();
                 PlayerController::Add(go);
                 SetupControllerBody(ed, go);
                 ed.dirty = true;
             }
-            if (item(!go->GetComponent<TopDownController>(), "Top Down Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownController>(); SetupControllerBody(ed, go); ed.dirty = true; }
-            if (item(!go->GetComponent<TopDownShooterController>(), "Top Down Shooter Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
-            if (item(!go->GetComponent<Platformer25DController>(), "2.5D Platformer Controller (LittleBigPlanet)")) { ed.PushUndo(); go->AddComponent<Platformer25DController>()->frontLayerZ = go->transform->Position().z; SetupControllerBody(ed, go); ed.dirty = true; }
-            if (item(!go->GetComponent<Projectile3D>(), "Projectile 3D")) { go->AddComponent<Projectile3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<TopDownController2D>(), "Top Down Controller 2D")) { go->AddComponent<TopDownController2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ThirdPersonShooterController>(), "Third Person Shooter Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
-            if (item(!go->GetComponent<FreeRoamController>(), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
-            if (item(!go->GetComponent<VehicleController>(), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<VehicleController2D>(), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<BlockBuilder>(), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }
-            if (item(!go->GetComponent<StructureBuilder>(), "Structure Builder (Rust-style)")) { go->AddComponent<StructureBuilder>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<TopDownController>(*go), "Top Down Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownController>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            if (item(oked::CanAddOne<TopDownShooterController>(*go), "Top Down Shooter Controller (3D)")) { ed.PushUndo(); go->AddComponent<TopDownShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            if (item(oked::CanAddOne<Platformer25DController>(*go), "2.5D Platformer Controller (LittleBigPlanet)")) { ed.PushUndo(); go->AddComponent<Platformer25DController>()->frontLayerZ = go->transform->Position().z; SetupControllerBody(ed, go); ed.dirty = true; }
+            if (item(oked::CanAddOne<Projectile3D>(*go), "Projectile 3D")) { go->AddComponent<Projectile3D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<TopDownController2D>(*go), "Top Down Controller 2D")) { go->AddComponent<TopDownController2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<ThirdPersonShooterController>(*go), "Third Person Shooter Controller")) { ed.PushUndo(); go->AddComponent<ThirdPersonShooterController>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            if (item(oked::CanAddOne<FreeRoamController>(*go), "Free Roam (Fly) Controller")) { go->AddComponent<FreeRoamController>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<VehicleController>(*go), "Vehicle Controller (Car)")) { go->AddComponent<VehicleController>(); if (!go->GetComponent<Rigidbody3D>()) go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<VehicleController2D>(*go), "Vehicle Controller 2D")) { go->AddComponent<VehicleController2D>(); if (!go->GetComponent<Rigidbody2D>()) go->AddComponent<Rigidbody2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<BlockBuilder>(*go), "Block Builder (voxel)")) { go->AddComponent<BlockBuilder>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<StructureBuilder>(*go), "Structure Builder (Rust-style)")) { go->AddComponent<StructureBuilder>(); ed.dirty = true; }
             // Builder Mode is a built-in engine feature (press F2 in Play) — not a
             // component you add — so it's intentionally not listed here.
             // Players building in your game: Build Mode on the player, Buildable on what
             // they may edit, Logic Source / Target on wireable prefabs.
-            if (item(!go->GetComponent<BuildMode>(), "Build Mode (players build + wire)")) { go->AddComponent<BuildMode>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Buildable>(), "Buildable (players may edit)")) {
+            if (item(oked::CanAddOne<BuildMode>(*go), "Build Mode (players build + wire)")) { go->AddComponent<BuildMode>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Buildable>(*go), "Buildable (players may edit)")) {
                 go->AddComponent<Buildable>()->buildId = Buildable::MaxId(ed.scene()) + 1; ed.dirty = true;
             }
-            if (item(!go->GetComponent<LogicSource>(), "Logic Source (button / plate / zone / timer)")) { go->AddComponent<LogicSource>(); ed.dirty = true; }
-            if (item(!go->GetComponent<LogicTarget>(), "Logic Target (door / light / spawner / event)")) { go->AddComponent<LogicTarget>(); ed.dirty = true; }
-            if (item(!go->GetComponent<SurvivalStats>(), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
-            if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Seat>(), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<VehicleSeat>(), "Vehicle Seat (get in and drive)")) { go->AddComponent<VehicleSeat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ThirstStat>(), "Stat: Thirst")) { go->AddComponent<ThirstStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<StaminaStat>(), "Stat: Stamina")) { go->AddComponent<StaminaStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<OxygenStat>(), "Stat: Oxygen")) { go->AddComponent<OxygenStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<TemperatureStat>(), "Stat: Temperature")) { go->AddComponent<TemperatureStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<SleepStat>(), "Stat: Sleep / Energy")) { go->AddComponent<SleepStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<SanityStat>(), "Stat: Sanity")) { go->AddComponent<SanityStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<RadiationStat>(), "Stat: Radiation")) { go->AddComponent<RadiationStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<BleedingStat>(), "Stat: Bleeding")) { go->AddComponent<BleedingStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<PoisonStat>(), "Stat: Poison")) { go->AddComponent<PoisonStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<WetnessStat>(), "Stat: Wetness")) { go->AddComponent<WetnessStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<CarryWeightStat>(), "Stat: Carry Weight")) { go->AddComponent<CarryWeightStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<StatusEffectStat>(), "Status Effects")) { go->AddComponent<StatusEffectStat>(); ed.dirty = true; }
-            if (item(!go->GetComponent<SurvivalSave>(), "Survival Save / Load")) { go->AddComponent<SurvivalSave>(); ed.dirty = true; }
-            if (item(!go->GetComponent<SurvivalZone>(), "Survival Zone (trigger)")) { go->AddComponent<SurvivalZone>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<LogicSource>(*go), "Logic Source (button / plate / zone / timer)")) { go->AddComponent<LogicSource>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<LogicTarget>(*go), "Logic Target (door / light / spawner / event)")) { go->AddComponent<LogicTarget>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<SurvivalStats>(*go), "Survival Stats (native)")) { go->AddComponent<SurvivalStats>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<HealthStat>(*go), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Ragdoll>(*go), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Seat>(*go), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<VehicleSeat>(*go), "Vehicle Seat (get in and drive)")) { go->AddComponent<VehicleSeat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<HungerStat>(*go), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<ThirstStat>(*go), "Stat: Thirst")) { go->AddComponent<ThirstStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<StaminaStat>(*go), "Stat: Stamina")) { go->AddComponent<StaminaStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<OxygenStat>(*go), "Stat: Oxygen")) { go->AddComponent<OxygenStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<TemperatureStat>(*go), "Stat: Temperature")) { go->AddComponent<TemperatureStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<SleepStat>(*go), "Stat: Sleep / Energy")) { go->AddComponent<SleepStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<SanityStat>(*go), "Stat: Sanity")) { go->AddComponent<SanityStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<RadiationStat>(*go), "Stat: Radiation")) { go->AddComponent<RadiationStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<BleedingStat>(*go), "Stat: Bleeding")) { go->AddComponent<BleedingStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<PoisonStat>(*go), "Stat: Poison")) { go->AddComponent<PoisonStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<WetnessStat>(*go), "Stat: Wetness")) { go->AddComponent<WetnessStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<CarryWeightStat>(*go), "Stat: Carry Weight")) { go->AddComponent<CarryWeightStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<StatusEffectStat>(*go), "Status Effects")) { go->AddComponent<StatusEffectStat>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<SurvivalSave>(*go), "Survival Save / Load")) { go->AddComponent<SurvivalSave>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<SurvivalZone>(*go), "Survival Zone (trigger)")) { go->AddComponent<SurvivalZone>(); ed.dirty = true; }
             oked::VolumeAddComponentItems(ed, go, item);   // Volume: checkpoint, kill, force, atmosphere, ambience
-            if (item(!go->GetComponent<Consumables>(), "Consumables (items -> stats)")) { go->AddComponent<Consumables>(); ed.dirty = true; }
-            if (item(!go->GetComponent<DayNightCycle>(), "Day / Night Cycle")) { go->AddComponent<DayNightCycle>(); ed.dirty = true; }
-            if (item(!go->GetComponent<NPCController>(), "NPC Controller")) { go->AddComponent<NPCController>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Crafting>(), "Crafting")) { go->AddComponent<Crafting>(); ed.dirty = true; }
-            if (item(!go->GetComponent<CraftingMenu>(), "Crafting Menu (auto UI)")) { go->AddComponent<CraftingMenu>(); ed.dirty = true; }
-            if (item(!go->GetComponent<MeleeAttacker>(), "Melee Attacker")) { go->AddComponent<MeleeAttacker>(); ed.dirty = true; }
-            if (item(!go->GetComponent<RangedWeapon>(), "Ranged Weapon (gun)")) { go->AddComponent<RangedWeapon>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Spawner>(), "Spawner")) { go->AddComponent<Spawner>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ClickToMoveController>(), "Click To Move Controller")) { ed.PushUndo(); go->AddComponent<ClickToMoveController>(); SetupControllerBody(ed, go); ed.dirty = true; }
-            if (item(!go->GetComponent<FollowTarget2D>(), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<GridPathAgent2D>(), "Grid Path Agent (2D)")) { go->AddComponent<GridPathAgent2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<GridCostLayer>(), "Grid Movement Costs")) { go->AddComponent<GridCostLayer>(); ed.dirty = true; }
-            if (item(!go->GetComponent<GridObstacle2D>(), "Grid Obstacle (2D)")) { go->AddComponent<GridObstacle2D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Mover>(), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Spinner>(), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Lifetime>(), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
-            if (item(!go->GetComponent<SequencePlayer>(), "Sequence Player (cutscene)")) { go->AddComponent<SequencePlayer>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Consumables>(*go), "Consumables (items -> stats)")) { go->AddComponent<Consumables>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<DayNightCycle>(*go), "Day / Night Cycle")) { go->AddComponent<DayNightCycle>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<NPCController>(*go), "NPC Controller")) { go->AddComponent<NPCController>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Crafting>(*go), "Crafting")) { go->AddComponent<Crafting>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<CraftingMenu>(*go), "Crafting Menu (auto UI)")) { go->AddComponent<CraftingMenu>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<MeleeAttacker>(*go), "Melee Attacker")) { go->AddComponent<MeleeAttacker>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<RangedWeapon>(*go), "Ranged Weapon (gun)")) { go->AddComponent<RangedWeapon>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Spawner>(*go), "Spawner")) { go->AddComponent<Spawner>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<ClickToMoveController>(*go), "Click To Move Controller")) { ed.PushUndo(); go->AddComponent<ClickToMoveController>(); SetupControllerBody(ed, go); ed.dirty = true; }
+            if (item(oked::CanAddOne<FollowTarget2D>(*go), "Follow Target 2D")) { go->AddComponent<FollowTarget2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<GridPathAgent2D>(*go), "Grid Path Agent (2D)")) { go->AddComponent<GridPathAgent2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<GridCostLayer>(*go), "Grid Movement Costs")) { go->AddComponent<GridCostLayer>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<GridObstacle2D>(*go), "Grid Obstacle (2D)")) { go->AddComponent<GridObstacle2D>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Mover>(*go), "Mover")) { go->AddComponent<Mover>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Spinner>(*go), "Spinner")) { go->AddComponent<Spinner>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Lifetime>(*go), "Lifetime")) { go->AddComponent<Lifetime>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<SequencePlayer>(*go), "Sequence Player (cutscene)")) { go->AddComponent<SequencePlayer>(); ed.dirty = true; }
             NavigationAddComponentItems(ed, go, item);   // Nav Mesh Surface / Agent / Obstacle
             // Dialogue and quests (View > Editors & Tools > Dialogue & Quests edits the files).
-            if (item(!go->GetComponent<DialogueRunner>(), "Dialogue Runner (talk with E)")) { ed.PushUndo(); go->AddComponent<DialogueRunner>(); ed.dirty = true; }
-            if (item(!go->GetComponent<QuestLog>(), "Quest Log (one per scene)")) { ed.PushUndo(); go->AddComponent<QuestLog>(); ed.dirty = true; }
-            if (item(!go->GetComponent<QuestTrigger>(), "Quest Trigger (reach zone)")) {
+            if (item(oked::CanAddOne<DialogueRunner>(*go), "Dialogue Runner (talk with E)")) { ed.PushUndo(); go->AddComponent<DialogueRunner>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<QuestLog>(*go), "Quest Log (one per scene)")) { ed.PushUndo(); go->AddComponent<QuestLog>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<QuestTrigger>(*go), "Quest Trigger (reach zone)")) {
                 ed.PushUndo(); go->AddComponent<QuestTrigger>();
                 if (!go->GetComponent<Collider2D>() && !go->GetComponent<Collider3D>()) {
                     if (ed.view3D) { auto* c = go->AddComponent<BoxCollider3D>(); c->isTrigger = true; c->autoFit = true; }
@@ -40378,7 +40384,7 @@ void DrawInspector(EditorState& ed) {
                 }
                 ed.dirty = true;
             }
-            if (item(!go->GetComponent<StoryState>(), "Story State (story variables)")) { ed.PushUndo(); go->AddComponent<StoryState>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<StoryState>(*go), "Story State (story variables)")) { ed.PushUndo(); go->AddComponent<StoryState>(); ed.dirty = true; }
             BehaviorTreeAddComponentItems(ed, go, item);   // Behavior Tree Runner
             SplineAddComponentItems(ed, go, item, false);  // Spline, Spline Follower, Spline Instancer
           } EndCat(o); }
@@ -40393,32 +40399,32 @@ void DrawInspector(EditorState& ed) {
                     else           { auto* c = go->AddComponent<BoxCollider2D>(); c->isTrigger = asTrigger; }
                 }
             };
-            if (item(!go->GetComponent<Collectible>(), "Collectible (pickup -> score)")) { go->AddComponent<Collectible>(); ensureCollider(true); ed.dirty = true; }
-            if (item(!go->GetComponent<DamageOnTouch>(), "Damage On Touch (hazard)")) { go->AddComponent<DamageOnTouch>(); ensureCollider(true); ed.dirty = true; }
-            if (item(!go->GetComponent<Teleporter>(), "Teleporter")) { go->AddComponent<Teleporter>(); ensureCollider(true); ed.dirty = true; }
-            if (item(!go->GetComponent<JumpPad>(), "Jump Pad (launch on touch)")) { go->AddComponent<JumpPad>(); ed.dirty = true; }
-            if (item(!go->GetComponent<TriggerZone>(), "Trigger Zone (event)")) { go->AddComponent<TriggerZone>(); ensureCollider(true); ed.dirty = true; }
+            if (item(oked::CanAddOne<Collectible>(*go), "Collectible (pickup -> score)")) { go->AddComponent<Collectible>(); ensureCollider(true); ed.dirty = true; }
+            if (item(oked::CanAddOne<DamageOnTouch>(*go), "Damage On Touch (hazard)")) { go->AddComponent<DamageOnTouch>(); ensureCollider(true); ed.dirty = true; }
+            if (item(oked::CanAddOne<Teleporter>(*go), "Teleporter")) { go->AddComponent<Teleporter>(); ensureCollider(true); ed.dirty = true; }
+            if (item(oked::CanAddOne<JumpPad>(*go), "Jump Pad (launch on touch)")) { go->AddComponent<JumpPad>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<TriggerZone>(*go), "Trigger Zone (event)")) { go->AddComponent<TriggerZone>(); ensureCollider(true); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("RPG / Turn-Based");
           if (o) {
-            if (item(!go->GetComponent<Stats>(), "Stats")) { go->AddComponent<Stats>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Inventory>(), "Inventory")) { go->AddComponent<Inventory>(); ed.dirty = true; }
-            if (item(!go->GetComponent<CraftingStation>(), "Crafting Station")) {
+            if (item(oked::CanAddOne<Stats>(*go), "Stats")) { go->AddComponent<Stats>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Inventory>(*go), "Inventory")) { go->AddComponent<Inventory>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<CraftingStation>(*go), "Crafting Station")) {
                 auto* cs = go->AddComponent<CraftingStation>();
                 CraftingStation::Recipe r; r.inputs = {{"wood", 4}}; r.output = "table"; r.outputCount = 1;
                 cs->recipes = {r};
                 ed.dirty = true;
             }
-            if (item(!go->GetComponent<ItemPickup>(), "Item Pickup")) {
+            if (item(oked::CanAddOne<ItemPickup>(*go), "Item Pickup")) {
                 auto* pk = go->AddComponent<ItemPickup>();
                 if (!okay::ItemDatabase::Get().Items().empty()) pk->item = okay::ItemDatabase::Get().Items().front().id;
                 ed.dirty = true;
             }
-            if (item(!go->GetComponent<LootSource>(), "Loot Source")) { go->AddComponent<LootSource>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Equipment>(), "Equipment")) { go->AddComponent<Equipment>(); ed.dirty = true; }
-            if (item(!go->GetComponent<NetInventory>(), "Net Inventory (host-owned)")) { go->AddComponent<NetInventory>(); ed.dirty = true; }
-            if (item(!go->GetComponent<ChestInventory>(), "Chest / Container")) {
+            if (item(oked::CanAddOne<LootSource>(*go), "Loot Source")) { go->AddComponent<LootSource>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Equipment>(*go), "Equipment")) { go->AddComponent<Equipment>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<NetInventory>(*go), "Net Inventory (host-owned)")) { go->AddComponent<NetInventory>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<ChestInventory>(*go), "Chest / Container")) {
                 go->AddComponent<ChestInventory>();
                 if (!go->GetComponent<Inventory>()) {        // chest needs an Inventory for its loot
                     auto* in = go->AddComponent<Inventory>();
@@ -40426,73 +40432,73 @@ void DrawInspector(EditorState& ed) {
                 }
                 ed.dirty = true;
             }
-            if (item(!go->GetComponent<TurnManager>(), "Turn Manager")) { go->AddComponent<TurnManager>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<TurnManager>(*go), "Turn Manager")) { go->AddComponent<TurnManager>(); ed.dirty = true; }
           } EndCat(o); }
 
         { bool o = BeginCat("UI");
           if (o) {
-            if (item(!go->GetComponent<Canvas>(), "Canvas")) { go->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; }
-            if (item(!go->GetComponent<EventSystem>(), "Event System")) { go->AddComponent<EventSystem>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIDocument>(), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
-            if (item(!go->GetComponent<NetworkManager>(), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
-            if (item(!go->GetComponent<NetworkSync>(), "Network Sync (replicate transform)")) { go->AddComponent<NetworkSync>(); ed.dirty = true; }
-            if (item(!go->GetComponent<NetworkPlayerSpawner>(), "Network Player Spawner")) { go->AddComponent<NetworkPlayerSpawner>(); ed.dirty = true; }
-            if (item(!go->GetComponent<AntiCheatConfig>(), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Canvas>(*go), "Canvas")) { go->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; }
+            if (item(oked::CanAddOne<EventSystem>(*go), "Event System")) { go->AddComponent<EventSystem>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIDocument>(*go), "UI Document")) { go->AddComponent<UIDocument>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<NetworkManager>(*go), "Network Manager")) { go->AddComponent<NetworkManager>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<NetworkSync>(*go), "Network Sync (replicate transform)")) { go->AddComponent<NetworkSync>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<NetworkPlayerSpawner>(*go), "Network Player Spawner")) { go->AddComponent<NetworkPlayerSpawner>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<AntiCheatConfig>(*go), "Anti-Cheat Config")) { go->AddComponent<AntiCheatConfig>(); ed.dirty = true; }
             oked::AddAntiCheatMenuItem(ed, go);   // one click: a config with a safe preset next to the Network Manager
             if (item(true, "Net Validator (RPC rule)")) { go->AddComponent<NetValidator>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIAnimation>(), "UI Animation (fade / slide / pop / pulse)")) { go->AddComponent<UIAnimation>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIAnimation>(*go), "UI Animation (fade / slide / pop / pulse)")) { go->AddComponent<UIAnimation>(); ed.dirty = true; }
             // grok/ui-theme
-            if (item(!go->GetComponent<UITheme>(), "UI Theme (colors, radius, shadow)")) { go->AddComponent<UITheme>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIButton>(), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
-            if (item(!go->GetComponent<VirtualJoystick>(), "Virtual Joystick")) { go->AddComponent<VirtualJoystick>(); ed.dirty = true; }
-            if (item(!go->GetComponent<TouchDPad>(), "D-Pad")) { go->AddComponent<TouchDPad>(); ed.dirty = true; }
-            if (item(!go->GetComponent<TouchButton>(), "Touch Button")) { go->AddComponent<TouchButton>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIPanel>(), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIImage>(), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIRawImage>() && !go->GetComponent<UIImage>(), "UI Raw Image (tile / scroll a texture)")) { go->AddComponent<UIRawImage>(); ed.dirty = true; }
-            if (item(!GetUIRect(go).valid, "UI Safe Area (keep clear of phone notches)")) { go->AddComponent<UISafeArea>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIProgressBar>(), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIRadialProgress>(), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Minimap>(), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
-            if (item(!go->GetComponent<MinimapBlip>(), "Minimap Blip")) { go->AddComponent<MinimapBlip>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Crosshair>(), "Crosshair")) { go->AddComponent<Crosshair>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIColorPicker>(), "UI Color Picker")) { go->AddComponent<UIColorPicker>()->Rebuild(); ed.dirty = true; } // grok/ui-color
-            if (item(!go->GetComponent<UISlotGrid>(), "UI Slot Grid")) { go->AddComponent<UISlotGrid>()->Rebuild(); ed.dirty = true; } // grok/ui-hud
-            if (item(!go->GetComponent<LoadingScreen>(), "Loading Screen")) {
+            if (item(oked::CanAddOne<UITheme>(*go), "UI Theme (colors, radius, shadow)")) { go->AddComponent<UITheme>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIButton>(*go), "UI Button")) { go->AddComponent<UIButton>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<VirtualJoystick>(*go), "Virtual Joystick")) { go->AddComponent<VirtualJoystick>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<TouchDPad>(*go), "D-Pad")) { go->AddComponent<TouchDPad>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<TouchButton>(*go), "Touch Button")) { go->AddComponent<TouchButton>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIPanel>(*go), "UI Panel")) { go->AddComponent<UIPanel>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIImage>(*go), "UI Image")) { go->AddComponent<UIImage>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIRawImage>(*go) && oked::CanAddOne<UIImage>(*go), "UI Raw Image (tile / scroll a texture)")) { go->AddComponent<UIRawImage>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UISafeArea>(*go) && !GetUIRect(go).valid, "UI Safe Area (keep clear of phone notches)")) { go->AddComponent<UISafeArea>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIProgressBar>(*go), "UI Progress Bar")) { go->AddComponent<UIProgressBar>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIRadialProgress>(*go), "UI Radial Progress")) { go->AddComponent<UIRadialProgress>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Minimap>(*go), "Minimap")) { go->AddComponent<Minimap>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<MinimapBlip>(*go), "Minimap Blip")) { go->AddComponent<MinimapBlip>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<Crosshair>(*go), "Crosshair")) { go->AddComponent<Crosshair>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIColorPicker>(*go), "UI Color Picker")) { go->AddComponent<UIColorPicker>()->Rebuild(); ed.dirty = true; } // grok/ui-color
+            if (item(oked::CanAddOne<UISlotGrid>(*go), "UI Slot Grid")) { go->AddComponent<UISlotGrid>()->Rebuild(); ed.dirty = true; } // grok/ui-hud
+            if (item(oked::CanAddOne<LoadingScreen>(*go), "Loading Screen")) {
                 auto* ls = go->AddComponent<LoadingScreen>();
                 ls->tips = {"Tip: hold Shift to sprint.", "Tip: build a foundation first.", "Loading the world..."};
                 ed.dirty = true;
             }
-            if (item(!go->GetComponent<WorldUI>(), "World UI (3D label)")) { go->AddComponent<WorldUI>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UISlider>(), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIStepper>(), "UI Stepper")) { go->AddComponent<UIStepper>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIRating>(), "UI Rating")) { go->AddComponent<UIRating>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIToggle>(), "UI Toggle")) { go->AddComponent<UIToggle>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UITabs>(), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIDraggable>(), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIDropTarget>(), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIFrame>() && GetUIRect(go).sizePtr, "UI Frame (anchors + pivot)")) { ConvertToUIFrame(go); ed.dirty = true; }
-            if (item(!go->GetComponent<UIMask>(), "UI Mask (clip children)")) { go->AddComponent<UIMask>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIFlexItem>(), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIListView>(), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
-            if (item(!go->GetComponent<UIModal>(), "UI Modal (dialog)")) { go->AddComponent<UIModal>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIToast>(), "UI Toast")) { go->AddComponent<UIToast>(); ed.dirty = true; }   // grok/ui-toast
-            if (item(!go->GetComponent<UIContextMenu>(), "UI Context Menu (right-click)")) { go->AddComponent<UIContextMenu>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIKeybindField>(), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UISearchBar>(), "UI Search Bar")) { go->AddComponent<UISearchBar>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIDateTimePicker>(), "UI Date and Time")) { go->AddComponent<UIDateTimePicker>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIFilePicker>(), "UI File Picker")) { go->AddComponent<UIFilePicker>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIAccordion>(), "UI Accordion")) { go->AddComponent<UIAccordion>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIBreadcrumbs>(), "UI Breadcrumbs")) { go->AddComponent<UIBreadcrumbs>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIPagination>(), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UISkeleton>(), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIBottomSheet>(), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIStyleVariant>(), "UI Style Variant (theme role)")) { go->AddComponent<UIStyleVariant>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIDamageNumbers>(), "UI Damage Numbers (floating text)")) { go->AddComponent<UIDamageNumbers>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIDialogueBox>(), "UI Dialogue Box (typing text + choices)")) { go->AddComponent<UIDialogueBox>(); ed.dirty = true; }
-            if (item(!go->GetComponent<UIInventoryBind>() && go->GetComponent<UISlotGrid>(), "UI Inventory Bind (slot grid shows the Inventory)")) { go->AddComponent<UIInventoryBind>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<WorldUI>(*go), "World UI (3D label)")) { go->AddComponent<WorldUI>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UISlider>(*go), "UI Slider")) { go->AddComponent<UISlider>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIStepper>(*go), "UI Stepper")) { go->AddComponent<UIStepper>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIRating>(*go), "UI Rating")) { go->AddComponent<UIRating>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIToggle>(*go), "UI Toggle")) { go->AddComponent<UIToggle>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UITabs>(*go), "UI Tabs")) { go->AddComponent<UITabs>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIDraggable>(*go), "UI Draggable")) { go->AddComponent<UIDraggable>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIDropTarget>(*go), "UI Drop Target")) { go->AddComponent<UIDropTarget>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIFrame>(*go) && GetUIRect(go).sizePtr, "UI Frame (anchors + pivot)")) { ConvertToUIFrame(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIMask>(*go), "UI Mask (clip children)")) { go->AddComponent<UIMask>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIFlexItem>(*go), "UI Flex Item (grow / shrink)")) { go->AddComponent<UIFlexItem>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIListView>(*go), "UI List View")) { oked::BuildUIListView(go); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIModal>(*go), "UI Modal (dialog)")) { go->AddComponent<UIModal>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIToast>(*go), "UI Toast")) { go->AddComponent<UIToast>(); ed.dirty = true; }   // grok/ui-toast
+            if (item(oked::CanAddOne<UIContextMenu>(*go), "UI Context Menu (right-click)")) { go->AddComponent<UIContextMenu>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIKeybindField>(*go), "UI Keybind Field")) { go->AddComponent<UIKeybindField>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UISearchBar>(*go), "UI Search Bar")) { go->AddComponent<UISearchBar>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIDateTimePicker>(*go), "UI Date and Time")) { go->AddComponent<UIDateTimePicker>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIFilePicker>(*go), "UI File Picker")) { go->AddComponent<UIFilePicker>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIAccordion>(*go), "UI Accordion")) { go->AddComponent<UIAccordion>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIBreadcrumbs>(*go), "UI Breadcrumbs")) { go->AddComponent<UIBreadcrumbs>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIPagination>(*go), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UISkeleton>(*go), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIBottomSheet>(*go), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UITextBind>(*go), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIBarBind>(*go), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIStyleVariant>(*go), "UI Style Variant (theme role)")) { go->AddComponent<UIStyleVariant>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIDamageNumbers>(*go), "UI Damage Numbers (floating text)")) { go->AddComponent<UIDamageNumbers>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIDialogueBox>(*go), "UI Dialogue Box (typing text + choices)")) { go->AddComponent<UIDialogueBox>(); ed.dirty = true; }
+            if (item(oked::CanAddOne<UIInventoryBind>(*go) && go->GetComponent<UISlotGrid>(), "UI Inventory Bind (slot grid shows the Inventory)")) { go->AddComponent<UIInventoryBind>(); ed.dirty = true; }
           } EndCat(o); }
 
         if (!acShown)

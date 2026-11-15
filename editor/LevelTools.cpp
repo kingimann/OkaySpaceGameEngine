@@ -1,6 +1,7 @@
 // Level-design tools in the editor: foliage brush, terrain texture layers, decal projector, cable, the
 // measuring tool and the orthographic views. See LevelTools.hpp and docs/level_tools.md.
 #include "LevelTools.hpp"
+#include "AddComponentRules.hpp"   // CanAddOne: the kinds Add Component offers once per object
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "InspectorPanel.hpp"   // AssetPathPicker, HighlightAssetDrop
 #include "okay/Components/Cable.hpp"
@@ -642,9 +643,9 @@ void DrawTerrainScatterUI(EditorState& ed, Terrain& t) {
 // ---- Add Component and GameObject menus ---------------------------------------------------------------------------------
 
 void LevelAddComponentItems(EditorState& ed, GameObject* go, const std::function<bool(bool, const char*)>& item) {
-    if (item(!go->GetComponent<Foliage>(), "Foliage (paint plants)")) { ed.PushUndo(); go->AddComponent<Foliage>(); ed.view3D = true; ed.dirty = true; }
-    if (item(!go->GetComponent<Decal>(), "Decal Projector")) { ed.PushUndo(); go->AddComponent<Decal>()->Project(); ed.view3D = true; ed.dirty = true; }
-    if (item(!go->GetComponent<Cable>(), "Cable (rope with sag)")) { ed.PushUndo(); auto* c = go->AddComponent<Cable>(); c->endOffset = {4, 0, 0}; c->Rebuild(); ed.view3D = true; ed.dirty = true; }
+    if (item(oked::CanAddOne<Foliage>(*go), "Foliage (paint plants)")) { ed.PushUndo(); go->AddComponent<Foliage>(); ed.view3D = true; ed.dirty = true; }
+    if (item(oked::CanAddOne<Decal>(*go), "Decal Projector")) { ed.PushUndo(); go->AddComponent<Decal>()->Project(); ed.view3D = true; ed.dirty = true; }
+    if (item(oked::CanAddOne<Cable>(*go), "Cable (rope with sag)")) { ed.PushUndo(); auto* c = go->AddComponent<Cable>(); c->endOffset = {4, 0, 0}; c->Rebuild(); ed.view3D = true; ed.dirty = true; }
 }
 
 void LevelCreateMenuItems(EditorState& ed, bool& created) {

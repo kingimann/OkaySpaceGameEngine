@@ -2,6 +2,7 @@
 #include "EditUndo.hpp"
 #include "EditorWidgets.hpp"
 #include "ConsolePanel.hpp"
+#include "InspectorClickRules.hpp"
 #include "InspectorModel.hpp"
 #include "PrefabEdit.hpp"
 #include "imgui_internal.h"
@@ -396,7 +397,8 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
             Color c = st.value.AsColor();
             float f[4] = {c.r, c.g, c.b, c.a};
             ImGui::SetNextItemWidth(ImGui::CalcItemWidth());
-            if (ImGui::ColorEdit4("##v", f, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf)) {
+            // NoOptions: the colour box's own right-click popup (display format) would be replaced by the field menu anyway.
+            if (ImGui::ColorEdit4("##v", f, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf | ImGuiColorEditFlags_NoOptions)) {
                 unsigned m = 0;
                 const float old[4] = {c.r, c.g, c.b, c.a};
                 for (int i = 0; i < 4; ++i) if (f[i] != old[i]) m |= 1u << i;
@@ -435,9 +437,8 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
     }
     if (ro) ImGui::EndDisabled();
     // The blue bar of a prefab instance's overridden property, and the right-click menu (Reset to Default, Copy / Paste Value, Revert ...).
-    // A text box and a colour box have a right-click menu of their own, so there only the label answers.
-    const bool ownMenu = d.type == PropertyType::String || d.type == PropertyType::Color;
-    FieldMark(label.c_str(), &d, ownMenu ? nullptr : &rowStart.y);
+    // The whole row answers, every kind of value: the label, the gap and the box (Dear ImGui's text boxes have no right-click menu of their own).
+    FieldMark(label.c_str(), &d, &rowStart.y);
     ImGui::PopID();
     if (wrote) ed.dirty = true;
     return wrote;
@@ -874,6 +875,8 @@ ComponentClip s_clip;              // Copy Values: Paste Values and Paste As New
 ObjectClip s_objClip;              // Copy All Component Values
 TransformClip s_tclip;             // Copy Transform Values
 bool s_addComponentRequest = false;
+ctx::ClickRouter s_router;         // hands each right click to one menu: a field's, or the empty space's (editor/InspectorClickRules.hpp)
+ctx::ClipboardText s_fieldClip;    // the system clipboard as it was when the open field menu was opened: read once, not every frame
 
 enum class Act {
     None, CopyValues, PasteValues, Reset, Duplicate, PasteNew, Toggle, Move, Remove,
@@ -998,12 +1001,26 @@ void DrawComponentMenu(okay::Component* comp, bool removable, okay::Component** 
     st.removable = removable;
     st.neededBy = NeededByName(*go, *comp);
     st.hasValues = HasRegisteredProperties(*comp);
-    st.canAddAnother = CanAddAnother(*comp);
+    {
+        std::string why;
+        st.canAddAnother = CanAddAnother(*comp, &why);   // "only one per object" is the Add Component list's own table (editor/AddComponentRules.hpp)
+        st.noAnotherReason = why;
+    }
+    // Would a copy be the same? Tried once when the menu opens (it loads the object's saved text a few times), only for a kind that
+    // could be duplicated at all, and not at all for one that is only allowed once.
+    if (st.kind == ctx::ComponentKind::Plain && st.hasValues && st.canAddAnother) {
+        static const Component* s_checkedComp = nullptr;
+        static CopyCheck s_check;
+        if (ImGui::IsWindowAppearing() || s_checkedComp != comp) { s_check = CheckCopyIsExact(*go, *comp); s_checkedComp = comp; }
+        st.copyExact = s_check.exact;
+        st.copyNote = s_check.note;
+    }
     st.prefabChanged = PrefabChangedFor(comp);
     if (s_clip.Valid()) {
         st.clipType = TypeDisplayName(s_clip.type);
         std::string why;
-        st.clipCanAdd = CanPasteAsNew(*go, s_clip, &why);
+        st.pasteNewObjects = PasteAsNewTargets(SelectedObjects(ed, go), s_clip, &why);   // every selected object that can take it, not only those with this kind
+        st.clipCanAdd = st.pasteNewObjects > 0;
         st.clipBlockedReason = why;
     }
 
@@ -1037,22 +1054,21 @@ void DrawComponentMenu(okay::Component* comp, bool removable, okay::Component** 
 void DrawTransformMenu(okay::editor::EditorState& ed, okay::GameObject* go) {
     if (!go || !go->transform) return;
     const std::vector<GameObject*> objs = SelectedObjects(ed, go);
-    ctx::TransformMenuState st;
-    st.selectionCount = (int)objs.size();
-    st.clipValid = s_tclip.valid;
-    unsigned atDefault = kTransformAll;
+    std::vector<ctx::TransformObjectState> states;
     for (GameObject* g : objs) {
-        if (g->GetComponent<Camera>()) st.scaleLocked = true;
-        atDefault &= TransformAtDefault(*g->transform);
+        const unsigned at = TransformAtDefault(*g->transform);
+        ctx::TransformObjectState o;
+        o.camera = ScaleIsLocked(*g);   // its scale cannot change: the scale rows look at the other selected objects only
+        o.posAtDefault = (at & kTransformPosition) != 0;
+        o.rotAtDefault = (at & kTransformRotation) != 0;
+        o.scaleAtDefault = (at & kTransformScale) != 0;
+        states.push_back(o);
     }
-    st.posAtDefault = (atDefault & kTransformPosition) != 0;
-    st.rotAtDefault = (atDefault & kTransformRotation) != 0;
-    st.scaleAtDefault = (atDefault & kTransformScale) != 0;
-    st.atDefault = atDefault == kTransformAll;
+    const ctx::TransformMenuState st = ctx::TransformStateFor(states, s_tclip.valid);
 
     const auto pasteParts = [&](unsigned parts) {
         ed.PushUndo("Paste Transform");
-        for (GameObject* g : objs) PasteTransform(s_tclip, *g->transform, g->GetComponent<Camera>() ? (parts & ~kTransformScale) : parts);
+        for (GameObject* g : objs) PasteTransform(s_tclip, *g->transform, ScaleIsLocked(*g) ? (parts & ~kTransformScale) : parts);
         ed.dirty = true;
     };
     const auto resetParts = [&](unsigned parts) {
@@ -1100,7 +1116,8 @@ ctx::ObjectMenuState ObjectStateOf(okay::editor::EditorState& ed, GameObject* go
     if (s_clip.Valid()) {
         st.clipType = TypeDisplayName(s_clip.type);
         std::string why;
-        st.clipCanAdd = CanPasteAsNew(*go, s_clip, &why);
+        st.pasteNewObjects = PasteAsNewTargets(SelectedObjects(ed, go), s_clip, &why);   // the objects it will really be added to
+        st.clipCanAdd = st.pasteNewObjects > 0;
         st.clipBlockedReason = why;
     }
     return st;
@@ -1127,8 +1144,10 @@ void DrawObjectHeaderMenu(okay::editor::EditorState& ed, okay::GameObject* go) {
     if (!go) return;
     // The last item is the header bar. A right click on it opens the menu, except on the name box (it has the text menu of its own).
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && !s_nameFieldHovered && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
-        ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()))
+        ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax())) {
         ImGui::OpenPopup("##objectctx");
+        s_router.Claim(ImGui::GetFrameCount());   // this click is the header's: the empty-space menu must not replace it
+    }
     if (ImGui::BeginPopup("##objectctx")) {
         DrawItems(ctx::ObjectMenu(ObjectStateOf(ed, go)), nullptr, [&](const std::string& id) { ObjectAction(id, go); }, nullptr);
         ImGui::EndPopup();
@@ -1137,7 +1156,13 @@ void DrawObjectHeaderMenu(okay::editor::EditorState& ed, okay::GameObject* go) {
 
 void DrawInspectorBackgroundMenu(okay::editor::EditorState& ed, okay::GameObject* go) {
     if (!go) return;
-    if (ImGui::BeginPopupContextWindow("##inspectorbg", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+    // Opened by hand (not BeginPopupContextWindow): that one opens whenever no widget is under the mouse, which is also true over a field's
+    // label and the gaps between rows, and its popup would replace the field's own menu opened earlier in the same frame.
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const ctx::RightClick click{ImGui::IsMouseReleased(ImGuiMouseButton_Right), mouse.x, mouse.y};
+    if (s_router.BackgroundOpens(ImGui::GetFrameCount(), click, ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup), ImGui::IsAnyItemHovered()))
+        ImGui::OpenPopup("##inspectorbg");
+    if (ImGui::BeginPopup("##inspectorbg")) {
         DrawItems(ctx::BackgroundMenu(ObjectStateOf(ed, go)), nullptr, [&](const std::string& id) { ObjectAction(id, go); }, nullptr);
         ImGui::EndPopup();
     }
@@ -1156,11 +1181,16 @@ void ApplyComponentValueRequests(okay::editor::EditorState& ed, okay::GameObject
     const auto plural = [](int n, const char* one) { return std::to_string(n) + " " + one + (n == 1 ? "" : "s"); };
 
     switch (r.act) {
-        case Act::CopyValues:
+        case Act::CopyValues: {
             if (!c) return;
             s_clip = CopyComponentValues(*c);
-            ConsoleLog("Copied the values of " + name);
+            // Would a new component made from these values be the same? (Paste As New is only offered when it would.)
+            const CopyCheck check = CheckCopyIsExact(*go, *c);
+            s_clip.exact = check.exact;
+            s_clip.inexactNote = check.note;
+            ConsoleLog("Copied the values of " + name + (check.exact ? std::string() : " (not copied: " + check.note + "; Paste As New is not offered for it)"));
             return;
+        }
         case Act::PasteValues:
         case Act::Reset: {
             if (!c) return;
@@ -1281,8 +1311,7 @@ static void FieldMark(const char* label, const PropertyDesc* knownDesc, const fl
         std::snprintf(pid, sizeof(pid), "##fieldctx%08x%08x", (unsigned)item, (unsigned)((std::uintptr_t)s_markComp >> 4));
     }
 
-    // The property this field shows. A hand-drawn text or colour box has a right-click menu of its own, and a box that was
-    // greyed out on purpose (a camera's scale) is not ours to change: those get no value rows.
+    // The property this field shows. A box that was greyed out on purpose (a camera's scale) is not ours to change: no value rows.
     const ImGuiItemFlags itemFlags = GImGui->LastItemData.ItemFlags;
     std::shared_ptr<const ComponentTypeInfo> info;   // looked up only when a menu is opened or open: this runs for every field every frame
     const auto findDesc = [&]() -> const PropertyDesc* {
@@ -1290,21 +1319,31 @@ static void FieldMark(const char* label, const PropertyDesc* knownDesc, const fl
         if (!info) info = PropertyRegistry::FindFor(*s_markComp);
         if (!info) return nullptr;
         const PropertyDesc* d = FindPropertyForLabel(*info, label);
-        if (d && (d->type == PropertyType::String || d->type == PropertyType::Color)) return nullptr;
         if (d && (itemFlags & ImGuiItemFlags_Disabled)) return nullptr;
         return d;
     };
 
-    bool hot;
-    if (wholeRowTopY) {   // the full width of the row: from where it started down to the bottom of its last item
-        const float pad = ImGui::GetStyle().FramePadding.y;
-        const ImVec2 mn(ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x, std::min(*wholeRowTopY, ImGui::GetItemRectMin().y - pad));
-        const ImVec2 mx(ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x, ImGui::GetItemRectMax().y + pad);
-        hot = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(mn, mx);
-    } else {
-        hot = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+    // Who gets this right click: this field, or the empty-space menu (editor/InspectorClickRules.hpp). A field with a menu takes the
+    // click when the mouse is on its row (label, gap and box) and tells the empty-space menu, so exactly one menu opens.
+    {
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const ctx::RightClick click{ImGui::IsMouseReleased(ImGuiMouseButton_Right), mouse.x, mouse.y};
+        const int frame = ImGui::GetFrameCount();
+        const auto hasMenu = [&] { return overridden || findDesc() != nullptr; };
+        bool opens;
+        if (wholeRowTopY) {   // the full width of the row: from where it started down to the bottom of its last item
+            const ctx::Rect row = ctx::FieldRowRect(ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x,
+                                                    ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x, *wholeRowTopY,
+                                                    ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().y, ImGui::GetStyle().FramePadding.y);
+            opens = s_router.FieldOpensInRow(frame, click, ImGui::IsWindowHovered(), row, hasMenu);
+        } else {
+            opens = s_router.FieldOpens(frame, click, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled), hasMenu);
+        }
+        if (opens) {
+            ImGui::OpenPopup(pid);
+            s_fieldClip = ctx::ReadClipboard(ImGui::GetClipboardText());   // once, now: not every frame the menu stays open
+        }
     }
-    if (hot && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && (overridden || findDesc())) ImGui::OpenPopup(pid);
     if (!ImGui::BeginPopup(pid)) return;
 
     // The prefab rows: what differs, and Revert / Apply.
@@ -1332,7 +1371,11 @@ static void FieldMark(const char* label, const PropertyDesc* knownDesc, const fl
 
     okay::editor::EditorState& ed = *s_ed;
     const int idx = ComponentIndexOf(*go, *s_markComp);
-    const std::vector<GameObject*> targets = SameKindOnSelection(ed, go, s_markComp).objs;
+    // The objects a write reaches: the same component on every selected object that has one, except cameras for a scale (a camera
+    // cannot be scaled, as the Scale row of the Transform and Reset Transform already say).
+    int skipped = 0;
+    const std::vector<GameObject*> targets = WriteTargets(SameKindOnSelection(ed, go, s_markComp).objs, info->name, *d, &skipped);
+    if (targets.empty()) { prefabRows(); ImGui::EndPopup(); return; }
     const FieldState fs = ReadField(targets, info->name, idx, *d);
 
     ctx::PropertyMenuState st;
@@ -1340,15 +1383,17 @@ static void FieldMark(const char* label, const PropertyDesc* knownDesc, const fl
     st.name = PrettyName(d->name);
     st.kind = KindOf(d->type);
     st.selectionCount = std::max(1, (int)targets.size());
+    st.skippedCount = skipped;
+    st.skippedWhy = skipped > 0 ? "a camera cannot be scaled" : "";
     st.readOnly = d->IsReadOnly();
     const PropertyValue def = DefaultValueOf(*info, *d);
     st.hasDefault = def.IsValid();
     st.atDefault = def.IsValid() && fs.have > 0 && !fs.mixed && fs.value == def;
-    {
-        const char* text = ImGui::GetClipboardText();
-        PropertyValue parsed;
-        st.clipboardFits = text && *text && d->ParseText(text, parsed);
-    }
+    const PasteCheck paste = CheckPaste(*d, s_fieldClip, fs, ed.projectDir());   // from the text read when the menu opened
+    st.clipboardFits = paste.ok;
+    st.clipRefusal = paste.ok ? std::string() : paste.reason;
+    st.clipPreview = paste.ok ? paste.preview : std::string();
+    st.clipIsSame = paste.ok && paste.same;
     st.hasRange = d->hasRange; st.rangeMin = d->rangeMin; st.rangeMax = d->rangeMax;
     const bool isText = d->type == PropertyType::String || d->type == PropertyType::AssetPath || d->type == PropertyType::ObjectRef;
     st.valueEmpty = isText && !fs.mixed && fs.value.AsString().empty();
@@ -1356,6 +1401,10 @@ static void FieldMark(const char* label, const PropertyDesc* knownDesc, const fl
     st.objectResolves = d->type == PropertyType::ObjectRef && !fs.mixed && ed.scene().FindByGuid(fs.value.AsString()) != nullptr;
 
     const auto write = [&](const PropertyValue& v, unsigned axisMask = 0) {
+        if (axisMask == 0) {   // every selected object already holds it: no undo step for a change that is not one
+            PropertyValue norm;
+            if (d->Normalize(v, norm) && fs.have > 0 && !fs.mixed && fs.value == norm) { ConsoleLog(st.name + " already has that value"); return; }
+        }
         ed.PushUndo("Set " + st.name);
         const int n = axisMask ? WriteFieldAxes(targets, info->name, idx, *d, v, axisMask) : WriteField(targets, info->name, idx, *d, v);
         if (n > 0) ed.dirty = true;
@@ -1375,11 +1424,7 @@ static void FieldMark(const char* label, const PropertyDesc* knownDesc, const fl
             if (ResetField(targets, info->name, idx, *d) > 0) ed.dirty = true;
         }
         else if (id == "prop.copy") { ImGui::SetClipboardText(fs.value.ToString().c_str()); ConsoleLog("Copied " + st.name); }
-        else if (id == "prop.paste") {
-            PropertyValue v;
-            const char* text = ImGui::GetClipboardText();
-            if (text && d->ParseText(text, v)) write(v);
-        }
+        else if (id == "prop.paste") { if (paste.ok) write(paste.value); }   // the value the tooltip showed, from the text read when the menu opened
         else if (id == "prop.copyPath") { ImGui::SetClipboardText(st.path.c_str()); ConsoleLog("Copied " + st.path); }
         else if (id == "prop.zero") write(allParts(0.0f));
         else if (id == "prop.one") write(allParts(1.0f));

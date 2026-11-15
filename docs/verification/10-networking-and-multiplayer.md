@@ -62,13 +62,24 @@ Areas: 16, 39. Rows ids start `V-NW-`. `V-NW-S<area>` rows are smoke tests built
   - **You should see (expected, not yet seen on Windows):** the connected game gets laggy as you raise the numbers.
   - **Known partial:** steps beyond opening the panel are unverified.
 
+- [ ] **V-NW-007** Join by link from a visual script (Net Join Link, Net Pin Host)
+  - **Map:** 14, 16.4. **Where:** editor, two windows on one PC
+  - **Steps:**
+    1. Choose **File > Open...** and open `examples\visual_script\playground\online.okayscene` (zip: the `examples` folder next to `OkaySpace.exe`; installer: `%LOCALAPPDATA%\OkaySpace\examples`). Press Play (Ctrl+P).
+    2. Read the green line. Then Stop, start a second editor, open the same scene in both and press Play in both.
+    3. In window 1 press H (it hosts on UDP 47777). In window 2 press J (it joins `okay://join?game=Playground&addr=127.0.0.1:47777`).
+    4. In any graph, click **+ Instruction**, open the topic **Online** and look for **Net Join Link** and **Net Pin Host**.
+  - **You should see (expected, not yet seen on Windows):** the green line says `Pin a made-up key: 0   Clear the pin: 1   Join hello: 0`; after H and J both blue lines say `Players: 1` and window 2 says `Connected: 1`; both nodes are in the Online topic.
+  - **Known partial:** pinning to a real host key needs a host with an identity key (dedicated server); the demo only clears the pin. The Windows firewall may ask about the host window. File > Examples may not find the folder if the editor was started far from the install folder; use File > Open.
+  - **More:** [../../try_it.md](../../try_it.md)
+
 - [ ] **V-NW-S16** Area 16: Networking & multiplayer (smoke test, steps unverified)
   - **Map:** [16](../feature_map/16-networking.md), 14 sub-areas, 14 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 16.1 Transport, sealed channels, packets [Works]. Where: Inspector: Network Manager has no encryption field (set 'encryption' in code or script; Anti-Cheat Config has...
     - 16.2 Server authority, prediction, lag compensation [Works]. Where: Inspector: Network Manager (Fixed Net Tick, Authoritative movement, Correction easing, Snap distance...
     - 16.3 Snapshots and sync, interest [Works]. Where: Inspector: Network Sync (authority, id, claimable), Add Component menu; Net panel shows bytes per object...
-    - 16.4 Matchmaking, queues, server browser, join links [Works].
+    - 16.4 Matchmaking, queues, server browser, join links [Works]. Where: the player draws the "Find a server" window and a "Finding a match" banner ('player/main.cpp'); in the...
     - 16.5 Dedicated server, export, relay [Works]. Where: File > Build Settings > Platform: Server (see 18.7)
     - 16.6 Anti-cheat (server side) [Works]. Where: Inspector: Anti-Cheat Config and Net Validator (Add Component menu); File > Build Settings > Server page for...
     - 16.7 Voice chat server [Partial].

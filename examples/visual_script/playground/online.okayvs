@@ -1,0 +1,158 @@
+# Online: Net Join Link and Net Pin Host. Row 1 needs no server. Row 2: press H to host on UDP 47777. Row 3: press J (in a second window) to join it by link.
+node 1 OnStart
+pos 1 40 40
+entry OnStart 1
+node 2 Fn.net_pin_host
+pos 2 320 40
+default 2 0 "not-a-key"
+exec 1 0 2
+node 3 SetVar pinMadeUp
+pos 3 600 40
+exec 2 0 3
+data 3 0 2 0
+node 4 Fn.net_pin_host
+pos 4 880 40
+default 4 0 ""
+exec 3 0 4
+node 5 SetVar pinCleared
+pos 5 1160 40
+exec 4 0 5
+data 5 0 4 0
+node 6 Fn.net_join_link
+pos 6 1440 40
+default 6 0 "hello"
+exec 5 0 6
+node 7 SetVar joinHello
+pos 7 1720 40
+exec 6 0 7
+data 7 0 6 0
+node 8 GetVar pinMadeUp
+pos 8 40 240
+node 9 Concat
+pos 9 320 240
+default 9 0 "Pin a made-up key: "
+data 9 1 8 0
+node 10 Concat
+pos 10 600 240
+data 10 0 9 0
+default 10 1 "   Clear the pin: "
+node 11 GetVar pinCleared
+pos 11 600 390
+node 12 Concat
+pos 12 880 240
+data 12 0 10 0
+data 12 1 11 0
+node 13 Concat
+pos 13 1160 240
+data 13 0 12 0
+default 13 1 "   Join hello: "
+node 14 GetVar joinHello
+pos 14 1160 390
+node 15 Concat
+pos 15 1440 240
+data 15 0 13 0
+data 15 1 14 0
+node 16 SetText Readout
+pos 16 2000 40
+exec 7 0 16
+data 16 0 15 0
+node 17 OnKey h
+pos 17 40 560
+entry OnKey:h 17
+node 18 Fn.net_host
+pos 18 320 560
+default 18 0 47777
+exec 17 0 18
+node 19 SetVar hostOk
+pos 19 600 560
+exec 18 0 19
+data 19 0 18 0
+node 20 GetVar hostOk
+pos 20 600 710
+node 21 Concat
+pos 21 880 710
+default 21 0 "Host on UDP 47777: "
+data 21 1 20 0
+node 22 SetText Status
+pos 22 1160 560
+exec 19 0 22
+data 22 0 21 0
+node 23 OnKey j
+pos 23 40 860
+entry OnKey:j 23
+node 24 Fn.net_pin_host
+pos 24 320 860
+default 24 0 ""
+exec 23 0 24
+node 25 Fn.net_join_link
+pos 25 600 860
+default 25 0 "okay://join?game=Playground&addr=127.0.0.1:47777"
+exec 24 0 25
+node 26 SetVar joinOk
+pos 26 880 860
+exec 25 0 26
+data 26 0 25 0
+node 27 GetVar joinOk
+pos 27 880 1010
+node 28 Concat
+pos 28 1160 1010
+default 28 0 "Join 127.0.0.1:47777: "
+data 28 1 27 0
+node 29 SetText Status
+pos 29 1440 860
+exec 26 0 29
+data 29 0 28 0
+node 30 OnUpdate
+pos 30 40 1160
+entry OnUpdate 30
+node 31 Fn.net_is_server
+pos 31 320 1160
+exec 30 0 31
+node 32 SetVar isHost
+pos 32 600 1160
+exec 31 0 32
+data 32 0 31 0
+node 33 Fn.net_connected
+pos 33 880 1160
+exec 32 0 33
+node 34 SetVar connected
+pos 34 1160 1160
+exec 33 0 34
+data 34 0 33 0
+node 35 Fn.net_peers
+pos 35 1440 1160
+exec 34 0 35
+node 36 SetVar players
+pos 36 1720 1160
+exec 35 0 36
+data 36 0 35 0
+node 37 GetVar isHost
+pos 37 40 1330
+node 38 Concat
+pos 38 320 1330
+default 38 0 "Hosting: "
+data 38 1 37 0
+node 39 Concat
+pos 39 600 1330
+data 39 0 38 0
+default 39 1 "   Connected: "
+node 40 GetVar connected
+pos 40 600 1480
+node 41 Concat
+pos 41 880 1330
+data 41 0 39 0
+data 41 1 40 0
+node 42 Concat
+pos 42 1160 1330
+data 42 0 41 0
+default 42 1 "   Players: "
+node 43 GetVar players
+pos 43 1160 1480
+node 44 Concat
+pos 44 1440 1330
+data 44 0 42 0
+data 44 1 43 0
+node 45 SetText Live
+pos 45 2000 1160
+exec 36 0 45
+data 45 0 44 0

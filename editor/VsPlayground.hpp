@@ -67,6 +67,8 @@ inline const VsPlaygroundDemo* VsPlaygroundDemos(int* count = nullptr) {
          "For Each Map adds up a map of three things. The readout shows 13."},
         {"flow_run_graph", "Flow - Run Another Graph", "flow_run_graph.okayscene", "flow_run_graph.okayvs", "Runner",
          "Run Another Graph runs a second file that sets a number. The readout shows 7."},
+        {"online", "Online - Net Join Link and Net Pin Host", "online.okayscene", "online.okayvs", "Lobby",
+         "Net Join Link and Net Pin Host answer with no server. In two windows, H hosts and J joins by link."},
 #include "generated/gplib_demos.inc"
     };
     if (count) *count = (int)(sizeof(kDemos) / sizeof(kDemos[0]));
@@ -134,6 +136,8 @@ inline const char* VsPlaygroundForNode(const char* type) {
         {"SwitchCases", "flow_switch"}, {"LatchGate", "flow_latch"}, {"ForEachMap", "flow_map"}, {"RunGraph", "flow_run_graph"},
     };
     for (const Row& r : kFlowRows) if (std::strcmp(r.type, type) == 0) return r.demo;
+    static const Row kOnlineRows[] = {{"Fn.net_join_link", "online"}, {"Fn.net_pin_host", "online"}};
+    for (const Row& r : kOnlineRows) if (std::strcmp(r.type, type) == 0) return r.demo;
     static const Row kGameplayLib[] = {
 #include "generated/gplib_playground.inc"
     };

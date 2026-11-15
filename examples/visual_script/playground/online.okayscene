@@ -1,0 +1,60 @@
+okayscene 3
+name "VS Playground: Online"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "f29490ad1ca14691b19ddec7e1c1cf7d"
+  active 1
+  parent -1
+  transform 0 6 -10 0.2669336 0 0 0.96371496 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Instructions"
+  guid "ddb11c08b6484ad98109117ceb4e967b"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Online: Net Join Link and Net Pin Host. Press Play. The line below needs no server: a made-up key is refused (0), an empty key clears the pin (1) and the word hello is not a join link (0).
+To really join, run this scene in two windows. Press H in one (it hosts on UDP 47777), then J in the other (it clears the pin and joins by link). The last line shows hosting, connected and players." 1 1 1 1 1.8 1 24 28 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 1000 170 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 2 "Readout"
+  guid "da701a5ee4fe421bbec9428a46ab80b0"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Press Play" 0.45 1 0.55 1 1.8 1 24 214 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 1000 40 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 3 "Status"
+  guid "504e91f51c8c481eb2b9fba5116c0851"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Press H to host or J to join" 1 0.86 0.45 1 1.8 1 24 262 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 1000 40 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 4 "Live"
+  guid "7b8f5e80bf274f4985caef0d50961baa"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Hosting: 0   Connected: 0   Players: 0" 0.7 0.85 1 1 1.8 1 24 310 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 1000 40 1 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 5 "Net"
+  guid "6f25db069a204d31b36fd7ba4aba7389"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  network 0 45000 "" "" "" 8 20 "" ""
+end
+gameobject 6 "Lobby"
+  guid "54c1e49778ad4c9496dbe8f1f5aaf0ab"
+  active 1
+  parent -1
+  transform 0 0.5 0 0 0 0 1 1 1 1
+  mesh "Cube" 0.9 0.9 0.95 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  visualscript ""
+  visualscriptpath "online.okayvs"
+end

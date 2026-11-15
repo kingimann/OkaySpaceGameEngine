@@ -162,6 +162,14 @@ for d in $EXAMPLE_DIRS; do
         [ -f "$f" ] && cp "$f" "$OUT_DIR/examples/$d/"
     done
 done
+# The visual-script Node Playground (File > Examples > Visual Script Node Playground opens these scenes, and each demo's
+# graph sits beside its scene). It is a subfolder, so the loop above does not take it. About 0.4 MB.
+[ -d examples/visual_script/playground ] || { echo "error: examples/visual_script/playground is missing" >&2; exit 1; }
+mkdir -p "$OUT_DIR/examples/visual_script/playground"
+for f in examples/visual_script/playground/*; do
+    [ -f "$f" ] && cp "$f" "$OUT_DIR/examples/visual_script/playground/"
+done
+[ -s "$OUT_DIR/examples/visual_script/playground/online.okayscene" ] || { echo "error: examples/visual_script/playground/online.okayscene did not make it into the distribution" >&2; exit 1; }
 # The texture the obj_texture_paths cubes name (the same starter file that ships in Assets/Textures).
 cp assets/textures/grid.png "$OUT_DIR/examples/obj_texture_paths/"
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }

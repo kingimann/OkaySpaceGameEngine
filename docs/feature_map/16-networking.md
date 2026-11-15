@@ -86,9 +86,9 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
   - 16.4.6 Rich presence from a session - `Net/SessionPresence` - `DescribeSession` turns a live NetworkManager into what friends see ("Hosting a match 3/8") plus the join link
 - **Code:** `Net/JoinLink`, `Net/ServerQuery`, `Net/ServerBrowser`, `Net/Matchmaking`, `Net/Matchmaker`, `Net/SessionPresence`, `player/main.cpp`
 - **API:** `JoinLink`, `NetworkManager::JoinByLink`, `QueryServers`, `ServerBrowser::Shared`, `Matchmaker`, `DescribeSession`, scripts `net_browser_open`, `net_browser_refresh`, `net_browser_join`, `net_queue_join`, `net_queue_state`, `net_join_link`, action Open Server Browser
-- **Editor:** none; the player draws the "Find a server" window and a "Finding a match" banner (`player/main.cpp`)
-- **Docs:** `docs/launcher-multiplayer.md` (In-game server browser, Public servers, Matchmaking), `docs/supabase-backend.md`
-- **Tests:** `launcher_join`, `matchmaker`, `matchmaking`, `net_token_policy`
+- **Editor:** the player draws the "Find a server" window and a "Finding a match" banner (`player/main.cpp`); in the visual-script editor the nodes Net Join Link and Net Pin Host are in the Add Node menu under Online, and File > Examples > Visual Script Node Playground > "Online - Net Join Link and Net Pin Host" is a demo of them
+- **Docs:** `docs/launcher-multiplayer.md` (In-game server browser, Public servers, Matchmaking), `docs/supabase-backend.md`, `docs/try_it.md` 7c (the demo `examples/visual_script/playground/online.okayscene`)
+- **Tests:** `launcher_join`, `matchmaker`, `matchmaking`, `net_token_policy`, `vs_net_link_pin` (Net Join Link and Net Pin Host run as nodes against a loopback server), `vs_online_playground` (the demo scene played, and its graph joining a host in a second scene)
 - **Status:** Works - join links, queries, LAN scan, presence and a joining game are in `launcher_join`; the queue uses an in-memory stand-in for the SQL in `matchmaker`
 - **Open:** the live Supabase queue and `game_sessions` listing are only checked by hand per the test comments; an `allocate_match` Edge Function (start a server per match) is not written (docs/dedicated-server.md)
 - **Related:** 16.5, 16.9, 17.8, 17.15, 17.3

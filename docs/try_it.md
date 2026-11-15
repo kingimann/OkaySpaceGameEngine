@@ -27,8 +27,8 @@ sequences) next to itself, so the folder works from any install path.
 
 What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
 `spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
-Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
-`visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
+Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins`. The
+subfolder `visual_script\playground` (the Node Playground demo scenes, about 0.4 MB, see 7c) is shipped too. The packaging is checked by reading and by running the copy step of
 `scripts/build-windows-dist.sh` on Linux (see "How the packaging was checked" at the end); nobody has run the whole
 release job or the installer build for this change.
 
@@ -44,6 +44,7 @@ release job or the installer build for this change.
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
 | 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
+| 7c | Online nodes Net Join Link and Net Pin Host in the visual-script editor | Add Node > Online, and the demo `examples\visual_script\playground\online.okayscene` | Nodes shown again and demo new in this change; editor clicks and two real windows unverified |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
@@ -235,6 +236,56 @@ the Details step and cannot start a second create. Unverified: the launcher scre
 compiled or run on this machine).
 
 ---
+
+## 7c. Online nodes: Net Join Link and Net Pin Host
+
+**What it is.** Two nodes for the visual-script editor. **Net Join Link** joins a game from an `okay://join?...` link (it
+answers 1 when it started the join, 0 when the text is not a join link). **Net Pin Host** makes this player join only the
+host whose identity key matches (an empty key removes the pin; it answers 0 for a key that is not well formed). Both had
+been hidden from the Add Node menu "until tested". A test now runs them as nodes against a loopback server, so they are
+back. The sample below (`online.okayscene`) is the one place they are wired up for you. Before this change the whole
+visual-script Node Playground (File > Examples) was not in the Windows zip or installer at all; the packaging step now
+copies it into `examples\visual_script\playground\`.
+
+**Where they are.** Open a visual-script graph, click **+ Instruction**, choose the topic **Online**: **Net Join Link** and
+**Net Pin Host** are in the list (or type `net join link` or `pin host` in the search box). Checked here by running the
+editor's own palette code on Linux: both are in the topic Online, not hidden.
+
+**Steps (no server needed).**
+1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and paste
+   `<install folder>\examples\visual_script\playground\online.okayscene` (see "Where the files are"). You can also try
+   **File > Examples > Visual Script Node Playground > Online - Net Join Link and Net Pin Host**. That menu finds the
+   demo folder from where the editor was started: if the Console says "Node Playground scenes were not found", use
+   File > Open instead.
+2. Press **Play**. White text at the top explains the scene. A green line says
+   `Pin a made-up key: 0   Clear the pin: 1   Join hello: 0`: Net Pin Host refused the made-up key `not-a-key` (0) and
+   accepted the empty key (1); Net Join Link said 0 for the word `hello` because it is not a join link. A yellow line says
+   `Press H to host or J to join`. A blue line says `Hosting: 0   Connected: 0   Players: 0`.
+
+**Steps (two windows on one PC, a real join by link).**
+3. Press Stop. Start a second editor (`Tools\OkayEngine.exe` again), open the same scene in it, and press **Play** in both.
+4. In window 1 press **H**: it hosts on UDP port 47777. Yellow: `Host on UDP 47777: 1`. Blue: `Hosting: 1   Connected: 1   Players: 0`.
+   Windows may ask whether to let the editor through the firewall: allow it on a private network, or press Cancel and the
+   host still works on this PC.
+5. In window 2 press **J**: it clears the pin, then joins `okay://join?game=Playground&addr=127.0.0.1:47777`. Yellow:
+   `Join 127.0.0.1:47777: 1`. Within a second both blue lines say `Players: 1`, and window 2 says
+   `Hosting: 0   Connected: 1   Players: 1`.
+6. To use a link from a real host, open the graph (select `Lobby`, then the Visual Script window), double-click the link
+   text of the **Net Join Link** node on the J row and paste the link, then press J.
+
+**How you know it worked.** The green line in step 2 reads exactly as above, with no server running. In step 5 the blue line
+of window 2 turns to `Connected: 1`.
+
+**Not covered.** Pinning to a real host key needs a host that has an identity key and encryption on (a dedicated server
+started with a host key, `docs/anticheat.md`); the demo only clears the pin. The test `vs_net_link_pin` covers the
+pinned, encrypted join (the right key joins sealed, a wrong key never joins) when the build has a crypto backend.
+
+**Tested here (Linux, headless).** `vs_online_playground` loads this scene from disk, plays it, and runs its graph in
+two scenes in one process (H hosts, J joins by link, the blue lines read as above): 39 checks, 0 failures. `vs_net_link_pin`
+(31 checks) runs the two nodes against a loopback server, including the sealed join with the right key and the refusal of
+a wrong key. `vs_net_nodes` (41 checks) runs 16 other online nodes (host, join, name, room, state, send, poll, leave) the
+same way. **Unverified:** the real editor window, clicking H and J in two windows, the File > Examples menu finding the
+folder on Windows, the firewall prompt, and a join over a real network.
 
 ## Switches that are off by default (own code)
 

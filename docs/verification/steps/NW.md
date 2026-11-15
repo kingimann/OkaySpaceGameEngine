@@ -63,3 +63,16 @@
 - **See:** the connected game gets laggy as you raise the numbers.
 - **Partial:** steps beyond opening the panel are unverified.
 - **Grounded:** no
+
+### V-NW-007 Join by link from a visual script (Net Join Link, Net Pin Host)
+- **Map:** 14, 16.4
+- **Where:** editor, two windows on one PC
+- **Steps:**
+  1. Choose **File > Open...** and open `examples\visual_script\playground\online.okayscene` (zip: the `examples` folder next to `OkaySpace.exe`; installer: `%LOCALAPPDATA%\OkaySpace\examples`). Press Play (Ctrl+P).
+  2. Read the green line. Then Stop, start a second editor, open the same scene in both and press Play in both.
+  3. In window 1 press H (it hosts on UDP 47777). In window 2 press J (it joins `okay://join?game=Playground&addr=127.0.0.1:47777`).
+  4. In any graph, click **+ Instruction**, open the topic **Online** and look for **Net Join Link** and **Net Pin Host**.
+- **See:** the green line says `Pin a made-up key: 0   Clear the pin: 1   Join hello: 0`; after H and J both blue lines say `Players: 1` and window 2 says `Connected: 1`; both nodes are in the Online topic.
+- **Partial:** pinning to a real host key needs a host with an identity key (dedicated server); the demo only clears the pin. The Windows firewall may ask about the host window. File > Examples may not find the folder if the editor was started far from the install folder; use File > Open.
+- **Link:** [../../try_it.md](../../try_it.md)
+

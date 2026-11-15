@@ -3553,3 +3553,11 @@ add_test(NAME vs_api_silent COMMAND test_vs_api_silent)
 add_executable(test_vs_net_link_pin test_vs_net_link_pin.cpp)
 target_link_libraries(test_vs_net_link_pin PRIVATE okay::engine)
 add_test(NAME vs_net_link_pin COMMAND test_vs_net_link_pin)
+
+# The Online demo of the visual-script Node Playground (examples/visual_script/playground/online.*): the shipped scene
+# played from disk, then its graph in two scenes (a host and a guest) joining by link.
+add_executable(test_vs_online_playground test_vs_online_playground.cpp)
+target_include_directories(test_vs_online_playground PRIVATE ${CMAKE_SOURCE_DIR}/editor)   # editor/VsPlayground.hpp (no ImGui needed)
+target_link_libraries(test_vs_online_playground PRIVATE okay::engine)
+target_compile_definitions(test_vs_online_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_online_playground COMMAND test_vs_online_playground)

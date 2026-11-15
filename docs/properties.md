@@ -272,7 +272,7 @@ More of the builder:
 
 ## What is registered
 
-2645 properties on 192 types, as `property_registry` counts them ("covered 192 component types, 2645 properties"; a number before a slash counts the authored ones; the rest are
+2687 properties on 193 types, as `property_registry` counts them ("covered 193 component types, 2687 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -336,6 +336,7 @@ has `enabled`.
 | BehaviorTreeRunner, SplineMesh, SplineInstancer | 6, 16, 16 | tree file, tick rate and home point (the blackboard overrides are a list); spline mesh extrude and repeat settings (the custom profile is a list; `meshAxis` uses the explicit-values enum); spline instancer source, spacing, seed, jitter, scale and alignment |
 | NPCController | 38 | behaviour and target, movement, senses, temper, wander and patrol, combat and animation switches. The waypoints are a list (`npcwp` records); current health is play state |
 | InventoryUI | 58 | hotbar and backpack, keys and clicks (sort mode as an enum), layout, text, panel and colours. The rarity rules are a list; open, scroll and the drag state are play state. The record does not save `gamepadNav`, so it is not a property yet |
+| GridInventoryUI | 42 | grid, containers (the nearby column and stacked bags), style and colours. The rarity rules are a list; the drag state and scroll are play state |
 
 How the new types are described, so a tool can rely on it:
 

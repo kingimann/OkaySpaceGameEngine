@@ -1,11 +1,12 @@
 // Our own IQM (Inter-Quake Model, version 2, binary) reader: meshes with positions, normals, texture coordinates and
 // four skin weights per vertex, a joint hierarchy, and frame animations stored as per-pose channel masks.
-// Written from the IQM specification text (Lee Salzman's iqm.txt: the header, the iqmmesh / iqmtriangle / iqmjoint /
-// iqmpose / iqmanim / iqmvertexarray records and the frame-channel packing rule) and from looking at a real file's
-// headers and tables with a hex dump; no code from any other importer was read. Bounds-checked, every count is checked
+// Written from my memory of the IQM specification text (Lee Salzman's iqm.txt: the header, the iqmmesh / iqmtriangle / iqmjoint /
+// iqmpose / iqmanim / iqmvertexarray records and the frame-channel packing rule; it was not fetched during the work), with every layout detail
+// checked against a hex dump of one real file; no code from any other importer was read. Bounds-checked, every count is checked
 // against the file size and a per-file budget before anything is allocated, no recursion, no unbounded allocation.
 // See okay/Render/ModelData.hpp and docs/own_iqm_reader.md.
 #include "BinReader.hpp"
+#include "ReaderCommon.hpp"
 #include "SceneRefPath.hpp"
 #include "TextReaderUtil.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -30,7 +31,9 @@ constexpr std::size_t kMaxFileBytes = 128u * 1024u * 1024u;
 // shared arrays, so each mesh counts again). A mesh is one part and every part carries a copy of the whole bone list.
 constexpr std::uint32_t kMaxVerts = 4000000, kMaxTris = 4000000, kMaxJoints = 10000, kMaxMeshes = 10000, kMaxAnims = 10000, kMaxVertexArrays = 64;
 constexpr std::uint64_t kMaxJointFrames = 500000;   // frames x poses over all animations (each costs up to three keys)
-constexpr std::uint64_t kMaxBoneRefs = 500000;      // meshes x joints
+constexpr std::uint32_t kMaxOutVerts = 1000000, kMaxOutTris = 1000000;   // FILE-WIDE output: summed over all meshes, so one small range named by many meshes counts each time
+constexpr std::uint64_t kMaxBoneRefs = 100000;      // meshes x joints
+constexpr std::uint64_t kMaxBoneNameBytes = 16u * 1024u * 1024u;   // meshes x the joint names' bytes (every part carries a copy of the bone list)
 constexpr double kMaxCoord = 1e15;
 constexpr std::size_t kMaxName = 256;
 
@@ -157,8 +160,8 @@ static bool ReadIqmImpl(const std::string& bytes, const std::string& baseDir, Im
             if ((std::uint64_t)m.firstVert + m.numVerts > numVerts) return Fail(err, "a mesh names vertices that are not in the vertex arrays");
             if ((std::uint64_t)m.firstTri + m.numTris > numTris) return Fail(err, "a mesh names triangles that are not in the triangle table");
             vsum += m.numVerts; tsum += m.numTris;
-            if (vsum > kMaxVerts) return Fail(err, "the meshes together use too many vertices (more than " + std::to_string(kMaxVerts) + ")");
-            if (tsum > kMaxTris) return Fail(err, "the meshes together use too many triangles (more than " + std::to_string(kMaxTris) + ")");
+            if (vsum > kMaxOutVerts) return Fail(err, "the meshes together make too many output vertices (more than " + std::to_string(kMaxOutVerts) + "; a range named by several meshes counts each time)");
+            if (tsum > kMaxOutTris) return Fail(err, "the meshes together make too many output triangles (more than " + std::to_string(kMaxOutTris) + "; a range named by several meshes counts each time)");
         }
     }
     if ((std::uint64_t)numMeshes * numJoints > kMaxBoneRefs) return Fail(err, "meshes x joints is over the budget of " + std::to_string(kMaxBoneRefs) + " (every mesh carries the whole bone list)");
@@ -206,6 +209,11 @@ static bool ReadIqmImpl(const std::string& bytes, const std::string& baseDir, Im
             j.r = NormalizedQ(qx, qy, qz, qw, &z);
             if (z) ++zeroQuats;
         }
+    }
+    {   // the bone list is copied into every part: its size in bytes is part of the budget
+        std::uint64_t nameBytes = 0;
+        for (const Joint& j : joints) nameBytes += j.name.size() + 24;
+        if (nameBytes * numMeshes > kMaxBoneNameBytes) return Fail(err, "meshes x joint name bytes is over the budget of " + std::to_string(kMaxBoneNameBytes) + " (every mesh carries the whole bone list)");
     }
     // ---- poses ----
     std::vector<Pose> poses(numPoses);
@@ -278,9 +286,10 @@ static bool ReadIqmImpl(const std::string& bytes, const std::string& baseDir, Im
 
     // ---- meshes -> parts ----
     std::vector<ImportedBone> bones;
+    int singularJoints = 0;
     if (haveSkinData) {
         bones.resize(numJoints);
-        for (std::uint32_t i = 0; i < numJoints; ++i) { bones[i].name = nodeName[i]; bones[i].inverseBind = abs[i].Inverse(); }
+        for (std::uint32_t i = 0; i < numJoints; ++i) { bones[i].name = nodeName[i]; if (detail::rc::Singular3(abs[i])) { bones[i].inverseBind = Mat4::Identity(); ++singularJoints; } else bones[i].inverseBind = abs[i].Inverse(); }
     }
     bool needRootBone = false;
     int badTris = 0, degenerate = 0, badNormals = 0, badBlend = 0, unweighted = 0, emptyMeshes = 0;
@@ -474,6 +483,7 @@ static bool ReadIqmImpl(const std::string& bytes, const std::string& baseDir, Im
     if (loops) note(std::to_string(loops) + " joint parent loop(s) were cut");
     if (dupNames) note(std::to_string(dupNames) + " joint name(s) are repeated: the later ones got a numeric suffix");
     if (zeroQuats) note(std::to_string(zeroQuats) + " joint rotation(s) of zero length were read as no rotation");
+    if (singularJoints) note(std::to_string(singularJoints) + " joint(s) with a zero scale (or flat axes) cannot be inverted: their inverse bind matrix is the identity, so skinning to them is wrong");
     if (badNames) note(std::to_string(badNames) + " name(s) point outside the text block and are empty");
     if (badTris) note(std::to_string(badTris) + " triangle(s) with a vertex outside their mesh's range skipped");
     if (degenerate) note(std::to_string(degenerate) + " triangle(s) with a repeated vertex skipped");

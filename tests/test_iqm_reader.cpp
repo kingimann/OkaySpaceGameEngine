@@ -16,6 +16,7 @@
 #include <fstream>
 #include <new>
 #include <string>
+#include <vector>
 
 using namespace okay;
 namespace fs = std::filesystem;
@@ -38,8 +39,35 @@ void operator delete[](void* p) noexcept { CountedFree(p); }
 void operator delete(void* p, std::size_t) noexcept { CountedFree(p); }
 void operator delete[](void* p, std::size_t) noexcept { CountedFree(p); }
 
+static constexpr std::size_t kWorstCap = 50u * 1024u * 1024u;   // about 2x the measured worst case (24 MB)
+static constexpr std::size_t kReuseCap = 50u * 1024u * 1024u;   // about 2x the measured 24 MB
 static bool HasNote(const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; }
 static bool Read(const std::string& b, ImportedModel& m, std::string* e = nullptr) { std::string er; const bool ok = ReadIqmBuffer(b, "dir/", m, e ? e : &er); return ok; }
+
+
+// A small file whose meshes all name the same tiny range: `nMeshes` meshes of `verts` vertices each (one position array of `verts` vertices, one triangle),
+// `nJoints` joints with names `nameLen` characters long. The file is a few hundred KB however many parts it would make.
+static std::string BuildReusing(std::uint32_t nMeshes, std::uint32_t verts, std::uint32_t nJoints, std::size_t nameLen) {
+    std::string text(1, '\0');
+    std::vector<std::uint32_t> jn;
+    for (std::uint32_t j = 0; j < nJoints; ++j) { jn.push_back((std::uint32_t)text.size()); std::string n = std::to_string(j); n.resize(nameLen, 'n'); text += n; text.push_back('\0'); }
+    std::string s;
+    s.append("INTERQUAKEMODEL", 15); s.push_back('\0'); s.resize(124, '\0');
+    const std::uint32_t ofsText = (std::uint32_t)s.size(); s += text; while (s.size() % 4) s.push_back('\0');
+    const std::uint32_t ofsM = (std::uint32_t)s.size();
+    for (std::uint32_t m = 0; m < nMeshes; ++m) { fx::P32(s, 0); fx::P32(s, 0); fx::P32(s, 0); fx::P32(s, verts); fx::P32(s, 0); fx::P32(s, 1); }
+    const std::uint32_t ofsVA = (std::uint32_t)s.size();
+    fx::P32(s, 0); fx::P32(s, 0); fx::P32(s, 7); fx::P32(s, 3); const std::size_t vaOfs = s.size(); fx::P32(s, 0);
+    const std::uint32_t ofsT = (std::uint32_t)s.size(); fx::P32(s, 0); fx::P32(s, 1); fx::P32(s, 2);
+    const std::uint32_t ofsJ = (std::uint32_t)s.size();
+    for (std::uint32_t j = 0; j < nJoints; ++j) { fx::P32(s, jn[j]); fx::P32(s, (std::uint32_t)-1); for (float v : {0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f, 1.f}) fx::PutF(s, v); }
+    const std::uint32_t ofsP = (std::uint32_t)s.size();
+    for (std::uint32_t i = 0; i < verts; ++i) { fx::PutF(s, (float)(i % 97)); fx::PutF(s, (float)(i / 97)); fx::PutF(s, 0.0f); }
+    fx::Put32(s, vaOfs, ofsP);
+    const std::uint32_t vals[27] = {2, (std::uint32_t)s.size(), 0, (std::uint32_t)text.size(), ofsText, nMeshes, ofsM, 1, verts, ofsVA, 1, ofsT, 0, nJoints, ofsJ, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (int i = 0; i < 27; ++i) fx::IqmSetH(s, i, vals[i]);
+    return s;
+}
 
 int main() {
     RUN_SUITE("iqm_reader");
@@ -184,6 +212,39 @@ int main() {
         std::string h = f; fx::IqmSetH(h, fx::kNumMeshes, 10000); fx::IqmSetH(h, fx::kNumJoints, 100);
         CHECK(!Read(h, m, &e));
     }
+    {   // memory amplification: many meshes naming one tiny range. The budget is on the OUTPUT (summed over meshes), and the bone list is copied per part
+        const std::string big = BuildReusing(10000, 400, 0, 4);   // 10,000 x 400 = 4,000,000 output vertices from a tiny file
+        std::size_t base = g_live.load(); g_peak.store(base);
+        ImportedModel m; std::string e;
+        CHECK(!Read(big, m, &e) && e.find("output vertices") != std::string::npos);
+        std::fprintf(stderr, "  10,000 meshes x 400 vertices (%zu KB file): refused, peak %zu KB beyond the input\n", big.size() >> 10, (g_peak.load() - base) >> 10);
+        CHECK(g_peak.load() - base < 4u * 1024u * 1024u);
+        // the largest such file that is allowed: 1,000,000 output vertices (2,500 meshes x 400)
+        const std::string ok = BuildReusing(2500, 400, 0, 4);
+        base = g_live.load(); g_peak.store(base);
+        CHECK(Read(ok, m, &e) && m.parts.size() == 2500);
+        const std::size_t peak = (g_peak.load() - base) >> 20;
+        std::fprintf(stderr, "  2,500 meshes x 400 vertices (1,000,000 output vertices): read, peak %zu MB beyond the input\n", peak);
+        CHECK(g_peak.load() - base < kReuseCap);
+        CHECK(!Read(BuildReusing(2501, 400, 0, 4), m, &e) && e.find("output vertices") != std::string::npos);
+        // triangles: 1,000,001 meshes would be needed: the mesh cap and the vertex budget come first, so check the message of the one that fires
+        // the bone list: 100 joints with 255-character names x 1,000 meshes = 100,000 bone entries (the entry budget) but 27 MB of names
+        const std::string names = BuildReusing(1000, 4, 100, 255);
+        base = g_live.load(); g_peak.store(base);
+        CHECK(!Read(names, m, &e) && e.find("name bytes") != std::string::npos);
+        CHECK(g_peak.load() - base < 4u * 1024u * 1024u);
+        CHECK(!Read(BuildReusing(1001, 4, 100, 4), m, &e) && e.find("meshes x joints") != std::string::npos);
+        CHECK(Read(BuildReusing(1000, 4, 100, 4), m, &e));   // short names: the same shape passes (blend arrays are absent, so no bone lists: rigid parts)
+    }
+    {   // a joint with zero scale cannot be inverted: identity inverse bind and a note, not a silent wrong matrix
+        std::string f = fx::BuildIqm();
+        const std::uint32_t oj = fx::IqmH(f, fx::kOfsJoints);
+        fx::Put32(f, oj + 48 + 36, 0);   // arm: scale.x = 0.0f
+        ImportedModel m;
+        CHECK(Read(f, m) && HasNote(m, "zero scale") && m.parts[0].bones.size() == 2);
+        const Mat4& I = m.parts[0].bones[1].inverseBind;
+        for (int k = 0; k < 16; ++k) CHECK(fx::Near(I.m[k], (k % 5 == 0) ? 1.0f : 0.0f));
+    }
     {   // the worst file the budgets allow: 100 joints x 5000 frames = 500,000 joint frames, every channel animated; memory is counted
         const std::uint32_t nj = 100, nf = 5000;
         std::string s;
@@ -207,7 +268,7 @@ int main() {
         const std::size_t extra = g_peak.load() - base;
         std::fprintf(stderr, "  worst allowed file (%zu MB): %s in %.2f s, peak %zu MB beyond the input\n", s.size() >> 20, ok ? "read" : e.c_str(), secs, extra >> 20);
         CHECK(ok && m.clips.size() == 1 && m.clips[0].channels.size() == nj);
-        CHECK(extra < 160u * 1024u * 1024u);
+        CHECK(extra < kWorstCap);
         CHECK(secs < 20.0);
         // one frame more is refused before any key is made
         fx::IqmSetH(s, fx::kNumFrames, nf + 1);

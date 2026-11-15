@@ -9,8 +9,9 @@ Status: **header recognised, body NOT read.** Off by default (`OKAY_OWN_NDO`, sl
 ## Why there is no geometry code
 
 - No real `.ndo` file exists in this repository, on this machine, or in Assimp's test tree.
-- The only descriptions of the Nendo body that exist are other projects' importer source code. Rule 19a forbids reading or following it. A web search for a specification found only that, so **nothing about the body was looked at or guessed**. Inventing a layout would produce a reader that looks finished and is not.
-- **Disclosure**: that search's summary text mentioned, in passing, that the header is `nendo 1.x`, that the file is big endian and that counts changed width at version 1.2. Only the `nendo ` header test uses that (it is also what the sample file extension lists say). Nothing else of it is used.
+- The only descriptions of the Nendo body that exist are other projects' importer source code. Rule 19a forbids reading or following it. A web search for a specification found only that, so **no description of the body was used and none was guessed** (the search summary's passing facts are listed in the disclosure below). Inventing a layout would produce a reader that looks finished and is not.
+- **Disclosure**: that search's summary text mentioned, in passing, that the header is `nendo 1.x`, that the file is big endian and that counts changed width at version 1.2. Only the `nendo ` header test uses that. Nothing else of it is used, but those three facts were seen, so the body is not "clean-room" untouched: whoever writes the body later should know that.
+- `ImportableExtensions()` does not list `.ndo`, even with `OKAY_OWN_NDO=1`, because the reader refuses everything (tested in `own_dispatch_e3`).
 
 ## What is needed to finish it
 

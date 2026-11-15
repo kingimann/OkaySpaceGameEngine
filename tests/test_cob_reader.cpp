@@ -37,6 +37,7 @@ void operator delete[](void* p) noexcept { CountedFree(p); }
 void operator delete(void* p, std::size_t) noexcept { CountedFree(p); }
 void operator delete[](void* p, std::size_t) noexcept { CountedFree(p); }
 
+static constexpr std::size_t kWorstCap = 480u * 1024u * 1024u;   // about 2x the measured worst case (see the printed peak)
 static bool HasNote(const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; }
 static bool Read(const std::string& b, ImportedModel& m, std::string* e = nullptr) { std::string er; return ReadCobBuffer(b, "dir/", m, e ? e : &er); }
 static double PartArea(const ImportedPart& p) { ImportedModel m; m.nodes.push_back(ImportedNode{}); m.parts.push_back(p); return fx::Area(m); }
@@ -178,14 +179,14 @@ int main() {
         CHECK(!Read(v, m, &e) && e.find("too many vertices") != std::string::npos);
         std::string tri = a + "World Vertices 3\n0 0 0\n1 0 0\n0 1 0\nFaces 1000001\n";
         CHECK(!Read(tri, m, &e) && e.find("too many faces") != std::string::npos);
-        // 1,000,000 triangles in 500,001 quads: the triangle budget refuses, not the face budget
-        std::string q = a + "World Vertices 4\n0 0 0\n1 0 0\n1 1 0\n0 1 0\nFaces 500001\n";
-        for (int i = 0; i < 500001; ++i) q += "Face verts 4 flags 0 mat 0\n<0,0> <1,0> <2,0> <3,0> \n";
+        // 500,002 triangles in 250,001 quads: the triangle budget refuses, not the face budget
+        std::string q = a + "World Vertices 4\n0 0 0\n1 0 0\n1 1 0\n0 1 0\nFaces 250001\n";
+        for (int i = 0; i < 250001; ++i) q += "Face verts 4 flags 0 mat 0\n<0,0> <1,0> <2,0> <3,0> \n";
         CHECK(!Read(q, m, &e) && e.find("too many triangles") != std::string::npos);
     }
-    {   // the worst file the budgets allow: 1,000,000 triangles (500,000 quads x 2) in ASCII; memory is counted
+    {   // the worst file the budgets allow: 500,000 triangles (250,000 quads x 2) in ASCII; memory is counted
         std::string a = "Caligari V00.01ALH             \nPolH V0.08 Id 1 Parent 0 Size 1\nName B\ncenter 0 0 0\nx axis 1 0 0\ny axis 0 1 0\nz axis 0 0 1\nTransform\n1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n";
-        const int nq = 500000, side = 700;   // a grid of vertices; each quad uses 4 of them
+        const int nq = 250000, side = 500;   // a grid of vertices; each quad uses 4 of them
         const int nv = (side + 1) * (side + 1);
         a += "World Vertices " + std::to_string(nv) + "\n";
         for (int y = 0; y <= side; ++y) for (int x = 0; x <= side; ++x) a += std::to_string(x) + " " + std::to_string(y) + " " + std::to_string((x * 7 + y * 3) % 5) + "\n";
@@ -202,10 +203,74 @@ int main() {
         const bool ok = Read(a, m, &e);
         const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         const std::size_t extra = g_peak.load() - base;
-        std::fprintf(stderr, "  worst allowed file (%zu MB ASCII, 1,000,000 triangles): %s in %.2f s, peak %zu MB beyond the input\n", a.size() >> 20, ok ? "read" : e.c_str(), secs, extra >> 20);
-        CHECK(ok && fx::TriCount(m) == 1000000);
-        CHECK(extra < 700u * 1024u * 1024u);
+        std::fprintf(stderr, "  worst allowed file (%zu MB ASCII, 500,000 triangles): %s in %.2f s, peak %zu MB beyond the input\n", a.size() >> 20, ok ? "read" : e.c_str(), secs, extra >> 20);
+        CHECK(ok && fx::TriCount(m) == 500000);
+        CHECK(extra < kWorstCap);
         CHECK(secs < 60.0);
+    }
+    {   // quadratic work: many shader chunks that each look for their material (ids that match nothing make the old search scan every material)
+        const int nm = 100000, ns = 300000;
+        std::string a = "Caligari V00.01ALH             \n";
+        for (int i = 0; i < nm; ++i) a += "Mat1 V0.08 Id " + std::to_string(i + 1) + " Parent 5 Size 1\nmat# " + std::to_string(i % 60000) + "\nrgb 1,1,1\n";
+        for (int i = 0; i < ns; ++i) a += "ShBx V0.04 Id " + std::to_string(nm + 10 + i) + " Parent 99999999 Size 1\nfile name: string \"a.png\"\n";
+        a += "END V1.00 Id 0 Parent 0 Size 0\n";
+        ImportedModel m; std::string e;
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool ok = Read(a, m, &e);
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        std::fprintf(stderr, "  %d materials + %d shader chunks (ASCII, %zu MB): %s in %.2f s\n", nm, ns, a.size() >> 20, ok ? "read" : e.c_str(), secs);
+        CHECK(!ok && e.find("no polygon object") != std::string::npos);   // no object in it: refused for that, after the chunks were walked
+        CHECK(secs < 5.0);
+        // the same with a chunk count over the cap is refused by the cap
+        std::string b = "Caligari V00.01ALH             \n";
+        for (int i = 0; i < 1000001; ++i) b += "Unit V0.01 Id 1 Parent 0 Size 1\n";
+        CHECK(!Read(b, m, &e) && e.find("too many chunks") != std::string::npos);
+        // binary: 100,000 materials with distinct ids, 300,000 shader chunks naming nothing
+        std::string c = "Caligari V00.01BLH             \n";
+        for (int i = 0; i < nm; ++i) { std::string d; fx::P16(d, (unsigned)(i % 60000)); fx::PutU8(d, 'p'); fx::PutU8(d, 'a'); fx::PutU8(d, 40); for (int k = 0; k < 8; ++k) fx::PutF(d, 1); fx::CobChunk(c, "Mat1", i + 1, 5, d); }
+        std::string sh; fx::PutU8(sh, 0); fx::P16(sh, 1); sh += "x"; fx::P32(sh, 1); fx::P16(sh, 9); sh += "file name"; fx::P32(sh, 10); fx::P16(sh, 5); sh += "a.png"; fx::P16(sh, 3);
+        for (int i = 0; i < ns; ++i) fx::CobChunk(c, "ShBx", nm + 10 + i, 99999999, sh);
+        fx::CobChunk(c, "END ", 0, 0, std::string());
+        const auto t1 = std::chrono::steady_clock::now();
+        const bool okb = Read(c, m, &e);
+        const double sb = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
+        std::fprintf(stderr, "  binary: %s in %.2f s\n", okb ? "read" : e.c_str(), sb);
+        CHECK(!okb && e.find("no polygon object") != std::string::npos && sb < 5.0);
+    }
+    {   // quadratic / cubic work: many concave 256-corner polygons (ear clipping is cubic; above 48 corners the faces are fanned)
+        std::string a = "Caligari V00.01ALH             \nPolH V0.08 Id 1 Parent 0 Size 1\nName S\ncenter 0 0 0\nx axis 1 0 0\ny axis 0 1 0\nz axis 0 0 1\nTransform\n1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\n";
+        a += "World Vertices 256\n";
+        for (int i = 0; i < 256; ++i) { const double r = i % 2 ? 0.4 : 1.0, t = 6.283185307179586 * i / 256.0; a += std::to_string(r * std::cos(t)) + " " + std::to_string(r * std::sin(t)) + " 0\n"; }   // a 128-point star: concave
+        const int nf = 1900;   // 1900 x 254 = 482,600 triangles: inside the triangle budget
+        a += "Faces " + std::to_string(nf) + "\n";
+        std::string corners;
+        for (int i = 0; i < 256; ++i) corners += "<" + std::to_string(i) + ",0> ";
+        for (int i = 0; i < nf; ++i) a += "Face verts 256 flags 0 mat 0\n" + corners + "\n";
+        ImportedModel m; std::string e;
+        const auto t0 = std::chrono::steady_clock::now();
+        const bool ok = Read(a, m, &e);
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        std::fprintf(stderr, "  %d concave 256-corner faces: %s in %.2f s\n", nf, ok ? "read" : e.c_str(), secs);
+        CHECK(ok || e.find("too many") != std::string::npos);
+        CHECK(secs < 10.0);
+        // a 40-corner concave star is still ear clipped (it has no overlapping triangles: all 38 are inside the star)
+        std::string b = "Caligari V00.01ALH             \nPolH V0.08 Id 1 Parent 0 Size 1\nName S\ncenter 0 0 0\nx axis 1 0 0\ny axis 0 1 0\nz axis 0 0 1\nTransform\n1 0 0 0\n0 1 0 0\n0 0 1 0\n0 0 0 1\nWorld Vertices 40\n";
+        for (int i = 0; i < 40; ++i) { const double r = i % 2 ? 0.3 : 1.0, t = 6.283185307179586 * i / 40.0; b += std::to_string(r * std::cos(t)) + " " + std::to_string(r * std::sin(t)) + " 0\n"; }
+        b += "Faces 1\nFace verts 40 flags 0 mat 0\n";
+        for (int i = 0; i < 40; ++i) b += "<" + std::to_string(i) + ",0> ";
+        b += "\n";
+        ImportedModel s;
+        CHECK(Read(b, s, &e) && fx::TriCount(s) == 38);
+        // star area by hand: 20 points of radius 1 and 20 of radius 0.3, 40 triangles (O, outer, inner) of area 0.5 r1 r2 sin(9 degrees)
+        CHECK_NEAR(fx::Area(s), 40 * 0.5 * 1.0 * 0.3 * std::sin(6.283185307179586 / 40.0), 1e-3);
+    }
+    {   // a zero-scale parent cannot be undone: the child keeps its world matrix and a note says so
+        std::string a = fx::CobAscii();
+        const std::size_t p = a.find("2 0 0 10\n0 2 0 0\n0 0 2 0\n");
+        a.replace(p, std::string("2 0 0 10\n0 2 0 0\n0 0 2 0\n").size(), "0 0 0 10\n0 0 0 0\n0 0 0 0\n");
+        ImportedModel m;
+        CHECK(Read(a, m) && fx::Sane(m) && HasNote(m, "zero scale"));
+        CHECK(fx::Near(m.nodes[2].position.x, 10) && fx::Near(m.nodes[2].position.y, 5));   // the world position (10,0,5) after the swap (10,5,0)
     }
     {   // the real files, when at hand
         const char* dir = std::getenv("OKAY_E3_SAMPLES");

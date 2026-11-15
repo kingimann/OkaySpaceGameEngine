@@ -1,10 +1,9 @@
-// Our own COB (Caligari trueSpace) reader, binary ("B") and ASCII ("A") files. Written from the public description of the
-// chunk structure (a 32 byte file header "Caligari V00.01<A|B>LH", then chunks of type / version / id / parent id / size:
-// Grou and PolH objects with a name, a centre, three axes, a 3x4 transform, "World Vertices", "Texture Vertices" and "Faces"
-// of <vertex,texture-vertex> corners; Mat1 materials with the shader, facet, rgb, alpha ka ks exp ior; ShBx shader blocks) and
-// from reading real binary and ASCII files with a hex dump and a text viewer to settle the byte layout. No code from any other
-// importer was read. Bounds-checked, every count is checked against the data that is really there and a per-file budget
-// before anything is allocated, no recursion. See okay/Render/ModelData.hpp and docs/own_cob_reader.md.
+// Our own COB (Caligari trueSpace) reader, binary ("B") and ASCII ("A") files. No document was used: the chunk names and the ASCII keywords
+// (Grou, PolH, Mat1, ShBx, Name, center, Transform, World Vertices, Faces ...) are from memory of the format; every byte layout (the 20 byte chunk
+// header, the object chunk with its 48 byte centre-and-axes block and 3x4 matrix, the face record, Mat1, the ShBx parameter type codes 3 / 6 / 7 / 10
+// and the "file name" parameter) was settled by a hex dump and a text view of 8 real sample files. No importer source was read. Bounds-checked,
+// every count is checked against the data that is really there and a per-file budget before anything is allocated, no recursion.
+// See okay/Render/ModelData.hpp and docs/own_cob_reader.md.
 #include "BinReader.hpp"
 #include "PolygonTriangulate.hpp"
 #include "ReaderCommon.hpp"
@@ -29,8 +28,8 @@ using detail::bin::Br;
 
 constexpr std::size_t kMaxFileBytes = 128u * 1024u * 1024u;
 // Per-file budgets (counted over all objects). The triangle budget also bounds the work of the welding step.
-constexpr std::size_t kMaxObjects = 100000, kMaxVerts = 2000000, kMaxUvs = 2000000, kMaxFaces = 1000000, kMaxCorners = 4000000, kMaxTris = 1000000;
-constexpr std::size_t kMaxFaceCorners = 4096, kMaxMats = 100000, kMaxKinds = 256;
+constexpr std::size_t kMaxObjects = 100000, kMaxVerts = 2000000, kMaxUvs = 2000000, kMaxFaces = 500000, kMaxCorners = 2000000, kMaxTris = 500000;
+constexpr std::size_t kMaxFaceCorners = 4096, kMaxMats = 100000, kMaxKinds = 256, kMaxEarCorners = 48, kMaxChunks = 1000000;
 
 bool Fail(std::string* err, const std::string& m) { if (err) *err = "COB: " + m; return false; }
 
@@ -58,6 +57,10 @@ struct CMat {
 struct Parsed {
     std::vector<Obj> objs;
     std::vector<CMat> mats;
+    std::unordered_map<long long, std::size_t> matById;   // chunk id -> index in mats (the first Mat1 with that id)
+    std::size_t chunks = 0;
+    void AddMat(const CMat& m) { matById.emplace(m.id, mats.size()); mats.push_back(m); }
+    void SetTexture(long long matId, const std::string& tex) { auto it = matById.find(matId); if (it != matById.end() && mats[it->second].texture.empty()) mats[it->second].texture = tex; }
     std::map<std::string, int> skipped;   // chunk kinds that are not read, with how often each came
     int unitChunks = 0;
     std::size_t verts = 0, uvs = 0, faces = 0, corners = 0;
@@ -113,7 +116,7 @@ bool ParseBinary(const std::string& bytes, Parsed& P, std::string* err) {
         b.U16(); b.U16();                         // major, minor version
         const std::int32_t id = b.I32(), parent = b.I32(), size = b.I32();
         if (size < 0 || (std::uint64_t)size > (std::uint64_t)b.Left()) return Fail(err, "a chunk is larger than the rest of the file (the file is truncated or damaged)");
-        if (++chunks > 4u * kMaxObjects + 4u * kMaxMats + 1000000u) return Fail(err, "too many chunks");
+        if (++chunks > kMaxChunks) return Fail(err, "too many chunks (more than " + std::to_string(kMaxChunks) + ")");
         const unsigned char* d = (const unsigned char*)bytes.data() + b.pos;
         const std::size_t sz = (std::size_t)size;
         std::string t(type, 4);
@@ -191,12 +194,12 @@ bool ParseBinary(const std::string& bytes, Parsed& P, std::string* err) {
             m.alpha = c.F32();
             for (float& f : m.rgb) if (!std::isfinite(f)) f = 1.0f;
             if (!std::isfinite(m.alpha)) m.alpha = 1.0f;
-            P.mats.push_back(m);
+            P.AddMat(m);
         } else if (t == "ShBx") {
             bool unk = false;
             const std::string tex = BinShaderTexture(d, sz, unk);
             if (unk) ++P.badShaders;
-            if (!tex.empty()) for (CMat& m : P.mats) if (m.id == parent && m.texture.empty()) m.texture = tex;
+            if (!tex.empty()) P.SetTexture(parent, tex);
         } else if (t == "Unit") ++P.unitChunks;
         else if (t != "OLay" && t != "ObRQ" && t != "BitM" && t != "PhAn") P.Skip(t);
     }
@@ -261,6 +264,7 @@ bool ParseAscii(const std::string& text, Parsed& P, std::string* err) {
     long long id, parent;
     while (R.Header(type, id, parent)) {
         if (type == "END") break;
+        if (++P.chunks > kMaxChunks) return Fail(err, "too many chunks (more than " + std::to_string(kMaxChunks) + ")");
         if (type == "Grou" || type == "PolH") {
             if (P.objs.size() >= kMaxObjects) return Fail(err, "too many objects");
             Obj o;
@@ -364,7 +368,7 @@ bool ParseAscii(const std::string& text, Parsed& P, std::string* err) {
                     if (tk.size() >= 2 && detail::txt::ToDouble(tk[1], a)) m.alpha = (float)a;
                 }
             }
-            if (any) P.mats.push_back(m); else ++P.badShaders;
+            if (any) P.AddMat(m); else ++P.badShaders;
         } else if (type == "ShBx") {
             std::string tex;
             while (R.Body(l)) {
@@ -374,7 +378,7 @@ bool ParseAscii(const std::string& text, Parsed& P, std::string* err) {
                     if (q2 != std::string::npos) tex = l.substr(q1 + 1, q2 - q1 - 1);
                 }
             }
-            if (!tex.empty()) for (CMat& m : P.mats) if (m.id == parent && m.texture.empty()) m.texture = tex;
+            if (!tex.empty()) P.SetTexture(parent, tex);
         } else {
             if (type == "Unit") ++P.unitChunks;
             else if (type != "OLay" && type != "ObRQ" && type != "BitM" && type != "PhAn") P.Skip(type);
@@ -428,7 +432,7 @@ static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, Im
     std::vector<Mat4> world(no);
     std::unordered_map<std::string, int> used;
     used["COB"] = 1;
-    int mirrored = 0, nonAffine = 0, dupNames = 0;
+    int mirrored = 0, nonAffine = 0, dupNames = 0, singularParents = 0;
     for (int oi : order) {
         const Obj& o = P.objs[(std::size_t)oi];
         world[(std::size_t)oi] = Conj(o.m);
@@ -439,7 +443,8 @@ static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, Im
         nd.name = nm;
         const int p = par[(std::size_t)oi];
         nd.parent = p < 0 ? 0 : nodeOf[(std::size_t)p];
-        const Mat4 local = p < 0 ? world[(std::size_t)oi] : world[(std::size_t)p].Inverse() * world[(std::size_t)oi];
+        Mat4 local = world[(std::size_t)oi];
+        if (p >= 0) { if (detail::rc::Singular3(world[(std::size_t)p])) ++singularParents; else local = world[(std::size_t)p].Inverse() * world[(std::size_t)oi]; }   // a zero-scale parent cannot be undone: the child keeps its world matrix
         if (!local.Decompose(nd.position, nd.rotation, nd.scale)) ++nonAffine;
         if (nd.scale.x < 0.0f) ++mirrored;
         nodeOf[(std::size_t)oi] = (int)out.nodes.size();
@@ -450,21 +455,30 @@ static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, Im
     std::map<std::pair<long long, int>, int> matOf;
     std::vector<double> matDeg;
     int texRefused = 0, texReduced = 0;
+    std::unordered_map<std::string, std::pair<std::string, int>> texCache;
     for (const CMat& m : P.mats) {
         ImportedMaterial im;
         im.name = "mat" + std::to_string(m.index);
         im.hasDiffuse = true;
         im.diffuse = Color{std::max(0.0f, std::min(1.0f, m.rgb[0])), std::max(0.0f, std::min(1.0f, m.rgb[1])), std::max(0.0f, std::min(1.0f, m.rgb[2])), std::max(0.0f, std::min(1.0f, m.alpha))};
         if (!m.texture.empty()) {
-            std::string joined, why;
-            if (detail::ResolveInsideDir(baseDir, m.texture, joined, why)) im.texture = joined;
-            else {   // a full path from the artist's machine: only the file name is tried, inside the model's folder
-                std::string f = m.texture;
-                const std::size_t sl = f.find_last_of("/\\");
-                if (sl != std::string::npos) f = f.substr(sl + 1);
-                if (!f.empty() && f != m.texture && detail::ResolveInsideDir(baseDir, f, joined, why)) { im.texture = joined; ++texReduced; }
-                else ++texRefused;
+            // many materials name the same few files: each distinct name is resolved (a disk lookup) once
+            auto it = texCache.find(m.texture);
+            if (it == texCache.end()) {
+                std::string joined, why, res;
+                int kind = 0;   // 0 refused, 1 resolved, 2 resolved after dropping the folder part
+                if (texCache.size() >= 1000) {}   // more than 1,000 distinct texture names: the rest are not looked up (each lookup is a disk access)
+                else if (detail::ResolveInsideDir(baseDir, m.texture, joined, why)) { res = joined; kind = 1; }
+                else {   // a full path from the artist's machine: only the file name is tried, inside the model's folder
+                    std::string f = m.texture;
+                    const std::size_t sl = f.find_last_of("/\\");
+                    if (sl != std::string::npos) f = f.substr(sl + 1);
+                    if (!f.empty() && f != m.texture && detail::ResolveInsideDir(baseDir, f, joined, why)) { res = joined; kind = 2; }
+                }
+                it = texCache.emplace(m.texture, std::make_pair(res, kind)).first;
             }
+            im.texture = it->second.first;
+            if (it->second.second == 2) ++texReduced; else if (it->second.second == 0) ++texRefused;
         }
         matOf[{m.objId, m.index}] = (int)out.materials.size();
         matDeg.push_back(m.facet == 'f' ? 0.0 : m.facet == 's' ? 180.0 : (double)m.angle);   // the smoothing: faceted = flat, smooth = fully smooth, auto N = N degrees
@@ -497,7 +511,7 @@ static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, Im
             }
             if (!ok) { ++badCorners; continue; }
             if (f.flags) ++flagged;
-            detail::TriangulatePolygon(poly, t3);
+            detail::TriangulatePolygon(poly, t3, kMaxEarCorners);   // ear clipping is cubic: only small polygons get it, the rest are fanned
             if (t3.size() > kMaxTris - tris) return Fail(err, "too many triangles (more than " + std::to_string(kMaxTris) + " in the file)");
             tris += t3.size();
             faceTris[fi] = t3;
@@ -553,6 +567,7 @@ static bool ReadCobImpl(const std::string& bytes, const std::string& baseDir, Im
     if (loops) note(std::to_string(loops) + " object parent loop(s) were cut");
     if (dupNames) note(std::to_string(dupNames) + " object name(s) are repeated: the later ones got a numeric suffix");
     if (nonAffine) note(std::to_string(nonAffine) + " object matrix(es) could not be split into position, rotation and scale cleanly");
+    if (singularParents) note(std::to_string(singularParents) + " object(s) under a parent whose matrix has a zero scale: the stored world matrix was used as the local one (the position is wrong if the parent really moves it)");
     if (mirrored) note(std::to_string(mirrored) + " object(s) with a mirroring matrix (negative scale): the winding of their faces is not corrected");
     if (noFaceObjects) note(std::to_string(noFaceObjects) + " polygon object(s) without faces or vertices skipped");
     if (flagged) note(std::to_string(flagged) + " face(s) with non-zero flags were read as ordinary polygons (hole flags are not interpreted)");

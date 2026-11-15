@@ -102,6 +102,8 @@ int main() {
         CHECK(!ImportModelData((dir / "t.ndo").string(), m, ImportBackend::Own, false, &err) && err.find("recognised but not read") != std::string::npos && m.parts.empty());
         WriteFile(dir / "bad.ndo", "not nendo at all");
         CHECK(!ImportModelData((dir / "bad.ndo").string(), m, ImportBackend::Own, false, &err) && err.find("not a Nendo file") != std::string::npos);
+        // the refusing seam is never advertised as importable, even with the own backend switched on (when Assimp is built it may list .ndo itself)
+        if (!AssimpAvailable()) CHECK((" " + ImportableExtensions() + " ").find(" .ndo ") == std::string::npos);
         SetImportBackend("*", ImportBackend::Default);
         if (!AssimpAvailable()) {
             ImportedModel d; std::string e2;

@@ -1511,6 +1511,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - flinch (5.8)
 - fling (8.4)
 - flip book (2.12)
+- Flip proposal (41.11.6)
 - flip-book (5.10)
 - Flip-book animator (43.3.1)
 - flipbook (43.3)

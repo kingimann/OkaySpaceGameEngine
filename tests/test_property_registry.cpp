@@ -391,7 +391,7 @@ static void TestRegistryBasics() {
         "UITextBind", "UIBarBind", "UIAnimation", "AimOffset", "SequencePlayer",
         "ProceduralObjectHolding", "BuildPiece", "BuilderMode", "PoseCapture", "CraftingMenu",
         "BehaviorTreeRunner", "SplineMesh", "SplineInstancer", "NPCController", "InventoryUI", "GridInventoryUI", "CraftingStation",
-        "UIListView", "UISlotGrid", "Spline"};
+        "UIListView", "UISlotGrid", "Spline", "UITabs"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

@@ -48,6 +48,7 @@
 #include "okay/Components/CraftingStation.hpp"
 #include "okay/Components/UIListView.hpp"
 #include "okay/Components/UISlotGrid.hpp"
+#include "okay/Components/UITabs.hpp"
 #include "okay/Math/Easing.hpp"
 
 namespace okay {
@@ -943,6 +944,47 @@ void RegisterUISlotGrid() {
     b.Commit();
 }
 
+// UITabs (record "uitabs"). The tab names, pages, icons, badges and disabled
+// flags are lists; the layout cache and scroll are play state.
+void RegisterUITabs() {
+    PropertyBuilder<UITabs> b("UITabs", "uitabs", "UI");
+    b.Section("Layout")
+     .AddVec2("position", &UITabs::position).Range(-kBig, kBig, 1).Tooltip("Pixels from the anchor")
+     .AddVec2("size", &UITabs::size).Range(-kBig, kBig, 1).Tooltip("Width and height in pixels")
+     .AddEnum("anchor", &UITabs::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddInt("value", &UITabs::value).Range(0, 65535, 1).Tooltip("Selected tab")
+     .AddEnum("style", &UITabs::style, {"Segmented", "Underline", "Folder", "Pills", "Vertical"}).Tooltip("Look of the tab strip")
+     .AddEnum("sizing", &UITabs::sizing, {"Equal", "FitText"}).Tooltip("Equal tabs, or each as wide as its text")
+     .AddEnum("shape", &UITabs::shape, ShapeNames()).Tooltip("Tab silhouette")
+     .AddFloat("cornerRadius", &UITabs::cornerRadius).Range(0, 1e3, 0.5).Tooltip("Corner radius")
+     .AddFloat("spacing", &UITabs::spacing).Range(0, 1e3, 1).Tooltip("Gap between tabs in pixels")
+     .AddFloat("padding", &UITabs::padding).Range(0, 1e3, 1).Tooltip("Space either side of a tab's content")
+     .AddFloat("fontScale", &UITabs::fontScale).Range(0.1, 64, 0.05).Tooltip("Label text size")
+     .AddFloat("minTabSize", &UITabs::minTabSize).Range(0, 1e4, 1).Tooltip("Shortest a tab may be (0 = no limit)")
+     .AddFloat("indicatorThickness", &UITabs::indicatorThickness).Range(0, 1e3, 0.5).Tooltip("Underline or accent thickness in pixels")
+     .AddFloat("iconSize", &UITabs::iconSize).Range(0, 1e3, 1).Tooltip("Icon size in pixels")
+     .Section("Colours")
+     .AddColor("background", &UITabs::background).Range(0, 1, 0.01).Tooltip("Track and unselected tab colour")
+     .AddColor("selected", &UITabs::selected).Range(0, 1, 0.01).Tooltip("Selected tab or indicator colour")
+     .AddColor("textColor", &UITabs::textColor).Range(0, 1, 0.01).Tooltip("Text colour")
+     .AddColor("selectedTextColor", &UITabs::selectedTextColor).Range(0, 1, 0.01).Tooltip("Selected tab text colour")
+     .AddColor("hoverColor", &UITabs::hoverColor).Range(0, 1, 0.01).Tooltip("Tint on the tab under the pointer")
+     .AddColor("pressedColor", &UITabs::pressedColor).Range(0, 1, 0.01).Tooltip("Tint while a tab is pressed")
+     .AddColor("badgeColor", &UITabs::badgeColor).Range(0, 1, 0.01).Tooltip("Badge colour")
+     .AddColor("badgeTextColor", &UITabs::badgeTextColor).Range(0, 1, 0.01).Tooltip("Badge text colour")
+     .Section("Behaviour")
+     .AddBool("interactable", &UITabs::interactable).Tooltip("Tabs can be clicked")
+     .AddBool("closable", &UITabs::closable).Tooltip("Each tab has a close button")
+     .AddBool("animate", &UITabs::animate).Tooltip("Slide the indicator to the new tab")
+     .AddFloat("animSpeed", &UITabs::animSpeed).Range(0, 1e3, 0.5).Tooltip("Indicator slide speed")
+     .AddBool("hotkeys", &UITabs::hotkeys).Tooltip("The previous and next keys change tab")
+     .AddString("prevKey", &UITabs::prevKey).Tooltip("Key for the previous tab")
+     .AddString("nextKey", &UITabs::nextKey).Tooltip("Key for the next tab")
+     .AddBool("wrapAround", &UITabs::wrapAround).Tooltip("Going past the last tab returns to the first")
+     .AddBool("focusable", &UITabs::focusable).Tooltip("The tab strip takes keyboard and gamepad focus");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -1230,6 +1272,7 @@ void RegisterUIProperties() {
     RegisterCraftingStation();
     RegisterUIListView();
     RegisterUISlotGrid();
+    RegisterUITabs();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

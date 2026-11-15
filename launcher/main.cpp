@@ -18628,7 +18628,8 @@ int main(int argc, char** argv) {
         // ---- Crash reports: the one-time notice (shared/CrashUpload.hpp NoticeText) ----
         // Sending is on by default, so before the FIRST report leaves this computer the person is told, once, what is sent, that it becomes a public
         // GitHub issue and how to turn it off. Nothing is sent until this has been answered (the pump waits for g_crashNoticeSeen).
-        if (g_crashNoticeReq && !g_crashNoticeSeen && !ImGui::IsPopupOpen("Crash reports##notice")) ImGui::OpenPopup("Crash reports##notice");
+        // (It opens when no other popup is open, so it never fights another dialog for the screen; until then nothing is sent.)
+        if (g_crashNoticeReq && !g_crashNoticeSeen && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) ImGui::OpenPopup("Crash reports##notice");
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Crash reports##notice", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
             ImGui::TextUnformatted(okaycrash::upload::NoticeTitle());

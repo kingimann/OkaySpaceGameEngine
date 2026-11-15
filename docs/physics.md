@@ -32,7 +32,7 @@ in use (triangles, or the hull).
 A body that lands on a solid mesh raises **On Collision Enter**, **On Collision
 Stay** and **On Collision Exit**, including the exit when it leaves.
 
-The navigation bake still treats a mesh collider as its bounding box.
+The navigation bake reads a mesh collider's real triangles (see `docs/navigation.md`).
 
 ## Sweeping a box or a capsule in 2D
 

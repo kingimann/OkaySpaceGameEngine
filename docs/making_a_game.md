@@ -29,7 +29,7 @@ the exact pre-play state.
 
 ## 3. Build a scene from scratch
 
-1. **GameObject → Create Sprite** (or right-click the Hierarchy). It appears as a
+1. **GameObject → 2D Object → Sprite** (or right-click the Hierarchy). It appears as a
    colored quad in the viewport.
 2. Select it; in the **Inspector** set its Transform, **Color**, **Size**, an
    optional **Texture** (a PNG next to your scene), **Sort Order** (layering),

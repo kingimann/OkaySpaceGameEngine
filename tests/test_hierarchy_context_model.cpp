@@ -1,6 +1,9 @@
 #include "test_framework.hpp"
 #include "HierarchyContextModel.hpp"
+#include <filesystem>
+#include <fstream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -68,6 +71,21 @@ std::vector<RowState> Rows() {
 }
 
 }  // namespace
+
+std::string EditorSources() {
+#ifdef OKAY_SOURCE_DIR
+    std::string all;
+    for (const auto& f : std::filesystem::directory_iterator(std::filesystem::path(OKAY_SOURCE_DIR) / "editor")) {
+        if (f.path().extension() != ".cpp") continue;
+        std::ifstream in(f.path());
+        std::stringstream ss; ss << in.rdbuf();
+        all += ss.str();
+    }
+    return all;
+#else
+    return {};
+#endif
+}
 
 int main() {
     RUN_SUITE("hierarchy_context_model");
@@ -278,6 +296,29 @@ int main() {
         const auto pm = CreatePopup(e);
         for (const char* id : {"h.createempty", "h.groupselected", "create.2d", "create.3d", "create.camera", "create.ui"})
             CHECK(FindId(pm, id) != nullptr);
+    }
+
+    {   // Wiring: every id the three menus can produce is handled in the editor sources (`id == "h.copy"`, or its toggle flag).
+        const std::string src = EditorSources();
+        if (src.empty()) {
+            std::cout << "  (editor sources not found: wiring check skipped)\n";
+        } else {
+            std::set<std::string> seen;
+            auto check = [&](const std::vector<Entry>& m) {
+                Walk(m, [&](const Entry& e, int) {
+                    if (e.kind == Kind::Separator || e.kind == Kind::Heading || e.id.empty() || !seen.insert(e.id).second) return;
+                    if (e.kind == Kind::Submenu) return;   // its children are checked on their own
+                    const bool wired = src.find("id == \"" + e.id + "\"") != std::string::npos;
+                    if (!wired) std::cerr << "  not wired in editor/*.cpp: " << e.id << "\n";
+                    CHECK(wired);
+                });
+            };
+            for (const RowState& r : Rows()) check(RowMenu(r));
+            EmptyState e; e.objectCount = 3; e.selectedCount = 1; e.clipboardHasObject = true;
+            check(EmptyMenu(e));
+            check(CreatePopup(e));
+            CHECK(seen.size() > 50);
+        }
     }
 
     TEST_MAIN_RESULT();

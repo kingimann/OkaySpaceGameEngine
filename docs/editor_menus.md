@@ -323,7 +323,9 @@ placeholder line. They show the order, the shortcuts, the plural labels and the 
 * Tests: `tests/test_menu_bar_model.cpp` (ctest `menu_bar_model`) and `tests/test_hierarchy_context_model.cpp`
   (`hierarchy_context_model`). They check the order, that nothing is listed twice (the three Examples, the double Reset Layout and Items
   Loot & Recipes are reproduced as negative controls), that every disabled item has a reason, that every shown key is a working key,
-  plural labels, enable rules for every state, and that every item of the old menus still has a home (a table of old item to new id).
+  plural labels, enable rules for every state, that every item of the old menus still has a home (a table of old item to new id), and
+  **wiring**: every id a menu can produce has a handler in `editor/*.cpp` (the test reads the sources), so an entry cannot be a dead
+  click. It does not run the handlers; those are checked by clicking (see section 5).
 
 To add a menu item: add an `Item(...)` in the right builder in `MenuBarModel.hpp`, run its id in `RunMenuAction`, and re-run the
 test; a missing reason, a duplicate label or a shortcut that is not in `KnownShortcuts()` fails it. A window toggle also needs its flag

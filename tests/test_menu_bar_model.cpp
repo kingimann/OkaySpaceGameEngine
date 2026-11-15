@@ -1,6 +1,9 @@
 #include "test_framework.hpp"
 #include "MenuBarModel.hpp"
+#include <filesystem>
+#include <fstream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -65,6 +68,22 @@ std::vector<std::string> Ids(const std::vector<Entry>& es) {
 }
 
 }  // namespace
+
+// The text of every editor/*.cpp (empty when the source directory is not known): the wiring check below looks for the ids in it.
+std::string EditorSources() {
+#ifdef OKAY_SOURCE_DIR
+    std::string all;
+    for (const auto& f : std::filesystem::directory_iterator(std::filesystem::path(OKAY_SOURCE_DIR) / "editor")) {
+        if (f.path().extension() != ".cpp") continue;
+        std::ifstream in(f.path());
+        std::stringstream ss; ss << in.rdbuf();
+        all += ss.str();
+    }
+    return all;
+#else
+    return {};
+#endif
+}
 
 int main() {
     RUN_SUITE("menu_bar_model");
@@ -316,6 +335,28 @@ int main() {
                                   "Weapons", "Localization", "UI Editing Mode"}) {
             const Entry* e = FindLabel(all, label);
             CHECK(e != nullptr && e->kind == Kind::Toggle);
+        }
+    }
+
+    {   // Wiring: every id the model can produce is handled in the editor sources, so no menu entry is a dead click.
+        // An Item must be run (`id == "file.save"`), a Toggle must have its flag (`{"panel.hierarchy",`), a slot must be drawn.
+        const std::string src = EditorSources();
+        if (src.empty()) {
+            std::cout << "  (editor sources not found: wiring check skipped)\n";
+        } else {
+            std::set<std::string> seen;
+            for (const State& st : States())
+                for (const auto& m : AllMenus(st))
+                    Walk(m.second, [&](const Entry& e, int) {
+                        if (e.kind == Kind::Separator || e.kind == Kind::Heading || e.id.empty() || !seen.insert(e.id).second) return;
+                        bool wired;
+                        if (e.kind == Kind::Toggle) wired = src.find("{\"" + e.id + "\",") != std::string::npos;
+                        else if (e.kind == Kind::Submenu) wired = true;   // children are checked on their own
+                        else wired = src.find("id == \"" + e.id + "\"") != std::string::npos;
+                        if (!wired) std::cerr << "  not wired in editor/*.cpp: " << e.id << "\n";
+                        CHECK(wired);
+                    });
+            CHECK(seen.size() > 80);   // the walk really covered the menus (about 90 ids)
         }
     }
 

@@ -127,9 +127,15 @@ player gets in and out instead of the car always listening to the keyboard.
 - **From C++:** `VehicleSeat::Enter(go)` (returns false if refused), `Exit()`,
   `Occupant()`, `VehicleController::Driver()`.
 
+**Behaviour change for every existing vehicle scene (plain note for the release text):** two things changed in `VehicleController`.
+1. **Steering direction.** D (steer right) used to yaw the car counter-clockwise seen from above, which is a LEFT turn; it now turns right (A turns left). Scenes that relied on the old mirrored steering will steer the other way round.
+2. **Chase camera.** With `followCamera` on, the camera used to be aimed backwards (a camera looks down its -Z, the code aimed +Z at the car). It now looks at the car. Scenes with `followCamera` will see the camera facing the car for the first time.
+Checked here: `tests/test_vehicle.cpp` (steering changes the heading, camera options still save and load), `tests/test_vehicle_seat.cpp` (loads `examples/vehicle/vehicle_test.okayscene` and drives it), `tests/test_templates.cpp` (the Vehicle 3D template builds). The `Vehicle3D` template (one box car with `followCamera`) was **not** looked at in a render after the change; only its tests ran. `VehicleController2D` was not changed.
+
 **Fixed in this branch (found by an outside review of the merged seat code):**
 - A seat **moved to another car** (re-parented, for example dragged in the Hierarchy during Play) used to leave the old car counting a driver seat that was gone, so it never drove again. If someone was seated, getting out left them as the old car's driver and that car then drove itself with nobody inside. The seat now remembers the car it was counted on and the car it made the person driver of, and frees exactly those.
 - **Unticking `driver` while someone sits** used to leave them as the car's driver after they got out. Same fix.
+- A `VehicleController` removed while a seat points at it (editor, undo, prefab apply) is safe: the seat checks that the controller it remembers is still alive (and is the same one) before touching it, and counts itself on a new controller if one is added.
 - Still true: moving an occupied seat to another car does **not** put the person out. They keep sitting in it (now on the new car) until they press E.
 - Tested: `tests/test_vehicle_seat.cpp` (nobody seated; seated then re-parent then E; two driver seats with `driver` unticked). Try it by hand: press Play, drive or sit in the car, drag the seat object onto another car in the Hierarchy.
 
@@ -153,8 +159,8 @@ arcade body, there are no wheel colliders and no suspension per wheel.
 
 Limits, honestly:
 - The name rule is a prefix: `Wheel...` (an object called `Rewheel` is not a wheel). The `Tire` child must be named exactly `Tire`; steering needs `Front` in the Wheel's name.
-- Wheels are looked up **once, on the first frame the car is updated**. Wheels added later are not seen.
-- A remote or proxy car (not locally controlled) does not animate its wheels: the animation runs after the local-control check.
+- Wheels are looked up on the first frame the car is updated and then **twice a second**, so wheels added later are found within half a second.
+- A remote or proxy car (not locally controlled) rolls its wheels from how far it moved along its heading; its front wheels stay straight (the steering is not known). **Unverified:** no test runs a proxy car.
 - The Wheel's and Tire's local rotation is **overwritten every frame**, so a tire authored with a different rotation or axis is replaced by "axle along X". Because it is a normal rotation, a save or undo snapshot taken while playing writes the current steer and roll angles into the file (nothing restores the authored ones). Do not save a scene from play mode if you care about them.
 - A car with no wheel objects still tracks `WheelSpin()` (as if the radius were 0.35 m).
 

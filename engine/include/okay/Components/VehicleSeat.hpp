@@ -102,7 +102,7 @@ public:
             if (v->Driver()) return false;                       // one driver per vehicle
         }
         m_who = who;
-        m_driverCar = (driver && v) ? v : nullptr;      // the car this seat makes `who` the driver of (cleared exactly this on exit)
+        m_driverCar.set((driver && v) ? v : nullptr);      // the car this seat makes `who` the driver of (cleared exactly this on exit)
         occupied = true;
         m_off.clear(); m_offColliders.clear();
         for (Behaviour* b : who->GetComponents<Behaviour>())     // player controllers: off while seated
@@ -196,8 +196,6 @@ public:
 
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (m_who && dying.count(m_who)) Forget();        // the person is going away: free the seat
-        if (m_driverCar && m_driverCar->gameObject && dying.count(m_driverCar->gameObject)) m_driverCar = nullptr;   // never keep a freed car
-        if (m_reg && m_reg->gameObject && dying.count(m_reg->gameObject)) m_reg = nullptr;
     }
 
 private:
@@ -210,12 +208,12 @@ private:
     void Sync() {
         VehicleController* v = Vehicle();
         const bool want = driver && enabled && v;
-        if (m_reg && (!want || m_reg != v)) Unregister();
-        if (want && !m_reg) { v->AddDriverSeat(); m_reg = v; }
+        if (m_reg.p && (!want || m_reg.get() != v)) Unregister();
+        if (want && !m_reg.p) { v->AddDriverSeat(); m_reg.set(v); }
     }
     void Unregister() {
-        if (m_reg) m_reg->RemoveDriverSeat();   // the car this seat was counted on, even if the seat has been moved to another car since
-        m_reg = nullptr;
+        if (VehicleController* r = m_reg.get()) r->RemoveDriverSeat();   // the car this seat was counted on, even if the seat has moved since
+        m_reg.clear();
     }
 
     static bool SittingOnChair(GameObject* who) {
@@ -257,7 +255,11 @@ private:
         m_camRot = ct->localRotation;
         auto* pc = PlayerController::Of(who);
         m_camFirst = pc && pc->CurrentView() == 0;
-        if (VehicleController* v = Vehicle()) v->SetCameraDrivenBySeat(true);
+        if (VehicleController* v = Vehicle()) { v->SetCameraDrivenBySeat(true); m_camCar.set(v); }
+    }
+    void ReleaseCameraFlag() {
+        if (VehicleController* c = m_camCar.get()) c->SetCameraDrivenBySeat(false);
+        m_camCar.clear();
     }
     void RestoreCameraPose() {
         Scene* sc = gameObject ? gameObject->scene() : nullptr;
@@ -268,14 +270,14 @@ private:
     }
     void GiveCameraBack() {
         RestoreCameraPose();
-        if (m_cam) if (VehicleController* v = Vehicle()) v->SetCameraDrivenBySeat(false);
+        ReleaseCameraFlag();
         m_cam = nullptr;
     }
     void RideCamera(float dt) {
         if (!m_cam) return;
         Scene* sc = gameObject ? gameObject->scene() : nullptr;
         if (!sc || sc->mainCamera != m_cam || !m_cam->gameObject || !m_cam->gameObject->transform || !transform) {
-            if (VehicleController* v = Vehicle()) v->SetCameraDrivenBySeat(false);
+            ReleaseCameraFlag();
             m_cam = nullptr;   // the camera was replaced or removed: let go
             return;
         }
@@ -359,12 +361,12 @@ private:
     // Free the seat without touching the (maybe gone) person.
     void Forget() {
         // Free the car this seat put the person at the wheel of, whatever the seat's parent or `driver` flag is now.
-        if (m_driverCar && m_driverCar->Driver() == m_who) m_driverCar->SetDriver(nullptr);
-        m_driverCar = nullptr;
+        if (VehicleController* d = m_driverCar.get()) if (d->Driver() == m_who) d->SetDriver(nullptr);
+        m_driverCar.clear();
         auto& occ = Occupied();
         for (size_t i = 0; i < occ.size(); ++i) if (occ[i] == this) { occ.erase(occ.begin() + (long)i); break; }
         if (m_who && !m_who->IsDestroyed()) GiveCameraBack();
-        else if (m_cam) { if (VehicleController* v = Vehicle()) v->SetCameraDrivenBySeat(false); }
+        else ReleaseCameraFlag();
         m_cam = nullptr;
         m_posed = false;
         m_who = nullptr;
@@ -375,8 +377,16 @@ private:
     }
 
     GameObject* m_who = nullptr;
-    VehicleController* m_reg = nullptr;     // the car this seat is counted on (nulled when that car is destroyed)
-    VehicleController* m_driverCar = nullptr; // the car whose driver this seat set at Enter (nulled when that car is destroyed)
+    // A remembered car: the pointer is only used while VehicleController::IsLive says it is still that controller.
+    struct CarRef {
+        VehicleController* p = nullptr; unsigned uid = 0;
+        VehicleController* get() const { return p && VehicleController::IsLive(p, uid) ? p : nullptr; }
+        void set(VehicleController* v) { p = v; uid = v ? v->Uid() : 0; }
+        void clear() { p = nullptr; uid = 0; }
+    };
+    CarRef m_reg;        // the car this seat is counted on
+    CarRef m_driverCar;  // the car whose driver this seat set at Enter
+    CarRef m_camCar;     // the car whose camera flag TakeCamera set
     std::vector<Behaviour*> m_off;
     std::vector<Collider3D*> m_offColliders;
     float m_savedGravity = 1.0f;

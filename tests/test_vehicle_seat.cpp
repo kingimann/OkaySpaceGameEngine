@@ -524,6 +524,88 @@ int main() {
         }
     }
 
+    // --- Camera flag follows the car it was set on; a removed VehicleController leaves no stale pointer; wheels re-scan ----
+    {
+        // (a) seated with the player's camera, seat re-parented to car B, E: car A gets its own camera back
+        Scene s("camcar");
+        auto mkCar = [&](const char* n, Vec3 pos) {
+            GameObject* c = s.CreateGameObject(n);
+            c->transform->SetPosition(pos);
+            c->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
+            c->AddComponent<VehicleController>()->followCamera = true;
+            return c;
+        };
+        GameObject* a = mkCar("A", {0, 0, 0}); GameObject* b = mkCar("B", {100, 0, 0});
+        GameObject* so = s.CreateGameObject("Seat");
+        so->transform->SetParent(a->transform, false);
+        so->AddComponent<VehicleSeat>();
+        GameObject* p = Templates::AddThirdPersonPlayer(s, {-1.0f, 0.0f, 0.0f});
+        s.Start();
+        auto run = [&](std::vector<char> k, int n) { for (int i = 0; i < n; ++i) { Input::FeedKeys(k); s.Update(DT); } };
+        auto press = [&](char k) { run({}, 1); run({k}, 1); run({}, 1); };
+        auto* va = a->GetComponent<VehicleController>(); auto* vb = b->GetComponent<VehicleController>();
+        run({}, 5);
+        press('e');
+        CHECK(va->CameraDrivenBySeat());
+        so->transform->SetParent(b->transform, false);
+        run({}, 3);
+        press('e');                                        // out
+        CHECK(!va->CameraDrivenBySeat());                  // A is not stuck with its chase camera off
+        CHECK(!vb->CameraDrivenBySeat());
+        (void)p;
+    }
+    {
+        // (b) remove just the VehicleController component while someone is seated, then add a new one
+        Scene s("rmvc");
+        GameObject* car = s.CreateGameObject("Car");
+        car->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
+        auto* v = car->AddComponent<VehicleController>();
+        auto* seat = car->AddComponent<VehicleSeat>();
+        GameObject* p = s.CreateGameObject("P");
+        p->transform->SetPosition({-1.0f, 0.0f, 0.0f});
+        p->AddComponent<ThirdPersonController>();
+        s.Start();
+        auto run = [&](std::vector<char> k, int n) { for (int i = 0; i < n; ++i) { Input::FeedKeys(k); s.Update(DT); } };
+        auto press = [&](char k) { run({}, 1); run({k}, 1); run({}, 1); };
+        run({}, 3);
+        press('e');
+        CHECK(seat->Occupant() == p);
+        CHECK(car->RemoveComponent(v));
+        run({}, 3);
+        auto* v2 = car->AddComponent<VehicleController>();   // may reuse the freed address
+        run({}, 3);
+        CHECK(v2->HasDriverSeat());                          // the seat counts on the NEW controller, not the dead one
+        CHECK(v2->Driver() == nullptr || v2->Driver() == p);
+        press('e');                                          // get out: must not touch the freed controller
+        CHECK(!seat->occupied);
+        CHECK(v2->Driver() == nullptr);
+        // and a seat that is only registered (nobody seated)
+        auto* v3 = car->AddComponent<VehicleController>();
+        run({}, 3);
+        CHECK(car->RemoveComponent(v3));
+        run({}, 3);
+        CHECK(v2->HasDriverSeat());
+    }
+    {
+        // (c) wheels added after the first frame are found (re-scan), and nothing else is driven
+        Scene s("late");
+        GameObject* car = s.CreateGameObject("Car");
+        car->AddComponent<Rigidbody3D>()->gravityScale = 0.0f;
+        auto* v = car->AddComponent<VehicleController>();
+        v->maxSpeed = 2.0f; v->acceleration = 100.0f;
+        s.Start();
+        for (int i = 0; i < 5; ++i) { Input::FeedKeys({'w'}); s.Update(DT); }
+        CHECK(v->WheelCount() == 0);
+        GameObject* w = s.CreateGameObject("Wheel Front Left");
+        w->transform->SetParent(car->transform, false);
+        GameObject* t = s.CreateGameObject("Tire");
+        t->transform->SetParent(w->transform, false);
+        t->transform->localScale = {0.7f, 0.25f, 0.7f};
+        for (int i = 0; i < 60; ++i) { Input::FeedKeys({'w'}); s.Update(DT); }
+        Input::FeedKeys({});
+        CHECK(v->WheelCount() == 1);
+    }
+
     // --- Sit clips: the pose height is pinned (a drop from the standing hip height, 0.92 m) ----
     {
         const float kRest = 0.92f;

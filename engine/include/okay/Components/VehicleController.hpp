@@ -12,6 +12,7 @@
 #include <cmath>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace okay {
@@ -34,6 +35,23 @@ namespace okay {
 /// rolls/pitches from per-wheel compression plus accel/cornering lean.
 class VehicleController : public Behaviour {
 public:
+    VehicleController() { m_uid = ++NextUid(); Live().push_back({this, m_uid}); }
+    ~VehicleController() override {
+        auto& l = Live();
+        for (size_t i = 0; i < l.size(); ++i) if (l[i].first == this) { l.erase(l.begin() + (long)i); break; }
+    }
+    VehicleController(const VehicleController&) = delete;
+    VehicleController& operator=(const VehicleController&) = delete;
+    /// True while `p` is a live VehicleController with this `uid` (Uid()). A seat keeps (pointer, uid) pairs and
+    /// checks them here, so a controller that was removed (even with another one later made at the same address)
+    /// is never touched.
+    static bool IsLive(const VehicleController* p, unsigned uid) {
+        if (!p) return false;
+        for (const auto& e : Live()) if (e.first == p) return e.second == uid;
+        return false;
+    }
+    unsigned Uid() const { return m_uid; }
+
     float acceleration = 18.0f;          // how quickly it reaches top speed (units/s^2)
     float maxSpeed     = 22.0f;          // forward top speed (units/s)
     float reverseSpeed = 8.0f;           // top reverse speed
@@ -92,10 +110,11 @@ public:
     /// The Seat that sits in this car moves the main camera (a seated rider's camera). While it does, the
     /// chase camera of `followCamera` stays out of its way. Called by VehicleSeat only.
     void  SetCameraDrivenBySeat(bool on) { m_seatCamera = on; }
+    bool  CameraDrivenBySeat() const { return m_seatCamera; }
 
     void Update(float dt) override {
         if (!transform || dt <= 0.0f) return;
-        if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
+        if (!IsLocallyControlled(gameObject)) { ProxyWheels(dt); return; }   // remote proxy: NetworkSync drives it
 
         // ---- Read input: WASD/arrow axis (y = throttle, x = steer) ----
         // With a driver seat, only a seated driver's keys count; empty = no input.
@@ -174,6 +193,7 @@ public:
 
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (m_driver && dying.count(m_driver)) m_driver = nullptr;   // never keep a freed driver
+        m_wheelScanT = 0.0f;                                          // re-scan the wheels soon
         for (size_t i = m_wheels.size(); i-- > 0;)
             if (dying.count(m_wheels[i].root) || dying.count(m_wheels[i].tire))
                 m_wheels.erase(m_wheels.begin() + (long)i);
@@ -214,7 +234,17 @@ private:
     }
     // Roll and steer the wheel objects. `steer` is the -1..1 steering input (0 with nobody at the wheel).
     void AnimateWheels(float dt, float speed, float steer) {
-        if (!m_wheelsFound && transform) { FindWheels(transform); m_wheelsFound = true; }
+        // Look for wheels on the first call and then twice a second, so wheels added later are found.
+        m_wheelScanT -= dt;
+        if (transform && (!m_wheelsFound || m_wheelScanT <= 0.0f)) {
+            std::vector<Wheel> old;
+            old.swap(m_wheels);
+            FindWheels(transform);
+            for (Wheel& w : m_wheels)
+                for (const Wheel& o : old) if (o.root == w.root) { w.spin = o.spin; break; }
+            m_wheelsFound = true;
+            m_wheelScanT = 0.5f;
+        }
         const float k = 1.0f - std::exp(-12.0f * dt);
         m_steerAngle += (steer * kMaxSteerAngle - m_steerAngle) * k;
         if (m_wheels.empty()) {   // still track the roll angle so WheelSpin() works with no wheel objects
@@ -228,6 +258,18 @@ private:
                 w.tire->transform->localRotation = (Quat::AngleAxis(w.spin, Vec3{1, 0, 0}) * Quat::Euler(0.0f, 0.0f, 90.0f)).Normalized();
         }
         m_wheelSpin = m_wheels[0].spin;
+    }
+    // A car driven by someone else (a network proxy): roll the wheels from how far it moved along its heading.
+    // Steering is not known here, so the front wheels stay straight.
+    void ProxyWheels(float dt) {
+        if (!transform) return;
+        const Vec3 pos = transform->Position();
+        if (m_proxyInit) {
+            const Vec3 fp = Planar(transform->Forward());
+            const Vec3 d = pos - m_proxyPos;
+            AnimateWheels(dt, (d.x * fp.x + d.z * fp.z) / dt, 0.0f);
+        }
+        m_proxyPos = pos; m_proxyInit = true;
     }
     void UpdateGrounded() {
         m_grounded = true;
@@ -336,6 +378,15 @@ private:
     bool  m_wheelsFound = false;
     float m_wheelSpin = 0.0f, m_steerAngle = 0.0f;
     bool  m_seatCamera = false;
+    float m_wheelScanT = 0.0f;
+    Vec3  m_proxyPos{0, 0, 0};
+    bool  m_proxyInit = false;
+    unsigned m_uid = 0;
+    static unsigned& NextUid() { static unsigned n = 0; return n; }
+    static std::vector<std::pair<const VehicleController*, unsigned>>& Live() {
+        static std::vector<std::pair<const VehicleController*, unsigned>> v;
+        return v;
+    }
 };
 
 } // namespace okay

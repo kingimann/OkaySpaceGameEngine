@@ -446,7 +446,7 @@ class Publisher:
         notes = os.path.join(case.tmp, "notes-%s-%s-%s.txt" % (who, version, tag))
         with open(notes, "w") as f:
             f.write("- notes for %s\n" % version)
-        e = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": case.tmp, "LC_ALL": "C", "PYTHONDONTWRITEBYTECODE": "1",
+        e = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": case.tmp, "TMPDIR": case.tmp, "LC_ALL": "C", "PYTHONDONTWRITEBYTECODE": "1",
              "no_proxy": "127.0.0.1,localhost", "NO_PROXY": "127.0.0.1,localhost", "https_proxy": DEAD_PROXY, "HTTPS_PROXY": DEAD_PROXY,
              "SUPABASE_URL": case.url, "SUPABASE_SERVICE_KEY": "test-key-" + who, "DIST_DIR": self.dist, "NOTES_FILE": notes,
              "ARCHIVE_REPO": "o/n", "KEEP": "3", "OKAY_UPDATE_SIGNING_SEED": case.seed, "PUBLISH_V2": "1",
@@ -621,7 +621,7 @@ class Base(unittest.TestCase):
         open(os.path.join(d, "calls"), "w").close()   # (a fresh call log for every run)
         if published:
             self.store.put("versions.json", json.dumps({"schema": 1, "latest": published, "versions": []}))
-        e = {"PATH": d + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"), "FAKE_GH_DIR": d, "GITHUB_REPOSITORY": "o/n", "HOME": self.tmp,
+        e = {"PATH": d + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"), "FAKE_GH_DIR": d, "GITHUB_REPOSITORY": "o/n", "HOME": self.tmp, "TMPDIR": self.tmp,
              "RELEASES_BASE": "%s/storage/v1/object/public/%s" % (self.url, BUCKET), "TRIES": "2", "TRY_PAUSE": "0",
              "no_proxy": "127.0.0.1,localhost", "NO_PROXY": "127.0.0.1,localhost", "https_proxy": DEAD_PROXY, "HTTPS_PROXY": DEAD_PROXY}
         e.update(env)
@@ -1451,7 +1451,7 @@ class CheckUnreleased(Base):
         open(os.path.join(d, "latest"), "w").close()
         open(os.path.join(d, "calls"), "w").close()
         e = {"PATH": d + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"), "FAKE_GH_DIR": d, "FAKE_GH_RELEASES": releases,
-             "GITHUB_REPOSITORY": "o/n", "HOME": self.tmp, "RELEASES_BASE": "%s/storage/v1/object/public/%s" % (self.url, BUCKET),
+             "GITHUB_REPOSITORY": "o/n", "HOME": self.tmp, "TMPDIR": self.tmp, "RELEASES_BASE": "%s/storage/v1/object/public/%s" % (self.url, BUCKET),
              "TRIES": "2", "TRY_PAUSE": "0", "no_proxy": "127.0.0.1,localhost", "NO_PROXY": "127.0.0.1,localhost",
              "https_proxy": DEAD_PROXY, "HTTPS_PROXY": DEAD_PROXY}
         e.update(env)
@@ -1514,7 +1514,7 @@ class Rehearsal(Base):
 
     def run_rehearsal(self, mode="run", bucket=BUCKET_NAME, **env):
         summary = os.path.join(self.tmp, "summary-%s.md" % mode)
-        e = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": self.tmp, "LC_ALL": "C", "PYTHONDONTWRITEBYTECODE": "1",
+        e = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": self.tmp, "TMPDIR": self.tmp, "LC_ALL": "C", "PYTHONDONTWRITEBYTECODE": "1",
              "no_proxy": "127.0.0.1,localhost", "NO_PROXY": "127.0.0.1,localhost", "https_proxy": DEAD_PROXY, "HTTPS_PROXY": DEAD_PROXY,
              "SUPABASE_URL": self.url, "SUPABASE_SERVICE_KEY": "test-key-Z", "BUCKET": bucket, "LOCK_POLL_SECONDS": "1",
              "READ_RETRY_BASE_SECONDS": "0", "GITHUB_STEP_SUMMARY": summary}
@@ -1649,7 +1649,7 @@ class DocRecipes(Base):
         notes = os.path.join(self.tmp, "recipe-notes.txt")
         with open(notes, "w") as f:
             f.write("- notes from the recipe\n")
-        e = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": self.tmp, "LC_ALL": "C", "PYTHONDONTWRITEBYTECODE": "1",
+        e = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": self.tmp, "TMPDIR": self.tmp, "LC_ALL": "C", "PYTHONDONTWRITEBYTECODE": "1",
              "no_proxy": "127.0.0.1,localhost", "NO_PROXY": "127.0.0.1,localhost", "https_proxy": DEAD_PROXY, "HTTPS_PROXY": DEAD_PROXY,
              "SUPABASE_URL": self.url, "SUPABASE_SERVICE_KEY": "test-key-D", "NOTES_FILE": notes, "ARCHIVE_REPO": "o/n",
              "OKAY_UPDATE_SIGNING_SEED": self.seed, "LOCK_POLL_SECONDS": "1", "READ_RETRY_BASE_SECONDS": "0"}

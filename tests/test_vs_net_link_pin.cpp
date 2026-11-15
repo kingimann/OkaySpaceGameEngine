@@ -136,6 +136,8 @@ int main() {
         CHECK(c.Var("pinOk") == 1.0f);
         CHECK(c.Var("joinOk") == 1.0f);                                    // the attempt starts...
         CHECK(!c.net->Joined());                                           // ...but the wrong host is refused
+        CHECK(c.net->JoinRejected());                                      // refused for a stated reason, not just slow
+        CHECK(c.net->JoinRejectReason() == "server identity doesn't match the pinned key");
     }
     TEST_MAIN_RESULT();
 }

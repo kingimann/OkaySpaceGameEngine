@@ -1,5 +1,6 @@
 #include "okay/Components/MeleeAttacker.hpp"
 #include "okay/Combat/WeaponDefinition.hpp"
+#include "okay/Inventory/Durability.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/Stats.hpp"
@@ -123,6 +124,7 @@ void MeleeAttacker::Swing() {
         const Vec3 pos = transform->Position();
         Scene* scene = gameObject->scene();
         if (scene && amount > 0.0f) {
+            bool struck = false;
             for (const auto& up : scene->Objects()) {
                 GameObject* g = up.get();
                 if (!g || g == gameObject || !g->ActiveInHierarchy() || !g->transform) continue;
@@ -130,7 +132,9 @@ void MeleeAttacker::Swing() {
                 if (!Inside(*this, t, g->transform->Position())) continue;
                 const Vec3 away = Flat(g->transform->Position() - pos);
                 ApplyCombatDamage(g, amount, pos, away * t.knockback);
+                struck = true;
             }
+            if (struck) durability::WearWeaponOnStrike(gameObject);   // once a swing, however many it hit
         }
         m_comboTimer = t.comboWindow;
     }
@@ -158,6 +162,7 @@ void MeleeAttacker::Update(float dt) {
                     m_hit.push_back(g);
                     const Vec3 away = Flat(g->transform->Position() - pos);
                     ApplyCombatDamage(g, amount, pos, away * t.knockback);
+                    if (m_hit.size() == 1) durability::WearWeaponOnStrike(gameObject);   // the swing's first hit only
                 }
             }
         }

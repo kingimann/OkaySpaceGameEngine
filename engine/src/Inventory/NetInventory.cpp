@@ -530,6 +530,12 @@ void NetInventory::NoticeUnequip(Inventory* inv, int equipSlot, bool ok) {
     Send(inv->gameObject, "inv/unequip", ObjectId(inv->gameObject) + "|" + std::to_string(equipSlot));
     HostPublishTouched(inv->gameObject, nullptr);
 }
+bool NetInventory::HostDecides(GameObject* go) {
+    if (g_apply || !go || !go->scene()) return false;   // applying the host's snapshot is always allowed
+    NetworkManager* nm = Manager(go->scene());
+    return nm && nm->IsConnected() && !nm->IsServer() && Rules(go->scene());
+}
+void NetInventory::NoticeDurability(GameObject* go) { if (go) HostPublishTouched(go, nullptr); }
 void NetInventory::NoticeCraft(GameObject* station, int index, int times) {
     if (!station || index < 0 || times < 1) return;
     Send(station, "inv/craft", ObjectId(station) + "|" + std::to_string(index) + "|" + std::to_string(times));

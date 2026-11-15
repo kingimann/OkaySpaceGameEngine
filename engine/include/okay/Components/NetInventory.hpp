@@ -46,6 +46,12 @@ public:
     static void NoticeEquip(Inventory* inv, int from, int equipSlot, bool ok);
     static void NoticeUnequip(Inventory* inv, int equipSlot, bool ok);
     static void NoticeCraft(GameObject* station, int index, int times);
+    /// Durability (okay/Inventory/Durability.hpp) is decided by the host. True on a connected client of a game with
+    /// NetInventory rules: wear and repair are refused there, and the host's snapshot brings the new values.
+    static bool HostDecides(GameObject* go);
+    /// Host: an item's durability on `go` (its bag or worn equipment) changed; send the new state to the clients
+    /// that see it. Does nothing offline or on a client.
+    static void NoticeDurability(GameObject* go);
     /// Client: ask the host to pick this up and do nothing locally. False = collect as usual.
     static bool DeferPickup(ItemPickup* pk, GameObject* who);
     /// False on a connected client whose bag is networked: the host spawns the world drop.

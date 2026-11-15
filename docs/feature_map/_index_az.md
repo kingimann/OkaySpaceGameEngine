@@ -1234,7 +1234,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - duplicate asset (20.3)
 - duplicate faces (3.1)
 - duplication (39.12)
-- durability (11.2)
+- durability (11.2, 11.2.6)
 - Dutch (4.8)
 - DX11 (40.3)
 

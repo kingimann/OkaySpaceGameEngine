@@ -1,3 +1,4 @@
+#include "okay/Inventory/Durability.hpp"
 #include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/Equipment.hpp"
 #include "okay/Components/NPCController.hpp"
@@ -290,6 +291,7 @@ const WeaponDefinition* WeaponForHolder(GameObject* go) {
     if (slot < 0) return nullptr;
     const std::string& item = eq->ItemIn(slot);
     if (item.empty()) return nullptr;
+    if (durability::Broken(item, eq->slots[slot].data)) return nullptr;   // a broken weapon fights like bare hands
     if (const ItemDefinition* def = ItemDatabase::Get().Find(item)) {
         const std::string named = def->Custom("weapon");
         if (!named.empty())

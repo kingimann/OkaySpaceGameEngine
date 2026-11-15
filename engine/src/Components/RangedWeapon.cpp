@@ -1,5 +1,6 @@
 #include "okay/Components/RangedWeapon.hpp"
 #include "okay/Combat/WeaponDefinition.hpp"
+#include "okay/Inventory/Durability.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/Projectile3D.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -146,6 +147,7 @@ bool RangedWeapon::Fire() {
     m_cooldown = 1.0f / t.fireRate;
     if (t.magazine > 0) --m_mag;
     ++m_shots;
+    durability::WearWeaponOnShot(gameObject);   // a Main Hand gun with wearPerShot wears (Durability.hpp)
     if (Scene* scene = gameObject->scene())
         for (ActionList* al : scene->FindObjectsOfType<ActionList>()) al->ReceiveMessage("weapon_fire");
     if (auto* sc = gameObject->GetComponent<ScriptComponent>())

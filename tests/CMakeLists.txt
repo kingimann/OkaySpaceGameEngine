@@ -3553,3 +3553,7 @@ add_test(NAME inv_grid_script COMMAND test_inv_grid_script)
 add_executable(test_item_cooldowns test_item_cooldowns.cpp)
 target_link_libraries(test_item_cooldowns PRIVATE okay::engine)
 add_test(NAME item_cooldowns COMMAND test_item_cooldowns)
+
+add_executable(test_item_durability test_item_durability.cpp)
+target_link_libraries(test_item_durability PRIVATE okay::engine)
+add_test(NAME item_durability COMMAND test_item_durability)

@@ -1,4 +1,5 @@
 #include "okay/Inventory/InventoryOps.hpp"
+#include "okay/Inventory/Durability.hpp"
 #include "okay/Components/NetInventory.hpp"
 #include "okay/Components/BuildMode.hpp"
 #include "okay/Components/Consumables.hpp"
@@ -249,6 +250,7 @@ InvResult Drop(Inventory* inv, int i, int n) {
 static InvResult UseItem(Inventory* inv, int i, GameObject* user) {
     if (!ValidSlot(inv, i) || Inventory::Empty(inv->slots[i]) || !user) return InvResult::No("nothing to use");
     const std::string item = inv->slots[i].item;
+    if (durability::Broken(item, inv->slots[i].data)) return InvResult::No("broken");   // repair it first
     GameObject* root = user;
     while (root->transform && root->transform->Parent() && root->transform->Parent()->gameObject) root = root->transform->Parent()->gameObject;
     for (GameObject* g : {user, root}) {

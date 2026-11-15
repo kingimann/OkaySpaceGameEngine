@@ -3380,6 +3380,12 @@ if(OKAY_OWN_TER)
 endif()
 add_test(NAME own_ter_default COMMAND test_own_ter_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+# Texture paths named in model files (okay/Render/TexturePath.hpp, #753): inside the model's folder, or inside an allowed root
+# (the open project) with links followed; both OBJ/MTL code paths (ReadObjFile and Mesh::LoadOBJ).
+add_executable(test_obj_texture_roots test_obj_texture_roots.cpp)
+target_link_libraries(test_obj_texture_roots PRIVATE okay::engine)
+add_test(NAME obj_texture_roots COMMAND test_obj_texture_roots WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 # Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/own_sib_reader.md): one test per reader on SYNTHETIC hand-built fixtures
 # (tests/batche2_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
 # The reader tests build on their own from the reader sources (no engine library).

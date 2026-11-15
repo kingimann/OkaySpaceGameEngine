@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Render/TexturePath.hpp"
 #include <cstdint>
 #include <functional>
 #include <Okay.hpp>
@@ -182,6 +183,8 @@ public:
         if (d == m_projectDir) return;
         const std::string old = m_projectDir;
         m_projectDir = d;
+        // Model files in this project may name textures anywhere in the project (absolute or "../" paths); nothing outside it.
+        okay::SetModelTextureRoots(d.empty() ? std::vector<std::string>() : std::vector<std::string>{d});
         if (onProjectChanged) onProjectChanged(old, d);
         okay::ItemDatabase::Get().Clear();   // each project has its own item definitions
         if (!d.empty()) okay::ItemDatabase::Get().Load(ItemDatabasePath());

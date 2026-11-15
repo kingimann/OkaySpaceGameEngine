@@ -149,7 +149,9 @@ struct Reader {
                 gltf_detail::Base64Decode(uri.substr(comma + 1), data);
             } else {
                 std::string path, why;
-                if (!detail::ResolveInsideDir(baseDir, uri, path, why)) return Fail("buffer '" + id + "': " + why);
+                // glTF names files as URIs: a space is written %20 (Blender and others do), so decode before the folder check
+                // (an escaped ".." or NUL is still refused by ResolveInsideDir, which looks at the decoded text).
+                if (!detail::ResolveInsideDir(baseDir, gltf_detail::UriDecode(uri), path, why)) return Fail("buffer '" + id + "': " + why);
                 std::string bytes, rerr;
                 if (!detail::txt::ReadFileCapped(path, (std::size_t)(kMaxBufferBytes - bufferBytes), bytes, &rerr))
                     return Fail("buffer '" + id + "' (" + uri + "): " + (rerr.empty() ? std::string("cannot read the file") : rerr));
@@ -247,7 +249,7 @@ struct Reader {
         if (uri.empty()) return;
         if (uri.compare(0, 5, "data:") == 0) { ++embeddedImages; return; }
         std::string path, why;
-        if (!detail::ResolveInsideDir(baseDir, uri, path, why)) { ++refusedImages; return; }
+        if (!detail::ResolveInsideDir(baseDir, gltf_detail::UriDecode(uri), path, why)) { ++refusedImages; return; }
         out = path;
     }
 

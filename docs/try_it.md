@@ -271,6 +271,23 @@ Tested on main (Linux): the line format and that each variable changes it, by th
   with `no OFF reader enabled: our own reader is off by default (set OKAY_OWN_OFF=1 ...)`; the Windows release has
   Assimp, so you will not see that message.
 * **More sample files** for other formats are under `tests\data\models` in a source checkout (not in the release).
+* **glTF 1.0 (`.gltf` / `.glb` of version 1)**, off by default.
+  * **Switch.** `OKAY_OWN_GLTF1=1` (`0` forces it off), or at build time `-DOKAY_OWN_GLTF1=ON`. Not part of `OKAY_OWN_STACK=1`
+    and not in the startup line. glTF 2.0 files are read by the engine's glTF 2.0 reader whether or not the switch is on.
+  * **Sample files** (shipped in `examples\own_readers`, made by `scripts/gen_gltf1_samples.py` from nothing but our own numbers, no
+    outside source: `docs/provenance_audit.md`): `box_v1.gltf` (JSON, geometry in a base64 data URI) and `box_v1.glb` (the binary
+    form). Both are an orange 1 x 1 x 1 box on a node that moves it up by half a unit (so it stands on the ground, y 0 to 1).
+  * **Steps.** (1) Start the editor with **no** variable. **File > Import Model...** and choose `examples\own_readers\box_v1.gltf`.
+    Nothing is added, and the **Console** shows an error that says glTF 1.0 "is not read by default" and names
+    `OKAY_OWN_GLTF1=1`. (2) Close the editor, start it from a Command Prompt with `set OKAY_OWN_GLTF1=1`, import the same file
+    again: an orange box appears standing on the ground. Import `box_v1.glb` too: the same box.
+  * **How you can tell it is ours.** The step 1 refusal turns into a box. There is no other glTF 1.0 reader in the editor, so
+    that difference is the proof (the About popup does not list this reader).
+  * **Not checked on Windows:** the click path of step 1 and 2 in the real editor. Tested on Linux: `own_gltf1_samples` imports
+    both files through the same import function with the reader switched on and checks the box (24 vertices, 12 triangles,
+    material "orange", node at y 0.5); `gltf1_reader` and `gltf1_hostile` cover the reader; `own_gltf1_default` covers
+    `-DOKAY_OWN_GLTF1=ON`. The 7 real glTF 1.0 files of Assimp's test directory were read when the reader was written
+    (`docs/own_gltf1_reader.md`); they are not shipped.
 
 ### 9. Own WAV decoder
 

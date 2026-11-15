@@ -3537,3 +3537,9 @@ if(OKAY_OWN_GLTF1)
     target_compile_definitions(test_own_gltf1_default PRIVATE OKAY_EXPECT_OWN_GLTF1)
 endif()
 add_test(NAME own_gltf1_default COMMAND test_own_gltf1_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# The glTF 1.0 sample files shipped in examples/own_readers (box_v1.gltf, box_v1.glb; scripts/gen_gltf1_samples.py) import through the seam
+# with the own reader on and give the box docs/try_it.md section 8 describes.
+add_executable(test_own_gltf1_samples test_own_gltf1_samples.cpp)
+target_link_libraries(test_own_gltf1_samples PRIVATE okay::engine)
+target_compile_definitions(test_own_gltf1_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_gltf1_samples COMMAND test_own_gltf1_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

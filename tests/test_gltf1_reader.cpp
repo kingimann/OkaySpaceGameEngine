@@ -202,6 +202,22 @@ int main() {
         o.bufferUri = "sub/none.bin";
         WriteFile(dir / "broken.gltf", QuadJson(o));
         CHECK(!ReadGltf1File((dir / "broken.gltf").u8string(), m, &err) && err.find("none.bin") != std::string::npos);
+        // a percent-escaped file name (Blender and other exporters write a space as %20): the buffer and the texture are found. Before the
+        // fix this reader did not decode the URI and refused the file with "cannot open file" (the glTF 2.0 reader decodes it).
+        WriteFile(dir / "sub" / "my quad.bin", QuadBuffer());
+        o.bufferUri = "sub/my%20quad.bin";
+        o.materialValues = "\"diffuse\": \"tex\"";
+        o.extraTopLevel = ",\n  \"textures\": { \"tex\": { \"source\": \"img\" } },\n  \"images\": { \"img\": { \"uri\": \"pics/my%20wood.png\" } }";
+        WriteFile(dir / "pct.gltf", QuadJson(o));
+        CHECK(ReadGltf1File((dir / "pct.gltf").u8string(), m, &err));
+        if (m.materials.size() == 1) CHECK(m.materials[0].texture == (dir / "pics" / "my wood.png").u8string());
+        // an escaped ".." or NUL is decoded first and then refused by the folder rule, as the plain forms are
+        o.bufferUri = "%2e%2e/outside.bin";
+        WriteFile(dir / "pct_dots.gltf", QuadJson(o));
+        CHECK(!ReadGltf1File((dir / "pct_dots.gltf").u8string(), m, &err) && err.find("leaves") != std::string::npos);
+        o.bufferUri = "sub/quad.bin%00.png";
+        WriteFile(dir / "pct_nul.gltf", QuadJson(o));
+        CHECK(!ReadGltf1File((dir / "pct_nul.gltf").u8string(), m, &err));
     }
     {   // a glTF 2.0 file is not version 1, and keeps going to the 2.0 reader even with ours switched on
         const std::string v2 = std::string("{ \"asset\": { \"version\": \"2.0\" }, \"scene\": 0, \"scenes\": [ { \"nodes\": [0] } ], \"nodes\": [ { \"mesh\": 0 } ], ") +

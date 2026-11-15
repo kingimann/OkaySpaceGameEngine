@@ -169,6 +169,7 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 | File | Written from | Notes |
 |---|---|---|
 | `engine/src/Render/Gltf1Reader.cpp` (2026-11-15, branch `claude2/own-reader-gltf1`) | The Khronos glTF 1.0 specification (`specification/1.0/README.md` and schemas) and the `KHR_binary_glTF` and `KHR_materials_common` extension descriptions | No importer source read; reuses the engine's own JSON parser and base64 decoder (`okay/Render/Gltf.hpp`). Compared with Assimp only by running it (`docs/own_gltf1_reader.md`) |
+| `examples/own_readers/box_v1.gltf`, `box_v1.glb` (2026-11-15) | Made by `scripts/gen_gltf1_samples.py` from numbers typed in the script (a box); no outside file or text | Our own data, no licence needed. The real-world glTF 1.0 files of the corpus (Assimp's test directory) are referenced by `tests/data/model_corpus_manifest.tsv` only, not copied into the repository or shipped |
 
 ## Method and limits
 

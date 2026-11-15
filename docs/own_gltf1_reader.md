@@ -23,6 +23,10 @@ glTF 1.0 is the first version of Khronos's transmission format (2015). It was re
 
 Switch it on with `SetImportBackend(".gltf1", ImportBackend::Own)`, the environment variable `OKAY_OWN_GLTF1=1` (or `0` to force it off), or `-DOKAY_OWN_GLTF1=ON` at build time. Only when it is on does the importer parse a `.gltf` / `.glb` file a second time to see its version, so a default import costs nothing more.
 
+## How to try it
+
+Full steps: `docs/try_it.md`, section 8. Short form: import `examples\own_readers\box_v1.gltf` (shipped in the Windows release; made by `scripts/gen_gltf1_samples.py`) with **File > Import Model...** in the editor, once with no variable (an error that names `OKAY_OWN_GLTF1=1`, nothing is added) and once after `set OKAY_OWN_GLTF1=1` (an orange box stands on the ground); `box_v1.glb` is the same box in the binary form. `own_gltf1_samples` checks both files through the import seam, and `own_gltf1_default` checks `-DOKAY_OWN_GLTF1=ON`. Not verified: a run on Windows.
+
 ## What it reads
 
 - **The container.** JSON (a UTF-8 byte order mark is dropped), or the binary form:
@@ -96,6 +100,8 @@ Compared with Assimp v5.4.3, built from the same sources with only its glTF impo
 - **`CesiumMilkTruck`:** the same meshes, vertices (8,348), triangles (3,624), area (64.8164) and materials (4), and the same box except its lowest point (ours 0.001, Assimp -0.258).
   - **The difference is the wheels.** Their nodes have a translation (1.43, 0.43, 0) and a rotation of about -10 degrees round Z, given as (x, y, z, w) as the specification says. With them, the wheels (radius 0.428 around their own origin) touch the ground at y = 0.001 under the body, which starts at 0.267. Assimp's lowest point is -0.258, below the ground, which does not fit the model. This is our reading of why the two differ; we did not look into Assimp's code.
 
+
+Fixed when the branch was brought up to date (2026-11-15): **file names written as URIs.** A buffer or an image named `my%20model.bin` (Blender and other exporters write a space as `%20`) was looked up with the `%20` in it and refused with "cannot open file"; the glTF 2.0 reader already decoded such names. The reader now decodes them (`gltf_detail::UriDecode`) before the folder rule runs, so an escaped `..` or NUL is still refused (`gltf1_reader`, the "percent-escaped file name" checks; reproduced before the fix with a file named `my quad.bin`).
 
 Known limits (low severity, from the review of this branch):
 - **Escaped characters.** The shared JSON parser (`okay/Render/Gltf.hpp`, the glTF 2.0 one too) turns `\u` escapes into `?`. A non-ASCII uri or id written with escapes then names the wrong file or id.

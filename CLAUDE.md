@@ -70,7 +70,10 @@ then this file gets updated. Keep this file short and true.
 
 11. **Release small and often** ("merge whatever is green and release"). Bump `CMakeLists.txt`, add a
     `ROADMAP.md` row and a plain-language `dist/CHANGELOG.txt` entry, merge, dispatch `release.yml` (ref `main`,
-    channel `latest`).
+    channel `latest`). **Keep sending releases even if the previous one is not out yet** (owner, 2026-11-15: "keep
+    sending out releases even if the previous one isn't out yet, so I can keep testing"): every release has its own new
+    version, and the publish step is serialized by a lock and never moves "latest" backwards (branch
+    `claude/release-parallel`; until it is merged, check that no other release is publishing before you dispatch).
 12. **Never re-run the release workflow for a version that already exists.** It rebuilds the programs and changes
     their checksums.
 13. **Check the release really worked**: the Supabase publish step, the "make latest" step, and `versions.json`

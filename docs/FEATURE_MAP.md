@@ -314,8 +314,9 @@ Details for every sub-area and numbered part: [docs/feature_map/10-story-cinemat
 The ready-made game-logic kit: inventory and equipment, items, loot and crafting, survival, player building, spawners, melee
 and RPG stats. Code is `engine/include/okay/Inventory/*` (8 headers), `engine/src/Inventory/*` (about 2.6k lines) and about 35
 components in `Components/`; editor pieces are in `editor/main.cpp`. Docs: `docs/survival_kit.md`, `docs/npcs_and_crafting.md`,
-`docs/build_mode.md`; the inventory, item database, loot and equipment have none. ROADMAP.md lists inventory items 6-9 (gameplay,
-scripting, UI polish, networking) as open although `inv_*` scripting, pickups and a host-owned inventory are on main: ask first.
+`docs/build_mode.md`; the inventory has `docs/inventory.md` (what exists and what is missing, and how to try it); the item database, loot and
+equipment have no page of their own. ROADMAP.md lists inventory items 6-9 (gameplay, scripting, UI polish, networking) as open although
+`inv_*` scripting, typed-script inventory classes, pickups and a host-owned inventory are on main: ask first.
 No open PR touches this area.
 
 Details for every sub-area and numbered part: [docs/feature_map/11-gameplay-systems.md](feature_map/11-gameplay-systems.md).

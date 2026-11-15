@@ -1246,6 +1246,7 @@ function on_item_broken(item) { toast_push("Broken", item_def(item, "name") + " 
 function swing() {
     var s = slot_of("Sword");
     if (s < 0) { toast_push("Sword", "There is no sword in the bag.", 2); return 0; }
+    if (inv_durability(s) < 0) { toast_push("Sword", "No durability (is items.okayitems loaded?).", 3); return 0; }
     if (!inv_wear(s, 1)) { toast_push("Sword", "It is broken. Press V to repair it.", 2); }
     return 0;
 }
@@ -1283,8 +1284,10 @@ function refresh_status() {
     var w = "Sword: not in the bag";
     var s = slot_of("Sword");
     if (s >= 0) {
-        w = "Sword: " + inv_durability(s) + " / " + item_def("Sword", "maxDurability");
-        if (inv_broken(s)) { w = "Sword: BROKEN (V repairs it)"; }
+        var d = inv_durability(s);
+        if (d < 0) { w = "Sword: no durability (is items.okayitems loaded?)"; }
+        else if (inv_broken(s)) { w = "Sword: BROKEN (V repairs it)"; }
+        else { w = "Sword: " + d + " / " + item_def("Sword", "maxDurability"); }
     }
     ui_set_text("Status", p + "   |   " + w);
 }
@@ -1350,7 +1353,7 @@ inline void Inventory(Scene& scene) {
     auto* toast = toasts->AddComponent<UIToast>();
     toast->corner = 0;
     toast->duration = 4.0f;
-    toast->width = 620.0f;   // the sentences are long
+    toast->width = 660.0f;   // the sentences are long
     toasts->transform->SetParent(canvas->transform, false);
 
     GameObject* chest = scene.CreateGameObject("Chest");

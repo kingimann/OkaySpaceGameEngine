@@ -45,7 +45,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | Rich text tags | Screen-space UI text only | World (3D) text ignores them; italic and bold are approximations |
 | UI nameplate | Health bar bound | Name and level are plain text, not bound to data |
 | UI Dropdown | Scrolls with wheel, keys and by dragging the open list (mouse or finger; a tap still picks, a drag never does) | Scrolls whole rows only, no momentum; touch is tested through the pointer the finger drives, not on a real touch screen |
-| Inventory screen | Shows the bag, drags and splits stacks, moves between chest, hotbar, backpack and grid bags | Networked slot-to-grid moves (scripts have `inv_to_grid` / `inv_from_grid`, local only); durability rules exist (`Durability.hpp`: wear, repair, broken items; scripts `inv_wear`, `inv_repair`, `inv_durability`, `inv_broken`): worn armor with `wearPerHit` wears when hit and a Main Hand weapon with `wearPerStrike` / `wearPerShot` when a melee swing lands or a shot fires, but tools do not wear on their own yet; item cooldowns exist (`cooldown` on the definition, script `inv_cooldown`) but are not networked or saved; own-code arbiter for wheel and use key (only lean and bag-key clashes are handled), item names cut by measured width and icon file re-check are not ported; see [inventory.md](inventory.md) |
+| Inventory screen | Shows the bag, drags and splits stacks, moves between chest, hotbar, backpack and grid bags; scripts move stacks to and from the grid bag (`inv_to_grid`, `inv_from_grid`); item cooldowns; durability (wear, repair, broken items); a refused use logs and fires `on_item_use_refused`; the Inventory template and `examples/inventory/` show it | Networked slot-to-grid moves and cooldowns (local only); tools do not wear on their own yet (armor, melee and guns do, through definition fields) and no durability bar in the bag; no visual-script event for a refused use; the typed-script classes have no cooldown, durability or slot-to-grid methods; own-code arbiter for wheel and use key (only lean and bag-key clashes are handled), item names cut by measured width and icon file re-check are not ported; see [inventory.md](inventory.md) |
 | Mixamo Soldier and Xbot samples | Removed | |
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
@@ -98,7 +98,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 - Admin: create test servers without a game (not started: "test server" needs a definition from the owner; see unfinished_launcher.md)
 - Improve the editor Plugins menu
-- Improve inventory systems (survival-game style): partly done (moves, stack and weight rules, slot-to-grid moves); see [inventory.md](inventory.md) for what is left
+- Improve inventory systems (survival-game style): mostly done (moves, stack and weight rules, slot-to-grid moves for UI and scripts, item cooldowns, durability, typed-script classes; try it with `examples/inventory/`); see [inventory.md](inventory.md) for what is left (networking of cooldowns and grid moves, tool wear, a durability bar, container rules)
 - Scene Manager window in the editor
 - Full UI component library (essential, game, app, layout, data-driven)
 - Improve the blocky character's arms, especially in first person

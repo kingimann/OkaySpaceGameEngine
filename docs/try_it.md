@@ -26,8 +26,8 @@ asks for a scene path: type or paste it, or press **Browse...**. A scene finds t
 sequences) next to itself, so the folder works from any install path.
 
 What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
-`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
-Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
+`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`,
+`inventory` (a small project: `Assets\inventory_demo.okayscene` and `items.okayitems`). Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
 `visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
 `scripts/build-windows-dist.sh` on Linux (see "How the packaging was checked" at the end); nobody has run the whole
 release job or the installer build for this change.
@@ -50,6 +50,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Inventory: grid bag, item cooldown, item durability | **File > Examples > Inventory**, or New Project > Inventory, or `examples\inventory\Assets\inventory_demo.okayscene` | New in this change; headless test only, editor menu and screens unverified |
 
 ---
 
@@ -233,6 +234,67 @@ you did not open since they were made are safe to remove; check the path before 
 **Status.** Tested on main once merged: `test_project_create` (289 checks) covers the rule that a template shortcut opens
 the Details step and cannot start a second create. Unverified: the launcher screens themselves (the launcher was not
 compiled or run on this machine).
+
+---
+
+## 14. Inventory: a grid bag, an item with a cooldown, an item with durability
+
+**What it is.** The Inventory template now shows three inventory features that were finished but could not be reached: a
+grid bag (items take up cells), a Healing Potion that cannot be used again for 5 seconds, and an Iron Sword that wears down
+and breaks. Using an item that is refused tells you why: a message on the screen and a line in the Console. What is built
+and what is missing is in [inventory.md](inventory.md).
+
+**Open it** (any one of these):
+* In the editor: **File > Examples > Inventory (grid bag, cooldown, durability)**, then press **Play**. The menu line is
+  grayed out when the editor cannot find `examples\inventory` (it looks next to the editor and in the folder the editor
+  was started from); then use the next way.
+* **File > Open...**, paste `<install folder>\examples\inventory\Assets\inventory_demo.okayscene`, press **Play**. The
+  folder is a small project: its `items.okayitems` is read when the scene opens. Do not copy the scene on its own, or the
+  potion and the sword are plain items with no cooldown and no durability.
+* Make a project: launcher **Create** (or **File > New Project...**), template **Inventory** (group "Examples & systems"),
+  **Create**, then **Play**. The new project gets the same `items.okayitems`.
+
+**Keys.** **W A S D** move. **1**-**9** pick a hotbar slot. **Q** uses the picked slot. **E** opens the bag, **I** the grid
+bag. **X** swings the sword (wears it by 1), **V** repairs it. **T** puts the picked stack into the grid bag, **Y** takes the
+first grid item back into the bag. (The chest on the right is **F**, the workbench on the left is **C**, as before.)
+
+**Cooldown.**
+1. Slot 1 (Healing Potion, 3) is picked at the start. Press **Q**: the count drops to 2, a green card "Used" appears at the
+   top right and the line above the hotbar says `Potion: wait 4.x s`, counting down.
+2. Press **Q** again at once: a yellow card "Can't use it: Healing Potion is not ready: wait 4.x s." and the count stays 2.
+   The Console shows the same sentence, `inventory: Healing Potion is not ready: wait 4.x s.`
+3. When the line says `Potion: ready`, press **Q**: the count is 1.
+
+**Durability.**
+1. Press **2** (Iron Sword). The line says `Sword: 4 / 4`.
+2. Press **X**: `Sword: 3 / 4`. Press **X** three more times: a red card "Broken: Iron Sword broke. Press V to repair it." and
+   the line says `Sword: BROKEN (V repairs it)`.
+3. Press **Q**: a yellow card "Iron Sword is broken: repair it first." Press **X**: "It is broken. Press V to repair it."
+4. Press **V**: "Repaired." and `Sword: 4 / 4`.
+
+**Grid bag.**
+1. Press **I**: a grid bag opens (6 wide, 4 tall) and is empty. Press **I** to close it.
+2. Press **2**, then **T**: a card "In the grid at 0,0. Press I to look." and the sword leaves slot 2. Press **I**: the sword is
+   a tile 1 wide and 3 tall (the size comes from its item definition). Drag it with the mouse to another cell.
+3. Close it, press **1**, then **T**: the potion goes into the grid too (1 wide, 2 tall).
+4. Press **Y**: the first grid item comes back to the bag. Swing the sword with **X** before **T**, and its wear is still there
+   after **Y**.
+
+**Change the numbers.** **Window > Items, Loot & Recipes**, pick **Healing Potion**, open **Custom Fields**: `cooldown` is
+5. Change it to 2, press **Save** (it writes the project's `items.okayitems`) and play again. **+ Known field...** on any
+item lists the fields the engine reads: `cooldown`, `maxDurability`, `breakAction`, `wearPerHit`, `wearPerStrike`,
+`wearPerShot`, each with a one-line explanation.
+
+**Visual script nodes.** Open a visual script, right-click for **Add Node**, topic **Objects**, group **Items**. The inventory
+functions are there as nodes whose title is the function name in words: VS_NODE_TITLES. Search the box for `grid`, `cooldown` or
+`wear` to find them. Each takes the arguments the text function takes (`docs/inventory.md`).
+
+**What is not there.** No durability bar or "broken" tint in the bag (the tooltip shows the number). In the sample the **X**
+key stands in for fighting; a real melee swing, a shot or a hit wears an item through its fields `wearPerStrike`,
+`wearPerShot` and `wearPerHit`, with no script. Cooldowns and slot-to-grid moves are not networked. A visual script cannot
+listen for a refused use yet.
+
+**Status.** TRY_STATUS_PLACEHOLDER
 
 ---
 

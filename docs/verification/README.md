@@ -49,7 +49,7 @@ Screenshots help. One comment per row. The row id is how we find the feature in 
 | [Rendering and post-processing](06-rendering-and-post-processing.md) | 18 | 9 | 9 |
 | [Audio and input](07-audio-and-input.md) | 7 | 5 | 2 |
 | [In-game UI, scripting and visual scripting](08-ui-and-scripting.md) | 16 | 11 | 5 |
-| [Gameplay, story and samples](09-gameplay-story-and-samples.md) | 14 | 7 | 7 |
+| [Gameplay, story and samples](09-gameplay-story-and-samples.md) | 15 | 8 | 7 |
 | [Networking, multiplayer and anti-cheat](10-networking-and-multiplayer.md) | 8 | 6 | 2 |
 | [Build, export, updates and tooling](11-build-export-and-updates.md) | 15 | 7 | 8 |
 | [Own-code switches (off by default)](12-own-code-switches.md) | 11 | 10 | 1 |

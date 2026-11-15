@@ -70,3 +70,16 @@
   2. Open **File > Examples > Node Playground** (or the other Examples list) and pick a scene.
 - **See:** the physics example runs; the playground scenes open.
 - **Partial:** the Examples menus show a scene only when the `examples` folder is found next to the editor.
+
+### V-GP-008 Inventory: grid bag, item cooldown, item durability
+- **Map:** 11.1, 11.2
+- **Where:** editor
+- **Steps:**
+  1. Choose **File > Examples > Inventory (grid bag, cooldown, durability)** and press Play. (If the line is grayed out, use **File > Open...** on `examples\inventory\Assets\inventory_demo.okayscene`.)
+  2. Press **Q** to use slot 1 (the Healing Potion), then press **Q** again at once.
+  3. Press **2** (the Iron Sword), press **X** four times, press **Q**, then press **V**.
+  4. Press **T**, then **I** to look at the grid bag, then **I** again and **Y**.
+- **See:** the first Q drinks a potion (the count drops by one) and the line above the hotbar says `Potion: wait ...`; the second Q shows a card "Healing Potion is not ready: wait ..." and takes nothing; after the fourth X the line says `Sword: BROKEN` and Q shows "Iron Sword is broken: repair it first."; V repairs it (`Sword: 4 / 4`); T moves the sword into the grid bag (a tile 1 wide and 3 tall) and Y brings it back to the bag.
+- **Partial:** no durability bar or broken tint in the bag; the X key stands in for fighting in this sample; cooldowns and slot-to-grid moves are not networked; the editor menu line and the screens were never run in a real window.
+- **Link:** [../../try_it.md](../../try_it.md)
+

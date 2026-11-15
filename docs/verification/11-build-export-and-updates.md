@@ -118,7 +118,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
   - **Ask me like:** "write a play-test that checks the door opens"; "add a Test Runner window"
 
 - [ ] **V-BX-S41** Area 41: Build, tools & infrastructure (smoke test, steps unverified)
-  - **Map:** [41](../feature_map/41-build-tools-infra.md), 11 sub-areas, 11 built.
+  - **Map:** [41](../feature_map/41-build-tools-infra.md), 12 sub-areas, 12 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 41.1 CMake project layout and options [Works].
     - 41.2 CMake modules, Windows resources and toolchain [Works].
@@ -131,8 +131,9 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 41.9 Versioning and release prep [Works]. Where: Engine > Check for Updates...
     - 41.10 Dependencies and pinned versions [Works].
     - 41.11 Own-stack dogfood switch and startup line [Works]. Where: Help > About OkaySpace (the stack line)
+    - 41.12 Collaboration tooling (lanes, claims, find-existing... [Works].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/41-build-tools-infra.md](../feature_map/41-build-tools-infra.md) (area 41, sections 41.1, 41.2, 41.3, 41.4, 41.5, 41.6, 41.7, 41.8, 41.9, 41.10, 41.11): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/41-build-tools-infra.md](../feature_map/41-build-tools-infra.md) (area 41, sections 41.1, 41.2, 41.3, 41.4, 41.5, 41.6, 41.7, 41.8, 41.9, 41.10, 41.11, 41.12): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "which CMake flag builds the editor?", "add my new source file to the engine build"
 
 - [ ] **V-BX-S56** Area 56: Platform targets and store packaging (smoke test, steps unverified)

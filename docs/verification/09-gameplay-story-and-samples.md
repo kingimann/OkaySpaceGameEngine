@@ -68,6 +68,17 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
   - **You should see (expected, not yet seen on Windows):** the physics example runs; the playground scenes open.
   - **Known partial:** the Examples menus show a scene only when the `examples` folder is found next to the editor.
 
+- [ ] **V-GP-008** Inventory: grid bag, item cooldown, item durability
+  - **Map:** 11.1, 11.2. **Where:** editor
+  - **Steps:**
+    1. Choose **File > Examples > Inventory (grid bag, cooldown, durability)** and press Play. (If the line is grayed out, use **File > Open...** on `examples\inventory\Assets\inventory_demo.okayscene`.)
+    2. Press **Q** to use slot 1 (the Healing Potion), then press **Q** again at once.
+    3. Press **2** (the Iron Sword), press **X** four times, press **Q**, then press **V**.
+    4. Press **T**, then **I** to look at the grid bag, then **I** again and **Y**.
+  - **You should see (expected, not yet seen on Windows):** the first Q drinks a potion (the count drops by one) and the line above the hotbar says `Potion: wait ...`; the second Q shows a card "Healing Potion is not ready: wait ..." and takes nothing; after the fourth X the line says `Sword: BROKEN` and Q shows "Iron Sword is broken: repair it first."; V repairs it (`Sword: 4 / 4`); T moves the sword into the grid bag (a tile 1 wide and 3 tall) and Y brings it back to the bag.
+  - **Known partial:** no durability bar or broken tint in the bag; the X key stands in for fighting in this sample; cooldowns and slot-to-grid moves are not networked; the editor menu line and the screens were never run in a real window.
+  - **More:** [../../try_it.md](../../try_it.md)
+
 - [ ] **V-GP-S10** Area 10: Story & cinematics (smoke test, steps unverified)
   - **Map:** [10](../feature_map/10-story-cinematics.md), 4 sub-areas, 4 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
@@ -83,7 +94,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
   - **Map:** [11](../feature_map/11-gameplay-systems.md), 12 sub-areas, 12 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 11.1 Inventory: bag, grid, chests, equipment [Works]. Where: Add Component > RPG / Turn-Based (Inventory, Equipment, Chest / Container); Inventory UI and Grid Inventory...
-    - 11.2 Items and loot [Works]. Where: Window > Items, Loot & Recipes; View > Editors & Tools > Items, Loot & Recipes; Add Component > RPG /...
+    - 11.2 Items and loot [Works]. Where: Window > Items, Loot & Recipes (an item's Custom Fields > + Known field... adds cooldown, maxDurability...
     - 11.3 Crafting and recipes [Works]. Where: Window > Items, Loot & Recipes (Recipes tab) edits '.okayrecipes' (inputs, outputs, crafting time, bench...
     - 11.4 Survival: stats, afflictions, zones [Works]. Where: Add Component > Gameplay > Survival Stats and Stat rows; UI buttons can call Eat, Drink and Heal through On...
     - 11.5 Building: build mode, structure builder, snapping [Works]. Where: Add Component > Gameplay rows "Build Mode (players build + wire)", "Buildable (players may edit)", Logic...

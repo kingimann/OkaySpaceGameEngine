@@ -2045,6 +2045,7 @@ std::vector<std::string> g_favorites;   // favorited game paths (persisted)
 std::vector<std::string> g_recent;       // recently played, most-recent first (persisted)
 int g_playSort = 0;               // 0 Favorites first, 1 Name A–Z, 2 Recently played, 3 Most played
 int g_playView = 0;               // 0 List rows, 1 Grid tiles
+std::string g_wizardTemplateRequest;   // a Templates-page card asks the Create page's New Project wizard to open on this template title (never creates anything)
 int g_lastTab = 0;                // section shown when the launcher was last closed
 
 // Per-game play stats (persisted): how many times launched + when last played.
@@ -19688,6 +19689,7 @@ int main(int argc, char** argv) {
             // Makes the project. Returns "" on success, otherwise one sentence saying why nothing was made
             // (the wizard goes back to its Details step so it can be fixed).
             auto doCreate = [&]() -> std::string {
+                if (!s_wiz.creating) return "Already creating a project.";   // one wizard Create makes at most one project
                 s_plan = okayproj::PlanProject(npLoc[0] ? npLoc : ".", npName);
                 s_planKey = std::string(npName) + "\n" + npLoc;
                 s_planAt = okay::platform::TicksMs32();
@@ -19703,6 +19705,16 @@ int main(int argc, char** argv) {
                 Toast("Created " + fs::path(root).filename().string() + " (" + std::string(s_tpls[(std::size_t)s_tpl].title) + ") \xE2\x80\x94 opening the editor", 1);
                 return "";
             };
+            if (!g_wizardTemplateRequest.empty()) {   // a Templates-page card was clicked
+                int idx = -1;
+                for (int i = 0; i < (int)s_tpls.size(); ++i) if (g_wizardTemplateRequest == s_tpls[(std::size_t)i].title) idx = i;
+                if (idx >= 0) {
+                    s_tpl = idx;
+                    std::snprintf(npName, sizeof(npName), "%s", s_tpls[(std::size_t)idx].title);
+                }
+                okayproj::WizardOpenOnTemplate(s_wiz, idx, (int)s_tpls.size());
+                g_wizardTemplateRequest.clear();
+            }
             {
                 const float avail = ImGui::GetContentRegionAvail().x;
                 const bool stack = avail < 520.0f;
@@ -21393,7 +21405,7 @@ int main(int argc, char** argv) {
                         dl->AddRectFilled(cp, ImVec2(cp.x + cardW, cp.y + cardH), IM_COL32(255, 255, 255, 10), 10.0f);
                         dl->AddRect(cp, ImVec2(cp.x + cardW, cp.y + cardH), ImGui::GetColorU32(kAccent), 10.0f, 0, 1.5f);
                         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                        ImGui::SetTooltip("Create a project from the %s template and open it", t.name);
+                        ImGui::SetTooltip("Start a new project from the %s template (you confirm the name first)", t.name);
                     } else if (editor.empty() && ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Editor not found next to the launcher");
                     }
@@ -21404,10 +21416,9 @@ int main(int argc, char** argv) {
                     const ImU32 a = editor.empty() ? IM_COL32(255, 255, 255, 110) : cText;
                     dl->AddText(ImVec2(tx, cp.y + cardH * 0.5f - lh - 1), a, FitText(t.name, tr - tx).c_str());
                     dl->AddText(ImVec2(tx, cp.y + cardH * 0.5f + 2), cDim, FitText(t.desc, tr - tx).c_str());
-                    if (clicked && !editor.empty()) {   // the editor always opens into a project: make one
-                        const std::string loc = g_projectsDir.empty() ? (fs::path(g_exeDir) / "Projects").string() : g_projectsDir;
-                        std::string root = CreateProject(loc, t.name, t.tmpl, editor);
-                        if (!root.empty()) Toast("Created " + fs::path(root).filename().string() + " \xE2\x80\x94 opening the editor", 1);
+                    if (clicked && !editor.empty()) {   // a card only opens the New Project wizard; the person confirms name and place
+                        g_wizardTemplateRequest = t.tmpl;
+                        tab = 0; g_lastTab = 0;
                     }
                     ImGui::PopID();
                 }
@@ -21418,7 +21429,7 @@ int main(int argc, char** argv) {
                 }
                 if (shown == 0) ImGui::TextDisabled("No templates match \"%s\".", marketFilter);
                 ImGui::Dummy(ImVec2(0, 6));
-                ImGui::TextDisabled("Templates open the editor's New Project on the chosen starting point.");
+                ImGui::TextDisabled("A template opens New Project on that starting point. Nothing is made until you press Create.");
                 ImGui::Dummy(ImVec2(0, 6));
             }
             ImGui::EndChild();   // ##commbody

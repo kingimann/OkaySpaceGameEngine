@@ -63,8 +63,11 @@ class Lib(unittest.TestCase):
     def test_lanes(self):
         lanes = L.load_lanes(ROOT)
         self.assertEqual(L.owner_of("engine/src/Scene/SceneSerializer.cpp", lanes), "shared")
-        self.assertEqual(L.owner_of("engine/include/okay/Components/VehicleSeat.hpp", lanes), "claude2")
-        self.assertEqual(L.owner_of("engine/src/Crypto/Sha512.cpp", lanes), "coordinator")
+        self.assertEqual(L.owner_of("engine/include/okay/Components/VehicleSeat.hpp", lanes), "coordinator")   # unfinished features (owner 2026-11-15)
+        self.assertEqual(L.owner_of("engine/src/Crypto/Sha512.cpp", lanes), "claude2")   # third-party replacement (owner 2026-11-15)
+        self.assertEqual(L.owner_of("engine/src/Render/ObjReader.cpp", lanes), "claude2")
+        self.assertEqual(L.owner_of("okayui/src/OkayUI.cpp", lanes), "claude2")
+        self.assertEqual(L.owner_of("editor/main.cpp", lanes), "coordinator")
         self.assertEqual(L.owner_of("scripts/work_board.py", lanes), "coordinator")
         self.assertEqual(L.owner_of("engine/include/okay/Core/Time.hpp", lanes), "open")
         self.assertEqual(L.lane_of_branch("claude2/x"), "claude2"); self.assertEqual(L.lane_of_branch("claude/x"), "coordinator")
@@ -77,6 +80,8 @@ class Lib(unittest.TestCase):
              {"created_at": "2026-11-15T13:00:00Z", "body": "Agree: claude2/a"}]
         claims, _ = L.parse_claims(c)
         self.assertEqual(sorted(claims), ["claude2/a"])
+        kc, _ = L.parse_claims([{"created_at": "2026-11-15T10:00:00Z", "body": "Claim: claude2/fix-x\nKind: bug\nExisting: e / Gap: g / Files: engine/src/Scene/Foo.cpp / Test-first: t / Try-it: s"}])
+        self.assertEqual(kc["claude2/fix-x"]["kind"], "bug")
         a = claims["claude2/a"]
         self.assertEqual(a["files"], ["engine/src/UI/**", "editor/Foo.cpp"])
         self.assertEqual(a["test_first"], "tween_ease"); self.assertTrue(a["agreed"])
@@ -96,6 +101,11 @@ class Lib(unittest.TestCase):
         self.assertTrue(any("coordinator lane" in p for p in probs))
         c["agreed"] = True
         self.assertEqual(L.check_claim_rules(c, lanes, []), [])
+        # a bug-fix claim with a Test-first line may touch the other lane's files (owner 2026-11-15)
+        bug = dict(c, agreed=False, kind="bug", files=["scripts/foo.py"])
+        self.assertEqual(L.check_claim_rules(bug, lanes, []), [])
+        self.assertTrue(any("coordinator lane" in p for p in L.check_claim_rules(dict(bug, kind="feature"), lanes, [])))
+        self.assertTrue(any("coordinator lane" in p or "Test-first" in p for p in L.check_claim_rules(dict(bug, test_first=""), lanes, [])))
         other = {"branch": "claude2/y", "files": ["engine/src/Components/**"]}
         c2 = dict(c, files=["engine/src/Components/Foo.cpp"], agreed=False)
         self.assertTrue(any("overlaps claude2/y" in p for p in L.check_claim_rules(c2, lanes, [other])))

@@ -135,7 +135,7 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 |---|---|---|---|
 | MP3 Huffman tables 1 to 3, 5 to 13, 15, 16, 24, count1 table, 512-entry synthesis window | `engine/src/Audio/Mp3Tables.hpp` | ISO/IEC 11172-3 Table B.7 and the synthesis window | The header cites the standard. The layout (separate length and code arrays per table) and the window "first 257 of 512 in units of 1/65536" is our own choice, as far as I can see. I could not compare with minimp3, stb or other decoders (none on this machine), so a match with a library's table file is **unverified**. The numbers themselves are standard |
 | MP3, Vorbis, FLAC decoders | `Mp3Decoder.cpp`, `VorbisDecoder.cpp`, `FlacDecoder.cpp` | ISO 11172-3 and 13818-3; Vorbis I spec; FLAC format spec | Headers say "written from the spec". Not compared line by line with any library |
-| SHA-256, SHA-512 constants | `engine/src/Crypto/Sha256.cpp`, `Sha512.cpp`, `AntiCheatCrypto.hpp` | FIPS 180-4 | Standard; own comments explain how they are defined |
+| SHA-256, SHA-512 constants | `engine/include/okay/Crypto/Sha256.hpp`, `engine/src/Crypto/Sha512.cpp`, `AntiCheatCrypto.hpp` | FIPS 180-4 | Standard; own comments explain how they are defined |
 | Ed25519 constants | `engine/src/Crypto/Ed25519.cpp` | RFC 8032 | The file says d, sqrt(-1) and the base point "are derived from their definitions on first use"; nothing is pasted in. Good practice |
 | CRC-32 | `ZipLite.hpp`, `ImageWrite.cpp`, `OkfDecode.hpp` | zlib and PNG specs | One-line generator loop, not a pasted table |
 | Inflate length and distance tables | `FbxReader.cpp` line about 70 (the PNG decoder in `ImageDecode.cpp` was not checked for its own copy) | RFC 1951 | Standard |

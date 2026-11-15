@@ -36,7 +36,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 ### 17.2 Accounts and sign-in
 - **What:** One account service shared by the launcher, editor, player and game scripts: sign up and in, session tokens that refresh, cloud saves and leaderboards. It works offline with a local on-disk account, with a custom server, or with Supabase.
 - **Parts:**
-  - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted, stretched SHA-256 file), Remote (your server, see 42.4) and Supabase (email sign-up, password reset (emails a link to the hosted page `supabase/auth-pages/reset-password`, see `docs/password-reset.md`), change email or username, token refresh); `Api()` adds the key and bearer token
+  - 17.2.1 Account service - `Platform/Account/AccountService` - providers Local (salted PBKDF2-HMAC-SHA256 file, on `Crypto/Sha256.hpp`), Remote (your server, see 42.4) and Supabase (email sign-up, password reset (emails a link to the hosted page `supabase/auth-pages/reset-password`, see `docs/password-reset.md`), change email or username, token refresh); `Api()` adds the key and bearer token
   - 17.2.2 Account facade - `Platform/Account/Account` - process-wide `okay::Account` used by editor, player and the `account_*` script builtins; `OKAY_ACCOUNT_SERVER`
   - 17.2.3 Cloud saves and leaderboards - `Platform/Account/AccountService` - `CloudSave`, `CloudLoad`, `CloudList`, `LeaderboardSubmit`, `LeaderboardTop` on two Supabase tables
   - 17.2.4 Native HTTPS - `Platform/NativeHttp` - pooled WinHTTP connections on Windows (no curl process per request); elsewhere, or if WinHTTP can't reach, the code falls back to curl with secrets passed in files (Linux can opt in to our own HTTP client with the system OpenSSL, `docs/own_http_client.md`)
@@ -326,7 +326,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `shared/CrashReports.hpp`, `shared/CrashScrub.hpp`, `shared/CrashUpload.hpp`, `launcher/main.cpp`, `scripts/crash_to_issue.py`, `docs/sql/crash_reports.sql`, `.github/workflows/crash-issues.yml`
 - **API:** `okaycrash::Report`, `okaycrash::ParseOne`, `okaycrash::ParseLog`, `okaycrash::Signature`, `okaycrash::Scrub`, `okaycrash::upload::BuildPayload`, `okaycrash::upload::Run`, `okaycrash::upload::IssueUrl`; `OKAY_CRASH_UPLOAD`, `OKAY_CRASH_DIR`
 - **Editor:** the editor writes the reports (15.9, 22.3.2)
-- **Docs:** `docs/crash_reports.md`, `docs/editor.md`, `docs/try_it.md` (section 14)
+- **Docs:** `docs/crash_reports.md`, `docs/editor.md`, `docs/try_it.md` (section 15)
 - **Tests:** `crash_reports`, `crash_scrub`, `crash_upload`, `crash_context`, `crash_handler`; `tests/scripts/test_crash_reports_sql.sh`, `tests/scripts/test_crash_to_issue.py`, `tests/scripts/test_crash_to_issue_http.py`, `tests/scripts/test_crash_workflow.py`
 - **Status:** Partial - the parser, scrubber, uploader, table SQL, issue script and workflow file are tested (and were security reviewed, docs/crash_reports.md); the launcher page, notice window and worker were only syntax-checked, and the server half does nothing until the owner runs the SQL and sets the repository variable (the secret is the one releases use)
 - **Open:** a real crash on Windows and an upload to the real project have not been run; function names for a stripped release need the release's `OkayEngine.debug` (see docs/crash_reports.md); no upload from the player (no player handler, 48.1)

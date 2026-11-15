@@ -108,7 +108,7 @@ def generated_entry(path, lanes):
 
 CLAIM_RE = re.compile(r"^[\s>*#_-]*(Claim|Release|Agree)(?:\s+and\s+result)?\s*:\s*[*_`\s]*([A-Za-z0-9_./-]+)", re.I | re.M)
 FIELD_KEYS = ["Existing", "Gap", "Files", "Test-first", "Try-it"]
-FIELD_RE = re.compile(r"(?:^|\s/\s|\n)[\s>*_-]*(Existing|Gap|Files|Test-first|Try-it)\s*(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*", re.I)
+FIELD_RE = re.compile(r"(?:^|\s/\s|\n)[\s>*_-]*(Existing|Gap|Files|Test-first|Try-it|Kind)\s*(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*", re.I)
 
 
 def norm_branch(b):
@@ -151,7 +151,8 @@ def parse_claims(comments):
                 claims[br] = {"branch": br, "created_at": c.get("created_at"), "url": c.get("html_url"),
                               "existing": f.get("existing", ""), "gap": f.get("gap", ""),
                               "files": split_globs(f.get("files", "")), "test_first": f.get("test-first", ""),
-                              "try_it": f.get("try-it", ""), "agreed": False, "has_fields": bool(f)}
+                              "try_it": f.get("try-it", ""), "agreed": False, "has_fields": bool(f),
+                              "kind": f.get("kind", "").strip(" *_`.").lower()}
             elif kind == "release":
                 claims.pop(br, None)
             elif kind == "agree" and br in claims:
@@ -193,7 +194,8 @@ def check_claim_rules(claim, lanes, other_claims, files=None):
         # a glob is cross-lane when any sample of the rules owner for its literal prefix is the other lane
         sample = re.split(r"[*?\[]", g)[0]
         o = owner_of(sample if sample == g else sample + "x", lanes)
-        if lane and o in ("claude2", "coordinator") and o != lane and not claim.get("agreed"):
+        bug_fix = claim.get("kind", "").startswith("bug") and bool(claim.get("test_first"))   # owner 2026-11-15: bug fixes may touch any file
+        if lane and o in ("claude2", "coordinator") and o != lane and not claim.get("agreed") and not bug_fix:
             probs.append(f"{g} is in the {o} lane (needs 'Agree: {claim['branch']}' from that lane)")
         elif o == "shared" and not claim.get("agreed"):
             pass  # shared files are only a handshake when two claims overlap; see overlaps below

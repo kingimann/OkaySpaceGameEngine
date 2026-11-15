@@ -3365,6 +3365,13 @@ find_package(Threads REQUIRED)
 target_link_libraries(test_own_http_inflate PRIVATE Threads::Threads)
 add_test(NAME own_http_inflate COMMAND test_own_http_inflate)
 set_tests_properties(own_http_inflate PROPERTIES TIMEOUT 240)
+# The ONE inflate (engine/include/okay/Core/Inflate.hpp) against the three older decoders it replaced (kept as reference
+# copies in tests/inflate_reference_old.hpp): old and new must agree on every valid, bit-flipped, truncated and spliced stream.
+# python3 optional (SKIPs the Python-made corpus with a message); OKAY_REQUIRE_DIFFERENTIAL=1 makes a skip a failure.
+add_executable(test_inflate_differential test_inflate_differential.cpp)
+target_include_directories(test_inflate_differential PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME inflate_differential COMMAND test_inflate_differential)
+set_tests_properties(inflate_differential PROPERTIES TIMEOUT 600)
 if(UNIX AND NOT APPLE)
     add_executable(test_own_http_net test_own_http_net.cpp)
     target_include_directories(test_own_http_net PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)

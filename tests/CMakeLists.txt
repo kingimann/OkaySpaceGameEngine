@@ -1685,6 +1685,12 @@ add_executable(test_ui_templates test_ui_templates.cpp)
 target_link_libraries(test_ui_templates PRIVATE okay::engine)
 add_test(NAME ui_templates COMMAND test_ui_templates)
 
+# Toast stack: pushing past the stack size used to spin forever (the "UI Notify" template froze the editor).
+add_executable(test_ui_toast test_ui_toast.cpp)
+target_link_libraries(test_ui_toast PRIVATE okay::engine)
+add_test(NAME ui_toast COMMAND test_ui_toast)
+set_tests_properties(ui_toast PROPERTIES TIMEOUT 60)
+
 add_executable(test_gltf_cubicspline test_gltf_cubicspline.cpp)
 target_link_libraries(test_gltf_cubicspline PRIVATE okay::engine)
 add_test(NAME gltf_cubicspline COMMAND test_gltf_cubicspline)

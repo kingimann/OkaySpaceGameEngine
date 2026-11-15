@@ -7,6 +7,7 @@
 #include "imgui_internal.h"
 #include <algorithm>
 #include <cstring>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -20,6 +21,7 @@ namespace {
 
 okay::editor::EditorState* s_ed = nullptr;
 const okay::Component* s_markComp = nullptr;   // the component whose fields are being drawn (SetTipComponent)
+bool s_nameFieldHovered = false;               // the object name box (FieldTip("##name")) is under the mouse: it has its own right-click menu
 
 std::string LowerS(std::string s) {
     for (char& c : s) c = (char)std::tolower((unsigned char)c);
@@ -79,6 +81,8 @@ void WatchEditUndo(okay::editor::EditorState& ed) {
     static EditUndo u;
     static ImGuiID lastActive = 0;   // the widget being edited: the same widget edited again joins the step
     s_ed = &ed;
+    s_markComp = nullptr;            // a component freed last frame must not be looked at by a field of this one
+    s_nameFieldHovered = false;
     if (ed.isPlaying()) { if (u.IsOpen()) u.Cancel(); return; }   // Play changes are thrown away anyway
     ImGuiContext& g = *GImGui;
     const bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right);
@@ -304,6 +308,11 @@ unsigned FloatRow(const char* id, float* v, int n, const std::vector<bool>& mixe
 
 } // namespace
 
+// The marker and right-click menu of a field (defined with the prefab code below). `desc` is the property the field shows when the
+// caller knows it (the generic card), else it is found from the label when the menu opens. `wholeRowTopY`: when set, a right click
+// anywhere on the row counts (the row is the full width of the window, from that screen y down to the last item), not only on the last item.
+static void FieldMark(const char* label, const PropertyDesc* desc, const float* wholeRowTopY);
+
 // Draws one property of the component `typeName` (index `idx`) on all `targets`. True when something was written.
 static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameObject*>& targets,
                           const std::string& typeName, int idx, const PropertyDesc& d) {
@@ -316,6 +325,7 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
     bool wrote = false;
     ImGui::PushID(d.name.c_str());
     const bool ro = d.IsReadOnly();
+    const ImVec2 rowStart = ImGui::GetCursorScreenPos();
     if (ro) ImGui::BeginDisabled();
     switch (d.type) {
         case PropertyType::Bool: {
@@ -423,8 +433,11 @@ static bool PropertyField(okay::editor::EditorState& ed, const std::vector<GameO
         }
         default: break;
     }
-    PrefabFieldMark(label.c_str());   // a prefab instance's overridden property: blue bar and Revert / Apply menu
     if (ro) ImGui::EndDisabled();
+    // The blue bar of a prefab instance's overridden property, and the right-click menu (Reset to Default, Copy / Paste Value, Revert ...).
+    // A text box and a colour box have a right-click menu of their own, so there only the label answers.
+    const bool ownMenu = d.type == PropertyType::String || d.type == PropertyType::Color;
+    FieldMark(label.c_str(), &d, ownMenu ? nullptr : &rowStart.y);
     ImGui::PopID();
     if (wrote) ed.dirty = true;
     return wrote;
@@ -482,8 +495,10 @@ void SetTipComponent(const okay::Component* comp) {
     if (auto info = PropertyRegistry::FindFor(*comp)) s_tipType = info->name;
 }
 
-void FieldTip(const char* label) {
-    PrefabFieldMark(label);   // a prefab instance's overridden field: blue bar and the Revert / Apply menu
+void FieldTip(const char* label, bool wholeRow) {
+    if (std::strcmp(label, "##name") == 0) s_nameFieldHovered = ImGui::IsItemHovered();   // the object name box: the header menu stays off it
+    const float rowTop = ImGui::GetItemRectMin().y;
+    FieldMark(label, nullptr, wholeRow ? &rowTop : nullptr);   // a prefab instance's overridden field: blue bar; right-click: Reset, Copy / Paste Value, Revert ...
     if (s_tipType.empty() || !ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) return;
     const std::string tip = FieldTooltip(s_tipType, label);
     if (!tip.empty()) ImGui::SetTooltip("%s", tip.c_str());
@@ -505,54 +520,6 @@ void DrawMixedNote(const okay::Component* comp) {
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("What you change here is set on every selected object.");
-}
-
-// ---- Component menu: copy / paste / reset values --------------------------------------------------------------------------
-
-namespace {
-ComponentClip s_clip;
-Component* s_reqComp = nullptr;
-int s_reqKind = 0;   // 1 copy, 2 paste, 3 reset
-}
-
-void ComponentValueMenu(okay::Component* comp) {
-    if (!comp || !HasRegisteredProperties(*comp)) return;
-    auto info = PropertyRegistry::FindFor(*comp);
-    ImGui::Separator();
-    if (ImGui::MenuItem("Copy Values")) { s_reqComp = comp; s_reqKind = 1; }
-    const bool canPaste = s_clip.Valid() && info && info->name == s_clip.type;
-    if (ImGui::MenuItem("Paste Values", nullptr, false, canPaste)) { s_reqComp = comp; s_reqKind = 2; }
-    if (ImGui::IsItemHovered() && !canPaste) ImGui::SetTooltip(s_clip.Valid() ? "The copied values belong to a different component." : "Copy the values of another component of this kind first.");
-    if (ImGui::MenuItem("Reset")) { s_reqComp = comp; s_reqKind = 3; }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put every value back to what a new component has.");
-    PrefabComponentMenu(comp);   // Revert / Apply Component for a prefab instance's changed component
-}
-
-void ApplyComponentValueRequests(okay::editor::EditorState& ed, okay::GameObject* go) {
-    Component* c = s_reqComp;
-    const int kind = s_reqKind;
-    s_reqComp = nullptr; s_reqKind = 0;
-    if (!c || !go || c->gameObject != go) return;
-    auto info = PropertyRegistry::FindFor(*c);
-    if (!info) return;
-    if (kind == 1) { s_clip = CopyComponentValues(*c); ConsoleLog("Copied the values of " + PrettyName(info->name)); return; }
-    // Paste and Reset go to the same component on every selected object that has one.
-    const int idx = ComponentIndexOf(*go, *c);
-    std::vector<Component*> targets;
-    std::vector<GameObject*> objs;
-    for (GameObject* g : ed.MultiSelection()) if (g) objs.push_back(g);
-    if (std::find(objs.begin(), objs.end(), go) == objs.end()) objs = {go};
-    for (GameObject* g : objs) {
-        int n = 0;
-        for (const auto& up : g->Components())
-            if (up && PropertyRegistry::FindFor(*up) == info) { if (n++ == idx) { targets.push_back(up.get()); break; } }
-    }
-    ed.PushUndo();
-    int written = 0;
-    for (Component* t : targets) written += kind == 2 ? PasteComponentValues(s_clip, *t) : ResetComponentValues(*t);
-    if (written > 0) ed.dirty = true;
-    ConsoleLog(std::string(kind == 2 ? "Pasted values onto " : "Reset ") + PrettyName(info->name) +
-               (written == 0 ? " (nothing changed)" : ""));
 }
 
 // ---- Prefab instances: header, per-property marks, changes list --------------------------------------------------------------
@@ -633,36 +600,7 @@ std::vector<std::string> OverriddenFieldsFor(const char* label, const PrefabChan
 }
 }   // namespace
 
-void PrefabFieldMark(const char* label) {
-    if (!s_markComp || s_changeOf.empty() || !s_changesRoot) return;
-    const PrefabChange* ch = nullptr;
-    const std::vector<std::string> fields = OverriddenFieldsFor(label, &ch);
-    if (fields.empty() || !ch) return;
-    // A blue bar at the left edge of the row, so overridden fields stand out in a long card.
-    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-    const float x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x - 5.0f;
-    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x, mn.y), ImVec2(x + 3.0f, mx.y), IM_COL32(90, 165, 255, 255), 1.5f);
-    const ImGuiID id = ImGui::GetItemID();
-    char pid[40];
-    std::snprintf(pid, sizeof(pid), "##prefabprop%08x", (unsigned)id);
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) ImGui::OpenPopup(pid);
-    if (ImGui::BeginPopup(pid)) {
-        const std::string pname = std::filesystem::path(s_changesRoot->prefabSource).filename().string();
-        ImGui::TextColored(PrefabBlue(), "Overridden from %s", pname.c_str());
-        for (const std::string& f : fields)
-            for (const PrefabFieldDiff& d : ch->fields)
-                if (d.name == f) ImGui::TextDisabled("%s: %s -> %s", f.c_str(), d.prefabValue.c_str(), d.instanceValue.c_str());
-        ImGui::Separator();
-        std::vector<PrefabTarget> targets;
-        for (const std::string& f : fields) targets.push_back(TargetOf(*ch, f));
-        if (ch->wholeRecordOnly || ch->added || ch->removed) targets = {TargetOf(*ch)};
-        if (ImGui::MenuItem("Revert Property")) Queue(PrefabReq::Revert, s_changesRoot, targets);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put this property back to the prefab's value.");
-        if (ImGui::MenuItem("Apply Property to Prefab")) Queue(PrefabReq::Apply, s_changesRoot, targets);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this value into %s. Other instances that did not change it take it too.", pname.c_str());
-        ImGui::EndPopup();
-    }
-}
+void PrefabFieldMark(const char* label) { FieldMark(label, nullptr, nullptr); }
 
 void PrefabComponentMenu(okay::Component* comp) {
     auto it = comp ? s_changeOf.find(comp) : s_changeOf.end();
@@ -914,5 +852,547 @@ void DrawPlayModeNote(okay::editor::EditorState& ed) {
     ImGui::PopStyleColor();
     ImGui::Spacing();
 }
+
+// ---- Right-click menus -------------------------------------------------------------------------------------------------------------------
+//
+// The rules (which rows, in what order, when one is disabled and why) are in InspectorContextModel.hpp and are tested there; the
+// operations behind the rows are in InspectorModel.cpp. This part draws a list of rows and queues or runs what a row asks for:
+//   component header   "..." button and right-click   DrawComponentMenu (+ ApplyComponentValueRequests after the component loop)
+//   Transform header   right-click                    DrawTransformMenu
+//   a field            right-click                    FieldMark (the generic card and every hand-drawn field that matches a property)
+//   object header bar  right-click                    DrawObjectHeaderMenu
+//   empty space        right-click                    DrawInspectorBackgroundMenu
+// Changes to the list of components (move, duplicate, add, remove) are queued and made once the component loop is done, because
+// the loop is walking that list; value changes and selection of the same object are made at once.
+
+namespace {
+
+namespace ctx = okay::inspectorctx;
+
+InspectorMenuHooks s_menuHooks;
+ComponentClip s_clip;              // Copy Values: Paste Values and Paste As New Component use it
+ObjectClip s_objClip;              // Copy All Component Values
+TransformClip s_tclip;             // Copy Transform Values
+bool s_addComponentRequest = false;
+
+enum class Act {
+    None, CopyValues, PasteValues, Reset, Duplicate, PasteNew, Toggle, Move, Remove,
+    CopyAllValues, PasteAllValues, ResetTransform, SelectParent, SelectPrefabRoot, SelectPrefabAsset, SelectGuid
+};
+struct Req {
+    Act act = Act::None;
+    Component* comp = nullptr;      // the component the menu belongs to (null for the object-level rows)
+    ctx::MoveKind move = ctx::MoveKind::Up;
+    std::string text;               // SelectGuid: the object to select
+} s_menuReq;
+
+void Ask(Act a, Component* c = nullptr, ctx::MoveKind m = ctx::MoveKind::Up, std::string text = {}) {
+    s_menuReq = Req(); s_menuReq.act = a; s_menuReq.comp = c; s_menuReq.move = m; s_menuReq.text = std::move(text);
+}
+
+// The objects an action reaches: the whole selection when `go` is in it, else just `go`.
+std::vector<GameObject*> SelectedObjects(okay::editor::EditorState& ed, GameObject* go) {
+    std::vector<GameObject*> objs;
+    for (GameObject* g : ed.MultiSelection()) if (g && !g->IsDestroyed()) objs.push_back(g);
+    if (std::find(objs.begin(), objs.end(), go) == objs.end()) objs = {go};
+    return objs;
+}
+
+// The same kind of component, in the same position among components of that kind, on each selected object that has one.
+struct SameKindSet { std::vector<GameObject*> objs; std::vector<Component*> comps; };
+SameKindSet SameKindOnSelection(okay::editor::EditorState& ed, GameObject* go, const Component* c) {
+    SameKindSet out;
+    int idx = 0;
+    for (const auto& up : go->Components()) { if (up.get() == c) break; if (up && typeid(*up) == typeid(*c)) ++idx; }
+    for (GameObject* g : SelectedObjects(ed, go)) {
+        int n = 0;
+        for (const auto& up : g->Components())
+            if (up && typeid(*up) == typeid(*c)) { if (n++ == idx) { out.objs.push_back(g); out.comps.push_back(up.get()); break; } }
+    }
+    return out;
+}
+
+// Only compares addresses: safe for a component that was freed since the menu queued the request.
+bool OnObject(const GameObject& go, const Component* c) {
+    for (const auto& up : go.Components()) if (up.get() == c) return true;
+    return false;
+}
+
+// A path as the Project panel can find it: as stored, else relative to the project folder.
+std::string ResolveProjectPath(const std::string& p) {
+    std::error_code ec;
+    if (p.empty() || std::filesystem::exists(p, ec)) return p;
+    if (s_ed && !s_ed->projectDir().empty()) {
+        const std::filesystem::path q = std::filesystem::path(s_ed->projectDir()) / p;
+        if (std::filesystem::exists(q, ec)) return q.string();
+    }
+    return p;
+}
+
+using SubFn = std::function<std::vector<ctx::Item>(const std::string&)>;
+using ActFn = std::function<void(const std::string&)>;
+
+// Draw a model menu: separators, rows (greyed with the reason as a tooltip when disabled), submenus. `slot` draws the prefab rows.
+void DrawItems(const std::vector<ctx::Item>& items, const SubFn& sub, const ActFn& act, const std::function<void()>& slot) {
+    for (const ctx::Item& it : items) {
+        if (it.separator) { ImGui::Separator(); continue; }
+        if (it.id == ctx::kPrefabSlot) { if (slot) slot(); continue; }
+        const std::string& tip = it.enabled ? it.tip : it.reason;
+        if (!it.submenu.empty()) {
+            const bool open = ImGui::BeginMenu(it.label.c_str(), it.enabled);
+            if (!it.enabled && !tip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", tip.c_str());
+            if (open) { if (sub) DrawItems(sub(it.submenu), sub, act, slot); ImGui::EndMenu(); }
+            continue;
+        }
+        const bool hit = ImGui::MenuItem(it.label.c_str(), it.shortcut.empty() ? nullptr : it.shortcut.c_str(), it.checked, it.enabled);
+        if (!tip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_ForTooltip)) ImGui::SetTooltip("%s", tip.c_str());
+        if (hit && it.enabled) act(it.id);
+    }
+}
+
+void SetCardsOpen(bool open) { if (s_menuHooks.setCardsOpen) s_menuHooks.setCardsOpen(open); }
+
+ctx::ValueKind KindOf(PropertyType t) {
+    switch (t) {
+        case PropertyType::Bool: return ctx::ValueKind::Bool;
+        case PropertyType::Int: return ctx::ValueKind::Int;
+        case PropertyType::Float: return ctx::ValueKind::Float;
+        case PropertyType::String: return ctx::ValueKind::String;
+        case PropertyType::Vec2: return ctx::ValueKind::Vec2;
+        case PropertyType::Vec3: return ctx::ValueKind::Vec3;
+        case PropertyType::Vec4: return ctx::ValueKind::Vec4;
+        case PropertyType::Quat: return ctx::ValueKind::Quat;
+        case PropertyType::Color: return ctx::ValueKind::Color;
+        case PropertyType::Enum: return ctx::ValueKind::Enum;
+        case PropertyType::AssetPath: return ctx::ValueKind::Asset;
+        case PropertyType::ObjectRef: return ctx::ValueKind::Object;
+        default: return ctx::ValueKind::None;
+    }
+}
+
+}   // namespace
+
+void SetInspectorMenuHooks(InspectorMenuHooks hooks) { s_menuHooks = std::move(hooks); }
+bool TakeAddComponentRequest() { const bool r = s_addComponentRequest; s_addComponentRequest = false; return r; }
+
+// ---- Component header ----
+
+void DrawComponentMenu(okay::Component* comp, bool removable, okay::Component** toRemove) {
+    if (!comp || !s_ed || !comp->gameObject) return;
+    okay::editor::EditorState& ed = *s_ed;
+    GameObject* go = comp->gameObject;
+    const SameKindSet same = SameKindOnSelection(ed, go, comp);
+    const ComponentSlot slot = SlotOf(*go, *comp);
+    const auto* script = dynamic_cast<const ScriptComponent*>(comp);
+    const auto* vscript = dynamic_cast<const VisualScriptComponent*>(comp);
+    const std::string scriptPath = script ? script->Path() : vscript ? vscript->Path() : std::string();
+
+    ctx::ComponentMenuState st;
+    st.typeName = ComponentDisplayName(*comp);
+    st.typeKey = ComponentSerializerRegistry::TypeKey(*comp);
+    st.kind = script ? ctx::ComponentKind::Script : vscript ? ctx::ComponentKind::VisualScript : ctx::ComponentKind::Plain;
+    st.hasScriptFile = !scriptPath.empty();
+    st.selectionCount = std::max(1, (int)same.comps.size());
+    st.index = slot.index; st.count = slot.count;
+    st.enabled = comp->enabled;
+    st.removable = removable;
+    st.neededBy = NeededByName(*go, *comp);
+    st.hasValues = HasRegisteredProperties(*comp);
+    st.canAddAnother = CanAddAnother(*comp);
+    st.prefabChanged = PrefabChangedFor(comp);
+    if (s_clip.Valid()) {
+        st.clipType = TypeDisplayName(s_clip.type);
+        std::string why;
+        st.clipCanAdd = CanPasteAsNew(*go, s_clip, &why);
+        st.clipBlockedReason = why;
+    }
+
+    const ActFn act = [&](const std::string& id) {
+        if (id == "comp.toggleEnabled") Ask(Act::Toggle, comp);
+        else if (id == "comp.moveUp") Ask(Act::Move, comp, ctx::MoveKind::Up);
+        else if (id == "comp.moveDown") Ask(Act::Move, comp, ctx::MoveKind::Down);
+        else if (id == "comp.moveTop") Ask(Act::Move, comp, ctx::MoveKind::Top);
+        else if (id == "comp.moveBottom") Ask(Act::Move, comp, ctx::MoveKind::Bottom);
+        else if (id == "comp.duplicate") Ask(Act::Duplicate, comp);
+        else if (id == "comp.copy") Ask(Act::CopyValues, comp);
+        else if (id == "comp.paste") Ask(Act::PasteValues, comp);
+        else if (id == "comp.pasteNew") Ask(Act::PasteNew, comp);
+        else if (id == "comp.reset") Ask(Act::Reset, comp);
+        else if (id == "comp.expandAll") SetCardsOpen(true);
+        else if (id == "comp.collapseAll") SetCardsOpen(false);
+        else if (id == "comp.editScript") { if (s_menuHooks.editScript) s_menuHooks.editScript(comp); }
+        else if (id == "comp.revealScript") { if (s_hooks.selectAsset) s_hooks.selectAsset(ResolveProjectPath(scriptPath)); }
+        else if (id == "comp.scriptDocs") { if (s_menuHooks.showScriptReference) s_menuHooks.showScriptReference(); }
+        else if (id == "comp.copyTypeName") ImGui::SetClipboardText(st.typeKey.c_str());
+        else if (id == "comp.remove") {
+            if (same.comps.size() > 1) Ask(Act::Remove, comp);   // several objects: after the loop
+            else if (toRemove) *toRemove = comp;                 // one: the Inspector's own removal path
+        }
+    };
+    DrawItems(ctx::ComponentMenu(st), nullptr, act, [&] { PrefabComponentMenu(comp); });
+}
+
+// ---- Transform header ----
+
+void DrawTransformMenu(okay::editor::EditorState& ed, okay::GameObject* go) {
+    if (!go || !go->transform) return;
+    const std::vector<GameObject*> objs = SelectedObjects(ed, go);
+    ctx::TransformMenuState st;
+    st.selectionCount = (int)objs.size();
+    st.clipValid = s_tclip.valid;
+    unsigned atDefault = kTransformAll;
+    for (GameObject* g : objs) {
+        if (g->GetComponent<Camera>()) st.scaleLocked = true;
+        atDefault &= TransformAtDefault(*g->transform);
+    }
+    st.posAtDefault = (atDefault & kTransformPosition) != 0;
+    st.rotAtDefault = (atDefault & kTransformRotation) != 0;
+    st.scaleAtDefault = (atDefault & kTransformScale) != 0;
+    st.atDefault = atDefault == kTransformAll;
+
+    const auto pasteParts = [&](unsigned parts) {
+        ed.PushUndo("Paste Transform");
+        for (GameObject* g : objs) PasteTransform(s_tclip, *g->transform, g->GetComponent<Camera>() ? (parts & ~kTransformScale) : parts);
+        ed.dirty = true;
+    };
+    const auto resetParts = [&](unsigned parts) {
+        ed.PushUndo("Reset Transform");
+        for (GameObject* g : objs) ResetTransform(*g, parts);   // a camera keeps its scale
+        ed.dirty = true;
+    };
+    const ActFn act = [&](const std::string& id) {
+        if (id == "xform.copy") { s_tclip = CopyTransform(*go->transform); ConsoleLog("Copied the Transform of " + go->name); }
+        else if (id == "xform.paste") pasteParts(kTransformAll);
+        else if (id == "xform.pastePos") pasteParts(kTransformPosition);
+        else if (id == "xform.pasteRot") pasteParts(kTransformRotation);
+        else if (id == "xform.pasteScale") pasteParts(kTransformScale);
+        else if (id == "xform.resetAll") resetParts(kTransformAll);
+        else if (id == "xform.resetPos") resetParts(kTransformPosition);
+        else if (id == "xform.resetRot") resetParts(kTransformRotation);
+        else if (id == "xform.resetScale") resetParts(kTransformScale);
+        else if (id == "comp.expandAll") SetCardsOpen(true);
+        else if (id == "comp.collapseAll") SetCardsOpen(false);
+    };
+    DrawItems(ctx::TransformMenu(st), [&](const std::string& sub) { return ctx::SubmenuItems(sub, st); }, act, nullptr);
+}
+
+// ---- Object header bar and empty space ----
+
+namespace {
+
+ctx::ObjectMenuState ObjectStateOf(okay::editor::EditorState& ed, GameObject* go) {
+    ctx::ObjectMenuState st;
+    st.selectionCount = (int)SelectedObjects(ed, go).size();
+    if (go->transform && go->transform->Parent() && go->transform->Parent()->gameObject) {
+        st.hasParent = true;
+        st.parentName = go->transform->Parent()->gameObject->name;
+    }
+    PrefabInstanceInfo info;
+    if (DescribePrefabInstance(*go, info)) {
+        st.inPrefab = true;
+        st.isPrefabRoot = info.root == go;
+        st.prefabMissing = !info.exists;
+        st.prefabName = info.name;
+    }
+    st.hasObjectClip = s_objClip.Valid();
+    st.clipObjectName = s_objClip.from;
+    st.componentCount = SlotOf(*go, *go->transform).count;
+    if (s_clip.Valid()) {
+        st.clipType = TypeDisplayName(s_clip.type);
+        std::string why;
+        st.clipCanAdd = CanPasteAsNew(*go, s_clip, &why);
+        st.clipBlockedReason = why;
+    }
+    return st;
+}
+
+void ObjectAction(const std::string& id, GameObject* go) {
+    if (id == "obj.copyAll") Ask(Act::CopyAllValues);
+    else if (id == "obj.pasteAll") Ask(Act::PasteAllValues);
+    else if (id == "obj.resetTransform") Ask(Act::ResetTransform);
+    else if (id == "obj.selectParent") Ask(Act::SelectParent);
+    else if (id == "obj.selectPrefabRoot") Ask(Act::SelectPrefabRoot);
+    else if (id == "obj.selectPrefabAsset") Ask(Act::SelectPrefabAsset);
+    else if (id == "obj.copyName") ImGui::SetClipboardText(go->name.c_str());
+    else if (id == "obj.copyPath") ImGui::SetClipboardText(go->Path().c_str());
+    else if (id == "obj.addComponent") s_addComponentRequest = true;
+    else if (id == "comp.pasteNew") Ask(Act::PasteNew);
+    else if (id == "comp.expandAll") SetCardsOpen(true);
+    else if (id == "comp.collapseAll") SetCardsOpen(false);
+}
+
+}   // namespace
+
+void DrawObjectHeaderMenu(okay::editor::EditorState& ed, okay::GameObject* go) {
+    if (!go) return;
+    // The last item is the header bar. A right click on it opens the menu, except on the name box (it has the text menu of its own).
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && !s_nameFieldHovered && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+        ImGui::IsMouseHoveringRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()))
+        ImGui::OpenPopup("##objectctx");
+    if (ImGui::BeginPopup("##objectctx")) {
+        DrawItems(ctx::ObjectMenu(ObjectStateOf(ed, go)), nullptr, [&](const std::string& id) { ObjectAction(id, go); }, nullptr);
+        ImGui::EndPopup();
+    }
+}
+
+void DrawInspectorBackgroundMenu(okay::editor::EditorState& ed, okay::GameObject* go) {
+    if (!go) return;
+    if (ImGui::BeginPopupContextWindow("##inspectorbg", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
+        DrawItems(ctx::BackgroundMenu(ObjectStateOf(ed, go)), nullptr, [&](const std::string& id) { ObjectAction(id, go); }, nullptr);
+        ImGui::EndPopup();
+    }
+}
+
+// ---- Running what the menus queued ----
+
+void ApplyComponentValueRequests(okay::editor::EditorState& ed, okay::GameObject* go) {
+    const Req r = s_menuReq;
+    s_menuReq = Req();
+    if (r.act == Act::None || !go) return;
+    Component* c = r.comp;
+    if (c && !OnObject(*go, c)) return;   // gone since the click
+    const std::vector<GameObject*> objs = SelectedObjects(ed, go);
+    const std::string name = c ? ComponentDisplayName(*c) : std::string();
+    const auto plural = [](int n, const char* one) { return std::to_string(n) + " " + one + (n == 1 ? "" : "s"); };
+
+    switch (r.act) {
+        case Act::CopyValues:
+            if (!c) return;
+            s_clip = CopyComponentValues(*c);
+            ConsoleLog("Copied the values of " + name);
+            return;
+        case Act::PasteValues:
+        case Act::Reset: {
+            if (!c) return;
+            const SameKindSet same = SameKindOnSelection(ed, go, c);   // the same component on every selected object that has one
+            ed.PushUndo(r.act == Act::Reset ? "Reset " + name : "Paste Values onto " + name);
+            int written = 0;
+            for (Component* t : same.comps) written += r.act == Act::PasteValues ? PasteComponentValues(s_clip, *t) : ResetComponentValues(*t);
+            if (written > 0) ed.dirty = true;
+            ConsoleLog(std::string(r.act == Act::PasteValues ? "Pasted values onto " : "Reset ") + name + (written == 0 ? " (nothing changed)" : ""));
+            return;
+        }
+        case Act::Toggle: {
+            if (!c) return;
+            const SameKindSet same = SameKindOnSelection(ed, go, c);
+            const bool on = !c->enabled;
+            ed.PushUndo(std::string(on ? "Enable " : "Disable ") + name);
+            for (Component* t : same.comps) t->enabled = on;
+            ed.dirty = true;
+            ConsoleLog(std::string(on ? "Enabled " : "Disabled ") + name);
+            return;
+        }
+        case Act::Move: {
+            if (!c) return;
+            const ComponentSlot slot = SlotOf(*go, *c);
+            if (ctx::MoveDelta(r.move, slot.index, slot.count) == 0) return;
+            ed.PushUndo("Move " + name);
+            if (MoveComponentTo(*go, *c, r.move)) ed.dirty = true;
+            return;
+        }
+        case Act::Duplicate: {
+            if (!c) return;
+            const SameKindSet same = SameKindOnSelection(ed, go, c);
+            ed.PushUndo("Duplicate " + name);
+            int made = 0;
+            for (std::size_t i = 0; i < same.comps.size(); ++i) if (DuplicateComponent(*same.objs[i], *same.comps[i])) ++made;
+            if (made > 0) ed.dirty = true;
+            ConsoleLog(made == 0 ? "Could not duplicate " + name : "Duplicated " + name + (same.comps.size() > 1 ? " on " + plural(made, "object") : std::string()), made == 0 ? 1 : 0);
+            return;
+        }
+        case Act::PasteNew: {
+            if (!s_clip.Valid()) return;
+            const std::string kind = TypeDisplayName(s_clip.type);
+            ed.PushUndo("Paste " + kind + " As New Component");
+            int made = 0, skipped = 0;
+            for (GameObject* g : objs) { if (PasteComponentAsNew(*g, s_clip)) ++made; else ++skipped; }
+            if (made > 0) ed.dirty = true;
+            ConsoleLog(made == 0 ? "Could not add a " + kind + " here" : "Added a new " + kind + " with the copied values" + (objs.size() > 1 ? " to " + plural(made, "object") : std::string()) +
+                                       (skipped > 0 ? " (" + plural(skipped, "object") + " skipped: it cannot be added there)" : std::string()), made == 0 ? 1 : 0);
+            return;
+        }
+        case Act::Remove: {   // several objects selected: the same component on each (the one object case goes through the Inspector's own removal)
+            if (!c) return;
+            const SameKindSet same = SameKindOnSelection(ed, go, c);
+            ed.PushUndo("Remove " + name);
+            int removed = 0, blocked = 0;
+            for (std::size_t i = 0; i < same.comps.size(); ++i) {
+                if (!NeededByName(*same.objs[i], *same.comps[i]).empty()) { ++blocked; continue; }
+                if (same.objs[i]->RemoveComponent(same.comps[i])) ++removed;
+            }
+            if (removed > 0) ed.dirty = true;
+            ConsoleLog("Removed " + name + " from " + plural(removed, "object") + (blocked > 0 ? " (" + plural(blocked, "object") + " kept it: another component needs it)" : std::string()), removed == 0 ? 1 : 0);
+            return;
+        }
+        case Act::CopyAllValues:
+            s_objClip = CopyObjectValues(*go);
+            ConsoleLog("Copied the component values of " + go->name);
+            return;
+        case Act::PasteAllValues: {
+            if (!s_objClip.Valid()) return;
+            ed.PushUndo("Paste All Component Values");
+            int written = 0;
+            for (GameObject* g : objs) written += PasteObjectValues(s_objClip, *g);
+            if (written > 0) ed.dirty = true;
+            ConsoleLog(written == 0 ? "Pasted component values (nothing changed)" : "Pasted component values from " + s_objClip.from + " onto " + plural((int)objs.size(), "object"));
+            return;
+        }
+        case Act::ResetTransform:
+            ed.PushUndo("Reset Transform");
+            for (GameObject* g : objs) ResetTransform(*g, kTransformAll);   // a camera keeps its scale
+            ed.dirty = true;
+            return;
+        case Act::SelectParent:
+            if (go->transform && go->transform->Parent() && go->transform->Parent()->gameObject) ed.Select(go->transform->Parent()->gameObject);
+            return;
+        case Act::SelectPrefabRoot:
+        case Act::SelectPrefabAsset: {
+            PrefabInstanceInfo info;
+            if (!DescribePrefabInstance(*go, info) || !info.root) return;
+            if (r.act == Act::SelectPrefabRoot) ed.Select(info.root);
+            else if (s_hooks.selectAsset) s_hooks.selectAsset(ResolveProjectPath(info.source));
+            return;
+        }
+        case Act::SelectGuid:
+            if (GameObject* o = ed.scene().FindByGuid(r.text)) ed.Select(o);
+            return;
+        case Act::None: return;
+    }
+}
+
+// ---- A field: the prefab marker and the right-click menu ----
+
+static void FieldMark(const char* label, const PropertyDesc* knownDesc, const float* wholeRowTopY) {
+    if (!s_markComp) return;
+    const PrefabChange* ch = nullptr;
+    std::vector<std::string> fields;
+    if (!s_changeOf.empty() && s_changesRoot) fields = OverriddenFieldsFor(label, &ch);
+    const bool overridden = !fields.empty() && ch;
+    if (overridden) {   // a blue bar at the left edge of the row, so overridden fields stand out in a long card
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        const float x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x - 5.0f;
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x, mn.y), ImVec2(x + 3.0f, mx.y), IM_COL32(90, 165, 255, 255), 1.5f);
+    }
+    // The popup's name must be this field's own. The last item of a labelled field is often its label text, which has no id (0), so
+    // the label and the component are mixed in: two fields (two rows of one card, or the same row of two Lights) never share a menu.
+    char pid[48];
+    {
+        const ImGuiID item = ImGui::GetItemID() ? ImGui::GetItemID() : ImGui::GetID(label);
+        std::snprintf(pid, sizeof(pid), "##fieldctx%08x%08x", (unsigned)item, (unsigned)((std::uintptr_t)s_markComp >> 4));
+    }
+
+    // The property this field shows. A hand-drawn text or colour box has a right-click menu of its own, and a box that was
+    // greyed out on purpose (a camera's scale) is not ours to change: those get no value rows.
+    const ImGuiItemFlags itemFlags = GImGui->LastItemData.ItemFlags;
+    std::shared_ptr<const ComponentTypeInfo> info;   // looked up only when a menu is opened or open: this runs for every field every frame
+    const auto findDesc = [&]() -> const PropertyDesc* {
+        if (knownDesc) return knownDesc;
+        if (!info) info = PropertyRegistry::FindFor(*s_markComp);
+        if (!info) return nullptr;
+        const PropertyDesc* d = FindPropertyForLabel(*info, label);
+        if (d && (d->type == PropertyType::String || d->type == PropertyType::Color)) return nullptr;
+        if (d && (itemFlags & ImGuiItemFlags_Disabled)) return nullptr;
+        return d;
+    };
+
+    bool hot;
+    if (wholeRowTopY) {   // the full width of the row: from where it started down to the bottom of its last item
+        const float pad = ImGui::GetStyle().FramePadding.y;
+        const ImVec2 mn(ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x, std::min(*wholeRowTopY, ImGui::GetItemRectMin().y - pad));
+        const ImVec2 mx(ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x, ImGui::GetItemRectMax().y + pad);
+        hot = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(mn, mx);
+    } else {
+        hot = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+    }
+    if (hot && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && (overridden || findDesc())) ImGui::OpenPopup(pid);
+    if (!ImGui::BeginPopup(pid)) return;
+
+    // The prefab rows: what differs, and Revert / Apply.
+    const auto prefabRows = [&] {
+        if (!overridden) return;
+        const std::string pname = std::filesystem::path(s_changesRoot->prefabSource).filename().string();
+        ImGui::TextColored(PrefabBlue(), "Overridden from %s", pname.c_str());
+        for (const std::string& f : fields)
+            for (const PrefabFieldDiff& d : ch->fields)
+                if (d.name == f) ImGui::TextDisabled("%s: %s -> %s", f.c_str(), d.prefabValue.c_str(), d.instanceValue.c_str());
+        ImGui::Separator();
+        std::vector<PrefabTarget> targets;
+        for (const std::string& f : fields) targets.push_back(TargetOf(*ch, f));
+        if (ch->wholeRecordOnly || ch->added || ch->removed) targets = {TargetOf(*ch)};
+        if (ImGui::MenuItem("Revert Property")) Queue(PrefabReq::Revert, s_changesRoot, targets);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put this property back to the prefab's value.");
+        if (ImGui::MenuItem("Apply Property to Prefab")) Queue(PrefabReq::Apply, s_changesRoot, targets);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Write this value into %s. Other instances that did not change it take it too.", pname.c_str());
+    };
+
+    const PropertyDesc* d = findDesc();
+    if (!info) info = PropertyRegistry::FindFor(*s_markComp);
+    GameObject* go = s_markComp->gameObject;
+    if (!d || !info || !go || !s_ed) { prefabRows(); ImGui::EndPopup(); return; }
+
+    okay::editor::EditorState& ed = *s_ed;
+    const int idx = ComponentIndexOf(*go, *s_markComp);
+    const std::vector<GameObject*> targets = SameKindOnSelection(ed, go, s_markComp).objs;
+    const FieldState fs = ReadField(targets, info->name, idx, *d);
+
+    ctx::PropertyMenuState st;
+    st.path = ComponentPath(info->name, idx) + "." + d->name;
+    st.name = PrettyName(d->name);
+    st.kind = KindOf(d->type);
+    st.selectionCount = std::max(1, (int)targets.size());
+    st.readOnly = d->IsReadOnly();
+    const PropertyValue def = DefaultValueOf(*info, *d);
+    st.hasDefault = def.IsValid();
+    st.atDefault = def.IsValid() && fs.have > 0 && !fs.mixed && fs.value == def;
+    {
+        const char* text = ImGui::GetClipboardText();
+        PropertyValue parsed;
+        st.clipboardFits = text && *text && d->ParseText(text, parsed);
+    }
+    st.hasRange = d->hasRange; st.rangeMin = d->rangeMin; st.rangeMax = d->rangeMax;
+    const bool isText = d->type == PropertyType::String || d->type == PropertyType::AssetPath || d->type == PropertyType::ObjectRef;
+    st.valueEmpty = isText && !fs.mixed && fs.value.AsString().empty();
+    st.overridden = overridden;
+    st.objectResolves = d->type == PropertyType::ObjectRef && !fs.mixed && ed.scene().FindByGuid(fs.value.AsString()) != nullptr;
+
+    const auto write = [&](const PropertyValue& v, unsigned axisMask = 0) {
+        ed.PushUndo("Set " + st.name);
+        const int n = axisMask ? WriteFieldAxes(targets, info->name, idx, *d, v, axisMask) : WriteField(targets, info->name, idx, *d, v);
+        if (n > 0) ed.dirty = true;
+    };
+    const auto allParts = [&](float v) -> PropertyValue {   // every part of a number or vector set to v
+        switch (d->type) {
+            case PropertyType::Int: return PropertyValue::MakeInt((long long)v);
+            case PropertyType::Vec2: return PropertyValue::MakeVec2({v, v});
+            case PropertyType::Vec3: return PropertyValue::MakeVec3({v, v, v});
+            case PropertyType::Vec4: return PropertyValue::MakeVec4({v, v, v, v});
+            default: return PropertyValue::MakeFloat(v);
+        }
+    };
+    const ActFn act = [&](const std::string& id) {
+        if (id == "prop.reset") {
+            ed.PushUndo("Reset " + st.name);
+            if (ResetField(targets, info->name, idx, *d) > 0) ed.dirty = true;
+        }
+        else if (id == "prop.copy") { ImGui::SetClipboardText(fs.value.ToString().c_str()); ConsoleLog("Copied " + st.name); }
+        else if (id == "prop.paste") {
+            PropertyValue v;
+            const char* text = ImGui::GetClipboardText();
+            if (text && d->ParseText(text, v)) write(v);
+        }
+        else if (id == "prop.copyPath") { ImGui::SetClipboardText(st.path.c_str()); ConsoleLog("Copied " + st.path); }
+        else if (id == "prop.zero") write(allParts(0.0f));
+        else if (id == "prop.one") write(allParts(1.0f));
+        else if (id == "prop.identity") write(PropertyValue::MakeQuat(Quat::Identity));
+        else if (id == "prop.white") write(PropertyValue::MakeColor(Color{1, 1, 1, 1}), 0x7u);   // red, green, blue: each object keeps its own alpha
+        else if (id == "prop.clear")
+            write(d->type == PropertyType::AssetPath ? PropertyValue::MakeAssetPath("") : d->type == PropertyType::ObjectRef ? PropertyValue::MakeObjectRef("") : PropertyValue::MakeString(""));
+        else if (id == "prop.showAsset") { if (s_hooks.selectAsset) s_hooks.selectAsset(ResolveProjectPath(fs.value.AsString())); }
+        else if (id == "prop.selectObject") Ask(Act::SelectGuid, nullptr, ctx::MoveKind::Up, fs.value.AsString());
+    };
+    DrawItems(ctx::PropertyMenu(st), nullptr, act, prefabRows);
+    ImGui::EndPopup();
+}
+
 
 } // namespace oked

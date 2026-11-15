@@ -3520,3 +3520,14 @@ add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
+
+# The Inspector's right-click menus: the rules as data (editor/InspectorContextModel.hpp: header-only, no ImGui, no engine; order, labels, plurals, what is enabled when)
+# and the operations behind the rows (editor/InspectorModel: move to top / bottom, duplicate, paste as new, copy all values of an object, reset one value, Transform parts).
+add_executable(test_inspector_context_model test_inspector_context_model.cpp)
+target_include_directories(test_inspector_context_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME inspector_context_model COMMAND test_inspector_context_model)
+
+add_executable(test_inspector_menu_actions test_inspector_menu_actions.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp)
+target_include_directories(test_inspector_menu_actions PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_inspector_menu_actions PRIVATE okay::engine)
+add_test(NAME inspector_menu_actions COMMAND test_inspector_menu_actions)

@@ -891,7 +891,10 @@ step, a press that changes nothing is none, and a field that already made its ow
 - The panel's own "Lock" box is now "Lock Inspector" (the other "Lock" is the Scene-view lock of the object).
 - While you play, a note says changes made in the Inspector are not kept. They go away when you press Stop.
 - Component menu (the ... button or right click): **Copy Values**, **Paste Values** (same kind of component; goes to
-  every selected object that has one) and **Reset** (what a new component has). Each is one undo step.
+  every selected object that has one) and **Reset** (what a new component has). Each is one undo step. The Inspector's
+  right-click menus (component, Transform, field, object header, empty space) have many more rows now: Duplicate Component,
+  Paste As New, Move to Top / Bottom, Enable / Disable, Reset to Default and Copy / Paste Value on a field, Copy and Paste All
+  Component Values, Select Parent and more. See [inspector_menus.md](inspector_menus.md).
 - A component with no hand-written Inspector (a plugin's, or a new one) is drawn from the property registry: every
   property with its tooltip, drag to change numbers (range and step from the registry), colour picker, enum list,
   file and object fields. With several objects selected, the edit goes to all of them; fields that differ show

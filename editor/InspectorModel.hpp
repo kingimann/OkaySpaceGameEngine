@@ -2,8 +2,11 @@
 // The logic behind the Hierarchy and Inspector windows, without any drawing, so it
 // can be tested: the Hierarchy search filter, drag-and-drop reparenting, editing the
 // same property on several objects ("mixed" values), copy / paste / reset of one
-// component's values, and which prefab records an instance has changed.
+// component's values, and which prefab records an instance has changed. Also the actions behind the Inspector's
+// right-click menus (duplicate / paste as new / move / reset one value ...; the menu rules themselves are in
+// InspectorContextModel.hpp).
 #include <Okay.hpp>
+#include "InspectorContextModel.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include <functional>
@@ -108,6 +111,68 @@ int PasteComponentValues(const ComponentClip& clip, okay::Component& target);
 int ResetComponentValues(okay::Component& c);
 /// True when the component's type has registered properties (so Copy / Paste / Reset work on it).
 bool HasRegisteredProperties(const okay::Component& c);
+
+// ---- Right-click menu actions: components -----------------------------------------------------
+// Written for the Inspector's context menus. The rules for which rows exist and when they are enabled are in
+// InspectorContextModel.hpp; these are the operations the rows run (all ImGui-free, so they are tested headless).
+/// Where `c` sits among the components after the Transform: index 0 = the first, `count` = how many there are.
+/// index is -1 when `c` is not on `go` (or is its Transform).
+struct ComponentSlot { int index = -1; int count = 0; };
+ComponentSlot SlotOf(const okay::GameObject& go, const okay::Component& c);
+/// Move `c` up, down, to the top (right after the Transform) or to the bottom. True when the order changed.
+bool MoveComponentTo(okay::GameObject& go, okay::Component& c, okay::inspectorctx::MoveKind kind);
+/// The kind of `c` as the Inspector shows it: the registry's name made readable ("Rigidbody 2D"), else its C++ type name.
+std::string ComponentDisplayName(const okay::Component& c);
+/// The kind of component a registry type name stands for, as shown ("Rigidbody2D" -> "Rigidbody 2D").
+std::string TypeDisplayName(const std::string& registryTypeName);
+/// A component on `go` that needs `c` (RequireComponent) and would be left without it, as shown; "" when removing `c` is fine.
+std::string NeededByName(const okay::GameObject& go, const okay::Component& c);
+/// True when another component of `c`'s kind may be added to its object: the registry can make one, and the kind is not
+/// "only one per object". `why` gets the reason when not.
+bool CanAddAnother(const okay::Component& c, std::string* why = nullptr);
+/// Add a second component of `source`'s kind to `go` with the same values (the ones Copy Values copies) and the same on / off
+/// state, placed right after `source`. Null when it cannot be done (CanAddAnother says why).
+okay::Component* DuplicateComponent(okay::GameObject& go, okay::Component& source);
+/// True when the clipboard's kind can be added to `go`. `why` gets the reason when not.
+bool CanPasteAsNew(const okay::GameObject& go, const ComponentClip& clip, std::string* why = nullptr);
+/// Add a new component of the clipboard's kind to `go` and paste the copied values into it. Null when it cannot be done.
+okay::Component* PasteComponentAsNew(okay::GameObject& go, const ComponentClip& clip);
+
+// ---- Right-click menu actions: a whole object --------------------------------------------------
+/// The component values of one object, without its name, tag, layer or place in the Hierarchy (Transform.parent is left out).
+struct ObjectClip {
+    std::string from;                ///< the object's name when it was copied
+    okay::PropertySnapshot values;
+    bool Valid() const { return !values.Empty(); }
+};
+ObjectClip CopyObjectValues(const okay::GameObject& go);
+/// Write the copied values into the components `target` has of the same kinds (matched by kind and position among that
+/// kind); components it lacks are skipped. Returns how many values were written.
+int PasteObjectValues(const ObjectClip& clip, okay::GameObject& target);
+
+// ---- Right-click menu actions: one value -------------------------------------------------------
+/// What a new component holds for this property: the registered default, else read from a fresh component. Invalid when unknown.
+okay::PropertyValue DefaultValueOf(const okay::ComponentTypeInfo& info, const okay::PropertyDesc& desc);
+/// Write the default of the property to every object that has the component (like WriteField). Returns how many changed.
+int ResetField(const std::vector<okay::GameObject*>& objs, const std::string& typeName, int index, const okay::PropertyDesc& desc);
+/// The property of `info` that a field drawn with this label shows ("Spot Angle##light" -> spotAngle), or null.
+const okay::PropertyDesc* FindPropertyForLabel(const okay::ComponentTypeInfo& info, const std::string& label);
+
+// ---- Right-click menu actions: the Transform ---------------------------------------------------
+/// Position, rotation and scale relative to the parent, as Copy Transform Values keeps them.
+struct TransformClip {
+    bool valid = false;
+    okay::Vec3 position{0, 0, 0}, scale{1, 1, 1};
+    okay::Quat rotation;
+};
+constexpr unsigned kTransformPosition = 1u, kTransformRotation = 2u, kTransformScale = 4u, kTransformAll = 7u;
+TransformClip CopyTransform(const okay::Transform& t);
+/// Write the parts named by `parts` (bit set of kTransform*) of the clip into `t`.
+void PasteTransform(const TransformClip& clip, okay::Transform& t, unsigned parts);
+/// Put the parts back to position 0, no rotation, scale 1. A camera keeps its scale (it is not editable).
+void ResetTransform(okay::GameObject& go, unsigned parts);
+/// Which parts of the transform already are at their default (bit set of kTransform*).
+unsigned TransformAtDefault(const okay::Transform& t);
 
 // ---- Field labels and asset kinds ---------------------------------------------------------
 /// "spotAngle" -> "Spot Angle", "castShadows" -> "Cast Shadows", "uvScale" -> "UV Scale"

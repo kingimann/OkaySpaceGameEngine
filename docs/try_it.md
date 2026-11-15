@@ -49,6 +49,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Inspector right-click menus (component, Transform, field, object header, empty space) | Editor, select an object, right-click (details in section 8) | New in this change; headless tests only, never opened in a window |
 
 ---
 
@@ -211,6 +212,66 @@ controller at 30, 60 and 144 fps; the test failed on the old code and passes now
 The before-and-after of the bug needs the old release to compare.
 
 ---
+
+## 8. Inspector right-click menus
+
+**What it is.** The Inspector panel has right-click menus in five places. They are described row by row in
+[inspector_menus.md](inspector_menus.md). New in this change: Duplicate Component, Paste As New, Move to Top / Bottom,
+Enable / Disable, a greyed-out Remove when another component needs it, script rows (Edit Script, Reveal Script in Project),
+Copy Component Type Name, a field menu (Reset to Default, Copy / Paste Value, Copy Property Path, Set to Zero / One ...), a
+Transform menu with resets and Paste Only, and an object / empty-space menu (Copy and Paste All Component Values, Select
+Parent, Select Prefab Asset, Add Component...). Before this change the component menu had Move Up, Move Down, Expand / Collapse
+All, Copy Values, Paste Values, Reset and Remove, and the Transform had Copy and Paste Transform Values.
+
+**Steps (Windows editor, `Tools\OkayEngine.exe`).**
+1. **File > Open...**, paste `<install folder>\examples\vehicle\vehicle_test.okayscene`, press Open. In the Hierarchy click
+   `Car`. The Inspector shows Transform, Rigidbody 3D, Box Collider 3D, Vehicle Controller (Car) and Vehicle Seat.
+2. **Component menu.** Right-click the **Box Collider 3D** header (or click the **...** at its right end). You should see:
+   Disable Component, Move Up, Move Down, Move to Top, Move to Bottom, Duplicate Component, Copy Values, Paste Values,
+   Paste As New Component, Reset, Expand All Components, Collapse All Components, Copy Component Type Name, Remove Component.
+   Paste Values and Paste As New Component are grey; hover one and the tooltip says "Copy the values of another component of
+   this kind first." / "Copy a component's values first."
+3. **Duplicate.** Click **Duplicate Component**. A second Box Collider 3D appears right below the first with the same size
+   (1.6, 0.6, 3). **Edit > Undo** (Ctrl+Z) removes it again.
+4. **Move.** Right-click the Box Collider 3D again and choose **Move to Top**: it moves above Rigidbody 3D. **Move Up** is now
+   grey (tooltip: already first). Move it back with **Move to Bottom**.
+5. **Copy and paste as new.** On Box Collider 3D choose **Copy Values**. Click `Directional Light` in the Hierarchy and
+   right-click empty space in the Inspector (below the **Delete GameObject** button, or beside the **Add Component** button): the menu shows **Paste As New
+   Box Collider 3D**. Click it: the light gets a Box Collider 3D with the same size. Ctrl+Z removes it.
+6. **Disable.** Click `Car` again, right-click Rigidbody 3D, **Disable Component**: its header text turns grey and its
+   check box is off. The same row now reads **Enable Component**.
+7. **Field menu.** Click `Car Body` (a child of `Car`, scale 1.6, 0.6, 3). Right-click the **Scale** row of the Transform
+   (anywhere on the row, not only the numbers). Choose **Set to One**: the scale becomes 1, 1, 1; Ctrl+Z puts it back.
+   Right-click again: **Reset to Default** (1, 1, 1), **Copy Value** (puts `1.6 0.6 3` on the clipboard: paste it into any text
+   box to see), **Copy Property Path** (`Transform.scale`). Then click `Directional Light`, right-click its Scale row and choose
+   **Paste Value**: its scale becomes 1.6, 0.6, 3 (the light does not care; Ctrl+Z). Other cards answer too wherever a row's
+   label is a registered property (for example Rigidbody 3D **Body Type**: Reset to Default, Copy Value).
+8. **Transform menu.** Right-click the **Transform** header: Copy Transform Values, Paste Transform Values, Paste Only >
+   Position / Rotation / Scale, Reset Transform, Reset Position / Rotation / Scale. On `Car`, whose rotation is none, **Reset
+   Rotation** is grey (tooltip: there is no rotation already).
+9. **Object menu.** Right-click the grey object header bar at the top of the Inspector (the gaps and the icon, not the name
+   box): Copy All Component Values, Paste All Component Values, Reset Transform, Select Parent, Copy Object Name, Copy Object
+   Path, Add Component..., Expand All Components, Collapse All Components. On a `Wheel`, **Select Parent** selects `Car`.
+   **Add Component...** opens the Add Component browser.
+10. **Scripts.** On an object with a Script component (add one with Add Component > Scripts), right-click its header: **Edit
+    Script** opens the Script Editor, **Reveal Script in Project** finds the file, **Scripting Reference** opens the help window.
+
+**How you know it worked.** Each row does what it says, a grey row shows a tooltip with a reason, and every change is undone
+by one Ctrl+Z (**Edit > Undo** names it, for example "Undo Duplicate Box Collider 3D").
+
+**Screenshots.** [inspector_menus.md](inspector_menus.md) has seven pictures of the menus. They are headless renders of the
+real menu code in a stand-in Inspector (Dear ImGui's built-in font and style, so not the editor's look).
+
+**Status.** Headless tests in the repository: `inspector_context_model` (the menu rules: order, labels, plurals, which rows are
+grey and why, 465 thousand checks over every combination of the states) and `inspector_menu_actions` (move, duplicate every
+registered kind of component with the values compared in memory and after a save and load, paste as new, copy all values of an
+object, reset one value, Transform parts, a component another one needs). A throwaway program (not in the repository) also
+clicked through the real drawing code inside a window-less Dear ImGui context: 97 checks, all passing. **Unverified:** the real
+editor window: that a right-click opens each menu where described in your build, the real look and tooltips, and the script
+rows (Edit Script, Reveal Script in Project, Scripting Reference: tested only with stand-in hooks, not with the real windows). The
+whole editor was not built here, `main.cpp` was only syntax-checked. Known limits are listed at the end of
+[inspector_menus.md](inspector_menus.md): script components cannot be duplicated; a text box and a colour box keep their own
+right-click menu.
 
 ## Switches that are off by default (own code)
 

@@ -40,18 +40,19 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.2.6 Character Model panel - `editor/main.cpp` (`CharacterModelPanel` ~7269-7390, auto-rig ~7391-7642) - swap model by drag and drop, Rig Model onto the humanoid skeleton
   - 15.2.7 Shared pickers and fields - `editor/main.cpp` (~24195-25415) - object, asset, variable and tag pickers, key bind combo, tween preview, particle gradient and curve editors
   - 15.2.8 Reference fields - `editor/InspectorPanel.*` (`AssetField`, `ObjectField`, ObjectRef properties) - drag and drop, picker and clear for asset and object references
-  - 15.2.9 Component menu: Copy Values, Paste Values, Reset - `editor/InspectorPanel.*` - per-component rows in the header menu
+  - 15.2.9 Component menu: Copy Values, Paste Values, Reset - `editor/InspectorPanel.*` - per-component rows in the header menu (now part of 15.2.12)
   - 15.2.10 Prefab override UI - `editor/InspectorPanel.*`, `editor/PrefabEdit.*` (logic in `PrefabTools`) - read the differences of an instance, Revert and Apply per property or whole, with undo and updating the other instances (21.4)
   - 15.2.11 Play-mode note - `editor/InspectorPanel.cpp` (`DrawPlayModeNote`) - while playing, the Inspector says changes made there are not saved
+  - 15.2.12 Inspector right-click menus - `editor/InspectorContextModel.hpp` (rules as data), `editor/InspectorModel.*` (operations), `editor/InspectorPanel.cpp` (drawing), `docs/inspector_menus.md` - component header menu (Enable / Disable, Move Up / Down / Top / Bottom, Duplicate, Copy / Paste Values, Paste As New, Reset, script rows, Copy Type Name, Remove that refuses while another component needs it), Transform menu (copy, paste, Paste Only, resets), field menu (Reset to Default, Copy / Paste Value, Copy Property Path, Set to Zero / One / Identity / White, Clear, Show in Project, Select Object, prefab Revert / Apply), object header and empty-space menus (Copy / Paste All Component Values, Reset Transform, Select Parent / Prefab Root / Prefab Asset, Add Component...); every row is greyed out with a reason when it cannot work
 - **Code:** `editor/main.cpp`, `editor/EditorWidgets.*`, `editor/UIInspectorLayout.*`, `editor/UIInspectorOverlay.*`
 - **API:** View > Panels > Inspector; Add Component button under the component list
 - **Editor:** Inspector panel
 - **Docs:** `docs/editor.md` (Add Component, Component headers)
-- **Tests:** `editor` (selftest), `char_editor_parts` (editor-built part rig of a Character)
+- **Tests:** `editor` (selftest), `char_editor_parts` (editor-built part rig of a Character), `inspector_context_model` (the menu rules: order, labels, plurals, enabled / greyed with reason), `inspector_menu_actions` (move, duplicate every registered kind, paste as new, copy all values, reset one value, Transform parts)
 - **Status:** Works - one header per component type exists; the 9.8k-line function is the biggest part of `main.cpp`; the editor-wide undo hooks that watch Inspector fields (`WatchEditUndo`) are compiled but not run in the GUI (`docs/editor_undo.md`); the model behind them is tested headless
 - **Open:** polish (carried from the earlier map); `DrawInspector` is one 9.8k-line function (a splitting candidate, 15.10); values edited during Play are discarded when Play stops, on purpose (the Inspector shows a note, `DrawPlayModeNote`); keeping them is a planned feature (area 34); prefab overrides are shown and edited in the Inspector header, per property and in the Hierarchy (area 21)
 - **Related:** 15.10, 12.10, 13.4, 14.1, 21, 34
-- **Words:** Inspector, Add Component, component header, enable checkbox, Remove Component, tag, static, Character Model panel, Rig Model, script fields, component search
+- **Words:** Inspector, Add Component, component header, enable checkbox, Remove Component, tag, static, Character Model panel, Rig Model, script fields, component search, right-click menu, context menu, Duplicate Component, Paste As New Component, Reset to Default, Copy Value, Paste Value
 - **Seen as:** a component has no card or a field is missing; Add Component search cannot find a component; values reset after editing; the Inspector is slow with many components
 - **Ask me like:** "work on 15.2.4, add Foot IK weights to the Inspector"; "Add Component should show recently used components"
 

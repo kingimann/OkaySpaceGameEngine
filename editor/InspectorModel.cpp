@@ -1,8 +1,10 @@
 #include "InspectorModel.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <sstream>
+#include <unordered_map>
 
 using namespace okay;
 
@@ -378,6 +380,193 @@ int ResetComponentValues(Component& c) {
     Component* fresh = info->add(*g);
     if (!fresh) return 0;
     return PasteComponentValues(CopyComponentValues(*fresh), c);
+}
+
+// ---- Right-click menu actions ---------------------------------------------------------------------------------------------
+// Written from the Inspector menu rules in InspectorContextModel.hpp; every value goes through the property registry
+// (the same path Copy Values, the Inspector's cards, Undo and the scene text use), so nothing here has its own idea of a value.
+
+ComponentSlot SlotOf(const GameObject& go, const Component& c) {
+    ComponentSlot s;
+    int n = 0;
+    for (const auto& up : go.Components()) {
+        if (!up || up.get() == static_cast<const Component*>(go.transform)) continue;
+        if (up.get() == &c) s.index = n;
+        ++n;
+    }
+    s.count = n;
+    return s;
+}
+
+bool MoveComponentTo(GameObject& go, Component& c, inspectorctx::MoveKind kind) {
+    const ComponentSlot slot = SlotOf(go, c);
+    const int delta = inspectorctx::MoveDelta(kind, slot.index, slot.count);
+    if (delta == 0) return false;
+    go.MoveComponent(&c, delta);
+    return SlotOf(go, c).index != slot.index;
+}
+
+std::string TypeDisplayName(const std::string& n) {
+    // "BoxCollider3D" -> "Box Collider 3D", "UIButton" -> "UI Button", "AimIK" -> "Aim IK": the way the component headers are written.
+    std::string out;
+    for (std::size_t i = 0; i < n.size(); ++i) {
+        const unsigned char c = (unsigned char)n[i], prev = i > 0 ? (unsigned char)n[i - 1] : 0, next = i + 1 < n.size() ? (unsigned char)n[i + 1] : 0;
+        bool space = false;
+        if (i > 0 && std::isupper(c) && std::islower(prev)) space = true;                              // Box|Collider
+        else if (i > 0 && std::isupper(c) && std::isupper(prev) && std::islower(next)) space = true;   // UI|Button
+        else if (i > 0 && std::isdigit(c) && std::isalpha(prev)) space = true;                         // Collider| 3D
+        if (space) out += ' ';
+        out += (char)c;
+    }
+    return out;
+}
+
+std::string ComponentDisplayName(const Component& c) {
+    auto info = PropertyRegistry::FindFor(c);
+    return TypeDisplayName(info ? info->name : ComponentSerializerRegistry::TypeKey(c));
+}
+
+std::string NeededByName(const GameObject& go, const Component& c) {
+    const Component* by = go.RequiredBy(&c);
+    return by ? ComponentDisplayName(*by) : std::string();
+}
+
+bool CanAddAnother(const Component& c, std::string* why) {
+    auto info = PropertyRegistry::FindFor(c);
+    if (!info || !info->add) { if (why) *why = "The editor cannot make another of this kind of component."; return false; }
+    if (ComponentRules::IsUnique(info->type)) { if (why) *why = "An object can hold only one " + TypeDisplayName(info->name) + "."; return false; }
+    return true;
+}
+
+namespace {
+int IndexInComponents(const GameObject& go, const Component& c) {
+    int i = 0;
+    for (const auto& up : go.Components()) { if (up.get() == &c) return i; ++i; }
+    return -1;
+}
+}   // namespace
+
+Component* DuplicateComponent(GameObject& go, Component& source) {
+    if (!CanAddAnother(source)) return nullptr;
+    auto info = PropertyRegistry::FindFor(source);
+    const ComponentClip clip = CopyComponentValues(source);   // taken first: adding can add required siblings
+    Component* fresh = info->add(go);
+    if (!fresh || fresh == &source) return nullptr;
+    PasteComponentValues(clip, *fresh);
+    fresh->enabled = source.enabled;
+    // Right below the source (adding appended it, perhaps after the siblings a RequireComponent rule added).
+    const int want = IndexInComponents(go, source) + 1, have = IndexInComponents(go, *fresh);
+    if (want > 0 && have > want) go.MoveComponent(fresh, want - have);
+    return fresh;
+}
+
+bool CanPasteAsNew(const GameObject& go, const ComponentClip& clip, std::string* why) {
+    if (!clip.Valid()) { if (why) *why = "Copy a component's values first."; return false; }
+    auto info = PropertyRegistry::FindByName(clip.type);
+    if (!info || !info->add) { if (why) *why = "The editor cannot add a " + TypeDisplayName(clip.type) + " by itself."; return false; }
+    if (ComponentRules::IsUnique(info->type)) {
+        for (const auto& up : go.Components())
+            if (up && PropertyRegistry::FindFor(*up) == info) {
+                if (why) *why = "This object already has a " + TypeDisplayName(info->name) + ", and only one is allowed.";
+                return false;
+            }
+    }
+    return true;
+}
+
+Component* PasteComponentAsNew(GameObject& go, const ComponentClip& clip) {
+    if (!CanPasteAsNew(go, clip)) return nullptr;
+    auto info = PropertyRegistry::FindByName(clip.type);
+    Component* fresh = info->add(go);
+    if (!fresh) return nullptr;
+    PasteComponentValues(clip, *fresh);
+    return fresh;
+}
+
+ObjectClip CopyObjectValues(const GameObject& go) {
+    ObjectClip clip;
+    clip.from = go.name;
+    const PropertySnapshot all = SnapshotProperties(go);
+    for (const PropertySnapshot::Entry& e : all.entries) {
+        auto info = PropertyRegistry::FindByName(e.component);
+        if (!info || info->objectLevel) continue;               // the name, tag, layer ... of the object stay where they are
+        const PropertyDesc* d = info->Find(e.property);
+        if (!d || (d->flags & PropertyFlag::Structural)) continue;   // Transform.parent: a paste must not move the object in the Hierarchy
+        clip.values.entries.push_back(e);
+    }
+    return clip;
+}
+
+int PasteObjectValues(const ObjectClip& clip, GameObject& target) {
+    int changed = 0;
+    for (const PropertySnapshot::Entry& e : clip.values.entries)   // by kind and position among that kind ("Light#1.intensity"); a value that already matches counts nothing
+        if (PropertyRegistry::WriteProperty(target, e.Path(), e.value).changed) ++changed;
+    return changed;
+}
+
+PropertyValue DefaultValueOf(const ComponentTypeInfo& info, const PropertyDesc& desc) {
+    if (desc.defaultValue.IsValid()) return desc.defaultValue;
+    if (!info.add) return {};
+    // A type the registry could not make a sample of: read it from a fresh component on a scratch object. Kept per type (UI thread only).
+    static std::unordered_map<std::string, PropertySnapshot> s_fresh;
+    auto it = s_fresh.find(info.name);
+    if (it == s_fresh.end()) {
+        PropertySnapshot snap;
+        Scene scratch;
+        GameObject* g = scratch.CreateGameObject("scratch");
+        if (Component* fresh = info.add(*g)) snap = SnapshotComponent(*fresh);
+        it = s_fresh.emplace(info.name, std::move(snap)).first;
+    }
+    for (const PropertySnapshot::Entry& e : it->second.entries)
+        if (e.property == desc.name) return e.value;
+    return {};
+}
+
+int ResetField(const std::vector<GameObject*>& objs, const std::string& typeName, int index, const PropertyDesc& desc) {
+    auto info = PropertyRegistry::FindByName(typeName);
+    if (!info) return 0;
+    const PropertyValue v = DefaultValueOf(*info, desc);
+    return v.IsValid() ? WriteField(objs, typeName, index, desc, v) : 0;
+}
+
+const PropertyDesc* FindPropertyForLabel(const ComponentTypeInfo& info, const std::string& label) {
+    std::string l = label.substr(0, label.find("##"));
+    while (!l.empty() && l.back() == ' ') l.pop_back();
+    if (l.empty()) return nullptr;
+    l = Lower(l);
+    for (const PropertyDesc& d : info.properties)
+        if (Lower(PrettyName(d.name)) == l || Lower(d.name) == l) return &d;
+    return nullptr;
+}
+
+TransformClip CopyTransform(const Transform& t) {
+    TransformClip c;
+    c.valid = true;
+    c.position = t.localPosition; c.rotation = t.localRotation; c.scale = t.localScale;
+    return c;
+}
+
+void PasteTransform(const TransformClip& clip, Transform& t, unsigned parts) {
+    if (!clip.valid) return;
+    if (parts & kTransformPosition) t.localPosition = clip.position;
+    if (parts & kTransformRotation) t.localRotation = clip.rotation;
+    if (parts & kTransformScale) t.localScale = clip.scale;
+}
+
+void ResetTransform(GameObject& go, unsigned parts) {
+    Transform* t = go.transform;
+    if (!t) return;
+    if (parts & kTransformPosition) t->localPosition = {0, 0, 0};
+    if (parts & kTransformRotation) t->localRotation = Quat::Identity;
+    if ((parts & kTransformScale) && !go.GetComponent<Camera>()) t->localScale = {1, 1, 1};
+}
+
+unsigned TransformAtDefault(const Transform& t) {
+    unsigned at = 0;
+    if (t.localPosition.x == 0.0f && t.localPosition.y == 0.0f && t.localPosition.z == 0.0f) at |= kTransformPosition;
+    if (std::fabs(t.localRotation.w) > 0.999999f) at |= kTransformRotation;   // q and -q are the same rotation
+    if (t.localScale.x == 1.0f && t.localScale.y == 1.0f && t.localScale.z == 1.0f) at |= kTransformScale;
+    return at;
 }
 
 // ---- Field labels and asset kinds ---------------------------------------------------------------------------------

@@ -5,7 +5,8 @@
 //  - AssetField / ObjectField: reference fields (drag and drop, picker, clear)
 //  - DrawFallbackInspector: a card for components without a hand-written Inspector,
 //    built from the property registry, editing every selected object at once
-//  - the component menu (copy / paste / reset values), prefab changes, the Play-mode note
+//  - the right-click menus (component header, Transform header, field, object header, empty space; the rules are
+//    in InspectorContextModel.hpp), prefab changes, the Play-mode note
 #include "EditorState.hpp"
 #include "imgui.h"
 #include <functional>
@@ -47,9 +48,28 @@ void BeginInspectorFrame();
 /// properties. `targets` are all selected objects: edits go to every one that has the component.
 void DrawFallbackInspector(okay::editor::EditorState& ed, okay::GameObject* go, okay::Component* comp,
                            okay::Component*& toRemove, float cursorYBefore, CompHeaderFn header);
-/// The "Copy Values / Paste Values / Reset" rows of a component's menu. Call inside its popup.
-void ComponentValueMenu(okay::Component* comp);
-/// Run what the menu asked for. After the component loop, with the object that was drawn.
+
+// ---- Right-click menus ----------------------------------------------------------------------------------------
+// Rows, order, labels and what is greyed out when: InspectorContextModel.hpp (tested without a window). The operations: InspectorModel.hpp.
+/// What main.cpp lends the menus: the things only it can do. Set once (SetInspectorMenuHooks); a missing function turns its row into a no-op.
+struct InspectorMenuHooks {
+    std::function<void(bool open)> setCardsOpen;           ///< Expand All (true) / Collapse All (false) Components
+    std::function<void(okay::Component*)> editScript;      ///< open a Script in the Script Editor, or a Visual Script in the node editor
+    std::function<void()> showScriptReference;             ///< Help > Scripting Reference
+};
+void SetInspectorMenuHooks(InspectorMenuHooks hooks);
+/// The rows of a component header's menu ("..." button or right-click). Call inside its popup. `removable` false = a required component;
+/// `*toRemove` is set when Remove Component is chosen for one object (the Inspector removes it after the loop).
+void DrawComponentMenu(okay::Component* comp, bool removable, okay::Component** toRemove);
+/// The rows of the Transform header's menu. Call inside its popup.
+void DrawTransformMenu(okay::editor::EditorState& ed, okay::GameObject* go);
+/// Right after the object header bar (its child window is the last item): a right click on the bar, except on the name box, opens the object menu.
+void DrawObjectHeaderMenu(okay::editor::EditorState& ed, okay::GameObject* go);
+/// At the end of the Inspector window: a right click on empty space opens a menu (Add Component, Paste As New Component, Expand / Collapse All).
+void DrawInspectorBackgroundMenu(okay::editor::EditorState& ed, okay::GameObject* go);
+/// True once after a menu asked for the Add Component browser; the Add Component button opens it then, as if it was clicked.
+bool TakeAddComponentRequest();
+/// Run what the menus asked for that changes the list of components or several objects. After the component loop, with the object that was drawn.
 void ApplyComponentValueRequests(okay::editor::EditorState& ed, okay::GameObject* go);
 
 // ---- Prefab instances (logic: PrefabEdit.hpp, PrefabTools) ----------------------------------------------------
@@ -84,8 +104,11 @@ bool RunPrefabRequests(okay::editor::EditorState& ed);
 
 /// Hand-written Inspectors: tell the tooltip lookup which component is being drawn (CompHeader does it) ...
 void SetTipComponent(const okay::Component* comp);
-/// ... then call right after a field's widget: shows the field's tooltip (registry text or the plain default) on hover.
-void FieldTip(const char* label);
+/// ... then call right after a field's widget: shows the field's tooltip (registry text or the plain default) on hover, and
+/// opens the field's right-click menu (Reset to Default, Copy / Paste Value, Copy Property Path, quick values, prefab Revert / Apply)
+/// when the label matches a property of the component. `wholeRow`: a right click anywhere on the row counts (for a field made of
+/// several boxes whose last item is only its label), not just on the last item.
+void FieldTip(const char* label, bool wholeRow = false);
 /// With several objects selected: one line under a component header naming the values that differ between them
 /// ("Different on the selected objects: Intensity, Color"). No-op otherwise.
 void DrawMixedNote(const okay::Component* comp);

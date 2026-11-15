@@ -26370,11 +26370,6 @@ static std::unordered_map<std::string, bool> sCompOpen;
 static int sCompForceRequest = -1;
 static int sCompForceOpen    = -1;
 
-// Deferred component reorder request, applied after the inspector finishes drawing
-// so the component vector isn't mutated mid-iteration.
-static okay::Component* sMoveComp = nullptr;
-static int sMoveDelta = 0;
-
 // Put the next item on the same line if `nextW` px still fit there, else on a new
 // line — rows of buttons / small fields flow instead of clipping in a narrow panel.
 static bool SameLineOrWrap(float nextW) {
@@ -26825,15 +26820,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     if (oked::PrefabChangedFor(comp) && ImGui::IsMouseHoveringRect(hmn, hmx) && ImGui::IsWindowHovered()) ImGui::SetTooltip("Changed from the prefab");
     if (hdrRightClick) ImGui::OpenPopup("##compctx");
     if (ImGui::BeginPopup("##compctx")) {
-        if (ImGui::MenuItem("Move Up"))   { sMoveComp = comp; sMoveDelta = -1; }
-        if (ImGui::MenuItem("Move Down")) { sMoveComp = comp; sMoveDelta = +1; }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Expand All Components"))   sCompForceRequest = 1;
-        if (ImGui::MenuItem("Collapse All Components")) sCompForceRequest = 0;
-        oked::ComponentValueMenu(comp);   // Copy Values / Paste Values / Reset
-        ImGui::Separator();
-        if (removable && ImGui::MenuItem("Remove Component")) *toRemove = comp;
-        if (!removable) ImGui::TextDisabled("(required component)");
+        oked::DrawComponentMenu(comp, removable, toRemove);   // rows and rules: editor/InspectorContextModel.hpp (docs/inspector_menus.md)
         ImGui::EndPopup();
     }
     DrawComponentDiagMarker(comp->gameObject, label, hmn, hmx);
@@ -28952,6 +28939,7 @@ void DrawInspector(EditorState& ed) {
         ImGui::SetTooltip("Drop a script/material/image here to attach it");
     ImGui::PopStyleVar();
     ImGui::PopStyleColor();
+    oked::DrawObjectHeaderMenu(ed, go);   // right-click the header bar (not the name box): copy / paste all values, reset Transform, select parent / prefab ...
     ImGui::Spacing();
 
     // ---- Prefab instance header, per-property marks and the changes list ------------------
@@ -28968,6 +28956,28 @@ void DrawInspector(EditorState& ed) {
                 if (root) OpenPrefabModeOf(ed, root);
             };
             oked::SetPrefabUiHooks(std::move(h));
+        }
+    }
+    {   // what the right-click menus ask of this file: fold all cards, open the script windows
+        static bool s_menuHooks = false;
+        if (!s_menuHooks) {
+            s_menuHooks = true;
+            oked::InspectorMenuHooks mh;
+            mh.setCardsOpen = [](bool open) { sCompForceRequest = open ? 1 : 0; };
+            mh.editScript = [](okay::Component* c) {
+                if (auto* sc = dynamic_cast<ScriptComponent*>(c)) {
+                    g_showScriptEditor = true;
+                    if (std::find(g_scriptTabs.begin(), g_scriptTabs.end(), sc) == g_scriptTabs.end()) g_scriptTabs.push_back(sc);
+                    g_activeScriptTab = sc; g_focusScriptTab = sc;
+                } else if (auto* vsc = dynamic_cast<VisualScriptComponent*>(c)) {
+                    if (vsc->Path().empty()) return;   // an embedded graph first needs a file: the card's "Open in node editor" makes one
+                    okay::editor::vsed::OpenFile(vsc->Path());
+                    okay::editor::vsed::BindObject(vsc->gameObject);
+                    g_showVisualScript = true;
+                }
+            };
+            mh.showScriptReference = [] { g_showScriptDocs = true; };
+            oked::SetInspectorMenuHooks(std::move(mh));
         }
     }
     oked::RefreshPrefabChanges(go);
@@ -29163,27 +29173,10 @@ void DrawInspector(EditorState& ed) {
         ImGui::TextDisabled("Drop on the visual script");
         ImGui::EndDragDropSource();
     }
-    // Right-click the Transform header: copy the whole TRS, paste it onto another
-    // object.
-    {
-        static bool s_tcopyValid = false;
-        static Vec3 s_tcopyPos, s_tcopyScl;
-        static Quat s_tcopyRot;
-        if (ImGui::BeginPopupContextItem("##tfctx")) {
-            Transform* t = go->transform;
-            if (ImGui::MenuItem("Copy Transform Values")) {
-                s_tcopyPos = t->localPosition; s_tcopyRot = t->localRotation;
-                s_tcopyScl = t->localScale;    s_tcopyValid = true;
-            }
-            if (ImGui::MenuItem("Paste Transform Values", nullptr, false, s_tcopyValid)) {
-                ed.PushUndo();
-                t->localPosition = s_tcopyPos;
-                t->localRotation = s_tcopyRot;
-                t->localScale    = s_tcopyScl;
-                ed.dirty = true;
-            }
-            ImGui::EndPopup();
-        }
+    // Right-click the Transform header: copy / paste the position, rotation and scale, reset them (rows: editor/InspectorContextModel.hpp).
+    if (ImGui::BeginPopupContextItem("##tfctx")) {
+        oked::DrawTransformMenu(ed, go);
+        ImGui::EndPopup();
     }
     if (tfOpen) {
         Transform* t = go->transform;
@@ -29203,7 +29196,7 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { g->transform->localPosition = t->localPosition; });
         }
         if (act) ed.PushUndo();
-        oked::SetTipComponent(t); oked::FieldTip("Position");
+        oked::SetTipComponent(t); oked::FieldTip("Position", true);
         if (ImGui::BeginDragDropSource()) {
             const char* payload = "field\nposition";
             ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
@@ -29227,7 +29220,7 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { g->transform->localRotation = t->localRotation; g_euler[g] = e; });
         }
         if (act) ed.PushUndo();
-        oked::SetTipComponent(t); oked::FieldTip("Rotation");
+        oked::SetTipComponent(t); oked::FieldTip("Rotation", true);
         if (ImGui::BeginDragDropSource()) {
             const char* payload = "field\nrotation";
             ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
@@ -29255,7 +29248,7 @@ void DrawInspector(EditorState& ed) {
             others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = t->localScale; });
         }
         if (act) ed.PushUndo();
-        oked::SetTipComponent(t); oked::FieldTip("Scale");
+        oked::SetTipComponent(t); oked::FieldTip("Scale", true);
         if (!isCam && ImGui::BeginDragDropSource()) {
             const char* payload = "field\nscale";
             ImGui::SetDragDropPayload("VS_INSPECTOR", payload, std::strlen(payload) + 1);
@@ -40007,7 +40000,7 @@ void DrawInspector(EditorState& ed) {
         sPendingViewModeCtrl = nullptr;
         ed.dirty = true;
     }
-    oked::ApplyComponentValueRequests(ed, go);   // the component menu's Copy / Paste / Reset Values
+    oked::ApplyComponentValueRequests(ed, go);   // what the right-click menus queued: move, duplicate, paste, copy / reset values, remove from several objects
     if (oked::RunPrefabRequests(ed)) {           // Revert / Apply Property or Component from a right-click menu
         ImGui::PopItemWidth(); ImGui::PopStyleVar(3); ImGui::End();
         return;
@@ -40015,13 +40008,6 @@ void DrawInspector(EditorState& ed) {
     // Apply a queued component removal (undoable).
     if (toRemove) { ed.PushUndo(); go->RemoveComponent(toRemove); ed.dirty = true; }
 
-    // Apply a deferred reorder request (set by CompHeader's arrows / context menu).
-    if (sMoveComp && sMoveComp->gameObject == go) {
-        ed.PushUndo();
-        go->MoveComponent(sMoveComp, sMoveDelta);
-        ed.dirty = true;
-    }
-    sMoveComp = nullptr;
     // Promote a pending Expand/Collapse All so it drives every header next frame.
     sCompForceOpen = sCompForceRequest;
     sCompForceRequest = -1;
@@ -40043,7 +40029,7 @@ void DrawInspector(EditorState& ed) {
     // on the right as a plain list; typing searches every category at once.
     static std::string s_acCat;                  // selected category ("Recent" = recently added)
     static std::vector<std::string> s_acRecent;  // labels, most recent first
-    if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30))) {
+    if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30)) || oked::TakeAddComponentRequest()) {   // or "Add Component..." in a right-click menu
         acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
         s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
     }
@@ -40605,6 +40591,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::EndDragDropTarget();
         }
     }
+    oked::DrawInspectorBackgroundMenu(ed, go);   // right-click empty space: Add Component, Paste As New Component, Expand / Collapse All
     ImGui::PopItemWidth();
     ImGui::PopStyleVar(3);
     ImGui::End();

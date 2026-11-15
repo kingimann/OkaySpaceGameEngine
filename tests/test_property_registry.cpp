@@ -383,7 +383,8 @@ static void TestRegistryBasics() {
         "TrailRenderer", "MinimapBlip", "AimIK", "SurvivalSave",
         "UIToast", "UITooltip", "UIModal", "UIContextMenu",
         "WorldSpaceUI", "PauseMenu", "ChestInventory", "UIDropTarget",
-        "IKTarget", "NetValidator", "DialogueRunner", "LogicTarget"};
+        "IKTarget", "NetValidator", "DialogueRunner", "LogicTarget",
+        "LogicSource", "QuestLog", "Saveable", "SpriteAnimator"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

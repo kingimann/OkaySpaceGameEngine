@@ -19,6 +19,8 @@
 #include "okay/Components/NetValidator.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/LogicLinks.hpp"
+#include "okay/Components/SpriteAnimator.hpp"
+#include "okay/Core/SaveFramework.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalStats.hpp"
@@ -1307,6 +1309,67 @@ void RegisterLogicTarget() {
     b.Commit();
 }
 
+// LogicSource (record "logicsource"). The links and the I/O link list are lists.
+void RegisterLogicSource() {
+    PropertyBuilder<LogicSource> b("LogicSource", "logicsource", "Gameplay");
+    b.AddEnum("kind", &LogicSource::kind, {"Button", "PressurePlate", "TriggerZone", "Timer", "Relay"}).Tooltip("What switches the signal on")
+     .AddBool("startOn", &LogicSource::startOn).Tooltip("Toggle button or timer: start switched on")
+     .Section("Button")
+     .AddBool("toggle", &LogicSource::toggle).Tooltip("Each press flips the signal (off = on for a moment)")
+     .AddFloat("holdTime", &LogicSource::holdTime).Range(0, 1e4, 0.05).Tooltip("Momentary: seconds on after a press")
+     .AddKey("pressKey", &LogicSource::pressKey).Tooltip("Interact key while aiming at it (0 = off)")
+     .AddInt("pressPadButton", &LogicSource::pressPadButton).Range(-1, 31, 1).Tooltip("Gamepad button (2 = X, -1 = off)")
+     .AddFloat("pressReach", &LogicSource::pressReach).Range(0, kBig, 0.1).Tooltip("How far away it can be pressed")
+     .Section("Timer")
+     .AddFloat("interval", &LogicSource::interval).Range(0, 1e6, 0.05).Tooltip("Seconds per cycle")
+     .AddFloat("onTime", &LogicSource::onTime).Range(0, 1e6, 0.05).Tooltip("Seconds of each cycle it is on")
+     .Section("Plate and zone")
+     .AddVec3("zoneSize", &LogicSource::zoneSize).Range(0, kBig, 0.05).Tooltip("Detection box size (local units)")
+     .AddVec3("zoneOffset", &LogicSource::zoneOffset).Range(-kBig, kBig, 0.05).Tooltip("Detection box centre (local units)")
+     .AddString("activatorTag", &LogicSource::activatorTag).Tooltip("Only this tag counts (empty = anything that moves)");
+    b.Commit();
+}
+
+// QuestLog (record "questlog"). The quest records and the tracked quest are play state.
+void RegisterQuestLog() {
+    PropertyBuilder<QuestLog> b("QuestLog", "questlog", "Gameplay");
+    b.AddAssetPath("questFile", &QuestLog::questFile, "file").Tooltip("The .okayquest file, loaded at Start")
+     .AddBool("showTracker", &QuestLog::showTracker).Tooltip("Show the active-quest overlay")
+     .AddBool("allowJournal", &QuestLog::allowJournal).Tooltip("The journal key opens the Journal window")
+     .AddKey("journalKey", &QuestLog::journalKey).Tooltip("Opens the Journal window")
+     .AddBool("showNotifications", &QuestLog::showNotifications).Tooltip("Toasts on start, progress and completion")
+     .AddBool("drawUI", &QuestLog::drawUI).Tooltip("Off: the game draws its own quest UI")
+     .AddString("playerName", &QuestLog::playerName).Tooltip("Whose inventory Collect objectives count (empty = the player)");
+    b.Commit();
+}
+
+// Saveable (record "saveable"). The extra property paths are a list.
+void RegisterSaveable() {
+    PropertyBuilder<Saveable> b("Saveable", "saveable", "Gameplay");
+    b.AddString("saveId", &Saveable::saveId).Tooltip("Stable key in the save (empty = the object's scene path)")
+     .AddBool("dynamic", &Saveable::dynamic).Tooltip("Spawned while playing: made again from the prefab on load")
+     .AddString("prefab", &Saveable::prefab).Tooltip("Prefab path or factory:Name for a dynamic object (empty = its own prefab)")
+     .AddBool("saveTransform", &Saveable::saveTransform).Tooltip("Store position, rotation and scale")
+     .AddBool("saveActive", &Saveable::saveActive).Tooltip("Store whether the object is active")
+     .AddBool("saveComponents", &Saveable::saveComponents).Tooltip("Store bodies, inventory and stats")
+     .AddBool("saveVariables", &Saveable::saveVariables).Tooltip("Store this object's script variables")
+     .AddBool("saveSceneVariables", &Saveable::saveSceneVariables).Tooltip("Store the scene-wide variables once per save");
+    b.Commit();
+}
+
+// SpriteAnimator (record "spriteanim"). The frame list and clips are lists.
+void RegisterSpriteAnimator() {
+    PropertyBuilder<SpriteAnimator> b("SpriteAnimator", "spriteanim", "Rendering");
+    b.AddFloat("fps", &SpriteAnimator::fps).Range(0, 1e3, 0.5).Tooltip("Frames per second")
+     .AddBool("loop", &SpriteAnimator::loop).Tooltip("Start again after the last frame")
+     .AddBool("playing", &SpriteAnimator::playing).Tooltip("Play from the start")
+     .Section("Sprite sheet")
+     .AddInt("atlasColumns", &SpriteAnimator::atlasColumns).Range(0, 4096, 1).Tooltip("Cells across the sheet (0 = use the frame list)")
+     .AddInt("atlasRows", &SpriteAnimator::atlasRows).Range(0, 4096, 1).Tooltip("Cells down the sheet")
+     .AddInt("atlasCount", &SpriteAnimator::atlasCount).Range(0, 1 << 24, 1).Tooltip("Cells to play (0 = columns x rows)");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -1929,6 +1992,10 @@ void RegisterGameplayProperties() {
     RegisterNetValidator();
     RegisterDialogueRunner();
     RegisterLogicTarget();
+    RegisterLogicSource();
+    RegisterQuestLog();
+    RegisterSaveable();
+    RegisterSpriteAnimator();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

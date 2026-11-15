@@ -22,6 +22,9 @@
 #include <Okay.hpp>
 #include "okay/Render/SoftwareRenderer.hpp"
 #include "okay/Render/ModelImport.hpp"
+#include "okay/Physics/Broadphase.hpp"
+#include "okay/Scene/ComponentCache.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include "okay/UI/UIBatcher.hpp"
 #include "okay/UI/UIRenderer.hpp"
 
@@ -323,6 +326,13 @@ struct Options {
     int frames = 100, warmup = 30, width = 640, height = 360;
     float scale = 1.0f;
     int shadows = 1;               // --shadows 0 switches the sun's shadow maps off (the software renderer spends most of a frame on them)
+    int perPixel = 0;              // --perpixel 1: the per-pixel lighting path for every mesh (the default shades per vertex unless shadows are on)
+    bool legacySw = false;         // --legacy-sw: the software renderer without this pass's shortcuts (the same pictures, slower)
+    bool noSpan = false, noBandSkip = false, noLightCull = false;   // each shortcut alone
+    std::string saveScenes;        // --save-scenes DIR: write the 3D bench scenes as .okayscene files (examples/perf) and stop
+    std::string sceneFile;         // --scene-file PATH: benchmark a scene file instead of a built in scene
+    bool legacyPhysics = false;    // --legacy-physics: all pairs of colliders and a plain Raycast per falling body, as before (the same motion, slower)
+    bool noQueryCache = false;     // --no-query-cache: the physics steps walk the scene for every component list, as before
     bool list = false, quiet = false;
 };
 
@@ -342,12 +352,34 @@ struct Result {
     int objects = 0, drawn = 0, culled = 0;
 };
 
+World LoadWorld(const std::string& path) {   // a scene file: its own camera and lights; the first frames' contents decide the rest
+    World w;
+    w.scene = std::make_unique<Scene>("file");
+    std::string err;
+    if (!SceneSerializer::LoadFromFile(*w.scene, path, &err)) { std::fprintf(stderr, "could not load %s: %s\n", path.c_str(), err.c_str()); w.scene.reset(); return w; }
+    w.render3d = true;
+    if (Camera* cam = w.scene->FindObjectOfType<Camera>()) {
+        w.eye = cam->transform->Position();
+        w.target = w.eye + cam->transform->Forward() * -10.0f;   // (the camera looks along its local -Z, see AddCamera)
+    }
+    return w;
+}
+
 Result RunScene(const SceneDef& def, const Options& o) {
     Result res;
-    World w = def.make(o.scale);
+    World w = o.sceneFile.empty() ? def.make(o.scale) : LoadWorld(o.sceneFile);
+    if (!w.scene) return res;
     Scene& s = *w.scene;
     if (w.fixedStep) s.UseFixedStepPhysics(true);
     ShadowsEnabled() = o.shadows != 0;
+    PerPixelLighting() = o.perPixel != 0;
+    // The software renderer's shortcuts (each only skips work that cannot change a pixel): on unless asked off, so a run
+    // with and without them can be compared in one binary, and must print the same frame_hash.
+    detail::TriangleSpanDisabled() = o.legacySw || o.noSpan;
+    BandSkipEnabled() = !(o.legacySw || o.noBandSkip);
+    LightCullingEnabled() = !(o.legacySw || o.noLightCull);
+    ComponentCacheDisabled() = o.noQueryCache;
+    broadphase::ForceBruteForce() = o.legacyPhysics;
     UICanvas::Set(1920.0f, 1080.0f);
     s.Start();
     res.objects = (int)s.Objects().size();
@@ -462,6 +494,15 @@ bool ParseArgs(int argc, char** argv, Options& o) {
         else if (a == "--frames") { const char* v = next("--frames"); if (!v) return false; o.frames = std::atoi(v); }
         else if (a == "--warmup") { const char* v = next("--warmup"); if (!v) return false; o.warmup = std::atoi(v); }
         else if (a == "--shadows") { const char* v = next("--shadows"); if (!v) return false; o.shadows = std::atoi(v); }
+        else if (a == "--perpixel") { const char* v = next("--perpixel"); if (!v) return false; o.perPixel = std::atoi(v); }
+        else if (a == "--legacy-sw") o.legacySw = true;
+        else if (a == "--no-span") o.noSpan = true;
+        else if (a == "--no-query-cache") o.noQueryCache = true;
+        else if (a == "--legacy-physics") o.legacyPhysics = true;
+        else if (a == "--save-scenes") { const char* v = next("--save-scenes"); if (!v) return false; o.saveScenes = v; }
+        else if (a == "--scene-file") { const char* v = next("--scene-file"); if (!v) return false; o.sceneFile = v; }
+        else if (a == "--no-bandskip") o.noBandSkip = true;
+        else if (a == "--no-lightcull") o.noLightCull = true;
         else if (a == "--scale") { const char* v = next("--scale"); if (!v) return false; o.scale = (float)std::atof(v); }
         else if (a == "--size") { const char* v = next("--size"); if (!v) return false; if (std::sscanf(v, "%dx%d", &o.width, &o.height) != 2) return false; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); return false; }
@@ -475,10 +516,29 @@ bool ParseArgs(int argc, char** argv, Options& o) {
 
 int main(int argc, char** argv) {
     Options o;
-    if (!ParseArgs(argc, argv, o)) { std::fprintf(stderr, "usage: bench_frame [--list] [--scene NAME|all] [--frames N] [--warmup N] [--size WxH] [--scale F] [--shadows 0|1]\n"); return 2; }
+    if (!ParseArgs(argc, argv, o)) { std::fprintf(stderr, "usage: bench_frame [--list] [--scene NAME|all] [--frames N] [--warmup N] [--size WxH] [--scale F] [--shadows 0|1] [--perpixel 0|1] [--legacy-sw | --no-span --no-bandskip --no-lightcull] [--no-query-cache] [--legacy-physics] [--scene-file PATH] [--save-scenes DIR]\n"); return 2; }
     if (o.list) { for (const auto& d : kScenes) std::printf("%-12s %s\n", d.name, d.what); return 0; }
     Log::minLevel = Log::Level::Warning;
+    if (!o.saveScenes.empty()) {   // examples/perf: the same scenes, as files the editor opens
+        struct Out { const char* scene; const char* file; };
+        const Out outs[] = {{"cubes2000", "many_colliders"}, {"bodies500", "falling_bodies"}, {"lights64", "many_lights"}};
+        for (const Out& out : outs)
+            for (const auto& d : kScenes)
+                if (std::string(d.name) == out.scene) {
+                    World w = d.make(1.0f);
+                    const std::string path = o.saveScenes + "/" + out.file + ".okayscene";
+                    std::string err;
+                    const bool ok = SceneSerializer::SaveToFile(*w.scene, path, &err);
+                    std::printf("%s %s %s\n", ok ? "wrote" : "FAILED", path.c_str(), err.c_str());
+                }
+        return 0;
+    }
     int ran = 0;
+    if (!o.sceneFile.empty()) {   // one scene from a file, reported under the name "file"
+        static const SceneDef fileDef = {"file", "a scene file", nullptr};
+        Print(fileDef, o, RunScene(fileDef, o));
+        return 0;
+    }
     for (const auto& d : kScenes) {
         if (o.scene != "all" && o.scene != d.name) continue;
         Print(d, o, RunScene(d, o));

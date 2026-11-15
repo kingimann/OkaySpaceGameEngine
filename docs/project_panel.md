@@ -22,13 +22,13 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
   digits; hover for the whole GUID and the content hash), how many assets it uses (and how many through the whole graph), how
   many use it, its tags, and an orange warning when it names a file that is not there (hover to see which). The same warning
   shows as a small triangle on the tile or row.
-- **Create.** The **+** button and the right-click menu (grouped: folder, code, scenes and objects, looks and data)
-  create a folder, script, visual script, scene, prefab, material, data asset or item. Each one asks for a name first.
+- **Create.** The **+** button and the right-click menu (grouped: folder, code, scenes and objects, story and AI, looks and data)
+  create a folder, script, visual script, scene, prefab, dialogue, quest file, behavior tree, cutscene, material, data asset or item. Each one asks for a name first.
   A new visual script opens in the Visual Script editor under that name.
 - **Rename (F2).** Keeps the file type. Every scene, prefab, material and other text asset that used the old name is
   updated, the `.okaymeta` (the asset's GUID) moves with the file, colour labels follow, and the open scene is
   updated too.
-- **Move.** Drag onto a folder (in the tree or the grid). References are updated the same way. Several selected
+- **Move.** Drag onto a folder (in the tree or the grid), or right-click > **Move to...** and pick the folder. References are updated the same way. Several selected
   items move together.
 - **Copy, cut, paste, duplicate.** Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+D (or the menu). A name that is taken gets a number.
 - **Delete (Del).** Asks first and lists the assets that use it. Deleted items go to `<project>/.okay/trash` (the last
@@ -59,7 +59,7 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
   FAVOURITES on the left. They are kept in the project (`.okay/favourites.txt`) and follow renames and moves.
 - **Reimport** reads a file again after you changed it in another program.
 - **Keyboard.** Arrow keys move the selection (Shift adds), Enter opens, Backspace goes up a folder, Home and End jump,
-  Ctrl+A selects all. After you click in the folder tree, Up and Down walk the folders, Right opens a folder (then
+  Ctrl+A selects all, F5 refreshes. After you click in the folder tree, Up and Down walk the folders, Right opens a folder (then
   steps into it) and Left closes it (then goes up).
 - **Drag and drop.** Drag assets into the Scene view, the Hierarchy and the Inspector's asset fields (payload `ASSET_PATH`).
   Drop files or folders from your file manager onto the editor to import them into the folder you are looking at

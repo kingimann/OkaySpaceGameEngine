@@ -233,7 +233,7 @@ manager onto the editor window, or use the Project panel's **Import** button.
    * **Open with Default App** opens the picture in your system's picture program.
    * **Show in Explorer** opens the folder with the file selected.
 2. **Several items.** Click one file, Ctrl+click two more, right-click one of them. The first line says **3 items selected**; the items read
-   **Delete 3 Items**, **Duplicate 3 Items**, **Copy 3 Items**; Rename and Open are greyed with "Select one item first / to ...". **Copy Text > Relative Paths
+   **Delete 3 Items**, **Duplicate 3 Items**, **Copy 3 Items**; Rename and Open are greyed ("Select one item to rename it." / "Select one item to open it."). **Copy Text > Relative Paths
    (one per line)**, then paste into a multi-line box: one path per line.
 3. **Move to...** Right-click a file, **Move to...**, pick a folder in the window (your Assets folder and its folders; the file's own folder is greyed:
    "It is already in that folder."), press **Move**. Ctrl+Z in the Project panel moves it back. Try it on a folder and pick that folder or a folder inside

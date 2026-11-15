@@ -1,0 +1,10 @@
+// Latin-1 sample for the Script Editor. This file is NOT valid UTF-8, on purpose.
+// The next word ends in one byte E9 (an e with an acute accent in Latin-1): café
+// The own code editor (OKAY_UI_BACKEND=okayui) cannot show that byte, so it opens this file read-only,
+// says so above the code, and never writes it back changed. Open it, try to type, then look at the file
+// in Notepad: it is byte for byte what you copied. (Dear ImGui's editor, the default, shows the byte as is.)
+
+void Start()
+{
+    Debug.Log("Latin-1 sample is ready");
+}

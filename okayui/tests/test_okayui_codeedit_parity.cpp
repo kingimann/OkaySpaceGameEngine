@@ -39,6 +39,16 @@ double Ms(std::chrono::steady_clock::time_point a) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
 }
 
+// The OkayScript highlighter, counting how often the editor calls it (one call colours one line). What a frame costs is decided by how many
+// times the highlighter runs, so that is counted: unlike a stopwatch it gives the same answer on a loaded machine and under a sanitizer.
+struct CountingHighlighter {
+    long long calls = 0;
+    UI::CodeHighlighter base = UI::MakeCLikeHighlighter(UI::OkayScriptLanguage());
+    UI::CodeHighlighter Get() {
+        return [this](const char* s, int n, int st, std::vector<UI::CodeToken>& out) { ++calls; return base(s, n, st, out); };
+    }
+};
+
 struct Rig {
     Sim sim;
     CodeEdit ce;
@@ -552,6 +562,10 @@ void NanAndExtremeTests() {
     r.ce.SetBreakpoints({0, 5, INT_MAX});
     r.ce.SetMarkers({UI::CodeMarker{3, 0, -1, "x"}, UI::CodeMarker{INT_MAX, INT_MAX, INT_MIN, "far"}, UI::CodeMarker{-5, -5, 99999999, "neg"}});
     r.Frames(2);
+    {   // the control: a point that is on a word does find it, so the empty answers below mean something
+        const UI::Vec2 on = r.ce.PosToScreen(P(0, 9));                // "    var line0 = 0;": column 9 is inside "line0"
+        CHECK(r.ce.IdentifierAt(on.x + r.ce.CharWidth() * 0.5f, on.y + r.ce.LineHeight() * 0.5f) == "line0");
+    }
     const float vals[] = {nan, inf, -inf, 1e30f, -1e30f, 3.0e9f, -3.0e9f, 0.0f, -0.0f, 1e-30f, std::numeric_limits<float>::max()};
     for (float a : vals) for (float b : vals) {
         r.ce.SetScroll(a, b);
@@ -560,8 +574,7 @@ void NanAndExtremeTests() {
         CHECK(r.ce.FirstVisibleLine() >= 0 && r.ce.FirstVisibleLine() < r.ce.LineCount());
         const CodePos s = r.ce.ScreenToPos(a, b);
         CHECK(s.line >= 0 && s.line < r.ce.LineCount() && s.col >= 0 && s.col <= r.ce.LineLength(s.line));
-        const std::string w = r.ce.IdentifierAt(a, b);
-        (void)w;
+        CHECK(r.ce.IdentifierAt(a, b).empty());                       // none of these points is on a character of the text: nothing is found
         r.sim.Move(a, b); r.Frame();                                  // the pointer is anywhere, including nowhere
         r.sim.Down(); r.Frame(); r.sim.Move(b, a); r.Frame(); r.sim.Up(); r.Frame();
         CHECK(r.ce.Caret().line >= 0 && r.ce.Caret().line < r.ce.LineCount());
@@ -648,28 +661,34 @@ void LongLineTests() {
     for (std::size_t i = 0; line.size() < (4u << 20); ++i) line += "x" + std::to_string(i % 97) + " + ";
     Rig r(800, 400);
     r.ce.SetLimits((std::size_t)-1, (std::size_t)-1);                     // 4 MB is a hair over the default limit of 4 MiB: lifted, it is the speed that is tested
-    r.ce.SetLanguage(UI::OkayScriptLanguage());
+    CountingHighlighter hl;
+    r.ce.SetHighlighter(hl.Get());
     r.w = 760; r.h = 340;
     auto t0 = std::chrono::steady_clock::now();
     r.ce.SetText(line);
     const double tSet = Ms(t0);
     CHECK(r.ce.LineCount() == 1);
+    CHECK(hl.calls == 0);                                                 // colouring is lazy: nothing runs until a frame needs it
     t0 = std::chrono::steady_clock::now();
     r.Frame();
     const double tFirst = Ms(t0);
+    CHECK(hl.calls == 1);                                                 // the one line is coloured once
     t0 = std::chrono::steady_clock::now();
     const int kFrames = 10;
     for (int i = 0; i < kFrames; ++i) r.Frame();
     const double tSteady = Ms(t0) / kFrames;
+    CHECK(hl.calls == 1);                                                 // steady frames cost no colouring at all
     // scroll to the far right end and edit there
     r.ce.SetCaret(P(0, (int)line.size()));
     t0 = std::chrono::steady_clock::now();
     r.Frame();
     const double tEnd = Ms(t0);
     CHECK(r.ce.ScrollX() > 1000.0f);
+    const long long callsBeforeTyping = hl.calls;
     t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < 5; ++i) { r.ce.InsertText("y"); r.Frame(); }
     const double tType = Ms(t0) / 5;
+    CHECK(hl.calls - callsBeforeTyping <= 5);                             // typing colours the one line once per edit, not once per use
     t0 = std::chrono::steady_clock::now();
     r.ce.SetFind("x5 + ", true);
     const int cnt = r.ce.FindCount();
@@ -684,14 +703,16 @@ void LongLineTests() {
     CHECK(r.ce.Undo());
     std::cout << "  one 4 MB line: SetText " << tSet << " ms, first frame " << tFirst << " ms, steady frame " << tSteady << " ms, jump to the end " << tEnd
               << " ms, type+frame " << tType << " ms, find-count " << tFind << " ms, moves " << tMove << " ms, select all + frame " << tSelAll << " ms\n";
-    CHECK(tSet < 3000 * kSlack);
-    CHECK(tFirst < 3000 * kSlack);
-    CHECK(tSteady < 150 * kSlack);          // far from smooth, but a frame is not seconds
-    CHECK(tEnd < 3000 * kSlack);
-    CHECK(tType < 1500 * kSlack);
-    CHECK(tFind < 3000 * kSlack);
-    CHECK(tMove < 1500 * kSlack);
-    CHECK(tSelAll < 1500 * kSlack);
+    // The real checks are the operation counts above. These are only a hang detector: seconds, far over what this takes even on a
+    // loaded machine (the numbers printed above are tens of milliseconds), and 20 times more under a sanitizer.
+    CHECK(tSet < 5000 * kSlack);
+    CHECK(tFirst < 5000 * kSlack);
+    CHECK(tSteady < 2000 * kSlack);
+    CHECK(tEnd < 5000 * kSlack);
+    CHECK(tType < 5000 * kSlack);
+    CHECK(tFind < 5000 * kSlack);
+    CHECK(tMove < 5000 * kSlack);
+    CHECK(tSelAll < 5000 * kSlack);
     // a line that is nothing but one huge token (an unterminated string) and one that is all tabs
     r.ce.SetText("\"" + std::string(2u << 20, 'a'));
     r.Frames(2);
@@ -707,28 +728,38 @@ void ManyLinesTests() {
     for (int i = 0; i < 1000000; ++i) { t += "v"; t += std::to_string(i); t += "\n"; }
     Rig r(800, 400);
     r.ce.SetLimits((std::size_t)-1, (std::size_t)-1);                     // a million lines is over the default limits: lifted, it is the speed that is tested
-    r.ce.SetLanguage(UI::OkayScriptLanguage());
+    CountingHighlighter hl;
+    r.ce.SetHighlighter(hl.Get());
     r.w = 760; r.h = 340;
     auto t0 = std::chrono::steady_clock::now();
     r.ce.SetText(t);
     const double tSet = Ms(t0);
     CHECK(r.ce.LineCount() == 1000001);
+    CHECK(hl.calls == 0);                                                 // colouring is lazy
     t0 = std::chrono::steady_clock::now();
     r.Frame();
     const double tFirst = Ms(t0);
+    const long long perFrame = r.ce.VisibleLineCount() + 4;               // what a frame colours: the lines it draws (about 17 here; a line is coloured once for the text and once for its end state)
+    CHECK(hl.calls > 0 && hl.calls <= 2 * perFrame);                      // the first frame colours only the lines on screen, not a million
+    const long long callsBeforeJump = hl.calls;
     t0 = std::chrono::steady_clock::now();
     r.ce.SetCaret(P(999999, 0)); r.Frame();
     const double tEnd = Ms(t0);
     CHECK(r.ce.FirstVisibleLine() > 900000);
+    CHECK(hl.calls - callsBeforeJump >= 999990 && hl.calls - callsBeforeJump <= 1000000 + 2 * perFrame);   // jumping to the end colours every line above it, once
     t0 = std::chrono::steady_clock::now();
     const int kFrames = 20;
+    const long long callsAtEnd = hl.calls;
     for (int i = 0; i < kFrames; ++i) r.Frame();
     const double tSteady = Ms(t0) / kFrames;
+    CHECK(hl.calls - callsAtEnd <= kFrames * perFrame);                   // steady frames at the end colour only the lines on screen: the states above are cached
     r.ce.GoToLine(500000); r.Frame();
     CHECK(r.ce.FirstVisibleLine() > 499900 && r.ce.FirstVisibleLine() <= 500000);
+    const long long callsBeforeEdit = hl.calls;
     t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < 10; ++i) { r.ce.InsertText("x"); r.ce.InsertText("\n"); r.Frame(); }
     const double tEdit = Ms(t0) / 10;
+    CHECK(hl.calls - callsBeforeEdit <= 10 * 3 * perFrame);               // an edit in the middle re-colours from the edit down the screen, not from the top
     r.ce.SetBreakpoints({0, 500000, 999999});
     r.ce.SetMarkers({UI::CodeMarker{12345, 0, -1, "m"}});
     t0 = std::chrono::steady_clock::now();
@@ -750,14 +781,16 @@ void ManyLinesTests() {
     std::cout << "  1M lines (" << t.size() / 1024 << " KiB): SetText " << tSet << " ms, first frame " << tFirst << " ms, jump to end " << tEnd
               << " ms, steady frame " << tSteady << " ms, edit+frame in the middle " << tEdit << " ms, insert lines at the top (marks move) " << tTop
               << " ms, delete all + undo " << tAll << " ms, find-count " << tFind << " ms\n";
-    CHECK(tSet < 6000 * kSlack);
-    CHECK(tFirst < 1500 * kSlack);
-    CHECK(tEnd < 6000 * kSlack);
-    CHECK(tSteady < 30 * kSlack);
-    CHECK(tEdit < 400 * kSlack);
-    CHECK(tTop < 1500 * kSlack);
-    CHECK(tAll < 8000 * kSlack);
-    CHECK(tFind < 3000 * kSlack);
+    // The real checks are the operation counts above. These are only a hang detector: seconds, far over what this takes even on a loaded
+    // machine (the numbers printed above are milliseconds, a steady frame is a fraction of one), and 20 times more under a sanitizer.
+    CHECK(tSet < 10000 * kSlack);
+    CHECK(tFirst < 5000 * kSlack);
+    CHECK(tEnd < 10000 * kSlack);
+    CHECK(tSteady < 2000 * kSlack);
+    CHECK(tEdit < 5000 * kSlack);
+    CHECK(tTop < 5000 * kSlack);
+    CHECK(tAll < 15000 * kSlack);
+    CHECK(tFind < 10000 * kSlack);
 }
 
 } // namespace

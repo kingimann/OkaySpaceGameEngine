@@ -56,6 +56,17 @@ int main() {
         CHECK(g_errors.empty());
     }
     Log::sink = nullptr;
+    // The Latin-1 sample (docs/try_it.md, "a script the editor cannot show"): not valid UTF-8 on purpose (a single byte E9 after "caf"),
+    // and still a script that compiles, so whoever copies it into a project sees the read-only note and no compile error.
+    {
+        const std::string bad = ReadAll(dir + "latin1_sample.okay");
+        CHECK(bad.size() > 200 && bad.find("caf\xE9\n") != std::string::npos);
+        CHECK(bad.find('\r') == std::string::npos && bad.find('\0') == std::string::npos);
+        ScriptComponent latin("okayscript");
+        std::string lerr;
+        CHECK(latin.LoadSource(bad, &lerr));
+        CHECK(lerr.empty());
+    }
     // the text shows each thing the editor colours: keywords, types, strings, numbers, both kinds of line comment, a block comment
     CHECK(file.find("public float") != std::string::npos && file.find("Vector3") != std::string::npos);
     CHECK(file.find("\"Horizontal\"") != std::string::npos && file.find("0.25") != std::string::npos);

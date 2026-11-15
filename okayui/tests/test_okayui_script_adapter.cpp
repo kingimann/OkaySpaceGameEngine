@@ -11,6 +11,10 @@
 #include <fstream>
 #include <iterator>
 
+#ifndef OKAYUI_EXAMPLES_DIR
+#define OKAYUI_EXAMPLES_DIR "examples"      // the tests run from the repository root when the build did not say where the samples are
+#endif
+
 using namespace scripteditor;
 namespace UI = OkayUI;
 
@@ -348,6 +352,50 @@ int main() {
         CHECK(r.se.Edit().GetText() == "foo\nif (a) {\n    \n}" && r.se.GetCursorPosition() == Coord(2, 4) && r.se.GetTotalLines() == 4);
         r.Keys("x");
         CHECK(r.se.Edit().GetText() == "foo\nif (a) {\n    x\n}");
+    }
+    {   // what the script editor does around the widget that could change a script behind the user's back
+        // "Format", "Rename" and "Replace All" hand the whole text back as one undoable insert over a select-all: a script with a byte order mark
+        // gets its text with the mark in front, which must not become a second mark (or a character in the first line)
+        const std::string bom = "\xEF\xBB\xBF";
+        ScriptEditorCodeEdit s;
+        s.SetText(bom + "int  x;\n");
+        s.SelectAll();
+        s.InsertTextUndoable(bom + "int x;\n");
+        CHECK(s.GetText() == bom + "int x;\n\n" && s.Edit().Line(0) == "int x;");
+        std::vector<UI::CodeToken> t;
+        s.Edit().LineTokens(0, t);
+        CHECK(!t.empty() && t[0].start == 0 && t[0].color == UI::CodeColor_Keyword);              // the first token is still coloured (int)
+        // "Reload from disk" of a file that is not valid UTF-8 into an open, editable script: refused, never repaired into the text
+        ScriptEditorCodeEdit r;
+        r.SetText("abc");
+        r.SelectAll();
+        r.InsertTextUndoable("caf\xE9");
+        CHECK(r.GetText() == "abc\n" && !r.IsTextChanged());
+        CHECK(r.Notice().find("the script was not changed") != std::string::npos);
+        r.SetCursorPosition(Coord(0, 3));
+        r.InsertTextUndoable("d");                                                                  // the next real edit clears the message
+        CHECK(r.GetText() == "abcd\n" && r.Notice().empty());
+        r.InsertTextUndoable("a\x1b" "b");                                                         // control characters too
+        CHECK(r.GetText() == "abcd\n" && !r.Notice().empty());
+        r.InsertTextUndoable("\r\nline");                                                          // CRLF is fine: it becomes LF
+        CHECK(r.GetText() == "abcd\nline\n" && r.Notice().empty());
+    }
+    {   // the samples that ship with the release (examples/script_editor, copied by scripts/build-windows-dist.sh)
+        ScriptEditorCodeEdit ok, latin;
+        const std::string good = ReadBytes(std::string(OKAYUI_EXAMPLES_DIR) + "/script_editor/highlight_sample.okay");
+        const std::string bad = ReadBytes(std::string(OKAYUI_EXAMPLES_DIR) + "/script_editor/latin1_sample.okay");
+        CHECK(!good.empty() && !bad.empty());
+        ok.SetText(good);
+        CHECK(!ok.ReadOnlyBecauseDamaged() && ok.Notice().empty() && !ok.Edit().ReadOnly());
+        CHECK(!okay::text::Buffer::IsValidUtf8(bad));                                               // the sample really is not UTF-8 (a byte E9)
+        latin.SetText(bad);
+        CHECK(latin.ReadOnlyBecauseDamaged() && latin.Edit().ReadOnly());
+        CHECK(latin.Notice() == "This file is not valid UTF-8; it is open read-only so nothing is lost.");
+        TryEveryEdit(latin);
+        CHECK(!latin.IsTextChanged() && latin.GetText() == bad + "\n");                            // what try_it.md says: byte for byte
+        std::vector<UI::CodeToken> t;
+        latin.Edit().LineTokens(6, t);                                                              // line 7, "void Start()": still coloured
+        CHECK(!t.empty() && t[0].color == UI::CodeColor_Keyword);
     }
     {   // the same keys with the setting off: no pairing, no stepping over (the user turned "Auto-close Brackets" off)
         Rig r;

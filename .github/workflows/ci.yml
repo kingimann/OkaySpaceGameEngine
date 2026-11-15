@@ -225,7 +225,11 @@ jobs:
           done
           # OkayUI's own robustness tests: NaN / infinity / 1e30 positions must not reach a float-to-int cast
           # (float-cast-overflow is on in this job). Run from the repo root (see the Test step).
+          # The code editor's own tests run here too (text model, widget, hostile-input parity, script-editor adapter): they feed
+          # it invalid UTF-8, NaN and huge texts, and their time limits are generous or counted in operations, so a slow
+          # sanitizer build cannot fail them.
           OKAYUI_TESTS="test_okayui_fuzz test_okayui_codeedit_fuzz test_okayui_dock_fuzz test_okayui_windows_fuzz"
+          OKAYUI_TESTS="$OKAYUI_TESTS test_text_buffer test_okayui_codeedit test_okayui_codeedit_parity test_okayui_script_adapter"
           TESTS="$TESTS $OKAYUI_TESTS"
           echo "OKAYUI_TESTS=$OKAYUI_TESTS" >> "$GITHUB_ENV"
           echo "SAN_TESTS=$TESTS" >> "$GITHUB_ENV"

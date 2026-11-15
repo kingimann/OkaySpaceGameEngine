@@ -57,7 +57,11 @@ void ScriptEditorCodeEdit::SetText(const std::string& text) {
     seenVersion_ = ed_.Version();       // setting the text is not a user edit
 }
 
-std::string ScriptEditorCodeEdit::Notice() const { return keepOriginal_ ? notice_ : ed_.Status(); }
+std::string ScriptEditorCodeEdit::Notice() const {
+    if (keepOriginal_) return notice_;
+    if (!insertNotice_.empty() && insertNoticeVersion_ == ed_.Version()) return insertNotice_;
+    return ed_.Status();
+}
 
 std::string ScriptEditorCodeEdit::GetText() const {
     if (keepOriginal_) return original_ + "\n";             // nothing could be edited, so what goes back is what came in
@@ -79,8 +83,19 @@ int ScriptEditorCodeEdit::LineLength(int line) const {
 }
 
 void ScriptEditorCodeEdit::InsertTextUndoable(const std::string& text) {
+    if (ed_.ReadOnly()) return;                     // nothing to do (and nothing to say: the notice already tells why)
+    std::string t = text;
+    if (t.compare(0, 3, kBom) == 0 && ed_.SelectionStart() == OkayUI::CodePos{0, 0}) {   // the script's own mark, not a character
+        t.erase(0, 3);
+        bom_ = true;
+    }
+    if (ed_.Model().Repair(t) != CrlfToLf(t)) {     // e.g. "Reload from disk" of a file that is not valid UTF-8: do not repair it into the script
+        insertNotice_ = "Not inserted: that text has bytes this editor cannot keep (not valid UTF-8, or control characters); the script was not changed.";
+        insertNoticeVersion_ = ed_.Version();
+        return;
+    }
     ed_.BreakUndoGroup();               // each call is its own undo step, like the library's InsertTextUndoable
-    ed_.InsertText(text.c_str());
+    ed_.InsertText(t.c_str());
     ed_.BreakUndoGroup();
 }
 

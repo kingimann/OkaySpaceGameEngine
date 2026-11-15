@@ -15686,7 +15686,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Run (compile & execute)", [&]{ bool ok = sc->LoadSource(buf.data(), &s_error); if (ok) s_error.clear(); ed.dirty = true; }},
                 {"Save", [&]{ std::string p = filePath(); if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
                 {"Format Document", [&]{ caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }},
-                {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
+                {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty() || CodeEditorFor(sc).UsingOkayUI()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},   // (the OkayUI editor takes the text through SetText, which knows what it cannot keep, instead of an undoable whole-text insert that would repair it)
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
                 {"Toggle Minimap", [&]{ s_minimap = !s_minimap; }},
                 {"Find in Files (Ctrl+Shift+F)", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
@@ -15755,6 +15755,7 @@ void DrawScriptEditor(EditorState& ed) {
 
         ScriptEditorWidget& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
+        te.SetAutoPair(g_scriptAutoPair);     // the OkayUI editor pairs brackets and quotes itself; the ImGui editor's pairing is done around the widget below
 
         // Sync widget <-> CodeBuffer. g_teHash is the text both sides last agreed on:
         // if buf changed underneath us (format, live-sync, first open, language switch)
@@ -15764,6 +15765,19 @@ void DrawScriptEditor(EditorState& ed) {
         {
             auto it = g_teHash.find(sc);
             if (it == g_teHash.end() || it->second != bufHash) { te.SetText(buf.data()); g_teHash[sc] = bufHash; }
+        }
+        // The OkayUI editor opens a script it cannot show byte for byte (not UTF-8, control characters, too big) read-only, so it never writes
+        // a repaired copy over the file, and says so here; it also says what it refused (a paste over its size limits). The line takes a row
+        // from the code area. (Always empty with the ImGui editor.)
+        {
+            const std::string note = te.OkayNotice();
+            if (!note.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.76f, 0.30f, 1.0f));
+                ImGui::TextWrapped("%s", note.c_str());
+                ImGui::PopStyleColor();
+                av.y -= ImGui::GetItemRectSize().y + ImGui::GetStyle().ItemSpacing.y;
+                if (av.y < 80) av.y = 80;
+            }
         }
         // Pending whole-buffer replace (Format / Rename / Replace All / Reload): one
         // undoable edit in the widget, so Ctrl+Z takes it back and the view stays put
@@ -15921,7 +15935,10 @@ void DrawScriptEditor(EditorState& ed) {
         // highlight, and Esc dismisses — the widget must not also act on those keys
         // (insert a tab/newline, move the caret). g_acCount is last frame's popup
         // size; suppression frames are never typing frames.
-        bool acWasOpen = g_acCount > 0;
+        // These helpers (the popup that owns Tab/Enter/Up/Down/Esc, bracket pairing, Tab spaces) were written around ImGuiColorTextEdit. The OkayUI
+        // editor does each of them itself, so with it they do not run: otherwise every key did two things (scripteditor::PlanLegacyKeyHandling).
+        const scripteditor::LegacyKeyHandling legacyKeys = scripteditor::PlanLegacyKeyHandling(te.UsingOkayUI(), g_scriptAutoPair);
+        bool acWasOpen = legacyKeys.autocompleteOwnsKeys && g_acCount > 0;
         bool acKeyTab   = acWasOpen && ImGui::IsKeyPressed(ImGuiKey_Tab, false);
         bool acKeyEnter = acWasOpen && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
                                         ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
@@ -15933,7 +15950,7 @@ void DrawScriptEditor(EditorState& ed) {
         // Tab with no suggestion and no selection indents with spaces (the file's
         // style, shown as "Spaces" in the status bar), as one undo step.
         bool tabSpaces = false;
-        if (!acWasOpen && !te.HasSelection() && !ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyCtrl &&
+        if (legacyKeys.tabInsertsSpaces && !acWasOpen && !te.HasSelection() && !ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyCtrl &&
             GImGui->NavWindow && std::strstr(GImGui->NavWindow->Name, "##code") &&
             ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
             te.SetHandleKeyboardInputs(false);
@@ -15949,9 +15966,8 @@ void DrawScriptEditor(EditorState& ed) {
         // typing): ( [ { " ' get their closer, typing a closer that's already
         // next to the caret steps over it, and Enter between { } opens a block.
         static bool s_codeFocus = false;
-        const bool s_autoPair = g_scriptAutoPair;
         char pairOpen = 0; bool stepOver = false, braceEnter = false;
-        if (s_autoPair && s_codeFocus && !acWasOpen && !te.HasSelection()) {
+        if (legacyKeys.autoPair && s_codeFocus && !acWasOpen && !te.HasSelection()) {
             ImGuiIO& kio = ImGui::GetIO();
             const std::string line = te.GetCurrentLineText();
             const int col = te.GetCursorPosition().mColumn;
@@ -16685,7 +16701,7 @@ void DrawScriptEditor(EditorState& ed) {
                     }
                 }
             }
-            if (!g_acDismiss && !inCommentOrString && (recentlyTyping || s_acForce) &&
+            if (legacyKeys.autocompleteOwnsKeys && !g_acDismiss && !inCommentOrString && (recentlyTyping || s_acForce) &&
                 (memberMode || prefix.size() >= 2 || s_acForce)) {
                 std::string lp = prefix; for (auto& ch : lp) ch = (char)std::tolower((unsigned char)ch);
                 struct Hit { const std::string* w; bool fuzzy; int score; };
@@ -48210,9 +48226,12 @@ int main(int argc, char** argv) {
 
     ConsoleLog("Welcome to OkaySpace v" OKAY_ENGINE_VERSION
                ". Choose a 2D or 3D project to begin.");
-    // Which code editor the Script editor uses: ours (OkayUI CodeEdit, only with the OkayUI backend) or ImGuiColorTextEdit (default).
-    ConsoleLog(std::string("Script editor: ") + (UseOkayUIBackend() ? "our own code editor (OkayUI backend, preview)" : "ImGuiColorTextEdit (default)")
-               + ". To try ours: OKAY_UI_BACKEND=okayui (docs/own_code_editor.md).");
+    // Which code editor the Script editor uses: ours (OkayUI CodeEdit, only with the OkayUI backend) or ImGuiColorTextEdit (default). Only
+    // with the developer flag OKAY_DEV: the line names a developer-only variable, so normal users never see it. (Help > About always shows
+    // which editor is in use, with or without OKAY_DEV.)
+    if (okayuibackend::DevMode(std::getenv("OKAY_DEV")))
+        ConsoleLog(std::string("Script editor: ") + (UseOkayUIBackend() ? "our own code editor (OkayUI backend, preview)" : "ImGuiColorTextEdit (default)")
+                   + ". To try ours: OKAY_UI_BACKEND=okayui (docs/own_code_editor.md).");
 
     // Automatically check for a newer build at startup, in the background so it
     // never blocks the editor. The result is picked up in the main loop and, if

@@ -110,6 +110,7 @@ if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
     add_executable(test_okayui_script_adapter tests/test_okayui_script_adapter.cpp ../editor/ScriptEditorCodeEdit.cpp)
     target_link_libraries(test_okayui_script_adapter PRIVATE okay_ui_soft)
     target_include_directories(test_okayui_script_adapter PRIVATE ${CMAKE_SOURCE_DIR}/tests ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_SOURCE_DIR}/editor)
+    target_compile_definitions(test_okayui_script_adapter PRIVATE OKAYUI_EXAMPLES_DIR="${CMAKE_SOURCE_DIR}/examples")   # the shipped samples it opens
     add_test(NAME okayui_script_adapter COMMAND test_okayui_script_adapter)
     set_tests_properties(okayui_script_adapter PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
 endif()

@@ -60,7 +60,9 @@ public:
     std::string GetCurrentLineText() const;
     int GetTotalLines() const { return ed_.LineCount(); }
     int LineLength(int line) const;                 // in display columns; 0 for a line out of range
-    /// Replace the selection (or insert at the caret) as one undoable edit.
+    /// Replace the selection (or insert at the caret) as one undoable edit. Text this editor cannot keep (not valid UTF-8, control characters,
+    /// a lone CR) is refused whole, not repaired, and Notice() says so: a script must never be changed behind the user's back. A leading
+    /// byte order mark in text inserted at the very top is the script's mark (it sets the flag instead of becoming a character).
     void InsertTextUndoable(const std::string& text);
     /// Delete the selection, or the character after the caret.
     void Delete();
@@ -126,6 +128,8 @@ private:
     bool hostReadOnly_ = false;
     std::string original_;              // the exact bytes SetText was given (only kept when keepOriginal_)
     std::string notice_;                // why keepOriginal_ is set
+    std::string insertNotice_;          // why the last InsertTextUndoable was refused; valid while the text is at insertNoticeVersion_
+    unsigned insertNoticeVersion_ = 0;
 };
 
 } // namespace scripteditor

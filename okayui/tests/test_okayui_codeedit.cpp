@@ -1166,7 +1166,11 @@ void PerfTests() {
     Rig r(800, 600);
     r.w = 760; r.h = 540;
     r.ce.SetLimits((std::size_t)-1, (std::size_t)-1);     // this text is about 8 MB: over the default limit of 4 MiB; it is the speed that is tested here
-    r.ce.SetLanguage(UI::OkayScriptLanguage());
+    // What a frame costs is decided by how often the highlighter runs (one call colours one line), so that is counted: it gives the same
+    // answer on a loaded machine and under a sanitizer, which a stopwatch does not.
+    long long hlCalls = 0;
+    const UI::CodeHighlighter hlBase = UI::MakeCLikeHighlighter(UI::OkayScriptLanguage());
+    r.ce.SetHighlighter([&hlCalls, hlBase](const char* s, int n, int st, std::vector<UI::CodeToken>& out) { ++hlCalls; return hlBase(s, n, st, out); });
     auto t0 = std::chrono::steady_clock::now();
     r.ce.SetText(big);
     const double tSet = Ms(t0);
@@ -1178,23 +1182,33 @@ void PerfTests() {
     const UI::DrawData dTop = UI::GetDrawData();
     t0 = std::chrono::steady_clock::now();
     const int kFrames = 60;
+    const long long callsTop0 = hlCalls;
     for (int i = 0; i < kFrames; ++i) r.Frame();
     const double tTop = Ms(t0) / kFrames;
+    const long long perFrame = r.ce.VisibleLineCount() + 4;               // the lines a frame draws (and colours)
+    const long long topPerFrame = (hlCalls - callsTop0) / kFrames;
+    CHECK(hlCalls - callsTop0 <= kFrames * perFrame);                     // only the visible lines are coloured, however long the text
     // jump to the end: the highlighter must run over the whole text once
     t0 = std::chrono::steady_clock::now();
+    const long long callsJump0 = hlCalls;
     r.ce.SetCaret(P(r.ce.LineCount() - 1, 0));
     r.Frame();
     const double tEnd = Ms(t0);
+    CHECK(hlCalls - callsJump0 >= 100000 && hlCalls - callsJump0 <= (long long)r.ce.LineCount() + 2 * perFrame);   // every line above, once
     const UI::DrawData dEnd = UI::GetDrawData();
     t0 = std::chrono::steady_clock::now();
+    const long long callsEnd0 = hlCalls;
     for (int i = 0; i < kFrames; ++i) r.Frame();
     const double tEndSteady = Ms(t0) / kFrames;
+    CHECK(hlCalls - callsEnd0 <= kFrames * perFrame);                     // the end states above are cached: steady frames colour only what is drawn
     // jump to the middle and edit there
     r.ce.GoToLine(50000);
     r.Frame();
     t0 = std::chrono::steady_clock::now();
+    const long long callsEdit0 = hlCalls;
     for (int i = 0; i < 20; ++i) { r.ce.InsertText("x"); r.ce.InsertText("\n"); r.Frame(); }
     const double tEdit = Ms(t0) / 20;
+    CHECK(hlCalls - callsEdit0 <= 20 * 3 * perFrame);                     // an edit re-colours from the edit down the screen, not from the top of the text
     t0 = std::chrono::steady_clock::now();
     r.ce.SelectAll();
     r.ce.SetFind("Compute");
@@ -1206,26 +1220,31 @@ void PerfTests() {
     std::cout << "  100k lines (" << big.size() / 1024 << " KiB): SetText " << tSet << " ms, first frame " << tFirst << " ms, steady frame at top " << tTop
               << " ms, jump to end " << tEnd << " ms, steady at end " << tEndSteady << " ms, edit+frame in the middle " << tEdit
               << " ms, find-count " << tFind << " ms (" << cnt << " matches), page " << tPage << " ms; vertices at top " << dTop.vertexCount << ", at end " << dEnd.vertexCount << "\n";
-    CHECK(tSet < 2000 * slack);
-    CHECK(tFirst < 500 * slack);
-    CHECK(tTop < 20 * slack);                       // only the visible lines are drawn
-    CHECK(tEnd < 2000 * slack);
-    CHECK(tEndSteady < 20 * slack);
-    CHECK(tEdit < 100 * slack);
+    // The operation counts above are the real checks. These limits only catch a hang: seconds, far over what this takes on a loaded
+    // machine (a frame here is a fraction of a millisecond), and 20 times more under a sanitizer.
+    CHECK(tSet < 5000 * slack);
+    CHECK(tFirst < 2000 * slack);
+    CHECK(tTop < 1000 * slack);
+    CHECK(tEnd < 5000 * slack);
+    CHECK(tEndSteady < 1000 * slack);
+    CHECK(tEdit < 2000 * slack);
     CHECK(cnt == 100000);
     CHECK(dTop.vertexCount > 0 && dTop.vertexCount < 262144 && dEnd.vertexCount < 262144);
     CHECK(dTop.dropped == 0 && dEnd.dropped == 0);
     // the cost of a frame does not depend on the length of the text: the same frame count on a tiny text is in the same range
     Rig small(800, 600);
     small.w = 760; small.h = 540;
-    small.ce.SetLanguage(UI::OkayScriptLanguage());
+    long long smallCalls = 0;
+    small.ce.SetHighlighter([&smallCalls, hlBase](const char* s, int n, int st, std::vector<UI::CodeToken>& out) { ++smallCalls; return hlBase(s, n, st, out); });
     small.ce.SetText(big.substr(0, 4000));
     small.Frames(3);
     t0 = std::chrono::steady_clock::now();
+    const long long smallCalls0 = smallCalls;
     for (int i = 0; i < kFrames; ++i) small.Frame();
     const double tSmall = Ms(t0) / kFrames;
+    const long long smallPerFrame = (smallCalls - smallCalls0) / kFrames;
     std::cout << "  same frame on a 4 KB text: " << tSmall << " ms\n";
-    CHECK(tTop < tSmall * 4 + 2 * slack);
+    CHECK(topPerFrame <= smallPerFrame + 2);                              // a frame colours the same number of lines on a 100,000 line text as on a tiny one
     // undo of the edits in the middle, and of a huge delete
     t0 = std::chrono::steady_clock::now();
     r.ce.SelectAll(); r.ce.InsertText("");

@@ -543,8 +543,10 @@ struct DownRays {
         // The colliders that can matter: those covering this column, and those tried for every ray, in collider order.
         std::vector<int> candidates;
         if (nx > 0) {
-            const int cx = (int)std::floor((origin.x - x0) / cell), cz = (int)std::floor((origin.z - z0) / cell);
-            if (cx >= 0 && cx < nx && cz >= 0 && cz < nz) {
+            // (compared as floats before the cast: a huge but finite position must not overflow an int)
+            const float fx = std::floor((origin.x - x0) / cell), fz = std::floor((origin.z - z0) / cell);
+            if (fx >= 0.0f && fx < (float)nx && fz >= 0.0f && fz < (float)nz) {
+                const int cx = (int)fx, cz = (int)fz;
                 const int a = cellStart[(std::size_t)cz * nx + cx], b = cellStart[(std::size_t)cz * nx + cx + 1];
                 candidates.assign(cellItems.begin() + a, cellItems.begin() + b);
             }

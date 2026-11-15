@@ -945,6 +945,18 @@ target_compile_features(test_account PRIVATE cxx_std_17)
 target_include_directories(test_account PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 add_test(NAME account COMMAND test_account)
 
+# The ONE SHA-256 (engine/include/okay/Crypto/Sha256.hpp) against the three old copies kept as references, RFC 4231 HMAC and
+# RFC 7914 PBKDF2 vectors, and password records written by the old code (docs/sha256_comparison.md). Header-only: no link needed.
+add_executable(test_sha256_unify test_sha256_unify.cpp)
+target_compile_features(test_sha256_unify PRIVATE cxx_std_17)
+target_include_directories(test_sha256_unify PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+add_test(NAME sha256_unify COMMAND test_sha256_unify)
+# Comparison tool (not a test): speed, memory and Python-hashlib differential of the old copies and the new one.
+# python3 scripts/sha256_python_diff.py <build>/tests/sha256_compare   |   sha256_compare bench
+add_executable(sha256_compare sha256_compare.cpp)
+target_compile_features(sha256_compare PRIVATE cxx_std_17)
+target_include_directories(sha256_compare PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
+
 # Exercises the okay::Account facade and the account_* OkayScript builtins, so
 # this one links the engine.
 add_executable(test_account_script test_account_script.cpp)
@@ -2800,7 +2812,7 @@ add_executable(test_crypto_fe16 test_crypto.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Util.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Random.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Crypto/ChaCha20.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Poly1305.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Aead.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Blake2b.cpp
-    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha256.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha512.cpp
+    ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Sha512.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Crypto/X25519.cpp ${CMAKE_SOURCE_DIR}/engine/src/Crypto/Ed25519.cpp)
 target_include_directories(test_crypto_fe16 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_crypto_fe16 PRIVATE OKAY_CRYPTO_FE16)
@@ -2816,7 +2828,7 @@ find_path(OKAY_VALGRIND_INCLUDE valgrind/memcheck.h)
 find_program(OKAY_VALGRIND valgrind)
 if(OKAY_VALGRIND_INCLUDE AND NOT WIN32)
     set(_okay_ct_srcs "")
-    foreach(_f IN ITEMS Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519)
+    foreach(_f IN ITEMS Util Random ChaCha20 Poly1305 Aead Blake2b Sha512 X25519 Ed25519)
         list(APPEND _okay_ct_srcs ${CMAKE_SOURCE_DIR}/engine/src/Crypto/${_f}.cpp)
     endforeach()
     add_executable(crypto_ct_valgrind crypto_ct_valgrind.cpp ${_okay_ct_srcs})

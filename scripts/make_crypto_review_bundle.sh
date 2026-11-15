@@ -40,7 +40,7 @@ files=(
     engine/src/Crypto/ChaCha20.cpp
     engine/src/Crypto/Poly1305.cpp
     engine/src/Crypto/Blake2b.cpp
-    engine/src/Crypto/Sha256.cpp
+    engine/include/okay/Crypto/Sha256.hpp
     engine/src/Crypto/Sha512.cpp
     engine/src/Crypto/Fe25519.hpp
     engine/src/Crypto/Fe25519_64.hpp

@@ -112,6 +112,15 @@ Every red was one test: `player` (arm pixel check broken by shadows on by defaul
 - The full test suite on most branches (CI runs it on PRs).
 - An independent human review of any of it, including all cryptography.
 
+## Grok (second AI) findings, issue #888
+
+Source: issue #888 comments, sanitizer builds of main by the second AI. Each finding is reproduced by a test first.
+
+| Finding | What | Status |
+|---|---|---|
+| 2 | OBJ reader: face index 2147483648 narrowed `long` to `int` (signed overflow, UB). Fixed in `ReadObjBuffer`: an out-of-range index is not narrowed, the file is still refused with "face index out of range". Test: `tests/test_model_readers_fuzz.cpp` (runs in the sanitizer CI job). Same pattern checked in the other own readers: none found (the `p`/`l` element path was already range-checked). | Fixed on `claude/grok-fix-obj-okayui` |
+| 7 | OkayUI float-to-int casts on NaN / inf / 1e30: `BeginDragDropSource` (drag id now hashes the float bits) and `CodeEdit::handleMouse` (gutter line is range-checked). The four OkayUI fuzz tests now run in the sanitizer CI job. | Fixed on `claude/grok-fix-obj-okayui` (also hidden behind the abort: `CodeEdit::ScreenToPos` and the draw loop's scroll-to-line / scroll-to-column casts, now through a clamping helper). All 25 OkayUI test binaries pass under ASan + UBSan + float-cast-overflow |
+
 ## How to add a review
 
 Add a section: reviewer kind, what was read and run, findings with file and line, status of each, and what was not

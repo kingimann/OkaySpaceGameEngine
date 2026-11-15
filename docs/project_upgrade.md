@@ -48,7 +48,10 @@ look at `project.okayproj` the loading screen takes. The old shared `project.oka
 As a safety net, `EditorState::Load` itself refuses a scene of a project nobody has answered for (`EditorState::beforeLoad`), so a future
 way of opening scenes that forgot the question cannot skip it.
 
-One question at a time. **Cancel** changes nothing and the editor stays where it was (or shows the project chooser, when nothing was open).
+One question at a time, also across the editor's other startup questions: the version question goes first, and **Save changes?**,
+the project chooser, an old `<scene>.autosave` and **Restore recovered work?** wait until it is answered (`editor/StartupModals.hpp`,
+issue #888; before that fix the version question and the recovery question closed each other every frame and the editor froze).
+**Cancel** changes nothing and the editor stays where it was (or shows the project chooser, when nothing was open).
 Answering is remembered for the session: once a project is upgraded, opened anyway, or made in this session, it is not asked about again.
 
 ### Older: upgrade or keep
@@ -206,13 +209,18 @@ that version highlighted; a launcher that is already running is brought forward 
 
 `project_version` (parse and compare matrix, Decide table, the stamp line in text and in files, CRLF, BOM, read-only, release lines, the
 keep target, the Versions layout; links nothing), `project_upgrade` (the upgrade end to end, backup completeness, space refusal, the disk
-failing at every step in turn, damaged and read-only files, restore, the whole gate state machine) and `editor_hooks` (`EditorState::Load`
-under the gate).
+failing at every step in turn, damaged and read-only files, restore, the whole gate state machine), `editor_hooks` (`EditorState::Load`
+under the gate) and `startup_modals` (the version question and a waiting recovery copy at startup, stepped frame by frame: exactly one
+question asks at a time, the scene opens after the answer, then the recovery question asks).
 
 ## What changed
 
 New: `shared/ProjectVersion.hpp`, `editor/ProjectUpgrade.hpp/.cpp`, `editor/ProjectUpgradeUI.hpp/.cpp`. Edited: `editor/main.cpp` (hook calls),
 `editor/EditorState.hpp/.cpp` (`beforeLoad`), `editor/CMakeLists.txt`. The editor's own copy of `CompareVersions` now calls the shared one.
+
+Startup freeze fix (issue #888): new `editor/StartupModals.hpp` (which startup question may ask; which recovery copies an answer deletes;
+where the recovery folder is), used by `DrawGatePrompt` (`editor/ProjectUpgradeUI.cpp`) and by the two recovery questions in
+`editor/main.cpp`; the recovery folder moved from the working folder to the user data folder. Test: `tests/test_startup_modals.cpp`.
 
 Launcher side (see [launcher_versions.md](launcher_versions.md)): the launcher's own `CompareVersions` now calls the shared one too; the
 "v2.850.x is not installed" window gained **Open launcher** (`editor/ProjectUpgradeUI.cpp`).

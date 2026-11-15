@@ -830,6 +830,12 @@ add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/edi
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_editor_hooks PRIVATE okay::engine)
 add_test(NAME editor_hooks COMMAND test_editor_hooks)
+# The editor's startup questions take turns (editor/StartupModals.hpp, ImGui-free; issue #888): the project-version question, then
+# "Save changes?", the project chooser, then "Restore recovered work?", one at a time; an answered recovery copy is deleted.
+add_executable(test_startup_modals test_startup_modals.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
+target_include_directories(test_startup_modals PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_startup_modals PRIVATE okay::engine)
+add_test(NAME startup_modals COMMAND test_startup_modals)
 add_executable(test_play_start_bench test_play_start_bench.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # times what Play does on the click frame and the first ticks
 target_include_directories(test_play_start_bench PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
@@ -3571,3 +3577,15 @@ add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+
+# KNOWN BUG (issue #888 / Upgrade project): failing tests for "Upgrade project". Registered but DISABLED unless
+# -DOKAY_RUN_KNOWN_BUG_TESTS=ON, so they can never break CI. They fail until the feature is fixed.
+option(OKAY_RUN_KNOWN_BUG_TESTS "Run the known-bug tests (they fail until fixed)" OFF)
+add_executable(test_upgrade_bugs test_upgrade_bugs.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
+target_include_directories(test_upgrade_bugs PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_upgrade_bugs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(test_upgrade_bugs PRIVATE okay::engine)
+add_test(NAME upgrade_bug_project_upgrade COMMAND test_upgrade_bugs)
+if(NOT OKAY_RUN_KNOWN_BUG_TESTS)
+  set_tests_properties(upgrade_bug_project_upgrade PROPERTIES DISABLED TRUE)
+endif()

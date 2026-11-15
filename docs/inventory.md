@@ -50,7 +50,7 @@ Tests: `tests/test_ui_input_guard.cpp` (lean, top-down fire), `tests/test_invent
 ## Not done
 
 * **Networked slot <-> grid moves.** `ToGrid` / `FromGrid` are local operations: they send no `inv/*` request. A client must not use them against a host-owned bag until a request for them exists in `NetInventory`.
-* **Scripts and visual scripts** cannot call `ToGrid` / `FromGrid`. Scripts already have `inv_move`; a script function and a visual-script node ("Move Item To Grid" with slot, grid, x, y, rotated, amount) are still to be added (the visual-script core is owned by another change, so no node was added here).
+* ~~**Scripts and visual scripts** cannot call `ToGrid` / `FromGrid`.~~ Done: `inv_to_grid(slot, x, y, [rotated], [amount = all], [grid object])` and `inv_from_grid(index, [slot = a matching stack, else the first empty one], [amount = all], [grid object])` move between this object's slot bag and its own or another object's grid bag; each returns how many moved (0 when refused). Visual scripts get them as `Fn.inv_to_grid` / `Fn.inv_from_grid`. Like `ToGrid` / `FromGrid` they are local moves: a client must not use them on a host-owned bag (see the networked bullet above). Test `inv_grid_script`.
 * **Worn weight and enforced weight.** `Equipment::Unequip` into a bag that enforces its weight limit is checked while the worn item is still counted in `wornWeight`, so it can be refused a little early near the limit.
 * **Durability use.** Durability is stored and carried, but nothing wears it down (tools, weapons, armor) or repairs it; no "broken item" rule.
 * **Container-in-container rules, locked and owned containers, item cooldowns, hotbar-bound ability slots, and a "stack count" prompt in the drag UI** are not built.

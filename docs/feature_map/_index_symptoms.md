@@ -213,6 +213,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a rebound key still triggers the old action | [8.3](08-input.md#83-input-actions-and-rebinding-ui) Input actions and rebinding UI |
 | a red tile for a broken image | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | a release has no installer or is missing an exe the updater wants | [18.4](18-build-export-release.md#184-release-workflow) Release workflow |
+| a release says "gave up waiting for the release lock" or "TAKING IT OVER | [18.5](18-build-export-release.md#185-update-feed) Update feed |
+| a release stays hidden with "versions.json has no checksums" after two releases ran together (should not happen now) | [18.5](18-build-export-release.md#185-update-feed) Update feed |
 | a remote player can be driven by my keys | [16.8](16-networking.md#168-network-player-spawning-and-avatar-motion) Network player spawning and avatar motion |
 | a remote player's controller fights the network | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | a renamed item disappears from old saves | [11.2](11-gameplay-systems.md#112-items-and-loot) Items and loot |

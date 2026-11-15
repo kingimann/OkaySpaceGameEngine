@@ -12,7 +12,14 @@ the GitHub release listed in "archive".
       --file OkayEngine.exe=path/to/OkayEngine.exe --file OkaySpacePlayer.exe=... \
       --date 2026-11-09 --bucket-versions "2.856.0 2.855.0" --latest 2.856.0 \
       --lts 2.850.1 --repo owner/name --out NEW.json
+  versions_index.py check --index NEW.json --version 2.856.0 --file OkayEngine.exe=path/to/OkayEngine.exe ...
+  versions_index.py status --index OLD.json --version 2.856.0 --file OkayEngine.exe=path/to/OkayEngine.exe ...
   versions_index.py --self-test
+
+`status` prints one word, so the publish script can refuse to change what was already published (CLAUDE.md rule 12):
+  new        the version is not in the index (or is listed without any file checksum)
+  same       the index lists it and every checksum it records for these files matches them: publishing it again changes nothing
+  different  a recorded checksum differs from the file: publishing would CHANGE what users may already hold
 
 Schema (version 1):
   { "schema": 1, "latest": "2.856.0", "lts": "2.850.1",
@@ -165,6 +172,29 @@ def merge(existing, version, channel, files, date, bucket_versions, latest, lts,
     return out
 
 
+def entry_status(existing, version, files):
+    """'new', 'same' or 'different' (see the module doc). `existing` may be None or garbage; `files` is a name -> {size, sha256} dict.
+    Only names that both the index entry and `files` have are compared, so an index that records more (or fewer) files than this
+    publish brings is not a conflict."""
+    ver = canonical(version)
+    entry = None
+    if isinstance(existing, dict) and existing.get("schema") == SCHEMA and isinstance(existing.get("versions"), list):
+        for e in existing["versions"]:
+            c = _clean_entry(e)
+            if c is not None and c["version"] == ver:
+                entry = c
+                break
+    if entry is None:
+        return "new"
+    shared = [n for n in entry["files"] if n in files]
+    if not shared:
+        return "new"
+    for n in shared:
+        if files[n] != entry["files"][n]:
+            return "different"
+    return "same"
+
+
 def _read_json(path):
     if not path or not os.path.isfile(path):
         return None
@@ -195,6 +225,19 @@ def _cmd_check(a):
     for p in problems:
         sys.stderr.write("versions_index: %s\n" % p)
     return 1 if problems else 0
+
+
+def _cmd_status(a):
+    """Print new / same / different for --version against the index in --index (a missing or unreadable index means new)."""
+    files = {}
+    for spec in a.file or []:
+        name, sep, path = spec.partition("=")
+        if not sep or not os.path.isfile(path):
+            sys.stderr.write("versions_index: bad --file %r\n" % spec)
+            return 2
+        files[name] = file_entry(path)
+    print(entry_status(_read_json(a.index), a.version, files))
+    return 0
 
 
 def _cmd_merge(a):
@@ -266,6 +309,18 @@ def _self_test():
     same = [v for v in idx5["versions"] if v["version"] == "2.857.0"]
     check(len(same) == 1 and same[0]["files"]["OkayEngine.exe"]["size"] == 11, "republish replaces")
 
+    # status: what publishing a version again would do to what is already published (CLAUDE.md rule 12).
+    other = {n: {"size": 10, "sha256": "c" * 64} for n in REQUIRED_FILES}
+    check(entry_status(idx2, "2.856.0", f1) == "same", "status same files")
+    check(entry_status(idx2, "2.856.0", other) == "different", "status different files")
+    check(entry_status(idx2, "2.857.0", f1) == "new", "status unlisted version")
+    check(entry_status(idx2, "v2.856", f1) == "same", "status canonical version")
+    check(entry_status(None, "2.856.0", f1) == "new" and entry_status("junk", "2.856.0", f1) == "new", "status without a usable index")
+    check(entry_status(idx2, "2.856.0", {"OkayEngine.exe": other["OkayEngine.exe"]}) == "different", "status compares the files given")
+    check(entry_status(idx2, "2.856.0", {"Other.exe": f1["OkayEngine.exe"]}) == "new", "status with no file in common")
+    check(entry_status({"schema": 1, "versions": [{"version": "2.860.0"}]}, "2.860.0", f1) == "new", "status of an entry without checksums")
+    check(entry_status({"schema": 2, "versions": idx2["versions"]}, "2.856.0", other) == "new", "status of an unknown schema")
+
     # Garbage in the old index is ignored; good entries in a damaged one survive.
     check(merge("junk", "2.1.0", "latest", f1, "", None, None, None, "o/n")["versions"][0]["version"] == "2.1.0", "garbage index")
     bad = {"schema": 1, "versions": [{"version": "nope"}, 7, {"version": "2.2.0", "files": {"../x": {"size": 1, "sha256": sha},
@@ -326,6 +381,22 @@ def _self_test():
         check(data and data["versions"][0]["files"]["OkayEngine.exe"] ==
               {"size": 5, "sha256": hashlib.sha256(b"hello").hexdigest()}, "cli hashes the file")
         check(not os.path.exists(out + ".tmp"), "no temp file left")
+        # status on the real files: the same bytes, then a changed one
+        import contextlib
+        import io
+
+        def status_word(file_specs, index=out):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = _cmd_status(argparse.Namespace(index=index, version="2.9.0", file=file_specs))
+            return rc, buf.getvalue().strip()
+        check(status_word([n + "=" + paths[n] for n in REQUIRED_FILES]) == (0, "same"), "cli status same")
+        alt = os.path.join(d, "alt.exe")
+        with open(alt, "wb") as fh:
+            fh.write(b"another build")
+        check(status_word(["OkayEngine.exe=" + alt]) == (0, "different"), "cli status different")
+        check(status_word(["OkayEngine.exe=" + os.path.join(d, "nope")]) == (2, ""), "cli status refuses a missing file")
+        check(status_word(None, index=os.path.join(d, "none.json")) == (0, "new"), "cli status without an index")
         with open(out, "w", encoding="utf-8") as fh:
             fh.write("{ not json")
         check(_read_json(out) is None, "unreadable json ignored")
@@ -365,6 +436,10 @@ def main(argv):
     c.add_argument("--index", required=True)
     c.add_argument("--version", required=True)
     c.add_argument("--file", action="append")
+    s = sub.add_parser("status")
+    s.add_argument("--index", required=True)
+    s.add_argument("--version", required=True)
+    s.add_argument("--file", action="append")
     m = sub.add_parser("merge")
     m.add_argument("--existing", default="")
     m.add_argument("--version", required=True)
@@ -381,6 +456,8 @@ def main(argv):
         return _self_test()
     if a.cmd == "check":
         return _cmd_check(a)
+    if a.cmd == "status":
+        return _cmd_status(a)
     if a.cmd == "merge":
         return _cmd_merge(a)
     p.print_help()

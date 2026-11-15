@@ -26,8 +26,10 @@ jobs:
   windows-exe:
     name: Cross-compile Windows exes (MinGW)
     runs-on: ubuntu-latest
-    # A normal release takes ~11 min; never let a stuck download hold one for hours.
-    timeout-minutes: 45
+    # A normal release takes ~11 min; never let a stuck download hold one for hours. The last step can also wait for another release's
+    # publish to finish (scripts/publish-supabase.sh holds a lock while it publishes; LOCK_WAIT_SECONDS below): 45 min of work plus 30 min.
+    # There is deliberately NO workflow-level concurrency group: releases build side by side and only their publishing takes turns.
+    timeout-minutes: 75
     outputs:
       ver: ${{ steps.pkg.outputs.ver }}
     env:
@@ -242,10 +244,15 @@ jobs:
 
       # Also publish to the Supabase "releases" bucket (launchers check it first),
       # when the repo has a SUPABASE_SERVICE_KEY secret. Without it this is skipped.
+      #
+      # Publishing takes turns: the script holds the lock release.lock in the bucket while it rewrites the shared files (versions.json,
+      # VERSION.txt, pruning), waits for another release's publish to finish, and never moves "latest" backwards (docs/release_channels.md,
+      # "Several releases at once"). It waits at most 30 min here, so a stuck lock fails this step before the job's own time limit.
       - name: Publish to Supabase
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           CHANNEL: ${{ inputs.channel || 'latest' }}
+          LOCK_WAIT_SECONDS: "1800"
         if: env.SUPABASE_PUBLISH == 'true'
         run: scripts/publish-supabase.sh
 
@@ -301,13 +308,23 @@ jobs:
   # any file that has no SHA-256 in versions.json, so announcing a version first just shows users an error. Without the
   # SUPABASE_SERVICE_KEY secret nothing publishes the checksums, so this job fails loudly instead of letting the release
   # slip out unchecked: run scripts/publish-supabase.sh (or scripts/release-local.sh), then
-  # `gh release edit v<version> --latest`.
+  # scripts/promote-latest.sh <version> (it marks the release latest, but never takes "latest" away from a newer release).
+  #
+  # Releases can be in flight at the same time (docs/release_channels.md, "Several releases at once"), and the one that finishes last is
+  # not always the newest. So this job only marks its release latest when no NEWER release is already latest or already published
+  # (scripts/promote-latest.sh), and the finalize jobs of different runs take turns so two never flip "latest" at the same moment.
+  # (GitHub keeps one running and one waiting job per concurrency group: a third finalize arriving while one runs and one waits replaces
+  # the waiting one, which then shows as cancelled. Each job is a few seconds long, so that needs three releases finishing within seconds;
+  # if it ever happens, run: scripts/promote-latest.sh <version>, for the newest version that was cancelled.)
   finalize:
     name: Make the release visible (latest)
     needs: [windows-exe, linux-server]
     if: ${{ always() && needs.windows-exe.result == 'success' && needs.linux-server.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: release-finalize
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
@@ -315,19 +332,25 @@ jobs:
       VER: ${{ needs.windows-exe.outputs.ver }}
       HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
       CHANNEL: ${{ inputs.channel || 'latest' }}
+      RELEASES_BASE: https://tgthoueacrlanpojxoen.supabase.co/storage/v1/object/public/releases
     steps:
+      # Only scripts/promote-latest.sh is needed, so a sparse checkout keeps this job tiny.
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts
+
       - name: Check the checksums are published, then mark the release latest
         run: |
           if [ "$HAVE_KEY" != "true" ]; then
-            msg="v$VER was built and attached to its GitHub release, but its checksums were NOT published (no SUPABASE_SERVICE_KEY secret), so launchers would refuse it. It is not marked latest. Run scripts/publish-supabase.sh with a key (or scripts/release-local.sh), then: gh release edit v$VER --latest"
+            msg="v$VER was built and attached to its GitHub release, but its checksums were NOT published (no SUPABASE_SERVICE_KEY secret), so launchers would refuse it. It is not marked latest. Run scripts/publish-supabase.sh with a key (or scripts/release-local.sh), then: scripts/promote-latest.sh $VER"
             echo "::error title=Release not visible to launchers::$msg"
             echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          B=https://tgthoueacrlanpojxoen.supabase.co/storage/v1/object/public/releases
+          B="$RELEASES_BASE"
           # The checksum list must really contain this version with a checksum for each program, not just exist.
           for i in 1 2 3 4 5 6; do
-            if curl -fsS "$B/versions.json" | python3 -c "
+            if curl -fsS -H 'Cache-Control: no-cache' "$B/versions.json?nocache=$(date +%s)" | python3 -c "
           import sys, json
           d = json.load(sys.stdin)
           v = [x for x in d.get('versions', []) if x.get('version') == '$VER']
@@ -336,9 +359,9 @@ jobs:
             echo "versions.json has no checksums for v$VER yet (attempt $i)"; sleep 10
           done
           if [ "${ok:-0}" != "1" ]; then
-            echo "::error title=Checksums missing::versions.json on the release server has no checksums for v$VER, so the release stays hidden. Run scripts/publish-supabase.sh, then: gh release edit v$VER --latest"
+            echo "::error title=Checksums missing::versions.json on the release server has no checksums for v$VER, so the release stays hidden. Run scripts/publish-supabase.sh, then: scripts/promote-latest.sh $VER"
             exit 1
           fi
           if [ "$CHANNEL" = "lts" ]; then echo "LTS patch: left as a normal release (never latest)"; exit 0; fi
-          gh release edit "v$VER" --repo "$GITHUB_REPOSITORY" --latest
-          echo "v$VER is now the latest release, with checksums published." >> "$GITHUB_STEP_SUMMARY"
+          # Marks v$VER latest unless a newer release is already latest or already published (then it says so and exits 0).
+          bash scripts/promote-latest.sh "$VER"

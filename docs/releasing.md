@@ -29,15 +29,24 @@ The bucket layout:
 | `VERSION.txt` | newest version, uploaded last (cached 30 s) |
 | `NOTES.txt` | "what's new" lines for the launcher (default: recent commit subjects; set `NOTES_FILE` to choose) |
 | `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt` | that version's files |
+| `release.lock` | only while a publish runs: the lock that makes publishes take turns (below) |
 
 `versions.json` is required: it lists the size and SHA-256 of `OkayEngine.exe`, `OkaySpacePlayer.exe` and `OkaySpace.exe`, and the launcher
 refuses to update any file without one. The script checks that it can compute all of them before it uploads anything (also under
 `DRY_RUN=1`), uploads `versions.json` before `VERSION.txt`, reads it back from the bucket and compares it with the uploaded files, and
-stops (no `VERSION.txt`, so nobody is offered the version) if anything is off. Re-running the publish is safe. A release that exists only
+stops (no `VERSION.txt`, so nobody is offered the version) if anything is off. Re-running the publish with the same files is safe; a
+version that is already listed with different files is refused (`ALLOW_REPUBLISH=1` replaces it on purpose; see
+[release_channels.md](release_channels.md#one-version-published-once-claudemd-rule-12)). A release that exists only
 on GitHub has no `versions.json`, so launchers show "cannot update: no checksum list" instead of installing unchecked files.
 
 Only the newest 3 versions are kept (`KEEP=n` to change). `DRY_RUN=1` checks
-the build and key without uploading.
+the build and key without uploading (and takes no lock).
+
+**Several releases at once.** Builds can run in parallel, but publishing takes turns: the script holds a lock (`release.lock` in the
+bucket) while it rewrites `versions.json`, `VERSION.txt` and the old-version clean-up, waits if another publish holds it, and never
+moves "latest" backwards (an older version that finishes late is published but does not touch `VERSION.txt`). The GitHub "latest"
+release follows the same rule (`scripts/promote-latest.sh`). What you will see in the log, how to clear a stuck lock and how to
+rehearse it safely: [release_channels.md, "Several releases at once"](release_channels.md#several-releases-at-once).
 
 Limits: each file must be at most 100 MB (the project and bucket limit, set in Supabase Settings > Storage; the script checks `MAX_MB`, default 100). The editor is
 about 23 MB because its debug info is split into `build-win-symbols/OkayEngine.debug`

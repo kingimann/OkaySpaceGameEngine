@@ -22,7 +22,121 @@ became GitHub's "latest" before that list had it, launchers saw the new version 
 Supabase, checks that `versions.json` really lists the version with a checksum for each program, and only then marks it
 latest (job "Make the release visible (latest)"). Without the secret that job fails with a message instead of letting the
 release out unchecked: publish with `scripts/publish-supabase.sh` (or `scripts/release-local.sh`), then run
-`gh release edit v<version> --latest`. `scripts/release-local.sh` follows the same order.
+`scripts/promote-latest.sh <version>` (the safe form of `gh release edit v<version> --latest`: it never takes "latest" away from
+a newer release). `scripts/release-local.sh` follows the same order.
+
+## Several releases at once
+
+You can dispatch the release workflow again before the last release has finished. That is safe. Give each release its own
+version number first (bump `VERSION` in `CMakeLists.txt`, as a release PR does), and never run the workflow again for a
+version that already exists (see "One version, published once" below).
+
+* **Builds run side by side.** Each run builds its own version on its own runner. Nothing makes one build wait for another.
+  (The workflow has no workflow-level concurrency group on purpose.)
+* **Publishing takes turns.** Publishing rewrites files that every version shares: `versions.json`, `VERSION.txt`,
+  `NOTES.txt`, and it deletes old version folders. If two runs did that at the same moment, one version's checksums could be
+  lost (that release would stay hidden with "versions.json has no checksums"), or an older version that finishes late could
+  move "latest" backwards. So `scripts/publish-supabase.sh` first takes a **lock**: it creates a small file `release.lock` in
+  the bucket. The storage service refuses to create a file that already exists, so only one run can hold it. A run that finds
+  the lock held looks again every 10 to 20 seconds (up to 40 minutes locally, 30 in the workflow), then publishes. The lock
+  is given back when the script ends, whatever way it ends (done, an error, the job cancelled).
+* **"Latest" never goes backwards.** An older version that finishes after a newer one is still published, with its files
+  and its checksums (so it can be installed from the Versions page), but it does not write `VERSION.txt` or `NOTES.txt`, and
+  `latest` in `versions.json` stays at the newer version. The script says so in its log.
+* **GitHub's "latest" release never goes backwards either.** The last job ("Make the release visible (latest)") runs
+  `scripts/promote-latest.sh`. It marks the release latest only when no newer release is already latest on GitHub and no
+  newer version is already published. These jobs also run one at a time.
+* **What the script reads under the lock is fresh.** `VERSION.txt`, `LTS.txt` and `versions.json` are read through the
+  authenticated storage API, not through the public address. The public address is served from a cache and can show an
+  old copy for a while; a publish that believed it would drop the version published a moment ago.
+* **The version being published is never pruned**, even when it is older than the newest three (an older release finishing
+  late). A later publish removes it with the other old folders.
+
+### One version, published once (CLAUDE.md rule 12)
+
+Running the workflow again for an existing version rebuilds the programs, so their files and checksums change under people
+who already have them. The publish script now refuses that: when `versions.json` already lists the version with **different**
+files it stops with "already published with DIFFERENT files" before it uploads anything. The **same** files again are a safe
+re-run (it says so). `ALLOW_REPUBLISH=1` replaces a version on purpose (`scripts/release-local.sh --force` sets it). This only
+guards the Supabase side: the GitHub release of that version is written earlier in the same job, so do not re-run a version
+there either.
+
+### What you will see in the log
+
+The "Publish to Supabase" step of a run that had to wait:
+
+```
+Taking the release lock (release.lock): releases are published one at a time
+  release.lock is held by github-run-123456789-attempt-1 (v2.876.0, renewed 12 s ago); waiting for it, up to 1800 s more
+  took the release lock (release.lock) for v2.875.0 after 94 s
+v2.875.0 is OLDER than the version that is latest now (v2.876.0). Publishing its files and its checksums so it can be
+installed, but VERSION.txt and NOTES.txt are left alone: latest does not move backwards.
+  ...
+  left VERSION.txt at v2.876.0
+  gave the release lock back
+Done: v2.875.0 is published and can be installed from the version list; v2.876.0 stays the latest (...)
+```
+
+and the last job of that run: `A newer release (v2.876.0) is already latest on GitHub: v2.875.0 stays a normal release (it is
+not made latest).` A run that did not have to wait shows `took the release lock ... after 0 s` and `gave the release lock back`.
+
+### If a lock is stuck
+
+A lock is left behind only when a publish dies without a chance to clean up (the machine was lost). The next publish notices
+that the lock has not been renewed for 20 minutes, takes it over and prints a loud warning (`TAKING IT OVER`; in GitHub Actions
+it also shows as a warning on the run page). A publish that is slower than that keeps its lock alive by renewing it after each
+upload, and it checks that the lock is still its own before it writes `versions.json` and `VERSION.txt`. (The lock is renewed
+between uploads, not during one: on a connection so slow that a single file takes more than 20 minutes, set
+`LOCK_STALE_SECONDS` higher.)
+
+To clear a stuck lock yourself, delete `release.lock` in the bucket (Supabase dashboard > Storage > `releases` > `release.lock`
+> Delete), or just wait 20 minutes. A lock whose time cannot be read, or lies in the future, is never taken over by the script:
+delete it by hand. If a run says "gave up waiting for the release lock", nothing was published; run the publish again once the
+lock is gone (`scripts/publish-supabase.sh`, with the same build, or `scripts/release-local.sh`).
+
+### What is shared, and what protects it
+
+| Shared thing | Written by | Protected by |
+|---|---|---|
+| `versions.json`, `versions.json.sig` | every publish | the lock, and a fresh read under it |
+| `VERSION.txt`, `NOTES.txt` | latest publish | the lock, and the "never backwards" rule |
+| `LTS.txt`, `NOTES-LTS.txt` | LTS publish | the same lock; the LTS rules are checked again under it |
+| Pruning of old `v<version>/` folders | latest publish | the lock; the version being published is never pruned |
+| `v<version>/` files | one publish per version | one version, one publish (rule 12, above) |
+| GitHub's "latest" release | the last job, `release-local.sh` | `scripts/promote-latest.sh`, and the last jobs take turns |
+| GitHub release assets of one version (zip, installer, exes, `SDL2.dll`, Linux server) | that run only | nothing is shared between versions; two runs of one version would overwrite each other (rule 12) |
+| Actions caches | each run | keyed by commit or run: no clash |
+
+Not covered because the release workflow does not run it: `scripts/publish-official-game.sh` (the official game under
+`official/`, run by an admin) has its own newer-than-live check and no lock. The workflow has no Steam step.
+
+### Trying it
+
+Automatic: `python3 -I tests/scripts/test_publish_lock.py` runs two publishes at a time against a local fake of the storage
+service (about two minutes; it also runs in CI, job "Ticket function, update signing and account server tests"). The fake is
+not the real service, so the first real overlap is the real check.
+
+Safest way to rehearse it for real, without touching the real `releases` bucket: publish two throwaway versions into a
+throwaway bucket at the same time, from your own computer, in the repository folder (the key stays in your shell, never in a
+file or in chat):
+
+```bash
+D=$(mktemp -d); mkdir -p "$D"/a/Tools "$D"/b/Tools
+for pair in a:2.900.0 b:2.901.0; do
+  dir=${pair%%:*}; ver=${pair##*:}; echo "$ver" > "$D/$dir/VERSION.txt"
+  for f in OkaySpace.exe Tools/OkayEngine.exe Tools/OkaySpacePlayer.exe; do printf 'MZ %s %s' "$ver" "$f" > "$D/$dir/$f"; done
+done
+export SUPABASE_SERVICE_KEY=...        # your service key, typed into your own shell
+BUCKET=zz-publish-test DIST_DIR="$D/a" scripts/publish-supabase.sh &
+BUCKET=zz-publish-test DIST_DIR="$D/b" scripts/publish-supabase.sh
+wait
+```
+
+You should see: one run says `took the release lock ... after 0 s`, the other `release.lock is held by local-pid-...; waiting
+for it`, both end with `gave the release lock back`, and the bucket's `VERSION.txt` says `2.901.0` whichever one went first. If
+the older one (2.900.0) happens to publish second it also says `is OLDER than the version that is latest now`. Then delete the
+bucket `zz-publish-test` in the Supabase dashboard. For a real release: dispatch two releases with consecutive versions a minute apart and read the "Publish to
+Supabase" step of each; the second prints the waiting lines only if its build finished while the first was publishing.
 
 ## Where the files live
 
@@ -39,8 +153,9 @@ Files at the root of the bucket:
 | `NOTES.txt` | latest publish | "What's new" lines for the launcher's card. |
 | `LTS.txt` | lts publish | The newest patch of the LTS line. Absent until a line is promoted. |
 | `NOTES-LTS.txt` | lts publish | Notes for the LTS patch. |
-| `versions.json` | every publish | The index below. A failure to update it only warns. |
+| `versions.json` | every publish | The index below. The publish stops (no `VERSION.txt`) if it cannot be written and read back. |
 | `versions.json.sig` | every publish made with a signing key | The ed25519 signature of `versions.json` (see [Signed releases](#signed-releases)). |
+| `release.lock` | every publish, while it runs | The lock (see [Several releases at once](#several-releases-at-once)). Present only while a publish runs; it names the version, the run and the time. |
 
 An LTS patch never writes `VERSION.txt` or `NOTES.txt`, never becomes GitHub's "latest release" (the in-app updater
 downloads `releases/latest/download/<name>`), and never prunes anything.
@@ -139,8 +254,14 @@ script stop instead of uploading an unsigned index.
 - `CHANNEL=latest` refuses a version that is in the LTS line.
 - `CHANNEL=lts` refuses a patch older than the current LTS in the same line. The first publish of a different line promotes it
   (the script says so).
-- Pruning never deletes a version of the current LTS line.
-- `DRY_RUN=1` runs these checks without uploading.
+- Both are checked twice: at the start (so a wrong channel fails in seconds) and again under the lock, on what is published at
+  that moment.
+- Pruning never deletes a version of the current LTS line, or the version being published.
+- A version older than the current latest is published but never moves `VERSION.txt` or `NOTES.txt`.
+- A version already listed in `versions.json` with different files is refused (`ALLOW_REPUBLISH=1` overrides).
+- Only one publish runs at a time (the lock `release.lock`; `LOCK_WAIT_SECONDS`, `LOCK_STALE_SECONDS`, `LOCK_POLL_SECONDS`,
+  `LOCK_RENEW_SECONDS` tune it). See [Several releases at once](#several-releases-at-once).
+- `DRY_RUN=1` runs these checks without uploading and without taking the lock.
 - With `OKAY_UPDATE_SIGNING_SEED` set it signs `versions.json`, uploads `versions.json.sig`, reads both back from the bucket and
   checks the published pair before `VERSION.txt` goes out. Unset: a warning and an unsigned index (`REQUIRE_SIGNED=1` stops instead).
   With `bash -x` and a seed in the environment it refuses to run, because the trace would print the seed.
@@ -149,6 +270,10 @@ script stop instead of uploading an unsigned index.
 
 Release channels were added in one change: `CHANNEL` in `scripts/publish-supabase.sh`, `LTS.txt` and `NOTES-LTS.txt`,
 `versions.json` (`scripts/versions_index.py`), the `channel` input and `make_latest` in `.github/workflows/release.yml`.
+
+Overlapping releases were made safe in a later change: the lock, the "never backwards" rule, fresh reads and the rule-12 check in
+`scripts/publish-supabase.sh` (and `scripts/versions_index.py status`), `scripts/promote-latest.sh` with the one-at-a-time
+`finalize` job in `.github/workflows/release.yml`, and `tests/scripts/test_publish_lock.py`.
 
 The launcher side (Versions page, the channel setting, keeping the previous editor on update) came after: see
 [launcher_versions.md](launcher_versions.md). No change to the feed's format was needed; `SDL2.dll` in `files` is the one wish above.

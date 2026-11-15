@@ -22,7 +22,14 @@
 #
 # Safety: refuses to publish unless the tree is clean and HEAD is already on
 # origin (the release tags that exact commit), and refuses to republish a
-# version whose GitHub release already exists unless --force is given.
+# version whose GitHub release already exists unless --force is given (--force
+# also lets scripts/publish-supabase.sh replace a version that is already listed
+# with different files: ALLOW_REPUBLISH=1).
+#
+# Releases may overlap (docs/release_channels.md, "Several releases at once"):
+# the Supabase publish takes a lock and waits for another publish to finish, it
+# never moves "latest" backwards, and the GitHub release only becomes "latest"
+# when no newer one already is (scripts/promote-latest.sh).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -35,7 +42,7 @@ for a in "$@"; do
     --no-installer) INSTALLER=0 ;;
     --lts) CHANNEL=lts ;;
     --force) FORCE=1 ;;
-    -h|--help) sed -n 2,28p "$0"; exit 0 ;;
+    -h|--help) awk 'NR > 1 { if (/^#/) print; else exit }' "$0"; exit 0 ;;   # (the whole comment block at the top)
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
 done
@@ -150,14 +157,14 @@ fi
 # ---- Supabase ----------------------------------------------------------------
 if [ -n "${SUPABASE_SERVICE_KEY:-}${SUPABASE_ACCESS_TOKEN:-}" ]; then
   say "Publishing to Supabase ($CHANNEL)"
-  CHANNEL=$CHANNEL DIST_DIR="$PWD/build-win-dist" scripts/publish-supabase.sh
+  CHANNEL=$CHANNEL DIST_DIR="$PWD/build-win-dist" ALLOW_REPUBLISH=$FORCE scripts/publish-supabase.sh
   if [ $CHANNEL != lts ]; then
-    say "Checksums are published: marking $TAG as the latest release"
-    gh release edit "$TAG" --latest
+    say "Checksums are published: marking $TAG as the latest release (unless a newer release already is)"
+    scripts/promote-latest.sh "$VER"
   fi
 else
   echo "warning: no SUPABASE_SERVICE_KEY / SUPABASE_ACCESS_TOKEN set: the checksums were NOT published, so launchers would refuse v$VER."
-  echo "         $TAG was left as NOT latest. Publish the checksums (scripts/publish-supabase.sh), then: gh release edit $TAG --latest"
+  echo "         $TAG was left as NOT latest. Publish the checksums (scripts/publish-supabase.sh), then: scripts/promote-latest.sh $VER"
 fi
 
 # ---- verify what users will download matches what we built --------------------

@@ -716,8 +716,9 @@ jobs:
           if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
 
   # The ticket service's signing code (supabase/functions/session-ticket/ticket.ts) against Web Crypto's Ed25519 on
-  # a current Node, the signed-update tool (scripts/sign_index.py) with its guards, and the reference account server's
-  # limits. They were run by hand before.
+  # a current Node, the signed-update tool (scripts/sign_index.py) with its guards, the reference account server's
+  # limits, and the release scripts when several releases are published at once (the publish lock, "latest" never
+  # moving backwards; against a fake storage server and a fake `gh`). They were run by hand before.
   ticket-and-script-tests:
     name: Ticket function, update signing and account server tests
     runs-on: ubuntu-latest
@@ -740,6 +741,12 @@ jobs:
 
       - name: Publish script checks
         run: bash tests/scripts/test_publish_supabase_checks.sh
+
+      # Two publish-supabase.sh processes at a time against a local fake of the storage API: the lock, a stale lock, "latest" never
+      # moving back, no lost update in versions.json, the lock given back after an error or SIGTERM; promote-latest.sh with a stub gh.
+      # Takes a minute or two (the processes wait for each other on purpose).
+      - name: Overlapping releases (publish lock, latest only moves forward)
+        run: python3 -I tests/scripts/test_publish_lock.py
 
       - name: Reference account server limits
         run: python3 -I tests/scripts/test_account_server.py

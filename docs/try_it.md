@@ -404,3 +404,28 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
+
+## Release tooling: several releases at once (not part of the Windows release)
+
+What it is: you can dispatch the release workflow again before the last release is out. Builds run side by side; publishing takes
+turns (a lock file `release.lock` in the update bucket), "latest" never goes backwards, and the GitHub "latest" release follows the
+same rule. The full guide is [release_channels.md, "Several releases at once"](release_channels.md#several-releases-at-once).
+It changes the release workflow and scripts only; nothing in `OkaySpace.exe`, the editor or the installer. Status: **tested only
+against a fake storage service and a stub `gh` on Linux; it has not run on the real storage service or in a real Actions run.**
+
+1. **Run the automatic test** (Linux checkout, about two minutes):
+   `python3 -I tests/scripts/test_publish_lock.py`. You should see a line per test and `OK` at the end. It starts two copies of
+   `scripts/publish-supabase.sh` at the same time against a local fake, and checks that both versions end up in `versions.json`
+   with checksums, that `VERSION.txt` is the newer one even when the older one finishes last, and that the lock is gone at the end.
+   The same test runs in CI as the step "Overlapping releases" of the job "Ticket function, update signing and account server tests".
+2. **Rehearse it for real without touching the real bucket**: the command block under "Trying it" in the guide publishes two
+   throwaway versions into a throwaway bucket (`BUCKET=zz-publish-test`) at the same time. You should see one run take the lock, the
+   other say `release.lock is held by ...; waiting for it`, both say `gave the release lock back`, and `VERSION.txt` in that bucket say
+   `2.901.0`. Delete the bucket afterwards. The service key stays in your own shell.
+3. **On the next real release**: dispatch two releases a minute apart (each with its own version). In each run, open the step
+   "Publish to Supabase": you should see `took the release lock` and `gave the release lock back`; a run that had to wait shows
+   `is held by github-run-...; waiting for it` first. In the last job, "Make the release visible (latest)", the newer release says
+   `v... is now the latest release`; an older one that finished last says `A newer release (v...) is already latest on GitHub: ... stays a
+   normal release`.
+4. **A stuck lock**: delete `release.lock` in the Supabase dashboard (Storage > `releases`), or wait 20 minutes; the guide says what
+   the log shows.

@@ -238,6 +238,10 @@ More of the builder:
   `.Adder([](GameObject& go) -> Component* { return PlayerController::Add(&go); })`.
 - **A key binding** held in a `char` field: `.AddKey("jumpKey", &C::jumpKey)` (also for a `char` in a struct
   member). It is an Int property 0..255 holding the key code.
+- **An enum whose stored numbers skip** (an axis enum with `X = 0, Z = 2`): `.AddEnum("meshAxis", &C::meshAxis,
+  {"X", "Z"}, {0, 2})`. Option i stands for `values[i]`; a field value that is not in the list reads as option 0.
+- **An unsigned field** (a layer mask, a seed): plain `.AddInt`, which takes any integer type and starts its range
+  at that type's own limits.
 - **Not addable** (a Transform): `.NoAdd()`.
 - A modifier called before the first property (`Tooltip` right after the constructor) is ignored
   instead of writing through an empty list, and a `Custom` with an empty getter adds nothing.
@@ -268,7 +272,7 @@ More of the builder:
 
 ## What is registered
 
-2546 properties on 190 types, as `property_registry` counts them ("covered 190 component types, 2546 properties"; a number before a slash counts the authored ones; the rest are
+2549 properties on 190 types, as `property_registry` counts them ("covered 190 component types, 2549 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -324,12 +328,12 @@ has `enabled`.
 | VirtualCamera, CinemachineBrain, DollyPath | 34, 2, 1 | virtual camera priority, targets, offsets, damping, shake, free look, dolly and confiner (the confiner box allows +-1e9, its "no limit" default); brain blend; dolly path loop (the waypoints are a list) |
 | Minimap | 48 | layout, view, blips, grid, view cone, rings, north mark, labels, route line, map image, full-screen map and zoom keys. The markers and map shapes are lists; the placed waypoint is play state |
 | HoldableObject, LookAtIK | 23, 12 | hold style, hands, weight, socket, the custom / first-person / third-person placement and both hand grips (`leftGripCurl` and so on); look target, axis, weight, limits, eyes and distance fade (the bone chain, per-bone weights and eye bones are lists) |
-| FootIK | 31 | bone names, planting (weight, rays, pelvis, knee bend), foot axes and probes, foot lock. The hip and knee limits and the unsigned `groundMask` are not properties yet |
+| FootIK | 32 | bone names, planting (weight, rays, ground mask, pelvis, knee bend), foot axes and probes, foot lock. The hip and knee limits are not properties yet |
 | LimbIK | 18 | bone names, goal (target, rotation, blend), bend (pole, pole mode, bend limits) and solve settings. The upper and lower joint limits are not properties yet |
 | NetInventory, RootMotion, TerrainDigger, VoxelDigger, WorldStreamer, Consumables | 6, 5, 11, 9, 8, 3 | net inventory limits; root motion mode and options; terrain and voxel brush settings (the record does not save `VoxelDigger.removeFloaters`, so it is not a property yet); world streaming cells and files; consumable switches (the recipes are a list) |
 | UITextBind, UIBarBind, UIAnimation, AimOffset, SequencePlayer | 1, 3, 12, 10, 6 | the bound text format; the bound bar value and range; widget intro, loop and outro with the ease (options from `Easing::Name`); aim offset weights, clamps and recoil; cutscene file, playback and skip key |
 | ProceduralObjectHolding, BuildPiece, BuilderMode, PoseCapture, CraftingMenu | 14, 5, 20, 2, 6 | hands, style and throw settings; build piece tier, health and cost; builder shapes, grid, scale and buttons (the record does not save the seven hotkeys, so they are not properties yet); pose capture clip and length; crafting menu key and layout |
-| BehaviorTreeRunner, SplineMesh, SplineInstancer | 6, 15, 15 | tree file, tick rate and home point (the blackboard overrides are a list); spline mesh extrude and repeat settings (the custom profile is a list; `meshAxis`, whose values are 0 and 2, is not a property yet); spline instancer source, spacing, jitter, scale and alignment (the unsigned `seed` is not a property yet) |
+| BehaviorTreeRunner, SplineMesh, SplineInstancer | 6, 16, 16 | tree file, tick rate and home point (the blackboard overrides are a list); spline mesh extrude and repeat settings (the custom profile is a list; `meshAxis` uses the explicit-values enum); spline instancer source, spacing, seed, jitter, scale and alignment |
 
 How the new types are described, so a tool can rely on it:
 

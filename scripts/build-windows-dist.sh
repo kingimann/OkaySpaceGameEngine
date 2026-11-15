@@ -190,7 +190,10 @@ Everything else lives in  Tools/:
 
 examples/ example scenes to try: in the editor use File > Open and pick
                         examples\vehicle\vehicle_test.okayscene, then press Play
-                        (get in the car with E). More in docs/try_it.md.
+                        (get in the car with E), or
+                        examples\ui_text\ui_text.okayscene (a nameplate over each of
+                        two characters and a sign with rich text; keys 1 2 3 H).
+                        More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the
 launcher and a copy sits in Tools/. Don't separate an .exe from its SDL2.dll.

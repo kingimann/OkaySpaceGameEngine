@@ -2162,6 +2162,12 @@ static void TestAuditSceneEdges() {
             }
             for (const PropertyValue& v : values) {
                 if (d.name == "tag" || (info->name == "GameObject" && d.name == "name" && v.AsString().empty())) continue;
+                // An item pickup's id is resolved through the item database when the scene loads, which trims the
+                // spaces around it (on purpose: an item id never starts or ends with one).
+                if (info->name == "ItemPickup" && d.name == "item") {
+                    const std::string t = v.AsString();
+                    if (!t.empty() && (t.front() == ' ' || t.back() == ' ')) continue;
+                }
                 ++cases;
                 const std::string why = SceneRoundTripOf(*info, d, v, path, true);
                 if (!why.empty()) {

@@ -9,6 +9,7 @@
 // caught by the second check at the end: the property registry's types must all be in the list.
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Components/Occluder.hpp"
 #include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/VehicleSeat.hpp"
@@ -44,7 +45,7 @@ using namespace okay;
     X(InventoryUI) X(ItemPickup) X(Joint2D) X(Joint3D) X(JumpPad) X(Lifetime) X(Light) X(LimbIK) X(LineRenderer) \
     X(LoadingScreen) X(LogicSource) X(LogicTarget) X(LookAtIK) X(LootSource) X(MeleeAttacker) X(MeshCollider3D) \
     X(MeshModifiers) X(MeshRenderer) X(Minimap) X(MinimapBlip) X(ModelAnimator) X(Mover) X(MusicPlayer) \
-    X(NPCController) X(NavMeshAgent) X(NavMeshLink) X(NavMeshModifier) X(NavMeshObstacle) X(NavMeshSurface) X(NetInventory) X(NetValidator) \
+    X(NPCController) X(NavMeshAgent) X(NavMeshLink) X(NavMeshModifier) X(NavMeshObstacle) X(NavMeshSurface) X(NetInventory) X(NetValidator) X(Occluder) \
     X(NetworkAvatarMotion) X(NetworkManager) X(NetworkObject) X(NetworkPlayerSpawner) X(NetworkSync) \
     X(NetworkTransform) X(OxygenStat) X(ParticleSystem) X(PauseMenu) X(Platformer25DController) \
     X(PlayerController) X(PlayerView) X(PoisonStat) X(PolygonCollider2D) X(PoseCapture) \

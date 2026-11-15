@@ -1,0 +1,803 @@
+okayscene 3
+name "Vehicle Test"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  guid "1bb57324ef53692d9d81230a2767815e"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Ground"
+  guid "4b552c1e3a8c0cb995a335f1795cb085"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 300 1 300
+  mesh "Cube" 0.32941177 0.5019608 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 2 "Road"
+  guid "06bafdf66d1a0425fbc19f634c5c8507"
+  active 1
+  parent -1
+  transform 0 0.01 40 0 0 0 1 9 0.04 150
+  mesh "Cube" 0.22745098 0.23529412 0.25882354 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Road Edge Left"
+  guid "09a9506ae7a97c233dd2fe4aca68750b"
+  active 1
+  parent -1
+  transform -4.2 0.03 40 0 0 0 1 0.15 0.02 150
+  mesh "Cube" 0.88235295 0.88235295 0.8627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Road Edge Right"
+  guid "c8b1a59fc9219bef78c4f464abfbeae7"
+  active 1
+  parent -1
+  transform 4.2 0.03 40 0 0 0 1 0.15 0.02 150
+  mesh "Cube" 0.88235295 0.88235295 0.8627451 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Lane Dash"
+  guid "8187f206592f65742727a98e1293d70b"
+  active 1
+  parent -1
+  transform 0 0.03 -20 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "Lane Dash"
+  guid "8948e004e094f7c01935e186196df099"
+  active 1
+  parent -1
+  transform 0 0.03 -14 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Lane Dash"
+  guid "b5aaef48ef72fabfdf49c50f1abf69a7"
+  active 1
+  parent -1
+  transform 0 0.03 -8 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Lane Dash"
+  guid "d6dd56d865f23dc36de365e79136f5f3"
+  active 1
+  parent -1
+  transform 0 0.03 -2 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Lane Dash"
+  guid "273496f9806bf13e0e4dfb1b2a2d838b"
+  active 1
+  parent -1
+  transform 0 0.03 4 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Lane Dash"
+  guid "44e6e2490f824cbed6df9cc79c432035"
+  active 1
+  parent -1
+  transform 0 0.03 10 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Lane Dash"
+  guid "701071f0451402e0f0a922d65f05f41d"
+  active 1
+  parent -1
+  transform 0 0.03 16 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Lane Dash"
+  guid "a2283621ac8c65aa65f748b5deb4a5d3"
+  active 1
+  parent -1
+  transform 0 0.03 22 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Lane Dash"
+  guid "5e31b64e063fa78fa4816c9edbb4d657"
+  active 1
+  parent -1
+  transform 0 0.03 28 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Lane Dash"
+  guid "e19488889534d5994583ddefcc9a194c"
+  active 1
+  parent -1
+  transform 0 0.03 34 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Lane Dash"
+  guid "502d82b6d9c90ab8b078a64b3371a7e8"
+  active 1
+  parent -1
+  transform 0 0.03 40 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Lane Dash"
+  guid "f92474d4aa07f71e7c9bd3184e4da1cc"
+  active 1
+  parent -1
+  transform 0 0.03 46 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Lane Dash"
+  guid "41a5f2a50abc3f824a4d68a7862751a7"
+  active 1
+  parent -1
+  transform 0 0.03 52 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Lane Dash"
+  guid "4fbf2564609fb3e35cab6b3486ebaee9"
+  active 1
+  parent -1
+  transform 0 0.03 58 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Lane Dash"
+  guid "5448ff588980dfc747e619e08469e5fd"
+  active 1
+  parent -1
+  transform 0 0.03 64 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Lane Dash"
+  guid "5e7a2adafbadc9576590e5ddf835385f"
+  active 1
+  parent -1
+  transform 0 0.03 70 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Lane Dash"
+  guid "72521435088624221f930b390bf07b23"
+  active 1
+  parent -1
+  transform 0 0.03 76 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Lane Dash"
+  guid "8369ae6c08b2b91e9249e808404d9b7b"
+  active 1
+  parent -1
+  transform 0 0.03 82 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Lane Dash"
+  guid "3ee987b22a8fcf8c41e8c54eee818a69"
+  active 1
+  parent -1
+  transform 0 0.03 88 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Lane Dash"
+  guid "4f4aab5b272abc93f99a79b15531cb1e"
+  active 1
+  parent -1
+  transform 0 0.03 94 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 25 "Lane Dash"
+  guid "57f35b0b503c989ca2e01d840298c950"
+  active 1
+  parent -1
+  transform 0 0.03 100 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 26 "Lane Dash"
+  guid "d63ffc0ff7058f6b8a8ae94bf1a12e6e"
+  active 1
+  parent -1
+  transform 0 0.03 106 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 27 "Lane Dash"
+  guid "a246c194f7fc32a65aef98fdd4827368"
+  active 1
+  parent -1
+  transform 0 0.03 112 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 28 "Lane Dash"
+  guid "3abb0649890180fc25572e0a982080e3"
+  active 1
+  parent -1
+  transform 0 0.03 118 0 0 0 1 0.18 0.02 2.6
+  mesh "Cube" 0.92156863 0.84313726 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 29 "Cone"
+  guid "6336eb3c1336ddd96155a707343e7812"
+  active 1
+  parent -1
+  transform 1.8 0.35 46 0 0 0 1 0.4 0.7 0.4
+  mesh "Cone" 0.93333334 0.47058824 0.11764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 30 "Cone Base"
+  guid "5bdf7d27dbab99b50905520dfe0a5c3f"
+  active 1
+  parent 29
+  transform 0 -0.5 0 0 0 0 1 1.5 0.06 1.5
+  mesh "Cube" 0.15686275 0.15686275 0.17254902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 31 "Cone"
+  guid "fd345f780915e09e91429a7258035bb5"
+  active 1
+  parent -1
+  transform 3.4 0.35 53 0 0 0 1 0.4 0.7 0.4
+  mesh "Cone" 0.93333334 0.47058824 0.11764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 32 "Cone Base"
+  guid "19a80a09cfa63af9d4687cf0ed1b42f5"
+  active 1
+  parent 31
+  transform 0 -0.5 0 0 0 0 1 1.5 0.06 1.5
+  mesh "Cube" 0.15686275 0.15686275 0.17254902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 33 "Cone"
+  guid "260847451baf7fe063ec937a46aa2768"
+  active 1
+  parent -1
+  transform 1.8 0.35 60 0 0 0 1 0.4 0.7 0.4
+  mesh "Cone" 0.93333334 0.47058824 0.11764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 34 "Cone Base"
+  guid "6d7615589e7bb2dcbeb6ac3b800da1d8"
+  active 1
+  parent 33
+  transform 0 -0.5 0 0 0 0 1 1.5 0.06 1.5
+  mesh "Cube" 0.15686275 0.15686275 0.17254902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 35 "Cone"
+  guid "363ff0613ed6f869cc0a00fb6f4c0c51"
+  active 1
+  parent -1
+  transform 3.4 0.35 67 0 0 0 1 0.4 0.7 0.4
+  mesh "Cone" 0.93333334 0.47058824 0.11764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 36 "Cone Base"
+  guid "9d658197b88a8c26a392501f83c716ff"
+  active 1
+  parent 35
+  transform 0 -0.5 0 0 0 0 1 1.5 0.06 1.5
+  mesh "Cube" 0.15686275 0.15686275 0.17254902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 37 "Cone"
+  guid "41a5276af635ed12bf7366f30bbf5ed3"
+  active 1
+  parent -1
+  transform -1.8 0.35 74 0 0 0 1 0.4 0.7 0.4
+  mesh "Cone" 0.93333334 0.47058824 0.11764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 38 "Cone Base"
+  guid "e43ef1c38080c42f00ab5baad460c355"
+  active 1
+  parent 37
+  transform 0 -0.5 0 0 0 0 1 1.5 0.06 1.5
+  mesh "Cube" 0.15686275 0.15686275 0.17254902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 39 "Cone"
+  guid "bcc71571cddb8f4642b4239861de5bf9"
+  active 1
+  parent -1
+  transform -3.4 0.35 81 0 0 0 1 0.4 0.7 0.4
+  mesh "Cone" 0.93333334 0.47058824 0.11764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 40 "Cone Base"
+  guid "d44b8530f26925cca45394802255c1d9"
+  active 1
+  parent 39
+  transform 0 -0.5 0 0 0 0 1 1.5 0.06 1.5
+  mesh "Cube" 0.15686275 0.15686275 0.17254902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 41 "Crate"
+  guid "35a240fe621d5e357ca51d9eddf576ef"
+  active 1
+  parent -1
+  transform -3.2 0.4 92 0 0 0 1 0.8 0.8 0.8
+  mesh "Cube" 0.6901961 0.47843137 0.28235295 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 42 "Crate"
+  guid "045dfa5c539a6aa26c471b6e3976f85f"
+  active 1
+  parent -1
+  transform -3.2 1.2 92 0 0 0 1 0.8 0.8 0.8
+  mesh "Cube" 0.6901961 0.47843137 0.28235295 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 43 "Crate"
+  guid "27a346d74af402cbbe14b06e27ca8cdd"
+  active 1
+  parent -1
+  transform 3 0.4 94 0 0 0 1 0.8 0.8 0.8
+  mesh "Cube" 0.6901961 0.47843137 0.28235295 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 2 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 44 "Car"
+  guid "c3656bcd3fd560a844fcf9ac4c4189b1"
+  active 1
+  parent -1
+  transform 2.2 0.35 0 0 0 0 1 1 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 1.8 0.7 4.1 0 0 0 0 0 0
+  vehicle 18 22 8 36 4 110 7 0.6 1.2 0 6.5 2.4 5 32
+  vehicleseat 1 -0.45 0.1 -0.2 -1.6 -0.3 -0.2 2.3 101 "Drive"
+end
+gameobject 45 "Car Body"
+  guid "ba19ecdf64da2f7cfc1b0ed3d22cfb49"
+  active 1
+  parent 44
+  transform 0 -0.01 0 0 0 0 1 1.8 0.22 4
+  mesh "Cube" 0.14901961 0.14901961 0.16470589 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 46 "Hood"
+  guid "e89dd1ff7357a8a7b7262d3362a2d2f8"
+  active 1
+  parent 44
+  transform 0 0.325 1.375 0 0 0 1 1.8 0.45 1.25
+  mesh "Cube" 0.8039216 0.23529412 0.21568628 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 47 "Trunk"
+  guid "dec62555114ed98e3f8789409a4794d3"
+  active 1
+  parent 44
+  transform 0 0.325 -1.675 0 0 0 1 1.8 0.45 0.65
+  mesh "Cube" 0.8039216 0.23529412 0.21568628 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 48 "Dashboard"
+  guid "bc16f2756f62fe5b0fded42c8d4e6c58"
+  active 1
+  parent 44
+  transform 0 0.38 0.66 0 0 0 1 1.56 0.56 0.22
+  mesh "Cube" 0.20392157 0.21176471 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 49 "Door Left"
+  guid "b1ca17d48bf45fc7109a4aea13910193"
+  active 1
+  parent 44
+  transform -0.85 0.35 -0.3 0 0 0 1 0.1 0.5 2.1
+  mesh "Cube" 0.8039216 0.23529412 0.21568628 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 50 "Door Right"
+  guid "0eca64378dbebfa172879a9214b5d610"
+  active 1
+  parent 44
+  transform 0.85 0.35 -0.3 0 0 0 1 0.1 0.5 2.1
+  mesh "Cube" 0.8039216 0.23529412 0.21568628 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 51 "Bumper Front"
+  guid "f8753d9a9cc34ca109638ad681ff553c"
+  active 1
+  parent 44
+  transform 0 0 2.04 0 0 0 1 1.84 0.22 0.12
+  mesh "Cube" 0.14901961 0.14901961 0.16470589 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 52 "Bumper Rear"
+  guid "1832d5720e5875fc67a500b86afa7cce"
+  active 1
+  parent 44
+  transform 0 0 -2.04 0 0 0 1 1.84 0.22 0.12
+  mesh "Cube" 0.14901961 0.14901961 0.16470589 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 53 "Headlight Left"
+  guid "02a221d823ffa30611ebc2141b238819"
+  active 1
+  parent 44
+  transform -0.6 0.4 2.01 0 0 0 1 0.34 0.13 0.06
+  mesh "Cube" 0.98039216 0.9411765 0.74509805 1 0 "" 0
+  material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
+end
+gameobject 54 "Headlight Right"
+  guid "5e15f7164d8972a51a221bd61d30bd89"
+  active 1
+  parent 44
+  transform 0.6 0.4 2.01 0 0 0 1 0.34 0.13 0.06
+  mesh "Cube" 0.98039216 0.9411765 0.74509805 1 0 "" 0
+  material 0.47058824 0.43137255 0.27450982 0 16 0 "" 1 1
+end
+gameobject 55 "Taillight Left"
+  guid "5798f312b565ddce49fe903c4e4f9260"
+  active 1
+  parent 44
+  transform -0.65 0.4 -2.01 0 0 0 1 0.3 0.12 0.06
+  mesh "Cube" 0.8627451 0.11764706 0.11764706 1 0 "" 0
+  material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
+end
+gameobject 56 "Taillight Right"
+  guid "83116374f569b581b70144842b76b462"
+  active 1
+  parent 44
+  transform 0.65 0.4 -2.01 0 0 0 1 0.3 0.12 0.06
+  mesh "Cube" 0.8627451 0.11764706 0.11764706 1 0 "" 0
+  material 0.43137255 0.039215688 0.039215688 0 16 0 "" 1 1
+end
+gameobject 57 "Driver Seat Cushion"
+  guid "fbe48458d362fd490682a78a61082d15"
+  active 1
+  parent 44
+  transform -0.45 0.325 -0.2 0 0 0 1 0.5 0.45 0.5
+  mesh "Cube" 0.27450982 0.2901961 0.3372549 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 58 "Driver Seat Back"
+  guid "cde3839d37e42126c42d43c8e1612fb4"
+  active 1
+  parent 44
+  transform -0.45 0.85 -0.46 -0.05233596 0 0 0.9986295 0.5 0.62 0.1
+  mesh "Cube" 0.27450982 0.2901961 0.3372549 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 59 "Driver Headrest"
+  guid "435aa2d713afce43a225e3094add8444"
+  active 1
+  parent 44
+  transform -0.45 1.27 -0.47 0 0 0 1 0.2 0.2 0.09
+  mesh "Cube" 0.23529412 0.2509804 0.29803923 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 60 "Passenger Seat Cushion"
+  guid "0987324ddf7a036ea33acdb9ad7ea0ec"
+  active 1
+  parent 44
+  transform 0.45 0.325 -0.2 0 0 0 1 0.5 0.45 0.5
+  mesh "Cube" 0.27450982 0.2901961 0.3372549 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 61 "Passenger Seat Back"
+  guid "a10c20bb9f3b5fd3b090bfcb078b8dd1"
+  active 1
+  parent 44
+  transform 0.45 0.85 -0.46 -0.05233596 0 0 0.9986295 0.5 0.62 0.1
+  mesh "Cube" 0.27450982 0.2901961 0.3372549 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 62 "Passenger Headrest"
+  guid "fb7018cd0ef40c981f9faef4a5d08c44"
+  active 1
+  parent 44
+  transform 0.45 1.27 -0.47 0 0 0 1 0.2 0.2 0.09
+  mesh "Cube" 0.23529412 0.2509804 0.29803923 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 63 "Steering Wheel"
+  guid "5d26fec077c3f75a8518388ad961c12d"
+  active 1
+  parent 44
+  transform -0.45 0.93 0.28 -0.5150381 0 0 0.8571673 0.3 0.3 0.3
+  mesh "Torus" 0.08627451 0.08627451 0.09411765 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 64 "Steering Column"
+  guid "1cc0a1dba021727ac70cf1f70908aaaf"
+  active 1
+  parent 44
+  transform -0.45 0.8 0.43 0.3007058 0 0 0.95371693 0.06 0.06 0.4
+  mesh "Cube" 0.11764706 0.11764706 0.1254902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 65 "Wheel Front Left"
+  guid "f9de7120ef75833db6cf2f2a8f7c803c"
+  active 1
+  parent 44
+  transform -0.84 0 1.3 0 0 0 1 1 1 1
+end
+gameobject 66 "Tire"
+  guid "3eba1c55825c0d3db779921daee7cd25"
+  active 1
+  parent 65
+  transform 0 0 0 0 0 0.7071068 0.7071068 0.7 0.25 0.7
+  mesh "Cylinder" 0.09411765 0.09411765 0.105882354 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 67 "Rim"
+  guid "05c0472ea08dd9dec2d17e372ed04ebf"
+  active 1
+  parent 66
+  transform 0 0 0 0 0 0 1 0.62 1.06 0.62
+  mesh "Cylinder" 0.74509805 0.7529412 0.7764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 68 "Rim Bar"
+  guid "7ab42f85bb85bb572e921a4c22461ab2"
+  active 1
+  parent 66
+  transform 0 0 0 0 0 0 1 0.95 1.1 0.14
+  mesh "Cube" 0.27450982 0.28235295 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 69 "Wheel Front Right"
+  guid "b98a883721bb5b124ce28ee3ad37af45"
+  active 1
+  parent 44
+  transform 0.84 0 1.3 0 0 0 1 1 1 1
+end
+gameobject 70 "Tire"
+  guid "ea2bb59656d590e61ae49d0b8d7fff06"
+  active 1
+  parent 69
+  transform 0 0 0 0 0 0.7071068 0.7071068 0.7 0.25 0.7
+  mesh "Cylinder" 0.09411765 0.09411765 0.105882354 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 71 "Rim"
+  guid "3ca2ef2a68693c48e814ed1932171599"
+  active 1
+  parent 70
+  transform 0 0 0 0 0 0 1 0.62 1.06 0.62
+  mesh "Cylinder" 0.74509805 0.7529412 0.7764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 72 "Rim Bar"
+  guid "2a351a533a279708e83ae56880a5bedc"
+  active 1
+  parent 70
+  transform 0 0 0 0 0 0 1 0.95 1.1 0.14
+  mesh "Cube" 0.27450982 0.28235295 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 73 "Wheel Rear Left"
+  guid "7d2c1222e6e1fe5fe3c51a75f21d3a2a"
+  active 1
+  parent 44
+  transform -0.84 0 -1.3 0 0 0 1 1 1 1
+end
+gameobject 74 "Tire"
+  guid "61c763effb8059976e7550a0eb47b580"
+  active 1
+  parent 73
+  transform 0 0 0 0 0 0.7071068 0.7071068 0.7 0.25 0.7
+  mesh "Cylinder" 0.09411765 0.09411765 0.105882354 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 75 "Rim"
+  guid "745404a32594e3fbc95066e82db32614"
+  active 1
+  parent 74
+  transform 0 0 0 0 0 0 1 0.62 1.06 0.62
+  mesh "Cylinder" 0.74509805 0.7529412 0.7764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 76 "Rim Bar"
+  guid "9fc92818210a29a94536dd4423833309"
+  active 1
+  parent 74
+  transform 0 0 0 0 0 0 1 0.95 1.1 0.14
+  mesh "Cube" 0.27450982 0.28235295 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 77 "Wheel Rear Right"
+  guid "01608fc4d6da4669cff84519b3d26b86"
+  active 1
+  parent 44
+  transform 0.84 0 -1.3 0 0 0 1 1 1 1
+end
+gameobject 78 "Tire"
+  guid "ee9b9da2761747c839f434136215e8fa"
+  active 1
+  parent 77
+  transform 0 0 0 0 0 0.7071068 0.7071068 0.7 0.25 0.7
+  mesh "Cylinder" 0.09411765 0.09411765 0.105882354 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 79 "Rim"
+  guid "cc954e306e360efbf6adcc0831c9e97e"
+  active 1
+  parent 78
+  transform 0 0 0 0 0 0 1 0.62 1.06 0.62
+  mesh "Cylinder" 0.74509805 0.7529412 0.7764706 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 80 "Rim Bar"
+  guid "4ad1a7cb4e64abb09760cecd4d217a25"
+  active 1
+  parent 78
+  transform 0 0 0 0 0 0 1 0.95 1.1 0.14
+  mesh "Cube" 0.27450982 0.28235295 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 81 "Passenger Seat"
+  guid "de7f955be15d87332196858655ddbef7"
+  active 1
+  parent 44
+  transform 0 0 0 0 0 0 1 1 1 1
+  vehicleseat 0 0.45 0.1 -0.2 1.6 -0.3 -0.2 2.3 101 "Ride"
+end
+gameobject 82 "Player"
+  guid "6b8bd28b879a24e2d83ec7a000ade057"
+  active 1
+  parent -1
+  transform -0.25 1 0 0 0 0 1 1 1 1
+  animsm "Idle" 48 "Idle" "Idle" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.22 "Walk" 1 "speed" 0.35 0.28 "Walk" "" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Idle" 2 "speed" 0.2 0.28 "Run" 3 "run" 0 0.22 "Run" "" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Idle" 2 "speed" 0.2 0.22 "Walk" 4 "run" 0 0.22 "Crouch" "Crouch" 1 1 6 "Crawl" 3 "prone" 0 0.5 "Prone" 3 "prone" 0 0.5 "CrouchWalk" 1 "speed" 0.35 0.2 "Run" 4 "crouch" 0 0.25 "Walk" 4 "crouch" 0 0.25 "Idle" 4 "crouch" 0 0.25 "CrouchWalk" "" 1 1 6 "Crawl" 3 "prone" 0 0.5 "Prone" 3 "prone" 0 0.5 "Run" 4 "crouch" 0 0.25 "Walk" 4 "crouch" 0 0.25 "Idle" 4 "crouch" 0 0.25 "Crouch" 2 "speed" 0.2 0.2 "Prone" "Prone" 1 1 4 "Crawl" 1 "speed" 0.35 0.2 "CrouchWalk" 4 "prone" 0 0.5 "Crouch" 4 "prone" 0 0.5 "GetUp" 4 "prone" 0 0.1 "Crawl" "" 1 1 6 "Prone" 2 "speed" 0.2 0.2 "CrouchWalk" 4 "prone" 0 0.5 "Crouch" 4 "prone" 0 0.5 "Run" 4 "prone" 0 0.8 "Walk" 4 "prone" 0 0.8 "GetUp" 4 "prone" 0 0.1 "GetUp" "GetUp" 1.25 0 7 "Prone" 3 "prone" 0 0.75 "Crouch" 3 "crouch" 0 0.25 "CrouchWalk" 0 "" 0 0.25 "Crouch" 0 "" 0 0.25 "Run" 0 "" 0 0.15 "Walk" 0 "" 0 0.15 "Idle" 0 "" 0 0.15 "Drop" "Drop" 1.3333334 0 4 "Crouch" 4 "prone" 0 0.25 "Idle" 4 "prone" 0 0.2 "Crawl" 0 "" 0 0.75 "Prone" 0 "" 0 0.75 "Jump" "Jump" 1 0 7 "Crawl" 3 "prone" 0 0.2 "Prone" 3 "prone" 0 0.2 "CrouchWalk" 2 "airTime" 0.12 0.08 "Crouch" 2 "airTime" 0.12 0.08 "Run" 2 "airTime" 0.12 0.24 "Walk" 2 "airTime" 0.12 0.24 "Land" 2 "airTime" 0.12 0.24 "Fall" "Fall" 1 1 7 "Crawl" 3 "prone" 0 0.2 "Prone" 3 "prone" 0 0.2 "CrouchWalk" 2 "airTime" 0.12 0.08 "Crouch" 2 "airTime" 0.12 0.08 "Run" 2 "airTime" 0.12 0.24 "Walk" 2 "airTime" 0.12 0.24 "Land" 2 "airTime" 0.12 0.24 "Land" "Land" 1 0 7 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.22 "Walk" 1 "speed" 0.35 0.28 "Idle" 0 "" 0 0.28 "Hang" "Hang" 1 1 9 "Death" 5 "die" 0 0.12 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 2 "airTime" 0.12 0.25 "Crouch" 2 "airTime" 0.12 0.25 "Run" 2 "airTime" 0.12 0.2 "Walk" 2 "airTime" 0.12 0.2 "Idle" 2 "airTime" 0.12 0.2 "Fall" 4 "hanging" 0 0.12 "Wave" "Wave" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Point" "Point" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Clap" "Clap" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "ThumbsUp" "ThumbsUp" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Salute" "Salute" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "WaveBoth" "WaveBoth" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Cheer" "Cheer" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Sad" "Sad" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Angry" "Angry" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Think" "Think" 1 1 6 "Crawl" 3 "prone" 0 0.75 "Drop" 3 "prone" 0 0.1 "CrouchWalk" 3 "crouch" 0 0.25 "Crouch" 3 "crouch" 0 0.25 "Run" 1 "speed" 0.35 0.2 "Walk" 1 "speed" 0.35 0.2 "Death" "" 1 0 2 "GetUp" 4 "dead" 0 0.8 "DeadHold" 0 "" 0 0.5 "DeadHold" "" 1 1 1 "GetUp" 4 "dead" 0 0.8 "Dive" "Dive" 1 0 4 "Death" 5 "die" 0 0.2 "DiveLand" 0 "" 0 0.5 "Crawl" 0 "" 0 0.5 "Prone" 0 "" 0 0.5 "DiveLand" "DiveLand" 1 0 3 "Death" 5 "die" 0 0.2 "Crawl" 3 "grounded" 0 0.5 "Prone" 3 "grounded" 0 0.5 "SitDown" "" 1 0 1 "Sit" 0 "" 0 0.15 "Sit" "" 1 1 1 "StandUp" 4 "sitting" 0 0.12 "StandUp" "" 1 0 1 "Idle" 0 "" 0 0.2 "HitHeavy" "" 1 0 1 "Idle" 0 "" 0 0.1 "Hit_Crouch" "Hit_Crouch" 1 0 1 "Crouch" 0 "" 0 0.1 "Hit_Prone" "Hit_Prone" 1 0 1 "Prone" 0 "" 0 0.1 "Roll" "Roll_F" 1 0 1 "Idle" 0 "" 0 0.12 "Dodge" "" 1 0 1 "Idle" 0 "" 0 0.12 "Slide" "Slide" 1 1 1 "SlideEnd" 4 "slide" 0 0.1 "SlideEnd" "SlideEnd" 1 0 2 "Run" 0 "" 0 0.12 "Crouch" 0 "" 0 0.12 "Vault" "Vault" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "MantleLow" "Mantle_Low" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "MantleHigh" "Mantle_High" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "LedgeGrab" "LedgeGrab" 1 0 2 "Death" 5 "die" 0 0.12 "Hang" 0 "" 0 0.15 "ClimbUp" "ClimbUp" 1 0 2 "Death" 5 "die" 0 0.12 "Idle" 0 "" 0 0.15 "LetGo" "LetGo" 1 0 2 "Death" 5 "die" 0 0.12 "Fall" 0 "" 0 0.15 "HangShimmy" "" 1 1 2 "Death" 5 "die" 0 0.12 "Hang" 2 "shimmy" 0.2 0.25 "Swim" "" 1 1 2 "Death" 5 "die" 0 0.2 "Idle" 4 "swimming" 0 0.8 "Emote_Nod" "Emote_Nod" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15 "Emote_Shake" "Emote_Shake" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15 "Emote_Shrug" "Emote_Shrug" 1 0 3 "Run" 1 "speed" 0.35 0.12 "Walk" 1 "speed" 0.35 0.12 "Idle" 0 "" 0 0.15
+  animsmpos 48 40 40 40 130 40 220 260 40 260 130 480 40 480 130 480 220 480 310 700 40 700 130 700 220 700 310 920 40 920 130 920 220 920 310 920 400 920 490 920 580 920 670 920 760 920 850 1140 40 1140 130 1360 40 1360 130 1580 40 1580 130 1580 220 1800 40 1800 130 1800 220 2020 40 2020 130 2020 220 2020 310 2240 40 2240 130 2240 220 2240 310 2240 400 2240 490 2240 580 2460 40 2680 40 2680 130 2680 220
+  animsmparams 37 "speed" 0 "airTime" 0 "verticalSpeed" 0 "gaitX" 0 "gaitZ" 0 "gaitSpeed" 0 "run" 1 "crouch" 1 "prone" 1 "dive" 2 "grounded" 1 "sprint" 1 "deathDir" 0 "dead" 1 "die" 2 "sitting" 1 "sitType" 0 "sit" 2 "hit" 2 "hitDir" 0 "hitHeavy" 1 "staggerScale" 0 "dodgeDir" 0 "roll" 2 "dodge" 2 "slide" 1 "vault" 2 "mantle" 2 "ledgeGrab" 2 "climbUp" 2 "letGo" 2 "hanging" 1 "shimmy" 0 "swimSpeed" 0 "swimming" 1 "emoteId" 3 "emote" 2
+  animsmx 48 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 1 "gaitX" 40 "Walk_0.3_F" 0 "Walk_0.3_FR" 0.21213204 "Walk_0.3_R" 0.3 "Walk_0.3_BR" 0.21213204 "Walk_0.3_B" -2.6226834e-08 "Walk_0.3_BL" -0.21213204 "Walk_0.3_L" -0.3 "Walk_0.3_FL" -0.21213204 "Walk_1_F" 0 "Walk_1_FR" 0.70710677 "Walk_1_R" 1 "Walk_1_BR" 0.70710677 "Walk_1_B" -8.742278e-08 "Walk_1_BL" -0.70710677 "Walk_1_L" -1 "Walk_1_FL" -0.70710677 "Walk_2_F" 0 "Walk_2_FR" 1.4142135 "Walk_2_R" 2 "Walk_2_BR" 1.4142135 "Walk_2_B" -1.7484555e-07 "Walk_2_BL" -1.4142135 "Walk_2_L" -2 "Walk_2_FL" -1.4142135 "Walk_3_F" 0 "Walk_3_FR" 2.1213202 "Walk_3_R" 3 "Walk_3_BR" 2.1213202 "Walk_3_B" -2.6226832e-07 "Walk_3_BL" -2.1213202 "Walk_3_L" -3 "Walk_3_FL" -2.1213202 "Walk_4.5_F" 0 "Walk_4.5_FR" 3.1819804 "Walk_4.5_R" 4.5 "Walk_4.5_BR" 3.1819804 "Walk_4.5_B" -3.934025e-07 "Walk_4.5_BL" -3.1819804 "Walk_4.5_L" -4.5 "Walk_4.5_FL" -3.1819804 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.2 0 1 0 0 0 1 0 0 0 1 0 0 1 "gaitX" 32 "Run_4_F" 0 "Run_4_FR" 2.828427 "Run_4_R" 4 "Run_4_BR" 2.828427 "Run_4_B" -3.496911e-07 "Run_4_BL" -2.828427 "Run_4_L" -4 "Run_4_FL" -2.828427 "Run_5.5_F" 0 "Run_5.5_FR" 3.8890872 "Run_5.5_R" 5.5 "Run_5.5_BR" 3.8890872 "Run_5.5_B" -4.808253e-07 "Run_5.5_BL" -3.8890872 "Run_5.5_L" -5.5 "Run_5.5_FL" -3.8890872 "Run_7_F" 0 "Run_7_FR" 4.9497476 "Run_7_R" 7 "Run_7_BR" 4.9497476 "Run_7_B" -6.119594e-07 "Run_7_BL" -4.9497476 "Run_7_L" -7 "Run_7_FL" -4.9497476 "Run_8.5_F" 0 "Run_8.5_FR" 6.0104074 "Run_8.5_R" 8.5 "Run_8.5_BR" 6.0104074 "Run_8.5_B" -7.430936e-07 "Run_8.5_BL" -6.0104074 "Run_8.5_L" -8.5 "Run_8.5_FL" -6.0104074 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.2 0 1 0 0 0 1 0 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 1 "gaitX" 24 "CrouchWalk_0.3_F" 0 "CrouchWalk_0.3_FR" 0.21213204 "CrouchWalk_0.3_R" 0.3 "CrouchWalk_0.3_BR" 0.21213204 "CrouchWalk_0.3_B" -2.6226834e-08 "CrouchWalk_0.3_BL" -0.21213204 "CrouchWalk_0.3_L" -0.3 "CrouchWalk_0.3_FL" -0.21213204 "CrouchWalk_1_F" 0 "CrouchWalk_1_FR" 0.70710677 "CrouchWalk_1_R" 1 "CrouchWalk_1_BR" 0.70710677 "CrouchWalk_1_B" -8.742278e-08 "CrouchWalk_1_BL" -0.70710677 "CrouchWalk_1_L" -1 "CrouchWalk_1_FL" -0.70710677 "CrouchWalk_2_F" 0 "CrouchWalk_2_FR" 1.4142135 "CrouchWalk_2_R" 2 "CrouchWalk_2_BR" 1.4142135 "CrouchWalk_2_B" -1.7484555e-07 "CrouchWalk_2_BL" -1.4142135 "CrouchWalk_2_L" -2 "CrouchWalk_2_FL" -1.4142135 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 1 "speed" 0.2 3 "run" 0 0 1 0 1 1 "speed" 0.2 0 1 0 0 0 1 0 0 0 "" 0 4 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 0 1 "gaitX" 4 "Crawl" 0 "Crawl_R" 0.8 "Crawl_B" 0 "Crawl_L" -0.8 6 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 0 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 4 0 1 0 1 3 "crouch" 0 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 "" 0 7 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 1 0 0 0 "" 0 9 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 2 3 "crouch" 0 1 "speed" 0.35 0 1 0 1 3 "crouch" 0 0 1 0 2 1 "speed" 0.35 3 "run" 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 0 "" 0 6 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 0 1 0 1 3 "run" 0 0 1 0 0 1 "deathDir" 4 "Death_F" 0 "Death_B" 1 "Death_L" 2 "Death_R" 3 2 0 1 0 0 1 1 0 0 1 "deathDir" 4 "DeadHold_F" 0 "DeadHold_B" 1 "DeadHold_L" 2 "DeadHold_R" 3 1 0 1 0 0 0 "" 0 4 0 1 0 0 1 1 0 1 4 "grounded" 0 1 1 0 2 3 "grounded" 0 1 "speed" 0.35 1 1 0 1 3 "grounded" 0 0 "" 0 3 0 1 0 0 0 1 0 1 1 "speed" 0.35 0 1 0 0 1 "sitType" 2 "SitDown_Chair" 0 "SitDown_Ground" 1 1 1 1 0 0 1 "sitType" 3 "Sit_Chair" 0 "Sit_Ground" 1 "Sit_Ground_Knees" 2 1 0 1 0 0 1 "sitType" 2 "StandUp_Chair" 0 "StandUp_Ground" 1 1 1 1 0 0 1 "hitDir" 2 "Hit_Heavy_F" 0 "Hit_Heavy_B" 1 1 1 1 0 0 0 "" 0 1 1 1 0 0 0 "" 0 1 1 1 0 0 0 "" 0 1 1 1 0 0 1 "dodgeDir" 4 "Roll_F" 0 "Dodge_B" 1 "Dodge_L" 2 "Dodge_R" 3 1 1 1 0 0 0 "" 0 1 0 1 0 0 0 "" 0 2 1 1 0 2 3 "sprint" 0 4 "crouch" 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 0 "" 0 2 0 1 0 0 1 1 0 0 1 "shimmy" 2 "Hang_Shimmy_L" -1 "Hang_Shimmy_R" 1 2 0 1 0 0 0 1 0 1 1 "shimmy" -0.2 1 "swimSpeed" 2 "Swim_Tread" 0 "Swim_Fwd" 1.5 2 0 1 0 0 0 1 0 0 0 "" 0 3 0 1 0 1 3 "run" 0 0 1 0 0 1 1 0 0 0 "" 0 3 0 1 0 1 3 "run" 0 0 1 0 0 1 1 0 0 0 "" 0 3 0 1 0 1 3 "run" 0 0 1 0 0 1 1 0 0
+  animsmany 22 "Swim" 3 "swimming" 0 0.5 0 1 0 0 "Jump" 1 "airTime" 0.12 0.12 0 1 0 2 1 "verticalSpeed" 0.4 4 "prone" 0 "Fall" 1 "airTime" 0.12 0.12 0 1 0 2 2 "verticalSpeed" 0.4 4 "prone" 0 "Dive" 5 "dive" 0 0.12 0 1 0 2 3 "sprint" 0 3 "grounded" 0 "Dive" 5 "dive" 0 0.12 0 1 0 2 3 "run" 0 3 "grounded" 0 "Death" 5 "die" 0 0.25 0 1 0 0 "SitDown" 5 "sit" 0 0.2 0 1 0 0 "Hit_Prone" 5 "hit" 0 0.25 0 1 1 1 3 "prone" 0 "Hit_Crouch" 5 "hit" 0 0.25 0 1 1 2 3 "crouch" 0 4 "prone" 0 "HitHeavy" 5 "hit" 0 0.25 0 1 1 3 3 "hitHeavy" 0 4 "crouch" 0 4 "prone" 0 "Roll" 5 "roll" 0 0.1 0 1 1 0 "Dodge" 5 "dodge" 0 0.1 0 1 1 0 "Slide" 3 "slide" 0 0.1 0 1 0 0 "Vault" 5 "vault" 0 0.12 0 1 0 0 "MantleLow" 5 "mantle" 0 0.12 0 1 0 0 "LedgeGrab" 5 "ledgeGrab" 0 0.12 0 1 0 0 "ClimbUp" 5 "climbUp" 0 0.12 0 1 0 0 "LetGo" 5 "letGo" 0 0.12 0 1 0 0 "Hang" 3 "hanging" 0 0.12 0 1 0 0 "Emote_Nod" 5 "emote" 0 0.12 0 1 0 1 7 "emoteId" 0 "Emote_Shake" 5 "emote" 0 0.12 0 1 0 1 7 "emoteId" 1 "Emote_Shrug" 5 "emote" 0 0.12 0 1 0 1 7 "emoteId" 2
+  animsm2d 48 1 "" "" 0 2 "gaitZ" "gaitSpeed" 40 0.3 0.21213204 -1.3113417e-08 -0.21213204 -0.3 -0.21213204 -1.3113417e-08 0.21213204 1 0.70710677 -4.371139e-08 -0.70710677 -1 -0.70710677 -4.371139e-08 0.70710677 2 1.4142135 -8.742278e-08 -1.4142135 -2 -1.4142135 -8.742278e-08 1.4142135 3 2.1213202 -1.3113416e-07 -2.1213202 -3 -2.1213202 -1.3113416e-07 2.1213202 4.5 3.1819804 -1.9670125e-07 -3.1819804 -4.5 -3.1819804 -1.9670125e-07 3.1819804 2 "gaitZ" "gaitSpeed" 32 4 2.828427 -1.7484555e-07 -2.828427 -4 -2.828427 -1.7484555e-07 2.828427 5.5 3.8890872 -2.4041265e-07 -3.8890872 -5.5 -3.8890872 -2.4041265e-07 3.8890872 7 4.9497476 -3.059797e-07 -4.9497476 -7 -4.9497476 -3.059797e-07 4.9497476 8.5 6.0104074 -3.715468e-07 -6.0104074 -8.5 -6.0104074 -3.715468e-07 6.0104074 1 "" "" 0 2 "gaitZ" "gaitSpeed" 24 0.3 0.21213204 -1.3113417e-08 -0.21213204 -0.3 -0.21213204 -1.3113417e-08 0.21213204 1 0.70710677 -4.371139e-08 -0.70710677 -1 -0.70710677 -4.371139e-08 0.70710677 2 1.4142135 -8.742278e-08 -1.4142135 -2 -1.4142135 -8.742278e-08 1.4142135 1 "" "" 0 2 "gaitZ" "gaitSpeed" 4 0.8 0 -0.8 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 4 0 0 0 0 1 "" "" 4 0 0 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 2 0 0 1 "" "" 3 0 0 0 1 "" "" 2 0 0 1 "" "" 2 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 4 0 0 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 0 1 "" "" 2 0 0 1 "" "" 2 0 0 1 "" "" 0 1 "" "" 0 1 "" "" 0
+  animsmev 48 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0 0 0 0 "" "" 1 6 0 0 0 0 0 0 "" "" 1 6 0 0 0.31 0.11844584 0.3 0 "" "" 1 6 0 0 0 0 0 0 "" "" 0 4 0 0 0 0 "" "" 0 6 0 0 0 0 0 0 "" "" 0 7 0 0 0.31 0 0.11844584 0.3 0 "" "" 0 4 0 0 0 0 "" "" 1 7 0 0 0 0 0 0 0 "" "" 1 7 0 0 0 0 0 0 0 "" "" 1 7 0 0 0.31 0 0.11844584 0.3 0 "" "" 1 9 0 0 0 0.31 0 0.11844584 0.3 0 0 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 1 6 0 0 0.31 0 0.11844584 0.3 "" "" 0 2 0 0 "" "" 0 1 0 "" "" 0 4 0 0 0 0 "" "" 0 3 0 0 0 "" "" 0 1 0 "sit" "" 0 1 0 "stand" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 1 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 0 2 0 0 "" "" 1 3 0 0 0 "" "" 1 3 0 0 0 "" "" 1 3 0 0 0 22 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  animsmfb 48 -1 -1 -1 -1 -1 1 1 1 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 0 0 0 1 1 1 0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 0 -1 -1 -1
+  animsmlk 48 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 1 1 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0
+  animsmint 48 6 4 0 4 4 4 4 6 4 0 4 4 4 4 6 4 0 4 4 4 4 6 4 4 0 4 4 4 6 4 4 4 4 4 0 4 0 4 4 0 6 0 4 4 4 4 0 7 4 4 4 4 0 0 0 4 4 0 4 4 7 0 0 0 0 4 4 4 7 0 0 0 0 4 4 4 7 4 0 4 4 4 4 4 9 1 4 0 4 4 0 0 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 6 4 0 4 4 0 0 2 0 0 1 0 4 0 0 0 0 3 0 0 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 2 0 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 2 1 0 3 0 0 0 3 0 0 0 3 0 0 0
+  animsmmatch 48 0 1 1 0 1 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  animsmactions 8
+  animsmnoint 48 1 1 1 1 1 1 1 1 1 1 1 1 0 1 1 1 1 1 1 1 1 1 1 0 0 0 0 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 1 1 1
+  animsmanyint 22 1 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0
+  animsmlayer 1 0 "Torso"
+  animsm "Off" 2 "Off" "Hit_Off" 1 1 0 "Hit" "" 1 0 1 "Off" 0 "" 0 0.1
+  animsmpos 2 40 40 40 140
+  animsmx 2 0 "" 0 0 1 "hitDir" 4 "Hit_F" 0 "Hit_B" 1 "Hit_L" 2 "Hit_R" 3 1 1 1 0 0
+  animsmany 1 "Hit" 5 "hit" 0 0.1 0 1 1 3 4 "hitHeavy" 0 4 "crouch" 0 4 "prone" 0
+  animsmanyint 1 1
+  fphands 0 0 1 1 1 0 0 0 0 0 0 0 1 0 1 0 0 0 0 0 0 1 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 1 0 0 0 0 0 0 1 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0
+  fphands2 0 0.42 0.07 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 0 0.42 0.07 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0
+  character 1 0.862745 0.690196 0.588235 0.235294 0.372549 0.294118 0.156863 0.164706 0.215686 0.14902 0.137255 0.14902 0.313726 0.196078 0.117647 0.117647 0.101961 0.109804 0.588235 0.176471 0.176471 0.294118 0.235294 0.176471 0.176471 0.156863 0.137255 0.27451 0.27451 0.313726 0.137255 0.109804 0.0862745 1 0 0 2 0 1 0 0 0 0 0 0 0 0 0 0 1 1 "-" - 0 1 0 - - - 0.15 0 - - - 0 0 0 0.05 0.12 28 50 0.22 32 0.45 1 5 - 0
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0
+  boxcollider3d 0.6 1.8 0.6 0 0.9 0 0 0 0
+  playercontroller view=2 allow=1 start=1 key=118 pad=4 blend=0.3 ease=1 snap=0 ex=0 ey=0 ez=0 dist=-1 shoulder=0
+  pcfirst 4.5 8 6 0.15 1 1 0 130 90 0.78 0.12 0.12 16 0 17 122 1 2.2 1.1 1.6 1.2 0.4 12 113 101 14 0.35 10 1 0
+  pcfirstfeel 0 8 8 1 40 0.55 0.12 1 10.5 0.75 0.9 1 1 1 0.035 9 0 0.8 8 0.12 14 0 0 7.5 0.35 0.55 18 0 0 0 0
+  pcfirststance prone=1 resize=1 crouchH=0.65 proneH=0.33 pad=1 hold=0.4 walkA=64 steer=260 dive=1 diveHop=0.25 diveSlide=0.45 capSens=0.15 capPx=220
+  pcthird 4.5 8 6 0.2 24 5 1.5 1 1 0 0 2 12 1 0 20 -20 70 0 130 90 0.78 0.12 0.12 1 0.3 16 0 17 122 1 2.2 1.1 0.4 1.1 12 113 101 12 0.5 10 1 0 20 10 0.6 0.05 0.2 4294967295 30 6
+  pcthirdstance prone=1 resize=1 crouchH=0.65 proneH=0.33 pad=1 hold=0.4 walkA=64 steer=260 dive=1 diveHop=0.25 diveSlide=0.45 capSens=0.2 capPx=220
+  pcthirdfeel 0 6 7 1 2.2 0.65 48 0.6 10 0 1.5 2.5 0.25 1.5 1 10 0.75 1 1 0 0 7.5 0.35 0.55 18 0 0 0 0 1
+  comporder "Character" "MeshRenderer" "AnimStateMachine" "AnimStateMachine" "Rigidbody3D" "BoxCollider3D" "PlayerController" "FirstPersonController" "ThirdPersonController" "PlayerView" "FirstPersonHands"
+end
+gameobject 83 "Main Camera"
+  guid "1c69c1ceb0256faabe23679f4f4129fa"
+  active 1
+  parent 82
+  transform 0.45 3.045085 4.755283 -0.15643448 0 0 0.98768836 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 84 "Windshield"
+  guid "9482a0766112c7a663aaf3058cdd8590"
+  active 1
+  parent 44
+  transform 0 1.075 0.525 -0.21643962 0 0 0.976296 1.6 1.05 0.03
+  mesh "Cube" 0.5882353 0.8039216 0.92156863 0.27450982 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 85 "Window Left"
+  guid "11bec124cc911aad020501c3f468d788"
+  active 1
+  parent 44
+  transform -0.86 1.07 -0.45 0 0 0 1 0.03 0.95 1.7
+  mesh "Cube" 0.5882353 0.8039216 0.92156863 0.27450982 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 86 "Window Right"
+  guid "140f38f18fba33f9a21b944d57d1f9ea"
+  active 1
+  parent 44
+  transform 0.86 1.07 -0.45 0 0 0 1 0.03 0.95 1.7
+  mesh "Cube" 0.5882353 0.8039216 0.92156863 0.27450982 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 87 "Rear Window"
+  guid "734249a721499af1be279147ab4b2dc8"
+  active 1
+  parent 44
+  transform 0 1.07 -1.33 0 0 0 1 1.6 0.95 0.03
+  mesh "Cube" 0.5882353 0.8039216 0.92156863 0.27450982 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 88 "Roof"
+  guid "b41c2016d6452e46008df5a043b7b224"
+  active 1
+  parent 44
+  transform 0 1.57 -0.45 0 0 0 1 1.78 0.05 1.75
+  mesh "Cube" 0.5882353 0.8039216 0.92156863 0.27450982 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 89 "Pillar Left Front"
+  guid "cf289835acf740ae675c9cf9d7215d93"
+  active 1
+  parent 44
+  transform -0.83 1.075 0.525 -0.21643962 0 0 0.976296 0.07 1.05 0.05
+  mesh "Cube" 0.20392157 0.21176471 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 90 "Pillar Right Front"
+  guid "a942665c9e1dddac92780b153f0c48ff"
+  active 1
+  parent 44
+  transform 0.83 1.075 0.525 -0.21643962 0 0 0.976296 0.07 1.05 0.05
+  mesh "Cube" 0.20392157 0.21176471 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 91 "Pillar Left Rear"
+  guid "841b431e89fd2fb55a7a351e68c7f443"
+  active 1
+  parent 44
+  transform -0.83 1.07 -1.32 0 0 0 1 0.07 1 0.07
+  mesh "Cube" 0.20392157 0.21176471 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 92 "Pillar Right Rear"
+  guid "ad6141c2d809a9f74f6c09b68f263ef3"
+  active 1
+  parent 44
+  transform 0.83 1.07 -1.32 0 0 0 1 0.07 1 0.07
+  mesh "Cube" 0.20392157 0.21176471 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end

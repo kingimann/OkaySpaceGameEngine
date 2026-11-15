@@ -76,6 +76,21 @@ player gets in and out instead of the car always listening to the keyboard.
 - **Get in:** walk within `useRadius` of the seat and press **E** (`enterKey`). The
   player controller and the body collider switch off, gravity is paused, and the body is
   carried at `sitPoint`. The car now reads the driver's keys (W/S/A/D, Space).
+- **Sitting:** the person is posed sitting. It is the same sit the chair `Seat` uses (the humanoid
+  animator's `SitDown` then `Sit` states, chair clip), started by `HumanoidActions::BeginVehicleSit`,
+  and `StandUp` plays on exit. The body is turned to face the way the car drives. `sitPoint` is where
+  the **feet** go (the cabin floor), not the cushion: the sit clip puts the hips 0.48 m above the feet.
+  Passengers sit the same way. Covered: the built-in humanoid rig (the one every Player template
+  builds). Any other body (a different rig, a plain mesh) is carried upright and does not play a sit
+  (`PoseApplied()` is false for it). Hands are **not** on the wheel: the sit clip has the arms bent
+  forward, and no hand-hold / IK to the steering wheel is wired in (not done).
+- **Camera:** when the scene's main camera belongs to the player (the Player templates), boarding
+  takes it over: third person = a chase view behind and above the car (`camDistance`, `camHeight`,
+  `camLerp` of the VehicleController; it eases in from where the orbit was); first person = at the
+  seated eyes looking along the car (no mouse look while seated). On exit the camera gets its old
+  pose back and the player controller drives it again. `VehicleSeat::CameraTarget()` is the car
+  while that is on. A camera that is not the player's is left alone, and `followCamera` still works
+  for it (it stays out of the way while a seat drives the camera).
 - **Get out:** press **E** again. The player is put at `exitPoint` (local to the seat) and
   the controller, collider and gravity come back. If something solid is there, the
   mirrored sides are tried, then the roof (2.5 m above the seat).
@@ -112,26 +127,54 @@ player gets in and out instead of the car always listening to the keyboard.
   `Occupant()`, `VehicleController::Driver()`.
 
 Not done: no script or visual-script node for enter / exit / driver yet; **multiplayer
-does not replicate seat state** (each machine decides on its own); no sit or steering
-animation on the character; no per-seat camera.
+does not replicate seat state** (each machine decides on its own); no hands on the wheel and
+no steering animation on the character; no mouse look from the seat in first person; the camera
+does not blend back smoothly on exit (the player's own camera takes over at once).
+
+## Wheels (looks only)
+
+`VehicleController` animates wheel objects it finds under the car (nothing to add or save):
+every descendant whose name starts with `Wheel` and that has a child named `Tire`. The `Tire` is the
+cylinder (a Cylinder mesh is radius 0.5, height 1 along Y: scale it to the tyre, e.g. `0.7, 0.25, 0.7`
+for a 0.35 m radius, 0.25 m wide tyre, and lay it on its side with local rotation `0, 0, 90`). The
+roll angle is distance divided by radius, so the radius comes from the Tire's local X scale (half of it).
+A `Wheel` object whose name contains `Front` is also turned about Y for steering, up to
+`VehicleController::kMaxSteerAngle` (30 degrees). The controller rewrites the Wheel's and the Tire's
+local rotation each frame, so keep those two for the animation and hang rims, hubcaps and so on under
+the Tire. `WheelSpin()` and `SteerAngle()` read the angles. This is visual only: the physics is the
+arcade body, there are no wheel colliders and no suspension per wheel.
 
 ### Try it yourself: the "Vehicle Test" scene
 
-A ready scene has a red car with a driver seat (left front) and a passenger seat (right front),
-four wheels, a flat ground, and a third-person player standing by the driver door.
+A ready scene: a red car about 4.1 m long and 1.8 m wide (hood, glass cabin, two seats, a steering wheel,
+four wheels with rims, head and tail lights) on a two-lane road with edge lines and a dashed centre
+line, a slalom of cones and some crates ahead, and a third-person player standing in the road by the
+driver door.
 
 1. In the editor use *File ▸ Open* and pick `examples/vehicle/vehicle_test.okayscene` from the engine
    folder. (It is not in the New Project chooser.) In code: `Templates::VehicleSeats3D(scene)`.
 2. Press **Play**.
-3. Walk to the driver door (WASD) and press **E**. You sit in the car.
-4. **W / S** = gas and brake / reverse, **A / D** = steer, **Space** = handbrake.
-5. Press **E** again to get out beside the car. The car then brakes to a stop and ignores the keys.
-6. Walk to the right side and press **E** to ride as a passenger (you are carried, the car does not drive).
+3. Walk to the driver door (left side, WASD) and press **E**. You sit in the driver seat and the camera
+   swings behind the car.
+4. **W / S** = gas and brake / reverse, **A / D** = steer (the front wheels turn, all wheels roll),
+   **Space** = handbrake. Drive through the cones.
+5. Press **E** again to get out beside the car. The camera goes back to you. The car brakes to a stop
+   and ignores the keys.
+6. Walk to the right side and press **E** to ride as a passenger (you sit, you are carried, the car does not drive).
+7. Press **V** before getting in to try first person: the camera sits at your eyes in the car.
 
-**Unverified in play:** I (the agent) ran none of this in a real editor or a window. What was run is the
-headless test `vehicle_seat`, which loads `examples/vehicle/vehicle_test.okayscene` from disk and plays
-steps 3 to 6 with simulated key presses, on Linux only. The editor Inspector block for the seat was added but never compiled.
-The wheels are for looks: they do not spin or turn.
+How the file is made: the scene file is the output of `Templates::VehicleSeats3D` saved with
+`SceneSerializer::SaveToFile` (the template is the source). If you change the template, save it again.
+
+**What was checked and what was not.** The headless test `vehicle_seat` (Linux) loads the scene file and
+plays steps 3 to 6 with simulated keys: the sit state is set and cleared, the wheels roll with the speed
+and the front ones steer, and the camera follows the car and is the player's again after exit. The look
+of the scene was checked only in software-renderer screenshots (1280x720, shadows on) from a chase
+camera, not in a window or the editor. Unverified: first person from the seat (the eye position is
+set by hand; not looked at in a window), a window / GPU render of the glass, the editor Inspector block
+for the seat (never compiled by an editor build), Windows.
+Known rough edges: the sit clip is a generic chair sit, so the hands rest near the wheel but do not
+hold it; the car is a stack of boxes, not a modelled body.
 
 ## Roadmap
 

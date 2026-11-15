@@ -389,6 +389,56 @@ int main() {
         CHECK(seat3 && seat3->Occupant() == nullptr);
     }
 
+    // --- Wheels: they roll with the speed and the front ones steer --------------------
+    {
+        World w(false);
+        w.v->maxSpeed = 2.0f; w.v->acceleration = 100.0f;
+        const char* names[4] = {"Wheel Front Left", "Wheel Front Right", "Wheel Rear Left", "Wheel Rear Right"};
+        GameObject* roots[4];
+        for (int i = 0; i < 4; ++i) {
+            roots[i] = w.s.CreateGameObject(names[i]);
+            roots[i]->transform->SetParent(w.car->transform, false);
+            GameObject* tire = w.s.CreateGameObject("Tire");
+            tire->transform->SetParent(roots[i]->transform, false);
+            tire->transform->localScale = {0.7f, 0.25f, 0.7f};      // radius 0.35
+            tire->transform->localRotation = Quat::Euler(0.0f, 0.0f, 90.0f);
+        }
+        w.s.Start();
+        w.Press('e');                                       // sit in the driver seat (no animator: carried upright)
+        CHECK(w.seat->Occupant() == w.p);
+        CHECK(!w.seat->PoseApplied());                      // a body with no humanoid animator has no sit pose
+        w.Run({}, 5);
+        CHECK(w.v->WheelCount() == 4);
+        CHECK_NEAR(w.v->WheelSpin(), 0.0f, 1e-3f);          // stopped: not turning
+        const float a0 = w.v->WheelSpin();
+        w.Run({'w'}, 30);                                   // 2 m/s for about half a second: 2 / 0.35 rad/s
+        const float a1 = w.v->WheelSpin();
+        CHECK(a1 - a0 > 110.0f && a1 - a0 < 200.0f);
+        w.Run({'w'}, 10);
+        const float fast = w.v->WheelSpin() - a1;
+        w.v->maxSpeed = 1.0f;
+        w.Run({'w'}, 40);                                   // slow down to 1 m/s
+        const float b1 = w.v->WheelSpin();
+        w.Run({'w'}, 10);
+        const float slow = w.v->WheelSpin() - b1;
+        CHECK(slow > 0.0f && slow < fast * 0.7f && slow > fast * 0.3f);   // half the speed, about half the roll
+        // Forward roll: the top of the tyre moves toward the car's front (+Z).
+        CHECK((Quat::AngleAxis(10.0f, Vec3{1, 0, 0}) * Vec3{0, 1, 0}).z > 0.1f);
+        // Steering: front wheels turn with the key, rear wheels never.
+        const Vec3 head0 = w.car->transform->Forward();
+        w.Run({'w', 'd'}, 20);
+        CHECK(Vec3::Cross(head0, w.car->transform->Forward()).y < -0.01f);   // D = a right turn: clockwise seen from above
+        CHECK(w.v->SteerAngle() > 20.0f && w.v->SteerAngle() <= VehicleController::kMaxSteerAngle + 0.01f);
+        CHECK_NEAR(roots[0]->transform->LocalEulerAngles().y, -w.v->SteerAngle(), 0.5f);   // right turn = negative yaw
+        CHECK_NEAR(roots[1]->transform->LocalEulerAngles().y, -w.v->SteerAngle(), 0.5f);
+        CHECK_NEAR(roots[2]->transform->LocalEulerAngles().y, 0.0f, 0.1f);
+        CHECK_NEAR(roots[3]->transform->LocalEulerAngles().y, 0.0f, 0.1f);
+        w.Run({'w', 'a'}, 40);
+        CHECK(w.v->SteerAngle() < -20.0f);                  // the other way
+        w.Run({'w'}, 40);
+        CHECK_NEAR(w.v->SteerAngle(), 0.0f, 1.0f);          // straight again
+    }
+
     // --- THE MAIN PROOF: load the real sample scene file from disk and play it --------
     // examples/vehicle/vehicle_test.okayscene is a hand-kept copy of Templates::VehicleSeats3D (not in the editor chooser; open it with File > Open).
     {
@@ -418,28 +468,68 @@ int main() {
                 run({'w'}, 30);
                 CHECK_NEAR(car->transform->Position().z, car0z, 0.05f);   // nobody inside: the keys do nothing
                 CHECK_NEAR(v->Speed(), 0.0f, 1e-3f);
-                player->transform->SetPosition({-2.2f, 1.0f, 0.3f});     // W also walked the player: back to the door
+                player->transform->SetPosition({car->transform->Position().x - 2.45f, 1.0f, 0.0f});     // W also walked the player: back to the door
                 run({}, 60);
 
+                Camera* cam = s.mainCamera;
+                CHECK(cam != nullptr);
+                CHECK(!HumanoidActions::IsSitting(player));     // standing
                 press('e');                                     // get in (driver door side)
                 CHECK(driverSeat->Occupant() == player);
                 CHECK(v->Driver() == player);
                 CHECK(!passSeat->occupied);
-                run({'w'}, 120);                                // 2 s of throttle: 22 m/s top speed
+                // Sitting: the player plays the chair sit clip (the humanoid animator's sitting state).
+                run({}, 40);
+                CHECK(driverSeat->PoseApplied());
+                CHECK(HumanoidActions::IsSitting(player));
+                // The body faces the way the car drives (humanoids face -Z, the car drives +Z).
+                CHECK(Vec3::Dot(player->transform->Rotation() * Vec3{0, 0, -1}, car->transform->Forward()) > 0.99f);
+                // Camera: the player's own camera now follows the car.
+                CHECK(driverSeat->CameraTarget() == car);
+                run({'w'}, 80);                                 // drive; the chase camera catches up
+                if (cam && cam->gameObject) {
+                    const Vec3 cpos = cam->gameObject->transform->Position();
+                    const Vec3 carp = car->transform->Position();
+                    CHECK(cpos.z < carp.z - 3.0f && cpos.z > carp.z - 12.0f);     // behind the car
+                    CHECK(cpos.y > carp.y + 0.8f);                                // and above it
+                    const Vec3 fwd = cam->gameObject->transform->Rotation() * Vec3{0, 0, -1};   // a camera looks down -Z
+                    CHECK(Vec3::Dot(fwd, (carp - cpos).Normalized()) > 0.9f);     // looking at the car
+                }
+                // Wheels roll with the speed, the front ones are straight with no steering.
+                CHECK(v->WheelCount() == 4);
+                const float spin0 = v->WheelSpin();
+                run({'w'}, 3);
+                CHECK(std::fabs(v->WheelSpin() - spin0) > 1.0f);
+                CHECK_NEAR(v->SteerAngle(), 0.0f, 0.5f);
+                run({'w', 'd'}, 15);                            // steer right while driving
+                CHECK(v->SteerAngle() > 15.0f);
+                if (GameObject* fl = s.Find("Wheel Front Left")) CHECK(std::fabs(fl->transform->LocalEulerAngles().y + v->SteerAngle()) < 1.0f);
+                if (GameObject* rl = s.Find("Wheel Rear Left")) CHECK(std::fabs(rl->transform->LocalEulerAngles().y) < 0.5f);
+                run({'w', 'a'}, 15);                            // steer back the same amount
+                run({'w'}, 30);                                 // about 2.4 s of throttle in all: 22 m/s top speed
                 const Vec3 cp = car->transform->Position();
                 CHECK(cp.z > car0z + 15.0f);                    // drove forward
                 CHECK(v->Speed() > 20.0f);
                 const Vec3 pp = player->transform->Position();
-                CHECK_NEAR(pp.z, cp.z + 0.3f, 0.1f);            // seat is 0.3 m ahead of the middle
-                CHECK_NEAR(pp.x, cp.x - 0.4f, 0.1f);            // and 0.4 m to the left
+                const Vec3 seatLocal = driverSeat->sitPoint;
+                CHECK_NEAR(pp.z, cp.z + seatLocal.z, 0.6f);     // at the sit point (the car turned a little while steering)
+                CHECK_NEAR(pp.x, cp.x + seatLocal.x, 0.6f);
+                CHECK_NEAR(pp.y, cp.y + seatLocal.y, 0.1f);
                 CHECK(pp.y > cp.y);
 
                 press('e');                                     // get out
                 CHECK(!driverSeat->occupied);
                 CHECK(v->Driver() == nullptr);
+                CHECK(!driverSeat->PoseApplied());              // the pose flag is cleared
+                CHECK(driverSeat->CameraTarget() == nullptr);   // and the camera is the player's again
                 const Vec3 cp2 = car->transform->Position();
                 const Vec3 pp2 = player->transform->Position();
-                CHECK_NEAR(pp2.x, cp2.x - 1.8f, 0.25f);         // beside the car, on the driver side
+                const Vec3 away{pp2.x - cp2.x, 0.0f, pp2.z - cp2.z};
+                CHECK(away.Magnitude() > 1.0f);   // beside the car, on the driver side
+                run({}, 60);                                    // the stand-up clip plays out
+                CHECK(!HumanoidActions::IsSitting(player));     // back on their feet
+                if (cam && cam->gameObject)
+                    CHECK((cam->gameObject->transform->Position() - player->transform->Position()).Magnitude() < 9.0f);   // orbit behind the player
                 run({'w'}, 90);                                 // W is held but nobody drives
                 CHECK_NEAR(v->Speed(), 0.0f, 1e-2f);
                 const float stopZ = car->transform->Position().z;
@@ -447,15 +537,21 @@ int main() {
                 CHECK_NEAR(car->transform->Position().z, stopZ, 0.01f);
 
                 // Passenger: walk to the right side, get in; the car does not drive for them.
-                player->transform->SetPosition({stopZ * 0.0f + car->transform->Position().x + 2.2f, 1.0f, stopZ + 0.3f});
+                player->transform->SetPosition({car->transform->Position().x + 2.2f, 1.0f, car->transform->Position().z - 0.2f});
                 run({}, 60);
                 press('e');
                 CHECK(passSeat->Occupant() == player);
                 CHECK(v->Driver() == nullptr);
+                run({}, 40);
+                CHECK(HumanoidActions::IsSitting(player));      // passengers sit too
+                CHECK(passSeat->CameraTarget() == car);
                 run({'w'}, 60);
                 CHECK_NEAR(v->Speed(), 0.0f, 1e-3f);
                 press('e');
                 CHECK(!passSeat->occupied);
+                CHECK(!passSeat->PoseApplied());
+                run({}, 60);
+                CHECK(!HumanoidActions::IsSitting(player));
                 Input::FeedKeys({});
             }
         }

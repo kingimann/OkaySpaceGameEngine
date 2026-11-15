@@ -4209,7 +4209,13 @@ static void CompleteViewToggle(Scene& scene, GameObject* go) {
 // State of a document being parsed, kept so a parse can pause between objects
 // and carry on later (multi-frame scene loads).
 struct ParseSession {
-    explicit ParseSession(std::string t) : text(std::move(t)), in(text) { in.imbue(TolerantLocale()); }
+    // A UTF-8 byte-order mark (EF BB BF), which some text editors add when they save, is not part of the scene: the
+    // header check would read it as part of "okayscene" and refuse the file (issue #888; test scene_bom_load).
+    static std::string WithoutBom(std::string t) {
+        if (t.size() >= 3 && (unsigned char)t[0] == 0xEF && (unsigned char)t[1] == 0xBB && (unsigned char)t[2] == 0xBF) t.erase(0, 3);
+        return t;
+    }
+    explicit ParseSession(std::string t) : text(WithoutBom(std::move(t))), in(text) { in.imbue(TolerantLocale()); }
     std::string text;
     std::istringstream in;
     bool started = false;

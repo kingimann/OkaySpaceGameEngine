@@ -64,6 +64,10 @@ add_executable(test_scene_subnormal test_scene_subnormal.cpp)
 target_link_libraries(test_scene_subnormal PRIVATE okay::engine)
 add_test(NAME scene_subnormal COMMAND test_scene_subnormal)
 
+add_executable(test_scene_bom_load test_scene_bom_load.cpp)
+target_link_libraries(test_scene_bom_load PRIVATE okay::engine)
+add_test(NAME scene_bom_load COMMAND test_scene_bom_load)
+
 # Safe loading: bad / cut-short / newer documents never damage the live scene
 add_executable(test_scene_safe_load test_scene_safe_load.cpp)
 target_link_libraries(test_scene_safe_load PRIVATE okay::engine)

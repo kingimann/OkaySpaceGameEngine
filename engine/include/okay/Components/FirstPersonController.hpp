@@ -75,7 +75,7 @@ public:
     bool  invertY = false;              // invert vertical mouse look
     // View bob: up and down, in step with walking. Scales with speed; smooths
     // out when idle. bobSway adds an optional side-to-side roll (off by default).
-    bool  headBob   = true;
+    bool  headBob   = true;             // off by itself when the player picks Reduce Motion (Accessibility)
     float bobAmount = 0.035f;           // bob height (world units)
     float bobSpeed  = 9.0f;             // bob cadence (≈ footstep rate)
     float bobSway   = 0.0f;             // roll sway in degrees, once per stride, in step with the bob (0 = off)
@@ -145,7 +145,7 @@ public:
     bool  zoomWithRightMouse = true;    // hold right mouse to zoom / aim down sights
     float zoomFov = 40.0f;
     float zoomSensitivity = 0.55f;      // look sensitivity multiplier while zoomed
-    float landDip = 0.12f;              // max camera dip on a hard landing (world units)
+    float landDip = 0.12f;              // max camera dip on a hard landing (world units); none with Reduce Motion
 
     // ---- Slide (sprint, then crouch) ----
     bool  canSlide = true;
@@ -627,7 +627,8 @@ public:
             } else {
                 m_landed = m_landing.Step(groundish, rb ? rb->velocity.y : 0.0f, impact);
                 if (m_landed) {
-                    m_dip = Mathf::Min(landDip, impact * 0.012f);
+                    // Reduce Motion (accessibility) turns the dip off; the landing itself still counts.
+                    m_dip = Mathf::Min(landDip, impact * 0.012f) * Accessibility::MotionScale();
                     if (onLand) onLand(impact);
                 }
             }
@@ -933,7 +934,10 @@ private:
         const float ref = Mathf::Max(0.1f, walkSpeed);
         const bool walking = grounded && hSpeed > 0.3f && m_slideT <= 0.0f;
         float want = 0.0f, wantSway = 0.0f;
-        if (walking && headBob) {
+        // Reduce Motion (accessibility) eases the bob and sway out (and back in when it is turned off) instead of
+        // snapping the view. The phase keeps running while walking, so footstep events still fire.
+        const float motion = Accessibility::MotionScale();
+        if (walking && headBob && motion > 0.0f) {
             const float run = runSpeed > walkSpeed ? Mathf::Clamp((hSpeed - walkSpeed) / (runSpeed - walkSpeed), 0.0f, 1.0f) : 0.0f;
             want = bobAmount * Mathf::Min(1.0f, hSpeed / ref) * (1.0f + (bobRunScale - 1.0f) * run);
             wantSway = bobSway * Mathf::Min(1.0f, hSpeed / ref) * (1.0f + (bobRunScale - 1.0f) * run);

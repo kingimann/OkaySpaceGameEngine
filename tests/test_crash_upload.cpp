@@ -291,6 +291,38 @@ int main() {
               srv.got[0].body.find("10.1.2.3") == std::string::npos && srv.got[0].body.find("abcdefghijklmnop") == std::string::npos);
     }
 
+    // ---- Only crashes from the moment sending was switched on are sent ------------------------------------------------------------------
+    {
+        std::vector<Report> reports = {MakeReport(2, "2026-11-15 11:45:00"), MakeReport(1, "2026-11-15 11:00:00"), MakeReport(3, "garbled"), MakeReport(4, "")};
+        Server srv; Ledger ledger;
+        ledger.SetSince("2026-11-15 11:30:00");
+        Result r = Run(reports, ledger, srv.Transport_(), Alice(), opts(kNow));
+        CHECK(r.sent == 1 && srv.got.size() == 1 && srv.got[0].body.find("DrawThing2") != std::string::npos && r.beforeSwitch == 3);   // the three older or undated ones stay
+        Result again = Run(reports, ledger, srv.Transport_(), Alice(), opts(kNow + 60));
+        CHECK(again.sent == 0 && srv.got.size() == 1);
+        // Only older reports: nothing is sent and the page says why.
+        Server srv2; Ledger l2; l2.SetSince("2026-11-15 11:30:00");
+        Result o2 = Run({MakeReport(1, "2026-11-15 11:00:00")}, l2, srv2.Transport_(), Alice(), opts(kNow));
+        CHECK(srv2.got.empty() && o2.beforeSwitch == 1 && o2.note == "Reports from before sending was switched on stay on this computer.");
+        // The first run on a machine: no "since" yet, so Run sets it to now, and every report already there is held back.
+        Server srv3; Ledger fresh;
+        Options first = opts(kNow); first.nowLocal = "2026-11-15 12:00:00";
+        Result f = Run({MakeReport(1, "2026-11-15 11:59:00"), MakeReport(2, "2026-10-01 08:00:00")}, fresh, srv3.Transport_(), Alice(), first);
+        CHECK(srv3.got.empty() && f.beforeSwitch == 2 && f.changedLedger && fresh.Since() == "2026-11-15 12:00:00");
+        // ... and a crash after that moment goes.
+        Result next = Run({MakeReport(5, "2026-11-15 12:00:05"), MakeReport(1, "2026-11-15 11:59:00")}, fresh, srv3.Transport_(), Alice(), opts(kNow + 60));
+        CHECK(next.sent == 1 && srv3.got.size() == 1 && srv3.got[0].body.find("DrawThing5") != std::string::npos);
+        // Without a time from the caller nothing is held back (the unit tests above rely on it); a ledger without "since" stays without.
+        Server srv4; Ledger plain;
+        CHECK(Run({MakeReport(1, "2026-11-15 11:59:00")}, plain, srv4.Transport_(), Alice(), opts(kNow)).sent == 1 && plain.Since().empty());
+        // On disk and hostile.
+        Ledger rt = Ledger::Parse(fresh.Serialize());
+        CHECK(rt.Since() == "2026-11-15 12:00:00");
+        CHECK(Ledger::Parse("since garbage\nsince 2026-11-15\nsince 2026-13-99 25:61:61x\n").Since().empty());
+        CHECK(Ledger::Parse("since 2026-11-15 12:00:00\n").Since() == "2026-11-15 12:00:00" && Ledger::Parse("since 2026-11-15 12:00:00\r\n").Since() == "2026-11-15 12:00:00");
+        Ledger bad; bad.SetSince("../../etc"); CHECK(bad.Since().empty());
+    }
+
     // ---- Report it yourself on GitHub: the prefilled address -------------------------------------------------------------------------------
     {
         Report r = MakeReport(7, "2026-11-15 10:00:00", 60);

@@ -47573,8 +47573,10 @@ static int RunBuildGameCli(int argc, char** argv) {
 // What the crash report says about the open scene and the editor mode; refreshed a few times a second from the main loop (a handful
 // of stores, no allocation). `slow` also re-reads the things that need a file or a lookup.
 static void UpdateCrashContext(EditorState& ed, bool slow) {
+    static int s_assets = -1;   // CachedCount() takes the asset manager's lock and walks its cache: only the slow refresh asks
+    if (slow) s_assets = (int)okay::AssetManager::Instance().CachedCount();
     okaycrash::ctx::SetMode(ed.isPlaying(), ed.InPrefabMode());
-    okaycrash::ctx::SetSceneStats((int)ed.scene().Objects().size(), (int)okay::AssetManager::Instance().CachedCount());
+    okaycrash::ctx::SetSceneStats((int)ed.scene().Objects().size(), s_assets);
     if (!slow) return;
     okaycrash::ctx::SetSceneName(ed.path().c_str());
     okaycrash::ctx::SetUiBackend(UseOkayUIBackend() ? "okayui" : "imgui");

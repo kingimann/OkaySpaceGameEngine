@@ -14,6 +14,9 @@
 //     but those fields (BuildPayload is the only place a body is made).
 //   * A report is sent at most once: the ledger (okay_crash_sent.txt) records every id it sent, and a report the server refuses for good
 //     (too big, malformed) is recorded too and never retried. If the ledger cannot be written, nothing is sent.
+//   * Only crashes from the moment sending was switched on are sent: the ledger records that moment ("since", in the same local time the
+//     editor writes), and a report from before it stays on the computer. Reports already on a machine when the launcher first runs this
+//     feature are therefore never sent behind the person's back, and neither are reports from a time sending was off.
 //   * At most 5 uploads in any 24 hours. Offline, a server error or a table that is not set up keeps the reports and tries again later,
 //     with a growing wait (5 minutes up to 6 hours).
 //   * Only the public anon key is used: the table accepts inserts from it and nothing else (the SQL says so; the tests there check it).
@@ -57,7 +60,7 @@ inline bool Enabled(bool settingOn, const char* envValue) { return settingOn && 
 inline std::string StatusLine(bool settingOn, const char* envValue) {
     if (EnvDisabled(envValue)) return "Off: the environment variable OKAY_CRASH_UPLOAD is 0.";
     if (!settingOn) return "Off: you turned it off. Reports stay on this computer.";
-    return "On: new crash reports are sent the next time the launcher runs.";
+    return "On: new crash reports are sent soon after they happen. Reports from before it was switched on stay on this computer.";
 }
 // What is sent, in the one line the Settings page shows next to the switch.
 inline const char* DisclosureLine() {
@@ -213,6 +216,19 @@ inline std::string PreviewText(const Payload& p, const std::string& host) {
     return t;
 }
 
+// "2026-11-15 12:00:00": the shape of a report's When line (local time), digits and separators exactly.
+inline bool LooksLikeWhen(const std::string& w) {
+    if (w.size() != 19) return false;
+    for (std::size_t i = 0; i < w.size(); ++i) {
+        const char c = w[i];
+        if (i == 4 || i == 7) { if (c != '-') return false; }
+        else if (i == 10) { if (c != ' ') return false; }
+        else if (i == 13 || i == 16) { if (c != ':') return false; }
+        else if (c < '0' || c > '9') return false;
+    }
+    return true;
+}
+
 // ---- The ledger: what was sent, what was refused for good, when to try again --------------------------------------------------------
 class Ledger {
 public:
@@ -221,6 +237,9 @@ public:
     void MarkSent(const std::string& id, long t) { sent_[id] = t; refused_.erase(id); }
     void MarkRefused(const std::string& id, long t) { refused_[id] = t; }
     int SentSince(long since) const { int n = 0; for (const auto& kv : sent_) if (kv.second >= since) ++n; return n; }
+    // "2026-11-15 12:00:00" (local time, the format of a report's When line); "" = not set (no report is held back).
+    const std::string& Since() const { return since_; }
+    void SetSince(const std::string& when) { since_ = LooksLikeWhen(when) ? when : std::string(); }
     long RetryAfter() const { return retryAfter_; }
     int Fails() const { return fails_; }
     void SetRetry(long notBefore, int fails) { retryAfter_ = notBefore; fails_ = fails; }
@@ -228,7 +247,8 @@ public:
     long LastSent() const { long t = 0; for (const auto& kv : sent_) t = std::max(t, kv.second); return t; }
 
     std::string Serialize() const {
-        std::string s = "# crash reports this computer has sent or been told to keep (docs/crash_reports.md). Safe to delete: then old reports could be sent again.\n";
+        std::string s = "# crash reports this computer has sent or been told to keep (docs/crash_reports.md). Deleting it is safe: sending starts again from that moment on.\n";
+        if (!since_.empty()) s += "since " + since_ + "\n";
         for (const auto& kv : sent_) s += "sent " + kv.first + " " + std::to_string(kv.second) + "\n";
         for (const auto& kv : refused_) s += "refused " + kv.first + " " + std::to_string(kv.second) + "\n";
         if (retryAfter_ > 0 || fails_ > 0) s += "retry " + std::to_string(retryAfter_) + " " + std::to_string(fails_) + "\n";
@@ -245,11 +265,13 @@ public:
             if (kind == "sent" && (ls >> id >> t) && Plausible(id)) l.sent_[id] = t;
             else if (kind == "refused" && (ls >> id >> t) && Plausible(id)) l.refused_[id] = t;
             else if (kind == "retry" && (ls >> t >> f)) { l.retryAfter_ = t; l.fails_ = (int)std::max(0L, std::min(f, 30L)); }
+            else if (kind == "since") { std::string d, tm; if ((ls >> d >> tm) && LooksLikeWhen(d + " " + tm)) l.since_ = d + " " + tm; }
         }
         return l;
     }
 private:
     static bool Plausible(const std::string& id) { return id.size() == 16 && id.find_first_not_of("0123456789abcdef") == std::string::npos; }
+    std::string since_;
     std::map<std::string, long> sent_, refused_;
     long retryAfter_ = 0;
     int fails_ = 0;
@@ -333,6 +355,7 @@ struct Options {
     int maxPerDay = kMaxPerDay;
     long maxAgeSeconds = kMaxAgeSeconds;
     std::size_t maxBytes = kMaxBodyBytes;
+    std::string nowLocal;                 // the local time now, "YYYY-MM-DD HH:MM:SS": when the ledger has no "since" yet, Run sets it to this
 };
 
 struct Result {
@@ -340,6 +363,7 @@ struct Result {
     int duplicates = 0;       // the server already had them (counted as sent)
     int alreadySent = 0;      // skipped: in the ledger
     int tooOld = 0;
+    int beforeSwitch = 0;     // skipped: from before sending was switched on (they stay on this computer)
     int refused = 0;          // the server will never take these (now in the ledger)
     int limited = 0;          // left for tomorrow: 5 uploads in 24 hours
     int failed = 0;           // a server error: kept, retried later
@@ -359,6 +383,7 @@ inline std::vector<const Report*> Pending(const std::vector<Report>& reports, co
         if (r.text.empty()) continue;
         const std::string id = ReportId(r);
         if (ledger.Sent(id) || ledger.Refused(id)) continue;
+        if (!ledger.Since().empty() && (!LooksLikeWhen(r.when) || r.when < ledger.Since())) continue;   // from before sending was switched on, or undated (same local-time format: compares as text)
         const long t = EpochFromWhen(r.when);
         if (t > 0 && o.now > 0 && o.now - t > o.maxAgeSeconds) continue;
         v.push_back(&r);
@@ -369,15 +394,21 @@ inline std::vector<const Report*> Pending(const std::vector<Report>& reports, co
 // Send what is waiting: newest first, one request each, stopping at the first sign that the next would fail the same way.
 inline Result Run(const std::vector<Report>& reports, Ledger& ledger, const Transport& send, const ScrubContext& ctx, const Options& o) {
     Result res;
+    if (ledger.Since().empty() && !o.nowLocal.empty()) { ledger.SetSince(o.nowLocal); res.changedLedger = !ledger.Since().empty(); }   // sending starts now: nothing older is sent
     for (const Report& r : reports) {   // counts for the note
         if (r.text.empty()) continue;
         const std::string id = ReportId(r);
         if (ledger.Sent(id) || ledger.Refused(id)) { ++res.alreadySent; continue; }
+        if (!ledger.Since().empty() && (!LooksLikeWhen(r.when) || r.when < ledger.Since())) { ++res.beforeSwitch; continue; }
         const long t = EpochFromWhen(r.when);
         if (t > 0 && o.now > 0 && o.now - t > o.maxAgeSeconds) ++res.tooOld;
     }
     const std::vector<const Report*> todo = Pending(reports, ledger, o);
-    if (todo.empty()) { res.note = reports.empty() ? "No crash reports." : "Nothing new to send."; return res; }
+    if (todo.empty()) {
+        res.note = reports.empty() ? "No crash reports." : res.beforeSwitch > 0 && res.alreadySent == 0 && res.tooOld == 0
+                 ? "Reports from before sending was switched on stay on this computer." : "Nothing new to send.";
+        return res;
+    }
     if (o.now > 0 && ledger.RetryAfter() > o.now) {
         res.waiting = true;
         res.note = "Will try again in " + std::to_string((ledger.RetryAfter() - o.now + 59) / 60) + " minutes.";

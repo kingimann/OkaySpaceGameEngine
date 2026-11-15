@@ -5852,9 +5852,16 @@ static void PumpPrivacy(okay::account::AccountService& account) {
 static std::string g_crashUpNote;                        // the last result, one plain sentence, shown on the Crash reports page
 static volatile bool g_crashUpBusy = false;
 static SDL_mutex* g_crashUpMutex = nullptr;
-struct CrashUpJob { std::vector<okaycrash::Report> reports; std::string ledgerPath; okaycrash::ScrubContext ctx; };
+struct CrashUpJob { std::vector<okaycrash::Report> reports; std::string ledgerPath; okaycrash::ScrubContext ctx; std::string nowLocal; };
 struct CrashUpResult { bool ready = false; std::string note; int sent = 0; };
 static CrashUpResult g_crashUpRes;
+static bool g_crashUpResetSince = false;                 // the switch was just turned on: only crashes from now on are sent (the pump records the moment)
+static std::string LocalNowText() {                      // "2026-11-15 12:00:00", local time: the format the editor writes in a report's When line
+    const std::time_t t = std::time(nullptr);
+    char b[32] = "";
+    if (const std::tm* lt = std::localtime(&t)) std::strftime(b, sizeof(b), "%Y-%m-%d %H:%M:%S", lt);
+    return b;
+}
 static int CrashUploadWorker(void* p) {
     std::unique_ptr<CrashUpJob> j(static_cast<CrashUpJob*>(p));
     CrashUpResult res;
@@ -5873,6 +5880,7 @@ static int CrashUploadWorker(void* p) {
             };
             okaycrash::upload::Options o;
             o.now = (long)std::time(nullptr);
+            o.nowLocal = j->nowLocal;
             const okaycrash::upload::Result out = okaycrash::upload::Run(j->reports, ledger, send, j->ctx, o);
             if (out.changedLedger && !okaycrash::upload::SaveLedger(j->ledgerPath, ledger))
                 res.note = "Sent, but could not save okay_crash_sent.txt (the same report may be sent again).";
@@ -5895,12 +5903,22 @@ static void PumpCrashUpload() {
     SDL_UnlockMutex(g_crashUpMutex);
     static Uint32 next = 0;
     const Uint32 now = okay::platform::TicksMs32();
-    if (g_crashUpBusy || now < next) return;
+    if (g_crashUpBusy || (now < next && !g_crashUpResetSince)) return;
     next = now + 20000;   // a look every 20 seconds is plenty
-    if (!CrashUploadOn() || g_pollCfgDir.empty() || g_crashes.empty()) return;
     const fs::path dir = CrashDir();
     if (dir.empty()) return;
     std::error_code ec;
+    {   // The moment sending starts: the first run on this computer (no ledger yet) or the switch just turned on. Reports from before it are never sent.
+        const std::string ledgerFile = (dir / okaycrash::upload::kLedgerName).string();
+        if (g_crashUpResetSince || !fs::exists(ledgerFile, ec)) {
+            okaycrash::upload::Ledger l;
+            okaycrash::upload::LoadLedger(ledgerFile, l);   // (what was already sent is kept)
+            l.SetSince(LocalNowText());
+            okaycrash::upload::SaveLedger(ledgerFile, l);
+            g_crashUpResetSince = false;
+        }
+    }
+    if (!CrashUploadOn() || g_pollCfgDir.empty() || g_crashes.empty()) return;
     const fs::path hist = fs::exists(dir / "okay_crashlog.txt", ec) ? dir / "okay_crashlog.txt" : dir / "okay_crash.txt";
     const auto age = fs::file_time_type::clock::now() - fs::last_write_time(hist, ec);
     if (ec || age < std::chrono::seconds(15)) return;   // let the editor finish writing (and, on Windows, naming the frames) first
@@ -5914,6 +5932,7 @@ static void PumpCrashUpload() {
     job->reports = g_crashes;
     job->ledgerPath = (dir / okaycrash::upload::kLedgerName).string();
     job->ctx = okaycrash::LocalContext();
+    job->nowLocal = LocalNowText();
     g_crashUpBusy = true;
     if (SDL_Thread* t = SDL_CreateThread(CrashUploadWorker, "okay-crashup", job)) SDL_DetachThread(t);
     else { g_crashUpBusy = false; delete job; }
@@ -23010,6 +23029,7 @@ int main(int argc, char** argv) {
                         if (ToggleSwitch("##crashup", &g_crashUpload)) {
                             SavePrefs();
                             g_crashUpNote.clear();
+                            if (g_crashUpload) g_crashUpResetSince = true;   // turned on: only crashes from now on are sent, not the ones from while it was off
                         }
                     });
                     {
@@ -23077,8 +23097,10 @@ int main(int argc, char** argv) {
                         if (i == 0) meta += "  \xC2\xB7  latest";
                         {   // was it sent?
                             const std::string id = okaycrash::upload::ReportId(r);
+                            const bool older = !crashLedger.Since().empty() && (!okaycrash::upload::LooksLikeWhen(r.when) || r.when < crashLedger.Since());
                             meta += "  \xC2\xB7  ";
                             meta += crashLedger.Sent(id) ? "sent" : crashLedger.Refused(id) ? "not sent (the server refused it)"
+                                  : older ? "not sent (from before sending was switched on)"
                                   : CrashUploadOn() ? "waiting to be sent" : "not sent (sending is off)";
                         }
                         dl->AddText(ImVec2(tx, p.y + 22), cDim, meta.c_str());

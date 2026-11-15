@@ -260,7 +260,8 @@ Full story: [crash_reports.md](crash_reports.md).
    `OkayEngine.exe` (`Tools\`). Open it in Notepad: you should see `Version`, `Build`, `Last step: Test.Step`, `OS`, `CPU`, `GPU`, `Backtrace`, then
    `--- Breadcrumbs`, `--- Console` (the last line says the crash was on purpose).
 5. In the launcher a notification "The editor crashed" appears. Open **Settings > Crash reports**. You should see a card "Access violation"
-   with the time and version and, after a dot, **waiting to be sent**.
+   with the time and version and, after a dot, **waiting to be sent**. (Crash reports that were already on your computer before the launcher
+   first ran this version say "not sent (from before sending was switched on)" and are never sent; only crashes from now on are.)
 6. Click **What would be sent** on the card (or **Preview** in the SENDING CRASH REPORTS card). You should see the report with your folders
    shown as `%USERPROFILE%` and your computer name as `<host>`, and the columns (report id, signature, version, ...). Nothing has been sent by looking.
 7. **Turn it off:** switch **Send crash reports automatically** off: the card says "not sent (sending is off)". (Or start the launcher with

@@ -18,7 +18,10 @@ until the one-time setup below is done**. Nothing here has been run on a real Wi
 3. **The launcher sends it**, if sending is on, once the files are 15 seconds old (so the editor has finished writing). It removes personal
    details first (see below), sends one row to the `crash_reports` table of our Supabase project using the **public** key that is already
    in every launcher, and writes the report's id to `okay_crash_sent.txt` so it is never sent twice. Offline, it keeps the report and
-   tries again later (5 minutes, then longer, up to 6 hours). At most 5 reports go out in 24 hours.
+   tries again later (5 minutes, then longer, up to 6 hours). At most 5 reports go out in 24 hours. **Only crashes from the moment sending
+   was switched on are sent:** the first time the launcher runs this version (no `okay_crash_sent.txt` yet), and each time you turn the
+   switch back on, it notes the time in that file, and a report from before it stays on your computer (its card says "not sent (from
+   before sending was switched on)"). Nothing that was already on your machine is sent behind your back.
 4. **A GitHub job makes the issue** (every 30 minutes, `.github/workflows/crash-issues.yml`): one issue per kind of crash, labelled
    `crash`. The same crash again adds a comment (how many, which versions, which systems) instead of a second issue.
 5. **Or you report it yourself:** on the same page, **Report on GitHub** opens a new-issue page with the cleaned report filled in. You
@@ -39,7 +42,7 @@ Written by `shared/CrashHandler.hpp` (the handler) from `shared/CrashContext.hpp
 | OS, CPU, RAM, Process memory | Windows version (and "Windows 11", and "[Wine]"), CPU name and logical cores, memory total and free, memory the editor was using |
 | GPU, UI backend | The OpenGL renderer, vendor and version, the SDL renderer (`direct3d11`), `imgui` or `okayui` |
 | Own code | The startup stack line (which parts are ours and which third party) and the `OKAY_*` switches that are on, for example `OKAY_OWN_FBX=1`. Only switches: a value that is long, has a path in it, or whose name says KEY, TOKEN, SECRET, PASSWORD, URL, DIR, PATH, USER and the like is left out |
-| Mode, Scene, Objects, Assets loaded | Edit or play (and prefab open), the scene's **file name only**, how many objects, how many assets are loaded |
+| Mode, Scene, Objects, Assets loaded | Edit or play (and prefab open), the scene's **file name only**, how many objects, how many assets are loaded (the asset count is refreshed about every 40 seconds) |
 | Uptime, Recovery copy | How long the editor ran and for how many frames, whether a recovery copy of the scene exists |
 | Backtrace | One line per frame: `module + offset`, and on Windows a function name and file:line when `dbghelp` can find them |
 | Breadcrumbs | The last 64 different steps with the frame number (the same step many times in a row is one line with `x40`) |
@@ -96,6 +99,9 @@ cuts long lines and removes invisible and right-to-left characters.
   columns, after the removal. Looking sends nothing. With sending off it says so at the top.
 * A report whose card says "sent", "waiting to be sent" or "not sent (sending is off)" tells you where it stands.
 * Reports stay on your computer until you clear them (**Clear all**). Sending a report never deletes it.
+* Reports that were already there when the launcher first ran this version, and reports from a time when sending was off, are not sent when
+  you turn it on. (Deleting `okay_crash_sent.txt` starts again from that moment: nothing older is sent.) To send an old one, use **Report on
+  GitHub** on its card.
 
 The one line next to the switch: *Sends: the editor version, your Windows version, CPU, memory and graphics card, which scene and mode it
 was in, the last 200 Console lines, the steps it took and the crash location. Your name, folders, email, computer name and IP address are
@@ -172,6 +178,8 @@ with `-rdynamic` so the tests can name the faulting functions.
 
 [`docs/try_it.md`](try_it.md), section 14, has the exact steps for the Windows release: a real crash on purpose with `OKAY_TEST_CRASH_LATE`,
 where `okay_crash.txt` appears, what the launcher shows, the preview, the GitHub button, and how to see the row and the issue.
+
+`OKAY_CRASH_NO_DIALOG=1` skips the "OkaySpace crashed" box on Windows (for automated runs).
 
 **Why an environment variable and not a menu item.** `OKAY_TEST_CRASH=<step>` (it existed before) crashes the editor right after it starts;
 `OKAY_TEST_CRASH_LATE=<step>` crashes it on the 120th frame of the running editor, so the report has the graphics card, the scene and the

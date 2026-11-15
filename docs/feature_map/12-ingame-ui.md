@@ -48,7 +48,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.2.11 Crosshair - `Components/Crosshair` - screen-centre reticle with gap, dot and outline
 - **Code:** `Components/UIButton`, `Components/NativeUIActions`, `Components/TextRenderer`, `Components/UIPanel`, `UI/UIShape`, `Components/UIImage`, `Components/UIRawImage`, `Components/UIProgressBar`, `Components/UIRadialProgress`, `Components/UIRating`, `Components/Crosshair`
 - **API:** `UIButton`, `UIPanel`, `TextRenderer`, `UIImage`, `UIRawImage`, `UIProgressBar`, `UIRadialProgress`, `UIRating`, `Crosshair`; script: `ui_set_text`, `ui_get_text`, `ui_clicked`, `ui_set_progress`, `ui_set_fill`, `ui_set_interactable`
-- **Editor:** GameObject > Create > UI (and the UI view's + Add menu); Inspector headers UI Button, UI Panel, UI Image, UI Raw Image, Text, UI Progress Bar, UI Radial Progress, UI Rating, Crosshair
+- **Editor:** GameObject > UI (and the UI view's + Add menu); Inspector headers UI Button, UI Panel, UI Image, UI Raw Image, Text, UI Progress Bar, UI Radial Progress, UI Rating, Crosshair
 - **Docs:** `docs/game_ui.md` (Images, Building blocks), `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `uishape`, `text`, `minimap`, `ui_renderer_golden`, `world_text_rich` (rich text on world text, `[size=N]`, line heights)
 - **Status:** Works - implemented per the headers; tests cover hit testing, serialization of every style field, nine-slice, fill, shapes, text options
@@ -152,7 +152,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.7.6 UI Theme window - `editor/main.cpp` (~42418-42667) - reusable styles applied across widgets, "Apply to All UI"
 - **Code:** `Scene/UITemplates`, `Scene/UIStyles`, `Components/UITheme`, `editor/main.cpp` (`DrawUIThemer`, `DrawUIWidgetItems`)
 - **API:** `UITemplates::AddMainMenu/AddPauseMenu/AddSettings/AddHUD/AddShop...`, `UIStyles::ApplyButton/ApplyPanel...`, `UITheme::Apply`; script `apply_ui_theme`, `set_ui_theme`, `ui_style("classic")`
-- **Editor:** GameObject > Create > UI (Kit, Prebuilt Screens), View > Editors & Tools > UI Theme, "Look" chips at the top of each UI inspector, Save Selected as UI
+- **Editor:** GameObject > UI (Kit, Prebuilt Screens), View > Editors & Tools > UI Theme, "Look" chips at the top of each UI inspector, Save Selected as UI
 - **Docs:** `docs/game_ui.md` (Adding UI in the editor, Theming)
 - **Tests:** `ui_templates`, `ui_tabs`, `uicapture_look`, `runtime_ui` (UITheme looks, roles and saved `.okaytheme` files)
 - **Status:** Partial - kit, screens and presets are implemented and tested; UITheme (12 looks, roles, saved `.okaytheme` files) is tested in `test_runtime_ui` but is still a one-shot skin baked onto widgets, not the stylesheet system the UI plan describes
@@ -212,7 +212,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
   - 12.10.7 Create > UI menus - `editor/main.cpp` (`DrawUIWidgetItems` ~5389-5550, menu ~6092-6248) - single widgets, kit, prebuilt screens, 3D UI
   - 12.10.8 Widget inspectors - `editor/main.cpp` (~34698-36498) - Canvas, Event System, UI Button, Panel, Input Field, Dropdown, Slider, Tabs and the rest
 - **Code:** `editor/UIPreviewPainter.*`, `editor/UIInspectorLayout.*`, `editor/UIInspectorOverlay.*`, `editor/main.cpp`, `Scene/UILayoutTools`, `Scene/UIStyles`
-- **API:** menu items GameObject > Create > UI, View > Editors & Tools > UI Editing Mode, UI Editor (separate tab), UI Theme
+- **API:** menu items GameObject > UI, View > Editors & Tools > UI Editing Mode, UI Editor (separate tab), UI Theme
 - **Editor:** Scene view (UI button, "..." menu toggle for the overlay), UI tab, Inspector
 - **Docs:** `docs/editor.md` (UI editing), `docs/game_ui.md`
 - **Tests:** `ui_frame` (undo through `editor/EditorState.cpp`), `ui_renderer_options`, `editor` (selftest)

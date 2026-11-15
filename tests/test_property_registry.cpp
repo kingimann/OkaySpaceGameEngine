@@ -1102,8 +1102,11 @@ static void TestSerializerCrossCheck() {
             expect[key] = PropertyRegistry::GetProperty(*go, key);
         }
         const std::string text = SceneSerializer::Serialize(s1);
+        // A lone First / Third Person controller is saved in its Player Controller form (pcfirst / pcthird).
+        const std::string recName = info->recordName == "fpctrl" ? "pcfirst"
+                                  : info->recordName == "tpctrl" ? "pcthird" : info->recordName;
         if (!info->recordName.empty() && !info->objectLevel)
-            CHECK(text.find("\n  " + info->recordName + " ") != std::string::npos || text.find("\n  " + info->recordName + "\n") != std::string::npos);
+            CHECK(text.find("\n  " + recName + " ") != std::string::npos || text.find("\n  " + recName + "\n") != std::string::npos);
         Scene s2("s2");
         std::string err;
         CHECK(SceneSerializer::Deserialize(s2, text, &err));

@@ -16,6 +16,8 @@
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/IKTarget.hpp"
+#include "okay/Components/HoldableObject.hpp"
+#include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/NetValidator.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/LogicLinks.hpp"
@@ -1428,6 +1430,55 @@ void RegisterDollyPath() {
     b.Commit();
 }
 
+// HoldableObject (record "holdable")
+void RegisterHoldableObject() {
+    PropertyBuilder<HoldableObject> b("HoldableObject", "holdable", "Gameplay");
+    b.AddEnum("style", &HoldableObject::style, {"Automatic", "Custom", "Pistol", "Rifle", "Box", "Flashlight", "Sword", "Cup", "Heavy",
+                                                "OneHandRight", "OneHandLeft", "TwoHanded", "CarryFront", "OverShoulder"}).Tooltip("How it is held (Automatic = from its shape)")
+     .AddBool("supportHand", &HoldableObject::supportHand).Tooltip("Pistol or sword: the other hand helps")
+     .AddBool("twoHanded", &HoldableObject::twoHanded).Tooltip("Always use both hands")
+     .AddFloat("weight", &HoldableObject::weight).Range(0, kBig, 0.1).Tooltip("Mass in kg (0 = the body's mass, else 1)")
+     .AddString("socket", &HoldableObject::socket).Tooltip("Hold it at this object inside the character (a holster or back slot)")
+     .Section("Placement")
+     .AddVec3("holdOffset", &HoldableObject::holdOffset).Range(-kBig, kBig, 0.01).Tooltip("Custom: position from the chest (right, up, forward) in metres")
+     .AddVec3("holdRotation", &HoldableObject::holdRotation).Range(-360, 360, 1).Tooltip("Rotation in degrees (Custom: against the body; other styles: a model fix)")
+     .AddFloat("inHandScale", &HoldableObject::inHandScale).Range(0.001, 1e3, 0.01).Tooltip("Scale while in the hands (1 = its own scale)")
+     .AddVec3("fpOffset", &HoldableObject::fpOffset).Range(-kBig, kBig, 0.01).Tooltip("First person: position in the hand's space")
+     .AddVec3("fpRotation", &HoldableObject::fpRotation).Range(-360, 360, 1).Tooltip("First person: rotation in degrees")
+     .AddFloat("fpScale", &HoldableObject::fpScale).Range(0.001, 1e3, 0.01).Tooltip("First person: scale")
+     .AddVec3("tpOffset", &HoldableObject::tpOffset).Range(-kBig, kBig, 0.01).Tooltip("Third person: position in body space (side, up, forward)")
+     .AddVec3("tpRotation", &HoldableObject::tpRotation).Range(-360, 360, 1).Tooltip("Third person: rotation in degrees after the hold's own")
+     .Section("Left hand grip")
+     .AddBool("leftGripEnabled", &HoldableObject::leftGrip, &HoldableObject::Grip::enabled).Tooltip("Use a hand-placed left grip instead of the style's")
+     .AddVec3("leftGripPosition", &HoldableObject::leftGrip, &HoldableObject::Grip::position).Range(-kBig, kBig, 0.01).Tooltip("Where the left hand holds, on the object")
+     .AddVec3("leftGripRotation", &HoldableObject::leftGrip, &HoldableObject::Grip::rotation).Range(-360, 360, 1).Tooltip("Left hand rotation in degrees")
+     .AddFloat("leftGripCurl", &HoldableObject::leftGrip, &HoldableObject::Grip::curl).Range(0, 1, 0.01).Tooltip("How far the left fingers close (0 = open, 1 = fist)")
+     .Section("Right hand grip")
+     .AddBool("rightGripEnabled", &HoldableObject::rightGrip, &HoldableObject::Grip::enabled).Tooltip("Use a hand-placed right grip instead of the style's")
+     .AddVec3("rightGripPosition", &HoldableObject::rightGrip, &HoldableObject::Grip::position).Range(-kBig, kBig, 0.01).Tooltip("Where the right hand holds, on the object")
+     .AddVec3("rightGripRotation", &HoldableObject::rightGrip, &HoldableObject::Grip::rotation).Range(-360, 360, 1).Tooltip("Right hand rotation in degrees")
+     .AddFloat("rightGripCurl", &HoldableObject::rightGrip, &HoldableObject::Grip::curl).Range(0, 1, 0.01).Tooltip("How far the right fingers close (0 = open, 1 = fist)");
+    b.Commit();
+}
+
+// LookAtIK (record "lookatik"). The bone chain, per-bone weights and eye bones are lists.
+void RegisterLookAtIK() {
+    PropertyBuilder<LookAtIK> b("LookAtIK", "lookatik", "Animation");
+    b.AddString("targetName", &LookAtIK::targetName).Tooltip("Object to look at, found by name (empty = the fixed point)")
+     .AddVec3("target", &LookAtIK::target).Range(-kBig, kBig, 0.1).Tooltip("World point to look at when there is no target object")
+     .AddBool("aimAtPoint", &LookAtIK::aimAtPoint).Tooltip("Look at the point (off = only the target object)")
+     .AddVec3("forwardAxis", &LookAtIK::forwardAxis).Range(-1, 1, 0.01).Tooltip("The bones' own forward axis")
+     .AddFloat("weight", &LookAtIK::weight).Range(0, 1, 0.01).Tooltip("0 = off, 1 = full look")
+     .AddFloat("maxAngle", &LookAtIK::maxAngle).Range(0, 180, 1).Tooltip("Largest turn per bone in degrees")
+     .AddFloat("smoothing", &LookAtIK::smoothing).Range(0, 1e4, 0.1).Tooltip("How quickly the look follows (0 = instant)")
+     .AddFloat("clampAngle", &LookAtIK::clampAngle).Range(0, 180, 1).Tooltip("Keep the look within this cone of the animated pose (0 = no limit)")
+     .AddFloat("eyeMaxAngle", &LookAtIK::eyeMaxAngle).Range(0, 180, 1).Tooltip("Largest eye turn in degrees")
+     .AddFloat("eyeWeight", &LookAtIK::eyeWeight).Range(0, 1, 0.01).Tooltip("How much the eyes lead")
+     .AddFloat("maxDistance", &LookAtIK::maxDistance).Range(0, kBig, 0.1).Tooltip("Stop looking beyond this distance (0 = no limit)")
+     .AddFloat("fadeDistance", &LookAtIK::fadeDistance).Range(0, kBig, 0.1).Tooltip("The look fades out over this last stretch before the limit");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2057,6 +2108,8 @@ void RegisterGameplayProperties() {
     RegisterVirtualCamera();
     RegisterCinemachineBrain();
     RegisterDollyPath();
+    RegisterHoldableObject();
+    RegisterLookAtIK();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

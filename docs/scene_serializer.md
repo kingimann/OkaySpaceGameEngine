@@ -74,6 +74,18 @@ page covers what an object round trip keeps.
   escaped). The key=value records read a line that ends inside a quote on to the next one until the quote closes, and so
   does the skipping of an unknown record, so a quest description typed over several lines no longer cuts its record in two.
   A quote that never closes (a damaged file) takes only its own line, as before.
+- **Settings of a feature that is switched off are kept.** MeshRenderer's `normalmap`, `aomap`, `shader` and `rim`
+  records are also written when a value differs from the default with the feature off (no map, the Standard shader,
+  rim strength 0), and an outline that is off but has its own width or colour gets an `outlineoff` record (the
+  `outline` record switches the outline on when it is read; an older build keeps `outlineoff` as an unknown record).
+  VehicleController's `vehiclesusp` carries its on/off flag and is written whenever the suspension is tuned. Before
+  this, Outline Width 0.4 with Outline off came back as 0.03 after a save, Ctrl+D or a prefab (Grok, issue #888;
+  test `switch_off_settings`). A plain component writes none of these records, as before.
+- **Colour alpha that is not saved:** MeshRenderer `emissive`, `outlineColor` and `rimColor`, `Light.ambientColor`,
+  `Flashlight.color` and the DayNightCycle colours are saved as RGB. No renderer reads the alpha of the MeshRenderer,
+  Light or Flashlight colours (checked by search), so it is not meaningful there. DayNightCycle passes its sky
+  colours to the camera background, where alpha would only matter for a transparent background; they are opaque by
+  default, and an alpha set there is not kept.
 - **Records this build does not know:** a field of an object (a component or a setting a newer build wrote) and a record at
   the top of the file are still skipped with a warning, and now also kept as text (`GameObject::unknownRecords`,
   `Scene::unknownRecords`) and written back by the next save, so opening a file with an older build and saving it does not

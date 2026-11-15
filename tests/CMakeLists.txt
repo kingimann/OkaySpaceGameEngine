@@ -3549,3 +3549,7 @@ add_test(NAME unequip_weight COMMAND test_unequip_weight)
 add_executable(test_inv_grid_script test_inv_grid_script.cpp)
 target_link_libraries(test_inv_grid_script PRIVATE okay::engine)
 add_test(NAME inv_grid_script COMMAND test_inv_grid_script)
+
+add_executable(test_item_cooldowns test_item_cooldowns.cpp)
+target_link_libraries(test_item_cooldowns PRIVATE okay::engine)
+add_test(NAME item_cooldowns COMMAND test_item_cooldowns)

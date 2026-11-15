@@ -2,6 +2,8 @@
 #include "StartupUpdate.hpp"
 #include "LauncherDemo.hpp"
 #include <string>
+#include <vector>
+#include <cstdlib>
 #include <cstdio>
 using namespace okay::startupupdate;
 
@@ -53,11 +55,32 @@ int main() {
     CHECK(FailureToast("") == "Could not check for updates (offline)");
     CHECK(FailureToast("The update to v2.9.0 failed 2 times, so it is not tried again automatically.") == "The update to v2.9.0 failed 2 times, so it is not tried again automatically.");
 
-    // Demo modes: all seven variables, nothing else.
-    for (const char* n : okay::kLauncherDemoEnv) { std::string want = n; CHECK(okay::IsLauncherDemoMode([&](const char* x) { return want == x; })); }
-    CHECK(!okay::IsLauncherDemoMode([](const char*) { return false; }));
-    CHECK(!okay::IsLauncherDemoMode([](const char* x) { return std::string(x) == "OKAY_UPDATE_ON_LAUNCH"; }));
-    { int n = 0; for (const char* e : okay::kLauncherDemoEnv) { (void)e; ++n; } CHECK(n == 7); }
+    // Demo modes: ANY OKAY_UI_DEMO_* or OKAY_*_DEMO* variable.
+    for (const char* n : {"OKAY_UI_DEMO_USER", "OKAY_UI_DEMO_TAB", "OKAY_UI_DEMO_ACVIEW", "OKAY_CHAT_DEMO", "OKAY_MP_DEMO", "OKAY_MP_DEMO_TAB",
+                          "OKAY_VOICE_DEMO", "OKAY_VOICE_DEMO_SERVER", "OKAY_UI_DEMO_UPDATE", "OKAY_OA_DEMO_FOLDER"})
+        CHECK(okay::IsLauncherDemoMode(std::vector<std::string>{"PATH", n}));
+    CHECK(!okay::IsLauncherDemoMode(std::vector<std::string>{}));
+    CHECK(!okay::IsLauncherDemoMode(std::vector<std::string>{"PATH", "HOME", "OKAY_UPDATE_ON_LAUNCH", "OKAY_UPDATE_SERVER", "MY_DEMO", "DEMO", "OKAY_DEMOLITION"}));
+    CHECK(!okay::IsLauncherDemoMode(std::vector<std::string>{"OKAY_UI_BACKEND"}));
+#ifndef _WIN32
+    { setenv("OKAY_ZZ_DEMO_TEST", "1", 1); CHECK(okay::IsLauncherDemoMode()); unsetenv("OKAY_ZZ_DEMO_TEST"); }   // the real environment is scanned
+#endif
+
+    // A stalled or endless download must give up (the locked screen needs an exit).
+    CHECK(!DownloadShouldAbort(0, 1000, 30000000));
+    CHECK(!DownloadShouldAbort(kDownloadStallMs - 1, 5000, 30000000));
+    CHECK(DownloadShouldAbort(kDownloadStallMs, 5000, 30000000));                       // no data for a minute
+    CHECK(DownloadCapMs(0) == kDownloadMinCapMs);
+    CHECK(DownloadCapMs(1000) == kDownloadMinCapMs);
+    CHECK(DownloadCapMs(100LL * 1024 * 1024) > kDownloadMinCapMs);                       // a big file gets more time
+    CHECK(!DownloadShouldAbort(0, DownloadCapMs(100LL * 1024 * 1024) - 1, 100LL * 1024 * 1024));
+    CHECK(DownloadShouldAbort(0, DownloadCapMs(100LL * 1024 * 1024), 100LL * 1024 * 1024));   // the hard cap, even while trickling
+    CHECK(DownloadShouldAbort(0, kDownloadMinCapMs, 0));
+
+    // Only a release that really failed counts toward "failed 2 times, so it is not tried again automatically".
+    CHECK(CountsTowardAutoRetry(FailKind::Release));
+    CHECK(!CountsTowardAutoRetry(FailKind::ProgramsRunning));
+    CHECK(!CountsTowardAutoRetry(FailKind::Network));
 
     std::printf(g_fail ? "startup_update: %d FAILED\n" : "startup_update: all passed\n", g_fail);
     return g_fail ? 1 : 0;

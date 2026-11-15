@@ -154,8 +154,7 @@ When the launcher opens it checks for updates, like Steam, and installs one befo
 (Settings > Behavior > "Check for updates when the launcher starts"). "On by default" means new installs and "Reset to defaults" only:
 the launcher has always written `update_on_launch=0/1` into `launcher.cfg`, so most existing installs already hold a saved 0 and keep it.
 Only a missing key means on. For developers, CI and screenshots, `OKAY_UPDATE_ON_LAUNCH=0` switches it off, and the demo modes
-(`okay::IsLauncherDemoMode()` in `shared/LauncherDemo.hpp`: `OKAY_UI_DEMO_USER`, `OKAY_UI_DEMO_TAB`, `OKAY_UI_DEMO_UPDATE`, `OKAY_CHAT_DEMO`,
-`OKAY_MP_DEMO`, `OKAY_VOICE_DEMO`, `OKAY_VOICE_DEMO_SERVER`) skip it so they work without a network.
+(`okay::IsLauncherDemoMode()` in `shared/LauncherDemo.hpp`: any variable named `OKAY_UI_DEMO_*` or `OKAY_*_DEMO*`) skip it so they work without a network.
 
 - A small centred panel replaces the launcher: "Checking for updates", then "Downloading 2 of 3", "Installing", "Restarting", with a
   progress bar. **Skip** shows only while it is just checking, never while an update is being installed.
@@ -166,6 +165,10 @@ Only a missing key means on. For developers, CI and screenshots, `OKAY_UPDATE_ON
   restart helper). While it runs the panel stays up (even past 8 seconds) and the editor and games cannot be started (a toast says why).
   If the person pressed Skip or the check ran long and an editor or game was started meanwhile, the update stops before replacing any file
   ("close them, then Retry") instead of swapping programs that are running.
+- A download that gets no data for 60 seconds (or runs past a hard cap of 10 minutes, more for a very large file) is given up: the update
+  fails with a plain reason and the usual Retry dialog, so the locked panel never stays for ever. curl also has its own speed limit. Neither a
+  stall nor "an editor or game was open" counts toward "failed 2 times, so it is not tried again automatically". Not run against a real
+  hung connection.
 - The restart cannot hang the screen: if the restart helper cannot start, the editor is open, or 12 seconds pass, the panel goes away,
   a toast says "Update installed. Close and reopen OkaySpace to finish." and the update dialog opens with "Restart now".
 - An install that fails opens the usual update dialog with the plain reason and Retry; the person can close it and carry on.

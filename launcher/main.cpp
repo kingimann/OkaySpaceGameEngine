@@ -355,8 +355,8 @@ bool Download(const std::string& url, const fs::path& out) {
     }
     // argv, not a shell string, so the output path is not re-parsed by cmd.exe.
     const std::vector<std::string> curl = {
-        "curl", "-L", "-s", "-f", "-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache",
-        "-o", outUtf, u};
+        "curl", "-L", "-s", "-f", "--connect-timeout", "30", "--speed-limit", "1024", "--speed-time", "60",   // (a stalled transfer ends by itself)
+        "-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache", "-o", outUtf, u};
     if (okay::restart::RunAndWait(curl) == 0 && fs::exists(out)) return true;
 #if defined(_WIN32)
     auto psQuote = [](const std::string& s) {
@@ -759,28 +759,44 @@ long long RemoteSize(const std::string& url) {
 // the growing output file, publishing byte progress into the update globals so
 // the dialog can show a live MB / percentage bar.
 struct DlMonitor { std::string url; fs::path out; SDL_atomic_t done; SDL_atomic_t ok; };
+static SDL_atomic_t g_dlStalled;   // the last DownloadProgress gave up because no data came (worker thread writes, StageFile reads)
 int DlMonitorThread(void* p) {
-    DlMonitor* d = (DlMonitor*)p;
+    std::shared_ptr<DlMonitor>* keep = (std::shared_ptr<DlMonitor>*)p;   // (the thread owns a share: it may outlive a download that was given up on)
+    DlMonitor* d = keep->get();
     bool r = Download(d->url, d->out);
     SDL_AtomicSet(&d->ok, r ? 1 : 0);
     SDL_AtomicSet(&d->done, 1);
+    delete keep;
     return 0;
 }
 bool DownloadProgress(const std::string& url, const fs::path& out) {
+    SDL_AtomicSet(&g_dlStalled, 0);
     SDL_AtomicSet(&g_upBytesNow, 0);
-    SDL_AtomicSet(&g_upBytesTotal, (int)std::min<long long>(RemoteSize(url), 0x7fffffffll));   // 0 if unknown; clamp for the progress bar
-    DlMonitor d; d.url = url; d.out = out;
-    SDL_AtomicSet(&d.done, 0); SDL_AtomicSet(&d.ok, 0);
-    SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", &d);
-    while (SDL_AtomicGet(&d.done) == 0) {
+    const long long total = std::min<long long>(RemoteSize(url), 0x7fffffffll);
+    SDL_AtomicSet(&g_upBytesTotal, (int)total);   // 0 if unknown; clamp for the progress bar
+    auto d = std::make_shared<DlMonitor>(); d->url = url; d->out = out;
+    SDL_AtomicSet(&d->done, 0); SDL_AtomicSet(&d->ok, 0);
+    SDL_Thread* th = SDL_CreateThread(DlMonitorThread, "okay-dlp", new std::shared_ptr<DlMonitor>(d));
+    const Uint32 t0 = okay::platform::TicksMs32();
+    Uint32 lastGrow = t0; long long lastSize = -1;
+    while (SDL_AtomicGet(&d->done) == 0) {
         std::error_code ec; auto sz = fs::file_size(out, ec);
-        SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
+        const long long cur = ec ? 0 : (long long)sz;
+        SDL_AtomicSet(&g_upBytesNow, (int)cur);
+        const Uint32 now = okay::platform::TicksMs32();
+        if (cur != lastSize) { lastSize = cur; lastGrow = now; }
+        if (okay::startupupdate::DownloadShouldAbort((long long)(Uint32)(now - lastGrow), (long long)(Uint32)(now - t0), total)) {
+            SDL_AtomicSet(&g_dlStalled, 1);
+            okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "download stalled, giving up: " + url);
+            SDL_DetachThread(th);   // the blocked transfer cannot be stopped from here; it ends on its own (curl has a speed limit) and frees itself
+            return false;
+        }
         okay::platform::DelayMs(90);
     }
     SDL_WaitThread(th, nullptr);
     std::error_code ec; auto sz = fs::file_size(out, ec);
     SDL_AtomicSet(&g_upBytesNow, ec ? 0 : (int)(long long)sz);
-    return SDL_AtomicGet(&d.ok) == 1;
+    return SDL_AtomicGet(&d->ok) == 1;
 }
 
 std::string g_upFailReason;   // why the last update did not install, in plain words (worker thread only; "" = no failure)
@@ -795,7 +811,8 @@ bool StageFile(const std::string& name, const std::string& url, const fs::path& 
     const okayupdater::Outcome o = okayupdater::Stage(name, url, dest, check,
         [&](const std::string& u, const fs::path& to, std::string& err) {
             const bool got = progress ? DownloadProgress(u, to) : Download(u, to);
-            if (!got) err = "the server could not be reached or the file was not found";
+            if (!got) err = SDL_AtomicGet(&g_dlStalled) ? std::string(okay::startupupdate::kDownloadStalledReason)
+                                                       : std::string("the server could not be reached or the file was not found");
             return got;
         });
     if (!o.ok) UpFail(o.reason);
@@ -1155,15 +1172,20 @@ int RunUpdateCheck(void*) {
     }
     // The editor or a game was started while this was downloading (the person pressed Skip, or the check ran long): replacing programs that
     // are running would fail half way. Stop with a plain reason; nothing has been replaced yet.
+    // g_upCommitting goes up BEFORE the check, and launches look at it: a program started after this point is refused, one started before is seen.
+    bool recordFailure = true;   // (a refusal because programs are open, or a stalled connection, is not the release's fault: it must not count toward "failed 2 times")
+    if (ok) SDL_AtomicSet(&g_upCommitting, 1);
     if (ok && SDL_AtomicGet(&g_programsRunning)) {
         UpFail("The editor or a game is running, and an update replaces those programs. Close them, then use Retry. Nothing was installed and your current version is unchanged.");
+        recordFailure = okay::startupupdate::CountsTowardAutoRetry(okay::startupupdate::FailKind::ProgramsRunning);
+        SDL_AtomicSet(&g_upCommitting, 0);
         ok = false;
     }
+    if (!ok && SDL_AtomicGet(&g_dlStalled)) recordFailure = okay::startupupdate::CountsTowardAutoRetry(okay::startupupdate::FailKind::Network);
     if (!ok) {
         for (const Item& it : items) okayupdater::Discard(it.dest);   // nothing was replaced: the install is as it was
     } else {
         SetUpMsg("Installing...");
-        SDL_AtomicSet(&g_upCommitting, 1);
         // The launcher goes first (the swap most likely to be refused: a security scanner holding the file) and the others only if it worked;
         // if any swap fails everything already swapped is put back, so the install stays whole (okayupdater::CommitAll).
         std::vector<okayupdater::CommitItem> order;
@@ -1201,7 +1223,7 @@ int RunUpdateCheck(void*) {
     } else {
         if (keptNow) okayversions::DiscardKept(dir, local);   // the copy only duplicates what is still running
         const std::string why = g_upFailReason.empty() ? std::string("The update did not install for an unknown reason. Your current version is unchanged.") : g_upFailReason;
-        if (newer) RecordSelfUpdate(local, latest, false, why);
+        if (newer && recordFailure) RecordSelfUpdate(local, latest, false, why);
         SetUpMsg("Update failed. " + why);
         SetUpStep("Update failed: nothing was changed", 0, kSteps);
         SetState(Up_Failed);
@@ -1264,7 +1286,6 @@ static void StartupUpdateBegin() {
 static void StartupUpdateFrame() {
     using namespace okay::startupupdate;
     g_suLocked = false;
-    SDL_AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);
     if (!g_suActive) return;
     const UpState us = GetState();
     ScreenInputs si;
@@ -1429,6 +1450,7 @@ static bool SpawnTracked(const std::string& exe, const std::string& args, const 
     pp.pid = pid;
 #endif
     g_playProcs.push_back(pp);
+    SDL_AtomicSet(&g_programsRunning, 1);   // seen at once by an update worker that is about to swap files
     return true;
 }
 // Once a second or so: credit running games, close out the ones that ended.
@@ -18178,6 +18200,7 @@ int main(int argc, char** argv) {
     bool running = true;
     bool closeConfirm = false;    // the [X] raises an Exit / Minimize confirm dialog
     while (running) {
+        SDL_AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);   // every frame, minimized or not (the update worker reads it before swapping files)
         bool okayFrame = false;   // this frame has an OkayUI frame open (the OkayUI backend is on): closed after ImGui's draw data
         Uint64 frameStart = okay::platform::PerfCounter();   // for the frame-rate cap below
         // Current account service for this frame. Held by reference so existing

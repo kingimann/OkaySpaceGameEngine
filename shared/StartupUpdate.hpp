@@ -96,6 +96,25 @@ inline std::string FailureToast(const std::string& upMsg) {
     return upMsg;
 }
 
+// ---- A download that stops getting data must not hold the locked screen for ever ----
+inline constexpr long long kDownloadStallMs = 60 * 1000;           // no new bytes for this long = stalled
+inline constexpr long long kDownloadMinCapMs = 10 * 60 * 1000;     // the hard cap is at least this ...
+inline constexpr long long kDownloadSlowestBytesPerSec = 20 * 1024; // ... and allows a connection this slow for the whole file
+
+inline long long DownloadCapMs(long long totalBytes) {
+    const long long bySize = totalBytes > 0 ? totalBytes * 1000 / kDownloadSlowestBytesPerSec : 0;
+    return bySize > kDownloadMinCapMs ? bySize : kDownloadMinCapMs;
+}
+// Give up on the download now? (`sinceProgressMs`: since the file last grew; `elapsedMs`: since it started; `totalBytes` 0 = unknown.)
+inline bool DownloadShouldAbort(long long sinceProgressMs, long long elapsedMs, long long totalBytes) {
+    return sinceProgressMs >= kDownloadStallMs || elapsedMs >= DownloadCapMs(totalBytes);
+}
+inline constexpr const char* kDownloadStalledReason = "The download stopped (no data for a minute), so the update was not installed and your current version is unchanged. Check your connection, then use Retry.";
+
+// ---- Which failures count toward "failed 2 times, so it is not tried again automatically" ----
+enum class FailKind { Release, ProgramsRunning, Network };   // the release itself did not install / the person had the editor or a game open / the connection stalled
+inline bool CountsTowardAutoRetry(FailKind k) { return k == FailKind::Release; }
+
 inline constexpr const char* kRestartGaveUpText = "Update installed. Close and reopen OkaySpace to finish.";
 
 } // namespace okay::startupupdate

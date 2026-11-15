@@ -16,6 +16,7 @@
 #include <random>
 
 #include "AntiCheatIntegrity.hpp"
+#include "okay/Crypto/Sha256.hpp"   // HMAC-SHA256 (the engine's one copy)
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -173,22 +174,10 @@ struct ClockResponse {
 
 namespace detail {
 inline std::array<std::uint8_t, 32> HmacSha256(const std::string& key, const std::string& msg) {
-    using okay::account::detail::Sha256;
-    std::array<std::uint8_t, 64> k{};
-    if (key.size() > 64) {
-        Sha256 h; h.Update(key);
-        const auto d = h.Digest();
-        std::copy(d.begin(), d.end(), k.begin());
-    } else {
-        std::copy(key.begin(), key.end(), k.begin());
-    }
-    std::array<std::uint8_t, 64> ipad{}, opad{};
-    for (int i = 0; i < 64; ++i) { ipad[i] = k[i] ^ 0x36; opad[i] = k[i] ^ 0x5c; }
-    Sha256 in; in.Update(ipad.data(), ipad.size()); in.Update(msg);
-    const auto inner = in.Digest();
-    Sha256 out; out.Update(opad.data(), opad.size()); out.Update(inner.data(), inner.size());
-    Wipe(k.data(), k.size());
-    return out.Digest();
+    std::array<std::uint8_t, 32> out{};
+    okay::crypto::HmacSha256Mac(out.data(), reinterpret_cast<const std::uint8_t*>(key.data()), key.size(),
+                                reinterpret_cast<const std::uint8_t*>(msg.data()), msg.size());
+    return out;
 }
 inline std::string ClockTag(const std::string& key, std::uint64_t nonce, std::uint32_t seq, std::uint64_t clientMs) {
     const auto d = HmacSha256(key, "okayac-clock|" + std::to_string(nonce) + "|" + std::to_string(seq) + "|" + std::to_string(clientMs));

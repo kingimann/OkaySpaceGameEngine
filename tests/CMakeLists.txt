@@ -3559,3 +3559,15 @@ add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
+
+# The editor's main menu bar and the Hierarchy menus as data (editor/MenuBarModel.hpp, editor/HierarchyContextModel.hpp; no ImGui, header-only):
+# the menu order, nothing listed twice, every greyed-out item says why, shortcuts that work, plural labels, and that every item of the old menus still has a home.
+# (They also read editor/*.cpp to check that every menu id has a handler there: OKAY_SOURCE_DIR.)
+add_executable(test_menu_bar_model test_menu_bar_model.cpp)
+target_include_directories(test_menu_bar_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_menu_bar_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME menu_bar_model COMMAND test_menu_bar_model)
+add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
+target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)

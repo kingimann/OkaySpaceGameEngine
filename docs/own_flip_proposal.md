@@ -420,7 +420,7 @@ All switches are environment variables set before starting a program. How (Windo
 
 **Gaps to close (all in Step 0):** no sample for 32 of the 35 reader switches (only OFF, 3DS and COLLADA have one); no way to tell that the 16
 newest readers or WAV are on; no run-time switch for STL and PLY; no import log line for any reader. The same table in short form is in
-`docs/try_it.md`, section 14.
+`docs/try_it.md`, section 7n.
 
 ## 6. Claims I found wrong or out of date
 

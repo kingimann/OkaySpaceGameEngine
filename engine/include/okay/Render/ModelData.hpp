@@ -8,7 +8,7 @@
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
-//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO) are
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS / MOT) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -305,6 +305,22 @@ bool ReadHmpBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// and the motion as one clip ("csm") with a position key per frame and marker, at the file's $Rate. No mesh. Units are kept as
 /// written; the root node turns Z-up into Y-up.
 bool ReadCsmBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// PMX 2.0 / 2.1 (MikuMikuDance model, binary; UTF-16LE or UTF-8 text; index sizes of 1, 2 or 4 bytes): one skinned part per
+/// material (vertices welded, BDEF1 / BDEF2 / BDEF4 / SDEF as two-bone blend / QDEF weights as the four strongest, z mirrored and the
+/// winding reversed because the file is left-handed), the diffuse colour, alpha, specular power and diffuse texture of each material (the
+/// texture only when its path stays inside `baseDir`), and the bones as nodes (positions only) with their inverse bind matrices. Morphs are
+/// walked and checked but not imported; IK, inherit rules, display frames, rigid bodies, joints and soft bodies are not read (reported in
+/// `out.notes`). Per-file budgets on vertices, triangles, bones, morphs, materials and textures. `baseDir` ends with a slash or is empty.
+bool ReadPmxBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// LightWave scene (.lws, "LWSC" text, versions 1 to 6) and LightWave motion (.mot, "LWMO"): every object item (LoadObject /
+/// LoadObjectLayer / AddNullObject), camera, light and bone becomes a node (parents by ParentItem), the position, heading / pitch / bank and
+/// scale envelopes (channels 0 to 8) become one clip "scene" with keys at the file's own key times (seconds); the node's rest pose is the
+/// envelope value at time 0. Object files are read through `loader` (a path already joined to the scene's folder with
+/// ResolveInsideDir: absolute paths, "..", and links that leave the folder are refused; a scene may not name another scene); without a loader the
+/// objects are empty nodes. A .mot alone gives one node and one clip. Coordinates are left-handed: z is mirrored like in the LWO reader.
+/// Envelope shapes other than linear, pre / post behaviours, plugins, lighting values and render settings are not read (reported in `out.notes`).
+bool ReadLwsBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
+                   const IrrMeshLoader* loader = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -343,6 +359,9 @@ bool ReadQ3dBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
 bool ReadRawFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadRawBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+bool ReadPmxFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// `path` is a .lws scene or a .mot motion file.
+bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

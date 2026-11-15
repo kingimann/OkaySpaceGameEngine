@@ -73,6 +73,8 @@ option(OKAY_OWN_CSM      "Read .csm (Character Studio motion capture) with our o
 option(OKAY_OWN_TER      "Read .ter (Terragen terrain) with our own Terragen reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_TER=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_Q3D      "Read .q3o / .q3s (Quick3D) with our own Q3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3D=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_RAW      "Read .raw (plain triangle text) with our own RAW reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_RAW=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_PMX      "Read .pmx (MikuMikuDance models) with our own PMX reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_PMX=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_LWS      "Read .lws / .mot (LightWave scenes and motions) with our own LWS reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_LWS=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 

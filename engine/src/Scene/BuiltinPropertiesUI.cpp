@@ -44,6 +44,7 @@
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/CraftingMenu.hpp"
 #include "okay/Components/InventoryUI.hpp"
+#include "okay/Components/GridInventoryUI.hpp"
 #include "okay/Math/Easing.hpp"
 
 namespace okay {
@@ -821,6 +822,58 @@ void RegisterInventoryUI() {
     b.Commit();
 }
 
+// GridInventoryUI (record "gridinventoryui"). The rarity rules are a list; the
+// drag state and scroll are play state.
+void RegisterGridInventoryUI() {
+    PropertyBuilder<GridInventoryUI> b("GridInventoryUI", "gridinventoryui", "UI");
+    b.Section("Grid")
+     .AddFloat("cellSize", &GridInventoryUI::cellSize).Range(1, 1e3, 1).Tooltip("Cell size in pixels")
+     .AddFloat("gap", &GridInventoryUI::gap).Range(0, 1e3, 1).Tooltip("Pixels between cells")
+     .AddFloat("cornerRadius", &GridInventoryUI::cornerRadius).Range(0, 1e3, 0.5).Tooltip("Corner radius")
+     .AddString("iconFolder", &GridInventoryUI::iconFolder).Tooltip("Folder of <item>.png icons")
+     .AddBool("darkenWhenOpen", &GridInventoryUI::darkenWhenOpen).Tooltip("Darken the game while it is open")
+     .AddBool("showWeight", &GridInventoryUI::showWeight).Tooltip("Show the carried weight")
+     .AddBool("showTooltips", &GridInventoryUI::showTooltips).Tooltip("Hovering an item shows its name, size and weight")
+     .AddKey("rotateKey", &GridInventoryUI::rotateKey).Tooltip("While dragging, turns the item 90 degrees (0 = off)")
+     .AddBool("showItemNames", &GridInventoryUI::showItemNames).Tooltip("Draw the item name on each tile")
+     .AddFloat("itemNameScale", &GridInventoryUI::itemNameScale).Range(0.1, 20, 0.05).Tooltip("Item name text size")
+     .Section("Containers")
+     .AddBool("multiContainer", &GridInventoryUI::multiContainer).Tooltip("Show nearby ground containers in a second column")
+     .AddFloat("nearbyRange", &GridInventoryUI::nearbyRange).Range(0, 1e5, 0.1).Tooltip("How far to look for nearby containers")
+     .AddString("nearbyTitle", &GridInventoryUI::nearbyTitle).Tooltip("Header above the nearby column")
+     .AddFloat("columnGap", &GridInventoryUI::columnGap).Range(0, 1e4, 1).Tooltip("Gap between the columns")
+     .AddFloat("panelPad", &GridInventoryUI::panelPad).Range(0, 1e4, 1).Tooltip("Padding inside each column's panel")
+     .AddFloat("containerGap", &GridInventoryUI::containerGap).Range(0, 1e4, 1).Tooltip("Gap between stacked containers")
+     .AddFloat("headerHeight", &GridInventoryUI::headerHeight).Range(0, 1e4, 1).Tooltip("Height of each container's header")
+     .AddBool("showMasterTitle", &GridInventoryUI::showMasterTitle).Tooltip("Show the big title above the bags")
+     .AddString("masterTitle", &GridInventoryUI::masterTitle).Tooltip("Big title text")
+     .AddFloat("titleScale", &GridInventoryUI::titleScale).Range(0.1, 20, 0.05).Tooltip("Big title text size")
+     .Section("Style")
+     .AddFloat("backdropDim", &GridInventoryUI::backdropDim).Range(0, 1, 0.01).Tooltip("How dark the backdrop is")
+     .AddBool("useGradients", &GridInventoryUI::useGradients).Tooltip("Soft gradients on panels and tiles")
+     .AddBool("dropShadows", &GridInventoryUI::dropShadows).Tooltip("Shadows behind panels and the carried item")
+     .AddBool("accentBars", &GridInventoryUI::accentBars).Tooltip("Coloured accent stripes on headers and tiles")
+     .AddBool("autoAccent", &GridInventoryUI::autoAccent).Tooltip("Pick each accent from the name (off = the accent colour)")
+     .Section("Colours")
+     .AddColor("panelColor", &GridInventoryUI::panelColor).Range(0, 1, 0.01).Tooltip("Panel colour")
+     .AddColor("cellColor", &GridInventoryUI::cellColor).Range(0, 1, 0.01).Tooltip("Cell colour")
+     .AddColor("itemColor", &GridInventoryUI::itemColor).Range(0, 1, 0.01).Tooltip("Item tile colour")
+     .AddColor("itemBorder", &GridInventoryUI::itemBorder).Range(0, 1, 0.01).Tooltip("Item tile border")
+     .AddColor("textColor", &GridInventoryUI::textColor).Range(0, 1, 0.01).Tooltip("Text colour")
+     .AddColor("titleBar", &GridInventoryUI::titleBar).Range(0, 1, 0.01).Tooltip("Title strip colour")
+     .AddColor("hoverColor", &GridInventoryUI::hoverColor).Range(0, 1, 0.01).Tooltip("Tint over the hovered item")
+     .AddColor("dropOk", &GridInventoryUI::dropOk).Range(0, 1, 0.01).Tooltip("Drop target colour when the item fits")
+     .AddColor("dropBad", &GridInventoryUI::dropBad).Range(0, 1, 0.01).Tooltip("Drop target colour when it is blocked")
+     .AddColor("tooltipColor", &GridInventoryUI::tooltipColor).Range(0, 1, 0.01).Tooltip("Tooltip background")
+     .AddColor("tooltipText", &GridInventoryUI::tooltipText).Range(0, 1, 0.01).Tooltip("Tooltip text colour")
+     .AddColor("overweightColor", &GridInventoryUI::overweightColor).Range(0, 1, 0.01).Tooltip("Weight text colour when over the limit")
+     .AddColor("accentColor", &GridInventoryUI::accentColor).Range(0, 1, 0.01).Tooltip("Fixed accent colour")
+     .AddColor("headerColor", &GridInventoryUI::headerColor).Range(0, 1, 0.01).Tooltip("Container header colour")
+     .AddColor("weightGood", &GridInventoryUI::weightGood).Range(0, 1, 0.01).Tooltip("Weight bar colour well under the limit")
+     .AddColor("weightWarn", &GridInventoryUI::weightWarn).Range(0, 1, 0.01).Tooltip("Weight bar colour near the limit");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -1104,6 +1157,7 @@ void RegisterUIProperties() {
     RegisterUIAnimation();
     RegisterCraftingMenu();
     RegisterInventoryUI();
+    RegisterGridInventoryUI();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

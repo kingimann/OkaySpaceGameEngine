@@ -265,12 +265,17 @@ add_library(okay_engine
     src/Render/XglReader.cpp
     src/Render/IrrSceneReader.cpp
     src/Render/NffReader.cpp
+    src/Render/IqmReader.cpp
+    src/Render/CobReader.cpp
+    src/Render/NdoReader.cpp
     src/Render/TerragenReader.cpp
     src/Render/MdcReader.cpp
     src/Render/HmpReader.cpp
     src/Render/CsmReader.cpp
     src/Render/Q3dReader.cpp
     src/Render/RawReader.cpp
+    src/Render/PmxReader.cpp
+    src/Render/LwsReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -650,7 +655,7 @@ foreach(_fmt 3MF AMF X3D DXF LWO)
     endif()
 endforeach()
 
-# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C), AC3D / OGRE / XGL / IRR / NFF (batch D), Terragen and MDC / HMP / CSM / Q3D / RAW (batch E), same opt-in rules as 3DS: default OFF.
+# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C), AC3D / OGRE / XGL / IRR / NFF (batch D), Terragen and MDC / HMP / CSM / Q3D / RAW (batch E) IQM / COB / NDO (batch E3) and PMX / LWS (batch E5), same opt-in rules as 3DS: default OFF.
 # Guard: every model reader option the root CMakeLists.txt declares ("Read .xyz ... with our own ...") must be in a
 # foreach(_fmt ...) list of this file (or have a literal OKAY_OWN_<FMT>_DEFAULT definition), or its default is silently never
 # defined (a merge once dropped Terragen from this loop that way). Add a new reader's name to the literal list below.
@@ -670,7 +675,7 @@ foreach(_line IN LISTS _okay_own_opts)
         message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no foreach(_fmt ...) list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
     endif()
 endforeach()
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW)
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB NDO PMX LWS)
     if(OKAY_OWN_${_fmt})
         target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")

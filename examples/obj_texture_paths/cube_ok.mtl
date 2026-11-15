@@ -1,0 +1,3 @@
+newmtl m
+Kd 1 1 1
+map_Kd grid.png

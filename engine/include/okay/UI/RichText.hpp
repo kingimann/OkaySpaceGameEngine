@@ -16,6 +16,10 @@
 // The parser has no drawing or font code, so tools and tests use it directly. The text is laid out
 // without the tags (wrapping, alignment, typing effect all see the plain text); each visible
 // character (not a space or line break) carries one style.
+//
+// Line height: a line is as tall as the largest [size] on it (RichLineScales, RichLineAdvance), so a big run pushes
+// the lines below it down instead of overlapping the line above, and a run smaller than the rest sits on the line's
+// bottom. The width of a line is still measured at the text's own size (wrapping and centring ignore [size]).
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -153,6 +157,34 @@ inline std::string StripRichText(const std::string& marked) {
     return ParseRichText(marked).plain;
 }
 
+/// How tall each line of `plain` is, as a scale of the text's own size: the largest [size] of any glyph on the line, so a
+/// line with a big run is as tall as that run and the line below it starts under it (1 for a line with no glyph, a smaller
+/// run on a line of its own makes the line smaller). `plain` is the text as drawn (tags gone, possibly cut or wrapped);
+/// `styles` is one entry per visible character, like RichText::styles. One entry per line (the count of '\n' plus one).
+inline std::vector<float> RichLineScales(const std::string& plain, const std::vector<RichStyle>& styles) {
+    std::vector<float> out;
+    std::size_t glyph = 0;
+    float best = 0.0f;   // 0: no glyph on this line yet
+    for (std::size_t i = 0; i < plain.size(); ++i) {
+        const char c = plain[i];
+        if (c == '\n') { out.push_back(best > 0.0f ? best : 1.0f); best = 0.0f; continue; }
+        if (c == ' ' || c == '\t' || ((unsigned char)c & 0xC0) == 0x80) continue;   // no glyph of its own
+        const float s = glyph < styles.size() && styles[glyph].size > 0.0f ? styles[glyph].size : 1.0f;
+        ++glyph;
+        if (s > best) best = s;
+    }
+    out.push_back(best > 0.0f ? best : 1.0f);
+    return out;
+}
+
+/// How far the next line starts below the top of a line whose largest glyph is `scale` times the text's size.
+/// `advance` is the plain advance between two lines at size 1 and `spacing` the part of it that is the Line Spacing
+/// setting (the same unit for both): the glyphs and the gap between lines grow with the size, the spacing does not.
+/// At scale 1 it returns `advance` exactly, so text without a [size] tag lays out as it always did.
+inline float RichLineAdvance(float advance, float spacing, float scale) {
+    return scale == 1.0f ? advance : (advance - spacing) * scale + spacing;
+}
+
 /// A piece of one line of rich text drawn in one style. A space joins the run it sits in.
 struct RichRun {
     int line = 0;          ///< 0 for the first line
@@ -160,6 +192,8 @@ struct RichRun {
     RichStyle style;
     std::string before;    ///< for the first run of a line, the text of the line before it (leading spaces); empty for the
                            ///< others, which start where the run before them ends
+    float lineScale = 1.0f; ///< the size of the largest glyph on the run's line (RichLineScales): the line is that tall, and a
+                            ///< run of a smaller size sits on the line's bottom
 };
 
 /// Split rich text into runs of one style, line by line, so a host without its own rich-text drawing (the
@@ -169,6 +203,7 @@ inline std::vector<RichRun> RichTextRuns(const RichText& rt) {
     std::size_t glyph = 0, lineStart = 0;
     int line = 0;
     const std::string& disp = rt.plain;
+    const std::vector<float> scales = RichLineScales(disp, rt.styles);
     while (lineStart <= disp.size()) {
         std::size_t lineEnd = disp.find('\n', lineStart);
         if (lineEnd == std::string::npos) lineEnd = disp.size();
@@ -179,7 +214,8 @@ inline std::vector<RichRun> RichTextRuns(const RichText& rt) {
         auto flush = [&](std::size_t end) {
             if (!have || end <= runStart) return;
             const bool first = out.empty() || out.back().line != line;   // only the first run copies what is before it
-            out.push_back(RichRun{line, ln.substr(runStart, end - runStart), runStyle, first ? ln.substr(0, runStart) : std::string()});
+            out.push_back(RichRun{line, ln.substr(runStart, end - runStart), runStyle, first ? ln.substr(0, runStart) : std::string(),
+                                  (std::size_t)line < scales.size() ? scales[(std::size_t)line] : 1.0f});
         };
         for (std::size_t i = 0; i < ln.size(); ++i) {
             const char c = ln[i];

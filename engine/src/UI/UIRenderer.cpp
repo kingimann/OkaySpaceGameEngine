@@ -667,7 +667,9 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
 
 // Rich text: draw `disp` (already free of tags) in runs, each in the colour and weight its characters
 // carry in `styles` (one per visible character, in order). Each run is placed by measuring the text before
-// it on its line, so any font lines up; the lines advance like DrawUIText's.
+// it on its line, so any font lines up. The lines advance like DrawUIText's, except that a line is as tall as the
+// largest [size] on it (RichLineScales): the line below starts under the big run instead of the big run climbing over
+// the line above, and a smaller run sits on its line's bottom. (oy is the top of the first line.)
 void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,
                   float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,
                   bool bold, float boldOff, TtfFont* ttf) {
@@ -678,9 +680,13 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
     const float adv = (sized && sized->Valid())
                           ? sized->LineHeight(sized->BakeHeight()) * (logicalH / sized->BakeHeight()) + lineSp * px
                           : (Font8x8::Height + 1 + lineSp) * px;
-    std::size_t glyph = 0, lineStart = 0;
+    (void)boldOff;   // bold is drawn by DrawUIText itself; kept so every caller states the weight offset it draws with
+    const std::vector<float> lineScale = okay::RichLineScales(disp, styles);
+    std::size_t glyph = 0, lineStart = 0, lineNo = 0;
     float y = oy;
     while (lineStart <= disp.size()) {
+        const float S = lineNo < lineScale.size() ? lineScale[lineNo] : 1.0f;   // the largest size on this line
+        ++lineNo;
         std::size_t lineEnd = disp.find('\n', lineStart);
         if (lineEnd == std::string::npos) lineEnd = disp.size();
         const std::string line = disp.substr(lineStart, lineEnd - lineStart);
@@ -703,8 +709,8 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
             RGBA col = base;
             if (runStyle.hasColor) col = RGBA{runStyle.r, runStyle.g, runStyle.b, (std::uint8_t)(runStyle.a * base.a / 255)};
             const bool it = italic || runStyle.italic;
-            // A bigger or smaller run sits on the same bottom line as the rest of the line.
-            const float ry = y + (1.0f - s) * (float)Font8x8::Height * px;
+            // Every run sits on the bottom of its line: the line is as tall as its largest run (S), a smaller run starts lower.
+            const float ry = y + (S - s) * (float)Font8x8::Height * px;
             DrawUIText(r, run, cx, ry, rpx, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
             cx += UITextW(run, rpx) + letterSp * rpx * (float)okay::utf8::Length(run);
             cxAt = end;
@@ -719,7 +725,7 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
             else if (!(st == runStyle)) { flush(at); runStart = at; runStyle = st; }
         }
         flush(line.size());
-        y += adv;
+        y += okay::RichLineAdvance(adv, lineSp * px, S);
         if (lineEnd >= disp.size()) break;
         lineStart = lineEnd + 1;
     }

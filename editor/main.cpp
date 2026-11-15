@@ -42176,14 +42176,17 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         okay::TtfFont* fnt = tr->Font();
         if (tr->richText && okay::RichTextHasTags(tr->text)) {
             // Rich text (colour, bold, italic, size tags): each run in its own style, placed one after the other,
-            // as the player draws it (ui2d::DrawWorldText). The 8x8 line advance; sized runs share the bottom line.
+            // as the player draws it (ui2d::DrawWorldText). The 8x8 line advance; a line is as tall as the largest
+            // size on it, and every run sits on its line's bottom (okay::RichLineScales).
             const okay::RichText rt = okay::ParseRichText(tr->text);
-            const float lineAdv = (8.0f + 1.0f) * px;
+            const std::vector<float> lineScale = okay::RichLineScales(rt.plain, rt.styles);
+            std::vector<float> lineTop(lineScale.size() + 1, 0.0f);   // the top of each line below the text's top, in screen px
+            for (std::size_t k = 0; k < lineScale.size(); ++k) lineTop[k + 1] = lineTop[k] + okay::RichLineAdvance((8.0f + 1.0f) * px, 0.0f, lineScale[k]);
             int curLine = -1; float cx = o.x;
             for (const okay::RichRun& run : okay::RichTextRuns(rt)) {
                 if (run.line != curLine) { curLine = run.line; cx = o.x + ui2d::UITextW(run.before, px); }
                 const float s = run.style.size > 0.0f ? run.style.size : 1.0f, rpx = px * s;
-                const float ry = o.y + (float)run.line * lineAdv + (1.0f - s) * 8.0f * px;
+                const float ry = o.y + lineTop[(std::size_t)run.line] + (run.lineScale - s) * 8.0f * px;
                 ImU32 rc = col;
                 if (run.style.hasColor) rc = IM_COL32(run.style.r, run.style.g, run.style.b, (int)(run.style.a * tr->color.a));
                 const bool it = tr->italic || run.style.italic;

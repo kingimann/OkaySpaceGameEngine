@@ -20,6 +20,7 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/NPCController.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/SplineMesh.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
@@ -1797,6 +1798,56 @@ void RegisterSplineInstancer() {
     b.Commit();
 }
 
+// NPCController (record "npc"). The waypoints are a list (npcwp records); health
+// is play state.
+void RegisterNPCController() {
+    PropertyBuilder<NPCController> b("NPCController", "npc", "Gameplay");
+    b.AddEnum("behavior", &NPCController::behavior, {"Idle", "Wander", "Follow", "Flee", "Chase", "Patrol", "Guard"}).Tooltip("What the NPC does")
+     .AddString("targetName", &NPCController::targetName).Tooltip("Object it follows, flees or chases, by name")
+     .Section("Movement")
+     .AddFloat("moveSpeed", &NPCController::moveSpeed).Range(0, kBig, 0.1).Tooltip("Walk speed (wander, patrol, follow)")
+     .AddFloat("runSpeed", &NPCController::runSpeed).Range(0, kBig, 0.1).Tooltip("Run speed (chase, flee, search)")
+     .AddFloat("turnSpeed", &NPCController::turnSpeed).Range(-1, 1e5, 1).Tooltip("Turn rate in degrees per second (0 or less = instant)")
+     .AddFloat("acceleration", &NPCController::acceleration).Range(-1, kBig, 0.1).Tooltip("How quickly it reaches its speed (0 or less = instant)")
+     .AddFloat("stopDistance", &NPCController::stopDistance).Range(0, kBig, 0.05).Tooltip("Extra distance added when arriving")
+     .AddBool("faceMovement", &NPCController::faceMovement).Tooltip("Turn to face the direction of travel")
+     .AddBool("usePathfinding", &NPCController::usePathfinding).Tooltip("Route around obstacles (NavMesh when baked, else a grid)")
+     .AddFloat("repathInterval", &NPCController::repathInterval).Range(0, 1e4, 0.05).Tooltip("Seconds between route updates")
+     .Section("Senses")
+     .AddFloat("sightRange", &NPCController::sightRange).Range(0, kBig, 0.1).Tooltip("How far it can see the target")
+     .AddFloat("fieldOfView", &NPCController::fieldOfView).Range(0, 360, 1).Tooltip("Vision cone width in degrees")
+     .AddBool("lineOfSight", &NPCController::lineOfSight).Tooltip("Walls block its sight")
+     .AddFloat("eyeHeight", &NPCController::eyeHeight).Range(-kBig, kBig, 0.05).Tooltip("Eye height for the sight ray")
+     .AddFloat("hearingRange", &NPCController::hearingRange).Range(0, kBig, 0.1).Tooltip("Hears the target within this distance (0 = deaf)")
+     .AddFloat("detectionTime", &NPCController::detectionTime).Range(0, 1e4, 0.05).Tooltip("Seconds of sight before it reacts (0 = at once)")
+     .AddFloat("loseSightTime", &NPCController::loseSightTime).Range(0, 1e4, 0.1).Tooltip("Keep hunting this long after losing sight")
+     .AddFloat("searchTime", &NPCController::searchTime).Range(0, 1e4, 0.1).Tooltip("Seconds spent searching the last seen spot")
+     .Section("Temper")
+     .AddBool("aggressive", &NPCController::aggressive).Tooltip("Chase a target it notices")
+     .AddBool("provokable", &NPCController::provokable).Tooltip("Turn hostile after taking damage")
+     .AddBool("returnsHome", &NPCController::returnsHome).Tooltip("Walk back to its start after losing the target")
+     .AddFloat("leashRange", &NPCController::leashRange).Range(0, kBig, 0.5).Tooltip("Give up a chase this far from home (0 = no limit)")
+     .Section("Wander and patrol")
+     .AddFloat("wanderRadius", &NPCController::wanderRadius).Range(0, kBig, 0.1).Tooltip("How far it roams from its start")
+     .AddFloat("wanderPause", &NPCController::wanderPause).Range(0, 1e4, 0.1).Tooltip("Seconds it pauses at each wander point")
+     .AddBool("patrolLoop", &NPCController::patrolLoop).Tooltip("Loop the waypoints (off = back and forth)")
+     .AddFloat("waypointWait", &NPCController::waypointWait).Range(0, 1e4, 0.1).Tooltip("Seconds it waits at each waypoint")
+     .Section("Combat")
+     .AddFloat("attackRange", &NPCController::attackRange).Range(0, kBig, 0.05).Tooltip("Distance it attacks from")
+     .AddFloat("attackDamage", &NPCController::attackDamage).Range(0, kBig, 0.5).Tooltip("Health taken per hit")
+     .AddFloat("attackInterval", &NPCController::attackInterval).Range(0, 1e4, 0.05).Tooltip("Seconds between hits")
+     .AddFloat("attackWindup", &NPCController::attackWindup).Range(0, 1e4, 0.05).Tooltip("Warning delay before a hit lands (0 = at once)")
+     .AddFloat("fleeHealthPct", &NPCController::fleeHealthPct).Range(0, 1, 0.01).Tooltip("Flee when health falls to this part of the maximum (0 = never)")
+     .AddFloat("separationRadius", &NPCController::separationRadius).Range(0, kBig, 0.05).Tooltip("Keep this far from other NPCs (0 = off)")
+     .AddFloat("maxHealth", &NPCController::maxHealth).Range(0, kBig, 1).Tooltip("Full health")
+     .AddBool("invulnerable", &NPCController::invulnerable).Tooltip("Takes no damage")
+     .Section("Animation")
+     .AddBool("driveAnimation", &NPCController::driveAnimation).Tooltip("Set the Character's idle, walk and run from movement")
+     .AddBool("lookAtTarget", &NPCController::lookAtTarget).Tooltip("Turn its head to the target while alert")
+     .AddBool("footIK", &NPCController::footIK).Tooltip("Plant the Character's feet on the ground");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2445,6 +2496,7 @@ void RegisterGameplayProperties() {
     RegisterBehaviorTreeRunner();
     RegisterSplineMesh();
     RegisterSplineInstancer();
+    RegisterNPCController();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

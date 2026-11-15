@@ -45,6 +45,12 @@ v2.871.0
   - The OkayUI toolkit gets its script editor; it is off by default.
   - A new internet client of our own is built but off by default; the game
     still uses the old one.
+  - Room and cave reverb now uses our own code instead of a borrowed design.
+    It is tuned to be about as loud as before (within about 1 dB), but we
+    have only measured it, not listened to it, so it may sound a little
+    different.
+  - Release builds now refuse to be made without the libsodium crypto
+    library, so our own crypto code can never be shipped by accident.
   - Fixed a timing check that failed on busy build servers.
 
 v2.870.0

@@ -386,7 +386,7 @@ static void TestRegistryBasics() {
         "IKTarget", "NetValidator", "DialogueRunner", "LogicTarget",
         "LogicSource", "QuestLog", "Saveable", "SpriteAnimator",
         "VirtualCamera", "CinemachineBrain", "DollyPath", "Minimap",
-        "HoldableObject", "LookAtIK"};
+        "HoldableObject", "LookAtIK", "FootIK"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

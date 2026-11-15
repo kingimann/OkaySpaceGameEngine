@@ -18,6 +18,7 @@
 #include "okay/Components/IKTarget.hpp"
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/LookAtIK.hpp"
+#include "okay/Components/FootIK.hpp"
 #include "okay/Components/NetValidator.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/LogicLinks.hpp"
@@ -1479,6 +1480,47 @@ void RegisterLookAtIK() {
     b.Commit();
 }
 
+// FootIK (record "footik"). The hip and knee limits are nested limit structs and
+// groundMask is an unsigned layer mask; neither is a property yet.
+void RegisterFootIK() {
+    PropertyBuilder<FootIK> b("FootIK", "footik", "Animation");
+    b.Section("Bones")
+     .AddString("leftHipName", &FootIK::leftHipName).Tooltip("Left hip bone, by name")
+     .AddString("leftKneeName", &FootIK::leftKneeName).Tooltip("Left knee bone, by name")
+     .AddString("leftFootName", &FootIK::leftFootName).Tooltip("Left foot bone, by name")
+     .AddString("rightHipName", &FootIK::rightHipName).Tooltip("Right hip bone, by name")
+     .AddString("rightKneeName", &FootIK::rightKneeName).Tooltip("Right knee bone, by name")
+     .AddString("rightFootName", &FootIK::rightFootName).Tooltip("Right foot bone, by name")
+     .AddString("pelvisName", &FootIK::pelvisName).Tooltip("Pelvis bone, by name")
+     .Section("Planting")
+     .AddFloat("weight", &FootIK::weight).Range(0, 1, 0.01).Tooltip("0 = pure animation, 1 = fully planted")
+     .AddFloat("footOffset", &FootIK::footOffset).Range(-10, 10, 0.005).Tooltip("Lowest the ankle may be above the ground")
+     .AddFloat("smoothing", &FootIK::smoothing).Range(0, 1e4, 0.1).Tooltip("How quickly the feet follow (0 = instant)")
+     .AddBool("useRaycast", &FootIK::useRaycast).Tooltip("Find the ground with rays (off = use groundY)")
+     .AddFloat("groundY", &FootIK::groundY).Range(-kBig, kBig, 0.01).Tooltip("Ground height when not using rays")
+     .AddFloat("maxRayUp", &FootIK::maxRayUp).Range(0, 100, 0.01).Tooltip("How far above the foot the ray starts")
+     .AddFloat("maxRayDown", &FootIK::maxRayDown).Range(0, 100, 0.01).Tooltip("How far below the foot the ground may be")
+     .AddBool("adjustPelvis", &FootIK::adjustPelvis).Tooltip("Lower the pelvis so a foot on lower ground reaches it")
+     .AddBool("plantDown", &FootIK::plantDown).Tooltip("Also press feet down onto lower ground")
+     .AddFloat("maxPelvisShift", &FootIK::maxPelvisShift).Range(0, 100, 0.01).Tooltip("Furthest the pelvis may move")
+     .AddFloat("minKneeBend", &FootIK::minKneeBend).Range(0, 180, 1).Tooltip("Smallest inside knee angle in degrees (0 = no limit)")
+     .AddFloat("maxKneeBend", &FootIK::maxKneeBend).Range(0, 180, 1).Tooltip("Largest knee angle in degrees")
+     .Section("Feet")
+     .AddBool("orient", &FootIK::orient).Tooltip("Turn the leg bones so the knees point the right way")
+     .AddBool("alignToGround", &FootIK::alignToGround).Tooltip("Tilt the planted foot to the ground slope")
+     .AddVec3("footUpAxis", &FootIK::footUpAxis).Range(-1, 1, 0.01).Tooltip("The left sole's up axis in the foot bone's space")
+     .AddVec3("footUpAxisR", &FootIK::footUpAxisR).Range(-1, 1, 0.01).Tooltip("The right sole's up axis in the foot bone's space")
+     .AddBool("stepProbes", &FootIK::stepProbes).Tooltip("Also test the ground under the toes and heel")
+     .AddFloat("toeReach", &FootIK::toeReach).Range(0, 10, 0.005).Tooltip("Toes this far ahead of the ankle")
+     .AddFloat("heelReach", &FootIK::heelReach).Range(0, 10, 0.005).Tooltip("Heel this far behind the ankle")
+     .Section("Foot lock")
+     .AddBool("footLock", &FootIK::footLock).Tooltip("Pin a planted foot so it does not slide")
+     .AddFloat("lockSpeed", &FootIK::lockSpeed).Range(0, 100, 0.01).Tooltip("A foot slower than this counts as planted")
+     .AddFloat("lockHeight", &FootIK::lockHeight).Range(0, 10, 0.005).Tooltip("... and within this height of the ground")
+     .AddFloat("lockRelease", &FootIK::lockRelease).Range(0, 10, 0.01).Tooltip("Let go once the animated foot is this far from the pin");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2110,6 +2152,7 @@ void RegisterGameplayProperties() {
     RegisterDollyPath();
     RegisterHoldableObject();
     RegisterLookAtIK();
+    RegisterFootIK();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

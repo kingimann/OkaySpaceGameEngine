@@ -4,11 +4,14 @@
 For every fix of the Inspector menus review (docs/inspector_menus.md) this script makes a temporary copy of the one source line that
 carries the fix, writes the OLD behaviour (or removes the fix) into the copy, builds the matching test against the copy, runs it and
 reports "RED" (the test caught it) or "GREEN (!)" (the test did not notice: the test is too weak). It never edits the repository.
+The unchanged test is built and run first (once per test): when it is not green the mutations of that test are SKIPPED, because a red
+result would prove nothing. A mutation of an engine source is built and linked ahead of the library; one of editor/main.cpp is shown
+to the test as a copy of the editor folder (the test reads that file); one of a header rebuilds the test and the model.
 
   python3 scripts/inspector_menus_mutation_check.py                       header-only rules (g++ only, a few seconds)
   python3 scripts/inspector_menus_mutation_check.py --imgui <dir>         + the window-less Dear ImGui test (<dir> = an ImGui checkout)
   python3 scripts/inspector_menus_mutation_check.py --build <build dir>   + the engine-linked tests (<build dir> = a CMake build of the tests
-                                                                           with libokay_engine.a already built)
+                                                                           with libokay_engine.a already built; a few minutes)
   --only <text>   run only the mutations whose name contains <text>
 
 Exit code 0 when every mutation was caught, 1 otherwise (or when a mutation no longer applies because the source changed).

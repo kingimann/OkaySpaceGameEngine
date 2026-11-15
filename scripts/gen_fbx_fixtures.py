@@ -205,10 +205,12 @@ class Scene:
         self.objects.append(N('Material', [L(i), self.nm('Material', name), S('')], [N('Version', [I(102)]), N('ShadingModel', [S('phong')]), props70(*pl)]))
         return i
 
-    def texture(self, name, filename, content=None):
+    def texture(self, name, filename, content=None, uvset=None):
         i = self.nid()
-        self.objects.append(N('Texture', [L(i), self.nm('Texture', name), S('')], [
-            N('Type', [S('TextureVideoClip')]), N('FileName', [S(filename)]), N('RelativeFilename', [S(filename.replace('\\', '/').split('/')[-1])])]))
+        kids = [N('Type', [S('TextureVideoClip')]), N('FileName', [S(filename)]), N('RelativeFilename', [S(filename.replace('\\', '/').split('/')[-1])])]
+        if uvset is not None:   # the UV set this texture is mapped with, by name ("default" = the first set)
+            kids.append(props70(prop70('UVSet', 'KString', '', '', uvset)))
+        self.objects.append(N('Texture', [L(i), self.nm('Texture', name), S('')], kids))
         if content is not None:
             v = self.nid()
             self.objects.append(N('Video', [L(v), self.nm('Video', name), S('Clip')], [
@@ -228,7 +230,9 @@ class Scene:
         ]
 
 
-def geo_children(verts, polys, normals=None, nmap='ByPolygonVertex', uvs=None, uvidx=None, mats=None, mmap='AllSame', edges=None):
+def geo_children(verts, polys, normals=None, nmap='ByPolygonVertex', uvs=None, uvidx=None, mats=None, mmap='AllSame', edges=None, uvsets=None):
+    """uvsets: several UV sets, a list of (layer index, name, uvs, uvidx or None), written in the order given (the
+    layer index, not the file order, says which set is the first). Each index also gets its own Layer element."""
     ch = [N('Vertices', [AD([c for v in verts for c in v])]),
           N('PolygonVertexIndex', [AI(polys)])]
     if edges is not None:
@@ -244,11 +248,19 @@ def geo_children(verts, polys, normals=None, nmap='ByPolygonVertex', uvs=None, u
                 N('UV', [AD([c for u in uvs for c in u])])]
         if uvidx is not None: kids.append(N('UVIndex', [AI(uvidx)]))
         ch.append(N('LayerElementUV', [I(0)], kids))
+    for (k, name, us, ui) in (uvsets or []):
+        kids = [N('Version', [I(101)]), N('Name', [S(name)]), N('MappingInformationType', [S('ByPolygonVertex')]),
+                N('ReferenceInformationType', [S('IndexToDirect' if ui is not None else 'Direct')]),
+                N('UV', [AD([c for u in us for c in u])])]
+        if ui is not None: kids.append(N('UVIndex', [AI(ui)]))
+        ch.append(N('LayerElementUV', [I(k)], kids))
     if mats is not None:
         ch.append(N('LayerElementMaterial', [I(0)], [N('Version', [I(101)]), N('Name', [S('')]),
                   N('MappingInformationType', [S(mmap)]), N('ReferenceInformationType', [S('IndexToDirect')]),
                   N('Materials', [AI(mats)])]))
     ch.append(N('Layer', [I(0)], [N('Version', [I(100)]), N('LayerElement', [], [N('Type', [S('LayerElementNormal')]), N('TypedIndex', [I(0)])])]))
+    for k in sorted(set(u[0] for u in (uvsets or []))):
+        ch.append(N('Layer', [I(k)], [N('Version', [I(100)]), N('LayerElement', [], [N('Type', [S('LayerElementUV')]), N('TypedIndex', [I(k)])])]))
     return ch
 
 
@@ -524,6 +536,36 @@ def orphan_video_scene(content):
     return sc.top()
 
 
+def uvsets_scene(ascii_names):
+    """Three quads with two UV sets each, every set named, and a textured material per quad whose texture names the UV
+    set it is mapped with (the Texture's UVSet property):
+      TwoSets:  the second set (layer 1, 'A_Detail') is written before the first (layer 0, 'Z_Base'), so neither file order
+                nor name order gives the first set; the texture names 'Z_Base' (the first set).
+      TexSet1:  the texture names 'lightmap', the second set. ufbx's path in ModelImport always takes the first set.
+      Fallback: the texture names a set the mesh does not have: the first set is used."""
+    sc = Scene(ascii_names)
+    verts = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    polys = [0, 1, 2, ~3]
+    normals = [(0, 0, 1)] * 4
+    base = [(0, 0), (1, 0), (1, 1), (0, 1)]
+    detail = [(0.5, 0.5), (0.75, 0.5), (0.75, 0.75), (0.5, 0.75)]
+    light = [(0.1, 0.2), (0.3, 0.2), (0.3, 0.4), (0.1, 0.4)]
+    quads = [
+        ('TwoSets', [(1, 'A_Detail', detail, None), (0, 'Z_Base', base, [0, 1, 2, 3])], 'Z_Base'),
+        ('TexSet1', [(0, 'map1', base, None), (1, 'lightmap', light, [0, 1, 2, 3])], 'lightmap'),
+        ('Fallback', [(0, 'UVMap', base, None), (1, 'UVMap.001', detail, None)], 'nosuchset'),
+    ]
+    for n, (name, sets, texset) in enumerate(quads):
+        g = sc.geometry(name + 'Geo', geo_children(verts, polys, normals, 'ByPolygonVertex', mats=[0], mmap='AllSame', uvsets=sets))
+        m = sc.model(name, 0, t=(2 * n, 0, 0))
+        mat = sc.material(name + 'Mat', (0.5, 0.5, 0.5))
+        tex = sc.texture(name + 'Tex', 'C:\\art\\' + name.lower() + '.png', uvset=texset)
+        sc.connect(tex, mat, 'DiffuseColor')
+        sc.connect(g, m)
+        sc.connect(mat, m)
+    return sc.top()
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), '..', 'tests', 'assets', 'fbx')
     os.makedirs(out, exist_ok=True)
@@ -545,6 +587,8 @@ def main():
     write_binary(os.path.join(out, 'bridge_bin.fbx'), bridge_scene(), 7400, compress=False)
     write_binary(os.path.join(out, 'orphan_video_bin.fbx'), orphan_video_scene(png), 7400, compress=False)
     write_binary(os.path.join(out, 'pbr_bin.fbx'), pbr_scene(), 7400, compress=False)
+    write_binary(os.path.join(out, 'uvsets_bin.fbx'), uvsets_scene(False), 7400)
+    write_ascii(os.path.join(out, 'uvsets_ascii.fbx'), uvsets_scene(True), 7400)
     for f in sorted(os.listdir(out)):
         print(f, os.path.getsize(os.path.join(out, f)))
 

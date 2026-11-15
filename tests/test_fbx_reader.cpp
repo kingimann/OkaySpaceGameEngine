@@ -94,6 +94,8 @@ static void DirectTests() {
         const fbx::Mesh& m = b.meshes[0];
         CHECK(m.triangleCount() == 12 && a.meshes[0].triangleCount() == 12);
         CHECK(m.hasUV && m.hasNormals && m.parts.size() == 1);
+        CHECK(m.uvSets == std::vector<std::string>({"UVMap"}) && a.meshes[0].uvSets == m.uvSets);   // one named set: no extra sets
+        if (!m.parts.empty()) CHECK(m.parts[0].extraUV.empty());
         float lo[3] = {1e9f, 1e9f, 1e9f}, hi[3] = {-1e9f, -1e9f, -1e9f};
         for (const fbx::Corner& c : m.parts[0].corners) for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], c.p[k]); hi[k] = std::max(hi[k], c.p[k]); }
         for (int k = 0; k < 3; ++k) { CHECK(Near(lo[k], -0.01, 1e-6)); CHECK(Near(hi[k], 0.01, 1e-6)); }
@@ -152,7 +154,7 @@ static void DirectTests() {
         }
         CHECK(allUp);
         CHECK(m.materials.size() == 2 && g.materials[(std::size_t)m.materials[1]].name == "B");
-        CHECK(!m.hasUV);
+        CHECK(!m.hasUV && m.uvSets.empty());
     }
 
     RUN_SUITE("fbx scene: generated normals, hierarchy, bad polygons");
@@ -532,6 +534,44 @@ static void CompareWithUfbx() {
         }
         if (!clipsMayDiffer) CompareClips(su, ru, so, ro, what, isReal ? 1.5e-2 : 2e-3);   // real files: custom tangent weights are ignored (docs/own_fbx_reader.md)
 
+        // UV values of every mesh object (not only skinned ones): match vertices by position + uv. The one deliberate
+        // difference: uvsets_*.fbx "TexSet1", whose texture names the second UV set (ours maps it with that set, the ufbx
+        // path always takes the first one; checked on its own in UVSetTests).
+        for (const auto& up : su.Objects()) {
+            auto* ma = up->GetComponent<MeshRenderer>();
+            if (!ma || !up->IsSelfOrDescendantOf(ru) || ma->mesh.uvs.size() != ma->mesh.vertices.size() || ma->mesh.uvs.empty()) continue;
+            if (what.rfind("uvsets_", 0) == 0 && up->name == "TexSet1") continue;
+            GameObject* other = nullptr;
+            for (const auto& o : so.Objects()) if (o->name == up->name && o->IsSelfOrDescendantOf(ro)) other = o.get();
+            auto* mb = other ? other->GetComponent<MeshRenderer>() : nullptr;
+            CHECK(mb != nullptr && mb->mesh.uvs.size() == mb->mesh.vertices.size());
+            if (!mb || mb->mesh.uvs.size() != mb->mesh.vertices.size()) continue;
+            auto key = [](const Mesh& m, std::size_t i, int digits) {
+                char buf[128];
+                std::snprintf(buf, sizeof(buf), "%.*f,%.*f,%.*f|%.*f,%.*f", digits, m.vertices[i].x, digits, m.vertices[i].y, digits, m.vertices[i].z, digits, m.uvs[i].x, digits, m.uvs[i].y);
+                return std::string(buf);
+            };
+            std::size_t unmatched = 0;
+            if (isReal) {   // big meshes: printed keys (rounding at a boundary can split a pair, so a few misses are allowed)
+                std::unordered_map<std::string, int> inB;
+                for (std::size_t j = 0; j < mb->mesh.vertices.size(); ++j) ++inB[key(mb->mesh, j, 3)];
+                for (std::size_t i = 0; i < ma->mesh.vertices.size(); ++i) if (!inB.count(key(ma->mesh, i, 3))) ++unmatched;
+                if (unmatched > ma->mesh.vertices.size() / 100) std::cerr << "  (" << what << ") uvs of " << up->name << ": " << unmatched << " of " << ma->mesh.vertices.size() << " ufbx vertices have no match in ours\n";
+                CHECK(unmatched <= ma->mesh.vertices.size() / 100);
+            } else {
+                for (std::size_t i = 0; i < ma->mesh.vertices.size(); ++i) {
+                    bool found = false;
+                    for (std::size_t j = 0; j < mb->mesh.vertices.size() && !found; ++j) {
+                        const Vec3 &p = ma->mesh.vertices[i], &q = mb->mesh.vertices[j];
+                        const Vec2 &u = ma->mesh.uvs[i], &v = mb->mesh.uvs[j];
+                        found = std::fabs(p.x - q.x) < 2e-5f && std::fabs(p.y - q.y) < 2e-5f && std::fabs(p.z - q.z) < 2e-5f && std::fabs(u.x - v.x) < 2e-5f && std::fabs(u.y - v.y) < 2e-5f;
+                    }
+                    if (!found) { if (!unmatched) std::cerr << "  (" << what << ") uvs of " << up->name << ": ufbx vertex " << key(ma->mesh, i, 4) << " has no match in ours\n"; ++unmatched; }
+                }
+                CHECK(unmatched == 0);
+            }
+        }
+
         // skinned vertex data: weights and inverse binds
         for (const auto& up : su.Objects()) {
             auto* sa = up->GetComponent<SkinnedMesh>();
@@ -604,6 +644,91 @@ static void CompareWithUfbx() {
     CHECK(files >= 6);
 }
 
+// The UV sets of the importer's meshes, for UVSetTests: the sorted (u, v) pairs of the mesh object called `name`.
+static std::vector<std::pair<float, float>> UVsOf(Scene& sc, GameObject* root, const char* name) {
+    std::vector<std::pair<float, float>> out;
+    for (const auto& up : sc.Objects()) {
+        if (up->name != name || !up->IsSelfOrDescendantOf(root)) continue;
+        if (auto* mr = up->GetComponent<MeshRenderer>()) for (const Vec2& u : mr->mesh.uvs) out.push_back({u.x, u.y});
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+static bool SameUVs(const std::vector<std::pair<float, float>>& got, std::vector<std::pair<float, float>> want) {
+    std::sort(want.begin(), want.end());
+    if (got.size() != want.size()) return false;
+    for (std::size_t i = 0; i < got.size(); ++i) if (!Near(got[i].first, want[i].first, 1e-5) || !Near(got[i].second, want[i].second, 1e-5)) return false;
+    return true;
+}
+
+static void UVSetTests() {
+    RUN_SUITE("fbx: several UV sets, by name; a texture's UVSet picks the set the importer uses");
+    // Engine UVs are top-down: v = 1 - the file's v. The three sets the generator writes (scripts/gen_fbx_fixtures.py):
+    const std::vector<std::pair<float, float>> base = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+    const std::vector<std::pair<float, float>> detail = {{0.5f, 0.5f}, {0.75f, 0.5f}, {0.75f, 0.25f}, {0.5f, 0.25f}};
+    const std::vector<std::pair<float, float>> light = {{0.1f, 0.8f}, {0.3f, 0.8f}, {0.3f, 0.6f}, {0.1f, 0.6f}};
+    for (const char* f : {"uvsets_bin.fbx", "uvsets_ascii.fbx"}) {
+        // the reader itself: every set with its name, set 0 first; the texture's UVSet name
+        fbx::Scene s; std::string err;
+        CHECK(fbx::LoadFile(Fx(f), s, &err));
+        auto meshOf = [&](const char* node) -> const fbx::Mesh* {
+            for (const auto& n : s.nodes) if (n.name == node && n.mesh >= 0) return &s.meshes[(std::size_t)n.mesh];
+            return nullptr;
+        };
+        auto texOf = [&](const char* name) -> std::string { for (const auto& t : s.textures) if (t.name == name) return t.uvSet; return "?"; };
+        auto stored = [](const fbx::Part& p, std::size_t set) {   // (u, v) per corner as the file stores them, flipped to engine v
+            std::vector<std::pair<float, float>> o;
+            for (std::size_t i = 0; i < p.corners.size(); ++i) {
+                const float u = set == 0 ? p.corners[i].uv[0] : p.extraUV[set - 1][i * 2], v = set == 0 ? p.corners[i].uv[1] : p.extraUV[set - 1][i * 2 + 1];
+                bool dup = false; for (auto& q : o) dup = dup || (q.first == u && q.second == 1.0f - v);
+                if (!dup) o.push_back({u, 1.0f - v});
+            }
+            std::sort(o.begin(), o.end());
+            return o;
+        };
+        const fbx::Mesh* two = meshOf("TwoSets");
+        const fbx::Mesh* tex1 = meshOf("TexSet1");
+        const fbx::Mesh* fb = meshOf("Fallback");
+        CHECK(two && tex1 && fb);
+        if (two && tex1 && fb) {
+            CHECK(two->hasUV && two->uvSets == std::vector<std::string>({"Z_Base", "A_Detail"}));   // by layer index, not file order
+            CHECK(tex1->uvSets == std::vector<std::string>({"map1", "lightmap"}));
+            CHECK(fb->uvSets == std::vector<std::string>({"UVMap", "UVMap.001"}));
+            CHECK(two->parts.size() == 1 && two->parts[0].extraUV.size() == 1 && two->parts[0].extraUV[0].size() == two->parts[0].corners.size() * 2);
+            if (two->parts.size() == 1 && two->parts[0].extraUV.size() == 1) { CHECK(SameUVs(stored(two->parts[0], 0), base)); CHECK(SameUVs(stored(two->parts[0], 1), detail)); }
+            if (tex1->parts.size() == 1 && tex1->parts[0].extraUV.size() == 1) { CHECK(SameUVs(stored(tex1->parts[0], 0), base)); CHECK(SameUVs(stored(tex1->parts[0], 1), light)); }
+            CHECK(texOf("TwoSetsTex") == "Z_Base" && texOf("TexSet1Tex") == "lightmap" && texOf("FallbackTex") == "nosuchset");
+            CHECK(fbx::UVSetIndex(*two, "Z_Base") == 0 && fbx::UVSetIndex(*two, "A_Detail") == 1 && fbx::UVSetIndex(*tex1, "lightmap") == 1);
+            CHECK(fbx::UVSetIndex(*fb, "nosuchset") == 0 && fbx::UVSetIndex(*fb, "default") == 0 && fbx::UVSetIndex(*fb, "") == 0);
+        }
+        // the per-mesh cap: only the first set is kept, and the importer then has nothing else to choose from
+        fbx::BuildOptions one; one.limits.maxUVSets = 1;
+        fbx::Scene s1;
+        CHECK(fbx::LoadFile(Fx(f), s1, &err, one));
+        for (const auto& m : s1.meshes) { CHECK(m.uvSets.size() == 1); for (const auto& p : m.parts) CHECK(p.extraUV.empty()); }
+
+        // through the importer
+        fbx::SetOwnReaderEnabled(true);
+        Scene so("own"); bool oko = false;
+        GameObject* ro = ImportModelScene(so, Fx(f), &oko);
+        fbx::SetOwnReaderEnabled(false);
+        Scene su("ufbx"); bool oku = false;
+        GameObject* ru = ImportModelScene(su, Fx(f), &oku);
+        CHECK(oko && ro && oku && ru);
+        if (!ro || !ru) continue;
+        // the first set is the layer with index 0, even when it is written after the second set and its name sorts last
+        CHECK(SameUVs(UVsOf(so, ro, "TwoSets"), base));
+        CHECK(SameUVs(UVsOf(su, ru, "TwoSets"), base));
+        // the texture names the second set: ours maps the mesh with it; the ufbx path takes the first set (a known difference)
+        const bool ownLight = SameUVs(UVsOf(so, ro, "TexSet1"), light);
+        if (!ownLight) std::cerr << "  (" << f << ") TexSet1: our reader did not use the texture's UV set 'lightmap'\n";
+        CHECK(ownLight);
+        CHECK(SameUVs(UVsOf(su, ru, "TexSet1"), base));
+        // a UV set name the mesh does not have: the first set
+        CHECK(SameUVs(UVsOf(so, ro, "Fallback"), base));
+    }
+}
+
 static void OrphanVideoTest() {
     RUN_SUITE("fbx scene: embedded picture in a Video that is not connected to its texture");
     fbx::Scene s; std::string err;
@@ -648,6 +773,7 @@ int main() {
     HermiteTests();
     PbrTests();
     OrphanVideoTest();
+    UVSetTests();
     CompareWithUfbx();
     TEST_MAIN_RESULT();
 }

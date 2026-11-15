@@ -36,6 +36,7 @@ struct Limits {
     std::size_t maxCorners      = 8u * 1024 * 1024;   ///< triangle corners built, whole scene
     std::size_t maxNodes        = 1u * 1024 * 1024;   ///< scene nodes (models)
     std::size_t maxNodeDepth    = 2048;               ///< scene hierarchy depth
+    std::size_t maxUVSets       = 8;                  ///< UV sets kept per mesh (lowest layer indices); the rest are ignored
     // Animation. A small file can claim many stacks/curves/keys, or point many stacks at the same curves,
     // so besides the per-clip cap above there is a budget for the whole file.
     std::size_t maxAnimStacks   = 128;                ///< AnimationStack objects (takes)
@@ -86,6 +87,9 @@ struct Mat { double m[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1}; };
 
 struct Texture {
     std::string name, fileName, relativeFileName;
+    /// The UV set the texture is mapped with: the texture's `UVSet` property, a set name from Mesh::uvSets.
+    /// Empty when the file has none; "" and "default" mean the mesh's first set.
+    std::string uvSet;
     std::vector<std::uint8_t> content;      ///< embedded bytes (Video "Content"), may be empty
 };
 
@@ -116,6 +120,9 @@ struct Corner {
 struct Part {
     int slot = 0;                  ///< material slot (index into Mesh::materials)
     std::vector<Corner> corners;   ///< 3 per triangle
+    /// UV sets after the first: extraUV[k - 1] holds set k of Mesh::uvSets, 2 floats (u, v as stored) per corner,
+    /// parallel to `corners`. Corner::uv is set 0. A corner the set does not cover gets (0, 0).
+    std::vector<std::vector<float>> extraUV;
 };
 
 struct Influence { std::uint32_t cluster; float weight; };
@@ -137,6 +144,9 @@ struct Mesh {
     std::string name;
     std::uint32_t controlPoints = 0;
     bool hasNormals = false, hasUV = false, hasColors = false;
+    /// Names of the UV sets (the `Name` of each LayerElementUV), first set first: sets are ordered by their layer index,
+    /// ties in file order. Set 0 is in Corner::uv, the others in Part::extraUV. Empty when hasUV is false.
+    std::vector<std::string> uvSets;
     std::vector<Part> parts;       ///< non-empty parts, ascending slot
     std::vector<int> materials;    ///< slot -> index into Scene::materials (-1 unknown)
     std::vector<Cluster> clusters; ///< empty when not skinned
@@ -198,6 +208,10 @@ struct BuildOptions {
     double bakeRate = 30.0;
     Limits limits;
 };
+
+/// Which UV set of `mesh` the name `uvSet` (a Texture::uvSet) means: its index in Mesh::uvSets, 0 for "", "default" or a
+/// name the mesh does not have (the first set, what the ufbx path always uses), and 0 when the mesh has no UVs.
+int UVSetIndex(const Mesh& mesh, const std::string& uvSet);
 
 bool Build(const Document& doc, Scene& out, std::string* err, const BuildOptions& opt = BuildOptions());
 bool LoadMemory(const std::uint8_t* data, std::size_t size, Scene& out, std::string* err, const BuildOptions& opt = BuildOptions());

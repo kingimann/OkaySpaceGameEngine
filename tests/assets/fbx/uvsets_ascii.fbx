@@ -1,0 +1,317 @@
+; FBX 7.4.0 project file
+; ------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "okay gen_fbx_fixtures.py"
+}
+
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "", 1.0
+		P: "UpAxisSign", "int", "Integer", "", 1.0
+		P: "FrontAxis", "int", "Integer", "", 2.0
+		P: "FrontAxisSign", "int", "Integer", "", 1.0
+		P: "CoordAxis", "int", "Integer", "", 0.0
+		P: "CoordAxisSign", "int", "Integer", "", 1.0
+		P: "UnitScaleFactor", "double", "Number", "", 1.0
+	}
+}
+
+Definitions:  {
+	Version: 100
+	Count: 12
+}
+
+Objects:  {
+	Geometry: 1001, "Geometry::TwoSetsGeo", "Mesh" {
+		Vertices: *12 {
+			a: 0,0,0,1,0,0,1,1,0,0,1,0
+		}
+		PolygonVertexIndex: *4 {
+			a: 0,1,2,-4
+		}
+		GeometryVersion: 124
+		LayerElementNormal: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: *12 {
+				a: 0,0,1,0,0,1,0,0,1,0,0,1
+			}
+		}
+		LayerElementUV: 1 {
+			Version: 101
+			Name: "A_Detail"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *8 {
+				a: 0.5,0.5,0.75,0.5,0.75,0.75,0.5,0.75
+			}
+		}
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "Z_Base"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "IndexToDirect"
+			UV: *8 {
+				a: 0,0,1,0,1,1,0,1
+			}
+			UVIndex: *4 {
+				a: 0,1,2,3
+			}
+		}
+		LayerElementMaterial: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "AllSame"
+			ReferenceInformationType: "IndexToDirect"
+			Materials: *1 {
+				a: 0
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementUV"
+				TypedIndex: 0
+			}
+		}
+		Layer: 1 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementUV"
+				TypedIndex: 1
+			}
+		}
+	}
+	Model: 1002, "Model::TwoSets", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 1.0, 1.0
+		}
+	}
+	Material: 1003, "Material::TwoSetsMat", "" {
+		Version: 102
+		ShadingModel: "phong"
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A", 0.5, 0.5, 0.5
+		}
+	}
+	Texture: 1004, "Texture::TwoSetsTex", "" {
+		Type: "TextureVideoClip"
+		FileName: "C:\art\twosets.png"
+		RelativeFilename: "twosets.png"
+		Properties70:  {
+			P: "UVSet", "KString", "", "", "Z_Base"
+		}
+	}
+	Geometry: 1005, "Geometry::TexSet1Geo", "Mesh" {
+		Vertices: *12 {
+			a: 0,0,0,1,0,0,1,1,0,0,1,0
+		}
+		PolygonVertexIndex: *4 {
+			a: 0,1,2,-4
+		}
+		GeometryVersion: 124
+		LayerElementNormal: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: *12 {
+				a: 0,0,1,0,0,1,0,0,1,0,0,1
+			}
+		}
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "map1"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *8 {
+				a: 0,0,1,0,1,1,0,1
+			}
+		}
+		LayerElementUV: 1 {
+			Version: 101
+			Name: "lightmap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "IndexToDirect"
+			UV: *8 {
+				a: 0.1,0.2,0.3,0.2,0.3,0.4,0.1,0.4
+			}
+			UVIndex: *4 {
+				a: 0,1,2,3
+			}
+		}
+		LayerElementMaterial: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "AllSame"
+			ReferenceInformationType: "IndexToDirect"
+			Materials: *1 {
+				a: 0
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementUV"
+				TypedIndex: 0
+			}
+		}
+		Layer: 1 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementUV"
+				TypedIndex: 1
+			}
+		}
+	}
+	Model: 1006, "Model::TexSet1", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 2.0, 0.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 1.0, 1.0
+		}
+	}
+	Material: 1007, "Material::TexSet1Mat", "" {
+		Version: 102
+		ShadingModel: "phong"
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A", 0.5, 0.5, 0.5
+		}
+	}
+	Texture: 1008, "Texture::TexSet1Tex", "" {
+		Type: "TextureVideoClip"
+		FileName: "C:\art\texset1.png"
+		RelativeFilename: "texset1.png"
+		Properties70:  {
+			P: "UVSet", "KString", "", "", "lightmap"
+		}
+	}
+	Geometry: 1009, "Geometry::FallbackGeo", "Mesh" {
+		Vertices: *12 {
+			a: 0,0,0,1,0,0,1,1,0,0,1,0
+		}
+		PolygonVertexIndex: *4 {
+			a: 0,1,2,-4
+		}
+		GeometryVersion: 124
+		LayerElementNormal: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			Normals: *12 {
+				a: 0,0,1,0,0,1,0,0,1,0,0,1
+			}
+		}
+		LayerElementUV: 0 {
+			Version: 101
+			Name: "UVMap"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *8 {
+				a: 0,0,1,0,1,1,0,1
+			}
+		}
+		LayerElementUV: 1 {
+			Version: 101
+			Name: "UVMap.001"
+			MappingInformationType: "ByPolygonVertex"
+			ReferenceInformationType: "Direct"
+			UV: *8 {
+				a: 0.5,0.5,0.75,0.5,0.75,0.75,0.5,0.75
+			}
+		}
+		LayerElementMaterial: 0 {
+			Version: 101
+			Name: ""
+			MappingInformationType: "AllSame"
+			ReferenceInformationType: "IndexToDirect"
+			Materials: *1 {
+				a: 0
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementNormal"
+				TypedIndex: 0
+			}
+		}
+		Layer: 0 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementUV"
+				TypedIndex: 0
+			}
+		}
+		Layer: 1 {
+			Version: 100
+			LayerElement:  {
+				Type: "LayerElementUV"
+				TypedIndex: 1
+			}
+		}
+	}
+	Model: 1010, "Model::Fallback", "Mesh" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A", 4.0, 0.0, 0.0
+			P: "Lcl Rotation", "Lcl Rotation", "", "A", 0.0, 0.0, 0.0
+			P: "Lcl Scaling", "Lcl Scaling", "", "A", 1.0, 1.0, 1.0
+		}
+	}
+	Material: 1011, "Material::FallbackMat", "" {
+		Version: 102
+		ShadingModel: "phong"
+		Properties70:  {
+			P: "DiffuseColor", "Color", "", "A", 0.5, 0.5, 0.5
+		}
+	}
+	Texture: 1012, "Texture::FallbackTex", "" {
+		Type: "TextureVideoClip"
+		FileName: "C:\art\fallback.png"
+		RelativeFilename: "fallback.png"
+		Properties70:  {
+			P: "UVSet", "KString", "", "", "nosuchset"
+		}
+	}
+}
+
+Connections:  {
+	C: "OO", 1002, 0
+	C: "OP", 1004, 1003, "DiffuseColor"
+	C: "OO", 1001, 1002
+	C: "OO", 1003, 1002
+	C: "OO", 1006, 0
+	C: "OP", 1008, 1007, "DiffuseColor"
+	C: "OO", 1005, 1006
+	C: "OO", 1007, 1006
+	C: "OO", 1010, 0
+	C: "OP", 1012, 1011, "DiffuseColor"
+	C: "OO", 1009, 1010
+	C: "OO", 1011, 1010
+}

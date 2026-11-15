@@ -249,14 +249,40 @@ const std::vector<double>* ArrayOf(const Elem& e, const char* name) {
     const Elem* c = e.Find(name);
     return (c && !c->props.empty() && c->props[0].type == 'a') ? &c->props[0].arr : nullptr;
 }
+// The layer index of a LayerElement* (its first property); 0 when missing or not a number, so ordering stays well defined.
+double LayerIndexOf(const Elem& c) {
+    const double k = (!c.props.empty() && c.props[0].IsNumber()) ? c.props[0].Num() : 0;
+    return k == k ? k : 0;
+}
+Layer LayerFrom(const Elem* best, const char* valName, const char* idxName, int dim);
 Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, const char* idxName, int dim) {
-    Layer L; L.dim = dim;
     const Elem* best = nullptr; double bestIdx = 1e30;
     for (const Elem& c : geo.children) {
         if (c.name != layerName) continue;
-        const double k = (!c.props.empty() && c.props[0].IsNumber()) ? c.props[0].Num() : 0;
+        const double k = LayerIndexOf(c);
         if (!best || k < bestIdx) { best = &c; bestIdx = k; }
     }
+    return LayerFrom(best, valName, idxName, dim);
+}
+/// Every UV set of a geometry (LayerElementUV), ordered by layer index with ties in file order: the layer with the lowest
+/// index is set 0, whatever the order the elements are written in. Sets with a mapping or values we cannot read are left
+/// out; at most `maxSets` are kept. `names` gets each kept set's `Name` ("" when it has none).
+void LoadUVLayers(const Elem& geo, std::size_t maxSets, std::vector<Layer>& out, std::vector<std::string>& names) {
+    std::vector<std::pair<double, const Elem*>> all;
+    for (const Elem& c : geo.children) if (c.name == "LayerElementUV") all.push_back({LayerIndexOf(c), &c});
+    std::stable_sort(all.begin(), all.end(), [](const std::pair<double, const Elem*>& a, const std::pair<double, const Elem*>& b) { return a.first < b.first; });
+    for (const auto& a : all) {
+        if (out.size() >= maxSets) break;
+        const Layer L = LayerFrom(a.second, "UV", "UVIndex", 2);
+        if (!L.Ok()) continue;
+        out.push_back(L);
+        std::string nm;
+        if (const Elem* n = a.second->Find("Name")) if (!n->props.empty() && n->props[0].type == 'S') nm = n->props[0].s;
+        names.push_back(std::move(nm));
+    }
+}
+Layer LayerFrom(const Elem* best, const char* valName, const char* idxName, int dim) {
+    Layer L; L.dim = dim;
     if (!best) return L;
     std::string mp, ref;
     if (const Elem* m = best->Find("MappingInformationType")) if (!m->props.empty()) mp = m->props[0].s;
@@ -467,6 +493,7 @@ struct Builder {
             Texture t; t.name = o.name;
             if (const Elem* f = o.e->Find("FileName")) if (!f->props.empty()) t.fileName = f->props[0].s;
             if (const Elem* f = o.e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = f->props[0].s;
+            { auto us = o.props.str.find("UVSet"); if (us != o.props.str.end()) t.uvSet = us->second; }
             const Id id = ToId(o.e->props[0].Num());
             auto pit = parentsOf.find(id);   // Video -> Texture
             for (const Conn* c : childrenOf[id]) {   // children of the texture: Video
@@ -698,7 +725,10 @@ struct Builder {
             for (std::size_t e = 0; e < ed->size(); ++e) { const double v = (*ed)[e]; if (v >= 0 && v < (double)pvi->size()) edgeOfCorner[(std::size_t)v] = (int)e; }
         }
         const Layer ln = LoadLayer(g, "LayerElementNormal", "Normals", "NormalsIndex", 3);
-        const Layer lu = LoadLayer(g, "LayerElementUV", "UV", "UVIndex", 2);
+        std::vector<Layer> uvl;   // every UV set, set 0 first (docs/own_fbx_reader.md, "UV sets")
+        LoadUVLayers(g, opt.limits.maxUVSets, uvl, m.uvSets);
+        const Layer lu = uvl.empty() ? Layer() : uvl[0];
+        const std::size_t extraSets = uvl.empty() ? 0 : uvl.size() - 1;
         const Layer lc = LoadLayer(g, "LayerElementColor", "Colors", "ColorIndex", 4);
         Layer lm = LoadLayer(g, "LayerElementMaterial", "Materials", "Materials", 1);
         if (lm.Ok()) lm.indexed = false;          // material ids are the values themselves
@@ -731,6 +761,7 @@ struct Builder {
             if (cornersBuilt + tris.size() > opt.limits.maxCorners) return Fail("mesh too large");
             cornersBuilt += tris.size();
             Part& part = parts[slot]; part.slot = slot;
+            part.extraUV.resize(extraSets);
             for (int t : tris) {
                 const std::size_t k = (std::size_t)t, pv = f.start + k;
                 const std::size_t cp = (std::size_t)cpOf[pv];
@@ -744,6 +775,10 @@ struct Builder {
                 if (l > 1e-12) for (int a = 0; a < 3; ++a) c.n[a] = (float)(nn[a] / l);
                 double uv[2];
                 if (lu.Ok() && Fetch(lu, pv, fi, cp, edgeOfCorner, uv)) { c.uv[0] = (float)uv[0]; c.uv[1] = (float)uv[1]; }
+                for (std::size_t k = 0; k < extraSets; ++k) {
+                    if (!Fetch(uvl[k + 1], pv, fi, cp, edgeOfCorner, uv)) uv[0] = uv[1] = 0;
+                    part.extraUV[k].push_back((float)uv[0]); part.extraUV[k].push_back((float)uv[1]);
+                }
                 double col[4];
                 if (lc.Ok() && Fetch(lc, pv, fi, cp, edgeOfCorner, col)) for (int a = 0; a < 4; ++a) c.color[a] = (float)col[a];
                 part.corners.push_back(c);
@@ -1055,6 +1090,12 @@ struct Builder {
 };
 
 } // namespace
+
+int UVSetIndex(const Mesh& mesh, const std::string& uvSet) {
+    if (uvSet.empty() || uvSet == "default") return 0;
+    for (std::size_t k = 0; k < mesh.uvSets.size(); ++k) if (mesh.uvSets[k] == uvSet) return (int)k;
+    return 0;
+}
 
 bool Build(const Document& doc, Scene& out, std::string* err, const BuildOptions& opt) {
     out = Scene();

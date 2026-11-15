@@ -1666,18 +1666,37 @@ int OwnMaterialOfSlot(const fbx::Mesh& m, int slot) {
     return slot >= 0 && slot < (int)m.materials.size() ? m.materials[(std::size_t)slot] : -1;
 }
 
+// Which UV set the importer maps a part with: the set its material's colour texture names (the Texture's UVSet property),
+// else the set the normal map names, else the first set. The engine mesh has one UV channel, so one set is chosen. The
+// ufbx path always takes the first set; the two differ only on a file whose texture names a later set.
+int OwnUVSetOfMaterial(const fbx::Scene& sc, const fbx::Mesh& mesh, int matIdx) {
+    if (matIdx < 0 || (std::size_t)matIdx >= sc.materials.size()) return 0;
+    const fbx::Material& m = sc.materials[(std::size_t)matIdx];
+    for (int t : {m.diffuseTexture, m.normalTexture}) {
+        if (t < 0 || (std::size_t)t >= sc.textures.size()) continue;
+        return fbx::UVSetIndex(mesh, sc.textures[(std::size_t)t].uvSet);
+    }
+    return 0;
+}
+
 // One material part: deduplicated vertices + triangle list (first occurrence order, like the ufbx path).
+// `uvSet` is the mesh UV set to use (0 = Corner::uv, k > 0 = Part::extraUV[k - 1]).
 Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
                   std::vector<std::array<int, 4>>* jIdx, std::vector<std::array<float, 4>>* jWt,
-                  std::vector<uint32_t>* outVi) {
+                  std::vector<uint32_t>* outVi, int uvSet = 0) {
     Mesh out;
     std::vector<FbxVert> verts;
     verts.reserve(part.corners.size());
-    for (const fbx::Corner& c : part.corners) {
+    const std::vector<float>* moreUV = nullptr;
+    if (uvSet > 0 && (std::size_t)uvSet <= part.extraUV.size() && part.extraUV[(std::size_t)uvSet - 1].size() == part.corners.size() * 2)
+        moreUV = &part.extraUV[(std::size_t)uvSet - 1];
+    for (std::size_t ci = 0; ci < part.corners.size(); ++ci) {
+        const fbx::Corner& c = part.corners[ci];
         FbxVert fv{};
         fv.px = c.p[0]; fv.py = c.p[1]; fv.pz = c.p[2];
         fv.nx = c.n[0]; fv.ny = c.n[1]; fv.nz = c.n[2];
-        fv.u = c.uv[0]; fv.v = 1.0f - c.uv[1];   // FBX UVs are bottom-up
+        const float u = moreUV ? (*moreUV)[ci * 2] : c.uv[0], v = moreUV ? (*moreUV)[ci * 2 + 1] : c.uv[1];
+        fv.u = u; fv.v = 1.0f - v;   // FBX UVs are bottom-up
         fv.w[0] = 1.0f;
         fv.vi = c.cp;
         if (skinned && c.cp < mesh.skinWeights.size()) {
@@ -1766,7 +1785,7 @@ static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* o
         const fbx::Mesh& fm = sc.meshes[(std::size_t)node.mesh];
         const Mat4 g2w = OwnToMat4(node.geometryToWorld);
         for (const fbx::Part& part : fm.parts) {
-            Mesh m = TransformedMesh(BuildOwnPart(fm, part, false, nullptr, nullptr, nullptr), g2w);
+            Mesh m = TransformedMesh(BuildOwnPart(fm, part, false, nullptr, nullptr, nullptr, OwnUVSetOfMaterial(sc, fm, OwnMaterialOfSlot(fm, part.slot))), g2w);
             const int base = (int)merged.vertices.size();
             const bool keepN = merged.normals.size() == merged.vertices.size() && m.normals.size() == m.vertices.size();
             const bool keepUV = merged.uvs.size() == merged.vertices.size() && m.uvs.size() == m.vertices.size();
@@ -1819,10 +1838,11 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
             const fbx::Part& part = mesh.parts[pi];
             std::vector<std::array<int, 4>> jIdx; std::vector<std::array<float, 4>> jWt;
             std::vector<uint32_t> vi;
-            Mesh bind = BuildOwnPart(mesh, part, skinned, skinned ? &jIdx : nullptr, skinned ? &jWt : nullptr, mesh.channels.empty() ? nullptr : &vi);
+            const int matIdx = OwnMaterialOfSlot(mesh, part.slot);
+            Mesh bind = BuildOwnPart(mesh, part, skinned, skinned ? &jIdx : nullptr, skinned ? &jWt : nullptr, mesh.channels.empty() ? nullptr : &vi,
+                                     OwnUVSetOfMaterial(sc, mesh, matIdx));
             if (bind.vertices.empty()) continue;
             GameObject* g = host;
-            const int matIdx = OwnMaterialOfSlot(mesh, part.slot);
             if (made++ > 0 || parts > 1) {
                 g = scene.CreateGameObject(host->name + "_" + (matIdx >= 0 ? sc.materials[(std::size_t)matIdx].name : ("mat" + std::to_string(pi))));
                 g->transform->SetParent(host->transform, false);

@@ -102,6 +102,7 @@ public:
     void NewTopDownShooter();
     void NewPlatformer25D();
     void NewVehicle3D();
+    void NewVehicleSeats3D();
     void NewVehicle2D();
     void NewCoinCollector();
     void NewMainMenu();

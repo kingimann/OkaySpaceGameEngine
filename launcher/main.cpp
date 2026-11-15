@@ -3263,7 +3263,7 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
     } else if (t == "Sandbox") {
         d->AddRect(P(8, 20), P(19, 31), col, 1.5f * k, 0, th); d->AddRect(P(19, 20), P(30, 31), col, 1.5f * k, 0, th);
         d->AddRect(P(13.5f, 9), P(24.5f, 20), col, 1.5f * k, 0, th);
-    } else if (t == "Vehicle (3D)" || t == "Vehicle (2D)") {
+    } else if (t.rfind("Vehicle", 0) == 0) {
         d->PathLineTo(P(6, 26)); d->PathLineTo(P(6, 20)); d->PathLineTo(P(12, 19)); d->PathLineTo(P(16, 13));
         d->PathLineTo(P(26, 13)); d->PathLineTo(P(30, 19)); d->PathLineTo(P(34, 20)); d->PathLineTo(P(34, 26));
         d->PathStroke(col, ImDrawFlags_Closed, th);

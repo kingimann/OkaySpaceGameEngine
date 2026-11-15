@@ -19,6 +19,13 @@ then this file gets updated. Keep this file short and true.
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something
    done, ready or green when it is not. A failing test is reported with its output.
+4a. **The owner must be able to try everything.** (Owner rule, 2026-11-15: "everything that's being made I should be able
+   to test; if I can't test it out it's useless".) Every change that adds or changes something a person can use comes
+   with a way to try it in the Windows release the owner runs (launcher, editor, player, installer, zip): a menu, a
+   template, a shipped example scene, a setting or an environment variable, plus exact steps and what to expect, in
+   `docs/try_it.md` and in the PR's "How to try it" section. If it cannot be tried on a release today, say so plainly
+   and what is missing, and build that way in (an `examples/` scene shipped by `scripts/build-windows-dist.sh`, a
+   template, a log line). A feature nobody can reach is not done.
 5. **Update the docs as you go**, in the same change as the code: the matching guide, the feature map
    (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, and `docs/UNFINISHED.md` rows.
 

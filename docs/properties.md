@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2507 properties on 187 types, as `property_registry` counts them ("covered 187 component types, 2507 properties"; a number before a slash counts the authored ones; the rest are
+2546 properties on 190 types, as `property_registry` counts them ("covered 190 component types, 2546 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -329,6 +329,7 @@ has `enabled`.
 | NetInventory, RootMotion, TerrainDigger, VoxelDigger, WorldStreamer, Consumables | 6, 5, 11, 9, 8, 3 | net inventory limits; root motion mode and options; terrain and voxel brush settings (the record does not save `VoxelDigger.removeFloaters`, so it is not a property yet); world streaming cells and files; consumable switches (the recipes are a list) |
 | UITextBind, UIBarBind, UIAnimation, AimOffset, SequencePlayer | 1, 3, 12, 10, 6 | the bound text format; the bound bar value and range; widget intro, loop and outro with the ease (options from `Easing::Name`); aim offset weights, clamps and recoil; cutscene file, playback and skip key |
 | ProceduralObjectHolding, BuildPiece, BuilderMode, PoseCapture, CraftingMenu | 14, 5, 20, 2, 6 | hands, style and throw settings; build piece tier, health and cost; builder shapes, grid, scale and buttons (the record does not save the seven hotkeys, so they are not properties yet); pose capture clip and length; crafting menu key and layout |
+| BehaviorTreeRunner, SplineMesh, SplineInstancer | 6, 15, 15 | tree file, tick rate and home point (the blackboard overrides are a list); spline mesh extrude and repeat settings (the custom profile is a list; `meshAxis`, whose values are 0 and 2, is not a property yet); spline instancer source, spacing, jitter, scale and alignment (the unsigned `seed` is not a property yet) |
 
 How the new types are described, so a tool can rely on it:
 

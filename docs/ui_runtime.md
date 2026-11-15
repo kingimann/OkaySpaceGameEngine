@@ -102,8 +102,9 @@ every rich text, on screen and in the world alike: text over 2,000 bytes is not 
 included (so a long dialogue line over 2,000 bytes shows its `[color=...]` tags; split it into shorter texts), at most
 16 tags may be open at once, and
 nested sizes are held to 25..400 percent. A sized run sits on
-the same bottom line as the rest of its line and pushes what follows to the right; the line height stays the
-text's own, and centring and wrapping still measure the plain text at its own size (so a centred line with a big
+the same bottom line as the rest of its line and pushes what follows to the right; a line holding a bigger run is
+moved down by that run's extra height, so it covers neither the line above nor anything above the text's top (smaller
+runs do not shrink a line), and centring and wrapping still measure the plain text at its own size (so a centred line with a big
 run leans right). The tooltip's own `<b>` and `#rrggbb` tags are unchanged. Tests: `runtime_ui` (screen text),
 `world_text_rich` (the size tag, runs, world text colours, sizes, shadow and outline).
 

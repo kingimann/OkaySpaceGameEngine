@@ -42180,10 +42180,19 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             const float glyphH = (float)okay::Font8x8::Height;
             const float lineAdv = (glyphH + 1.0f) * px;
             int curLine = -1; float cx = o.x;
-            for (const okay::RichRun& run : okay::RichTextRuns(rt)) {
+            const std::vector<okay::RichRun> runs = okay::RichTextRuns(rt);
+            // Lines holding a bigger run move down by its extra height, as the player draws them (DrawRichRuns).
+            std::vector<float> lineDrop;
+            for (const okay::RichRun& run : runs) {
+                if ((int)lineDrop.size() <= run.line) lineDrop.resize((std::size_t)run.line + 1, 0.0f);
+                const float s = run.style.size > 0.0f ? run.style.size : 1.0f;
+                lineDrop[(std::size_t)run.line] = std::max(lineDrop[(std::size_t)run.line], (s - 1.0f) * glyphH * px);
+            }
+            for (std::size_t k = 1; k < lineDrop.size(); ++k) lineDrop[k] += lineDrop[k - 1];
+            for (const okay::RichRun& run : runs) {
                 if (run.line != curLine) { curLine = run.line; cx = o.x + ui2d::UITextW(run.before, px); }
                 const float s = run.style.size > 0.0f ? run.style.size : 1.0f, rpx = px * s;
-                const float ry = o.y + (float)run.line * lineAdv + (1.0f - s) * glyphH * px;
+                const float ry = o.y + (float)run.line * lineAdv + lineDrop[(std::size_t)run.line] + (1.0f - s) * glyphH * px;
                 ImU32 rc = col;
                 if (run.style.hasColor) rc = IM_COL32(run.style.r, run.style.g, run.style.b, (int)(run.style.a * tr->color.a));
                 const bool it = tr->italic || run.style.italic;

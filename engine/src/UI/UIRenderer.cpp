@@ -684,6 +684,21 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
         std::size_t lineEnd = disp.find('\n', lineStart);
         if (lineEnd == std::string::npos) lineEnd = disp.size();
         const std::string line = disp.substr(lineStart, lineEnd - lineStart);
+        // A line holding a bigger run ([size] above 100%) is moved down by the extra height of its tallest run, so
+        // the run (which grows upward from the shared bottom line) neither covers the line above nor reaches above
+        // the text's top; the next line follows from there. Smaller runs do not shrink the line.
+        {
+            float tallest = 1.0f;
+            std::size_t g = glyph;
+            for (std::size_t i = 0; i < line.size();) {
+                const std::uint32_t cp = okay::utf8::Next(line, i);
+                if (cp == ' ' || cp == '\t') continue;
+                const float s = g < styles.size() && styles[g].size > 0.0f ? styles[g].size : 1.0f;
+                ++g;
+                if (s > tallest) tallest = s;
+            }
+            y += (tallest - 1.0f) * (float)Font8x8::Height * px;
+        }
         std::size_t runStart = 0;
         okay::RichStyle runStyle;
         bool haveRun = false;

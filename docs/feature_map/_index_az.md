@@ -5210,6 +5210,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - What's New (17.1)
 - What's New and Tips (17.1.4)
 - wheel (8.1)
+- Wheel visuals (4.5.5)
 - Where it goes (41.9.2)
 - Where to put them (42.5.3)
 - which UI system (40.5)

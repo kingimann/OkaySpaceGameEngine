@@ -3245,6 +3245,37 @@ target_compile_definitions(test_batchd_budget PRIVATE OKAY_STANDALONE_TEST OKAY_
 add_test(NAME batchd_budget COMMAND test_batchd_budget WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(batchd_budget PROPERTIES TIMEOUT 300)
 
+# Batch E own readers (MDC / HMP / CSM): one test per reader on SYNTHETIC fixtures built in memory (tests/batche_fixtures.hpp), one standalone
+# hostile-input + mutation-fuzz + worst-case-memory test for all three (reader sources only, no engine library; it also reads the four real
+# files when OKAY_MODEL_CORPUS is set), the dispatch test (needs the engine), and a CMake-time check that every opt-in reader in the import
+# table has its option, its compile-definition loop entry and its #ifdef (a merge once dropped a name from that loop without anyone noticing).
+okay_batchd_reader_test(mdc MdcReader.cpp)
+okay_batchd_reader_test(hmp HmpReader.cpp)
+okay_batchd_reader_test(csm CsmReader.cpp)
+add_executable(test_batche_hostile test_batche_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/MdcReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/HmpReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/CsmReader.cpp)
+target_include_directories(test_batche_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_batche_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME batche_hostile COMMAND test_batche_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(batche_hostile PROPERTIES TIMEOUT 600)
+
+add_executable(test_own_dispatch_e test_own_dispatch_e.cpp)
+target_link_libraries(test_own_dispatch_e PRIVATE okay::engine)
+foreach(_f MDC HMP CSM)   # -DOKAY_OWN_<FMT>=ON: the test then requires the own reader to be the default
+    if(OKAY_OWN_${_f})
+        target_compile_definitions(test_own_dispatch_e PRIVATE OKAY_EXPECT_OWN_${_f})
+    endif()
+endforeach()
+add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
+    -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt
+    -DENGINE_CMAKE=${PROJECT_SOURCE_DIR}/engine/CMakeLists.txt
+    -DMODEL_IMPORT=${PROJECT_SOURCE_DIR}/engine/src/Render/ModelImport.cpp
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_own_reader_wiring.cmake)
+
 # The import seam routes the batch-D formats (slots 22 to 26) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_d test_own_dispatch_d.cpp)
 target_link_libraries(test_own_dispatch_d PRIVATE okay::engine)

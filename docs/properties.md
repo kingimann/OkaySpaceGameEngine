@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2165 properties on 159 types, as `property_registry` counts them ("covered 159 component types, 2165 properties"; a number before a slash counts the authored ones; the rest are
+2202 properties on 163 types, as `property_registry` counts them ("covered 163 component types, 2202 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -320,6 +320,7 @@ has `enabled`.
 | UIToast, UITooltip, UIModal, UIContextMenu | 8, 7, 15, 8 | toast corner, timing and size; tooltip text, delay, colours and offset; modal dimming, close rules and card style; context menu sizes and colours (its item list is a list) |
 | WorldSpaceUI, PauseMenu, ChestInventory, UIDropTarget | 4, 7, 16, 10 | world UI scale and facing; pause menu key, title, buttons and colours (the record does not save `hint`, `showRestart`, `showVolume`, `restartScene` or `localized`, so they are not properties yet); chest key, range, grid and style; drop slot tag, background and hover tints |
 | IKTarget, NetValidator, DialogueRunner, LogicTarget | 4, 7, 13, 13 | IK limb, character, weight and blend; RPC limits (size, rate, cooldown, budget); dialogue file, start, key, prompt, typewriter and UI switches; logic target kind and mode, door/mover travel, light, spawner and event |
+| LogicSource, QuestLog, Saveable, SpriteAnimator | 13, 7, 8, 6 | logic source kind, button, timer and zone (links are lists); quest file and UI switches (records and the tracked quest are play state); save key, prefab and what to store (property paths are a list); sprite speed, loop and sheet layout (frames and clips are lists) |
 
 How the new types are described, so a tool can rely on it:
 

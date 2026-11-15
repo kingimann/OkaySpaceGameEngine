@@ -20,6 +20,12 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/NetInventory.hpp"
+#include "okay/Components/RootMotion.hpp"
+#include "okay/Components/TerrainDigger.hpp"
+#include "okay/Components/VoxelDigger.hpp"
+#include "okay/Components/WorldStreamer.hpp"
+#include "okay/Components/Consumables.hpp"
 #include "okay/Components/NetValidator.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/LogicLinks.hpp"
@@ -1550,6 +1556,85 @@ void RegisterLimbIK() {
     b.Commit();
 }
 
+// NetInventory (record "netinventory")
+void RegisterNetInventory() {
+    PropertyBuilder<NetInventory> b("NetInventory", "netinventory", "Networking");
+    b.AddFloat("range", &NetInventory::range).Range(0, kBig, 0.1).Tooltip("World containers: how close a requester must be (0 = any)")
+     .AddInt("maxPerSecond", &NetInventory::maxPerSecond).Range(0, 1000000, 1).Tooltip("Requests one client may make per second (0 = no extra limit)")
+     .AddInt("cheatThreshold", &NetInventory::cheatThreshold).Range(0, 1000000, 1).Tooltip("Invalid requests before On Cheat Detected fires")
+     .AddInt("maxRequestBytes", &NetInventory::maxRequestBytes).Range(0, 1 << 30, 1).Tooltip("Longer client requests are refused")
+     .AddBool("hideUntilOpen", &NetInventory::hideUntilOpen).Tooltip("World containers: send contents only to clients who open them")
+     .AddString("saveDir", &NetInventory::saveDir).Tooltip("The host saves each player's bag here (empty = not saved)");
+    b.Commit();
+}
+
+// RootMotion (record "rootmotion")
+void RegisterRootMotion() {
+    PropertyBuilder<RootMotion> b("RootMotion", "rootmotion", "Animation");
+    b.AddString("rootNodeName", &RootMotion::rootNodeName).Tooltip("Root bone, by name")
+     .AddEnum("mode", &RootMotion::mode, {"AnimDrivesMotion", "PhysicsDrivesAnim", "Disabled"}).Tooltip("The clip moves the body, or the body moves itself")
+     .AddBool("lockHeight", &RootMotion::lockHeight).Tooltip("Keep root motion on the ground plane")
+     .AddBool("applyToRigidbody", &RootMotion::applyToRigidbody).Tooltip("Apply the motion as Rigidbody3D velocity")
+     .AddFloat("loopThreshold", &RootMotion::loopThreshold).Range(0, kBig, 0.01).Tooltip("Ignore root jumps bigger than this (the clip's loop seam)");
+    b.Commit();
+}
+
+// TerrainDigger (record "terraindigger")
+void RegisterTerrainDigger() {
+    PropertyBuilder<TerrainDigger> b("TerrainDigger", "terraindigger", "Environment");
+    b.AddEnum("mode", &TerrainDigger::mode, {"Dig", "Raise", "Smooth", "Flatten"}).Tooltip("What the main button does")
+     .AddInt("button", &TerrainDigger::button).Range(-1, 7, 1).Tooltip("Mouse button for the main action (-1 = none)")
+     .AddInt("raiseButton", &TerrainDigger::raiseButton).Range(-1, 7, 1).Tooltip("Mouse button that raises (-1 = none)")
+     .AddKey("key", &TerrainDigger::key).Tooltip("Key that also acts (0 = none)")
+     .AddFloat("radius", &TerrainDigger::radius).Range(0, kBig, 0.1).Tooltip("Brush radius in world units")
+     .AddFloat("strength", &TerrainDigger::strength).Range(0, kBig, 0.1).Tooltip("Height change per second while held")
+     .AddFloat("range", &TerrainDigger::range).Range(0, kBig, 1).Tooltip("How far the aim ray reaches")
+     .AddFloat("relax", &TerrainDigger::relax).Range(0, kBig, 0.1).Tooltip("Smooth and flatten rate per second")
+     .AddFloat("hardness", &TerrainDigger::hardness).Range(0, 1, 0.01).Tooltip("Brush edge (0 = soft, 1 = hard)")
+     .AddBool("showBrush", &TerrainDigger::showBrush).Tooltip("Draw the brush marker")
+     .AddColor("brushColor", &TerrainDigger::brushColor).Range(0, 1, 0.01).Tooltip("Brush marker colour");
+    b.Commit();
+}
+
+// VoxelDigger (record "voxeldigger"). removeFloaters is not saved by the record,
+// so it is not a property yet.
+void RegisterVoxelDigger() {
+    PropertyBuilder<VoxelDigger> b("VoxelDigger", "voxeldigger", "Environment");
+    b.AddEnum("mode", &VoxelDigger::mode, {"Dig", "Add", "Smooth", "Box"}).Tooltip("What the main button does")
+     .AddInt("button", &VoxelDigger::button).Range(-1, 7, 1).Tooltip("Mouse button for the main action (-1 = none)")
+     .AddInt("addButton", &VoxelDigger::addButton).Range(-1, 7, 1).Tooltip("Mouse button that adds (-1 = none)")
+     .AddKey("key", &VoxelDigger::key).Tooltip("Key that also acts (0 = none)")
+     .AddFloat("radius", &VoxelDigger::radius).Range(0, kBig, 0.1).Tooltip("Brush radius in world units")
+     .AddFloat("strength", &VoxelDigger::strength).Range(0, kBig, 0.1).Tooltip("Density change per second while held")
+     .AddFloat("range", &VoxelDigger::range).Range(0, kBig, 1).Tooltip("How far the aim ray reaches")
+     .AddBool("showBrush", &VoxelDigger::showBrush).Tooltip("Draw the brush marker")
+     .AddColor("brushColor", &VoxelDigger::brushColor).Range(0, 1, 0.01).Tooltip("Brush marker colour");
+    b.Commit();
+}
+
+// WorldStreamer (record "worldstreamer")
+void RegisterWorldStreamer() {
+    PropertyBuilder<WorldStreamer> b("WorldStreamer", "worldstreamer", "Environment");
+    b.AddFloat("cellSize", &WorldStreamer::cellSize).Range(0.01, kBig, 1).Tooltip("World units per cell edge")
+     .AddInt("loadRadius", &WorldStreamer::loadRadius).Range(0, 1000, 1).Tooltip("Load cells within this many cells of the target")
+     .AddInt("unloadRadius", &WorldStreamer::unloadRadius).Range(0, 1000, 1).Tooltip("Unload cells beyond this many cells (keep it at least loadRadius)")
+     .AddBool("onlyOnCellChange", &WorldStreamer::onlyOnCellChange).Tooltip("Check only when the target enters a new cell")
+     .AddString("folder", &WorldStreamer::folder).Tooltip("Folder the cell files are in")
+     .AddString("prefix", &WorldStreamer::prefix).Tooltip("Cell file name start (file = <folder><prefix>_<x>_<z><ext>)")
+     .AddString("ext", &WorldStreamer::ext).Tooltip("Cell file extension")
+     .AddString("target", &WorldStreamer::target).Tooltip("Object to follow, by name (empty = the main camera)");
+    b.Commit();
+}
+
+// Consumables (record "consumables"). The recipes are a list.
+void RegisterConsumables() {
+    PropertyBuilder<Consumables> b("Consumables", "consumables", "Gameplay");
+    b.AddBool("requireInventory", &Consumables::requireInventory).Tooltip("Using an item must find and remove it from the Inventory")
+     .AddBool("consumeOnDrop", &Consumables::consumeOnDrop).Tooltip("A matching item dropped here is consumed")
+     .AddBool("destroyDroppedItem", &Consumables::destroyDroppedItem).Tooltip("Remove the dropped object after consuming it");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2183,6 +2268,12 @@ void RegisterGameplayProperties() {
     RegisterLookAtIK();
     RegisterFootIK();
     RegisterLimbIK();
+    RegisterNetInventory();
+    RegisterRootMotion();
+    RegisterTerrainDigger();
+    RegisterVoxelDigger();
+    RegisterWorldStreamer();
+    RegisterConsumables();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

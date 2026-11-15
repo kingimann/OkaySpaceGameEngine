@@ -3757,8 +3757,13 @@ the "same job" groups in the table above count them.
 builtin on the current object. Requires: wire only the arguments it takes (First, Second, Third, Fourth) ...". Nothing says what they
 do. Sorting them into specific topics makes them findable, but each needs a one-line `VsNodeHelp` sentence (and a level).
 
-**A details-pane bug seen in the headless render.** The pin text for **Add (+)** says pin A is "Opacity, from 0 (invisible) to 1 (solid)"
-and pin B is "Blue, from 0 to 1", which belongs to a colour node. The cause was not looked into.
+**Wrong pin descriptions on 26 math and logic nodes (seen in the headless render).** The details pane for **Add (+)** says pin A is
+"Opacity, from 0 (invisible) to 1 (solid)" and pin B is "Blue, from 0 to 1". The cause is in `scripts/gen_vs_node_docs.py`: it keeps one
+table of pin meanings keyed by the pin's name alone ("A" is Opacity, "B" is Blue, "R" is Red, "G" is Green, meant for colour pins), so every
+node with a pin named A or B gets the colour text. Hand-written nodes affected (counted in `editor/VisualScriptNodeDocs.inc`): Add, Sub, Mul,
+Div, Mod, Pow, Min, Max, Lerp, InverseLerp, Approx, Average, Compare, Equals, NotEquals, And, Or, Xor, Select, Concat, Vec3Add, Vec3Sub, Vec3Cross,
+Vec3Dot, Vec3Distance, Vec3Lerp. Not changed here (it is not a menu-topic problem). A fix would key the table by node type and pin name, then
+regenerate `editor/VisualScriptNodeDocs.inc` and `docs/visual_scripting_nodes.md`.
 
 **Things the new tree makes visible**
 

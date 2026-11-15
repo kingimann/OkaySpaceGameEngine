@@ -36,7 +36,8 @@ Short words used below:
 * **Not soon:** OkayUI for Dear ImGui, our platform layer for SDL2, our HTTP client on Windows (Windows uses WinHTTP, the
   system's own client). **Never on our word:** our crypto for libsodium (rule 18, your decision of 2026-11-14).
 * **Three things hold back every model-reader flip.**
-  1. No reader has ever run on real Windows. Wine only. CI does have real Windows jobs, but they do not run the readers.
+  1. None of the readers we would flip has run on real Windows. Wine only. CI does have real Windows jobs, but they run no reader except
+     one tiny OBJ file (`test_mesh_asset`, checked).
   2. The real-file corpus is not run in CI. Agents ran it by hand. A regression would not be seen.
   3. The 16 newest readers (AC3D, OGRE, XGL, IRR, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS) and WAV cannot be
      seen switched on. They are not in the startup line, the CI jobs on main never build
@@ -313,7 +314,7 @@ Its TweetNaCl section is out of date: that port is already gone (#849).
    4.x, zstd and 5.0 are untested. 3MF colours and textures are untested. COLLADA has no morph targets.
 5. **The announcement.** `docs/release_note_dropped_model_formats.md` is a draft. It must be one release ahead and the owner must
    decide every format that will still be dropped.
-6. **Process.** No reader has run on real Windows. The corpus is not in CI. The old comparison tool needs Assimp built outside the
+6. **Process.** None of these readers has run on real Windows (CI's Windows jobs load one tiny OBJ file and nothing else). The corpus is not in CI. The old comparison tool needs Assimp built outside the
    engine, so after Assimp is gone the manifest is the only record of the comparison.
 7. **Then delete:** the FetchContent block, `ModelImportAssimp.cpp`, `ImportBackend::Assimp`, the options `OKAY_USE_ASSIMP` and
    `OKAY_PREFER_OWN_READERS`, CI job `assimp-models`, `-DOKAY_USE_ASSIMP` in `scripts/build-windows-dist.sh` and `scripts/build-web.sh`,

@@ -4,6 +4,20 @@
 #
 # Built only when SDL2 dev libraries are present; otherwise quietly skipped so a
 # headless engine-only build is unaffected.
+# okay::text::Buffer: the code editor's data model (lines, UTF-8, edit log with undo, selections, find, brackets, tokenizer hook).
+# Pure standard C++ with no dependencies, so it is built and tested even without SDL2. Own code, not used by the editor yet
+# (docs/own_code_editor.md).
+add_library(okay_text STATIC src/TextBuffer.cpp)
+target_include_directories(okay_text PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(okay_text PUBLIC cxx_std_17)
+add_library(okay::text ALIAS okay_text)
+if(OKAY_BUILD_OKAYUI_TESTS AND OKAY_BUILD_TESTS)
+    add_executable(test_text_buffer tests/test_text_buffer.cpp)
+    target_link_libraries(test_text_buffer PRIVATE okay_text)
+    target_include_directories(test_text_buffer PRIVATE ${CMAKE_SOURCE_DIR}/tests)
+    add_test(NAME text_buffer COMMAND test_text_buffer)
+endif()
+
 find_package(SDL2 QUIET)
 if(NOT SDL2_FOUND)
     return()

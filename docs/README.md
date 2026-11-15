@@ -109,6 +109,7 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [localization_tools.md](localization_tools.md): translation grid, CSV and JSON, the table checker, key scanner, language previews and font coverage.
 - [own_ui_toolkit.md](own_ui_toolkit.md): OkayUI, our own immediate-mode UI toolkit (off by default), its widgets and render backends.
 - [own_ui_code_editor.md](own_ui_code_editor.md): the OkayUI code-editor widget.
+- [own_code_editor.md](own_code_editor.md): the code editor's own text data model (`okay::text::Buffer`), the plan and what is not done.
 - [accessibility.md](accessibility.md): subtitles and captions, colour vision, controller navigation, remapping and accessibility settings.
 
 ## Multiplayer, accounts and servers

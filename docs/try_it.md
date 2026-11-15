@@ -50,7 +50,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
-| 14 | Inspector right-click menus (component, Transform, field, object header, empty space) | Editor, select an object, right-click (details in section 8) | New in this change; headless tests only, never opened in a window |
+| 16 | Inspector right-click menus (component, Transform, field, object header, empty space) | Editor, select an object, right-click (details in section 16) | New in this change; headless tests only, never opened in a window |
 
 ---
 
@@ -237,7 +237,7 @@ compiled or run on this machine).
 
 ---
 
-## 8. Inspector right-click menus
+## 16. Inspector right-click menus
 
 **What it is.** The Inspector panel has right-click menus in five places. They are described row by row in
 [inspector_menus.md](inspector_menus.md). New in this change: Duplicate Component, Paste As New, Move to Top / Bottom,
@@ -248,8 +248,8 @@ Parent, Select Prefab Asset, Add Component...). Before this change the component
 All, Copy Values, Paste Values, Reset and Remove, and the Transform had Copy and Paste Transform Values.
 
 **Steps (Windows editor, `Tools\OkayEngine.exe`).**
-1. **File > Open...**, paste `<install folder>\examples\vehicle\vehicle_test.okayscene`, press Open. In the Hierarchy click
-   `Car`. The Inspector shows Transform, Rigidbody 3D, Box Collider 3D, Vehicle Controller (Car) and Vehicle Seat.
+1. **File > Open...**, paste `<install folder>\examples\vehicle\vehicle_test.okayscene` and confirm. In the Hierarchy click
+   `Car`. The Inspector shows cards for Transform, Rigidbody3D, Box Collider 3D, Vehicle Controller (Car) and Vehicle Seat.
 2. **Component menu.** Right-click the **Box Collider 3D** header (or click the **...** at its right end). You should see:
    Disable Component, Move Up, Move Down, Move to Top, Move to Bottom, Duplicate Component, Copy Values, Paste Values,
    Paste As New Component, Reset, Expand All Components, Collapse All Components, Copy Component Type Name, Remove Component.
@@ -257,19 +257,20 @@ All, Copy Values, Paste Values, Reset and Remove, and the Transform had Copy and
    this kind first." / "Copy a component's values first."
 3. **Duplicate.** Click **Duplicate Component**. A second Box Collider 3D appears right below the first with the same size
    (1.6, 0.6, 3). **Edit > Undo** (Ctrl+Z) removes it again.
-4. **Move.** Right-click the Box Collider 3D again and choose **Move to Top**: it moves above Rigidbody 3D. **Move Up** is now
-   grey (tooltip: already first). Move it back with **Move to Bottom**.
+4. **Move.** Right-click the Box Collider 3D again and choose **Move to Top**: its card moves to the first place under the
+   Transform. **Move Up** and **Move to Top** are now grey (tooltip: already the first). Choose **Move to Bottom** to send it to
+   the end, then **Move Down** is grey instead.
 5. **Copy and paste as new.** On Box Collider 3D choose **Copy Values**. Click `Directional Light` in the Hierarchy and
    right-click empty space in the Inspector (below the **Delete GameObject** button, or beside the **Add Component** button): the menu shows **Paste As New
    Box Collider 3D**. Click it: the light gets a Box Collider 3D with the same size. Ctrl+Z removes it.
-6. **Disable.** Click `Car` again, right-click Rigidbody 3D, **Disable Component**: its header text turns grey and its
+6. **Disable.** Click `Car` again, right-click Rigidbody3D, **Disable Component**: its header text turns grey and its
    check box is off. The same row now reads **Enable Component**.
 7. **Field menu.** Click `Car Body` (a child of `Car`, scale 1.6, 0.6, 3). Right-click the **Scale** row of the Transform
    (anywhere on the row, not only the numbers). Choose **Set to One**: the scale becomes 1, 1, 1; Ctrl+Z puts it back.
    Right-click again: **Reset to Default** (1, 1, 1), **Copy Value** (puts `1.6 0.6 3` on the clipboard: paste it into any text
    box to see), **Copy Property Path** (`Transform.scale`). Then click `Directional Light`, right-click its Scale row and choose
    **Paste Value**: its scale becomes 1.6, 0.6, 3 (the light does not care; Ctrl+Z). Other cards answer too wherever a row's
-   label is a registered property (for example Rigidbody 3D **Body Type**: Reset to Default, Copy Value).
+   label is a registered property (for example Rigidbody3D **Body Type**: Reset to Default, Copy Value).
 8. **Transform menu.** Right-click the **Transform** header: Copy Transform Values, Paste Transform Values, Paste Only >
    Position / Rotation / Scale, Reset Transform, Reset Position / Rotation / Scale. On `Car`, whose rotation is none, **Reset
    Rotation** is grey (tooltip: there is no rotation already).

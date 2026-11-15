@@ -96,7 +96,8 @@ The empty-space menu has: Add Component..., Paste As New *Kind*, Paste All Compo
 These are **headless renders** (a small software rasteriser draws Dear ImGui's draw lists to a PNG) of the real menu code in
 `editor/InspectorPanel.cpp`, driven by simulated mouse clicks on a small stand-in Inspector with a few components. They use Dear
 ImGui's built-in font and dark style, not the editor's theme, so the real editor looks different (colours, font, spacing). They show
-what rows appear, in what order, and which are greyed out. The render program is not part of the repository (see "Tested" below).
+what rows appear, in what order, and which are greyed out. The card titles use the readable names the real hand-written cards use
+("Box Collider 2D"). The render program is not part of the repository (see "Tested" below).
 
 | Picture | What it shows |
 |---|---|
@@ -127,6 +128,10 @@ Searched first (the feature map, the code, `scripts/find_existing.py`): no other
   registry has no entry for are greyed out with a reason. What is copied is what **Copy Values** copied before: the registry's values,
   not run-time state.
 * A value only the hand-written card knows (not in the registry) is not copied.
+* **A hand-drawn field answers only where its card calls the tooltip helper** (`oked::FieldTip`, about 1,350 call sites in `main.cpp`,
+  which is also what shows the field's tooltip) and its label matches a registered property. A few rows do not call it yet; for
+  example the Size and Offset rows of the Box Collider 3D card. The generated cards and the Transform rows always answer. The
+  fix for a missing row is one `oked::FieldTip("Size##bc3");` line after the widget.
 * The Add Component browser itself is still opened by its button or by **Add Component...** in the menus; it has no menu of its own.
 * No "Add Keyframe": the Animator's keyframes record a whole Transform, not single properties.
 * No docs link per component: the editor has no viewer for component pages (script components get **Scripting Reference**).
@@ -135,15 +140,22 @@ Searched first (the feature map, the code, `scripts/find_existing.py`): no other
 
 ## Tested
 
-* `tests/test_inspector_context_model.cpp` (`inspector_context_model`): the rules, 465 thousand checks over every combination of
-  the state flags. Header-only, builds with plain `g++`.
-* `tests/test_inspector_menu_actions.cpp` (`inspector_menu_actions`): the operations. It duplicates every kind of component the
-  registry can add (109 kinds when it was written) with changed values and compares the copy with the original in memory and, for
-  the kinds the scene file keeps (97), after a save and load.
+Run on Linux (g++ 13, Debug build without optimisation, engine library built before the last merge of main; the four newer commits
+on main do not touch anything these tests use):
+
+* `tests/test_inspector_context_model.cpp` (`inspector_context_model`): the rules, 465,583 checks over every combination of the
+  state flags, 0 failures. Header-only, builds with plain `g++` (also a mutation check: breaking a rule makes it fail).
+* `tests/test_inspector_menu_actions.cpp` (`inspector_menu_actions`): the operations, 173 checks, 0 failures. It duplicates every
+  kind of component the registry can add (109 kinds) with changed values (106 of them had values to change) and compares the copy
+  with the original in memory and, for the kinds the scene file keeps (97), after a save and load.
+* The existing `inspector_model` test (copy, paste, reset, prefab changes, one undo step per edit): 192 checks, 0 failures.
+* The three files and `InspectorPanel.cpp` / `InspectorModel.cpp` give no warning of their own with the project's flags
+  (`-Wall -Wextra -Wpedantic`).
 * Not in the repository: a throwaway program ran the real `InspectorPanel.cpp` menu code inside a Dear ImGui context with no window
-  and clicked through it with simulated mouse input (97 checks: the rows that open, the greyed rows, duplicate, move, enable /
-  disable, paste as new, copy and paste values, the field menu on a generated card and on a hand-drawn field, the Transform
+  and clicked through it with simulated mouse input (97 checks, 0 failures: the rows that open, the greyed rows, duplicate, move,
+  enable / disable, paste as new, copy and paste values, the field menu on a generated card and on a hand-drawn field, the Transform
   menu with its submenu, the object and empty-space menus, several selected objects, a required component, script rows, undo
   names). It found one real bug, fixed here: the right-click popup of a field was named after an item id that is 0 for a labelled
-  field, so two rows shared one popup (the same fault was in the prefab "Revert Property" popup).
-* **Not run:** the real editor (`main.cpp` was only syntax-checked, with `g++ -fsyntax-only`; the whole editor was not built or run), anything on Windows.
+  field, so two rows shared one popup (the same fault was in the prefab "Revert Property" popup). It also drew the pictures above.
+* **Not run:** the real editor (`main.cpp` was only syntax-checked with `g++ -fsyntax-only`; the editor target was not built or run),
+  the Windows build, and the script rows with the real Script Editor and node editor windows (the harness gave them stand-in hooks).

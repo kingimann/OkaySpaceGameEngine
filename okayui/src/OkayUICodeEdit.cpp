@@ -9,6 +9,9 @@
 
 namespace OkayUI {
 
+// float to int without undefined behaviour: NaN gives 0, anything outside [-1e9, 1e9] is clamped.
+static int SafeInt(float v) { return v != v ? 0 : (v < -1.0e9f ? -1000000000 : (v > 1.0e9f ? 1000000000 : (int)v)); }
+
 // ================================================================================================
 // Small text helpers
 // ================================================================================================
@@ -929,7 +932,7 @@ Vec2 CodeEdit::PosToScreen(CodePos p) const {
 }
 
 CodePos CodeEdit::ScreenToPos(float x, float y) const {
-    int row = (int)std::floor((y - view_.y + scrollY_) / lineH_);
+    int row = SafeInt(std::floor((y - view_.y + scrollY_) / lineH_));
     row = std::min(std::max(row, 0), (int)lines_.size() - 1);
     return CodePos{row, ColumnToByte(row, (x - textLeft_ + scrollX_) / charW_)};
 }
@@ -960,7 +963,7 @@ void CodeEdit::layout(const Rect& item) {
         const float tw = std::min(hTrack_.w, std::max(20.0f, hTrack_.w * (contentW_ > 0 ? view_.w / contentW_ : 1.0f)));
         hThumb_ = Rect{hTrack_.x + (maxX > 0 ? scrollX_ / maxX * (hTrack_.w - tw) : 0.0f), hTrack_.y + 1, tw, sb - 2};
     }
-    firstLine_ = std::min(std::max(0, (int)std::floor(scrollY_ / lineH_)), (int)lines_.size() - 1);
+    firstLine_ = std::min(std::max(0, SafeInt(std::floor(scrollY_ / lineH_))), (int)lines_.size() - 1);
     visLines_ = std::max(1, (int)(view_.h / lineH_));
 }
 
@@ -1026,7 +1029,9 @@ void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
             if (inRect(hThumb_, mx, my)) { dragHBar_ = true; dragOff_ = mx - hThumb_.x; }
             else { scrollX_ += (mx < hThumb_.x ? -1.0f : 1.0f) * view_.w; clampScroll(); }
         } else if (mx < view_.x) {
-            const int line = (int)std::floor((my - view_.y + scrollY_) / lineH_);
+            const float lineF = std::floor((my - view_.y + scrollY_) / lineH_);
+            // NaN, infinity or a huge value: no line (the cast would be undefined).
+            const int line = (lineF >= 0.0f && lineF < 2.0e9f) ? (int)lineF : -1;
             if (line >= 0 && line < (int)lines_.size()) {
                 if (showBreakpoints_ && mx < item.x + lineH_) {
                     if (autoToggle_) ToggleBreakpoint(line);
@@ -1121,7 +1126,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
     const Vec2 i0{item.x, item.y}, i1{item.x + item.w, item.y + item.h};
     const int n = (int)lines_.size();
     const int first = firstLine_;
-    const int last = std::min(n - 1, (int)std::floor((scrollY_ + view_.h) / lineH_));
+    const int last = std::min(n - 1, SafeInt(std::floor((scrollY_ + view_.h) / lineH_)));
     auto rowY = [&](int l) { return view_.y + (float)l * lineH_ - scrollY_; };
     dl.PushClipRect(i0, i1);
     dl.AddRectFilled(i0, i1, pal_.background);
@@ -1149,7 +1154,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
     const CodePos sa = SelectionStart(), sb = SelectionEnd();
     const bool sel = HasSelection();
     const float textH = GetTextLineHeight(), dy = (lineH_ - textH) * 0.5f;
-    const int c0 = std::max(0, (int)std::floor(scrollX_ / charW_) - 1), c1 = c0 + (int)(view_.w / charW_) + 4;
+    const int c0 = std::max(0, SafeInt(std::floor(scrollX_ / charW_)) - 1), c1 = c0 + SafeInt(view_.w / charW_) + 4;
     auto xOf = [&](int col) { return textLeft_ + (float)col * charW_ - scrollX_; };
     std::vector<CodeToken> toks;
     std::string run;

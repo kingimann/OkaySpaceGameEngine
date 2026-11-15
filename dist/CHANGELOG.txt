@@ -1,5 +1,41 @@
 OkaySpace Game Engine — Changelog
 
+v2.875.0
+  Launcher
+  - Clicking a template card on the Templates page no longer creates a
+    project on the spot. It opens the New Project wizard on that template,
+    and nothing is made until you press Create. (One click, or a double
+    click, used to make a project each time, which is how extra projects
+    piled up.) A single Create press can no longer run twice.
+  - "Remove from list" and "Delete project" now do what they say. A project
+    that was listed twice (in your Projects folder and in the opened-from-
+    elsewhere list) really disappears; the hide works whatever way the path
+    is written; the hidden list no longer forgets old entries after 100;
+    "Delete from disk" no longer leaves a ghost row; and on Windows the
+    Recycle Bin call uses the right path form. The toast tells you the files
+    stay on disk. Not tried on a real Windows machine yet.
+  - The start-up update screen is on by default for new installs and after
+    "Reset to defaults". An existing install keeps what it saved. Turn it off
+    in Settings > "Check for updates when the launcher starts", or with the
+    environment variable OKAY_UPDATE_ON_LAUNCH=0.
+
+  Download
+  - The examples folder (including the vehicle test scene and the sample
+    files for our own readers) is now part of the Windows download, and there
+    is a "Vehicle (get in and drive)" template and a plain how-to-try-it
+    guide (docs/try_it.md).
+
+  Our own code, off by default (nothing changes unless you switch it on)
+  - Twelve more of our own model readers (Terragen, MDC, HMP, CSM, Q3D, SIB
+    marker, RAW, IQM, COB, Nendo marker, PMX, LWS). Each has an environment
+    variable OKAY_OWN_<FORMAT>=1 and a sample file in examples/own_readers.
+  - The launcher voice clips can load through our own WAV reader. Switch:
+    OKAY_OWN_WAV=1. Sample: examples/own_wav.
+
+  Team tooling
+  - New checks that stop two people building the same thing and catch common
+    mistakes early (docs/collaboration.md).
+
 v2.874.0
   Gameplay
   - Vehicles: a new Vehicle Seat component. Walk up to a car, press E to get

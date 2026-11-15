@@ -8,6 +8,8 @@
 #include "okay/Render/LocalShadowMath.hpp"
 #include "okay/Render/Atmosphere.hpp"
 #include "okay/Render/PostQualityMath.hpp"
+#include "okay/Render/DofMath.hpp"
+#include "okay/Render/SsaoMath.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -1583,6 +1585,139 @@ inline float& BloomIntensity() { static float v = 0.6f; return v; }
 /// is box-downsampled into a small buffer, blurred there (the blur is ~16x cheaper
 /// than at full res), then bilinearly upsampled when added back. A wide full-res
 /// gaussian would otherwise dominate the frame time.
+/// Depth of field on the CPU: the scene's Post-processing "Depth of field" switch with its Focus distance and Focus
+/// range, using the shared maths of okay/Render/DofMath.hpp (the same circle of confusion and mix as the OpenGL and
+/// Direct3D 11 passes). Steps:
+///   1. distance per pixel from the W-buffer (`depth` holds 1/w; 0 is an empty pixel, which counts as sky), turned
+///      into the GPU's normalised depth (distance / far, far = ssao::kFar) so sky and far geometry match dof::Distance;
+///   2. a half-resolution copy of the frame (2x2 average), blurred twice with a 9-tap binomial kernel
+///      (C(8,k) / 256 for k = 0..8: the 8th row of Pascal's triangle, a close discrete gaussian), each round a
+///      horizontal then a vertical pass. Colours are blurred premultiplied by their alpha, so the transparent
+///      background (the host draws the sky behind) does not darken the edges;
+///   3. out = mix(sharp, blurred, coc) per pixel, the blurred value read bilinearly; alpha mixes too.
+/// The blur radius is fixed (two rounds of the 9-tap kernel on the half-resolution copy: about 8 half-resolution
+/// pixels, 16 full ones); the circle of confusion sets how much of the blurred copy is mixed in, not how wide the blur
+/// is. It is in pixels of the raster it runs on (the supersampled one when anti-aliasing is on), so with
+/// supersampling it is narrower on screen than the GPU's. 8-bit frame, display-space colours (no HDR).
+/// With nothing out of focus it returns after one scan of the depth buffer; the work buffers are kept between frames
+/// (per thread), and every pass is split over the hardware threads (ParallelRows). Each camera of a camera stack draws
+/// into its own raster and gets this pass, like the software renderer's other post effects.
+/// How many times ApplyDof got past its early outs and blurred (tests check the early outs touch nothing).
+inline unsigned long long& DofBlurPasses() { static unsigned long long n = 0; return n; }
+inline void ApplyDof(Raster& r, float focus, float range) {
+    const int W = r.width, H = r.height;
+    if (W < 2 || H < 2 || r.depth.size() != (std::size_t)W * H || r.color.size() != (std::size_t)W * H) return;
+    const float farDist = ssao::kFar;
+    auto cocAt = [&](std::size_t i) {
+        const float iw = r.depth[i];
+        const float dist = iw > 1e-12f ? 1.0f / iw : std::numeric_limits<float>::infinity();
+        const float dn = std::isfinite(dist) ? std::fmin(dist / farDist, 1.0f) : 1.0f;
+        return dof::Coc(dof::Distance(dn, farDist), focus, range);
+    };
+    // Nothing out of focus (everything inside the focus zone): no blur, no allocation. The zone is turned into a range
+    // of the stored 1/w once, so the scan is two compares a pixel; anything the range cannot decide (sky, the far
+    // clamp) asks cocAt.
+    {
+        const float lo = focus - range * dof::kHalf, hi = focus + range * dof::kHalf;
+        const float iwMin = hi > 0.0f ? 1.0f / hi : std::numeric_limits<float>::infinity();       // farther = smaller 1/w
+        const float iwMax = lo > 0.0f ? 1.0f / lo : std::numeric_limits<float>::infinity();       // nearer = larger
+        const float iwSky = 1.0f / (dof::kBackground * farDist);   // below this the GPU counts the pixel as sky
+        bool any = false;
+        for (std::size_t i = 0, n = r.depth.size(); i < n && !any; ++i) {
+            const float iw = r.depth[i];
+            if (iw > iwSky && iw >= iwMin && iw <= iwMax) continue;   // inside the focus zone
+            any = cocAt(i) > 0.0f;
+        }
+        if (!any) return;
+    }
+    ++DofBlurPasses();
+    const int hw = (W + 1) / 2, hh = (H + 1) / 2;
+    // half resolution, premultiplied RGBA in 0..1; the buffers are kept between frames (per thread)
+    // Bound to plain references here, on the calling thread: inside the worker threads the thread_local names would
+    // mean each worker's own (empty) copy.
+    thread_local std::vector<float> keepA, keepB;
+    std::vector<float>& a = keepA;
+    std::vector<float>& b = keepB;
+    a.resize((std::size_t)hw * hh * 4);
+    b.resize(a.size());
+    ParallelRows(0, hh, [&](int ya, int yb) {
+    for (int y = ya; y < yb; ++y)
+        for (int x = 0; x < hw; ++x) {
+            float acc[4] = {0, 0, 0, 0};
+            int n = 0;
+            for (int dy = 0; dy < 2; ++dy)
+                for (int dx = 0; dx < 2; ++dx) {
+                    const int sx = std::min(2 * x + dx, W - 1), sy = std::min(2 * y + dy, H - 1);
+                    const std::uint32_t px = r.color[(std::size_t)sy * W + sx];
+                    const float al = (float)(px >> 24) / 255.0f;
+                    acc[0] += (float)(px & 0xFF) / 255.0f * al;
+                    acc[1] += (float)((px >> 8) & 0xFF) / 255.0f * al;
+                    acc[2] += (float)((px >> 16) & 0xFF) / 255.0f * al;
+                    acc[3] += al;
+                    ++n;
+                }
+            float* o = &a[((std::size_t)y * hw + x) * 4];
+            for (int c = 0; c < 4; ++c) o[c] = acc[c] / (float)n;
+        }
+    });
+    static const float kTap[9] = {1 / 256.0f, 8 / 256.0f, 28 / 256.0f, 56 / 256.0f, 70 / 256.0f,
+                                  56 / 256.0f, 28 / 256.0f, 8 / 256.0f, 1 / 256.0f};
+    auto pass = [&](const std::vector<float>& src, std::vector<float>& dst, bool horizontal) {
+        ParallelRows(0, hh, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y)
+            for (int x = 0; x < hw; ++x) {
+                float acc[4] = {0, 0, 0, 0};
+                for (int k = -4; k <= 4; ++k) {
+                    const int sx = horizontal ? std::clamp(x + k, 0, hw - 1) : x;
+                    const int sy = horizontal ? y : std::clamp(y + k, 0, hh - 1);
+                    const float* s = &src[((std::size_t)sy * hw + sx) * 4];
+                    for (int c = 0; c < 4; ++c) acc[c] += s[c] * kTap[k + 4];
+                }
+                float* o = &dst[((std::size_t)y * hw + x) * 4];
+                for (int c = 0; c < 4; ++c) o[c] = acc[c];
+            }
+        });
+    };
+    for (int round = 0; round < 2; ++round) { pass(a, b, true); pass(b, a, false); }
+    ParallelRows(0, H, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y)
+            for (int x = 0; x < W; ++x) {
+                const std::size_t i = (std::size_t)y * W + x;
+                const float coc = cocAt(i);
+                if (coc <= 0.0f) continue;
+                // bilinear fetch of the half-resolution blur at this pixel's centre
+                const float fx = std::clamp(((float)x + 0.5f) * 0.5f - 0.5f, 0.0f, (float)(hw - 1));
+                const float fy = std::clamp(((float)y + 0.5f) * 0.5f - 0.5f, 0.0f, (float)(hh - 1));
+                const int x0 = (int)fx, y0 = (int)fy, x1 = std::min(x0 + 1, hw - 1), y1 = std::min(y0 + 1, hh - 1);
+                const float tx = fx - (float)x0, ty = fy - (float)y0;
+                float bl[4];
+                for (int c = 0; c < 4; ++c) {
+                    const float v00 = a[((std::size_t)y0 * hw + x0) * 4 + c], v10 = a[((std::size_t)y0 * hw + x1) * 4 + c];
+                    const float v01 = a[((std::size_t)y1 * hw + x0) * 4 + c], v11 = a[((std::size_t)y1 * hw + x1) * 4 + c];
+                    bl[c] = (v00 + (v10 - v00) * tx) + ((v01 + (v11 - v01) * tx) - (v00 + (v10 - v00) * tx)) * ty;
+                }
+                const std::uint32_t px = r.color[i];
+                const float sa = (float)(px >> 24) / 255.0f;
+                const float sp[3] = {(float)(px & 0xFF) / 255.0f * sa, (float)((px >> 8) & 0xFF) / 255.0f * sa,
+                                     (float)((px >> 16) & 0xFF) / 255.0f * sa};
+                const float oa = dof::Mix(sa, bl[3], coc);
+                float oc[3];
+                for (int c = 0; c < 3; ++c) {
+                    const float premul = dof::Mix(sp[c], bl[c], coc);
+                    oc[c] = oa > 1e-5f ? premul / oa : 0.0f;
+                }
+                auto q = [](float v) { return (std::uint32_t)((v < 0 ? 0 : (v > 1 ? 1 : v)) * 255.0f + 0.5f); };
+                r.color[i] = (q(oa) << 24) | (q(oc[2]) << 16) | (q(oc[1]) << 8) | q(oc[0]);
+            }
+    });
+}
+/// The scene's depth of field, when its switch is on (Post-processing > Depth of field).
+/// It is applied once per frame: RenderMeshes is called only by RenderMeshesSS, which clears the raster first, and a
+/// camera stack gives each camera its own raster, so a frame is never blurred twice (test software_dof).
+inline void ApplySceneDof(Raster& r, const Scene::RenderSettings& rs) {
+    if (rs.post.dof) ApplyDof(r, rs.post.dofFocus, rs.post.dofRange);
+}
+
 inline void ApplyBloom(Raster& r) {
     if (!BloomEnabled()) return;
     int W = r.width, H = r.height;
@@ -1762,8 +1897,8 @@ inline void ApplyColorGrade(Raster& r) {
 /// saturation, contrast, lift / gamma / gain, the vignette (with its smoothness), bloom and FXAA.
 /// Same maths as the OpenGL "uber" pass (kUberFrag), but on 8-bit colour: the software renderer shades
 /// in display space and has no HDR buffer, so the curves act on 0..1 values (the process-wide switches
-/// behave exactly as before). NOT supported on the CPU: SSAO from the scene, depth of field (see
-/// docs/render_status.md).
+/// behave exactly as before). Depth of field is its own pass (ApplyDof, before bloom). NOT supported on the CPU:
+/// SSAO from the scene (see docs/render_status.md).
 struct ScenePostPlan {
     int   tonemap = 1;           // 0 none, 1 ACES, 2 Filmic
     float exposure = 1.0f;
@@ -2334,6 +2469,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         SSAOSceneFormula() = true;
         ApplySSAO(r, vp, eye);
     }
+    ApplySceneDof(r, rs);                                            // the scene's depth of field (off by default)
     if (rs.post.bloom && !BloomEnabled()) {                          // the scene's own Bloom switch
         BloomEnabled() = true;
         const float t0 = BloomThreshold(), i0 = BloomIntensity();

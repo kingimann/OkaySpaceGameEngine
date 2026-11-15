@@ -103,7 +103,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Docs:** `docs/rendering.md`, `docs/lighting.md`
 - **Tests:** `software_renderer`, `shadows`, `light_shadows`, `software_local_shadows`, `software_default_shadows`, `software_scene_post`, `ssao_math`, `shaders`, `lighting`, `frustum_culling`
 - **Status:** Works - read the header (1.9k lines, header-only) and tests such as the depth-test one
-- **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting (without shadows), SSAO and bloom are off by default; no procedural sky, clouds or DoF; the scene's SSAO switch is read (`software_scene_ssao`)
+- **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting (without shadows), SSAO and bloom are off by default; no procedural sky or clouds; the scene's SSAO switch is read (`software_scene_ssao`, per-pixel-lit meshes only); depth of field is a CPU pass (`ApplyDof`, fixed blur radius, about 21 ms at 1080p on 4 threads)
 - **Related:** 38.1, 38.10, 2.3, 2.5, 2.8
 - **Words:** software renderer, Raster, RenderMeshes, RenderMeshesSS, CPU rasterizer, z-buffer, W-buffer, supersampling, fallback renderer, mip map
 - **Seen as:** 1 FPS with a large model; jagged edges; shadows missing after turning `ShadowsUsePerPixel` off
@@ -139,7 +139,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Docs:** `docs/web_mobile.md`
 - **Tests:** -
 - **Status:** Basic - the build and the software path exist (read `build-web.sh` and the `__EMSCRIPTEN__` guards); 3D in the browser is the CPU rasterizer
-- **Open:** no WebGL or WebGPU backend, so GPU-only effects (SSAO, depth of field, procedural sky and clouds) are missing in the browser; possible doc mismatch in `docs/rendering.md` ("OpenGL in the editor and the Linux / web player"); software speed limits web scenes
+- **Open:** no WebGL or WebGPU backend, so GPU-only effects (SSAO, procedural sky and clouds) are missing in the browser (depth of field now has a software pass); possible doc mismatch in `docs/rendering.md` ("OpenGL in the editor and the Linux / web player"); software speed limits web scenes
 - **Related:** 18.2, 38.1, 38.5, 2.5
 - **Words:** WebGL, WASM, Emscripten, web player, browser, HTML5 build, okay-player.html
 - **Seen as:** web export looks flatter or runs slowly than desktop; no clouds or bloom in the browser

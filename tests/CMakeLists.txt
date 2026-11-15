@@ -3545,3 +3545,7 @@ add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
 add_executable(test_software_scene_ssao test_software_scene_ssao.cpp)
 target_link_libraries(test_software_scene_ssao PRIVATE okay::engine)
 add_test(NAME software_scene_ssao COMMAND test_software_scene_ssao)
+
+add_executable(test_software_dof test_software_dof.cpp)
+target_link_libraries(test_software_dof PRIVATE okay::engine)
+add_test(NAME software_dof COMMAND test_software_dof)

@@ -292,23 +292,42 @@ eight Create categories.
 | GameObject > Audio > Audio Source, Music Player | Inspector > Add Component > Audio has both (the same line builds the object) | no way to create a sound object from the menu |
 | Help > Documentation (online), Report a Bug... | About > GitHub button (`extide::RevealInFiles`); the Crash Log panel | no direct route to the docs or the issue page |
 
-## 3b. Screenshots
+## 3b. Screenshots (the real editor, run on Linux)
 
-These are **headless renders of a small test window, not of the editor**: the real menu lists (`MenuBarModel.hpp`,
-`HierarchyContextModel.hpp`) drawn by the real drawer (`MenuEntriesUI.hpp`) with Dear ImGui under a virtual display (Xvfb), the mouse moved
-by `xdotool`. What a click does, and the lists that depend on live data (Open Recent, the Create categories' items), are stubbed and show a
-placeholder line. They show the order, the shortcuts, the plural labels and the reasons on hover. The folder is `docs/images/editor_menus/`.
+These are screenshots of the **real editor** built from this branch on Linux (`okay-editor`, engine at `-O1`, `editor/main.cpp` at `-O0` to fit
+in memory, no `NDEBUG`, so Dear ImGui's asserts were live), started with `--dev` (skips the launcher gate) from a project made with
+`--new-project ... --template "Third Person"`, in a virtual display (Xvfb, 1600x900) with the software renderer, the mouse driven by `xdotool`.
+They are not from Windows. Cropped to the editor window. The folder is `docs/images/editor_menus/`.
 
 | Screenshot | What it shows |
 |---|---|
-| [file.png](images/editor_menus/file.png) | File: one Examples, the groups, Open Recent greyed with its reason on hover |
-| [file_play_save_greyed.png](images/editor_menus/file_play_save_greyed.png) | File while the game runs: Save Scene and Save Scene As greyed, "Stop Play first ..." |
-| [edit_three_selected_cut_reason.png](images/editor_menus/edit_three_selected_cut_reason.png) | Edit with three objects selected: "Duplicate 3 Objects", "Delete 3 Objects", Cut greyed with the reason |
-| [view_editors_and_tools.png](images/editor_menus/view_editors_and_tools.png) | View: Panels, Editors & Tools, Layout, Frame / Isolate / UI Editing Mode, overlays, rendering |
+| [file.png](images/editor_menus/file.png) | File: the groups and the right-aligned keys |
+| [file_examples.png](images/editor_menus/file_examples.png) | File > Examples: the one merged submenu (the tooltip is the UI Gallery's; "Node Playground" is greyed because no playground scenes sit next to this build) |
+| [file_play_save_greyed.png](images/editor_menus/file_play_save_greyed.png) | File while the game runs (a project from the "3D Scene" template): Save Scene and Save Scene As greyed, the reason on hover |
+| [edit_undo_named.png](images/editor_menus/edit_undo_named.png) | Edit after Create Child: "Undo Create Hemisphere", Paste greyed (nothing copied) |
+| [gameobject.png](images/editor_menus/gameobject.png) | GameObject: Create Empty / Child / Parent, then the eight categories |
+| [gameobject_audio_source_created.png](images/editor_menus/gameobject_audio_source_created.png) | After GameObject > Audio > Audio Source: the object is in the Hierarchy and selected, its component in the Inspector |
+| [view.png](images/editor_menus/view.png) | View: nine entries |
 | [help.png](images/editor_menus/help.png) | Help |
-| [hierarchy_row_three_selected.png](images/editor_menus/hierarchy_row_three_selected.png) | Hierarchy row menu with three selected: plural labels, Group 3 Objects, Cut reason |
-| [hierarchy_create_child.png](images/editor_menus/hierarchy_create_child.png) | Hierarchy row menu, Create Child with the eight categories |
-| [hierarchy_empty_space.png](images/editor_menus/hierarchy_empty_space.png) | Hierarchy empty space: Create Empty, the categories, Paste greyed with its reason |
+| [hierarchy_row_menu.png](images/editor_menus/hierarchy_row_menu.png) | Hierarchy right-click on the Player (it has children) |
+| [hierarchy_create_child.png](images/editor_menus/hierarchy_create_child.png) | Create Child > 3D Object (the list is shifted up to fit the screen) |
+| [hierarchy_create_child_result.png](images/editor_menus/hierarchy_create_child_result.png) | The click on "Hemisphere": it is now a child of the Player (Player (2)); Edit > Undo took it away again |
+| [hierarchy_three_selected.png](images/editor_menus/hierarchy_three_selected.png) | Three crates selected: "Duplicate 3 Objects", "Delete 3 Objects", "Group 3 Objects", Cut greyed |
+| [hierarchy_same_type_reason.png](images/editor_menus/hierarchy_same_type_reason.png) | Select > Same Type (Light), greyed: "No other Light in the scene." |
+| [hierarchy_add_component.png](images/editor_menus/hierarchy_add_component.png) | Add Component... on the Ground: the Inspector's own browser opened |
+| [hierarchy_empty_space.png](images/editor_menus/hierarchy_empty_space.png) | Right-click on the empty space |
+
+What was clicked in that run, and seen to work: every top menu opened; File > Examples; Create Audio Source; Create Child > 3D Object >
+Hemisphere (a child of the Player) and then Edit > Undo; Edit > Cut then Edit > Paste; the row menu's Delete; the row menu with three selected;
+Select > Same Type on a Light (greyed) and on a mesh (selected the 8 meshes); Add Component... (the Inspector's browser opened);
+Rig & IK > Add IK Target; GameObject > Create Empty Parent, then Create Empty Child; View > Isolate Selection and the label turning into
+Exit Isolation; View > Panels (a check mark per open panel; clicking Problems closed that tab); View > Layout > Delete Layout hover reason;
+Camera Bookmarks "Go to slot 1" hover reason; the Play button, then File and Edit while the game ran; the [+] button; the empty-space menu; Help
+> Report a Bug... (no crash; there is no browser here, so the page and the clipboard line were not seen).
+**Not clicked:** the items under Open Recent, Autosave, Import Model, Merge Scene, Build Settings, New Project; Edit > Preferences items; the
+other Create items (2D, Player, Light, Camera, Effects, UI); Instantiate Prefab, Array Duplicate, Snap; Help > Documentation, Check for
+Updates, Keyboard Shortcuts, About, Scripting Reference; the prefab menu (no prefab in the test project); Parent To, Order, Transform
+and the Expand/Collapse items; Paste as Child.
 
 ## 4. How it is built and tested
 

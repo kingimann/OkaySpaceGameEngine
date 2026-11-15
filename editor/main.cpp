@@ -7055,12 +7055,11 @@ static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* p
             ImGui::EndMenu();
         }
     }
-    if (created || ed.scene().Objects().size() > before) {
-        ed.Achievement("FIRST_OBJECT");
-        if (ed.selected()) ed.Select(ed.selected());   // the creators set the active object; make it the whole selection so its row lights up
-    }
+    const bool grew = ed.scene().Objects().size() > before;
+    if (created || grew) ed.Achievement("FIRST_OBJECT");
+    if (grew && ed.selected()) ed.Select(ed.selected());   // the creators set the active object; make it the whole selection so its row lights up
     // Create Child: the new object goes inside `parent` (UI pieces choose their own parent: the Canvas or the selected panel).
-    if (parent && id != "create.ui" && ed.selected() && ed.selected() != parent && ed.scene().Objects().size() > before) {
+    if (parent && id != "create.ui" && grew && ed.selected() && ed.selected() != parent) {
         GameObject* made = ed.selected();
         bool fresh = false;
         const auto& objs = ed.scene().Objects();

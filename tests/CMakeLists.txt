@@ -3329,6 +3329,47 @@ foreach(_fmt IQM COB NDO)
     endif()
 endforeach()
 add_test(NAME own_default_e3 COMMAND test_own_default_e3 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# Own PMX and LWS / MOT readers (batch E5, slots 39 and 40): one test per reader on SYNTHETIC fixtures built in memory
+# (tests/pmxlws_fixtures.hpp), and one standalone budget / memory / path test for both (counting operator new inside; reader sources only,
+# so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow).
+foreach(_t pmx lws)
+    string(SUBSTRING ${_t} 0 1 _first)
+    string(TOUPPER ${_first} _FIRST)
+    string(SUBSTRING ${_t} 1 -1 _rest)
+    add_executable(test_${_t}_reader test_${_t}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${_FIRST}${_rest}Reader.cpp)
+    target_include_directories(test_${_t}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${_t}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${_t}_reader COMMAND test_${_t}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endforeach()
+add_executable(test_pmxlws_hostile test_pmxlws_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/PmxReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/LwsReader.cpp)
+target_include_directories(test_pmxlws_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_pmxlws_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME pmxlws_hostile COMMAND test_pmxlws_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(pmxlws_hostile PROPERTIES TIMEOUT 600)
+
+# The import seam routes PMX (slot 39) and LWS / MOT (slot 40) to their own readers; needs the whole engine (ImportModelData).
+add_executable(test_own_dispatch_e5 test_own_dispatch_e5.cpp)
+target_link_libraries(test_own_dispatch_e5 PRIVATE okay::engine)
+foreach(_f PMX LWS)   # -DOKAY_OWN_<FMT>=ON: the off-by-default checks are skipped for that format
+    if(OKAY_OWN_${_f})
+        target_compile_definitions(test_own_dispatch_e5 PRIVATE OKAY_EXPECT_OWN_${_f})
+    endif()
+endforeach()
+add_test(NAME own_dispatch_e5 COMMAND test_own_dispatch_e5 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# -DOKAY_OWN_PMX=ON / -DOKAY_OWN_LWS=ON must make our reader the default for that format: fails when the engine did not get the
+# OKAY_OWN_<FMT>_DEFAULT define (the foreach list in engine/CMakeLists.txt). With the options OFF it checks that the default stayed off.
+add_executable(test_own_pmx_lws_default test_own_pmx_lws_default.cpp)
+target_link_libraries(test_own_pmx_lws_default PRIVATE okay::engine)
+if(OKAY_OWN_PMX)
+    target_compile_definitions(test_own_pmx_lws_default PRIVATE OKAY_EXPECT_OWN_PMX)
+endif()
+if(OKAY_OWN_LWS)
+    target_compile_definitions(test_own_pmx_lws_default PRIVATE OKAY_EXPECT_OWN_LWS)
+endif()
+add_test(NAME own_pmx_lws_default COMMAND test_own_pmx_lws_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # The import seam routes the batch-C formats (slots 17 to 21) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)

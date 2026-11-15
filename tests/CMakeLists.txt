@@ -2160,6 +2160,11 @@ add_executable(test_renderer_features test_renderer_features.cpp)
 target_link_libraries(test_renderer_features PRIVATE okay::engine)
 add_test(NAME renderer_features COMMAND test_renderer_features)
 # Navigation mesh: bake (walls, doorways, slopes, steps, bridges), queries, agents, files, records
+add_executable(test_play_hitch test_play_hitch.cpp)   # sources on one file share one decoded clip; a nav surface skips an unchanged bake
+target_link_libraries(test_play_hitch PRIVATE okay::engine)
+target_compile_definitions(test_play_hitch PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME play_hitch COMMAND test_play_hitch)
+
 add_executable(test_navmesh test_navmesh.cpp)
 target_link_libraries(test_navmesh PRIVATE okay::engine)
 add_test(NAME navmesh COMMAND test_navmesh)

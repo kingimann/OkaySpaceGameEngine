@@ -11,7 +11,12 @@ An AudioSource plays a **WAV, OGG, MP3 or FLAC** file. Set its file in the Inspe
 (Opt-in, off by default: `OKAY_OWN_WAV=1` makes WAV loading use our own decoder, which also reads MS ADPCM, IMA ADPCM, A-law, mu-law, 64-bit float and extensible files and refuses oversized or damaged ones; see `docs/own_wav_decoder.md`.)
 (Browse or type a path relative to the project). Files are decoded once when Play
 starts, resampled to the output rate, and shared between every source that uses
-them. Files that can't be read are listed in the Console. FLAC is lossless: the
+them: sources on the same file hold the one decoded clip (`AudioSource::UseSharedClip`,
+read it with `AudioSource::Clip()`), not a copy each. The shared cache remembers each
+file's size and write time, so a file you changed or replaced is decoded again, never
+served stale. It keeps the sounds of the last Play so the next Play is quick, and
+trims the least recently used ones nothing holds once it passes 256 MB when Play stops
+(`AudioClip::TrimCache`, `ClearCache`). A clip you set on `clip` yourself wins over the shared one. Files that can't be read are listed in the Console. FLAC is lossless: the
 samples are the ones stored in the file. The decoder is our own, written from the
 public FLAC format description.
 

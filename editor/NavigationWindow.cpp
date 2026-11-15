@@ -770,7 +770,14 @@ void NavigationBeforePlay(EditorState& ed) {
     for (NavMeshSurface* ns : ed.scene().FindObjectsOfType<NavMeshSurface>()) {
         if (!ns || !ns->bakeBeforePlay || !ns->enabled) continue;
         ns->CancelBake();
-        BakeNow(ed, ns);
+        // Skip the bake when nothing it reads has changed since the last one (same settings, same colliders,
+        // same terrain): the mesh in memory, or the saved .okaynav this surface was baked into, is still right.
+        std::string err;
+        bool skipped = false;
+        if (!ns->BakeIfChanged(ed.scene(), &skipped, nullptr, &err)) { ConsoleLog("Navigation: " + err, 2); continue; }
+        // Always store: after a skip this just rewrites the same mesh, so the in-memory mesh and the .okaynav file
+        // cannot disagree (a reverted or deleted file is written back).
+        StoreBake(ed, ns);
     }
 }
 

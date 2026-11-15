@@ -36932,7 +36932,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this file now to hear it with the Play button here");
             }
             ImGui::TextDisabled("WAV, OGG, MP3 or FLAC; loads on Play and in the built game; %.2fs %s%s", a->Duration(),
-                                a->IsStreaming() ? "stream" : "clip", a->clip.channels == 2 ? ", stereo" : (a->IsStreaming() && a->Stream()->Channels() == 2 ? ", stereo" : ""));
+                                a->IsStreaming() ? "stream" : "clip", a->Clip().channels == 2 ? ", stereo" : (a->IsStreaming() && a->Stream()->Channels() == 2 ? ", stereo" : ""));
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
             oked::FieldTip("3D (spatial)");
             if (a->spatial) {

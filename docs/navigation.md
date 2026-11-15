@@ -47,8 +47,13 @@ Audit of the navigation code before the carving work, and where each item stands
    it (`navsurface ... path=...`). Build Game copies it with the scene. The
    file is text and diffs cleanly.
 
-**Bake before Play** on the surface rebakes every time Play starts, so the mesh
-always matches what you just moved. **Clear** drops the mesh and its file.
+**Bake before Play** on the surface rebakes when Play starts, so the mesh
+always matches what you just moved. It skips the bake when nothing the bake reads has
+changed since the last one: the same surface settings and bounds and the same colliders
+and terrain (shape, size, world position and rotation, area), compared exactly on the
+gathered bake input (`NavMeshSurface::BakeIfChanged`). After Stop the saved `.okaynav` counts
+only if it is the file that bake wrote (same size and write time). If that cannot be
+shown, it bakes. Mesh Collider triangles (world-space corners, area, two-sided) and the mesh work limits are part of the compared input. **Clear** drops the mesh and its file.
 
 What is baked: every enabled, non-trigger `BoxCollider3D` (an oriented box),
 `MeshCollider3D` (its real triangles; see below), `SphereCollider3D`, `CapsuleCollider3D` /

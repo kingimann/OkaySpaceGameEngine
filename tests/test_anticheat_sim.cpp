@@ -872,6 +872,7 @@ int main() {
         CHECK(ok);
     }
     std::printf("\n");
+    std::remove(crate.c_str());   // the prefab was written into the working folder; do not leave it behind
     Log::sink = sink;
     TEST_MAIN_RESULT();
 }

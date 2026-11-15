@@ -6,6 +6,9 @@ seam now, what is not, and what was and was not tested.
 
 Header: `engine/include/okay/Platform/Platform.hpp`. Sources: `engine/src/Platform/`. CMake: `cmake/OkayPlatform.cmake`.
 
+Current counts, file by file, and what covers each SDL use: `docs/sdl_inventory.md` (generated). The ordered plan to get the editor and
+launcher off SDL2: `docs/sdl_removal_plan.md`.
+
 ## Choosing a backend
 
 | | |

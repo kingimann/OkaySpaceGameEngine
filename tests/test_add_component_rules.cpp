@@ -2,7 +2,8 @@
 // (editor/AddComponentRules.hpp). The browser's rows are written as `item(oked::CanAddOne<T>(*go), "...")`, which refuses to compile
 // for a kind that is not in the table. This test reads the browser's sources and checks the other directions: every kind in the table
 // has a row, no row still spells the old hand-written test out (it would not be in the table), and the table is made of real,
-// distinct components that the run-time questions answer the same way the compile-time one does.
+// distinct components that the run-time questions answer the same way the compile-time one does. It also reads editor/main.cpp for
+// three one-line Inspector fixes that no test can run.
 #include "test_framework.hpp"
 #include "AddComponentRules.hpp"
 #include <Okay.hpp>
@@ -136,11 +137,45 @@ void TestTemplateTest() {
     CHECK(CanAddOne<PlayerController>(*g) && !CanAddOne<FirstPersonController>(*g));
 }
 
+std::size_t CountOf(const std::string& text, const std::string& what) {
+    std::size_t n = 0;
+    for (std::size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + what.size())) ++n;
+    return n;
+}
+
+// Three fixes of the Inspector menus review live in editor/main.cpp's drawing code, which no test can run (it needs a window and the
+// whole editor). They are one line each and easy to lose in a merge, so this reads the source and checks the lines are there.
+void TestMainKeepsItsInspectorFixes() {
+    RUN_SUITE("editor/main.cpp keeps the Inspector fixes that no test can run");
+    const std::string main = ReadFile("main.cpp");
+    CHECK(!main.empty());
+    const std::size_t npos = std::string::npos;
+    // 1. Every component's card gets widget ids of its own (two cards of one kind never share "Size##bc"): the scope is the first thing
+    //    in the body of the component loop, right after the loop skips the Transform, and it is there once.
+    const std::string scope = "const oked::ComponentIdScope componentIdScope(curComp);";
+    CHECK(CountOf(main, scope) == 1);
+    const std::size_t at = main.find(scope);
+    const std::size_t guard = at == npos ? npos : main.rfind("curComp == go->transform) continue;", at);
+    CHECK(at != npos && guard != npos && at - guard < 600);
+    // ... and the card's tip component is this component, not the one drawn before it.
+    const std::size_t tip = at == npos ? npos : main.find("oked::SetTipComponent(curComp);", at);
+    CHECK(tip != npos && tip - at < 800);
+    // 2. The Rigidbody cards edit the component they draw (a second Rigidbody's card used to edit the first one, and its Remove removed it).
+    CHECK(CountOf(main, "auto* rb = rb2;") == 1 && CountOf(main, "auto* rb = rb3;") == 1);
+    CHECK(main.find("auto* rb = go->GetComponent<Rigidbody2D>();") == npos);
+    CHECK(main.find("auto* rb = go->GetComponent<Rigidbody3D>();") == npos);
+    // 3. A Player Controller part never calls CompHeader, so it names its own component for the field tooltips and the field menu.
+    const std::size_t part = main.find("oked::SetTipComponent(part);");
+    const std::size_t head = part == npos ? npos : main.rfind("static bool PlayerPartHeader(", part);
+    CHECK(part != npos && head != npos && part - head < 800);
+}
+
 }   // namespace
 
 int main() {
     TestTableMatchesTheBrowser();
     TestTableAnswersAtRunTime();
     TestTemplateTest();
+    TestMainKeepsItsInspectorFixes();
     TEST_MAIN_RESULT();
 }

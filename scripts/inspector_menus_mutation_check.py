@@ -26,6 +26,7 @@ CLIP = 'editor/InspectorClipboardRules.hpp'
 CTX = 'editor/InspectorContextModel.hpp'
 IDS = 'editor/ComponentIdScope.hpp'
 TABLE = 'editor/AddComponentRules.hpp'
+MAIN = 'editor/main.cpp'
 
 # (name, test, [(file, old text, new text)])
 HEADER_ONLY = [
@@ -88,8 +89,16 @@ ENGINE = [
      [(MODEL, "    return IsOnePerObject(info.type) || ComponentRules::IsUnique(info.type);", "    return ComponentRules::IsUnique(info.type);")]),
     ('1b Paste As New ignores "only one per object"', 'test_inspector_menu_actions',
      [(MODEL, "    if (OnePerObject(*info)) {\n        bool has = HasOnePerObjectKind(go, info->type);", "    if (false) {\n        bool has = HasOnePerObjectKind(go, info->type);")]),
-    ('1c the table loses AudioSource (a browser row would no longer match it)', 'test_add_component_rules', [(TABLE, "X(AudioSource) ", "")]),
-    ('1d the table gains kinds that no browser row uses', 'test_add_component_rules', [(TABLE, "X(AimIK) ", "X(AimIK) X(ParticleSystem) X(Volume) ")]),
+    ('1c the table loses AimIK (the browser still has a row for it)', 'test_add_component_rules', [(TABLE, "X(AimIK) ", "")]),
+    ('1d the table gains Volume, which the browser offers again and again', 'test_add_component_rules', [(TABLE, "X(VirtualJoystick) X(VoxelDigger)", "X(VirtualJoystick) X(Volume) X(VoxelDigger)")]),
+    ('7b main.cpp: the component loop pushes no widget id (two cards of one kind share ids)', 'test_add_component_rules',
+     [(MAIN, "        const oked::ComponentIdScope componentIdScope(curComp);\n", "")]),
+    ('1f main.cpp: the card of a second Rigidbody 2D edits the first one', 'test_add_component_rules', [(MAIN, "auto* rb = rb2;", "auto* rb = go->GetComponent<Rigidbody2D>();")]),
+    ('1g main.cpp: the card of a second Rigidbody 3D edits the first one', 'test_add_component_rules', [(MAIN, "auto* rb = rb3;", "auto* rb = go->GetComponent<Rigidbody3D>();")]),
+    ('7c main.cpp: a Player Controller part keeps the previous card as its tip component', 'test_add_component_rules',
+     [(MAIN, "    oked::SetTipComponent(part);   // the fields of this section", "    // (removed) the fields of this section")]),
+    ('7d main.cpp: a card does not name its own component for tooltips and menus', 'test_add_component_rules',
+     [(MAIN, "        oked::SetTipComponent(curComp);   // a card that never calls CompHeader", "        // (removed) a card that never calls CompHeader")]),
     ('2a CheckCopyIsExact always says "exact"', 'test_inspector_menu_actions', [(MODEL, "    if (addedSorted == ownSorted) return r;", "    return r;")]),
     ('2b Paste As New ignores a clip that is not exact', 'test_inspector_menu_actions',
      [(MODEL, "    if (!clip.exact) {\n        if (why) *why = \"A new \"", "    if (false) {\n        if (why) *why = \"A new \"")]),
@@ -122,7 +131,7 @@ def run(cmd, **kw):
 
 
 def mutated_dir(edits, work):
-    """Write the edited copies into `work` (flat, by file name). Returns False when an edit does not apply any more."""
+    """Write the edited copies into `work` (flat, by file name; nothing is written for no edits). False when an edit does not apply any more."""
     sources = {}
     for f, old, new in edits:
         if f not in sources:
@@ -146,50 +155,90 @@ def summary(proc):
     return (checks[-1] if checks else out[-120:].replace('\n', ' ')) + ('   e.g. ' + fails[0][:100] if fails else '')
 
 
-def header_only(test, edits, work):
-    if not mutated_dir(edits, work):
-        return None
-    exe = os.path.join(work, 't')
-    c = run(['g++', '-std=c++17', '-O0', '-w', '-I', work, '-I', EDITOR, '-I', TESTS, os.path.join(TESTS, test + '.cpp'), '-o', exe])
-    if c.returncode:
-        return ('COMPILE ERROR', c.stderr[:200].replace('\n', ' '))
-    r = run([exe])
-    return ('RED' if r.returncode else 'GREEN (!)', summary(r))
+def engine_flags(first_include, editor_dir=EDITOR):
+    return ENGINE_DEFS + ['-I', first_include, '-I', EDITOR, '-I', os.path.join(ROOT, 'engine', 'include'), '-isystem', '/usr/include/SDL2', '-O0', '-DNDEBUG',
+                          '-std=c++17', '-w', '-DOKED_EDITOR_DIR="%s"' % editor_dir]
 
 
-def with_imgui(test, edits, work, imgui, objs):
-    if not mutated_dir(edits, work):
-        return None
-    exe = os.path.join(work, 't')
-    c = run(['g++', '-std=c++17', '-O0', '-w', '-I', work, '-I', EDITOR, '-I', TESTS, '-I', imgui, os.path.join(TESTS, test + '.cpp')] + objs + ['-o', exe])
-    if c.returncode:
-        return ('COMPILE ERROR', c.stderr[:200].replace('\n', ' '))
-    r = run([exe])
-    return ('RED' if r.returncode else 'GREEN (!)', summary(r))
-
-
-def with_engine(test, edits, work, build):
-    if not mutated_dir(edits, work):
-        return None
-    libs = [build + '/engine/libokay_engine.a', build + '/engine/libokay_crypto.a', '-lsodium', build + '/engine/libokay_platform.a', '/usr/lib/x86_64-linux-gnu/libSDL2.so', '-ldl']
-    flags = ENGINE_DEFS + ['-I', work, '-I', EDITOR, '-I', os.path.join(ROOT, 'engine', 'include'), '-isystem', '/usr/include/SDL2', '-O0', '-DNDEBUG', '-std=c++17', '-w',
-                           '-DOKED_EDITOR_DIR="%s"' % EDITOR]
-    jobs = [(os.path.join(TESTS, test + '.cpp'), os.path.join(work, 'test.o'))]
-    if test == 'test_inspector_menu_actions':   # this test is built together with InspectorModel.cpp (the mutated copy when that is what changed)
-        model = os.path.join(work, 'InspectorModel.cpp')
-        jobs.append((model if os.path.exists(model) else os.path.join(EDITOR, 'InspectorModel.cpp'), os.path.join(work, 'model.o')))
+def engine_objects(test, edits, work, ctx):
+    """The objects of an engine-linked test. What the edits do not touch is compiled once from the unchanged sources and kept."""
+    parts = [('test', os.path.join(TESTS, test + '.cpp'))]
+    if test == 'test_inspector_menu_actions':   # built together with InspectorModel.cpp
+        parts.append(('model', os.path.join(EDITOR, 'InspectorModel.cpp')))
+    changed = {os.path.basename(f) for f, _, _ in edits}
+    headers = any(n.endswith('.hpp') for n in changed)   # a changed header reaches every file that includes it
+    editor_dir = EDITOR
+    if 'main.cpp' in changed:   # the test reads editor/main.cpp: give it a copy of the editor folder whose main.cpp is the changed one
+        editor_dir = os.path.join(work, 'editor_view')
+        os.makedirs(editor_dir)
+        for n in os.listdir(EDITOR):
+            if n != 'main.cpp':
+                os.symlink(os.path.join(EDITOR, n), os.path.join(editor_dir, n))
+        os.replace(os.path.join(work, 'main.cpp'), os.path.join(editor_dir, 'main.cpp'))
+        changed.discard('main.cpp')
+        headers = True   # the test's own object has to be built again with the other folder
     objs = []
-    for src, out in jobs:
-        c = run(['nice', '-n', '10', 'g++'] + flags + ['-c', src, '-o', out])
-        if c.returncode:
-            return ('COMPILE ERROR', c.stderr[:200].replace('\n', ' '))
+    for key, src in parts:
+        name = os.path.basename(src)
+        if name in changed or headers:
+            out = os.path.join(work, key + '.o')
+            c = run(['nice', '-n', '10', 'g++'] + engine_flags(work, editor_dir) + ['-c', os.path.join(work, name) if name in changed else src, '-o', out])
+        else:
+            out = ctx['clean'].get((test, key))
+            c = None
+            if out is None:
+                out = os.path.join(ctx['tmp'], test + '.' + key + '.o')
+                c = run(['nice', '-n', '10', 'g++'] + engine_flags(os.path.join(ctx['tmp'], 'no_edits')) + ['-c', src, '-o', out])
+                if not c.returncode:
+                    ctx['clean'][(test, key)] = out
+        if c is not None and c.returncode:
+            return None, c.stderr[:200].replace('\n', ' ')
         objs.append(out)
+    return objs, ''
+
+
+def build_run(kind, test, edits, work, ctx):
+    """Build `test` against copies of the sources with the edits applied, then run it. None when an edit no longer applies,
+    ('ERROR', what, text) when it does not build, ('RAN', process) when it ran."""
+    if not mutated_dir(edits, work):
+        return None
     exe = os.path.join(work, 't')
-    link = run(['g++', '-O0'] + objs + ['-o', exe] + libs)
-    if link.returncode:
-        return ('LINK ERROR', link.stderr[:200].replace('\n', ' '))
-    r = run([exe], cwd=ROOT)
-    return ('RED' if r.returncode else 'GREEN (!)', summary(r))
+    if kind == 'engine':
+        objs, err = engine_objects(test, edits, work, ctx)
+        if objs is None:
+            return ('ERROR', 'COMPILE ERROR', err)
+        b = ctx['build']
+        libs = [b + '/engine/libokay_engine.a', b + '/engine/libokay_crypto.a', '-lsodium', b + '/engine/libokay_platform.a', '/usr/lib/x86_64-linux-gnu/libSDL2.so', '-ldl']
+        c = run(['g++', '-O0'] + objs + ['-o', exe] + libs)
+        if c.returncode:
+            return ('ERROR', 'LINK ERROR', c.stderr[:200].replace('\n', ' '))
+    else:
+        cmd = ['g++', '-std=c++17', '-O0', '-w', '-I', work, '-I', EDITOR, '-I', TESTS]
+        extra = []
+        if kind == 'imgui':
+            cmd += ['-I', ctx['imgui']]
+            extra = ctx['imgui_objs']
+        c = run(cmd + [os.path.join(TESTS, test + '.cpp')] + extra + ['-o', exe])
+        if c.returncode:
+            return ('ERROR', 'COMPILE ERROR', c.stderr[:200].replace('\n', ' '))
+    return ('RAN', run([exe], cwd=ROOT))
+
+
+def attempt(kind, test, edits, work, ctx):
+    """One mutation. The unchanged test is built and run first (once per test): when it is not green already, a red mutation proves nothing."""
+    key = (kind, test)
+    if key not in ctx['base']:
+        b = build_run(kind, test, [], work, ctx)
+        ctx['base'][key] = (b is not None and b[0] == 'RAN' and b[1].returncode == 0, b)
+    ok, b = ctx['base'][key]
+    if not ok:
+        return ('SKIPPED', 'the unchanged test is not green (%s), so a red mutation would prove nothing' % (b[2] if b and b[0] == 'ERROR' else summary(b[1])))
+    res = build_run(kind, test, edits, work, ctx)
+    if res is None:
+        return None
+    if res[0] == 'ERROR':
+        return (res[1], res[2])
+    return ('RED' if res[1].returncode else 'GREEN (!)', summary(res[1]))
 
 
 def main():
@@ -201,25 +250,25 @@ def main():
     results = []
     with tempfile.TemporaryDirectory(prefix='inspector_mutations_') as tmp:
         work = os.path.join(tmp, 'm')
+        ctx = {'tmp': tmp, 'clean': {}, 'base': {}, 'imgui': args.imgui, 'imgui_objs': [], 'build': os.path.abspath(args.build) if args.build else None}
         for name, test, edits in HEADER_ONLY:
             if args.only in name:
-                results.append((name, test, header_only(test, edits, work)))
+                results.append((name, test, attempt('header', test, edits, work, ctx)))
         if args.imgui:
-            objs = []
             for f in ('imgui', 'imgui_draw', 'imgui_tables', 'imgui_widgets'):
                 o = os.path.join(tmp, f + '.o')
                 c = run(['g++', '-std=c++17', '-O0', '-w', '-c', os.path.join(args.imgui, f + '.cpp'), '-o', o])
                 if c.returncode:
                     print('cannot compile', f, c.stderr[:200]); return 2
-                objs.append(o)
+                ctx['imgui_objs'].append(o)
             for name, test, edits in IMGUI:
                 if args.only in name:
-                    results.append((name, test, with_imgui(test, edits, work, args.imgui, objs)))
+                    results.append((name, test, attempt('imgui', test, edits, work, ctx)))
         if args.build:
             for name, test, edits in ENGINE:
                 if args.only in name:
                     t0 = time.time()
-                    res = with_engine(test, edits, work, os.path.abspath(args.build))
+                    res = attempt('engine', test, edits, work, ctx)
                     results.append((name, test, (res[0], '%s   [%ds]' % (res[1], time.time() - t0)) if res else None))
     width = max([len(n) for n, _, _ in results] or [0])
     bad = 0

@@ -12,6 +12,7 @@
 #include "okay/Scene/PropertyBuilder.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Scene/SceneDiff.hpp"
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 #include <new>
@@ -430,8 +431,9 @@ void TestEveryRegisteredKind() {
     for (const std::string& n : inexactKinds) std::cout << "  not exact: " << n << "\n";
     for (const std::string& n : notTwo) std::cout << "  not reloaded as two: " << n << "\n";
     CHECK(kinds > 80);
-    CHECK(onceOnly > 70);                                           // nearly everything is a kind the browser hides once present
-    CHECK(enabled >= 5);
+    CHECK(onceOnly > 60);                                           // nearly everything is a kind the browser hides once present
+    CHECK(enabled >= 1);
+    CHECK(std::find(enabledKinds.begin(), enabledKinds.end(), "Volume") != enabledKinds.end());   // the kind the other tests duplicate
     CHECK(notTwo.empty());                                          // a kind that is offered must come back from the file as two
 }
 

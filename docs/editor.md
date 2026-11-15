@@ -894,7 +894,12 @@ step, a press that changes nothing is none, and a field that already made its ow
   every selected object that has one) and **Reset** (what a new component has). Each is one undo step. The Inspector's
   right-click menus (component, Transform, field, object header, empty space) have many more rows now: Duplicate Component,
   Paste As New, Move to Top / Bottom, Enable / Disable, Reset to Default and Copy / Paste Value on a field, Copy and Paste All
-  Component Values, Select Parent and more. See [inspector_menus.md](inspector_menus.md).
+  Component Values, Select Parent and more. See [inspector_menus.md](inspector_menus.md). Duplicate Component and Paste As New
+  follow the **Add Component** list: a kind that list offers only once per object (most kinds: Rigidbody, colliders, Light,
+  Audio Source ...) is greyed with the reason, and a copy is only offered when it would save as the same scene text (a
+  particle system's gradient is not a copyable value, so it is not offered). A right click opens one menu: a field's menu
+  answers on the whole row (label, gap and box). **Paste Value** is greyed, with the reason, when the clipboard text is too
+  long, on several lines, not that kind of value, `nan`, or a file path outside the project.
 - A component with no hand-written Inspector (a plugin's, or a new one) is drawn from the property registry: every
   property with its tooltip, drag to change numbers (range and step from the registry), colour picker, enum list,
   file and object fields. With several objects selected, the edit goes to all of them; fields that differ show

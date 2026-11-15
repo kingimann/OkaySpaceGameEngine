@@ -313,6 +313,7 @@ has `enabled`.
 | ItemPickup, SurvivalZone, QuestTrigger, HoldPrompt, Occluder | 10, 4, 5, 3, 1 | the pickup's instance data (durability, uid, values) is saved too but is not a property; `SurvivalZone.effect` is an Int 0..11 (Radiation ... Drink, see the tooltip) |
 | Ragdoll, AutoSave, TurnManager, Decal, Cable | 11, 4, 3, 5, 8 | the turn manager's participant list is saved but is not a property; the cable's ends are object names |
 | SplineFollower, DollyCart, LineRenderer | 9, 4, 12 | `SplineFollower.drive` (Speed, Time) and `wrap` (Loop, PingPong, Once), `LineRenderer.alignment` (View, Flat) and `textureMode` (Stretch, Tile) are enums; the line's points, width curve and colour gradient are lists, not properties |
+| HealthStat, SurvivalStats | 21, 28 | health, armor and mitigation, overheal, death and respawn, and the Prefs / bar / message switches; survival adds hunger, thirst, stamina, oxygen and warmth. The current values (health, hunger ...) are runtime, not properties |
 
 How the new types are described, so a tool can rely on it:
 

@@ -378,7 +378,7 @@ static void TestRegistryBasics() {
         "UIPagination", "UISkeleton", "UIBottomSheet", "Seat", "Stats", "WorldUI", "LootSource",
         "ItemPickup", "SurvivalZone", "QuestTrigger", "HoldPrompt", "Occluder",
         "Ragdoll", "AutoSave", "TurnManager", "Decal", "Cable",
-        "SplineFollower", "DollyCart", "LineRenderer"};
+        "SplineFollower", "DollyCart", "LineRenderer", "HealthStat", "SurvivalStats"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

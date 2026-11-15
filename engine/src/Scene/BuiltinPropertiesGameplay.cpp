@@ -14,6 +14,8 @@
 #include "okay/Components/DollyPath.hpp"
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/Spline.hpp"
+#include "okay/Components/SurvivalComponents.hpp"
+#include "okay/Components/SurvivalStats.hpp"
 #include "okay/Components/HoldPrompt.hpp"
 #include "okay/Components/Ragdoll.hpp"
 #include "okay/Components/TurnManager.hpp"
@@ -944,6 +946,75 @@ void RegisterLineRenderer() {
     b.Commit();
 }
 
+// HealthStat (record "stat_health")
+void RegisterHealthStat() {
+    PropertyBuilder<HealthStat> b("HealthStat", "stat_health", "Gameplay");
+    b.Section("Health")
+     .AddFloat("maxHealth", &HealthStat::maxHealth).Range(0, kBig, 1).Tooltip("Full health")
+     .AddFloat("armor", &HealthStat::armor).Range(0, kBig, 0.5).Tooltip("Flat reduction taken off every hit first")
+     .AddFloat("regenPerSecond", &HealthStat::regenPerSecond).Range(0, kBig, 0.1).Tooltip("Passive heal per second (0 = off)")
+     .AddFloat("regenDelay", &HealthStat::regenDelay).Range(0, 1e6, 0.1).Tooltip("Seconds after a hit before healing starts")
+     .AddFloat("lowThreshold", &HealthStat::lowThreshold).Range(0, kBig, 1).Tooltip("Below this the health counts as low")
+     .Section("Damage")
+     .AddFloat("resistance", &HealthStat::resistance).Range(0, 1, 0.01).Tooltip("Fraction of the damage left after armor that is ignored")
+     .AddFloat("minDamage", &HealthStat::minDamage).Range(0, kBig, 0.1).Tooltip("A hit always deals at least this")
+     .AddBool("godMode", &HealthStat::godMode).Tooltip("Ignore all damage")
+     .AddFloat("invincibleTime", &HealthStat::invincibleTime).Range(0, 1e6, 0.05).Tooltip("Seconds of no damage after a hit (0 = off)")
+     .AddFloat("overhealMax", &HealthStat::overhealMax).Range(0, kBig, 1).Tooltip("Extra health a heal may stack above the maximum")
+     .AddFloat("overhealDecay", &HealthStat::overhealDecay).Range(0, kBig, 0.1).Tooltip("Health per second the part above the maximum bleeds off")
+     .Section("Death")
+     .AddBool("destroyOnDeath", &HealthStat::destroyOnDeath).Tooltip("Remove the object when it dies")
+     .AddBool("respawn", &HealthStat::respawn).Tooltip("Come back after the respawn delay")
+     .AddFloat("respawnDelay", &HealthStat::respawnDelay).Range(0, 1e6, 0.1).Tooltip("Seconds before coming back")
+     .AddInt("lives", &HealthStat::lives).Range(0, 1000000, 1).Tooltip("Respawns allowed (0 = unlimited)")
+     .AddBool("playDeathAnim", &HealthStat::playDeathAnim).Tooltip("Play the death animation and stay until it settles")
+     .AddBool("playHitAnim", &HealthStat::playHitAnim).Tooltip("A light flinch when a hit has a source")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &HealthStat::publishPrefs).Tooltip("Write the value to Prefs each frame (UI bindings read it)")
+     .AddBool("publishBar", &HealthStat::publishBar).Tooltip("Fill the same-named bar widget")
+     .AddBool("sendMessages", &HealthStat::sendMessages).Tooltip("Broadcast the low and death messages once");
+    b.Commit();
+}
+
+// SurvivalStats (record "survival")
+void RegisterSurvivalStats() {
+    PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
+    b.Section("Health")
+     .AddFloat("maxHealth", &SurvivalStats::maxHealth).Range(0, kBig, 1).Tooltip("Full health")
+     .AddFloat("armor", &SurvivalStats::armor).Range(0, kBig, 0.5).Tooltip("Flat reduction taken off every hit first")
+     .AddFloat("regenWhenFed", &SurvivalStats::regenWhenFed).Range(0, kBig, 0.1).Tooltip("Health per second regained while fed and watered")
+     .AddFloat("regenDelay", &SurvivalStats::regenDelay).Range(0, 1e6, 0.1).Tooltip("Seconds after a hit before healing starts")
+     .AddFloat("resistance", &SurvivalStats::resistance).Range(0, 1, 0.01).Tooltip("Fraction of the damage left after armor that is ignored")
+     .AddBool("godMode", &SurvivalStats::godMode).Tooltip("Ignore all damage")
+     .AddFloat("invincibleTime", &SurvivalStats::invincibleTime).Range(0, 1e6, 0.05).Tooltip("Seconds of no damage after a hit (0 = off)")
+     .Section("Hunger and thirst")
+     .AddFloat("maxHunger", &SurvivalStats::maxHunger).Range(0, kBig, 1).Tooltip("Full stomach")
+     .AddFloat("hungerDrain", &SurvivalStats::hungerDrain).Range(0, kBig, 0.1).Tooltip("Hunger lost per second")
+     .AddFloat("starveDamage", &SurvivalStats::starveDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost while starving")
+     .AddFloat("maxThirst", &SurvivalStats::maxThirst).Range(0, kBig, 1).Tooltip("Fully watered")
+     .AddFloat("thirstDrain", &SurvivalStats::thirstDrain).Range(0, kBig, 0.1).Tooltip("Thirst lost over time")
+     .AddFloat("dehydrateDamage", &SurvivalStats::dehydrateDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost while dehydrated")
+     .Section("Stamina")
+     .AddFloat("maxStamina", &SurvivalStats::maxStamina).Range(0, kBig, 1).Tooltip("Full stamina")
+     .AddFloat("staminaRegen", &SurvivalStats::staminaRegen).Range(0, kBig, 0.1).Tooltip("Stamina per second regained")
+     .AddFloat("sprintCost", &SurvivalStats::sprintCost).Range(0, kBig, 0.1).Tooltip("Stamina per second used while sprinting")
+     .AddFloat("sprintDrainMult", &SurvivalStats::sprintDrainMult).Range(0, 1000, 0.1).Tooltip("Hunger and thirst drain this much faster while sprinting")
+     .Section("Oxygen and warmth")
+     .AddFloat("maxOxygen", &SurvivalStats::maxOxygen).Range(0, kBig, 1).Tooltip("Full lungs")
+     .AddFloat("oxygenDrain", &SurvivalStats::oxygenDrain).Range(0, kBig, 0.1).Tooltip("Oxygen per second used under water")
+     .AddFloat("oxygenRefill", &SurvivalStats::oxygenRefill).Range(0, kBig, 0.1).Tooltip("Oxygen per second regained in the air")
+     .AddFloat("drownDamage", &SurvivalStats::drownDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost with no oxygen")
+     .AddFloat("maxWarmth", &SurvivalStats::maxWarmth).Range(0, kBig, 1).Tooltip("Fully warm")
+     .AddFloat("coldDrain", &SurvivalStats::coldDrain).Range(0, kBig, 0.1).Tooltip("Warmth per second lost in the cold")
+     .AddFloat("warmRegen", &SurvivalStats::warmRegen).Range(0, kBig, 0.1).Tooltip("Warmth per second regained")
+     .AddFloat("freezeDamage", &SurvivalStats::freezeDamage).Range(0, kBig, 0.1).Tooltip("Health per second lost while freezing")
+     .Section("Publishing")
+     .AddBool("publishPrefs", &SurvivalStats::publishPrefs).Tooltip("Write the values to Prefs each frame (UI bindings read them)")
+     .AddBool("publishBars", &SurvivalStats::publishBars).Tooltip("Fill the same-named bar widgets")
+     .AddBool("sendMessages", &SurvivalStats::sendMessages).Tooltip("Broadcast the critical messages once");
+    b.Commit();
+}
+
 // Volume
 void RegisterVolume() {
     PropertyBuilder<Volume> b("Volume", "volume", "Gameplay");
@@ -1504,6 +1575,8 @@ void RegisterGameplayProperties() {
     RegisterSplineFollower();
     RegisterDollyCart();
     RegisterLineRenderer();
+    RegisterHealthStat();
+    RegisterSurvivalStats();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

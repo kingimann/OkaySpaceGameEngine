@@ -9,6 +9,14 @@
 //  - Geometry (RowHeight, CharWidth, TextStartX, ContentOrigin, CaretScreenPosBelow, ScreenToCoords, FirstVisibleLine) is
 //    that of the last Draw, in screen pixels.
 //
+// Nothing is lost on the way through (docs/own_code_editor.md, "What the editor does with a file"):
+//  - A leading UTF-8 byte order mark is taken off the text the editor shows and put back by GetText(), so the first token is coloured
+//    and the mark survives an edit.
+//  - CodeEdit repairs what it cannot show (bytes that are not UTF-8, NUL and other control characters, a lone CR) and cuts a text over its
+//    size limits. Writing that repaired copy back over the script would destroy bytes, so such a text is opened READ-ONLY: GetText()
+//    returns the exact bytes SetText was given, and Notice() says why nothing can be edited. A CRLF line end is not damage: it becomes
+//    LF, as it always did with the old editor.
+//
 // This file and its .cpp use no Dear ImGui and no SDL: they build and are tested headless (okayui/tests/test_okayui_script_adapter.cpp).
 // The widget that picks between this and the ImGui editor is editor/ScriptEditorWidget.hpp.
 #include "okay/UI/OkayUICodeEdit.hpp"
@@ -45,7 +53,9 @@ public:
 
     // ---- text ----
     void SetText(const std::string& text);
-    std::string GetText() const;                    // every line followed by '\n' (so the text of "a" is "a\n")
+    /// Every line followed by '\n' (so the text of "a" is "a\n"), with the byte order mark put back when the script had one. For a script
+    /// that was opened read-only (ReadOnlyBecauseDamaged()) these are exactly the bytes SetText was given, plus the final "\n".
+    std::string GetText() const;
     std::vector<std::string> GetTextLines() const;
     std::string GetCurrentLineText() const;
     int GetTotalLines() const { return ed_.LineCount(); }
@@ -84,7 +94,15 @@ public:
     /// Breakpoint marks by 1-based line, as TextEditor::Breakpoints.
     void SetBreakpoints(const std::unordered_set<int>& lines);
     void SetHandleKeyboardInputs(bool on) { ed_.SetHandleKeyboardInput(on); }
-    void SetReadOnly(bool on) { ed_.SetReadOnly(on); }
+    /// True when SetText had to repair or cut the text to show it (see the top of this file): the editor is read-only and GetText() returns the
+    /// original bytes. Nothing the host asks for (SetReadOnly(false) included) makes it editable again until the next SetText.
+    bool ReadOnlyBecauseDamaged() const { return keepOriginal_; }
+    /// A one-line message for the user, "" when there is none: why this script is read-only, or what the editor last refused (a paste over
+    /// the size limits, CodeEdit::Status()). The script editor shows it above the code.
+    std::string Notice() const;
+    /// Pair brackets and quotes while typing (the script editor's "Auto-close Brackets" setting; CodeEdit::SetAutoPair).
+    void SetAutoPair(bool on) { ed_.SetAutoPair(on); }
+    void SetReadOnly(bool on) { hostReadOnly_ = on; ed_.SetReadOnly(on || keepOriginal_); }
     void SetTabSize(int n) { ed_.SetTabSize(n); }
     void SetLineSpacing(float s) { ed_.SetLineSpacing(s); }
 
@@ -103,6 +121,11 @@ private:
     unsigned seenVersion_ = 0;
     bool colorize_ = true;
     std::vector<int> gutterClicks_;
+    bool bom_ = false;                  // the script began with a UTF-8 byte order mark (not part of ed_'s text)
+    bool keepOriginal_ = false;         // the text was repaired or cut for display: read-only, GetText() gives original_
+    bool hostReadOnly_ = false;
+    std::string original_;              // the exact bytes SetText was given (only kept when keepOriginal_)
+    std::string notice_;                // why keepOriginal_ is set
 };
 
 } // namespace scripteditor

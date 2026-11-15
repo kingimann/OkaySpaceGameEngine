@@ -34,6 +34,7 @@ constexpr double kSlack = 1.0;
 #endif
 
 CodePos P(int l, int c) { return CodePos{l, c}; }
+bool At(const CodeEdit& e, int l, int c) { return e.Caret() == P(l, c) && !e.HasSelection(); }
 double Ms(std::chrono::steady_clock::time_point a) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count();
 }
@@ -398,6 +399,7 @@ void ClipboardTests() {
     CHECK(got.size() == kLimit - 2);                                       // one byte too many would split a character: cut before it
     CHECK(huge.compare(0, got.size(), got) == 0);
     CodeEdit h;
+    h.SetLimits((std::size_t)-1, (std::size_t)-1);                        // the editor's own size limit is lifted: it is the clipboard's that is tested
     h.SetText(huge);
     h.SelectAll();
     CHECK(h.Copy());
@@ -409,6 +411,7 @@ void ClipboardTests() {
     // a paste of the biggest clipboard works and is valid text
     UI::SetClipboardText(huge.c_str());
     CodeEdit p;
+    p.SetLimits((std::size_t)-1, (std::size_t)-1);
     CHECK(p.Paste() && p.GetText().size() == got.size() && ValidUtf8(p.GetText()));
     // invalid UTF-8 and control characters in the clipboard are repaired like typed text
     UI::SetClipboardText("ok\xff\xfe\xc3(\x01\x7f z\xed\xa0\x80 end");
@@ -420,6 +423,125 @@ void ClipboardTests() {
 // ---------------------------------------------------------------------------------------------
 // 4. Hostile input
 // ---------------------------------------------------------------------------------------------
+// A paste or a load that would make the text absurdly big is refused (a paste) or cut (a load), whatever the clipboard holds. Before
+// this, a 16 MiB paste of newlines made about 16.7 million lines and a gigabyte of temporary memory.
+void SizeLimitTests() {
+    CHECK(CodeEdit::kDefaultMaxBytes == (4u << 20) && CodeEdit::kDefaultMaxLines == 200000);
+    {   // a paste of newlines only: 300,000 lines is over the default limit of 200,000 lines
+        CodeEdit e;
+        CHECK(e.MaxBytes() == CodeEdit::kDefaultMaxBytes && e.MaxLines() == CodeEdit::kDefaultMaxLines && e.Status().empty());
+        e.SetText("keep\nme");
+        e.SetSelection(P(0, 1), P(1, 1));
+        UI::SetClipboardText(std::string(300000, '\n').c_str());
+        CHECK(!e.Paste());
+        CHECK(e.GetText() == "keep\nme" && e.LineCount() == 2);          // nothing changed
+        CHECK(e.Anchor() == P(0, 1) && e.Caret() == P(1, 1));            // and the selection was not collapsed
+        CHECK(!e.CanUndo());
+        CHECK(e.Status().find("limit") != std::string::npos && e.Status().find("200,000 lines") != std::string::npos && e.Status().find("4 MiB") != std::string::npos);
+        CHECK(e.InsertText("!") && e.Status().empty());                  // the message goes away with the next change
+        UI::SetClipboardText("");
+    }
+    {   // the biggest clipboard there is (16 MiB) of newlines: refused at once, no 16.7 million lines and no gigabyte of memory
+        UI::SetClipboardText(std::string(UI::kClipboardStoreMax, '\n').c_str());
+        CodeEdit e;
+        e.SetText("abc");
+        e.SetCaret(P(0, 3));
+        CHECK(!e.Paste() && e.GetText() == "abc" && e.LineCount() == 1 && At(e, 0, 3) && !e.CanUndo());
+        CHECK(e.Status().find("limit") != std::string::npos);
+        // 3 MiB of newlines is under the byte limit and still over the line limit
+        UI::SetClipboardText(std::string(3u << 20, '\n').c_str());
+        CHECK(!e.Paste() && e.LineCount() == 1);
+        // and the same text typed or inserted through the other doors
+        CHECK(!e.InsertText(std::string(300000, '\n').c_str()) && e.LineCount() == 1);
+        UI::SetClipboardText("");
+    }
+    {   // text over the byte limit that has few lines: refused too
+        CodeEdit e;
+        UI::SetClipboardText(std::string((4u << 20) + 1, 'x').c_str());
+        CHECK(!e.Paste() && e.IsEmpty() && !e.Status().empty());
+        UI::SetClipboardText(std::string(4u << 20, 'x').c_str());       // exactly the limit fits
+        CHECK(e.Paste() && e.GetText().size() == (4u << 20) && e.Status().empty());
+        CHECK(!e.InsertText("y") && e.GetText().size() == (4u << 20));  // and now one more byte is over it
+        CHECK(e.Backspace() && e.InsertText("y") && e.GetText().size() == (4u << 20));
+        UI::SetClipboardText("");
+    }
+    {   // limits you set: bytes, lines, every way in, and every refusal leaves the text, the caret, the selection and the undo log alone
+        CodeEdit e;
+        e.SetLimits(40, 4);
+        CHECK(e.MaxBytes() == 40 && e.MaxLines() == 4);
+        e.SetText("one\ntwo\nthree");
+        e.SetSelection(P(0, 1), P(0, 2));
+        UI::SetClipboardText("a\nb\nc\nd\ne");
+        CHECK(!e.Paste() && e.GetText() == "one\ntwo\nthree" && e.Anchor() == P(0, 1) && e.Caret() == P(0, 2) && !e.CanUndo());
+        CHECK(e.InsertText("x\ny") && e.GetText() == "ox\nye\ntwo\nthree" && e.LineCount() == 4);   // replaces the selection: 4 lines is the limit
+        CHECK(!e.NewLine() && e.LineCount() == 4 && !e.Status().empty());      // Enter would make a fifth
+        CHECK(!e.InsertText("\n") && e.GetText() == "ox\nye\ntwo\nthree");
+        CHECK(e.InsertText("z") && e.GetText() == "ox\nyze\ntwo\nthree");     // no new line: fine
+        CHECK(e.Undo() && e.Undo() && e.GetText() == "one\ntwo\nthree");
+        e.SetSelection(P(0, 0), P(2, 5));                                       // a selection that spans every line: its lines are given back
+        CHECK(e.InsertText("a\nb\nc\nd") && e.LineCount() == 4);
+        CHECK(e.TypeText(std::string(40, 'q').c_str()) == false && e.GetText() == "a\nb\nc\nd");   // over the byte limit
+        e.SetText("");
+        CHECK(e.InsertText(std::string(40, 'x').c_str()) && !e.InsertText("y") && e.GetText().size() == 40);
+        e.SetFind("x");
+        CHECK(e.ReplaceAll("xx") == 0 && e.GetText().size() == 40 && !e.Status().empty());   // replace all that would go over: refused, and says so
+        CHECK(e.ReplaceAll("") > 0 && e.IsEmpty() && e.Status().empty());      // shrinking is always fine
+        e.SetLimits(10, 0);                                                     // 0 lines means 1
+        CHECK(e.MaxLines() == 1 && !e.InsertText("a\nb") && e.InsertText("ab"));
+        e.SetLimits((std::size_t)-1, (std::size_t)-1);
+        CHECK(e.InsertText("c\nd\ne") && e.LineCount() == 3);                  // no limit at all
+        e.SetLimits(2, 2);                                                      // a text that is already over a new limit stays; growing is refused
+        CHECK(e.LineCount() == 3 && !e.InsertText("z") && e.Backspace() && e.Backspace());
+        UI::SetClipboardText("");
+    }
+    {   // SetText over the limits: cut to the longest start that fits, at a line break, and read-only so the cut copy can never be saved
+        std::string many;
+        for (int i = 0; i < 300000; ++i) many += "x\n";
+        CodeEdit e;
+        e.SetText(many);
+        CHECK(e.LineCount() == 200000 && e.Truncated() && e.ReadOnly() && e.GetText().size() == 2 * 199999 + 1);
+        CHECK(e.Status().find("only the start is shown") != std::string::npos && e.Status().find("200,000 lines") != std::string::npos);
+        CHECK(!e.InsertText("a") && !e.Backspace() && !e.DeleteForward() && !e.NewLine() && !e.Tab() && !e.TypeText("a") && !e.Cut() && !e.Paste());
+        e.SelectAll(); CHECK(e.Copy());                                         // looking and copying still work
+        e.SetReadOnly(false); CHECK(!e.InsertText("a") && e.ReadOnly());       // and it cannot be lifted
+        e.SetText("short");                                                     // the next SetText is a fresh start
+        CHECK(!e.Truncated() && !e.ReadOnly() && e.Status().empty() && e.InsertText("!") && e.GetText() == "!short");
+        // CRLF and a lone CR are line breaks too, and the cut is before the break that would make one line too many
+        std::string crlf, cr;
+        for (int i = 0; i < 300000; ++i) { crlf += "ab\r\n"; cr += "ab\r"; }
+        e.SetText(crlf);
+        CHECK(e.LineCount() == 200000 && e.Truncated() && e.Line(199999) == "ab" && e.GetText().find('\r') == std::string::npos);
+        e.SetText(cr);
+        CHECK(e.LineCount() == 200000 && e.Truncated() && e.Line(199998) == "ab");
+        // a CRLF split by the byte limit does not leave a stray break
+        CodeEdit f;
+        f.SetLimits(5, 100);
+        f.SetText("abcd\r\nxyz");
+        CHECK(f.Truncated() && f.GetText() == "abcd" + std::string(f.LineCount() == 2 ? "\n" : ""));
+        CHECK(f.LineCount() <= 2);
+        // one huge line: cut at the byte limit on a character boundary (here the limit falls in the middle of an e-acute)
+        std::string wide = "a";
+        while (wide.size() < (4u << 20) + 100) wide += "\xC3\xA9";
+        CodeEdit g;
+        g.SetText(wide);
+        CHECK(g.Truncated() && g.LineCount() == 1 && g.GetText().size() == (4u << 20) - 1 && ValidUtf8(g.GetText()));
+        // under both limits: not cut, not read-only
+        CodeEdit h;
+        h.SetText(std::string(4u << 20, 'x'));
+        CHECK(!h.Truncated() && !h.ReadOnly() && h.GetText().size() == (4u << 20));
+        // limits of zero cut everything and say so
+        CodeEdit z;
+        z.SetLimits(0, 1);
+        z.SetText("abc");
+        CHECK(z.Truncated() && z.IsEmpty() && z.ReadOnly());
+    }
+    {   // the multi-line text field (InputTextMultiline) is built on CodeEdit: a normal buffer is unaffected by the limits
+        Rig r(640, 400);
+        r.ce.SetText("small text");
+        CHECK(!r.ce.Truncated() && r.ce.InsertText("!") && r.ce.GetText() == "!small text");
+    }
+}
+
 void NanAndExtremeTests() {
     const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
     Rig r(640, 400);
@@ -525,6 +647,7 @@ void LongLineTests() {
     line.reserve(4u << 20);
     for (std::size_t i = 0; line.size() < (4u << 20); ++i) line += "x" + std::to_string(i % 97) + " + ";
     Rig r(800, 400);
+    r.ce.SetLimits((std::size_t)-1, (std::size_t)-1);                     // 4 MB is a hair over the default limit of 4 MiB: lifted, it is the speed that is tested
     r.ce.SetLanguage(UI::OkayScriptLanguage());
     r.w = 760; r.h = 340;
     auto t0 = std::chrono::steady_clock::now();
@@ -583,6 +706,7 @@ void ManyLinesTests() {
     t.reserve(9u << 20);
     for (int i = 0; i < 1000000; ++i) { t += "v"; t += std::to_string(i); t += "\n"; }
     Rig r(800, 400);
+    r.ce.SetLimits((std::size_t)-1, (std::size_t)-1);                     // a million lines is over the default limits: lifted, it is the speed that is tested
     r.ce.SetLanguage(UI::OkayScriptLanguage());
     r.w = 760; r.h = 340;
     auto t0 = std::chrono::steady_clock::now();
@@ -647,6 +771,7 @@ int main() {
     ZoomTests();
     InlineMessageTests();
     ClipboardTests();
+    SizeLimitTests();
     NanAndExtremeTests();
     JunkTextTests();
     LongLineTests();

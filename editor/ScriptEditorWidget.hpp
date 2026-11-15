@@ -9,6 +9,7 @@
 // newline), so editor/main.cpp changes only the type name and the Render call site.
 #include "TextEditor.h"
 #include "ScriptEditorCodeEdit.hpp"
+#include "ScriptEditorKeys.hpp"
 #include "MainShared.hpp"
 #include "imgui.h"
 
@@ -79,6 +80,9 @@ public:
     void SetErrorMarkers(const ErrorMarkers& m) { imgui_.SetErrorMarkers(m); okay_.SetErrorMarkers(m); }
     void SetBreakpoints(const Breakpoints& b) { imgui_.SetBreakpoints(b); okay_.SetBreakpoints(b); }
     void SetHandleKeyboardInputs(bool on) { imgui_.SetHandleKeyboardInputs(on); okay_.SetHandleKeyboardInputs(on); }
+    /// Auto-close brackets and quotes. The OkayUI editor does it itself (the ImGui editor has none: editor/main.cpp does it around the widget,
+    /// see scripteditor::PlanLegacyKeyHandling).
+    void SetAutoPair(bool on) { okay_.SetAutoPair(on); }
 
     // ---- geometry of the last Render (screen pixels) ----
     float RowHeight() { return Okay() ? okay_.RowHeight() : imgui_.RowHeight(); }
@@ -96,6 +100,10 @@ public:
     /// editor). The caller toggles its own bookmark set; a click changes nothing by itself.
     std::vector<int> TakeGutterClicks() { return okay_.TakeGutterClicks(); }
     bool UsingOkayUI() { return Okay(); }
+    /// A one-line message from the OkayUI editor, "" when there is none (always "" with the ImGui editor): why the open script is read-only
+    /// (it has bytes the editor cannot show, so it is not allowed to write a repaired copy back) or what the editor refused (a paste over
+    /// its size limits). The script editor shows it above the code.
+    std::string OkayNotice() { return Okay() ? okay_.Notice() : std::string(); }
 
     /// Draw it. `size` as ImGui: <= 0 means "what is left, plus this".
     void Render(const char* id, const ImVec2& size = ImVec2(), bool border = false) {

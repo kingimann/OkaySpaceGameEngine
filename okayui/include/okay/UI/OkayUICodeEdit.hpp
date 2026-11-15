@@ -14,6 +14,10 @@
 // Columns are byte offsets into a line and always sit on UTF-8 character boundaries. The text is kept valid UTF-8
 // (invalid bytes become '?', "\r\n" and "\r" become "\n", other control characters are dropped). One character is one
 // cell wide; a tab advances to the next multiple of the tab size. The font should be monospaced.
+//
+// The text has limits (SetLimits; by default kDefaultMaxBytes = 4 MiB and kDefaultMaxLines = 200,000 lines). A paste or an edit that
+// would go over is refused and changes nothing (Status() says why), and SetText cuts a text that is too big to the longest start that
+// fits and leaves the editor read-only (Truncated()), so a cut copy can never be written back over the whole text.
 #include "okay/Text/TextBuffer.hpp"
 #include "okay/UI/OkayUI.hpp"
 
@@ -97,6 +101,8 @@ public:
 
     // ---- text ----
     /// Replace all text. Clears the undo history and puts the caret at the start. Markers and breakpoints are kept (lines past the end are dropped).
+    /// A text over the limits is cut to the longest start that fits (at a line break, or at a character for one huge line) and the editor
+    /// becomes read-only until the next SetText (Truncated(), Status()).
     void SetText(const std::string& text);
     std::string GetText() const;
     int LineCount() const { return (int)buf_.LineCount(); }
@@ -108,6 +114,21 @@ public:
     bool IsEmpty() const { return buf_.LineCount() == 1 && buf_.LineRef(0).empty(); }
     /// The text model underneath (read only), for callers that want its helpers (offsets, search, tokens).
     const okay::text::Buffer& Model() const { return buf_; }
+
+    // ---- limits ----
+    static constexpr std::size_t kDefaultMaxBytes = (std::size_t)4 << 20;    // 4 MiB
+    static constexpr std::size_t kDefaultMaxLines = 200000;
+    /// The most bytes and lines the text may have (lines at least 1; (size_t)-1 for no limit). Memory is the reason: every line costs about
+    /// 32 bytes even when empty, so a paste of 16 MiB of newlines used to make a gigabyte of temporary text. A text that is already over a
+    /// new limit stays; only changes that make it bigger are refused.
+    void SetLimits(std::size_t maxBytes, std::size_t maxLines) { limitBytes_ = maxBytes; limitLines_ = maxLines < 1 ? 1 : maxLines; updateModelOptions(); }
+    std::size_t MaxBytes() const { return limitBytes_; }
+    std::size_t MaxLines() const { return limitLines_; }
+    /// True when SetText had to cut the text to the limits: what is shown is only the start, and the editor stays read-only.
+    bool Truncated() const { return truncated_; }
+    /// One line saying what the editor last refused or cut ("" when there is nothing to say): a paste or an edit over the limits, or a text
+    /// that SetText had to cut. It goes away with the next change to the text (an edit, Undo, Redo or SetText).
+    const std::string& Status() const;
 
     // ---- caret and selection ----
     CodePos Caret() const { return caret_; }
@@ -126,8 +147,18 @@ public:
     void Move(CodeMove m, bool extend = false);
 
     // ---- editing (all of them do nothing in read-only mode) ----
-    /// Replace the selection (or insert at the caret) with `text`. "\r\n" becomes "\n". Returns false if nothing changed.
+    /// Replace the selection (or insert at the caret) with `text`. "\r\n" becomes "\n". Returns false if nothing changed, also when the
+    /// result would be over the limits (nothing is touched then, the selection stays, and Status() says why).
     bool InsertText(const char* text);
+    /// Typed text, as the keyboard sends it: InsertText without newlines and tabs (those have their own keys), plus, when SetAutoPair(true) is
+    /// on, bracket and quote pairing for a single typed character with no selection: ( [ { " ' also insert their closer and leave the caret
+    /// between the two (as one undo step), when what follows is blank, the end of the line or one of ) ] } ; , (a quote also not right after a
+    /// letter, digit or '_'); a closer ) ] } " ' typed right before the same character only moves the caret over it, so a closer that was
+    /// pairing-inserted is never doubled. Enter between { and } is NewLine's own rule and does not depend on this.
+    bool TypeText(const char* text);
+    /// Pair brackets and quotes while typing (see TypeText). Off by default: a plain text field must not do it.
+    void SetAutoPair(bool on) { autoPair_ = on; }
+    bool AutoPair() const { return autoPair_; }
     bool Backspace(bool word = false);
     bool DeleteForward(bool word = false);
     /// Enter: split the line, keeping its indent (and one more level after '{', '(' or '[' ; "{|}" opens a blank line between).
@@ -151,7 +182,7 @@ public:
     /// Select the next / previous match after / before the selection, wrapping round the ends. False if there is none.
     bool FindNext();
     bool FindPrev();
-    /// How many matches there are in the whole text.
+    /// How many matches there are in the whole text (counts up to 1,000,000).
     int FindCount() const;
     /// Replace the selection if it is a match, then select the next match. ReplaceAll is one undo step and returns the count.
     bool ReplaceCurrent(const std::string& with);
@@ -166,7 +197,8 @@ public:
     void SetReadOnly(bool ro) { readOnly_ = ro; }
     /// false: Draw does not act on keys (the host's autocomplete popup owns them); the mouse still works.
     void SetHandleKeyboardInput(bool b) { handleKeys_ = b; }
-    bool ReadOnly() const { return readOnly_; }
+    /// True when edits are not accepted: SetReadOnly(true), or a text that SetText had to cut (Truncated()).
+    bool ReadOnly() const { return readOnly_ || truncated_; }
     void SetTabSize(int n) { tabSize_ = n < 1 ? 1 : (n > 16 ? 16 : n); updateModelOptions(); }
     int TabSize() const { return tabSize_; }
     void SetInsertSpaces(bool b) { insertSpaces_ = b; updateModelOptions(); }     // Tab inserts spaces (default) or a tab character
@@ -270,6 +302,11 @@ private:
     void endCompound();
     bool replaceSelection(const std::string& ins, int kind);
     bool deleteSelectionIfAny();
+    bool locked() const { return readOnly_ || truncated_; }
+    bool fits(CodePos a, CodePos b, const std::string& ins) const;     // would replacing [a, b) by ins stay within the limits
+    bool refuse();                                                     // says "over the limits" in Status(); returns false
+    void setStatus(const std::string& s) { status_ = s; statusVersion_ = buf_.Version(); }
+    std::string limitText() const;
     void setCaretKeep(CodePos c, CodePos a) { caret_ = c; anchor_ = a; reveal_ = true; }
     void moveCaret(CodePos p, bool extend, bool keepDesired = false);
     void clampScroll();
@@ -314,6 +351,9 @@ private:
     std::function<void(int, bool)> onBreakpoint_; bool autoToggle_ = true;
 
     bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true;
+    bool autoPair_ = false, truncated_ = false, refused_ = false;
+    std::size_t limitBytes_ = kDefaultMaxBytes, limitLines_ = kDefaultMaxLines;
+    std::string status_; std::uint64_t statusVersion_ = 0;
     int tabSize_ = 4;
     float lineSpacing_ = 1.2f;
     CodePalette pal_;

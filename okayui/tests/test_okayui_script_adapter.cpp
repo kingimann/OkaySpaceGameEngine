@@ -4,11 +4,51 @@
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "ScriptEditorCodeEdit.hpp"
+#include "ScriptEditorKeys.hpp"
+
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 
 using namespace scripteditor;
 namespace UI = OkayUI;
 
 namespace {
+// ---- files: what the script editor does with a script on disk ----
+std::string TempPath(const std::string& name) { return (std::filesystem::temp_directory_path() / ("okay_script_adapter_" + name)).string(); }
+void WriteBytes(const std::string& path, const std::string& bytes) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    f.write(bytes.data(), (std::streamsize)bytes.size());
+}
+std::string ReadBytes(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+// Write `original` to a file, read it back, give it to the editor, let `use` press keys, then do what editor/main.cpp does with the
+// widget's text (GetText, drop the one newline the adapter adds, store it) and write that to a second file. Returns the bytes on disk.
+template <class Use> std::string RoundTrip(ScriptEditorCodeEdit& s, const std::string& original, const std::string& name, Use use) {
+    const std::string in = TempPath(name + ".in"), out = TempPath(name + ".out");
+    WriteBytes(in, original);
+    s.SetText(ReadBytes(in));
+    use(s);
+    std::string t = s.GetText();
+    if (!t.empty() && t.back() == '\n') t.pop_back();
+    WriteBytes(out, t);
+    const std::string back = ReadBytes(out);
+    std::remove(in.c_str()); std::remove(out.c_str());
+    return back;
+}
+// Every way the script editor (or the user) could try to change the text of the open script.
+void TryEveryEdit(ScriptEditorCodeEdit& s) {
+    s.InsertTextUndoable("zzz");
+    s.SetCursorPosition(Coord(0, 1)); s.Delete();
+    s.SelectAll(); s.InsertTextUndoable("Q");
+    s.Edit().InsertText("typed"); s.Edit().NewLine(); s.Edit().Backspace(); s.Edit().Tab(false); s.Edit().Cut();
+    s.Edit().SetFind("a"); s.Edit().ReplaceAll("b");
+    UI::SetClipboardText("pasted"); s.Edit().Paste();
+}
+
 struct Rig {
     okayuitest::Sim sim;
     ScriptEditorCodeEdit se;
@@ -20,6 +60,8 @@ struct Rig {
             UI::End();
         });
     }
+    void Frames(int n) { for (int i = 0; i < n; ++i) Frame(); }
+    void Keys(const std::string& text) { for (char c : text) { sim.Type(std::string(1, c)); Frame(); } }   // one typed character per frame, as a keyboard sends
 };
 }
 
@@ -220,6 +262,101 @@ int main() {
         s.SetTabSize(8);
         s.SetText("\tb");
         CHECK(s.LineLength(0) == 9);
+    }
+    {   // a script that is not valid UTF-8, or has control characters or lone carriage returns, comes back byte for byte: the editor
+        // cannot show those bytes, so it must not write its repaired copy over the file (a Latin-1 e-acute used to become '?')
+        const std::string cases[] = {
+            "// caf\xE9 au lait\nvar x = 1;\n",                  // Latin-1 (or ANSI): invalid UTF-8
+            "var s = \"\xFF\xFE\";\n",                          // bytes that are never UTF-8
+            "a\x1b[0m b\x0c c\x7f d\n",                         // ESC, form feed and DEL
+            "one\rtwo\rthree",                                   // lone carriage returns (an old Mac file)
+            std::string("a\0b\n", 4),                           // a NUL
+            "ok \xC3\xA9 then a cut character \xC3",           // valid text, then a truncated sequence at the very end
+        };
+        int n = 0;
+        for (const std::string& c : cases) {
+            const std::string name = "damaged" + std::to_string(n++);
+            ScriptEditorCodeEdit idle, busy;
+            CHECK(RoundTrip(idle, c, name, [](ScriptEditorCodeEdit&) {}) == c);                // no edit at all
+            CHECK(RoundTrip(busy, c, name, [](ScriptEditorCodeEdit& s) { TryEveryEdit(s); }) == c);   // every edit attempted
+            CHECK(idle.ReadOnlyBecauseDamaged() && busy.ReadOnlyBecauseDamaged() && busy.Edit().ReadOnly());
+            CHECK(!busy.IsTextChanged());                                                       // so the editor never asks to be saved
+            CHECK(busy.Notice().find("read-only so nothing is lost") != std::string::npos);
+            busy.SetReadOnly(false);                                                            // the host cannot lift it either
+            busy.InsertTextUndoable("zzz");
+            CHECK(busy.Edit().ReadOnly() && busy.GetText() == c + "\n");
+        }
+        ScriptEditorCodeEdit l1, ctl;
+        l1.SetText("caf\xE9");
+        CHECK(l1.Notice() == "This file is not valid UTF-8; it is open read-only so nothing is lost.");
+        ctl.SetText("a\x1b" "b");                                                                // valid UTF-8, but a control character
+        CHECK(ctl.ReadOnlyBecauseDamaged() && ctl.Notice().find("control characters") != std::string::npos);
+        l1.SetText("caf\xC3\xA9");                                                              // the next, clean script is editable again
+        CHECK(!l1.ReadOnlyBecauseDamaged() && l1.Notice().empty() && !l1.Edit().ReadOnly());
+        l1.InsertTextUndoable("!");
+        CHECK(l1.Edit().Line(0) == "!caf\xC3\xA9" && l1.GetText() == "!caf\xC3\xA9\n");
+    }
+    {   // a valid UTF-8 script is untouched by a round trip, and CRLF becomes LF as it always did (the old editor did the same)
+        ScriptEditorCodeEdit s;
+        const std::string ok = "// caf\xC3\xA9 \xE2\x82\xAC\nvar x = 1;\n";
+        CHECK(RoundTrip(s, ok, "valid", [](ScriptEditorCodeEdit&) {}) == ok);
+        ScriptEditorCodeEdit t;
+        CHECK(RoundTrip(t, "a\r\nb\r\n", "crlf", [](ScriptEditorCodeEdit&) {}) == "a\nb\n");
+        ScriptEditorCodeEdit e;
+        CHECK(RoundTrip(e, ok, "validedit", [](ScriptEditorCodeEdit& x) { x.SetCursorPosition(Coord(1, 0)); x.InsertTextUndoable("// hi\n"); }) ==
+              "// caf\xC3\xA9 \xE2\x82\xAC\n// hi\nvar x = 1;\n");                        // a clean script is still editable
+    }
+    {   // a UTF-8 byte order mark: written back unchanged, never edited into the text, and it does not spoil the first token's colour
+        const std::string bom = "\xEF\xBB\xBF", body = "var x = 1;\n// note\n";
+        ScriptEditorCodeEdit a;
+        CHECK(RoundTrip(a, bom + body, "bom", [](ScriptEditorCodeEdit&) {}) == bom + body);
+        std::vector<UI::CodeToken> t;
+        a.Edit().LineTokens(0, t);
+        CHECK(!t.empty() && t[0].start == 0 && t[0].end == 3 && t[0].color == UI::CodeColor_Keyword);   // "var" at column 0 is a keyword
+        CHECK(a.Edit().Line(0) == "var x = 1;" && a.GetCursorPosition() == Coord(0, 0));
+        ScriptEditorCodeEdit b;
+        CHECK(RoundTrip(b, bom + body, "bomedit", [](ScriptEditorCodeEdit& x) { x.SetCursorPosition(Coord(0, 0)); x.InsertTextUndoable("// first\n"); }) ==
+              bom + "// first\n" + body);                                                      // edited, and the mark is still the first three bytes
+        ScriptEditorCodeEdit c;
+        c.SetText(bom + body);
+        c.SetText(body);                                                                        // a new script without a mark loses the old script's mark
+        CHECK(c.GetText() == body + "\n");
+    }
+    {   // B1: which of editor/main.cpp's own key helpers (autocomplete popup, bracket pairing, Tab spaces, written around the ImGui
+        // editor) may run. With the OkayUI editor none of them: it does each of those itself, so every key does one thing
+        for (bool pair : {false, true}) {
+            const LegacyKeyHandling okay = PlanLegacyKeyHandling(true, pair);
+            CHECK(!okay.autocompleteOwnsKeys && !okay.autoPair && !okay.tabInsertsSpaces);
+            const LegacyKeyHandling imgui = PlanLegacyKeyHandling(false, pair);
+            CHECK(imgui.autocompleteOwnsKeys && imgui.tabInsertsSpaces && imgui.autoPair == pair);   // the ImGui editor: as before
+        }
+    }
+    {   // each key does one thing in the OkayUI editor, through the real key path (typed text and the Enter key of a frame)
+        Rig r;
+        r.se.SetAutoPair(true);
+        r.se.Edit().Focus(); r.Frames(2);
+        r.Keys("foo");
+        r.sim.Press(okayuitest::Key_Enter); r.Frame();                       // Enter after an identifier: a new line, nothing else
+        CHECK(r.se.Edit().GetText() == "foo\n" && r.se.GetCursorPosition() == Coord(1, 0));
+        r.Keys("if (a");                                                     // ( pairs; typing goes on inside it
+        CHECK(r.se.Edit().GetText() == "foo\nif (a)" && r.se.GetCursorPosition() == Coord(1, 5));
+        r.Keys(")");                                                         // a ) typed over the paired ) steps over it: not doubled
+        CHECK(r.se.Edit().GetText() == "foo\nif (a)" && r.se.GetCursorPosition() == Coord(1, 6));
+        r.Keys(" {");                                                        // { pairs (what follows is the end of the line)
+        CHECK(r.se.Edit().GetText() == "foo\nif (a) {}" && r.se.GetCursorPosition() == Coord(1, 8));
+        r.sim.Press(okayuitest::Key_Enter); r.Frame();                       // { then Enter opens the block once
+        CHECK(r.se.Edit().GetText() == "foo\nif (a) {\n    \n}" && r.se.GetCursorPosition() == Coord(2, 4) && r.se.GetTotalLines() == 4);
+        r.Keys("x");
+        CHECK(r.se.Edit().GetText() == "foo\nif (a) {\n    x\n}");
+    }
+    {   // the same keys with the setting off: no pairing, no stepping over (the user turned "Auto-close Brackets" off)
+        Rig r;
+        r.se.SetAutoPair(false);
+        r.se.Edit().Focus(); r.Frames(2);
+        r.Keys("f(x");
+        CHECK(r.se.Edit().GetText() == "f(x");
+        r.Keys("){");
+        CHECK(r.se.Edit().GetText() == "f(x){");
     }
     TEST_MAIN_RESULT();
 }

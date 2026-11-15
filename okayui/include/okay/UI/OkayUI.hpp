@@ -826,8 +826,9 @@ bool IsItemHovered();
 /// True while a text field has keyboard focus: the host should send typed text and key edges
 /// to OkayUI and not to the game (ImGui's io.WantTextInput).
 bool WantsTextInput();
-/// Copy text to the clipboard / read it back (up to kClipboardMax - 1 bytes, never cut inside a character). It is also mirrored to the
-/// system clipboard when a window system is running; with none (tests, servers) the copy lives inside OkayUI. The text of
+/// Copy text to the clipboard / read it back (up to kClipboardStoreMax - 1 bytes, 16 MiB; longer text is cut, never inside a character).
+/// A one-line text field copies at most kClipboardMax - 1 bytes (4095) from itself; a code editor copies a whole script. It is also
+/// mirrored to the system clipboard when a window system is running; with none (tests, servers) the copy lives inside OkayUI. The text of
 /// GetClipboardText() is valid until the next call. Text fields copy (Input::copy), cut (Input::cut) and paste (Input::paste) with it.
 void SetClipboardText(const char* text);
 const char* GetClipboardText();

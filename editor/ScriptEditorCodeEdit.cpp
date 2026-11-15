@@ -4,6 +4,21 @@
 
 namespace scripteditor {
 
+namespace {
+const char kBom[] = "\xEF\xBB\xBF";
+
+// "\r\n" to "\n": the one change to a script's bytes that loading is allowed to make (the old editor did the same).
+std::string CrlfToLf(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (s[i] == '\r' && i + 1 < s.size() && s[i + 1] == '\n') continue;
+        out.push_back(s[i]);
+    }
+    return out;
+}
+}
+
 ScriptEditorCodeEdit::ScriptEditorCodeEdit() {
     ed_.SetLanguage(OkayUI::OkayScriptLanguage());
     ed_.SetTabSize(4);
@@ -24,11 +39,30 @@ OkayUI::CodePos ScriptEditorCodeEdit::ToPos(Coord c) const {
 }
 
 void ScriptEditorCodeEdit::SetText(const std::string& text) {
-    ed_.SetText(text);
+    bom_ = text.compare(0, 3, kBom) == 0;
+    const std::string body = bom_ ? text.substr(3) : text;
+    // Would showing this change more than the CRLF line ends? Then the editor must not be the one to write it back.
+    const std::string clean = ed_.Model().Repair(body);
+    const bool damaged = clean != CrlfToLf(body);
+    keepOriginal_ = false; notice_.clear(); original_.clear();
+    ed_.SetText(body);
+    if (damaged || ed_.Truncated()) {
+        keepOriginal_ = true;
+        original_ = text;
+        if (ed_.Truncated()) notice_ = "This file is over the editor's size limit; only the start is shown, and it is open read-only so nothing is lost.";
+        else if (!okay::text::Buffer::IsValidUtf8(body)) notice_ = "This file is not valid UTF-8; it is open read-only so nothing is lost.";
+        else notice_ = "This file has control characters or lone carriage returns this editor would change; it is open read-only so nothing is lost.";
+    }
+    ed_.SetReadOnly(hostReadOnly_ || keepOriginal_);
     seenVersion_ = ed_.Version();       // setting the text is not a user edit
 }
 
-std::string ScriptEditorCodeEdit::GetText() const { return ed_.GetText() + "\n"; }
+std::string ScriptEditorCodeEdit::Notice() const { return keepOriginal_ ? notice_ : ed_.Status(); }
+
+std::string ScriptEditorCodeEdit::GetText() const {
+    if (keepOriginal_) return original_ + "\n";             // nothing could be edited, so what goes back is what came in
+    return (bom_ ? std::string(kBom) : std::string()) + ed_.GetText() + "\n";
+}
 
 std::vector<std::string> ScriptEditorCodeEdit::GetTextLines() const {
     std::vector<std::string> out;

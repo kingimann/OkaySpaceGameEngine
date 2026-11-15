@@ -185,6 +185,106 @@ void NewLineTests() {
     e.SetInsertSpaces(true);
 }
 
+// Enter between { and } opens the block, once (the script editor used to add a second one on top, see docs/own_code_editor.md), and Enter
+// after anything else is just a new line.
+void NewLineInBracesTests() {
+    CodeEdit e;
+    e.SetText("if (a) {}");
+    e.SetCaret(P(0, 8));
+    CHECK(e.NewLine() && e.GetText() == "if (a) {\n    \n}" && At(e, 1, 4) && e.LineCount() == 3);
+    CHECK(e.Undo() && e.GetText() == "if (a) {}" && e.CanRedo());                    // one undo step takes the whole block back
+    CHECK(e.Redo() && e.GetText() == "if (a) {\n    \n}" && At(e, 1, 4));
+    e.SetText("\tf(a) {  }");                                                         // blanks between the braces are skipped
+    e.SetCaret(P(0, 7));
+    CHECK(e.NewLine() && e.LineCount() == 3 && e.Line(0) == "\tf(a) {" && e.Line(1) == "\t    " && e.Line(2) == "\t  }" && At(e, 1, 5));
+    e.SetText("foo");                                                                // Enter after an identifier: a new line and nothing else
+    e.SetCaret(P(0, 3));
+    CHECK(e.NewLine() && e.GetText() == "foo\n" && At(e, 1, 0));
+    e.SetText("{x}");                                                                // not empty braces: no block
+    e.SetCaret(P(0, 2));
+    CHECK(e.NewLine() && e.GetText() == "{x\n}" && At(e, 1, 0));
+    e.SetText("(  )");
+    e.SetCaret(P(0, 2));
+    CHECK(e.NewLine() && e.LineCount() == 3 && e.Line(2) == " )");                   // ( ) and [ ] open like { }
+    e.SetText("abc {x} def");                                                        // a selection that ends before a closer: what follows the caret decides
+    e.SetSelection(P(0, 5), P(0, 6));
+    CHECK(e.NewLine() && e.GetText() == "abc {\n    \n} def");
+}
+
+// Typing with pairing on (CodeEdit::TypeText, what the keyboard's text goes through): an opener brings its closer, a closer typed
+// over the one already there steps over it, each pair is one undo step. Pairing is off by default.
+void AutoPairTests() {
+    CodeEdit off;
+    CHECK(!off.AutoPair() && off.TypeText("(") && off.GetText() == "(");                  // off: plain typing
+    CHECK(off.TypeText(")") && off.GetText() == "()" && At(off, 0, 2));
+    CodeEdit e;
+    e.SetAutoPair(true);
+    CHECK(e.AutoPair());
+    CHECK(e.TypeText("(") && e.GetText() == "()" && At(e, 0, 1));                         // pairs, caret between
+    CHECK(e.TypeText("a") && e.GetText() == "(a)" && At(e, 0, 2));
+    CHECK(e.TypeText(")") && e.GetText() == "(a)" && At(e, 0, 3));                        // steps over: not doubled
+    CHECK(e.Undo() && e.GetText() == "()" && At(e, 0, 1));                                // the typed letter is its own step
+    CHECK(e.Undo() && e.GetText() == "" && At(e, 0, 0));                                  // the pair is ONE step: both characters go together
+    CHECK(e.Redo() && e.GetText() == "()" && At(e, 0, 1));                                // Redo puts the caret back between the two
+    CHECK(e.Redo() && e.GetText() == "(a)" && At(e, 0, 2));
+    e.SetText("");
+    for (const char* o : {"(", "[", "{", "\"", "'"}) {                                    // every opener pairs at the end of a line
+        e.SetText("");
+        CHECK(e.TypeText(o) && e.GetText().size() == 2 && At(e, 0, 1));
+    }
+    e.SetText("");
+    e.TypeText("{"); e.TypeText("}");                                                     // { } typed: one pair, caret after it
+    CHECK(e.GetText() == "{}" && At(e, 0, 2));
+    e.SetText("");
+    e.TypeText("["); e.TypeText("]"); e.TypeText("]");                                    // a closer with nothing to step over is plain
+    CHECK(e.GetText() == "[]]" && At(e, 0, 3));
+    // what follows the caret decides: blank, end of line and ) ] } ; , allow a pair; anything else does not
+    for (const char* tail : {" x", ")", "]", "}", ";", ","}) {
+        e.SetText(tail);
+        e.SetCaret(P(0, 0));
+        CHECK(e.TypeText("(") && e.Line(0) == std::string("()") + tail && At(e, 0, 1));
+    }
+    e.SetText("x");
+    e.SetCaret(P(0, 0));
+    CHECK(e.TypeText("(") && e.GetText() == "(x" && At(e, 0, 1));                          // before a letter: plain
+    // a quote does not pair right after a letter, digit or underscore (it's, x"), and steps over its own closer
+    e.SetText("it");
+    e.SetCaret(P(0, 2));
+    CHECK(e.TypeText("'") && e.GetText() == "it'" && At(e, 0, 3));
+    e.SetText("a_");
+    e.SetCaret(P(0, 2));
+    CHECK(e.TypeText("\"") && e.GetText() == "a_\"");
+    e.SetText("x = ");
+    e.SetCaret(P(0, 4));
+    CHECK(e.TypeText("\"") && e.GetText() == "x = \"\"" && At(e, 0, 5));
+    CHECK(e.TypeText("hi") && e.GetText() == "x = \"hi\"");
+    CHECK(e.TypeText("\"") && e.GetText() == "x = \"hi\"" && At(e, 0, 8));                // the closing quote is stepped over
+    // with a selection the typed character replaces it (no pair)
+    e.SetText("abc");
+    e.SetSelection(P(0, 0), P(0, 3));
+    CHECK(e.TypeText("(") && e.GetText() == "(" && At(e, 0, 1));
+    // only a single typed character pairs: a burst (a paste of text is not typed) is plain text
+    e.SetText("");
+    CHECK(e.TypeText("()") && e.GetText() == "()" && At(e, 0, 2));
+    CHECK(e.TypeText("") == false && e.TypeText(nullptr) == false && e.TypeText("\n\t") == false);   // Enter and Tab have their own keys
+    // Enter then works as the block opener on top of a pair, once
+    e.SetText("");
+    e.TypeText("f"); e.TypeText("("); e.TypeText(")"); e.TypeText(" "); e.TypeText("{");
+    CHECK(e.GetText() == "f() {}" && At(e, 0, 5));
+    CHECK(e.NewLine() && e.GetText() == "f() {\n    \n}" && At(e, 1, 4) && e.LineCount() == 3);
+    // read-only: nothing is typed
+    CodeEdit ro;
+    ro.SetAutoPair(true); ro.SetReadOnly(true);
+    CHECK(!ro.TypeText("(") && ro.GetText().empty());
+    // a multi-byte character beside the caret does not confuse the neighbour test
+    e.SetText("\xC3\xA9");
+    e.SetCaret(P(0, 2));
+    CHECK(e.TypeText("(") && e.GetText() == "\xC3\xA9()" && At(e, 0, 3));
+    e.SetText("");
+    e.TypeText("\xC3\xA9"); e.TypeText("\"");                                             // the previous character is non-ASCII: not alphanumeric, pairs
+    CHECK(e.GetText() == "\xC3\xA9\"\"");
+}
+
 void TabTests() {
     CodeEdit e;
     e.SetText("ab");
@@ -389,6 +489,8 @@ void ClipboardTests() {
     e.SetReadOnly(false);
     // a selection too big for the clipboard (16 MiB, was 4 KiB before the clipboard became a growing buffer) is not cut: it could
     // not be pasted back. Copy takes what fits. Selections up to the limit are in test_okayui_codeedit_parity.
+    // (The editor's own size limit is lifted for this one: it is the clipboard's limit that is being tested.)
+    e.SetLimits((std::size_t)-1, (std::size_t)-1);
     e.SetText(std::string(UI::kClipboardStoreMax + 10, 'x'));
     e.SelectAll();
     UI::SetClipboardText("");
@@ -1063,11 +1165,12 @@ void PerfTests() {
     }
     Rig r(800, 600);
     r.w = 760; r.h = 540;
+    r.ce.SetLimits((std::size_t)-1, (std::size_t)-1);     // this text is about 8 MB: over the default limit of 4 MiB; it is the speed that is tested here
     r.ce.SetLanguage(UI::OkayScriptLanguage());
     auto t0 = std::chrono::steady_clock::now();
     r.ce.SetText(big);
     const double tSet = Ms(t0);
-    CHECK(r.ce.LineCount() > 100000);
+    CHECK(r.ce.LineCount() > 100000 && !r.ce.Truncated());
     t0 = std::chrono::steady_clock::now();
     r.Frame();
     const double tFirst = Ms(t0);
@@ -1142,6 +1245,8 @@ int main() {
     TypingTests();
     DeleteTests();
     NewLineTests();
+    NewLineInBracesTests();
+    AutoPairTests();
     TabTests();
     MoveTests();
     SelectionTests();

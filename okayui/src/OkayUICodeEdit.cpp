@@ -2,6 +2,7 @@
 #include "okay/UI/OkayUICodeEdit.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <climits>
 #include <cmath>
 #include <cstdio>
@@ -59,6 +60,37 @@ bool inSkipToken(const std::vector<okay::text::Token>& t, std::size_t j) {
 }
 
 int digitsOf(int n) { int d = 1; while (n >= 10) { n /= 10; ++d; } return d; }
+
+// The length of the longest start of `s` that fits the limits once repaired: at most `maxBytes` bytes, cut on a character start, and at
+// most `maxLines` lines (CRLF and a lone CR are line breaks like LF; the cut is before the break that would make one line too many).
+// Repair never makes the text longer here (CodeEdit's bad byte is one byte, and everything else is kept or dropped), so what fits
+// before repair fits after it.
+std::size_t FitLength(const std::string& s, std::size_t maxBytes, std::size_t maxLines) {
+    std::size_t cut = std::min(s.size(), maxBytes);
+    if (cut < s.size()) while (cut > 0 && isCont((unsigned char)s[cut])) --cut;       // not in the middle of a character
+    if (maxLines != (std::size_t)-1) {
+        std::size_t lines = 1;
+        for (std::size_t i = 0; i < cut;) {
+            const char c = s[i];
+            if (c != '\n' && c != '\r') { ++i; continue; }
+            if (lines >= maxLines) return i;                                        // this break would make line maxLines + 1
+            ++lines;
+            i += (c == '\r' && i + 1 < cut && s[i + 1] == '\n') ? 2 : 1;
+        }
+    }
+    return cut;
+}
+
+std::string GroupedNumber(std::size_t n) {
+    std::string d = std::to_string(n), out;
+    for (std::size_t i = 0; i < d.size(); ++i) { if (i && (d.size() - i) % 3 == 0) out.push_back(','); out.push_back(d[i]); }
+    return out;
+}
+std::string ByteText(std::size_t n) {
+    if (n >= ((std::size_t)1 << 20) && n % ((std::size_t)1 << 20) == 0) return std::to_string(n >> 20) + " MiB";
+    if (n >= 1024 && n % 1024 == 0) return std::to_string(n >> 10) + " KiB";
+    return std::to_string(n) + " bytes";
+}
 
 // Display columns of byte offsets that only grow, over one line, without starting from the line start each time (a long line with
 // thousands of find matches must cost one pass, not one pass per match).
@@ -234,13 +266,14 @@ CodeEdit::CodeEdit() {
     updateModelOptions();
 }
 
-// The model repairs input the way this editor always did: bad bytes become '?', control characters are dropped. Edits are
-// unlimited in size, and the undo log keeps 2000 steps.
+// The model repairs input the way this editor always did: bad bytes become '?', control characters are dropped. The text has the limits
+// of SetLimits (the model refuses what would go over them), and the undo log keeps 2000 steps.
 void CodeEdit::updateModelOptions() {
     okay::text::Options o = buf_.GetOptions();
     o.tabSize = tabSize_;
     o.insertSpaces = insertSpaces_;
-    o.maxBytes = (std::size_t)-1;
+    o.maxBytes = limitBytes_;
+    o.maxLines = limitLines_;
     o.undoGroups = 2000;
     o.badByte = "?";
     o.dropControls = true;
@@ -251,8 +284,33 @@ const std::string& CodeEdit::Line(int i) const { return buf_.LineRef(i < 0 ? (st
 
 std::string CodeEdit::GetText() const { return buf_.Text(); }
 
+std::string CodeEdit::limitText() const {
+    std::string r;
+    if (limitBytes_ != (std::size_t)-1) r = ByteText(limitBytes_);
+    if (limitLines_ != (std::size_t)-1) r += (r.empty() ? "" : " or ") + GroupedNumber(limitLines_) + " lines";
+    return r;
+}
+
+const std::string& CodeEdit::Status() const {
+    static const std::string kNone;
+    return statusVersion_ == buf_.Version() ? status_ : kNone;
+}
+
+bool CodeEdit::refuse() {
+    setStatus("Not inserted: the text would go over the limit of " + limitText() + ".");
+    return false;
+}
+
+bool CodeEdit::fits(CodePos a, CodePos b, const std::string& ins) const {
+    return buf_.WouldFit(ToPos(Clamp(a)), ToPos(Clamp(b)), ins);
+}
+
 void CodeEdit::SetText(const std::string& text) {
-    buf_.SetText(text);
+    truncated_ = false;
+    const std::size_t keep = FitLength(text, limitBytes_, limitLines_);
+    bool ok = keep == text.size() ? buf_.SetText(text) : buf_.SetText(std::string_view(text).substr(0, keep));
+    if (!ok) { buf_.SetText(std::string_view()); ok = false; }     // not expected (a repair never grows the text here); show nothing rather than keep the old text
+    if (keep < text.size() || !ok) truncated_ = true;
     caret_ = anchor_ = CodePos{};
     groupOpen_ = false; breakGroup_ = true; compound_ = false;
     desiredCol_ = -1; maxDirty_ = true;
@@ -260,6 +318,7 @@ void CodeEdit::SetText(const std::string& text) {
     breakpoints_.erase(std::remove_if(breakpoints_.begin(), breakpoints_.end(), [&](int l) { return l < 0 || l >= (int)buf_.LineCount(); }), breakpoints_.end());
     mirrorBreakpoints();
     mirrorMarkers();
+    if (truncated_) setStatus("This text is over the limit of " + limitText() + ": only the start is shown, and it is read-only.");
 }
 
 CodePos CodeEdit::Clamp(CodePos p) const {
@@ -390,6 +449,7 @@ void CodeEdit::endCompound() {
 }
 
 CodePos CodeEdit::edit(int kind, CodePos from, CodePos to, const std::string& ins) {
+    refused_ = false;
     from = Clamp(from); to = Clamp(to);
     const okay::text::Pos a = ToPos(from), b = ToPos(to);
     if (a == b && buf_.Repair(ins).empty()) return from;
@@ -407,6 +467,7 @@ CodePos CodeEdit::edit(int kind, CodePos from, CodePos to, const std::string& in
         buf_.EndGroup();
     }
     breakGroup_ = false;
+    refused_ = !end;                                              // the model refused (over a limit): nothing changed
     const CodePos e = end ? FromPos(*end) : from;
     for (int l = from.line; l <= e.line && l < (int)buf_.LineCount(); ++l) maxBytes_ = std::max(maxBytes_, (int)Line(l).size());
     if (!compound_) refreshMarks();
@@ -417,9 +478,10 @@ CodePos CodeEdit::edit(int kind, CodePos from, CodePos to, const std::string& in
 #define CE_FINISH() recordCaretInLastGroup()
 
 bool CodeEdit::replaceSelection(const std::string& ins, int kind) {
-    if (readOnly_) return false;
+    if (locked()) return false;
     const CodePos a = SelectionStart(), b = SelectionEnd();
     if (a == b && ins.empty()) return false;
+    if (!fits(a, b, ins)) return refuse();                        // before anything changes: the text, the caret and the selection stay
     const bool sel = a != b;
     if (sel) beginCompound();
     const CodePos e = edit(sel ? Kind_Other : kind, a, b, ins);
@@ -430,7 +492,7 @@ bool CodeEdit::replaceSelection(const std::string& ins, int kind) {
 }
 
 bool CodeEdit::InsertText(const char* text) {
-    if (readOnly_) return false;
+    if (locked()) return false;
     const std::string s = text ? buf_.Repair(text) : std::string();
     if (s.empty() && !HasSelection()) return false;
     int kind = Kind_Other;
@@ -439,8 +501,37 @@ bool CodeEdit::InsertText(const char* text) {
     return replaceSelection(s, kind);
 }
 
+bool CodeEdit::TypeText(const char* text) {
+    if (locked()) return false;
+    std::string t = text ? buf_.Repair(text) : std::string();
+    t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());   // Enter and Tab have their own keys
+    if (t.empty()) return false;
+    if (autoPair_ && t.size() == 1 && !HasSelection()) {
+        const char ch = t[0];
+        const std::string& L = Line(caret_.line);
+        const char next = caret_.col < (int)L.size() ? L[(size_t)caret_.col] : 0;
+        const char prev = caret_.col > 0 ? L[(size_t)caret_.col - 1] : 0;
+        if ((ch == ')' || ch == ']' || ch == '}' || ch == '"' || ch == '\'') && next == ch) {   // the closer is already there: step over it
+            moveCaret(CodePos{caret_.line, caret_.col + 1}, false);
+            return true;
+        }
+        if (ch == '(' || ch == '[' || ch == '{' || ch == '"' || ch == '\'') {
+            bool ok = next == 0 || next == ' ' || next == ')' || next == ']' || next == '}' || next == ';' || next == ',';
+            if ((ch == '"' || ch == '\'') && (std::isalnum((unsigned char)prev) || prev == '_')) ok = false;   // it's, x"
+            if (ok) {
+                const char close = ch == '(' ? ')' : ch == '[' ? ']' : ch == '{' ? '}' : ch;
+                if (!replaceSelection(std::string{ch, close}, Kind_Other)) return false;
+                caret_ = anchor_ = CodePos{caret_.line, caret_.col - 1};   // between the two; Redo puts the caret back here too
+                recordCaretInLastGroup();
+                return true;
+            }
+        }
+    }
+    return InsertText(t.c_str());
+}
+
 bool CodeEdit::Backspace(bool word) {
-    if (readOnly_) return false;
+    if (locked()) return false;
     if (HasSelection()) return replaceSelection("", Kind_Other);
     if (caret_.line == 0 && caret_.col == 0) return false;
     const CodePos from = FromPos(word ? buf_.PrevWordStart(ToPos(caret_)) : buf_.Prev(ToPos(caret_)));
@@ -451,7 +542,7 @@ bool CodeEdit::Backspace(bool word) {
 }
 
 bool CodeEdit::DeleteForward(bool word) {
-    if (readOnly_) return false;
+    if (locked()) return false;
     if (HasSelection()) return replaceSelection("", Kind_Other);
     const CodePos to = FromPos(word ? buf_.NextWordEnd(ToPos(caret_)) : buf_.Next(ToPos(caret_)));
     if (to == caret_) return false;
@@ -462,34 +553,35 @@ bool CodeEdit::DeleteForward(bool word) {
 }
 
 bool CodeEdit::NewLine() {
-    if (readOnly_) return false;
-    beginCompound();
+    if (locked()) return false;
     const CodePos a = SelectionStart(), b = SelectionEnd();
-    if (a != b) edit(Kind_Other, a, b, "");
     std::string ins = "\n";
+    CodePos at{a.line + 1, 0};
     if (autoIndent_) {
+        // What Enter types, worked out from the text before any of it changes. `before` is the last real character before the caret; `after`
+        // the first real character at or after the end of the selection, which is what follows the caret once the selection is gone.
         const std::string& L = Line(a.line);
         ins = buf_.NewlineText(ToPos(a));
         int bi = a.col - 1; while (bi >= 0 && (L[(size_t)bi] == ' ' || L[(size_t)bi] == '\t')) --bi;
         const char before = bi >= 0 ? L[(size_t)bi] : 0;
-        int ai = a.col; while (ai < (int)L.size() && (L[(size_t)ai] == ' ' || L[(size_t)ai] == '\t')) ++ai;
-        const char after = ai < (int)L.size() ? L[(size_t)ai] : 0;
-        const CodePos at = FromPos(okay::text::Buffer::EndOfText(ToPos(a), ins));
-        if (isOpener(before) && after == partnerOf(before)) ins += "\n" + buf_.IndentOf((std::size_t)a.line).substr(0, (size_t)std::min(a.col, (int)buf_.IndentBytes((std::size_t)a.line)));
-        edit(Kind_Other, a, a, ins);
-        endCompound();
-        caret_ = anchor_ = at;
-    } else {
-        edit(Kind_Other, a, a, ins);
-        endCompound();
-        caret_ = anchor_ = CodePos{a.line + 1, 0};
+        const std::string& Lb = Line(b.line);
+        int ai = b.col; while (ai < (int)Lb.size() && (Lb[(size_t)ai] == ' ' || Lb[(size_t)ai] == '\t')) ++ai;
+        const char after = ai < (int)Lb.size() ? Lb[(size_t)ai] : 0;
+        at = FromPos(okay::text::Buffer::EndOfText(ToPos(a), ins));
+        if (isOpener(before) && after == partnerOf(before)) ins += "\n" + buf_.IndentOf((std::size_t)a.line).substr(0, (size_t)std::min(a.col, (int)buf_.IndentBytes((std::size_t)a.line)));   // {|} opens a blank line between
     }
+    if (!fits(a, b, ins)) return refuse();
+    beginCompound();
+    if (a != b) edit(Kind_Other, a, b, "");
+    edit(Kind_Other, a, a, ins);
+    endCompound();
+    caret_ = anchor_ = at;
     reveal_ = true; desiredCol_ = -1;
     CE_FINISH();
     return true;
 }
 bool CodeEdit::Tab(bool outdent) {
-    if (readOnly_) return false;
+    if (locked()) return false;
     const CodePos a = SelectionStart(), b = SelectionEnd();
     const bool multi = a.line != b.line;
     if (!outdent && !multi) {
@@ -511,7 +603,7 @@ bool CodeEdit::Tab(bool outdent) {
         if (!outdent) {
             if (s.empty()) continue;
             edit(Kind_Other, CodePos{l, 0}, CodePos{l, 0}, unit);
-            delta[(size_t)(l - l0)] = (int)unit.size();
+            if (!refused_) delta[(size_t)(l - l0)] = (int)unit.size();
         } else {
             int r = 0;
             if (!s.empty() && s[0] == '\t') r = 1; else while (r < tabSize_ && r < (int)s.size() && s[(size_t)r] == ' ') ++r;
@@ -541,7 +633,7 @@ bool CodeEdit::Copy() const {
 }
 
 bool CodeEdit::Cut() {
-    if (readOnly_ || !HasSelection()) return false;
+    if (locked() || !HasSelection()) return false;
     const std::string s = SelectedText();
     if (s.size() >= kClipboardStoreMax) return false;   // the clipboard could not hold it all: never delete what was not copied
     SetClipboardText(s.c_str());
@@ -549,9 +641,10 @@ bool CodeEdit::Cut() {
 }
 
 bool CodeEdit::Paste() {
-    if (readOnly_) return false;
+    if (locked()) return false;
     const char* c = GetClipboardText();
     if (!c || !*c) return false;
+    if (std::strlen(c) > limitBytes_) return refuse();             // never fits: do not even copy it
     const std::string s = buf_.Repair(c);
     return replaceSelection(s, Kind_Other);
 }
@@ -761,7 +854,7 @@ int CodeEdit::FindCount() const {
 }
 
 bool CodeEdit::ReplaceCurrent(const std::string& with) {
-    if (readOnly_ || find_.empty() || !HasSelection()) return false;
+    if (locked() || find_.empty() || !HasSelection()) return false;
     const std::string sel = SelectedText();
     bool eq = sel.size() == find_.size();
     for (size_t i = 0; eq && i < sel.size(); ++i) eq = findCase_ ? sel[i] == find_[i] : lower(sel[i]) == lower(find_[i]);
@@ -772,10 +865,13 @@ bool CodeEdit::ReplaceCurrent(const std::string& with) {
 }
 
 int CodeEdit::ReplaceAll(const std::string& with) {
-    if (readOnly_ || find_.empty()) return 0;
+    if (locked() || find_.empty()) return 0;
     syncCaretToModel();
     const std::size_t count = buf_.ReplaceAll(find_, with, findFlags());
-    if (!count) return 0;
+    if (!count) {
+        if (buf_.Find(find_, okay::text::Pos{}, findFlags(), false, false)) refuse();   // there was something to replace: the result would be over the limits
+        return 0;
+    }
     groupOpen_ = true; breakGroup_ = true; compound_ = false; curKind_ = Kind_Other; maxDirty_ = true;
     caret_ = Clamp(caret_); anchor_ = Clamp(anchor_);
     refreshMarks();
@@ -910,9 +1006,7 @@ void CodeEdit::handleKeys(bool& changed) {
         if (!t.empty()) { InsertText(t.c_str()); any = true; }
     }
     if (in.text && in.text[0] && !ctrl) {
-        std::string t = buf_.Repair(in.text ? in.text : "");
-        t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
-        if (!t.empty()) { InsertText(t.c_str()); any = true; }
+        if (TypeText(in.text)) any = true;                 // the keyboard's text: with pairing when it is on
     }
     if (comp_.active) {   // composing: the input method owns Backspace, the arrows, Enter and Escape
         if (any) lastActivity_ = GetTime();
@@ -1021,7 +1115,7 @@ bool CodeEdit::Draw(const char* id, float w, float h) {
     item_ = GetItemRect();
     const bool hovered = IsItemHovered();
     if (wantFocus_) { SetKeyboardFocusId(wid); wantFocus_ = false; }
-    comp_ = (Focused() && !readOnly_) ? GetComposition() : Composition();
+    comp_ = (Focused() && !locked()) ? GetComposition() : Composition();
     compCells_ = compCaretCells_ = 0;
     if (comp_.active) {
         compCells_ = SafeInt(std::ceil(CalcTextSize(comp_.text).x / charW_ - 0.001f));

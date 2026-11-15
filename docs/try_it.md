@@ -260,7 +260,7 @@ italic words and a small line. Code: `UIOwnerData` (the `owner.` keys), `UIGalle
    `<install folder>\examples\ui_text\ui_text.okayscene` (installer: `%LOCALAPPDATA%\OkaySpace\examples\ui_text\ui_text.okayscene`),
    press Open.
 2. The Hierarchy lists `Main Camera`, `Ground`, `Sign Post`, `Sign Board`, `Sign Text`, `Goblin Scout`, `Orc Chief`,
-   `Canvas` (with `Hints`) and `Director`. Expand `Goblin Scout`: it has a child `Nameplate`.
+   `Canvas` (with `Hints`), `EventSystem` and `Director`. Expand `Goblin Scout`: it has a child `Nameplate`.
 3. The scene is flat (2D). In the **Scene** view header the button next to the view name says **3D** or **2D**: if it says
    3D, click it once so it says 2D. Look at the **Game** tab for the plates (see "Known rough").
 4. Press **Play**. In the Game view you should see a blue sky, green ground, the brown sign at the top, a green box at the

@@ -974,6 +974,67 @@ int main() {
         Input::ClearTypedText();
     }
 
+    // ---- Dragging inside an open long dropdown list scrolls it (mouse or finger); a tap still picks ----
+    {
+        Scene s("DDDrag");
+        GameObject* g = s.CreateGameObject("DD");
+        auto* dd = g->AddComponent<UIDropdown>();
+        dd->position = {100, 100}; dd->size = {200, 30};
+        dd->options.clear();
+        for (int i = 0; i < 12; ++i) dd->options.push_back("Opt" + std::to_string(i));
+        dd->maxVisible = 5; dd->value = 0;
+        NoHooks(); MouseTo(0, 0, false);
+        s.Start();
+        dd->open = true;
+        auto frame = [&](float x, float y, bool down, int touchState) {   // a finger drives the mouse pointer too
+            if (touchState >= 0) Input::FeedTouch(1, touchState, {x, y});
+            MouseTo(x, y, down); s.Update(0.016f); Input::ClearTypedText();
+        };
+        // mouse drag: press on row 3 (y 220..250 slot 3 -> screen y 235), pull up 70 px = 2 rows
+        frame(150, 235, false, -1);
+        frame(150, 235, true, -1);
+        CHECK(!dd->IsDragScrolling() && dd->open);
+        frame(150, 230, true, -1);                                 // under the threshold: still a possible tap
+        CHECK(dd->ScrollOffset() == 0 && !dd->IsDragScrolling());
+        frame(150, 165, true, -1);
+        CHECK(dd->IsDragScrolling() && dd->ScrollOffset() == 2);
+        frame(150, 100, true, -1);                                 // keeps scrolling, clamped to 0..7
+        frame(150, -400, true, -1);
+        CHECK(dd->ScrollOffset() == 7);
+        frame(150, 800, true, -1);                                 // dragged far down: clamps at the top
+        CHECK(dd->ScrollOffset() == 0);
+        frame(150, 800, false, -1);                                // lift outside: nothing picked, list stays open
+        CHECK(dd->value == 0 && dd->open && !dd->IsDragScrolling());
+        // drag that ends back over a row still does not pick
+        frame(150, 200, false, -1); frame(150, 200, true, -1); frame(150, 150, true, -1); frame(150, 140, false, -1);
+        CHECK(dd->value == 0 && dd->open && dd->ScrollOffset() == 2);
+        // a tap (press and release on the same row, no movement) picks it
+        const int row = dd->OptionAt({150, 145});
+        CHECK(row == 2);
+        frame(150, 145, false, -1); frame(150, 145, true, -1);
+        CHECK(dd->open && dd->value == 0);                         // not yet: decided on release
+        frame(150, 145, false, -1);
+        CHECK(dd->value == 2 && !dd->open);
+        // touch: same gesture with a finger
+        dd->open = true; dd->ScrollBy(-100); dd->value = 0;
+        frame(150, 235, false, -1);
+        frame(150, 235, true, 0);
+        frame(150, 165, true, 1);
+        CHECK(dd->IsDragScrolling() && dd->ScrollOffset() == 2);
+        frame(150, 165, false, 2);
+        CHECK(dd->value == 0 && dd->open);
+        frame(150, 165, false, -1);
+        frame(150, 175, true, 0); frame(150, 175, false, 2);       // finger tap: y 175 is slot 1 = Opt3 at offset 2
+        frame(150, 175, false, -1);
+        CHECK(dd->value == 3 && !dd->open);
+        // a short list (no scrolling) still picks on press, as before
+        dd->maxVisible = 0; dd->open = true; dd->value = 0;
+        frame(150, 0, false, -1);
+        frame(150, 175, true, -1);
+        CHECK(dd->value == 1 && !dd->open);
+        MouseTo(0, 0, false); Input::ClearTypedText();
+    }
+
     // ---- The gallery's theme picker lists every look, Glass included, and picking one restyles ----
     {
         Scene s("Pick");

@@ -4,6 +4,7 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/Seat.hpp"
+#include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/DodgeAction.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
@@ -1780,7 +1781,7 @@ Seat* NearestSeat(GameObject* go) {
 } // namespace
 
 bool RequestSit(GameObject* go, GameObject* seatObject, int sitType) {
-    if (!go || IsDead(go) || IsSitting(go)) return false;
+    if (!go || IsDead(go) || IsSitting(go) || VehicleSeat::IsSeated(go)) return false;
     Seat* seat = seatObject ? seatObject->GetComponent<Seat>() : nullptr;
     if (seat) {
         if (seat->occupied && seat->Occupant() != go) return false;
@@ -2198,6 +2199,7 @@ void Seat::Update(float dt) {
     for (const auto& up : gameObject->scene()->Objects()) {
         if (!up || !up->active || !up->transform || up.get() == gameObject) continue;
         if (!IsLocallyControlled(up.get()) || !up->GetComponent<Character>()) continue;
+        if (VehicleSeat::IsSeated(up.get())) continue;   // already in a vehicle
         Vec3 d = up->transform->Position() - sit;
         d.y = 0.0f;
         const float dist = d.Magnitude();

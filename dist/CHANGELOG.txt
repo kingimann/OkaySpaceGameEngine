@@ -1,5 +1,23 @@
 OkaySpace Game Engine — Changelog
 
+v2.873.0
+  Gameplay
+  - Characters that turn while the game runs physics in fixed steps no
+    longer jitter on screen or lose most of their walking speed. When game
+    code turns a body, the drawn pose now keeps the physics position and the
+    game's rotation. Tested with the real third-person controller at 30, 60
+    and 144 frames per second; not checked in a real window or on Windows.
+
+  Behind the scenes (all switched off by default, nothing changes for you)
+  - A new audio file reader for WAV files written by us, instead of a
+    library. It was already inside 2.872.0 and stays off until we are sure
+    it is finished.
+  - New own readers for three more 3D model formats (MDC, HMP and CSM) and
+    for Terragen terrain files. They are off by default and were tested on
+    small sample files only.
+  - The project now has a live work board on GitHub (the "work-board"
+    branch) that shows what is being worked on.
+
 v2.872.0
   Launcher
   - The Admin page no longer disappears when the launcher has been open for

@@ -367,7 +367,7 @@ static void TestRegistryBasics() {
         "Mover", "Spinner", "Lifetime", "CameraFollow", "Canvas", "UIPanel",
         "PlayerController", "PlayerView", "FirstPersonController", "ThirdPersonController", "CharacterController2D", "CharacterController3D",
         "TopDownController", "TopDownController2D", "FreeRoamController", "ClickToMoveController", "ThirdPersonShooterController",
-        "TopDownShooterController", "Platformer25DController", "VehicleController", "VehicleController2D", "Projectile3D", "Spawner",
+        "TopDownShooterController", "Platformer25DController", "VehicleController", "VehicleSeat", "VehicleController2D", "Projectile3D", "Spawner",
         "MusicPlayer", "NavMeshAgent", "NavMeshLink", "NavMeshModifier", "NavMeshObstacle", "NavMeshSurface", "NetworkObject", "NetworkSync", "NetworkTransform", "SyncVar",
         "NetworkPlayerSpawner", "UIButton", "TextRenderer", "UIImage", "UISlider", "UIToggle", "UIProgressBar", "UIInputField", "UIStepper", "UIDropdown",
         "Collectible", "DamageOnTouch", "Teleporter", "JumpPad", "TriggerZone", "FollowTarget2D", "Destructible", "Draggable", "DropZone",
@@ -1102,8 +1102,11 @@ static void TestSerializerCrossCheck() {
             expect[key] = PropertyRegistry::GetProperty(*go, key);
         }
         const std::string text = SceneSerializer::Serialize(s1);
+        // A lone First / Third Person controller is saved in its Player Controller form (pcfirst / pcthird).
+        const std::string recName = info->recordName == "fpctrl" ? "pcfirst"
+                                  : info->recordName == "tpctrl" ? "pcthird" : info->recordName;
         if (!info->recordName.empty() && !info->objectLevel)
-            CHECK(text.find("\n  " + info->recordName + " ") != std::string::npos || text.find("\n  " + info->recordName + "\n") != std::string::npos);
+            CHECK(text.find("\n  " + recName + " ") != std::string::npos || text.find("\n  " + recName + "\n") != std::string::npos);
         Scene s2("s2");
         std::string err;
         CHECK(SceneSerializer::Deserialize(s2, text, &err));

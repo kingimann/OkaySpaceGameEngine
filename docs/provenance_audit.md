@@ -142,6 +142,12 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 - `okayui/` is a Dear ImGui style API ("ImGui-style" auto layout). API shape is an idea. An overlap run against a Dear ImGui source tree found no matching runs in `okayui/`.
 - "taken from", "copy of", "derived from" in comments, almost all about program data ("a copy of the prefab"), not about code origin.
 
+## New own code written after this audit (stated sources)
+
+| File | Written from | Notes |
+|---|---|---|
+| `engine/src/Render/Gltf1Reader.cpp` (2026-11-15, branch `claude2/own-reader-gltf1`) | The Khronos glTF 1.0 specification (`specification/1.0/README.md` and schemas) and the `KHR_binary_glTF` and `KHR_materials_common` extension descriptions | No importer source read; reuses the engine's own JSON parser and base64 decoder (`okay/Render/Gltf.hpp`). Compared with Assimp only by running it (`docs/own_gltf1_reader.md`) |
+
 ## Method and limits
 
 1. **Known pieces.** Read `CLAUDE.md` and `docs/THIRD_PARTY.md`; looked for each piece and its notice file in the repository.

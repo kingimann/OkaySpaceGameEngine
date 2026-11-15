@@ -18,7 +18,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 | COLLADA | 26 | 25 in `Collada/` and one in `invalid/`; geometry, skins, animation, instancing, cameras and lights only, three encodings |
 | 3DS | 16 | static and keyframed, camera animation, textured, one empty file |
 | BVH | 3 | motion capture, 2,752 to 4,511 frames |
-| glTF / GLB | 54 (48 `.gltf`, 6 `.glb`) | glTF 2.0 samples, embedded and external buffers, skins, morph targets, texture transform, primitive modes, extensions, and about 15 deliberately broken files; 7 are glTF 1.0 (6 `.gltf` and one `.glb`) |
+| glTF / GLB | 54 (48 `.gltf`, 6 `.glb`) | glTF 2.0 samples, embedded and external buffers, skins, morph targets, texture transform, primitive modes, extensions, and about 15 deliberately broken files; 7 are glTF 1.0 (6 `.gltf` and one `.glb`), which the glTF rows record as failing and the `gltf1` rows (our own glTF 1.0 reader, switched on for the run, `docs/own_gltf1_reader.md`) record as read |
 | OBJ | 28 | `models/OBJ` (23), `models-nonbsd/OBJ` (2), `models/invalid` (3): groups, `usemtl`, concave polygons, point and line elements, vertex colours, UTF-16 |
 | STL | 8 | ascii and binary, several solids, an empty solid |
 | PLY | 12 | ascii, binary little and big endian, point clouds, a truncated file, odd headers |
@@ -262,7 +262,7 @@ Assimp row:
 - The one 3DS file that fails (`invalid/empty.3ds`, no bytes) fails in Assimp too ("File is empty"): not a gap.
 - LWO planar, cylindrical and spherical image maps: UVs are generated now (see the LWO section); not applied, as in Assimp: the map's own centre, size and rotation.
 - SMD and MS3D skeletons on real files: none of the corpus files has a joint beyond the bind pose (SMD) or any joint (MS3D), so there was nothing to check and no defect was found; unverified on real animated files.
-- Not done, and large: glTF 1.0 (above), Maya Arnold / OSL / ShaderFX materials for FBX (separate `Shader` objects; estimate: several days with real Maya files to test against, which the corpus does not have).
+- Not done, and large (glTF 1.0 is now written, off by default: `docs/own_gltf1_reader.md`): Maya Arnold / OSL / ShaderFX materials for FBX (separate `Shader` objects; estimate: several days with real Maya files to test against, which the corpus does not have).
 - Material values for COLLADA, 3DS, glTF and OBJ were compared only by count.
 - The release note naming the dropped formats is not written (the owner decides its text).
 

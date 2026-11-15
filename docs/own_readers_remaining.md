@@ -55,7 +55,7 @@ none were invented.
 | 14 | **RAW** (`.raw`) | plain triangle list | very low | easy | 4 (one empty) | yes |
 | 15 | **Quake III BSP** (`.bsp` in `.pk3`) | Quake 3 map in a zip | low | medium-hard (faces, patches, shaders) | 1 (`SGDTT3.pk3`) | yes |
 | 16 | **Nendo** (`.ndo`) | Nendo modeller | almost none | easy-medium | **0: no file in the tree, so it cannot be checked against Assimp** | yes |
-| 17 | **glTF 1.0** (`.gltf`, `.glb`) | the old glTF; our glTF reader reads 2.0 only | low (legacy, but real models exist) | medium | 7 (inside the 54 glTF files of the corpus, they fail in our reader on purpose) | yes |
+| 17 | **glTF 1.0** (`.gltf`, `.glb`): **own reader written, off by default** (`OKAY_OWN_GLTF1`, `docs/own_gltf1_reader.md`) | the old glTF; our glTF 2.0 reader refuses it unless this reader is switched on | low (legacy, but real models exist) | medium | 7 (all 7 read by the new reader) | yes |
 | 18 | **M3D** (`.m3d` `.a3d`) | Model 3D: a newer compact binary and ASCII format | low | medium | 8 | no |
 | 19 | **Unreal** (`.3d` `.uc`) | Unreal Engine 1 mesh pair (`_a.3d` / `_d.3d` and `.uc`) | very low | easy-medium | 6 | no |
 | 20 | **USD** (`.usd` `.usda` `.usdc` `.usdz`) | Pixar Universal Scene Description: text (`usda`), binary crate (`usdc`), zip (`usdz`) | rising, large | `usda`: medium; `usdc` crate: hard; full USD (composition, references): very hard | 7 here plus a folder of 15 in `models-nonbsd/USD` | no |
@@ -76,7 +76,7 @@ Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real
 2. **MDL**, in this order: Quake 1, then Half-Life 1, then 3D GameStudio 3/5/7 (43 real files).
 3. **IQM**, **OpenGEX**, **COB**, **LWS**, **PMX**: one real file or a handful each; each is a few days.
 4. The tiny ones in one batch: **Q3D, SIB, CSM, MDC, HMP, Terragen, RAW, Unreal**.
-5. **Quake III BSP** and **glTF 1.0**: medium; glTF 1.0 is the one with the largest real-file count (7) after MDL.
+5. **Quake III BSP** and **glTF 1.0**: medium; glTF 1.0 is written (`docs/own_gltf1_reader.md`, off by default).
 6. **Nendo**: last, and only from a published description, because no file exists to check it against; honest status "unverified".
 7. Not in our build, so not needed to remove Assimp from the Windows distribution: **M3D, USD, IFC, Assbin, C4D**. If the owner wants them anyway: USD `usda` first, then `usdc`; IFC is a project of its own; Assbin can be dropped; C4D needs a decision about reverse engineering.
 

@@ -1,4 +1,4 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / glTF 1.0 readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
@@ -428,3 +428,11 @@ nff	models/NFF/NFF/octahedron.nff	ok	area=173.2051	meshes=1	tris=8	bones=0	skinn
 nff	models/NFF/NFF/positionTest.nff	ok	area=2690.3634	meshes=15	tris=72704	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-8.000,-8.000,-5.000,68.000,8.000,5.000	verts=36894	tex=0	nodes=1	uv=0	nrm=1
 nff	models/NFF/NFF/spheres.nff	ok	area=734.9215	meshes=4	tris=15380	bones=0	skinned=0	clips=0	dur=0.000	mat=4	bbox=-3.000,-21.805,-4.805,8.000,8.000,11.000	verts=7698	tex=1	nodes=1	uv=0	nrm=1
 nff	models/NFF/NFF/tetrahedron.nff	ok	area=115.4700	meshes=1	tris=4	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.357,-4.082,-1.667,4.714,4.082,5.000	verts=12	tex=0	nodes=1	uv=0	nrm=1
+# gltf1: own glTF 1.0 reader, switched on for the run (the gltf rows above record the same files failing with it off)
+gltf1	models/glTF/BoxTextured-glTF-Binary/BoxTextured.glb	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=5	uv=1	nrm=1
+gltf1	models/glTF/BoxTextured-glTF-Embedded/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=0	nodes=5	uv=1	nrm=1
+gltf1	models/glTF/BoxTextured-glTF-MaterialsCommon/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=5	uv=1	nrm=1
+gltf1	models/glTF/BoxTextured-glTF/BoxTextured.gltf	ok	area=6.0000	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,0.500,0.500	verts=24	tex=1	nodes=5	uv=1	nrm=1
+gltf1	models/glTF/CesiumMilkTruck/CesiumMilkTruck.gltf	ok	area=64.8164	meshes=5	tris=3624	bones=0	skinned=0	clips=0	dur=0.000	mat=4	bbox=-2.431,0.001,-1.396,2.438,2.584,1.396	verts=8348	tex=1	nodes=8	uv=1	nrm=1
+gltf1	models/glTF/IncorrectVertexArrays/Cube_v1.gltf	ok	area=92.0000	meshes=4	tris=46	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=-3.500,-1.000,-1.000,3.500,1.000,3.500	verts=142	tex=0	nodes=9	uv=0	nrm=1
+gltf1	models/glTF/TwoBoxes/TwoBoxes.gltf	ok	area=7.5000	meshes=2	tris=24	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-0.500,-0.500,-0.500,0.500,1.250,0.500	verts=48	tex=0	nodes=4	uv=0	nrm=1

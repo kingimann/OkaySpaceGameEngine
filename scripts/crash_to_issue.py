@@ -216,7 +216,8 @@ def _ip(m):
 
 @functools.lru_cache(maxsize=512)
 def _scrub_text(text):
-    text = cut_long_lines(clean(text))
+    # (the cut comes before the first pattern: only plain string replaces run on the whole text until every line is at most 600 characters)
+    text = clean(cut_long_lines(text.replace("\r\n", "\n").replace("\r", "\n")))
     text = _WIN_PROFILE.sub("%USERPROFILE%", text)
     text = _ONEDRIVE.sub("OneDrive - <org>", text)
     text = _POSIX_HOME.sub("~", text)
@@ -695,7 +696,11 @@ def _http(method, url, headers, data=None, timeout=30):
     try:
         with _OPENER.open(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", "replace")
-            return resp.status, (json.loads(raw) if raw.strip().startswith(("{", "[")) else raw), resp.headers
+            try:
+                answer = json.loads(raw) if raw.strip().startswith(("{", "[")) else raw
+            except ValueError:
+                raise RuntimeError("unexpected answer from %s (it is not valid JSON)" % urllib.parse.urlsplit(url).netloc)
+            return resp.status, answer, resp.headers
     except urllib.error.HTTPError as e:
         raw = e.read().decode("utf-8", "replace")[:500]
         raise HttpError(e.code, "HTTP %d from %s: %s" % (e.code, urllib.parse.urlsplit(url).netloc, mask(raw)))
@@ -895,7 +900,11 @@ def main(argv=None, env=None):
     print("%d unprocessed crash report row(s)." % len(rows))
     if rows and not args.dry_run:
         gh.ensure_label()
-    stats = process(rows, gh, sb, args.max_new, args.dry_run, **limits)
+    try:
+        stats = process(rows, gh, sb, args.max_new, args.dry_run, **limits)
+    except RuntimeError as e:   # GitHub could not be asked at all (an outage, a bad token): say so in a line, not a traceback
+        print("::error::could not turn the crash reports into issues: %s" % log_safe(one_line(mask(str(e)))))
+        return 1
     print("created %(created)d issue(s), commented %(commented)d time(s), marked %(marked)d row(s), deferred %(deferred)d, invalid %(invalid)d, "
           "quarantined %(quarantined)d, retrying %(retrying)d, failed %(failed)d" % stats)
     summary = env.get("GITHUB_STEP_SUMMARY")

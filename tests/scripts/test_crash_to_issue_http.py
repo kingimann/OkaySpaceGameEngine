@@ -125,6 +125,7 @@ class FakeGitHub(BaseHTTPRequestHandler):
     comments = []      # (number, body)
     labels_posted = []
     fail_issue_create = False
+    fail_list = False       # the issue list itself cannot be read (an outage, a bad token)
     calls = []
 
     def log_message(self, *a):
@@ -152,7 +153,9 @@ class FakeGitHub(BaseHTTPRequestHandler):
         if not self._auth():
             return
         u = urllib.parse.urlsplit(self.path)
-        if u.path == "/repos/o/r/issues":
+        if u.path == "/repos/o/r/issues" and FakeGitHub.fail_list:
+            self._send(500, {"message": "boom"})
+        elif u.path == "/repos/o/r/issues":
             q = urllib.parse.parse_qs(u.query)
             assert q["labels"] == ["crash"] and q["state"] == ["all"], q
             items = [i for i in FakeGitHub.issues if "crash" in i["labels"]] if q["page"] == ["1"] else []
@@ -205,7 +208,7 @@ class Pipeline(unittest.TestCase):
 
     def setUp(self):
         FakeSupabase.rows, FakeSupabase.calls, FakeSupabase.deleted, FakeSupabase.no_table, FakeSupabase.really_delete = [], [], [], False, False
-        FakeGitHub.issues, FakeGitHub.comments, FakeGitHub.labels_posted, FakeGitHub.calls, FakeGitHub.fail_issue_create = [], [], [], [], False
+        FakeGitHub.issues, FakeGitHub.comments, FakeGitHub.labels_posted, FakeGitHub.calls, FakeGitHub.fail_issue_create, FakeGitHub.fail_list = [], [], [], [], False, False
         self.env = {"SUPABASE_SERVICE_KEY": SERVICE_KEY, "SUPABASE_URL": "http://127.0.0.1:%d" % self.sb.server_address[1], "GITHUB_TOKEN": GH_TOKEN,
                     "GITHUB_REPOSITORY": "o/r", "GITHUB_API_URL": "http://127.0.0.1:%d" % self.gh.server_address[1]}
 
@@ -379,6 +382,16 @@ class Pipeline(unittest.TestCase):
         code, out = self.run_main()
         self.assertIn("0 unprocessed", out)                                       # the next run does not see it at all
 
+    def test_github_down_is_a_clean_error_line_not_a_traceback(self):
+        FakeSupabase.rows = [row(1, SIG_A, "2026-11-15T10:00:00+00:00")]
+        FakeGitHub.fail_list = True
+        code, out = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("::error::could not turn the crash reports into issues", out)
+        self.assertNotIn("Traceback", out)
+        self.assertNotIn(GH_TOKEN, out)
+        self.assertIsNone(FakeSupabase.rows[0]["processed_at"])           # the row waits for the next run
+
     def test_a_missing_table_says_what_to_do(self):
         FakeSupabase.no_table = True
         code, out = self.run_main()
@@ -426,6 +439,18 @@ class Redirector(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+class Garbled(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        raw = b'{"this is": not json'
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+
 class Redirects(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -445,6 +470,15 @@ class Redirects(unittest.TestCase):
         self.assertIn("302", str(cm.exception))
         self.assertNotIn(SERVICE_KEY, str(cm.exception))
         self.assertEqual(Spy.seen, [], "the redirect was followed to another host")       # nothing reached it, so no header did either
+
+    def test_an_answer_that_is_not_json_is_a_clean_error(self):
+        srv = serve(Garbled)
+        try:
+            with self.assertRaises(RuntimeError) as cm:
+                c._http("GET", "http://127.0.0.1:%d/x" % srv.server_address[1], {"apikey": SERVICE_KEY})
+        finally:
+            srv.shutdown()
+        self.assertIn("not valid JSON", str(cm.exception))
 
     def test_a_redirect_inside_the_same_host_is_followed(self):
         url = "http://127.0.0.1:%d/same" % self.redir.server_address[1]

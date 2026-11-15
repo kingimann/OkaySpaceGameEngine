@@ -61,7 +61,14 @@ python3 scripts/bench_ab.py "shadow depth" 5 "$B --scene cubes2000 --frames 8 --
 
 For a function level profile: `valgrind --tool=callgrind --collect-atstart=no build/tests/bench_frame --scene cubes2000
 --frames 3 --warmup 2`, then `callgrind_annotate`. Only the measured frames are counted (the bench switches counting
-on and off itself). **Instruction counts are exact and do not depend on how busy the machine is.**
+on and off itself). Instruction counts are exact and do not depend on how busy the machine is.
+
+**One limit, found late in this pass:** callgrind's counting switch works per thread, so **only the main thread is
+counted**. The main thread runs the physics, the scene update, the sun shadow maps and the first band of rows of every
+pass that is split over threads (`ParallelRows`); the other bands run on worker threads that are not counted (checked with
+`--separate-threads=yes`: thread 1 shows 93.0 million instructions on `lights64`, threads 2 to 4 show 0). So a count is
+the main thread's work. That is close to the length of a frame when the bands are balanced, but it is not the total work
+of all threads (the `frame (cpu, all threads)` row is), and after band skipping the bands are no longer balanced.
 
 The engine's own profiler (`OKAY_PROFILE`, `docs/core_logging_profiling.md`) now also records the software renderer's
 phases as `Render.*`, so the editor's Profiler panel shows them.
@@ -72,20 +79,22 @@ has: the example scenes `examples\perf\*.okayscene` and the editor's Profiler (`
 ## 2. What the numbers are, and are not
 
 * **Machine:** a shared Linux virtual machine, 4 cores of an Intel Xeon at 2.30 GHz, 16 GB, other jobs running the whole
-  time. Wall times are noisy (see 4.4). The `(cpu)` rows and the instruction counts are the trustworthy ones.
+  time. Wall times are noisy (see 4.4). The `(cpu)` rows are the trustworthy totals; instruction counts are exact but count the main thread only (section 1).
 * **Build:** CMake `Release` with GCC 13.3 (`-O3 -DNDEBUG`). **Not Debug**; no Debug numbers exist.
 * **Method:** every table row is the median of at least 5 runs of the whole program; the two sides of a comparison are run
   in turns (A, B, A, B, ...) so a slow minute hits both. Each run is itself the median of 8 to 300 frames.
 * **The timing runs were not taken under the machine-wide build lock** (the lock queue was a dozen jobs long). The load
   average was about 2 while they ran, with one niced compile of another agent running now and then.
 * **Not measured:** any GPU path (OpenGL, Direct3D 11 and 12), Windows, real hardware, audio, networking, the editor
-  window. The software renderer is what the bench draws with; the player uses it only when no GPU renderer starts, and
-  the editor does not use it for its viewport on a normal PC. So changes 2 and 3 below (software renderer) help only
-  there. Changes 1, 4 and 5 (physics and scene update) are shared by every renderer, but were measured only here.
+  window. The software renderer is what the bench draws with; the player uses it only when no GPU renderer starts, and the
+  editor viewport only when its GPU renderer is switched off or fails (`editor/main.cpp`, the `RenderMeshesSS` fallback).
+  The editor's asset thumbnails (`RenderFramedImage`, 128 x 128 pictures of prefabs and models) always use it, so they
+  should get faster too (not measured). So changes 2 and 3 below help in those places only. Changes 1, 4 and 5 (physics and
+  scene update) are shared by every renderer, but were measured only here.
 
 ## 3. Where the time went (baseline, before any change)
 
-Instruction counts per frame from callgrind (Release, 640x360, shadows off unless noted), share of the whole frame:
+Shares of the main thread's instructions per frame from callgrind (Release, 640x360, shadows off unless noted):
 
 | Scene | Biggest costs |
 |---|---|
@@ -161,16 +170,18 @@ Reading the table:
   removed) for all 2 million pairs *before* it compared boxes. The all-pairs path behind `--legacy-physics` compares boxes
   first, so it is already 4x cheaper than the original: `Physics.3D` on `cubes2000` is 9.3 ms in the original program (the
   same with the sun on or off), 2.3 ms with the switch, 0.45 ms with the sweep.
-* There is no switch for the dead shading computations and the hoisted per-frame values (change 3c). Their effect can be
-  read off `lights64`: with light culling and band skipping both off, `Render.Raster` is 60.3 ms in the new code against
-  91.1 ms in the original, so those two alone are worth about 1.5x there.
+* There is no switch for the dead shading computations and the values worked out once per frame instead of once per
+  thread (the rest of change 3). Measured in one batch on `lights64` with light culling and band skipping both off: the
+  original program 151.7 ms of CPU time per frame (`Render.Raster` 62.4 ms wall), the new code 116.6 ms (48.9 ms), 1.30x.
+  On `cubes2000` without shadows and with band skipping off the new code's `Render.Raster` was 6.6 ms against 5.8 ms in
+  the original (0.88x, about the size of the noise): the per-object bookkeeping costs a little where nothing is skipped.
 * Wall times of the renderer rows depend on how many cores were free at that moment (the renderer runs one band of rows
   per core). The CPU rows do not. Compare the CPU rows when they disagree with the wall rows.
 
-### 4.3 Instruction counts (exact)
+### 4.3 Instructions the main thread ran (exact, but not the total work)
 
-callgrind, only the 3 measured frames after 2 warm-up frames, instructions per frame, millions. These do not depend on the
-machine or on its load.
+callgrind, only the 3 measured frames after 2 warm-up frames, instructions per frame, millions, **main thread only** (see
+the limit in section 1). These do not depend on the machine or on its load.
 
 | Scene | Settings | Original | This branch | Original / this branch |
 |---|---|---|---|---|
@@ -184,25 +195,33 @@ machine or on its load.
 | `mixed` | shadows off | 142.4 | 42.6 | 3.34x |
 | `ui500` | | 19.8 | 20.2 | 0.98x (see 4.1) |
 
-Instructions fell more (4.3x) than time (2.4x) on the shadow scenes because the shadow loop now runs fewer instructions
-per texel but still writes the same memory, and memory, not instructions, is what it waits for.
+Read these as "how much shorter the main thread's work got", not as "how much less work the machine does": they are
+larger than the time ratios of 4.1 (2.3x to 8.2x) because the sun shadow maps, the physics and the scene update run
+entirely on the main thread and shrank a lot, while the banded passes are only counted for their first band. For the
+total work use the `frame (cpu, all threads)` column of 4.1. One example of the difference: on `lights64`, with light
+culling on, the main thread runs 93.0 million instructions and with it off 86.6 million (more with it on, because the
+main thread pays for working out which lights reach which mesh), while the CPU time of all threads is 17.3 ms with it
+on and 36.8 ms with it off: the saving is on the worker threads, which callgrind did not count.
 
 ### 4.4 How noisy this is
 
-* Running the same command twice in turns gives ratios of 1.00 to 1.01 on every row: the alternation itself adds no bias
+* Running the same command twice in turns gives ratios of 0.99 to 1.01 on every row: the alternation itself adds no bias
   (checked on `ui500` with 9 runs, in both orders).
 * But the machine's speed drifts. The identical command `bench_frame --scene ui500 --frames 300 --warmup 20` printed a
   frame time of 1.5 ms in one batch and 2.1 ms in another a few minutes later; the identical `lights64` command printed
   16.4 ms of wall time in one batch and 9.6 ms in another, while its CPU time was 17.7 and 18.2 ms. So an absolute wall time
   here is good to about 30 percent, and a ratio from one batch to about 10 percent. The wins in this log are 1.2x to 20x:
-  the small ones (1.1x to 1.3x) are at the edge of what wall time can show, which is why the CPU rows and instruction counts
-  are there.
+  the small ones (1.1x to 1.3x) are at the edge of what wall time can show, which is why the CPU rows are there.
 * Medians of 5 runs (9 for `ui500`). The p95 and max columns are in the bench's own output; they are not used here.
 
 ## 5. The changes, one by one
 
 The commits on `claude/perf-pass-1`, in order: the benchmark and the profiler scopes, then one commit for each change
 below (1, 2, 3, 5, 4), then the benchmark's switches, then this log with the docs and the example scenes.
+The commit messages quote shares "of the instructions" (60, 86, 83, 38 percent, a fifth): those are shares of the main
+thread's instructions (the limit in section 1; a commit message cannot be changed without rewriting the branch). The first
+version of this log, and the commit message of change 1, also quoted a first `Physics.3D` measurement (21.7 to 1.06 ms)
+taken while the machine ran at load 10 to 15; tables 4.1 and 4.2 replace it.
 
 ### 0. The benchmark (`tests/bench_frame.cpp`) and the `Render.*` profiler scopes
 
@@ -213,8 +232,8 @@ profiler is off (it is off unless the Profiler panel or `OKAY_PERF_DUMP` is on).
 ### 1. Physics broad phase: sort and sweep (`engine/include/okay/Physics/Broadphase.hpp`)
 
 *What was wrong.* Each physics step compared every collider with every other one: 2,000 cubes meant about 2 million pair
-visits per step, each behind several checks, even when only a handful of boxes touched. 60 percent of the instructions of
-`cubes2000`.
+visits per step, each behind several checks, even when only a handful of boxes touched. 60 percent of the main thread's
+instructions of `cubes2000` (the physics step runs on the main thread, so that is also close to its share of the frame).
 
 *What changed.* The pairs whose boxes overlap are found by sorting the boxes along their widest axis and sweeping (the
 general sort-and-sweep idea, written from scratch). The list is the same as the old double loop produced, in the same
@@ -231,14 +250,13 @@ all six scenes.
 
 *Back to the old code:* `broadphase::ForceBruteForce() = true` (bench `--legacy-physics`).
 
-*Note.* The commit message of this change quotes `Physics.3D` 21.7 ms to 1.06 ms on `cubes2000`. That was a first
-measurement made while the machine was running at load 10 to 15; the table in 4.1 (9.3 to 0.46 ms) replaces it.
 
 ### 2. Software shadow depth: only the texels a triangle can cover, four at a time (`engine/include/okay/Render/TriangleSpan.hpp`)
 
 *What was wrong.* The cascaded sun shadow pass visited every texel of every triangle's bounding box and ran three edge
 tests on it. A big ground quad cut by a diagonal has a box twice the size of the triangle, so half of the visits were
-wasted. 86 percent of the instructions of `cubes2000` with shadows on.
+wasted. 86 percent of the main thread's instructions of `cubes2000` with shadows on (the shadow maps are drawn by the
+main thread alone; in time they were 76 percent of the frame: 114.6 of 151.2 ms).
 
 *What changed.* `TriangleRows` works out, for every row, the columns outside which no texel can pass the edge tests (the
 bound is widened by an error bound on the float rounding of those tests, and by one column, so it can only be too wide,
@@ -258,7 +276,7 @@ none outside its span) and the depth buffers of 4,000 triangles, compared bit fo
 
 *What was wrong.* `RenderMeshes` ran every object through every thread's band of rows (so each object's setup was repeated
 once per thread, and objects outside the band were rasterized into nothing), ran every vertex through every light, and worked
-out colours that no code path read. `lights64`: 83 percent of the instructions were the light loop.
+out colours that no code path read. `lights64`: 83 percent of the main thread's instructions were the light loop.
 
 *What changed.*
 * **3b, band skipping.** Each object's drawn vertices give a world box once per frame (from the vertices actually drawn, so
@@ -291,7 +309,7 @@ copies in `LightSubset.hpp`, `software_perf_paths` fails (it compares against th
 
 *What was wrong.* `Physics3D::Step` casts one downward ray per falling body (`CatchTunneledFloor`), and `Raycast` measured
 every collider's world box for every ray: 500 falling bodies meant 250,000 box measurements in one step. 38 percent of the
-instructions of `bodies500`.
+main thread's instructions of `bodies500`.
 
 *What changed.* The boxes do not move while that loop runs (a lift of a body drops the index), so they are measured once
 and put in a grid over the ground plane; a vertical ray looks only at the colliders whose box covers its column.
@@ -310,7 +328,7 @@ same `state_hash` as the original program on `bodies500`.
 
 *What was wrong.* Each physics step (and the scene's own step around it) asked for the rigidbodies, colliders, terrains and
 joints about fifteen times, and every ask visited every object and ran a `dynamic_cast` on every component. About a fifth of
-the instructions of a 2,000 object frame once the broad phase was fixed.
+the main thread's instructions of a 2,000 object frame once the broad phase was fixed.
 
 *What changed.* `CachedComponents<T>(scene)` returns a copy of the same list `FindObjectsOfType<T>()` gives, kept until
 the scene's component count, structure count or identity changes (those change exactly when a component is added or removed
@@ -334,31 +352,38 @@ because it changes `GameObject.hpp`, which rebuilds about 130 compile units, on 
 
 ## 6. Found but not fixed (ranked, for the next pass)
 
-Shares are instructions in the same callgrind runs, after this pass.
+Ranked by how much of a frame each one is now. Shares of time come from the tables above (wall time of a frame). Shares of
+instructions are of the main thread only (the limit in section 1), from the same callgrind runs as 4.3; they are good for
+the single threaded parts (physics, scene update, visibility, shadow maps) and only rough for the banded passes.
 
-1. **Software sun shadow maps are still the largest cost whenever shadows are on: 76 to 84 percent of the instructions**
-   (`cubes2000` 76, `bodies500` 84, `skinned100` 84, `mixed` 82; `RasterDepthTriangle` plus clearing the maps). The default
-   is 3 cascades of 2048 x 2048 floats, 48 MB written per frame. Ideas, from safest: skip a cascade (clear and draw) when
-   the light, the camera and every caster in it are unchanged; clear only what was drawn; draw only front faces of closed
-   meshes (almost always the same map, but not bit for bit at silhouettes, so it needs the owner's tolerance); a smaller
-   default map or fewer cascades (a visible change: the owner's decision).
-2. **FXAA and the scene post pass: 39 and 18 percent of a shadows-off `skinned100` frame** (`ApplyFXAA` 39, `ApplyScenePost`
-   18; 23 and 11 on `cubes2000`, 32 and 15 on `mixed`). About 9 to 12 percent of the frame is calls to libm's `fmaxf` and
-   `fminf` that the compiler cannot inline (they promise exact NaN handling); SSE min and max, or a branch-free version,
-   would remove most of it. The picture must stay bit for bit: prove it with `frame_hash` as in changes 2 and 3.
-3. **RTTI in component lookups: about a fifth of a shadows-off `cubes2000` frame** (`dynamic_cast`, `__do_dyncast` and
-   `strcmp` 20 percent by themselves, 24.6 percent with their callers, mostly in `visibility::Build` and `Scene::Update`)
-   **and a fifth of the `ui500` frame** (`GetComponent<SpriteRenderer>` and friends). Every `GetComponent<T>()` is a
-   `dynamic_cast` on each component of the object. A type id stored in each component would make it a compare. This
-   changes `GameObject.hpp` and `Component.hpp` (about 130 compile units rebuild): do it when the machine is quiet.
+1. **Software sun shadow maps are still the largest cost whenever shadows are on: 63 to 67 percent of the wall time of a
+   frame** (35 to 59 ms of 55 to 93 ms; `cubes2000` 64, `bodies500` 63, `skinned100` 64, `mixed` 67 percent), and 76 to 84
+   percent of the main thread's instructions (`RasterDepthTriangle`, plus clearing the maps). The default is 3 cascades of
+   2048 x 2048 floats, 48 MB written per frame. Ideas, from safest: skip a cascade (clear and draw) when the light, the
+   camera and every caster in it are unchanged; clear only what was drawn; draw the shadow maps on the worker threads too
+   (one cascade each: they are independent); draw only front faces of closed meshes (almost always the same map, but not
+   bit for bit at silhouettes, so it needs the owner's tolerance); a smaller default map or fewer cascades (a visible
+   change: the owner's decision).
+2. **FXAA and the scene post pass: `Render.Post` is 3.4 to 5.1 ms, 31 to 46 percent of the wall time of a shadows-off
+   frame** (9.6 to 11.2 ms). In the callgrind profile of a shadows-off `skinned100` frame `ApplyFXAA` is 39 and
+   `ApplyScenePost` 18 percent of the main thread's instructions (23 and 11 on `cubes2000`, 32 and 15 on `mixed`). About 9
+   to 13 percent of those instructions are calls to libm's `fmaxf` and `fminf`, which the compiler cannot inline (they
+   promise exact NaN handling); SSE min and max, or a branch-free version, would remove most of that. The picture must
+   stay bit for bit: prove it with `frame_hash` as in changes 2 and 3.
+3. **RTTI in component lookups: 20 percent of the main thread's instructions of a shadows-off `cubes2000` frame**
+   (`dynamic_cast`, `__do_dyncast` and `strcmp` by themselves; 24.6 percent with their callers, mostly `visibility::Build`
+   and `Scene::Update`) **and 21 percent of the `ui500` frame** (`GetComponent<SpriteRenderer>` and friends). Every
+   `GetComponent<T>()` is a `dynamic_cast` on each component of the object. A type id stored in each component would make
+   it a compare. This changes `GameObject.hpp` and `Component.hpp` (about 130 compile units rebuild): do it when the machine
+   is quiet. This is the best next step for the editor and for scenes with many objects on any renderer.
 4. **The pointer ray: `Scene::DispatchPointer` calls `Physics3D::Raycast` every frame, through every collider** (5.7 percent
-   of a `cubes2000` frame). The grid of change 4 only answers vertical rays; a general bounding volume tree would answer
-   this one too. `FitColliders` is another 5.7 percent of the same frame.
-5. **Skinning: `SkinnedMesh::Skin` and `Transform::WorldCache`/`RefreshWorld` are 16 and 10 percent of a shadows-off
-   `skinned100` frame** (100 characters). Not looked at in detail.
-6. **Thread start-up (unmeasured guess).** `ParallelRows` creates and joins threads for each pass of a frame. The
-   instruction counts cannot show that cost (it is waiting, not instructions); wall time on Windows may. A standing worker
-   pool needs waiting that obeys rule 21a (no mutex or condition variable in code the Windows programs reach).
+   of the main thread's instructions of a shadows-off `cubes2000` frame). The grid of change 4 only answers vertical rays; a
+   general bounding volume tree would answer this one too. `FitColliders` is another 5.7 percent of the same frame.
+5. **Skinning: `SkinnedMesh::Skin` and `Transform::WorldCache`/`RefreshWorld` are 16 and 10 percent of the main thread's
+   instructions of a shadows-off `skinned100` frame** (100 characters). Not looked at in detail.
+6. **Thread start-up (unmeasured guess).** `ParallelRows` creates and joins threads for each pass of a frame. Instruction
+   counts cannot show that cost (it is waiting, not instructions); wall time on Windows may. A standing worker pool needs
+   waiting that obeys rule 21a (no mutex or condition variable in code the Windows programs reach).
 7. Nothing was found in the narrow phase or the solver: on `bodies500` physics is now about 0.45 ms of a 94 ms frame.
 
 ## 7. What could not be measured or checked
@@ -368,6 +393,7 @@ Shares are instructions in the same callgrind runs, after this pass.
 * **The editor's Profiler panel and the example scenes opened in the editor:** not run. The menu path in
   `docs/try_it.md` was read from `editor/main.cpp`; the three example scenes were written by `bench_frame --save-scenes`
   and loaded and run headless by `bench_frame --scene-file`, not clicked open in the editor.
-* **Numbers on the owner's PC:** none. On a normal Windows PC the Direct3D renderer draws, so changes 2 and 3 do not
-  apply there; changes 1, 4 and 5 do, and the way to see them is `docs/try_it.md` section 14.
+* **Numbers on the owner's PC:** none. On a normal Windows PC the Direct3D renderer draws the viewport and the game, so
+  changes 2 and 3 do not apply there (except to the thumbnails above); changes 1, 4 and 5 do, and the way to see them is
+  `docs/try_it.md` section 14.
 * **Noise:** about 10 percent between batches (section 4.4); the timing batch was not run under the build lock.

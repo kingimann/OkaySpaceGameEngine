@@ -225,7 +225,9 @@ with a benchmark that runs whole frames:
   and callbacks behave exactly as before (the tests compare them bit for bit). This part helps every renderer.
 * **The software renderer** (the one used when no GPU renderer starts: a virtual machine, remote desktop, or the player with
   `gpu=0` in its `game.okayconfig`): the sun's shadow maps, the lights and the thread bands do less work. The pictures are
-  identical. On a normal Windows PC the Direct3D 11 renderer draws instead, so you will not see this part.
+  identical. On a normal Windows PC the Direct3D 11 renderer draws the viewport and the game, so you will not see this part
+  there. (The Project panel's thumbnails of prefabs and models are drawn by the software renderer and should appear faster;
+  not measured.)
 
 **Steps (editor).**
 1. Open `Tools\OkayEngine.exe`. **File > Open...**, paste `<install folder>\examples\perf\many_colliders.okayscene`

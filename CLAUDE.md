@@ -8,8 +8,12 @@ then this file gets updated. Keep this file short and true.
 
 1. **Keep working.** Do not stop to ask or to wait. When a decision is the owner's, pick the safe default, say what
    you picked, and carry on. Use several agents at once for independent work.
-2. **Work on things that matter.** Do not sit polling GitHub. Start agents on real engine work while CI runs, and
-   come back when something finishes.
+2. **Always be working on something real.** At every moment the main session and every agent is doing one of three
+   things: finishing an unfinished feature (`docs/UNFINISHED.md`), fixing a bug, or building our own replacement for
+   a third-party library (`docs/own_code_roadmap.md`). Waiting for CI is not a reason to stop: start or continue
+   one of those three while it runs, and never sit polling GitHub. Reviews, merges and releases happen in between.
+   (Owner rule, 2026-11-15: "you should be always working finishing a feature, fixing a bug or working on a third
+   party".) If an agent or the main session has nothing running, start more agents on the next items.
 3. **Explain plainly.** Short, simple sentences. Say what you did, what it means and what is left. No jargon
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something

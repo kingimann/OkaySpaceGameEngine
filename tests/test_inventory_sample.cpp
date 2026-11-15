@@ -5,6 +5,9 @@
 // them, never edit them by hand. The checks load the files from disk, feed the keys the steps name, and read what the
 // player would see: the toasts, the status line, the hotbar counts and the grid bag.
 // (It runs headless: nothing here draws the screen, and the editor's own windows are not touched.)
+#ifdef OKAY_SAMPLE_SHOTS
+#define SDL_MAIN_HANDLED
+#endif
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/GridInventory.hpp"
@@ -16,6 +19,13 @@
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/SceneTemplates.hpp"
+#ifdef OKAY_SAMPLE_SHOTS
+#include "okay/Graphics/Image.hpp"
+#include "okay/UI/UIPainterSDL.hpp"
+#include "okay/UI/UIRenderer.hpp"
+#include <SDL.h>
+#include <unordered_map>
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -29,6 +39,43 @@ using namespace okay;
 namespace fs = std::filesystem;
 
 namespace {
+#ifdef OKAY_SAMPLE_SHOTS
+// The toast cards, drawn by the same UI pass as the game (ui2d::RenderSceneUI) on SDL's software renderer: a headless
+// picture, not a screenshot of the editor. The hotbar, the grid bag and the status line are drawn by the player and the
+// editor, not by this pass, so they are not in it. Returns how many pixels differ from the background (-1: no renderer).
+// With a path the picture is also written as a PNG.
+int RenderToasts(Scene& scene, const std::string& path) {
+    const int W = 1280, H = 360;
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ABGR8888);
+    SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
+    if (!ren) {
+        if (surf) SDL_FreeSurface(surf);
+        return -1;
+    }
+    std::unordered_map<std::string, SDL_Texture*> cache;
+    SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(ren, 18, 22, 32, 255);
+    SDL_RenderClear(ren);
+    ui2d::SDLPainter painter(ren, &cache, "");
+    ui2d::RenderSceneUI(scene, painter, W, H);
+    SDL_RenderPresent(ren);
+    Image img(W, H);
+    for (int y = 0; y < H; ++y) {
+        const unsigned char* row = (const unsigned char*)surf->pixels + y * (int)surf->pitch;
+        for (int x = 0; x < W; ++x)
+            img.SetPixel(x, y, Color::FromBytes(row[x * 4], row[x * 4 + 1], row[x * 4 + 2], row[x * 4 + 3]));
+    }
+    for (auto& kv : cache) if (kv.second) SDL_DestroyTexture(kv.second);
+    SDL_DestroyRenderer(ren);
+    SDL_FreeSurface(surf);
+    int drawn = 0;
+    const unsigned char* px = img.Data();
+    for (int i = 0; i < W * H; ++i)
+        if (px[i * 4] != 18 || px[i * 4 + 1] != 22 || px[i * 4 + 2] != 32) ++drawn;
+    if (!path.empty() && drawn > 0) img.SavePNG(path);
+    return drawn;
+}
+#endif
 std::string ReadAll(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -132,6 +179,27 @@ int main() {
         return false;
     };
     auto statusHas = [&](const std::string& what) { return status->text.find(what) != std::string::npos; };
+    // A headless picture of the toast cards (only when built with SDL): checks that cards are drawn, and writes
+    // docs/images/inventory/<name>.png when OKAY_WRITE_SHOTS is set. It lets 0.3 s pass first so the cards have slid in.
+    auto shot = [&](const char* name) {
+#ifdef OKAY_SAMPLE_SHOTS
+        idle(0.3f);
+        std::string path;
+        if (const char* write = std::getenv("OKAY_WRITE_SHOTS")) {
+            if (write[0]) {
+                const std::string dir = std::string(OKAY_SOURCE_DIR) + "/docs/images/inventory";
+                std::error_code ec;
+                fs::create_directories(dir, ec);
+                path = dir + "/" + name + ".png";
+            }
+        }
+        const int drawn = RenderToasts(s, path);
+        CHECK(drawn > 2000);                                               // at least one card (each is about 660 x 72 px)
+        std::printf("  picture %s: %d pixels drawn%s%s\n", name, drawn, path.empty() ? "" : " -> ", path.c_str());
+#else
+        (void)name;
+#endif
+    };
 
     idle(0.1f);
     CHECK(inv->slots[0].item == "Potion" && inv->slots[0].count == 3);    // slot 1: the potions
@@ -149,6 +217,7 @@ int main() {
     CHECK(inv->Count("Potion") == 2);                                      // nothing was taken
     CHECK(showing("Healing Potion is not ready: wait "));                  // the message the player reads
     std::printf("  refusal toast: %s\n", [&] { for (const std::string& b : bodies()) if (b.find("not ready") != std::string::npos) return b; return std::string("(none)"); }().c_str());
+    shot("cooldown_refused");                                              // the green "Used" card and the yellow refusal
     idle(5.0f);                                                            // the cooldown runs out
     CHECK(statusHas("Potion: ready"));
     press('q');
@@ -170,6 +239,7 @@ int main() {
     CHECK(showing("Iron Sword broke"));
     press('q');                                                            // using a broken item
     CHECK(showing("Iron Sword is broken: repair it first."));
+    shot("broken");                                                        // the red "Broken" card and the yellow refusal
     press('x');                                                            // swinging a broken sword
     CHECK(showing("It is broken. Press V to repair it."));
     CHECK(inv->slots[1].data.durability == 0.0f);                          // it does not go below 0

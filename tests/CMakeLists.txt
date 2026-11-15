@@ -3589,6 +3589,11 @@ add_test(NAME inventory_refusals COMMAND test_inventory_refusals)
 add_executable(test_inventory_sample test_inventory_sample.cpp)
 target_link_libraries(test_inventory_sample PRIVATE okay::engine)
 target_compile_definitions(test_inventory_sample PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(SDL2_FOUND)   # also draws the toast cards headlessly (docs/images/inventory/, written with OKAY_WRITE_SHOTS=1)
+    target_link_libraries(test_inventory_sample PRIVATE ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_inventory_sample PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_inventory_sample PRIVATE OKAY_SAMPLE_SHOTS=1)
+endif()
 add_test(NAME inventory_sample COMMAND test_inventory_sample)
 
 # Where the inventory nodes are in the Add Node menu (Objects > Items) and which typed-script inventory nodes it lists.

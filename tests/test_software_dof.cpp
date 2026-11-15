@@ -3,10 +3,12 @@
 // stays exactly as it was; the part outside is blurred toward its average; the transparent background does not darken
 // a blurred edge; the scene switch gates it. Uses DofMath.hpp (the shared circle of confusion). Written for this engine.
 #include "test_framework.hpp"
+#include <Okay.hpp>
 #include "okay/Render/SoftwareRenderer.hpp"
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <thread>
 
 using namespace okay;
 
@@ -110,11 +112,37 @@ int main() {
         ApplySceneDof(r, rs);
         CHECK(r.color != before.color);
     }
-    {   // everything in focus: the frame is left alone (the early out after one depth scan)
+    {   // everything in focus: the frame is left alone, bit for bit, and no blur work runs (the early out)
         Raster r = Frame(10.0f, 11.0f);
         const Raster before = r;
+        const unsigned long long passes = DofBlurPasses();
         ApplyDof(r, 10.5f, 4.0f);
         CHECK(r.color == before.color);
+        CHECK(r.depth == before.depth);
+        CHECK(DofBlurPasses() == passes);
+        Raster far = Frame(5.0f, 40.0f);                                  // and a frame with blur does count one pass
+        ApplyDof(far, 5.0f, 2.0f);
+        CHECK(DofBlurPasses() == passes + 1);
+    }
+    {   // once per frame: two renders of the same scene with depth of field on give the same picture (no compounding)
+        Scene sc("dof");
+        GameObject* nearBox = sc.CreateGameObject("Near");
+        nearBox->AddComponent<MeshRenderer>()->color = Color::FromBytes(230, 230, 230);
+        GameObject* farBox = sc.CreateGameObject("Far");
+        farBox->transform->localPosition = {2.0f, 0.0f, -30.0f};
+        farBox->transform->localScale = {6.0f, 6.0f, 1.0f};
+        farBox->AddComponent<MeshRenderer>()->color = Color::FromBytes(220, 40, 40);
+        sc.renderSettings.post.dof = true; sc.renderSettings.post.dofFocus = 4.0f; sc.renderSettings.post.dofRange = 2.0f;
+        const Vec3 eye{0, 0, 4};
+        const Mat4 vp = Mat4::Perspective(60.0f, 1.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, {0, 0, 0}, Vec3::Up);
+        Raster work; std::vector<std::uint32_t> out;
+        const unsigned long long passes = DofBlurPasses();
+        const std::uint32_t* p1 = RenderMeshesSS(work, out, sc, vp, eye, 64, 64, 1);
+        const std::vector<std::uint32_t> first(p1, p1 + 64 * 64);
+        const std::uint32_t* p2 = RenderMeshesSS(work, out, sc, vp, eye, 64, 64, 1);
+        const std::vector<std::uint32_t> second(p2, p2 + 64 * 64);
+        CHECK(first == second);
+        CHECK(DofBlurPasses() == passes + 2);                             // exactly one pass per frame
     }
     {   // a 1080p frame, half near and half far: measured time (reported; a loose bound only, machines differ)
         Raster big;
@@ -131,7 +159,8 @@ int main() {
         for (int k = 0; k < frames; ++k) ApplyDof(big, 5.0f, 2.0f);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / frames;
         std::printf("  1920x1080 depth of field: %.1f ms per frame (%u hardware threads)\n", ms, std::thread::hardware_concurrency());
-        CHECK(ms < 2000.0);
+        // No check on the time: machines differ too much for a bound that could fail fairly. The number is reported
+        // here and written into docs/render_status.md with the machine it came from.
         Raster calm = big;
         for (float& d : calm.depth) d = 1.0f / 5.0f;
         const auto t1 = std::chrono::steady_clock::now();
@@ -139,12 +168,17 @@ int main() {
         const double msCalm = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
         std::printf("  1920x1080 all in focus (early out): %.2f ms\n", msCalm);
     }
-    {   // tiny and empty frames do nothing and do not crash
+    {   // tiny and empty frames are left alone and run no blur work
+        const unsigned long long passes = DofBlurPasses();
         Raster t; t.Resize(1, 1);
+        t.color[0] = 0xFF336699u; t.depth[0] = 1.0f / 40.0f;
         ApplyDof(t, 5.0f, 2.0f);
+        CHECK(t.color[0] == 0xFF336699u);
         Raster e; e.Resize(4, 4); e.depth.clear();
+        const std::vector<std::uint32_t> ec = e.color;
         ApplyDof(e, 5.0f, 2.0f);
-        CHECK(true);
+        CHECK(e.color == ec);
+        CHECK(DofBlurPasses() == passes);
     }
     TEST_MAIN_RESULT();
 }

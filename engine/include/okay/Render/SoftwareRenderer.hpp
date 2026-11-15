@@ -1590,6 +1590,8 @@ inline float& BloomIntensity() { static float v = 0.6f; return v; }
 /// With nothing out of focus it returns after one scan of the depth buffer; the work buffers are kept between frames
 /// (per thread), and every pass is split over the hardware threads (ParallelRows). Each camera of a camera stack draws
 /// into its own raster and gets this pass, like the software renderer's other post effects.
+/// How many times ApplyDof got past its early outs and blurred (tests check the early outs touch nothing).
+inline unsigned long long& DofBlurPasses() { static unsigned long long n = 0; return n; }
 inline void ApplyDof(Raster& r, float focus, float range) {
     const int W = r.width, H = r.height;
     if (W < 2 || H < 2 || r.depth.size() != (std::size_t)W * H || r.color.size() != (std::size_t)W * H) return;
@@ -1616,6 +1618,7 @@ inline void ApplyDof(Raster& r, float focus, float range) {
         }
         if (!any) return;
     }
+    ++DofBlurPasses();
     const int hw = (W + 1) / 2, hh = (H + 1) / 2;
     // half resolution, premultiplied RGBA in 0..1; the buffers are kept between frames (per thread)
     // Bound to plain references here, on the calling thread: inside the worker threads the thread_local names would
@@ -1697,6 +1700,8 @@ inline void ApplyDof(Raster& r, float focus, float range) {
     });
 }
 /// The scene's depth of field, when its switch is on (Post-processing > Depth of field).
+/// It is applied once per frame: RenderMeshes is called only by RenderMeshesSS, which clears the raster first, and a
+/// camera stack gives each camera its own raster, so a frame is never blurred twice (test software_dof).
 inline void ApplySceneDof(Raster& r, const Scene::RenderSettings& rs) {
     if (rs.post.dof) ApplyDof(r, rs.post.dofFocus, rs.post.dofRange);
 }

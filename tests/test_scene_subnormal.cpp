@@ -5,6 +5,7 @@
 // before and after the fix; they are the ones that fail under libc++ without it. Written for this engine.
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include <cstdio>
 #include <cstring>
 #include <string>
 

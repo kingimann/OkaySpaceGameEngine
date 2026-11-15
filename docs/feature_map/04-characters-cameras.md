@@ -96,13 +96,14 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.5.1 Arcade vehicle - `Components/VehicleController` - maxSpeed, reverseSpeed, acceleration, brakeForce, drag, turnSpeed, grip, handbrakeGrip, followCamera, Speed(), IsGrounded()
   - 4.5.2 Raycast suspension - `Components/VehicleController` - four down-rays at wheelBase x trackWidth, spring to rideHeight, chassis roll and pitch, maxTilt
   - 4.5.3 2D vehicle - `Components/VehicleController2D` - top-down (local +Y) or side view
+  - 4.5.4 Getting in and driving - `Components/VehicleController`, `Components/Seat` - the first Seat on the car is the driver's seat; parked until a player sits there; E gets in and out; move keys drive instead of standing up; rider colliders off while seated
 - **Code:** `Components/VehicleController`, `Components/VehicleController2D`
-- **API:** `VehicleController`, `VehicleController2D`, `Speed()`, `IsGrounded()`
+- **API:** `VehicleController`, `VehicleController2D`, `Speed()`, `IsGrounded()`, `DriverSeat()`, `HasDriver()`, `Seat::OnVehicle()`, `HumanoidActions::InVehicleSeat`
 - **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D
 - **Docs:** `docs/vehicle_controller.md`
-- **Tests:** `vehicle`
-- **Status:** Works - vehicle test covers throttle, steering, grip and serialization; suspension is opt-in
-- **Open:** no get-in/get-out or driver-seat mechanic found in VehicleController (grep); torque-based body dynamics are a roadmap item in the doc
+- **Tests:** `vehicle`, `vehicle_seat`
+- **Status:** Works - vehicle test covers throttle, steering, grip and serialization; suspension is opt-in; `vehicle_seat` covers parking, getting in with E, driving with the rider in the seat, getting out, passenger seats and an ordinary chair
+- **Open:** vehicle seats are not networked; no getting-in animation or in-car camera; the driver's seat is the first Seat (no field to choose it); torque-based body dynamics are a roadmap item in the doc
 - **Related:** 4.4, 6.2
 - **Words:** vehicle, car, drift, handbrake, grip, suspension, ride height, VehicleController
 - **Seen as:** the car skates sideways; it does not stay on slopes; it flips; the camera sits inside the roof

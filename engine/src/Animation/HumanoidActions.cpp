@@ -4,6 +4,7 @@
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/Seat.hpp"
+#include "okay/Components/VehicleController.hpp"
 #include "okay/Components/DodgeAction.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
@@ -1815,6 +1816,11 @@ void RequestStandUp(GameObject* go) {
     }
 }
 
+bool InVehicleSeat(GameObject* go) {
+    Seat* s = SeatHolding(go);
+    return s && s->OnVehicle();
+}
+
 bool IsSitting(GameObject* go) {
     SM* sm = BaseMachine(go);
     if (!sm) return false;
@@ -2140,10 +2146,35 @@ void RestoreDeadBody(GameObject* go, DeadShape& shape) {
 
 } // namespace HumanoidActions
 
+bool Seat::OnVehicle() const {
+    return gameObject && gameObject->GetComponentInParent<VehicleController>() != nullptr;
+}
+
+bool Seat::IsDriverSeat() const {
+    VehicleController* v = gameObject ? gameObject->GetComponentInParent<VehicleController>() : nullptr;
+    return v && v->DriverSeat() == this;
+}
+
+void Seat::RestoreColliders() {
+    if (m_who && !m_who->IsDestroyed())
+        for (Collider3D* c : m_offColliders)
+            for (const auto& comp : m_who->Components())   // only if it still belongs to the occupant
+                if (comp.get() == c) { c->enabled = true; break; }
+    m_offColliders.clear();
+}
+
 void Seat::Claim(GameObject* who) {
     if (!who || !who->transform) return;
     m_who = who;
     occupied = true;
+    m_claimedThisFrame = true;
+    m_offColliders.clear();
+    if (OnVehicle()) {
+        // The rider's body would overlap the car's collider and push it: switch it off while seated.
+        for (const auto& comp : who->Components())
+            if (auto* c = dynamic_cast<Collider3D*>(comp.get()))
+                if (c->enabled && !c->isTrigger) { c->enabled = false; m_offColliders.push_back(c); }
+    }
     m_from = who->transform->Position();
     m_fromRot = who->transform->Rotation();
     m_blend = 0.0f;
@@ -2158,6 +2189,7 @@ void Seat::Claim(GameObject* who) {
 void Seat::Release() {
     if (m_who && m_who->transform && transform && !m_who->IsDestroyed())
         m_who->transform->SetPosition(ExitWorld());
+    RestoreColliders();
     if (m_who && !m_who->IsDestroyed()) {
         if (auto* rb = m_who->GetComponent<Rigidbody3D>()) {
             if (m_hadGravity) rb->gravityScale = m_savedGravity;
@@ -2173,6 +2205,7 @@ void Seat::Release() {
 void Seat::Update(float dt) {
     if (m_who && (m_who->IsDestroyed() || !m_who->transform || HumanoidActions::IsDead(m_who))) {
         // Death frees the seat and restores gravity. It does not snap to exitPoint.
+        RestoreColliders();
         GameObject* who = m_who;
         m_who = nullptr;
         occupied = false;
@@ -2190,8 +2223,16 @@ void Seat::Update(float dt) {
         m_who->transform->SetRotation(Quat::Slerp(m_fromRot, FaceWorld(), u));
         if (auto* rb = m_who->GetComponent<Rigidbody3D>()) rb->velocity = Vec3{0, 0, 0};
     }
+    // On a vehicle the move keys drive, so the use key is the way out (not on the frame that got in).
+    const bool justClaimed = m_claimedThisFrame;
+    m_claimedThisFrame = false;
+    if (m_who && !justClaimed && OnVehicle() && IsLocallyControlled(m_who) && Input::GetKeyDown('e')) {
+        HumanoidActions::RequestStandUp(m_who);
+        m_claimedThisFrame = true;   // and the same press must not get straight back in below
+    }
     playerInRange = false;
     if (!gameObject || !gameObject->scene() || !transform || occupied) return;
+    if (m_claimedThisFrame) { m_claimedThisFrame = false; return; }
     GameObject* who = nullptr;
     float best = useRadius;
     const Vec3 sit = SitWorld();

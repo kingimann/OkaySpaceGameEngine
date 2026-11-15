@@ -149,8 +149,8 @@ public:
         if (HumanoidActions::IsSitting(gameObject)) {
             Vec2 axis = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();
             const bool wantMove = axis.x * axis.x + axis.y * axis.y > 1e-4f;
-            if (wantMove || (!uiBlocked && Input::GetKeyDown(' ')))
-                HumanoidActions::RequestStandUp(gameObject);
+            if ((wantMove || (!uiBlocked && Input::GetKeyDown(' '))) && !HumanoidActions::InVehicleSeat(gameObject))
+                HumanoidActions::RequestStandUp(gameObject);   // in a vehicle the move keys drive; E gets out
             return;
         }
 

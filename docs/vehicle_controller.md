@@ -38,6 +38,28 @@ quick top-down/kinematic car).
 down-ray hit — useful for engine-sound pitch, skid effects, or disabling control in
 the air.
 
+## Getting in and driving (Seat)
+
+Add a **Seat** to the car, or to a child object placed where the driver sits. That makes it a vehicle:
+
+- The **first Seat** in the car's hierarchy (the car object, then its children in order) is the **driver's seat**.
+  Further Seats are passenger seats.
+- With a driver's seat, the car takes the keys only while a player sits there (`HasDriver()`). Empty, it brakes to a
+  stop and stays parked, and W or S do nothing.
+- Walk up to the seat (within its Use Radius) and press **E** to get in. The player sits at the seat's Sit Point and
+  rides along. The move keys drive the car instead of standing the player up. **E** again gets out at the seat's
+  Exit Point (put it beside the door, in the seat's local space).
+- While seated in a vehicle, the player's colliders are switched off so the body does not push the car; they come
+  back on when the player gets out or dies.
+- A car with no Seat drives from the keys at once, as before.
+
+Code: `DriverSeat()`, `HasDriver()` on `VehicleController`; `Seat::OnVehicle()`, `Seat::IsDriverSeat()`;
+`HumanoidActions::InVehicleSeat(player)`. Test: `vehicle_seat`.
+
+Not done yet: multiplayer (the car still drives from the local keys of whoever owns it, and no seat state is sent to
+other players), a getting-in animation (the seat's sit-down is used), a dedicated in-car camera (use `followCamera`
+or the player's own camera), and a way to choose the driver's seat other than putting it first.
+
 ## Raycast suspension (opt-in)
 
 Tick **Raycast Suspension** on a `VehicleController` for a sim-ish ride. Four

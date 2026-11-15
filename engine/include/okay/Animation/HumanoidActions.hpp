@@ -97,6 +97,9 @@ bool RequestSit(GameObject* go, GameObject* seatObject, int sitType = 1);
 /// Leave Sit through StandUp and free the Seat.
 void RequestStandUp(GameObject* go);
 bool IsSitting(GameObject* go);
+/// True when `go` sits in a Seat on a vehicle. Controllers then leave the move keys to the vehicle instead of
+/// standing up; the use key (E) gets out.
+bool InVehicleSeat(GameObject* go);
 /// Nearest Seat in range, else a ground sit when the floor is flat. Already
 /// sitting stands up.
 void Interact(GameObject* go);

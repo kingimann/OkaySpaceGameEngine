@@ -404,8 +404,8 @@ public:
         }
         if (seated) {
             const bool wantMove = in.move.x * in.move.x + in.move.y * in.move.y > 1e-4f;
-            if (wantMove || in.Pressed(PlayerInput::Jump))
-                HumanoidActions::RequestStandUp(gameObject);
+            if ((wantMove || in.Pressed(PlayerInput::Jump)) && !HumanoidActions::InVehicleSeat(gameObject))
+                HumanoidActions::RequestStandUp(gameObject);   // in a vehicle the move keys drive; E gets out
             return;
         }
 

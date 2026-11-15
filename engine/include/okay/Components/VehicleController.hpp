@@ -5,6 +5,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/Seat.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Net/NetOwnership.hpp"
@@ -29,6 +30,10 @@ namespace okay {
 /// four down-rays (at the wheelBase × trackWidth corners) drive a critically-damped
 /// vertical spring so the body rides at `rideHeight`, soaks up bumps, and the chassis
 /// rolls/pitches from per-wheel compression plus accel/cornering lean.
+///
+/// Getting in: put a Seat on the car (or on a child). The first Seat in the car's hierarchy is the driver's seat;
+/// with one, the car takes input only while a player sits in it (E gets in and out) and otherwise brakes to a stop
+/// and stays parked. A car with no Seat drives from the keys at once, as before.
 class VehicleController : public Behaviour {
 public:
     float acceleration = 18.0f;          // how quickly it reaches top speed (units/s^2)
@@ -63,6 +68,15 @@ public:
     char handbrakeKey = ' ';
 
     float Speed() const { return m_speed; }              // signed forward speed (units/s)
+    /// The driver's seat: the first Seat on this object or its children, or null (then no driver is needed).
+    Seat* DriverSeat() const { return gameObject ? gameObject->GetComponentInChildren<Seat>() : nullptr; }
+    /// True when the keys drive the car: it has no Seat, or a player on this machine sits in the driver's seat.
+    bool HasDriver() const {
+        Seat* s = DriverSeat();
+        if (!s) return true;
+        GameObject* who = s->Occupant();
+        return s->occupied && who && !who->IsDestroyed() && IsLocallyControlled(who);
+    }
     bool  IsGrounded() const { return m_grounded; }
 
     void Update(float dt) override {
@@ -70,9 +84,11 @@ public:
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
 
         // ---- Read input: WASD/arrow axis (y = throttle, x = steer) ----
-        Vec2 axis = Input::AxisWASD();
+        // With a driver's seat and nobody in it the car is parked: no throttle or steering, and it brakes.
+        const bool driven = HasDriver();
+        Vec2 axis = driven ? Input::AxisWASD() : Vec2{0.0f, 0.0f};
         float throttle = axis.y, steer = axis.x;
-        bool handbrake = handbrakeKey && Input::GetKey(handbrakeKey);
+        bool handbrake = driven ? (handbrakeKey && Input::GetKey(handbrakeKey)) : true;
 
         // Planar facing axes (flatten Y so slopes don't change the drive plane).
         Vec3 F = transform->Forward(); Vec3 R = transform->Right();
@@ -105,7 +121,8 @@ public:
         // ---- Longitudinal: ease forward speed toward the throttle target ----
         float target = throttle > 0.0f ? maxSpeed * throttle
                      : throttle < 0.0f ? -reverseSpeed * (-throttle) : 0.0f;
-        float rate = (throttle == 0.0f) ? drag
+        float rate = !driven ? brakeForce
+                   : (throttle == 0.0f) ? drag
                    : (throttle < 0.0f && speedF > 0.1f) ? brakeForce      // pressing back while rolling fwd = brake
                    : acceleration;
         speedF = MoveToward(speedF, target, rate * dt);

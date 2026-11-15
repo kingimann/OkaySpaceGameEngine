@@ -2,14 +2,23 @@
 // A place to sit. The player snaps to sitPoint (local) facing `facing` degrees
 // off this object's yaw, then the Animator plays SitDown → Sit. Move or jump
 // stands them up at exitPoint. Occupied is runtime only.
+//
+// On a vehicle (this object or a parent has a VehicleController) the seat is a vehicle seat: the occupant rides
+// along, moving does not stand them up (the move keys drive), the use key E gets in and out, and the occupant's
+// colliders are switched off while seated so the body does not push the car. The first Seat in the vehicle's
+// hierarchy (the vehicle object, then its children in order) is the driver's seat: the car takes input only while a
+// player sits in it. Other seats on the vehicle are passenger seats.
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Math/Vec3.hpp"
 #include <string>
+#include <vector>
 
 namespace okay {
+
+class Collider3D;
 
 class Seat : public Behaviour {
 public:
@@ -24,6 +33,10 @@ public:
     bool  playerInRange = false;
 
     GameObject* Occupant() const { return m_who; }
+    /// True when this seat is on a vehicle (this object or a parent has a VehicleController).
+    bool OnVehicle() const;
+    /// True when this is the vehicle's driver seat (the first Seat in the vehicle's hierarchy).
+    bool IsDriverSeat() const;
     Vec3 SitWorld() const { return transform ? transform->TransformPoint(sitPoint) : Vec3{}; }
     Vec3 ExitWorld() const { return transform ? transform->TransformPoint(exitPoint) : Vec3{}; }
     Quat FaceWorld() const {
@@ -43,6 +56,9 @@ private:
     float m_blend = 1.0f;
     float m_savedGravity = 1.0f;
     bool  m_hadGravity = false;
+    bool  m_claimedThisFrame = false;          // the use key that got in must not also get out
+    std::vector<Collider3D*> m_offColliders;   // the occupant's colliders switched off on a vehicle
+    void RestoreColliders();
 };
 
 } // namespace okay

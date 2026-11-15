@@ -404,8 +404,8 @@ public:
         // Orbit (LateUpdate) still runs. Move or jump stands up; the body stays put.
         if (HumanoidActions::IsSitting(gameObject)) {
             const bool wantMove = in.move.x * in.move.x + in.move.y * in.move.y > 1e-4f;
-            if (wantMove || in.Pressed(PlayerInput::Jump))
-                HumanoidActions::RequestStandUp(gameObject);
+            if ((wantMove || in.Pressed(PlayerInput::Jump)) && !HumanoidActions::InVehicleSeat(gameObject))
+                HumanoidActions::RequestStandUp(gameObject);   // in a vehicle the move keys drive; E gets out
             return;
         }
         m_aim = aimWithRightMouse && in.Held(PlayerInput::AltFire);

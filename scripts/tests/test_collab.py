@@ -210,7 +210,7 @@ class Lint(unittest.TestCase):
         self.assertEqual([x["sev"] for x in f], ["warning"])
 
     def test_secrets(self):
-        f = self.lint({"editor/a.cpp": 'const char* k = "ghp_' + "a" * 36 + '";\n// -----BEGIN RSA " + "PRIVATE KEY-----\nconst char* apiKey = "' + "Ab1" * 14 + '";\n',
+        f = self.lint({"editor/a.cpp": 'const char* k = "ghp_' + "a" * 36 + '";\n// -----BEGIN RSA ' + 'PRIVATE KEY-----\nconst char* apiKey = "' + "Ab1" * 14 + '";\n',
                        "tests/t.cpp": 'const char* key = "' + "ab" * 32 + '";\n'}, BL.check_secrets)
         self.assertEqual(sorted(x["line"] for x in f if x["file"] == "editor/a.cpp"), [1, 2, 3])
         self.assertFalse([x for x in f if x["file"] == "tests/t.cpp"])

@@ -817,6 +817,18 @@ void EditorState::NewVehicle3D() {
     StartDocument();
 }
 
+void EditorState::NewVehicleSeats3D() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::VehicleSeats3D(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 1, 0};
+    camDist = 12.0f;
+    m_selected = m_scene.Find("Car");
+    StartDocument();
+}
+
 void EditorState::NewVehicle2D() {
     NewScene();
     m_suppressUndo = true;

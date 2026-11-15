@@ -121,7 +121,7 @@ A ready scene has a red car with a driver seat (left front) and a passenger seat
 four wheels, a flat ground, and a third-person player standing by the driver door.
 
 1. In the editor use *File ▸ Open* and pick `examples/vehicle/vehicle_test.okayscene` from the engine
-   folder. (It is not in the New Project chooser.) In code: `Templates::VehicleSeats3D(scene)`.
+   folder. It is also in the New Project chooser as "Vehicle (get in and drive)", and the Windows zip and installer ship it under `examples/vehicle/`. In code: `Templates::VehicleSeats3D(scene)`.
 2. Press **Play**.
 3. Walk to the driver door (WASD) and press **E**. You sit in the car.
 4. **W / S** = gas and brake / reverse, **A / D** = steer, **Space** = handbrake.

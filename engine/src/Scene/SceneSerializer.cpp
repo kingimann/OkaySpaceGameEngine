@@ -966,8 +966,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             mr->texOffset.x != 0.0f || mr->texOffset.y != 0.0f)
             out << "  texopts " << (int)mr->texFilter << " "
                 << mr->texOffset.x << " " << mr->texOffset.y << "\n";
+        // Settings of a switched-off feature are written too when they differ from the default, so turning a feature
+        // off (no map, Standard shader, rim 0, outline off) and saving, duplicating or making a prefab keeps them
+        // (Grok, #888 finding 1; test switch_off_settings).
+        static const MeshRenderer kMrDefault;
+        auto sameColor = [](const Color& a, const Color& b) { return a.r == b.r && a.g == b.g && a.b == b.b; };
         // Normal map (separate record so older scenes still load).
-        if (!mr->normalMap.empty())
+        if (!mr->normalMap.empty() || mr->normalStrength != kMrDefault.normalStrength)
             out << "  normalmap " << Quote(mr->normalMap) << " " << mr->normalStrength << "\n";
         // Environment reflectivity + metalness (separate record, metalness is an
         // optional trailing field so older scenes still load).
@@ -977,24 +982,30 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         if (!mr->specularMap.empty())
             out << "  specmap " << Quote(mr->specularMap) << "\n";
         // Ambient-occlusion map + strength (separate record so older scenes still load).
-        if (!mr->aoMap.empty())
+        if (!mr->aoMap.empty() || mr->aoStrength != kMrDefault.aoStrength)
             out << "  aomap " << Quote(mr->aoMap) << " " << mr->aoStrength << "\n";
         if (!mr->metallicRoughnessMap.empty())
             out << "  mrmap " << Quote(mr->metallicRoughnessMap) << "\n";
         if (!mr->emissiveMap.empty())
             out << "  emissivemap " << Quote(mr->emissiveMap) << "\n";
         // Shading model (separate record so older scenes still load).
-        if (mr->shader != MeshRenderer::Shader::Standard)
+        if (mr->shader != MeshRenderer::Shader::Standard || mr->toonBands != kMrDefault.toonBands ||
+            !sameColor(mr->gradientTop, kMrDefault.gradientTop) || !sameColor(mr->gradientBottom, kMrDefault.gradientBottom))
             out << "  shader " << (int)mr->shader << " " << mr->toonBands
                 << " " << mr->gradientTop.r << " " << mr->gradientTop.g << " " << mr->gradientTop.b
                 << " " << mr->gradientBottom.r << " " << mr->gradientBottom.g << " " << mr->gradientBottom.b << "\n";
         // Per-material rim (Fresnel) backlight (separate record).
-        if (mr->rimStrength > 0.0f)
+        if (mr->rimStrength > 0.0f || mr->rimPower != kMrDefault.rimPower || !sameColor(mr->rimColor, kMrDefault.rimColor))
             out << "  rim " << mr->rimStrength << " " << mr->rimPower << " "
                 << mr->rimColor.r << " " << mr->rimColor.g << " " << mr->rimColor.b << "\n";
         // Silhouette outline (separate record).
         if (mr->outline)
             out << "  outline " << mr->outlineWidth << " "
+                << mr->outlineColor.r << " " << mr->outlineColor.g << " " << mr->outlineColor.b << "\n";
+        else if (mr->outlineWidth != kMrDefault.outlineWidth || !sameColor(mr->outlineColor, kMrDefault.outlineColor))
+            // Off, with its own width or colour: a record of its own, because "outline" switches the outline on when
+            // it is read (an older build skips this one and keeps it as an unknown record).
+            out << "  outlineoff " << mr->outlineWidth << " "
                 << mr->outlineColor.r << " " << mr->outlineColor.g << " " << mr->outlineColor.b << "\n";
         // Scrolling UV + triplanar mapping (separate record).
         if (mr->uvScroll.x != 0.0f || mr->uvScroll.y != 0.0f || mr->triplanar)
@@ -2011,8 +2022,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
             << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
             << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
-        if (v->suspension)
-            out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
+        // Written while suspension is off too when a value differs, so switching it off keeps the tuning (#888 finding 1).
+        static const VehicleController kVcDefault;
+        if (v->suspension || v->rideHeight != kVcDefault.rideHeight || v->springStrength != kVcDefault.springStrength ||
+            v->springDamping != kVcDefault.springDamping || v->suspensionTravel != kVcDefault.suspensionTravel ||
+            v->wheelBase != kVcDefault.wheelBase || v->trackWidth != kVcDefault.trackWidth || v->bodyLean != kVcDefault.bodyLean ||
+            v->maxTilt != kVcDefault.maxTilt || v->tiltSmooth != kVcDefault.tiltSmooth)
+            out << "  vehiclesusp " << (v->suspension ? 1 : 0) << " " << v->rideHeight << " " << v->springStrength << " "
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
                 << v->trackWidth << " " << v->bodyLean << " " << v->maxTilt << " " << v->tiltSmooth << "\n";
     }
@@ -5133,6 +5149,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
                         in >> mr->outlineWidth >> mr->outlineColor.r >> mr->outlineColor.g >> mr->outlineColor.b;
                         mr->outline = true;
+                    }
+                } else if (field == "outlineoff") {   // the outline's width and colour while it is switched off
+                    if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
+                        float w = 0.0f; Color c;
+                        in >> w >> c.r >> c.g >> c.b;
+                        // An older build keeps this record as unknown text and writes it after the components, so a
+                        // file can hold an "outline" (switched on in that build) and a stale "outlineoff": the outline
+                        // that is on wins.
+                        if (!mr->outline) { mr->outlineWidth = w; mr->outlineColor.r = c.r; mr->outlineColor.g = c.g; mr->outlineColor.b = c.b; }
                     }
                 } else if (field == "uvanim") {
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {

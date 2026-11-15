@@ -396,13 +396,12 @@ rediscover it):
   save unchanged (older builds printed six digits and rounded; old files still load).
   The cross-check test still allows a relative error of 1e-5; text from `ToString()`
   itself is exact.
-- **Conditional records:** some properties are written only together with
-  another. Alone they are lost on save: `toonBands`, `gradientTop`,
-  `gradientBottom` need a non-Standard `shader`; `rimPower`, `rimColor` need
-  `rimStrength` above 0; `outlineWidth`, `outlineColor` need `outline` on;
-  `normalStrength` needs a `normalMap`; `aoStrength` needs an `aoMap`; the
-  vehicle's `rideHeight`, `springStrength`, `springDamping`, `suspensionTravel`, `wheelBase`,
-  `trackWidth`, `bodyLean`, `maxTilt` and `tiltSmooth` need `suspension` on.
+- **Conditional records:** MeshRenderer's `toonBands`, `gradientTop`, `gradientBottom`, `rimPower`, `rimColor`,
+  `outlineWidth`, `outlineColor`, `normalStrength` and `aoStrength`, and the vehicle's suspension values used to be
+  written only while their feature was on, so with it off they were lost on save. They are saved on their own now
+  (an outline that is off gets an `outlineoff` record; test `switch_off_settings`), so the cross-check no longer
+  pairs them with a companion. A prefab override is a whole record, so "off, with default values" is not a prefab
+  override (an older limit).
 - **Alpha:** `Light.ambientColor`, the MeshRenderer colors `emissive`,
   `gradientTop`, `gradientBottom`, `rimColor`, `outlineColor`, `Flashlight.color` and the five
   `DayNightCycle` colours are saved as red, green and blue only; alpha reads back as 1. `Water.color`

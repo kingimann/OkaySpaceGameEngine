@@ -1134,27 +1134,10 @@ static void TestSerializerCrossCheck() {
 
 // Properties the scene file writes only together with another one: each rides on its
 // companion when it is set alone (see docs/properties.md, "What the cross-check showed").
+// MeshRenderer's toon / gradient / rim / outline / normal and AO strengths and the vehicle's
+// suspension values are no longer here: they are saved on their own now (test switch_off_settings).
 static const std::map<std::string, std::pair<std::string, PropertyValue>>& Companions() {
     static const std::map<std::string, std::pair<std::string, PropertyValue>> companion = {
-        {"MeshRenderer.toonBands", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},
-        {"MeshRenderer.gradientTop", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},
-        {"MeshRenderer.gradientBottom", {"MeshRenderer.shader", PropertyValue::MakeEnum(2)}},
-        {"MeshRenderer.rimPower", {"MeshRenderer.rimStrength", PropertyValue::MakeFloat(0.5f)}},
-        {"MeshRenderer.rimColor", {"MeshRenderer.rimStrength", PropertyValue::MakeFloat(0.5f)}},
-        {"MeshRenderer.outlineColor", {"MeshRenderer.outline", PropertyValue::MakeBool(true)}},
-        {"MeshRenderer.outlineWidth", {"MeshRenderer.outline", PropertyValue::MakeBool(true)}},
-        {"MeshRenderer.normalStrength", {"MeshRenderer.normalMap", PropertyValue::MakeAssetPath("n.png")}},
-        {"MeshRenderer.aoStrength", {"MeshRenderer.aoMap", PropertyValue::MakeAssetPath("ao.png")}},
-        // the vehicle's suspension record is written only while the suspension is on
-        {"VehicleController.rideHeight", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
-        {"VehicleController.springStrength", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
-        {"VehicleController.springDamping", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
-        {"VehicleController.suspensionTravel", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
-        {"VehicleController.wheelBase", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
-        {"VehicleController.trackWidth", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
-        {"VehicleController.bodyLean", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
-        {"VehicleController.maxTilt", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
-        {"VehicleController.tiltSmooth", {"VehicleController.suspension", PropertyValue::MakeBool(true)}},
     };
     return companion;
 }

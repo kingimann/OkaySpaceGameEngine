@@ -20,6 +20,8 @@
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/LogicLinks.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
+#include "okay/Components/VirtualCamera.hpp"
+#include "okay/Components/CinemachineBrain.hpp"
 #include "okay/Core/SaveFramework.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
@@ -930,7 +932,7 @@ void RegisterSplineFollower() {
 
 // DollyCart (record "dollycart")
 void RegisterDollyCart() {
-    PropertyBuilder<DollyCart> b("DollyCart", "dollycart", "Cameras");
+    PropertyBuilder<DollyCart> b("DollyCart", "dollycart", "Camera");
     b.AddString("path", &DollyCart::path).Tooltip("Name of the object holding the DollyPath")
      .AddFloat("position", &DollyCart::position).Range(0, 1, 0.01).Tooltip("Position along the path, 0 to 1")
      .AddFloat("speed", &DollyCart::speed).Range(-1000, 1000, 0.01).Tooltip("Path fractions per second (when Auto Move is on)")
@@ -1367,6 +1369,62 @@ void RegisterSpriteAnimator() {
      .AddInt("atlasColumns", &SpriteAnimator::atlasColumns).Range(0, 4096, 1).Tooltip("Cells across the sheet (0 = use the frame list)")
      .AddInt("atlasRows", &SpriteAnimator::atlasRows).Range(0, 4096, 1).Tooltip("Cells down the sheet")
      .AddInt("atlasCount", &SpriteAnimator::atlasCount).Range(0, 1 << 24, 1).Tooltip("Cells to play (0 = columns x rows)");
+    b.Commit();
+}
+
+// VirtualCamera (record "vcam")
+void RegisterVirtualCamera() {
+    PropertyBuilder<VirtualCamera> b("VirtualCamera", "vcam", "Camera");
+    b.AddInt("priority", &VirtualCamera::priority).Range(-1000000, 1000000, 1).Tooltip("The live camera is the active one with the highest priority")
+     .AddString("follow", &VirtualCamera::follow).Tooltip("Object to follow, by name")
+     .AddString("lookAt", &VirtualCamera::lookAt).Tooltip("Object to look at, by name")
+     .AddEnum("bindingMode", &VirtualCamera::bindingMode, {"WorldSpace", "LockToTarget"}).Tooltip("Follow offset in world space, or turning with the target")
+     .AddVec3("followOffset", &VirtualCamera::followOffset).Range(-kBig, kBig, 0.1).Tooltip("Where the camera sits from the follow target")
+     .AddVec3("lookAtOffset", &VirtualCamera::lookAtOffset).Range(-kBig, kBig, 0.1).Tooltip("Point aimed at, from the look-at target")
+     .AddFloat("aimDeadZone", &VirtualCamera::aimDeadZone).Range(0, 180, 0.5).Tooltip("Degrees the target may drift before the camera turns")
+     .AddFloat("positionDamping", &VirtualCamera::positionDamping).Range(0, 1e4, 0.1).Tooltip("How quickly the camera catches up (0 = instant)")
+     .AddFloat("rotationDamping", &VirtualCamera::rotationDamping).Range(0, 1e4, 0.1).Tooltip("How quickly the camera turns (0 = instant)")
+     .AddFloat("fieldOfView", &VirtualCamera::fieldOfView).Range(1, 179, 0.5).Tooltip("Vertical field of view in degrees")
+     .AddFloat("dutch", &VirtualCamera::dutch).Range(-180, 180, 0.5).Tooltip("Roll in degrees")
+     .Section("Shake")
+     .AddFloat("shakeAmplitude", &VirtualCamera::shakeAmplitude).Range(0, kBig, 0.01).Tooltip("Constant shake strength (0 = off)")
+     .AddFloat("shakeFrequency", &VirtualCamera::shakeFrequency).Range(0, 1e3, 0.1).Tooltip("Shake speed")
+     .AddFloat("impulseDecay", &VirtualCamera::impulseDecay).Range(0, 1e3, 0.1).Tooltip("How fast a shake impulse fades")
+     .Section("Free look")
+     .AddBool("freeLook", &VirtualCamera::freeLook).Tooltip("Orbit around the follow target")
+     .AddFloat("orbitYaw", &VirtualCamera::orbitYaw).Range(-kBig, kBig, 1).Tooltip("Starting horizontal orbit angle in degrees")
+     .AddFloat("orbitPitch", &VirtualCamera::orbitPitch).Range(-90, 90, 1).Tooltip("Starting vertical orbit angle in degrees")
+     .AddFloat("orbitRadius", &VirtualCamera::orbitRadius).Range(0, kBig, 0.1).Tooltip("Distance from the target")
+     .AddFloat("orbitHeight", &VirtualCamera::orbitHeight).Range(-kBig, kBig, 0.1).Tooltip("Height of the orbit centre above the target")
+     .AddFloat("orbitMinPitch", &VirtualCamera::orbitMinPitch).Range(-90, 90, 1).Tooltip("Lowest pitch in degrees")
+     .AddFloat("orbitMaxPitch", &VirtualCamera::orbitMaxPitch).Range(-90, 90, 1).Tooltip("Highest pitch in degrees")
+     .AddBool("orbitInput", &VirtualCamera::orbitInput).Tooltip("The mouse turns the orbit")
+     .AddInt("orbitButton", &VirtualCamera::orbitButton).Range(-1, 7, 1).Tooltip("Mouse button held to orbit (1 = right)")
+     .AddFloat("mouseSensitivity", &VirtualCamera::mouseSensitivity).Range(0, 100, 0.01).Tooltip("Degrees per pixel of mouse movement")
+     .Section("Dolly")
+     .AddBool("dolly", &VirtualCamera::dolly).Tooltip("Ride along a dolly path or spline")
+     .AddString("dollyPath", &VirtualCamera::dollyPath).Tooltip("Object holding the DollyPath or Spline, by name")
+     .AddFloat("dollyPosition", &VirtualCamera::dollyPosition).Range(0, 1, 0.001).Tooltip("Position along the path (0 to 1)")
+     .AddBool("autoDolly", &VirtualCamera::autoDolly).Tooltip("Slide to the path point nearest the follow target")
+     .Section("Confiner")
+     .AddBool("confine", &VirtualCamera::confine).Tooltip("Keep the camera inside a box")
+     .AddVec3("confineMin", &VirtualCamera::confineMin).Range(-kBig, kBig, 0.1).Tooltip("Lowest corner of the box")
+     .AddVec3("confineMax", &VirtualCamera::confineMax).Range(-kBig, kBig, 0.1).Tooltip("Highest corner of the box");
+    b.Commit();
+}
+
+// CinemachineBrain (record "cmbrain")
+void RegisterCinemachineBrain() {
+    PropertyBuilder<CinemachineBrain> b("CinemachineBrain", "cmbrain", "Camera");
+    b.AddFloat("blendTime", &CinemachineBrain::blendTime).Range(0, 1e4, 0.05).Tooltip("Seconds to blend when the live virtual camera changes")
+     .AddBool("easeInOut", &CinemachineBrain::easeInOut).Tooltip("Ease the blend in and out (off = linear)");
+    b.Commit();
+}
+
+// DollyPath (record "dollypath"). The waypoints are a list.
+void RegisterDollyPath() {
+    PropertyBuilder<DollyPath> b("DollyPath", "dollypath", "Camera");
+    b.AddBool("looped", &DollyPath::looped).Tooltip("Join the last waypoint back to the first");
     b.Commit();
 }
 
@@ -1996,6 +2054,9 @@ void RegisterGameplayProperties() {
     RegisterQuestLog();
     RegisterSaveable();
     RegisterSpriteAnimator();
+    RegisterVirtualCamera();
+    RegisterCinemachineBrain();
+    RegisterDollyPath();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

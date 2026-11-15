@@ -107,7 +107,7 @@ text's own, and centring and wrapping still measure the plain text at its own si
 run leans right). The tooltip's own `<b>` and `#rrggbb` tags are unchanged. Tests: `runtime_ui` (screen text),
 `world_text_rich` (the size tag, runs, world text colours, sizes, shadow and outline).
 
-How to try it (world text): add a Text, set it to draw in the world (not on the Canvas), turn on **Rich Text** and type
+How to try it (world text): add a Text, turn its **Screen Space** off so it is drawn in the world, turn on **Rich Text** and type
 `Hello [color=#ffcc33]gold[/color] [size=150]big[/size] [b]bold[/b]`. The Scene view and Play show the gold word, the
 bigger word sitting on the same line, and the bold one; turn Rich Text off and the tags show as written.
 

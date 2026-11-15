@@ -105,7 +105,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Script language phases 2 to 5: classes, physics and events, visual-script shared layer, tooling and debugger, export, replace the old VM
 - Per-face materials (renderer submeshes)
 - Script editor: classes, default templates, no random script on New Script
-- Prone for first and third person
+- ~~Prone for first and third person~~ Done (checked 2026-11-15): the First Person, Third Person and Third Person Shooter controllers have prone (key Z, gamepad hold, Prone input action, speed, smaller collider, eye or camera height, saved in scenes). Tested on First and Third Person (`stance`, `stance_save`, `prone_ceiling`: a stand-up or crouch under a ceiling lower than that stance waits until there is room). Not tested here: the gamepad hold-to-prone path and the Third Person Shooter controller's prone
 - Player customization: more options
 - Humanoid animation quality, procedural object holding, 2.5D controller improvements, backpedal and strafe animations, character joint hinges and detail (animation team)
 - Splitting the largest files: launcher `main.cpp`, the OkayScript VM, component serializer registry, editor `main.cpp` into panel files

@@ -388,6 +388,22 @@ void TestFind() {
     c.SetText("a a a a");
     CHECK(c.ReplaceAll("a", "bbb") == 0 && c.Text() == "a a a a");
     CHECK(c.ReplaceAll("a", "bb") == 4 && c.Text() == "bb bb bb bb" && c.ByteSize() == 11);
+    // replace all has no hidden cap: more than FindAll's default of a million matches are all replaced and the count is the real one
+    {
+        const std::size_t N = 1500000;
+        Buffer big;
+        big.SetText(std::string(N, 'a'));
+        CHECK(big.ReplaceAll("a", "bb") == N);
+        CHECK(big.ByteSize() == 2 * N && big.Text() == std::string(2 * N, 'b'));
+        CHECK(big.UndoDepth() == 1 && big.Undo() && big.Text() == std::string(N, 'a'));
+        CHECK(big.FindAll("a").size() == 1000000);                                 // FindAll's cap is a parameter you can see
+        CHECK(big.FindAll("a", FindFlags::MatchCase, N).size() == N);
+        std::string lines, want;
+        for (std::size_t i = 0; i < N; ++i) { lines += "x\n"; want += "y\n"; }
+        Buffer many;
+        many.SetText(lines);
+        CHECK(many.ReplaceAll("x", "y") == N && many.Text() == want && many.LineCount() == N + 1);
+    }
 }
 
 void TestEditorSupport() {
@@ -617,6 +633,36 @@ void TestHostile() {
         CHECK(!b.Replace(Pos{0, 0}, Pos{0, 1}, "bb").has_value());
         CHECK(b.Erase(Pos{0, 0}, Pos{0, 50}) && b.Insert(Pos{0, 0}, std::string(50, 'c')));
         CHECK(!b.SetText(std::string(101, 'x')) && b.ByteSize() == 100);          // a refused SetText changes nothing
+    }
+    // the line limit: a change that would make more lines than Options::maxLines is refused and changes nothing
+    {
+        Options o; o.maxLines = 3;
+        Buffer b(o);
+        CHECK(b.SetText("a\nb\nc") && b.LineCount() == 3);
+        CHECK(!b.SetText("a\nb\nc\nd") && b.Text() == "a\nb\nc" && b.LineCount() == 3);          // a refused SetText changes nothing
+        CHECK(!b.Insert(Pos{0, 1}, "\n").has_value() && b.Text() == "a\nb\nc" && b.UndoDepth() == 0);
+        CHECK(!b.Insert(Pos{0, 0}, "\r\n").has_value() && !b.Insert(Pos{0, 0}, "\r").has_value());   // CRLF and CR are line breaks too
+        CHECK(b.Insert(Pos{0, 1}, "x").has_value() && b.Text() == "ax\nb\nc");                    // no new line: fine
+        CHECK(!b.Replace(Pos{0, 0}, Pos{1, 1}, "q\nr\ns").has_value() && b.Text() == "ax\nb\nc");   // removes one break, adds two: 4 lines
+        CHECK(b.Replace(Pos{0, 0}, Pos{2, 1}, "q\nr\ns").has_value() && b.Text() == "q\nr\ns");     // removes two breaks, adds two: 3 lines
+        CHECK(b.WouldFit(Pos{0, 0}, Pos{0, 0}, "\n") == false && b.WouldFit(Pos{0, 0}, Pos{1, 0}, "\n") == true &&
+              b.WouldFit(Pos{0, 0}, Pos{0, 0}, "z") == true && b.WouldFit(Pos{0, 0}, Pos{2, 1}, "") == true);
+        CHECK(b.Erase(Pos{0, 0}, Pos{1, 0}) && b.LineCount() == 2 && b.Insert(Pos{0, 0}, "\n").has_value());   // room again
+        b.SetText("a\nb\nc");
+        b.SetSelections({Selection{Pos{0, 1}, Pos{0, 1}}, Selection{Pos{1, 1}, Pos{1, 1}}});
+        CHECK(!b.TypeText("\n") && b.Text() == "a\nb\nc");                                        // each caret would add a line
+        CHECK(b.TypeText("!") && b.Text() == "a!\nb!\nc");
+        CHECK(b.ReplaceAll("b", "b\nb") == 0 && b.Text() == "a!\nb!\nc");                         // refused: nothing changes
+        CHECK(b.ReplaceAll("b", "bb") == 1 && b.Text() == "a!\nbb!\nc");
+        CHECK(b.Undo() && b.Undo() && b.Text() == "a\nb\nc");                                      // undo and redo never refuse
+        CHECK(b.Redo() && b.Redo() && b.Text() == "a!\nbb!\nc");
+        Options zero; zero.maxLines = 0;                                                            // 0 means 1: a buffer always has a line
+        Buffer z(zero);
+        CHECK(z.SetText("only") && !z.SetText("a\nb") && !z.Insert(Pos{0, 0}, "\n").has_value() && z.Text() == "only");
+        CHECK(Buffer().GetOptions().maxLines == (std::size_t)-1);                                   // no line limit unless asked for
+        Options huge; huge.maxLines = (std::size_t)-1; huge.maxBytes = (std::size_t)-1;              // limit arithmetic must not wrap
+        Buffer h(huge);
+        CHECK(h.SetText("a\nb") && h.Insert(Pos{0, 0}, "\n\n").has_value() && h.LineCount() == 4);
     }
     // junk text of every kind goes through every entry point and keeps the invariants
     {

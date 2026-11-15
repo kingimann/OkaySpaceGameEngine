@@ -80,6 +80,8 @@ struct Matcher {
 
 const std::vector<Token> kNoTokens;
 
+inline std::size_t CountNewlines(std::string_view s) { return (std::size_t)std::count(s.begin(), s.end(), '\n'); }
+
 }  // namespace
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -116,6 +118,7 @@ std::string Buffer::Repair(std::string_view s) const {
 
 Buffer::Buffer(const Options& o) : opt_(o) {
     opt_.tabSize = std::clamp(opt_.tabSize, 1, 16);
+    opt_.maxLines = std::max<std::size_t>(opt_.maxLines, 1);     // a buffer always has one line
     lines_.assign(1, std::string());
     sel_.assign(1, Selection{});
 }
@@ -123,12 +126,14 @@ Buffer::Buffer(const Options& o) : opt_(o) {
 void Buffer::SetOptions(const Options& o) {
     opt_ = o;
     opt_.tabSize = std::clamp(opt_.tabSize, 1, 16);
+    opt_.maxLines = std::max<std::size_t>(opt_.maxLines, 1);
     TrimHistory();
 }
 
 bool Buffer::SetText(std::string_view s) {
     std::string t = Repair(s);
     if (t.size() > opt_.maxBytes) return false;
+    if (CountNewlines(t) >= opt_.maxLines) return false;          // N newlines make N+1 lines
     lines_.clear();
     std::size_t start = 0;
     for (;;) {
@@ -363,6 +368,26 @@ void Buffer::AdjustForInsert(Pos& p, Pos at, Pos end) const {
 // ---------------------------------------------------------------------------------------------------------------------
 // logged edits
 
+// The size rule for a change that removes `removedBytes` (over `removedLines` line breaks) and inserts `ins` (already repaired).
+// A change that only removes text never grows it, so it always fits. All arithmetic is overflow-safe.
+bool Buffer::FitsAfter(std::size_t removedBytes, std::size_t removedLines, std::string_view ins) const {
+    if (ins.empty()) return true;
+    const std::size_t baseBytes = bytes_ - std::min(removedBytes, bytes_);
+    if (ins.size() > opt_.maxBytes || baseBytes > opt_.maxBytes - ins.size()) return false;
+    const std::size_t newLines = CountNewlines(ins);
+    if (newLines) {
+        const std::size_t baseLines = lines_.size() - std::min(removedLines, lines_.size() - 1);
+        if (baseLines > opt_.maxLines || newLines > opt_.maxLines - baseLines) return false;
+    }
+    return true;
+}
+
+bool Buffer::WouldFit(Pos a, Pos b, std::string_view s) const {
+    a = Clamp(a); b = Clamp(b);
+    if (b < a) std::swap(a, b);
+    return FitsAfter(RangeBytes(a, b), b.line - a.line, Repair(s));
+}
+
 void Buffer::BeginGroup() {
     if (depth_++ == 0) { open_ = Group(); open_.before = sel_; }
 }
@@ -411,8 +436,7 @@ bool Buffer::ApplyEdit(Pos a, Pos b, std::string_view s, std::optional<Pos>* end
     std::string ins = Repair(s);
     const std::size_t removedLen = RangeBytes(a, b);
     if (removedLen == 0 && ins.empty()) return false;
-    const std::size_t base = bytes_ - removedLen;
-    if (!ins.empty() && (ins.size() > opt_.maxBytes || base > opt_.maxBytes - ins.size())) return false;   // overflow-safe
+    if (!FitsAfter(removedLen, b.line - a.line, ins)) return false;   // over the size or line limit: nothing changes
     BeginGroup();
     EditRec r;
     r.at = a;
@@ -548,6 +572,12 @@ bool Buffer::EditEachSelection(int mode, std::string_view text) {
         const std::size_t add = n * ins.size();
         const std::size_t base = bytes_ - std::min(removed, bytes_);
         if (base > opt_.maxBytes || add > opt_.maxBytes - base) return false;
+        if (const std::size_t insLines = CountNewlines(ins)) {   // line limit: every caret adds the new lines
+            std::size_t removedLines = 0;
+            for (std::size_t i = 0; i < n; ++i) removedLines += rg[i].end.line - rg[i].begin.line;
+            const std::size_t baseLines = lines_.size() - std::min(removedLines, lines_.size() - 1);
+            if (insLines > opt_.maxLines / n || baseLines > opt_.maxLines || n * insLines > opt_.maxLines - baseLines) return false;
+        }
     }
     std::vector<Selection> cur = s;
     bool any = false;
@@ -833,24 +863,28 @@ std::vector<std::size_t> Buffer::FindInLine(std::size_t line, std::string_view n
 std::size_t Buffer::ReplaceAll(std::string_view needleIn, std::string_view replIn, FindFlags f) {
     const std::string needle = Repair(needleIn);
     const std::string repl = Repair(replIn);
-    const std::vector<Range> hits = FindAll(needle, f);
-    if (hits.empty()) return 0;
-    // One edit over the span from the first match to the last: linear in the span, whatever the number of matches.
-    const Pos a = hits.front().begin, b = hits.back().end;
-    const std::size_t baseOff = OffsetOf(a);
-    const std::string region = Slice(a, b);
+    if (needle.empty()) return 0;
+    // One pass over the joined text (a needle without a newline cannot match across a line break, so these are the same
+    // non-overlapping matches FindAll reports, and there is no cap and no list of ranges to hold), building the replacement of the span
+    // from the first match to the last: one linear edit whatever the number of matches.
+    const Matcher m(needle, f);
+    const std::string flat = Text();
     std::string out;
-    std::size_t cur = 0;
-    for (const Range& h : hits) {
-        const std::size_t s = OffsetOf(h.begin) - baseOff;
-        out.append(region, cur, s - cur);
+    std::size_t count = 0, first = 0, resume = 0;           // resume: where the copy of the text between matches continues
+    bool tooBig = false;
+    m.Run(std::string_view(flat), [&](std::size_t st) {
+        if (count && st < resume) return false;                // overlaps the match before it
+        if (!count) { first = st; resume = st; }
+        out.append(flat, resume, st - resume);
         out += repl;
-        cur = s + needle.size();
-        if (out.size() > opt_.maxBytes) return 0;              // bail out early instead of building a huge string
-    }
-    out.append(region, cur, std::string::npos);
-    if (!ApplyEdit(a, b, out, nullptr, true)) return 0;
-    return hits.size();
+        resume = st + needle.size();
+        ++count;
+        if (out.size() > opt_.maxBytes) { tooBig = true; return true; }   // stop early instead of building a huge string
+        return false;
+    });
+    if (!count || tooBig) return 0;
+    if (!ApplyEdit(PosOf(first), PosOf(resume), out, nullptr, true)) return 0;
+    return count;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -16,7 +16,8 @@
 //    character) are safe.
 //  * An "offset" is a byte index in the whole text with lines joined by '\n'.
 //  * Every change goes through the edit log. Changes can be grouped; Undo and Redo move a whole group at a time.
-//  * Limits are explicit and overflow-safe: a change that would take the text over Options::maxBytes is refused.
+//  * Limits are explicit and overflow-safe: a change that would take the text over Options::maxBytes or Options::maxLines is
+//    refused and changes nothing.
 //
 // Not thread safe. A tokenizer callback must not call back into the buffer.
 #include <cstddef>
@@ -58,6 +59,8 @@ struct Options {
     int tabSize = 4;                         // 1..16, used for display columns and indent steps
     bool insertSpaces = true;                // indent with spaces (true) or one tab per level (false)
     std::size_t maxBytes = 256u << 20;       // the text may not grow past this
+    std::size_t maxLines = (std::size_t)-1;  // nor have more lines than this (at least 1; no limit by default). A line costs about 32 bytes of
+                                             // bookkeeping even when empty, so this is the limit that bounds the memory a paste of newlines can take
     std::size_t undoGroups = 1000;           // oldest groups are dropped past this
     std::size_t undoBytes = 64u << 20;       // and past this many bytes held by the log (removed + inserted text)
     std::string badByte = "\xEF\xBF\xBD";    // what each invalid byte becomes (a front end may prefer "?")
@@ -92,7 +95,7 @@ public:
     void SetOptions(const Options& o);       // clamps tabSize, trims the log if the limits shrank
 
     // ---- text ----
-    /// Replace everything. Clears the undo log and selections. False (and no change) if over maxBytes.
+    /// Replace everything. Clears the undo log and selections. False (and no change) if over maxBytes or maxLines.
     bool SetText(std::string_view s);
     std::string Text() const;
     std::size_t ByteSize() const { return bytes_; }
@@ -135,6 +138,9 @@ public:
 
     /// Where the text ends up if `s` (already clean) is inserted at `at`.
     static Pos EndOfText(Pos at, std::string_view s);
+    /// Would replacing [a, b) (either order) with `s` (repaired first) keep the text within maxBytes and maxLines? This is the rule
+    /// Insert, Replace and the typing calls refuse by, so a caller can ask first and tell the user why nothing happened.
+    bool WouldFit(Pos a, Pos b, std::string_view s) const;
 
     // ---- undo, redo, groups ----
     void BeginGroup();                       // nests; the outermost End closes one undo step
@@ -211,7 +217,8 @@ public:
     std::vector<Range> FindAll(std::string_view needle, FindFlags f = FindFlags::MatchCase, std::size_t maxCount = 1000000) const;
     /// Start columns of the non-overlapping matches of a needle without a newline on one line (for drawing).
     std::vector<std::size_t> FindInLine(std::size_t line, std::string_view needle, FindFlags f = FindFlags::MatchCase) const;
-    /// Replace all matches in one undo step. Returns how many; 0 also when refused (size limit).
+    /// Replace all matches in one undo step. Returns how many (every match, however many: FindAll's cap does not apply here); 0
+    /// also when refused (size or line limit). The matches are the same non-overlapping ones FindAll reports.
     std::size_t ReplaceAll(std::string_view needle, std::string_view repl, FindFlags f = FindFlags::MatchCase);
 
     // ---- tokenizer hook ----
@@ -233,6 +240,7 @@ private:
     void TrimHistory();
     void AdjustForErase(Pos& p, Pos a, Pos b) const;
     void AdjustForInsert(Pos& p, Pos at, Pos end) const;
+    bool FitsAfter(std::size_t removedBytes, std::size_t removedLines, std::string_view repaired) const;   // the size rule, overflow-safe
     void EnsureStarts() const;
     bool EditEachSelection(int mode, std::string_view text);     // 0 type, 1 backspace, 2 delete, 3 word back, 4 word forward
     std::size_t RangeBytes(Pos a, Pos b) const;                  // bytes in [a, b), clamped and ordered, no offset table

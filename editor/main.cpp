@@ -40606,6 +40606,10 @@ void DrawInspector(EditorState& ed) {
     }
     ImGui::PopItemWidth();
     ImGui::PopStyleVar(3);
+    // OKAY_UI_INSPSCROLL=0.5: scroll the Inspector (0 top .. 1 bottom) for a headless screenshot, like
+    // OKAY_UI_LIGHTSCROLL does for the Lighting window.
+    if (const char* sc = std::getenv("OKAY_UI_INSPSCROLL"))
+        ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)std::atof(sc));
     ImGui::End();
 }
 

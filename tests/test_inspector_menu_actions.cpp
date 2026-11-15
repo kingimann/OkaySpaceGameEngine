@@ -720,9 +720,10 @@ void TestRotationDefault() {
     CHECK((TransformAtDefault(*g->transform) & kTransformRotation) != 0);
     // Position and scale keep their exact tests.
     g->transform->localPosition = {0.0f, 1e-6f, 0.0f};
-    g->transform->localScale = {1.0f, 1.0f, 1.0000001f};
     const unsigned at = TransformAtDefault(*g->transform);
-    CHECK((at & kTransformPosition) == 0 && (at & kTransformScale) != 0);   // 1.0000001f is 1 as a float
+    CHECK((at & kTransformPosition) == 0 && (at & kTransformScale) != 0);
+    g->transform->localScale = {1.0f, 1.0f, 1.001f};
+    CHECK((TransformAtDefault(*g->transform) & kTransformScale) == 0);
 }
 
 // Paste Value: what the clipboard may put into a field (finding 6). The text-level rules (size, lines, paths) are in

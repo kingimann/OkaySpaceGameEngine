@@ -239,15 +239,14 @@ compiled or run on this machine).
 
 ## 16. Inspector right-click menus
 
-**What it is.** The Inspector panel has right-click menus in five places. They are described row by row in
-[inspector_menus.md](inspector_menus.md). New in this change: Duplicate Component, Paste As New, Move to Top / Bottom,
-Enable / Disable, a greyed-out Remove when another component needs it, script rows (Edit Script, Reveal Script in Project),
-Copy Component Type Name, a field menu (Reset to Default, Copy / Paste Value, Copy Property Path, Set to Zero / One ...), a
-Transform menu with resets and Paste Only, and an object / empty-space menu (Copy and Paste All Component Values, Select
-Parent, Select Prefab Asset, Add Component...). Before this change the component menu had Move Up, Move Down, Expand / Collapse
-All, Copy Values, Paste Values, Reset and Remove, and the Transform had Copy and Paste Transform Values.
+**What it is.** The Inspector panel has right-click menus in five places (component header, Transform header, a field, the object
+header bar, empty space). They are described row by row in [inspector_menus.md](inspector_menus.md). This round fixes what an
+independent review of the first version found: Duplicate Component and Paste As New now obey the same "only one per object" rule as
+the Add Component list, a copy is only offered when it would be the same, a field's menu now opens on its label and in the gap
+next to it (before, the Add Component menu opened there instead), Paste Value checks what is on the clipboard, a camera is never
+scaled by an edit that reaches several objects, and Paste As New names the number of objects it really adds to.
 
-**Steps (Windows editor, `Tools\OkayEngine.exe`).**
+**Steps (Windows editor, `Tools\OkayEngine.exe`).** The scene is the vehicle example that ships with the editor.
 1. **File > Open...**, paste `<install folder>\examples\vehicle\vehicle_test.okayscene` and confirm. In the Hierarchy click
    `Car`. The Inspector shows cards for Transform, Rigidbody3D, Box Collider 3D, Vehicle Controller (Car) and Vehicle Seat.
 2. **Component menu.** Right-click the **Box Collider 3D** header (or click the **...** at its right end). You should see:
@@ -255,48 +254,73 @@ All, Copy Values, Paste Values, Reset and Remove, and the Transform had Copy and
    Paste As New Component, Reset, Expand All Components, Collapse All Components, Copy Component Type Name, Remove Component.
    Paste Values and Paste As New Component are grey; hover one and the tooltip says "Copy the values of another component of
    this kind first." / "Copy a component's values first."
-3. **Duplicate.** Click **Duplicate Component**. A second Box Collider 3D appears right below the first with the same size
-   (1.6, 0.6, 3). **Edit > Undo** (Ctrl+Z) removes it again.
-4. **Move.** Right-click the Box Collider 3D again and choose **Move to Top**: its card moves to the first place under the
-   Transform. **Move Up** and **Move to Top** are now grey (tooltip: already the first). Choose **Move to Bottom** to send it to
-   the end, then **Move Down** is grey instead.
-5. **Copy and paste as new.** On Box Collider 3D choose **Copy Values**. Click `Directional Light` in the Hierarchy and
-   right-click empty space in the Inspector (below the **Delete GameObject** button, or beside the **Add Component** button): the menu shows **Paste As New
-   Box Collider 3D**. Click it: the light gets a Box Collider 3D with the same size. Ctrl+Z removes it.
-6. **Disable.** Click `Car` again, right-click Rigidbody3D, **Disable Component**: its header text turns grey and its
+3. **Only one per object.** In the same menu **Duplicate Component** is grey too. Hover it: "Only one per object: a second Box
+   Collider 3D cannot be added (the Add Component list does not offer one either)." Check the second half of that sentence:
+   click **Add Component** below the cards and type `box collider`: **Box Collider 2D** is listed, **Box Collider 3D** is not,
+   because `Car` has one. Nearly every kind works like this (Rigidbody, Light, Audio Source, Particle System ...). The kinds that
+   can be duplicated are the ones Add Component offers again and again, such as **Volume**. Close the browser (Esc).
+4. **Duplicate a kind that may repeat.** Click `Directional Light` in the Hierarchy. Click **Add Component**, type `volume`, click
+   **Volume: Checkpoint (respawn point)**. A **Volume (zone)** card appears. Right-click its header and click **Duplicate
+   Component**: a second Volume card appears right below with the same values. Drag the **Size** numbers of the second card: the
+   first card's Size does not change (each card has widget ids of its own; before, dragging the copy also moved the original).
+   Ctrl+Z removes the copy (**Edit > Undo** reads "Undo Duplicate Volume (zone)").
+5. **Move.** Right-click the second Volume header and choose **Move to Top**: its card moves to the first place under the
+   Transform. **Move Up** and **Move to Top** are now grey (tooltip: already the first). **Move to Bottom** sends it to the end,
+   then **Move Down** is grey instead.
+6. **Copy and paste as new, and the count.** Click `Car`, right-click **Box Collider 3D** > **Copy Values**. Click `Car Body`, then
+   Ctrl+click one `Wheel` and Ctrl+click `Car`, so three objects are selected. Right-click empty space in the Inspector (below the
+   **Delete GameObject** button, or beside the **Add Component** button): the menu shows **Paste As New Box Collider 3D (2
+   objects)**. Three are selected, but `Car` already has one and a Box Collider 3D is "only one per object", so the label names the
+   two it will add to. Click it: `Car Body` and the `Wheel` each get a Box Collider 3D with the size 1.6, 0.6, 3 (the Console says one
+   object was skipped). Right-click empty space again: the row is grey now, "Only one per object: this object already has a Box Collider
+   3D." Ctrl+Z removes both new colliders in one step.
+7. **Disable.** Click `Car` again, right-click Rigidbody3D, **Disable Component**: its header text turns grey and its
    check box is off. The same row now reads **Enable Component**.
-7. **Field menu.** Click `Car Body` (a child of `Car`, scale 1.6, 0.6, 3). Right-click the **Scale** row of the Transform
-   (anywhere on the row, not only the numbers). Choose **Set to One**: the scale becomes 1, 1, 1; Ctrl+Z puts it back.
-   Right-click again: **Reset to Default** (1, 1, 1), **Copy Value** (puts `1.6 0.6 3` on the clipboard: paste it into any text
-   box to see), **Copy Property Path** (`Transform.scale`). Then click `Directional Light`, right-click its Scale row and choose
-   **Paste Value**: its scale becomes 1.6, 0.6, 3 (the light does not care; Ctrl+Z). Other cards answer too wherever a row's
-   label is a registered property (for example Rigidbody3D **Body Type**: Reset to Default, Copy Value).
-8. **Transform menu.** Right-click the **Transform** header: Copy Transform Values, Paste Transform Values, Paste Only >
-   Position / Rotation / Scale, Reset Transform, Reset Position / Rotation / Scale. On `Car`, whose rotation is none, **Reset
-   Rotation** is grey (tooltip: there is no rotation already).
-9. **Object menu.** Right-click the grey object header bar at the top of the Inspector (the gaps and the icon, not the name
-   box): Copy All Component Values, Paste All Component Values, Reset Transform, Select Parent, Copy Object Name, Copy Object
-   Path, Add Component..., Expand All Components, Collapse All Components. On a `Wheel`, **Select Parent** selects `Car`.
-   **Add Component...** opens the Add Component browser.
-10. **Scripts.** On an object with a Script component (add one with Add Component > Scripts), right-click its header: **Edit
+8. **Field menu: the label and the gap too.** Click `Car Body` (a child of `Car`, scale 1.6, 0.6, 3). Right-click the word **Scale**
+   (the label to the right of the three numbers), then the empty strip right of it, then one of the numbers: **each** opens the same
+   field menu: Reset to Default, Copy Value, Paste Value, Copy Property Path, Set to Zero, Set to One. (Before this round only the
+   numbers did; the label and the gap opened the Add Component menu.) Choose **Set to One**: the scale becomes 1, 1, 1; Ctrl+Z puts it
+   back. Right-click empty space below all the cards: that is the Add Component menu.
+9. **Paste Value checks the clipboard.** Open a text editor, type `1 2`, select it and copy it (Ctrl+C). Back in the editor
+   right-click **Scale** on `Car Body`: **Paste Value** is grey; hover it: "The clipboard text is not 3 numbers." Now copy `nan nan nan`:
+   grey, "A number that is nan or infinite cannot be pasted." Copy two lines (`1 1 1`, Enter, `2 2 2`): grey, "The clipboard holds
+   several lines." Copy `2 2 2`: **Paste Value** is on and its tooltip says "Paste 2 2 2". Click it: the scale becomes 2, 2, 2 (one
+   Ctrl+Z undoes it). Right-click Scale again, still with `2 2 2` on the clipboard: Paste Value is grey ("The field already holds the
+   copied value") instead of making an empty undo step. (Long text over 64 KB, `..` or network paths in a file field and absolute paths
+   outside the project are refused the same way; those are covered by tests, see the status below.)
+10. **A camera is never scaled.** Click `Main Camera`, then Ctrl+click `Car Body` (the Inspector shows the one you clicked last).
+    Right-click the **Transform** header: **Reset
+    Scale** is on, and hovering it says "1 selected camera keeps its scale (a camera cannot be scaled)". (Before, a camera in the
+    selection greyed Reset Scale for everything.) With the same two selected, right-click the **Scale** row: **Set to Zero**
+    hovered says "Skips 1 selected object: a camera cannot be scaled." and it changes `Car Body` only.
+11. **Reset Rotation needs a real rotation to be on.** Click `Car Body`, right-click the **Transform** header: **Reset Rotation** is
+    grey (there is no rotation). Double-click the Rotation **Y** number, type `0.05` (a twentieth of a degree), press Enter, and
+    right-click the header again: **Reset Rotation** is on now. (It used to stay grey until the turn was 0.16 degrees.)
+12. **Transform menu.** Right-click the **Transform** header: Copy Transform Values, Paste Transform Values, Paste Only >
+    Position / Rotation / Scale, Reset Transform, Reset Position / Rotation / Scale.
+13. **Object menu.** Right-click the grey object header bar at the top of the Inspector (the gaps and the icon, not the name
+    box): Copy All Component Values, Paste All Component Values, Reset Transform, Select Parent, Copy Object Name, Copy Object
+    Path, Add Component..., Expand All Components, Collapse All Components. On a `Wheel`, **Select Parent** selects `Car`.
+    **Add Component...** opens the Add Component browser.
+14. **Scripts.** On an object with a Script component (add one with Add Component > Scripts), right-click its header: **Edit
     Script** opens the Script Editor, **Reveal Script in Project** finds the file, **Scripting Reference** opens the help window.
+    **Duplicate Component** is grey there (scripts are attached from files).
+
+**What you cannot see in the shipped editor.** **Remove Component** is greyed while another component on the object needs it, but
+only in a project whose code registers `RequireComponent` rules; the shipped editor registers none, so there is no step for it
+(it is tested with a rule registered in the test). The first version of this section and its pictures showed that state and a
+Duplicate on a Box Collider; both are gone.
 
 **How you know it worked.** Each row does what it says, a grey row shows a tooltip with a reason, and every change is undone
-by one Ctrl+Z (**Edit > Undo** names it, for example "Undo Duplicate Box Collider 3D").
+by one Ctrl+Z (**Edit > Undo** names it, for example "Undo Duplicate Volume (zone)").
 
-**Screenshots.** [inspector_menus.md](inspector_menus.md) has seven pictures of the menus. They are headless renders of the
-real menu code in a stand-in Inspector (Dear ImGui's built-in font and style, so not the editor's look).
+**Screenshots.** [inspector_menus.md](inspector_menus.md) has five pictures of the menus that did not change (Transform, field,
+object, empty space). They are headless renders of the real menu code in a stand-in Inspector (Dear ImGui's built-in font and
+style, so not the editor's look), taken before this round. The component-menu picture and the "Remove blocked" picture were removed
+(they showed Duplicate switched on for a Box Collider and a state the editor cannot produce). There are no new pictures: the program
+that drew them is not in the repository and was not re-run.
 
-**Status.** Headless tests in the repository: `inspector_context_model` (the menu rules: order, labels, plurals, which rows are
-grey and why, 465 thousand checks over every combination of the states) and `inspector_menu_actions` (move, duplicate every
-registered kind of component with the values compared in memory and after a save and load, paste as new, copy all values of an
-object, reset one value, Transform parts, a component another one needs). A throwaway program (not in the repository) also
-clicked through the real drawing code inside a window-less Dear ImGui context: 97 checks, all passing. **Unverified:** the real
-editor window: that a right-click opens each menu where described in your build, the real look and tooltips, and the script
-rows (Edit Script, Reveal Script in Project, Scripting Reference: tested only with stand-in hooks, not with the real windows). The
-whole editor was not built here, `main.cpp` was only syntax-checked. Known limits are listed at the end of
-[inspector_menus.md](inspector_menus.md): script components cannot be duplicated; a text box and a colour box keep their own
-right-click menu.
+**Status.** @@STATUS@@
 
 ---
 

@@ -75,7 +75,7 @@ widgets; nothing moves.
 | Window | GameObject > UI > Prebuilt Screens > Window | A title bar with **Drag the parent** and **Keep on screen** on a UI Draggable, and an x button that hides it (On Click: `HideObject`). The window carries its own Canvas one step above the page, so it and its contents draw above the page and take clicks first; dragging a window brings it in front of other windows. |
 | Damage Numbers | UI Damage Numbers | `Spawn(text, kind, pos)` (canvas pixels) or `SpawnAtWorld(text, kind, point)`; the numbers are made under the scene's Canvas. Buttons can call `Hit`, `Crit`, `Heal`, `Miss`, `Info`. Numbers drift by a fixed pattern, so a replay looks the same. |
 | Dialogue Box | UI Dialogue Box | Children named `Box`, `Speaker`, `Body`, `Choice1-3`, `Next`. Typing speed, skip on click or Space, up to four choices. |
-| Nameplate | Prebuilt Screens > Nameplate | A plate with a name, a level and a health bar. The bar follows the Health Stat (the player's health); the name and level are text you edit. The "in the world" version is a 3D object that faces the camera: make it a child of a character. |
+| Nameplate | Prebuilt Screens > Nameplate | A plate with a name, a level and a health bar, bound to the character it belongs to. Make the "in the world" version (a 3D object that faces the camera) a child of a character: it shows that character's object name, its Stats level (level 1 without Stats) and its health (Health Stat, Stats, Survival Stats or NPC Controller), live. With no such parent it is a preview: "Goblin", "Lv 1" and the player's published health. The bindings are ordinary UI Text Bind / UI Bar Bind keys (`{owner.name}`, `Lv {owner.level|1}`, `owner.healthFrac`), so you can edit them. |
 | Inventory | Prebuilt Screens > Inventory | A bag screen with a slot grid you can click. A **UI Inventory Bind** on the grid shows the real Inventory: the Player's, else the one named in **Inventory Name**, else the first in the scene. Each slot shows its item and stack size ("Potion 7"), empty places stay blank, and the grid gets as many rows as the bag has room for. `SelectedItem()` and `SelectedCount()` say what is in the clicked slot. With no Inventory in the scene the grid keeps its sample names. It shows the bag; moving items between bags is done by the Inventory itself. |
 | Rich text | Text > **Rich Text** | See below. |
 
@@ -186,6 +186,24 @@ write properties by name already reach every setting. See [properties.md](proper
 `UIGallery::BuildGallery(scene, preset)` (in `okay/Scene/UIGallery.hpp`) builds the gallery into any
 scene. File > Examples > UI Gallery does that in a fresh 2D scene. The same header has
 `AddInventoryScreen`, `AddDialogueScreen`, `AddWindow`, `AddNameplate` and `ApplyThemePreset`.
+
+### Binding UI to the character it belongs to (`owner.` keys)
+
+A UI Text Bind format and a UI Bar Bind variable can start with `owner.` to read the character the UI object belongs
+to: the nearest object above it (its parent first) that has a Health Stat, Stats, Survival Stats, NPC Controller or
+Character (`okay/Components/UIOwnerData.hpp`).
+
+| Key | Value |
+|---|---|
+| `owner.name` | the character object's name |
+| `owner.level` | its Stats level (nothing without Stats) |
+| `owner.health`, `owner.maxHealth` | health and its maximum, from the first of Health Stat, Stats, Survival Stats, NPC Controller |
+| `owner.healthFrac` | health / maximum, 0 to 1 (for a bar) |
+| `owner.healthPct` | the same, 0 to 100 |
+
+With no owner at all, a key falls back to the global variable of the same name without `owner.` (so a nameplate on its
+own still follows the player's `healthFrac`). An owner that lacks the data gives nothing: a text shows its `|default`, a
+bar keeps its fill. It never shows the player's value on another character. Test: `ui_nameplate_bound`.
 `BuildGallery(scene, preset, true)` (File > Examples > UI Gallery (phone)) lays the same widgets in one scrolling
 column on a 440 x 960 canvas inside a Safe Area, for portrait phones.
 
@@ -205,5 +223,5 @@ once; with no project open it stays an unsaved scene.
 | UIDialogueBox | Add Component, inspector | typed text, choices, Restart | `test_runtime_ui` | yes |
 | UIInventoryBind | Add Component, inspector | slots show the Inventory | `test_runtime_ui` | yes |
 | Radio toggles, draggable window | inspector | one on per group, window moves | `test_runtime_ui` | yes |
-| Nameplate | UI add menu (and in the world) | health bar follows the Health Stat; the name and level are plain text | `test_runtime_ui` (Hit and Heal change the bar) | yes, with Hit / Heal buttons |
+| Nameplate | UI add menu (and in the world) | name, level and health bar bound to the parent character (`owner.` keys); with no character, the player's health | `test_runtime_ui` (Hit and Heal change the bar), `ui_nameplate_bound` (two characters show their own values; missing data never shows the player's) | yes, with Hit / Heal buttons |
 | `ui_*` script calls | text scripts | as above | `test_runtime_ui` | n/a |

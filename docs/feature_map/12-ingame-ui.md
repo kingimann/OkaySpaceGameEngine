@@ -270,6 +270,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Parts:**
   - 12.13.1 Bar bind - `Components/UIBarBind` - progress bar or radial fill follows a visual-script variable or a Prefs value
   - 12.13.2 Text bind - `Components/UITextBind` - `format` with `{key}` placeholders filled each frame, `{score|0}` defaults
+  - 12.13.6 Owner keys - `Components/UIOwnerData` - `{owner.name}`, `{owner.level}`, `{owner.health}`, `owner.healthFrac`: text and bars read the character the UI is a child of (the nameplate uses them); no owner falls back to the global variable
   - 12.13.3 UI Animation - `Components/UIAnimation` - fade, slide, pop, drop intros, pulse/bob/sway/blink/glow loops, outro that can hide the object
   - 12.13.4 Script control by name - `Scripting/OkayScriptVM` - `ui_set_text`, `ui_set_progress`, `ui_show`, `ui_hide`, `ui_play`, `ui_clicked`, drop helpers, `tween_ui_move`, `tween_ui_size`
   - 12.13.5 Typed scripts and graph nodes - `Script/EngineApi` - UI component members reachable from the typed language and from Engine API nodes; the visual node Show/Hide UI
@@ -277,7 +278,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `UIBarBind`, `UITextBind`, `UIAnimation::Play/PlayOut/Stop`, script `ui_*`, `tween_ui_*`
 - **Editor:** Inspector headers UI Text Bind, UI Bar Bind, UI Animation; the prebuilt HUD wires hp, score and loading variables
 - **Docs:** `docs/game_ui.md`, `docs/scripting_reference.md` (UI section), `docs/engine_api.md`
-- **Tests:** `ui_animation`, `ui` (bar bind, text bind), `uidocument` (binding), `ui_extra` (UI script API, tweens)
+- **Tests:** `ui_animation`, `ui` (bar bind, text bind), `uidocument` (binding), `ui_extra` (UI script API, tweens), `ui_nameplate_bound` (owner keys)
 - **Status:** Partial - bindings, animation and name-based script calls work; the generic script API from the UI plan (P3) is not there
 - **Open:** UI plan P3 not found: `ui_create`, `ui_destroy`, `ui_find`, generic `ui_get/ui_set(prop)`, events `on_hover_enter`, `on_hover_exit`, `on_value_changed`, two-way binding to SyncVars, list/array binding, visual nodes On Value Changed, Set Progress, Focus, Create Widget; a settings menu built purely from nodes
 - **Related:** 14.4, 13.7, 1.2, 12.4

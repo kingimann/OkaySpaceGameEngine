@@ -96,6 +96,14 @@ add_executable(test_own_wav_sample test_own_wav_sample.cpp)
 target_link_libraries(test_own_wav_sample PRIVATE okay::engine)
 target_compile_definitions(test_own_wav_sample PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_wav_sample COMMAND test_own_wav_sample WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+# -DOKAY_OWN_WAV=ON must make the own decoder the default (whole-file loads and streaming); fails if the option stops reaching the engine.
+add_executable(test_own_wav_default test_own_wav_default.cpp)
+target_link_libraries(test_own_wav_default PRIVATE okay::engine)
+target_compile_definitions(test_own_wav_default PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(OKAY_OWN_WAV)
+    target_compile_definitions(test_own_wav_default PRIVATE OKAY_EXPECT_OWN_WAV)
+endif()
+add_test(NAME own_wav_default COMMAND test_own_wav_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # FLAC decoding against known samples, and audio import settings (mono, stream).
 add_executable(test_flac_import test_flac_import.cpp)

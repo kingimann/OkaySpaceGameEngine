@@ -4,7 +4,7 @@ Status: **side by side, off by default.** Part of `docs/own_code_roadmap.md` (th
 
 ## How to try it
 
-Full steps: `docs/try_it.md`, section 9. Short form: the whole-file path is tried with `examples\own_wav\own_wav_test.okayscene` (mu-law), the **streaming** path with `examples\own_wav\own_wav_stream_test.okayscene` (an IMA ADPCM file, `ima_tone.wav`, played with the Stream box on): without `OKAY_OWN_WAV=1` it is silent (the old streaming reader cannot read ADPCM), with it you hear a clean 440 Hz tone. `own_wav_sample` checks the committed file and that behaviour on Linux; not heard on Windows.
+Full steps: `docs/try_it.md`, section 9. Short form: the whole-file path is tried with `examples\own_wav\own_wav_test.okayscene` (mu-law), the **streaming** path with `examples\own_wav\own_wav_stream_test.okayscene` (an IMA ADPCM file, `ima_tone.wav`, played with the Stream box on): without `OKAY_OWN_WAV=1` it is silent (the old streaming reader cannot read ADPCM), with it you hear a clean 440 Hz tone. `own_wav_sample` checks the committed file and that behaviour on Linux, and `own_wav_default` checks that `-DOKAY_OWN_WAV=ON` really makes the own decoder the default (it fails if the option stops reaching the engine); not heard on Windows.
 
 ## Why this one
 

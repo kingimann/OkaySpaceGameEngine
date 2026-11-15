@@ -4,6 +4,7 @@
 // a blurred edge; the scene switch gates it. Uses DofMath.hpp (the shared circle of confusion). Written for this engine.
 #include "test_framework.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 
@@ -108,6 +109,35 @@ int main() {
         rs.post.dof = true; rs.post.dofFocus = 5.0f; rs.post.dofRange = 2.0f;
         ApplySceneDof(r, rs);
         CHECK(r.color != before.color);
+    }
+    {   // everything in focus: the frame is left alone (the early out after one depth scan)
+        Raster r = Frame(10.0f, 11.0f);
+        const Raster before = r;
+        ApplyDof(r, 10.5f, 4.0f);
+        CHECK(r.color == before.color);
+    }
+    {   // a 1080p frame, half near and half far: measured time (reported; a loose bound only, machines differ)
+        Raster big;
+        big.Resize(1920, 1080);
+        for (int y = 0; y < 1080; ++y)
+            for (int x = 0; x < 1920; ++x) {
+                const std::uint32_t v = ((x / 3) + (y / 3)) % 2 ? 255u : 40u;
+                big.color[(std::size_t)y * 1920 + x] = (255u << 24) | (v << 16) | (v << 8) | v;
+                big.depth[(std::size_t)y * 1920 + x] = 1.0f / (x < 960 ? 5.0f : 40.0f);
+            }
+        ApplyDof(big, 5.0f, 2.0f);   // warm the reused buffers
+        const auto t0 = std::chrono::steady_clock::now();
+        const int frames = 5;
+        for (int k = 0; k < frames; ++k) ApplyDof(big, 5.0f, 2.0f);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / frames;
+        std::printf("  1920x1080 depth of field: %.1f ms per frame (%u hardware threads)\n", ms, std::thread::hardware_concurrency());
+        CHECK(ms < 2000.0);
+        Raster calm = big;
+        for (float& d : calm.depth) d = 1.0f / 5.0f;
+        const auto t1 = std::chrono::steady_clock::now();
+        ApplyDof(calm, 5.0f, 2.0f);
+        const double msCalm = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
+        std::printf("  1920x1080 all in focus (early out): %.2f ms\n", msCalm);
     }
     {   // tiny and empty frames do nothing and do not crash
         Raster t; t.Resize(1, 1);

@@ -46,7 +46,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | LedgeGrab hands-on-ledge IK | Honest tooltip: not wired | Animation and IK team |
 | App icon | Placeholder OkaySpace logo | Branding decision |
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
-| Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
+| Software renderer: scene Ambient Occlusion (depth of field done) | SSAO not read; depth of field drawn by `ApplyDof` (`software_dof`) | The scene's Post-processing SSAO switch does nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette and now depth of field are read). Software depth of field has a fixed blur radius and does not match the GPU pixel for pixel. See [render_status.md](render_status.md) |
 | Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
 
 ## Own cryptography: no hired review, libsodium stays

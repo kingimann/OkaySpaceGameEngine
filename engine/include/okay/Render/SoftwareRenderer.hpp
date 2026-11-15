@@ -1583,15 +1583,50 @@ inline float& BloomIntensity() { static float v = 0.6f; return v; }
 ///      horizontal then a vertical pass. Colours are blurred premultiplied by their alpha, so the transparent
 ///      background (the host draws the sky behind) does not darken the edges;
 ///   3. out = mix(sharp, blurred, coc) per pixel, the blurred value read bilinearly; alpha mixes too.
-/// The blur radius is in pixels of the raster it runs on (the supersampled one when anti-aliasing is on), so with
+/// The blur radius is fixed (two rounds of the 9-tap kernel on the half-resolution copy: about 8 half-resolution
+/// pixels, 16 full ones); the circle of confusion sets how much of the blurred copy is mixed in, not how wide the blur
+/// is. It is in pixels of the raster it runs on (the supersampled one when anti-aliasing is on), so with
 /// supersampling it is narrower on screen than the GPU's. 8-bit frame, display-space colours (no HDR).
+/// With nothing out of focus it returns after one scan of the depth buffer; the work buffers are kept between frames
+/// (per thread), and every pass is split over the hardware threads (ParallelRows). Each camera of a camera stack draws
+/// into its own raster and gets this pass, like the software renderer's other post effects.
 inline void ApplyDof(Raster& r, float focus, float range) {
     const int W = r.width, H = r.height;
     if (W < 2 || H < 2 || r.depth.size() != (std::size_t)W * H || r.color.size() != (std::size_t)W * H) return;
+    const float farDist = ssao::kFar;
+    auto cocAt = [&](std::size_t i) {
+        const float iw = r.depth[i];
+        const float dist = iw > 1e-12f ? 1.0f / iw : std::numeric_limits<float>::infinity();
+        const float dn = std::isfinite(dist) ? std::fmin(dist / farDist, 1.0f) : 1.0f;
+        return dof::Coc(dof::Distance(dn, farDist), focus, range);
+    };
+    // Nothing out of focus (everything inside the focus zone): no blur, no allocation. The zone is turned into a range
+    // of the stored 1/w once, so the scan is two compares a pixel; anything the range cannot decide (sky, the far
+    // clamp) asks cocAt.
+    {
+        const float lo = focus - range * dof::kHalf, hi = focus + range * dof::kHalf;
+        const float iwMin = hi > 0.0f ? 1.0f / hi : std::numeric_limits<float>::infinity();       // farther = smaller 1/w
+        const float iwMax = lo > 0.0f ? 1.0f / lo : std::numeric_limits<float>::infinity();       // nearer = larger
+        const float iwSky = 1.0f / (dof::kBackground * farDist);   // below this the GPU counts the pixel as sky
+        bool any = false;
+        for (std::size_t i = 0, n = r.depth.size(); i < n && !any; ++i) {
+            const float iw = r.depth[i];
+            if (iw > iwSky && iw >= iwMin && iw <= iwMax) continue;   // inside the focus zone
+            any = cocAt(i) > 0.0f;
+        }
+        if (!any) return;
+    }
     const int hw = (W + 1) / 2, hh = (H + 1) / 2;
-    // half resolution, premultiplied RGBA in 0..1
-    std::vector<float> a((std::size_t)hw * hh * 4, 0.0f), b(a.size(), 0.0f);
-    for (int y = 0; y < hh; ++y)
+    // half resolution, premultiplied RGBA in 0..1; the buffers are kept between frames (per thread)
+    // Bound to plain references here, on the calling thread: inside the worker threads the thread_local names would
+    // mean each worker's own (empty) copy.
+    thread_local std::vector<float> keepA, keepB;
+    std::vector<float>& a = keepA;
+    std::vector<float>& b = keepB;
+    a.resize((std::size_t)hw * hh * 4);
+    b.resize(a.size());
+    ParallelRows(0, hh, [&](int ya, int yb) {
+    for (int y = ya; y < yb; ++y)
         for (int x = 0; x < hw; ++x) {
             float acc[4] = {0, 0, 0, 0};
             int n = 0;
@@ -1609,10 +1644,12 @@ inline void ApplyDof(Raster& r, float focus, float range) {
             float* o = &a[((std::size_t)y * hw + x) * 4];
             for (int c = 0; c < 4; ++c) o[c] = acc[c] / (float)n;
         }
+    });
     static const float kTap[9] = {1 / 256.0f, 8 / 256.0f, 28 / 256.0f, 56 / 256.0f, 70 / 256.0f,
                                   56 / 256.0f, 28 / 256.0f, 8 / 256.0f, 1 / 256.0f};
     auto pass = [&](const std::vector<float>& src, std::vector<float>& dst, bool horizontal) {
-        for (int y = 0; y < hh; ++y)
+        ParallelRows(0, hh, [&](int ya, int yb) {
+        for (int y = ya; y < yb; ++y)
             for (int x = 0; x < hw; ++x) {
                 float acc[4] = {0, 0, 0, 0};
                 for (int k = -4; k <= 4; ++k) {
@@ -1624,17 +1661,14 @@ inline void ApplyDof(Raster& r, float focus, float range) {
                 float* o = &dst[((std::size_t)y * hw + x) * 4];
                 for (int c = 0; c < 4; ++c) o[c] = acc[c];
             }
+        });
     };
     for (int round = 0; round < 2; ++round) { pass(a, b, true); pass(b, a, false); }
-    const float farDist = ssao::kFar;
     ParallelRows(0, H, [&](int ya, int yb) {
         for (int y = ya; y < yb; ++y)
             for (int x = 0; x < W; ++x) {
                 const std::size_t i = (std::size_t)y * W + x;
-                const float iw = r.depth[i];
-                const float dist = iw > 1e-12f ? 1.0f / iw : std::numeric_limits<float>::infinity();
-                const float dn = std::isfinite(dist) ? std::fmin(dist / farDist, 1.0f) : 1.0f;
-                const float coc = dof::Coc(dof::Distance(dn, farDist), focus, range);
+                const float coc = cocAt(i);
                 if (coc <= 0.0f) continue;
                 // bilinear fetch of the half-resolution blur at this pixel's centre
                 const float fx = std::clamp(((float)x + 0.5f) * 0.5f - 0.5f, 0.0f, (float)(hw - 1));

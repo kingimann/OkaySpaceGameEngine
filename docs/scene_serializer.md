@@ -78,7 +78,7 @@ page covers what an object round trip keeps.
   the top of the file are still skipped with a warning, and now also kept as text (`GameObject::unknownRecords`,
   `Scene::unknownRecords`) and written back by the next save, so opening a file with an older build and saving it does not
   lose them. A copy of the object (`Instantiate`, `Duplicate`, an undo snapshot) carries them. A top-level record is kept
-  only by a full load and only when it starts with a record-like name; at most 256 records (65536 bytes each) are kept per
+  only by a full load and only when it starts with a record-like name (lowercase letters, digits and `_`, starting with a letter); an object field is kept only when its name starts with a letter, so a stray number (a value a record did not read, like a third number after the 2D `gravity`) is dropped with a warning instead of being written back by every save (test `scene_stray_number`); this also drops any other object line that does not start with a letter (a `#` note, for example), which used to be kept: none of the shipped scenes or prefabs has one; at most 256 records (65536 bytes each) are kept per
   object and per scene. The warning, and `SceneSerializer::Validate`, still name them.
 - **Asset paths:** `CollectAssetPaths` lists the files of every instance of a component that can hold several (all the audio
   sources, particle systems and sequence players of an object) and the prefab of each Spawner, so Build Game copies them.

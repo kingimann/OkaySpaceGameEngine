@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 iters=${1:-200000}; seed=${2:-1}; cxx=${3:-g++}
 out=$(mktemp -d)
 srcs=""
-for f in Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519; do srcs="$srcs engine/src/Crypto/$f.cpp"; done
+for f in Util Random ChaCha20 Poly1305 Aead Blake2b Sha512 X25519 Ed25519; do srcs="$srcs engine/src/Crypto/$f.cpp"; done
 san="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 common="-std=c++17 -O1 -g $san -Iengine/include"
 "$cxx" $common tests/fuzz_crypto.cpp $srcs -o "$out/fuzz_crypto"

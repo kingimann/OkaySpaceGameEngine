@@ -1,6 +1,6 @@
 #pragma once
 // Error console data model (feature map 23.4): a ring buffer over the Log with
-// repeat collapsing, filters (level, category, text), search, pause, an error-pause
+// repeat collapsing (identical level + category + message, anywhere in the log), filters (level, category, text), search, pause, an error-pause
 // request flag, a link back to the source object or asset parsed from the message,
 // and a copy-all text export. No UI here: a console window reads Rows() each frame.
 //
@@ -72,8 +72,8 @@ struct ConsoleEntry {
     ConsoleSource source;
 };
 
-/// One line of the console view. With collapsing, a run of identical entries is one
-/// row: `entry` is the first, `repeat` the run length and last* describe the final one.
+/// One line of the console view. With collapsing, all entries with the same level, category and
+/// message are one row: `entry` is the first, `repeat` the number of them and last* describe the newest.
 struct ConsoleRow {
     ConsoleEntry entry;
     int repeat = 1;
@@ -151,7 +151,7 @@ public:
     // ---- view -------------------------------------------------------------
     void SetFilter(const ConsoleFilter& f);
     ConsoleFilter GetFilter() const;
-    /// Collapse identical consecutive entries (after filtering) into one row. Default on.
+    /// Merge entries with identical level, category and message (after filtering, anywhere in the log) into one row. Default on.
     void SetCollapse(bool on);
     bool Collapse() const;
     /// The rows to draw: current filter and collapse setting, oldest first.

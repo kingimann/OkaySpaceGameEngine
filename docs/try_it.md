@@ -276,15 +276,15 @@ scaled by an edit that reaches several objects, and Paste As New names the numbe
    Transform. **Move Up** and **Move to Top** are now grey (tooltip: already the first). **Move to Bottom** sends it to the end,
    then **Move Down** is grey instead.
 6. **Copy and paste as new, and the count.** Click `Car`, right-click **Box Collider 3D** > **Copy Values**. Click `Car Body`, then
-   Ctrl+click one `Wheel` and Ctrl+click `Car`, so three objects are selected. Right-click empty space in the Inspector (below the
+   Ctrl+click `Wheel Front Left` and Ctrl+click `Car`, so three objects are selected. Right-click empty space in the Inspector (below the
    **Delete GameObject** button, or beside the **Add Component** button): the menu shows **Paste As New Box Collider 3D (2
    objects)**. Three are selected, but `Car` already has one and a Box Collider 3D is "only one per object", so the label names the
-   two it will add to. Click it: `Car Body` and the `Wheel` each get a Box Collider 3D with the size 1.6, 0.6, 3 (the Console says one
+   two it will add to. Click it: `Car Body` and `Wheel Front Left` each get a Box Collider 3D with the size 1.8, 0.7, 4.1 (the Console says one
    object was skipped). Right-click empty space again: the row is grey now, "Only one per object: this object already has a Box Collider
    3D." Ctrl+Z removes both new colliders in one step.
 7. **Disable.** Click `Car` again, right-click Rigidbody3D, **Disable Component**: its header text turns grey and its
    check box is off. The same row now reads **Enable Component**.
-8. **Field menu: the label and the gap too.** Click `Car Body` (a child of `Car`, scale 1.6, 0.6, 3). Right-click the word **Scale**
+8. **Field menu: the label and the gap too.** Click `Car Body` (a child of `Car`, scale 1.8, 0.22, 4). Right-click the word **Scale**
    (the label to the right of the three numbers), then the empty strip right of it, then one of the numbers: **each** opens the same
    field menu: Reset to Default, Copy Value, Paste Value, Copy Property Path, Set to Zero, Set to One. (Before this round only the
    numbers did; the label and the gap opened the Add Component menu.) Choose **Set to One**: the scale becomes 1, 1, 1; Ctrl+Z puts it
@@ -308,7 +308,7 @@ scaled by an edit that reaches several objects, and Paste As New names the numbe
     Position / Rotation / Scale, Reset Transform, Reset Position / Rotation / Scale.
 13. **Object menu.** Right-click the grey object header bar at the top of the Inspector (the gaps and the icon, not the name
     box): Copy All Component Values, Paste All Component Values, Reset Transform, Select Parent, Copy Object Name, Copy Object
-    Path, Add Component..., Expand All Components, Collapse All Components. On a `Wheel`, **Select Parent** selects `Car`.
+    Path, Add Component..., Expand All Components, Collapse All Components. On `Wheel Front Left`, **Select Parent** selects `Car`.
     **Add Component...** opens the Add Component browser.
 14. **Scripts.** On an object with a Script component (add one with Add Component > Scripts), right-click its header: **Edit
     Script** opens the Script Editor, **Reveal Script in Project** finds the file, **Scripting Reference** opens the help window.

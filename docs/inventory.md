@@ -69,7 +69,7 @@ What was added on top, so that every one of these can be tried (CLAUDE.md rule 4
 * **The item editor shows the fields.** Window > Items, Loot & Recipes > an item > Custom Fields > **+ Known field...** adds
   `cooldown`, `maxDurability`, `breakAction`, `wearPerHit`, `wearPerStrike` and `wearPerShot` with a one-line explanation each.
 * **The visual-script nodes are easy to find.** The `Fn.inv_*` and `Fn.item_def` nodes sit under Add Node > Objects > Items beside Add
-  Item and Has Item (before this they were in Advanced, and `inv_cooldown` was in Time). Test `vs_inventory_palette` lists them.
+  Item and Has Item (before this a keyword rule scattered them: most in Advanced, `inv_move` in Movement, `inv_cooldown` in Time). Test `vs_inventory_palette` lists them.
 
 Keys in the sample: `1`-`9` pick a slot, `Q` uses it, `E` opens the bag, `I` the grid bag, `X` swings the sword (wears 1), `V`
 repairs it, `T` puts the selected stack in the grid bag, `Y` takes the first grid item back. The script that does X, V, T, Y and the

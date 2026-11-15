@@ -112,7 +112,8 @@ inline VsPlace VsPlaceForBuiltin(const char* name) {
     auto has = [&](const char* t) { return VsTokenIs(low, t); };
     if (has("clipboard")) return VsAt("Text");   // get_clipboard_text, set_clipboard_text
     // The inventory functions (inv_add, inv_to_grid, inv_cooldown, inv_wear, item_def ...) sit with the other item nodes
-    // (Add Item, Has Item, On Item Added ...) under Objects > Items: not in Advanced, and not in Time because of "cooldown".
+    // (Add Item, Has Item, On Item Added ...) under Objects > Items: the keyword rules below would scatter them (Advanced, Movement
+    // for inv_move, Time for inv_cooldown).
     if (low.rfind("inv_", 0) == 0 || low == "item_def") return VsAt("Objects", "Items");
     if (has("print") || has("log") || has("warn") || has("assert") || has("debug") || has("trace"))
         return VsAt("Debug");

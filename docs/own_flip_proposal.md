@@ -268,11 +268,30 @@ is tried by itself. Please tell us which file went wrong."
    (`ForceOwnReaderFailureForTest`). Take the idea, not the diff.
 6. A real-Windows run (Step 0.1) and your try of your own FBX files.
 
-**Release-note text for the other flips.** Use the template with the format list from the table above. For Flip 4 add: "STL and PLY
-used to go to a third-party library first. Now our own readers go first." For Flip 7 say: "Sound files: WAV files are now decoded by our
-own code. This fixes A-law, mu-law, 64-bit float and ADPCM files, which used to play as noise or silence. If a sound plays wrong,
-set `OKAY_OWN_WAV=0`." For Flip 8 name the known gaps: "Maya Arnold and ShaderFX materials are not read by our code, so such
-files use the old reader."
+**Ready-to-paste lines for the flip release** (`dist/CHANGELOG.txt`, section "Our own code, now on by default"). Each ends with the
+rollback. The announcement one release earlier is "Coming in the next version: <the same formats> will be read by our own code first.
+Nothing changes in this version."
+
+1. "Old model formats (`.off`, `.smd`, `.md5mesh` and `.md5anim`, `.ms3d`, `.ase`) are now read by our own code first. If a file looks
+   wrong, set `OKAY_OWN_OFF=0` (or `OKAY_OWN_SMD`, `OKAY_OWN_MD5`, `OKAY_OWN_MS3D`, `OKAY_OWN_ASE`) and start the program again. If our code
+   cannot read a file, the old reader is tried by itself."
+2. "`.md2`, `.md3`, `.irrmesh`, `.b3d` and DirectX `.x` files are now read by our own code first. MD2 and MD3 play only their first frame,
+   as before. Rollback: `OKAY_OWN_MD2=0`, `_MD3`, `_IRRMESH`, `_B3D`, `_X`."
+3. "`.ter`, `.dxf`, `.nff` and `.xgl` / `.zgl` files are now read by our own code first. Rollback: `OKAY_OWN_TER=0`, `_DXF`, `_NFF`, `_XGL`."
+4. "STL and PLY files are now read by our own readers first. They used to go to a third-party library first. Rollback: `OKAY_OWN_STL=0`,
+   `OKAY_OWN_PLY=0`."
+5. "`.bvh` and `.3ds` files are now read by our own code first. A `.bvh` file gives a skeleton and a motion clip but no stick-figure mesh.
+   Rollback: `OKAY_OWN_BVH=0`, `OKAY_OWN_3DS=0`."
+6. "`.dae` (COLLADA) files are now read by our own code first. Blend shapes in a `.dae` are not read. Rollback: `OKAY_OWN_COLLADA=0`."
+7. "WAV sound files are now decoded by our own code. This fixes A-law, mu-law, 64-bit float and ADPCM files, which used to play as loud noise
+   or as silence. If a sound plays wrong, set `OKAY_OWN_WAV=0` and tell us which file."
+8. "`.fbx` files are now read by our own code first. Maya Arnold and ShaderFX materials are not read by our code, so such files use the
+   old reader. If a model looks wrong (size, rotation, materials, skin, animation), set `OKAY_OWN_FBX=0` and start the program again."
+9. "`.ac`, `.lwo`, `.amf`, `.x3d` and `.3mf` files are now read by our own code first. They can differ from the old import: <list the
+   differences from the table in section 1.2>. Rollback: `OKAY_OWN_AC3D=0`, `_LWO`, `_AMF`, `_X3D`, `_3MF`."
+10. "`.blend` files are now read by our own code first. Not read: modifiers, constraints, shape keys, vertex colours, zstd-compressed files.
+    Rollback: `OKAY_OWN_BLEND=0`."
+
 
 ## 4. What blocks deleting the third-party code
 

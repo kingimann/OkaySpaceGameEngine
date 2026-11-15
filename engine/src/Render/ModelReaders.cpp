@@ -190,8 +190,13 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
                     if (vi < 0) vi = (long)pos.size() + vi + 1;
                     if (ti < 0) ti = (long)uv.size() + ti + 1;
                     if (ni < 0) ni = (long)nrm.size() + ni + 1;
-                    if (vi < 1 || vi > INT32_MAX || ti < 0 || ti > INT32_MAX || ni < 0 || ni > INT32_MAX) badIndex = true;
-                    corners.push_back({(int)vi - 1, (int)ti - 1, (int)ni - 1});
+                    if (vi < 1 || vi > INT32_MAX || ti < 0 || ti > INT32_MAX || ni < 0 || ni > INT32_MAX) {
+                        // Do not narrow an out-of-range long to int (signed overflow when it is 2147483648 on a
+                        // 64-bit long). Keep a corner with position -1 so the check below refuses the file
+                        // ("face index out of range") and the face still counts its corners.
+                        badIndex = true; corners.push_back({-1, -1, -1}); continue;
+                    }
+                    corners.push_back({(int)(vi - 1), (int)(ti - 1), (int)(ni - 1)});
                 }
                 if (corners.size() - first >= 3) { faceStart.push_back((std::uint32_t)first); faceMat.push_back(curMat); }
                 else corners.resize(first);

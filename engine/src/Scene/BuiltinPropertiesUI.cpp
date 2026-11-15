@@ -42,6 +42,7 @@
 #include "okay/Components/UITextBind.hpp"
 #include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UIAnimation.hpp"
+#include "okay/Components/CraftingMenu.hpp"
 #include "okay/Math/Easing.hpp"
 
 namespace okay {
@@ -736,6 +737,18 @@ void RegisterUIAnimation() {
     b.Commit();
 }
 
+// CraftingMenu (record "craftmenu")
+void RegisterCraftingMenu() {
+    PropertyBuilder<CraftingMenu> b("CraftingMenu", "craftmenu", "UI");
+    b.AddKey("toggleKey", &CraftingMenu::toggleKey).Tooltip("Shows and hides the panel (0 = always shown)")
+     .AddBool("open", &CraftingMenu::open).Tooltip("Shown at the start")
+     .AddVec2("position", &CraftingMenu::position).Range(-kBig, kBig, 1).Tooltip("Pixels from the anchor")
+     .AddVec2("buttonSize", &CraftingMenu::buttonSize).Range(0, kBig, 1).Tooltip("Size of each recipe button in pixels")
+     .AddFloat("spacing", &CraftingMenu::spacing).Range(0, 1e3, 1).Tooltip("Pixels between buttons")
+     .AddEnum("anchor", &CraftingMenu::anchor, AnchorNames()).Tooltip("The screen point the position is measured from");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -1017,6 +1030,7 @@ void RegisterUIProperties() {
     RegisterUITextBind();
     RegisterUIBarBind();
     RegisterUIAnimation();
+    RegisterCraftingMenu();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

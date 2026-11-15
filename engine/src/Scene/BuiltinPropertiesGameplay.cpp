@@ -20,6 +20,10 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/ProceduralObjectHolding.hpp"
+#include "okay/Components/BuildPiece.hpp"
+#include "okay/Components/BuilderMode.hpp"
+#include "okay/Components/PoseCapture.hpp"
 #include "okay/Components/AimOffset.hpp"
 #include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/NetInventory.hpp"
@@ -1665,6 +1669,72 @@ void RegisterSequencePlayer() {
     b.Commit();
 }
 
+// ProceduralObjectHolding (record "objholding")
+void RegisterProceduralObjectHolding() {
+    PropertyBuilder<ProceduralObjectHolding> b("ProceduralObjectHolding", "objholding", "Gameplay");
+    b.AddEnum("primaryHand", &ProceduralObjectHolding::primaryHand, {"Left", "Right", "Both"}).Tooltip("Hand a one-handed object goes in (Both = the other hand helps)")
+     .AddEnum("holdingStyle", &ProceduralObjectHolding::holdingStyle, {"Automatic", "Custom"}).Tooltip("Use the object's own style, or always its grip points")
+     .AddBool("armIK", &ProceduralObjectHolding::armIK).Tooltip("Bend the arms onto the grips")
+     .AddFloat("transitionTime", &ProceduralObjectHolding::transitionTime).Range(0, 1e3, 0.01).Tooltip("Seconds for the object to come into the hands")
+     .AddBool("bodyAdjustment", &ProceduralObjectHolding::bodyAdjustment).Tooltip("Heavy or big loads: lean back and walk slower")
+     .AddEnum("carryAnimations", &ProceduralObjectHolding::carryAnimations, {"Automatic", "Custom"}).Tooltip("The built-in lean, or your Animator's carry")
+     .Section("Throw")
+     .AddKey("throwKey", &ProceduralObjectHolding::throwKey).Tooltip("Hold to charge, release to throw (0 = no key)")
+     .AddInt("throwMouseButton", &ProceduralObjectHolding::throwMouseButton).Range(-1, 7, 1).Tooltip("Mouse button that throws (-1 = none)")
+     .AddInt("throwGamepadButton", &ProceduralObjectHolding::throwGamepadButton).Range(-1, 31, 1).Tooltip("Gamepad button that throws (-1 = none)")
+     .AddFloat("throwChargeTime", &ProceduralObjectHolding::throwChargeTime).Range(0, 1e3, 0.05).Tooltip("Seconds held to reach full strength")
+     .AddFloat("throwMinSpeed", &ProceduralObjectHolding::throwMinSpeed).Range(0, kBig, 0.1).Tooltip("Launch speed with no charge (m/s)")
+     .AddFloat("throwMaxSpeed", &ProceduralObjectHolding::throwMaxSpeed).Range(0, kBig, 0.1).Tooltip("Launch speed at full charge (m/s)")
+     .AddFloat("pickupRange", &ProceduralObjectHolding::pickupRange).Range(0, kBig, 0.1).Tooltip("With empty hands, the throw input picks up the nearest object this close");
+    b.Commit();
+}
+
+// BuildPiece (record "buildpiece")
+void RegisterBuildPiece() {
+    PropertyBuilder<BuildPiece> b("BuildPiece", "buildpiece", "Gameplay");
+    b.AddEnum("tier", &BuildPiece::tier, {"Wood", "Stone", "Metal"}).Tooltip("Upgrade tier")
+     .AddFloat("health", &BuildPiece::health).Range(0, kBig, 1).Tooltip("Current health")
+     .AddFloat("maxHealth", &BuildPiece::maxHealth).Range(0, kBig, 1).Tooltip("Full health")
+     .AddString("material", &BuildPiece::material).Tooltip("Resource spent to build, upgrade or repair it")
+     .AddInt("cost", &BuildPiece::cost).Range(0, 1000000, 1).Tooltip("Units of the material it cost (refunds and repairs use it)");
+    b.Commit();
+}
+
+// BuilderMode (record "buildermode"). The seven hotkeys (nextBrushKey ...
+// saveMapKey) are not saved by the record, so they are not properties yet.
+void RegisterBuilderMode() {
+    PropertyBuilder<BuilderMode> b("BuilderMode", "buildermode", "Gameplay");
+    b.AddEnum("brush", &BuilderMode::brush, {"Cube", "Sphere", "Cylinder", "Cone", "Wedge", "Pyramid", "Plane", "Capsule", "Torus", "Prefab"}).Tooltip("Shape placed next")
+     .AddFloat("gridSize", &BuilderMode::gridSize).Range(0.001, kBig, 0.05).Tooltip("Snap step in world units")
+     .AddBool("snapToGrid", &BuilderMode::snapToGrid).Tooltip("Round placement to the grid")
+     .AddFloat("reach", &BuilderMode::reach).Range(0, kBig, 0.1).Tooltip("Furthest place or remove distance")
+     .AddFloat("rotateStepDeg", &BuilderMode::rotateStepDeg).Range(0, 360, 1).Tooltip("Degrees turned per rotate press")
+     .AddFloat("scaleStep", &BuilderMode::scaleStep).Range(0, 100, 0.01).Tooltip("Scale change per scale press")
+     .AddFloat("minScale", &BuilderMode::minScale).Range(0.001, 1e4, 0.01).Tooltip("Smallest brush scale")
+     .AddFloat("maxScale", &BuilderMode::maxScale).Range(0.001, 1e4, 0.1).Tooltip("Largest brush scale")
+     .AddColor("partColor", &BuilderMode::partColor).Range(0, 1, 0.01).Tooltip("Colour of placed shapes")
+     .AddAssetPath("partTexture", &BuilderMode::partTexture, "image").Tooltip("Optional texture for placed shapes")
+     .AddString("buildTag", &BuilderMode::buildTag).Tooltip("Tag placed pieces carry (only these can be removed)")
+     .AddAssetPath("prefabPath", &BuilderMode::prefabPath, "prefab").Tooltip("Prefab the Prefab brush stamps, and the default save target")
+     .AddBool("parentToModel", &BuilderMode::parentToModel).Tooltip("Place shapes under one model root (can be saved as a prefab)")
+     .AddString("modelName", &BuilderMode::modelName).Tooltip("Name of that root")
+     .AddString("mapPath", &BuilderMode::mapPath).Tooltip("Where the save-map key writes the scene")
+     .AddInt("placeButton", &BuilderMode::placeButton).Range(-1, 7, 1).Tooltip("Mouse button that places (0 = left)")
+     .AddInt("removeButton", &BuilderMode::removeButton).Range(-1, 7, 1).Tooltip("Mouse button that removes (1 = right)")
+     .AddBool("brushHotkeys", &BuilderMode::brushHotkeys).Tooltip("Keys 1 to 9 pick a shape")
+     .AddBool("showPreview", &BuilderMode::showPreview).Tooltip("Show a ghost of the next placement")
+     .AddBool("showCrosshair", &BuilderMode::showCrosshair).Tooltip("Add an aim mark");
+    b.Commit();
+}
+
+// PoseCapture (record "posecap")
+void RegisterPoseCapture() {
+    PropertyBuilder<PoseCapture> b("PoseCapture", "posecap", "Animation");
+    b.AddString("clipName", &PoseCapture::clipName).Tooltip("Name of the recorded clip")
+     .AddFloat("recordSeconds", &PoseCapture::recordSeconds).Range(0, 1e4, 0.1).Tooltip("Seconds to record");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2306,6 +2376,10 @@ void RegisterGameplayProperties() {
     RegisterConsumables();
     RegisterAimOffset();
     RegisterSequencePlayer();
+    RegisterProceduralObjectHolding();
+    RegisterBuildPiece();
+    RegisterBuilderMode();
+    RegisterPoseCapture();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

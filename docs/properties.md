@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2322 properties on 169 types, as `property_registry` counts them ("covered 169 component types, 2322 properties"; a number before a slash counts the authored ones; the rest are
+2353 properties on 170 types, as `property_registry` counts them ("covered 170 component types, 2353 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -324,6 +324,7 @@ has `enabled`.
 | VirtualCamera, CinemachineBrain, DollyPath | 34, 2, 1 | virtual camera priority, targets, offsets, damping, shake, free look, dolly and confiner (the confiner box allows +-1e9, its "no limit" default); brain blend; dolly path loop (the waypoints are a list) |
 | Minimap | 48 | layout, view, blips, grid, view cone, rings, north mark, labels, route line, map image, full-screen map and zoom keys. The markers and map shapes are lists; the placed waypoint is play state |
 | HoldableObject, LookAtIK | 23, 12 | hold style, hands, weight, socket, the custom / first-person / third-person placement and both hand grips (`leftGripCurl` and so on); look target, axis, weight, limits, eyes and distance fade (the bone chain, per-bone weights and eye bones are lists) |
+| FootIK | 31 | bone names, planting (weight, rays, pelvis, knee bend), foot axes and probes, foot lock. The hip and knee limits and the unsigned `groundMask` are not properties yet |
 
 How the new types are described, so a tool can rely on it:
 

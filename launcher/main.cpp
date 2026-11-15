@@ -25,6 +25,7 @@
 #include "AntiCheatHardware.hpp"    // the salted hardware hash sent with appeals
 #include "TicketClient.hpp"         // session tickets: the ban / ticket check before a game is started to join a server
 #include "ProjectDelete.hpp"  // Create page: which folders "Delete project" may remove
+#include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
@@ -1744,7 +1745,7 @@ std::string CreateProject(const std::string& location, const std::string& rawNam
         j->failMsg = "Couldn't start a Git repository in " + finalName;
         if (!StartGit(j)) Toast("Git is busy — the project was created without a repository", 2);
     }
-    g_hiddenProjects.erase(std::remove(g_hiddenProjects.begin(), g_hiddenProjects.end(), root.lexically_normal().string()), g_hiddenProjects.end());
+    okayproj::Unhide(g_hiddenProjects, okayproj::FolderKey(root));
     g_projectsNeedRescan = true;
     g_projectJustMade = finalName;
     return root.string();
@@ -1754,8 +1755,11 @@ std::string CreateProject(const std::string& location, const std::string& rawNam
 // Send a folder to the Recycle Bin (Windows asks first if it's too big to recycle).
 static bool MoveToRecycleBin(const fs::path& p) {
     std::error_code ec;
-    std::wstring from = fs::absolute(p, ec).wstring();
-    if (ec || from.empty()) return false;
+    fs::path abs = fs::absolute(p, ec);
+    if (ec || abs.empty()) return false;
+    abs.make_preferred();                        // the shell needs backslashes to recycle (forward slashes can delete for good or fail)
+    std::wstring from = abs.wstring();
+    while (from.size() > 3 && (from.back() == L'\\' || from.back() == L'/')) from.pop_back();
     from.push_back(L'\0');
     SHFILEOPSTRUCTW op{};
     op.wFunc = FO_DELETE;
@@ -4641,8 +4645,7 @@ void LoadPrefs() {
         else if (k == "tab") { try { g_lastTab = std::stoi(v); } catch (...) {} }
         else if (k == "news_seen") g_newsSeen = v;
         else if (k == "projects_dir") g_projectsDir = v;
-        else if (k == "extra_project") { if (!v.empty() && g_extraProjects.size() < 40) g_extraProjects.push_back(v); }
-        else if (k == "hidden_project") { if (!v.empty() && g_hiddenProjects.size() < 100) g_hiddenProjects.push_back(v); }
+        else if (okayproj::ApplyPrefLine(k, v, g_extraProjects, g_hiddenProjects)) {}   // extra_project / hidden_project
         else if (k == "status_until") { try { g_statusUntil = std::stol(v); } catch (...) {} }
         else if (k == "lpin" && v.size() > 2) {   // lpin=d|<id>|<when> or g|...
             long id = 0, when = 0;
@@ -4760,8 +4763,7 @@ void SavePrefs() {
     f << "tab=" << g_lastTab << "\n";
     if (!g_newsSeen.empty()) f << "news_seen=" << g_newsSeen << "\n";
     if (!g_projectsDir.empty()) f << "projects_dir=" << g_projectsDir << "\n";
-    for (const auto& ep : g_extraProjects) f << "extra_project=" << ep << "\n";
-    for (const auto& hp : g_hiddenProjects) f << "hidden_project=" << hp << "\n";
+    okayproj::WritePrefLines(f, g_extraProjects, g_hiddenProjects);
     if (g_statusUntil > 0) f << "status_until=" << g_statusUntil << "\n";
     if (!g_pinsShared) {   // device-only pins (the server has no message_pins yet)
         for (const auto& kv : g_pinsDm)    f << "lpin=d|" << kv.first << "|" << kv.second << "\n";
@@ -19542,18 +19544,7 @@ int main(int argc, char** argv) {
             struct CrProj { std::string name, scene; long long mtime = 0; bool extra = false; bool ready = false; bool missing = false; std::string ver; };   // ver: engine_version in project.okayproj ("" = none)
             static std::vector<CrProj> s_projects;
             static std::string s_projScanned = "\x01";   // never equals a real path -> first scan
-            auto sceneIn = [](const fs::path& root) -> std::string {
-                std::error_code e;
-                fs::path assets = root / "Assets";
-                if (!fs::exists(assets, e)) return "";
-                fs::path preferred = assets / (root.filename().string() + ".okayscene");
-                if (fs::exists(preferred, e)) return preferred.string();
-                for (auto& f : fs::directory_iterator(assets, e))
-                    if (f.path().extension() == ".okayscene") return f.path().string();
-                // A freshly made project whose scene the editor hasn't written yet still
-                // lists (as "setting up..."), pointing at the expected path.
-                return fs::is_empty(assets, e) ? preferred.string() : std::string();
-            };
+            auto sceneIn = [](const fs::path& root) -> std::string { return okayproj::SceneIn(root); };
             if (s_projScanned != std::string(npLoc) || g_projectsNeedRescan) {
                 s_projScanned = npLoc;
                 g_projectsNeedRescan = false;
@@ -19568,17 +19559,8 @@ int main(int argc, char** argv) {
                     if (pr.ready) pr.ver = okayver::ReadProjectVersion(okayproj::RootOfScene(fs::path(scene)).string());   // read only: the launcher never writes into a project
                     s_projects.push_back(pr);
                 };
-                for (auto& e : fs::directory_iterator(fs::path(npLoc), pec)) {
-                    if (!e.is_directory(pec)) continue;
-                    if (std::find(g_hiddenProjects.begin(), g_hiddenProjects.end(), e.path().lexically_normal().string()) != g_hiddenProjects.end()) continue;
-                    std::string sc = sceneIn(e.path());
-                    if (!sc.empty()) add(e.path().filename().string(), sc, false);
-                }
-                for (const auto& ep : g_extraProjects) {
-                    bool dup = false;
-                    for (const auto& pr : s_projects) if (pr.scene == ep) dup = true;
-                    if (!dup) add(okayproj::RootOfScene(fs::path(ep)).filename().string(), ep, true);
-                }
+                for (const auto& lp : okayproj::ScanProjects(fs::path(npLoc), g_hiddenProjects, g_extraProjects))
+                    add(lp.name, lp.scene, lp.extra);
             }
             // Keep polling briefly after a create so the new project appears once the
             // editor saves its first scene, and highlight it during that window.
@@ -19631,13 +19613,11 @@ int main(int argc, char** argv) {
                         if (f.path().extension() == ".okayscene") { sc = f.path().string(); break; }
                 }
                 if (sc.empty() || !fs::exists(fs::path(sc), e)) { Toast("No OkaySpace project (.okayscene) in that folder", 2); return; }
-                auto hid = std::find(g_hiddenProjects.begin(), g_hiddenProjects.end(), okayproj::RootOfScene(fs::path(sc)).lexically_normal().string());
-                if (hid != g_hiddenProjects.end()) { g_hiddenProjects.erase(hid); SavePrefs(); }
-                if (fs::path(sc).parent_path().parent_path().parent_path() != fs::path(npLoc) &&
-                    std::find(g_extraProjects.begin(), g_extraProjects.end(), sc) == g_extraProjects.end()) {
-                    g_extraProjects.insert(g_extraProjects.begin(), sc);
-                    if (g_extraProjects.size() > 40) g_extraProjects.resize(40);
-                    SavePrefs();
+                if (okayproj::Unhide(g_hiddenProjects, okayproj::RootKey(sc))) SavePrefs();
+                if (okayproj::FolderKey(root.parent_path()) != okayproj::FolderKey(fs::path(npLoc))) {
+                    const size_t before = g_extraProjects.size();
+                    if (!okayproj::AddExtra(g_extraProjects, sc)) Toast("Your list of opened projects is full; this one won't be remembered", 2);
+                    else if (g_extraProjects.size() != before) SavePrefs();
                 }
                 s_projScanned = "\x01";
                 if (!editorExe.empty()) { LaunchEditor(editorExe, "", "", sc); Toast("Opening " + root.filename().string(), 1); }
@@ -19820,17 +19800,13 @@ int main(int argc, char** argv) {
             // "Delete project..." (filled by the project menu below).
             static std::string delName, delScene, delErr;
             static bool delExtra = false, delOpen = false;
-            auto forgetProject = [&](const std::string& scene, bool extra) {
-                if (extra) {
-                    g_extraProjects.erase(std::remove(g_extraProjects.begin(), g_extraProjects.end(), scene), g_extraProjects.end());
-                } else {
-                    const std::string key = okayproj::RootOfScene(fs::path(scene)).lexically_normal().string();
-                    if (std::find(g_hiddenProjects.begin(), g_hiddenProjects.end(), key) == g_hiddenProjects.end()) {
-                        g_hiddenProjects.insert(g_hiddenProjects.begin(), key);
-                        if (g_hiddenProjects.size() > 100) g_hiddenProjects.resize(100);
-                    }
-                }
+            // Hides it in the Projects folder and forgets it as an opened-by-path one (both, if it is both). Files stay.
+            // Returns false (and says why) when nothing could be saved.
+            auto forgetProject = [&](const std::string& scene, bool /*extra*/) -> bool {
+                const auto r = okayproj::ForgetProject(fs::path(npLoc), scene, g_hiddenProjects, g_extraProjects);
                 SavePrefs(); s_projScanned = "\x01";
+                if (r == okayproj::ForgetResult::ListFull) { Toast("Too many hidden projects; clear some in launcher.cfg (hidden_project lines)", 2); return false; }
+                return true;
             };
             if (s_projects.empty()) {
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, okaytheme::Mix(okaytheme::kSunken, okaytheme::kBase, 0.35f));
@@ -19956,7 +19932,7 @@ int main(int argc, char** argv) {
                             }
                         }
                         ImGui::Separator();
-                        if (ImGui::MenuItem("Remove from list")) { forgetProject(pr.scene, pr.extra); Toast("Removed " + pr.name + " from the list", 1); }
+                        if (ImGui::MenuItem("Remove from list")) { if (forgetProject(pr.scene, pr.extra)) Toast("Removed " + pr.name + " from the list (its files are still on disk)", 1); }
                         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1));
                         if (ImGui::MenuItem("Delete project\xE2\x80\xA6")) {
                             delName = pr.name; delScene = pr.scene; delExtra = pr.extra; delErr.clear(); delOpen = true;
@@ -20248,8 +20224,7 @@ int main(int argc, char** argv) {
 #endif
                         s_projScanned = "\x01";
                         if (delErr.empty()) {
-                            g_extraProjects.erase(std::remove(g_extraProjects.begin(), g_extraProjects.end(), delScene), g_extraProjects.end());
-                            g_hiddenProjects.erase(std::remove(g_hiddenProjects.begin(), g_hiddenProjects.end(), delRoot.lexically_normal().string()), g_hiddenProjects.end());
+                            okayproj::ForgetDeleted(delScene, g_hiddenProjects, g_extraProjects);
                             SavePrefs();
 #if defined(_WIN32)
                             Toast("Moved " + delName + " to the Recycle Bin", 1);
@@ -20262,8 +20237,7 @@ int main(int argc, char** argv) {
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Remove from list", ImVec2(150, 0))) {
-                    forgetProject(delScene, delExtra);
-                    Toast("Removed " + delName + " from the list", 1);
+                    if (forgetProject(delScene, delExtra)) Toast("Removed " + delName + " from the list (its files are still on disk)", 1);
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();

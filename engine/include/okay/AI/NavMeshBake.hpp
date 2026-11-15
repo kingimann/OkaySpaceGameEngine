@@ -4,6 +4,7 @@
 #include "okay/Math/Quat.hpp"
 #include <atomic>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace okay {
@@ -37,7 +38,11 @@ struct NavBakeInput {
     /// A triangle surface (a Mesh Collider's triangles placed in the world). Each triangle's corners a, b, c are wound so
     /// that cross(b - a, c - a) points out of the surface (the engine's winding; a mirrored transform is undone). A
     /// surface whose front faces point down is a ceiling, not a floor: it blocks but is never walked on.
-    struct Triangles { std::vector<Vec3> corners; int area = 0; };   // 3 corners per triangle, world space
+    /// `twoSided`: the facing is ignored and a triangle counts as walkable by how level it is, whichever way it
+    /// is wound. Gather sets it for an open mesh (a plane, a terrain sheet, a floor imported with the wrong
+    /// winding), which physics treats as solid from both sides; a closed mesh keeps its winding, so the inside
+    /// face of a room's ceiling is never a floor.
+    struct Triangles { std::vector<Vec3> corners; int area = 0; bool twoSided = false; };   // 3 corners per triangle, world space
     std::vector<Box> boxes;
     std::vector<Triangles> meshes;
     std::vector<Sphere> spheres;
@@ -46,6 +51,12 @@ struct NavBakeInput {
     /// The world box to bake; without it the union of the geometry (padded) is used.
     bool hasBounds = false;
     Vec3 boundsMin, boundsMax;
+    /// Work limits for mesh triangles, so a hostile or huge mesh cannot hang or exhaust a bake. Gather copies at
+    /// most `maxMeshTriangles` triangles in total (the rest are counted in `meshTrianglesDropped`); Bake stops
+    /// rasterizing meshes after `maxMeshColumnVisits` (triangle, column) visits and reports it in NavBakeStats.
+    std::size_t maxMeshTriangles = 2000000;
+    std::size_t maxMeshColumnVisits = 12000000;
+    std::size_t meshTrianglesDropped = 0;
 };
 
 struct NavBakeStats {
@@ -56,6 +67,11 @@ struct NavBakeStats {
     int links = 0;
     int vertices = 0;
     double seconds = 0.0;
+    int meshTrianglesDropped = 0;   ///< mesh triangles Gather left out because of the triangle cap
+    int meshTrianglesSkipped = 0;   ///< mesh triangles skipped for non-finite or absurdly large (> 1e7) coordinates
+    bool meshBudgetExceeded = false; ///< the column-visit budget ran out: some mesh triangles were not rasterized
+    bool incomplete = false;        ///< any of the above: the result may be missing geometry (show `warning`)
+    std::string warning;            ///< plain-language explanation when `incomplete`, else empty
 };
 
 /// Builds a NavMesh from NavBakeInput: rasterizes the geometry into a heightfield

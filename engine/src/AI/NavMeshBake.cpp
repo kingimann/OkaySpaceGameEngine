@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <tuple>
 
@@ -79,8 +80,40 @@ int NavMeshBaker::AreaFor(const GameObject* go) {
     return NavArea::Walkable;
 }
 
+namespace {
+// Is the triangle soup watertight: every edge shared by exactly two triangles (vertices compared exactly, as a
+// mesh built from an index buffer shares them)? Edges are hashed (64-bit) and sorted, so the cost is O(n log n).
+bool IsClosedMesh(const TriMesh& tm) {
+    auto vh = [](const Vec3& v) {
+        const float f[3] = {v.x + 0.0f, v.y + 0.0f, v.z + 0.0f};   // + 0.0f turns -0 into +0
+        std::uint64_t h = 1469598103934665603ull;
+        for (float x : f) { std::uint32_t u; std::memcpy(&u, &x, 4); h = (h ^ u) * 1099511628211ull; h ^= h >> 29; }
+        return h;
+    };
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> edges;
+    edges.reserve((std::size_t)tm.TriangleCount() * 3);
+    for (int i = 0; i < tm.TriangleCount(); ++i) {
+        Vec3 c[3]; tm.Triangle(i, c[0], c[1], c[2]);
+        std::uint64_t h[3] = {vh(c[0]), vh(c[1]), vh(c[2])};
+        for (int k = 0; k < 3; ++k) {
+            const std::uint64_t a = h[k], b = h[(k + 1) % 3];
+            edges.emplace_back(std::min(a, b), std::max(a, b));
+        }
+    }
+    std::sort(edges.begin(), edges.end());
+    for (std::size_t i = 0; i < edges.size();) {
+        std::size_t j = i;
+        while (j < edges.size() && edges[j] == edges[i]) ++j;
+        if (j - i != 2) return false;
+        i = j;
+    }
+    return !edges.empty();
+}
+} // namespace
+
 void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, std::uint32_t layerMask) {
-    out.boxes.clear(); out.spheres.clear(); out.capsules.clear(); out.terrains.clear(); out.meshes.clear();
+    out.boxes.clear(); out.spheres.clear(); out.capsules.clear(); out.terrains.clear(); out.meshes.clear(); out.meshTrianglesDropped = 0;
+    std::size_t meshTriTotal = 0;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
         if (!go || !go->active || !go->transform) continue;
@@ -101,13 +134,20 @@ void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, 
                     if (m->IsDynamicBody()) { if (m->UsesConvexHull()) tm = &m->HullTris(); }
                     else if (m->HasTriangles()) tm = &m->Tris();
                     if (tm && !tm->Empty()) {
+                        const std::size_t want = (std::size_t)tm->TriangleCount();
+                        const std::size_t room = out.maxMeshTriangles > meshTriTotal ? out.maxMeshTriangles - meshTriTotal : 0;
+                        const std::size_t take = std::min(want, room);
+                        out.meshTrianglesDropped += want - take;
+                        meshTriTotal += take;
+                        if (take == 0) break;
                         const Mat4 l2w = m->WorldMatrix();
                         const Vec3 ax = l2w.MultiplyVector({1, 0, 0}), ay = l2w.MultiplyVector({0, 1, 0}), az = l2w.MultiplyVector({0, 0, 1});
                         const bool mirrored = Vec3::Dot(Vec3::Cross(ax, ay), az) < 0.0f;   // a mirror flips the winding
                         NavBakeInput::Triangles t; t.area = area;
-                        t.corners.reserve((std::size_t)tm->TriangleCount() * 3);
-                        for (int i = 0; i < tm->TriangleCount(); ++i) {
-                            Vec3 a, b, cc; tm->Triangle(i, a, b, cc);
+                        t.twoSided = !IsClosedMesh(*tm);
+                        t.corners.reserve(take * 3);
+                        for (std::size_t i = 0; i < take; ++i) {
+                            Vec3 a, b, cc; tm->Triangle((int)i, a, b, cc);
                             t.corners.push_back(l2w.MultiplyPoint(a));
                             t.corners.push_back(l2w.MultiplyPoint(mirrored ? cc : b));
                             t.corners.push_back(l2w.MultiplyPoint(mirrored ? b : cc));
@@ -115,7 +155,8 @@ void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, 
                         out.meshes.push_back(std::move(t));
                         break;
                     }
-                    if (m->IsDynamicBody()) break;   // a dynamic body with no hull has no contact either
+                    // No triangles to read (a Mesh Collider with no mesh, or a dynamic body with no hull): it
+                    // still blocks as the box its size describes, as the docs say.
                     out.boxes.push_back({m->WorldCenter(), m->HalfExtents(), go->transform->Rotation(), area});
                     break;
                 }
@@ -172,6 +213,7 @@ struct Heightfield {
     float originX = 0.0f, originZ = 0.0f;
     std::vector<int> head;     // per column: first span (-1 = none), kept sorted by y0
     std::vector<Span> spans;
+    int freeHead = -1;         // spans unlinked by a merge are reused, so memory follows the live spans
     float CenterX(int ix) const { return originX + ((float)ix + 0.5f) * cs; }
     float CenterZ(int iz) const { return originZ + ((float)iz + 0.5f) * cs; }
     void AddSpan(int col, float y0, float y1, float ny, int area) {
@@ -185,15 +227,18 @@ struct Heightfield {
                 else if (y1 - s.y1 < 1e-4f) area = std::max(area, s.area);   // level tops: the higher area index wins
                 if (s.y0 < y0) y0 = s.y0;
                 const int nxt = s.next;
+                const int dead = cur;
                 if (prev >= 0) spans[(std::size_t)prev].next = nxt; else head[(std::size_t)col] = nxt;
+                spans[(std::size_t)dead].next = freeHead; freeHead = dead;
                 cur = nxt;
                 continue;
             }
             prev = cur; cur = s.next;
         }
         Span n{y0, y1, ny, cur, area};
-        spans.push_back(n);
-        const int id = (int)spans.size() - 1;
+        int id;
+        if (freeHead >= 0) { id = freeHead; freeHead = spans[(std::size_t)id].next; spans[(std::size_t)id] = n; }
+        else { spans.push_back(n); id = (int)spans.size() - 1; }
         if (prev >= 0) spans[(std::size_t)prev].next = id; else head[(std::size_t)col] = id;
     }
 };
@@ -239,22 +284,59 @@ bool LineBox(const NavBakeInput::Box& b, const Quat& inv, float x, float z, floa
     return true;
 }
 
-// The part of triangle abc above the column square [x0, x1] x [z0, z1]: false when none (or, for a triangle that is not
-// a wall, only an edge or a point, so a mesh that ends on a column border does not reach into the next column). Otherwise the lowest and highest
-// y of that part. Sutherland-Hodgman clipping of the triangle against the square's four sides.
-bool ClipTriangleToColumn(const Vec3& a, const Vec3& b, const Vec3& c, float x0, float x1, float z0, float z1,
+// A mesh triangle we can rasterize: all corners finite and not absurdly far out (1e7 m), so the bounds and the column
+// arithmetic stay sane.
+inline bool UsableTriangle(const Vec3& a, const Vec3& b, const Vec3& c) {
+    const float v[9] = {a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z};
+    for (float f : v) if (!(std::fabs(f) <= 1e7f)) return false;   // false for NaN and inf too
+    return true;
+}
+
+// The x range of the part of triangle abc inside the z slab [z0, z1]: false when none. Used to visit only the columns
+// a thin diagonal triangle really crosses, instead of its whole bounding box.
+bool SlabXRange(const Vec3& a, const Vec3& b, const Vec3& c, float z0, float z1, float& xMin, float& xMax) {
+    Vec3 buf[2][9];
+    int n = 3, cur = 0;
+    buf[0][0] = a; buf[0][1] = b; buf[0][2] = c;
+    for (int side = 0; side < 2 && n > 0; ++side) {
+        const Vec3* in = buf[cur];
+        Vec3* out = buf[cur ^ 1];
+        int m = 0;
+        for (int i = 0; i < n; ++i) {
+            const Vec3& p = in[i];
+            const Vec3& q = in[(i + 1) % n];
+            const float dp = side == 0 ? p.z - z0 : z1 - p.z, dq = side == 0 ? q.z - z0 : z1 - q.z;
+            if (dp >= 0.0f) out[m++] = p;
+            if ((dp >= 0.0f) != (dq >= 0.0f)) out[m++] = p + (q - p) * (dp / (dp - dq));
+        }
+        n = m; cur ^= 1;
+    }
+    if (n < 1) return false;
+    xMin = 1e30f; xMax = -1e30f;
+    for (int i = 0; i < n; ++i) { xMin = std::min(xMin, buf[cur][i].x); xMax = std::max(xMax, buf[cur][i].x); }
+    return true;
+}
+
+// The part of triangle abc above the column square with corner (ox, oz) and size w x d: false when none (or, for a
+// triangle that is not a wall, only an edge or a point, so a mesh that ends on a column border does not reach into the
+// next column). Otherwise the lowest and highest y of that part. Sutherland-Hodgman clipping against the square's four
+// sides. The triangle is first moved so the column corner is the origin: far from the world origin the numbers stay
+// small (no cancellation in the area test), and w / d are the very differences the caller takes between neighbouring
+// column edges, so two neighbours agree exactly on the border they share.
+bool ClipTriangleToColumn(const Vec3& a0, const Vec3& b0, const Vec3& c0, float ox, float oz, float w, float d,
                           float& yLo, float& yHi) {
+    const Vec3 a{a0.x - ox, a0.y, a0.z - oz}, b{b0.x - ox, b0.y, b0.z - oz}, c{c0.x - ox, c0.y, c0.z - oz};
+    const float x1 = w, z1 = d;
     Vec3 buf[2][9];
     int n = 3;
     buf[0][0] = a; buf[0][1] = b; buf[0][2] = c;
     int cur = 0;
     for (int side = 0; side < 4 && n > 0; ++side) {
-        // Inside test for this side: x >= x0, x <= x1, z >= z0, z <= z1.
         auto dist = [&](const Vec3& p) {
             switch (side) {
-                case 0: return p.x - x0;
+                case 0: return p.x;
                 case 1: return x1 - p.x;
-                case 2: return p.z - z0;
+                case 2: return p.z;
                 default: return z1 - p.z;
             }
         };
@@ -283,7 +365,7 @@ bool ClipTriangleToColumn(const Vec3& a, const Vec3& b, const Vec3& c, float x0,
         area2 += p.x * q.z - q.x * p.z;
         yLo = std::min(yLo, p.y); yHi = std::max(yHi, p.y);
     }
-    if (std::fabs(area2) > 1e-6f * (x1 - x0) * (z1 - z0)) return true;
+    if (std::fabs(area2) > 1e-6f * w * d) return true;
     // No area seen from above. For a sloped or flat triangle that only means it touches the square along an edge or
     // a corner (its neighbour column has it): skip. A vertical triangle (a wall, perhaps of no thickness) has no area
     // in any column, so keep its piece here, but a piece lying on the square's far border (x = x1 or z = z1) belongs
@@ -333,10 +415,27 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
     S.maxStep = std::max(S.maxStep, 0.0f);
     S.maxSlope = std::clamp(S.maxSlope, 0.0f, 89.0f);
     out.settings = S;
+    st.meshTrianglesDropped = (int)std::min<std::size_t>(in.meshTrianglesDropped, 2000000000u);
+    for (const auto& m : in.meshes)
+        for (std::size_t t = 0; t + 2 < m.corners.size(); t += 3)
+            if (!UsableTriangle(m.corners[t], m.corners[t + 1], m.corners[t + 2])) ++st.meshTrianglesSkipped;
+    auto finalizeWarning = [&]() {
+        std::string w;
+        if (st.meshTrianglesDropped > 0) w += std::to_string(st.meshTrianglesDropped) + " mesh triangle(s) were left out (too many; limit " + std::to_string(in.maxMeshTriangles) + "). ";
+        if (st.meshTrianglesSkipped > 0) w += std::to_string(st.meshTrianglesSkipped) + " mesh triangle(s) were skipped (NaN, infinite or beyond 1e7 m). ";
+        if (st.meshBudgetExceeded) w += "The mesh work limit was reached; some mesh triangles were not baked. Raise Cell Size or simplify the mesh. ";
+        st.incomplete = !w.empty();
+        if (!w.empty()) w.pop_back();
+        st.warning = w;
+    };
 
     // ---- Bounds: the bake area --------------------------------------------
     Vec3 bmin{1e30f, 1e30f, 1e30f}, bmax{-1e30f, -1e30f, -1e30f};
-    if (in.hasBounds) { bmin = in.boundsMin; bmax = in.boundsMax; }
+    if (in.hasBounds) {
+        bmin = in.boundsMin; bmax = in.boundsMax;
+        if (!(std::isfinite(bmin.x) && std::isfinite(bmin.y) && std::isfinite(bmin.z) &&
+              std::isfinite(bmax.x) && std::isfinite(bmax.y) && std::isfinite(bmax.z))) return false;
+    }
     else {
         for (const auto& b : in.boxes) { Vec3 mn, mx; BoxAABB(b, mn, mx); Expand(bmin, bmax, mn); Expand(bmin, bmax, mx); }
         for (const auto& s : in.spheres) { Expand(bmin, bmax, s.center - Vec3{s.radius, s.radius, s.radius}); Expand(bmin, bmax, s.center + Vec3{s.radius, s.radius, s.radius}); }
@@ -345,15 +444,21 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
             Expand(bmin, bmax, c.a - r); Expand(bmin, bmax, c.a + r); Expand(bmin, bmax, c.b - r); Expand(bmin, bmax, c.b + r);
         }
         for (const auto& t : in.terrains) { Expand(bmin, bmax, t.aabbMin); Expand(bmin, bmax, t.aabbMax); }
-        for (const auto& m : in.meshes) for (const Vec3& p : m.corners) Expand(bmin, bmax, p);
-        if (bmin.x > bmax.x) { if (stats) *stats = st; report(1.0f); return true; }   // nothing to bake
+        for (const auto& m : in.meshes)
+            for (std::size_t t = 0; t + 2 < m.corners.size(); t += 3)
+                if (UsableTriangle(m.corners[t], m.corners[t + 1], m.corners[t + 2]))
+                    for (int k = 0; k < 3; ++k) Expand(bmin, bmax, m.corners[t + k]);
+        if (bmin.x > bmax.x) { finalizeWarning(); if (stats) *stats = st; report(1.0f); return true; }   // nothing to bake
         const float pad = S.cellSize;
         bmin -= Vec3{pad, S.agentHeight, pad}; bmax += Vec3{pad, S.agentHeight, pad};
     }
     const float cs = S.cellSize;
     const double colsX = std::ceil((bmax.x - bmin.x) / cs), colsZ = std::ceil((bmax.z - bmin.z) / cs);
-    if (colsX < 1 || colsZ < 1) { if (stats) *stats = st; report(1.0f); return true; }
-    if (colsX * colsZ > 20000000.0) return false;   // 20M columns: raise the cell size or shrink the bounds
+    if (!(colsX >= 1) || !(colsZ >= 1)) {
+        if (!(colsX < 1 || colsZ < 1)) return false;   // NaN or infinite extent
+        finalizeWarning(); if (stats) *stats = st; report(1.0f); return true;
+    }
+    if (!(colsX * colsZ <= 20000000.0)) return false;   // 20M columns: raise the cell size or shrink the bounds
     Heightfield hf;
     hf.nx = (int)colsX; hf.nz = (int)colsZ; hf.cs = cs;
     hf.originX = bmin.x; hf.originZ = bmin.z;
@@ -463,23 +568,42 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
     // Triangles: each one is clipped to the square of every column it overlaps, and the part inside becomes a span
     // from its lowest to its highest point there (a floor gives a thin span, a slope a span as tall as its rise over
     // the cell, a wall a tall one). The top's normal is the triangle's, so a face pointing down is never a floor.
+    std::size_t visits = 0;
     for (const auto& m : in.meshes) {
-        for (std::size_t t = 0; t + 2 < m.corners.size(); t += 3) {
-            if ((t & 1023) == 0 && stop()) return false;
+        for (std::size_t t = 0; t + 2 < m.corners.size() && !st.meshBudgetExceeded; t += 3) {
+            if (stop()) return false;
             const Vec3 &a = m.corners[t], &b = m.corners[t + 1], &c = m.corners[t + 2];
+            if (!UsableTriangle(a, b, c)) { tick(); continue; }
             Vec3 n = Vec3::Cross(b - a, c - a);
             const float len = n.Magnitude();
             if (!(len > 1e-12f) || !std::isfinite(len)) { tick(); continue; }
-            const float ny = n.y / len;
+            const float ny = m.twoSided ? std::fabs(n.y) / len : n.y / len;
             Vec3 mn = a, mx = a; Expand(mn, mx, b); Expand(mn, mx, c);
             int x0, z0, x1, z1; if (!colRange(mn, mx, x0, z0, x1, z1)) { tick(); continue; }
-            for (int iz = z0; iz <= z1; ++iz)
-                for (int ix = x0; ix <= x1; ++ix) {
-                    const float cx0 = hf.originX + (float)ix * cs, cz0 = hf.originZ + (float)iz * cs;
+            // Row by row: only the columns the triangle really crosses in each row (a thin diagonal sliver costs about
+            // its length, not its bounding box). The column edges are one function of the index, so two neighbours
+            // share exactly the same border value.
+            auto edgeX = [&](int i) { return hf.originX + (float)i * cs; };
+            auto edgeZ = [&](int i) { return hf.originZ + (float)i * cs; };
+            for (int iz = z0; iz <= z1; ++iz) {
+                if (visits >= in.maxMeshColumnVisits) { st.meshBudgetExceeded = true; break; }
+                if (stop()) return false;
+                ++visits;
+                const float cz0 = edgeZ(iz), cz1 = edgeZ(iz + 1);
+                float sx0, sx1;
+                if (!SlabXRange(a, b, c, cz0, cz1, sx0, sx1)) continue;
+                int rx0 = std::clamp((int)std::floor((sx0 - hf.originX) / cs) - 1, x0, x1);   // one column of slack for rounding
+                int rx1 = std::clamp((int)std::floor((sx1 - hf.originX) / cs) + 1, x0, x1);
+                const std::size_t span = (std::size_t)(rx1 - rx0 + 1);
+                if (in.maxMeshColumnVisits - visits < span) { st.meshBudgetExceeded = true; break; }
+                visits += span;
+                for (int ix = rx0; ix <= rx1; ++ix) {
+                    const float cx0 = edgeX(ix), cx1 = edgeX(ix + 1);
                     float y0, y1;
-                    if (ClipTriangleToColumn(a, b, c, cx0, cx0 + cs, cz0, cz0 + cs, y0, y1))
+                    if (ClipTriangleToColumn(a, b, c, cx0, cz0, cx1 - cx0, cz1 - cz0, y0, y1))
                         hf.AddSpan(iz * hf.nx + ix, y0, y1, ny, m.area);
                 }
+            }
             tick();
         }
     }
@@ -736,6 +860,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
     }
     out.Finalize();
     st.polys = (int)out.polys.size(); st.links = (int)out.links.size(); st.vertices = (int)out.vertices.size();
+    finalizeWarning();
     st.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     if (stats) *stats = st;
     report(1.0f);

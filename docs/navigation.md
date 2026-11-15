@@ -69,15 +69,34 @@ the surface can exclude more.
 | Auto Bounds | Bake everything the colliders cover (padded). Off: only the given box. |
 
 A **Mesh Collider** bakes as its triangles, placed in the world. Each triangle is
-clipped to the square of every column it covers, and the part inside becomes a
-span from its lowest to its highest point there: a floor gives a thin span, a
-ramp follows its slope, and a wall made of a single quad (no thickness) still
-blocks. The triangle's facing decides the slope test, so a surface whose front
-faces point down is a ceiling, never a floor (a mirrored, negative-scale object
-is handled). A dynamic body that collides as its convex hull bakes as the hull
-(with Include Dynamic Bodies), and a Mesh Collider with no mesh to read bakes as
-the box its size describes. Test: `navmesh_mesh_collider` (an L-shaped floor, a
-ramp, a wall quad, a pillar, a ceiling, a mirrored floor).
+clipped to the square of every column it crosses (only the columns it really
+crosses, so a long thin triangle costs about its length), and the part inside
+becomes a span from its lowest to its highest point there: a floor gives a thin
+span, a ramp follows its slope, and a wall made of a single quad (no thickness)
+still blocks. A mirrored, negative-scale object is handled.
+
+Which side is a floor: physics treats a mesh collider as solid from both sides,
+so the bake does too, where it can tell. An **open** mesh (a plane, a terrain
+sheet, a floor with the wrong winding: some edge is not shared by exactly two
+triangles) is **two-sided**: a triangle is walkable by how level it is, whichever
+way it is wound. A **closed** (watertight) mesh keeps its winding: a face that
+points down is a ceiling, never a floor, so the underside of a slab is not walked
+on. A closed mesh with some faces flipped is not detected and follows its winding.
+
+A dynamic body that collides as its convex hull bakes as the hull (with Include
+Dynamic Bodies). A Mesh Collider with no triangles to read (no mesh, or a dynamic
+body with no hull) bakes as the box its size describes.
+
+Limits, so a huge or hostile mesh cannot hang or exhaust the bake: at most
+2,000,000 mesh triangles are copied (the rest are left out), at most 12,000,000
+(triangle, column) visits are made (then the remaining triangles are not baked),
+and a triangle with a NaN, infinite or beyond 1e7 m corner is skipped. Nothing
+crashes; the bake still finishes, `NavBakeStats::incomplete` is set and
+`NavBakeStats::warning` says in plain words what is missing (the editor logs it
+and shows it in the Navigation window). Raise Cell Size or simplify the mesh.
+Test: `navmesh_mesh_collider` (an L-shaped floor, a ramp, a wall quad, a pillar,
+a flipped floor, a closed slab, a mirrored floor, the budgets, bad numbers, a
+dynamic hull, a wall on a column border far from the origin).
 
 How the bake works (engine/src/AI/NavMeshBake.cpp): every collider is
 rasterized into a heightfield of solid spans per column (so floors can stack:

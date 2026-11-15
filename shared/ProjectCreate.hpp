@@ -140,7 +140,7 @@ inline const std::vector<TemplateInfo>& Templates() {
         {"Snake",                "The classic, fully playable.", 3},
         {"Brick Breaker",        "Paddle, ball, and a wall of bricks.", 3},
         {"Main Menu",            "A title screen with buttons.", 3},
-        {"Inventory",            "Drag-and-drop item grid.", 3},
+        {"Inventory",            "A bag and a grid bag, a potion with a cooldown, a sword that wears out.", 3},
         {"Humanoid",             "A rigged character to animate.", 3},
     };
     return t;
@@ -428,7 +428,7 @@ inline void TemplateFeatureLines(const char* title, const char*& a, const char*&
         {"Snake", "Playable game", "The classic rules", "A board"},
         {"Brick Breaker", "Paddle", "Ball", "A wall of bricks"},
         {"Main Menu", "Title screen", "Buttons", "A place to start"},
-        {"Inventory", "Item grid", "Drag and drop", "A sample bag"},
+        {"Inventory", "A bag and a grid bag", "A potion with a cooldown", "A sword that wears out"},
         {"Humanoid", "A rigged character", "Ready to animate", "A place to stand"},
     };
     a = b = c = "";

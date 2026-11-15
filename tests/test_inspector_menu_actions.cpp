@@ -844,18 +844,22 @@ void TestParseTextIsBounded() {
     RUN_SUITE("a huge text is refused without being copied or cut into pieces");
     auto tf = PropertyRegistry::FindByName("Transform");
     auto light = PropertyRegistry::FindByName("Light");
-    CHECK(tf && light);
-    if (!tf || !light) return;
+    auto spawner = PropertyRegistry::FindByName("Spawner");
+    CHECK(tf && light && spawner);
+    if (!tf || !light || !spawner) return;
     const PropertyDesc* position = tf->Find("position");
     const PropertyDesc* rotation = tf->Find("rotation");
     const PropertyDesc* intensity = light->Find("intensity");
     const PropertyDesc* color = light->Find("color");
-    CHECK(position && rotation && intensity && color);
-    if (!position || !rotation || !intensity || !color) return;
+    const PropertyDesc* whole = spawner->Find("maxAlive");            // a whole number
+    const PropertyDesc* yesNo = spawner->Find("autoStart");           // a true / false value
+    CHECK(position && rotation && intensity && color && whole && yesNo);
+    if (!position || !rotation || !intensity || !color || !whole || !yesNo) return;
+    CHECK(whole->type == PropertyType::Int && yesNo->type == PropertyType::Bool);
     std::string huge;
     for (int i = 0; i < 16 * 1024 * 1024; ++i) huge += "1 ";            // 32 MB of numbers
     PropertyValue v;
-    for (const PropertyDesc* d : {position, rotation, intensity, color}) {
+    for (const PropertyDesc* d : {position, rotation, intensity, color, whole, yesNo}) {
         g_allocated = 0; g_counting = true;
         const bool parsed = d->ParseText(huge, v);
         g_counting = false;

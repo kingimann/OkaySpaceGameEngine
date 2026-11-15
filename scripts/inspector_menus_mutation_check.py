@@ -27,6 +27,8 @@ CTX = 'editor/InspectorContextModel.hpp'
 IDS = 'editor/ComponentIdScope.hpp'
 TABLE = 'editor/AddComponentRules.hpp'
 MAIN = 'editor/main.cpp'
+PROPS = 'engine/src/Scene/Properties.cpp'
+SERIALIZER = 'engine/src/Scene/SceneSerializer.cpp'
 
 # (name, test, [(file, old text, new text)])
 HEADER_ONLY = [
@@ -99,6 +101,24 @@ ENGINE = [
      [(MAIN, "    oked::SetTipComponent(part);   // the fields of this section", "    // (removed) the fields of this section")]),
     ('7d main.cpp: a card does not name its own component for tooltips and menus', 'test_add_component_rules',
      [(MAIN, "        oked::SetTipComponent(curComp);   // a card that never calls CompHeader", "        // (removed) a card that never calls CompHeader")]),
+    ('6m engine: ParseFloats copies a huge text before looking at it (no size limit)', 'test_inspector_menu_actions',
+     [(PROPS, "    constexpr std::size_t kMaxText = 1024;\n    if (raw.size() > kMaxText) return false;\n", "    constexpr std::size_t kMaxText = 1024;\n    (void)kMaxText;\n")]),
+    ('6n engine: ParseFloats cuts a long comma list into every piece before counting', 'test_inspector_menu_actions',
+     [(PROPS, "            if (static_cast<int>(parts.size()) > n) return false;   // already one too many: stop splitting\n            if (comma == std::string::npos) break;",
+              "            if (comma == std::string::npos) break;")]),
+    ('6o engine: ParseFloats cuts a long list of numbers into every piece before counting', 'test_inspector_menu_actions',
+     [(PROPS, "            if (j > i) parts.push_back(t.substr(i, j - i));\n            if (static_cast<int>(parts.size()) > n) return false;   // already one too many: stop splitting\n",
+              "            if (j > i) parts.push_back(t.substr(i, j - i));\n")]),
+    ('6p engine: ParseFloat copies a huge text', 'test_inspector_menu_actions',
+     [(PROPS, "bool ParseFloat(const std::string& raw, float& out) {\n    if (raw.size() > 256) return false;   // no number is this long: refuse before copying a huge text\n", "bool ParseFloat(const std::string& raw, float& out) {\n")]),
+    ('6r engine: ParseHexColor copies a huge text', 'test_inspector_menu_actions',
+     [(PROPS, "bool ParseHexColor(const std::string& raw, Color& out) {\n    if (raw.size() > 64) return false;\n", "bool ParseHexColor(const std::string& raw, Color& out) {\n")]),
+    ('6s engine: ParseInt copies a huge text', 'test_inspector_menu_actions',
+     [(PROPS, "bool ParseInt(const std::string& raw, long long& out) {\n    if (raw.size() > 256) return false;\n", "bool ParseInt(const std::string& raw, long long& out) {\n")]),
+    ('6t engine: ParseBool copies a huge text', 'test_inspector_menu_actions',
+     [(PROPS, "bool ParseBool(const std::string& raw, bool& out) {\n    if (raw.size() > 64) return false;\n", "bool ParseBool(const std::string& raw, bool& out) {\n")]),
+    ('6q engine: SerializeObject cannot leave the children out', 'test_inspector_menu_actions',
+     [(SERIALIZER, "            if (!includeChildren) continue;   // the object alone\n", "")]),
     ('2a CheckCopyIsExact always says "exact"', 'test_inspector_menu_actions', [(MODEL, "    if (addedSorted == ownSorted) return r;", "    return r;")]),
     ('2b Paste As New ignores a clip that is not exact', 'test_inspector_menu_actions',
      [(MODEL, "    if (!clip.exact) {\n        if (why) *why = \"A new \"", "    if (false) {\n        if (why) *why = \"A new \"")]),
@@ -178,6 +198,18 @@ def engine_objects(test, edits, work, ctx):
         changed.discard('main.cpp')
         headers = True   # the test's own object has to be built again with the other folder
     objs = []
+    engine_sources = []   # a changed engine source: built here and linked before the library, so its code replaces the library's
+    for f, _, _ in edits:
+        if f.startswith('engine/src/') and f not in engine_sources:
+            engine_sources.append(f)
+    for f in engine_sources:
+        out = os.path.join(work, os.path.basename(f) + '.o')
+        inc = [os.path.join(ROOT, 'engine', 'include'), os.path.join(ROOT, 'engine', 'third_party', 'stb'), os.path.join(ROOT, 'engine', 'third_party', 'ufbx')]
+        c = run(['nice', '-n', '10', 'g++'] + ENGINE_DEFS + sum((['-I', d] for d in inc), []) + ['-isystem', '/usr/include/SDL2', '-O0', '-DNDEBUG', '-std=c++17', '-w',
+                 '-c', os.path.join(work, os.path.basename(f)), '-o', out])
+        if c.returncode:
+            return None, c.stderr[:200].replace('\n', ' ')
+        objs.append(out)
     for key, src in parts:
         name = os.path.basename(src)
         if name in changed or headers:

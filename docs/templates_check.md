@@ -148,6 +148,9 @@ suite stays green. A listed failure that stops happening fails the test, so the 
   test and was left to the owner of the serializer. The Humanoid template avoids it by object order. A scene a person builds
   by hand (Separate Into Parts, then add objects) can still hit it.
 * **Sandbox: the player creeps down the voxel terrain.** See "Known failures" above.
+* **The File menu has three rows named Examples** (`editor/main.cpp` builds a menu with that name three times; the first and the
+  third list the same node playground scenes). Not touched here: `claude/editor-menus` (claim and PR on issue #422) is rebuilding
+  the menu bar and names this problem. `examples_work` checks the scenes the menu opens, not the menu itself (no window).
 * **Two scenes nothing offers.** `NewPlatformer3D` and `NewTerrainSandbox` in `EditorState` are not reachable from the launcher or
   any editor menu (see "Scenes nothing offers" above). They work and are tested; whether to offer or delete them is the owner's
   call.

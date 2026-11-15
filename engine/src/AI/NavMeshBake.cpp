@@ -83,7 +83,7 @@ int NavMeshBaker::AreaFor(const GameObject* go) {
 namespace {
 // Is the triangle soup watertight: every edge shared by exactly two triangles (vertices compared exactly, as a
 // mesh built from an index buffer shares them)? Edges are hashed (64-bit) and sorted, so the cost is O(n log n).
-bool IsClosedMesh(const TriMesh& tm) {
+bool IsClosedMesh(const TriMesh& tm, std::size_t count) {
     auto vh = [](const Vec3& v) {
         const float f[3] = {v.x + 0.0f, v.y + 0.0f, v.z + 0.0f};   // + 0.0f turns -0 into +0
         std::uint64_t h = 1469598103934665603ull;
@@ -91,8 +91,8 @@ bool IsClosedMesh(const TriMesh& tm) {
         return h;
     };
     std::vector<std::pair<std::uint64_t, std::uint64_t>> edges;
-    edges.reserve((std::size_t)tm.TriangleCount() * 3);
-    for (int i = 0; i < tm.TriangleCount(); ++i) {
+    edges.reserve(count * 3);
+    for (int i = 0; i < (int)count; ++i) {
         Vec3 c[3]; tm.Triangle(i, c[0], c[1], c[2]);
         std::uint64_t h[3] = {vh(c[0]), vh(c[1]), vh(c[2])};
         for (int k = 0; k < 3; ++k) {
@@ -112,7 +112,7 @@ bool IsClosedMesh(const TriMesh& tm) {
 } // namespace
 
 void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, std::uint32_t layerMask) {
-    out.boxes.clear(); out.spheres.clear(); out.capsules.clear(); out.terrains.clear(); out.meshes.clear(); out.meshTrianglesDropped = 0;
+    out.boxes.clear(); out.spheres.clear(); out.capsules.clear(); out.terrains.clear(); out.meshes.clear(); out.meshTrianglesDropped = 0; out.closedTestTriangles = 0;
     std::size_t meshTriTotal = 0;
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
@@ -144,7 +144,10 @@ void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, 
                         const Vec3 ax = l2w.MultiplyVector({1, 0, 0}), ay = l2w.MultiplyVector({0, 1, 0}), az = l2w.MultiplyVector({0, 0, 1});
                         const bool mirrored = Vec3::Dot(Vec3::Cross(ax, ay), az) < 0.0f;   // a mirror flips the winding
                         NavBakeInput::Triangles t; t.area = area;
-                        t.twoSided = !IsClosedMesh(*tm);
+                        // Closed-ness is only judged on a whole mesh, and only on the triangles we keep (the edge table
+                        // costs ~48 bytes per triangle, so the cap protects it too). A cut-off mesh counts as open.
+                        if (take == want) { t.twoSided = !IsClosedMesh(*tm, take); out.closedTestTriangles += take; }
+                        else t.twoSided = true;
                         t.corners.reserve(take * 3);
                         for (std::size_t i = 0; i < take; ++i) {
                             Vec3 a, b, cc; tm->Triangle((int)i, a, b, cc);

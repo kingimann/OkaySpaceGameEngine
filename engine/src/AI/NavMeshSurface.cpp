@@ -1,3 +1,4 @@
+#include <cmath>
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Core/Log.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -90,6 +91,10 @@ bool NavMeshSurface::Bake(Scene& scene, NavBakeStats* stats, std::string* error)
     auto mesh = std::make_unique<NavMesh>();
     NavBakeStats st;
     if (!NavMeshBaker::Bake(input, settings, *mesh, nullptr, nullptr, &st)) {
+        const Vec3 lo = input.boundsMin, hi = input.boundsMax;
+        const bool badBounds = input.hasBounds && !(std::isfinite(lo.x) && std::isfinite(lo.y) && std::isfinite(lo.z) &&
+                                                    std::isfinite(hi.x) && std::isfinite(hi.y) && std::isfinite(hi.z));
+        if (badBounds) { if (error) *error = "the bake bounds contain a NaN or infinite number (fix the Bounds Center / Size)"; return false; }
         if (error) *error = "the bake area is too large for this cell size (raise Cell Size or shrink the bounds)";
         return false;
     }

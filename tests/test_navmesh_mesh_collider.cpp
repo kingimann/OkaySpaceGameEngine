@@ -230,6 +230,11 @@ int main() {
         CHECK(in.meshes.size() == 1);
         if (!in.meshes.empty()) CHECK(in.meshes[0].corners.size() == 15);
         CHECK(in.meshTrianglesDropped == 7);
+        CHECK(in.closedTestTriangles == 0);   // the cut-off mesh gets no edge table (counts as open)
+        if (!in.meshes.empty()) CHECK(in.meshes[0].twoSided);
+        NavBakeInput whole; NavMeshBaker::Gather(s, whole);
+        CHECK(whole.closedTestTriangles == 12);
+        if (!whole.meshes.empty()) CHECK(!whole.meshes[0].twoSided);   // a whole cube is closed
         NavMeshBuildSettings S; NavMesh m; NavBakeStats st;
         CHECK(NavMeshBaker::Bake(in, S, m, nullptr, nullptr, &st));
         CHECK(st.meshTrianglesDropped == 7);

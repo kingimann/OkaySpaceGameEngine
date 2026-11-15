@@ -82,6 +82,10 @@ triangles) is **two-sided**: a triangle is walkable by how level it is, whicheve
 way it is wound. A **closed** (watertight) mesh keeps its winding: a face that
 points down is a ceiling, never a floor, so the underside of a slab is not walked
 on. A closed mesh with some faces flipped is not detected and follows its winding.
+**One crack or hole anywhere in a Mesh Collider makes the whole collider two-sided**
+(and so does a mesh cut off by the triangle limit), so the underside of its
+ceilings can become walkable and floating islands are possible. Use a closed
+(watertight) mesh, or Box Colliders, for ceilings.
 
 A dynamic body that collides as its convex hull bakes as the hull (with Include
 Dynamic Bodies). A Mesh Collider with no triangles to read (no mesh, or a dynamic

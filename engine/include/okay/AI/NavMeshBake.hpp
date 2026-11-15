@@ -57,6 +57,7 @@ struct NavBakeInput {
     std::size_t maxMeshTriangles = 2000000;
     std::size_t maxMeshColumnVisits = 12000000;
     std::size_t meshTrianglesDropped = 0;
+    std::size_t closedTestTriangles = 0;   ///< triangles Gather ran the closed-mesh edge test on (a mesh over the cap is not tested)
 };
 
 struct NavBakeStats {

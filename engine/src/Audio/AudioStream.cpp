@@ -4,6 +4,7 @@
 #include "okay/Audio/AudioByteSource.hpp"
 #include "okay/Audio/FlacDecoder.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
+#include "okay/Audio/WavDecoder.hpp"
 #include "okay/Core/ImportSidecar.hpp"
 #include "AudioInternal.hpp"
 
@@ -130,6 +131,26 @@ private:
     std::uint64_t pos_ = 0;
 };
 
+/// Own WAV streaming (okay::wav::WavStream), used only when wav::OwnWavEnabled(): PCM, float, A-law, mu-law, MS and IMA
+/// ADPCM, RF64, decoded block by block. More than two channels are averaged to mono by ForceMonoDecoder, as for the old reader.
+class OwnWavPcmDecoder : public PcmDecoder {
+public:
+    bool Open(std::shared_ptr<AudioByteSource> src, std::string* error) {
+        wav::Limits lim;
+        lim.maxInputBytes = 0x7fffffffu;   // the file readers already refuse 2 GB and more
+        if (!ws_.Open(std::move(src), error, &lim)) return false;
+        sampleRate = ws_.Info().sampleRate;
+        channels = ws_.Info().channels;
+        totalFrames = static_cast<std::int64_t>(ws_.TotalFrames());
+        return true;
+    }
+    std::size_t Read(float* dst, std::size_t maxFrames) override { return ws_.Read(dst, maxFrames); }
+    bool Seek(std::int64_t frame) override { return ws_.Seek(static_cast<std::uint64_t>(std::max<std::int64_t>(0, frame))); }
+    std::size_t MemoryBytes() const override { return sizeof(*this) + ws_.MemoryBytes(); }
+private:
+    wav::WavStream ws_;
+};
+
 class FlacPcmDecoder : public PcmDecoder {
 public:
     bool Open(std::shared_ptr<AudioByteSource> src, std::string* error) {
@@ -201,7 +222,12 @@ std::unique_ptr<PcmDecoder> MakeDecoder(std::shared_ptr<AudioByteSource> src, st
     const std::size_t got = src->Read(0, head, 12);
     std::string err;
     std::unique_ptr<PcmDecoder> d;
-    if (got >= 12 && std::memcmp(head, "RIFF", 4) == 0 && std::memcmp(head + 8, "WAVE", 4) == 0) {
+    const bool own = wav::OwnWavEnabled();   // opt-in (OKAY_OWN_WAV); the old reader below stays the default
+    if (own && got >= 12 && (std::memcmp(head, "RIFF", 4) == 0 || std::memcmp(head, "RF64", 4) == 0 || std::memcmp(head, "BW64", 4) == 0) &&
+        std::memcmp(head + 8, "WAVE", 4) == 0) {
+        std::unique_ptr<OwnWavPcmDecoder> w(new OwnWavPcmDecoder);
+        if (w->Open(src, &err)) d = std::move(w);
+    } else if (got >= 12 && std::memcmp(head, "RIFF", 4) == 0 && std::memcmp(head + 8, "WAVE", 4) == 0) {
         std::unique_ptr<WavPcmDecoder> w(new WavPcmDecoder);
         if (w->Open(src, &err)) d = std::move(w);
     } else if (got >= 4 && std::memcmp(head, "OggS", 4) == 0) {

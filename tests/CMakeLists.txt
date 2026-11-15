@@ -79,6 +79,12 @@ add_executable(test_own_wav test_own_wav.cpp)
 target_link_libraries(test_own_wav PRIVATE okay::engine)
 add_test(NAME own_wav COMMAND test_own_wav WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(own_wav PROPERTIES TIMEOUT 240)
+# Own WAV streaming (WavStream, AudioStream on top of it with OKAY_OWN_WAV), RF64 / BW64, smpl and cue chunks: streamed == whole clip for every
+# format, hand-computed ADPCM values, every truncation, hostile ds64 sizes, budgets, and golden hashes of the old AudioStream PCM path
+add_executable(test_own_wav_stream test_own_wav_stream.cpp)
+target_link_libraries(test_own_wav_stream PRIVATE okay::engine)
+add_test(NAME own_wav_stream COMMAND test_own_wav_stream WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(own_wav_stream PROPERTIES TIMEOUT 240)
 
 # FLAC decoding against known samples, and audio import settings (mono, stream).
 add_executable(test_flac_import test_flac_import.cpp)

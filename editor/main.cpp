@@ -7330,7 +7330,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
 // A slim bottom status bar: the current selection on the left,
 // object count · active tool · edit/play mode · FPS on the right.
 void DrawStatusBar(EditorState& ed) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.135f, 0.135f, 0.145f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, SurfaceCol(1));
     ImGui::BeginChild("##statusbar", ImVec2(0, ImGui::GetFrameHeight()), false,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::AlignTextToFramePadding();
@@ -11167,7 +11167,7 @@ void DrawProject(EditorState& ed) {
         ImGui::SameLine();
         if (s_view == 0 && tbSliderW > 0.0f) {   // how big the tiles are
             ImGui::SetNextItemWidth(tbSliderW);
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.29f, 0.29f, 0.29f, 1.0f));   // a visible track
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, (ThemeIsLight() ? SurfaceCol(5) : ImVec4(0.29f, 0.29f, 0.29f, 1.0f)));   // a visible track
             ImGui::SliderFloat("##tilesize", &s_cell, 48.0f, 128.0f, "");
             ImGui::PopStyleColor();
             prefsChanged |= ImGui::IsItemDeactivatedAfterEdit();
@@ -15561,7 +15561,7 @@ void DrawScriptEditor(EditorState& ed) {
         if (s_showFind) {
             static char s_replace[128] = "";
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 7.0f));
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, SurfaceCol(3));
             ImGui::BeginChild("##findbar", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
             if (sfFocusField) { ImGui::SetKeyboardFocusHere(); s_findCursor = caret.pos; }
             ImGui::AlignTextToFramePadding();
@@ -16620,7 +16620,7 @@ void DrawScriptEditor(EditorState& ed) {
                     if (sg) {
                         ImVec2 hp = te.CaretScreenPosBelow();
                         ImGui::SetNextWindowPos(ImVec2(hp.x, hp.y - ImGui::GetTextLineHeightWithSpacing() * 2.4f));
-                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(36, 36, 36, 245));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::ColorConvertFloat4ToU32(SurfaceCol(3)));
                         if (ImGui::Begin("##sighelp", nullptr,
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
@@ -16850,7 +16850,7 @@ void DrawScriptEditor(EditorState& ed) {
                         ImVec2 cp2 = te.CaretScreenPosBelow();
                         float y = cp2.y - te.RowHeight() * 2.0f - 6.0f;
                         ImGui::SetNextWindowPos(ImVec2(cp2.x, y < 0 ? cp2.y + 2.0f : y));
-                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(51, 51, 51, 245));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::ColorConvertFloat4ToU32(SurfaceCol(3)));
                         if (ImGui::Begin("##sighint", nullptr,
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
@@ -25324,7 +25324,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
         { ImVec2 mn=ImGui::GetItemRectMin(), mx=ImGui::GetItemRectMax();
           ImGui::GetWindowDrawList()->AddRectFilled(mn, ImVec2(mn.x+4.0f, mx.y), IM_COL32(240,189,107,255), 4.0f, ImDrawFlags_RoundCornersLeft); }
         if (open) {
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.17f, 0.17f, 0.17f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, SurfaceCol(3));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12,10));
             ImGui::BeginChild("card", ImVec2(0,0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
 
@@ -28738,7 +28738,7 @@ void DrawInspector(EditorState& ed) {
     // Header: an active toggle + a type chip + the object name on
     // a tinted bar, then a Tag field + Save-as-Prefab, then a divider. The child
     // auto-sizes to its contents so there's no empty gap at the top.
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.177f, 0.177f, 0.177f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, SurfaceCol(3));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
     ImGui::BeginChild("##objheader", ImVec2(0, 0),
                       ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
@@ -28956,7 +28956,7 @@ void DrawInspector(EditorState& ed) {
             if (ps.x > 1.0f && ps.y > 1.0f) { refW = ps.x; refH = ps.y; hasParent = true; }
         }
         UIRect ar = GetUIRect(go);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.177f, 0.177f, 0.177f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, SurfaceCol(3));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
         ImGui::BeginChild("##uilayoutcard", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
         const float capW = ImGui::CalcTextSize("ARRANGE").x + 12.0f;

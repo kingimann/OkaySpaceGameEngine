@@ -872,6 +872,7 @@ static void RunEditorPlayKeyTest(int& failures) {
     Input::FeedKeys({});
 }
 #include "NodePlayground.hpp"      // File > Examples > Node Playground
+#include "TemplateTable.hpp"        // template title -> scene builder (New Project)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
 #include "ProblemsPanel.hpp"       // Problems panel: one list of what is wrong
@@ -18500,36 +18501,14 @@ void DrawFileDialogs(EditorState& ed) {
 // leaves nothing behind and keeps the open scene (EditorState::CreateProject). A bare --template just loads that
 // template into the open scene.
 
-// Template title -> the EditorState scene factory (the same titles the launcher lists).
-using TplFn = void (EditorState::*)();
+// Template title -> the EditorState scene factory. The table is editor/TemplateTable.hpp (tested by templates_work);
+// an unknown title still gives the 3D Scene, and now says so in the Console.
+using TplFn = oked::TemplateBuilder;
 static TplFn TemplateFn(const std::string& title) {
-    struct Tpl { const char* title; TplFn fn; };
-    static const Tpl tpls[] = {
-        {"2D Scene",             &EditorState::NewScene2D},
-        {"3D Scene",             &EditorState::NewScene3D},
-        {"Empty",                &EditorState::NewScene},
-        {"First Person",         &EditorState::NewFPS},
-        {"Third Person",         &EditorState::NewThirdPerson},
-        {"Humanoid",             &EditorState::NewHumanoid},
-        {"Third Person Shooter", &EditorState::NewThirdPersonShooter},
-        {"Point & Click",        &EditorState::NewPointAndClick},
-        {"Sandbox",              &EditorState::NewVoxelSandbox},
-        {"Vehicle (3D)",         &EditorState::NewVehicle3D},
-        {"Vehicle (get in and drive)", &EditorState::NewVehicleSeats3D},
-        {"Vehicle (2D)",         &EditorState::NewVehicle2D},
-        {"Platformer",           &EditorState::NewPlatformer},
-        {"Top-Down",             &EditorState::NewTopDown},
-        {"Top-Down Shooter",     &EditorState::NewTopDownShooter},
-        {"2.5D Platformer",      &EditorState::NewPlatformer25D},
-        {"Coin Collector",       &EditorState::NewCoinCollector},
-        {"Snake",                &EditorState::NewSnake},
-        {"Brick Breaker",        &EditorState::NewBrickBreaker},
-        {"Main Menu",            &EditorState::NewMainMenu},
-        {"Inventory",            &EditorState::NewInventory},
-        {"Multiplayer",          &EditorState::NewMultiplayer},
-    };
-    for (const Tpl& t : tpls) if (title == t.title) return t.fn;
-    return &EditorState::NewScene3D;   // default template
+    bool known = true;
+    const TplFn fn = oked::BuilderOrDefault(title, &known);
+    if (!known) ConsoleLog("Unknown template \"" + title + "\": made a 3D Scene instead.", 1);
+    return fn;
 }
 
 // ---- Errors the person has to read: one modal, plain words, the reason on the second line ----

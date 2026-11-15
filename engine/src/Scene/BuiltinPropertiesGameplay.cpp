@@ -1885,8 +1885,8 @@ void RegisterEquipment() {
 // GridInventory (record "gridinventory"). The items and overflow are lists.
 void RegisterGridInventory() {
     PropertyBuilder<GridInventory> b("GridInventory", "gridinventory", "Gameplay");
-    b.AddInt("cols", &GridInventory::cols).Range(1, 256, 1).Tooltip("Grid columns")
-     .AddInt("rows", &GridInventory::rows).Range(1, 256, 1).Tooltip("Grid rows")
+    b.AddInt("cols", &GridInventory::cols).Range(1, 64, 1).Tooltip("Grid columns (at most 64)")
+     .AddInt("rows", &GridInventory::rows).Range(1, 64, 1).Tooltip("Grid rows (at most 64)")
      .AddKey("toggleKey", &GridInventory::toggleKey).Tooltip("Opens and closes the grid")
      .AddString("title", &GridInventory::title).Tooltip("Heading of the grid")
      .AddFloat("weightLimit", &GridInventory::weightLimit).Range(0, kBig, 0.5).Tooltip("Most weight it holds (0 = no limit)")

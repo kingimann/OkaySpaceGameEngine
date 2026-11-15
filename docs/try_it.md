@@ -317,6 +317,10 @@ the test `ui_text_shots` makes the "after" ones again, the two "before" ones are
   11 of 11 passed.
 * Reproduced before fixing: the same two new tests, linked with the renderer from before this change, fail 24 of 158
   (`ui_nameplate_bound`) and 2 of 272 (`world_text_rich`) checks; with the fix both are 0.
+* All of the above ran on the branch before `main` (one SHA-256, vehicles, owner rules) was merged into it. After that merge
+  (it had no conflicts) only the cheap checks were repeated: a configure of the merged tree, the feature map check, the
+  branch lint, the MinGW win32 syntax check and a syntax-only compile of the editor, the player, the renderer and the new
+  tests. The suites were not re-run on the merged tree here (the shared build queue was too long); CI does that.
 
 **Unverified:** the real editor window and menus (steps 1, 3, 7, 8, 9), the Game view drawing of the plates in the editor, the
 player run in step 10 (the player's drawing code was only syntax-checked, never run), the Windows exe and the installer copy of

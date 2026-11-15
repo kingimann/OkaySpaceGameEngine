@@ -622,6 +622,41 @@ int main() {
         fs::remove_all(base, ec);
     }
 
+    // ---- File > Open of a scene outside Assets/ (Game/Levels/a.okayscene) roots the project where the gate finds it, so the
+    //      Project panel, File > Project Upgrade and the upgrade itself all work on the same folder (review of #888, finding 4)
+    {
+        namespace fs = std::filesystem;
+        const fs::path base = fs::temp_directory_path() / ("okay_hooks_root_" + std::to_string((long long)std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::error_code ec;
+        fs::create_directories(base / "Game" / "Levels", ec);
+        std::ofstream(base / "Game" / "project.okayproj", std::ios::binary) << "engine_version=2.855.0\n";
+        std::ofstream(base / "Game" / "Levels" / "a.okayscene", std::ios::binary) << SceneSerializer::Serialize(Scene("a"));
+        okayup::GateEnv env;
+        env.running = "2.855.0";
+        env.rootRules = okayup::DefaultRootRules();
+        env.rootRules->ceiling = base;                                                          // nothing above the test's folder counts
+        okayup::ProjectGate gate(env);
+        // what oked::ProjectUpgradeInit puts under Load in the editor
+        EditorState::beforeLoad = [&gate](const std::string& p, std::string* why) { return gate.MayLoad(p, why); };
+        EditorState::projectRootOf = [&gate](const std::string& p) { return gate.RootOf(p); };
+        EditorState ed;
+        std::string err;
+        CHECK(ed.Load((base / "Game" / "Levels" / "a.okayscene").string(), &err));
+        std::cerr << "[review4_open_roots_project] projectDir='" << ed.projectDir() << "'\n";
+        CHECK(ed.projectDir() == (base / "Game").string());
+        CHECK(gate.UpgradeRootOf(ed.path(), ed.projectDir()) == ed.projectDir());           // the window shows what its button upgrades
+        // a loose scene opened next does not change the open project (as before); one of another project moves it there
+        fs::create_directories(base / "Other" / "Assets", ec);
+        std::ofstream(base / "loose.okayscene", std::ios::binary) << SceneSerializer::Serialize(Scene("l"));
+        std::ofstream(base / "Other" / "Assets" / "o.okayscene", std::ios::binary) << SceneSerializer::Serialize(Scene("o"));
+        std::ofstream(base / "Other" / "project.okayproj", std::ios::binary) << "engine_version=2.855.0\n";
+        CHECK(ed.Load((base / "Other" / "Assets" / "o.okayscene").string(), &err) && ed.projectDir() == (base / "Other").string());
+        CHECK(ed.Load((base / "loose.okayscene").string(), &err) && ed.projectDir() == (base / "Other").string());
+        EditorState::beforeLoad = nullptr;
+        EditorState::projectRootOf = nullptr;
+        fs::remove_all(base, ec);
+    }
+
     // ---- Play's snapshot is the scene as it is right now, even for an edit nobody announced (no PushUndo) ------------
     {
         Fresh();

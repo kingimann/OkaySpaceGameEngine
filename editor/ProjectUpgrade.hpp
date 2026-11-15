@@ -29,11 +29,38 @@ namespace fs = std::filesystem;
 /// True when `dir` is a project folder: it has an Assets folder or a project.okayproj file in it. (A .okay folder alone
 /// does not count: the editor leaves one next to any scene it opened, project or not.)
 bool IsProjectRoot(const fs::path& dir);
-/// The project folder a scene belongs to: the folder that holds the nearest Assets folder above the scene (any case on
-/// Windows); else the scene's own folder when that is a project (the old flat layout); else the nearest folder above it
-/// that holds project.okayproj (a scene in Levels/ or Scenes/), the editor's working folder excepted (its project.okayproj
-/// is the old shared settings file). "" when the scene is not part of any project (a loose file).
-std::string ProjectRootForScene(const std::string& scene);
+
+/// What ProjectRootForScene needs from the machine, so the rules can be tried anywhere (tests pass their own).
+struct RootRules {
+    bool assetsAnyCase = false;   ///< an "Assets" folder the scene is inside may be spelled in any case (Windows)
+    fs::path workingFolder;       ///< the editor's working folder: its project.okayproj is the old shared settings file
+    fs::path home;                ///< the person's home folder: never a project
+    fs::path ceiling;             ///< tests: the search goes no higher than this folder ("" = up to the drive root)
+};
+/// This machine's rules: any case on Windows, the current folder, HOME (USERPROFILE on Windows).
+RootRules DefaultRootRules();
+/// The project folder a scene belongs to. From the scene's folder upwards, the nearest folder that is clearly a project:
+///   - it holds the scene through a folder called Assets (any case when `assetsAnyCase`): <project>/Assets/.../scene;
+///   - or it holds a project.okayproj with an engine_version stamp (not the working folder: its file is the old shared one,
+///     which a release build stamps too).
+/// Only when no folder up the path is clearly a project: the scene's own folder when it holds project.okayproj or an Assets
+/// folder (the old flat layout; not the working folder). A drive root and the home folder are never a project. Not evidence:
+/// an unstamped project.okayproj above the scene (a copy of the shared file) and an Assets folder beside a folder above the
+/// scene (the release folder holds Assets/ next to examples/). "" for a loose file.
+std::string ProjectRootForScene(const std::string& scene, const RootRules& rules);
+std::string ProjectRootForScene(const std::string& scene);   ///< with DefaultRootRules()
+/// The project File > Project Upgrade works on: the project of `scene`, else `projectDir` when that is a project folder
+/// (no scene saved yet). The window shows this folder and its Upgrade button upgrades this folder.
+std::string UpgradeRootFor(const std::string& scene, const std::string& projectDir, const RootRules& rules);
+/// The folder whose project.okayproj holds the settings of the project open in `projectDir`: `projectDir` when it is a project
+/// folder (it has project.okayproj or an Assets folder), else "" (the editor's shared file). So the old shared file is only
+/// ever copied into a real project, never into a scene's folder.
+std::string SettingsFolderFor(const std::string& projectDir);
+/// True for the root of a drive or a network share ("C:\", "/", "\\server\share").
+bool IsDriveRoot(const fs::path& dir);
+/// `a` and `b` are the same folder on disk, however each is spelled (a link, 8.3 name, another case on Windows, a trailing
+/// separator). False when either is missing.
+bool SameFolder(const fs::path& a, const fs::path& b);
 /// A folder as a map key: absolute, normalized, no trailing separator, lower case on Windows.
 std::string RootKey(const std::string& root);
 
@@ -65,6 +92,10 @@ struct Options {
     std::string legacySettings;       ///< text a project with no project.okayproj of its own starts from (the old shared file)
     std::vector<std::string> skipDirs;   ///< absolute folders to leave out of the backup (build output)
     std::uintmax_t spaceMargin = 16u * 1024u * 1024u;   ///< free space wanted beyond the copy itself
+    /// Above this many files or bytes the folder is too big to be copied without asking: the scan stops early and the result
+    /// says `tooLarge` (nothing made). A folder taken for a project by mistake (Documents, a drive) is caught here.
+    std::uint64_t largeFiles = 50000, largeBytes = 8ull * 1024 * 1024 * 1024;
+    bool allowLarge = false;          ///< the person said "copy it anyway"
     std::function<std::uintmax_t(const fs::path&, std::error_code&)> availableSpace;   ///< default: fs::space
     FailHook fail;
 };
@@ -75,6 +106,7 @@ struct Result {
     std::string error;                ///< the first thing that went wrong, in plain words
     std::string restoreNote;          ///< what was done about it: "The project is exactly as it was." and the like
     bool rolledBack = false;          ///< every file the upgrade had already rewritten was put back
+    bool tooLarge = false;            ///< stopped at the scan: more than Options::largeFiles / largeBytes (nothing was made)
     std::string backupDir;            ///< the finished backup ("" if none was made)
     int scenes = 0, prefabs = 0;      ///< checked
     int rewritten = 0;                ///< scene / prefab files that had to change
@@ -143,7 +175,7 @@ RestoreResult RestoreBackup(const BackupInfo& backup, const std::string& project
 
 // ---- the question ---------------------------------------------------------------------------------------------------------
 
-enum class PromptKind { None, Older, Unknown, Newer, NotInstalled, Working, Done, Failed };
+enum class PromptKind { None, Older, Unknown, Newer, NotInstalled, Working, Done, Failed, Large };
 enum class Choice { Upgrade, Keep, Cancel, OpenAnyway, UpdateEditor, Back, Continue, Close };
 
 struct Prompt {
@@ -154,7 +186,7 @@ struct Prompt {
     std::string keepTarget;           ///< Older: the installed editor "Keep" would start (the newest of the project's line), "" if none
     bool backupOnly = false;          ///< Working / Done / Failed: it is the backup before opening a newer project
     Progress progress;                ///< Working
-    Result result;                    ///< Done / Failed
+    Result result;                    ///< Done / Failed / Large (how big the folder is, roughly: what was counted before stopping)
     std::string message;              ///< NotInstalled: the sentence to show
 };
 
@@ -167,6 +199,8 @@ struct GateEnv {
     std::function<std::vector<std::string>(const std::string& projectDir)> outputDirs;   ///< Build Settings output folders
     FailHook fail;                                                ///< tests only
     std::function<std::uintmax_t(const fs::path&, std::error_code&)> availableSpace;   ///< tests only
+    std::optional<RootRules> rootRules;                           ///< tests only: how a scene's project is found (default: DefaultRootRules())
+    std::uint64_t largeFiles = 0, largeBytes = 0;                 ///< tests only: the "too big to copy without asking" limits (0 = Options' default)
 };
 
 /// An editor of another version to start in place of this one (the "Keep" choice).
@@ -181,13 +215,21 @@ public:
     explicit ProjectGate(GateEnv env = {});
 
     /// The editor wants to open `scene`. `proceed` runs when the project may be opened: at once when there is nothing to
-    /// ask, otherwise after the person's answer. `cancel` runs when it may not (or when a question is already open: one
-    /// at a time). A scene that is not part of a project, and a project that was already opened this session, never ask.
+    /// ask, otherwise after the person's answer. `cancel` runs when it may not. A scene that is not part of a project, and a
+    /// project that was already opened this session, never ask. One question at a time: a request that comes while a window
+    /// is open (the launcher handing over another project) is held and handled when the window closes; a newer held request
+    /// replaces an older one (whose `cancel` runs).
     void Open(const std::string& scene, std::function<void()> proceed, std::function<void()> cancel = {});
-    /// File > Project Upgrade...: the person asks for the upgrade of the project `scene` belongs to (an open one, so there
-    /// is no question): the backup and upgrade start at once, and `done` runs after the result window is dismissed with
+    /// File > Project Upgrade...: the person asks for the upgrade of UpgradeRootFor(scene, projectDir) (an open project, so
+    /// there is no question): the backup and upgrade start at once, and `done` runs after the result window is dismissed with
     /// Continue. Does nothing while a window is open.
-    void Upgrade(const std::string& scene, std::function<void()> done = {});
+    void Upgrade(const std::string& scene, std::function<void()> done = {}, const std::string& projectDir = {});
+    /// The project a scene belongs to, by this gate's rules (ProjectRootForScene).
+    std::string RootOf(const std::string& scene) const;
+    /// What Upgrade(scene, ..., projectDir) works on (UpgradeRootFor with this gate's rules).
+    std::string UpgradeRootOf(const std::string& scene, const std::string& projectDir) const;
+    /// True while an Open is held, waiting for the window on screen to close.
+    bool HasHeldOpen() const { return held_.has_value(); }
     /// True while a question, the upgrade or its result is on screen.
     bool Busy() const { return prompt_.kind != PromptKind::None; }
     const Prompt& prompt() const { return prompt_; }
@@ -221,13 +263,16 @@ public:
 
 private:
     void Ask(PromptKind k, const std::string& root, const std::string& scene, const std::string& version);
-    void StartJob(bool migrate);
+    void StartJob(bool migrate, bool allowLarge = false);
+    void RunHeld();
     void Finish(bool proceed);
     void KeepVersion();
 
     GateEnv env_;
     Prompt prompt_;
     std::function<void()> proceed_, cancel_;
+    struct Held { std::string scene; std::function<void()> proceed, cancel; };
+    std::optional<Held> held_;
     std::unique_ptr<UpgradeJob> job_;
     std::set<std::string> cleared_, kept_;
     bool quit_ = false, update_ = false;

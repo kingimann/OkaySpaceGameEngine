@@ -9,6 +9,7 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 
 #include "ProjectState.hpp"
@@ -37,6 +38,44 @@ bool StripUtf8Bom(std::string& t) {
         static_cast<unsigned char>(t[2]) != 0xBF)
         return false;
     t.erase(0, 3);
+    return true;
+}
+// A file that starts with a UTF-16 byte-order mark (FF FE little-endian, FE FF big-endian), as Windows PowerShell's `>` and
+// Notepad's "Unicode" encoding write it, turned into UTF-8 without the mark. Written from the UTF-16 and UTF-8 definitions
+// (Unicode chapter 3): a pair of surrogates makes one code point above U+FFFF; a lone surrogate or an odd byte count is
+// damage. Returns false (and leaves `t` alone) when `t` has no UTF-16 mark; sets `bad` when it has one but is damaged.
+bool Utf16ToUtf8(std::string& t, bool& bad) {
+    bad = false;
+    if (t.size() < 2) return false;
+    const unsigned char b0 = static_cast<unsigned char>(t[0]), b1 = static_cast<unsigned char>(t[1]);
+    const bool le = b0 == 0xFF && b1 == 0xFE, be = b0 == 0xFE && b1 == 0xFF;
+    if (!le && !be) return false;
+    if (t.size() % 2 != 0) { bad = true; return true; }
+    auto unit = [&](std::size_t i) {
+        const unsigned a = static_cast<unsigned char>(t[i]), b = static_cast<unsigned char>(t[i + 1]);
+        return le ? (a | (b << 8)) : ((a << 8) | b);
+    };
+    std::string out;
+    out.reserve(t.size() / 2);
+    for (std::size_t i = 2; i < t.size(); i += 2) {
+        unsigned cp = unit(i);
+        if (cp >= 0xD800 && cp <= 0xDBFF) {                       // the first of a pair
+            if (i + 3 >= t.size()) { bad = true; return true; }
+            const unsigned lo = unit(i + 2);
+            if (lo < 0xDC00 || lo > 0xDFFF) { bad = true; return true; }
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+            i += 2;
+        } else if (cp >= 0xDC00 && cp <= 0xDFFF) { bad = true; return true; }   // the second of a pair, alone
+        if (cp < 0x80) out += static_cast<char>(cp);
+        else if (cp < 0x800) { out += static_cast<char>(0xC0 | (cp >> 6)); out += static_cast<char>(0x80 | (cp & 0x3F)); }
+        else if (cp < 0x10000) {
+            out += static_cast<char>(0xE0 | (cp >> 12)); out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F)); out += static_cast<char>(0x80 | (cp & 0x3F));
+        } else {
+            out += static_cast<char>(0xF0 | (cp >> 18)); out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F)); out += static_cast<char>(0x80 | (cp & 0x3F));
+        }
+    }
+    t.swap(out);
     return true;
 }
 std::string ErrnoText() { return errno ? std::error_code(errno, std::generic_category()).message() : std::string("unknown error"); }
@@ -116,6 +155,7 @@ std::string PathKey(const fs::path& p) {
 }  // namespace
 
 // ---- which folder is the project ---------------------------------------------------------------------------------------
+// Written from the folder layout the editor makes (docs/project_upgrade.md, "Which folder is the project"); no other code.
 
 bool IsProjectRoot(const fs::path& dir) {
     std::error_code ec;
@@ -128,58 +168,114 @@ bool IsProjectRoot(const fs::path& dir) {
 namespace {
 
 // "Assets" as a folder name. Windows folder names ignore case (a project copied around may end up with "assets"), so
-// there any case counts; elsewhere the name must be exactly "Assets", as the editor makes it. Compared on the native
-// characters, so a name that has no narrow spelling on Windows can't throw.
-bool IsAssetsFolderName(const fs::path& name) {
+// there any case counts (`anyCase`); elsewhere the name must be exactly "Assets", as the editor makes it. Compared on the
+// native characters, so a name that has no narrow spelling on Windows can't throw.
+bool IsAssetsFolderName(const fs::path& name, bool anyCase) {
     const auto& n = name.native();
-#if defined(_WIN32)
-    static const char kWord[] = "assets";   // compared with the name in lower case (ASCII letters only)
-#else
     static const char kWord[] = "Assets";
-#endif
     if (n.size() != sizeof(kWord) - 1) return false;
     for (std::size_t i = 0; i < n.size(); ++i) {
         long c = static_cast<long>(n[i]);
-#if defined(_WIN32)
-        if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-#endif
-        if (c != static_cast<long>(static_cast<unsigned char>(kWord[i]))) return false;
+        long w = static_cast<long>(static_cast<unsigned char>(kWord[i]));
+        if (anyCase) {   // ASCII letters only
+            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+            if (w >= 'A' && w <= 'Z') w += 'a' - 'A';
+        }
+        if (c != w) return false;
     }
     return true;
 }
 
-// The editor's working folder. When no project is open the editor keeps its settings in a project.okayproj there (the
-// old shared file), so that file does not make every folder below the working folder part of a project.
-bool IsWorkingFolder(const fs::path& dir) {
+// The folder as the disk spells it: links resolved, absolute, no trailing separator (okayproj::Normalized's rule).
+fs::path Canon(const fs::path& p) {
     std::error_code ec;
-    const fs::path cwd = fs::current_path(ec);
-    return !ec && !cwd.empty() && PathKey(cwd) == PathKey(dir);
+    fs::path n = fs::weakly_canonical(p, ec);
+    if (ec || n.empty()) n = okayproj::Absolute(p);
+    n = n.lexically_normal();
+    if (n.filename().empty() && n.has_relative_path()) n = n.parent_path();
+    return n;
+}
+
+// project.okayproj in `dir` with an engine_version line: written by an editor that knows about versions for this project.
+bool HasStampedProjectFile(const fs::path& dir) {
+    const okayver::Stamp st = okayver::ReadProjectStamp(dir.string());
+    return st.fileFound && !st.version.empty();
 }
 
 }  // namespace
 
-std::string ProjectRootForScene(const std::string& scene) {
+bool IsDriveRoot(const fs::path& dir) {
+    if (dir.empty()) return false;
+    const fs::path n = Canon(dir);
+    const fs::path rel = n.relative_path();
+    if (rel.empty()) return true;                                                     // "/", "C:\"
+    // "\\server\share": a network share's root (its name is part of the root on Windows)
+    return n.root_name().native().size() > 2 && std::distance(rel.begin(), rel.end()) == 1;
+}
+
+bool SameFolder(const fs::path& a, const fs::path& b) {
+    if (a.empty() || b.empty()) return false;
+    std::error_code ec;
+    const bool same = fs::equivalent(a, b, ec);                                       // the same folder on disk (links, 8.3 names, \\?\, case)
+    if (!ec) return same;
+    std::error_code e2;
+    if (!fs::exists(a, e2) || !fs::exists(b, e2)) return false;                       // a missing folder is nobody's
+    return PathKey(Canon(a)) == PathKey(Canon(b));                                    // the disk couldn't say: compare the spellings
+}
+
+RootRules DefaultRootRules() {
+    RootRules r;
+#if defined(_WIN32)
+    r.assetsAnyCase = true;
+    const char* home = std::getenv("USERPROFILE");
+#else
+    const char* home = std::getenv("HOME");
+#endif
+    if (home && *home) r.home = fs::path(home);
+    std::error_code ec;
+    r.workingFolder = fs::current_path(ec);
+    if (ec) r.workingFolder.clear();
+    return r;
+}
+
+std::string ProjectRootForScene(const std::string& scene, const RootRules& rules) {
     if (scene.empty()) return {};
     std::error_code ec;
     fs::path abs = fs::absolute(fs::path(scene), ec);
     if (ec) return {};
     abs = abs.lexically_normal();
-    // 1. The nearest Assets folder above the scene: the project is the folder that holds it.
-    for (fs::path p = abs.parent_path(); !p.empty(); p = p.parent_path()) {
-        if (IsAssetsFolderName(p.filename())) return fs::is_directory(p, ec) ? p.parent_path().string() : std::string();
-        if (p == p.parent_path()) break;
-    }
-    // 2. The scene's own folder, when it is a project (the old flat layout: project.okayproj or Assets beside the scene).
     const fs::path dir = abs.parent_path();
-    if (IsProjectRoot(dir)) return dir.string();
-    // 3. A scene in some other folder of a project (Levels/, Scenes/, ...): the nearest folder above it that holds a
-    //    project.okayproj. The editor's working folder is skipped: its project.okayproj is the old shared settings file.
-    for (fs::path p = dir.parent_path(); !p.empty(); p = p.parent_path()) {
-        const fs::path pf = p / okayproj::SettingsFileName();
-        if (fs::is_regular_file(pf, ec) && !IsWorkingFolder(p)) return p.string();
+    auto never = [&](const fs::path& p) { return IsDriveRoot(p) || (!rules.home.empty() && SameFolder(p, rules.home)); };
+    auto working = [&](const fs::path& p) { return !rules.workingFolder.empty() && SameFolder(p, rules.workingFolder); };
+    // The nearest folder that is clearly a project: it holds the scene through Assets/, or it has a stamped project.okayproj.
+    const fs::path ceiling = rules.ceiling.empty() ? fs::path() : okayproj::Absolute(rules.ceiling);
+    fs::path child;   // the folder below `p` on the way to the scene
+    for (fs::path p = dir; !p.empty(); child = p, p = p.parent_path()) {
+        if (!ceiling.empty() && child == ceiling) break;                             // tests: nothing above the ceiling
+        if (!never(p)) {
+            if (!child.empty() && IsAssetsFolderName(child.filename(), rules.assetsAnyCase) && fs::is_directory(child, ec)) return p.string();
+            if (!working(p) && HasStampedProjectFile(p)) return p.string();
+        }
         if (p == p.parent_path()) break;
     }
+    // The old flat layout: project.okayproj (or Assets) right beside the scene.
+    if (IsProjectRoot(dir) && !never(dir) && !working(dir)) return dir.string();
     return {};
+}
+
+std::string ProjectRootForScene(const std::string& scene) { return ProjectRootForScene(scene, DefaultRootRules()); }
+
+std::string UpgradeRootFor(const std::string& scene, const std::string& projectDir, const RootRules& rules) {
+    std::string root = ProjectRootForScene(scene, rules);
+    if (root.empty() && !projectDir.empty() && IsProjectRoot(projectDir) && !IsDriveRoot(projectDir) &&
+        !(!rules.home.empty() && SameFolder(projectDir, rules.home)))
+        root = projectDir;
+    return root;
+}
+
+std::string SettingsFolderFor(const std::string& projectDir) {
+    if (projectDir.empty() || IsDriveRoot(projectDir)) return {};
+    return IsProjectRoot(projectDir) ? projectDir : std::string();
 }
 
 std::string RootKey(const std::string& root) {
@@ -329,6 +425,7 @@ struct UpgradeJob::Impl {
     std::unique_ptr<okay::Scene> scratch;
 
     std::size_t idx = 0;                       // position inside the current phase
+    std::uint64_t scanFiles = 0, scanBytes = 0;   // what the scan has seen so far (for the "too big" limits)
     std::uint64_t totalBytes = 0, copiedBytes = 0, totalFiles = 0, copiedFiles = 0, madeEntries = 0;
     std::string current;
 
@@ -441,6 +538,7 @@ struct UpgradeJob::Impl {
             if (ec) return Fail("Couldn't read the project folder \"" + root.string() + "\": " + ec.message());
         }
         const fs::recursive_directory_iterator end;
+        if (!opt.allowLarge && (scanFiles > opt.largeFiles || scanBytes > opt.largeBytes)) return TooLarge();
         for (int n = 0; n < 256 && *scan != end; ++n) {
             const fs::directory_entry de = **scan;
             const fs::path rp = de.path().lexically_relative(root);   // not fs::relative: that would follow a link
@@ -461,6 +559,8 @@ struct UpgradeJob::Impl {
                 e.mtime = de.last_write_time(ec);
                 e.isScene = HasExt(nm, ".okayscene");
                 e.isPrefab = HasExt(nm, ".okayprefab");
+                ++scanFiles;
+                scanBytes += e.size;
                 entries.push_back(e);
             } else {
                 res.warnings.push_back("\"" + rel + "\" is not an ordinary file or folder: it is left out of the backup.");
@@ -469,6 +569,7 @@ struct UpgradeJob::Impl {
             scan->increment(ec);
             if (ec) return Fail("Couldn't read the folder \"" + (root / rp).parent_path().string() + "\": " + ec.message());
         }
+        if (!opt.allowLarge && (scanFiles > opt.largeFiles || scanBytes > opt.largeBytes)) return TooLarge();
         if (*scan != end) return;
         scan.reset();
         std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.rel < b.rel; });
@@ -481,6 +582,16 @@ struct UpgradeJob::Impl {
         }
         idx = 0;
         phase = opt.migrate ? Phase::Checking : Phase::Space;
+    }
+
+    // More than the limits: a folder this big is copied only when the person says so (it may be a folder that was taken for a
+    // project by mistake). Nothing has been made yet.
+    void TooLarge() {
+        res.tooLarge = true;
+        res.files = scanFiles;
+        res.bytes = scanBytes;
+        Fail("\"" + root.string() + "\" holds more than " + (scanFiles > opt.largeFiles ? std::to_string(opt.largeFiles) + " files" : Megabytes(opt.largeBytes)) +
+             ", which is a lot to copy for a backup. Check that this folder is the project. Nothing was changed.");
     }
 
     bool CheckWritableDirs() {
@@ -507,7 +618,10 @@ struct UpgradeJob::Impl {
             std::string text = raw;
             // The engine's loader refuses a file that starts with the mark, so such a file is checked without it and written
             // back without it (the backup keeps the original bytes, and a restore puts them back).
-            const bool bom = StripUtf8Bom(text);
+            bool damaged16 = false;
+            const bool utf16 = Utf16ToUtf8(text, damaged16);
+            if (damaged16) return Fail("\"" + e.rel + "\" can't be upgraded: it starts with a UTF-16 byte-order mark but is not whole UTF-16 text.");
+            const bool bom = !utf16 && StripUtf8Bom(text);
             const okay::SceneMigration::Result r = okay::SceneMigration::MigrateThroughEngine(text);
             if (!r.ok) return Fail("\"" + e.rel + "\" can't be upgraded: " + r.error + ".");
             const std::string& finalText = r.changed ? r.text : text;
@@ -519,8 +633,9 @@ struct UpgradeJob::Impl {
             if (!warns.empty()) res.log.push_back(e.rel + ": " + std::to_string(warns.size()) + (warns.size() == 1 ? " record" : " records") + " this version doesn't know (kept as they are).");
             (e.isPrefab ? res.prefabs : res.scenes)++;
             if (bom) res.log.push_back(e.rel + ": removed the UTF-8 byte-order mark at the start of the file (the scene loader reads files without one).");
+            if (utf16) res.log.push_back(e.rel + ": converted from UTF-16 to UTF-8, without the byte-order mark (the scene loader reads UTF-8).");
             for (const std::string& l : r.log) res.log.push_back(e.rel + ": " + l);
-            if (r.changed || bom) {
+            if (r.changed || bom || utf16) {
                 if (ReadOnly(abs)) return Fail("\"" + e.rel + "\" is read-only, so it can't be upgraded. Make it writable and try again. Nothing was changed.");
                 Change c;
                 c.rel = e.rel; c.size = e.size; c.mtime = e.mtime; c.hash = HashText(raw); c.text = finalText;
@@ -877,8 +992,16 @@ void ProjectGate::MarkCleared(const std::string& root) { if (!root.empty()) { cl
 bool ProjectGate::IsCleared(const std::string& root) const { return !root.empty() && cleared_.count(RootKey(root)) != 0; }
 bool ProjectGate::IsKept(const std::string& root) const { return !root.empty() && kept_.count(RootKey(root)) != 0; }
 
+std::string ProjectGate::RootOf(const std::string& scene) const {
+    return ProjectRootForScene(scene, env_.rootRules ? *env_.rootRules : DefaultRootRules());
+}
+
+std::string ProjectGate::UpgradeRootOf(const std::string& scene, const std::string& projectDir) const {
+    return UpgradeRootFor(scene, projectDir, env_.rootRules ? *env_.rootRules : DefaultRootRules());
+}
+
 void ProjectGate::NoteKeepRequest(const std::string& scene, const std::string& forVersion) {
-    const std::string root = ProjectRootForScene(scene);
+    const std::string root = RootOf(scene);
     if (root.empty()) return;
     if (!forVersion.empty() && okayver::CompareVersions(forVersion, env_.running) != 0) return;   // meant for another version's editor
     kept_.insert(RootKey(root));
@@ -886,7 +1009,7 @@ void ProjectGate::NoteKeepRequest(const std::string& scene, const std::string& f
 }
 
 bool ProjectGate::MayLoad(const std::string& scene, std::string* why) {
-    const std::string root = ProjectRootForScene(scene);
+    const std::string root = RootOf(scene);
     if (root.empty() || IsCleared(root)) return true;
     const okayver::Stamp st = okayver::ReadProjectStamp(root);
     const okayver::Decision d = okayver::Decide(st.version, env_.running);
@@ -905,8 +1028,12 @@ bool ProjectGate::MayLoad(const std::string& scene, std::string* why) {
 }
 
 void ProjectGate::Open(const std::string& scene, std::function<void()> proceed, std::function<void()> cancel) {
-    if (Busy()) { if (cancel) cancel(); return; }
-    const std::string root = ProjectRootForScene(scene);
+    if (Busy()) {   // one window at a time: hold the request (the launcher handing over another project) until this one closes
+        if (held_ && held_->cancel) { auto old = std::move(held_->cancel); held_.reset(); old(); }   // a newer request replaces it
+        held_ = Held{scene, std::move(proceed), std::move(cancel)};
+        return;
+    }
+    const std::string root = RootOf(scene);
     if (root.empty() || IsCleared(root)) { if (proceed) proceed(); return; }
     const okayver::Stamp st = okayver::ReadProjectStamp(root);
     const okayver::Decision d = okayver::Decide(st.version, env_.running);
@@ -930,9 +1057,9 @@ void ProjectGate::Open(const std::string& scene, std::function<void()> proceed, 
     }
 }
 
-void ProjectGate::Upgrade(const std::string& scene, std::function<void()> done) {
+void ProjectGate::Upgrade(const std::string& scene, std::function<void()> done, const std::string& projectDir) {
     if (Busy()) return;
-    const std::string root = ProjectRootForScene(scene);
+    const std::string root = UpgradeRootOf(scene, projectDir);
     if (root.empty()) return;
     const okayver::Stamp st = okayver::ReadProjectStamp(root);
     proceed_ = std::move(done);
@@ -953,7 +1080,7 @@ void ProjectGate::Ask(PromptKind k, const std::string& root, const std::string& 
         prompt_.keepTarget = okayver::ResolveKeepTarget(version, okayver::InstalledVersions(env_.launcherDir()));
 }
 
-void ProjectGate::StartJob(bool migrate) {
+void ProjectGate::StartJob(bool migrate, bool allowLarge) {
     Options o;
     o.projectDir = prompt_.root;
     o.fromVersion = prompt_.projectVersion;
@@ -963,6 +1090,9 @@ void ProjectGate::StartJob(bool migrate) {
     if (env_.outputDirs) o.skipDirs = env_.outputDirs(prompt_.root);
     o.fail = env_.fail;
     o.availableSpace = env_.availableSpace;
+    if (env_.largeFiles) o.largeFiles = env_.largeFiles;
+    if (env_.largeBytes) o.largeBytes = env_.largeBytes;
+    o.allowLarge = allowLarge;
     job_ = std::make_unique<UpgradeJob>(std::move(o));
     const std::string root = prompt_.root, scene = prompt_.scene, name = prompt_.projectName, from = prompt_.projectVersion, run = prompt_.runningVersion;
     prompt_ = Prompt{};
@@ -978,6 +1108,15 @@ void ProjectGate::Finish(bool proceed) {
     prompt_ = Prompt{};
     if (proceed) { if (go) go(); }
     else if (no) no();
+    RunHeld();
+}
+
+void ProjectGate::RunHeld() {
+    if (!held_ || Busy()) return;
+    Held h = std::move(*held_);
+    held_.reset();
+    if (quit_) { if (h.cancel) h.cancel(); return; }   // this editor is closing (Keep started another one): nothing more opens here
+    Open(h.scene, std::move(h.proceed), std::move(h.cancel));
 }
 
 void ProjectGate::KeepVersion() {
@@ -1030,6 +1169,10 @@ void ProjectGate::Answer(Choice c) {
         case PromptKind::Failed:
             if (c == Choice::Close || c == Choice::Cancel) Finish(false);
             return;
+        case PromptKind::Large:
+            if (c == Choice::Upgrade || c == Choice::OpenAnyway) StartJob(!prompt_.backupOnly, true);
+            else if (c == Choice::Cancel || c == Choice::Close) Finish(false);
+            return;
         case PromptKind::None:
             return;
     }
@@ -1042,7 +1185,7 @@ void ProjectGate::Tick(std::chrono::milliseconds budget) {
     if (!job_->Finished()) return;
     prompt_.result = job_->result();
     if (prompt_.result.cancelled) { Finish(false); return; }
-    prompt_.kind = prompt_.result.ok ? PromptKind::Done : PromptKind::Failed;
+    prompt_.kind = prompt_.result.ok ? PromptKind::Done : prompt_.result.tooLarge ? PromptKind::Large : PromptKind::Failed;
 }
 
 }  // namespace okayup

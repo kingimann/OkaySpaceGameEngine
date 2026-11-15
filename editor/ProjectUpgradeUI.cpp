@@ -164,6 +164,16 @@ void Heading(const char* text, const ImVec4& col) {
     ImGui::Dummy(ImVec2(0, 2));
 }
 
+// What the upgrade did, one line per file it changed or noticed ("removed the UTF-8 byte-order mark", a migration step).
+void DrawLog(const std::vector<std::string>& log) {
+    if (log.empty()) return;
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextDisabled("WHAT WAS DONE (%d)", (int)log.size());
+    ImGui::BeginChild("##upgradelog", ImVec2(0, std::min(150.0f, (float)log.size() * ImGui::GetTextLineHeightWithSpacing() + 10.0f)), true);
+    for (const std::string& l : log) ImGui::TextWrapped("%s", l.c_str());
+    ImGui::EndChild();
+}
+
 void DrawGatePrompt() {
     using okayup::PromptKind;
     using okayup::Choice;
@@ -259,6 +269,7 @@ void DrawGatePrompt() {
             ImGui::TextDisabled("%s in the backup: a complete copy of the project.", Plural((int)r.files, "file", "files").c_str());
             if (!pr.backupOnly) ImGui::TextDisabled("The project is now marked as made with v%s.", rv.c_str());
             for (const std::string& w : r.warnings) { ImGui::TextColored(kAmber, "%s", FitEnd(w, textW).c_str()); }
+            DrawLog(r.log);
             ImGui::Dummy(ImVec2(0, 8));
             if (Btn("Open project", first, true)) g_gate.Answer(Choice::Continue);
             if (Btn("Open backup folder", first)) OpenFolder(r.backupDir);
@@ -279,6 +290,21 @@ void DrawGatePrompt() {
             if (!r.backupDir.empty() && Btn("Open backup folder", first)) OpenFolder(r.backupDir);
             break;
         }
+        case PromptKind::Large: {
+            const okayup::Result& r = pr.result;
+            ImGui::TextDisabled("A VERY BIG FOLDER");
+            Heading(("\"" + pr.projectName + "\" is very big for a backup copy.").c_str(), kAmber);
+            ImGui::TextDisabled("%s", FitEnd(pr.root, textW).c_str());
+            ImGui::Dummy(ImVec2(0, 4));
+            ImGui::TextWrapped("%s", r.error.c_str());
+            ImGui::TextWrapped("Counted so far: %s, %s. If this is not your project folder (for example Documents or a whole drive), "
+                               "choose Cancel: nothing has been copied or changed.", Plural((int)r.files, "file", "files").c_str(),
+                               (std::to_string((r.bytes + 1024 * 1024 - 1) / (1024 * 1024)) + " MB").c_str());
+            ImGui::Dummy(ImVec2(0, 8));
+            if (Btn(pr.backupOnly ? "Copy it anyway, then open" : "Copy it anyway and upgrade", first)) g_gate.Answer(pr.backupOnly ? Choice::OpenAnyway : Choice::Upgrade);
+            if (Btn("Cancel", first, true) || esc) g_gate.Answer(Choice::Cancel);
+            break;
+        }
         case PromptKind::None: break;
     }
     if (g_gate.prompt().kind == PromptKind::None) ImGui::CloseCurrentPopup();   // answered (or finished by itself): the window goes with it
@@ -287,8 +313,7 @@ void DrawGatePrompt() {
 
 // ---- File > Project Upgrade... ------------------------------------------------------------------------------------------
 
-void DoRestore(okay::editor::EditorState& ed, const okayup::BackupInfo& b) {
-    const std::string dir = ed.projectDir();
+void DoRestore(okay::editor::EditorState& ed, const okayup::BackupInfo& b, const std::string& dir) {
     const okayup::RestoreResult r = okayup::RestoreBackup(b, dir);
     if (!r.ok) { ShowErrorPopup("Couldn't restore the backup", r.error); return; }
     // The files on disk are the old ones now: nothing in memory may be written over them, and the editor starts again on the
@@ -319,11 +344,12 @@ void DrawUpgradeWindow(okay::editor::EditorState& ed) {
     ImGui::SetNextWindowSize(ImVec2(660, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSizeConstraints(ImVec2(660, 0), ImVec2(660, ImGui::GetMainViewport()->Size.y - 24.0f));
     if (!ImGui::BeginPopupModal("Project Upgrade", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) return;
-    const std::string dir = ed.projectDir();
+    // The folder shown is the folder the Upgrade button upgrades and Restore restores: the gate's own rule (#888).
+    const std::string dir = g_gate.UpgradeRootOf(ed.path(), ed.projectDir());
     const float textW = ImGui::GetContentRegionAvail().x;
     const std::string running = RunningVersion();
     const std::string rv = okayver::NormalizeVersion(running);
-    const okayver::Stamp st = okayver::ReadProjectStamp(dir);
+    const okayver::Stamp st = dir.empty() ? okayver::Stamp{} : okayver::ReadProjectStamp(dir);
     const okayver::Decision d = okayver::Decide(st.version, running);
     ImGui::TextDisabled("PROJECT");
     ImGui::TextUnformatted(fs::path(dir).filename().string().c_str());
@@ -343,30 +369,31 @@ void DrawUpgradeWindow(okay::editor::EditorState& ed) {
     ImGui::TextWrapped("Upgrading makes a complete backup copy of the project next to it, checks every scene and prefab, rewrites only the files that "
                        "need it, and marks the project with this version. It does it all or none of it.");
     ImGui::Dummy(ImVec2(0, 4));
-    const bool canUpgrade = !rv.empty() && d != okayver::Decision::Newer && !g_gate.Busy();
+    if (dir.empty()) ImGui::TextColored(kAmber, "The open scene is not part of a project, so there is nothing to upgrade.");
+    const bool canUpgrade = !dir.empty() && !rv.empty() && d != okayver::Decision::Newer && !g_gate.Busy();
     ImGui::BeginDisabled(!canUpgrade);
     const bool upgrade = Accent((std::string("Upgrade project") + (rv.empty() ? "" : " to v" + rv) + "...").c_str());
     ImGui::EndDisabled();
     if (upgrade) {
-        const std::string scene = ed.path().empty() ? (fs::path(dir) / "Assets" / "project.okayscene").string() : ed.path();   // only its folder matters here
+        const std::string scene = ed.path(), projectDir = ed.projectDir();
         ImGui::CloseCurrentPopup();
-        RunAfterSavePrompt(ed, "upgrading the project", [&ed, scene] {
+        RunAfterSavePrompt(ed, "upgrading the project", [&ed, scene, projectDir] {
             g_gate.Upgrade(scene, [&ed] {   // the scene on disk may have been rewritten: open it again
                 const std::string open = ed.path();
                 std::error_code ec;
                 std::string err;
                 if (!open.empty() && fs::exists(open, ec) && !ed.Load(open, &err)) ShowErrorPopup("Couldn't reopen the scene", err);
-            });
+            }, projectDir);
         });
     }
     if (!canUpgrade && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip(rv.empty() ? "A development build has no version number to upgrade to." : "A project from a newer version is not upgraded by an older editor.");
+        ImGui::SetTooltip(dir.empty() ? "Open a scene of a project first." : rv.empty() ? "A development build has no version number to upgrade to." : "A project from a newer version is not upgraded by an older editor.");
 
     ImGui::Dummy(ImVec2(0, 8));
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, 4));
     ImGui::TextDisabled("BACKUPS NEXT TO THIS PROJECT");
-    const std::vector<okayup::BackupInfo> list = okayup::ListBackups(dir);
+    const std::vector<okayup::BackupInfo> list = dir.empty() ? std::vector<okayup::BackupInfo>() : okayup::ListBackups(dir);
     if (list.empty()) ImGui::TextDisabled("  None yet. One is made every time you upgrade.");
     ImGui::BeginChild("##backups", ImVec2(0, list.empty() ? 0.0f : std::min(206.0f, (float)list.size() * 64.0f + 6.0f)));
     const float rowW = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ScrollbarSize;
@@ -410,7 +437,7 @@ void DrawUpgradeWindow(okay::editor::EditorState& ed) {
         if (Btn("Restore", first, true)) {
             ImGui::CloseCurrentPopup();
             const okayup::BackupInfo pick = b;
-            RunAfterSavePrompt(ed, "restoring the backup", [&ed, pick] { DoRestore(ed, pick); });
+            RunAfterSavePrompt(ed, "restoring the backup", [&ed, pick, dir] { DoRestore(ed, pick, dir); });
         }
         if (Btn("Cancel", first) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -458,6 +485,7 @@ void ProjectUpgradeInit(int argc, char** argv) {
     }
     if (g_keepFlag && !open.empty()) g_gate.NoteKeepRequest(open, keepFor);
     okay::editor::EditorState::beforeLoad = [](const std::string& path, std::string* why) { return g_gate.MayLoad(path, why); };
+    okay::editor::EditorState::projectRootOf = [](const std::string& path) { return g_gate.RootOf(path); };   // File > Open roots the project as the gate does
 }
 
 bool ProjectMayOpenSilently(const std::string& scene) { return g_gate.MayLoad(scene, nullptr); }
@@ -498,6 +526,16 @@ void NoteKeepVersionHandoff(const std::string& scene, const std::string& version
 bool KeepVersionRequested() { return g_keepFlag; }
 
 void ProjectUpgradeDraw(okay::editor::EditorState& ed) {
+    {   // development builds only (screenshots): OKAY_UI_UPGRADE_ANSWER=upgrade answers the version question with Upgrade, once
+        static bool answered = false;
+        const char* dev = std::getenv("OKAY_DEV");
+        const char* ans = std::getenv("OKAY_UI_UPGRADE_ANSWER");
+        const okayup::PromptKind k = g_gate.prompt().kind;
+        if (!answered && dev && dev[0] && dev[0] != '0' && ans && std::string(ans) == "upgrade" && (k == okayup::PromptKind::Older || k == okayup::PromptKind::Unknown)) {
+            answered = true;
+            g_gate.Answer(okayup::Choice::Upgrade);
+        }
+    }
     g_gate.Tick(std::chrono::milliseconds(10));
     DrawGatePrompt();
     DrawUpgradeWindow(ed);

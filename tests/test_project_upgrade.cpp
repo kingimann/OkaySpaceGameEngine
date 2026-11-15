@@ -101,7 +101,8 @@ const char* kV1 =
 // name, a space in the folder's name, an empty folder, and the folders a backup leaves out.
 struct Proj {
     fs::path base, root;
-    explicit Proj(const fs::path& b, std::size_t bigBytes = 1200 * 1024) : base(b), root(b / "My Game \xC3\xBC") {
+    explicit Proj(const fs::path& b, std::size_t bigBytes = 1200 * 1024, bool bomScene = false) : base(b), root(b / "My Game \xC3\xBC") {
+        if (bomScene) WriteFile(root / "Assets" / "Scenes" / "Bom.okayscene", "\xEF\xBB\xBF" + Current("Bom", 1));   // rewritten too: the mark goes
         WriteFile(root / "project.okayproj", "company=Me\nversion=1.0.0\nfuture_setting=on\n");
         WriteFile(root / ".okay" / "build_live.cfg", "@profile live\nproduct=My Game\ndir=build/My Game\n");
         WriteFile(root / ".okay" / "scene_build.txt", "1|Assets/Scenes/Level1.okayscene\n");
@@ -150,6 +151,11 @@ std::size_t BackupCount(const Proj& p) {
     return n;
 }
 
+// The machine's rules, but the search for a project stops at `top` (a test's temp folder): what is above it (the system's
+// temp folder, a home folder that holds a project) can't change a "this is a loose file" answer.
+RootRules Fenced(const fs::path& top) { RootRules r = DefaultRootRules(); r.ceiling = top; return r; }
+GateEnv FencedEnv(const fs::path& top, const char* running = "2.855.0") { GateEnv e; e.running = running; e.rootRules = Fenced(top); return e; }
+
 bool Loads(const fs::path& p) {
     Scene s("probe");
     std::string err;
@@ -174,7 +180,7 @@ int main() {
         CHECK(ProjectRootForScene((p.root / "Assets" / "Main.okayscene").string()) == root);
         CHECK(ProjectRootForScene((p.root / "Main.okayscene").string()) == root);                              // the old flat layout: project.okayproj beside it
         WriteFile(td.path / "loose" / "Desktop.okayscene", "x");
-        CHECK(ProjectRootForScene((td.path / "loose" / "Desktop.okayscene").string()).empty());                // a loose file is no project
+        CHECK(ProjectRootForScene((td.path / "loose" / "Desktop.okayscene").string(), Fenced(td.path)).empty());   // a loose file is no project
         CHECK(ProjectRootForScene("").empty());
         CHECK(IsProjectRoot(p.root) && !IsProjectRoot(td.path / "loose") && !IsProjectRoot(td.path / "nowhere"));
         CHECK(RootKey(root) == RootKey(root + "/") && RootKey(root) == RootKey((p.root / "Assets" / "..").string()));
@@ -193,10 +199,12 @@ int main() {
         std::cerr << "[bug1_scene_outside_assets] root='" << ProjectRootForScene(deep) << "'\n";
         CHECK(ProjectRootForScene(deep) == root.string());                                       // two folders down, no Assets anywhere
         CHECK(ProjectRootForScene((root / "Levels" / "b.okayscene").string()) == root.string());
-        WriteFile(root / "Tools" / "project.okayproj", "company=Inner\n");                       // a project inside a project: the nearest wins
+        WriteFile(root / "Tools" / "project.okayproj", "company=Inner\n");                       // an unstamped file in a folder above the scene is
+        CHECK(ProjectRootForScene((root / "Tools" / "Maps" / "c.okayscene").string()) == root.string());   // a copy of the shared one, not a project
+        WriteFile(root / "Tools" / "project.okayproj", "engine_version=2.840.0\ncompany=Inner\n");   // a project inside a project: the nearest wins
         CHECK(ProjectRootForScene((root / "Tools" / "Maps" / "c.okayscene").string()) == (root / "Tools").string());
         WriteFile(td.path / "Loose" / "Deep" / "d.okayscene", Current("D", 1));                  // no project.okayproj above it: still a loose file
-        CHECK(ProjectRootForScene((td.path / "Loose" / "Deep" / "d.okayscene").string()).empty());
+        CHECK(ProjectRootForScene((td.path / "Loose" / "Deep" / "d.okayscene").string(), Fenced(td.path)).empty());
 
         // The editor's working folder keeps the old shared project.okayproj (written while no project is open); it does not make
         // every scene below the working folder part of a "project" (launch.sh / launch.bat start the editor in the repository).
@@ -211,7 +219,7 @@ int main() {
             const std::string found = ProjectRootForScene((work / "examples" / "vehicle" / "v.okayscene").string());
             fs::current_path(before, ec);
             CHECK(found.empty());
-            CHECK(ProjectRootForScene((work / "examples" / "vehicle" / "v.okayscene").string()) == work.string());   // from elsewhere it is a project
+            CHECK(ProjectRootForScene((work / "examples" / "vehicle" / "v.okayscene").string(), Fenced(td.path)).empty());   // from elsewhere too: no stamp, no project
         }
 
         // the gate asks, and its safety net refuses, for such a scene of an older project
@@ -240,10 +248,21 @@ int main() {
             g.Answer(Choice::Continue);
             CHECK(done == 1 && !g.Busy());
         }
-#if defined(_WIN32)
-        // Windows only (folder names ignore case there): a lower-case "assets" folder counts as the Assets folder
+        // Folder names ignore case on Windows: there (assetsAnyCase) a lower-case "assets" the scene is inside counts as the Assets
+        // folder; elsewhere it does not. The rule is a parameter, so both answers are checked on every system.
         WriteFile(td.path / "Win" / "assets" / "Scenes" / "w.okayscene", Current("W", 1));
-        CHECK(ProjectRootForScene((td.path / "Win" / "assets" / "Scenes" / "w.okayscene").string()) == (td.path / "Win").string());
+        const std::string w = (td.path / "Win" / "assets" / "Scenes" / "w.okayscene").string();
+        RootRules anyCase = Fenced(td.path), exact = Fenced(td.path);
+        anyCase.assetsAnyCase = true; exact.assetsAnyCase = false;
+        CHECK(ProjectRootForScene(w, anyCase) == (td.path / "Win").string());
+        CHECK(ProjectRootForScene(w, exact).empty());
+        WriteFile(td.path / "Ex" / "Assets" / "x.okayscene", Current("X", 1));
+        CHECK(ProjectRootForScene((td.path / "Ex" / "Assets" / "x.okayscene").string(), exact) == (td.path / "Ex").string());   // "Assets": either rule
+        CHECK(ProjectRootForScene((td.path / "Ex" / "Assets" / "x.okayscene").string(), anyCase) == (td.path / "Ex").string());
+#if defined(_WIN32)
+        CHECK(DefaultRootRules().assetsAnyCase);
+#else
+        CHECK(!DefaultRootRules().assetsAnyCase);
 #endif
     }
 
@@ -257,11 +276,10 @@ int main() {
         WriteFile(dir / ".okay" / "autosave.txt", "x");
         WriteFile(dir / ".okay" / "scene_build.txt", "1|vehicle_test.okayscene\n");
         const std::string scene = (dir / "vehicle_test.okayscene").string();
-        std::cerr << "[bug2_bare_okay_folder] IsProjectRoot=" << IsProjectRoot(dir) << " root='" << ProjectRootForScene(scene) << "'\n";
+        std::cerr << "[bug2_bare_okay_folder] IsProjectRoot=" << IsProjectRoot(dir) << " root='" << ProjectRootForScene(scene, Fenced(td.path)) << "'\n";
         CHECK(!IsProjectRoot(dir));
-        CHECK(ProjectRootForScene(scene).empty());
-        GateEnv env;
-        env.running = "2.855.0";
+        CHECK(ProjectRootForScene(scene, Fenced(td.path)).empty());
+        GateEnv env = FencedEnv(td.path);
         ProjectGate g(env);
         int go = 0;
         g.Open(scene, [&] { ++go; });
@@ -282,7 +300,7 @@ int main() {
         CHECK(IsProjectRoot(dir) && ProjectRootForScene(scene) == dir.string());
         fs::remove(dir / "Assets", ec);
         fs::create_directories(dir / "project.okayproj", ec);                                   // a folder of that name is not the settings file
-        CHECK(!IsProjectRoot(dir) && ProjectRootForScene(scene).empty());
+        CHECK(!IsProjectRoot(dir) && ProjectRootForScene(scene, Fenced(td.path)).empty());
     }
 
     // ---- scene files that start with a UTF-8 byte-order mark (issue #888, bug 3) ---------------------------------------
@@ -335,6 +353,333 @@ int main() {
         UpgradeJob k(o);
         k.Run();
         CHECK(!k.result().ok && Has(k.result().error, "Junk.okayscene") && Snap(root) == mid);
+    }
+    // A UTF-16 file with its byte-order mark (Windows PowerShell's `>` writes those) is converted to UTF-8 the same way.
+    {
+        TempDir td;
+        const fs::path root = td.path / "Game";
+        WriteFile(root / "project.okayproj", "engine_version=2.850.0\n");
+        auto utf16 = [](const std::string& ascii, bool bigEndian) {
+            std::string o = bigEndian ? std::string("\xFE\xFF", 2) : std::string("\xFF\xFE", 2);
+            for (char c : ascii) { if (bigEndian) { o += '\0'; o += c; } else { o += c; o += '\0'; } }
+            return o;
+        };
+        WriteFile(root / "Assets" / "Ps.okayscene", utf16(Current("Ps", 2), false));
+        WriteFile(root / "Assets" / "PsOld.okayscene", utf16(kV1, false));
+        WriteFile(root / "Assets" / "Be.okayscene", utf16(Current("Be", 1), true));
+        const Tree before = Snap(root);
+        Options o;
+        o.projectDir = root.string(); o.fromVersion = "2.850.0"; o.toVersion = "2.855.0";
+        UpgradeJob j(o);
+        j.Run();
+        std::cerr << "[review7_utf16_scene] ok=" << j.result().ok << " error='" << j.result().error << "'\n";
+        CHECK(j.result().ok && j.result().scenes == 3 && j.result().rewritten == 3);
+        for (const char* f : {"Ps.okayscene", "PsOld.okayscene", "Be.okayscene"}) {
+            CHECK(ReadFile(root / "Assets" / f).compare(0, 12, "okayscene 3\n") == 0);
+            CHECK(Loads(root / "Assets" / f));
+            if (!j.result().backupDir.empty()) CHECK(ReadFile(fs::path(j.result().backupDir) / "Assets" / f) == before.at(std::string("Assets/") + f));
+            bool logged = false;
+            for (const std::string& l : j.result().log) if (Has(l, f) && Has(l, "UTF-16")) logged = true;
+            CHECK(logged);
+        }
+        // broken UTF-16 (an odd number of bytes) is a damaged file: it stops the upgrade, named, before anything is made
+        WriteFile(root / "Assets" / "Odd.okayscene", utf16(Current("O", 1), false) + "x");
+        const Tree mid = Snap(root);
+        UpgradeJob k(o);
+        k.Run();
+        CHECK(!k.result().ok && Has(k.result().error, "Odd.okayscene") && Snap(root) == mid);
+    }
+
+    // ---- review of the upgrade fixes (issue #888, da5423e): which folder is the project ------------------------------------
+    // 1. A project.okayproj above the scene with no stamp is the old shared file (the editor copied it into scene folders),
+    //    not a project: Documents, Desktop or a repository root must not become a "project" that is asked about and copied.
+    //    An Assets folder beside a folder above the scene is no evidence either: the release folder holds Assets/ (starter
+    //    textures) next to examples/.
+    {
+        TempDir td;
+        const fs::path docs = td.path / "Documents";
+        WriteFile(docs / "project.okayproj", "company=Shared\n");
+        WriteFile(docs / "Downloads" / "x.okayscene", Current("X", 1));
+        const std::string scene = (docs / "Downloads" / "x.okayscene").string();
+        std::cerr << "[review1_unstamped_ancestor] root='" << ProjectRootForScene(scene, Fenced(td.path)) << "'\n";
+        CHECK(ProjectRootForScene(scene, Fenced(td.path)).empty());
+        GateEnv env = FencedEnv(td.path);
+        ProjectGate g(env);
+        int go = 0;
+        g.Open(scene, [&] { ++go; });
+        CHECK(go == 1 && !g.Busy());                                                             // no "Unknown" question
+        std::string why;
+        CHECK(ProjectGate(env).MayLoad(scene, &why));
+        // the same folder with a stamp is a project
+        WriteFile(docs / "project.okayproj", "engine_version=2.850.0\ncompany=Shared\n");
+        CHECK(ProjectRootForScene(scene, Fenced(td.path)) == docs.string());
+        // an Assets folder beside it is not enough
+        WriteFile(docs / "project.okayproj", "company=Shared\n");
+        std::error_code ec;
+        fs::create_directories(docs / "Assets", ec);
+        CHECK(ProjectRootForScene(scene, Fenced(td.path)).empty());
+        // the release folder: Assets/Textures and examples/vehicle side by side, with the shared file
+        const fs::path inst = td.path / "OkaySpace";
+        WriteFile(inst / "Assets" / "Textures" / "grid.png", "png");
+        WriteFile(inst / "project.okayproj", "company=Shared\n");
+        WriteFile(inst / "examples" / "vehicle" / "vehicle_test.okayscene", Current("V", 1));
+        CHECK(ProjectRootForScene((inst / "examples" / "vehicle" / "vehicle_test.okayscene").string(), Fenced(td.path)).empty());
+        // 3. a stray copy of the shared file (no stamp) in a project's scene folder does not beat the project above it
+        const fs::path game = td.path / "Game";
+        WriteFile(game / "project.okayproj", "engine_version=2.855.0\n");
+        WriteFile(game / "Levels" / "project.okayproj", "company=Shared\n");
+        WriteFile(game / "Levels" / "a.okayscene", Current("A", 1));
+        const std::string levels = ProjectRootForScene((game / "Levels" / "a.okayscene").string(), Fenced(td.path));
+        std::cerr << "[review3_stray_copy_in_levels] root='" << levels << "'\n";
+        CHECK(levels == game.string());
+        // ... and a project's settings only ever go into a project folder (never a scene's folder: no new stray copies)
+        CHECK(SettingsFolderFor(game.string()) == game.string());
+        CHECK(SettingsFolderFor((td.path / "Loose").string()).empty());
+        WriteFile(td.path / "Loose" / "a.okayscene", "x");
+        CHECK(SettingsFolderFor((td.path / "Loose").string()).empty());
+        fs::create_directories(td.path / "OnlyAssets" / "Assets", ec);
+        CHECK(SettingsFolderFor((td.path / "OnlyAssets").string()) == (td.path / "OnlyAssets").string());   // an old project: it gets its copy
+        CHECK(SettingsFolderFor("").empty() && SettingsFolderFor("/").empty());
+    }
+    // 1. A folder too big to copy without asking: the scan stops early, nothing is made, and the gate asks.
+    {
+        TempDir td;
+        Proj p(td.path, 10 * 1024);
+        std::string e;
+        CHECK(okayver::WriteProjectVersion(p.root.string(), "2.850.0", &e));
+        for (int i = 0; i < 40; ++i) WriteFile(p.root / "Assets" / "Many" / ("f" + std::to_string(i) + ".txt"), "x");
+        const Tree before = Snap(p.root);
+        Options o = p.Opts("2.850.0");
+        o.largeFiles = 20;
+        UpgradeJob j(o);
+        j.Run();
+        std::cerr << "[review1_too_large] ok=" << j.result().ok << " tooLarge=" << j.result().tooLarge << " error='" << j.result().error << "'\n";
+        CHECK(!j.result().ok && j.result().tooLarge && Has(j.result().error, "more than 20 files") && Has(j.result().error, "Nothing was changed"));
+        CHECK(j.result().files <= 20 + 256 && Snap(p.root) == before && BackupCount(p) == 0 && NoPartial(p.base));
+        o.largeFiles = 50000; o.largeBytes = 1024;                                                // the size limit the same way
+        UpgradeJob jb(o);
+        jb.Run();
+        CHECK(!jb.result().ok && jb.result().tooLarge && Has(jb.result().error, "MB") && BackupCount(p) == 0);
+        o.largeBytes = 1024; o.allowLarge = true;                                                // "copy it anyway"
+        UpgradeJob ja(o);
+        ja.Run();
+        CHECK(ja.result().ok && !ja.result().tooLarge && BackupCount(p) == 1);
+        fs::remove_all(ja.result().backupDir);
+        // the gate: the "very big folder" window, Cancel changes nothing, "copy it anyway" upgrades
+        std::string root;
+        WriteFile(p.root / "project.okayproj", "engine_version=2.850.0\n");
+        const Tree before2 = Snap(p.root);
+        GateEnv env = FencedEnv(td.path);
+        env.largeFiles = 20;
+        ProjectGate g(env);
+        int go = 0, no = 0;
+        const std::string scene = (p.root / "Assets" / "Scenes" / "Level1.okayscene").string();
+        g.Open(scene, [&] { ++go; }, [&] { ++no; });
+        g.Answer(Choice::Upgrade);
+        for (int i = 0; i < 100000 && g.prompt().kind == PromptKind::Working; ++i) g.Tick(std::chrono::milliseconds(0));
+        CHECK(g.prompt().kind == PromptKind::Large && g.prompt().result.tooLarge && g.prompt().root == p.root.string());
+        g.Answer(Choice::Cancel);
+        CHECK(!g.Busy() && no == 1 && go == 0 && Snap(p.root) == before2 && BackupCount(p) == 0);
+        g.Open(scene, [&] { ++go; }, [&] { ++no; });
+        g.Answer(Choice::Upgrade);
+        for (int i = 0; i < 100000 && g.prompt().kind == PromptKind::Working; ++i) g.Tick(std::chrono::milliseconds(0));
+        CHECK(g.prompt().kind == PromptKind::Large);
+        g.Answer(Choice::Upgrade);                                                                // copy it anyway
+        CHECK(g.prompt().kind == PromptKind::Working && !g.prompt().backupOnly);
+        for (int i = 0; i < 100000 && g.prompt().kind == PromptKind::Working; ++i) g.Tick(std::chrono::milliseconds(0));
+        CHECK(g.prompt().kind == PromptKind::Done && g.prompt().result.ok && BackupCount(p) == 1);
+        g.Answer(Choice::Continue);
+        CHECK(go == 1 && okayver::ReadProjectVersion(p.root.string()) == "2.855.0");
+        // a newer project opened anyway: the big-folder window keeps it a backup only
+        TempDir t2;
+        Proj q(t2.path, 10 * 1024);
+        CHECK(okayver::WriteProjectVersion(q.root.string(), "2.860.0", &e));
+        const Tree qb = Snap(q.root);
+        GateEnv e2 = FencedEnv(t2.path);
+        e2.largeFiles = 3;
+        ProjectGate g2(e2);
+        g2.Open((q.root / "Assets" / "Scenes" / "Level1.okayscene").string(), [&] { ++go; });
+        g2.Answer(Choice::OpenAnyway);
+        for (int i = 0; i < 100000 && g2.prompt().kind == PromptKind::Working; ++i) g2.Tick(std::chrono::milliseconds(0));
+        CHECK(g2.prompt().kind == PromptKind::Large && g2.prompt().backupOnly);
+        g2.Answer(Choice::OpenAnyway);
+        for (int i = 0; i < 100000 && g2.prompt().kind == PromptKind::Working; ++i) g2.Tick(std::chrono::milliseconds(0));
+        CHECK(g2.prompt().kind == PromptKind::Done && g2.prompt().backupOnly && Snap(q.root) == qb);
+    }
+    // 2. The working folder: the same folder however it is spelled (a link); a scene right in it is not a project because of the
+    //    shared file; a real project there still is one through its Assets folder. (A scene outside Assets/ of a project that
+    //    is the working folder is not recognised: that folder can't be told apart from the release folder, which holds
+    //    Assets/ and the shared file, stamped by a release editor. See docs/project_upgrade.md.)
+    {
+        TempDir td;
+        std::error_code ec;
+        const fs::path before = fs::current_path(ec);
+        const fs::path real = td.path / "Real";
+        WriteFile(real / "project.okayproj", "engine_version=2.850.0\n");
+        WriteFile(real / "Assets" / "Scenes" / "Main.okayscene", Current("M", 1));
+        WriteFile(real / "Levels" / "a.okayscene", Current("A", 1));
+        fs::current_path(real, ec);
+        const std::string inAssets = ProjectRootForScene((real / "Assets" / "Scenes" / "Main.okayscene").string(), Fenced(td.path));
+        const std::string inLevels = ProjectRootForScene((real / "Levels" / "a.okayscene").string(), Fenced(td.path));
+        fs::current_path(before, ec);
+        std::cerr << "[review2_project_is_cwd] assets='" << inAssets << "' levels='" << inLevels << "'\n";
+        CHECK(inAssets == real.string());
+        CHECK(inLevels.empty());                                                                  // the accepted limit (see above)
+        const fs::path work = td.path / "Work";
+        WriteFile(work / "project.okayproj", "engine_version=2.855.0\ncompany=Shared\n");   // a release build stamps the shared file too
+        WriteFile(work / "s.okayscene", Current("S", 1));
+        WriteFile(work / "examples" / "v.okayscene", Current("V", 1));
+        fs::create_directory_symlink(work, td.path / "WorkLink", ec);
+        const bool links = !ec;
+        fs::current_path(work, ec);
+        const std::string direct = ProjectRootForScene((work / "s.okayscene").string(), Fenced(td.path));
+        const std::string viaLink = links ? ProjectRootForScene((td.path / "WorkLink" / "examples" / "v.okayscene").string(), Fenced(td.path)) : std::string();
+        const std::string viaDots = ProjectRootForScene((work / "examples" / ".." / "examples" / "v.okayscene").string(), Fenced(td.path));
+        fs::current_path(before, ec);
+        std::cerr << "[review2_scene_in_cwd] direct='" << direct << "' viaLink='" << viaLink << "'\n";
+        CHECK(direct.empty());
+        CHECK(viaLink.empty());
+        CHECK(viaDots.empty());
+        // the same rule with the working folder given (what the tests of other machines' spellings use)
+        RootRules r = Fenced(td.path);
+        r.workingFolder = links ? td.path / "WorkLink" : work;
+        CHECK(ProjectRootForScene((work / "examples" / "v.okayscene").string(), r).empty());
+        CHECK(SameFolder(work, work / "") && SameFolder(work, td.path / "Work" / "examples" / ".."));
+        CHECK(!links || SameFolder(work, td.path / "WorkLink"));
+        CHECK(!SameFolder(work, real) && !SameFolder(work, td.path / "missing") && !SameFolder(fs::path(), work));
+        CHECK(IsDriveRoot(fs::current_path(ec).root_path()));
+        CHECK(!IsDriveRoot(td.path) && !IsDriveRoot(fs::path()));
+    }
+    // 5. The nearest real project wins: a stamped project inside another project's Assets folder is its own project; an Assets
+    //    folder in the home folder does not make the home folder a project.
+    {
+        TempDir td;
+        const fs::path game = td.path / "Game";
+        WriteFile(game / "project.okayproj", "engine_version=2.850.0\n");
+        WriteFile(game / "Assets" / "Sub" / "project.okayproj", "engine_version=2.840.0\n");
+        WriteFile(game / "Assets" / "Sub" / "Levels" / "x.okayscene", Current("X", 1));
+        const std::string nested = ProjectRootForScene((game / "Assets" / "Sub" / "Levels" / "x.okayscene").string(), Fenced(td.path));
+        std::cerr << "[review5_nearest_wins] root='" << nested << "'\n";
+        CHECK(nested == (game / "Assets" / "Sub").string());
+        WriteFile(game / "Assets" / "Other" / "y.okayscene", Current("Y", 1));                  // elsewhere in Assets: the outer project
+        CHECK(ProjectRootForScene((game / "Assets" / "Other" / "y.okayscene").string(), Fenced(td.path)) == game.string());
+        const fs::path home = td.path / "home" / "me";
+        WriteFile(home / "Assets" / "Downloads" / "t.okayscene", Current("T", 1));
+        const char* oldHome = std::getenv("HOME");
+        const std::string savedHome = oldHome ? oldHome : "";
+        setenv("HOME", home.string().c_str(), 1);
+        const std::string inHome = ProjectRootForScene((home / "Assets" / "Downloads" / "t.okayscene").string(), Fenced(td.path));
+        const std::string inHomeDefault = ProjectRootForScene((home / "Assets" / "Downloads" / "t.okayscene").string());
+        if (oldHome) setenv("HOME", savedHome.c_str(), 1); else unsetenv("HOME");
+        std::cerr << "[review5_home_assets] root='" << inHome << "'\n";
+        CHECK(inHome.empty() && inHomeDefault.empty());
+        RootRules hr = Fenced(td.path);
+        hr.home = home;
+        WriteFile(home / "project.okayproj", "engine_version=2.850.0\n");                       // not even with a stamp
+        CHECK(ProjectRootForScene((home / "Docs" / "t.okayscene").string(), hr).empty());
+        CHECK(ProjectRootForScene((home / "t.okayscene").string(), hr).empty());
+    }
+    // 4. File > Project Upgrade shows, upgrades and restores one folder: UpgradeRootFor(scene, projectDir).
+    {
+        TempDir td;
+        const fs::path game = td.path / "Game";
+        WriteFile(game / "project.okayproj", "engine_version=2.850.0\n");
+        WriteFile(game / "Levels" / "a.okayscene", kV1);
+        const RootRules r = Fenced(td.path);
+        CHECK(UpgradeRootFor((game / "Levels" / "a.okayscene").string(), "", r) == game.string());
+        CHECK(UpgradeRootFor((game / "Levels" / "a.okayscene").string(), (game / "Levels").string(), r) == game.string());   // the scene's project wins
+        std::error_code ec;
+        fs::create_directories(td.path / "New" / "Assets", ec);
+        CHECK(UpgradeRootFor("", (td.path / "New").string(), r) == (td.path / "New").string());     // a project with no scene saved yet
+        CHECK(UpgradeRootFor("", (td.path / "Levels").string(), r).empty());                         // not a project folder
+        WriteFile(td.path / "Loose" / "l.okayscene", Current("L", 1));
+        CHECK(UpgradeRootFor((td.path / "Loose" / "l.okayscene").string(), "", r).empty());
+        GateEnv env = FencedEnv(td.path);
+        ProjectGate g(env);
+        CHECK(g.UpgradeRootOf((game / "Levels" / "a.okayscene").string(), (game / "Levels").string()) == game.string());
+        g.Upgrade((game / "Levels" / "a.okayscene").string(), {}, (game / "Levels").string());
+        CHECK(g.prompt().kind == PromptKind::Working && g.prompt().root == game.string());
+        for (int i = 0; i < 100000 && g.prompt().kind == PromptKind::Working; ++i) g.Tick(std::chrono::milliseconds(0));
+        CHECK(g.prompt().kind == PromptKind::Done && okayver::ReadProjectVersion(game.string()) == "2.855.0");
+        g.Answer(Choice::Continue);
+        g.Upgrade("", {}, (td.path / "Levels").string());                                            // nothing to upgrade
+        CHECK(!g.Busy());
+    }
+    // item 7a: a second open while a question is on screen (the launcher's hand-off) is not dropped: it runs once the
+    // question is answered. A newer one replaces it; an editor that is closing (Keep) opens nothing more.
+    {
+        TempDir td;
+        GateEnv env = FencedEnv(td.path);
+        const fs::path a = td.path / "A", b = td.path / "B", c = td.path / "C";
+        WriteFile(a / "project.okayproj", "engine_version=2.850.0\n");
+        WriteFile(a / "Assets" / "a.okayscene", Current("A", 1));
+        WriteFile(b / "project.okayproj", "engine_version=2.855.0\n");
+        WriteFile(b / "Assets" / "b.okayscene", Current("B", 1));
+        WriteFile(c / "project.okayproj", "engine_version=2.850.0\n");
+        WriteFile(c / "Assets" / "c.okayscene", Current("C", 1));
+        const std::string sa = (a / "Assets" / "a.okayscene").string(), sb = (b / "Assets" / "b.okayscene").string(), sc = (c / "Assets" / "c.okayscene").string();
+        {
+            ProjectGate g(env);
+            int goA = 0, noA = 0, goB = 0, noB = 0;
+            g.Open(sa, [&] { ++goA; }, [&] { ++noA; });
+            CHECK(g.prompt().kind == PromptKind::Older);
+            g.Open(sb, [&] { ++goB; }, [&] { ++noB; });
+            std::cerr << "[review7a_second_open] goB=" << goB << " noB=" << noB << "\n";
+            CHECK(goB == 0 && noB == 0 && g.prompt().kind == PromptKind::Older && g.prompt().root == a.string() && g.HasHeldOpen());   // held, not refused
+            g.Answer(Choice::Cancel);
+            CHECK(noA == 1 && goA == 0 && goB == 1 && noB == 0 && !g.Busy() && !g.HasHeldOpen());   // A was cancelled, then B opened
+        }
+        {   // the held one asks its own question when it is its turn; a newer request replaces an older held one
+            ProjectGate g(env);
+            int goA = 0, goB = 0, noB = 0, goC = 0, noC = 0;
+            g.Open(sa, [&] { ++goA; });
+            g.Open(sb, [&] { ++goB; }, [&] { ++noB; });
+            g.Open(sc, [&] { ++goC; }, [&] { ++noC; });
+            CHECK(noB == 1 && goB == 0 && goC == 0 && noC == 0);
+            g.Answer(Choice::Cancel);
+            CHECK(g.prompt().kind == PromptKind::Older && g.prompt().root == c.string() && goC == 0);
+            g.Answer(Choice::Cancel);
+            CHECK(noC == 1 && goC == 0 && !g.Busy() && goA == 0);
+        }
+        {   // Keep starts another editor and this one closes: the held request is cancelled, not opened
+            const fs::path launcher = td.path / "L";
+            WriteFile(okayver::InstalledEditorPath(launcher, "2.850.0"), "#!/bin/sh\n");
+            GateEnv ke = env;
+            ke.launcherDir = [&] { return launcher; };
+            ProjectGate g(ke);
+            int goB = 0, noB = 0;
+            g.Open(sa, [] {}, [] {});
+            g.Open(sb, [&] { ++goB; }, [&] { ++noB; });
+            g.Answer(Choice::Keep);
+            CHECK(g.TakeQuitRequest() && goB == 0 && noB == 1 && !g.Busy());
+        }
+        {   // held behind an upgrade: it runs after the result window's Continue
+            ProjectGate g(env);
+            int goA = 0, goB = 0;
+            g.Open(sa, [&] { ++goA; });
+            g.Answer(Choice::Upgrade);
+            g.Open(sb, [&] { ++goB; });
+            for (int i = 0; i < 100000 && g.prompt().kind == PromptKind::Working; ++i) g.Tick(std::chrono::milliseconds(0));
+            CHECK(g.prompt().kind == PromptKind::Done && goB == 0);
+            g.Answer(Choice::Continue);
+            CHECK(goA == 1 && goB == 1 && !g.Busy());
+        }
+    }
+    // carried over from the known-bug file (they pass): records this version does not know are kept, and scenes with Windows
+    // line endings upgrade like any other
+    {
+        TempDir td;
+        const fs::path root = td.path / "Game";
+        WriteFile(root / "Assets" / "Old.okayscene", std::string(kV1) + "futurerecord 1 2 3\n");
+        WriteFile(root / "Assets" / "Crlf.okayscene", [] { std::string o; for (char ch : Current("C", 2)) { if (ch == '\n') o += '\r'; o += ch; } return o; }());
+        WriteFile(root / "Assets" / "CrlfOld.okayscene", [] { std::string o; for (const char* ch = kV1; *ch; ++ch) { if (*ch == '\n') o += '\r'; o += *ch; } return o; }());
+        Options o;
+        o.projectDir = root.string(); o.fromVersion = "2.850.0"; o.toVersion = "2.855.0";
+        UpgradeJob j(o);
+        j.Run();
+        CHECK(j.result().ok && j.result().scenes == 3);
+        CHECK(Has(ReadFile(root / "Assets" / "Old.okayscene"), "futurerecord 1 2 3"));
+        CHECK(Loads(root / "Assets" / "Crlf.okayscene") && Has(ReadFile(root / "Assets" / "CrlfOld.okayscene"), "okayscene 3"));
     }
 
     // ---- the keys project.okayproj's writer owns ---------------------------------------------------------------------
@@ -485,7 +830,7 @@ int main() {
     // ---- the disk refuses at every step in turn -------------------------------------------------------------------------
     {
         TempDir clean;
-        Proj pc(clean.path, 300 * 1024);
+        Proj pc(clean.path, 300 * 1024, true);                                  // with a byte-order-mark scene: one more file rewritten
         std::vector<std::pair<std::string, std::string>> calls;
         Options o = pc.Opts("2.850.0");
         o.fail = [&](const char* stage, const std::string& what) { calls.emplace_back(stage, what); return false; };
@@ -500,7 +845,7 @@ int main() {
         int failedRuns = 0, afterRename = 0;
         for (std::size_t i = 0; i < calls.size(); ++i) {
             TempDir td;
-            Proj p(td.path, 300 * 1024);
+            Proj p(td.path, 300 * 1024, true);
             const Tree before = Snap(p.root);
             std::size_t n = 0;
             Options fo = p.Opts("2.850.0");
@@ -521,18 +866,18 @@ int main() {
                 CHECK(BackupCount(p) == 0 && r.backupDir.empty());              // no half-made backup either
             }
         }
-        CHECK(failedRuns == (int)calls.size() && afterRename == 4);
+        CHECK(failedRuns == (int)calls.size() && afterRename == 5);              // apply x4 (three old files and the marked one), stamp
     }
 
     // a failed rollback says which file could not be put back, and the backup still has the original
     {
         TempDir td;
-        Proj p(td.path, 100 * 1024);
+        Proj p(td.path, 100 * 1024, true);
         const Tree before = Snap(p.root);
         int applies = 0;
         Options o = p.Opts("2.850.0");
         o.fail = [&](const char* stage, const std::string& what) {
-            if (std::string(stage) == "apply" && ++applies == 3) return true;      // the third rewrite fails ...
+            if (std::string(stage) == "apply" && ++applies == 4) return true;      // the fourth rewrite (Old1) fails ...
             return std::string(stage) == "restore" && Has(what, "Chars.okayscene");  // ... and putting one of the first two back fails too
         };
         UpgradeJob j(o);
@@ -544,6 +889,7 @@ int main() {
         int differing = 0;
         for (const auto& kv : before) if (now.at(kv.first) != kv.second) { ++differing; CHECK(kv.first == kChanged1); }
         CHECK(differing == 1);                                                      // everything else went back
+        CHECK(now.at("Assets/Scenes/Bom.okayscene") == before.at("Assets/Scenes/Bom.okayscene"));   // the marked scene too, mark and all
     }
 
     // ---- scenes that are damaged, too new, or read-only stop everything before anything is made ---------------------
@@ -897,7 +1243,7 @@ int main() {
         {
             TempDir td;
             WriteFile(td.path / "loose" / "x.okayscene", Current("x", 1));
-            ProjectGate g(env);
+            ProjectGate g(FencedEnv(td.path));
             int go = 0;
             g.Open((td.path / "loose" / "x.okayscene").string(), [&] { ++go; });
             CHECK(go == 1 && !g.Busy());
@@ -926,8 +1272,8 @@ int main() {
             g.Open(sceneOf(p), [&] { ++go; }, [&] { ++no; });                        // asked again: Cancel was not a decision
             CHECK(g.prompt().kind == PromptKind::Older);
             int second = 0;
-            g.Open(sceneOf(p), [&] { ++go; }, [&] { ++second; });                    // one question at a time
-            CHECK(second == 1 && g.prompt().kind == PromptKind::Older && go == 0);
+            g.Open(sceneOf(p), [&] { ++second; }, [&] { ++second; });                // one question at a time: the second is held
+            CHECK(second == 0 && g.prompt().kind == PromptKind::Older && go == 0 && g.HasHeldOpen());
             g.Answer(Choice::Upgrade);
             CHECK(g.prompt().kind == PromptKind::Working && go == 0);
             g.Answer(Choice::Back);                                                  // buttons that don't belong to this window are ignored
@@ -941,6 +1287,7 @@ int main() {
             CHECK(okayver::ReadProjectVersion(p.root.string()) == "2.855.0");
             g.Answer(Choice::Continue);
             CHECK(!g.Busy() && go == 1 && g.IsCleared(p.root.string()));
+            CHECK(second == 1 && !g.HasHeldOpen());                                  // ... and opened once the project was answered for
             g.Open(sceneOf(p), [&] { ++go; });                                       // the rest of the session: no question
             CHECK(go == 2 && !g.Busy());
         }
@@ -1132,7 +1479,7 @@ int main() {
         // File > Project Upgrade...: the person asks for it on an open project, so there is no question, only the work and the result
         {
             TempDir td; Proj p(td.path); stamp(p, "2.855.0");
-            ProjectGate g(env);
+            ProjectGate g(FencedEnv(td.path));
             g.MarkCleared(p.root.string());                                          // it is open
             int done = 0;
             g.Upgrade(sceneOf(p), [&] { ++done; });
@@ -1140,18 +1487,18 @@ int main() {
             int other = 0;
             g.Upgrade(sceneOf(p), [&] { ++other; });                                 // one at a time
             g.Open(sceneOf(p), [&] { ++other; }, [&] { ++other; });
-            CHECK(other == 1);                                                       // the second Open was cancelled, the second Upgrade ignored
+            CHECK(other == 0 && g.HasHeldOpen());                                    // the second Upgrade ignored, the Open held
             for (int i = 0; i < 100000 && g.prompt().kind == PromptKind::Working; ++i) g.Tick(std::chrono::milliseconds(0));
             CHECK(g.prompt().kind == PromptKind::Done && g.prompt().result.rewritten == 3 && done == 0);   // an up-to-date stamp still has old scenes to bring along
             g.Answer(Choice::Continue);
-            CHECK(done == 1 && !g.Busy());
+            CHECK(done == 1 && !g.Busy() && other == 1);                             // the held Open ran after the window closed
             g.Upgrade((td.path / "loose.okayscene").string(), [&] { ++done; });     // not a project: nothing happens
             CHECK(!g.Busy() && done == 1);
         }
         // the safety net under EditorState::Load
         {
             TempDir td; Proj p(td.path); stamp(p, "2.850.0");
-            ProjectGate g(env);
+            ProjectGate g(FencedEnv(td.path));
             std::string why;
             CHECK(!g.MayLoad(sceneOf(p), &why) && Has(why, "v2.850.0") && Has(why, "upgrade"));
             CHECK(!g.IsCleared(p.root.string()));

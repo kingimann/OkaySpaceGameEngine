@@ -9191,7 +9191,7 @@ bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
 }
 
 
-std::string SceneSerializer::SerializeObject(const GameObject& root) {
+std::string SceneSerializer::SerializeObject(const GameObject& root, bool includeChildren) {
     VehicleSeatSaveGuard seatGuard;
     // Gather the object and all its descendants (depth-first, in sibling order). A stack, not a
     // recursion: a hierarchy 100000 deep must not overflow the call stack. `skipBits` says why an
@@ -9209,6 +9209,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
             const unsigned bits = above | OwnSkipBits(go);
             subtree.push_back(go);
             skipBits.push_back(bits);
+            if (!includeChildren) continue;   // the object alone
             const auto& kids = go->transform->Children();
             for (std::size_t i = kids.size(); i-- > 0;) stack.push_back({kids[i]->gameObject, bits});
         }

@@ -108,8 +108,10 @@ public:
                               std::vector<GameObject*>* addedRoots = nullptr, std::string* error = nullptr,
                               std::vector<std::string>* warnings = nullptr);
 
-    /// Serialize a single GameObject and its descendants (a prefab).
-    static std::string SerializeObject(const GameObject& root);
+    /// Serialize a single GameObject and its descendants (a prefab). With `includeChildren` false only the object
+    /// itself is written (its components, no children): what a tool needs to look at one object's saved records
+    /// without paying for a big hierarchy below it.
+    static std::string SerializeObject(const GameObject& root, bool includeChildren = true);
     /// Clone `prefab` (and its descendants) into `scene`; returns the new root,
     /// or nullptr (nothing added) if the clone's text fails to parse.
     static GameObject* Instantiate(Scene& scene, const GameObject& prefab);

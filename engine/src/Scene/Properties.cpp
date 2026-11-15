@@ -51,6 +51,7 @@ std::string FloatText(float v) {
 }
 
 bool ParseFloat(const std::string& raw, float& out) {
+    if (raw.size() > 256) return false;   // no number is this long: refuse before copying a huge text
     const std::string tok = Trim(raw);
     if (tok.empty()) return false;
     const std::string low = Lower(tok);
@@ -71,6 +72,7 @@ bool ParseFloat(const std::string& raw, float& out) {
 }
 
 bool ParseInt(const std::string& raw, long long& out) {
+    if (raw.size() > 256) return false;
     const std::string tok = Trim(raw);
     if (tok.empty()) return false;
     std::size_t i = (tok[0] == '+' || tok[0] == '-') ? 1 : 0;
@@ -86,6 +88,7 @@ bool ParseInt(const std::string& raw, long long& out) {
 }
 
 bool ParseBool(const std::string& raw, bool& out) {
+    if (raw.size() > 64) return false;
     const std::string t = Lower(Trim(raw));
     if (t == "true" || t == "1" || t == "yes" || t == "on") { out = true; return true; }
     if (t == "false" || t == "0" || t == "no" || t == "off") { out = false; return true; }
@@ -93,7 +96,11 @@ bool ParseBool(const std::string& raw, bool& out) {
 }
 
 // Split "1 2 3" / "1, 2, 3" / "(1, 2, 3)" into exactly `n` floats.
+// Text that cannot be `n` numbers is refused before it is cut up: a pasted file must not be split into millions of pieces.
+// (`n` is at most 4 and a float is at most about 15 characters, so a thousand characters leaves room for any padding.)
 bool ParseFloats(const std::string& raw, int n, float* out) {
+    constexpr std::size_t kMaxText = 1024;
+    if (raw.size() > kMaxText) return false;
     std::string t = Trim(raw);
     if (t.size() >= 2) {
         const char a = t.front(), b = t.back();
@@ -106,6 +113,7 @@ bool ParseFloats(const std::string& raw, int n, float* out) {
         for (;;) {
             const std::size_t comma = t.find(',', start);
             parts.push_back(Trim(t.substr(start, comma == std::string::npos ? std::string::npos : comma - start)));
+            if (static_cast<int>(parts.size()) > n) return false;   // already one too many: stop splitting
             if (comma == std::string::npos) break;
             start = comma + 1;
         }
@@ -116,6 +124,7 @@ bool ParseFloats(const std::string& raw, int n, float* out) {
             std::size_t j = i;
             while (j < t.size() && !std::isspace(static_cast<unsigned char>(t[j]))) ++j;
             if (j > i) parts.push_back(t.substr(i, j - i));
+            if (static_cast<int>(parts.size()) > n) return false;   // already one too many: stop splitting
             i = j;
         }
     }
@@ -129,6 +138,7 @@ bool ParseFloats(const std::string& raw, int n, float* out) {
 }
 
 bool ParseHexColor(const std::string& raw, Color& out) {
+    if (raw.size() > 64) return false;
     const std::string t = Trim(raw);
     if (t.size() != 7 && t.size() != 9) return false;
     if (t[0] != '#') return false;

@@ -1,9 +1,9 @@
 // Our own RAW reader (engine/src/Render/RawReader.cpp): plain triangle text. SYNTHETIC fixture built by hand (BuildRaw in
-// batche_fixtures.hpp), hand-computed expectations. No real .raw file is in the repository: unverified against real files.
+// batche2_fixtures.hpp), hand-computed expectations. No real .raw file is in the repository: unverified against real files.
 // Builds on its own with -DOKAY_STANDALONE_TEST.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
-#include "batche_fixtures.hpp"
+#include "batche2_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <cmath>
 #include <string>
@@ -17,7 +17,7 @@ int main() {
     RUN_SUITE("raw_reader");
     for (const char* eol : {"\n", "\r\n", "\r"}) {
         ImportedModel m; std::string err;
-        CHECK(ReadRawBuffer(fx::BuildRaw(eol), m, &err));
+        CHECK(ReadRawBuffer(fx2::BuildRaw(eol), m, &err));
         CHECK(m.backend == "own" && fx::Sane(m) && m.nodes.size() == 1);
         CHECK(m.parts.size() == 3 && fx::TriCount(m) == 4);
         CHECK(m.parts[0].mesh.name == "RAW" && m.parts[1].mesh.name == "wing" && m.parts[2].mesh.name == "wood.tga");

@@ -28,6 +28,10 @@ constexpr std::int32_t kMaxMeshVerts = 4000000, kMaxMeshFaces = 4000000, kMaxFac
 // Per-file budgets over all meshes: corners read from the file, triangles and vertices built.
 constexpr std::uint64_t kMaxCorners = 16000000;
 constexpr std::size_t kMaxOutVerts = 4000000, kMaxBuiltTris = 4000000;
+// Ear clipping a concave polygon costs about n^3 steps. Only polygons of at most kMaxEarCorners corners are ear clipped, and the sum of
+// n^3 over the file may not pass kMaxEarWork; any polygon beyond either limit is fanned (the corner order of the file), with a note.
+constexpr std::size_t kMaxEarCorners = 32;
+constexpr std::uint64_t kMaxEarWork = 400000000ull;
 
 // A bounds-checked cursor with a chosen byte order. A failed read latches `bad`, returns zero and moves nothing.
 struct Cur {
@@ -67,7 +71,7 @@ struct Mesh1 {
     bool haveTex = false;
 };
 
-struct Stats { int badFace = 0, shortFace = 0, badUv = 0, badNormals = 0; std::uint64_t corners = 0; };
+struct Stats { int fanned = 0; std::uint64_t earWork = 0; int badFace = 0, shortFace = 0, badUv = 0, badNormals = 0; std::uint64_t corners = 0; };
 
 bool ReadMesh(Cur& c, std::int32_t numTextures, Mesh1& m, Stats& st, std::string& why) {
     const std::int32_t nv = c.I32();
@@ -109,8 +113,6 @@ bool ReadMesh(Cur& c, std::int32_t numTextures, Mesh1& m, Stats& st, std::string
     if (c.bad) { why = "the file ends inside a mesh"; return false; }
     return true;
 }
-
-struct Key { std::uint32_t a, b, c; };
 
 } // namespace q3d
 } // namespace
@@ -210,7 +212,13 @@ bool Q3dTry(const std::string& bytes, bool be, ImportedModel& out, std::string& 
             for (std::uint32_t f : grp.second) {
                 poly.clear();
                 for (std::size_t k = start[f]; k < start[f + 1]; ++k) poly.push_back(m.v[(std::size_t)m.face[k]]);
-                if (poly.size() == 3) { tris.assign(1, std::array<int, 3>{0, 1, 2}); } else detail::TriangulatePolygon(poly, tris);
+                const std::uint64_t cost = (std::uint64_t)poly.size() * poly.size() * poly.size();
+                if (poly.size() == 3) { tris.assign(1, std::array<int, 3>{0, 1, 2}); }
+                else if (poly.size() > kMaxEarCorners || st.earWork + cost > kMaxEarWork) {
+                    tris.clear();
+                    for (int k = 1; k + 1 < (int)poly.size(); ++k) tris.push_back({0, k, k + 1});
+                    if (poly.size() > 4) ++st.fanned;
+                } else { st.earWork += cost; detail::TriangulatePolygon(poly, tris); }
                 builtTris += tris.size();
                 if (builtTris > kMaxBuiltTris) { why = "over the budget of " + std::to_string(kMaxBuiltTris) + " triangles for one file"; return false; }
                 for (const auto& t : tris) for (int k : t) {
@@ -250,6 +258,7 @@ bool Q3dTry(const std::string& bytes, bool be, ImportedModel& out, std::string& 
     if (scene) note("scene file: the scene chunk (placement, camera, lights, background) is not used");
     if (skippedTex) note(std::to_string(skippedTex) + " embedded texture(s) not imported; the description gives no link from a material to a texture");
     note("ambient and specular colours are not imported");
+    if (st.fanned) note(std::to_string(st.fanned) + " polygon(s) with more than " + std::to_string(kMaxEarCorners) + " corners, or past the per-file ear clipping budget, were fanned from their first corner (a concave one may come out wrong)");
     if (st.badFace) note(std::to_string(st.badFace) + " face(s) with an out-of-range vertex index skipped");
     if (st.shortFace) note(std::to_string(st.shortFace) + " face(s) with fewer than 3 corners skipped");
     if (st.badUv) note(std::to_string(st.badUv) + " corner(s) with a bad texture coordinate index got (0, 0)");

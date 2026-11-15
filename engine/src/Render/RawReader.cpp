@@ -68,30 +68,54 @@ bool ReadRawBuffer(const std::string& input, ImportedModel& out, std::string* er
         return true;
     };
 
-    detail::txt::Lines lines(text);
-    std::string line;
-    while (lines.Next(line)) {
-        const std::vector<std::string> tok = detail::txt::Split(line);
-        if (tok.empty() || tok[0][0] == '#') continue;
+    // Lines are read in place (no copy of a line, no token strings): a 256 MiB line of one-letter words must not become
+    // 128 million strings. At most kMaxLineTokens tokens of a line are looked at; one more refuses the file.
+    using detail::rc::Ws;
+    std::size_t pos = 0, lineNo = 0;
+    while (pos < text.size()) {
+        std::size_t e = pos;
+        while (e < text.size() && text[e] != '\n' && text[e] != '\r') ++e;
+        const std::size_t b0 = pos;
+        pos = e;
+        if (pos < text.size() && text[pos] == '\r') { ++pos; if (pos < text.size() && text[pos] == '\n') ++pos; }
+        else if (pos < text.size()) ++pos;
+        ++lineNo;
+        std::size_t b = b0;
+        while (b < e && Ws(text[b])) ++b;
+        if (b >= e || text[b] == '#') continue;
+        // first token
+        std::size_t q = b;
+        while (q < e && !Ws(text[q])) ++q;
         double probe;
-        if (!detail::txt::ToDouble(tok[0], probe)) {   // a group name: the whole line
-            std::size_t b = 0, e = line.size();
-            while (b < e && detail::txt::IsWs(line[b])) ++b;
-            while (e > b && detail::txt::IsWs(line[e - 1])) --e;
-            if (e - b > 256) e = b + 256;
-            if (!groupFor(line.substr(b, e - b))) return Fail(err, "more than " + std::to_string(kMaxGroups) + " groups");
+        if (!detail::rc::ParseNumber(text.data() + b, text.data() + q, probe)) {   // a group name: the whole line, trimmed
+            std::size_t te = e;
+            while (te > b && Ws(text[te - 1])) --te;
+            if (te - b > 256) te = b + 256;
+            if (!groupFor(text.substr(b, te - b))) return Fail(err, "more than " + std::to_string(kMaxGroups) + " groups");
             continue;
         }
-        if (tok.size() > kMaxLineTokens) return Fail(err, "line " + std::to_string(lines.number) + " has too many values");
+        // tokens of a number line: pointers into the text
+        const char* tb[kMaxLineTokens + 1];
+        const char* te_[kMaxLineTokens + 1];
+        std::size_t nt = 0;
+        for (std::size_t t = b; t < e;) {
+            while (t < e && Ws(text[t])) ++t;
+            if (t >= e) break;
+            std::size_t u = t;
+            while (u < e && !Ws(text[u])) ++u;
+            if (nt >= kMaxLineTokens) return Fail(err, "line " + std::to_string(lineNo) + " has more than " + std::to_string(kMaxLineTokens) + " values");
+            tb[nt] = text.data() + t; te_[nt] = text.data() + u; ++nt;
+            t = u;
+        }
         double v[12];
         std::size_t k = 0;
-        while (k < tok.size() && k < 12 && detail::txt::ToDouble(tok[k], v[k])) ++k;
+        while (k < nt && k < 12 && detail::rc::ParseNumber(tb[k], te_[k], v[k])) ++k;
         std::string tex;
         std::size_t first = 0;
-        if (k == 9 && tok.size() == 9) first = 0;
-        else if (k == 9 && tok.size() == 10) { tex = tok[9]; first = 0; }
-        else if (k == 12 && tok.size() == 12) { first = 3; ++colourLines; }
-        else return Fail(err, "line " + std::to_string(lines.number) + " is not a triangle: nine numbers (optionally a colour before or a texture name after) are needed, " + std::to_string(k) + " found");
+        if (k == 9 && nt == 9) first = 0;
+        else if (k == 9 && nt == 10) { tex.assign(tb[9], (std::size_t)(te_[9] - tb[9])); if (tex.size() > 256) tex.resize(256); first = 0; }
+        else if (k == 12 && nt == 12) { first = 3; ++colourLines; }
+        else return Fail(err, "line " + std::to_string(lineNo) + " is not a triangle: nine numbers (optionally a colour before or a texture name after) are needed, " + std::to_string(k) + " found");
         if (++tris > kMaxTris) return Fail(err, "over the budget of " + std::to_string(kMaxTris) + " triangles for one file");
         if (!tex.empty()) { if (!groupFor(tex)) return Fail(err, "more than " + std::to_string(kMaxGroups) + " groups"); }
         else if (cur == (std::size_t)-1 && !groupFor("RAW")) return Fail(err, "no group");

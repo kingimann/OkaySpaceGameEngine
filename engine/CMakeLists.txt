@@ -631,8 +631,7 @@ if(OKAY_OWN_BLEND)
     message(STATUS "OkaySpace: model import reads .blend with the built-in Blender reader first")
 endif()
 # Our own 3MF / AMF / X3D / DXF / LWO readers (batch B), same opt-in rules as 3DS: default OFF.
-set(_okay_own_fmt_list_ab 3MF AMF X3D DXF LWO)
-foreach(_fmt ${_okay_own_fmt_list_ab})
+foreach(_fmt 3MF AMF X3D DXF LWO)
     if(OKAY_OWN_${_fmt})
         target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")
@@ -640,19 +639,26 @@ foreach(_fmt ${_okay_own_fmt_list_ab})
 endforeach()
 
 # Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C) and AC3D / OGRE / XGL / IRR / NFF (batch D) and Q3D / RAW (batch E), same opt-in rules as 3DS: default OFF.
-set(_okay_own_fmt_list MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF Q3D RAW)
-# Guard: every model reader option the root CMakeLists.txt declares ("Read .xyz ... with our own ...") must be in the lists of
-# this file, or its OKAY_OWN_<FMT>_DEFAULT is silently never defined (a merge once dropped Terragen from this loop that way).
+# Guard: every model reader option the root CMakeLists.txt declares ("Read .xyz ... with our own ...") must be in a
+# foreach(_fmt ...) list of this file (or have a literal OKAY_OWN_<FMT>_DEFAULT definition), or its default is silently never
+# defined (a merge once dropped Terragen from this loop that way). Add a new reader's name to the literal list below.
 file(STRINGS "${PROJECT_SOURCE_DIR}/CMakeLists.txt" _okay_own_opts REGEX "^option\\(OKAY_OWN_[A-Z0-9]+ +\"Read ")
 file(READ "${CMAKE_CURRENT_LIST_FILE}" _okay_this_file)
+string(REGEX MATCHALL "foreach\\(_fmt [A-Z0-9 ]+\\)" _okay_heads "${_okay_this_file}")
+set(_okay_looped "")
+foreach(_h IN LISTS _okay_heads)
+    string(REGEX REPLACE "^foreach\\(_fmt ([A-Z0-9 ]+)\\)$" "\\1" _h "${_h}")
+    string(REPLACE " " ";" _h "${_h}")
+    list(APPEND _okay_looped ${_h})
+endforeach()
 foreach(_line IN LISTS _okay_own_opts)
     string(REGEX REPLACE "^option\\(OKAY_OWN_([A-Z0-9]+) .*$" "\\1" _name "${_line}")
     string(FIND "${_okay_this_file}" "target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_name}_DEFAULT)" _okay_lit)
-    if(NOT _name IN_LIST _okay_own_fmt_list AND NOT _name IN_LIST _okay_own_fmt_list_ab AND _okay_lit EQUAL -1)
-        message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no OKAY_OWN foreach list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
+    if(NOT _name IN_LIST _okay_looped AND _okay_lit EQUAL -1)
+        message(FATAL_ERROR "OKAY_OWN_${_name} is an option in CMakeLists.txt but is in no foreach(_fmt ...) list of engine/CMakeLists.txt and has no OKAY_OWN_${_name}_DEFAULT definition: its default would never be applied")
     endif()
 endforeach()
-foreach(_fmt ${_okay_own_fmt_list})
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF Q3D RAW)
     if(OKAY_OWN_${_fmt})
         target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")

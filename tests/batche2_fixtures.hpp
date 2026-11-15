@@ -5,7 +5,7 @@
 #include <cstring>
 #include <string>
 
-namespace fx {
+namespace fx2 {
 
 // Writer with a chosen byte order.
 struct QW {
@@ -69,4 +69,4 @@ inline std::string BuildRaw(const char* eol = "\n") {
     return s;
 }
 
-} // namespace fx
+} // namespace fx2

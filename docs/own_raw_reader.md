@@ -10,8 +10,8 @@ The "raw triangle" text format (for example the output of POV-Ray tools): one tr
 |---|---|
 | `engine/src/Render/RawReader.cpp` | `okay::ReadRawBuffer` / `okay::ReadRawFile` (declared in `ModelData.hpp`) |
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 33 (extension `.raw`) |
-| `tests/test_raw_reader.cpp`, `tests/batche_fixtures.hpp` | Hand-computed checks (`raw_reader`) |
-| `tests/test_batche_hostile.cpp`, `tests/test_batche_budget.cpp`, `tests/test_own_dispatch_e.cpp` | Hostile input, budgets and memory, the seam |
+| `tests/test_raw_reader.cpp`, `tests/batche2_fixtures.hpp` | Hand-computed checks (`raw_reader`) |
+| `tests/test_batche2_hostile.cpp`, `tests/test_batche2_budget.cpp`, `tests/test_own_dispatch_e2.cpp` | Hostile input, budgets and memory, the seam |
 
 ## What it reads
 
@@ -21,15 +21,15 @@ The "raw triangle" text format (for example the output of POV-Ray tools): one tr
 
 ## Not handled
 
-Binary raw files (a NUL byte is refused with that reason; no description of one was found). A triangle spread over several lines (one per line is required, although the description says any white space may separate the numbers). Colours and texture images. Quads (Blender's 12-number quad reading conflicts with the colour variant and is not used).
+Binary raw files (a NUL byte is refused with that reason; no description of one was found). Quads or any other line length. The twelve-number reading as colour-then-nine follows the description's colour variant; whether real files with twelve numbers mean that is a guess (unverified). A triangle spread over several lines (one per line is required, although the description says any white space may separate the numbers). Colours and texture images.
 
 ## Limits
 
-File 256 MiB; 500,000 triangles, 100,000 groups, 4,000,000 output vertices per file; 64 values per line; numbers finite and within 1e15 (`nan`, `inf`, hex and `1e999` are refused). The worst accepted file (500,000 triangles with all-different corners) reads in 2 s with a peak of 284 MB. No recursion; no other file is named, so `ResolveInsideDir` is not needed.
+File 256 MiB; 500,000 triangles, 100,000 groups, 4,000,000 output vertices per file; 64 values per line (a longer number line is refused after the 65th token is seen; lines are read in place, so one huge line costs no memory: a 64 MB line of single-character words peaks at 0 KB); numbers finite and within 1e15 (`nan`, `inf`, hex and `1e999` are refused). The worst accepted file (500,000 triangles with all-different corners) reads in 2 s with a peak of 284 MB. No recursion; no other file is named, so `ResolveInsideDir` is not needed.
 
 ## Tests and what was checked
 
-`raw_reader` (43 checks): groups, the default group, the texture-name line, the colour line (area 2 only when the nine numbers are read after the colour; breaking that offset turns the test red), `\n` `\r\n` `\r`, welding, number syntax, refusals. `batche_hostile` (truncations, bit flips, garbage, 2 MB numbers, 5,000 groups) and `batche_budget` (500,000 read, 500,001 refused naming the budget; removing the budget turns the test red).
+`raw_reader` (43 checks): groups, the default group, the texture-name line, the colour line (area 2 only when the nine numbers are read after the colour; breaking that offset turns the test red), `\n` `\r\n` `\r`, welding, number syntax, refusals. `batche2_hostile` (truncations, bit flips, garbage, 2 MB numbers, 5,000 groups) and `batche2_budget` (500,000 read, 500,001 refused naming the budget; removing the budget turns the test red).
 
 ## Provenance
 

@@ -1,13 +1,13 @@
 # Every `option(OKAY_OWN_<FMT> "Read ..." ...)` of the root CMakeLists.txt must get its OKAY_OWN_<FMT>_DEFAULT definition in
-# engine/CMakeLists.txt, either by a literal target_compile_definitions line or by being in one of the own-reader foreach lists.
+# engine/CMakeLists.txt, either by a literal target_compile_definitions line or by being in a literal one-line foreach(_fmt NAME NAME ...) list.
 # Run: cmake -DROOT=<source dir> -P check_own_reader_defaults.cmake
 cmake_policy(SET CMP0057 NEW)
 file(STRINGS "${ROOT}/CMakeLists.txt" _opts REGEX "^option\\(OKAY_OWN_[A-Z0-9]+ +\"Read ")
 file(READ "${ROOT}/engine/CMakeLists.txt" _eng)
-string(REGEX MATCHALL "set\\(_okay_own_fmt_list[A-Za-z_]* [A-Z0-9 ]+\\)" _lists "${_eng}")
+string(REGEX MATCHALL "foreach\\(_fmt [A-Z0-9 ]+\\)" _lists "${_eng}")
 set(_names "")
 foreach(_l IN LISTS _lists)
-    string(REGEX REPLACE "^set\\(_okay_own_fmt_list[A-Za-z_]* ([A-Z0-9 ]+)\\)$" "\\1" _n "${_l}")
+    string(REGEX REPLACE "^foreach\\(_fmt ([A-Z0-9 ]+)\\)$" "\\1" _n "${_l}")
     string(REPLACE " " ";" _n "${_n}")
     list(APPEND _names ${_n})
 endforeach()

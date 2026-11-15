@@ -3305,7 +3305,7 @@ target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
 
 # Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/own_sib_reader.md): one test per reader on SYNTHETIC hand-built fixtures
-# (tests/batche_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
+# (tests/batche2_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
 # The reader tests build on their own from the reader sources (no engine library).
 foreach(_e_t IN ITEMS q3d_reader:Q3dReader.cpp raw_reader:RawReader.cpp)
     string(REPLACE ":" ";" _e_p "${_e_t}")
@@ -3316,7 +3316,7 @@ foreach(_e_t IN ITEMS q3d_reader:Q3dReader.cpp raw_reader:RawReader.cpp)
     target_compile_definitions(test_${_e_name} PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     add_test(NAME ${_e_name} COMMAND test_${_e_name} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 endforeach()
-foreach(_e_t IN ITEMS batche_hostile batche_budget)
+foreach(_e_t IN ITEMS batche2_hostile batche2_budget)
     add_executable(test_${_e_t} test_${_e_t}.cpp
         ${PROJECT_SOURCE_DIR}/engine/src/Render/Q3dReader.cpp
         ${PROJECT_SOURCE_DIR}/engine/src/Render/RawReader.cpp)
@@ -3327,9 +3327,14 @@ foreach(_e_t IN ITEMS batche_hostile batche_budget)
 endforeach()
 
 # The import seam routes the batch-E formats (slots 31 and 33) to their own readers; needs the whole engine (ImportModelData).
-add_executable(test_own_dispatch_e test_own_dispatch_e.cpp)
-target_link_libraries(test_own_dispatch_e PRIVATE okay::engine)
-add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_own_dispatch_e2 test_own_dispatch_e2.cpp)
+target_link_libraries(test_own_dispatch_e2 PRIVATE okay::engine)
+foreach(_e_f IN ITEMS Q3D RAW)
+    if(OKAY_OWN_${_e_f})
+        target_compile_definitions(test_own_dispatch_e2 PRIVATE OKAY_EXPECT_OWN_${_e_f})
+    endif()
+endforeach()
+add_test(NAME own_dispatch_e2 COMMAND test_own_dispatch_e2 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # The OKAY_OWN_<FMT>_DEFAULT definitions of the own model readers must exist in engine/CMakeLists.txt for every reader option
 # (a merge once silently dropped one from the foreach list): checked at configure time by engine/CMakeLists.txt itself (FATAL_ERROR),

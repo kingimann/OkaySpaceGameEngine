@@ -5,7 +5,7 @@
 // -fsanitize=address,undefined.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
-#include "batche_fixtures.hpp"
+#include "batche2_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <cstdint>
 #include <cstdlib>
@@ -23,11 +23,11 @@ static bool RQ(const std::string& b, ImportedModel& m, std::string* e) { return 
 static bool RR(const std::string& b, ImportedModel& m, std::string* e) { return ReadRawBuffer(b, m, e); }
 
 int main() {
-    RUN_SUITE("batche_hostile");
+    RUN_SUITE("batche2_hostile");
     const int iters = std::getenv("OKAY_BATCHE_FUZZ_ITERS") ? std::atoi(std::getenv("OKAY_BATCHE_FUZZ_ITERS")) : 20000;
     int reads = 0, refusals = 0;
     for (bool be : {false, true}) for (bool scene : {false, true}) {
-        const std::string good = fx::BuildQ3d(be, scene, true);
+        const std::string good = fx2::BuildQ3d(be, scene, true);
         for (std::size_t n = 0; n < good.size(); ++n) Probe(RQ, good.substr(0, n), reads, refusals);   // every truncation
         for (std::size_t off = 0; off + 4 <= good.size(); ++off)
             for (std::uint32_t v : {0u, 1u, 0x7FFFFFFFu, 0x80000000u, 0xFFFFFFFFu, 0x00FFFFFFu}) {
@@ -45,16 +45,16 @@ int main() {
         }
     }
     {   // a refusal is really reached by a count of 0xFFFFFFFF (negative as a signed int): this must NOT be read
-        std::string s = fx::BuildQ3d();
+        std::string s = fx2::BuildQ3d();
         for (int k = 0; k < 4; ++k) s[22 + 1 + (std::size_t)k] = (char)0xFF;   // vertex count of mesh 0
         ImportedModel m; std::string err;
         CHECK(!ReadQ3dBuffer(s, m, &err) && !err.empty());
-        s = fx::BuildQ3d();
+        s = fx2::BuildQ3d();
         for (int k = 0; k < 4; ++k) s[22 + 1 + (std::size_t)k] = (char)(k == 3 ? 0x7F : 0xFF);   // 2^31 - 1 vertices
         CHECK(!ReadQ3dBuffer(s, m, &err) && !err.empty());
     }
     for (const char* eol : {"\n", "\r\n"}) {
-        const std::string good = fx::BuildRaw(eol);
+        const std::string good = fx2::BuildRaw(eol);
         for (std::size_t n = 0; n < good.size(); ++n) Probe(RR, good.substr(0, n), reads, refusals);
         std::uint32_t x = 777u;
         for (int i = 0; i < iters / 4; ++i) {

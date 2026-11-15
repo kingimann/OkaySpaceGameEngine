@@ -5,10 +5,11 @@
 // All fixtures are SYNTHETIC, generated here. Builds on its own with the reader sources.
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
-#include "batche_fixtures.hpp"
+#include "batche2_fixtures.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <new>
 #include <string>
@@ -57,7 +58,7 @@ template <class F> static bool Measure(const char* what, F&& f) {
 // A Q3D file with `meshes` meshes of nv vertices each and nf faces each; face i of a mesh is a quad on vertices 0..3 (shared) when
 // `quads`, else the triangle (3i, 3i+1, 3i+2) (unique vertices).
 static std::string Q3dBig(int meshes, std::uint32_t nv, std::uint32_t nf, bool quads) {
-    fx::QW w(false);
+    fx2::QW w(false);
     w.s.reserve(64 + (std::size_t)meshes * ((std::size_t)nv * 12 + (std::size_t)nf * 28));
     w.s += "quick3Do30"; w.I32((std::uint32_t)meshes); w.I32(0); w.I32(0);
     w.U8('m');
@@ -74,6 +75,22 @@ static std::string Q3dBig(int meshes, std::uint32_t nv, std::uint32_t nf, bool q
     return w.s;
 }
 
+// nf faces, each the same concave star polygon of `n` corners (alternating radius 1 and 0.5 around a circle).
+static std::string Q3dStars(std::uint32_t n, std::uint32_t nf) {
+    fx2::QW w(false);
+    w.s.reserve(64 + (std::size_t)n * 12 + (std::size_t)nf * ((std::size_t)n * 4 + 6));
+    w.s += "quick3Do30"; w.I32(1); w.I32(0); w.I32(0); w.U8('m');
+    w.I32(n);
+    for (std::uint32_t i = 0; i < n; ++i) { const double a = 6.283185307179586 * i / n, r = (i & 1) ? 0.5 : 1.0; w.F((float)(r * std::cos(a))); w.F((float)(r * std::sin(a))); w.F(0.0f); }
+    w.I32(nf);
+    for (std::uint32_t i = 0; i < nf; ++i) w.U16(n);
+    for (std::uint32_t i = 0; i < nf; ++i) for (std::uint32_t k = 0; k < n; ++k) w.I32(k);
+    for (std::uint32_t i = 0; i < nf; ++i) w.I32(0xFFFFFFFFu);
+    w.I32(0);
+    for (int i = 0; i < 9; ++i) w.F(0.0f);
+    return w.s;
+}
+
 static std::string RawBig(std::size_t tris) {
     std::string s;
     s.reserve(tris * 40);
@@ -86,7 +103,7 @@ static std::string RawBig(std::size_t tris) {
 }
 
 int main() {
-    RUN_SUITE("batche_budget");
+    RUN_SUITE("batche2_budget");
     {   // Q3D: 2,000,000 quads on 4 shared vertices = exactly the 4,000,000 triangles of the budget
         const std::string f = Q3dBig(1, 4, 2000000, true);
         ImportedModel m; std::string err;
@@ -107,17 +124,17 @@ int main() {
         CHECK(err.find("budget") != std::string::npos && err.find("vertices") != std::string::npos);
     }
     {   // counts that claim far more than the bytes hold: refused without allocating for the claim
-        std::string f = fx::BuildQ3d();
+        std::string f = fx2::BuildQ3d();
         for (int k = 0; k < 4; ++k) f[22 + 1 + (std::size_t)k] = (char)(k == 3 ? 0x00 : 0xFF);   // 0x00FFFFFF vertices: over the per-mesh limit
         ImportedModel m; std::string err;
         CHECK(!Measure("q3d vertex count 16M in a 300 byte file", [&] { return ReadQ3dBuffer(f, m, &err); }));
-        f = fx::BuildQ3d();
+        f = fx2::BuildQ3d();
         for (int k = 0; k < 4; ++k) f[22 + 1 + (std::size_t)k] = (char)(k == 0 ? 0x80 : (k == 1 ? 0x84 : (k == 2 ? 0x1E : 0)));   // 2,000,000 vertices in a 300 byte file
         CHECK(!Measure("q3d vertex count 2M in a 300 byte file", [&] { return ReadQ3dBuffer(f, m, &err); }));
         CHECK(err.find("ends inside") != std::string::npos);
     }
     {   // face shapes that claim 16,000,000 corners (the corner budget) in an 8 KB file: no allocation for the claim
-        fx::QW w(false);
+        fx2::QW w(false);
         w.s += "quick3Do30"; w.I32(1); w.I32(0); w.I32(0); w.U8('m');
         w.I32(1); w.F(0); w.F(0); w.F(0);
         w.I32(4000);
@@ -129,6 +146,43 @@ int main() {
         std::fprintf(stderr, "  q3d 16M claimed corners in 8 KB: %s, peak %zu KB\n", ok ? "read" : "refused", extra >> 10);
         CHECK(!ok && err.find("ends inside the faces") != std::string::npos);
         CHECK(extra < (1u << 20));
+    }
+    {   // ear clipping is n^3 per concave polygon: 15,000 concave 256-corner faces (3.84M corners, 3.8M triangles) and
+        // 100,000 concave 32-corner faces (3.2M corners) must finish in the time cap, because they are fanned or share a work budget
+        for (std::uint32_t n : {256u, 32u}) {
+            const std::uint32_t nf = n == 256 ? 15000 : 100000;
+            const std::string f = Q3dStars(n, nf);
+            ImportedModel m; std::string err;
+            char what[96]; std::snprintf(what, sizeof(what), "q3d %u concave %u-corner faces", nf, n);
+            const bool ok = Measure(what, [&] { return ReadQ3dBuffer(f, m, &err); });
+            CHECK(ok);
+            if (!ok) std::fprintf(stderr, "    %s\n", err.c_str());
+            bool noted = false; for (const std::string& t : m.notes) if (t.find("fanned") != std::string::npos) noted = true;
+            CHECK(noted);
+        }
+    }
+    {   // RAW: one huge line must not become millions of token strings: 64 MB of "1 1 1 ..." and of "0 a a a ..." in one line
+        for (int variant = 0; variant < 2; ++variant) {
+            std::string f = variant == 0 ? std::string() : std::string("0 ");
+            f.reserve(64u << 20);
+            while (f.size() < (64u << 20)) f += variant == 0 ? "1 " : "a ";
+            f += "\n";
+            ImportedModel m; std::string err;
+            const std::size_t base = g_live.load(); g_peak.store(base);
+            const bool ok = ReadRawBuffer(f, m, &err);
+            const std::size_t extra = g_peak.load() - base;
+            std::fprintf(stderr, "  raw 64 MB line (%d): %s, peak %zu KB\n", variant, ok ? "read" : "refused", extra >> 10);
+            CHECK(!ok);
+            CHECK(err.find("more than") != std::string::npos);
+            CHECK(extra < (1u << 20));
+        }
+        // and a 64 MB first word on a line of its own is only a (capped) group name
+        std::string f(64u << 20, 'a'); f += "\n0 0 0 1 0 0 0 1 0\n";
+        ImportedModel m; std::string err;
+        const std::size_t base = g_live.load(); g_peak.store(base);
+        const bool ok = ReadRawBuffer(f, m, &err);
+        CHECK(ok && m.parts.size() == 1 && m.parts[0].mesh.name.size() == 256);
+        CHECK(g_peak.load() - base < (1u << 20));
     }
     {   // RAW: 500,000 triangles with all-different corners = the budget
         const std::string f = RawBig(500000);

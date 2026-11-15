@@ -10,14 +10,14 @@ Quick3D is an old Mac and Windows modeller. A `.q3o` file is one object, a `.q3s
 |---|---|
 | `engine/src/Render/Q3dReader.cpp` | `okay::ReadQ3dBuffer` / `okay::ReadQ3dFile` (declared in `ModelData.hpp`) |
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 31 (extensions `.q3o`, `.q3s`) |
-| `tests/test_q3d_reader.cpp`, `tests/batche_fixtures.hpp` | Hand-computed checks on a hand-built file (`q3d_reader`) |
-| `tests/test_batche_hostile.cpp` | Truncations, count and index overwrites, bit flips (`batche_hostile`) |
-| `tests/test_batche_budget.cpp` | Budgets and memory with a counting `operator new` (`batche_budget`) |
-| `tests/test_own_dispatch_e.cpp` | The seam routes `.q3o` / `.q3s` to this reader (`own_dispatch_e`) |
+| `tests/test_q3d_reader.cpp`, `tests/batche2_fixtures.hpp` | Hand-computed checks on a hand-built file (`q3d_reader`) |
+| `tests/test_batche2_hostile.cpp` | Truncations, count and index overwrites, bit flips (`batche2_hostile`) |
+| `tests/test_batche2_budget.cpp` | Budgets and memory with a counting `operator new` (`batche2_budget`) |
+| `tests/test_own_dispatch_e2.cpp` | The seam routes `.q3o` / `.q3s` to this reader (`own_dispatch_e2`) |
 
 ## What it reads
 
-The 22 byte header (signature `quick3Do` or `quick3Ds`, a 2 character version, the number of meshes, materials and textures), then chunks, each one type byte: `m` meshes, `c` materials, `t` textures, `s` scene. Each mesh: vertices, faces (a corner count per face, then the vertex indices), a material index per face, normals, and, when the header names textures, texture coordinates and per-corner texture indices; then a centre of mass and a bounding box (skipped). Faces of any size are triangulated (convex ones fanned, concave ones ear clipped). One part per mesh and material; materials carry the diffuse colour, and the transparency as `alpha = 1 - transparency`. Stored normals are used when there is one per vertex and all are usable; otherwise smooth normals are made.
+The 22 byte header (signature `quick3Do` or `quick3Ds`, a 2 character version, the number of meshes, materials and textures), then chunks, each one type byte: `m` meshes, `c` materials, `t` textures, `s` scene. Each mesh: vertices, faces (a corner count per face, then the vertex indices), a material index per face, normals, and, when the header names textures, texture coordinates and per-corner texture indices; then a centre of mass and a bounding box (skipped). Faces are triangulated: up to 32 corners convex ones are fanned and concave ones ear clipped; bigger ones, and every polygon once the per-file ear clipping work (sum of corners cubed) passes 400,000,000, are fanned from their first corner (a note says so; a concave one may then come out wrong). One part per mesh and material; materials carry the diffuse colour, and the transparency as `alpha = 1 - transparency`. Stored normals are used when there is one per vertex and all are usable; otherwise smooth normals are made.
 
 ## Not handled (each is a line in `out.notes`)
 
@@ -33,13 +33,13 @@ Ambient and specular colours; the embedded textures (the description gives no li
 
 ## Limits
 
-File 256 MiB; 100,000 meshes, materials and textures each; 4,000,000 vertices and 4,000,000 faces per mesh; 4,096 corners per face; 16,000,000 face corners, 4,000,000 triangles and 4,000,000 output vertices per file. Every count is checked against the bytes really left in the file before anything is allocated (a 300 byte file that claims 2,000,000 vertices is refused with no allocation). Floats must be finite and within 1e15. No recursion. A reader that throws is turned into a refusal by `RunReaderGuarded`. The reader names no other file, so `ResolveInsideDir` is not needed.
+File 256 MiB; 100,000 meshes, materials and textures each; 4,000,000 vertices and 4,000,000 faces per mesh; 4,096 corners per face; 16,000,000 face corners, 400,000,000 units of ear clipping work, 4,000,000 triangles and 4,000,000 output vertices per file. Every count is checked against the bytes really left in the file before anything is allocated (a 300 byte file that claims 2,000,000 vertices is refused with no allocation). Floats must be finite and within 1e15. The file is parsed as little endian and, only if that fails, as big endian; a header read in the wrong order gives counts over the limits and fails at once, so the second parse costs more than the first only for a header whose bytes read the same both ways, and the total is at most twice one parse. No recursion. A reader that throws is turned into a refusal by `RunReaderGuarded`. The reader names no other file, so `ResolveInsideDir` is not needed.
 
 ## Tests and what was checked
 
 - `q3d_reader` (126 checks): a hand-built file (a unit quad and a triangle, two materials, four texture coordinates), in little and big endian, as object and as scene: parts, vertex and triangle counts, areas (1 + 1), every UV against its vertex, alpha 0.75, notes; the same without textures; refusals. Mutation checks (code broken, test red, code restored): alpha formula, texture index.
-- `batche_hostile` (shared with RAW): every truncation, every 4-byte window of the file set to 0, 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF and 0x00FFFFFF, 5,000 bit flips per variant, 300 garbage files; 26,279 inputs read and 15,120 refused in all; every result checked for sanity (finite, indices in range). Also clean under `-fsanitize=address,undefined,float-cast-overflow`. This test found a real bug (texture coordinates that were NaN or infinite reached the mesh); it is fixed.
-- `batche_budget`: 4,000,000 triangles read (peak 446 MB, 1 s); one quad more refused naming the budget; 4,200,000 output vertices refused (peak 538 MB); counts that claim more than the bytes hold refused with no allocation (a face-size claim of 16,000,000 corners in 8 KB peaks under 1 MB; removing that check turns the test red).
+- `batche2_hostile` (shared with RAW): every truncation, every 4-byte window of the file set to 0, 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF and 0x00FFFFFF, 5,000 bit flips per variant, 300 garbage files; 26,279 inputs read and 15,120 refused in all; every result checked for sanity (finite, indices in range). Also clean under `-fsanitize=address,undefined,float-cast-overflow`. This test found a real bug (texture coordinates that were NaN or infinite reached the mesh); it is fixed.
+- `batche2_budget`: 4,000,000 triangles read (peak 446 MB, 1 s); one quad more refused naming the budget; 4,200,000 output vertices refused (peak 538 MB); counts that claim more than the bytes hold refused with no allocation (a face-size claim of 16,000,000 corners in 8 KB peaks under 1 MB; removing that check turns the test red).
 
 ## Provenance (what this file was written from)
 

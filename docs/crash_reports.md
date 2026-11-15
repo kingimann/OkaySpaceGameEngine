@@ -211,7 +211,7 @@ An independent reviewer read the branch and ran probes. Eight findings, all addr
 | 5 | Invisible Unicode tag characters; dry-run output could start an Actions command | Removed in C++ and Python; the issue says the text is untrusted data; `::` lines are broken up in the log |
 | 6 | `c++filt` inherited the secrets; auth headers followed redirects; the schedule would go red on merge | Empty environment; redirects to another host refused; the schedule runs only when `CRASH_ISSUES_ENABLED` is `true`, a manual run is a dry run by default |
 | 7 | Handler robustness | History start on Windows; no half UTF-8 character at a cut (it was a permanent 400: 90 of 90 oversized test rows were invalid before); `0600` and no symlinks on Linux and macOS |
-| 8 | try_it section 15 (was 14) | Says to quit the launcher first; no longer claims `<host>` shows in the test report |
+| 8 | try_it section 7f (was 14) | Says to quit the launcher first; no longer claims `<host>` shows in the test report |
 
 Accepted and not changed: a forged signature (they are public in the issues) can still add a comment to an existing issue, which is only noise
 and is capped at 20 a run; the service_role key is still a repository secret (an Environment-scoped secret would be stricter); the scrubber cannot
@@ -238,7 +238,7 @@ with `-rdynamic` so the tests can name the faulting functions.
 
 ## Try it
 
-[`docs/try_it.md`](try_it.md), section 15, has the exact steps for the Windows release: quit the launcher first, a real crash on purpose with
+[`docs/try_it.md`](try_it.md), section 7f, has the exact steps for the Windows release: quit the launcher first, a real crash on purpose with
 `OKAY_TEST_CRASH_LATE`, where `okay_crash.txt` appears, what the launcher shows, the one-time notice, the preview, the GitHub button, the owner's two
 one-time steps, and how to see the row and the issue.
 

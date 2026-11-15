@@ -51,7 +51,7 @@ release job or the installer build for this change.
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
-| 15 | Crash reports: a detailed report, sent for you, turned into a GitHub issue | `OKAY_TEST_CRASH_LATE=Test.Step` crashes the editor on purpose; launcher Settings > Crash reports | Local half new; the server half needs the owner's one-time setup (see 15) |
+| 7f | Crash reports: a detailed report, sent for you, turned into a GitHub issue | `OKAY_TEST_CRASH_LATE=Test.Step` crashes the editor on purpose; launcher Settings > Crash reports | Local half new; the server half needs the owner's one-time setup (see 15) |
 
 ---
 
@@ -245,7 +245,7 @@ compiled or run on this machine).
 
 ---
 
-## 15. Crash reports: detailed report, sending, GitHub issues
+## 7f. Crash reports: detailed report, sending, GitHub issues
 
 **What it is.** When the editor crashes it now writes a much fuller report (version and build, Windows version, CPU, memory, graphics card, the
 scene's name, the last 64 steps, the last 200 Console lines, a backtrace). The launcher shows it, lets you read exactly what would be sent

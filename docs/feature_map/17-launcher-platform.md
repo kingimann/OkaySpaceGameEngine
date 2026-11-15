@@ -326,7 +326,7 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
 - **Code:** `shared/CrashReports.hpp`, `shared/CrashScrub.hpp`, `shared/CrashUpload.hpp`, `launcher/main.cpp`, `scripts/crash_to_issue.py`, `docs/sql/crash_reports.sql`, `.github/workflows/crash-issues.yml`
 - **API:** `okaycrash::Report`, `okaycrash::ParseOne`, `okaycrash::ParseLog`, `okaycrash::Signature`, `okaycrash::Scrub`, `okaycrash::upload::BuildPayload`, `okaycrash::upload::Run`, `okaycrash::upload::IssueUrl`; `OKAY_CRASH_UPLOAD`, `OKAY_CRASH_DIR`
 - **Editor:** the editor writes the reports (15.9, 22.3.2)
-- **Docs:** `docs/crash_reports.md`, `docs/editor.md`, `docs/try_it.md` (section 15)
+- **Docs:** `docs/crash_reports.md`, `docs/editor.md`, `docs/try_it.md` (section 7f)
 - **Tests:** `crash_reports`, `crash_scrub`, `crash_upload`, `crash_context`, `crash_handler`; `tests/scripts/test_crash_reports_sql.sh`, `tests/scripts/test_crash_to_issue.py`, `tests/scripts/test_crash_to_issue_http.py`, `tests/scripts/test_crash_workflow.py`
 - **Status:** Partial - the parser, scrubber, uploader, table SQL, issue script and workflow file are tested (and were security reviewed, docs/crash_reports.md); the launcher page, notice window and worker were only syntax-checked, and the server half does nothing until the owner runs the SQL and sets the repository variable (the secret is the one releases use)
 - **Open:** a real crash on Windows and an upload to the real project have not been run; function names for a stripped release need the release's `OkayEngine.debug` (see docs/crash_reports.md); no upload from the player (no player handler, 48.1)

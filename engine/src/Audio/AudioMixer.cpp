@@ -334,7 +334,7 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
         std::fill(bufR.begin(), bufR.end(), 0.0f);
         bool any = false;
         if (src->m_playing) {
-            const AudioClip& c = src->clip;
+            const AudioClip& c = src->Clip();
             if (!c.samples.empty()) {
                 any = true;
                 const float step = pitch * (c.sampleRate > 0 ? (float)c.sampleRate / outRate : 1.0f);

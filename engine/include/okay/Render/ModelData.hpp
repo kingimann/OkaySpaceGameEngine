@@ -8,7 +8,7 @@
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
-//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, MDC, HMP, CSM) are
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS / MOT) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -267,6 +267,24 @@ bool ReadIrrSceneBuffer(const std::string& text, const std::string& baseDir, Imp
 /// polygons by index with matid / texture / both, an `mtable` material file looked up in `baseDir`). Lights, the viewpoint,
 /// the background and the diffuse / specular / transmission coefficients are not read (reported in `out.notes`).
 bool ReadNffBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// IQM (Inter-Quake Model, version 2, binary): one skinned part per mesh (positions, normals, the first texture coordinate set,
+/// four joint weights per vertex; smooth normals when the file has none), the joint hierarchy as nodes under a root that turns
+/// Z-up into Y-up, the material name as the material (an image file name is its texture, resolved inside `baseDir`), and each
+/// animation as one clip (translation / rotation / scale keys per joint and frame, from the pose channel masks, at the animation's
+/// framerate). Winding and texture coordinates as written. Tangents, colours, custom arrays, bounds, adjacency, comments and
+/// extensions are not read (reported in `out.notes`). Version 1 files are refused. `baseDir` ends with a slash or is empty.
+bool ReadIqmBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// COB (Caligari trueSpace, binary "B" and ASCII "A" files): the Grou / PolH object tree as nodes (each object's stored world
+/// matrix, made relative to its parent), one part per (polygon object, material) with faces triangulated (convex ones fanned,
+/// concave ones ear clipped), per-corner texture coordinates, smoothing from the material's facet setting, and the Mat1 / ShBx
+/// materials (colour, alpha, the texture file of a "texture map" shader). trueSpace is
+/// left-handed and Z-up: y and z are swapped (a reflection, so the winding stays as written). Animation channels, bones, characters,
+/// cameras, lights, holes, bitmaps and the rest are not read (reported in `out.notes`). `baseDir` ends with a slash or is empty.
+bool ReadCobBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// NDO (Nendo, Izware's modeler, binary): SEAM ONLY. The header ("nendo 1.x") is recognised; the body is not read, because no
+/// public description of it exists that our rules let us follow and no real file was available. Always returns false, with a message
+/// that says which it is (not a Nendo file / Nendo file not read). See docs/own_ndo_reader.md.
+bool ReadNdoBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
 /// Terragen terrain (.ter, binary): one mesh part, a regular grid of the file's XPTS by YPTS points (SIZE + 1 on a side when
 /// those are missing), in metres (SCAL, 30 m per terrain unit by default), heights BaseHeight + Elevation * HeightScale / 65536
 /// terrain units, curve mode 1 applied (draped over a sphere of radius CRAD), turned from Z-up to Y-up as (x, y, z) -> (x, z, -y).
@@ -287,6 +305,22 @@ bool ReadHmpBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// and the motion as one clip ("csm") with a position key per frame and marker, at the file's $Rate. No mesh. Units are kept as
 /// written; the root node turns Z-up into Y-up.
 bool ReadCsmBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+/// PMX 2.0 / 2.1 (MikuMikuDance model, binary; UTF-16LE or UTF-8 text; index sizes of 1, 2 or 4 bytes): one skinned part per
+/// material (vertices welded, BDEF1 / BDEF2 / BDEF4 / SDEF as two-bone blend / QDEF weights as the four strongest, z mirrored and the
+/// winding reversed because the file is left-handed), the diffuse colour, alpha, specular power and diffuse texture of each material (the
+/// texture only when its path stays inside `baseDir`), and the bones as nodes (positions only) with their inverse bind matrices. Morphs are
+/// walked and checked but not imported; IK, inherit rules, display frames, rigid bodies, joints and soft bodies are not read (reported in
+/// `out.notes`). Per-file budgets on vertices, triangles, bones, morphs, materials and textures. `baseDir` ends with a slash or is empty.
+bool ReadPmxBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// LightWave scene (.lws, "LWSC" text, versions 1 to 6) and LightWave motion (.mot, "LWMO"): every object item (LoadObject /
+/// LoadObjectLayer / AddNullObject), camera, light and bone becomes a node (parents by ParentItem), the position, heading / pitch / bank and
+/// scale envelopes (channels 0 to 8) become one clip "scene" with keys at the file's own key times (seconds); the node's rest pose is the
+/// envelope value at time 0. Object files are read through `loader` (a path already joined to the scene's folder with
+/// ResolveInsideDir: absolute paths, "..", and links that leave the folder are refused; a scene may not name another scene); without a loader the
+/// objects are empty nodes. A .mot alone gives one node and one clip. Coordinates are left-handed: z is mirrored like in the LWO reader.
+/// Envelope shapes other than linear, pre / post behaviours, plugins, lighting values and render settings are not read (reported in `out.notes`).
+bool ReadLwsBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
+                   const IrrMeshLoader* loader = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -312,6 +346,9 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
 bool ReadXglFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadIrrSceneFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadIqmFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadCobFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadNdoFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadTerragenFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMdcFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadHmpFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -322,6 +359,9 @@ bool ReadQ3dBuffer(const std::string& bytes, ImportedModel& out, std::string* er
 /// Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
 bool ReadRawFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadRawBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
+bool ReadPmxFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// `path` is a .lws scene or a .mot motion file.
+bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

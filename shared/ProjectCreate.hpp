@@ -132,6 +132,7 @@ inline const std::vector<TemplateInfo>& Templates() {
         {"2.5D Platformer",      "Side view with depth layers and grabbing.", 2},
         {"Point & Click",        "Click-to-move adventure starter.", 2},
         {"Vehicle (3D)",         "A drivable car with suspension.", 2},
+        {"Vehicle (get in and drive)", "Walk to a car, press E, drive, get out.", 2},
         {"Vehicle (2D)",         "A side-on car for hill-climb games.", 2},
         {"Sandbox",              "Place and break blocks in a voxel world.", 2},
         {"Multiplayer",          "Host / join networked starter.", 3},
@@ -419,6 +420,7 @@ inline void TemplateFeatureLines(const char* title, const char*& a, const char*&
         {"2.5D Platformer", "Side view", "Depth layers", "Grab"},
         {"Point & Click", "Click to move", "Adventure starter", "A character"},
         {"Vehicle (3D)", "A drivable car", "Suspension", "3D road space"},
+        {"Vehicle (get in and drive)", "Walk up, press E", "Driver and passenger seats", "A player on foot"},
         {"Vehicle (2D)", "Side-on car", "Hill-climb style", "2D track"},
         {"Sandbox", "Place blocks", "Break blocks", "A voxel world"},
         {"Multiplayer", "Host a game", "Join a game", "A networked starter"},
@@ -480,6 +482,18 @@ inline WizardMove WizardOpen(NewProjectWizard& w) {
     w.step = 0;
     w.creating = false;
     w.moreOpen = false;
+    return WizardMove::Opened;
+}
+
+/// A starter-template card is only a shortcut into the wizard: it opens the Details step with that
+/// template already chosen and creates nothing. `index` is the template's place in Templates()
+/// (a negative or too-large index keeps the wizard's current choice). A wizard that is already
+/// creating is left alone, so a second click can never start a second project.
+inline WizardMove WizardOpenOnTemplate(NewProjectWizard& w, int index, int templateCount) {
+    if (w.creating) return WizardMove::None;
+    WizardOpen(w);
+    if (index >= 0 && index < templateCount) w.selected = index;
+    w.step = 1;
     return WizardMove::Opened;
 }
 

@@ -423,7 +423,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 23.4.1 Console panel - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; error, warning, info toggles with counts, category dropdown, search, collapse of repeats, details pane, clear on play, pause on error, Open Script, Copy and Save to `console_log.txt`; tab badge shows error and warning counts
   - 23.4.2 Open script at the error line - `editor/ConsolePanel.*` - the details pane offers Open Script (line) for script errors
   - 23.4.3 Log core - `Core/Log` - levels, categories, `OKAY_LOG` string, rotating file sink, sink hook used by the Console
-  - 23.4.4 Console model (#574) - `Debug/ConsoleModel` - ring buffer with collapse, filters, source links to objects and assets, pause-on-error request; `Add` takes an explicit `ConsoleSource` (guid, component, node) and a `ConsoleSourceScope` stamps runtime lines
+  - 23.4.4 Console model (#574) - `Debug/ConsoleModel` - ring buffer with collapse (identical level + category + message merge anywhere in the log; a row keeps its first position, count and last time follow the newest), filters, source links to objects and assets, pause-on-error request; `Add` takes an explicit `ConsoleSource` (guid, component, node) and a `ConsoleSourceScope` stamps runtime lines
   - 23.4.5 Diagnostics - `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - severity, stable code, message, how-to-fix hint, source (object guid or path, component, asset, script file and line, graph and node); dedupe, clear by source, clear by owner; new rows log through `Log` so the Console shows them
   - 23.4.6 Problems and build gate - `editor/ProblemsPanel.*` - the live list (15.11.8); Build stops on errors, lists warnings, and links to Problems
 - **Code:** `editor/ConsolePanel.*`, `editor/ProblemsPanel.*`, `Core/Log`, `Debug/ConsoleModel`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics`
@@ -550,7 +550,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 25.1 Templates
 - **What:** Starting points for a new project: a blank scene, a genre starter or a complete small game.
 - **Parts:**
-  - 25.1.1 Launcher Create page - `launcher/main.cpp` - 21 templates in four groups (All, Start simple, Game kits, Examples and systems) with search; `CreateProject` makes the folder and `Assets`, the editor fills in the template scene headless
+  - 25.1.1 Launcher Create page - `launcher/main.cpp` - 22 templates in four groups (All, Start simple, Game kits, Examples and systems) with search; `CreateProject` makes the folder and `Assets`, the editor fills in the template scene headless
   - 25.1.2 Editor starter content - `editor/main.cpp`, `Scene/SceneTemplates` - New Scene templates (3D, 2D) and built-in object templates
   - 25.1.3 Marketplace templates - `Platform/Workshop` - Workshop items of kind "template" that the launcher downloads
 - **Code:** `launcher/main.cpp`, `editor/main.cpp`, `Scene/SceneTemplates`, `Platform/Workshop`
@@ -559,7 +559,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/editor.md`, `docs/making_a_game.md`
 - **Tests:** `templates`, `humanoid_template`, `ui_templates`
 - **Status:** Works - creating a project from a template is used daily (read in `launcher/main.cpp`).
-- **Exists today:** 21 template cards (3D Scene, 2D Scene, Empty, First Person, Third Person, Third Person Shooter, Platformer, Top-Down, Top-Down Shooter, 2.5D Platformer, Point and Click, two Vehicles, Sandbox, Multiplayer, Coin Collector, Snake, Brick Breaker, Main Menu, Inventory, Humanoid). No user-made templates.
+- **Exists today:** 22 template cards (3D Scene, 2D Scene, Empty, First Person, Third Person, Third Person Shooter, Platformer, Top-Down, Top-Down Shooter, 2.5D Platformer, Point and Click, three Vehicles (3D, get in and drive, 2D), Sandbox, Multiplayer, Coin Collector, Snake, Brick Breaker, Main Menu, Inventory, Humanoid). No user-made templates.
 - **Work packages:**
   1. M - "Save project as template" copies a project minus caches into a template folder the Create page lists. Depends on: 25.2.
   2. S - Template metadata file (name, description, engine version, thumbnail). Depends on: package 1.

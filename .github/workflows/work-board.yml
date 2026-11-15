@@ -1,5 +1,6 @@
 # Live work board: rewrites WORK_BOARD.md on the bot branch `work-board` every 10 minutes from GitHub data (open PRs and
-# their CI state, recently merged PRs, claude/* and claude2/* branches, the latest comments on issue #422).
+# their CI state, recently merged PRs, claude/* and claude2/* branches, the latest comments on issue #422, the claims table
+# parsed from `Claim:`/`Release:` comments on #422 and the collision report from scripts/collision_check.py).
 # Read it at https://github.com/<owner>/<repo>/blob/work-board/WORK_BOARD.md
 # It only reads from GitHub and force-pushes one commit to the `work-board` branch (never main). The branch is
 # generated; do not edit it. Scheduled workflows run from the default branch, so this starts after it is merged.
@@ -19,9 +20,11 @@ concurrency:
 jobs:
   board:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # the collision report compares every claude/* and claude2/* branch with main
       - name: Generate the board
         env:
           GITHUB_TOKEN: ${{ github.token }}

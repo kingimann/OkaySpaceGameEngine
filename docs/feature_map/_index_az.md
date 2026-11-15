@@ -1319,7 +1319,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - emitter (2.7)
 - emoji (17.4)
 - emote (5.12)
-- Empty-space context menu (15.1.3)
+- Empty-space context menu and [+] popup (15.1.3)
 - Emscripten (18.2, 37.5, 38.7, 56.3)
 - Emscripten build (56.3.1)
 - Emscripten player target (18.2.2)

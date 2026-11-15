@@ -209,12 +209,12 @@ int main() {
         CHECK(FindId(m, "h.saveprefab") != nullptr);   // Save As Prefab is there for any object
     }
 
-    {   // Rig and IK items: a slot, present only when they apply.
+    {   // Rig and IK items: one submenu the host fills, present only when they apply.
         RowState r;
         CHECK(FindId(RowMenu(r), "h.modeltools") == nullptr);
         r.modelTools = true;
         const Entry* s = FindId(RowMenu(r), "h.modeltools");
-        CHECK(s != nullptr && s->kind == Kind::Slot);
+        CHECK(s != nullptr && s->kind == Kind::SlotMenu && s->label == "Rig & IK");
     }
 
     {   // Empty space: Create Empty, the categories, Paste, Select All / Deselect, fold, sort.

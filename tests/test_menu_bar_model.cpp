@@ -69,16 +69,17 @@ std::vector<std::string> Ids(const std::vector<Entry>& es) {
 int main() {
     RUN_SUITE("menu_bar_model");
 
-    {   // The bar: File Edit GameObject View Window Plugins Help. The old Engine menu is gone (its two items moved).
+    {   // The bar: File Edit GameObject View Plugins Help. The old Engine menu and the old Window menu (one duplicate item) are gone.
         const auto& tops = TopMenus();
         std::vector<std::string> labels;
         for (const Top& t : tops) labels.push_back(t.label);
-        CHECK((labels == std::vector<std::string>{"File", "Edit", "GameObject", "View", "Window", "Plugins", "Help"}));
+        CHECK((labels == std::vector<std::string>{"File", "Edit", "GameObject", "View", "Plugins", "Help"}));
         for (const Top& t : tops) {
             if (t.hostDrawn) CHECK(BuildMenu(t.id, State{}).empty());   // Plugins is drawn by the host
             else CHECK(!BuildMenu(t.id, State{}).empty());
         }
         CHECK(BuildMenu("engine", State{}).empty());
+        CHECK(BuildMenu("window", State{}).empty());
         CHECK(BuildMenu("nope", State{}).empty());
     }
 
@@ -229,16 +230,15 @@ int main() {
         CHECK(CreateCategories().size() == 8);
     }
 
-    {   // Window: the panels and the tool windows (each once), then the layouts. View: the Scene view's own settings.
+    {   // View: the windows (each listed once) and the layouts, then the Scene view's commands, overlays and rendering settings.
         State s;
-        const auto w = WindowMenu(s);
-        CHECK((Ids(w) == std::vector<std::string>{"window.panels", "window.tools", "---", "window.layout"}));
-        CHECK(FindLabel(w, "Hierarchy")->kind == Kind::Toggle);
-        CHECK(FindLabel(w, "Items, Loot & Recipes")->kind == Kind::Toggle);
-        CHECK(FindLabel(w, "Audio Mixer")->tip.find("ducking") != std::string::npos);
-        CHECK(FindLabel(w, "Layout")->kind == Kind::SlotMenu);
         const auto v = ViewMenu(s);
-        CHECK((Ids(v) == std::vector<std::string>{"view.frame", "view.isolate", "view.uionly", "---", "view.overlays", "view.bookmarks", "---", "view.rendering"}));
+        CHECK((Ids(v) == std::vector<std::string>{"view.panels", "view.tools", "view.layout", "---", "view.frame", "view.isolate", "view.uionly", "---",
+                                                  "view.overlays", "view.bookmarks", "---", "view.rendering"}));
+        CHECK(FindLabel(v, "Hierarchy")->kind == Kind::Toggle);
+        CHECK(FindLabel(v, "Items, Loot & Recipes")->kind == Kind::Toggle);
+        CHECK(FindLabel(v, "Audio Mixer")->tip.find("ducking") != std::string::npos);
+        CHECK(FindLabel(v, "Layout")->kind == Kind::SlotMenu);
         CHECK(!FindId(v, "view.frame")->enabled);
         CHECK(FindId(v, "view.frame")->shortcut == "F");
         CHECK(FindId(v, "view.isolate")->label == "Isolate Selection");
@@ -283,12 +283,12 @@ int main() {
             {"File", "Merge Scene into Current...", "file.merge"}, {"File", "Autosave", "file.autosave"},
             {"File", "Build Settings...", "file.build"}, {"File", "Exit", "file.exit"},
             {"Edit", "Undo", "edit.undo"}, {"Edit", "Redo", "edit.redo"}, {"Edit", "Project Settings...", "edit.projectsettings"},
-            {"View", "Panels", "window.panels"}, {"View", "Editors & Tools", "window.tools"},
+            {"View", "Panels", "view.panels"}, {"View", "Editors & Tools", "view.tools"},
             {"View", "Rendering & Performance", "view.rendering"}, {"View", "Scene Overlays", "view.overlays"},
             {"View", "Appearance", "edit.preferences"}, {"View", "Camera Bookmarks", "view.bookmarks"},
-            {"View", "Layout", "window.layout"}, {"View", "Reset Layout", "window.layout"},
+            {"View", "Layout", "view.layout"}, {"View", "Reset Layout", "view.layout"},
             {"View > Editors & Tools", "UI Editing Mode", "view.uionly"},
-            {"Window", "Items, Loot & Recipes", "tool.items"},
+            {"Window", "Items, Loot & Recipes", "tool.items"},   // the Window menu held only this duplicate
             {"GameObject", "Create Empty", "go.empty"}, {"GameObject", "Create Sprite", "create.2d"},
             {"GameObject", "2D Character (Sprite Sheet)...", "create.2d"}, {"GameObject", "2D Shape", "create.2d"},
             {"GameObject", "Sprite Editor...", "tool.spriteeditor"}, {"GameObject", "Create Camera", "create.camera"},

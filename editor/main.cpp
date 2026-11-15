@@ -10,6 +10,9 @@
 #include "EditorState.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "ActionExport.hpp"
+#include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
+#include "HierarchyContextModel.hpp"
+#include "MenuEntriesUI.hpp"          // draws those lists with Dear ImGui
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
@@ -5525,6 +5528,8 @@ static void DrawLayoutMenuItems() {
             ImGui::PopID();
         }
         ImGui::EndMenu();
+    } else if (g_userLayouts.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("No saved layouts yet: use Save Layout... first.");
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Maximize Viewport", "Shift+Space", g_max.on)) g_maxToggle = true;
@@ -6166,7 +6171,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Tooltip"))      addUI("Tooltip",     [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UITooltip>(); });
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Layout")) {
+    if (ImGui::BeginMenu("Layout & Overlays")) {   // (was "Layout": the editor's panel layouts have a Layout menu of their own, in View)
         if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
         if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
         if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
@@ -6416,6 +6421,794 @@ static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
     }
 }
 
+// ============================================================================================================================
+// The main menu bar. Its structure (which menus, in what order, with which shortcuts, when an item is greyed out and why) is data in
+// MenuBarModel.hpp, tested by tests/test_menu_bar_model.cpp and mapped item by item in docs/editor_menus.md. The code below draws the parts
+// the model leaves to the editor (lists that depend on live data, and the object creators) and runs the item ids.
+// ============================================================================================================================
+static void HierSelectMany(EditorState& ed, const std::vector<GameObject*>& objs);   // (the Hierarchy section, below)
+static void FocusSelected(EditorState& ed);                                          // (the Scene view section, below)
+static bool g_openAddComponentFromHierarchy = false;   // Hierarchy > Add Component...: the Inspector opens its Add Component browser (read in the Inspector)
+
+// Wrap one object in a new empty parent that sits where the object is (Hierarchy > Create Parent, GameObject > Create Empty Parent).
+static void CreateEmptyParentOf(EditorState& ed, GameObject* node) {
+    if (!node || !node->transform) return;
+    ed.PushUndo();
+    GameObject* parent = ed.scene().CreateGameObject(node->name + " Group");
+    parent->transform->SetPosition(node->transform->Position());
+    if (Transform* op = node->transform->Parent())
+        parent->transform->SetParent(op, true);
+    node->transform->SetParent(parent->transform, true);  // keep world pose
+    ed.Select(parent); ed.dirty = true;
+}
+
+// The panel and tool windows the Window menu lists: its toggle ids (MenuBarModel.hpp) -> the live "is it open" flags.
+static bool* MenuFlag(const std::string& id) {
+    static const std::pair<const char*, bool*> kFlags[] = {
+        {"panel.hierarchy", &g_showHierarchy}, {"panel.inspector", &g_showInspector}, {"panel.project", &g_showProject},
+        {"panel.console", &g_showConsole}, {"panel.problems", &g_showProblems}, {"panel.game", &g_showGame},
+        {"panel.services", &g_showServices}, {"panel.scenemanager", &g_showScenes}, {"panel.net", &g_showNet},
+        {"panel.savemanager", &g_showSaveManager}, {"panel.varwatch", &g_showVarWatch}, {"panel.history", &g_showHistory},
+        {"panel.stats", &g_showStats}, {"panel.lighting", &g_showSceneSettings}, {"panel.profiler", &g_showProfiler},
+        {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer},
+        {"tool.customactions", &g_showCustomActions}, {"tool.visualscript", &g_showVisualScript}, {"tool.scripteditor", &g_showScriptEditor},
+        {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
+        {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
+        {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
+        {"tool.uieditor", &g_showUIEditor}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
+        {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"view.uionly", &g_uiOnlyMode},
+    };
+    for (const auto& f : kFlags) if (id == f.first) return f.second;
+    return nullptr;
+}
+
+// What the menus need to know about the editor, read once per frame a menu is open.
+static oked::menubar::State MenuBarState(EditorState& ed) {
+    oked::menubar::State s;
+    s.playing = ed.isPlaying();
+    s.inPrefabMode = ed.InPrefabMode();
+    s.scenePath = ed.path();
+    s.selectedCount = (int)ed.MultiSelection().size();
+    if (s.selectedCount == 0 && ed.selected()) s.selectedCount = 1;
+    s.objectCount = (int)ed.scene().Objects().size();
+    const bool meshU = !g_meshUndo.empty(), meshR = !g_meshRedo.empty();
+    s.canUndo = meshU || ed.CanUndo();
+    s.canRedo = meshR || ed.CanRedo();
+    s.undoName = meshU ? std::string("Mesh Edit") : ed.UndoName();
+    s.redoName = meshR ? std::string("Mesh Edit") : ed.RedoName();
+    s.clipboardHasObject = !g_clipboard.empty();
+    s.recentCount = (int)g_recent.size();
+    s.assimp = okay::AssimpAvailable();
+    s.isolating = g_isolate != nullptr;
+    return s;
+}
+
+// ---- the parts of the menus the model leaves to the editor ----
+static void DrawRecentMenuItems(EditorState& ed) {
+    for (const std::string& p : g_recent) {
+        // Tiny rendered preview beside each recent scene (cached snapshot).
+        if (SDL_Texture* stx = GetSceneThumb(p)) {
+            ImGui::Image((ImTextureID)stx, ImVec2(22, 22));
+            ImGui::SameLine();
+        }
+        std::error_code fec;
+        bool exists = std::filesystem::exists(p, fec);   // moved/deleted files gray out
+        if (ImGui::MenuItem((exists ? p : p + "   (missing)").c_str(), nullptr, false, exists)) {
+            RequestLoad(ed, p);
+        }
+        if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("File not found (moved or deleted)");
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Clear")) { g_recent.clear(); SaveRecent(); }
+}
+
+static void DrawExampleMenuItems(EditorState& ed) {
+    oked::DrawExampleItems(ed, [&ed](const std::function<void()>& run) { RunAfterSavePrompt(ed, "opening an example", run); });   // UI Gallery
+    ImGui::Separator();
+    if (ImGui::BeginMenu("Visual Script Node Playground")) {
+        ImGui::TextDisabled("Press Play and follow the text on screen.");
+        int nDemos = 0;
+        const okay::editor::vsed::VsPlaygroundDemo* demos = okay::editor::vsed::VsPlaygroundDemos(&nDemos);
+        for (int i = 0; i < nDemos; ++i) {
+            if (ImGui::MenuItem(demos[i].title)) OpenVsPlayground(ed, demos[i].id);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", demos[i].blurb);
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Ready-made scenes for the high-level visual script nodes.");
+    const auto basics = okay::editor::NodePlaygroundScenes();
+    if (ImGui::BeginMenu("Node Playground (flow and variables)", !basics.empty())) {
+        for (const std::string& p : basics) {
+            const std::string name = std::filesystem::path(p).stem().string();
+            if (ImGui::MenuItem(name.c_str())) {
+                std::string err;
+                if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                else ConsoleLog("Open failed: " + err, 2);
+            }
+        }
+        ImGui::EndMenu();
+    }
+    if (basics.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("No playground scenes were found next to the editor.");
+}
+
+static void DrawAutosaveMenuItems() {
+    ImGui::MenuItem("Enabled", nullptr, &g_autosave);
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::SliderFloat("Interval (s)", &g_docAutosaveSec, 5.0f, 300.0f, "%.0f")) SaveSettings();
+    if (g_autosaveStamp > 0.0)
+        ImGui::TextDisabled("Last autosave: %.0fs ago",
+                            okay::platform::TicksMs() / 1000.0 - g_autosaveStamp);
+    ImGui::TextDisabled("Unsaved graphs, scripts and the scene go to the");
+    ImGui::TextDisabled("recovery folder. Real files stay as you saved them.");
+    ImGui::TextDisabled("A leftover <scene>.autosave is still offered on open");
+    ImGui::TextDisabled("when it is newer than the scene. New ones are not written.");
+    if (ImGui::MenuItem("Also save the real file", nullptr, &g_autosaveToFile)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: recovery copies only. On: also overwrite the file you saved.");
+}
+
+// Edit > Preferences: how the editor looks (these four were View > Appearance).
+static void DrawPreferencesMenuItems() {
+    if (ImGui::BeginMenu("UI Scale")) {
+        struct { const char* n; float s; } presets[] = {
+            {"Compact (90%)", 0.9f}, {"Normal (100%)", 1.0f},
+            {"Comfortable (110%)", 1.1f}, {"Large (125%)", 1.25f}, {"Huge (150%)", 1.5f}};
+        for (auto& p : presets)
+            if (ImGui::MenuItem(p.n, nullptr, std::fabs(g_uiScale - p.s) < 0.01f))
+                { g_uiScale = p.s; ApplyTheme(); SaveSettings(); }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Density")) {
+        for (int d = 0; d < 2; ++d)
+            if (ImGui::MenuItem(okay::edlayout::DensityName(d), nullptr, g_view.density == d)) { g_view.density = d; ApplyTheme(); SaveSettings(); }
+        ImGui::Separator();
+        ImGui::TextDisabled("Row spacing and field height in the Inspector and every panel.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Theme")) {
+        if (ImGui::MenuItem("Slate", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); SaveSettings(); }
+        if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); SaveSettings(); }
+        if (ImGui::MenuItem("Classic", nullptr, g_theme == 2)) { g_theme = 2; ApplyTheme(); SaveSettings(); }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Accent color")) {
+        for (int i = 0; i < kAccentCount; ++i) {
+            char albl[48]; std::snprintf(albl, sizeof(albl), "     %s", kAccents[i].name);
+            if (ImGui::MenuItem(albl, nullptr, g_accent == i)) { g_accent = i; ApplyTheme(); SaveSettings(); }
+            // Drawn swatch dot in the leading space, in that accent's color.
+            ImVec2 amn = ImGui::GetItemRectMin(), amx = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddCircleFilled(
+                ImVec2(amn.x + 11.0f, (amn.y + amx.y) * 0.5f),
+                ImGui::GetFontSize() * 0.28f,
+                ImGui::GetColorU32(ImVec4(kAccents[i].r, kAccents[i].g, kAccents[i].b, 1.0f)), 16);
+        }
+        ImGui::EndMenu();
+    }
+}
+
+static void DrawSceneOverlayMenuItems(EditorState& ed) {
+    ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
+    oked::DrawVolumeOverlayMenu([] { SaveSettings(); });
+    if (ImGui::BeginMenu("Physics Debug")) {
+        if (ImGui::MenuItem("Show physics (Scene + Game)", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw colliders (green), triggers (blue), this frame's contact\npoints + normals (red) and query rays, also in the Game view\nwhile playing. Editor only - never in a build.");
+        if (ImGui::MenuItem("Rays cast from scripts", nullptr, &g_physDebugRays)) { ApplyPhysicsDebug(); SaveSettings(); }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also draw the raycasts / sphere casts that scripts, visual\nscripts and Actions make: green to the hit (white normal), yellow on a miss.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Skeletons")) {
+        if (ImGui::MenuItem("Selected model", nullptr, g_skeletonMode == 1)) g_skeletonMode = 1;
+        if (ImGui::MenuItem("All rigged models", nullptr, g_skeletonMode == 2)) g_skeletonMode = 2;
+        if (ImGui::MenuItem("Off", nullptr, g_skeletonMode == 0)) g_skeletonMode = 0;
+        ImGui::EndMenu();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw rigged models' bones, connected parent to child.\nClick a bone in the Scene view to select it.");
+    if (ImGui::MenuItem("Gizmos (selection / camera / lights)", nullptr, &g_showGizmos)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Editor-only overlays in the Scene view\n(yellow selection box, camera frustum, light icons).\nNever appear in the Game view or a build.");
+    if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
+    ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);
+}
+
+static void DrawCameraBookmarkMenuItems(EditorState& ed) {
+    ImGui::TextDisabled("Save a viewport camera angle, jump back anytime.");
+    for (int bi = 0; bi < 3; ++bi) {
+        CamBookmark& b = g_camBookmarks[bi];
+        char sl[32], ss[16], gl[32], gs[12];
+        std::snprintf(sl, sizeof(sl), "Save slot %d", bi + 1);
+        std::snprintf(ss, sizeof(ss), "Ctrl+Alt+%d", bi + 1);
+        std::snprintf(gl, sizeof(gl), "Go to slot %d", bi + 1);
+        std::snprintf(gs, sizeof(gs), "Ctrl+%d", bi + 1);
+        if (ImGui::MenuItem(sl, ss)) {
+            b.set = true; b.target = ed.camTarget; b.yaw = ed.camYaw; b.pitch = ed.camPitch;
+            b.dist = ed.camDist; b.px = ed.cameraPos.x; b.py = ed.cameraPos.y; b.view3D = ed.view3D;
+        }
+        ImGui::BeginDisabled(!b.set);
+        if (ImGui::MenuItem(gl, gs)) {
+            ed.camTarget = b.target; ed.camYaw = b.yaw; ed.camPitch = b.pitch;
+            ed.camDist = b.dist; ed.cameraPos = {b.px, b.py}; ed.view3D = b.view3D;
+        }
+        ImGui::EndDisabled();
+        if (!b.set && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Slot %d is empty: use Save slot %d first (%s).", bi + 1, bi + 1, ss);
+        if (bi < 2) ImGui::Separator();
+    }
+}
+
+static void DrawRenderingMenuItems(EditorState& ed) {
+    (void)ed;
+    bool aa = g_ssaa > 1;
+    if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
+    {
+        // One toggle; the backend is auto-selected for this system: Direct3D 11 on
+        // Windows, OpenGL elsewhere (whichever initialized), then software.
+        const char* backend = "software";
+#if defined(_WIN32)
+        if (g_d3dReady)      backend = "Direct3D 11";
+        else if (g_glReady)  backend = "OpenGL";
+#else
+        if (g_glReady)       backend = "OpenGL";
+#endif
+        bool gpuAvail = g_glReady;
+#if defined(_WIN32)
+        gpuAvail = gpuAvail || g_d3dReady;
+#endif
+        // The GPU renderer is automatic now (on by default, API auto-selected for
+        // the OS, self-healing to software on failure), so this is just a read-only
+        // status line — no manual switch needed.
+        char label[80];
+        std::snprintf(label, sizeof(label), "Renderer: %s", g_gpuRender && gpuAvail ? backend : "software");
+        ImGui::BeginDisabled();
+        ImGui::MenuItem(label, nullptr, false);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D is rendered on the GPU automatically — Direct3D 11 on Windows,\nOpenGL elsewhere — and falls back to software if no GPU is available.");
+    }
+#ifdef OKAY_HAVE_OKAYUI
+    // A developer demo panel, not a feature: only offered with OKAY_DEV set.
+    if (const char* devEnv = std::getenv("OKAY_DEV"); devEnv && devEnv[0] && devEnv[0] != '0') {
+        ImGui::MenuItem("Test UI", nullptr, &g_showTestUI);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
+    }
+#endif
+#ifdef OKAY_HAVE_OKAYUI
+    if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
+    if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, today)
+        const int src = okayuibackend::Source(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, true);
+        for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI})
+            if (ImGui::MenuItem(okayuibackend::Label(opt), nullptr, g_uiBackend == opt, src != 2) && g_uiBackend != opt) {
+                g_uiBackendSetting = okayuibackend::Name(opt);
+                ResolveUiBackend();
+                SaveSettings();
+            }
+        ImGui::Separator();
+        ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: only the Console panel is ported.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
+    }
+#endif
+    if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
+    if (ImGui::MenuItem("Smooth frame time", nullptr, &g_smoothFrameTime)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play steps the game by an evened-out frame time (whole refresh periods with\nVSync), so movement and cameras don't micro-judder at a steady frame rate.");
+    // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
+    if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
+}
+
+// ---- GameObject > <category>, Hierarchy > Create: every creator the editor has, grouped (Create Child passes the parent). ----
+static void DrawCreateSlot(EditorState& ed, const std::string& id, GameObject* parent) {
+    bool created = false;
+    const std::size_t before = ed.scene().Objects().size();
+    if (id == "create.2d") {
+        if (ImGui::MenuItem("Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
+        if (ImGui::MenuItem("2D Character (Sprite Sheet)...")) g_showSpriteChar = true;
+        if (ImGui::BeginMenu("2D Shape")) {     // premade sprite shapes (saved to Assets/Sprites)
+            for (int i = 0; i < SS_Count; ++i)
+                if (ImGui::MenuItem(kSpriteShapeNames[i])) {
+                    ed.Select(CreateShapeSprite(ed, i));
+                    ConsoleLog(std::string("Created ") + kSpriteShapeNames[i] + " sprite"); created = true;
+                }
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Tilemap")) {
+            GameObject* go = ed.CreateEmpty("Tilemap");
+            auto* tm = go->AddComponent<Tilemap>();
+            tm->Resize(12, 8);
+            for (int x = 0; x < 12; ++x) tm->SetTile(x, 0, 1); // a ground row
+            ConsoleLog("Created Tilemap");
+            created = true;
+        }
+    } else if (id == "create.3d") {
+        if (ImGui::MenuItem("Cube"))      { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
+        if (ImGui::MenuItem("Sphere"))    { ed.CreateMesh("Sphere");    ConsoleLog("Created Sphere"); created = true; }
+        if (ImGui::MenuItem("Cylinder"))  { ed.CreateMesh("Cylinder");  ConsoleLog("Created Cylinder"); created = true; }
+        if (ImGui::MenuItem("Capsule"))   { ed.CreateMesh("Capsule");   ConsoleLog("Created Capsule"); created = true; }
+        if (ImGui::MenuItem("Cone"))      { ed.CreateMesh("Cone");      ConsoleLog("Created Cone"); created = true; }
+        if (ImGui::MenuItem("Plane"))     { ed.CreateMesh("Plane");     ConsoleLog("Created Plane"); created = true; }
+        if (ImGui::MenuItem("Pyramid"))   { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
+        if (ImGui::MenuItem("Wedge"))     { ed.CreateMesh("Wedge");     ConsoleLog("Created Wedge"); created = true; }
+        if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
+        if (ImGui::MenuItem("Torus Knot")){ ed.CreateMesh("TorusKnot"); ConsoleLog("Created Torus Knot"); created = true; }
+        if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
+        if (ImGui::MenuItem("Hemisphere")){ ed.CreateMesh("Hemisphere");ConsoleLog("Created Hemisphere"); created = true; }
+        if (ImGui::MenuItem("Stairs"))    { ed.CreateMesh("Stairs");    ConsoleLog("Created Stairs"); created = true; }
+        if (ImGui::MenuItem("Gear"))      { ed.CreateMesh("Gear");      ConsoleLog("Created Gear"); created = true; }
+        if (ImGui::MenuItem("Prism"))     { ed.CreateMesh("Prism");     ConsoleLog("Created Prism"); created = true; }
+        if (ImGui::MenuItem("Octahedron")){ ed.CreateMesh("Octahedron");ConsoleLog("Created Octahedron"); created = true; }
+        if (ImGui::MenuItem("Disc"))      { ed.CreateMesh("Disc");      ConsoleLog("Created Disc"); created = true; }
+        if (ImGui::MenuItem("Tetrahedron")){ ed.CreateMesh("Tetrahedron");ConsoleLog("Created Tetrahedron"); created = true; }
+        if (ImGui::MenuItem("Bipyramid")) { ed.CreateMesh("Bipyramid"); ConsoleLog("Created Bipyramid"); created = true; }
+        if (ImGui::MenuItem("Rounded Box")){ ed.CreateMesh("RoundedBox");ConsoleLog("Created Rounded Box"); created = true; }
+        if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Nature")) {
+            const char* nat[] = {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock", "Mushroom", "Cactus", "Crystal"};
+            for (const char* n : nat)
+                if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Props")) {
+            const char* pr[] = {"Barrel", "Crate", "Fence", "Well", "StreetLamp",
+                                "Campfire", "Lantern", "Chest", "Signpost", "Cart", "Tent", "Bench"};
+            for (const char* n : pr)
+                if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Structures")) {
+            const char* st[] = {"House", "Tower", "Windmill", "Bridge", "RockArch"};
+            for (const char* n : st)
+                if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Terrain")) {
+            GameObject* go = ed.CreateEmpty("Terrain");
+            auto* tr = go->AddComponent<Terrain>();
+            tr->Resize(64); tr->size = 80.0f;
+            tr->Generate(1, 10.0f, 3.0f, 5, (unsigned)(ImGui::GetTime() * 1000.0)); // rolling hills
+            tr->Apply();
+            go->AddComponent<TerrainDigger>();   // dig/raise it at runtime out of the box
+            ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
+            ConsoleLog("Created Terrain (with a Terrain Digger: hold Left Mouse in Play to dig)");
+        }
+        if (ImGui::MenuItem("Voxel Terrain (caves)")) {
+            GameObject* go = ed.CreateEmpty("Voxel Terrain");
+            auto* v = go->AddComponent<VoxelTerrain>();
+            v->Resize(56, 32, 56); v->voxelSize = 1.5f;
+            v->Generate(0.5f, 7.0f, 0.0f, (unsigned)(ImGui::GetTime() * 1000.0));   // solid (no caves)
+            v->Apply();
+            go->AddComponent<VoxelDigger>();     // dig caves / raise at runtime
+            ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
+            ConsoleLog("Created Voxel Terrain (Voxel Digger: Left Mouse digs caves, Right Mouse adds)");
+        }
+        if (ImGui::MenuItem("Water")) {
+            GameObject* go = ed.CreateEmpty("Water");
+            auto* w = go->AddComponent<Water>();
+            w->size = 80.0f; w->Apply();
+            ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
+            ConsoleLog("Created Water (animated reflective surface)");
+        }
+        if (ImGui::MenuItem("Character")) {
+            GameObject* g = ed.CreateEmpty("Character");
+            g->AddComponent<Character>()->Apply();
+            HumanoidLibrary::EnsureAnimator(g);
+            ed.SettleSpawn(g);
+            ed.Select(g); ed.view3D = true; ed.dirty = true; created = true;
+            ConsoleLog("Created Character");
+        }
+    } else if (id == "create.player") {
+        if (ImGui::MenuItem("Third Person")) {
+            ed.PushUndo();
+            ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene())));
+            ConsoleLog("Added Third-Person player"); ed.dirty = true; created = true;
+        }
+        if (ImGui::MenuItem("Humanoid (foot IK)")) {
+            ed.PushUndo();
+            ed.Select(ed.SettleSpawn(okay::Templates::AddHumanoidPlayer(ed.scene())));
+            ConsoleLog("Added Humanoid player (rig + capsule + foot IK)"); ed.dirty = true; created = true;
+        }
+        if (ImGui::MenuItem("First Person")) {
+            ed.PushUndo();
+            ed.Select(ed.SettleSpawn(okay::Templates::AddFirstPersonPlayer(ed.scene())));
+            ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
+        }
+        if (ImGui::MenuItem("Third Person Shooter")) {
+            ed.PushUndo();
+            ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonShooterPlayer(ed.scene())));
+            ConsoleLog("Added Third-Person Shooter player"); ed.dirty = true; created = true;
+        }
+        if (ImGui::MenuItem("Top Down (3D)")) {
+            ed.PushUndo();
+            ed.Select(ed.SettleSpawn(okay::Templates::AddTopDownPlayer(ed.scene())));
+            ConsoleLog("Added Top-Down player"); ed.dirty = true; created = true;
+        }
+        if (ImGui::MenuItem("Top Down Shooter (3D)")) {
+            ed.PushUndo();
+            ed.Select(ed.SettleSpawn(okay::Templates::AddTopDownShooterPlayer(ed.scene())));
+            ConsoleLog("Added Top-Down Shooter player (WASD, mouse aim, LMB fire, Space dash)"); ed.dirty = true; created = true;
+        }
+        if (ImGui::MenuItem("2.5D Platformer (LittleBigPlanet)")) {
+            ed.PushUndo();
+            ed.Select(ed.SettleSpawn(okay::Templates::AddPlatformer25DPlayer(ed.scene())));
+            ConsoleLog("Added 2.5D player (A/D run, Space jump, W/S change layer, E grab, Ctrl crouch, Z prone)"); ed.dirty = true; created = true;
+        }
+        if (ImGui::MenuItem("Top Down (2D)")) {
+            ed.PushUndo();
+            ed.Select(okay::Templates::AddTopDown2DPlayer(ed.scene()));
+            ConsoleLog("Added Top-Down 2D player (sprite + TopDownController2D)"); ed.dirty = true; created = true;
+        }
+        if (ImGui::MenuItem("Click To Move")) {
+            ed.PushUndo();
+            ed.Select(ed.SettleSpawn(okay::Templates::AddClickToMovePlayer(ed.scene())));
+            ConsoleLog("Added Click-To-Move player"); ed.dirty = true; created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops a fully set-up player (Character + controller + physics) into this scene.");
+    } else if (id == "create.light") {
+        if (ImGui::MenuItem("Directional Light")) {
+            GameObject* go = ed.CreateEmpty("Directional Light");
+            go->AddComponent<Light>();
+            go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
+            ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
+        }
+        if (ImGui::MenuItem("Point Light")) {
+            GameObject* go = ed.CreateEmpty("Point Light");
+            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
+            go->transform->localPosition = {0, 3, 0};
+            ed.Select(go); ConsoleLog("Created Point Light"); created = true;
+        }
+        if (ImGui::MenuItem("Spot Light")) {
+            GameObject* go = ed.CreateEmpty("Spot Light");
+            auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
+            go->transform->localPosition = {0, 5, 0};
+            go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
+            ed.Select(go); ConsoleLog("Created Spot Light"); created = true;
+        }
+    } else if (id == "create.camera") {
+        if (ImGui::MenuItem("Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
+        ImGui::Separator();
+        ImGui::TextDisabled("Cinemachine");
+        if (ImGui::MenuItem("Virtual Camera")) {
+            GameObject* g = ed.CreateEmpty("Virtual Camera");
+            g->AddComponent<VirtualCamera>();
+            ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A Cinemachine shot: where to stand, what to aim at, the lens and damping.");
+        if (ImGui::MenuItem("Cinemachine Brain")) {
+            // The brain drives the real camera from virtual cameras, so put it on
+            // the existing main camera if there is one; otherwise make a Camera for it.
+            GameObject* camGO = nullptr;
+            for (const auto& up : ed.scene().Objects())
+                if (up->GetComponent<Camera>()) { camGO = up.get(); break; }
+            if (!camGO) { ed.CreateCamera(); camGO = ed.selected(); }
+            if (camGO && !camGO->GetComponent<CinemachineBrain>())
+                camGO->AddComponent<CinemachineBrain>();
+            if (camGO) ed.Select(camGO);
+            ConsoleLog("Added Cinemachine Brain to the camera"); created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lives on the main camera and blends it between virtual cameras.");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Dolly Path")) {
+            GameObject* go = ed.CreateEmpty("Dolly Path");
+            auto* dp = go->AddComponent<DollyPath>();
+            dp->waypoints = { {-8, 2, 0}, {0, 2, 6}, {8, 2, 0} }; // a gentle arc
+            ed.Select(go); ConsoleLog("Created Dolly Path"); created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A smooth camera rail (Catmull-Rom spline through waypoints).");
+        if (ImGui::MenuItem("Dolly Cart")) {
+            GameObject* go = ed.CreateEmpty("Dolly Cart");
+            go->AddComponent<DollyCart>();
+            ed.Select(go); ConsoleLog("Created Dolly Cart (set its Path to a Dolly Path)"); created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Glides along a Dolly Path; set its Path to the path's name.");
+    } else if (id == "create.audio") {
+        // The same two objects Add Component > Audio builds, here as ready-made objects.
+        if (ImGui::MenuItem("Audio Source")) {
+            GameObject* g = ed.CreateEmpty("Audio Source");
+            g->AddComponent<AudioSource>()->clip = AudioClip::Sine(440.0f, 0.3f);
+            ed.Select(g); ed.dirty = true; created = true;
+            ConsoleLog("Created an Audio Source (a short test tone: pick your own sound in the Inspector)");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays a sound. It starts with a short test tone; pick your own sound in the Inspector.");
+        if (ImGui::MenuItem("Music Player")) {
+            GameObject* g = ed.CreateEmpty("Music Player");
+            g->AddComponent<MusicPlayer>();
+            ed.Select(g); ed.dirty = true; created = true;
+            ConsoleLog("Created a Music Player");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plays a playlist of music tracks.");
+    } else if (id == "create.effects") {
+        if (ImGui::MenuItem("Particle System")) {
+            GameObject* go = ed.CreateEmpty("Particles");
+            go->AddComponent<ParticleSystem>();
+            ConsoleLog("Created Particle System (press Play to see it)");
+            created = true;
+        }
+        if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
+        LevelCreateMenuItems(ed, created);                // Foliage Layer, Decal Projector, Cable
+        oked::DrawVolumeGameObjectMenu(ed, created);      // Volume >
+    } else if (id == "create.ui") {
+        // Widgets go under the scene's Canvas (made, plus an Event System, if
+        // missing), or inside the selected panel; see DrawUIWidgetItems.
+        DrawUIWidgetItems(ed, created);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; }
+        if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
+        if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
+        if (ImGui::MenuItem("Inventory (Minecraft-style)")) {
+            // The items live on the player (selected or tagged "Player") so its Crafting,
+            // Consumables and StructureBuilder find them; only the UI goes under the Canvas.
+            GameObject* player = (ed.selected() && ed.selected()->tag == "Player") ? ed.selected()
+                                                                                     : ed.scene().FindWithTag("Player");
+            GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
+            GameObject* g = ed.CreateEmpty("Inventory");
+            GameObject* holder = player ? player : g;
+            auto* inv = holder->GetComponent<Inventory>();
+            if (!inv) {
+                inv = holder->AddComponent<Inventory>();
+                inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft (= the UI's slots)
+                inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
+                inv->Add("Torch", 16); inv->Add("Sword", 1);
+            }
+            auto* iu = g->AddComponent<InventoryUI>();
+            if (player) iu->inventoryTarget = player->name;
+            if (root) g->transform->SetParent(root->transform, false);
+            ed.Select(g); ed.dirty = true; created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. The Inventory goes on the selected or \"Player\"-tagged object, so crafting and consumables there use it.");
+        if (ImGui::MenuItem("Grid Inventory (DayZ/Unturned-style)")) {
+            GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
+            GameObject* g = ed.CreateEmpty("GridInventory");
+            auto* gi = g->AddComponent<GridInventory>();
+            gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
+            gi->AddItem("Rifle", 2, 6, 1, 4.0f);
+            gi->AddItem("Backpack", 3, 3, 1, 1.0f);
+            gi->AddItem("Beans", 1, 1, 2, 0.4f);
+            gi->AddItem("Bandage", 1, 1, 3, 0.1f);
+            gi->AddItem("Water", 1, 2, 1, 0.6f);
+            g->AddComponent<GridInventoryUI>();
+            if (root) g->transform->SetParent(root->transform, false);
+            ed.Select(g); ed.dirty = true; created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
+        if (ImGui::MenuItem("Unturned Inventory (worn bags + nearby loot)")) {
+            // Everything lives under ONE tidy "Unturned Inventory" group so the
+            // hierarchy stays clean: a Player (body grid + screen UI) with a worn
+            // Vest and Backpack as children, and a single Loot Crate beside it.
+            GameObject* group = ed.CreateEmpty("Unturned Inventory");
+            GameObject* player = ed.CreateEmpty("Player");
+            player->transform->SetParent(group->transform, false);
+            auto* body = player->AddComponent<GridInventory>();
+            body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
+            body->toggleKey = 'i';
+            body->AddItem("Knife", 1, 2, 1, 0.3f);
+            body->AddItem("Map", 2, 2, 1, 0.1f);
+            auto* screen = player->AddComponent<GridInventoryUI>();
+            screen->multiContainer = true; screen->nearbyRange = 4.0f;
+
+            auto worn = [&](const char* name, const char* cat, int c, int rr) {
+                GameObject* w = ed.CreateEmpty(name);
+                w->transform->SetParent(player->transform, false);
+                auto* gi = w->AddComponent<GridInventory>();
+                gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
+                return gi;
+            };
+            worn("Vest", "Vest", 5, 2)->AddItem("Mag", 1, 2, 3, 0.2f);
+            auto* pack = worn("Backpack", "Backpack", 6, 5);
+            pack->weightLimit = 30.0f;
+            pack->AddItem("Rifle", 2, 5, 1, 4.0f);
+            pack->AddItem("Water", 1, 2, 1, 0.6f);
+            pack->AddItem("Beans", 1, 1, 2, 0.4f);
+
+            GameObject* crate = ed.CreateEmpty("Loot Crate");
+            crate->transform->SetParent(group->transform, false);
+            crate->transform->localPosition = {2.0f, 0.0f, 0.0f};   // 2m away → in the Nearby column
+            auto* ci = crate->AddComponent<GridInventory>();
+            ci->cols = 5; ci->rows = 4; ci->title = "Loot Crate"; ci->worldItem = true; ci->toggleKey = 0;
+            ci->AddItem("Ammo", 1, 1, 30, 0.5f); ci->AddItem("Scope", 1, 2, 1, 0.3f); ci->AddItem("Medkit", 2, 2, 1, 1.2f);
+
+            ed.Select(player); ed.dirty = true; created = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("One tidy 'Unturned Inventory' group: a Player with a worn Vest + Backpack and a single nearby Loot Crate. Press I in Play; drag loot across bags.");
+        if (ImGui::MenuItem("UI Document"))  {
+            GameObject* root = EnsureUIRoot(ed);
+            GameObject* g = ed.CreateEmpty("UIDocument");
+            auto* doc = g->AddComponent<UIDocument>();
+            doc->markup =
+                "panel pos=40,40 size=360,240 color=30,36,52,220\n"
+                "  text \"MY GAME\" pos=70,70 size=5\n"
+                "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
+            if (root) g->transform->SetParent(root->transform, false);
+            doc->Rebuild(); ed.scene().Update(0.0f);
+            ed.Select(g); ed.dirty = true; created = true;
+        }
+        // Save the selected UI subtree as a reusable prefab under Assets/UI, so you
+        // can drop your own custom UI back into any scene from the Project panel.
+        if (ImGui::MenuItem("Save Selected as UI", nullptr, false, ed.selected() != nullptr)) {
+            namespace fs = std::filesystem;
+            fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
+            fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
+            SavePrefabInto(ed.selected(), dir);
+            created = true;
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", ed.selected() ? "Save the selected UI (e.g. a Canvas or a menu Panel + its children) as a reusable .okayprefab in Assets/UI.\nDrop it from the Project panel into any scene to reuse it."
+                                                  : "Select the UI first (a Canvas, or a menu Panel with its children), then save it as a reusable .okayprefab in Assets/UI.");
+        ImGui::Separator();
+        // 3D UI: each widget is its own standalone object in the world (a
+        // WorldSpaceUI marker), NOT under the 2D Canvas. Placed at the camera focus.
+        if (ImGui::BeginMenu("3D UI (in-world)")) {
+            auto add3d = [&](const char* nm, auto build) {
+                GameObject* g = ed.CreateEmpty(nm);
+                build(g);
+                g->AddComponent<WorldSpaceUI>();
+                if (g->transform) g->transform->localPosition = ed.camTarget;
+                ed.Select(g); ed.dirty = true; created = true;
+            };
+            if (ImGui::MenuItem("Button")) add3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
+            if (ImGui::MenuItem("Text"))   add3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
+            if (ImGui::MenuItem("Panel"))  add3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
+            if (ImGui::MenuItem("Image"))  add3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
+            ImGui::EndMenu();
+        }
+    }
+    if (created || ed.scene().Objects().size() > before) {
+        ed.Achievement("FIRST_OBJECT");
+        if (ed.selected()) ed.Select(ed.selected());   // the creators set the active object; make it the whole selection so its row lights up
+    }
+    // Create Child: the new object goes inside `parent` (UI pieces choose their own parent: the Canvas or the selected panel).
+    if (parent && id != "create.ui" && ed.selected() && ed.selected() != parent && ed.scene().Objects().size() > before) {
+        GameObject* made = ed.selected();
+        bool fresh = false;
+        const auto& objs = ed.scene().Objects();
+        for (std::size_t i = before; i < objs.size(); ++i) if (objs[i].get() == made) { fresh = true; break; }
+        if (fresh && made->transform && !made->transform->Parent() && !parent->IsSelfOrDescendantOf(made)) {
+            made->transform->SetParent(parent->transform, false);
+            ed.dirty = true;
+        }
+    }
+}
+
+static void DrawMenuSlot(EditorState& ed, const std::string& id) {
+    if (id == "file.recent") DrawRecentMenuItems(ed);
+    else if (id == "file.examples") DrawExampleMenuItems(ed);
+    else if (id == "file.upgrade") ProjectUpgradeMenuItem(ed);   // upgrade this project to the editor's version, or restore a backup
+    else if (id == "file.autosave") DrawAutosaveMenuItems();
+    else if (id == "edit.preferences") DrawPreferencesMenuItems();
+    else if (id == "view.overlays") DrawSceneOverlayMenuItems(ed);
+    else if (id == "view.bookmarks") DrawCameraBookmarkMenuItems(ed);
+    else if (id == "view.rendering") DrawRenderingMenuItems(ed);
+    else if (id == "view.layout") DrawLayoutMenuItems();
+    else if (id.rfind("create.", 0) == 0) DrawCreateSlot(ed, id, nullptr);
+}
+
+// An item of the menu bar was clicked: do it.
+static void RunMenuAction(EditorState& ed, const std::string& id) {
+    // File
+    if (id == "file.new2d") RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene2D(); ConsoleLog("New 2D scene"); });
+    else if (id == "file.new3d") RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene3D(); ConsoleLog("New 3D scene"); });
+    else if (id == "file.open") g_showOpen = true;
+    else if (id == "file.save") SaveSceneCmd(ed);
+    else if (id == "file.saveas") SaveSceneAsCmd(ed);
+    else if (id == "file.saveproject") SaveProject(ed, true);
+    else if (id == "file.newproject") g_openNewProjectDialog = true;
+    else if (id == "file.openproject") OpenProjectFolderDialog(ed, DefaultProjectsLocation());
+    else if (id == "file.import") PickAndImportModel();   // OS file explorer, then settings
+    else if (id == "file.merge") {
+        // Combine scenes: append another scene's objects into this one (kept),
+        // tagged with its name so the Hierarchy shows where it starts/ends.
+        EditorState* edp = &ed;
+        okay::filedialog::OpenOne("Merge scene into current", "", okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}),
+                                  [edp](const std::string& p) { MergeSceneIntoCurrent(*edp, p); });
+    }
+    else if (id == "file.build") g_showBuildGame = true;
+    else if (id == "file.exit") g_quitRequested = true;
+    // Edit
+    else if (id == "edit.undo" || id == "edit.redo") {
+        const bool redo = id == "edit.redo";
+        const bool mesh = redo ? !g_meshRedo.empty() : !g_meshUndo.empty();
+        const std::string nm = mesh ? std::string("Mesh Edit") : (redo ? ed.RedoName() : ed.UndoName());
+        const std::string verb = redo ? "Redo " : "Undo ";
+        if (MeshUndo(redo)) { ed.dirty = true; ConsoleLog(verb + nm); }
+        else if (redo ? ed.Redo() : ed.Undo()) ConsoleLog(verb + nm);
+        else ConsoleLog("Can't " + std::string(redo ? "redo " : "undo ") + nm + ": " + ed.UndoError(), 1);
+    }
+    else if (id == "edit.cut" && ed.selected()) {
+        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
+        ConsoleLog("Cut " + ed.selected()->name + " (Ctrl+V to paste)");
+        ed.DeleteSelected();
+    }
+    else if (id == "edit.copy" && ed.selected()) {
+        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
+        ConsoleLog("Copied " + ed.selected()->name);
+    }
+    else if (id == "edit.paste" && !g_clipboard.empty()) {
+        ed.PushUndo();
+        if (GameObject* go = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
+            go->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f};
+            ed.Select(go); ed.dirty = true; ConsoleLog("Pasted " + go->name);
+        }
+    }
+    else if (id == "edit.duplicate" && ed.selected()) { ed.DuplicateSelected(); ConsoleLog("Duplicated selection"); }
+    else if (id == "edit.delete" && ed.selected()) { ed.DeleteSelected(); ConsoleLog("Deleted selection"); }
+    else if (id == "edit.selectall") {
+        std::vector<GameObject*> all;
+        for (const auto& up : ed.scene().Objects()) all.push_back(up.get());
+        HierSelectMany(ed, all);
+    }
+    else if (id == "edit.deselect") ed.Select(nullptr);
+    else if (id == "edit.projectsettings") g_showProjectSettings = true;
+    // GameObject
+    else if (id == "go.empty") { ed.Select(ed.CreateEmpty()); ConsoleLog("Created empty GameObject"); ed.Achievement("FIRST_OBJECT"); }
+    else if (id == "go.emptychild" && ed.selected()) {
+        GameObject* parent = ed.selected();
+        GameObject* child = ed.CreateEmpty("Child");   // takes its own undo step
+        child->transform->SetParent(parent->transform, false);
+        ed.Select(child); ed.dirty = true;
+        ConsoleLog("Created an empty child of " + parent->name); ed.Achievement("FIRST_OBJECT");
+    }
+    else if (id == "go.emptyparent" && ed.selected()) {
+        if (ed.MultiSelection().size() > 1) ed.GroupSelected();
+        else CreateEmptyParentOf(ed, ed.selected());
+        ConsoleLog("Created an empty parent");
+    }
+    else if (id == "go.instantiate") g_showInstPrefab = true;
+    else if (id == "go.arraydup") g_showArrayDup = true;
+    else if (id == "go.snap" && ed.selected()) {
+        ed.PushUndo();
+        float g = g_snapSize > 1e-4f ? g_snapSize : 1.0f;
+        Vec3& p = ed.selected()->transform->localPosition;
+        p = {std::round(p.x / g) * g, std::round(p.y / g) * g, std::round(p.z / g) * g};
+        ed.dirty = true; ConsoleLog("Snapped to grid");
+    }
+    // View
+    else if (id == "view.frame") FocusSelected(ed);
+    else if (id == "view.isolate") {
+        g_isolate = g_isolate ? nullptr : ed.selected();
+        ConsoleLog(g_isolate ? "Isolating '" + g_isolate->name + "' (Shift+I to exit)" : "Isolation off");
+    }
+    // Help
+    else if (id == "help.scripting") g_showScriptDocs = true;
+    else if (id == "help.shortcuts") g_showShortcuts = true;
+    else if (id == "help.docs") extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/tree/main/docs");
+    else if (id == "help.updates") {
+        g_update = updater::CheckLatest();
+        g_openUpdatePopup = true;
+        ConsoleLog(g_update.error.empty()
+            ? (g_update.available ? "Update available: v" + g_update.latest
+                                  : "Up to date (v" + g_update.current + ").")
+            : "Update check failed: " + g_update.error);
+    }
+    else if (id == "help.bug") {
+        ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION).c_str());   // so the report can say which version
+        extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/issues/new");
+        ConsoleLog(std::string("Opened the bug report page in your browser. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + ") is on the clipboard: paste it into the report.");
+    }
+    else if (id == "help.about") g_openAbout = true;
+}
+
+static void DrawMainMenus(EditorState& ed) {
+    namespace mb = oked::menubar;
+    mb::Host host;
+    host.flag = [](const mb::Entry& e) { return MenuFlag(e.id); };
+    host.run = [&ed](const mb::Entry& e) { RunMenuAction(ed, e.id); };
+    host.slot = [&ed](const mb::Entry& e) { DrawMenuSlot(ed, e.id); };
+    for (const mb::Top& t : mb::TopMenus()) {
+        if (t.hostDrawn) { DrawPluginsMenu(ed); continue; }   // Plugins lists what is on disk
+        if (!ImGui::BeginMenu(t.label.c_str())) continue;
+        if (t.id == "edit") {   // First frame the menu is open: also pick up edits no window announced, so the names and the greying are true.
+            static int s_lastFrame = -10;
+            if (ImGui::GetFrameCount() != s_lastFrame + 1) ed.CaptureUnannouncedEdits();
+            s_lastFrame = ImGui::GetFrameCount();
+        }
+        mb::DrawEntries(mb::BuildMenu(t.id, MenuBarState(ed)), host);
+        ImGui::EndMenu();
+    }
+}
+
 void DrawMenuAndToolbar(EditorState& ed) {
     SceneBuildSync(ed);
     // play tint: while the game runs, darken the editor chrome a
@@ -6432,771 +7225,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         }
     }
     if (!ImGui::BeginMenuBar()) return;
-    if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New Project...")) g_openNewProjectDialog = true;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make a new project folder from a template and open it.\n(The launcher's Create page makes the same thing.)");
-        if (ImGui::MenuItem("Open Project Folder...")) OpenProjectFolderDialog(ed, DefaultProjectsLocation());
-        ProjectUpgradeMenuItem(ed);   // upgrade this project to the editor's version, or restore a backup
-        ImGui::Separator();
-        if (ImGui::MenuItem("New 2D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene2D(); ConsoleLog("New 2D scene"); });
-        if (ImGui::MenuItem("New 3D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene3D(); ConsoleLog("New 3D scene"); });
-        if (ImGui::BeginMenu("Examples")) {
-            const auto playground = okay::editor::NodePlaygroundScenes();
-            if (ImGui::BeginMenu("Node Playground", !playground.empty())) {
-                for (const std::string& p : playground) {
-                    const std::string name = std::filesystem::path(p).stem().string();
-                    if (ImGui::MenuItem(name.c_str())) {
-                        std::string err;
-                        if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
-                        else ConsoleLog("Open failed: " + err, 2);
-                    }
-                }
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Import Model...")) PickAndImportModel();   // OS file explorer, then settings
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ, STL, PLY%s", okay::AssimpAvailable() ? ", DAE, 3DS, ..." : "");
-        if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
-        oked::DrawExamplesMenu(ed, [&ed](const std::function<void()>& run) { RunAfterSavePrompt(ed, "opening an example", run); });
-        if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
-            for (const std::string& p : g_recent) {
-                // Tiny rendered preview beside each recent scene (cached snapshot).
-                if (SDL_Texture* stx = GetSceneThumb(p)) {
-                    ImGui::Image((ImTextureID)stx, ImVec2(22, 22));
-                    ImGui::SameLine();
-                }
-                std::error_code fec;
-                bool exists = std::filesystem::exists(p, fec);   // moved/deleted files gray out
-                if (ImGui::MenuItem((exists ? p : p + "   (missing)").c_str(), nullptr, false, exists)) {
-                    RequestLoad(ed, p);
-                }
-                if (!exists && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("File not found (moved or deleted)");
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Clear")) { g_recent.clear(); SaveRecent(); }
-            ImGui::EndMenu();
-        }
-        ImGui::Separator();
-        if (ImGui::BeginMenu("Examples")) {
-            if (ImGui::BeginMenu("Visual Script Node Playground")) {
-                ImGui::TextDisabled("Press Play and follow the text on screen.");
-                int nDemos = 0;
-                const okay::editor::vsed::VsPlaygroundDemo* demos = okay::editor::vsed::VsPlaygroundDemos(&nDemos);
-                for (int i = 0; i < nDemos; ++i) {
-                    if (ImGui::MenuItem(demos[i].title)) OpenVsPlayground(ed, demos[i].id);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", demos[i].blurb);
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Ready-made scenes for the high-level visual script nodes.");
-            const auto basics = okay::editor::NodePlaygroundScenes();
-            if (ImGui::BeginMenu("Node Playground (flow and variables)", !basics.empty())) {
-                for (const std::string& p : basics) {
-                    const std::string name = std::filesystem::path(p).stem().string();
-                    if (ImGui::MenuItem(name.c_str())) {
-                        std::string err;
-                        if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
-                        else ConsoleLog("Open failed: " + err, 2);
-                    }
-                }
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveSceneCmd(ed);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip(ed.path().empty() ? "This scene hasn't been saved yet: pick where it goes (Assets/Scenes)."
-                                                                         : "Save this scene: %s", ed.path().c_str());
-        if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) SaveSceneAsCmd(ed);
-        if (ImGui::MenuItem("Save Project", "Ctrl+Alt+S")) SaveProject(ed, true);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save everything: the scene, every edited script, the open visual\n"
-                                                      "script, project and build settings, and editor preferences.");
-        ImGui::Separator();
-        if (ImGui::MenuItem("Merge Scene into Current...")) {
-            // Combine scenes: append another scene's objects into this one (kept),
-            // tagged with its name so the Hierarchy shows where it starts/ends.
-            EditorState* edp = &ed;
-            okay::filedialog::OpenOne("Merge scene into current", "", okay::filedialog::Filters("OkaySpace scene", {"*.okayscene"}),
-                                      [edp](const std::string& p) { MergeSceneIntoCurrent(*edp, p); });
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Combine another scene into this one to build a seamless world.\n"
-                              "The Hierarchy marks where each merged scene begins.\n"
-                              "Tip: you can also drag a .okayscene from Project onto the Hierarchy.");
-        ImGui::Separator();
-        if (ImGui::BeginMenu("Autosave")) {
-            ImGui::MenuItem("Enabled", nullptr, &g_autosave);
-            ImGui::SetNextItemWidth(150);
-            if (ImGui::SliderFloat("Interval (s)", &g_docAutosaveSec, 5.0f, 300.0f, "%.0f")) SaveSettings();
-            if (g_autosaveStamp > 0.0)
-                ImGui::TextDisabled("Last autosave: %.0fs ago",
-                                    okay::platform::TicksMs() / 1000.0 - g_autosaveStamp);
-            ImGui::TextDisabled("Unsaved graphs, scripts and the scene go to the");
-            ImGui::TextDisabled("recovery folder. Real files stay as you saved them.");
-            ImGui::TextDisabled("A leftover <scene>.autosave is still offered on open");
-            ImGui::TextDisabled("when it is newer than the scene. New ones are not written.");
-            if (ImGui::MenuItem("Also save the real file", nullptr, &g_autosaveToFile)) SaveSettings();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: recovery copies only. On: also overwrite the file you saved.");
-            ImGui::EndMenu();
-        }
-        if (ImGui::MenuItem("Build Settings...", "Ctrl+B")) g_showBuildGame = true;
-        ImGui::Separator();
-        if (ImGui::MenuItem("Exit")) g_quitRequested = true;
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Edit")) {
-        {   // First frame the menu is open: also pick up edits no window announced, so the names and the greying are true.
-            static int s_lastFrame = -10;
-            if (ImGui::GetFrameCount() != s_lastFrame + 1) ed.CaptureUnannouncedEdits();
-            s_lastFrame = ImGui::GetFrameCount();
-        }
-        {   // The label says what Ctrl+Z would do; both are greyed out when there is nothing to do.
-            const bool meshU = !g_meshUndo.empty(), meshR = !g_meshRedo.empty();
-            const std::string un = meshU ? std::string("Mesh Edit") : ed.UndoName(), rn = meshR ? std::string("Mesh Edit") : ed.RedoName();
-            const std::string ul = un.empty() ? std::string("Undo") : "Undo " + un, rl = rn.empty() ? std::string("Redo") : "Redo " + rn;
-            if (ImGui::MenuItem(ul.c_str(), "Ctrl+Z", false, meshU || ed.CanUndo())) {
-                if (MeshUndo(false)) { ed.dirty = true; ConsoleLog("Undo " + un); }
-                else if (ed.Undo()) ConsoleLog("Undo " + un);
-                else ConsoleLog("Can't undo " + un + ": " + ed.UndoError(), 1);
-            }
-            if (ed.isPlaying() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Undo is off while the game runs: what you change in Play is thrown away when you press Stop.");
-            if (ImGui::MenuItem(rl.c_str(), "Ctrl+Y", false, meshR || ed.CanRedo())) {
-                if (MeshUndo(true)) { ed.dirty = true; ConsoleLog("Redo " + rn); }
-                else if (ed.Redo()) ConsoleLog("Redo " + rn);
-                else ConsoleLog("Can't redo " + rn + ": " + ed.UndoError(), 1);
-            }
-            if (ed.isPlaying() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Redo is off while the game runs.");
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !ed.isPlaying())
-                ImGui::SetTooltip("Scene edits. The Project panel, Timeline, string table, items / loot / recipes and the code editors have their own Undo while they have focus.");
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Project Settings...")) g_showProjectSettings = true;
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("View")) {
-        // Panels — the core dockable windows, grouped so the menu stays short.
-        if (ImGui::BeginMenu("Panels")) {
-            ImGui::MenuItem("Hierarchy", nullptr, &g_showHierarchy);
-            ImGui::MenuItem("Inspector", nullptr, &g_showInspector);
-            ImGui::MenuItem("Project", nullptr, &g_showProject);
-            ImGui::MenuItem("Console", nullptr, &g_showConsole);
-            ImGui::MenuItem("Problems", nullptr, &g_showProblems);
-            ImGui::MenuItem("Game", nullptr, &g_showGame);
-            ImGui::Separator();
-            ImGui::MenuItem("Services", nullptr, &g_showServices);
-            ImGui::MenuItem("Scene Manager", nullptr, &g_showScenes);
-            ImGui::MenuItem("Net", nullptr, &g_showNet);
-            ImGui::MenuItem("Save Manager", nullptr, &g_showSaveManager);
-            ImGui::MenuItem("Variables (watch)", nullptr, &g_showVarWatch);
-            ImGui::Separator();
-            ImGui::MenuItem("History", nullptr, &g_showHistory);
-            ImGui::MenuItem("Stats", nullptr, &g_showStats);
-            ImGui::MenuItem("Lighting", nullptr, &g_showSceneSettings);
-            ImGui::MenuItem("Profiler", nullptr, &g_showProfiler);
-            ImGui::MenuItem("Asset Manager", nullptr, &g_showAssetManager);
-            ImGui::MenuItem("Crash Log", nullptr, &g_showCrashLog);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "View past crash reports (okay_crashlog.txt) and copy them to send to support.");
-            ImGui::MenuItem("Audio Mixer", nullptr, &g_showAudioMixer);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Master and group volumes (Music, SFX, UI, Voice), output levels while playing, and music ducking.");
-            ImGui::EndMenu();
-        }
-        // Editors & Tools — the bigger authoring surfaces.
-        if (ImGui::BeginMenu("Editors & Tools")) {
-            ImGui::MenuItem("Custom Actions", nullptr, &g_showCustomActions);
-            ImGui::MenuItem("Visual Script", nullptr, &g_showVisualScript);
-            ImGui::MenuItem("Script Editor", nullptr, &g_showScriptEditor);
-            ImGui::Separator();
-            ImGui::MenuItem("Animation", nullptr, &g_showAnimation);
-            ImGui::MenuItem("Animator (state graph)", nullptr, &g_showAnimatorGraph);
-            ImGui::MenuItem("Timeline (cutscenes)", nullptr, &g_showTimeline);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Author cutscene sequences: camera shots, object keys, animation and audio cues, events and subtitles on one timeline.");
-            ImGui::MenuItem("Navigation", nullptr, &g_showNavigation);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Bake the scene's colliders into a navigation mesh NPCs and Nav Mesh Agents path over, and see it in the Scene view.");
-            ImGui::MenuItem("Dialogue & Quests", nullptr, &g_showDialogue);
-            ImGui::MenuItem("Behavior Tree", nullptr, &g_showBehaviorTree);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Author NPC AI as a behavior tree (.okaybt): patrol, perception, chase, attack, scripts; watch it run in Play.");
-            ImGui::Separator();
-            ImGui::MenuItem("Modeling", nullptr, &g_showModeling);
-            ImGui::MenuItem("UV Editor", nullptr, &g_showUVEditor);
-            ImGui::MenuItem("Sprite Editor", nullptr, &g_showSpriteEditor);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Paint custom 2D sprites pixel-by-pixel, start from a shape, and save them into the project's Assets/Sprites.");
-            ImGui::Separator();
-            ImGui::MenuItem("UI Editing Mode", nullptr, &g_uiOnlyMode);   // flat UI canvas draws directly, independent of the scene overlay toggle
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lock THIS Scene view to a flat UI canvas with the 3D scene hidden.\nAlso available as the 'UI Only' button on the Scene toolbar.");
-            ImGui::MenuItem("UI Editor (separate tab)", nullptr, &g_showUIEditor);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open a dedicated, dockable UI editing tab (flat canvas) beside the Scene view,\nso you can keep the 3D Scene and the UI layout visible at the same time.");
-            ImGui::MenuItem("UI Theme", nullptr, &g_showUIThemer);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define a reusable UI style (colors, corners, borders) and apply it to every widget at once — pick a preset or make your own, then restyle the whole UI in one click.");
-            ImGui::MenuItem("Items, Loot & Recipes", nullptr, &g_showItemDatabase);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define items, loot tables and crafting recipes. Saved as items.okayitems, .okayloot and .okayrecipes.");
-            ImGui::MenuItem("Weapons", nullptr, &g_showWeapons);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Define swords and guns once (damage, swing or fire rate, range, rounds and reload, hit window, arc or hit box, combo and knockback). Melee and guns use these.");
-            ImGui::MenuItem("Localization", nullptr, &g_showLocalization);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The project's string table: every text key in every language, how complete each language is, CSV for translators and a pseudo-localized preview.");
-            ImGui::EndMenu();
-        }
-        ImGui::Separator();
-        if (ImGui::BeginMenu("Rendering & Performance")) {
-        bool aa = g_ssaa > 1;
-        if (ImGui::MenuItem("3D Anti-aliasing (2x)", nullptr, &aa)) { g_ssaa = aa ? 2 : 1; SaveSettings(); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoother edges; turn OFF to boost FPS.");
-        {
-            // One toggle; the backend is auto-selected for this system: Direct3D 11 on
-            // Windows, OpenGL elsewhere (whichever initialized), then software.
-            const char* backend = "software";
-#if defined(_WIN32)
-            if (g_d3dReady)      backend = "Direct3D 11";
-            else if (g_glReady)  backend = "OpenGL";
-#else
-            if (g_glReady)       backend = "OpenGL";
-#endif
-            bool gpuAvail = g_glReady;
-#if defined(_WIN32)
-            gpuAvail = gpuAvail || g_d3dReady;
-#endif
-            // The GPU renderer is automatic now (on by default, API auto-selected for
-            // the OS, self-healing to software on failure), so this is just a read-only
-            // status line — no manual switch needed.
-            char label[80];
-            std::snprintf(label, sizeof(label), "Renderer: %s", g_gpuRender && gpuAvail ? backend : "software");
-            ImGui::BeginDisabled();
-            ImGui::MenuItem(label, nullptr, false);
-            ImGui::EndDisabled();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D is rendered on the GPU automatically — Direct3D 11 on Windows,\nOpenGL elsewhere — and falls back to software if no GPU is available.");
-        }
-#ifdef OKAY_HAVE_OKAYUI
-        // A developer demo panel, not a feature: only offered with OKAY_DEV set.
-        if (const char* devEnv = std::getenv("OKAY_DEV"); devEnv && devEnv[0] && devEnv[0] != '0') {
-            ImGui::MenuItem("Test UI", nullptr, &g_showTestUI);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw a sample OkayUI::Button on top of the editor.\nOkayUI renders through the same SDL_Renderer as ImGui\n(Direct3D on Windows), so there are no conflicts.\nIt ignores clicks while the cursor is over an ImGui panel.");
-        }
-#endif
-#ifdef OKAY_HAVE_OKAYUI
-        if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
-        if (ImGui::BeginMenu("UI backend")) {   // which toolkit draws the panels that have an OkayUI port (the Console, today)
-            const int src = okayuibackend::Source(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, true);
-            for (okayuibackend::Backend opt : {okayuibackend::Backend::ImGui, okayuibackend::Backend::OkayUI})
-                if (ImGui::MenuItem(okayuibackend::Label(opt), nullptr, g_uiBackend == opt, src != 2) && g_uiBackend != opt) {
-                    g_uiBackendSetting = okayuibackend::Name(opt);
-                    ResolveUiBackend();
-                    SaveSettings();
-                }
-            ImGui::Separator();
-            ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: only the Console panel is ported.");
-            ImGui::EndMenu();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
-        }
-#endif
-        if (ImGui::MenuItem("VSync", nullptr, &g_vsync)) { SDL_RenderSetVSync(g_sdlRenderer, g_vsync ? 1 : 0); SaveSettings(); }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("OFF = uncapped FPS (no 60 Hz limit). ON = no tearing.");
-        if (ImGui::MenuItem("Smooth frame time", nullptr, &g_smoothFrameTime)) SaveSettings();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play steps the game by an evened-out frame time (whole refresh periods with\nVSync), so movement and cameras don't micro-judder at a steady frame rate.");
-        // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
-        if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
-        ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Scene Overlays")) {
-            ImGui::MenuItem("Colliders (gizmos)", nullptr, &g_showColliders);
-            oked::DrawVolumeOverlayMenu([] { SaveSettings(); });
-            if (ImGui::BeginMenu("Physics Debug")) {
-                if (ImGui::MenuItem("Show physics (Scene + Game)", nullptr, &g_physDebug)) { ApplyPhysicsDebug(); SaveSettings(); }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw colliders (green), triggers (blue), this frame's contact\npoints + normals (red) and query rays, also in the Game view\nwhile playing. Editor only - never in a build.");
-                if (ImGui::MenuItem("Rays cast from scripts", nullptr, &g_physDebugRays)) { ApplyPhysicsDebug(); SaveSettings(); }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also draw the raycasts / sphere casts that scripts, visual\nscripts and Actions make: green to the hit (white normal), yellow on a miss.");
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Skeletons")) {
-                if (ImGui::MenuItem("Selected model", nullptr, g_skeletonMode == 1)) g_skeletonMode = 1;
-                if (ImGui::MenuItem("All rigged models", nullptr, g_skeletonMode == 2)) g_skeletonMode = 2;
-                if (ImGui::MenuItem("Off", nullptr, g_skeletonMode == 0)) g_skeletonMode = 0;
-                ImGui::EndMenu();
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Draw rigged models' bones, connected parent to child.\nClick a bone in the Scene view to select it.");
-            if (ImGui::MenuItem("Gizmos (selection / camera / lights)", nullptr, &g_showGizmos)) SaveSettings();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Editor-only overlays in the Scene view\n(yellow selection box, camera frustum, light icons).\nNever appear in the Game view or a build.");
-            if (ImGui::MenuItem("Skybox", nullptr, &ed.scene().renderSettings.skybox)) ed.dirty = true;
-            ImGui::MenuItem("Clear Console on Play", nullptr, &g_clearConsoleOnPlay);
-            ImGui::EndMenu();
-        }
-        ImGui::Separator();
-        if (ImGui::BeginMenu("Appearance")) {
-        if (ImGui::BeginMenu("UI Scale")) {
-            struct { const char* n; float s; } presets[] = {
-                {"Compact (90%)", 0.9f}, {"Normal (100%)", 1.0f},
-                {"Comfortable (110%)", 1.1f}, {"Large (125%)", 1.25f}, {"Huge (150%)", 1.5f}};
-            for (auto& p : presets)
-                if (ImGui::MenuItem(p.n, nullptr, std::fabs(g_uiScale - p.s) < 0.01f))
-                    { g_uiScale = p.s; ApplyTheme(); SaveSettings(); }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Density")) {
-            for (int d = 0; d < 2; ++d)
-                if (ImGui::MenuItem(okay::edlayout::DensityName(d), nullptr, g_view.density == d)) { g_view.density = d; ApplyTheme(); SaveSettings(); }
-            ImGui::Separator();
-            ImGui::TextDisabled("Row spacing and field height in the Inspector and every panel.");
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Theme")) {
-            if (ImGui::MenuItem("Slate", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); SaveSettings(); }
-            if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); SaveSettings(); }
-            if (ImGui::MenuItem("Classic", nullptr, g_theme == 2)) { g_theme = 2; ApplyTheme(); SaveSettings(); }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Accent color")) {
-            for (int i = 0; i < kAccentCount; ++i) {
-                char albl[48]; std::snprintf(albl, sizeof(albl), "     %s", kAccents[i].name);
-                if (ImGui::MenuItem(albl, nullptr, g_accent == i)) { g_accent = i; ApplyTheme(); SaveSettings(); }
-                // Drawn swatch dot in the leading space, in that accent's color.
-                ImVec2 amn = ImGui::GetItemRectMin(), amx = ImGui::GetItemRectMax();
-                ImGui::GetWindowDrawList()->AddCircleFilled(
-                    ImVec2(amn.x + 11.0f, (amn.y + amx.y) * 0.5f),
-                    ImGui::GetFontSize() * 0.28f,
-                    ImGui::GetColorU32(ImVec4(kAccents[i].r, kAccents[i].g, kAccents[i].b, 1.0f)), 16);
-            }
-            ImGui::EndMenu();
-        }
-        ImGui::EndMenu();   // Appearance
-        }
-        if (ImGui::BeginMenu("Camera Bookmarks")) {
-            ImGui::TextDisabled("Save a viewport camera angle, jump back anytime.");
-            for (int bi = 0; bi < 3; ++bi) {
-                CamBookmark& b = g_camBookmarks[bi];
-                char sl[32], ss[16], gl[32], gs[12];
-                std::snprintf(sl, sizeof(sl), "Save slot %d", bi + 1);
-                std::snprintf(ss, sizeof(ss), "Ctrl+Alt+%d", bi + 1);
-                std::snprintf(gl, sizeof(gl), "Go to slot %d", bi + 1);
-                std::snprintf(gs, sizeof(gs), "Ctrl+%d", bi + 1);
-                if (ImGui::MenuItem(sl, ss)) {
-                    b.set = true; b.target = ed.camTarget; b.yaw = ed.camYaw; b.pitch = ed.camPitch;
-                    b.dist = ed.camDist; b.px = ed.cameraPos.x; b.py = ed.cameraPos.y; b.view3D = ed.view3D;
-                }
-                ImGui::BeginDisabled(!b.set);
-                if (ImGui::MenuItem(gl, gs)) {
-                    ed.camTarget = b.target; ed.camYaw = b.yaw; ed.camPitch = b.pitch;
-                    ed.camDist = b.dist; ed.cameraPos = {b.px, b.py}; ed.view3D = b.view3D;
-                }
-                ImGui::EndDisabled();
-                if (bi < 2) ImGui::Separator();
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Layout")) { DrawLayoutMenuItems(); ImGui::EndMenu(); }
-        if (ImGui::MenuItem("Reset Layout")) g_resetLayout = true;
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Window")) {
-        ImGui::MenuItem("Items, Loot & Recipes", nullptr, &g_showItemDatabase);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Author items, loot tables (weighted drops, with a live roll preview) and crafting recipes.");
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("GameObject")) {
-        bool created = false;
-        if (ImGui::MenuItem("Create Empty"))   { ed.CreateEmpty();   ConsoleLog("Created empty GameObject"); created = true; }
-        if (ImGui::MenuItem("Create Sprite"))  { ed.CreateSprite();  ConsoleLog("Created Sprite"); created = true; }
-        if (ImGui::MenuItem("2D Character (Sprite Sheet)...")) g_showSpriteChar = true;
-        if (ImGui::BeginMenu("2D Shape")) {     // premade sprite shapes (saved to Assets/Sprites)
-            for (int i = 0; i < SS_Count; ++i)
-                if (ImGui::MenuItem(kSpriteShapeNames[i])) {
-                    ed.Select(CreateShapeSprite(ed, i));
-                    ConsoleLog(std::string("Created ") + kSpriteShapeNames[i] + " sprite"); created = true;
-                }
-            ImGui::EndMenu();
-        }
-        if (ImGui::MenuItem("Sprite Editor..."))  g_showSpriteEditor = true;
-        if (ImGui::MenuItem("Create Camera"))  { ed.CreateCamera();  ConsoleLog("Created Camera"); created = true; }
-        ImGui::Separator();
-        if (ImGui::BeginMenu("Player")) {           // ready-to-play premade players
-            if (ImGui::MenuItem("Third Person")) {
-                ed.PushUndo();
-                ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonPlayer(ed.scene())));
-                ConsoleLog("Added Third-Person player"); ed.dirty = true; created = true;
-            }
-            if (ImGui::MenuItem("Humanoid (foot IK)")) {
-                ed.PushUndo();
-                ed.Select(ed.SettleSpawn(okay::Templates::AddHumanoidPlayer(ed.scene())));
-                ConsoleLog("Added Humanoid player (rig + capsule + foot IK)"); ed.dirty = true; created = true;
-            }
-            if (ImGui::MenuItem("First Person")) {
-                ed.PushUndo();
-                ed.Select(ed.SettleSpawn(okay::Templates::AddFirstPersonPlayer(ed.scene())));
-                ConsoleLog("Added First-Person player"); ed.dirty = true; created = true;
-            }
-            if (ImGui::MenuItem("Third Person Shooter")) {
-                ed.PushUndo();
-                ed.Select(ed.SettleSpawn(okay::Templates::AddThirdPersonShooterPlayer(ed.scene())));
-                ConsoleLog("Added Third-Person Shooter player"); ed.dirty = true; created = true;
-            }
-            if (ImGui::MenuItem("Top Down (3D)")) {
-                ed.PushUndo();
-                ed.Select(ed.SettleSpawn(okay::Templates::AddTopDownPlayer(ed.scene())));
-                ConsoleLog("Added Top-Down player"); ed.dirty = true; created = true;
-            }
-            if (ImGui::MenuItem("Top Down Shooter (3D)")) {
-                ed.PushUndo();
-                ed.Select(ed.SettleSpawn(okay::Templates::AddTopDownShooterPlayer(ed.scene())));
-                ConsoleLog("Added Top-Down Shooter player (WASD, mouse aim, LMB fire, Space dash)"); ed.dirty = true; created = true;
-            }
-            if (ImGui::MenuItem("2.5D Platformer (LittleBigPlanet)")) {
-                ed.PushUndo();
-                ed.Select(ed.SettleSpawn(okay::Templates::AddPlatformer25DPlayer(ed.scene())));
-                ConsoleLog("Added 2.5D player (A/D run, Space jump, W/S change layer, E grab, Ctrl crouch, Z prone)"); ed.dirty = true; created = true;
-            }
-            if (ImGui::MenuItem("Top Down (2D)")) {
-                ed.PushUndo();
-                ed.Select(okay::Templates::AddTopDown2DPlayer(ed.scene()));
-                ConsoleLog("Added Top-Down 2D player (sprite + TopDownController2D)"); ed.dirty = true; created = true;
-            }
-            if (ImGui::MenuItem("Click To Move")) {
-                ed.PushUndo();
-                ed.Select(ed.SettleSpawn(okay::Templates::AddClickToMovePlayer(ed.scene())));
-                ConsoleLog("Added Click-To-Move player"); ed.dirty = true; created = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Drops a fully set-up player (Character + controller + physics) into this scene.");
-            ImGui::EndMenu();
-        }
-        ImGui::Separator();
-        if (ImGui::BeginMenu("3D Object")) {       // every built-in primitive
-            if (ImGui::MenuItem("Cube"))      { ed.CreateCube();    ConsoleLog("Created Cube"); created = true; }
-            if (ImGui::MenuItem("Sphere"))    { ed.CreateMesh("Sphere");    ConsoleLog("Created Sphere"); created = true; }
-            if (ImGui::MenuItem("Cylinder"))  { ed.CreateMesh("Cylinder");  ConsoleLog("Created Cylinder"); created = true; }
-            if (ImGui::MenuItem("Capsule"))   { ed.CreateMesh("Capsule");   ConsoleLog("Created Capsule"); created = true; }
-            if (ImGui::MenuItem("Cone"))      { ed.CreateMesh("Cone");      ConsoleLog("Created Cone"); created = true; }
-            if (ImGui::MenuItem("Plane"))     { ed.CreateMesh("Plane");     ConsoleLog("Created Plane"); created = true; }
-            if (ImGui::MenuItem("Pyramid"))   { ed.CreatePyramid(); ConsoleLog("Created Pyramid"); created = true; }
-            if (ImGui::MenuItem("Wedge"))     { ed.CreateMesh("Wedge");     ConsoleLog("Created Wedge"); created = true; }
-            if (ImGui::MenuItem("Torus"))     { ed.CreateMesh("Torus");     ConsoleLog("Created Torus"); created = true; }
-            if (ImGui::MenuItem("Torus Knot")){ ed.CreateMesh("TorusKnot"); ConsoleLog("Created Torus Knot"); created = true; }
-            if (ImGui::MenuItem("Icosphere")) { ed.CreateMesh("Icosphere"); ConsoleLog("Created Icosphere"); created = true; }
-            if (ImGui::MenuItem("Hemisphere")){ ed.CreateMesh("Hemisphere");ConsoleLog("Created Hemisphere"); created = true; }
-            if (ImGui::MenuItem("Stairs"))    { ed.CreateMesh("Stairs");    ConsoleLog("Created Stairs"); created = true; }
-            if (ImGui::MenuItem("Gear"))      { ed.CreateMesh("Gear");      ConsoleLog("Created Gear"); created = true; }
-            if (ImGui::MenuItem("Prism"))     { ed.CreateMesh("Prism");     ConsoleLog("Created Prism"); created = true; }
-            if (ImGui::MenuItem("Octahedron")){ ed.CreateMesh("Octahedron");ConsoleLog("Created Octahedron"); created = true; }
-            if (ImGui::MenuItem("Disc"))      { ed.CreateMesh("Disc");      ConsoleLog("Created Disc"); created = true; }
-            if (ImGui::MenuItem("Tetrahedron")){ ed.CreateMesh("Tetrahedron");ConsoleLog("Created Tetrahedron"); created = true; }
-            if (ImGui::MenuItem("Bipyramid")) { ed.CreateMesh("Bipyramid"); ConsoleLog("Created Bipyramid"); created = true; }
-            if (ImGui::MenuItem("Rounded Box")){ ed.CreateMesh("RoundedBox");ConsoleLog("Created Rounded Box"); created = true; }
-            if (ImGui::MenuItem("Quad"))      { ed.CreateMesh("Quad");      ConsoleLog("Created Quad"); created = true; }
-            ImGui::Separator();
-            if (ImGui::BeginMenu("Nature")) {
-                const char* nat[] = {"Tree", "Pine", "PalmTree", "DeadTree", "Bush", "Rock", "Mushroom", "Cactus", "Crystal"};
-                for (const char* n : nat)
-                    if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Props")) {
-                const char* pr[] = {"Barrel", "Crate", "Fence", "Well", "StreetLamp",
-                                    "Campfire", "Lantern", "Chest", "Signpost", "Cart", "Tent", "Bench"};
-                for (const char* n : pr)
-                    if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Structures")) {
-                const char* st[] = {"House", "Tower", "Windmill", "Bridge", "RockArch"};
-                for (const char* n : st)
-                    if (ImGui::MenuItem(n)) { ed.CreateMesh(n); ConsoleLog(std::string("Created ") + n); created = true; }
-                ImGui::EndMenu();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Terrain")) {
-                GameObject* go = ed.CreateEmpty("Terrain");
-                auto* tr = go->AddComponent<Terrain>();
-                tr->Resize(64); tr->size = 80.0f;
-                tr->Generate(1, 10.0f, 3.0f, 5, (unsigned)(ImGui::GetTime() * 1000.0)); // rolling hills
-                tr->Apply();
-                go->AddComponent<TerrainDigger>();   // dig/raise it at runtime out of the box
-                ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
-                ConsoleLog("Created Terrain (with a Terrain Digger: hold Left Mouse in Play to dig)");
-            }
-            if (ImGui::MenuItem("Voxel Terrain (caves)")) {
-                GameObject* go = ed.CreateEmpty("Voxel Terrain");
-                auto* v = go->AddComponent<VoxelTerrain>();
-                v->Resize(56, 32, 56); v->voxelSize = 1.5f;
-                v->Generate(0.5f, 7.0f, 0.0f, (unsigned)(ImGui::GetTime() * 1000.0));   // solid (no caves)
-                v->Apply();
-                go->AddComponent<VoxelDigger>();     // dig caves / raise at runtime
-                ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
-                ConsoleLog("Created Voxel Terrain (Voxel Digger: Left Mouse digs caves, Right Mouse adds)");
-            }
-            if (ImGui::MenuItem("Water")) {
-                GameObject* go = ed.CreateEmpty("Water");
-                auto* w = go->AddComponent<Water>();
-                w->size = 80.0f; w->Apply();
-                ed.Select(go); ed.view3D = true; ed.dirty = true; created = true;
-                ConsoleLog("Created Water (animated reflective surface)");
-            }
-            if (ImGui::MenuItem("Character")) {
-                GameObject* g = ed.CreateEmpty("Character");
-                g->AddComponent<Character>()->Apply();
-                HumanoidLibrary::EnsureAnimator(g);
-                ed.SettleSpawn(g);
-                ed.Select(g); ed.view3D = true; ed.dirty = true; created = true;
-                ConsoleLog("Created Character");
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Light")) {           // every light type in one place
-            if (ImGui::MenuItem("Directional Light")) {
-                GameObject* go = ed.CreateEmpty("Directional Light");
-                go->AddComponent<Light>();
-                go->transform->localRotation = Quat::Euler({50, -30, 0}); // angled key light
-                ed.Select(go); ConsoleLog("Created Directional Light"); created = true;
-            }
-            if (ImGui::MenuItem("Point Light")) {
-                GameObject* go = ed.CreateEmpty("Point Light");
-                auto* l = go->AddComponent<Light>(); l->type = Light::Type::Point; l->range = 12.0f;
-                go->transform->localPosition = {0, 3, 0};
-                ed.Select(go); ConsoleLog("Created Point Light"); created = true;
-            }
-            if (ImGui::MenuItem("Spot Light")) {
-                GameObject* go = ed.CreateEmpty("Spot Light");
-                auto* l = go->AddComponent<Light>(); l->type = Light::Type::Spot; l->range = 16.0f; l->spotAngle = 50.0f;
-                go->transform->localPosition = {0, 5, 0};
-                go->transform->localRotation = Quat::Euler({90, 0, 0}); // aim down
-                ed.Select(go); ConsoleLog("Created Spot Light"); created = true;
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Cinemachine")) {     // virtual cameras, brain & dolly rails
-            if (ImGui::MenuItem("Virtual Camera")) {
-                GameObject* g = ed.CreateEmpty("Virtual Camera");
-                g->AddComponent<VirtualCamera>();
-                ed.Select(g); ConsoleLog("Created Virtual Camera"); created = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A Cinemachine shot: where to stand, what to aim at, the lens and damping.");
-            if (ImGui::MenuItem("Cinemachine Brain")) {
-                // The brain drives the real camera from virtual cameras, so put it on
-                // the existing main camera if there is one; otherwise make a Camera for it.
-                GameObject* camGO = nullptr;
-                for (const auto& up : ed.scene().Objects())
-                    if (up->GetComponent<Camera>()) { camGO = up.get(); break; }
-                if (!camGO) { ed.CreateCamera(); camGO = ed.selected(); }
-                if (camGO && !camGO->GetComponent<CinemachineBrain>())
-                    camGO->AddComponent<CinemachineBrain>();
-                if (camGO) ed.Select(camGO);
-                ConsoleLog("Added Cinemachine Brain to the camera"); created = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lives on the main camera and blends it between virtual cameras.");
-            ImGui::Separator();
-            if (ImGui::MenuItem("Dolly Path")) {
-                GameObject* go = ed.CreateEmpty("Dolly Path");
-                auto* dp = go->AddComponent<DollyPath>();
-                dp->waypoints = { {-8, 2, 0}, {0, 2, 6}, {8, 2, 0} }; // a gentle arc
-                ed.Select(go); ConsoleLog("Created Dolly Path"); created = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A smooth camera rail (Catmull-Rom spline through waypoints).");
-            if (ImGui::MenuItem("Dolly Cart")) {
-                GameObject* go = ed.CreateEmpty("Dolly Cart");
-                go->AddComponent<DollyCart>();
-                ed.Select(go); ConsoleLog("Created Dolly Cart (set its Path to a Dolly Path)"); created = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Glides along a Dolly Path; set its Path to the path's name.");
-            ImGui::EndMenu();
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Create Particle System")) {
-            GameObject* go = ed.CreateEmpty("Particles");
-            go->AddComponent<ParticleSystem>();
-            ConsoleLog("Created Particle System (press Play to see it)");
-            created = true;
-        }
-        if (ImGui::MenuItem("Spline")) { CreateSplineFromMenu(ed); created = true; }
-        LevelCreateMenuItems(ed, created);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("A curve of three points in front of the camera: roads, rails, fences, paths.");
-        oked::DrawVolumeGameObjectMenu(ed, created);
-        if (ImGui::MenuItem("Create Tilemap")) {
-            GameObject* go = ed.CreateEmpty("Tilemap");
-            auto* tm = go->AddComponent<Tilemap>();
-            tm->Resize(12, 8);
-            for (int x = 0; x < 12; ++x) tm->SetTile(x, 0, 1); // a ground row
-            ConsoleLog("Created Tilemap");
-            created = true;
-        }
-        ImGui::Separator();
-        if (ImGui::BeginMenu("UI")) {   // each UI element is its own GameObject
-            // Widgets go under the scene's Canvas (made, plus an Event System, if
-            // missing), or inside the selected panel; see DrawUIWidgetItems.
-            DrawUIWidgetItems(ed, created);
-            ImGui::Separator();
-            if (ImGui::MenuItem("Canvas"))       { ed.Select(ed.CreateEmpty("Canvas"));   ed.selected()->AddComponent<Canvas>()->screenMatch = Canvas::ScreenMatch::Expand; ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("Event System")) { ed.Select(ed.CreateEmpty("EventSystem")); ed.selected()->AddComponent<EventSystem>();  ed.dirty = true; created = true; }
-            if (ImGui::MenuItem("World Label (3D)")) { ed.Select(ed.CreateEmpty("WorldLabel")); ed.selected()->AddComponent<WorldUI>(); ed.dirty = true; created = true; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("In-world UI: a label/marker that floats over a 3D point (nameplates, health bars). Shows in the Game view + built game.");
-            if (ImGui::MenuItem("Inventory (Minecraft-style)")) {
-                // The items live on the player (selected or tagged "Player") so its Crafting,
-                // Consumables and StructureBuilder find them; only the UI goes under the Canvas.
-                GameObject* player = (ed.selected() && ed.selected()->tag == "Player") ? ed.selected()
-                                                                                         : ed.scene().FindWithTag("Player");
-                GameObject* root = EnsureUIRoot(ed);   // inventories are UI → live under the Canvas
-                GameObject* g = ed.CreateEmpty("Inventory");
-                GameObject* holder = player ? player : g;
-                auto* inv = holder->GetComponent<Inventory>();
-                if (!inv) {
-                    inv = holder->AddComponent<Inventory>();
-                    inv->capacity = 36;   // 9 hotbar + 27 backpack, like Minecraft (= the UI's slots)
-                    inv->Add("Dirt", 64); inv->Add("Stone", 64); inv->Add("Wood", 32);
-                    inv->Add("Torch", 16); inv->Add("Sword", 1);
-                }
-                auto* iu = g->AddComponent<InventoryUI>();
-                if (player) iu->inventoryTarget = player->name;
-                if (root) g->transform->SetParent(root->transform, false);
-                ed.Select(g); ed.dirty = true; created = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ready hotbar + backpack (1-9 / wheel to select, E to open), with sample items. The Inventory goes on the selected or \"Player\"-tagged object, so crafting and consumables there use it.");
-            if (ImGui::MenuItem("Grid Inventory (DayZ/Unturned-style)")) {
-                GameObject* root = EnsureUIRoot(ed);   // UI → under the Canvas
-                GameObject* g = ed.CreateEmpty("GridInventory");
-                auto* gi = g->AddComponent<GridInventory>();
-                gi->cols = 8; gi->rows = 6; gi->title = "Backpack";
-                gi->AddItem("Rifle", 2, 6, 1, 4.0f);
-                gi->AddItem("Backpack", 3, 3, 1, 1.0f);
-                gi->AddItem("Beans", 1, 1, 2, 0.4f);
-                gi->AddItem("Bandage", 1, 1, 3, 0.1f);
-                gi->AddItem("Water", 1, 2, 1, 0.6f);
-                g->AddComponent<GridInventoryUI>();
-                if (root) g->transform->SetParent(root->transform, false);
-                ed.Select(g); ed.dirty = true; created = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A grid bag where items take up w×h cells; press I in Play to open and drag items around. Comes with sample loot.");
-            if (ImGui::MenuItem("Unturned Inventory (worn bags + nearby loot)")) {
-                // Everything lives under ONE tidy "Unturned Inventory" group so the
-                // hierarchy stays clean: a Player (body grid + screen UI) with a worn
-                // Vest and Backpack as children, and a single Loot Crate beside it.
-                GameObject* group = ed.CreateEmpty("Unturned Inventory");
-                GameObject* player = ed.CreateEmpty("Player");
-                player->transform->SetParent(group->transform, false);
-                auto* body = player->AddComponent<GridInventory>();
-                body->cols = 5; body->rows = 2; body->title = "Pockets"; body->category = "Pockets";
-                body->toggleKey = 'i';
-                body->AddItem("Knife", 1, 2, 1, 0.3f);
-                body->AddItem("Map", 2, 2, 1, 0.1f);
-                auto* screen = player->AddComponent<GridInventoryUI>();
-                screen->multiContainer = true; screen->nearbyRange = 4.0f;
-
-                auto worn = [&](const char* name, const char* cat, int c, int rr) {
-                    GameObject* w = ed.CreateEmpty(name);
-                    w->transform->SetParent(player->transform, false);
-                    auto* gi = w->AddComponent<GridInventory>();
-                    gi->cols = c; gi->rows = rr; gi->title = name; gi->category = cat; gi->toggleKey = 0;
-                    return gi;
-                };
-                worn("Vest", "Vest", 5, 2)->AddItem("Mag", 1, 2, 3, 0.2f);
-                auto* pack = worn("Backpack", "Backpack", 6, 5);
-                pack->weightLimit = 30.0f;
-                pack->AddItem("Rifle", 2, 5, 1, 4.0f);
-                pack->AddItem("Water", 1, 2, 1, 0.6f);
-                pack->AddItem("Beans", 1, 1, 2, 0.4f);
-
-                GameObject* crate = ed.CreateEmpty("Loot Crate");
-                crate->transform->SetParent(group->transform, false);
-                crate->transform->localPosition = {2.0f, 0.0f, 0.0f};   // 2m away → in the Nearby column
-                auto* ci = crate->AddComponent<GridInventory>();
-                ci->cols = 5; ci->rows = 4; ci->title = "Loot Crate"; ci->worldItem = true; ci->toggleKey = 0;
-                ci->AddItem("Ammo", 1, 1, 30, 0.5f); ci->AddItem("Scope", 1, 2, 1, 0.3f); ci->AddItem("Medkit", 2, 2, 1, 1.2f);
-
-                ed.Select(player); ed.dirty = true; created = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One tidy 'Unturned Inventory' group: a Player with a worn Vest + Backpack and a single nearby Loot Crate. Press I in Play; drag loot across bags.");
-            if (ImGui::MenuItem("UI Document"))  {
-                GameObject* root = EnsureUIRoot(ed);
-                GameObject* g = ed.CreateEmpty("UIDocument");
-                auto* doc = g->AddComponent<UIDocument>();
-                doc->markup =
-                    "panel pos=40,40 size=360,240 color=30,36,52,220\n"
-                    "  text \"MY GAME\" pos=70,70 size=5\n"
-                    "  button \"Play\" pos=70,170 size=300,60 anchor=topleft\n";
-                if (root) g->transform->SetParent(root->transform, false);
-                doc->Rebuild(); ed.scene().Update(0.0f);
-                ed.Select(g); ed.dirty = true; created = true;
-            }
-            // Save the selected UI subtree as a reusable prefab under Assets/UI, so you
-            // can drop your own custom UI back into any scene from the Project panel.
-            if (ImGui::MenuItem("Save Selected as UI", nullptr, false, ed.selected() != nullptr)) {
-                namespace fs = std::filesystem;
-                fs::path assets = ed.projectDir().empty() ? fs::path("Assets") : fs::path(ed.projectDir()) / "Assets";
-                fs::path dir = assets / "UI"; std::error_code ec; fs::create_directories(dir, ec);
-                SavePrefabInto(ed.selected(), dir);
-                created = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Save the selected UI (e.g. a Canvas or a menu Panel + its children) as a reusable .okayprefab in Assets/UI.\nDrop it from the Project panel into any scene to reuse it.");
-            ImGui::Separator();
-            // 3D UI: each widget is its own standalone object in the world (a
-            // WorldSpaceUI marker), NOT under the 2D Canvas. Placed at the camera focus.
-            if (ImGui::BeginMenu("3D UI (in-world)")) {
-                auto add3d = [&](const char* nm, auto build) {
-                    GameObject* g = ed.CreateEmpty(nm);
-                    build(g);
-                    g->AddComponent<WorldSpaceUI>();
-                    if (g->transform) g->transform->localPosition = ed.camTarget;
-                    ed.Select(g); ed.dirty = true; created = true;
-                };
-                if (ImGui::MenuItem("Button")) add3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
-                if (ImGui::MenuItem("Text"))   add3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
-                if (ImGui::MenuItem("Panel"))  add3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
-                if (ImGui::MenuItem("Image"))  add3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenu();
-        }
-        if (created) ed.Achievement("FIRST_OBJECT");
-        ImGui::Separator();
-        if (ImGui::MenuItem("Instantiate Prefab...")) g_showInstPrefab = true;
-        if (ImGui::MenuItem("Duplicate Selected", "Ctrl+D", false, ed.selected() != nullptr)) {
-            ed.DuplicateSelected(); ConsoleLog("Duplicated selection");
-        }
-        if (ImGui::MenuItem("Array Duplicate...", nullptr, false, ed.selected() != nullptr))
-            g_showArrayDup = true;
-        if (ImGui::MenuItem("Snap Position to Grid", nullptr, false, ed.selected() != nullptr)) {
-            ed.PushUndo();
-            float g = g_snapSize > 1e-4f ? g_snapSize : 1.0f;
-            Vec3& p = ed.selected()->transform->localPosition;
-            p = {std::round(p.x / g) * g, std::round(p.y / g) * g, std::round(p.z / g) * g};
-            ed.dirty = true; ConsoleLog("Snapped to grid");
-        }
-        if (ImGui::MenuItem("Copy", "Ctrl+C", false, ed.selected() != nullptr)) {
-            g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
-            ConsoleLog("Copied " + ed.selected()->name);
-        }
-        if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
-            ed.PushUndo();
-            if (GameObject* go = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
-                go->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f};
-                ed.Select(go); ed.dirty = true; ConsoleLog("Pasted " + go->name);
-            }
-        }
-        if (ImGui::MenuItem("Delete Selected", "Del", false, ed.selected() != nullptr)) {
-            ed.DeleteSelected(); ConsoleLog("Deleted selection");
-        }
-        ImGui::EndMenu();
-    }
-    if (ImGui::BeginMenu("Engine")) {
-        if (ImGui::MenuItem("Build Settings...", "Ctrl+B")) g_showBuildGame = true;
-        ImGui::Separator();
-        if (ImGui::MenuItem("Check for Updates...")) {
-            g_update = updater::CheckLatest();
-            g_openUpdatePopup = true;
-            ConsoleLog(g_update.error.empty()
-                ? (g_update.available ? "Update available: v" + g_update.latest
-                                      : "Up to date (v" + g_update.current + ").")
-                : "Update check failed: " + g_update.error);
-        }
-        ImGui::EndMenu();
-    }
-    DrawPluginsMenu(ed);
-    if (ImGui::BeginMenu("Help")) {
-        if (ImGui::MenuItem("Scripting Reference")) g_showScriptDocs = true;
-        if (ImGui::MenuItem("Keyboard Shortcuts")) g_showShortcuts = true;
-        if (ImGui::MenuItem("About OkaySpace")) g_openAbout = true;
-        ImGui::EndMenu();
-    }
+    DrawMainMenus(ed);
 
     // Transport: one compact segmented pill of icon buttons, centered —
     // [play/stop][pause][step] — then a quiet Build button. Colour only marks
@@ -19608,6 +19637,293 @@ static std::string EllipsizeToWidth(const std::string& text, float maxW) {
     return s.empty() ? std::string(ell) : s + ell;
 }
 
+// ---- The Hierarchy menus. The lists (what is in them, in what order, when an item is greyed out and why) are data in
+// HierarchyContextModel.hpp, tested by tests/test_hierarchy_context_model.cpp; this runs the ids. Creators are shared with
+// GameObject > <category> (DrawCreateSlot). docs/editor_menus.md has the map. ----
+
+// A short name for what kind of object a row is, in the order the row icon decides (HierKindIcon): what "Select Same Type" compares.
+static const char* HierKindName(GameObject* go) {
+    if (go->GetComponent<Camera>()) return "Camera";
+    if (go->GetComponent<Light>()) return "Light";
+    if (go->GetComponent<Canvas>()) return "Canvas";
+    if (go->GetComponent<UIButton>()) return "UI Button";
+    if (go->GetComponent<UIToggle>()) return "UI Toggle";
+    if (go->GetComponent<UISlider>() || go->GetComponent<UIProgressBar>()) return "UI Bar";
+    if (go->GetComponent<UIInputField>() || go->GetComponent<UIDropdown>()) return "UI Field";
+    if (go->GetComponent<UIImage>() || go->GetComponent<UIRawImage>()) return "UI Image";
+    if (go->GetComponent<UIPanel>() || go->GetComponent<UIScrollView>() || go->GetComponent<UITabs>()) return "UI Panel";
+    if (go->GetComponent<UIRadialProgress>()) return "UI Radial Progress";
+    if (go->GetComponent<EventSystem>()) return "Event System";
+    if (go->GetComponent<MeshRenderer>()) return "Mesh";
+    if (go->GetComponent<TextRenderer>()) return "Text";
+    if (go->GetComponent<ParticleSystem>()) return "Particle System";
+    if (go->GetComponent<Tilemap>()) return "Tilemap";
+    if (go->GetComponent<SpriteRenderer>()) return "Sprite";
+    if (go->GetComponent<AudioSource>()) return "Audio Source";
+    if (go->transform && go->transform->ChildCount() > 0 && go->Components().size() <= 1) return "Group";
+    return "Empty";
+}
+
+// The right-clicked row, as plain values for the model. `recount`: count the other objects of its kind (once, when the menu opens).
+static oked::hiermenu::RowState HierRowState(EditorState& ed, GameObject* node, bool recount) {
+    oked::hiermenu::RowState r;
+    r.selectedCount = (int)HierTargets(ed, node).size();
+    r.active = node->active;
+    r.locked = node->editorLocked;
+    r.childCount = node->transform->ChildCount();
+    Transform* par = node->transform->Parent();
+    r.hasParent = par != nullptr;
+    int index = 0, count = 0;
+    if (par) {
+        for (Transform* c : par->Children()) { if (c == node->transform) index = count; ++count; }
+    } else {
+        for (const auto& up : ed.scene().Objects())
+            if (up->transform && !up->transform->Parent()) { if (up.get() == node) index = count; ++count; }
+    }
+    r.siblingIndex = index;
+    r.siblingCount = count > 0 ? count : 1;
+    r.clipboardHasObject = !g_clipboard.empty();
+    r.isolated = g_isolate == node;
+    if (GameObject* proot = PrefabTools::NearestPrefabRoot(*node); proot && !proot->prefabSource.empty()) {
+        r.inPrefab = true;
+        r.prefabName = std::filesystem::path(proot->prefabSource).filename().string();
+        r.prefabChanged = oked::PrefabOverrideCount(*proot) > 0;
+        r.prefabHasNested = !PrefabTools::NestedInstances(*proot, false).empty();
+    }
+    // Rigging and IK only make sense on something that can be a rig or a model (they were offered on every object).
+    r.modelTools = r.childCount > 0 || node->GetComponent<MeshRenderer>() || node->GetComponent<Character>() ||
+                   node->GetComponent<ModelAnimator>() || node->GetComponent<FullBodyIK>();
+    r.kindName = HierKindName(node);
+    static GameObject* s_kindFor = nullptr;
+    static int s_kindOthers = -1;
+    if (recount || s_kindFor != node) {   // a walk over the scene: once per opening, not every frame
+        int others = 0;
+        const std::string kind = r.kindName;
+        for (const auto& up : ed.scene().Objects()) if (up.get() != node && kind == HierKindName(up.get())) ++others;
+        s_kindFor = node; s_kindOthers = others;
+    }
+    r.sameKindOthers = s_kindOthers;
+    return r;
+}
+
+static oked::hiermenu::EmptyState HierEmptyState(EditorState& ed) {
+    oked::hiermenu::EmptyState e;
+    e.objectCount = (int)ed.scene().Objects().size();
+    e.selectedCount = (int)ed.MultiSelection().size();
+    if (e.selectedCount == 0 && ed.selected()) e.selectedCount = 1;
+    e.clipboardHasObject = !g_clipboard.empty();
+    e.sortAZ = g_hierSort;
+    return e;
+}
+
+// What a row menu asks the panel to do after the tree is drawn (the rows below are still being walked).
+struct HierRowResult { bool cut = false, deleteChildren = false, revealSelection = false; };
+
+// Parent To >: every object that is not inside this one (so no cycle), world pose kept.
+static void HierParentToSlot(EditorState& ed, GameObject* node) {
+    bool any = false;
+    for (const auto& up : ed.scene().Objects()) {
+        GameObject* cand = up.get();
+        if (!cand || cand == node) continue;
+        bool isDescendant = false;          // can't parent to own subtree
+        for (Transform* t = cand->transform; t; t = t->Parent())
+            if (t == node->transform) { isDescendant = true; break; }
+        if (isDescendant) continue;
+        if (node->transform->Parent() == cand->transform) continue; // already
+        any = true;
+        if (ImGui::MenuItem(cand->name.c_str())) {
+            ed.PushUndo();
+            node->transform->SetParent(cand->transform, true);  // keep world pose
+            ed.dirty = true;
+        }
+    }
+    if (!any) ImGui::TextDisabled("(no eligible objects)");
+}
+
+// Rig & IK >: IK targets for a character or a model animator, and the humanoid tools for a model.
+static void HierModelToolsSlot(EditorState& ed, GameObject* node) {
+    if (node->GetComponent<Character>() || node->GetComponent<ModelAnimator>() || node->GetComponent<FullBodyIK>()) {
+        if (ImGui::BeginMenu("Add IK Target")) {
+            auto addLimb = [&](int limb, const char* label) {
+                if (ImGui::MenuItem(label)) {
+                    ed.PushUndo();
+                    if (GameObject* g = IKTarget::Spawn(ed.scene(), node, limb)) {
+                        ed.Select(g); ed.dirty = true;
+                        ConsoleLog(std::string("IK Target: ") + label + " on '" + node->name + "'");
+                    }
+                }
+            };
+            addLimb(IKTarget::LeftHand, "Left Hand");
+            addLimb(IKTarget::RightHand, "Right Hand");
+            addLimb(IKTarget::LeftFoot, "Left Foot");
+            addLimb(IKTarget::RightFoot, "Right Foot");
+            addLimb(IKTarget::Head, "Head");
+            ImGui::EndMenu();
+        }
+    }
+    if (!node->GetComponent<Character>()) {
+        // A skinned humanoid keeps its own mesh + weights: the built-in
+        // animations play straight on its skeleton (retargeted by bone name).
+        const int hb = okay::CountHumanoidBones(ed.scene(), node);
+        if (hb >= 8 && ImGui::MenuItem("Use Built-in Animations")) {
+            ed.PushUndo();
+            std::string log;
+            int found = okay::EnableBuiltinAnimations(ed.scene(), node, &log);
+            ConsoleLog(log + (found >= 8 ? " - press Play, or pick a clip on its Character" : ""), found >= 8 ? 0 : 1);
+            ed.Select(node); ed.dirty = true;
+        }
+        if (hb >= 8 && ImGui::IsItemHovered()) ImGui::SetTooltip("Play the engine's built-in idle / walk / run / jump / gesture animations\non this model's OWN skeleton and skin. Best for rigged models with\nno clips of their own.", hb);
+        if (ImGui::MenuItem("Map Humanoid Bones...")) OpenBoneMap(node, nullptr);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the body bones by hand when the names don't say\nwhich is which (\"Bone.001\"), then use the built-in animations.");
+        if (ImGui::MenuItem("Rig Model (Humanoid)")) RigModelHumanoid(ed, node);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
+    }
+}
+
+// An item of a row's right-click menu was clicked: do it. The menu has already selected the row (unless it was part of a multi-selection).
+static void HierRowAction(EditorState& ed, GameObject* node, const std::string& id, HierRowResult& out) {
+    if (id == "h.copy") g_clipboard = SceneSerializer::SerializeObject(*node);
+    else if (id == "h.cut") { g_clipboard = SceneSerializer::SerializeObject(*node); out.cut = true; }   // deleted after the tree is drawn
+    else if (id == "h.paste" || id == "h.pastechild") {
+        ed.PushUndo();
+        if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
+            if (id == "h.pastechild") p->transform->SetParent(node->transform, false);
+            else if (node->transform->Parent()) p->transform->SetParent(node->transform->Parent(), false);
+            ed.Select(p); ed.dirty = true;
+        }
+    }
+    else if (id == "h.rename") {
+        g_hierRename = node; g_hierRenameOpen = true;
+        std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
+        g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
+    }
+    else if (id == "h.duplicate") { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
+    else if (id == "h.delete") { ed.DeleteSelected(); ConsoleLog("Deleted"); }
+    else if (id == "h.deletechildren") out.deleteChildren = true;   // empties a container, keeps the object
+    else if (id == "h.emptychild") {
+        GameObject* child = ed.CreateEmpty("Child");   // takes its own undo step
+        child->transform->SetParent(node->transform, false);
+        ed.Select(child); ed.dirty = true;
+    }
+    else if (id == "h.createparent") {   // one object: wrap it, keeping its on-screen transform; several: group them
+        if (HierTargets(ed, node).size() > 1) { ed.GroupSelected(); ConsoleLog("Grouped selection"); }
+        else CreateEmptyParentOf(ed, node);
+    }
+    else if (id == "h.unparent") {
+        ed.PushUndo();
+        node->transform->SetParent(nullptr, true);   // keep world pose
+        ed.dirty = true;
+    }
+    else if (id == "h.moveup")     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
+    else if (id == "h.movedown")   { ed.PushUndo(); ed.scene().MoveSibling(node, +1); ed.dirty = true; }
+    else if (id == "h.movetop")    { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, true);  ed.dirty = true; }
+    else if (id == "h.movebottom") { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, false); ed.dirty = true; }
+    else if (id.rfind("h.sel.", 0) == 0) {
+        std::vector<GameObject*> pick;
+        Transform* par = node->transform->Parent();
+        if (id == "h.sel.children") { for (Transform* c : node->transform->Children()) pick.push_back(c->gameObject); }
+        else if (id == "h.sel.below") {
+            for (const auto& up : ed.scene().Objects())
+                if (up.get() != node && up->IsSelfOrDescendantOf(node)) pick.push_back(up.get());
+        }
+        else if (id == "h.sel.parent") { if (par) pick.push_back(par->gameObject); }
+        else if (id == "h.sel.siblings") {
+            for (const auto& up : ed.scene().Objects()) if (up->transform->Parent() == par) pick.push_back(up.get());
+        }
+        else if (id == "h.sel.samename") {
+            for (const auto& up : ed.scene().Objects()) if (up->name == node->name) pick.push_back(up.get());
+        }
+        else if (id == "h.sel.sametype") {
+            const std::string kind = HierKindName(node);
+            for (const auto& up : ed.scene().Objects()) if (kind == HierKindName(up.get())) pick.push_back(up.get());
+        }
+        if (!pick.empty()) { HierSelectMany(ed, pick); out.revealSelection = true; }   // open their parents so they show
+    }
+    else if (id == "h.expandbelow")   { g_hierExpandRoot = node; g_hierExpandRootVal = 1; }
+    else if (id == "h.collapsebelow") { g_hierExpandRoot = node; g_hierExpandRootVal = 0; }
+    else if (id == "h.active") {
+        ed.PushUndo();
+        const bool on = !node->active;
+        for (GameObject* g : HierTargets(ed, node)) SetActiveRecursive(g, on);   // the whole subtree (and the whole selection) goes with it
+        ed.dirty = true;
+    }
+    else if (id == "h.lock") {
+        ed.PushUndo();
+        const bool on = !node->editorLocked;
+        for (GameObject* g : HierTargets(ed, node)) SetLockedRecursive(g, on);
+        ed.dirty = true;
+    }
+    else if (id == "h.focus") FocusSelected(ed);
+    else if (id == "h.isolate") g_isolate = (g_isolate == node) ? nullptr : node;
+    else if (id.rfind("h.tf.", 0) == 0) {
+        auto each = [&](auto fn) { ed.PushUndo(); for (GameObject* g : HierTargets(ed, node)) fn(g->transform); ed.dirty = true; };
+        if (id == "h.tf.resetpos") each([](Transform* t) { t->localPosition = Vec3::Zero; });
+        else if (id == "h.tf.resetrot") each([](Transform* t) { t->localRotation = Quat::Identity; });
+        else if (id == "h.tf.resetscale") each([](Transform* t) { t->localScale = Vec3::One; });
+        else if (id == "h.tf.resetall") each([](Transform* t) { t->localPosition = Vec3::Zero; t->localRotation = Quat::Identity; t->localScale = Vec3::One; });
+        else if (id == "h.tf.movetoview") each([&](Transform* t) { t->SetPosition(ed.camTarget); });
+    }
+    else if (id == "h.addcomponent") {   // the Inspector's own browser: select this object, show the Inspector, open the browser there
+        ed.Select(node);
+        g_showInspector = true;
+        ImGui::SetWindowFocus("Inspector");
+        g_openAddComponentFromHierarchy = true;
+    }
+    else if (id == "h.copyname") ImGui::SetClipboardText(node->name.c_str());
+    else if (id == "h.copypath") ImGui::SetClipboardText(HierPath(node).c_str());
+    else if (id == "h.saveprefab") {
+        g_prefabSaveTarget = node;
+        std::strncpy(g_prefabNameBuf, node->name.c_str(), sizeof(g_prefabNameBuf) - 1);
+        g_prefabNameBuf[sizeof(g_prefabNameBuf) - 1] = '\0';
+    }
+    else if (id.rfind("h.prefab.", 0) == 0) {
+        GameObject* proot = PrefabTools::NearestPrefabRoot(*node);
+        if (!proot || proot->prefabSource.empty()) return;
+        if (id == "h.prefab.open") OpenPrefabModeOf(ed, proot);
+        else if (id == "h.prefab.selectasset") { g_pingAsset = proot->prefabSource; g_showProject = true; ImGui::SetWindowFocus("Project"); }
+        else if (id == "h.prefab.revertall") oked::QueuePrefabAction(oked::PrefabAction::RevertAll, proot);
+        else if (id == "h.prefab.applyall") oked::QueuePrefabAction(oked::PrefabAction::ApplyAll, proot);
+        else if (id == "h.prefab.variant") { ed.Select(proot); g_showInspector = true; oked::OpenCreateVariantDialog(); }
+        else if (id == "h.prefab.updateall") oked::QueuePrefabAction(oked::PrefabAction::UpdateAll, proot);
+        else if (id == "h.prefab.unpack") oked::QueuePrefabAction(oked::PrefabAction::Unpack, proot);
+        else if (id == "h.prefab.unpackall") oked::QueuePrefabAction(oked::PrefabAction::UnpackCompletely, proot);
+    }
+}
+
+// An item of the empty-space menu or of the [+] popup was clicked: do it.
+static void HierEmptyAction(EditorState& ed, const std::string& id) {
+    if (id == "h.createempty") { ed.Select(ed.CreateEmpty()); ConsoleLog("Created empty GameObject"); ed.Achievement("FIRST_OBJECT"); }
+    else if (id == "h.emptychild" && ed.selected()) {
+        GameObject* parent = ed.selected();
+        GameObject* child = ed.CreateEmpty("Child");
+        child->transform->SetParent(parent->transform, false);
+        ed.Select(child); ed.dirty = true;
+        ConsoleLog("Created an empty child of " + parent->name); ed.Achievement("FIRST_OBJECT");
+    }
+    else if (id == "h.groupselected") { if (ed.GroupSelected()) ConsoleLog("Grouped selection under an empty parent"); }
+    else if (id == "h.paste" && !g_clipboard.empty()) {
+        ed.PushUndo();
+        if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) { ed.Select(p); ed.dirty = true; }
+    }
+    else if (id == "h.selectall") {
+        std::vector<GameObject*> all;
+        for (const auto& up : ed.scene().Objects()) all.push_back(up.get());
+        HierSelectMany(ed, all);
+    }
+    else if (id == "h.deselect") ed.Select(nullptr);
+    else if (id == "h.expandall") g_hierExpand = 1;
+    else if (id == "h.collapseall") g_hierExpand = 2;
+}
+
+// The host of the empty-space menu and of the [+] popup.
+static oked::menubar::Host HierEmptyHost(EditorState& ed) {
+    oked::menubar::Host h;
+    h.flag = [](const oked::menubar::Entry& e) { return e.id == "h.sortaz" ? &g_hierSort : nullptr; };
+    h.run = [&ed](const oked::menubar::Entry& e) { HierEmptyAction(ed, e.id); };
+    h.slot = [&ed](const oked::menubar::Entry& e) { if (e.id.rfind("create.", 0) == 0) DrawCreateSlot(ed, e.id, nullptr); };
+    return h;
+}
+
 void DrawHierarchy(EditorState& ed) {
     // Skip the per-frame root-list build + sort + per-row component scans when the
     // Hierarchy panel is collapsed or a hidden background tab.
@@ -19643,32 +19959,7 @@ void DrawHierarchy(EditorState& ed) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Objects in the scene");
     }
     if (ImGui::BeginPopup("HierCreate")) {
-        if (ImGui::MenuItem("Empty"))  ed.Select(ed.CreateEmpty());
-        if (ImGui::MenuItem("Sprite")) ed.Select(ed.CreateSprite());
-        if (ImGui::MenuItem("Camera")) ed.Select(ed.CreateCamera());
-        if (ImGui::MenuItem("Cube"))   ed.Select(ed.CreateCube());
-        if (ImGui::MenuItem("Group Selected", "Ctrl+Shift+G", false, ed.selected() != nullptr)) {
-            if (ed.GroupSelected()) ConsoleLog("Grouped selection under an empty parent");
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("UI Button")) { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Button"); g->AddComponent<UIButton>(); if (root) g->transform->SetParent(root->transform, false); MakeButtonTextChild(ed, g); ed.Select(g); }
-        if (ImGui::MenuItem("UI Text"))   { GameObject* root = EnsureUIRoot(ed); GameObject* g = ed.CreateEmpty("Text"); auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; if (root) g->transform->SetParent(root->transform, false); ed.Select(g); }
-        // 3D UI: each widget is its own standalone object in the world (WorldSpaceUI),
-        // anchors intact, no Canvas. Placed at the editor camera's focus point.
-        if (ImGui::BeginMenu("3D UI (in-world)")) {
-            auto make3d = [&](const char* name, auto addWidget) {
-                GameObject* g = ed.CreateEmpty(name);
-                addWidget(g);
-                g->AddComponent<WorldSpaceUI>();
-                if (g->transform) g->transform->localPosition = ed.camTarget;
-                ed.Select(g); ed.dirty = true;
-            };
-            if (ImGui::MenuItem("Button")) make3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
-            if (ImGui::MenuItem("Text"))   make3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
-            if (ImGui::MenuItem("Panel"))  make3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
-            if (ImGui::MenuItem("Image"))  make3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
-            ImGui::EndMenu();
-        }
+        oked::menubar::DrawEntries(oked::hiermenu::CreatePopup(HierEmptyState(ed)), HierEmptyHost(ed));
         ImGui::EndPopup();
     }
     ImGui::Separator();
@@ -20028,230 +20319,19 @@ void DrawHierarchy(EditorState& ed) {
             // Right-click context menu per item.
             if (ImGui::BeginPopupContextItem()) {
                 if (!ed.IsSelected(node)) ed.Select(node);   // keep a multi-selection intact
-                if (ImGui::MenuItem("Rename", "F2")) {
-                    g_hierRename = node; g_hierRenameOpen = true;
-                    std::strncpy(g_hierRenameBuf, node->name.c_str(), sizeof(g_hierRenameBuf) - 1);
-                    g_hierRenameBuf[sizeof(g_hierRenameBuf) - 1] = '\0';
-                }
-                if (ImGui::MenuItem(node->active ? "Deactivate" : "Activate")) {
-                    bool on = !node->active;
-                    // Take the whole subtree (and the whole selection) with it.
-                    for (GameObject* g : HierTargets(ed, node)) SetActiveRecursive(g, on);
-                    ed.dirty = true;
-                }
-                if (ImGui::MenuItem(node->editorLocked ? "Unlock in Scene View" : "Lock in Scene View")) {
-                    ed.PushUndo();
-                    bool on = !node->editorLocked;
-                    for (GameObject* g : HierTargets(ed, node)) SetLockedRecursive(g, on);
-                    ed.dirty = true;
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Cut", "Ctrl+X")) {
-                    g_clipboard = SceneSerializer::SerializeObject(*node);
-                    cutPending = true;   // deleted after the tree is drawn
-                }
-                if (ImGui::MenuItem("Copy", "Ctrl+C"))
-                    g_clipboard = SceneSerializer::SerializeObject(*node);
-                if (ImGui::MenuItem("Paste As Sibling", "Ctrl+V", false, !g_clipboard.empty())) {
-                    ed.PushUndo();
-                    if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
-                        if (node->transform->Parent()) p->transform->SetParent(node->transform->Parent(), false);
-                        ed.Select(p); ed.dirty = true;
-                    }
-                }
-                if (ImGui::MenuItem("Paste As Child", nullptr, false, !g_clipboard.empty())) {
-                    ed.PushUndo();
-                    if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
-                        p->transform->SetParent(node->transform, false);
-                        ed.Select(p); ed.dirty = true;
-                    }
-                }
-                if (ImGui::MenuItem("Duplicate", "Ctrl+D")) { ed.DuplicateSelected(); ConsoleLog("Duplicated"); }
-                if (ImGui::MenuItem("Group Selected", "Ctrl+Shift+G")) { ed.GroupSelected(); ConsoleLog("Grouped selection"); }
-                if (ImGui::MenuItem("Focus", "F")) FocusSelected(ed);
-                if (ImGui::MenuItem(g_isolate == node ? "Exit Isolation" : "Isolate", "Shift+I"))
-                    g_isolate = (g_isolate == node) ? nullptr : node;
-                if (ImGui::MenuItem("Delete", "Del"))    { ed.DeleteSelected(); ConsoleLog("Deleted"); }
-                if (ImGui::MenuItem("Delete Children", nullptr, false, childCount > 0))   // empties a container, keeps the object
-                    deleteKidsPending = true;
-                if (node->GetComponent<Character>() || node->GetComponent<ModelAnimator>() || node->GetComponent<FullBodyIK>()) {
-                    if (ImGui::BeginMenu("Add IK Target")) {
-                        auto addLimb = [&](int limb, const char* label) {
-                            if (ImGui::MenuItem(label)) {
-                                ed.PushUndo();
-                                if (GameObject* g = IKTarget::Spawn(ed.scene(), node, limb)) {
-                                    ed.Select(g); ed.dirty = true;
-                                    ConsoleLog(std::string("IK Target: ") + label + " on '" + node->name + "'");
-                                }
-                            }
-                        };
-                        addLimb(IKTarget::LeftHand, "Left Hand");
-                        addLimb(IKTarget::RightHand, "Right Hand");
-                        addLimb(IKTarget::LeftFoot, "Left Foot");
-                        addLimb(IKTarget::RightFoot, "Right Foot");
-                        addLimb(IKTarget::Head, "Head");
-                        ImGui::EndMenu();
-                    }
-                }
-                if (!node->GetComponent<Character>()) {
-                    ImGui::Separator();
-                    // A skinned humanoid keeps its own mesh + weights: the built-in
-                    // animations play straight on its skeleton (retargeted by bone name).
-                    const int hb = okay::CountHumanoidBones(ed.scene(), node);
-                    if (hb >= 8 && ImGui::MenuItem("Use Built-in Animations")) {
-                        ed.PushUndo();
-                        std::string log;
-                        int found = okay::EnableBuiltinAnimations(ed.scene(), node, &log);
-                        ConsoleLog(log + (found >= 8 ? " - press Play, or pick a clip on its Character" : ""), found >= 8 ? 0 : 1);
-                        ed.Select(node); ed.dirty = true;
-                    }
-                    if (hb >= 8 && ImGui::IsItemHovered()) ImGui::SetTooltip("Play the engine's built-in idle / walk / run / jump / gesture animations\non this model's OWN skeleton and skin. Best for rigged models with\nno clips of their own.", hb);
-                    if (ImGui::MenuItem("Map Humanoid Bones...")) OpenBoneMap(node, nullptr);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pick the body bones by hand when the names don't say\nwhich is which (\"Bone.001\"), then use the built-in animations.");
-                    if (ImGui::MenuItem("Rig Model (Humanoid)")) RigModelHumanoid(ed, node);
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bind this model's mesh to the humanoid skeleton (auto weights):\nevery built-in animation, authored clip, movement state, controller\nand the Animation window then work on it. The model should stand\nupright facing +Z, in a T/A/rest pose.");
-                }
-                ImGui::Separator();
-                if (ImGui::BeginMenu("Order")) {
-                    if (ImGui::MenuItem("Move Up", "Ctrl+Up"))     { ed.PushUndo(); ed.scene().MoveSibling(node, -1); ed.dirty = true; }
-                    if (ImGui::MenuItem("Move Down", "Ctrl+Down")) { ed.PushUndo(); ed.scene().MoveSibling(node, +1); ed.dirty = true; }
-                    if (ImGui::MenuItem("Move to Top"))    { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, true);  ed.dirty = true; }
-                    if (ImGui::MenuItem("Move to Bottom")) { ed.PushUndo(); ed.scene().MoveSiblingToEdge(node, false); ed.dirty = true; }
-                    ImGui::EndMenu();
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Create Empty Child")) {
-                    GameObject* child = ed.scene().CreateGameObject("Child");
-                    child->transform->SetParent(node->transform, false);
-                    ed.Select(child); ed.dirty = true;
-                }
-                if (ImGui::BeginMenu("Create Child")) {
-                    auto childOf = [&](GameObject* g) { if (g) { g->transform->SetParent(node->transform, false); ed.Select(g); ed.dirty = true; } };
-                    if (ImGui::MenuItem("Cube"))   childOf(ed.CreateCube("Cube"));
-                    if (ImGui::MenuItem("Sphere")) childOf(ed.CreateMesh("Sphere"));
-                    if (ImGui::MenuItem("Cylinder")) childOf(ed.CreateMesh("Cylinder"));
-                    if (ImGui::MenuItem("Plane"))  childOf(ed.CreateMesh("Plane"));
-                    if (ImGui::MenuItem("Sprite")) childOf(ed.CreateSprite("Sprite"));
-                    if (ImGui::MenuItem("Camera")) childOf(ed.CreateCamera("Camera"));
-                    if (ImGui::MenuItem("Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); childOf(g); }
-                    ImGui::EndMenu();
-                }
-                // Wrap this object in a new empty parent ("Create Parent"),
-                // keeping its on-screen transform unchanged.
-                if (ImGui::MenuItem("Create Parent")) {
-                    ed.PushUndo();
-                    GameObject* parent = ed.scene().CreateGameObject(node->name + " Group");
-                    parent->transform->SetPosition(node->transform->Position());
-                    if (Transform* op = node->transform->Parent())
-                        parent->transform->SetParent(op, true);
-                    node->transform->SetParent(parent->transform, true);  // keep world pose
-                    ed.Select(parent); ed.dirty = true;
-                }
-                // Explicit re-parenting: make this object a child of any other object
-                // ("drag onto parent", but from a menu). Descendants of this
-                // object are skipped so you can't create a cycle. World pose is kept.
-                if (ImGui::BeginMenu("Parent To")) {
-                    bool any = false;
-                    for (const auto& up : ed.scene().Objects()) {
-                        GameObject* cand = up.get();
-                        if (!cand || cand == node) continue;
-                        bool isDescendant = false;          // can't parent to own subtree
-                        for (Transform* t = cand->transform; t; t = t->Parent())
-                            if (t == node->transform) { isDescendant = true; break; }
-                        if (isDescendant) continue;
-                        if (node->transform->Parent() == cand->transform) continue; // already
-                        any = true;
-                        if (ImGui::MenuItem(cand->name.c_str())) {
-                            ed.PushUndo();
-                            node->transform->SetParent(cand->transform, true);  // keep world pose
-                            ed.dirty = true;
-                        }
-                    }
-                    if (!any) ImGui::TextDisabled("(no eligible objects)");
-                    ImGui::EndMenu();
-                }
-                if (ImGui::MenuItem("Unparent (to top level)", nullptr, false,
-                                    node->transform->Parent() != nullptr)) {
-                    ed.PushUndo();
-                    node->transform->SetParent(nullptr, true);   // keep world pose
-                    ed.dirty = true;
-                }
-                ImGui::Separator();
-                if (ImGui::BeginMenu("Select")) {
-                    std::vector<GameObject*> pick;
-                    if (ImGui::MenuItem("Children", nullptr, false, childCount > 0)) {
-                        for (Transform* c : node->transform->Children()) pick.push_back(c->gameObject);
-                    }
-                    if (ImGui::MenuItem("Everything Below", nullptr, false, childCount > 0)) {
-                        for (const auto& up : ed.scene().Objects())
-                            if (up.get() != node && up->IsSelfOrDescendantOf(node)) pick.push_back(up.get());
-                    }
-                    if (ImGui::MenuItem("Parent", nullptr, false, node->transform->Parent() != nullptr))
-                        pick.push_back(node->transform->Parent()->gameObject);
-                    if (ImGui::MenuItem("Siblings")) {
-                        Transform* par = node->transform->Parent();
-                        for (const auto& up : ed.scene().Objects())
-                            if (up->transform->Parent() == par) pick.push_back(up.get());
-                    }
-                    if (ImGui::MenuItem("Same Name")) {
-                        for (const auto& up : ed.scene().Objects())
-                            if (up->name == node->name) pick.push_back(up.get());
-                    }
-                    if (!pick.empty()) {
-                        HierSelectMany(ed, pick);
-                        s_revealFor = nullptr;   // open their parents so they show
-                    }
-                    ImGui::EndMenu();
-                }
-                if (childCount > 0) {
-                    if (ImGui::MenuItem("Expand All Below"))   { g_hierExpandRoot = node; g_hierExpandRootVal = 1; }
-                    if (ImGui::MenuItem("Collapse All Below")) { g_hierExpandRoot = node; g_hierExpandRootVal = 0; }
-                }
-                if (ImGui::BeginMenu("Transform")) {
-                    auto each = [&](auto fn) { ed.PushUndo(); for (GameObject* g : HierTargets(ed, node)) fn(g->transform); ed.dirty = true; };
-                    if (ImGui::MenuItem("Reset Position")) each([](Transform* t) { t->localPosition = Vec3::Zero; });
-                    if (ImGui::MenuItem("Reset Rotation")) each([](Transform* t) { t->localRotation = Quat::Identity; });
-                    if (ImGui::MenuItem("Reset Scale"))    each([](Transform* t) { t->localScale = Vec3::One; });
-                    if (ImGui::MenuItem("Reset All"))      each([](Transform* t) { t->localPosition = Vec3::Zero; t->localRotation = Quat::Identity; t->localScale = Vec3::One; });
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Move to View Centre")) each([&](Transform* t) { t->SetPosition(ed.camTarget); });
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Put it where the Scene view camera is looking.");
-                    ImGui::EndMenu();
-                }
-                if (ImGui::BeginMenu("Copy Text")) {
-                    if (ImGui::MenuItem("Name")) ImGui::SetClipboardText(node->name.c_str());
-                    if (ImGui::MenuItem("Path")) ImGui::SetClipboardText(HierPath(node).c_str());
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", HierPath(node).c_str());
-                    ImGui::EndMenu();
-                }
-                ImGui::Separator();
-                if (GameObject* proot = PrefabTools::NearestPrefabRoot(*node); proot && !proot->prefabSource.empty()) {
-                    if (ImGui::BeginMenu("Prefab")) {
-                        const std::string pn = std::filesystem::path(proot->prefabSource).filename().string();
-                        ImGui::TextDisabled("%s", pn.c_str());
-                        const bool changed = oked::PrefabOverrideCount(*proot) > 0;
-                        if (ImGui::MenuItem("Open")) {
-                            OpenPrefabModeOf(ed, proot);
-                        }
-                        if (ImGui::MenuItem("Select Asset")) { g_pingAsset = proot->prefabSource; g_showProject = true; ImGui::SetWindowFocus("Project"); }
-                        ImGui::Separator();
-                        if (ImGui::MenuItem("Revert All", nullptr, false, changed)) oked::QueuePrefabAction(oked::PrefabAction::RevertAll, proot);
-                        if (ImGui::MenuItem("Apply All", nullptr, false, changed)) oked::QueuePrefabAction(oked::PrefabAction::ApplyAll, proot);
-                        if (ImGui::MenuItem("Create Variant...")) { ed.Select(proot); g_showInspector = true; oked::OpenCreateVariantDialog(); }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Opens the name box in the Inspector.");
-                        if (ImGui::MenuItem("Update All Instances")) oked::QueuePrefabAction(oked::PrefabAction::UpdateAll, proot);
-                        ImGui::Separator();
-                        if (ImGui::MenuItem("Unpack")) oked::QueuePrefabAction(oked::PrefabAction::Unpack, proot);
-                        if (ImGui::MenuItem("Unpack Completely", nullptr, false, !PrefabTools::NestedInstances(*proot, false).empty()))
-                            oked::QueuePrefabAction(oked::PrefabAction::UnpackCompletely, proot);
-                        ImGui::EndMenu();
-                    }
-                }
-                if (ImGui::MenuItem("Save As Prefab...")) {
-                    g_prefabSaveTarget = node;
-                    std::strncpy(g_prefabNameBuf, node->name.c_str(), sizeof(g_prefabNameBuf) - 1);
-                    g_prefabNameBuf[sizeof(g_prefabNameBuf) - 1] = '\0';
-                }
+                const oked::hiermenu::RowState rowState = HierRowState(ed, node, ImGui::IsWindowAppearing());
+                HierRowResult rowResult;
+                oked::menubar::Host rowHost;
+                rowHost.run = [&](const oked::menubar::Entry& e) { HierRowAction(ed, node, e.id, rowResult); };
+                rowHost.slot = [&](const oked::menubar::Entry& e) {
+                    if (e.id == "h.parentto") HierParentToSlot(ed, node);
+                    else if (e.id == "h.modeltools") HierModelToolsSlot(ed, node);
+                    else if (e.id.rfind("create.", 0) == 0) DrawCreateSlot(ed, e.id, node);   // Create Child >
+                };
+                oked::menubar::DrawEntries(oked::hiermenu::RowMenu(rowState), rowHost);
+                if (rowResult.cut) cutPending = true;                       // deleted after the tree is drawn
+                if (rowResult.deleteChildren) deleteKidsPending = true;
+                if (rowResult.revealSelection) s_revealFor = nullptr;       // open their parents so they show
                 ImGui::EndPopup();
             }
             if (open) {
@@ -20355,97 +20435,7 @@ void DrawHierarchy(EditorState& ed) {
     // Right-click empty space to create objects.
     if (ImGui::BeginPopupContextWindow("HierarchyCtx",
             ImGuiPopupFlags_NoOpenOverItems | ImGuiPopupFlags_MouseButtonRight)) {
-        if (ImGui::MenuItem("Create Empty"))  ed.CreateEmpty();
-        if (ImGui::MenuItem("Create Sprite")) ed.CreateSprite();
-        if (ImGui::MenuItem("Create Cube"))   ed.CreateCube();
-        if (ImGui::MenuItem("Create Camera")) ed.CreateCamera();
-        if (ImGui::MenuItem("Create Light"))  { GameObject* g = ed.CreateEmpty("Light"); g->AddComponent<Light>(); ed.Select(g); }
-        ImGui::Separator();
-        if (ImGui::BeginMenu("3D Object")) {
-            if (ImGui::MenuItem("Cube"))     ed.CreateCube();
-            if (ImGui::MenuItem("Sphere"))   ed.CreateMesh("Sphere");
-            if (ImGui::MenuItem("Cylinder")) ed.CreateMesh("Cylinder");
-            if (ImGui::MenuItem("Plane"))    ed.CreateMesh("Plane");
-            if (ImGui::MenuItem("Pyramid"))  ed.CreatePyramid();
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("UI")) {
-            // Create a UI widget under the canvas/UI root and centre it (so it's
-            // visible), mirroring the top GameObject > UI menu
-            // right-click-to-create in the Hierarchy.
-            auto mkUI = [&](const char* name, auto build) {
-                GameObject* root = EnsureUIRoot(ed);
-                GameObject* g = ed.CreateEmpty(name);
-                build(g);
-                if (root) g->transform->SetParent(root->transform, false);
-                UIRect r = GetUIRect(g);
-                if (r.valid && r.anchorPtr && r.position) { *r.anchorPtr = UIAnchor::Center; *r.position = {0, 0}; }
-                ed.Select(g); ed.dirty = true;
-            };
-            if (ImGui::MenuItem("Panel"))        mkUI("Panel",   [](GameObject* g){ g->AddComponent<UIPanel>(); });
-            if (ImGui::MenuItem("Button"))       { mkUI("Button", [](GameObject* g){ g->AddComponent<UIButton>(); }); MakeButtonTextChild(ed, ed.selected()); }
-            if (ImGui::MenuItem("Image"))        mkUI("Image",   [](GameObject* g){ g->AddComponent<UIImage>(); });
-            if (ImGui::MenuItem("Raw Image"))    mkUI("RawImage", [](GameObject* g){ g->AddComponent<UIRawImage>(); });
-            if (ImGui::MenuItem("Text"))         mkUI("Text",    [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
-            if (ImGui::MenuItem("Slider"))       mkUI("Slider",  [](GameObject* g){ g->AddComponent<UISlider>(); });
-            if (ImGui::MenuItem("Virtual Joystick")) mkUI("Virtual Joystick", [](GameObject* g){ g->AddComponent<VirtualJoystick>(); });
-            if (ImGui::MenuItem("D-Pad"))        mkUI("D-Pad", [](GameObject* g){ g->AddComponent<TouchDPad>(); });
-            if (ImGui::MenuItem("Touch Button")) mkUI("Touch Button", [](GameObject* g){ g->AddComponent<TouchButton>(); });
-            if (ImGui::MenuItem("Toggle"))       mkUI("Toggle",  [](GameObject* g){ g->AddComponent<UIToggle>(); });
-            if (ImGui::MenuItem("Stepper"))      mkUI("Stepper", [](GameObject* g){ g->AddComponent<UIStepper>(); });
-            if (ImGui::MenuItem("Rating"))       mkUI("Rating",  [](GameObject* g){ g->AddComponent<UIRating>(); });
-            if (ImGui::MenuItem("Progress Bar")) mkUI("ProgressBar", [](GameObject* g){ g->AddComponent<UIProgressBar>(); });
-            if (ImGui::MenuItem("Radial Progress")) mkUI("Radial", [](GameObject* g){ g->AddComponent<UIRadialProgress>(); });
-            if (ImGui::MenuItem("Minimap"))      mkUI("Minimap", [](GameObject* g){ g->AddComponent<Minimap>(); });
-            if (ImGui::MenuItem("Crosshair"))    mkUI("Crosshair", [](GameObject* g){ g->AddComponent<Crosshair>(); });
-            if (ImGui::MenuItem("Color Picker")) mkUI("ColorPicker", [](GameObject* g){ g->AddComponent<UIColorPicker>()->Rebuild(); }); // grok/ui-color
-            if (ImGui::MenuItem("Slot Grid"))    mkUI("SlotGrid", [](GameObject* g){ g->AddComponent<UISlotGrid>()->Rebuild(); }); // grok/ui-hud
-            if (ImGui::MenuItem("Input Field"))  mkUI("InputField", [](GameObject* g){ g->AddComponent<UIInputField>(); });
-            if (ImGui::MenuItem("Dropdown"))     mkUI("Dropdown", [](GameObject* g){ g->AddComponent<UIDropdown>(); });
-            if (ImGui::MenuItem("Tabs"))         mkUI("Tabs",    [](GameObject* g){ g->AddComponent<UITabs>(); });
-            if (ImGui::MenuItem("Scroll View"))  mkUI("ScrollView", [](GameObject* g){ g->AddComponent<UIScrollView>(); });
-            ImGui::Separator();
-            if (ImGui::MenuItem("Search Bar"))    mkUI("Search Bar", oked::BuildUISearchBar);
-            if (ImGui::MenuItem("Date and Time")) mkUI("Date and Time", oked::BuildUIDateTimePicker);
-            if (ImGui::MenuItem("File Picker"))   mkUI("File Picker", oked::BuildUIFilePicker);
-            if (ImGui::MenuItem("Accordion"))     mkUI("Accordion", oked::BuildUIAccordion);
-            if (ImGui::MenuItem("Breadcrumbs"))   mkUI("Breadcrumbs", oked::BuildUIBreadcrumbs);
-            if (ImGui::MenuItem("Pagination"))    mkUI("Pagination", oked::BuildUIPagination);
-            if (ImGui::MenuItem("Skeleton"))      mkUI("Skeleton", oked::BuildUISkeleton);
-            if (ImGui::MenuItem("Bottom Sheet"))  mkUI("Bottom Sheet", oked::BuildUIBottomSheet);
-            ImGui::Separator();
-            // 3D UI: standalone in-world objects (WorldSpaceUI), separate from 2D UI.
-            if (ImGui::BeginMenu("3D UI (in-world)")) {
-                auto mk3d = [&](const char* nm, auto build) {
-                    GameObject* g = ed.CreateEmpty(nm);
-                    build(g);
-                    g->AddComponent<WorldSpaceUI>();
-                    if (g->transform) g->transform->localPosition = ed.camTarget;
-                    ed.Select(g); ed.dirty = true;
-                };
-                if (ImGui::MenuItem("Button")) mk3d("Button3D", [](GameObject* g){ auto* b = g->AddComponent<UIButton>(); b->anchor = UIAnchor::Center; b->position = {0,0}; b->size = {220, 80}; b->label = "Button"; b->fontScale = 3.0f; });
-                if (ImGui::MenuItem("Text"))   mk3d("Text3D",   [](GameObject* g){ auto* t = g->AddComponent<TextRenderer>(); t->screenSpace = true; t->pixelSize = 3.0f; t->align = 1; t->anchor = UIAnchor::Center; });
-                if (ImGui::MenuItem("Panel"))  mk3d("Panel3D",  [](GameObject* g){ auto* p = g->AddComponent<UIPanel>(); p->anchor = UIAnchor::Center; p->position = {0,0}; });
-                if (ImGui::MenuItem("Image"))  mk3d("Image3D",  [](GameObject* g){ auto* im = g->AddComponent<UIImage>(); im->anchor = UIAnchor::Center; im->position = {0,0}; });
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::MenuItem("Paste", "Ctrl+V", false, !g_clipboard.empty())) {
-            ed.PushUndo();
-            if (GameObject* p = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) { ed.Select(p); ed.dirty = true; }
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Select All", "Ctrl+A")) {
-            std::vector<GameObject*> all;
-            for (const auto& up : ed.scene().Objects()) all.push_back(up.get());
-            HierSelectMany(ed, all);
-        }
-        if (ImGui::MenuItem("Deselect", nullptr, false, ed.selected() != nullptr)) ed.Select(nullptr);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Expand All"))   g_hierExpand = 1;
-        if (ImGui::MenuItem("Collapse All")) g_hierExpand = 2;
-        ImGui::MenuItem("Sort A-Z", nullptr, &g_hierSort);
+        oked::menubar::DrawEntries(oked::hiermenu::EmptyMenu(HierEmptyState(ed)), HierEmptyHost(ed));
         ImGui::EndPopup();
     }
 
@@ -40044,6 +40034,11 @@ void DrawInspector(EditorState& ed) {
     static std::string s_acCat;                  // selected category ("Recent" = recently added)
     static std::vector<std::string> s_acRecent;  // labels, most recent first
     if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30))) {
+        acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
+        s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
+    }
+    if (g_openAddComponentFromHierarchy) {   // Hierarchy right-click > Add Component...: open the same browser as the button above
+        g_openAddComponentFromHierarchy = false;
         acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
         s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
     }

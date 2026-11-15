@@ -141,7 +141,7 @@ struct Top { std::string id, label; bool hostDrawn = false; };   // hostDrawn: t
 inline const std::vector<Top>& TopMenus() {
     static const std::vector<Top> t = {
         {"file", "File", false}, {"edit", "Edit", false}, {"gameobject", "GameObject", false}, {"view", "View", false},
-        {"window", "Window", false}, {"plugins", "Plugins", true}, {"help", "Help", false}};
+        {"plugins", "Plugins", true}, {"help", "Help", false}};
     return t;
 }
 
@@ -287,9 +287,14 @@ inline std::vector<Entry> ToolsSubmenu() {
     return t;
 }
 
-/// View: how the Scene view looks and performs. (Panels and layouts are in Window.)
+/// View: the windows (Panels, Editors & Tools), the layouts that arrange them, then the Scene view's own commands and settings.
+/// (The old Window menu held one item that Editors & Tools already had, so it is gone; "View > Editors & Tools > X" stays true in every doc.)
 inline std::vector<Entry> ViewMenu(const State& s) {
     std::vector<Entry> m;
+    m.push_back(Sub("view.panels", "Panels", PanelsSubmenu()));
+    m.push_back(Sub("view.tools", "Editors & Tools", ToolsSubmenu()));
+    m.push_back(SlotMenu("view.layout", "Layout", "Panel arrangements: built-in and saved layouts, side tabs, maximize the Scene view."));
+    m.push_back(Sep());
     m.push_back(OnlyIf(Item("view.frame", "Frame Selected", key::Frame, "Centre the Scene view on the selection."), s.selectedCount > 0, kNeedSelection));
     m.push_back(OnlyIf(Item("view.isolate", s.isolating ? "Exit Isolation" : "Isolate Selection", key::Isolate,
                             "Dim everything except the selected object and its children. Esc leaves isolation."),
@@ -300,16 +305,6 @@ inline std::vector<Entry> ViewMenu(const State& s) {
     m.push_back(SlotMenu("view.bookmarks", "Camera Bookmarks"));
     m.push_back(Sep());
     m.push_back(SlotMenu("view.rendering", "Rendering & Performance"));
-    return m;
-}
-
-/// Window: every dockable window, and the layouts that arrange them.
-inline std::vector<Entry> WindowMenu(const State&) {
-    std::vector<Entry> m;
-    m.push_back(Sub("window.panels", "Panels", PanelsSubmenu()));
-    m.push_back(Sub("window.tools", "Editors & Tools", ToolsSubmenu()));
-    m.push_back(Sep());
-    m.push_back(SlotMenu("window.layout", "Layout"));
     return m;
 }
 
@@ -332,7 +327,6 @@ inline std::vector<Entry> BuildMenu(const std::string& topId, const State& s) {
     if (topId == "edit") return EditMenu(s);
     if (topId == "gameobject") return GameObjectMenu(s);
     if (topId == "view") return ViewMenu(s);
-    if (topId == "window") return WindowMenu(s);
     if (topId == "help") return HelpMenu(s);
     return {};
 }

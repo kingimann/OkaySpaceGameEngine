@@ -197,9 +197,8 @@ inline std::vector<Entry> RowMenu(const RowState& r) {
         m.push_back(Sub("h.prefab", "Prefab", std::move(p)));
     }
     m.push_back(Item(id::kSavePrefab, "Save As Prefab...", "", "Write this object (and its children) into the project as a .okayprefab."));
-    if (r.modelTools) {
-        m.push_back(Sep());
-        m.push_back(menubar::Slot(id::kModelTools));   // IK targets, built-in animations, humanoid bone map and rigging
+    if (r.modelTools) {   // IK targets, built-in animations, humanoid bone map and rigging: one submenu (they were loose items on every row)
+        m.push_back(menubar::SlotMenu(id::kModelTools, "Rig & IK", "Rigging, built-in animations and IK targets for a model or a character."));
     }
     m.push_back(Sep());
     {

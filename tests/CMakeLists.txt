@@ -3520,3 +3520,15 @@ add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
+
+# KNOWN BUG (issue #888 / Upgrade project): failing tests for "Upgrade project". Registered but DISABLED unless
+# -DOKAY_RUN_KNOWN_BUG_TESTS=ON, so they can never break CI. They fail until the feature is fixed.
+option(OKAY_RUN_KNOWN_BUG_TESTS "Run the known-bug tests (they fail until fixed)" OFF)
+add_executable(test_upgrade_bugs test_upgrade_bugs.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp)
+target_include_directories(test_upgrade_bugs PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_upgrade_bugs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+target_link_libraries(test_upgrade_bugs PRIVATE okay::engine)
+add_test(NAME upgrade_bug_project_upgrade COMMAND test_upgrade_bugs)
+if(NOT OKAY_RUN_KNOWN_BUG_TESTS)
+  set_tests_properties(upgrade_bug_project_upgrade PROPERTIES DISABLED TRUE)
+endif()

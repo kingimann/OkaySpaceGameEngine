@@ -51,7 +51,7 @@ Tests: `tests/test_ui_input_guard.cpp` (lean, top-down fire), `tests/test_invent
 
 * **Networked slot <-> grid moves.** `ToGrid` / `FromGrid` are local operations: they send no `inv/*` request. A client must not use them against a host-owned bag until a request for them exists in `NetInventory`.
 * **Scripts and visual scripts** cannot call `ToGrid` / `FromGrid`. Scripts already have `inv_move`; a script function and a visual-script node ("Move Item To Grid" with slot, grid, x, y, rotated, amount) are still to be added (the visual-script core is owned by another change, so no node was added here).
-* **Worn weight and enforced weight.** `Equipment::Unequip` into a bag that enforces its weight limit is checked while the worn item is still counted in `wornWeight`, so it can be refused a little early near the limit.
+* ~~**Worn weight and enforced weight.**~~ Not a bug: checking showed `Equipment::Unequip` never tests the weight (it places the item directly), which is right, because a worn item already counts in the bag's weight and taking it off leaves the carried total the same. Test `unequip_weight` holds this at 9, 10 and 11 of 10.
 * **Durability use.** Durability is stored and carried, but nothing wears it down (tools, weapons, armor) or repairs it; no "broken item" rule.
 * **Container-in-container rules, locked and owned containers, item cooldowns, hotbar-bound ability slots, and a "stack count" prompt in the drag UI** are not built.
 * **Slot bag weight in the UI** shows a bar only where the screen already did; no per-item "too heavy" message beyond the result reason (`InvResult::reason`).

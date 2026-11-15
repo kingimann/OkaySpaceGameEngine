@@ -84,6 +84,7 @@ player gets in and out instead of the car always listening to the keyboard.
   builds). Any other body (a different rig, a plain mesh) is carried upright and does not play a sit
   (`PoseApplied()` is false for it). Hands are **not** on the wheel: the sit clip has the arms bent
   forward, and no hand-hold / IK to the steering wheel is wired in (not done).
+- **Sit height fix:** the sit clips used to RAISE the body about 0.5 m (hipY was a hip height used as a drop). They now sit correctly for the chair, ground and knees sits. This also lowers the older chair `Seat`: a chair authored with `sitPoint` on the cushion (0.45 m up) will now sit too high. The body root is the feet, so put the chair `sitPoint` on the floor under the seat (the hip joint then lands 0.57 m up, about 0.12 m over a 0.45 m seat).
 - **Camera:** when the scene's main camera belongs to the player (the Player templates), boarding
   takes it over: third person = a chase view behind and above the car (`camDistance`, `camHeight`,
   `camLerp` of the VehicleController; it eases in from where the orbit was); first person = at the
@@ -133,7 +134,7 @@ does not blend back smoothly on exit (the player's own camera takes over at once
 
 ## Wheels (looks only)
 
-`VehicleController` animates wheel objects it finds under the car (nothing to add or save):
+`VehicleController` animates wheel objects it finds under the car (no component to add, no new saved fields; but see the save note below):
 every descendant whose name starts with `Wheel` and that has a child named `Tire`. The `Tire` is the
 cylinder (a Cylinder mesh is radius 0.5, height 1 along Y: scale it to the tyre, e.g. `0.7, 0.25, 0.7`
 for a 0.35 m radius, 0.25 m wide tyre, and lay it on its side with local rotation `0, 0, 90`). The
@@ -143,6 +144,13 @@ A `Wheel` object whose name contains `Front` is also turned about Y for steering
 local rotation each frame, so keep those two for the animation and hang rims, hubcaps and so on under
 the Tire. `WheelSpin()` and `SteerAngle()` read the angles. This is visual only: the physics is the
 arcade body, there are no wheel colliders and no suspension per wheel.
+
+Limits, honestly:
+- The name rule is a prefix: `Wheel...` (an object called `Rewheel` is not a wheel). The `Tire` child must be named exactly `Tire`; steering needs `Front` in the Wheel's name.
+- Wheels are looked up **once, on the first frame the car is updated**. Wheels added later are not seen.
+- A remote or proxy car (not locally controlled) does not animate its wheels: the animation runs after the local-control check.
+- The Wheel's and Tire's local rotation is **overwritten every frame**, so a tire authored with a different rotation or axis is replaced by "axle along X". Because it is a normal rotation, a save or undo snapshot taken while playing writes the current steer and roll angles into the file (nothing restores the authored ones). Do not save a scene from play mode if you care about them.
+- A car with no wheel objects still tracks `WheelSpin()` (as if the radius were 0.35 m).
 
 ### Try it yourself: the "Vehicle Test" scene
 
@@ -154,13 +162,13 @@ driver door.
 1. In the editor use *File ▸ Open* and pick `examples/vehicle/vehicle_test.okayscene` from the engine
    folder. (It is not in the New Project chooser.) In code: `Templates::VehicleSeats3D(scene)`.
 2. Press **Play**.
-3. Walk to the driver door (left side, WASD) and press **E**. You sit in the driver seat and the camera
+3. Walk to the driver door (the -X side of the car, which is the car's right side seen from behind; WASD) and press **E**. You sit in the driver seat and the camera
    swings behind the car.
 4. **W / S** = gas and brake / reverse, **A / D** = steer (the front wheels turn, all wheels roll),
    **Space** = handbrake. Drive through the cones.
 5. Press **E** again to get out beside the car. The camera goes back to you. The car brakes to a stop
    and ignores the keys.
-6. Walk to the right side and press **E** to ride as a passenger (you sit, you are carried, the car does not drive).
+6. Walk to the other side (+X) and press **E** to ride as a passenger (you sit, you are carried, the car does not drive).
 7. Press **V** before getting in to try first person: the camera sits at your eyes in the car.
 
 How the file is made: the scene file is the output of `Templates::VehicleSeats3D` saved with

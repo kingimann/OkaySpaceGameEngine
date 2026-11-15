@@ -892,7 +892,7 @@ inline void Vehicle3D(Scene& scene) {
 }
 
 /// "Vehicle Test": a third-person player standing in the road next to a small car (about 4.1 m long,
-/// 1.8 m wide) that has a driver seat and a passenger seat. Walk to the car, press E to get in: you sit
+/// 1.8 m wide) that has a driver seat and a passenger seat. Walk to the car's driver door (the -X side), press E to get in: you sit
 /// (the chair sit clip), the camera swings behind the car, drive with WASD / arrows (Space = handbrake),
 /// press E to get out. The car only drives while someone sits in the driver seat.
 /// The car faces +Z. Its wheels roll with the speed and the front two turn (VehicleController reads
@@ -958,9 +958,9 @@ inline void VehicleSeats3D(Scene& scene) {
         o->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
     }
 
-    // ---- The car. The root is unscaled, so everything below is in metres. Local axes: +Z forward, +X right,
+    // ---- The car. The root is unscaled, so everything below is in metres. Local axes: +Z forward, +X toward the car's LEFT side seen from behind (the engine is right-handed, so a car driving +Z has -X on its right). Object names "Left"/"Right" below mean -X/+X, not the driver's view.
     // Y = 0 at the wheel axles (the root sits one wheel radius, 0.35 m, above the road).
-    // Cabin floor is at y = 0.10. A seated person's hips are 0.48 m above their feet, a seat cushion 0.45 m.
+    // Cabin floor is at y = 0.10. A seated person's hip joint is 0.57 m above their feet (sit clip), the seat cushion top 0.45 m.
     GameObject* car = scene.CreateGameObject("Car");
     car->transform->localPosition = {2.2f, 0.35f, 0};
     Transform* ct = car->transform;
@@ -968,7 +968,7 @@ inline void VehicleSeats3D(Scene& scene) {
     car->AddComponent<BoxCollider3D>()->size = {1.8f, 0.7f, 4.1f};   // wheels to hood line; the roof is for looks
     auto* vc = car->AddComponent<VehicleController>();
     vc->camDistance = 6.0f; vc->camHeight = 1.9f; vc->camLerp = 5.0f;
-    auto* driverSeat = car->AddComponent<VehicleSeat>();     // left front: get in here to drive
+    auto* driverSeat = car->AddComponent<VehicleSeat>();     // the -X front seat (the car's right side seen from behind): get in here to drive
     driverSeat->sitPoint = {-0.45f, 0.10f, -0.20f};
     driverSeat->exitPoint = {-1.6f, -0.30f, -0.20f};
     driverSeat->useRadius = 2.3f;
@@ -994,7 +994,7 @@ inline void VehicleSeats3D(Scene& scene) {
         tr->GetComponent<MeshRenderer>()->emissive = rgb(110, 10, 10);
     }
 
-    // Seats: cushion (top at floor + 0.45), backrest, headrest. The driver's is on the left.
+    // Seats: cushion (top at floor + 0.45), backrest, headrest. The driver's is at -X.
     for (int i = 0; i < 2; ++i) {
         const float x = i == 0 ? -0.45f : 0.45f;
         const char* side = i == 0 ? "Driver" : "Passenger";
@@ -1039,7 +1039,7 @@ inline void VehicleSeats3D(Scene& scene) {
 
     GameObject* passenger = scene.CreateGameObject("Passenger Seat");
     passenger->transform->SetParent(ct, false);
-    auto* ps = passenger->AddComponent<VehicleSeat>();       // right front: rides along, does not drive
+    auto* ps = passenger->AddComponent<VehicleSeat>();       // the +X front seat: rides along, does not drive
     ps->driver = false;
     ps->sitPoint = {0.45f, 0.10f, -0.20f};
     ps->exitPoint = {1.6f, -0.30f, -0.20f};

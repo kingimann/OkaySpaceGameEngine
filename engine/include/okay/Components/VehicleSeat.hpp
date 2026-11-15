@@ -23,7 +23,7 @@
 //     SitDown then Sit) and plays StandUp on exit. Only a body with the humanoid animator sits; any other body
 //     is just carried upright. The body is turned to face the car's forward (humanoids face -Z, cars drive +Z).
 //     sitPoint is where the body's FEET root goes: the floor under the seat, not the seat cushion (the sit
-//     clip drops the hips about 0.48 m, so a cushion 0.45 m above sitPoint matches).
+//     clip puts the hip joint 0.57 m above the feet, so a seat surface about 0.45 m above sitPoint matches).
 //   - Camera: if the scene's main camera is the occupant's own (the player's camera), it is taken over while
 //     seated. Third person: a chase view behind and above the car (VehicleController camDistance, camHeight,
 //     camLerp; it eases in from where the orbit was). First person: at the seated eyes, looking along the car.
@@ -129,7 +129,7 @@ public:
         if (!who) return;
         const bool alive = !who->IsDestroyed() && who->transform;
         GiveCameraBack();
-        if (alive && m_posed) HumanoidActions::RequestStandUp(who);
+        if (alive && m_posed && !HumanoidActions::IsDead(who)) HumanoidActions::RequestStandUp(who);   // a dead body stays in its death pose
         Vec3 where = alive && transform ? PickExit(who) : Vec3{};
         ReleaseState(who, alive);
         if (alive && transform) {

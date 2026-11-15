@@ -44,6 +44,7 @@ release job or the installer build for this change.
 | 5 | Navmesh from a Mesh Collider | View > Editors & Tools > Navigation | Shipped |
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
+| 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
@@ -214,6 +215,29 @@ The before-and-after of the bug needs the old release to compare.
 
 ---
 
+## 7b. Template cards no longer make projects by themselves
+
+Why: some people found about ten projects in the Projects list that they never made. Before this change, one click
+(or a double click, or a click while scrolling) on a card on the Templates page made a project at once ("Platformer",
+"Platformer 2" and so on) and opened the editor.
+
+1. Open the launcher (`OkaySpace.exe`), go to **Templates** and click any card, for example Platformer.
+2. You should land on **Create** with the **New Project** window open on the Details step, that template chosen and the
+   name filled in. Look in your Projects folder: no new folder yet.
+3. Close the window with Esc (still nothing made), or press Next, then **Create project** to make it.
+
+Cleaning up the extra projects (this note deletes nothing for you): on **Create**, the projects list shows every
+folder in your Projects folder that has an Assets folder. The folder is shown on the Create page as the Location.
+For each one you do not want, right-click it (or use its menu) and choose **Remove from list** to only hide it, or
+**Delete project...** to delete its folder after a confirmation. Names like "Platformer 2" are the repeats. Projects
+you did not open since they were made are safe to remove; check the path before you delete.
+
+**Status.** Tested on main once merged: `test_project_create` (289 checks) covers the rule that a template shortcut opens
+the Details step and cannot start a second create. Unverified: the launcher screens themselves (the launcher was not
+compiled or run on this machine).
+
+---
+
 ## Switches that are off by default (own code)
 
 CLAUDE.md rule 17 and `docs/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
@@ -348,6 +372,25 @@ Nothing to try.
   the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
 * `release.yml` was not changed and no workflow was run.
 
+## Remove from list and Delete project (launcher Create page)
+
+**Where.** Launcher > **Create**. Your projects are the folders inside the **Projects** folder next to `OkaySpace.exe`
+(the Location shown on the page), plus projects you opened from other places with **Open folder**.
+
+**Steps.**
+1. Make two projects (New Project), or open a project folder. Right-click a project card.
+2. Click **Remove from list**. A toast says "Removed <name> from the list (its files are still on disk)" and the card
+   goes at once. Close the launcher and open it again: it is still gone. Open the folder in Explorer: the files are there.
+   To get it back, use **Open folder** and pick it (it is also un-hidden when you make a project of the same name).
+3. Right-click another project > **Delete project...**. The popup names the folder. **Delete from disk** moves the whole
+   folder to the Recycle Bin (Linux: deletes it for good). The card goes and a toast says "Moved <name> to the Recycle Bin".
+   When it cannot, the popup stays open with a red line saying why: the editor is open ("close the editor first"), the
+   folder is your Projects folder / home / the launcher's folder, or it has no scene, or a file is in use.
+
+Status: the list logic (hide, restart, a project that is both in the folder and opened by path, slash and trailing-slash
+forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
+Recycle Bin call and the clicks were not run on Windows.
+
 ## Checks run for this page
 
 Run on Linux, on the branch `claude/try-it`:
@@ -370,3 +413,15 @@ Anything on Windows. The NSIS installer and the zip.
 
 Built and run two ways: a direct `g++` build of the okayui library against an engine library borrowed from another build tree (fast, used while working, and for the sanitizer runs), and the real CMake build with `ninja -j1` of the okayui test targets and `test_script_editor_sample` followed by `ctest`:
 `test_okayui_codeedit_parity` (1,098 checks), `test_okayui_codeedit` (407), `test_okayui_codeedit_fuzz` (36), `test_okayui_script_adapter` (69), `test_okayui_values` (389), `test_okayui_widgets` (14,484), `test_okayui_host` (50) and `test_text_buffer` (83,050): 0 failures, also with `-fsanitize=address,undefined,float-cast-overflow`. The okayui ctest set (25 tests, without the EGL one), `text_buffer` and `script_editor_sample` ran through the CMake build too: 27 of 27 passed. `tests/test_script_editor_sample.cpp` (14 checks): the sample scene loads, carries the same text as `highlight_sample.okay`, compiles, and Play logs `Script sample is ready, speed 5` with no error. The `examples` copy block of `scripts/build-windows-dist.sh` copies `examples/script_editor` (2 files). `editor/main.cpp` was checked with `g++ -fsyntax-only` against the pinned Dear ImGui and SDL2 headers; the editor was not linked or run. **Not run:** the editor window, Windows, GitHub CI.
+
+## Team tooling (not part of the Windows release)
+
+How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in
+`OkaySpace.exe`:
+
+1. Open `WORK_BOARD.md` on the `work-board` branch (after the workflow has run once on main): it now has a **Claims** table and
+   a **Collision report**.
+2. `python3 scripts/find_existing.py tween` prints what already exists for "tween" (feature map, code, tests, branches).
+3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
+   fails with the file and line and says to use `debugutil::SpinLock`.
+4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.

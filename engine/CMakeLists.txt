@@ -192,6 +192,7 @@ add_library(okay_engine
     src/Audio/Mp3Decoder.cpp
     src/Audio/FlacDecoder.cpp
     src/Audio/WavDecoder.cpp
+    src/Audio/WavPlayback.cpp
     src/AI/Pathfinding.cpp
     src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp

@@ -55,6 +55,14 @@ then this file gets updated. Keep this file short and true.
    Do not open new PRs faster than CI can check them.
 10. Agents push only their own branch (plain push, never force) and do not open PRs unless told. The main session
     opens and merges PRs.
+26. **Two Claudes, one set of lanes.** Claude 2 (`claude2/*`) and the coordinator (`claude/*`) follow
+    `docs/collaboration.md` and its table `docs/lanes.json`: run `python3 scripts/find_existing.py <keywords>` before
+    you start anything; claim it with one comment `Claim: <branch>` on issue #422 (`Existing:`, `Gap:`, `Files:`,
+    `Test-first:`, `Try-it:`; `Release: <branch>` when done; a claim expires after 24 hours with no push); never
+    touch files another open claim or the other lane owns without an `Agree:` reply; meet the readiness checklist
+    before asking for a review. Every agent brief starts from `docs/agent_brief_template.md` with the current
+    rules pasted in, so no agent works from stale rules. The checks are automatic: `scripts/collision_check.py`
+    (in the live work board), `branch-lint` on every push, and the PR "How to try it" check.
 
 ## Releases
 

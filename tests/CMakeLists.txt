@@ -1698,6 +1698,10 @@ add_executable(test_project_delete test_project_delete.cpp)
 target_compile_features(test_project_delete PRIVATE cxx_std_17)
 target_include_directories(test_project_delete PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME project_delete COMMAND test_project_delete)
+add_executable(test_project_list test_project_list.cpp)
+target_compile_features(test_project_list PRIVATE cxx_std_17)
+target_include_directories(test_project_list PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME project_list COMMAND test_project_list)
 
 # New-project rules shared by the editor and the launcher: name, location, folder choice, skeleton, atomic writes.
 add_executable(test_project_create test_project_create.cpp)
@@ -3295,6 +3299,23 @@ foreach(_f MDC HMP CSM)   # -DOKAY_OWN_<FMT>=ON: the test then requires the own 
     endif()
 endforeach()
 add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# WAV playback seam (okay/Audio/WavPlayback.hpp, shared/WavPlayback.hpp): own path, error paths, and with SDL2 the option-off vs option-on
+# equivalence. check_wav_seam_wiring fails if a raw SDL_LoadWAV call appears outside the seam.
+add_executable(test_wav_playback test_wav_playback.cpp)
+target_link_libraries(test_wav_playback PRIVATE okay::engine)
+find_package(SDL2 QUIET)
+if(SDL2_FOUND)
+    target_compile_definitions(test_wav_playback PRIVATE OKAY_TEST_HAVE_SDL)
+    target_include_directories(test_wav_playback PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/shared)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_wav_playback PRIVATE SDL2::SDL2)
+    else()
+        target_link_libraries(test_wav_playback PRIVATE ${SDL2_LIBRARIES})
+    endif()
+endif()
+add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt

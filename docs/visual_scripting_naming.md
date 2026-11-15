@@ -261,5 +261,12 @@ sound). Online nodes run with no session and must report or return a value; the
 ones that would open a connection are built only. Event nodes are fired by what
 raises them. A node that does none of this fails the test, so it has to be fixed
 or hidden from the Add Node menu (its factory stays so old graphs still load).
-Eight online nodes are hidden that way for now, in `kHiddenUntilTested` in `editor/VisualScriptPalette.hpp` with a reason each: the eight PlayFab `Fn.pf_*` nodes. (`Fn.net_join_link` and `Fn.net_pin_host` were hidden too until `vs_net_link_pin` ran them as nodes.) How to try them: in a visual script, open Add Node and search "net_pin_host" and "net_join_link"; both are listed now. A graph that runs Fn.net_pin_host with the host's key and then Fn.net_join_link with the host's okay:// link joins only that host (with encryption on; a wrong key is refused with "server identity doesn't match the pinned key"). The registry test asserts that list, so it cannot grow quietly.
+Eight online nodes are hidden that way for now, in `kHiddenUntilTested` in `editor/VisualScriptPalette.hpp` with a reason each: the eight PlayFab `Fn.pf_*` nodes. (`Fn.net_join_link` and `Fn.net_pin_host` were hidden too until `vs_net_link_pin` ran them as nodes.) The registry test asserts that list, so it cannot grow quietly.
 `tests/vs_registry_known_gaps.inc` is the list of exceptions and is empty.
+
+How to try the two net nodes: in a visual script, open Add Node and search "net_pin_host" and "net_join_link"; both
+are listed now (before, the search found nothing). A graph **On Start > net_pin_host** (the host's public key) **>
+net_join_link** (the host's `okay://join?...` link) joins only that host, with encryption on; a wrong key is refused
+with "server identity doesn't match the pinned key". The test `vs_net_link_pin` runs exactly that graph against a host
+on this computer (`ctest -R vs_net_link_pin`). On a build without a crypto backend it prints SKIP for the encrypted
+part and still checks the rest.

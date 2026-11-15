@@ -23,6 +23,7 @@ Full steps: `docs/try_it.md`, section 8. Short form: start the editor from a Com
 | `tests/test_mdl_reader.cpp`, `tests/e4_fixtures.hpp` | Hand-computed checks on synthetic files (`mdl_reader`) |
 | `tests/test_e4_hostile.cpp` | Budgets, hostile input and mutation fuzz, for OpenGEX and MDL (`e4_hostile`) |
 | `tests/test_own_dispatch_e4.cpp`, `tests/test_own_e4_default.cpp` | The seam routes `.mdl` (both formats); `-DOKAY_OWN_MDL=ON` really makes it the default |
+| `tests/test_own_e4_samples.cpp`, `examples/own_readers/quake_pyramid.mdl`, `halflife_tri.mdl` | The shipped sample files (the fixtures written out: a Quake pyramid and a Half-Life triangle with two bones and a clip) import through the seam with the reader on, and are still exactly the fixtures (`own_e4_samples`) |
 
 ## What it reads
 

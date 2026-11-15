@@ -19,6 +19,7 @@ OpenGEX (Open Game Engine Exchange) is a scene format by Eric Lengyel, written i
 | `tests/test_ogex_reader.cpp`, `tests/e4_fixtures.hpp` | Hand-computed checks on synthetic files (`ogex_reader`) |
 | `tests/test_e4_hostile.cpp` | Budgets, hostile input and mutation fuzz, for OpenGEX and MDL (`e4_hostile`) |
 | `tests/test_own_dispatch_e4.cpp`, `tests/test_own_e4_default.cpp` | The seam routes `.ogex`; `-DOKAY_OWN_OPENGEX=ON` really makes it the default |
+| `tests/test_own_e4_samples.cpp`, `examples/own_readers/cube_spin.ogex` | The shipped sample file (a red cube with a 2 second turn) imports through the seam with the reader on (`own_e4_samples`) |
 
 ## What it reads
 

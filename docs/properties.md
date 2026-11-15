@@ -266,6 +266,35 @@ More of the builder:
    another one goes into `Companions()` in the test (the record names the writer needs).
 5. Add the type's name to `expected[]` in `TestRegistryBasics` and update the counts in this page.
 
+### Fields the scene file does not save
+
+These authored settings are not kept by their component's record, so they go back to the default on save,
+duplicate and prefab, and they are not registered properties. Test `unsaved_fields` checks that each one is really
+lost and that this table matches its list: when a record is fixed, the test fails until the row is removed and the
+field is registered. (C++ cannot list a component's fields, so a field saved by neither the record nor the registry
+cannot be found automatically; this table is where every known one is kept.) The PauseMenu fields `hint`,
+`showRestart`, `showVolume` and `restartScene` were on this list and are fixed (test `pausemenu_save`).
+
+| Field | Default |
+|---|---|
+| `VoxelDigger.removeFloaters` | 8 |
+| `BuilderMode.nextBrushKey` | `]` |
+| `BuilderMode.prevBrushKey` | `[` |
+| `BuilderMode.rotateKey` | `r` |
+| `BuilderMode.scaleUpKey` | `=` |
+| `BuilderMode.scaleDownKey` | `-` |
+| `BuilderMode.grabKey` | `g` |
+| `BuilderMode.saveMapKey` | `o` |
+| `InventoryUI.gamepadNav` | on |
+| `BlockBuilder.previewFree` | green |
+| `BlockBuilder.previewBusy` | red |
+| `StructureBuilder.rotateKey` | `r` |
+| `StructureBuilder.upgradeKey` | `g` |
+| `StructureBuilder.repairKey` | `f` |
+| `StructureBuilder.pieceHotkeys` | on |
+| `StructureBuilder.previewFree` | green |
+| `StructureBuilder.previewBusy` | red |
+
 ## What is registered
 
 2244 properties on 166 types, as `property_registry` counts them ("covered 166 component types, 2244 properties"; a number before a slash counts the authored ones; the rest are

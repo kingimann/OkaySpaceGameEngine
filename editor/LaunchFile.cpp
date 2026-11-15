@@ -68,6 +68,24 @@ std::wstring Backslashes(std::wstring w) {
     return w;
 }
 
+// The full path (a relative one is read from the current folder), "" when Windows cannot make one. A full path starts with a
+// drive letter or two backslashes, so a name that begins with '-' is never read as an option by the program it is handed to.
+std::wstring FullPath(const std::wstring& p) {
+    if (p.empty()) return {};
+    DWORD n = GetFullPathNameW(p.c_str(), 0, nullptr, nullptr);
+    if (n == 0) return {};
+    std::wstring out(static_cast<std::size_t>(n), L'\0');
+    n = GetFullPathNameW(p.c_str(), n, &out[0], nullptr);
+    if (n == 0 || n >= out.size()) return {};
+    out.resize(n);
+    return out;
+}
+
+// "C:\..." or "\\server\..." (a PATH entry that is relative would be read from whatever folder the editor was started in).
+bool IsAbsolute(const std::wstring& p) {
+    return (p.size() >= 3 && p[1] == L':' && (p[2] == L'\\' || p[2] == L'/')) || (p.size() >= 2 && p[0] == L'\\' && p[1] == L'\\');
+}
+
 bool Exists(const std::wstring& p) { return GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES; }
 bool IsFolder(const std::wstring& p) {
     const DWORD a = GetFileAttributesW(p.c_str());
@@ -128,7 +146,7 @@ std::wstring FindVsCode() {
         std::wstring dir = path.substr(start, end - start);
         if (dir.size() >= 2 && dir.front() == L'"' && dir.back() == L'"') dir = dir.substr(1, dir.size() - 2);
         while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
-        if (!dir.empty() && IsFile(dir + L"\\code.cmd")) {
+        if (IsAbsolute(dir) && IsFile(dir + L"\\code.cmd")) {
             const std::size_t sl = dir.find_last_of(L"\\/");
             if (sl != std::wstring::npos) candidates.push_back(dir.substr(0, sl) + L"\\Code.exe");
         }
@@ -211,7 +229,7 @@ Result OpenWithDefaultApp(const std::string& path) {
     const std::string refused = okaypb::ctx::LaunchRefusal(path);
     if (!refused.empty()) return Fail(refused);
 #if defined(_WIN32)
-    const std::wstring file = Backslashes(ToWide(path));
+    const std::wstring file = FullPath(Backslashes(ToWide(path)));
     if (file.empty()) return Fail("The file name could not be read.");
     if (!Exists(file)) return Fail("The file is not there any more.");
     if (IsFolder(file)) return Fail("That is a folder: use Show in Explorer.");
@@ -229,7 +247,7 @@ Result OpenWithDefaultApp(const std::string& path) {
 Result OpenInTextEditor(const std::string& path) {
     if (path.empty()) return Fail("No file was given.");
 #if defined(_WIN32)
-    const std::wstring file = Backslashes(ToWide(path));
+    const std::wstring file = FullPath(Backslashes(ToWide(path)));
     if (file.empty()) return Fail("The file name could not be read.");
     if (file.find(L'"') != std::wstring::npos) return Fail("A file name cannot contain a quote.");
     if (!IsFile(file)) return Fail("The file is not there any more.");
@@ -267,7 +285,7 @@ Result Reveal(const std::string& path, bool selectFile) {
     (void)selectFile;   // (a folder is told from a file on the disk)
 #endif
 #if defined(_WIN32)
-    const std::wstring p = Backslashes(ToWide(path));
+    const std::wstring p = FullPath(Backslashes(ToWide(path)));
     if (p.empty()) return Fail("The path could not be read.");
     if (p.find(L'"') != std::wstring::npos) return Fail("A file name cannot contain a quote.");
     if (!Exists(p)) return Fail("It is not there any more.");

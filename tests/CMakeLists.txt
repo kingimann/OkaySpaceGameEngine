@@ -60,6 +60,10 @@ add_executable(test_switch_off_settings test_switch_off_settings.cpp)
 target_link_libraries(test_switch_off_settings PRIVATE okay::engine)
 add_test(NAME switch_off_settings COMMAND test_switch_off_settings)
 
+add_executable(test_scene_subnormal test_scene_subnormal.cpp)
+target_link_libraries(test_scene_subnormal PRIVATE okay::engine)
+add_test(NAME scene_subnormal COMMAND test_scene_subnormal)
+
 # Safe loading: bad / cut-short / newer documents never damage the live scene
 add_executable(test_scene_safe_load test_scene_safe_load.cpp)
 target_link_libraries(test_scene_safe_load PRIVATE okay::engine)

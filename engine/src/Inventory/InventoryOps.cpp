@@ -270,6 +270,7 @@ static InvResult UseItem(Inventory* inv, int i, GameObject* user) {
 namespace {
 // When each (inventory object, item) may be used again, in game time. Keyed by the object's InstanceId (never reused)
 // rather than the pointer, so a destroyed bag's cooldowns cannot carry over to a new one at the same address.
+// The count is read by tests (CooldownCount).
 std::map<std::pair<std::uint64_t, std::string>, double>& Cooldowns() {
     static std::map<std::pair<std::uint64_t, std::string>, double> m;
     return m;
@@ -281,6 +282,14 @@ float CooldownOf(const ItemDefinition* def) {
     return std::isfinite(f) && f > 0.0f ? f : 0.0f;
 }
 std::uint64_t BagId(const Inventory* inv) { return inv && inv->gameObject ? inv->gameObject->InstanceId() : 0; }
+// Expired entries mean nothing, so they are dropped whenever the map grows past a small size: the map holds only
+// cooldowns still running, and a destroyed bag's entries go once they run out.
+void PruneCooldowns() {
+    auto& m = Cooldowns();
+    if (m.size() < 64) return;
+    const double now = Time::ElapsedTimeD();
+    for (auto it = m.begin(); it != m.end();) it = it->second <= now ? m.erase(it) : std::next(it);
+}
 } // namespace
 
 float CooldownLeft(const Inventory* inv, const std::string& item) {
@@ -291,14 +300,16 @@ float CooldownLeft(const Inventory* inv, const std::string& item) {
 }
 
 void ResetCooldowns() { Cooldowns().clear(); }
+std::size_t CooldownCount() { return Cooldowns().size(); }
 
 InvResult Use(Inventory* inv, int i, GameObject* user) {
     const std::string item = ValidSlot(inv, i) ? inv->slots[i].item : std::string();
     const ItemDefinition* def = item.empty() ? nullptr : ItemDatabase::Get().Find(item);
-    const float cooldown = CooldownOf(def);
+    // Using an equippable item puts it on: that is not a use, so it neither waits for nor starts a cooldown.
+    const float cooldown = (def && def->equip != EquipSlot::None) ? 0.0f : CooldownOf(def);
     if (cooldown > 0.0f && CooldownLeft(inv, item) > 0.0f) return InvResult::No("cooldown");
     const InvResult r = UseItem(inv, i, user);
-    if (r.Ok() && cooldown > 0.0f) Cooldowns()[{BagId(inv), item}] = Time::ElapsedTimeD() + cooldown;
+    if (r.Ok() && cooldown > 0.0f) { PruneCooldowns(); Cooldowns()[{BagId(inv), item}] = Time::ElapsedTimeD() + cooldown; }
     if (r.Ok()) {
         InventoryEvents::Fire(inv->gameObject, "on_item_used", "OnItemUsed", {vs::VsValue(item)});
         if (!def || def->equip == EquipSlot::None) NetInventory::NoticeUse(inv, i, true);

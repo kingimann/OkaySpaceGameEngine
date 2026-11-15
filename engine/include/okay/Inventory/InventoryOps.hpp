@@ -64,12 +64,15 @@ InvResult Drop(Inventory* inv, int i, int n = 1);
 /// through the user's Equipment when its definition has an equip slot.
 /// An item whose definition has a custom "cooldown" (seconds of game time) can be used again from the same inventory
 /// only once that time has passed; until then Use refuses it with reason "cooldown". Cooldowns are runtime only (not
-/// saved) and pause with the game clock.
+/// saved) and pause with the game clock. Using an equippable item equips it, which neither waits for nor starts a
+/// cooldown. Multiplayer: each machine times its own uses (not synchronised); the host's Use is the one that counts.
 InvResult Use(Inventory* inv, int i, GameObject* user);
 /// Seconds of game time before `item` can be used again from `inv` (0 = ready).
 float CooldownLeft(const Inventory* inv, const std::string& item);
 /// Forget every cooldown (a new game, a test).
 void ResetCooldowns();
+/// How many cooldowns are stored (expired ones are dropped once more than 64 are kept).
+std::size_t CooldownCount();
 
 /// Atomically remove `take` and add `give` (crafting).
 InvResult Craft(Inventory* inv, const std::vector<Inventory::Stack>& take, const std::vector<Inventory::Stack>& give);

@@ -52,6 +52,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 | Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
 | Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
+| Editor Light look (View > Appearance > Theme) | Works, rough in places; screenshotted on Linux, never run on Windows | Dark and Light are the only looks and nothing in the chrome is blue (`editor/ThemeModel.hpp`, `scripts/find_blue_ui.py`). Light is new as a full look: the panels were checked in screenshots (menu bar, Hierarchy, Inspector, Project, Console, Problems, script editor, OkayUI Console), but many drawn overlays still assume a dark background and keep it on purpose (the Scene / Game view canvases, node-graph canvases, viewport chips) or are not checked (Animator, Timeline, Dialogue, Behavior Tree, Localization windows). Hard-coded light-on-dark text colours in those windows may be faint on Light. The vendored text editor's unused built-in palettes (`editor/vendor/TextEditor.cpp`) are untouched. |
 
 ## Own cryptography: no hired review, libsodium stays
 

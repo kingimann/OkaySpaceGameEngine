@@ -375,8 +375,15 @@ looks are neutral greys with one neutral accent: a light graphite on Dark, a dar
 
 How it was checked: `tests/test_editor_theme.cpp` (no blue in any palette colour, text at least 4.5:1 and the accent at least
 3:1 against every surface in both looks, Light is the inverse of Dark, the old saved values map to Dark or Light) and
-`scripts/find_blue_ui.py --check`, both run on Linux. The editor was compiled on Linux and screenshots of both looks were
-taken from the real editor in a virtual display (software renderer); nothing was run on Windows.
+`scripts/find_blue_ui.py --check`, both run on Linux. The editor was compiled on Linux and run in a virtual display (Xvfb, SDL
+software renderer, 1600x900): both looks, the Theme menu, an old settings file (`theme 2` and `accent 7` opened as Dark and
+was saved back as `theme 0` with no `accent` line). Nothing was run on Windows.
+
+Screenshots of the real editor (taken in that virtual display) are in `docs/images/editor-two-themes/`:
+`dark_sel.png` / `light_sel.png` (Hierarchy selection and Inspector), `theme_menu_dark.png` / `theme_menu_light.png` (View >
+Appearance > Theme: only Dark and Light, no Accent color), `dark_script.png` / `light_script.png` (script editor),
+`dark_console.png` / `light_console.png`, `dark_project.png` / `light_project.png`, and `dark_okayui.png` /
+`light_okayui.png` (the Console drawn by OkayUI, `OKAY_UI_BACKEND=okayui`, which follows the same two looks).
 
 ## How the packaging was checked (and what was not)
 

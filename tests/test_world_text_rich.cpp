@@ -160,6 +160,25 @@ int main() {
         CHECK(std::abs((b2.y1 - b2.y0) - (b1.y1 - b1.y0)) <= 1);            // B itself kept its size
     }
 
+    {   // review: a line with a bigger run is moved down so the run does not overlap the line above, and a big run on
+        // the first line does not reach above the text's top (before, sized runs grew upward over the line above)
+        tr->shadow = false; tr->outline = false;
+        tr->text = "AB\n[size=300][color=#ff0000]C[/color][/size]D";
+        RecordPainter two;
+        ui2d::DrawWorldText(two, *tr, 0.0f, 100.0f, 2.0f);
+        const auto green = two.Of(0, 255, 0), red = two.Of(255, 0, 0);
+        int line1Bottom = INT_MIN;
+        for (const auto& f : two.fills) if (f.r == 0 && f.g == 255 && f.b == 0 && f.y < 100 + 9 * 2) line1Bottom = std::max(line1Bottom, f.y + f.h);
+        std::printf("  line 1 bottom %d, big C top %d\n", line1Bottom, red.y0);
+        CHECK(green.n > 0 && red.n > 0);
+        CHECK(red.y0 >= line1Bottom);                                       // no overlap with the line above
+        tr->text = "[size=300][color=#ff0000]A[/color][/size]B";
+        RecordPainter first;
+        ui2d::DrawWorldText(first, *tr, 0.0f, 100.0f, 2.0f);
+        CHECK(first.Of(255, 0, 0).y0 >= 100);                               // not above the text's own top
+        CHECK(std::abs(first.Of(255, 0, 0).y1 - first.Of(0, 255, 0).y1) <= 2);   // still one bottom line
+    }
+
     {   // shadow and outline follow the runs and keep their own colours
         tr->text = "[color=#ff0000]A[/color]B";
         tr->shadow = true; tr->shadowColor = Color::FromBytes(0, 0, 255);

@@ -115,7 +115,7 @@ inline std::string Column(const std::string& raw, const ScrubContext& ctx, std::
 
 // ---- The report as a row --------------------------------------------------------------------------------------------------------------
 // The id a report goes by: the same text is the same id (so a re-read or a retry never sends twice).
-inline std::string ReportId(const Report& r) { return HashHex(r.text); }
+inline std::string ReportId(const Report& r) { return r.id.empty() ? HashHex(r.text) : r.id; }
 
 struct Payload {
     bool ok = false;
@@ -497,6 +497,7 @@ inline IssueDraft MakeIssueDraft(const Report& original, const ScrubContext& ctx
         b += "\n### Console (last " + std::to_string(r.console.size() - from) + " lines)\n" + fence(r.console, from);
     }
     b += "\n### How to reproduce\n_Please fill in: what you were doing, and whether it happens every time._\n\n1. \n2. \n3. \n";
+    b += "\n### Full report\n_The launcher copied the whole cleaned report to your clipboard: paste it here._\n";
     d.body = LimitLines(b, 400);
     return d;
 }

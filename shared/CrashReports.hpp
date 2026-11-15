@@ -37,6 +37,7 @@ struct Report {
     std::vector<std::string> breadcrumbs;                     // "frame 1200: UI.Inspector"
     std::vector<std::string> console;                         // "[-3s] E message"
     std::string signature;                                    // 16 hex digits: the same crash gives the same signature (Signature())
+    std::string id;                                           // 16 hex digits: a hash of the whole text, one per report (what the uploader remembers)
     // The value of a header line ("GPU", "Scene", "Uptime", ...), "" if the report has none.
     std::string Info(const std::string& key) const {
         for (const auto& kv : info) if (kv.first == key) return kv.second;
@@ -228,6 +229,7 @@ inline Report ParseOne(const std::string& text) {
         else if (r.info.size() < 64) r.info.emplace_back(key, value);
     }
     r.signature = Signature(r);
+    r.id = HashHex(r.text);
     return r;
 }
 

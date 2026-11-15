@@ -85,7 +85,7 @@ class FakeSB:
 
 class Scrub(unittest.TestCase):
     def test_second_pass_catches_what_the_sender_missed(self):
-        t = "C:\\Users\\Alice Smith\\x.png /home/bob/p /Users/carol/q alice@example.com 203.0.113.9 ghp_abcdefghijklmnopqrstuvwxyz0123456789 password=hunter2 Bearer abcdefghijkl"
+        t = "C:\\Users\\Alice Smith\\x.png /home/bob/p /Users/carol/q alice@example.com 203.0.113.9 ghp_abcdefghijklmnopqrstuvwxyz0123456789 password=hunter2 Bearer abcdefghijkl"   # lint-allow: secret (a made-up value the scrubber must catch)
         s = c.scrub(t)
         for gone in ("Alice", "bob", "carol", "example.com", "203.0.113.9", "ghp_", "hunter2", "abcdefghijkl"):
             self.assertNotIn(gone, s, gone)
@@ -321,7 +321,7 @@ class Process(unittest.TestCase):
         self.assertEqual(stats2["created"], 2)
 
     def test_the_issue_never_holds_what_a_hostile_row_tried(self):
-        evil = row(1, report=report(console=["token=ghp_abcdefghijklmnopqrstuvwxyz0123456789 mail me bob@example.com from 198.51.100.4 C:\\Users\\bob\\x"]))
+        evil = row(1, report=report(console=["token=ghp_abcdefghijklmnopqrstuvwxyz0123456789 mail me bob@example.com from 198.51.100.4 C:\\Users\\bob\\x"]))   # lint-allow: secret (a made-up value the scrubber must catch)
         _, gh, _, _ = self.run_process([evil])
         text = gh.created[0][1] + gh.created[0][2]
         for gone in ("ghp_", "bob@", "198.51.100.4", "bob\\"):
@@ -364,7 +364,7 @@ class Main(unittest.TestCase):
     def test_mask_hides_secrets(self):
         c._SECRETS[:] = ["supersecretvalue123"]
         try:
-            m = c.mask("failed with supersecretvalue123 and ghp_abcdefghijklmnopqrstuvwxyz0123 and eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF")
+            m = c.mask("failed with supersecretvalue123 and ghp_abcdefghijklmnopqrstuvwxyz0123 and eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF")   # lint-allow: secret (a made-up value the scrubber must catch)
         finally:
             c._SECRETS[:] = []
         self.assertNotIn("supersecretvalue123", m)

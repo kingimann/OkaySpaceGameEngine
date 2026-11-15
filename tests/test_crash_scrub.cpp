@@ -62,16 +62,16 @@ int main() {
     CHECK(S("git@github.com:owner/repo.git") == "<email>:owner/repo.git");
     CHECK(S("@alice and user@host and x@") == "@<user> and user@host and x@");
     CHECK(S("\xC3\xA9@dom.com") == "\xC3\xA9@dom.com" || S("\xC3\xA9@dom.com") == "<email>");       // non-ASCII local parts: never garbled
-    // ---- Web addresses with a name and password ---------------------------------------------------------------------------------------
+    // ---- Web addresses with a name and password ---------------------------------------------------------------------------------------   // lint-allow: secret (a made-up value the scrubber must catch)
     CHECK(S("fetch https://alice:hunter2@example.com/path?x=1") == "fetch https://<redacted>@example.com/path?x=1");
     CHECK(S("see https://example.com/a@b/c and http://h:80/") == "see https://example.com/a@b/c and http://h:80/");
 
-    // ---- Secrets ----------------------------------------------------------------------------------------------------------------------
-    CHECK(S("token ghp_abcdefghijklmnopqrstuvwxyz0123456789 end") == "token <token> end");
-    CHECK(S("github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV") == "<token>");
+    // ---- Secrets ----------------------------------------------------------------------------------------------------------------------   // lint-allow: secret (a made-up value the scrubber must catch)
+    CHECK(S("token ghp_abcdefghijklmnopqrstuvwxyz0123456789 end") == "token <token> end");   // lint-allow: secret (a made-up value the scrubber must catch)
+    CHECK(S("github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV") == "<token>");   // lint-allow: secret (a made-up value the scrubber must catch)
     CHECK(S("key=sb_publishable_VYrh0rGNcTNTJRe1CovsoA_sP9ia4yn") == "key=<token>");
-    CHECK(S("sb_secret_abcdefghijklmnop") == "<token>" && S("AKIAIOSFODNN7EXAMPLE") == "<token>" && S("xoxb-123456789012-abcdef") == "<token>");
-    CHECK(S("sk-ant-api03-abcdefghijklmnopqrstuvwxyz and sk-abcdefghijklmnopqrstuvwxyz0123") == "<token> and <token>");
+    CHECK(S("sb_secret_abcdefghijklmnop") == "<token>" && S("AKIAIOSFODNN7EXAMPLE") == "<token>" && S("xoxb-123456789012-abcdef") == "<token>");   // lint-allow: secret (a made-up value the scrubber must catch)
+    CHECK(S("sk-ant-api03-abcdefghijklmnopqrstuvwxyz and sk-abcdefghijklmnopqrstuvwxyz0123") == "<token> and <token>");   // lint-allow: secret (a made-up value the scrubber must catch)
     CHECK(S("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF_ghi-123") == "<token>");     // a JSON web token
     CHECK(S("Authorization: Bearer abc.def.ghi\nnext line") == "Authorization: <redacted>\nnext line");
     CHECK(S("header was Bearer abcdefghijkl123456 and") == "header was Bearer <token> and");
@@ -86,7 +86,7 @@ int main() {
     CHECK(S("aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6kM9nP") == "<token>");                              // 41 mixed letters and digits
     CHECK(S("_ZN4okay5Scene14UpdateTransformsEfRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE") ==
           "_ZN4okay5Scene14UpdateTransformsEfRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE");   // a mangled name is not a key
-    CHECK(S("snake_case_identifier_that_is_quite_long_but_not_a_secret_at_all_1") == "snake_case_identifier_that_is_quite_long_but_not_a_secret_at_all_1");
+    CHECK(S("snake_case_identifier_that_is_quite_long_but_not_a_secret_at_all_1") == "snake_case_identifier_that_is_quite_long_but_not_a_secret_at_all_1");   // lint-allow: secret (a made-up value the scrubber must catch)
 
     // ---- IP addresses -----------------------------------------------------------------------------------------------------------------
     CHECK(S("connect 203.0.113.7:7777 from 192.168.1.20") == "connect <ip>:7777 from <ip>");
@@ -102,7 +102,7 @@ int main() {
     CHECK(S("") == "" && S("   ") == "   ");
     CHECK(S("[click](javascript:alert(1)) <script>alert(1)</script> @everyone") == "[click](javascript:alert(1)) <script>alert(1)</script> @everyone");   // not this layer's job (the issue script handles it)
     {   // idempotent: scrubbing scrubbed text changes nothing
-        const std::string dirty = "C:\\Users\\alice\\x alice@x.com 10.1.2.3 password=abc ghp_abcdefghijklmnopqrstuvwxyz0123 ALICE-PC Bearer abcdefghijkl /home/alice/p";
+        const std::string dirty = "C:\\Users\\alice\\x alice@x.com 10.1.2.3 password=abc ghp_abcdefghijklmnopqrstuvwxyz0123 ALICE-PC Bearer abcdefghijkl /home/alice/p";   // lint-allow: secret (a made-up value the scrubber must catch)
         const std::string once = S(dirty);
         CHECK(!Has(once, "alice@x") && !Has(once, "10.1.2.3") && !Has(once, "ghp_") && !Has(once, "ALICE-PC") && !Has(once, "abc "));
         CHECK(S(once) == once);

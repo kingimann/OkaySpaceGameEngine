@@ -285,7 +285,7 @@ int main() {
     {   // the request never carries anything but the nine columns, whatever the report said
         Server srv; Ledger ledger;
         Report r = MakeReport(1);
-        r.text += "\nsecret=hunter2 ghp_abcdefghijklmnopqrstuvwxyz0123456789 10.1.2.3 Bearer abcdefghijklmnop\n";
+        r.text += "\nsecret=hunter2 ghp_abcdefghijklmnopqrstuvwxyz0123456789 10.1.2.3 Bearer abcdefghijklmnop\n";   // lint-allow: secret (a made-up value the scrubber must catch)
         Run({r}, ledger, srv.Transport_(), Alice(), opts(kNow));
         CHECK(srv.got.size() == 1 && srv.got[0].body.find("hunter2") == std::string::npos && srv.got[0].body.find("ghp_") == std::string::npos &&
               srv.got[0].body.find("10.1.2.3") == std::string::npos && srv.got[0].body.find("abcdefghijklmnop") == std::string::npos);

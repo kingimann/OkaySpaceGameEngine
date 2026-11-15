@@ -122,7 +122,7 @@ inline std::string UserFolders(const std::string& in) {
     return out;
 }
 
-// ---- 2. user:password@ in a web address -----------------------------------------------------------------------------------------------
+// ---- 2. user:password@ in a web address ----
 inline std::string UrlCredentials(const std::string& in) {
     std::string out;
     std::size_t i = 0;
@@ -138,7 +138,7 @@ inline std::string UrlCredentials(const std::string& in) {
     return out;
 }
 
-// ---- 3. secrets ---------------------------------------------------------------------------------------------------------------------------
+// ---- 3. secrets ----
 inline bool TokenCh(char c) { return std::isalnum((unsigned char)c) || c == '_' || c == '-' || c == '.' || c == '~' || c == '+' || c == '/' || c == '='; }
 
 inline std::string KnownKeys(const std::string& in) {

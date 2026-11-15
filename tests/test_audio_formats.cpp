@@ -114,9 +114,9 @@ int main() {
         std::vector<std::string> failed;
         CHECK(LoadSceneAudio(s, kData, 44100, &failed) == 2);
         CHECK(failed.size() == 1 && failed[0] == "nope.ogg");
-        CHECK(music->clip.sampleRate == 44100 && !music->clip.samples.empty());
-        CHECK(!step->clip.samples.empty());
-        CHECK(none->clip.samples.empty());
+        CHECK(music->Clip().sampleRate == 44100 && !music->Clip().samples.empty());
+        CHECK(!step->Clip().samples.empty());
+        CHECK(none->Clip().samples.empty());
 
         // And it plays through the mixer.
         s.Start();

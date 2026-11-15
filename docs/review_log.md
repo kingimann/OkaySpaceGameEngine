@@ -62,6 +62,49 @@ verified by anyone.
 
 Nothing copied-looking was found in these branches. That comes from reading and cannot prove the code is original.
 
+## 5. Second Claude's branches: reverb, LWO UVs, Terragen (internal agent re-check)
+
+Read-only re-check of the fixes the second Claude made after its first review. Nothing was built or run by the
+reviewer; test counts are the author's claims.
+
+| Finding | Where | Status |
+|---|---|---|
+| Reverb: no problems found; level held to 0.05 dB against the old reverb; not listened to on speakers | `claude2/reverb-own-tuning` (PR #860) | Ready; unverified by ear |
+| LWO UVs: cylinder V lost the `WRPH` scale, so "placement kept identical" was not true; one code comment still said "derived from geometry" | `claude2/lwo-uv-rewrite` | Fixed on `claude/lwo-fix` (owner accepted keeping the old placement for now, 2026-11-14); test being added |
+| Terragen: `-DOKAY_OWN_TER=ON` did nothing (a merge dropped TER from the CMake loop) | `claude2/own-reader-terragen` | Fixed on `claude/terragen-fix`; proof being added |
+
+Not checked: Windows, the full test suite, any listening test.
+
+## 6. Launcher branches: startup update (#864) and login gate (internal agents, two rounds)
+
+Round 1 and round 2 were read-only reviews by fresh agents; the authors fixed what was real after each round.
+
+| Finding | Where | Status |
+|---|---|---|
+| "Restarting" panel could hide the launcher forever (restart failed or editor open) | startup update | Fixed (12 s give-up), round 2 verified |
+| Launch race: programs started during the check, then replaced by the install | startup update | Mostly fixed; residual window closed in round 3 (flag set in `SpawnTracked`) |
+| Stalled download kept a full-screen panel with no way out; "programs running" refusal counted as a failed update | startup update | Fixed on the branch (60 s no-growth and hard cap; refusal not counted) |
+| 403 from a proxy or captive portal counted as a refused sign-in and deleted the saved session | login gate | Fixed (only an auth-server body about the refresh token counts) |
+| Race with the editor's token rotation; clock set ahead locks out after 7 days; opaque tokens | login gate | Fixed (re-read the file, grace renewed on any server confirmation) |
+| Half-written session file or an old worker acting on a new account | login gate | Fixed in round 3 (guards and atomic write) |
+
+Not covered by any review: running either branch, Windows, a real server, a real hung download.
+
+## 7. Own readers by agents (second reviews of e1, e2, e3, e5)
+
+| Finding | Where | Status |
+|---|---|---|
+| Tiny file makes large work or memory: RAW tokeniser on one huge line (about 4 GB), COB quadratic ShBx loop, IQM meshes reusing one range (about 300 MB from 250 KB), PMX and LWS bone copies | readers e2, e3, e5 | Fixed on the branches with counting-new tests |
+| No test that the CMake option makes the reader the default (Terragen lost its option in a merge once) | readers e1 to e5 | Added per branch |
+| MDC used another project's struct names and "published structures"; HMP and COB spec claims vaguer than the evidence | readers e1, e3 | Reworded; constants "from memory, unverified" stated; owner decision flagged |
+| Sample files from a non-BSD part of a test tree | readers e1, e3 | Recorded in THIRD_PARTY.md; licence unchecked; not committed |
+
+Silo (SIB) is not written (no public description). Nendo (NDO) is a seam that refuses every file.
+
+## 8. Closed PRs #849 to #857 (merged with a red Ubuntu job)
+
+Every red was one test: `player` (arm pixel check broken by shadows on by default, #842; fixed by #859). #832, #839, #840 and #793 had the `ui_render_bench` speed test red. All other jobs on all nine PRs were green. They merged under the old rule 6; the owner then changed it (merge only with every job green).
+
 ## What no review has covered
 
 - Anything on real Windows or macOS; real servers, real network shares, real PlayFab.

@@ -11,6 +11,7 @@
 #include <Okay.hpp>
 #include "okay/Components/InventoryPlayer.hpp"
 #include "okay/Components/Seat.hpp"
+#include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/SettingsScreen.hpp"
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/WorldSpaceUI.hpp"
@@ -62,7 +63,7 @@ using namespace okay;
     X(UIPagination) X(UIProgressBar) X(UIRadialProgress) X(UIRating) X(UIRawImage) X(UISafeArea) X(UIScrollView) X(UISearchBar) X(UISkeleton) X(UISlider) \
     X(UISlotGrid) X(UIStepper) X(UITabs) X(UITextBind) X(UITheme) X(UIToast) X(UIToastItem) X(UIToggle) \
     X(TouchButton) X(TouchDPad) X(VirtualJoystick) \
-    X(UITooltip) X(VehicleController) X(VehicleController2D) X(VirtualCamera) X(VisualScriptComponent) \
+    X(UITooltip) X(VehicleController) X(VehicleController2D) X(VehicleSeat) X(VirtualCamera) X(VisualScriptComponent) \
     X(VoxelDigger) X(VoxelTerrain) X(Volume) X(Water) X(WeatherRig) X(WetnessStat) X(WorldSpaceUI) X(WorldStreamer) \
     X(WorldUI)
 

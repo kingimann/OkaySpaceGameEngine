@@ -93,8 +93,7 @@ inline int LoadSceneAudio(Scene& scene, const std::string& baseDir, int rate,
             continue;
         }
         if (auto clip = LoadAudioFile(au->clipPath, rate)) {
-            au->UseStream(nullptr);
-            au->clip = *clip;
+            au->UseSharedClip(clip);   // one decoded copy for every source on this file: no per-source copy of the samples
             ++loaded;
         }
         else if (failed) failed->push_back(au->clipPath);

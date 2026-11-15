@@ -47,6 +47,7 @@
 #include "okay/Components/TopDownShooterController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/Volume.hpp"
 #include "okay/Components/Water.hpp"
 
@@ -666,6 +667,18 @@ void RegisterVehicleController() {
     b.Commit();
 }
 
+// VehicleSeat
+void RegisterVehicleSeat() {
+    PropertyBuilder<VehicleSeat> b("VehicleSeat", "vehicleseat", "Vehicles");
+    b.AddBool("driver", &VehicleSeat::driver).Tooltip("On: sitting here drives the vehicle. Off: a passenger seat")
+     .AddVec3("sitPoint", &VehicleSeat::sitPoint).Range(-kBig, kBig, 0.01).Tooltip("Local point the body is carried at")
+     .AddVec3("exitPoint", &VehicleSeat::exitPoint).Range(-kBig, kBig, 0.01).Tooltip("Local point they step out to. Blocked: the mirrored sides, then the roof")
+     .AddFloat("useRadius", &VehicleSeat::useRadius).Range(0, kBig, 0.05).Tooltip("How close the player must be to get in")
+     .AddString("prompt", &VehicleSeat::prompt).Tooltip("Text shown while a player is in range")
+     .AddKey("enterKey", &VehicleSeat::enterKey);
+    b.Commit();
+}
+
 // VehicleController2D
 void RegisterVehicleController2D() {
     PropertyBuilder<VehicleController2D> b("VehicleController2D", "vehicle2d", "Vehicles");
@@ -1209,6 +1222,7 @@ void RegisterGameplayProperties() {
     RegisterTopDownShooterController();
     RegisterPlatformer25DController();
     RegisterVehicleController();
+    RegisterVehicleSeat();
     RegisterVehicleController2D();
     RegisterProjectile3D();
     RegisterMeleeAttacker();

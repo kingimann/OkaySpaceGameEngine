@@ -962,6 +962,10 @@ add_test(NAME worldcanvas COMMAND test_worldcanvas)
 add_executable(test_vehicle test_vehicle.cpp)
 target_link_libraries(test_vehicle PRIVATE okay::engine)
 add_test(NAME vehicle COMMAND test_vehicle)
+add_executable(test_vehicle_seat test_vehicle_seat.cpp)
+target_link_libraries(test_vehicle_seat PRIVATE okay::engine)
+target_compile_definitions(test_vehicle_seat PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vehicle_seat COMMAND test_vehicle_seat)
 
 add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
@@ -1486,6 +1490,11 @@ add_executable(test_anim_jitter test_anim_jitter.cpp)
 target_link_libraries(test_anim_jitter PRIVATE okay::engine)
 target_compile_definitions(test_anim_jitter PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME anim_jitter COMMAND test_anim_jitter)
+
+add_executable(test_controller_interpolation test_controller_interpolation.cpp)
+target_link_libraries(test_controller_interpolation PRIVATE okay::engine)
+target_compile_definitions(test_controller_interpolation PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME controller_interpolation COMMAND test_controller_interpolation)
 
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
@@ -2151,6 +2160,11 @@ add_executable(test_renderer_features test_renderer_features.cpp)
 target_link_libraries(test_renderer_features PRIVATE okay::engine)
 add_test(NAME renderer_features COMMAND test_renderer_features)
 # Navigation mesh: bake (walls, doorways, slopes, steps, bridges), queries, agents, files, records
+add_executable(test_play_hitch test_play_hitch.cpp)   # sources on one file share one decoded clip; a nav surface skips an unchanged bake
+target_link_libraries(test_play_hitch PRIVATE okay::engine)
+target_compile_definitions(test_play_hitch PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME play_hitch COMMAND test_play_hitch)
+
 add_executable(test_navmesh test_navmesh.cpp)
 target_link_libraries(test_navmesh PRIVATE okay::engine)
 add_test(NAME navmesh COMMAND test_navmesh)
@@ -3245,10 +3259,76 @@ target_compile_definitions(test_batchd_budget PRIVATE OKAY_STANDALONE_TEST OKAY_
 add_test(NAME batchd_budget COMMAND test_batchd_budget WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(batchd_budget PROPERTIES TIMEOUT 300)
 
+# Batch E own readers (MDC / HMP / CSM): one test per reader on SYNTHETIC fixtures built in memory (tests/batche_fixtures.hpp), one standalone
+# hostile-input + mutation-fuzz + worst-case-memory test for all three (reader sources only, no engine library; it also reads the four real
+# files when OKAY_MODEL_CORPUS is set), the dispatch test (needs the engine), and a CMake-time check that every opt-in reader in the import
+# table has its option, its compile-definition loop entry and its #ifdef (a merge once dropped a name from that loop without anyone noticing).
+okay_batchd_reader_test(mdc MdcReader.cpp)
+okay_batchd_reader_test(hmp HmpReader.cpp)
+okay_batchd_reader_test(csm CsmReader.cpp)
+add_executable(test_batche_hostile test_batche_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/MdcReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/HmpReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/CsmReader.cpp)
+target_include_directories(test_batche_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_batche_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME batche_hostile COMMAND test_batche_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(batche_hostile PROPERTIES TIMEOUT 600)
+
+add_executable(test_own_dispatch_e test_own_dispatch_e.cpp)
+target_link_libraries(test_own_dispatch_e PRIVATE okay::engine)
+foreach(_f MDC HMP CSM)   # -DOKAY_OWN_<FMT>=ON: the test then requires the own reader to be the default
+    if(OKAY_OWN_${_f})
+        target_compile_definitions(test_own_dispatch_e PRIVATE OKAY_EXPECT_OWN_${_f})
+    endif()
+endforeach()
+add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
+    -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt
+    -DENGINE_CMAKE=${PROJECT_SOURCE_DIR}/engine/CMakeLists.txt
+    -DMODEL_IMPORT=${PROJECT_SOURCE_DIR}/engine/src/Render/ModelImport.cpp
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/check_own_reader_wiring.cmake)
+
 # The import seam routes the batch-D formats (slots 22 to 26) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_d test_own_dispatch_d.cpp)
 target_link_libraries(test_own_dispatch_d PRIVATE okay::engine)
 add_test(NAME own_dispatch_d COMMAND test_own_dispatch_d WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Batch E3 own readers (IQM / COB / NDO seam): one test per reader on SYNTHETIC fixtures built in memory (tests/e3_fixtures.hpp), each with its own
+# hostile-input sweeps, budget refusals and a counting operator new for the worst allowed file; reader sources only (no engine library), so they
+# can also be built by hand under -fsanitize=address,undefined. OKAY_E3_SAMPLES (a folder with the real mrfixit.iqm and *.cob files, not in this repo)
+# adds the real-file checks; without it they say "skipped".
+function(okay_e3_reader_test fmt src)
+    add_executable(test_${fmt}_reader test_${fmt}_reader.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src})
+    target_include_directories(test_${fmt}_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${fmt}_reader PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${fmt}_reader COMMAND test_${fmt}_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(${fmt}_reader PROPERTIES TIMEOUT 600)
+endfunction()
+okay_e3_reader_test(iqm IqmReader.cpp)
+okay_e3_reader_test(cob CobReader.cpp)
+okay_e3_reader_test(ndo NdoReader.cpp)
+
+# The import seam routes the batch-E3 formats (slots 34 to 36) to their own readers; needs the whole engine (ImportModelData).
+add_executable(test_own_dispatch_e3 test_own_dispatch_e3.cpp)
+target_link_libraries(test_own_dispatch_e3 PRIVATE okay::engine)
+foreach(_f IQM COB)   # -DOKAY_OWN_<FMT>=ON: the off-by-default checks are skipped for that format
+    if(OKAY_OWN_${_f})
+        target_compile_definitions(test_own_dispatch_e3 PRIVATE OKAY_EXPECT_OWN_${_f})
+    endif()
+endforeach()
+add_test(NAME own_dispatch_e3 COMMAND test_own_dispatch_e3 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Fails when OKAY_OWN_IQM / OKAY_OWN_COB / OKAY_OWN_NDO is ON but the engine did not get the matching OKAY_OWN_<FMT>_DEFAULT (see engine/CMakeLists.txt).
+add_executable(test_own_default_e3 test_own_default_e3.cpp)
+target_link_libraries(test_own_default_e3 PRIVATE okay::engine)
+foreach(_fmt IQM COB NDO)
+    if(OKAY_OWN_${_fmt})
+        target_compile_definitions(test_own_default_e3 PRIVATE OKAY_EXPECT_OWN_${_fmt})
+    endif()
+endforeach()
+add_test(NAME own_default_e3 COMMAND test_own_default_e3 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # The import seam routes the batch-C formats (slots 17 to 21) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
@@ -3317,6 +3397,18 @@ target_compile_features(test_startup_update PRIVATE cxx_std_17)
 target_include_directories(test_startup_update PRIVATE ${PROJECT_SOURCE_DIR}/shared)
 add_test(NAME startup_update COMMAND test_startup_update)
 
+add_executable(test_navmesh_mesh_collider test_navmesh_mesh_collider.cpp)
+target_link_libraries(test_navmesh_mesh_collider PRIVATE okay::engine)
+add_test(NAME navmesh_mesh_collider COMMAND test_navmesh_mesh_collider)
+
+
+add_executable(test_reduce_motion_bob test_reduce_motion_bob.cpp)
+target_link_libraries(test_reduce_motion_bob PRIVATE okay::engine)
+add_test(NAME reduce_motion_bob COMMAND test_reduce_motion_bob)
+add_executable(test_turn_interpolation test_turn_interpolation.cpp)
+target_link_libraries(test_turn_interpolation PRIVATE okay::engine)
+add_test(NAME turn_interpolation COMMAND test_turn_interpolation)
+
 # Our own Terragen (.ter) reader (docs/own_terragen_reader.md): synthetic files built in memory, values worked out by hand
 # from the specification, the import seam; and the hostile-input test, which builds without the engine library.
 add_executable(test_terragen_reader test_terragen_reader.cpp)
@@ -3333,3 +3425,47 @@ if(OKAY_OWN_TER)
     target_compile_definitions(test_own_ter_default PRIVATE OKAY_EXPECT_OWN_TER)
 endif()
 add_test(NAME own_ter_default COMMAND test_own_ter_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Texture paths named in model files (okay/Render/TexturePath.hpp, #753): inside the model's folder, or inside an allowed root
+# (the open project) with links followed; both OBJ/MTL code paths (ReadObjFile and Mesh::LoadOBJ).
+add_executable(test_obj_texture_roots test_obj_texture_roots.cpp)
+target_link_libraries(test_obj_texture_roots PRIVATE okay::engine)
+add_test(NAME obj_texture_roots COMMAND test_obj_texture_roots WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Batch E own readers (Q3D, RAW; SIB is not written yet, see docs/own_sib_reader.md): one test per reader on SYNTHETIC hand-built fixtures
+# (tests/batche2_fixtures.hpp), a hostile-input / bit-flip test, a budget + memory test (counting operator new), and the dispatch test.
+# The reader tests build on their own from the reader sources (no engine library).
+foreach(_e_t IN ITEMS q3d_reader:Q3dReader.cpp raw_reader:RawReader.cpp)
+    string(REPLACE ":" ";" _e_p "${_e_t}")
+    list(GET _e_p 0 _e_name)
+    list(GET _e_p 1 _e_src)
+    add_executable(test_${_e_name} test_${_e_name}.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${_e_src})
+    target_include_directories(test_${_e_name} PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${_e_name} PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${_e_name} COMMAND test_${_e_name} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endforeach()
+foreach(_e_t IN ITEMS batche2_hostile batche2_budget)
+    add_executable(test_${_e_t} test_${_e_t}.cpp
+        ${PROJECT_SOURCE_DIR}/engine/src/Render/Q3dReader.cpp
+        ${PROJECT_SOURCE_DIR}/engine/src/Render/RawReader.cpp)
+    target_include_directories(test_${_e_t} PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${_e_t} PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${_e_t} COMMAND test_${_e_t} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(${_e_t} PROPERTIES TIMEOUT 600)
+endforeach()
+
+# The import seam routes the batch-E formats (slots 31 and 33) to their own readers; needs the whole engine (ImportModelData).
+add_executable(test_own_dispatch_e2 test_own_dispatch_e2.cpp)
+target_link_libraries(test_own_dispatch_e2 PRIVATE okay::engine)
+foreach(_e_f IN ITEMS Q3D RAW)
+    if(OKAY_OWN_${_e_f})
+        target_compile_definitions(test_own_dispatch_e2 PRIVATE OKAY_EXPECT_OWN_${_e_f})
+    endif()
+endforeach()
+add_test(NAME own_dispatch_e2 COMMAND test_own_dispatch_e2 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# The OKAY_OWN_<FMT>_DEFAULT definitions of the own model readers must exist in engine/CMakeLists.txt for every reader option
+# (a merge once silently dropped one from the foreach list): checked at configure time by engine/CMakeLists.txt itself (FATAL_ERROR),
+# and here again from the outside so a change to that guard cannot remove the check silently.
+add_test(NAME own_reader_cmake_defaults
+    COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_own_reader_defaults.cmake)

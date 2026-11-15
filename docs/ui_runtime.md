@@ -207,3 +207,11 @@ once; with no project open it stays an unsaved scene.
 | Radio toggles, draggable window | inspector | one on per group, window moves | `test_runtime_ui` | yes |
 | Nameplate | UI add menu (and in the world) | health bar follows the Health Stat; the name and level are plain text | `test_runtime_ui` (Hit and Heal change the bar) | yes, with Hit / Heal buttons |
 | `ui_*` script calls | text scripts | as above | `test_runtime_ui` | n/a |
+
+## Dropdown: long lists
+
+A dropdown with `maxVisible` set shows that many options and scrolls the rest: mouse wheel, keys, or
+dragging inside the open list. A press on an option only arms a pick. If the pointer (mouse, or a finger,
+which drives the same pointer) moves more than 10 pixels, the press becomes a scroll by whole rows and the
+list stays clamped; letting go never picks after a drag, even over a row. A tap (press and release on the
+same row without moving) picks it. Lists that do not scroll still pick on press. No momentum.

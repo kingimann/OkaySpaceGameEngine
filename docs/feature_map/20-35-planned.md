@@ -1298,7 +1298,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Editor:** none
 - **Docs:** `docs/accessibility.md`
 - **Tests:** `accessibility`, `accessibility_wired`, `accessibility_render`
-- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion, reduce flashing, subtitles, sound captions, hold-to-toggle and aim assist change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`, `accessibility_remaining`); the editor has no preview, UI images are not filtered, and screen-reader hints are not offered.
+- **Status:** Partial - the colour vision filter, text size, high contrast, reduce motion, reduce flashing, subtitles, sound captions, hold-to-toggle and aim assist change the player and are on the Settings screen (tests `accessibility_wired`, `accessibility_render`, `accessibility_remaining`, `reduce_motion_bob`); the editor has no preview, UI images are not filtered, and screen-reader hints are not offered.
 - **Exists today:** `Graphics/ColorVision`, `Core/AccessibilitySettings` and the player and UI renderer reading them; the editor and the okayui chrome do not.
 - **Work packages:**
   1. Done - the filter runs on the pixel buffer every renderer hands to the player (CPU, about a few ms at 1080p).

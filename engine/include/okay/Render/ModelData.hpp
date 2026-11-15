@@ -385,6 +385,12 @@ bool SetImportBackend(const std::string& ext, ImportBackend which);
 /// fallbacks: Own, Assimp, or Default when no backend reads that format.
 ImportBackend EffectiveImportBackend(const std::string& ext);
 
+/// The Console line an import writes when it succeeds (docs/model_import.md, "Which reader ran"):
+/// `model import '<path>': read by <readBy>`, plus ` (our own <ownRefused> reader refused it)` when `ownRefused` is not empty.
+/// `readBy` is "our own STL reader", "Assimp", "ufbx" and so on. ImportModel, ImportModelScene and ImportModelData log it once
+/// per call that succeeds (nested reads inside one import do not add lines); a failed import logs none.
+std::string ImportReaderLine(const std::string& path, const std::string& readBy, const std::string& ownRefused = std::string());
+
 /// Runs one reader step and turns a thrown std::bad_alloc, std::length_error or any other std::exception into a refusal
 /// (false, with the reason in `err`), so no hostile file can end the program through an exception. ImportModelData wraps every
 /// own reader in it; it is public so a test can check it with a reader that throws.

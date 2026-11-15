@@ -18,11 +18,13 @@
 // backend saved in the settings file of a developer build (OKAY_DEV); the About popup passes the resolved one.
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
 #include "AntiCheatCrypto.hpp"   // okayac::ed25519::UseSodium(): what Ed25519 really uses at run time
 #include "OkayUIBackend.hpp"
+#include "okay/Audio/WavDecoder.hpp"
 #include "okay/Platform/Platform.hpp"
 #include "okay/Render/FbxReader.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -33,7 +35,8 @@
 namespace okay::ownstack {
 
 /// One own reader that can be chosen at run time: the environment variable, the file extension the import table knows it
-/// by ("" for FBX, which has its own switch), and the short name used in the startup line.
+/// by ("" for FBX, which has its own switch; ".wav" for our WAV decoder, which is not a model reader but is listed with them),
+/// and the short name used in the startup line.
 struct ReaderSwitch { const char* var; const char* ext; const char* label; };
 
 inline const std::vector<ReaderSwitch>& Readers() {
@@ -45,8 +48,25 @@ inline const std::vector<ReaderSwitch>& Readers() {
         {"OKAY_OWN_DXF", ".dxf", "dxf"},      {"OKAY_OWN_LWO", ".lwo", "lwo"},       {"OKAY_OWN_BLEND", ".blend", "blend"},
         {"OKAY_OWN_MD2", ".md2", "md2"},      {"OKAY_OWN_MD3", ".md3", "md3"},       {"OKAY_OWN_IRRMESH", ".irrmesh", "irrmesh"},
         {"OKAY_OWN_B3D", ".b3d", "b3d"},      {"OKAY_OWN_X", ".x", "x"},
+        // Step 0.3 of the flip proposal: the newest readers (not NDO: that reader is a seam that refuses every file).
+        {"OKAY_OWN_AC3D", ".ac", "ac3d"},     {"OKAY_OWN_OGRE", ".mesh.xml", "ogre"}, {"OKAY_OWN_XGL", ".xgl", "xgl"},
+        {"OKAY_OWN_IRR", ".irr", "irr"},      {"OKAY_OWN_NFF", ".nff", "nff"},       {"OKAY_OWN_TER", ".ter", "ter"},
+        {"OKAY_OWN_MDC", ".mdc", "mdc"},      {"OKAY_OWN_HMP", ".hmp", "hmp"},       {"OKAY_OWN_CSM", ".csm", "csm"},
+        {"OKAY_OWN_Q3D", ".q3o", "q3d"},      {"OKAY_OWN_RAW", ".raw", "raw"},       {"OKAY_OWN_IQM", ".iqm", "iqm"},
+        {"OKAY_OWN_COB", ".cob", "cob"},      {"OKAY_OWN_PMX", ".pmx", "pmx"},       {"OKAY_OWN_LWS", ".lws", "lws"},
+        // Step 0.8: STL and PLY first (without Assimp in the build ours are the only readers, so they always show there).
+        {"OKAY_OWN_STL", ".stl", "stl"},      {"OKAY_OWN_PLY", ".ply", "ply"},
+        // Step 0.3: our WAV decoder (AudioClip::LoadWAV).
+        {"OKAY_OWN_WAV", ".wav", "wav"},
     };
     return r;
+}
+
+/// True when this switch's own code is what runs now: FBX asks its own switch, WAV the decoder switch, the rest the import table.
+inline bool OwnInUse(const ReaderSwitch& r) {
+    if (r.ext[0] == '\0') return okay::fbx::OwnReaderEnabled();
+    if (std::strcmp(r.ext, ".wav") == 0) return okay::wav::OwnWavEnabled();
+    return okay::EffectiveImportBackend(r.ext) == okay::ImportBackend::Own;
 }
 
 struct Setting { const char* var; const char* value; };
@@ -148,11 +168,8 @@ inline Info Gather(const char* ui = nullptr) {
     i.http = okay::http::NativeAvailable() ? "own" : "curl";
 #endif
 
-    for (const ReaderSwitch& r : Readers()) {
-        const bool own = r.ext[0] == '\0' ? okay::fbx::OwnReaderEnabled()
-                                          : okay::EffectiveImportBackend(r.ext) == okay::ImportBackend::Own;
-        if (own) i.ownReaders.push_back(r.label);
-    }
+    for (const ReaderSwitch& r : Readers())
+        if (OwnInUse(r)) i.ownReaders.push_back(r.label);
     i.ufbx = !okay::fbx::OwnReaderEnabled();   // ufbx is always compiled in
 #ifdef OKAY_HAVE_ASSIMP
     i.assimp = true;

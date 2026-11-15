@@ -306,10 +306,10 @@ jobs:
       - name: Build
         run: |
           cmake --build build-assimp -j --target test_model_readers test_model_readers_fuzz test_collada_reader \
-            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container
+            test_model_import_rig test_gltf_import test_fbx_reader test_glb_container test_import_reader_log
 
       - name: Test
-        run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container)$'
+        run: ctest --test-dir build-assimp --output-on-failure -R '^(model_readers|model_readers_fuzz|collada_reader|model_import_rig|gltf_import|fbx_reader|glb_container|import_reader_log)$'
 
   # Our own HTTP client (docs/own_http_client.md) with the CMake option on. NOT required for merging and the
   # option stays OFF by default everywhere else. Only the two header-only test targets are built (the client
@@ -390,16 +390,19 @@ jobs:
           grep -q 'OKAY_OWN_STACK_BUILD' build-own/build.ninja
           grep -q 'OKAY_OWN_HTTP_DEFAULT_ON' build-own/build.ninja
           grep -q 'OKAY_OWN_FBX_DEFAULT' build-own/build.ninja
+          # Step 0.3 / 0.8: the 15 newest model readers, our WAV decoder and STL / PLY first must reach the compiler too
+          for f in AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB PMX LWS WAV; do grep -q "OKAY_OWN_${f}_DEFAULT" build-own/build.ninja || { echo "OKAY_OWN_${f}_DEFAULT missing"; exit 1; }; done
+          grep -q 'OKAY_PREFER_OWN_READERS_DEFAULT' build-own/build.ninja
           grep -q 'OKAY_PLATFORM_DEFAULT_OWN' build-own/build.ninja
           grep -q 'OKAY_OWN_CRYPTO' build-own/build.ninja
 
-      # Only the own pieces' tests: model readers, own_http*, platform*, okayui*, anticheat_*, net_crypto_own and the
+      # Only the own pieces' tests: model readers, own_http*, platform*, okayui*, anticheat_*, net_crypto_own, the WAV tests and the
       # own-stack switch itself. The target names come from the configured build (some are made in loops, so they are not
       # all in tests/CMakeLists.txt as literal text), so new tests of these kinds join the job. The same names give the ctest filter.
       - name: Build the own-stack tests
         run: |
           ninja -C build-own -t targets all | grep -oE '^test_[a-z0-9_]+' | sort -u \
-            | grep -E '^test_([a-z0-9_]*(reader|hostile|fbx|3ds|bvh|collada|glb|gltf|obj_import)[a-z0-9_]*|model_(readers|readers_fuzz|corpus|import_rig)|own_[a-z0-9_]+|platform[a-z0-9_]*|net_crypto_own|net_crypto|anticheat_[a-z0-9_]+|net_anticheat[a-z0-9_]*|ui_backend|okayui[a-z0-9_]*)$' > own-stack-targets.txt
+            | grep -E '^test_([a-z0-9_]*(reader|hostile|fbx|3ds|bvh|collada|glb|gltf|obj_import)[a-z0-9_]*|model_(readers|readers_fuzz|corpus|import_rig)|own_[a-z0-9_]+|platform[a-z0-9_]*|net_crypto_own|net_crypto|anticheat_[a-z0-9_]+|net_anticheat[a-z0-9_]*|ui_backend|okayui[a-z0-9_]*|wav|wav_[a-z0-9_]+)$' > own-stack-targets.txt
           wc -l own-stack-targets.txt
           cmake --build build-own -j 2 --target $(cat own-stack-targets.txt | tr '\n' ' ')
           echo "OWN_STACK_TESTS=^($(sed 's/^test_//' own-stack-targets.txt | tr '\n' '|' | sed 's/|$//')|release_refuses_own_crypto)" >> "$GITHUB_ENV"
@@ -410,6 +413,7 @@ jobs:
           grep -q 'platform=own' stack.txt
           grep -q 'http=own' stack.txt
           grep -q 'readers=own(fbx,dae,3ds,bvh' stack.txt
+          grep -q ',x,ac3d,ogre,xgl,irr,nff,ter,mdc,hmp,csm,q3d,raw,iqm,cob,pmx,lws,stl,ply,wav)' stack.txt
           grep -q 'crypto=own(test)' stack.txt
 
       - name: Test

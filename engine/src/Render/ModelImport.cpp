@@ -72,6 +72,51 @@ static void ValidateSkinJoints(SkinnedMesh& sm, const std::string& path) {
 
 static std::string Lower(std::string s);
 
+// ---- Which reader read the file: one Console line per import (docs/model_import.md, "Which reader ran") ---------------
+// Every reader that succeeds notes who it was (NoteReader); the outermost public import call (ImportModel, ImportModelScene
+// or ImportModelData) logs one line when the whole import succeeded. Calls made inside an import (an Irrlicht or LightWave
+// scene reading the meshes it names, the scene importer trying the seam and then the one-mesh path) only add notes, and the
+// last note wins: the reader whose result was kept is the one that noted last. Thread-local, so imports on two threads do
+// not mix their notes.
+std::string ImportReaderLine(const std::string& path, const std::string& readBy, const std::string& ownRefused) {
+    std::string line = "model import '" + path + "': read by " + readBy;
+    if (!ownRefused.empty()) line += " (our own " + ownRefused + " reader refused it)";
+    return line;
+}
+
+namespace {
+struct ReaderNote {
+    int depth = 0;            // public import calls open on this thread
+    std::string readBy;       // "our own STL reader", "Assimp", "ufbx", ...
+    std::string ownRefused;   // the format name of our reader that refused the file before readBy read it, or ""
+};
+thread_local ReaderNote t_readerNote;
+
+void NoteReader(const std::string& readBy, const std::string& ownRefused = std::string()) {
+    t_readerNote.readBy = readBy;
+    t_readerNote.ownRefused = ownRefused;
+}
+std::string OwnReaderText(const char* format) { return std::string("our own ") + format + " reader"; }
+
+// One per public import call. Finish(ok) on the outermost one writes the line; the destructor only closes the nesting.
+class ImportLogScope {
+public:
+    explicit ImportLogScope(const std::string& path) : m_path(path), m_outer(t_readerNote.depth++ == 0) {
+        if (m_outer) { t_readerNote.readBy.clear(); t_readerNote.ownRefused.clear(); }
+    }
+    ~ImportLogScope() { --t_readerNote.depth; }
+    ImportLogScope(const ImportLogScope&) = delete;
+    ImportLogScope& operator=(const ImportLogScope&) = delete;
+    void Finish(bool ok) {
+        if (m_outer && ok && !t_readerNote.readBy.empty())
+            Log::Info(ImportReaderLine(m_path, t_readerNote.readBy, t_readerNote.ownRefused));
+    }
+private:
+    std::string m_path;
+    bool m_outer;
+};
+} // namespace
+
 bool AssimpAvailable() {
 #ifdef OKAY_HAVE_ASSIMP
     return true;
@@ -128,11 +173,18 @@ static void NormalizeImportedClips(GameObject* root) {
 }
 
 
-Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
+static Mesh ImportModelImpl(const std::string& path, bool* ok, std::string* outTexture) {
     std::string p = Lower(path);
-    if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp)
-        return Mesh::LoadOBJ(path, ok, outTexture);
-    if (EndsWith(p, ".gltf") || EndsWith(p, ".glb"))  return LoadGLTF(path, ok, outTexture);
+    if (EndsWith(p, ".obj") && EffectiveImportBackend(".obj") != ImportBackend::Assimp) {
+        Mesh m = Mesh::LoadOBJ(path, ok, outTexture);
+        if (ok && *ok) NoteReader(OwnReaderText("OBJ"));
+        return m;
+    }
+    if (EndsWith(p, ".gltf") || EndsWith(p, ".glb")) {
+        Mesh m = LoadGLTF(path, ok, outTexture);
+        if (ok && *ok) NoteReader(OwnReaderText("glTF"));
+        return m;
+    }
     if (EndsWith(p, ".fbx")) {
         bool fok = false;
         Mesh m = ImportFbxMerged(path, &fok, outTexture);
@@ -149,6 +201,15 @@ Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
     m = MergeModelMeshes(im, outTexture);
     Mesh::NormalizeImportScale(m);   // cm/mm exports (Meshy FBX etc.) land at a usable size
     if (ok) *ok = !m.vertices.empty();
+    return m;
+}
+
+Mesh ImportModel(const std::string& path, bool* ok, std::string* outTexture) {
+    ImportLogScope log(path);
+    bool local = false;
+    bool* o = ok ? ok : &local;
+    Mesh m = ImportModelImpl(path, o, outTexture);
+    log.Finish(*o);
     return m;
 }
 
@@ -696,6 +757,24 @@ bool OwnOptedIn(int slot) {
     return v;
 }
 
+// STL (slot 1) and PLY (slot 2) with Assimp in the build: Assimp first (as before our readers existed) unless the CMake option
+// OKAY_PREFER_OWN_READERS asked for ours first; the environment variables OKAY_OWN_STL / OKAY_OWN_PLY = 0/1 override that build
+// default at run time, read at each import like the opt-in switches above. Without Assimp ours are the only readers either way.
+bool PreferOwnStlPly(int slot) {
+    bool v = kPreferOwnDefault;
+    if (const char* e = std::getenv(slot == 1 ? "OKAY_OWN_STL" : "OKAY_OWN_PLY")) { if (e[0] == '1') v = true; else if (e[0] == '0') v = false; }
+    return v;
+}
+
+// The format name of our reader in a slot, for messages and the import line ("STL", "COLLADA", "Blender", ...); "" for none.
+const char* OwnReaderName(int slot) {
+    if (slot == 0) return "OBJ";
+    if (slot == 1) return "STL";
+    if (slot == 2) return "PLY";
+    if (slot >= 3 && slot - 3 < (int)(sizeof(kOptIn) / sizeof(kOptIn[0]))) return kOptIn[slot - 3].name;
+    return "";
+}
+
 std::string ExtensionOf(const std::string& path) {
     {   // OGRE's XML meshes are ".mesh.xml": the extension is the last two parts, not the last one
         const std::string l = Lower(path);
@@ -766,12 +845,12 @@ ImportBackend EffectiveImportBackend(const std::string& ext) {
     if (c == ImportBackend::Own) return ImportBackend::Own;
     if (c == ImportBackend::Assimp) return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Own;
     // Default: OBJ has always been our own reader. STL / PLY go to Assimp when the
-    // build has it (as before our readers existed), unless CMake asked for ours first.
+    // build has it (as before our readers existed), unless CMake or OKAY_OWN_STL / OKAY_OWN_PLY ask for ours first.
     if (s >= 3) {   // Collada, 3DS, BVH: off by default; Assimp reads them when the build has it
         if (OwnOptedIn(s)) return ImportBackend::Own;
         return AssimpAvailable() ? ImportBackend::Assimp : ImportBackend::Default;
     }
-    if (s == 0 || kPreferOwnDefault || !AssimpAvailable()) return ImportBackend::Own;
+    if (s == 0 || !AssimpAvailable() || PreferOwnStlPly(s)) return ImportBackend::Own;
     return ImportBackend::Assimp;
 }
 
@@ -790,7 +869,7 @@ bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
     return false;
 }
 
-bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
+static bool ImportModelDataImpl(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
     out = ImportedModel{};
     // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
     const std::string ext = ExtensionOf(path);
@@ -805,7 +884,9 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
     ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
     if (use == ImportBackend::Assimp) {
 #ifdef OKAY_HAVE_ASSIMP
-        return assimp_backend::Read(path, flatten, out, err);
+        const bool r = assimp_backend::Read(path, flatten, out, err);
+        if (r) NoteReader("Assimp");
+        return r;
 #else
         if (err) *err = "this build was compiled without Assimp";
         return false;
@@ -865,12 +946,13 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
+            NoteReader(OwnReaderText(OwnReaderName(s)));
             return true;
         }
         // Our reader said no. With the default choice, give Assimp a go when the build has it.
         if (which == ImportBackend::Default && AssimpAvailable()) {
 #ifdef OKAY_HAVE_ASSIMP
-            if (assimp_backend::Read(path, flatten, out, nullptr)) return true;
+            if (assimp_backend::Read(path, flatten, out, nullptr)) { NoteReader("Assimp", OwnReaderName(s)); return true; }
 #endif
         }
         out = ImportedModel{};
@@ -889,6 +971,13 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         else *err = "no reader for this format in this build";
     }
     return false;
+}
+
+bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
+    ImportLogScope log(path);
+    const bool r = ImportModelDataImpl(path, out, which, flatten, err);
+    log.Finish(r);
+    return r;
 }
 
 Mesh MergeModelMeshes(const ImportedModel& m, std::string* outTexture) {
@@ -1360,10 +1449,11 @@ bool IsIdentity(const ufbx_matrix& m) {
 // Every mesh flattened into one (world space) — the single-mesh ImportModel path.
 static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outTexture) {
     Mesh merged;
-    if (fbx::OwnReaderEnabled()) {   // our reader first (opt-in); ufbx below if it could not read the file
+    const bool ownTried = fbx::OwnReaderEnabled();
+    if (ownTried) {   // our reader first (opt-in); ufbx below if it could not read the file
         bool ownOk = false;
         Mesh m = ImportFbxMergedOwn(path, &ownOk, outTexture);
-        if (ownOk) { if (ok) *ok = true; return m; }
+        if (ownOk) { NoteReader(OwnReaderText("FBX")); if (ok) *ok = true; return m; }
     }
     ufbx_scene* sc = LoadFbx(path, nullptr);
     if (!sc) { if (ok) *ok = false; return merged; }
@@ -1387,6 +1477,7 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
     }
     ufbx_free_scene(sc);
     if (ok) *ok = !merged.vertices.empty();
+    if (!merged.vertices.empty()) NoteReader("ufbx", ownTried ? "FBX" : "");
     return merged;
 }
 
@@ -1394,10 +1485,12 @@ static Mesh ImportFbxMerged(const std::string& path, bool* ok, std::string* outT
 // caller must then fail the import instead of falling back to another reader that would take the
 // same hostile file.
 static GameObject* ImportFbxSceneGraph(Scene& scene, const std::string& path, bool* ok, std::string* err, bool* rejected) {
-    if (fbx::OwnReaderEnabled())
-        if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) return r;
+    const bool ownTried = fbx::OwnReaderEnabled();
+    if (ownTried)
+        if (GameObject* r = ImportFbxSceneGraphOwn(scene, path, ok, err)) { NoteReader(OwnReaderText("FBX")); return r; }
     ufbx_scene* sc = LoadFbx(path, err, rejected);
     if (!sc) { if (ok) *ok = false; return nullptr; }
+    NoteReader("ufbx", ownTried ? "FBX" : "");
 
     GameObject* root = scene.CreateGameObject(BaseName(path));
     std::vector<GameObject*> goOf(sc->nodes.count, nullptr);   // by node typed_id
@@ -1955,6 +2048,7 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
 
     GltfDoc doc = LoadDoc(path);
     if (!doc.ok) { if (ok) *ok = false; return nullptr; }
+    NoteReader(OwnReaderText("glTF"));
     // glTF 1.0 (deprecated, a different layout: meshes, nodes and accessors are objects, not arrays) is not read.
     if (const JVal* asset = doc.root.Find("asset"))
         if (const JVal* ver = asset->Find("version"))
@@ -2339,7 +2433,16 @@ static GameObject* ImportModelSceneRaw(Scene& scene, const std::string& path, bo
 // The model's own import settings (`<model>.okaymeta`): Normals / Smoothing angle / Import animations.
 // Rigged (skinned) parts and meshes with blend shapes keep the file's normals: their vertices are shared with the
 // skin weights and the shapes, so they are not rebuilt.
+static GameObject* ImportModelSceneImpl(Scene& scene, const std::string& path, bool* ok);
 GameObject* ImportModelScene(Scene& scene, const std::string& path, bool* ok) {
+    ImportLogScope log(path);
+    bool local = false;
+    bool* o = ok ? ok : &local;
+    GameObject* root = ImportModelSceneImpl(scene, path, o);
+    log.Finish(root != nullptr && *o);
+    return root;
+}
+static GameObject* ImportModelSceneImpl(Scene& scene, const std::string& path, bool* ok) {
     GameObject* root = ImportModelSceneRaw(scene, path, ok);
     if (!root) return root;
     const ModelImportOptions opt = ReadModelImportOptions(path);

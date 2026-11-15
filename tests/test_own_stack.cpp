@@ -8,6 +8,8 @@
 //                           among them, and that every setting reaches the real selectors.
 #include "test_framework.hpp"
 #include "OwnStack.hpp"
+#include "okay/Audio/WavDecoder.hpp"
+#include "okay/Render/ModelImport.hpp"   // AssimpAvailable()
 
 #include <cstring>
 #include <set>
@@ -36,6 +38,20 @@ static void ClearStackEnvironment() {
     Unset("OKAY_DEV");
 }
 static bool Has(const std::string& s, const char* part) { return s.find(part) != std::string::npos; }
+static bool IsWav(const ReaderSwitch& r) { return std::strcmp(r.ext, ".wav") == 0; }
+// What the real selector says for one switch (FBX: its own switch; WAV: the decoder switch; the rest: the import table).
+static bool InUse(const ReaderSwitch& r) {
+    if (r.ext[0] == '\0') return okay::fbx::OwnReaderEnabled();
+    if (IsWav(r)) return okay::wav::OwnWavEnabled();
+    return okay::EffectiveImportBackend(r.ext) == okay::ImportBackend::Own;
+}
+// The startup line's labels, in this order (Step 0.3 added ac3d to lws and wav; Step 0.8 added stl and ply).
+static const char* const kLabels[] = {
+    "fbx", "dae", "3ds", "bvh", "off", "smd", "md5", "ms3d", "ase", "3mf", "amf", "x3d", "dxf", "lwo", "blend",
+    "md2", "md3", "irrmesh", "b3d", "x",
+    "ac3d", "ogre", "xgl", "irr", "nff", "ter", "mdc", "hmp", "csm", "q3d", "raw", "iqm", "cob", "pmx", "lws",
+    "stl", "ply", "wav",
+};
 
 static void TestText() {
     Info old;   // the stack of a default build
@@ -93,10 +109,25 @@ static void TestTables() {
     for (const ReaderSwitch& r : Readers()) {
         CHECK(vars.insert(r.var).second);
         CHECK(labels.insert(r.label).second);
-        if (r.ext[0]) CHECK(okay::HasOwnReader(r.ext));
+        if (r.ext[0] && !IsWav(r)) CHECK(okay::HasOwnReader(r.ext));
         CHECK(std::strncmp(r.var, "OKAY_OWN_", 9) == 0);
+        CHECK(std::strcmp(r.var, "OKAY_OWN_NDO") != 0);   // the NDO seam refuses every file: not listed
     }
-    CHECK(Readers().size() == 20);   // FBX + the 19 opt-in readers of ModelImport.cpp (slots 3 to 21)
+    // FBX, the 34 opt-in model readers of ModelImport.cpp but NDO (slots 3 to 31 and 33 to 40), STL, PLY and the WAV decoder.
+    CHECK(Readers().size() == sizeof(kLabels) / sizeof(kLabels[0]));
+    for (std::size_t k = 0; k < Readers().size() && k < sizeof(kLabels) / sizeof(kLabels[0]); ++k) {
+        CHECK(std::strcmp(Readers()[k].label, kLabels[k]) == 0);
+        if (std::strcmp(Readers()[k].label, kLabels[k]) != 0) std::printf("  label %zu: %s, wanted %s\n", k, Readers()[k].label, kLabels[k]);
+    }
+    // The new switches by name: the 15 newest model readers, STL and PLY (Step 0.8) and the WAV decoder (Step 0.3).
+    for (const char* v : {"OKAY_OWN_AC3D", "OKAY_OWN_OGRE", "OKAY_OWN_XGL", "OKAY_OWN_IRR", "OKAY_OWN_NFF", "OKAY_OWN_TER", "OKAY_OWN_MDC",
+                          "OKAY_OWN_HMP", "OKAY_OWN_CSM", "OKAY_OWN_Q3D", "OKAY_OWN_RAW", "OKAY_OWN_IQM", "OKAY_OWN_COB", "OKAY_OWN_PMX",
+                          "OKAY_OWN_LWS", "OKAY_OWN_STL", "OKAY_OWN_PLY", "OKAY_OWN_WAV"}) {
+        CHECK(vars.count(v) == 1);
+        bool set = false;
+        for (const Setting& s : RuntimeSettings()) if (!std::strcmp(s.var, v)) set = !std::strcmp(s.value, "1");
+        CHECK(set);
+    }
     // Cryptography is not among the settings, by name or by value.
     for (const Setting& s : RuntimeSettings()) {
         CHECK(!Has(s.var, "CRYPTO") && !Has(s.var, "SODIUM") && !Has(s.value, "crypto"));
@@ -145,13 +176,19 @@ static void TestBuildDefaults() {
 #  else
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
 #  endif
-#else               // a default build: exactly the old stack, nothing of ours switched on
-    CHECK(i.ownReaders.empty());
+#else               // a default build: nothing of ours switched on, except STL and PLY in a build without Assimp (ours are the only readers there)
+    for (const std::string& l : i.ownReaders) CHECK(l == "stl" || l == "ply");
+    {
+        bool stl = false;
+        for (const std::string& l : i.ownReaders) if (l == "stl") stl = true;
+        CHECK(stl == (okay::EffectiveImportBackend(".stl") == okay::ImportBackend::Own));
+        if (!okay::AssimpAvailable()) CHECK(stl);
+    }
     CHECK(i.ufbx);
     CHECK(i.platform == "sdl2");
     CHECK(i.http == "curl" || i.http == "winhttp");
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
-    CHECK(Has(line, "readers=ufbx"));
+    CHECK(Has(line, "ufbx"));
 #endif
 #if !defined(OKAY_OWN_CRYPTO)
     CHECK(i.crypto != "own" && i.crypto != "own(test)");
@@ -186,14 +223,19 @@ static void TestEnvironment() {
 
     // The settings reach the real selectors: every reader but the one switched off is now ours.
     for (const ReaderSwitch& r : Readers()) {
-        const bool fbx = r.ext[0] == '\0';
-        const bool own = fbx ? okay::fbx::OwnReaderEnabled() : okay::EffectiveImportBackend(r.ext) == okay::ImportBackend::Own;
+        const bool own = InUse(r);
         if (!std::strcmp(r.var, "OKAY_OWN_3DS")) CHECK(!own);
         else CHECK(own);
+        if (!std::strcmp(r.var, "OKAY_OWN_3DS") ? own : !own) std::printf("  %s: own=%d\n", r.var, (int)own);
+    }
+    for (const char* v : {"OKAY_OWN_WAV", "OKAY_OWN_STL", "OKAY_OWN_PLY", "OKAY_OWN_LWS"}) {
+        const char* e = std::getenv(v);
+        CHECK(e && std::string(e) == "1");
     }
     const Info i = Gather("imgui");
     CHECK(i.ownReaders.size() == Readers().size() - 1);
     CHECK(!Has(FormatLine(i), "3ds"));
+    CHECK(Has(FormatLine(i), ",x,ac3d,ogre,xgl,irr,nff,ter,mdc,hmp,csm,q3d,raw,iqm,cob,pmx,lws,stl,ply,wav)"));
     CHECK(i.ufbx == false);
 #if defined(__linux__)
     CHECK(i.platform == "own");

@@ -29,7 +29,7 @@ option(OKAY_USE_SODIUM     "Authenticated packet encryption via libsodium"     O
 option(OKAY_REQUIRE_SODIUM "RELEASE builds: configuring FAILS unless libsodium is found and OKAY_OWN_CRYPTO is OFF (never silently fall back to our own unreviewed crypto; CLAUDE.md rule 18)" OFF)
 option(OKAY_OWN_CRYPTO    "Network encryption via our OWN okay::crypto instead of libsodium (UNREVIEWED; keep OFF in shipped builds)" OFF)
 option(OKAY_USE_ASSIMP     "Import FBX/DAE/STL/... via Assimp (FetchContent; downloads at configure time)" OFF)
-option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback); no effect without Assimp" OFF)
+option(OKAY_PREFER_OWN_READERS "With OKAY_USE_ASSIMP: read STL/PLY with our own readers first (Assimp stays the fallback; run-time env OKAY_OWN_STL=0/1 and OKAY_OWN_PLY=0/1 override); no effect without Assimp" OFF)
 # The UI toolkit the launcher and editor use for the screens that have an OkayUI port. Dear ImGui stays the default until
 # OkayUI is proven; a person can still choose OkayUI in Settings, or with the OKAY_UI_BACKEND environment variable.
 set(OKAY_UI_DEFAULT_BACKEND "imgui" CACHE STRING "Which UI toolkit the launcher and editor start with: imgui (default) or okayui (preview)")
@@ -96,9 +96,12 @@ if(OKAY_OWN_STACK_CRYPTO_TEST AND NOT OKAY_OWN_STACK)
     message(FATAL_ERROR "OKAY_OWN_STACK_CRYPTO_TEST needs OKAY_OWN_STACK=ON (it is a test-build extra of the dogfood switch)")
 endif()
 if(OKAY_OWN_STACK)
-    foreach(_f COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X FBX)
+    # Every own model reader (NDO is left out: it is a seam that refuses every file) and our own WAV decoder.
+    foreach(_f COLLADA 3DS BVH OFF SMD MD5 MS3D ASE BLEND 3MF AMF X3D DXF LWO MD2 MD3 IRRMESH B3D X FBX
+               AC3D OGRE XGL IRR NFF TER MDC HMP CSM Q3D RAW IQM COB PMX LWS WAV)
         set(OKAY_OWN_${_f} ON)
     endforeach()
+    set(OKAY_PREFER_OWN_READERS ON)   # STL and PLY: our readers first, Assimp (when built) the fallback; OKAY_OWN_STL / OKAY_OWN_PLY=0 still win
     set(OKAY_OWN_HTTP ON)   # Linux only in effect (the engine adds the define only for non-Windows, non-Apple)
     if(OKAY_OWN_STACK_CRYPTO_TEST)
         set(OKAY_OWN_CRYPTO ON)

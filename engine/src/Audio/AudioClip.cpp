@@ -1,5 +1,6 @@
 #include "okay/Audio/AudioClip.hpp"
 #include "okay/Audio/WavDecoder.hpp"
+#include "okay/Core/Log.hpp"
 #include "AudioInternal.hpp"
 
 #include <algorithm>
@@ -147,6 +148,7 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
             samples.resize(a.FrameCount());
             audio_detail::DownmixToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
         }
+        Log::Info("audio import '", path, "': read by our own WAV decoder");   // one line per load (docs/model_import.md)
         return true;
     }
     auto src = AudioByteSource::FromPointer(buf.data(), buf.size());
@@ -159,6 +161,7 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
     sampleRate = static_cast<int>(w.rate);
     channels = outCh;
     audio_detail::ConvertWavFrames(w, buf.data() + w.dataOffset, static_cast<std::size_t>(frames), samples.data(), outCh);
+    Log::Info("audio import '", path, "': read by the old WAV loader");
     return true;
 }
 

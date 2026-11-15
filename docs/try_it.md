@@ -44,8 +44,8 @@ release job or the installer build for this change.
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
 | 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
-| 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
-| 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
+| 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1` (now also `OKAY_OWN_STL`, `OKAY_OWN_PLY`), `examples\own_readers` | Switch works on a release; the Console names the reader of every import (section 8b, new in this change, unverified on Windows) |
+| 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1` or `OKAY_OWN_STACK=1`, `examples\own_wav` | Switch works; startup line and Console line new in this change, unverified on Windows |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
@@ -264,7 +264,10 @@ text. The exact format (from `shared/OwnStack.hpp`):
 ```
 
 * `readers=own(off,dae,...)+assimp` lists the formats read by our code now. `ufbx` shows while FBX is still ufbx; it
-  becomes `own(fbx,...)` with `OKAY_OWN_FBX=1`.
+  becomes `own(fbx,...)` with `OKAY_OWN_FBX=1`. With `OKAY_OWN_STACK=1` the list is, in this order:
+  `own(fbx,dae,3ds,bvh,off,smd,md5,ms3d,ase,3mf,amf,x3d,dxf,lwo,blend,md2,md3,irrmesh,b3d,x,ac3d,ogre,xgl,irr,nff,ter,mdc,hmp,csm,q3d,raw,iqm,cob,pmx,lws,stl,ply,wav)`.
+  `wav` is our WAV decoder (it is not a model reader, but it is listed here too). NDO (Nendo) is never listed: that
+  reader refuses every file. A build without Assimp always shows `stl,ply`, because ours are the only readers there.
 * `http=` is `winhttp` on Windows. `crypto=` must say `libsodium` in every release.
 * `OKAY_PRINT_STACK_AND_EXIT=1` prints the line to standard output and quits at once. From a Command Prompt:
   `set OKAY_PRINT_STACK_AND_EXIT=1` then `Tools\OkayEngine.exe > stack.txt` then `type stack.txt`. Unverified on
@@ -277,31 +280,72 @@ Tested on main (Linux): the line format and that each variable changes it, by th
 * **Variables.** `OKAY_OWN_STACK=1` turns on all of them (plus the settings below). Or one at a time: `OKAY_OWN_FBX`,
   `OKAY_OWN_COLLADA` (.dae), `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`,
   `OKAY_OWN_MS3D`, `OKAY_OWN_ASE`, `OKAY_OWN_3MF`, `OKAY_OWN_AMF`, `OKAY_OWN_X3D`, `OKAY_OWN_DXF`, `OKAY_OWN_LWO`,
-  `OKAY_OWN_BLEND`, `OKAY_OWN_MD2`, `OKAY_OWN_MD3`, `OKAY_OWN_IRRMESH`, `OKAY_OWN_B3D`, `OKAY_OWN_X`. Each set to `1`.
-  A variable you set to `0` wins over `OKAY_OWN_STACK=1`. The newer readers (AC3D, Ogre, XGL, Irrlicht scene, NFF, MDC,
-  HMP, CSM, Q3D, RAW, IQM, COB, NDO and others) have their own `OKAY_OWN_<NAME>` variables listed in
-  `docs/own_readers_remaining.md`; the startup line only lists the 20 above, so for those the only proof is an import
-  that works.
+  `OKAY_OWN_BLEND`, `OKAY_OWN_MD2`, `OKAY_OWN_MD3`, `OKAY_OWN_IRRMESH`, `OKAY_OWN_B3D`, `OKAY_OWN_X`, `OKAY_OWN_AC3D`,
+  `OKAY_OWN_OGRE` (.mesh.xml), `OKAY_OWN_XGL`, `OKAY_OWN_IRR` (Irrlicht scene), `OKAY_OWN_NFF`, `OKAY_OWN_TER`
+  (Terragen), `OKAY_OWN_MDC`, `OKAY_OWN_HMP`, `OKAY_OWN_CSM`, `OKAY_OWN_Q3D`, `OKAY_OWN_RAW`, `OKAY_OWN_IQM`,
+  `OKAY_OWN_COB`, `OKAY_OWN_PMX`, `OKAY_OWN_LWS`, and for STL and PLY `OKAY_OWN_STL` and `OKAY_OWN_PLY`. Each set to `1`.
+  A variable you set to `0` wins over `OKAY_OWN_STACK=1`. All of them are in the startup line now (new in this change).
+  `OKAY_OWN_NDO` exists but its reader refuses every file, so it is not in `OKAY_OWN_STACK=1` or the line.
 * **Sample files** (shipped in `examples\own_readers`): `cube.off` (OFF), `cube.3ds` (3DS), `skinned_strip.dae`
-  (COLLADA). Tiny hand-written files from our tests, no outside source.
+  (COLLADA), `cube.stl` (STL) and `cube.ply` (PLY; the last two new in this change). Tiny hand-written files from our
+  tests (`tests\data\models`), no outside source.
 * **Steps.**
   1. Start the editor with `set OKAY_OWN_OFF=1` (or `OKAY_OWN_STACK=1`), open **Help > About OkaySpace**. It should say
      `readers=own(off)+assimp` (with `OKAY_OWN_STACK=1`: a long `own(fbx,dae,3ds,...)` list).
   2. **File > Import Model...** and choose `examples\own_readers\cube.off`. A white unit cube appears in the scene.
   3. Close the editor, start it again with no variable, import the same file: you get the same cube, read by Assimp.
-* **How you can tell it is really ours.** Only the About popup or startup line (`own(off)`). There is no per-import
-  log line saying which reader ran, and the two readers give the same cube here (the corpus comparisons in
-  `docs/own_stack_rollout.md` say how closely they agree). Honest gap: a "read with the built-in OFF reader" Console
-  line on import would close this; it does not exist. Without Assimp in a build, a format whose own reader is off fails
-  with `no OFF reader enabled: our own reader is off by default (set OKAY_OWN_OFF=1 ...)`; the Windows release has
-  Assimp, so you will not see that message.
+* **How you can tell it is really ours.** The About popup or startup line (`own(off)`), and now one Console line per
+  import that names the reader (section 8b): `model import '...\cube.off': read by our own OFF reader` the first time,
+  `model import '...\cube.off': read by Assimp` the second. The two readers give the same cube here (the corpus
+  comparisons in `docs/own_stack_rollout.md` say how closely they agree). Without Assimp in a build, a format whose own
+  reader is off fails with `no OFF reader enabled: our own reader is off by default (set OKAY_OWN_OFF=1 ...)`; the
+  Windows release has Assimp, so you will not see that message.
 * **More sample files** for other formats are under `tests\data\models` in a source checkout (not in the release).
+
+### 8b. Which reader read a file: the Console line, and the STL and PLY switches
+
+New in this change (branch `claude2/own-step0-visible`, Step 0.3, 0.4 and 0.8 of the own-code flip proposal). Tested
+on Linux by the `import_reader_log` and `own_stack` tests. **Unverified on Windows** and in the real editor window.
+
+* **What you see.** Every model import that works writes one line to the editor's **Console** (and to the log file):
+
+  ```
+  model import 'C:\...\cube.stl': read by our own STL reader
+  model import 'C:\...\cube.stl': read by Assimp
+  model import 'C:\...\rig.fbx': read by ufbx
+  model import 'C:\...\rig.fbx': read by our own FBX reader
+  model import 'C:\...\old.fbx': read by ufbx (our own FBX reader refused it)
+  model import 'C:\...\cube.off': read by Assimp (our own OFF reader refused it)
+  ```
+
+  OBJ and glTF/GLB always say `our own OBJ reader` / `our own glTF reader` (they have no other reader). A file that
+  could not be read gives no such line (the import error is shown as before). An Irrlicht or LightWave scene that
+  loads other mesh files still gives one line, for the scene. Two lines for one **File > Import Model...** are normal:
+  the editor reads the file once for the settings dialog and once to place it. A thumbnail in the asset browser is an
+  import too and gives a line.
+* **WAV.** Every WAV the engine loads writes `audio import '...\mulaw_tone.wav': read by our own WAV decoder` with
+  `OKAY_OWN_WAV=1`, or `... read by the old WAV loader` without it.
+* **Steps (Windows download).**
+  1. Open a Command Prompt: `cd %LOCALAPPDATA%\OkaySpace`, `set OKAY_OWN_STACK=1`, `Tools\OkayEngine.exe`.
+  2. **Help > About OkaySpace**: the `readers=own(...)` list ends with
+     `...,b3d,x,ac3d,ogre,xgl,irr,nff,ter,mdc,hmp,csm,q3d,raw,iqm,cob,pmx,lws,stl,ply,wav)`.
+  3. Open or create a 3D project, **File > Import Model...**, pick `examples\own_readers\cube.stl`. The Console shows
+     `model import '...\cube.stl': read by our own STL reader` and a cube appears.
+  4. Close the editor. In the same window `set OKAY_OWN_STACK=` (empty, to clear it), then `set OKAY_OWN_STL=0`, start
+     the editor again, import the same file: the line says `read by Assimp`. With `set OKAY_OWN_STL=1` instead it says
+     `read by our own STL reader`, and the About line shows `readers=own(stl)+ufbx+assimp`.
+  5. The same with `OKAY_OWN_PLY` and `examples\own_readers\cube.ply`, and with `OKAY_OWN_OFF` and `cube.off`.
+  6. WAV: with `set OKAY_OWN_WAV=1` open `examples\own_wav\own_wav_test.okayscene` and press Play. The Console shows
+     `audio import '...\mulaw_tone.wav': read by our own WAV decoder`.
+* **Build default.** The STL and PLY switches override the build option `OKAY_PREFER_OWN_READERS` (off in the
+  release, so without a variable the release reads STL and PLY with Assimp first, as before).
 
 ### 9. Own WAV decoder
 
-* **Variable.** `OKAY_OWN_WAV=1` (and `0` to force the old one). It is **not** part of `OKAY_OWN_STACK=1` and **not** in
-  the startup line; it is only in the engine's `AudioClip::LoadWAV` (whole-file loads; streamed large files still use
-  the old parser).
+* **Variable.** `OKAY_OWN_WAV=1` (and `0` to force the old one). `OKAY_OWN_STACK=1` turns it on too, and the startup
+  line shows `wav` at the end of `readers=own(...)` when it is on (both new in this change). It is only in the engine's
+  `AudioClip::LoadWAV` (whole-file loads; streamed large files still use the old parser). Each load writes a Console
+  line naming the decoder (section 8b).
 * **Sample file.** `examples\own_wav\mulaw_tone.wav` (2 s of a 440 Hz sine, 8-bit mu-law, 22,050 Hz; we generated it
   from our own signal, no outside source) and the scene `own_wav_test.okayscene` that plays it.
 * **Steps.**

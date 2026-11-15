@@ -62,13 +62,17 @@ run-time switch still wins, and every third-party fallback is still compiled in.
 |---|---|---|
 | Our FBX reader | `OKAY_OWN_FBX=ON` | `okay::fbx` instead of ufbx (run time: `OKAY_OWN_FBX=0` goes back) |
 | Our readers for COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x | `OKAY_OWN_COLLADA`, `OKAY_OWN_3DS`, `OKAY_OWN_BVH`, `OKAY_OWN_OFF`, `OKAY_OWN_SMD`, `OKAY_OWN_MD5`, `OKAY_OWN_MS3D`, `OKAY_OWN_ASE`, `OKAY_OWN_3MF`, `OKAY_OWN_AMF`, `OKAY_OWN_X3D`, `OKAY_OWN_DXF`, `OKAY_OWN_LWO`, `OKAY_OWN_BLEND`, `OKAY_OWN_MD2`, `OKAY_OWN_MD3`, `OKAY_OWN_IRRMESH`, `OKAY_OWN_B3D`, `OKAY_OWN_X` all `ON` | each format reads with ours first (run time: `OKAY_OWN_<FMT>=0`) |
+| Our readers for AC3D, OGRE XML, XGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, PMX, LightWave scene (Step 0.3 of the flip proposal) | `OKAY_OWN_AC3D`, `OKAY_OWN_OGRE`, `OKAY_OWN_XGL`, `OKAY_OWN_IRR`, `OKAY_OWN_NFF`, `OKAY_OWN_TER`, `OKAY_OWN_MDC`, `OKAY_OWN_HMP`, `OKAY_OWN_CSM`, `OKAY_OWN_Q3D`, `OKAY_OWN_RAW`, `OKAY_OWN_IQM`, `OKAY_OWN_COB`, `OKAY_OWN_PMX`, `OKAY_OWN_LWS` all `ON` | the same. `OKAY_OWN_NDO` is left out: that reader refuses every file |
+| Our STL and PLY readers first | `OKAY_PREFER_OWN_READERS=ON` | ours first, Assimp (when built) the fallback (run time: `OKAY_OWN_STL=0`, `OKAY_OWN_PLY=0`) |
+| Our WAV decoder | `OKAY_OWN_WAV=ON` | `AudioClip::LoadWAV` uses `okay::wav` (run time: `OKAY_OWN_WAV=0`) |
 | Our HTTP client (Linux) | `OKAY_OWN_HTTP=ON`, and the engine gets `OKAY_OWN_HTTP_DEFAULT_ON` | `NativeAvailable()` is true without setting anything; `OKAY_OWN_HTTP=0` or `OKAY_HTTP_CURL=1` goes back to curl. No effect on Windows (WinHTTP stays) or macOS |
 | Our platform backend (Linux) | the engine's `okay_platform` gets `OKAY_PLATFORM_DEFAULT_OWN` | `okay::platform::Default()` is the own backend (run time: `OKAY_PLATFORM_BACKEND=sdl2`). **Not set on Windows**: the Win32 backend has never run on real Windows |
 | OkayUI as the launcher and editor UI | the launcher and editor get `OKAY_UI_DEFAULT_BACKEND_OKAYUI` (same as `OKAY_UI_DEFAULT_BACKEND=okayui`) | starts on OkayUI where it is compiled in (run time: `OKAY_UI_BACKEND=imgui`). Only the ported screens change; the rest stays Dear ImGui |
 | Marker | the engine gets `OKAY_OWN_STACK_BUILD` | tests can tell it is a dogfood build |
 
-Not set by it, ever: `OKAY_OWN_CRYPTO`, `OKAY_USE_SODIUM`, `OKAY_USE_ASSIMP`, `OKAY_PREFER_OWN_READERS`. Assimp, when
-you build it, stays the fallback reader.
+Not set by it, ever: `OKAY_OWN_CRYPTO`, `OKAY_USE_SODIUM`, `OKAY_USE_ASSIMP`. Assimp, when you build it, stays the
+fallback reader. (`OKAY_PREFER_OWN_READERS` was on this list until Step 0.8 gave STL and PLY run-time switches; it is a
+reader default like the others.)
 
 ### 3.2 Run time: `OKAY_OWN_STACK=1`
 
@@ -79,7 +83,8 @@ developer's own `OKAY_OWN_FBX=0` still wins:
 | Variable set to | What it switches |
 |---|---|
 | `OKAY_OWN_FBX=1` | our FBX reader |
-| `OKAY_OWN_COLLADA=1`, `OKAY_OWN_3DS=1`, `OKAY_OWN_BVH=1`, `OKAY_OWN_OFF=1`, `OKAY_OWN_SMD=1`, `OKAY_OWN_MD5=1`, `OKAY_OWN_MS3D=1`, `OKAY_OWN_ASE=1`, `OKAY_OWN_3MF=1`, `OKAY_OWN_AMF=1`, `OKAY_OWN_X3D=1`, `OKAY_OWN_DXF=1`, `OKAY_OWN_LWO=1`, `OKAY_OWN_BLEND=1`, `OKAY_OWN_MD2=1`, `OKAY_OWN_MD3=1`, `OKAY_OWN_IRRMESH=1`, `OKAY_OWN_B3D=1`, `OKAY_OWN_X=1` | the other readers (they exist in every build) |
+| `OKAY_OWN_COLLADA=1`, `OKAY_OWN_3DS=1`, `OKAY_OWN_BVH=1`, `OKAY_OWN_OFF=1`, `OKAY_OWN_SMD=1`, `OKAY_OWN_MD5=1`, `OKAY_OWN_MS3D=1`, `OKAY_OWN_ASE=1`, `OKAY_OWN_3MF=1`, `OKAY_OWN_AMF=1`, `OKAY_OWN_X3D=1`, `OKAY_OWN_DXF=1`, `OKAY_OWN_LWO=1`, `OKAY_OWN_BLEND=1`, `OKAY_OWN_MD2=1`, `OKAY_OWN_MD3=1`, `OKAY_OWN_IRRMESH=1`, `OKAY_OWN_B3D=1`, `OKAY_OWN_X=1`, `OKAY_OWN_AC3D=1`, `OKAY_OWN_OGRE=1`, `OKAY_OWN_XGL=1`, `OKAY_OWN_IRR=1`, `OKAY_OWN_NFF=1`, `OKAY_OWN_TER=1`, `OKAY_OWN_MDC=1`, `OKAY_OWN_HMP=1`, `OKAY_OWN_CSM=1`, `OKAY_OWN_Q3D=1`, `OKAY_OWN_RAW=1`, `OKAY_OWN_IQM=1`, `OKAY_OWN_COB=1`, `OKAY_OWN_PMX=1`, `OKAY_OWN_LWS=1`, `OKAY_OWN_STL=1`, `OKAY_OWN_PLY=1` | the other readers (they exist in every build) |
+| `OKAY_OWN_WAV=1` | our WAV decoder in `AudioClip::LoadWAV` |
 | `OKAY_OWN_HTTP=1` | our HTTP client, **only in a build made with `-DOKAY_OWN_HTTP=ON`** and only on Linux |
 | `OKAY_PLATFORM_BACKEND=own` | the own platform backend, **Linux only** |
 | `OKAY_UI_BACKEND=okayui` | OkayUI for the launcher and editor, where compiled in |

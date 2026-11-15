@@ -3463,6 +3463,13 @@ target_link_libraries(test_own_dispatch PRIVATE okay::engine)
 target_compile_definitions(test_own_dispatch PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME own_dispatch COMMAND test_own_dispatch WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+# One Console line per model or WAV import naming the reader that read it, and the run-time switches OKAY_OWN_STL / OKAY_OWN_PLY
+# (docs/own_flip_proposal.md Step 0.4 and 0.8; docs/try_it.md). Fixtures: tests/data/models, tests/assets and the in-memory dispatch fixtures.
+add_executable(test_import_reader_log test_import_reader_log.cpp import_reader_log_e3.cpp)
+target_link_libraries(test_import_reader_log PRIVATE okay::engine)
+target_compile_definitions(test_import_reader_log PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME import_reader_log COMMAND test_import_reader_log WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 add_executable(test_dof_math test_dof_math.cpp)
 target_link_libraries(test_dof_math PRIVATE okay::engine)
 add_test(NAME dof_math COMMAND test_dof_math)

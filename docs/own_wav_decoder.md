@@ -43,7 +43,7 @@ Hand-computed expected values: every PCM width, left-justified 12-in-16, stereo 
 ## Replacement criteria (from the roadmap) and honest state
 
 1. Real-file corpus: **partly done.** Files from an encoder we did not write are now in `tests/data/audio/wav_ffmpeg/` (test `wav_ffmpeg_diff`): our own synthetic signal encoded by ffmpeg 6.1.1 into MS ADPCM (mono and stereo, default, 256 and 2048 byte blocks), IMA ADPCM (mono, stereo), A-law, mu-law, unsigned 8-bit, 24-bit and float32, each compared with ffmpeg's own decode of the same file. MS ADPCM, A-law, mu-law, 8-bit, 24-bit and float match ffmpeg **bit for bit** (16-bit output). IMA ADPCM does **not**: most samples differ by a few steps (at most 29 of 32,768 in these files); our IMA matches Python's `audioop` exactly (above), so the two reference decoders disagree with each other in their arithmetic, and the test holds IMA to a bound of 32. Not yet: telephony-tool files, extensible multichannel files, files from a second encoder. ffmpeg is used as a program only (`scripts/gen_wav_ffmpeg_fixtures.py` records the commands); none of its code was read.
-2. Windows and Linux platform tests: Linux only so far; nothing was run on Windows or on GitHub CI.
+2. Windows and Linux platform tests: Linux only so far. The tests (`own_wav`, `wav_ffmpeg_diff`, `wav_playback`, `wav_seam_wiring`) run on GitHub in job "Build & test (Ubuntu)" with the option off (they call the decoder directly). No CI job builds with `OKAY_OWN_WAV` on, and nothing ran on Windows (the Windows CI jobs do not include these tests).
 3. Fuzz under sanitizers: a deterministic mutation run is in the test; a long fuzz run is not done.
 4. No known bugs: none known. MS ADPCM was checked by hand, and is now also equal, sample for sample, to ffmpeg's decoder on files ffmpeg's encoder made (`wav_ffmpeg_diff`; three deliberate changes to the decoder, one adaptation-table entry, the predictor shift, the order of the two header samples, each make it fail).
 5. Owner approval: not asked.
@@ -53,5 +53,5 @@ Hand-computed expected values: every PCM width, left-justified 12-in-16, stereo 
 - Deleting the `SDL_LoadWAV` call itself (in `shared/WavPlayback.hpp`) waits for the owner's approval of the default flip plus one release.
 - `AudioStream` (streamed WAV playback) still uses the old header parser; only whole-file loads (`AudioClip::LoadWAV`) use the own decoder. ADPCM streams are not supported there.
 - `RF64` / `BW64` (files over 4 GiB), `LIST` metadata, loop points (`smpl`) and cue points are not read. GSM, MP3-in-WAV and other tags are refused.
-- Not added to `OKAY_OWN_STACK`.
+- Not added to `OKAY_OWN_STACK`, so the startup line does not show it and no CI job runs with it on (Step 0.3 of `docs/own_flip_proposal.md` adds it). The default loader it would replace plays A-law and mu-law files as loud noise and 64-bit float as silence (Grok finding 19, issue #888).
 - `AudioClip::SaveWAV` is unchanged (16-bit PCM).

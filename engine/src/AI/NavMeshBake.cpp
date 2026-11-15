@@ -80,7 +80,7 @@ int NavMeshBaker::AreaFor(const GameObject* go) {
 }
 
 void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, std::uint32_t layerMask) {
-    out.boxes.clear(); out.spheres.clear(); out.capsules.clear(); out.terrains.clear();
+    out.boxes.clear(); out.spheres.clear(); out.capsules.clear(); out.terrains.clear(); out.meshes.clear();
     for (const auto& up : scene.Objects()) {
         GameObject* go = up.get();
         if (!go || !go->active || !go->transform) continue;
@@ -93,8 +93,33 @@ void NavMeshBaker::Gather(Scene& scene, NavBakeInput& out, bool includeDynamic, 
             auto* c = dynamic_cast<Collider3D*>(comp.get());
             if (!c || !c->enabled || c->isTrigger) continue;
             switch (c->shape()) {
-                case Collider3D::Shape::Box:
                 case Collider3D::Shape::Mesh: {
+                    // The real triangles (the convex hull for a dynamic body that collides as one); the box it
+                    // describes only when there are no triangles.
+                    auto* m = static_cast<MeshCollider3D*>(c);
+                    const TriMesh* tm = nullptr;
+                    if (m->IsDynamicBody()) { if (m->UsesConvexHull()) tm = &m->HullTris(); }
+                    else if (m->HasTriangles()) tm = &m->Tris();
+                    if (tm && !tm->Empty()) {
+                        const Mat4 l2w = m->WorldMatrix();
+                        const Vec3 ax = l2w.MultiplyVector({1, 0, 0}), ay = l2w.MultiplyVector({0, 1, 0}), az = l2w.MultiplyVector({0, 0, 1});
+                        const bool mirrored = Vec3::Dot(Vec3::Cross(ax, ay), az) < 0.0f;   // a mirror flips the winding
+                        NavBakeInput::Triangles t; t.area = area;
+                        t.corners.reserve((std::size_t)tm->TriangleCount() * 3);
+                        for (int i = 0; i < tm->TriangleCount(); ++i) {
+                            Vec3 a, b, cc; tm->Triangle(i, a, b, cc);
+                            t.corners.push_back(l2w.MultiplyPoint(a));
+                            t.corners.push_back(l2w.MultiplyPoint(mirrored ? cc : b));
+                            t.corners.push_back(l2w.MultiplyPoint(mirrored ? b : cc));
+                        }
+                        out.meshes.push_back(std::move(t));
+                        break;
+                    }
+                    if (m->IsDynamicBody()) break;   // a dynamic body with no hull has no contact either
+                    out.boxes.push_back({m->WorldCenter(), m->HalfExtents(), go->transform->Rotation(), area});
+                    break;
+                }
+                case Collider3D::Shape::Box: {
                     auto* b = static_cast<BoxCollider3D*>(c);
                     out.boxes.push_back({b->WorldCenter(), b->HalfExtents(), go->transform->Rotation(), area});
                     break;
@@ -214,6 +239,63 @@ bool LineBox(const NavBakeInput::Box& b, const Quat& inv, float x, float z, floa
     return true;
 }
 
+// The part of triangle abc above the column square [x0, x1] x [z0, z1]: false when none (or only an edge or a point,
+// so a mesh that ends on a column's border does not reach into the next column). Otherwise the lowest and highest
+// y of that part. Sutherland-Hodgman clipping of the triangle against the square's four sides.
+bool ClipTriangleToColumn(const Vec3& a, const Vec3& b, const Vec3& c, float x0, float x1, float z0, float z1,
+                          float& yLo, float& yHi) {
+    Vec3 buf[2][9];
+    int n = 3;
+    buf[0][0] = a; buf[0][1] = b; buf[0][2] = c;
+    int cur = 0;
+    for (int side = 0; side < 4 && n > 0; ++side) {
+        // Inside test for this side: x >= x0, x <= x1, z >= z0, z <= z1.
+        auto dist = [&](const Vec3& p) {
+            switch (side) {
+                case 0: return p.x - x0;
+                case 1: return x1 - p.x;
+                case 2: return p.z - z0;
+                default: return z1 - p.z;
+            }
+        };
+        const Vec3* in = buf[cur];
+        Vec3* out = buf[cur ^ 1];
+        int m = 0;
+        for (int i = 0; i < n; ++i) {
+            const Vec3& p = in[i];
+            const Vec3& q = in[(i + 1) % n];
+            const float dp = dist(p), dq = dist(q);
+            if (dp >= 0.0f) out[m++] = p;
+            if ((dp >= 0.0f) != (dq >= 0.0f)) {
+                const float t = dp / (dp - dq);
+                out[m++] = p + (q - p) * t;
+            }
+        }
+        n = m; cur ^= 1;
+    }
+    if (n < 3) return false;
+    const Vec3* poly = buf[cur];
+    float area2 = 0.0f;   // twice the area of the clipped part, seen from above
+    yLo = 1e30f; yHi = -1e30f;
+    for (int i = 0; i < n; ++i) {
+        const Vec3& p = poly[i];
+        const Vec3& q = poly[(i + 1) % n];
+        area2 += p.x * q.z - q.x * p.z;
+        yLo = std::min(yLo, p.y); yHi = std::max(yHi, p.y);
+    }
+    // A wall standing on the column's border has no area from above but must still block the column it stands in:
+    // keep a vertical piece when it lies strictly inside the square in at least one direction.
+    if (std::fabs(area2) > 1e-6f * (x1 - x0) * (z1 - z0)) return true;
+    float pxMin = 1e30f, pxMax = -1e30f, pzMin = 1e30f, pzMax = -1e30f;
+    for (int i = 0; i < n; ++i) {
+        pxMin = std::min(pxMin, poly[i].x); pxMax = std::max(pxMax, poly[i].x);
+        pzMin = std::min(pzMin, poly[i].z); pzMax = std::max(pzMax, poly[i].z);
+    }
+    const bool alongX = pxMax - pxMin > 1e-6f && pzMin > z0 && pzMax < z1;   // a wall running along x, inside in z
+    const bool alongZ = pzMax - pzMin > 1e-6f && pxMin > x0 && pxMax < x1;
+    return (alongX || alongZ) && yHi - yLo > 1e-6f;
+}
+
 struct Cell {
     float y = 0.0f, ny = 1.0f, ceil = 1e30f;
     bool  walk = false;
@@ -258,6 +340,7 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
             Expand(bmin, bmax, c.a - r); Expand(bmin, bmax, c.a + r); Expand(bmin, bmax, c.b - r); Expand(bmin, bmax, c.b + r);
         }
         for (const auto& t : in.terrains) { Expand(bmin, bmax, t.aabbMin); Expand(bmin, bmax, t.aabbMax); }
+        for (const auto& m : in.meshes) for (const Vec3& p : m.corners) Expand(bmin, bmax, p);
         if (bmin.x > bmax.x) { if (stats) *stats = st; report(1.0f); return true; }   // nothing to bake
         const float pad = S.cellSize;
         bmin -= Vec3{pad, S.agentHeight, pad}; bmax += Vec3{pad, S.agentHeight, pad};
@@ -282,7 +365,9 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
     };
 
     // ---- Rasterize: solid spans per column --------------------------------
-    const std::size_t prims = in.boxes.size() + in.spheres.size() + in.capsules.size() + in.terrains.size();
+    std::size_t meshTris = 0;
+    for (const auto& m : in.meshes) meshTris += m.corners.size() / 3;
+    const std::size_t prims = in.boxes.size() + in.spheres.size() + in.capsules.size() + in.terrains.size() + meshTris;
     std::size_t done = 0;
     auto tick = [&]() { if ((++done & 15) == 0) report(0.4f * (float)done / (float)std::max<std::size_t>(prims, 1)); };
     for (const auto& b : in.boxes) {
@@ -369,6 +454,29 @@ bool NavMeshBaker::Bake(const NavBakeInput& in, const NavMeshBuildSettings& sett
                 hf.AddSpan(iz * hf.nx + ix, yw - 1000.0f, yw, n.y, t.area);
             }
         tick();
+    }
+    // Triangles: each one is clipped to the square of every column it overlaps, and the part inside becomes a span
+    // from its lowest to its highest point there (a floor gives a thin span, a slope a span as tall as its rise over
+    // the cell, a wall a tall one). The top's normal is the triangle's, so a face pointing down is never a floor.
+    for (const auto& m : in.meshes) {
+        for (std::size_t t = 0; t + 2 < m.corners.size(); t += 3) {
+            if ((t & 1023) == 0 && stop()) return false;
+            const Vec3 &a = m.corners[t], &b = m.corners[t + 1], &c = m.corners[t + 2];
+            Vec3 n = Vec3::Cross(b - a, c - a);
+            const float len = n.Magnitude();
+            if (!(len > 1e-12f) || !std::isfinite(len)) { tick(); continue; }
+            const float ny = n.y / len;
+            Vec3 mn = a, mx = a; Expand(mn, mx, b); Expand(mn, mx, c);
+            int x0, z0, x1, z1; if (!colRange(mn, mx, x0, z0, x1, z1)) { tick(); continue; }
+            for (int iz = z0; iz <= z1; ++iz)
+                for (int ix = x0; ix <= x1; ++ix) {
+                    const float cx0 = hf.originX + (float)ix * cs, cz0 = hf.originZ + (float)iz * cs;
+                    float y0, y1;
+                    if (ClipTriangleToColumn(a, b, c, cx0, cx0 + cs, cz0, cz0 + cs, y0, y1))
+                        hf.AddSpan(iz * hf.nx + ix, y0, y1, ny, m.area);
+                }
+            tick();
+        }
     }
     report(0.4f);
 

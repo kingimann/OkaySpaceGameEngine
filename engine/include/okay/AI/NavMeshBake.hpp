@@ -14,7 +14,8 @@ class GameObject;
 /// The static geometry a bake works from, copied out of the scene on the main
 /// thread so the bake itself can run on a worker thread while the editor stays
 /// responsive. Colliders become oriented boxes / spheres / capsules; heightmap
-/// terrains are copied as heightfields.
+/// terrains are copied as heightfields. A Mesh Collider with triangles is copied as its world-space triangles
+/// (wound so their front faces point out of the surface; see `Triangles`).
 struct NavBakeInput {
     struct Box     { Vec3 center, half; Quat rot; int area = 0; };
     struct Sphere  { Vec3 center; float radius; int area = 0; };
@@ -33,7 +34,12 @@ struct NavBakeInput {
         float Sample(float lx, float lz) const;   // bilinear, local XZ
         Vec3  Normal(float lx, float lz) const;   // local, from the height gradient
     };
+    /// A triangle surface (a Mesh Collider's triangles placed in the world). Each triangle's corners a, b, c are wound so
+    /// that cross(b - a, c - a) points out of the surface (the engine's winding; a mirrored transform is undone). A
+    /// surface whose front faces point down is a ceiling, not a floor: it blocks but is never walked on.
+    struct Triangles { std::vector<Vec3> corners; int area = 0; };   // 3 corners per triangle, world space
     std::vector<Box> boxes;
+    std::vector<Triangles> meshes;
     std::vector<Sphere> spheres;
     std::vector<Capsule> capsules;
     std::vector<Heightfield> terrains;

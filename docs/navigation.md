@@ -50,8 +50,8 @@ Audit of the navigation code before the carving work, and where each item stands
 **Bake before Play** on the surface rebakes every time Play starts, so the mesh
 always matches what you just moved. **Clear** drops the mesh and its file.
 
-What is baked: every enabled, non-trigger `BoxCollider3D` / `MeshCollider3D`
-(oriented boxes), `SphereCollider3D`, `CapsuleCollider3D` /
+What is baked: every enabled, non-trigger `BoxCollider3D` (an oriented box),
+`MeshCollider3D` (its real triangles; see below), `SphereCollider3D`, `CapsuleCollider3D` /
 `CylinderCollider3D`, and heightmap `Terrain`s. Left out: objects that move -
 anything with a `NavMeshAgent` or `NavMeshObstacle`, the player and NPC
 controllers, `Character`s, projectiles, vehicles - and, unless **Include
@@ -67,6 +67,17 @@ the surface can exclude more.
 | Cell Size | Bake resolution in world units. Walls thinner than a cell can be missed; doorways are resolved to a cell. Keep it below `Max Step / tan(Max Slope)` so ramps stay connected cell to cell (0.25 is fine for 0.4 / 45 deg). |
 | Cell Height | Height tolerance: how far the ground may bend before a polygon is split. Flat floors and planar ramps are exact; terrain is approximated within this. |
 | Auto Bounds | Bake everything the colliders cover (padded). Off: only the given box. |
+
+A **Mesh Collider** bakes as its triangles, placed in the world. Each triangle is
+clipped to the square of every column it covers, and the part inside becomes a
+span from its lowest to its highest point there: a floor gives a thin span, a
+ramp follows its slope, and a wall made of a single quad (no thickness) still
+blocks. The triangle's facing decides the slope test, so a surface whose front
+faces point down is a ceiling, never a floor (a mirrored, negative-scale object
+is handled). A dynamic body that collides as its convex hull bakes as the hull
+(with Include Dynamic Bodies), and a Mesh Collider with no mesh to read bakes as
+the box its size describes. Test: `navmesh_mesh_collider` (an L-shaped floor, a
+ramp, a wall quad, a pillar, a ceiling, a mirrored floor).
 
 How the bake works (engine/src/AI/NavMeshBake.cpp): every collider is
 rasterized into a heightfield of solid spans per column (so floors can stack:

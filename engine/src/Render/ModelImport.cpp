@@ -98,7 +98,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".pmx", ".lws", ".mot"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -524,6 +524,18 @@ constexpr bool kOwnNffDefault = true;
 constexpr bool kOwnNffDefault = false;
 #endif
 
+#ifdef OKAY_OWN_PMX_DEFAULT
+constexpr bool kOwnPmxDefault = true;
+#else
+constexpr bool kOwnPmxDefault = false;
+#endif
+
+#ifdef OKAY_OWN_LWS_DEFAULT
+constexpr bool kOwnLwsDefault = true;
+#else
+constexpr bool kOwnLwsDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -558,8 +570,22 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_XGL",     "XGL",     kOwnXglDefault},       // 24
     {"OKAY_OWN_IRR",     "IRR",     kOwnIrrDefault},       // 25
     {"OKAY_OWN_NFF",     "NFF",     kOwnNffDefault},       // 26
+    {"", "", false},                                   // 27: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 28: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 29: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 30: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 31: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 32: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 33: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 34: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 35: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 36: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 37: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"", "", false},                                   // 38: taken by another branch (claude/terragen-fix, readers-e1 to e4); their rows replace these on merge
+    {"OKAY_OWN_PMX",     "PMX",     kOwnPmxDefault},       // 39
+    {"OKAY_OWN_LWS",     "LWS",     kOwnLwsDefault},       // 40 (.lws and .mot)
 };
-constexpr int kOwnSlots = 27;   // slots 22 to 26 are batch D; raise this (and add rows above) when a reader needs a slot beyond 26
+constexpr int kOwnSlots = 41;   // slots 22 to 26 are batch D; 27 to 38 belong to other branches; 39 and 40 are PMX and LWS/MOT
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -591,6 +617,8 @@ int OwnSlot(const std::string& ext) {
     if (e == ".xgl" || e == ".zgl") return 24;
     if (e == ".irr") return 25;
     if (e == ".nff" || e == ".enff") return 26;
+    if (e == ".pmx") return 39;
+    if (e == ".lws" || e == ".mot") return 40;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -727,7 +755,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         // reader where it is switched on, else Assimp when the build has it); one level only, so a scene cannot name a scene
         thread_local int loaderDepth = 0;
         const IrrMeshLoader irrLoader = [&](const std::string& p, ImportedModel& m, std::string* e) {
-            if (loaderDepth >= 1 || EndsWith(Lower(p), ".irr")) { if (e) *e = "a scene file may not load another scene"; return false; }
+            if (loaderDepth >= 1 || EndsWith(Lower(p), ".irr") || EndsWith(Lower(p), ".lws") || EndsWith(Lower(p), ".mot")) { if (e) *e = "a scene file may not load another scene"; return false; }
             ++loaderDepth;
             const bool r = ImportModelData(p, m, ImportBackend::Default, false, e);
             --loaderDepth;
@@ -756,7 +784,10 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 23 ? ReadOgreXmlFile(path, out, &e1)
                   : s == 24 ? ReadXglFile(path, out, &e1)
                   : s == 25 ? ReadIrrSceneFile(path, out, &e1, &irrLoader)
-                  : ReadNffFile(path, out, &e1); }, e1);   // 26
+                  : s == 26 ? ReadNffFile(path, out, &e1)
+                  : s == 39 ? ReadPmxFile(path, out, &e1)
+                  : s == 40 ? ReadLwsFile(path, out, &e1, &irrLoader)
+                  : false; }, e1);   // 26; 27 to 38 are other branches' readers
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {

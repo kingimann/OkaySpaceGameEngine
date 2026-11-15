@@ -267,6 +267,22 @@ bool ReadIrrSceneBuffer(const std::string& text, const std::string& baseDir, Imp
 /// polygons by index with matid / texture / both, an `mtable` material file looked up in `baseDir`). Lights, the viewpoint,
 /// the background and the diffuse / specular / transmission coefficients are not read (reported in `out.notes`).
 bool ReadNffBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// PMX 2.0 / 2.1 (MikuMikuDance model, binary; UTF-16LE or UTF-8 text; index sizes of 1, 2 or 4 bytes): one skinned part per
+/// material (vertices welded, BDEF1 / BDEF2 / BDEF4 / SDEF as two-bone blend / QDEF weights as the four strongest, z mirrored and the
+/// winding reversed because the file is left-handed), the diffuse colour, alpha, specular power and diffuse texture of each material (the
+/// texture only when its path stays inside `baseDir`), and the bones as nodes (positions only) with their inverse bind matrices. Morphs are
+/// walked and checked but not imported; IK, inherit rules, display frames, rigid bodies, joints and soft bodies are not read (reported in
+/// `out.notes`). Per-file budgets on vertices, triangles, bones, morphs, materials and textures. `baseDir` ends with a slash or is empty.
+bool ReadPmxBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// LightWave scene (.lws, "LWSC" text, versions 1 to 6) and LightWave motion (.mot, "LWMO"): every object item (LoadObject /
+/// LoadObjectLayer / AddNullObject), camera, light and bone becomes a node (parents by ParentItem), the position, heading / pitch / bank and
+/// scale envelopes (channels 0 to 8) become one clip "scene" with keys at the file's own key times (seconds); the node's rest pose is the
+/// envelope value at time 0. Object files are read through `loader` (a path already joined to the scene's folder with
+/// ResolveInsideDir: absolute paths, "..", and links that leave the folder are refused; a scene may not name another scene); without a loader the
+/// objects are empty nodes. A .mot alone gives one node and one clip. Coordinates are left-handed: z is mirrored like in the LWO reader.
+/// Envelope shapes other than linear, pre / post behaviours, plugins, lighting values and render settings are not read (reported in `out.notes`).
+bool ReadLwsBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
+                   const IrrMeshLoader* loader = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -292,6 +308,9 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
 bool ReadXglFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadIrrSceneFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadPmxFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// `path` is a .lws scene or a .mot motion file.
+bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

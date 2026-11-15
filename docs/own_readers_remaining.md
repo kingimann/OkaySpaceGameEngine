@@ -19,7 +19,8 @@ below were made by counting those files by extension; where I could not check so
 | Importers we covered **before batch C** (including Blender, merged as #829, off by default) | 19 |
 | Importers batch C added (MD2, MD3, Irrlicht mesh, B3D, DirectX .x) | 5 (24) |
 | Importers batch D adds (AC3D, XGL / ZGL, Irrlicht scene, NFF, and OGRE **for the XML form only**) | 5 (**29** of the 45 switched on; OGRE counts as half: its binary `.mesh` / `.skeleton` and the `.skeleton.xml` are row 1 below) |
-| Switched on in our build and still **without an own reader** | **16** (rows 2 to 17 below) plus OGRE's half |
+| Importers batch E4 adds (**OpenGEX**, whole; **MDL**, Quake 1 and Half-Life 1 only, not 3D GameStudio) | 1 and a half (**30 and a half** of the 45 on this branch's base; other open branches add their own formats on top, so add the counts when they merge) |
+| Switched on in our build and still **without an own reader** | **14 and a half** on this branch's base: rows 4 to 17 below, plus OGRE's half and the 3D GameStudio half of row 3 (row 2, OpenGEX, is done) |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
@@ -40,8 +41,8 @@ none were invented.
 | # | Format (extensions) | What it is | How common | How hard | Real files in the tree | Switched on in our build |
 |---|---|---|---|---|---|---|
 | 1 | **Ogre, the rest** (`.mesh`, `.skeleton`, `.skeleton.xml`) | OGRE3D: the binary mesh, and the skeleton in both forms with bones, bind pose and animations (the XML mesh geometry and materials are done, batch D) | medium-high | binary `.mesh`: medium; skeleton: medium (needs the skin and clip path of the other skinned readers) | 6 (`fish`, `ninja`, `razor` as `.mesh` and the skeletons as binary and XML) | yes |
-| 2 | **OpenGEX** (`.ogex`) | Open Game Engine Exchange: text (OpenDDL), meshes, skins, animation, materials | low-medium (growing) | medium | 6 | yes |
-| 3 | **MDL** (`.mdl`): Quake 1, Half-Life 1, 3D GameStudio MDL3/4/5/7 | four unrelated binary formats under one extension | medium (HL1 models are common) | Quake 1: easy; HL1: medium (bones, embedded textures); 3DGS: medium to hard (7 has skins and animation) | 43 (HL1, MDL3, MDL5, MDL7, alpha tests) | yes |
+| 2 | ~~**OpenGEX** (`.ogex`)~~ **done (batch E4, off by default, `OKAY_OWN_OPENGEX`, `docs/own_ogex_reader.md`)** | Open Game Engine Exchange: text (OpenDDL), meshes, skins, animation, materials | low-medium (growing) | medium | 6 | yes. Unverified against real files: written from the specification, tested on hand-written files; the 6 files of Assimp's tree have not been run through it |
+| 3 | **MDL** (`.mdl`): Quake 1, Half-Life 1 **done (batch E4, off by default, `OKAY_OWN_MDL`, `docs/own_mdl_reader.md`)**; **3D GameStudio MDL3/4/5/7 not done** | four unrelated binary formats under one extension | medium (HL1 models are common) | Quake 1: easy; HL1: medium (bones, embedded textures); 3DGS: medium to hard (7 has skins and animation) | 43 (HL1, MDL3, MDL5, MDL7, alpha tests) | yes. Quake 1 and Half-Life 1 are unverified against real files (none were run); embedded texture pictures are not extracted; the GameStudio files are refused with a message (Assimp still reads them when built) |
 | 4 | **IQM** (`.iqm`) | Inter-Quake Model: binary, skeleton, animation; used by Cube 2, Sauerbraten, open engines | low-medium | medium | 1 (`mrfixit.iqm`, skinned and animated) | yes |
 | 5 | **COB** (`.cob`) | Caligari trueSpace; binary and ASCII | low (old) | medium | 8 (dwarf, molecule, spider: binary and ASCII) | yes |
 | 6 | **LWS / MOT** (`.lws` `.mot`) | LightWave **scene** (objects by reference, cameras, lights, motion curves) | low-medium | medium (our LWO reader covers the objects it names) | 15 (envelopes, pre/post behaviours) | yes |
@@ -63,7 +64,7 @@ none were invented.
 | 22 | **Assbin** (`.assbin`) | Assimp's own dump of its scene | none outside Assimp | not worth a reader; it can simply go | 0 in the tree | no |
 | 23 | **Cinema 4D** (`.c4d`) | Maxon's format; Assimp's importer needs the non-free Maxon SDK and is off in every normal build | medium | the format is proprietary and undocumented: writing our own means reverse engineering | 0 in the tree | no (and not buildable without the SDK) |
 
-Rows 1 to 17 are what is left of the 45 importers our Windows build switches on (row 1 is the half of OGRE; glTF 1.0 is row 17); rows 18 to 23 are not switched
+Rows 1 to 17 (row 2 is done, rows 1 and 3 are partly done) are what is left of the 45 importers our Windows build switches on (row 1 is the half of OGRE; glTF 1.0 is row 17); rows 18 to 23 are not switched
 on, so removing Assimp does not remove anything a user has today for them.
 
 ## Proposed order for the next readers
@@ -73,8 +74,8 @@ Order of what to write next, by (how likely a user meets it) x (how small it is)
 Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real files compared), and the XML half of OGRE. After an outside review the batch has per-file budgets (triangles, vertices, subdivided corners), exception-to-refusal at the import seam, OGRE strips and fans read as strips and fans, and scene files that may only name files inside their own folder (`tests/test_batchd_budget.cpp`).
 
 1. **Ogre, the rest**: `.skeleton.xml` (bones, bind pose, animations, vertex weights) on the XML reader, then the binary `.mesh` and `.skeleton`: many real game assets.
-2. **MDL**, in this order: Quake 1, then Half-Life 1, then 3D GameStudio 3/5/7 (43 real files).
-3. **IQM**, **OpenGEX**, **COB**, **LWS**, **PMX**: one real file or a handful each; each is a few days.
+2. **MDL**: Quake 1 and Half-Life 1 are done (batch E4, unverified against the 43 real files, which have not been run through it); **3D GameStudio 3/5/7 is left** (it needs a documented layout; none was written from memory).
+3. **IQM**, **COB**, **LWS**, **PMX**: one real file or a handful each; each is a few days. (OpenGEX is done, batch E4.)
 4. The tiny ones in one batch: **Q3D, SIB, CSM, MDC, HMP, Terragen, RAW, Unreal**.
 5. **Quake III BSP** and **glTF 1.0**: medium; glTF 1.0 is the one with the largest real-file count (7) after MDL.
 6. **Nendo**: last, and only from a published description, because no file exists to check it against; honest status "unverified".

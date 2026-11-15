@@ -98,7 +98,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ogex", ".mdl"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -524,6 +524,18 @@ constexpr bool kOwnNffDefault = true;
 constexpr bool kOwnNffDefault = false;
 #endif
 
+#ifdef OKAY_OWN_OPENGEX_DEFAULT
+constexpr bool kOwnOpengexDefault = true;
+#else
+constexpr bool kOwnOpengexDefault = false;
+#endif
+
+#ifdef OKAY_OWN_MDL_DEFAULT
+constexpr bool kOwnMdlDefault = true;
+#else
+constexpr bool kOwnMdlDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -558,8 +570,15 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_XGL",     "XGL",     kOwnXglDefault},       // 24
     {"OKAY_OWN_IRR",     "IRR",     kOwnIrrDefault},       // 25
     {"OKAY_OWN_NFF",     "NFF",     kOwnNffDefault},       // 26
+    // Slots 27 to 36 belong to other branches (27 Terragen: claude/terragen-fix; 28 to 30 MDC, HMP, CSM: claude/readers-e1; 31 to 33:
+    // claude/readers-e2; 34 to 36: claude/readers-e3). Until those merge, these rows are placeholders: no extension maps to them and
+    // the empty variable name is never read.
+    {"", "", false}, {"", "", false}, {"", "", false}, {"", "", false}, {"", "", false},   // 27 to 31
+    {"", "", false}, {"", "", false}, {"", "", false}, {"", "", false}, {"", "", false},   // 32 to 36
+    {"OKAY_OWN_OPENGEX", "OpenGEX", kOwnOpengexDefault},   // 37
+    {"OKAY_OWN_MDL",     "MDL",     kOwnMdlDefault},       // 38
 };
-constexpr int kOwnSlots = 27;   // slots 22 to 26 are batch D; raise this (and add rows above) when a reader needs a slot beyond 26
+constexpr int kOwnSlots = 39;   // slots 22 to 26 are batch D, 37 OpenGEX, 38 MDL; raise this (and add rows above) when a reader needs a slot beyond 38
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -591,6 +610,8 @@ int OwnSlot(const std::string& ext) {
     if (e == ".xgl" || e == ".zgl") return 24;
     if (e == ".irr") return 25;
     if (e == ".nff" || e == ".enff") return 26;
+    if (e == ".ogex") return 37;
+    if (e == ".mdl") return 38;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -756,7 +777,9 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 23 ? ReadOgreXmlFile(path, out, &e1)
                   : s == 24 ? ReadXglFile(path, out, &e1)
                   : s == 25 ? ReadIrrSceneFile(path, out, &e1, &irrLoader)
-                  : ReadNffFile(path, out, &e1); }, e1);   // 26
+                  : s == 26 ? ReadNffFile(path, out, &e1)
+                  : s == 37 ? ReadOgexFile(path, out, &e1)
+                  : ReadMdlFile(path, out, &e1); }, e1);   // 38
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {

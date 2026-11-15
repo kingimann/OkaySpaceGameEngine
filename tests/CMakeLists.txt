@@ -3303,3 +3303,39 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+
+# Batch E4 own readers (OpenGEX, MDL): one test per reader on SYNTHETIC files built in memory (tests/e4_fixtures.hpp), one standalone
+# hostile-input + budget + mutation-fuzz test for both (reader sources only, so it can also be built by hand under
+# -fsanitize=address,undefined,float-cast-overflow; OKAY_READER_FUZZ_ITERS raises the sweep), the import seam routing, and the
+# build-default check (a merge once dropped TER from the engine's list of OKAY_OWN_<FMT> defaults).
+function(okay_e4_reader_test name src)
+    add_executable(test_${name} test_${name}.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/${src})
+    target_include_directories(test_${name} PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+    target_compile_definitions(test_${name} PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    add_test(NAME ${name} COMMAND test_${name} WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+endfunction()
+okay_e4_reader_test(ogex_reader OgexReader.cpp)
+okay_e4_reader_test(mdl_reader MdlReader.cpp)
+add_executable(test_e4_hostile test_e4_hostile.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/OgexReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/MdlReader.cpp)
+target_include_directories(test_e4_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render ${PROJECT_SOURCE_DIR}/engine/src/Core)
+target_compile_definitions(test_e4_hostile PRIVATE OKAY_STANDALONE_TEST OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME e4_hostile COMMAND test_e4_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(e4_hostile PROPERTIES TIMEOUT 600)
+
+# The import seam routes .ogex (slot 37) and .mdl (slot 38) to their own readers; needs the whole engine (ImportModelData).
+add_executable(test_own_dispatch_e4 test_own_dispatch_e4.cpp)
+target_link_libraries(test_own_dispatch_e4 PRIVATE okay::engine)
+add_test(NAME own_dispatch_e4 COMMAND test_own_dispatch_e4 WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# -DOKAY_OWN_OPENGEX=ON / -DOKAY_OWN_MDL=ON must make our reader the default for that format (fails if the option is not forwarded to the engine).
+add_executable(test_own_e4_default test_own_e4_default.cpp)
+target_link_libraries(test_own_e4_default PRIVATE okay::engine)
+if(OKAY_OWN_OPENGEX)
+    target_compile_definitions(test_own_e4_default PRIVATE OKAY_EXPECT_OWN_OPENGEX)
+endif()
+if(OKAY_OWN_MDL)
+    target_compile_definitions(test_own_e4_default PRIVATE OKAY_EXPECT_OWN_MDL)
+endif()
+add_test(NAME own_e4_default COMMAND test_own_e4_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

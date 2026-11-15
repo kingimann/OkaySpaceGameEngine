@@ -348,7 +348,17 @@ variables `OKAY_DEV=1` and `OKAY_FAKE_VERSION=2.855.0` (the editor then calls it
    launcher so its question is on screen, then click **Open** on `Game2` in the launcher. Answer **Cancel** for `Game`: the question for
    `Game2` comes up next (before the fix the second Open was lost).
 
-**How you know it worked.** Each step behaves as written; before the fixes, step 2 asked "This project has no version recorded" for
+6. **No freeze at start-up when two questions are waiting.** Make an older project like step 1 (`engine_version=2.850.0`) and let a crash
+   leave a recovery copy: start the editor on it, change something, and end the editor process in Task Manager (do not close it
+   normally). Then start `Tools\OkayEngine.exe C:\Test\Game\Levels\a.okayscene`. You see exactly **one** question at a time: first
+   "This project was made with v2.850.0"; after you answer it the scene opens, and only then **Restore recovered work?** appears.
+   Before the fix the two questions closed each other every frame, nothing was drawn and the editor froze (picture:
+   `docs/images/upgrade/startup_freeze_before.png`; after: `startup_freeze_after_1_version_question.png` and
+   `startup_freeze_after_2_recovery_question.png`). Recovery copies now live in your user data folder (`okay_recovery`), so they are found
+   whatever folder the editor was started from. This exact Windows sequence was not run (the Linux test `startup_modals` steps the same
+   frames; the pictures are from the editor under a virtual display).
+
+**How you know it worked.** Each step behaves as written (step 6: one question at a time, no freeze); before the fixes, step 2 asked "This project has no version recorded" for
 `C:\Test` and Upgrade would have copied all of it, step 1 left a `Levels\project.okayproj` behind, and step 5 dropped `Game2`.
 
 **Status.** The rules are tested on Linux (`project_upgrade`, `editor_hooks`: run for this change). The editor was built and the result

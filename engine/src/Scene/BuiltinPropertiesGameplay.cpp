@@ -20,6 +20,9 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/Inventory.hpp"
+#include "okay/Components/Equipment.hpp"
+#include "okay/Components/GridInventory.hpp"
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Components/SplineMesh.hpp"
@@ -1858,6 +1861,43 @@ void RegisterSpline() {
     b.Commit();
 }
 
+// Inventory (record "inventory"). The slots are a list.
+void RegisterInventory() {
+    PropertyBuilder<Inventory> b("Inventory", "inventory", "Gameplay");
+    b.AddInt("capacity", &Inventory::capacity).Range(0, 100000, 1).Tooltip("Most separate stacks it holds")
+     .AddInt("maxStack", &Inventory::maxStack).Range(0, 1000000, 1).Tooltip("Largest stack in this container (0 = only the item's own limit)")
+     .AddFloat("weightLimit", &Inventory::weightLimit).Range(0, kBig, 0.5).Tooltip("Carry limit by item weight (0 = none)")
+     .AddBool("enforceWeight", &Inventory::enforceWeight).Tooltip("Refuse items that would go over the weight limit")
+     .AddBool("slowWhenOverWeight", &Inventory::slowWhenOverWeight).Tooltip("Move slower while over the limit")
+     .AddFloat("overWeightSpeed", &Inventory::overWeightSpeed).Range(0, 1, 0.01).Tooltip("Speed multiplier while over the limit")
+     .AddBool("keepOnSceneLoad", &Inventory::keepOnSceneLoad).Tooltip("Carry the contents into the next scene");
+    b.Commit();
+}
+
+// Equipment (record "equipment"). The slots are a list.
+void RegisterEquipment() {
+    PropertyBuilder<Equipment> b("Equipment", "equipment", "Gameplay");
+    b.AddBool("showOnCharacter", &Equipment::showOnCharacter).Tooltip("Attach the worn items' models to the character")
+     .AddBool("keepOnSceneLoad", &Equipment::keepOnSceneLoad).Tooltip("Carry what is worn into the next scene");
+    b.Commit();
+}
+
+// GridInventory (record "gridinventory"). The items and overflow are lists.
+void RegisterGridInventory() {
+    PropertyBuilder<GridInventory> b("GridInventory", "gridinventory", "Gameplay");
+    b.AddInt("cols", &GridInventory::cols).Range(1, 256, 1).Tooltip("Grid columns")
+     .AddInt("rows", &GridInventory::rows).Range(1, 256, 1).Tooltip("Grid rows")
+     .AddKey("toggleKey", &GridInventory::toggleKey).Tooltip("Opens and closes the grid")
+     .AddString("title", &GridInventory::title).Tooltip("Heading of the grid")
+     .AddFloat("weightLimit", &GridInventory::weightLimit).Range(0, kBig, 0.5).Tooltip("Most weight it holds (0 = no limit)")
+     .AddBool("enforceWeight", &GridInventory::enforceWeight).Tooltip("Refuse items that would go over the weight limit")
+     .AddInt("maxStack", &GridInventory::maxStack).Range(0, 1000000, 1).Tooltip("Largest stack (0 = only the item's own limit)")
+     .AddString("category", &GridInventory::category).Tooltip("Container role (backpack, vest ...)")
+     .AddBool("worldItem", &GridInventory::worldItem).Tooltip("A container lying in the world")
+     .AddBool("keepOnSceneLoad", &GridInventory::keepOnSceneLoad).Tooltip("Carry the contents into the next scene");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2508,6 +2548,9 @@ void RegisterGameplayProperties() {
     RegisterSplineInstancer();
     RegisterNPCController();
     RegisterSpline();
+    RegisterInventory();
+    RegisterEquipment();
+    RegisterGridInventory();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

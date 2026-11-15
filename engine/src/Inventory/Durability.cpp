@@ -1,6 +1,7 @@
 // Item durability (okay/Inventory/Durability.hpp). Written for this engine from its own inventory model.
 #include "okay/Inventory/Durability.hpp"
 #include "okay/Components/Equipment.hpp"
+#include "okay/Components/NetInventory.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/VisualScript/VsValue.hpp"
@@ -13,6 +14,11 @@ namespace durability {
 
 namespace {
 bool ValidSlot(const Inventory* inv, int i) { return inv && i >= 0 && i < (int)inv->slots.size(); }
+// Every change: the new value goes to scripts (on_durability_changed(item, value)) and, on a host, to the clients.
+void Changed(GameObject* owner, const std::string& item, float value) {
+    InventoryEvents::Fire(owner, "on_durability_changed", nullptr, {vs::VsValue(item), vs::VsValue(value)});
+    NetInventory::NoticeDurability(owner);
+}
 bool DestroyOnBreak(const std::string& item) {
     const ItemDefinition* d = ItemDatabase::Get().Find(item);
     return d && d->Custom("breakAction") == "destroy";
@@ -28,11 +34,15 @@ float MaxOf(const ItemDefinition* def) {
 }
 float MaxOf(const std::string& item) { return MaxOf(ItemDatabase::Get().Find(item)); }
 
-bool Tracked(const std::string& item, const ItemInstanceData& data) { return data.durability >= 0.0f || MaxOf(item) > 0.0f; }
+// Only the definition decides. A value stored on an item whose definition has no maxDurability (an older scene or
+// save, or a definition that dropped it) is ignored, so a stored 0 never makes such an item "broken".
+bool Tracked(const std::string& item, const ItemInstanceData&) { return MaxOf(item) > 0.0f; }
 
 float Current(const std::string& item, const ItemInstanceData& data) {
-    if (data.durability >= 0.0f) return data.durability;
-    return MaxOf(item);
+    const float full = MaxOf(item);
+    if (full <= 0.0f) return 0.0f;
+    if (data.durability >= 0.0f) return std::min(data.durability, full);
+    return full;
 }
 
 bool Broken(const std::string& item, const ItemInstanceData& data) { return Tracked(item, data) && Current(item, data) <= 0.0f; }
@@ -42,6 +52,7 @@ InvResult Wear(Inventory* inv, int slot, float amount) {
     if (!(amount > 0.0f) || !std::isfinite(amount)) return InvResult::No("nothing to wear");
     const std::string item = inv->slots[slot].item;
     if (!Tracked(item, inv->slots[slot].data)) return InvResult::No("no durability");
+    if (NetInventory::HostDecides(inv->gameObject)) return InvResult::No("the host decides");
     if (Broken(item, inv->slots[slot].data)) return InvResult::No("broken");
     if (inv->slots[slot].count > 1) {   // only one item of the stack wears: the rest moves to a free slot
         const InvResult s = InventoryOps::Split(inv, slot, inv->slots[slot].count - 1);
@@ -54,10 +65,12 @@ InvResult Wear(Inventory* inv, int slot, float amount) {
         GameObject* owner = inv->gameObject;
         if (DestroyOnBreak(item)) { s = Inventory::Slot{}; }
         inv->NotifyChanged();
+        Changed(owner, item, 0.0f);
         InventoryEvents::Fire(owner, "on_item_broken", nullptr, {vs::VsValue(item)});
         return InvResult::Done(1);
     }
     inv->NotifyChanged();
+    Changed(inv->gameObject, item, now);
     return InvResult::Done(1);
 }
 
@@ -66,6 +79,7 @@ InvResult Repair(Inventory* inv, int slot, float amount, const std::vector<Inven
     const std::string item = inv->slots[slot].item;
     const float full = MaxOf(item);
     if (full <= 0.0f) return InvResult::No("no durability");
+    if (NetInventory::HostDecides(inv->gameObject)) return InvResult::No("the host decides");
     const float now = Current(item, inv->slots[slot].data);
     if (now >= full) return InvResult::No("not damaged");
     if (!cost.empty()) {
@@ -81,6 +95,7 @@ InvResult Repair(Inventory* inv, int slot, float amount, const std::vector<Inven
     const float target = (amount > 0.0f && std::isfinite(amount)) ? std::min(full, now + amount) : full;
     s.data.durability = target;
     inv->NotifyChanged();
+    Changed(inv->gameObject, item, target);
     return InvResult::Done(1);
 }
 
@@ -90,13 +105,17 @@ InvResult WearEquipped(Equipment* eq, int slot, float amount) {
     Equipment::Slot& s = eq->slots[slot];
     if (!Tracked(s.item, s.data)) return InvResult::No("no durability");
     if (Broken(s.item, s.data)) return InvResult::No("broken");
+    if (NetInventory::HostDecides(eq->gameObject)) return InvResult::No("the host decides");
+    const std::string item = s.item;
     s.data.durability = std::max(0.0f, Current(s.item, s.data) - amount);
-    if (s.data.durability <= 0.0f) {
-        const std::string item = s.item;
+    const float now = s.data.durability;
+    if (now <= 0.0f) {
         if (DestroyOnBreak(item)) eq->Clear(slot);
         eq->Refresh();   // a broken piece gives no armor or defense
-        InventoryEvents::Fire(eq->gameObject, "on_item_broken", nullptr, {vs::VsValue(item)});
     }
+    if (auto* bag = eq->gameObject ? eq->gameObject->GetComponent<Inventory>() : nullptr) bag->NotifyChanged();   // UIs redraw
+    Changed(eq->gameObject, item, now);
+    if (now <= 0.0f) InventoryEvents::Fire(eq->gameObject, "on_item_broken", nullptr, {vs::VsValue(item)});
     return InvResult::Done(1);
 }
 
@@ -105,11 +124,14 @@ InvResult RepairEquipped(Equipment* eq, int slot, float amount) {
     Equipment::Slot& s = eq->slots[slot];
     const float full = MaxOf(s.item);
     if (full <= 0.0f) return InvResult::No("no durability");
+    if (NetInventory::HostDecides(eq->gameObject)) return InvResult::No("the host decides");
     const float now = Current(s.item, s.data);
     if (now >= full) return InvResult::No("not damaged");
     const bool wasBroken = now <= 0.0f;
     s.data.durability = (amount > 0.0f && std::isfinite(amount)) ? std::min(full, now + amount) : full;
     if (wasBroken) eq->Refresh();
+    if (auto* bag = eq->gameObject ? eq->gameObject->GetComponent<Inventory>() : nullptr) bag->NotifyChanged();   // UIs redraw
+    Changed(eq->gameObject, s.item, s.data.durability);
     return InvResult::Done(1);
 }
 

@@ -5,6 +5,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/Equipment.hpp"
+#include "okay/Components/NetInventory.hpp"
 #include "okay/Inventory/Durability.hpp"
 #include "okay/Combat/WeaponDefinition.hpp"
 #include "okay/Components/MeleeAttacker.hpp"
@@ -238,6 +239,75 @@ int main() {
         CHECK(hinv->slots[0].data.durability == 100.0f);
         CHECK(G("chest_w") == 1.0f && G("chest_d") == 90.0f);
         CHECK(cinv->slots[0].data.durability == 90.0f);
+    }
+    {   // review (a): an item whose definition has no maxDurability is never tracked or broken, even with a value of
+        // 0 stored on it (an older scene or save). Before the fix it counted as broken: Use refused it, armor ignored.
+        ItemDefinition cap; cap.id = cap.name = "old_cap"; cap.equip = EquipSlot::Head;
+        cap.custom = {{"armor", "2"}};
+        ItemDatabase::Get().Put(cap);
+        ItemInstanceData zero; zero.durability = 0.0f;
+        CHECK(!durability::Tracked("stone", zero));
+        CHECK(!durability::Broken("stone", zero));
+        Scene os("old");
+        GameObject* p = os.CreateGameObject("P");
+        auto* bag = p->AddComponent<Inventory>();
+        bag->slots.assign(2, Inventory::Slot{});
+        bag->slots[0] = {"stone", 1, zero};
+        const InvResult u = InventoryOps::Use(bag, 0, p);
+        CHECK(u.reason != "broken");
+        CHECK(durability::Wear(bag, 0, 1.0f).reason == "no durability");
+        auto* eq = p->AddComponent<Equipment>();
+        const int head = eq->Find("Head");
+        CHECK(eq->Set(head, "old_cap"));
+        eq->slots[head].data = zero;
+        eq->Refresh();
+        CHECK(eq->ArmorBonus() == 2.0f);                                  // the stored 0 does not switch the armor off
+    }
+    {   // review (d): the armor piece that breaks on the hit that kills does not change that hit's damage
+        ItemDefinition shell; shell.id = shell.name = "shell"; shell.equip = EquipSlot::Chest;
+        shell.custom = {{"maxDurability", "1"}, {"armor", "6"}, {"wearPerHit", "5"}, {"breakAction", "destroy"}};
+        ItemDatabase::Get().Put(shell);
+        Scene ks("kill");
+        GameObject* v = ks.CreateGameObject("Victim");
+        auto* hp = v->AddComponent<HealthStat>();
+        hp->publishPrefs = false; hp->maxHealth = 10.0f; hp->health = 10.0f; hp->invincibleTime = 0.0f;
+        hp->respawn = false; hp->destroyOnDeath = false; hp->playDeathAnim = false;
+        auto* eq = v->AddComponent<Equipment>();
+        const int chest = eq->Find("Chest");
+        CHECK(eq->Set(chest, "shell"));
+        ks.Start(); ks.Update(0.016f);
+        CHECK(hp->equipArmor == 6.0f);
+        hp->health = 4.0f;
+        hp->Damage(12.0f);                                                // 12 - 6 = 6 > 4: this hit kills, and breaks the shell
+        CHECK(hp->dead);
+        CHECK(hp->health == -2.0f || hp->health == 0.0f);                 // the damage used the armor of before the hit
+        CHECK(eq->slots[chest].item.empty());                              // destroyed on break
+        CHECK(hp->equipArmor == 0.0f);                                     // and its armor is gone afterwards
+    }
+    {   // review (c): every change fires on_durability_changed(item, value), for a bag and for a worn piece
+        Scene es("events");
+        GameObject* h = es.CreateGameObject("H");
+        auto* bag = h->AddComponent<Inventory>();
+        bag->slots.assign(2, Inventory::Slot{});
+        bag->slots[0] = {"pick", 1, {}};
+        auto* eq = h->AddComponent<Equipment>();
+        const int head = eq->Find("Head");
+        CHECK(eq->Set(head, "helmet"));
+        auto* sc = h->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "var n = 0; var last = -1;\n"
+            "function on_durability_changed(item, v) { n = n + 1; last = v; }\n"));
+        es.Start();
+        CHECK(durability::Wear(bag, 0, 10.0f).Ok());
+        CHECK(sc->VM()->GetGlobal("n").AsFloat() == 1.0f && sc->VM()->GetGlobal("last").AsFloat() == 90.0f);
+        CHECK(durability::Repair(bag, 0).Ok());
+        CHECK(sc->VM()->GetGlobal("n").AsFloat() == 2.0f && sc->VM()->GetGlobal("last").AsFloat() == 100.0f);
+        CHECK(durability::WearEquipped(eq, head, 20.0f).Ok());
+        CHECK(sc->VM()->GetGlobal("n").AsFloat() == 3.0f && sc->VM()->GetGlobal("last").AsFloat() == 30.0f);
+        CHECK(durability::RepairEquipped(eq, head).Ok());
+        CHECK(sc->VM()->GetGlobal("n").AsFloat() == 4.0f && sc->VM()->GetGlobal("last").AsFloat() == 50.0f);
+        // (b) offline nobody else decides: the host check is false without a connected NetworkManager
+        CHECK(!NetInventory::HostDecides(h));
     }
     ItemDatabase::Get().Clear();
     TEST_MAIN_RESULT();

@@ -9,6 +9,9 @@
 // and counts as full. Rules: a broken item (durability 0) is refused by InventoryOps::Use ("broken"), and a broken
 // worn item gives no armor or defense bonus (Equipment). Scripts get on_item_broken(item) on the inventory's object.
 // Game code decides when wear happens (a hit with a weapon, a swing of a tool, damage taken in armor) and calls Wear.
+// Every change fires on_durability_changed(item, value). Multiplayer (NetInventory): the host decides. On a connected
+// client, Wear and Repair (and the Equipped versions) are refused with "the host decides"; the host's change is sent to
+// the clients with the next inventory snapshot, which carries the durability.
 #include "okay/Components/Inventory.hpp"
 #include "okay/Inventory/InventoryOps.hpp"
 #include <string>
@@ -24,7 +27,8 @@ namespace durability {
 /// The item's full durability from its definition, or 0 when it has none.
 float MaxOf(const ItemDefinition* def);
 float MaxOf(const std::string& item);
-/// True when the item has durability (by definition, or a value already stored on it).
+/// True when the item's definition has durability (maxDurability above 0). A value stored on an item whose definition
+/// has none (an older scene or save) is ignored: such an item is never broken.
 bool Tracked(const std::string& item, const ItemInstanceData& data);
 /// The current value: the stored one, else full (the definition's maximum). 0 for an item without durability.
 float Current(const std::string& item, const ItemInstanceData& data);

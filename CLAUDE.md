@@ -8,9 +8,10 @@ then this file gets updated. Keep this file short and true.
 
 1. **Keep working.** Do not stop to ask or to wait. When a decision is the owner's, pick the safe default, say what
    you picked, and carry on. Use several agents at once for independent work.
-2. **Always be working on something real.** At every moment the main session and every agent is doing one of three
-   things: finishing an unfinished feature (`docs/UNFINISHED.md`), fixing a bug, or building our own replacement for
-   a third-party library (`docs/own_code_roadmap.md`). Waiting for CI is not a reason to stop: start or continue
+2. **Always be working on something real.** At every moment the main session and every agent is doing one of four
+   things: finishing an unfinished feature (`docs/UNFINISHED.md`), fixing a bug, building our own replacement for
+   a third-party library (`docs/own_code_roadmap.md`), or checking on the second Claude (`claude2/*`, issue #422):
+   reading its reports, answering it, reviewing its work. Waiting for CI is not a reason to stop: start or continue
    one of those three while it runs, and never sit polling GitHub. Reviews, merges and releases happen in between.
    (Owner rule, 2026-11-15: "you should be always working finishing a feature, fixing a bug or working on a third
    party".) If an agent or the main session has nothing running, start more agents on the next items.

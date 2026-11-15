@@ -24,6 +24,9 @@
 #include <cstring>
 #include <ctime>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <typeinfo>
 #include <cxxabi.h>
@@ -113,6 +116,37 @@ inline void TerminateText(char* out, std::size_t cap) {
     DescribeCurrentException(what, sizeof(what));
     ctx::Out o(out, cap);
     o.S("C++ exception (std::terminate): ").S(what);
+}
+
+// The history file only ever grows (every crash appends a report of up to ~60 KB with the Console in it). At startup, not in the handler:
+// above `maxBytes` it is cut to roughly the newest `keepBytes`, starting at a report boundary. Anything that goes wrong leaves it alone.
+inline void TrimHistory(const std::filesystem::path& file, std::uintmax_t maxBytes = 8u << 20, std::uintmax_t keepBytes = 4u << 20) {
+    try {
+        std::error_code ec;
+        const std::uintmax_t size = std::filesystem::file_size(file, ec);
+        if (ec || size <= maxBytes || keepBytes >= size) return;
+        std::string tail;
+        {
+            std::ifstream in(file, std::ios::binary);
+            if (!in) return;
+            in.seekg((std::streamoff)(size - keepBytes));
+            tail.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        const std::size_t at = tail.find("\n========== crash @ ");
+        if (at == std::string::npos) return;   // no report boundary in what would be kept: leave the file as it is
+        tail.erase(0, at);
+        const std::filesystem::path tmp = file.string() + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) return;
+            out.write(tail.data(), (std::streamsize)tail.size());
+            out.flush();
+            if (!out) { out.close(); std::filesystem::remove(tmp, ec); return; }
+        }
+        std::filesystem::rename(tmp, file, ec);
+        if (ec) std::filesystem::remove(tmp, ec);
+    } catch (...) {
+    }
 }
 
 #if defined(_WIN32)
@@ -592,7 +626,9 @@ inline const char* SignalName(int sig) {
 
 inline void OnSignal(int sig, siginfo_t*, void* uctx) {
     if (!BeginCrash()) { ::signal(sig, SIG_DFL); ::raise(sig); return; }
-    ::signal(sig, SIG_DFL);   // a fault while reporting ends the process with the default action
+    // (The handler is NOT reset to the default here: that is per process, and another thread that faults while this one writes would then
+    // end the process under the report. A second fault on this thread inside the handler is fatal anyway: the signal is blocked while its
+    // handler runs, and a blocked synchronous fault kills the process.)
     void* frames[64];
     int n = ::backtrace(frames, 64);
     int skip = 2;             // the handler itself and the signal trampoline
@@ -741,8 +777,10 @@ inline void Install(const char* version, const char* buildStamp = nullptr) {
     }
 #if defined(_WIN32)
     win::InstallPlatform(buildStamp);
+    TrimHistory(std::filesystem::path(g_cfg.dirW) / L"okay_crashlog.txt");
 #else
     posix::InstallPlatform(buildStamp);
+    TrimHistory(std::filesystem::path(g_cfg.dir) / kLogFile);
 #endif
 }
 

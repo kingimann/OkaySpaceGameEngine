@@ -67,6 +67,7 @@ exception has the same few frames whatever caused it, so for those the last step
   program under it; a fault inside the handler itself ends the program at once.
 * On Windows the second pass (function names) runs on its own thread and the crash waits for it at most 8 seconds, so a slow or stuck
   dbghelp cannot hold the "OkaySpace crashed" box up; the first report is already saved.
+* The history file `okay_crashlog.txt` is trimmed when the editor starts: past 8 MB it is cut to roughly the newest 4 MB, at a report boundary.
 * It also catches `std::terminate` and `abort()`: an uncaught C++ exception (for example from a worker thread) never used to leave a report.
 
 ## What is removed before anything is sent
@@ -193,15 +194,16 @@ Run on Linux for this change, all passing:
 
 * `test_crash_context` (84 checks): the context, the bounded text writer, the report layout, truncation, the `OKAY_*` switch list.
 * `test_crash_reports` (55): parsing both formats and the new sections, the signature (same crash same name, different crash different).
-* `test_crash_handler` (46): a child process **really faults** (segmentation fault, divide by zero, `abort()`, an uncaught C++ exception, a stack
+* `test_crash_handler` (53): a child process **really faults** (segmentation fault, divide by zero, `abort()`, an uncaught C++ exception, a stack
   overflow, two threads at once) and the parent reads back the files the handler wrote, with the launcher's parser; the real report is also run
   through the scrubber and the row builder. POSIX only.
-* `test_crash_scrub` (72): hostile text for every rule above, idempotence, 200 KB runs.
-* `test_crash_upload` (95): the switch, the row, the 100 KB limit, the ledger, every server answer, the 5-a-day limit, offline and retry,
-  the prefilled GitHub address.
+* `test_crash_scrub` (73): hostile text for every rule above, idempotence, 200 KB runs.
+* `test_crash_upload` (105): the switch, the row, the 100 KB limit, the ledger, every server answer, the 5-a-day limit, offline and retry,
+  "only crashes from the moment sending was switched on", the prefilled GitHub address.
 * `tests/scripts/test_crash_reports_sql.sh` (43 checks) against a throwaway PostgreSQL 16: insert-only for `anon`, no reads, the row checks,
   the flood cap, loading the SQL twice. CI's `sql-tests` job runs it.
-* `tests/scripts/test_crash_to_issue.py` (47 tests): issue text, hostile input, dedupe, failures, the green no-op without the secret.
+* `tests/scripts/test_crash_to_issue.py` (47 tests): issue text, hostile input, dedupe, failures, the green no-op without the secret; and
+  `tests/scripts/test_crash_to_issue_http.py` (6): the same script end to end over real HTTP against two fake servers on 127.0.0.1.
 * `editor/main.cpp`, `editor/ConsolePanel.cpp` and `launcher/main.cpp` with `g++ -fsyntax-only`; every new header with the MinGW win32
   compiler (x86-64 and i686); a small Windows program that installs the handler was cross-linked.
 

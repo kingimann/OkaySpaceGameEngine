@@ -180,6 +180,35 @@ int main() {
         CHECK(tt[0].console.size() == 5);
     }
 
+    // ---- The history does not grow for ever: at startup an oversized file is cut to its newest reports, at a report boundary -----------------
+    {
+        const fs::path dir = base / "trim"; fs::create_directories(dir);
+        const fs::path hist = dir / "okay_crashlog.txt";
+        std::string entry;
+        for (int i = 0; i < 120; ++i) {
+            entry = "\n========== crash @ 2026-11-15 10:" + std::string(i < 10 ? "0" : "") + std::to_string(i % 60) + ":00 (v1.0." + std::to_string(i) + ") ==========\nOkaySpace crash report\nVersion: 1.0." + std::to_string(i) +
+                    "\nBacktrace:\n" + std::string(100 * 1024, 'x') + "\n\n";   // 120 reports of 100 KB = 12 MB
+            std::ofstream(hist, std::ios::binary | std::ios::app) << entry;
+        }
+        CHECK(fs::file_size(hist) > (8u << 20));
+        handler::TrimHistory(hist);
+        const auto size = fs::file_size(hist);
+        CHECK(size < (5u << 20) && size > (3u << 20));                 // about the newest 4 MB
+        const std::string kept = Slurp(hist);
+        const std::string boundary = "\n========== crash @ 2026-11";
+        CHECK(kept.compare(0, boundary.size(), boundary) == 0);   // it starts at a report boundary
+        const auto reports = okaycrash::ParseLog(kept);
+        CHECK(!reports.empty() && reports.front().version == "1.0.119" && reports.back().version.size() >= 5);   // newest first; the newest report is whole
+        CHECK(!fs::exists(dir / "okay_crashlog.txt.tmp"));
+        const std::string before = Slurp(hist);
+        handler::TrimHistory(hist);                                    // a small file is left alone
+        CHECK(Slurp(hist) == before);
+        handler::TrimHistory(dir / "no_such_file.txt");                // a missing file is not an error
+        std::ofstream(dir / "noboundary.txt", std::ios::binary) << std::string(9u << 20, 'z');
+        handler::TrimHistory(dir / "noboundary.txt");                  // no report boundary to cut at: left alone
+        CHECK(fs::file_size(dir / "noboundary.txt") == (9u << 20));
+    }
+
     // ---- A folder that does not exist: the report goes beside the program instead of being lost (here: nothing to check but no crash) ----
     // (OKAY_CRASH_DIR that is not a directory is ignored: covered by the dir check in Install.)
 

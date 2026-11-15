@@ -3552,3 +3552,20 @@ add_executable(test_inspector_menu_actions test_inspector_menu_actions.cpp ${PRO
 target_include_directories(test_inspector_menu_actions PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_inspector_menu_actions PRIVATE okay::engine)
 add_test(NAME inspector_menu_actions COMMAND test_inspector_menu_actions)
+
+# Which menu a right click opens (editor/InspectorClickRules.hpp, no ImGui, no engine): the field menu on a label and in a gap, never two menus.
+add_executable(test_inspector_click_rules test_inspector_click_rules.cpp)
+target_include_directories(test_inspector_click_rules PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME inspector_click_rules COMMAND test_inspector_click_rules)
+
+# What Paste Value does with the clipboard (editor/InspectorClipboardRules.hpp, no ImGui, no engine): size cap, one line, safe previews, paths inside the project.
+add_executable(test_inspector_clipboard_rules test_inspector_clipboard_rules.cpp)
+target_include_directories(test_inspector_clipboard_rules PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME inspector_clipboard_rules COMMAND test_inspector_clipboard_rules)
+
+# "Only one per object": the one table the Add Component browser, Duplicate and Paste As New share (editor/AddComponentRules.hpp), checked against the browser's sources.
+add_executable(test_add_component_rules test_add_component_rules.cpp)
+target_include_directories(test_add_component_rules PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_add_component_rules PRIVATE OKED_EDITOR_DIR="${PROJECT_SOURCE_DIR}/editor")
+target_link_libraries(test_add_component_rules PRIVATE okay::engine)
+add_test(NAME add_component_rules COMMAND test_add_component_rules)

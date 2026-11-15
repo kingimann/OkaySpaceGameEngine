@@ -140,11 +140,14 @@ void TestComponentMenuValues() {
     m = ComponentMenu(s);
     CHECK(Off(m, "comp.pasteNew") && !Why(m, "comp.pasteNew").empty());   // a default reason, never an empty tooltip
 
-    // A kind that is only allowed once cannot be duplicated.
+    // A kind that is only allowed once cannot be duplicated: grey, not hidden, and the reason says "only one per object".
     ComponentMenuState one = Middle(); one.canAddAnother = false;
     m = ComponentMenu(one);
-    CHECK(Off(m, "comp.duplicate") && Contains(Why(m, "comp.duplicate"), "only one Light"));
+    CHECK(Has(m, "comp.duplicate") && Off(m, "comp.duplicate"));
+    CHECK(Contains(Why(m, "comp.duplicate"), "Only one per object") && Contains(Why(m, "comp.duplicate"), "Light"));
     CHECK(On(m, "comp.copy"));
+    one.noAnotherReason = "The editor cannot make another of this kind of component.";   // the caller's own reason wins
+    CHECK(Why(ComponentMenu(one), "comp.duplicate") == one.noAnotherReason);
 
     // No registered values: nothing to copy, paste, reset or duplicate, and each says why.
     ComponentMenuState bare = Middle(); bare.hasValues = false;
@@ -154,7 +157,7 @@ void TestComponentMenuValues() {
     CheckInvariants(m, "bare");
 
     // Several selected objects: the value actions say how many they reach; copy and order do not.
-    ComponentMenuState many = Middle(); many.selectionCount = 3; many.clipType = "Light"; many.clipCanAdd = true;
+    ComponentMenuState many = Middle(); many.selectionCount = 3; many.clipType = "Light"; many.clipCanAdd = true; many.pasteNewObjects = 3;
     m = ComponentMenu(many);
     CHECK(Label(m, "comp.toggleEnabled") == "Disable Component (3 objects)");
     CHECK(Label(m, "comp.duplicate") == "Duplicate Component (3 objects)");
@@ -252,7 +255,7 @@ void TestTransformMenu() {
     CHECK(SubmenuItems("nope", s).empty());
 
     // Already at the default: the resets say so.
-    TransformMenuState def; def.atDefault = def.posAtDefault = def.rotAtDefault = def.scaleAtDefault = true;
+    TransformMenuState def; def.posAtDefault = def.rotAtDefault = def.scaleAtDefault = true;
     m = TransformMenu(def);
     for (const char* id : {"xform.resetAll", "xform.resetPos", "xform.resetRot", "xform.resetScale"}) CHECK(Off(m, id) && !Why(m, id).empty());
     CheckInvariants(m, "transform default");
@@ -263,7 +266,7 @@ void TestTransformMenu() {
     CHECK(On(m, "xform.resetAll") && On(m, "xform.resetPos") && Off(m, "xform.resetRot") && Off(m, "xform.resetScale"));
 
     // A camera: scale is locked, and Reset Transform is done once position and rotation are.
-    TransformMenuState cam; cam.scaleLocked = true; cam.clipValid = true; cam.posAtDefault = cam.rotAtDefault = true; cam.atDefault = false;
+    TransformMenuState cam; cam.scaleLocked = true; cam.cameraCount = 1; cam.clipValid = true; cam.posAtDefault = cam.rotAtDefault = true;
     m = TransformMenu(cam);
     CHECK(Off(m, "xform.resetScale") && Contains(Why(m, "xform.resetScale"), "camera"));
     CHECK(Off(m, "xform.resetAll"));                         // the camera's own scale is not its business
@@ -411,15 +414,151 @@ void TestObjectAndBackgroundMenus() {
     CHECK(Ids(m) == (std::vector<std::string>{"obj.addComponent", "comp.pasteNew", "obj.pasteAll", "comp.expandAll", "comp.collapseAll"}));
     CHECK(On(m, "obj.addComponent") && Off(m, "comp.pasteNew") && Off(m, "obj.pasteAll"));
     CHECK(On(m, "comp.expandAll") && On(m, "comp.collapseAll"));
-    bg.clipType = "Light"; bg.clipCanAdd = true; bg.hasObjectClip = true; bg.selectionCount = 3;
+    bg.clipType = "Light"; bg.clipCanAdd = true; bg.hasObjectClip = true; bg.selectionCount = 3; bg.pasteNewObjects = 2;
     m = BackgroundMenu(bg);
-    CHECK(Label(m, "comp.pasteNew") == "Paste As New Light (3 objects)" && On(m, "comp.pasteNew"));
+    // Three objects are selected but the new component can only go to two of them: the label names the two.
+    CHECK(Label(m, "comp.pasteNew") == "Paste As New Light (2 objects)" && On(m, "comp.pasteNew"));
+    CHECK(Label(m, "obj.pasteAll") == "Paste All Component Values (3 objects)");
     CHECK(On(m, "obj.pasteAll"));
     bg.clipCanAdd = false; bg.clipBlockedReason = "This object already has a Light, and only one is allowed.";
     CHECK(Why(BackgroundMenu(bg), "comp.pasteNew") == bg.clipBlockedReason);
     ObjectMenuState bare; bare.componentCount = 0;
     m = BackgroundMenu(bare);
     CHECK(Off(m, "comp.expandAll") && Off(m, "comp.collapseAll") && Contains(Why(m, "comp.expandAll"), "no components"));
+}
+
+
+void TestPasteNewCountsTheObjectsItReaches() {
+    RUN_SUITE("Paste As New names the objects it will really add to (finding 5)");
+    // The right-clicked kind is on 1 of the 3 selected objects, but Paste As New adds the component to every selected object that can take it.
+    ComponentMenuState s = Middle();
+    s.selectionCount = 1;            // objects that have the right-clicked kind: the value rows say "(N objects)" by this
+    s.clipType = "Light"; s.clipCanAdd = true; s.pasteNewObjects = 3;
+    std::vector<Item> m = ComponentMenu(s);
+    CHECK(Label(m, "comp.pasteNew") == "Paste As New Light (3 objects)");
+    CHECK(Label(m, "comp.paste") == "Paste Values");              // Paste Values reaches the one object that has the kind
+    CHECK(Label(m, "comp.reset") == "Reset" && Label(m, "comp.toggleEnabled") == "Disable Component");
+    // The other way round: 4 have the kind, 2 can take a new one.
+    s.selectionCount = 4; s.pasteNewObjects = 2;
+    m = ComponentMenu(s);
+    CHECK(Label(m, "comp.pasteNew") == "Paste As New Light (2 objects)" && Label(m, "comp.paste") == "Paste Values (4 objects)");
+    // One taker: no suffix. Nobody: greyed, and the reason is the caller's.
+    s.pasteNewObjects = 1;
+    CHECK(Label(ComponentMenu(s), "comp.pasteNew") == "Paste As New Light");
+    s.clipCanAdd = false; s.pasteNewObjects = 0; s.clipBlockedReason = "Only one per object: this object already has a Light.";
+    m = ComponentMenu(s);
+    CHECK(Off(m, "comp.pasteNew") && Why(m, "comp.pasteNew") == s.clipBlockedReason);
+    CHECK(Label(m, "comp.pasteNew") == "Paste As New Light");
+    // The empty-space menu names its own count too, apart from the count of "Paste All Component Values".
+    ObjectMenuState bg; bg.componentCount = 1; bg.selectionCount = 5; bg.clipType = "Rigidbody 2D"; bg.clipCanAdd = true; bg.pasteNewObjects = 3; bg.hasObjectClip = true;
+    m = BackgroundMenu(bg);
+    CHECK(Label(m, "comp.pasteNew") == "Paste As New Rigidbody 2D (3 objects)" && Label(m, "obj.pasteAll") == "Paste All Component Values (5 objects)");
+}
+
+void TestCopiesAreHonest() {
+    RUN_SUITE("a copy that would lose settings is not offered, and the menu says what it keeps (finding 2)");
+    ComponentMenuState s = Middle();
+    s.typeName = "Particle System";
+    // The kind could be added again, but a copy made from its registered values would not be the same.
+    s.copyExact = false; s.copyNote = "its saved \"particlesfx\" settings are not all part of its copyable values";
+    std::vector<Item> m = ComponentMenu(s);
+    CHECK(Has(m, "comp.duplicate") && Off(m, "comp.duplicate"));
+    CHECK(Contains(Why(m, "comp.duplicate"), "would not be the same") && Contains(Why(m, "comp.duplicate"), "particlesfx"));
+    // Copy Values stays (it is what Paste Values uses) and its tip names what is not copied.
+    CHECK(On(m, "comp.copy") && Contains(Find(m, "comp.copy")->tip, "Not copied") && Contains(Find(m, "comp.copy")->tip, "particlesfx"));
+    CheckInvariants(m, "inexact");
+    // An exact copy: Duplicate works and the Copy tip does not warn. Neither tip claims "every value".
+    ComponentMenuState exact = Middle();
+    m = ComponentMenu(exact);
+    CHECK(On(m, "comp.duplicate") && !Contains(Find(m, "comp.copy")->tip, "Not copied"));
+    CHECK(!Contains(Find(m, "comp.copy")->tip, "every value") && Contains(Find(m, "comp.copy")->tip, "property list"));
+    // The one-per-object reason comes before the inexact one (a kind that cannot be added twice need not be tried).
+    ComponentMenuState both = Middle(); both.canAddAnother = false; both.copyExact = false; both.copyNote = "x";
+    CHECK(Contains(Why(ComponentMenu(both), "comp.duplicate"), "Only one per object"));
+    // An empty note still gives a sentence.
+    ComponentMenuState bare = Middle(); bare.copyExact = false;
+    CHECK(!Why(ComponentMenu(bare), "comp.duplicate").empty() && Contains(Why(ComponentMenu(bare), "comp.duplicate"), "would not be the same"));
+}
+
+TransformObjectState Obj(bool camera, bool pos, bool rot, bool scale) {
+    TransformObjectState o; o.camera = camera; o.posAtDefault = pos; o.rotAtDefault = rot; o.scaleAtDefault = scale;
+    return o;
+}
+
+void TestTransformMenuWithCameras() {
+    RUN_SUITE("a camera in the selection does not lock the scale of the others (finding 4)");
+    // One plain object: as before.
+    TransformMenuState st = TransformStateFor({Obj(false, false, false, false)}, true);
+    CHECK(!st.scaleLocked && st.cameraCount == 0 && st.selectionCount == 1 && !st.scaleAtDefault);
+    std::vector<Item> m = TransformMenu(st);
+    CHECK(On(m, "xform.resetScale") && On(m, "xform.resetAll"));
+    // One camera alone: its scale is locked, Reset Scale says so, Reset Transform works on position and rotation.
+    st = TransformStateFor({Obj(true, false, false, false)}, true);
+    CHECK(st.scaleLocked && st.cameraCount == 1);
+    m = TransformMenu(st);
+    CHECK(Off(m, "xform.resetScale") && Contains(Why(m, "xform.resetScale"), "camera"));
+    CHECK(On(m, "xform.resetAll") && Off(SubmenuItems("xform.pasteOnly", st), "xform.pasteScale"));
+    // A camera and a plain object whose scale is not 1: Reset Scale and Paste Only > Scale are ON (for the plain one), and say what they skip.
+    st = TransformStateFor({Obj(true, true, true, false), Obj(false, true, true, false)}, true);
+    CHECK(!st.scaleLocked && st.cameraCount == 1 && st.selectionCount == 2 && !st.scaleAtDefault);
+    m = TransformMenu(st);
+    CHECK(On(m, "xform.resetScale") && Contains(Find(m, "xform.resetScale")->tip, "1 selected camera keeps its scale"));
+    CHECK(On(m, "xform.resetAll") && Contains(Find(m, "xform.resetAll")->tip, "camera"));
+    CHECK(On(SubmenuItems("xform.pasteOnly", st), "xform.pasteScale") && Contains(Find(SubmenuItems("xform.pasteOnly", st), "xform.pasteScale")->tip, "camera"));
+    CHECK(Contains(Find(m, "xform.paste")->tip, "camera"));
+    // The camera's own scale (not 1) must not make the plain object's scale look "not default": Reset Scale is greyed for "already 1", not for the camera.
+    st = TransformStateFor({Obj(true, true, true, false), Obj(false, true, true, true)}, true);
+    CHECK(st.scaleAtDefault && !st.scaleLocked);
+    m = TransformMenu(st);
+    CHECK(Off(m, "xform.resetScale") && Contains(Why(m, "xform.resetScale"), "already 1") && !Contains(Why(m, "xform.resetScale"), "camera"));
+    CHECK(Off(m, "xform.resetAll") && Contains(Why(m, "xform.resetAll"), "Already"));   // everything that can change is at its default
+    // Position and rotation count every object, the camera too.
+    st = TransformStateFor({Obj(true, false, true, false), Obj(false, true, true, true)}, true);
+    CHECK(!st.posAtDefault && st.rotAtDefault);
+    m = TransformMenu(st);
+    CHECK(On(m, "xform.resetPos") && Off(m, "xform.resetRot") && On(m, "xform.resetAll"));
+    // Two cameras: locked. Three cameras and one plain object: three are named.
+    CHECK(TransformStateFor({Obj(true, true, true, true), Obj(true, true, true, true)}, false).scaleLocked);
+    st = TransformStateFor({Obj(true, true, true, false), Obj(true, true, true, false), Obj(true, true, true, false), Obj(false, true, true, false)}, false);
+    CHECK(!st.scaleLocked && st.cameraCount == 3 && Contains(Find(TransformMenu(st), "xform.resetScale")->tip, "3 selected cameras keep its scale"));
+    // An empty selection does not lock anything and does not divide by zero.
+    st = TransformStateFor({}, false);
+    CHECK(!st.scaleLocked && st.selectionCount == 1);
+    CheckInvariants(TransformMenu(st), "empty selection");
+}
+
+void TestPropertyMenuClipboardRows() {
+    RUN_SUITE("Paste Value shows what it pastes, and refuses with a reason (finding 6)");
+    PropertyMenuState f = Prop(ValueKind::Vec3);
+    f.clipboardFits = true; f.clipPreview = "1.6 0.6 3";
+    std::vector<Item> m = PropertyMenu(f);
+    CHECK(On(m, "prop.paste") && Find(m, "prop.paste")->tip == "Paste 1.6 0.6 3");
+    // Not a value of this kind: the registry's refusal (nan, several lines, too long, a path outside the project) is the tooltip.
+    f.clipboardFits = false; f.clipPreview.clear(); f.clipRefusal = "A number that is nan or infinite cannot be pasted.";
+    m = PropertyMenu(f);
+    CHECK(Off(m, "prop.paste") && Why(m, "prop.paste") == f.clipRefusal);
+    f.clipRefusal.clear();
+    CHECK(Off(PropertyMenu(f), "prop.paste") && Contains(Why(PropertyMenu(f), "prop.paste"), "clipboard"));   // a default sentence
+    // The clipboard holds what the field has already: greyed, no empty undo step.
+    f.clipboardFits = true; f.clipIsSame = true;
+    m = PropertyMenu(f);
+    CHECK(Off(m, "prop.paste") && Contains(Why(m, "prop.paste"), "already holds"));
+    // Read-only wins over everything.
+    f.readOnly = true; f.clipIsSame = false;
+    CHECK(Contains(Why(PropertyMenu(f), "prop.paste"), "read-only"));
+    // Left-out objects (cameras, for a scale) are named on the rows that write.
+    PropertyMenuState sc = Prop(ValueKind::Vec3); sc.selectionCount = 2; sc.skippedCount = 1; sc.skippedWhy = "a camera cannot be scaled";
+    sc.clipboardFits = true; sc.clipPreview = "2 2 2";
+    m = PropertyMenu(sc);
+    CHECK(Label(m, "prop.reset") == "Reset to Default (2 objects)" && Label(m, "prop.zero") == "Set to Zero (2 objects)");
+    for (const char* id : {"prop.reset", "prop.paste", "prop.zero", "prop.one"})
+        CHECK(Contains(Find(m, id)->tip, "Skips 1 selected object: a camera cannot be scaled."));
+    CHECK(Contains(Find(m, "prop.paste")->tip, "Paste 2 2 2"));
+    sc.skippedCount = 0;
+    CHECK(!Contains(Find(PropertyMenu(sc), "prop.zero")->tip, "Skips"));
+    sc.skippedCount = 3;
+    CHECK(Contains(Find(PropertyMenu(sc), "prop.zero")->tip, "Skips 3 selected objects"));
+    CheckInvariants(PropertyMenu(sc), "skipped");
 }
 
 // Walk every on / off combination of the states and check the rules that hold for all of them.
@@ -443,7 +582,7 @@ void TestInvariantSweep() {
     }
     for (int bits = 0; bits < (1 << 8); ++bits) {
         TransformMenuState t;
-        t.clipValid = bits & 1; t.scaleLocked = bits & 2; t.atDefault = bits & 4; t.posAtDefault = bits & 8; t.rotAtDefault = bits & 16;
+        t.clipValid = bits & 1; t.scaleLocked = bits & 2; t.cameraCount = (bits & 4) ? 2 : 0; t.posAtDefault = bits & 8; t.rotAtDefault = bits & 16;
         t.scaleAtDefault = bits & 32; t.selectionCount = 1 + (bits >> 6);
         CheckInvariants(TransformMenu(t), "transform sweep");
         CheckInvariants(SubmenuItems("xform.pasteOnly", t), "transform submenu sweep");
@@ -484,6 +623,10 @@ int main() {
     TestTransformMenu();
     TestPropertyMenu();
     TestObjectAndBackgroundMenus();
+    TestPasteNewCountsTheObjectsItReaches();
+    TestCopiesAreHonest();
+    TestTransformMenuWithCameras();
+    TestPropertyMenuClipboardRows();
     TestInvariantSweep();
     TEST_MAIN_RESULT();
 }

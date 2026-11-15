@@ -27,12 +27,10 @@ int main() {
 
     // ---- Not signed in / rejected ----
     { Inputs i = base(); i.signedIn = false; CHECK(Decide(i) == Verdict::NeedSignIn); }
-    { Inputs i = base(); i.rejected = true; CHECK(Decide(i) == Verdict::NeedSignIn); }
-    { Inputs i = base(); i.rejected = true; i.tokenExpiresAt = 0; i.lastOnlineCheck = i.now; CHECK(Decide(i) == Verdict::NeedSignIn); }   // no grace for a refusal
+    { Inputs i = base(); i.signedIn = false; i.tokenExpiresAt = 0; i.lastOnlineCheck = i.now; CHECK(Decide(i) == Verdict::NeedSignIn); }   // refused = signed out: no grace
 
     // ---- Gate off ----
     { Inputs i = base(); i.required = false; i.signedIn = false; CHECK(Decide(i) == Verdict::Allowed); }
-    { Inputs i = base(); i.required = false; i.rejected = true; CHECK(Decide(i) == Verdict::Allowed); }
 
     // ---- Local backend has no server: signed in is enough ----
     { Inputs i = base(); i.onlineBackend = false; i.tokenExpiresAt = 0; i.lastOnlineCheck = 0; CHECK(Decide(i) == Verdict::Allowed); }
@@ -73,14 +71,47 @@ int main() {
         i.now -= 7 * D; i.tokenExpiresAt = i.now - 60; CHECK(Decide(i) == Verdict::GraceExpired);
     }
 
-    // ---- Refused vs unreachable (the launcher sets `rejected` only for a clear refusal; see AccountService ClassifyRefresh) ----
+    // ---- An outage keeps the session (grace); a refusal has already signed out (signedIn=false) ----
     {
-        Inputs refused = base(); refused.tokenExpiresAt = refused.now - 60; refused.lastOnlineCheck = refused.now - 60; refused.rejected = true;
-        CHECK(Decide(refused) == Verdict::NeedSignIn);            // refused: gate at once, even with a fresh last check
-        Inputs outage = refused; outage.rejected = false;         // 5xx / timeout / DNS / 429: not rejected
-        CHECK(Decide(outage) == Verdict::Allowed);                // the session is kept (grace)
+        Inputs outage = base(); outage.tokenExpiresAt = outage.now - 60; outage.lastOnlineCheck = outage.now - 60;
+        CHECK(Decide(outage) == Verdict::Allowed);
         outage.lastOnlineCheck = outage.now - 7 * D - 1;
-        CHECK(Decide(outage) == Verdict::GraceExpired);           // ...until the grace is used up
+        CHECK(Decide(outage) == Verdict::GraceExpired);
+        Inputs refused = outage; refused.signedIn = false; refused.lastOnlineCheck = refused.now;
+        CHECK(Decide(refused) == Verdict::NeedSignIn);
+    }
+
+    // ---- What to store as the last-confirmed time (NextLastCheck) ----
+    {
+        const long N = 2000000000L;
+        CHECK(NextLastCheck(0, N, 0, true) == N);                      // first unexpired token seen
+        CHECK(NextLastCheck(N - 100, N, 0, true) == N - 100);          // fresh enough: no write
+        CHECK(NextLastCheck(N - 601, N, 0, true) == N);                // stale: refresh it
+        CHECK(NextLastCheck(N + 5000, N, 0, true) == N);               // stored time in the future (clock corrected): reset
+        CHECK(NextLastCheck(N - 9 * D, N, 0, false) == N - 9 * D);     // expired token, no confirmation: nothing written
+        CHECK(NextLastCheck(0, N, 0, false) == 0);
+        CHECK(NextLastCheck(N - 9 * D, N, N - 5, false) == N - 5);     // server confirmed: counts even though the token looks expired (clock ahead / opaque token)
+        CHECK(NextLastCheck(N - 5, N, N - 9 * D, false) == N - 5);     // an older confirmation never moves it back
+        // Clock an hour+ fast: every token looks expired, but each sign-in/renewal is a confirmation, so the gate does not lock after 7 days.
+        Inputs i = base(); i.now = N + 8 * D; i.tokenExpiresAt = i.now - 7200;
+        i.lastOnlineCheck = NextLastCheck(N, i.now, i.now - 60, false);
+        CHECK(Decide(i) == Verdict::Allowed);
+        i.lastOnlineCheck = N;                                          // without the confirmation write it would lock
+        CHECK(Decide(i) == Verdict::GraceExpired);
+        // Opaque (non-JWT) token: expiry unknown, allowed while the server keeps confirming
+        Inputs o = base(); o.tokenExpiresAt = 0; o.lastOnlineCheck = NextLastCheck(0, o.now, o.now - 1, false);
+        CHECK(Decide(o) == Verdict::Allowed);
+    }
+    // First run after an upgrade: seeded from the session file's time (a file that exists is about "now"; a missing one is 0).
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_login_gate_seed";
+        std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
+        CHECK(SeedLastCheckFromSession((dir / "session.txt").string()) == 0);
+        { std::ofstream f(dir / "session.txt"); f << "a\nb\n"; }
+        const long t = SeedLastCheckFromSession((dir / "session.txt").string());
+        CHECK(t > 0 && std::labs(t - (long)std::time(nullptr)) < 120);
+        fs::remove_all(dir, ec);
     }
 
     // ---- The switch ----

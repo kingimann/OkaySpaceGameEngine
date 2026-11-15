@@ -5,9 +5,11 @@
 // OkaySpacePlayer.exe directly, and a modified launcher can skip it. See docs/UNFINISHED.md ("Launcher sign-in gate").
 #pragma once
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <string>
 
@@ -21,14 +23,13 @@ constexpr long kClockSkewSeconds = 5L * 60;
 
 enum class Verdict {
     Allowed,         // gate off, or signed in with a valid token (or the local backend)
-    NeedSignIn,      // nobody is signed in (also: the server rejected the session)
+    NeedSignIn,      // nobody is signed in (a session the server refused is signed out by the launcher first, so it lands here too)
     GraceExpired,    // signed in, token expired, and the last server confirmation is too old (or unknown / untrustworthy)
 };
 
 struct Inputs {
     bool required = true;       // the gate is on (see Required())
     bool signedIn = false;      // a saved session is loaded
-    bool rejected = false;      // the server explicitly refused the session / refresh token
     bool onlineBackend = true;  // false: the local (offline) account backend, which has no server to ask
     long tokenExpiresAt = 0;    // unix seconds, 0 = unknown
     long lastOnlineCheck = 0;   // unix seconds of the last time the server confirmed the session, 0 = never
@@ -37,10 +38,11 @@ struct Inputs {
 
 inline Verdict Decide(const Inputs& in) {
     if (!in.required) return Verdict::Allowed;
-    if (!in.signedIn || in.rejected) return Verdict::NeedSignIn;
+    if (!in.signedIn) return Verdict::NeedSignIn;
     if (!in.onlineBackend) return Verdict::Allowed;
     if (in.tokenExpiresAt > in.now) return Verdict::Allowed;   // a token the server issued and that has not lapsed
-    // Expired or unknown expiry: only the grace period keeps it working.
+    // Expired or unknown expiry (a custom server's opaque token): only the grace period keeps it working, counted from the last time
+    // the server confirmed the session (a sign-in, a renewal or a /verify), which the launcher re-checks every 30 minutes in that case.
     if (in.lastOnlineCheck <= 0) return Verdict::GraceExpired;                       // never confirmed: no grace
     if (in.lastOnlineCheck > in.now + kClockSkewSeconds) return Verdict::GraceExpired;   // from the future: not trusted
     const long age = in.now > in.lastOnlineCheck ? in.now - in.lastOnlineCheck : 0;   // small backwards skew counts as "just now"
@@ -64,6 +66,17 @@ inline bool Required(const char* envValue, bool setting, bool demoMode) {
     return setting;
 }
 
+// The rule for what to store as the last-confirmed time. `serverConfirmedAt` is the last time THIS process saw the server accept the session
+// (sign-in, renewal, /verify), 0 = never. A confirmation counts whatever the clock says, so a computer whose clock is hours fast (every
+// token looks expired) still keeps its grace. An unexpired token is also taken as "the server issued it within the hour" (refreshed at
+// most every 10 minutes, and when the stored time is in the future, e.g. after the clock was corrected). Returns the new value
+// (== `lastCheck` when nothing should be written).
+inline long NextLastCheck(long lastCheck, long now, long serverConfirmedAt, bool tokenUnexpired) {
+    if (serverConfirmedAt > 0 && serverConfirmedAt > lastCheck) return serverConfirmedAt;
+    if (tokenUnexpired && (lastCheck <= 0 || now - lastCheck > 600 || lastCheck > now)) return now;
+    return lastCheck;
+}
+
 // ---- The last-confirmed time, kept in a small file beside the saved session ----
 inline std::string LastCheckFile(const std::string& cfgDir) {
     return cfgDir + (cfgDir.empty() || cfgDir.back() == '/' || cfgDir.back() == '\\' ? "" : "/") + "login_lastcheck.txt";
@@ -73,6 +86,15 @@ inline long ReadLastCheck(const std::string& cfgDir) {
     long long v = 0;
     if (!(f >> v) || v < 0) return 0;
     return (long)v;
+}
+// First run after an upgrade (no file yet): the saved session file's modification time is the best stand-in for the last sign-in. 0 = unknown.
+inline long SeedLastCheckFromSession(const std::string& sessionFile) {
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(sessionFile, ec);
+    if (ec) return 0;
+    const auto sys = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+        t - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+    return (long)std::chrono::system_clock::to_time_t(sys);
 }
 inline bool WriteLastCheck(const std::string& cfgDir, long when) {
     std::ofstream f(LastCheckFile(cfgDir), std::ios::trunc);

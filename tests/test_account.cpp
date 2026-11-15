@@ -246,21 +246,41 @@ int main() {
         CHECK(names.size() == 2 && names[0] == "x>y" && names[1] == "z");
     }
 
-    // ---- Token renewal outcome: only a clear refusal is "Refused" (it signs out); an outage never does ----
+    // ---- Token renewal outcome: only a REAL auth-server refusal is "Refused" (it signs out); an outage or a portal never does ----
     {
         using RR = acct::RefreshResult;
-        CHECK(acct::ClassifyRefresh(true, 200, true) == RR::Ok);
-        CHECK(acct::ClassifyRefresh(true, 200, false) == RR::Unreachable);   // 2xx without a token: malformed, not a refusal
-        CHECK(acct::ClassifyRefresh(true, 400, false) == RR::Refused);       // Supabase: invalid refresh token
-        CHECK(acct::ClassifyRefresh(true, 401, false) == RR::Refused);
-        CHECK(acct::ClassifyRefresh(true, 403, false) == RR::Refused);
-        CHECK(acct::ClassifyRefresh(false, 0, false) == RR::Unreachable);    // offline / DNS / TLS / timeout
-        CHECK(acct::ClassifyRefresh(false, 401, false) == RR::Unreachable);  // not reached wins over a stale status
-        CHECK(acct::ClassifyRefresh(true, 429, false) == RR::Unreachable);
-        CHECK(acct::ClassifyRefresh(true, 500, false) == RR::Unreachable);
-        CHECK(acct::ClassifyRefresh(true, 502, false) == RR::Unreachable);
-        CHECK(acct::ClassifyRefresh(true, 503, false) == RR::Unreachable);
-        CHECK(acct::ClassifyRefresh(true, 404, false) == RR::Unreachable);
+        const std::string grant = "{\"error\":\"invalid_grant\",\"error_description\":\"Invalid Refresh Token: Refresh Token Not Found\"}";
+        const std::string code  = "{\"code\":400,\"error_code\":\"refresh_token_not_found\",\"msg\":\"Invalid Refresh Token: Refresh Token Not Found\"}";
+        const std::string html  = "<html><body><h1>403 Forbidden</h1>Sign in to the Wi-Fi network</body></html>";
+        CHECK(acct::ClassifyRefresh(true, 200, true, "") == RR::Ok);
+        CHECK(acct::ClassifyRefresh(true, 200, false, "{}") == RR::Unreachable);   // 2xx without a token: malformed, not a refusal
+        CHECK(acct::ClassifyRefresh(true, 400, false, grant) == RR::Refused);
+        CHECK(acct::ClassifyRefresh(true, 400, false, code) == RR::Refused);
+        CHECK(acct::ClassifyRefresh(true, 401, false, code) == RR::Refused);
+        CHECK(acct::ClassifyRefresh(true, 403, false, grant) == RR::Refused);
+        CHECK(acct::ClassifyRefresh(true, 403, false, html) == RR::Unreachable);   // captive portal / WAF page
+        CHECK(acct::ClassifyRefresh(true, 401, false, html) == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(true, 400, false, "") == RR::Unreachable);     // no body
+        CHECK(acct::ClassifyRefresh(true, 403, false, "{\"error\":\"forbidden\",\"message\":\"Access denied by proxy\"}") == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(true, 429, false, grant) == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(true, 500, false, grant) == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(true, 503, false, "") == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(false, 0, false, "") == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(false, 400, false, grant) == RR::Unreachable);
+        // VerifySession keeps the session on everything except a refusal.
+        CHECK(acct::KeepSessionAfterRefresh(RR::Ok));
+        CHECK(acct::KeepSessionAfterRefresh(RR::Unreachable));
+        CHECK(!acct::KeepSessionAfterRefresh(RR::Refused));
+    }
+    // Nothing to renew with: local backend, or Supabase with no saved refresh token (no network is touched) => Refused.
+    {
+        const fs::path d2 = dir / "refresh_pre";
+        fs::create_directories(d2);
+        acct::AccountService local(d2);
+        CHECK(local.RefreshSupabaseTokenEx() == acct::RefreshResult::Refused);
+        acct::AccountService sb(d2, "http://127.0.0.1:9", "anon-key");
+        CHECK(sb.RefreshSupabaseTokenEx() == acct::RefreshResult::Refused);
+        CHECK(local.ServerConfirmedAt() == 0);
     }
 
     fs::remove_all(dir);

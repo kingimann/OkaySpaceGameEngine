@@ -13105,21 +13105,37 @@ static int RoleCheckWorker(void*) {
 // Keep the Supabase access token fresh (it lasts an hour). A worker renews it
 // from the saved session a few minutes before expiry and saves it; the main
 // session and every worker (on a 401) then pick the new token up from disk.
-static volatile bool g_tokRefreshBusy = false;
-static volatile bool g_loginRejected = false;   // set by TokenRefreshWorker when the server refused the session; UpdateLoginGate signs out
+static std::atomic<bool> g_tokRefreshBusy{false};
+static std::atomic<bool> g_loginRejected{false};   // set by TokenRefreshWorker when the server refused the session; UpdateLoginGate signs out
+static std::atomic<bool> g_tokWorkerDone{false};   // a worker finished: the main thread re-reads the saved token and last-check time now
+static std::atomic<int>  g_loginGen{0};            // bumped when a different sign-in starts; a worker started for an older one is ignored
+static std::atomic<int>  g_workerGen{0};
 static int TokenRefreshWorker(void*) {
+    const int myGen = g_workerGen.load();
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
         const bool renewed = a.RefreshIfExpiring(600);
-        // Sign-in gate: the token is expired and could not be renewed. Offline keeps the session (the 7-day grace applies); a server that
-        // refuses it (VerifySession clears the saved session on 401/403) means the person is signed out at once.
+        // Sign-in gate: the token is expired (or its expiry is unknown) and could not be renewed. Offline, a 5xx, a 429 or a proxy/portal
+        // page keep the session (the 7-day grace applies). Only the auth server saying the refresh token is bad signs out
+        // (VerifySession; it re-reads the session file first, so a token the editor already rotated is not a refusal).
         if (!renewed && a.IsLoggedIn() && a.TokenExpiresAt() <= (long)std::time(nullptr)) {
             a.VerifySession();
-            if (!a.IsLoggedIn()) g_loginRejected = true;
+            if (!a.IsLoggedIn() && myGen == g_loginGen.load()) g_loginRejected = true;
+        }
+        if (a.ServerConfirmedAt() > 0 && myGen == g_loginGen.load()) {   // the server confirmed the session: that restarts the grace period
+            const std::string dir = g_pollCfgDir;
+            okay::logingate::WriteLastCheck(dir, okay::logingate::NextLastCheck(okay::logingate::ReadLastCheck(dir), (long)std::time(nullptr), a.ServerConfirmedAt(), false));
         }
     } catch (...) {}
+    g_tokWorkerDone = true;
     g_tokRefreshBusy = false;
     return 0;
+}
+static void StartTokenWorker() {
+    if (g_tokRefreshBusy.exchange(true)) return;
+    g_workerGen = g_loginGen.load();
+    if (SDL_Thread* t = SDL_CreateThread(TokenRefreshWorker, "okay-token", nullptr)) SDL_DetachThread(t);
+    else g_tokRefreshBusy = false;
 }
 static void PumpTokenRefresh(okay::account::AccountService& account) {
     static Uint32 next = 0;
@@ -13129,16 +13145,15 @@ static void PumpTokenRefresh(okay::account::AccountService& account) {
     account.ReloadSessionToken();   // a finished refresh (ours or the editor's) lands here
     const long exp = account.TokenExpiresAt();
     if (exp <= 0 || exp - (long)std::time(nullptr) > 600) return;
-    g_tokRefreshBusy = true;
-    if (SDL_Thread* t = SDL_CreateThread(TokenRefreshWorker, "okay-token", nullptr)) SDL_DetachThread(t);
-    else g_tokRefreshBusy = false;
+    StartTokenWorker();
 }
 
 // Sign-in gate, once a frame (main thread): works out g_loginVerdict from the saved session. See shared/LoginGate.hpp for the rules:
 // a valid saved session is signed in (offline too); an expired token that cannot be renewed keeps working for
-// okay::logingate::kOfflineGraceSeconds (7 days) after the last time the server confirmed it; a session the server refused signs out.
-// "Confirmed by the server" = the token is unexpired, because the server issued it at most an hour ago; that moment is written to
-// login_lastcheck.txt (at most every 10 minutes) so it survives a restart while offline.
+// okay::logingate::kOfflineGraceSeconds (7 days) after the last time the server confirmed it; a session the server refused is signed out
+// by the refresh worker (next run after the token expires, up to 30 s later; a revoked refresh token with a still-valid access token is
+// not noticed until that token expires, up to an hour). "Confirmed by the server" = a sign-in, renewal or /verify that succeeded
+// (AccountService::ServerConfirmedAt), or an unexpired token; it is kept in login_lastcheck.txt so it survives a restart while offline.
 static bool LoginGateRequired() {
     static const bool demo = std::getenv("OKAY_UI_DEMO_USER") || std::getenv("OKAY_UI_DEMO_TAB") || std::getenv("OKAY_CHAT_DEMO") ||
                              std::getenv("OKAY_MP_DEMO") || std::getenv("OKAY_VOICE_DEMO") || std::getenv("OKAY_VOICE_DEMO_SERVER");
@@ -13146,21 +13161,35 @@ static bool LoginGateRequired() {
 }
 static void UpdateLoginGate(okay::account::AccountService& a, const std::string& cfgDir) {
     namespace lg = okay::logingate;
-    if (g_loginRejected) {   // the refresh worker saw the server refuse the session
-        g_loginRejected = false;
+    if (g_loginRejected.exchange(false)) {   // the refresh worker saw the auth server refuse the session
         if (a.IsLoggedIn()) { a.Logout(); Toast("You were signed out. Please sign in again.", 2); }
     }
-    static long lastCheck = -1; static std::string lastDir;
-    if (lastCheck < 0 || lastDir != cfgDir) { lastCheck = lg::ReadLastCheck(cfgDir); lastDir = cfgDir; }
+    // A different sign-in (new account, or signed out and in again) is a new generation: workers started for the old one are ignored.
+    static bool wasIn = false; static std::string prevUser;
+    const std::string user = a.IsLoggedIn() ? a.CurrentSession().username : std::string();
+    if (a.IsLoggedIn() != wasIn || user != prevUser) { ++g_loginGen; wasIn = a.IsLoggedIn(); prevUser = user; }
     const long now = (long)std::time(nullptr);
+    static long lastCheck = -1; static std::string lastDir; static long nextRead = 0, nextVerify = 0;
+    if (g_tokWorkerDone.exchange(false)) { a.ReloadSessionToken(); nextRead = 0; }   // a finished refresh shows at once, not 30 s later
+    if (lastCheck < 0 || lastDir != cfgDir || now >= nextRead) {
+        lastCheck = lg::ReadLastCheck(cfgDir); lastDir = cfgDir; nextRead = now + 5;
+        std::error_code ec;
+        if (lastCheck <= 0 && a.IsLoggedIn() && !fs::exists(lg::LastCheckFile(cfgDir), ec)) {   // first run after the upgrade: seed from the session file's time
+            lastCheck = lg::SeedLastCheckFromSession((fs::path(cfgDir) / "session.txt").string());
+            if (lastCheck > 0) lg::WriteLastCheck(cfgDir, lastCheck);
+        }
+    }
     lg::Inputs in;
     in.required = LoginGateRequired();
     in.signedIn = a.IsLoggedIn();
     in.onlineBackend = a.IsOnline();
     in.tokenExpiresAt = in.signedIn ? a.TokenExpiresAt() : 0;
     in.now = now;
-    if (in.signedIn && in.onlineBackend && in.tokenExpiresAt > now && !cfgDir.empty() && (lastCheck <= 0 || now - lastCheck > 600 || lastCheck > now)) {
-        if (lg::WriteLastCheck(cfgDir, now)) lastCheck = now;
+    if (in.signedIn && in.onlineBackend && !cfgDir.empty()) {
+        const long nl = lg::NextLastCheck(lastCheck, now, a.ServerConfirmedAt(), in.tokenExpiresAt > now);
+        if (nl != lastCheck && lg::WriteLastCheck(cfgDir, nl)) lastCheck = nl;
+        // An opaque token (custom server) has no expiry to watch: ask the server every 30 minutes so the grace keeps being renewed.
+        if (in.tokenExpiresAt <= 0 && now >= nextVerify && !g_pollCfgDir.empty() && !g_tokRefreshBusy) { nextVerify = now + 1800; StartTokenWorker(); }
     }
     in.lastOnlineCheck = lastCheck;
     g_loginVerdict = lg::Decide(in);
@@ -19450,13 +19479,12 @@ int main(int argc, char** argv) {
             sectionHeader("Sign in to continue", nullptr);
             ImGui::PushTextWrapPos(520.0f);
             ImGui::TextUnformatted("OkaySpace could not confirm your account with the server for more than 7 days (or ever), so it needs the internet once before you can continue.");
+            ImGui::TextDisabled("If this keeps happening with a working connection, check that your computer's date and time are right.");
             ImGui::PopTextWrapPos();
             ImGui::Dummy(ImVec2(0, 10));
             ImGui::BeginDisabled(g_tokRefreshBusy);
             if (PrimaryButton(g_tokRefreshBusy ? "Checking\xE2\x80\xA6" : "Try again", ImVec2(180, 40)) && !g_tokRefreshBusy) {
-                g_tokRefreshBusy = true;
-                if (SDL_Thread* t = SDL_CreateThread(TokenRefreshWorker, "okay-token", nullptr)) SDL_DetachThread(t);
-                else g_tokRefreshBusy = false;
+                StartTokenWorker();
             }
             ImGui::EndDisabled();
             ImGui::SameLine();

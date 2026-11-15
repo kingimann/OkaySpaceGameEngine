@@ -500,13 +500,32 @@ struct ApiResponse {
 /// anyone out (the launcher's sign-in gate then relies on its offline grace period).
 enum class RefreshResult { Ok, Refused, Unreachable };
 
-/// Pure, so it is unit tested without a network. `hasToken`: the 2xx body held an access token.
-inline RefreshResult ClassifyRefresh(bool reached, long status, bool hasToken) {
+/// Is this reply body a real Supabase auth error about the REFRESH TOKEN ({"error":"invalid_grant",...} or {"error_code":"refresh_token_not_found",
+/// "msg":"Invalid Refresh Token: ..."})? A captive portal, proxy, WAF or CDN error page (HTML, or JSON of some other shape) is not.
+inline bool IsRefreshTokenRefusalBody(const std::string& body) {
+    if (body.find('{') == std::string::npos) return false;   // HTML / plain text / empty
+    auto lower = [](std::string v) { for (char& c : v) c = (char)std::tolower((unsigned char)c); return v; };
+    const std::string err  = lower(detail::JsonField(body, "error"));
+    const std::string code = lower(detail::JsonField(body, "error_code"));
+    if (err == "invalid_grant") return true;
+    if (code == "refresh_token_not_found" || code == "refresh_token_already_used" || code == "session_not_found" ||
+        code == "session_expired" || code == "invalid_grant") return true;
+    for (const char* k : {"msg", "message", "error_description"})
+        if (lower(detail::JsonField(body, k)).find("refresh token") != std::string::npos) return true;
+    return false;
+}
+
+/// Pure, so it is unit tested without a network. `hasToken`: the 2xx body held an access token. A 400/401/403 is only a refusal
+/// when the body really is the auth server saying the refresh token is bad; the same status from anything else is `Unreachable`.
+inline RefreshResult ClassifyRefresh(bool reached, long status, bool hasToken, const std::string& body = std::string()) {
     if (!reached) return RefreshResult::Unreachable;
     if (status >= 200 && status < 300) return hasToken ? RefreshResult::Ok : RefreshResult::Unreachable;   // malformed reply: not a refusal
-    if (status == 400 || status == 401 || status == 403) return RefreshResult::Refused;
-    return RefreshResult::Unreachable;   // 429, 5xx, anything else
+    if ((status == 400 || status == 401 || status == 403) && IsRefreshTokenRefusalBody(body)) return RefreshResult::Refused;
+    return RefreshResult::Unreachable;   // 429, 5xx, a portal's 403, anything else
 }
+
+/// What a failed/successful renewal means for the saved session (VerifySession): only a refusal signs out.
+inline bool KeepSessionAfterRefresh(RefreshResult r) { return r != RefreshResult::Refused; }
 
 /// One row of a server leaderboard: the player's name, their score, and their
 /// rank (1 = top).
@@ -765,6 +784,9 @@ public:
     /// The signed-in account's id (the JWT "sub"), "" when unknown. Profiles
     /// use the same id, so this finds MY profile even if the shown name differs.
     std::string UserId() const { return JwtClaim(session_.token, "sub"); }
+    /// The last time (unix seconds, this process's clock) the SERVER confirmed this session: a sign-in, a renewed token or a /verify that
+    /// answered 2xx. 0 = not in this process. Used by the launcher's sign-in gate for its offline grace period.
+    long ServerConfirmedAt() const { return serverConfirmedAt_; }
     /// When the access token expires (unix seconds), 0 when unknown.
     long TokenExpiresAt() const { return std::atol(JwtClaim(session_.token, "exp").c_str()); }
     /// Renew the access token when it expires within `marginSec` (Supabase).
@@ -828,13 +850,13 @@ public:
         // uses /verify.
         ApiResponse r = Api(provider_ == Provider::Supabase ? "/auth/v1/user" : "/verify");
         if (!r.reached) return true;                 // offline: keep the session
+        if (r.ok) serverConfirmedAt_ = (long)std::time(nullptr);
         if (r.status == 401 || r.status == 403) {    // token expired/revoked
             // Try to renew from the refresh token before giving up — a 1-hour
             // Supabase access token expiring shouldn't sign the player out.
             // Only a clear refusal signs out; an outage (network, 5xx, 429, bad reply) keeps the session.
             const RefreshResult rr = RefreshSupabaseTokenEx();
-            if (rr == RefreshResult::Ok) return true;
-            if (rr == RefreshResult::Unreachable) return true;
+            if (KeepSessionAfterRefresh(rr)) return true;
             Logout();
             return false;
         }
@@ -984,6 +1006,7 @@ private:
     mutable Session session_;   // mutable: Api() picks up a token refreshed by another instance
 
     fs::path SessionPath() const { return configDir_ / "session.txt"; }
+    long serverConfirmedAt_ = 0;   // see ServerConfirmedAt()
 
     // A claim from a JWT's payload (base64url JSON), without verifying it — we
     // only read our own token's id / expiry.
@@ -1073,6 +1096,7 @@ private:
     }
 
     void SaveSession() {
+        if (IsOnline()) serverConfirmedAt_ = (long)std::time(nullptr);   // only called after the server accepted a sign-in or a renewal
         std::ofstream f(SessionPath(), std::ios::trunc);
         f << session_.username << "\n" << session_.token << "\n" << session_.refreshToken << "\n";
     }
@@ -1091,8 +1115,33 @@ private:
     // true and updates the session on success. Used by VerifySession so a
     // signed-in player isn't kicked out just because the 1-hour token expired.
     bool RefreshSupabaseToken() { return RefreshSupabaseTokenEx() == RefreshResult::Ok; }
+    /// The refresh token saved on disk (another instance, e.g. the editor, may have rotated it), "" when none.
+    std::string SavedRefreshToken() const {
+        std::ifstream f(SessionPath());
+        std::string a, b, c;
+        std::getline(f, a); std::getline(f, b); std::getline(f, c);
+        while (!c.empty() && (c.back() == '\r' || c.back() == '\n')) c.pop_back();
+        return c;
+    }
+    // Supabase rotates refresh tokens, so a "refused" token may just be one another instance (the editor) already used. A refusal is
+    // therefore final only when the saved file still holds the very token we sent; if it changed, retry once with the new one.
+    // Two refusals in a row with a changing file are inconclusive (Unreachable): nothing is signed out on a guess.
+  public:
     RefreshResult RefreshSupabaseTokenEx() {
-        // Nothing to renew with: the 401 stands (same as before this was split).
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            const std::string used = session_.refreshToken;
+            const RefreshResult rr = RefreshOnce();
+            if (rr != RefreshResult::Refused) return rr;
+            const std::string disk = SavedRefreshToken();
+            if (disk.empty() || disk == used) return RefreshResult::Refused;
+            ReloadSessionToken();
+            session_.refreshToken = disk;   // adopt the rotated token and try again
+        }
+        return RefreshResult::Unreachable;
+    }
+  private:
+    RefreshResult RefreshOnce() {
+        // Nothing to renew with: the 401 stands.
         if (provider_ != Provider::Supabase || session_.refreshToken.empty() || !IsOnline())
             return RefreshResult::Refused;
         std::string base = serverUrl_;
@@ -1101,7 +1150,7 @@ private:
                                     "{\"refresh_token\":\"" + detail::JsonEscape(session_.refreshToken) + "\"}",
                                     /*authToken=*/{});
         const std::string tok = r.ok ? detail::JsonField(r.body, "access_token") : std::string();
-        const RefreshResult rr = ClassifyRefresh(r.reached, r.status, !tok.empty());
+        const RefreshResult rr = ClassifyRefresh(r.reached, r.status, !tok.empty(), r.body);
         if (rr != RefreshResult::Ok) return rr;
         session_.token = tok;
         std::string nr = detail::JsonField(r.body, "refresh_token");

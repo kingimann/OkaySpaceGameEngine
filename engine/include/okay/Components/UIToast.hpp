@@ -64,9 +64,12 @@ private:
 
 inline int UIToast::Count() const {
     if (!gameObject || !gameObject->transform) return 0;
+    const Scene* sc = gameObject->scene();
     int n = 0;
     for (Transform* ch : gameObject->transform->Children())
-        if (ch && ch->gameObject && ch->gameObject->GetComponent<UIToastItem>()) ++n;
+        if (ch && ch->gameObject && ch->gameObject->GetComponent<UIToastItem>() &&
+            !(sc && sc->IsDestroyPending(ch->gameObject)))   // a card already asked to go is no longer on the stack
+            ++n;
     return n;
 }
 
@@ -94,11 +97,13 @@ inline GameObject* UIToast::Push(const std::string& title, const std::string& bo
     Scene* sc = gameObject->scene();
     kind = std::clamp(kind, 0, 3);
     SetMaxStack(maxStack);
-    while (Count() >= maxStack) {
+    // Make room: the oldest card goes. Destroy only queues (the card leaves at the end of the frame), so a card already
+    // queued is skipped here and not counted by Count(); without that this loop never ended once the stack was full.
+    for (int guard = 0; guard < 256 && Count() >= maxStack; ++guard) {
         UIToastItem* oldest = nullptr;
         GameObject* og = nullptr;
         for (Transform* ch : gameObject->transform->Children()) {
-            if (!ch || !ch->gameObject) continue;
+            if (!ch || !ch->gameObject || sc->IsDestroyPending(ch->gameObject)) continue;
             auto* item = ch->gameObject->GetComponent<UIToastItem>();
             if (!item) continue;
             if (!oldest || item->serial < oldest->serial) { oldest = item; og = ch->gameObject; }

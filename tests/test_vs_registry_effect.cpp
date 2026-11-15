@@ -119,7 +119,10 @@ static std::string Snapshot(Scene& s) {
                       p.x, p.y, p.z, e.x, e.y, e.z, sc.x, sc.y, sc.z);
         out += b;
         if (auto* h = g->GetComponent<HealthStat>()) { std::snprintf(b, sizeof b, "H%.2f,%.2f,%.2f,%d,%d", h->health, h->maxHealth, h->armor, (int)h->godMode, (int)h->dead); out += b; }
-        if (auto* inv = g->GetComponent<Inventory>()) { for (const auto& sl : inv->slots) out += sl.item + "x" + std::to_string(sl.count) + ","; }
+        if (auto* inv = g->GetComponent<Inventory>()) {
+            out += "cap" + std::to_string(inv->capacity) + ":";   // Inventory.capacity= (typed-script class) changes only this
+            for (const auto& sl : inv->slots) out += sl.item + "x" + std::to_string(sl.count) + ",";
+        }
         if (auto* rb = g->GetComponent<Rigidbody3D>()) { std::snprintf(b, sizeof b, "R%.2f,%.2f,%.2f,%.2f,%.2f,w%.2f,%.2f,%.2f", rb->velocity.x, rb->velocity.y, rb->velocity.z, rb->mass, rb->gravityScale, rb->angularVelocity.x, rb->angularVelocity.y, rb->angularVelocity.z); out += b; }
         if (auto* t = g->GetComponent<TextRenderer>()) { std::snprintf(b, sizeof b, "T%s|%.2f,%.2f,%.2f,%.2f|%.2f", t->text.c_str(), t->color.r, t->color.g, t->color.b, t->color.a, t->pixelSize); out += b; }
         if (auto* a = g->GetComponent<AudioSource>()) { std::snprintf(b, sizeof b, "A%.2f,%.2f,%d,%d", a->volume, a->pitch, (int)a->loop, (int)a->IsPlaying()); out += b; }

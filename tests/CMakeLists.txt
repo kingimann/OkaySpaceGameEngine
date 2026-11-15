@@ -3578,3 +3578,8 @@ add_executable(test_vs_inventory_palette test_vs_inventory_palette.cpp)
 target_include_directories(test_vs_inventory_palette PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_inventory_palette PRIVATE okay::engine)
 add_test(NAME vs_inventory_palette COMMAND test_vs_inventory_palette)
+
+# A toast pushed while the stack is full removes the oldest and returns (it used to loop forever).
+add_executable(test_ui_toast_stack test_ui_toast_stack.cpp)
+target_link_libraries(test_ui_toast_stack PRIVATE okay::engine)
+add_test(NAME ui_toast_stack COMMAND test_ui_toast_stack)

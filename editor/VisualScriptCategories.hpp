@@ -446,6 +446,9 @@ inline VsPlace VsPlaceForApi(const char* apiType, const char* member) {
     if (VsIs(apiType, "IK")) return VsAt("Animation", "IK");
     if (VsIs(apiType, "Spline") || VsIs(apiType, "SplineFollower") || VsIs(apiType, "LineRenderer") ||
         VsIs(apiType, "TrailRenderer")) return VsAt("Objects", "Lines");
+    // The bag, the worn gear, the recipes, the grid bag and the item definitions: the same place as the Fn.inv_* nodes.
+    if (VsIs(apiType, "Inventory") || VsIs(apiType, "Equipment") || VsIs(apiType, "Crafting") ||
+        VsIs(apiType, "GridInventory") || VsIs(apiType, "Items")) return VsAt("Objects", "Items");
     return {};   // a new API type needs a line above, or the category test fails
 }
 

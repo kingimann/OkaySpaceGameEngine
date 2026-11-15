@@ -301,15 +301,16 @@ Screenshots of the real editor (Linux, virtual display): [docs/images/editor_men
   files changed.
 * **The real editor**, built from this branch (`okay-editor`, Linux, engine `-O1`, `main.cpp` `-O0`, asserts on) and run under Xvfb with the
   software renderer, started with `--dev`, the mouse driven by `xdotool`: the clicks listed in [editor_menus.md](editor_menus.md) section 3b
-  worked as described in steps 1 to 7 of this section and of section 14 (Create Child and its undo, Add Component, Same Type, Cut / Paste, Delete,
-  Create Empty Parent / Child, Isolate, Panels, Audio Source, the greyed items and their reasons, also while the game runs). No crash and no
+  worked as described (Create Child and its undo, Add Component, Same Type, Cut / Paste, Delete, Create Empty Parent / Child, Isolate, Panels,
+  Audio Source, the greyed items and their reasons, also while the game runs). No crash and no
   Dear ImGui assert while clicking, in 15 sessions of this kind. The one assert seen was at shutdown, in two sessions that were closed with a
   menu still open (`ImGui::DestroyPlatformWindow`, a pop-out menu's window still alive when the context is destroyed); asserts are off in a
   release build, and it was not looked into further.
 * `python3 scripts/gen_feature_map.py --check`, `scripts/branch_lint.py all`, `scripts/bug_patterns.py`: clean.
 
 **Not seen:** anything on Windows (the editor was never run there); the Windows build (MinGW) of the changed files was not compiled; the
-items listed as "not clicked" in editor_menus.md section 3b; Help > Documentation and Report a Bug open a browser, which this machine does not
+items listed as "not clicked" in editor_menus.md section 3b (among them the Order submenu and Open Recent greyed with no history: the test
+project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
 have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
 
 

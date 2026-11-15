@@ -327,7 +327,7 @@ Camera Bookmarks "Go to slot 1" hover reason; the Play button, then File and Edi
 **Not clicked:** the items under Open Recent, Autosave, Import Model, Merge Scene, Build Settings, New Project; Edit > Preferences items; the
 other Create items (2D, Player, Light, Camera, Effects, UI); Instantiate Prefab, Array Duplicate, Snap; Help > Documentation, Check for
 Updates, Keyboard Shortcuts, About, Scripting Reference; the prefab menu (no prefab in the test project); Parent To, Order, Transform
-and the Expand/Collapse items; Paste as Child.
+and the Expand/Collapse items; Paste as Child; Open Recent greyed with no history (the test project always had its scene in the list).
 
 ## 4. How it is built and tested
 

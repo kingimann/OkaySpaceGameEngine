@@ -372,7 +372,7 @@ void DrawSceneManager(EditorState& ed) {
             ImGui::SameLine();
         }
         const bool isOpen = !openPath.empty() && openPath == r.path;
-        if (!r.exists) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1), "%s (missing)", stem.c_str());
+        if (!r.exists) ImGui::TextColored(StatusCol(2), "%s (missing)", stem.c_str());
         else if (isOpen) ImGui::TextColored(oked::StatusCol(0), "%s", stem.c_str());
         else ImGui::TextUnformatted(stem.c_str());
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.path.c_str());
@@ -456,7 +456,7 @@ void DrawSceneManager(EditorState& ed) {
         ImGui::TextUnformatted("New name");
         ImGui::SetNextItemWidth(260);
         bool go = ImGui::InputText("##rn", renameBuf, sizeof(renameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-        if (!renameErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1), "%s", renameErr.c_str());
+        if (!renameErr.empty()) ImGui::TextColored(StatusCol(2), "%s", renameErr.c_str());
         if (ImGui::Button("Rename", ImVec2(120, 0)) || go) {
             std::string name = StripExt(renameBuf);
             std::string err;
@@ -543,7 +543,7 @@ void DrawSceneManager(EditorState& ed) {
         const char* kinds[] = {"Empty", "2D", "3D"};
         ImGui::SetNextItemWidth(160);
         ImGui::Combo("Template", &createKind, kinds, 3);
-        if (!createErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1), "%s", createErr.c_str());
+        if (!createErr.empty()) ImGui::TextColored(StatusCol(2), "%s", createErr.c_str());
         if (!hasProject) ImGui::TextDisabled("Open a project first.");
         ImGui::BeginDisabled(!hasProject);
         if (ImGui::Button("Create", ImVec2(120, 0)) || (go && hasProject)) {

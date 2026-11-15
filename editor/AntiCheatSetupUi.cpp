@@ -1,5 +1,6 @@
 #include "AntiCheatSetupUi.hpp"
 #include "AntiCheatSetup.hpp"
+#include "EditorWidgets.hpp"   // StatusCol, DimCol
 #include "imgui.h"
 
 using okay::editor::EditorState;
@@ -32,10 +33,10 @@ void Wrapped(const char* text, bool disabled) {
 
 ImVec4 Colour(as::Status s) {
     switch (s) {
-    case as::Status::Ok: return ImVec4(0.45f, 0.85f, 0.50f, 1);
-    case as::Status::Warn: return ImVec4(0.95f, 0.80f, 0.35f, 1);
-    case as::Status::Missing: return ImVec4(0.95f, 0.45f, 0.40f, 1);
-    default: return ImVec4(0.70f, 0.70f, 0.70f, 1);
+    case as::Status::Ok: return StatusCol(0);
+    case as::Status::Warn: return StatusCol(1);
+    case as::Status::Missing: return StatusCol(2);
+    default: return DimCol();
     }
 }
 const char* Mark(as::Status s) {

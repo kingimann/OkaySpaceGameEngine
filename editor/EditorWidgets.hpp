@@ -31,6 +31,7 @@ ImVec4 AccentOnCol();
 ImVec4 TextCol(float alpha = 1.0f);
 ImVec4 DimCol(float alpha = 1.0f);
 ImVec4 InkCol(float alpha = 1.0f);
+ImU32  InkU32(int alpha255);  // the hairline / hover-lift colour as a packed colour (an IM_COL32(255, 255, 255, a) that also works on the light look)
 ImVec4 SurfaceCol(int which);   // 0 deep, 1 sunken, 2 base, 3 raised, 4 field, 5 control
 // Status colours (never blue): 0 good, 1 warning, 2 error. Readable on every surface of the look.
 ImVec4 StatusCol(int kind, float alpha = 1.0f);

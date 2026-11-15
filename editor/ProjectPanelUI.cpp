@@ -1,5 +1,6 @@
 #include "ProjectPanelUI.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // InvalidateAllTextureCaches
+#include "EditorWidgets.hpp"                  // StatusCol (the Dark / Light status colours)
 
 #include <imgui.h>
 
@@ -139,8 +140,8 @@ void DrawDialogs() {
                                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
             if (!g_name.req.suffix.empty()) { ImGui::SameLine(0, 4); ImGui::TextDisabled("%s", g_name.req.suffix.c_str()); }
             const std::string why = okaypb::ValidateName(g_name.buf);
-            if (!g_name.error.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1.0f), "%s", g_name.error.c_str());
-            else if (!why.empty() && g_name.buf[0]) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1.0f), "%s", why.c_str());
+            if (!g_name.error.empty()) ImGui::TextColored(StatusCol(2), "%s", g_name.error.c_str());
+            else if (!why.empty() && g_name.buf[0]) ImGui::TextColored(StatusCol(2), "%s", why.c_str());
             else if (!g_name.req.hint.empty()) ImGui::TextDisabled("%s", g_name.req.hint.c_str());
             else ImGui::TextDisabled(" ");
             ImGui::Spacing();

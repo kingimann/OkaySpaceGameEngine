@@ -29,6 +29,9 @@ ImVec4 AccentOnCol() { return V4(ThemePalette().accentOn); }
 ImVec4 TextCol(float alpha) { return V4(ThemePalette().text, alpha); }
 ImVec4 DimCol(float alpha) { return V4(ThemePalette().textDim, alpha); }
 ImVec4 InkCol(float alpha) { return V4(ThemePalette().ink, alpha); }
+ImU32 InkU32(int alpha255) {
+    return ImGui::ColorConvertFloat4ToU32(InkCol((float)(alpha255 < 0 ? 0 : (alpha255 > 255 ? 255 : alpha255)) / 255.0f));
+}
 ImVec4 SurfaceCol(int which) {
     const okay::edtheme::Palette& p = ThemePalette();
     switch (which) {

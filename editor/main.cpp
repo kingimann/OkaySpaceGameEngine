@@ -3213,7 +3213,7 @@ static void LayerRenameMenu(int layer) {
     if (ImGui::SmallButton("Reset to default")) {
         if (apply(okay::Layers::DefaultName(layer))) ImGui::CloseCurrentPopup();
     }
-    if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
+    if (!err.empty()) ImGui::TextColored(StatusCol(2), "%s", err.c_str());
     ImGui::EndPopup();
 }
 // The right-click menu of a custom tag: rename it (the list, and the tag on every object of this scene that
@@ -3242,7 +3242,7 @@ static void TagRenameMenu(EditorState& ed, const std::string& tag) {
             } else err = "that tag cannot be renamed";
         }
     }
-    if (!err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", err.c_str());
+    if (!err.empty()) ImGui::TextColored(StatusCol(2), "%s", err.c_str());
     ImGui::Separator();
 }
 bool  g_snap = false;
@@ -7217,7 +7217,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     {
         ImVec2 c = iconC(); float s = tb * 0.2f, w = tb * 0.075f;
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImU32 col = playing || g_paused ? kIconWhite : IM_COL32(205, 205, 205, 200);
+        ImU32 col = playing || g_paused ? kIconWhite : ImGui::GetColorU32(ImGuiCol_Text, 0.78f);
         dl->AddRectFilled(ImVec2(c.x - w * 2.4f, c.y - s), ImVec2(c.x - w * 0.6f, c.y + s), col, 1.0f);
         dl->AddRectFilled(ImVec2(c.x + w * 0.6f, c.y - s), ImVec2(c.x + w * 2.4f, c.y + s), col, 1.0f);
         // A Step or "Run N frames" that has not run yet: its count sits on the button's corner, counting down.
@@ -7241,7 +7241,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     {
         ImVec2 c = iconC(); float s = tb * 0.19f;
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImU32 col = IM_COL32(205, 205, 205, 220);
+        ImU32 col = ImGui::GetColorU32(ImGuiCol_Text, 0.86f);
         dl->AddTriangleFilled(ImVec2(c.x - s * 1.1f, c.y - s), ImVec2(c.x - s * 1.1f, c.y + s), ImVec2(c.x + s * 0.5f, c.y), col);
         dl->AddRectFilled(ImVec2(c.x + s * 0.75f, c.y - s), ImVec2(c.x + s * 0.75f + tb * 0.075f, c.y + s), col, 1.0f);
     }
@@ -7321,7 +7321,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
         dotR, ImGui::GetColorU32(dotCol));
     ImGui::Dummy(ImVec2(dotW - 6.0f, ImGui::GetTextLineHeight()));
     ImGui::SameLine(0, 6);
-    ImGui::TextColored(ed.isPlaying() ? ImVec4(0.75f, 0.9f, 0.78f, 1) : ImVec4(0.70f, 0.70f, 0.70f, 1),
+    ImGui::TextColored(ed.isPlaying() ? StatusCol(0) : DimCol(),
                        "%s", status);
     ImGui::EndMenuBar();
 }
@@ -7384,7 +7384,7 @@ void DrawStatusBar(EditorState& ed) {
     // The dot is drawn (not a glyph) so it can't render as tofu in the UI font.
     if (ed.dirty && !ed.isPlaying()) {
         ImGui::SameLine(0, 12);
-        const ImVec4 amber(0.95f, 0.80f, 0.35f, 1.0f);
+        const ImVec4 amber = StatusCol(1);
         float r = ImGui::GetFontSize() * 0.22f;
         ImVec2 dp = ImGui::GetCursorScreenPos();
         ImGui::GetWindowDrawList()->AddCircleFilled(
@@ -7444,21 +7444,21 @@ void DrawStatusBar(EditorState& ed) {
     ImGui::SameLine(ImGui::GetWindowWidth() - total - 14.0f);
     if (cp[0]) {
         const bool bad = prob.error > 0;
-        ImGui::PushStyleColor(ImGuiCol_Text, bad ? ImVec4(0.96f, 0.45f, 0.42f, 1.0f) : ImVec4(0.95f, 0.80f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, bad ? StatusCol(2) : StatusCol(1));
         if (flatBtn(cp)) { g_showProblems = true; ImGui::SetWindowFocus("Problems###Problems"); }
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Problems in this project — click to open");
         ImGui::SameLine(0, gap);
     }
     if (cw[0]) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, StatusCol(1));
         if (flatBtn(cw)) { g_showConsole = true; ImGui::SetWindowFocus("Console###Console"); }
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Warnings in the Console — click to open");
         ImGui::SameLine(0, gap);
     }
     if (ce[0]) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f, 0.45f, 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, StatusCol(2));
         if (flatBtn(ce)) { g_showConsole = true; ImGui::SetWindowFocus("Console###Console"); }
         ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Errors in the Console — click to open");
@@ -7469,7 +7469,7 @@ void DrawStatusBar(EditorState& ed) {
     if (flatBtn(toolName)) g_tool = (Tool)(((int)g_tool + 1) % 3);   // cycle Move→Rotate→Scale
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Transform tool — click to cycle (W/E/R)");
     ImGui::SameLine(0, gap);
-    ImGui::TextColored(ed.isPlaying() ? ImVec4(0.45f, 0.85f, 0.5f, 1) : ImVec4(0.647f, 0.647f, 0.647f, 1), "%s", mode);
+    ImGui::TextColored(ed.isPlaying() ? StatusCol(0) : DimCol(), "%s", mode);
     ImGui::SameLine(0, gap);
     ImGui::TextDisabled("%s", c3);
     ImGui::SameLine(0, gap);
@@ -9613,7 +9613,7 @@ static void DrawPluginManager(EditorState& ed) {
             if (ImGui::Checkbox("##en", &en)) SetPluginEnabled(p, en);
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(p.name.c_str());
-            if (!p.error.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1.0f), "%s", p.error.c_str());
+            if (!p.error.empty()) ImGui::TextColored(StatusCol(2), "%s", p.error.c_str());
             else if (!p.description.empty()) ImGui::TextDisabled("%s", p.description.c_str());
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", p.user ? "All projects" : "This project");
@@ -11575,7 +11575,7 @@ void DrawSaveManager(EditorState& ed) {
     ImGui::TextDisabled("%d keys", (int)file.Count());
     if (s_dirty) {
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1.0f), "unsaved edits");
+        ImGui::TextColored(StatusCol(1), "unsaved edits");
     }
     ImGui::End();
 }
@@ -11668,7 +11668,7 @@ void DrawStats(EditorState& ed) {
     {
         ImVec4 fpsCol = io.Framerate >= 55.0f ? ImVec4(0.45f, 0.85f, 0.55f, 1.0f)
                       : io.Framerate >= 30.0f ? ImVec4(0.95f, 0.78f, 0.35f, 1.0f)
-                                              : ImVec4(0.96f, 0.45f, 0.42f, 1.0f);
+                                              : StatusCol(2);
         if (g_headingFont) ImGui::PushFont(g_headingFont);
         ImGui::TextColored(fpsCol, "%.0f", io.Framerate);
         if (g_headingFont) ImGui::PopFont();
@@ -15983,7 +15983,7 @@ void DrawScriptEditor(EditorState& ed) {
                     const bool h = ImGui::IsItemHovered();
                     ImDrawList* d = ImGui::GetWindowDrawList();
                     const ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
-                    if (h) { d->AddRectFilled(bmin, bmax, IM_COL32(255, 255, 255, 22), 5.0f); ImGui::SetTooltip("Hide scripts  (Alt+1)"); }
+                    if (h) { d->AddRectFilled(bmin, bmax, InkU32(22), 5.0f); ImGui::SetTooltip("Hide scripts  (Alt+1)"); }
                     chevron(d, ImVec2((bmin.x + bmax.x) * 0.5f, (bmin.y + bmax.y) * 0.5f), true, h ? IM_COL32(245, 245, 245, 255) : IM_COL32(178, 178, 178, 255));
                 }
                 ImGui::SetNextItemWidth(-1);
@@ -16167,7 +16167,7 @@ void DrawScriptEditor(EditorState& ed) {
         // --- Minimap: scaled overview beside the editor; click to scroll -------
         if (showMap) {
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(24, 24, 24, 255));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, okay::edtheme::PackAbgr(ThemeCodePalette().gutter));
             ImGui::BeginChild("##minimap", ImVec2(mmW, av.y), true,
                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
             ImDrawList* mdl = ImGui::GetWindowDrawList();
@@ -16212,8 +16212,8 @@ void DrawScriptEditor(EditorState& ed) {
                 float y0 = mp.y + 4.0f + top * usedH;
                 float y1 = y0 + vis * usedH;
                 if (y1 > mp.y + mh - 2.0f) y1 = mp.y + mh - 2.0f;
-                mdl->AddRectFilled(ImVec2(mp.x + 1, y0), ImVec2(mp.x + mmW - 1, y1), IM_COL32(255, 255, 255, 24));
-                mdl->AddRect(ImVec2(mp.x + 1, y0), ImVec2(mp.x + mmW - 1, y1), IM_COL32(255, 255, 255, 70));
+                mdl->AddRectFilled(ImVec2(mp.x + 1, y0), ImVec2(mp.x + mmW - 1, y1), InkU32(24));
+                mdl->AddRect(ImVec2(mp.x + 1, y0), ImVec2(mp.x + mmW - 1, y1), InkU32(70));
             }
             if (ImGui::IsWindowHovered() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                 float fy = (ImGui::GetIO().MousePos.y - (mp.y + 4.0f)) / (usedH > 1 ? usedH : 1);
@@ -16237,7 +16237,7 @@ void DrawScriptEditor(EditorState& ed) {
             // Hard-wrap margin: a faint rule at column 120 (Rider's right margin).
             {
                 float rx = textX + 120.0f * chW;
-                if (rx < teMax.x) fdl->AddLine(ImVec2(rx, teMin.y), ImVec2(rx, teMax.y), IM_COL32(255, 255, 255, 12));
+                if (rx < teMax.x) fdl->AddLine(ImVec2(rx, teMin.y), ImVec2(rx, teMax.y), InkU32(12));
             }
             // Changed-line diff bars (VS Code style): compare the buffer to the
             // file on disk and bar edited lines amber / added lines green in the
@@ -16485,11 +16485,11 @@ void DrawScriptEditor(EditorState& ed) {
                             std::string head(t + hb, t + he);
                             if (head.size() > 120) head = head.substr(0, 117) + "...";
                             float hh2 = rowH + 4.0f;
-                            fdl->AddRectFilled(teMin, ImVec2(teMax.x, teMin.y + hh2), IM_COL32(47, 47, 47, 245));
+                            fdl->AddRectFilled(teMin, ImVec2(teMax.x, teMin.y + hh2), okay::edtheme::PackAbgr(ThemeCodePalette().gutter));
                             fdl->AddLine(ImVec2(teMin.x, teMin.y + hh2), ImVec2(teMax.x, teMin.y + hh2),
-                                         IM_COL32(77, 77, 77, 255));
+                                         InkU32(45));
                             fdl->AddText(ImVec2(te.TextStartX(), teMin.y + 2.0f),
-                                         IM_COL32(255, 198, 109, 235), head.c_str());
+                                         okay::edtheme::PackAbgr(ThemeCodePalette().function), head.c_str());
                             if (ImGui::IsMouseHoveringRect(teMin, ImVec2(teMax.x, teMin.y + hh2)) &&
                                 ImGui::IsMouseClicked(ImGuiMouseButton_Left))
                                 jumpTo(hdr);
@@ -16720,7 +16720,7 @@ void DrawScriptEditor(EditorState& ed) {
                         if (at.y + s_acSize.y > vpB) at.y = std::max(vp->WorkPos.y, acPos.y - te.RowHeight() - 2 - s_acSize.y);
                         if (at.x + s_acSize.x > vpR) at.x = std::max(vp->WorkPos.x, vpR - s_acSize.x);
                         ImGui::SetNextWindowPos(at);
-                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 40, 255));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::ColorConvertFloat4ToU32(SurfaceCol(3)));
                         if (ImGui::Begin("##autocomplete", nullptr,
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
@@ -16803,8 +16803,8 @@ void DrawScriptEditor(EditorState& ed) {
                                         ImGui::Unindent(8.0f);
                                         const ImVec2 b1(std::max(b0.x + paneW, ImGui::GetItemRectMax().x + 8.0f), ImGui::GetCursorScreenPos().y - 2.0f);
                                         dl->ChannelsSetCurrent(0);
-                                        dl->AddRectFilled(b0, b1, IM_COL32(24, 24, 28, 255), 4.0f);
-                                        dl->AddRect(b0, b1, IM_COL32(73, 73, 73, 255), 4.0f);
+                                        dl->AddRectFilled(b0, b1, ImGui::ColorConvertFloat4ToU32(SurfaceCol(1)), 4.0f);
+                                        dl->AddRect(b0, b1, InkU32(50), 4.0f);
                                         dl->ChannelsMerge();
                                     }
                                     ImGui::EndGroup();
@@ -18061,7 +18061,7 @@ void DrawFileDialogs(EditorState& ed) {
                     ImGui::SetNextItemWidth(360);
                     ImGui::Combo("Layout", &g_build.layout, layouts, 3);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Folder: the game exe next to <Name>_Data/ holding the scenes, the assets they use, StreamingAssets/ and build.json.\nCompact: the older exe + Data/ folder (the server export always uses it).\nZip archive: builds the Folder layout and keeps only the .zip.");
-                    if (g_build.antiCheat != 0 && g_build.layout != 1) ImGui::TextColored(ImVec4(0.95f, 0.80f, 0.35f, 1), "Anti-cheat checks Data/manifest.json, so this build will use the compact exe + Data/ layout.");
+                    if (g_build.antiCheat != 0 && g_build.layout != 1) ImGui::TextColored(StatusCol(1), "Anti-cheat checks Data/manifest.json, so this build will use the compact exe + Data/ layout.");
                     if (g_build.layout == 1) {
                         ImGui::Checkbox("Tidy layout (Data/ folder)", &g_build.dataFolder);
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: scenes/config/assets go in a Data/ subfolder. Off: everything sits beside the exe (the oldest layout).");
@@ -18136,7 +18136,7 @@ void DrawFileDialogs(EditorState& ed) {
                                    (int)g_vsBuildErrors.size(), g_vsBuildErrors.size() == 1 ? "" : "s");
                 ImGui::PopStyleColor();
             } else {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1));
+                ImGui::PushStyleColor(ImGuiCol_Text, StatusCol(1));
                 ImGui::TextWrapped("%d warning%s. The build can still run. Problems lists them.",
                                    (int)g_buildWarnings.size(), g_buildWarnings.size() == 1 ? "" : "s");
                 ImGui::PopStyleColor();
@@ -18144,7 +18144,7 @@ void DrawFileDialogs(EditorState& ed) {
             ImGui::BeginChild("##vsbuilderrs", ImVec2(0, kVsErrListH), ImGuiChildFlags_Borders);
             for (const std::string& e : g_vsBuildErrors) ImGui::TextWrapped("%s", e.c_str());
             for (const std::string& e : g_buildWarnings) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1));
+                ImGui::PushStyleColor(ImGuiCol_Text, StatusCol(1));
                 ImGui::TextWrapped("%s", e.c_str());
                 ImGui::PopStyleColor();
             }
@@ -18392,7 +18392,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (ImGui::BeginTabItem(wTab)) {
                     if (RP.warnings.empty()) ImGui::TextDisabled("No warnings.");
                     ImGui::PushTextWrapPos(460.0f);
-                    for (const std::string& w : RP.warnings) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.80f, 0.35f, 1)); ImGui::TextWrapped("%s", w.c_str()); ImGui::PopStyleColor(); }
+                    for (const std::string& w : RP.warnings) { ImGui::PushStyleColor(ImGuiCol_Text, StatusCol(1)); ImGui::TextWrapped("%s", w.c_str()); ImGui::PopStyleColor(); }
                     ImGui::PopTextWrapPos();
                     ImGui::EndTabItem();
                 }
@@ -18661,7 +18661,7 @@ static std::string FitPathEnd(const std::string& where, float maxW) {
 // Draw the form. True on the frame "Create project" is pressed with a usable plan (f.plan, and the template in f.tpl).
 static bool DrawNewProjectForm(NewProjectForm& f) {
     const float labelW = 84.0f;
-    const ImVec4 red(0.96f, 0.55f, 0.50f, 1.0f), amber(0.95f, 0.80f, 0.35f, 1.0f), green(0.45f, 0.82f, 0.56f, 1.0f);
+    const ImVec4 red = StatusCol(2), amber = StatusCol(1), green = StatusCol(0);
     if (!f.loc[0]) std::snprintf(f.loc, sizeof(f.loc), "%s", DefaultProjectsLocation().c_str());
     const okayproj::Plan& plan0 = NewProjectPlan(f);
     const bool nameBad = !plan0.nameProblem.empty();
@@ -19027,7 +19027,7 @@ void DrawAboutPopup() {
 // (Tags::Strict: SetTag refuses a tag that is not listed) and the 32 layer names (okay::Layers, layer_name_N= lines).
 // Everything here is written to project.okayproj at once, like the right-click menus of the Inspector's lists.
 static void DrawTagsAndLayersSettings(EditorState& ed) {
-    const ImVec4 bad(0.95f, 0.45f, 0.40f, 1.0f), warn(0.95f, 0.75f, 0.30f, 1.0f);
+    const ImVec4 bad = StatusCol(2), warn = StatusCol(1);
     bool strict = okay::Tags::Strict();
     if (ImGui::Checkbox("Strict tags##ps", &strict)) { okay::Tags::Strict() = strict; SaveProjectSettings(); }
     if (ImGui::IsItemHovered())
@@ -19787,7 +19787,7 @@ void DrawHierarchy(EditorState& ed) {
                     ImGui::GetWindowDrawList()->AddRectFilled(
                         ImVec2(ImGui::GetWindowPos().x, p.y),
                         ImVec2(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), p.y + ImGui::GetFrameHeight()),
-                        IM_COL32(255, 255, 255, 5));
+                        InkU32(5));
             }
             // Show a child count on parents, plus an (off) marker.
             // The name stops before the eye, the lock and the error badge.
@@ -24559,7 +24559,7 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
     }
     if (playMode) ImGui::TextDisabled("Play mode: the Animator plays the clip live. Stop to edit keys.");
     else if (st.record) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.42f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, StatusCol(2));
         ImGui::TextUnformatted("Recording - move, rotate or scale the object (Scene gizmos or fields below) to key it.");
         ImGui::PopStyleColor();
     }
@@ -26429,9 +26429,9 @@ static bool EaseCurveField(const char* label, std::string& stored) {
                           "  cubic-bezier(0.4, 0, 0.2, 1)   steps(4)   steps(4, start)\n"
                           "  ease  ease-in  ease-out  ease-in-out   or a preset name (OutBack).\n"
                           "Empty = the Ease above. A text with a mistake is not applied (the old one stays).");
-    if (!e.err.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", e.err.c_str());
+    if (!e.err.empty()) ImGui::TextColored(StatusCol(2), "%s", e.err.c_str());
     else if (okay::EaseCurve unused; !stored.empty() && !okay::EaseCurve::Parse(stored, unused))
-        ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "Not an ease: the Ease above is used");
+        ImGui::TextColored(StatusCol(2), "Not an ease: the Ease above is used");
     return changed;
 }
 // Tween Animation preview in edit mode: play its tween on the real object, then put
@@ -26775,7 +26775,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
         if (ImGui::InvisibleButton("##compmenu", ImVec2(fh, fh))) ImGui::OpenPopup("##compctx");
         const bool hov = ImGui::IsItemHovered();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        if (hov) dl->AddRectFilled(bp, ImVec2(bp.x + fh, bp.y + fh), IM_COL32(255, 255, 255, 24), 4.0f);
+        if (hov) dl->AddRectFilled(bp, ImVec2(bp.x + fh, bp.y + fh), InkU32(24), 4.0f);
         for (int d = -1; d <= 1; ++d)
             dl->AddCircleFilled(ImVec2(bp.x + fh * 0.5f + d * 4.5f, bp.y + fh * 0.5f), 1.6f,
                                 ImGui::GetColorU32(hov ? ImGuiCol_Text : ImGuiCol_TextDisabled), 8);
@@ -28841,7 +28841,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::CloseCurrentPopup();
             }
         }
-        if (!newTagErr.empty()) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "%s", newTagErr.c_str());
+        if (!newTagErr.empty()) ImGui::TextColored(StatusCol(2), "%s", newTagErr.c_str());
         ImGui::EndCombo();
     }
     SameLineOrWrap(comboW + tagLblW);
@@ -28980,7 +28980,7 @@ void DrawInspector(EditorState& ed) {
             const float bw = 66.0f, bh = 50.0f;
             ImVec2 b0 = ImGui::GetCursorScreenPos();
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            dl->AddRect(ImVec2(b0.x + 6, b0.y + 6), ImVec2(b0.x + bw - 6, b0.y + bh - 6), IM_COL32(255, 255, 255, 50), 3.0f);
+            dl->AddRect(ImVec2(b0.x + 6, b0.y + 6), ImVec2(b0.x + bw - 6, b0.y + bh - 6), InkU32(50), 3.0f);
             for (int row = 0; row < 3; ++row)
                 for (int col = 0; col < 3; ++col) {
                     const UIAnchor cand = (UIAnchor)(row * 3 + col);
@@ -30160,7 +30160,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::TextUnformatted(nm.c_str());
             if (!vsc->Path().empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", vsc->Path().c_str());
             if (!vsc->LastError().empty())
-                ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.40f, 1.0f), "Error: %s", vsc->LastError().c_str());
+                ImGui::TextColored(StatusCol(2), "Error: %s", vsc->LastError().c_str());
             else if (vsc->Graph())
                 ImGui::TextDisabled("%d nodes", vsc->Graph()->NodeCount());
             if (ImGui::SmallButton("Open in node editor##vsc")) {
@@ -33743,7 +33743,7 @@ void DrawInspector(EditorState& ed) {
                 ImGui::Dummy(ImVec2(pw, ph));
                 ImDrawList* pdl = ImGui::GetWindowDrawList();
                 DrawLoadingScreenCmds(pdl, *ls, pp, ImVec2(pw, ph), (float)ImGui::GetTime());
-                pdl->AddRect(pp, ImVec2(pp.x + pw, pp.y + ph), IM_COL32(255, 255, 255, 40), 3.0f);
+                pdl->AddRect(pp, ImVec2(pp.x + pw, pp.y + ph), InkU32(40), 3.0f);
             }
             // Layout looks: one click sets the arrangement and colours that suit it.
             static const char* kLsLayouts[] = {"Classic", "Minimal", "Cinematic", "Splash", "Card", "Corner", "Ring"};
@@ -37758,7 +37758,7 @@ void DrawInspector(EditorState& ed) {
             if (nm->IsClient()) {
                 ImGui::Text("Server: %s   Ping: %.0f ms", nm->ServerName().c_str(), nm->RttMs());
                 if (nm->JoinRejected()) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.96f,0.45f,0.42f,1));
+                    ImGui::PushStyleColor(ImGuiCol_Text, StatusCol(2));
                     const std::string& why = nm->JoinRejectReason();
                     ImGui::TextUnformatted(why.empty() ? "Join refused (full / wrong password)" : ("Join refused: " + why).c_str());
                     ImGui::PopStyleColor();

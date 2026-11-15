@@ -32,7 +32,6 @@ okayup::BackupInfo g_restoreAsk;                  // the backup the confirm wind
 bool g_restoreAskOpen = false;
 bool g_exitNow = false;                           // the editor leaves now (Keep started another one, or a restore asked for a restart)
 
-const ImVec4 kRed(0.96f, 0.55f, 0.50f, 1.0f), kAmber(0.95f, 0.80f, 0.35f, 1.0f), kGreen(0.45f, 0.82f, 0.56f, 1.0f);
 
 std::string Plural(int n, const char* one, const char* many) { return std::to_string(n) + " " + (n == 1 ? one : many); }
 
@@ -190,8 +189,8 @@ void DrawGatePrompt() {
                                "first, next to it, so you can always go back.", rv.c_str());
             ImGui::Dummy(ImVec2(0, 2));
             ImGui::TextWrapped("Keeping %s does not touch the project at all: it opens with that version's editor instead.", okayver::LineLabel(pv).c_str());
-            if (!pr.keepTarget.empty()) ImGui::TextColored(kGreen, "v%s is installed and would open it.", pr.keepTarget.c_str());
-            else ImGui::TextColored(kAmber, "%s isn't installed on this computer.", okayver::LineLabel(pv).c_str());
+            if (!pr.keepTarget.empty()) ImGui::TextColored(StatusCol(0), "v%s is installed and would open it.", pr.keepTarget.c_str());
+            else ImGui::TextColored(StatusCol(1), "%s isn't installed on this computer.", okayver::LineLabel(pv).c_str());
             ImGui::Dummy(ImVec2(0, 8));
             if (Btn(("Upgrade project to v" + rv).c_str(), first, true)) g_gate.Answer(Choice::Upgrade);
             if (Btn(("Keep " + okayver::LineLabel(pv)).c_str(), first)) g_gate.Answer(Choice::Keep);
@@ -212,7 +211,7 @@ void DrawGatePrompt() {
         }
         case PromptKind::Newer: {
             ImGui::TextDisabled("PROJECT VERSION");
-            Heading(("This project was last saved by " + pvLabel + ", which is newer than this editor (v" + rv + ").").c_str(), kAmber);
+            Heading(("This project was last saved by " + pvLabel + ", which is newer than this editor (v" + rv + ").").c_str(), StatusCol(1));
             ImGui::TextDisabled("%s", FitEnd(pr.root, textW).c_str());
             ImGui::Dummy(ImVec2(0, 4));
             ImGui::TextWrapped("This editor may drop data it does not understand when it saves. Update OkaySpace to open it safely, or open it anyway: "
@@ -225,7 +224,7 @@ void DrawGatePrompt() {
         }
         case PromptKind::NotInstalled: {
             ImGui::TextDisabled("KEEP THE PROJECT'S VERSION");
-            Heading(pr.message.c_str(), kAmber);
+            Heading(pr.message.c_str(), StatusCol(1));
             ImGui::TextWrapped("Nothing was changed. The launcher keeps earlier versions side by side, so a project can be opened with the editor it was made with.");
             ImGui::Dummy(ImVec2(0, 8));
             if (Btn("Back", first, true)) g_gate.Answer(Choice::Back);
@@ -252,13 +251,13 @@ void DrawGatePrompt() {
         case PromptKind::Done: {
             const okayup::Result& r = pr.result;
             ImGui::TextDisabled(pr.backupOnly ? "BACKUP MADE" : "UPGRADED");
-            if (pr.backupOnly) Heading("The backup is made. The project is opened as it is.", kGreen);
+            if (pr.backupOnly) Heading("The backup is made. The project is opened as it is.", StatusCol(0));
             else Heading(("Upgraded " + Plural(r.scenes, "scene", "scenes") + ", " + Plural(r.prefabs, "prefab", "prefabs") + "; " +
-                          (r.rewritten == 0 ? std::string("nothing needed rewriting") : Plural(r.rewritten, "file", "files") + " rewritten") + ".").c_str(), kGreen);
+                          (r.rewritten == 0 ? std::string("nothing needed rewriting") : Plural(r.rewritten, "file", "files") + " rewritten") + ".").c_str(), StatusCol(0));
             ImGui::TextWrapped("Backup at %s", r.backupDir.c_str());
             ImGui::TextDisabled("%s in the backup: a complete copy of the project.", Plural((int)r.files, "file", "files").c_str());
             if (!pr.backupOnly) ImGui::TextDisabled("The project is now marked as made with v%s.", rv.c_str());
-            for (const std::string& w : r.warnings) { ImGui::TextColored(kAmber, "%s", FitEnd(w, textW).c_str()); }
+            for (const std::string& w : r.warnings) { ImGui::TextColored(StatusCol(1), "%s", FitEnd(w, textW).c_str()); }
             ImGui::Dummy(ImVec2(0, 8));
             if (Btn("Open project", first, true)) g_gate.Answer(Choice::Continue);
             if (Btn("Open backup folder", first)) OpenFolder(r.backupDir);
@@ -267,8 +266,8 @@ void DrawGatePrompt() {
         case PromptKind::Failed: {
             const okayup::Result& r = pr.result;
             ImGui::TextDisabled(pr.backupOnly ? "BACKUP FAILED" : "UPGRADE STOPPED");
-            Heading(pr.backupOnly ? "The backup could not be made, so the project was not opened." : "The upgrade could not be finished.", kRed);
-            ImGui::PushStyleColor(ImGuiCol_Text, kRed);
+            Heading(pr.backupOnly ? "The backup could not be made, so the project was not opened." : "The upgrade could not be finished.", StatusCol(2));
+            ImGui::PushStyleColor(ImGuiCol_Text, StatusCol(2));
             ImGui::TextWrapped("%s", r.error.c_str());
             ImGui::PopStyleColor();
             ImGui::Dummy(ImVec2(0, 4));
@@ -332,11 +331,11 @@ void DrawUpgradeWindow(okay::editor::EditorState& ed) {
     ImGui::TextDisabled("Last saved by"); ImGui::SameLine(130); ImGui::TextUnformatted(st.version.empty() ? "no version recorded" : ("v" + st.version).c_str());
     ImGui::TextDisabled("This editor");   ImGui::SameLine(130); ImGui::TextUnformatted(rv.empty() ? "a development build (no version)" : ("v" + rv).c_str());
     switch (d) {
-        case okayver::Decision::Same: ImGui::TextColored(kGreen, "Up to date."); break;
-        case okayver::Decision::SamePatchLine: ImGui::TextColored(kGreen, "Same release line (%s): nothing to upgrade. The next save marks it v%s.", okayver::LineLabel(rv).c_str(), rv.c_str()); break;
-        case okayver::Decision::Older: ImGui::TextColored(kAmber, "Made with an older version."); break;
-        case okayver::Decision::Newer: ImGui::TextColored(kAmber, "Last saved by a newer version than this editor."); break;
-        case okayver::Decision::Unknown: ImGui::TextColored(kAmber, "No version recorded."); break;
+        case okayver::Decision::Same: ImGui::TextColored(StatusCol(0), "Up to date."); break;
+        case okayver::Decision::SamePatchLine: ImGui::TextColored(StatusCol(0), "Same release line (%s): nothing to upgrade. The next save marks it v%s.", okayver::LineLabel(rv).c_str(), rv.c_str()); break;
+        case okayver::Decision::Older: ImGui::TextColored(StatusCol(1), "Made with an older version."); break;
+        case okayver::Decision::Newer: ImGui::TextColored(StatusCol(1), "Last saved by a newer version than this editor."); break;
+        case okayver::Decision::Unknown: ImGui::TextColored(StatusCol(1), "No version recorded."); break;
         case okayver::Decision::DevBuild: ImGui::TextDisabled("A development build never asks, and has no version to upgrade to."); break;
     }
     ImGui::Dummy(ImVec2(0, 6));
@@ -424,7 +423,7 @@ void DrawRestored() {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(580, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Backup restored", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) return;
-    Heading("The backup is restored.", kGreen);
+    Heading("The backup is restored.", StatusCol(0));
     ImGui::TextWrapped("%s", g_restoreSummary.c_str());
     ImGui::Dummy(ImVec2(0, 4));
     ImGui::TextWrapped("The editor restarts now to open the project again.");

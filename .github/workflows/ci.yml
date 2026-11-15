@@ -223,6 +223,11 @@ jobs:
           for t in test_net_hardening test_net_races; do
             if grep -q "add_executable($t " tests/CMakeLists.txt; then TESTS="$TESTS $t"; fi
           done
+          # OkayUI's own robustness tests: NaN / infinity / 1e30 positions must not reach a float-to-int cast
+          # (float-cast-overflow is on in this job). Run from the repo root (see the Test step).
+          OKAYUI_TESTS="test_okayui_fuzz test_okayui_codeedit_fuzz test_okayui_dock_fuzz test_okayui_windows_fuzz"
+          TESTS="$TESTS $OKAYUI_TESTS"
+          echo "OKAYUI_TESTS=$OKAYUI_TESTS" >> "$GITHUB_ENV"
           echo "SAN_TESTS=$TESTS" >> "$GITHUB_ENV"
           echo "$TESTS"
 
@@ -237,8 +242,14 @@ jobs:
         run: |
           failed=""
           for t in $SAN_TESTS; do
+            case " $OKAYUI_TESTS " in *" $t "*) continue;; esac
             echo "== $t"
             "./$t" || failed="$failed $t"
+          done
+          # The OkayUI tests live in build-asan/okayui and read golden files by path: run them headless.
+          for t in $OKAYUI_TESTS; do
+            echo "== $t"
+            (cd "$GITHUB_WORKSPACE" && SDL_VIDEODRIVER=dummy "build-asan/okayui/$t") || failed="$failed $t"
           done
           if [ -n "$failed" ]; then echo "failed:$failed"; exit 1; fi
 

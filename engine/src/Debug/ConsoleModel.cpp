@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unordered_map>
 
 namespace okay {
 
@@ -218,19 +219,33 @@ struct ConsoleModel::Impl {
         if (text.empty()) return true;
         return Contains(e.message, text, cs) || Contains(e.category, text, cs) || Contains(e.source.path, text, cs);
     }
-    static bool SameRun(const ConsoleEntry& a, const ConsoleEntry& b) {
-        return a.level == b.level && a.category == b.category && a.message == b.message;
+    // Rows with the same level, category and message are one row, wherever they sit in the log.
+    // The row stays where its first entry was (so rows do not jump while a line repeats), the count
+    // and the "last" fields follow the newest entry. Text is compared exactly: "hp 10" and "hp 9" differ.
+    static std::string RowKey(const ConsoleEntry& e) {
+        std::string k;
+        k.reserve(e.message.size() + e.category.size() + 3);
+        k += static_cast<char>('0' + static_cast<int>(e.level));
+        k += '\0';
+        k += e.category;
+        k += '\0';
+        k += e.message;
+        return k;
     }
     std::vector<ConsoleRow> BuildRows(const ConsoleFilter& f, bool collapseRuns) const {   // caller holds the lock
         std::vector<ConsoleRow> rows;
+        std::unordered_map<std::string, std::size_t> byKey;
         for (std::size_t i = 0; i < ring.size(); ++i) {
             const ConsoleEntry& e = At(i);
             if (!Passes(e, f)) continue;
-            if (collapseRuns && !rows.empty() && SameRun(rows.back().entry, e)) {
-                ConsoleRow& r = rows.back();
-                ++r.repeat;
-                r.lastSeq = e.seq; r.lastFrame = e.frame; r.lastTimeSec = e.timeSec;
-                continue;
+            if (collapseRuns) {
+                auto ins = byKey.emplace(RowKey(e), rows.size());
+                if (!ins.second) {
+                    ConsoleRow& r = rows[ins.first->second];
+                    ++r.repeat;
+                    r.lastSeq = e.seq; r.lastFrame = e.frame; r.lastTimeSec = e.timeSec;
+                    continue;
+                }
             }
             ConsoleRow r;
             r.entry = e;

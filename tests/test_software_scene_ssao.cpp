@@ -71,8 +71,22 @@ int main() {
     std::printf("  light: power 1 %.0f, power 3 %.0f\n", Brightness(on), Brightness(p3));
     CHECK(Brightness(p3) < Brightness(on));
 
-    // the settings the scene pass used are put back afterwards
-    CHECK(SSAORadius() == 0.45f || SSAORadius() == 0.5f);
+    // the settings the scene pass used are put back afterwards (the process values set above: radius 0.5)
+    CHECK(SSAORadius() == 0.5f);
+    CHECK(SSAOStrength() == 0.8f);
     CHECK(SSAOPower() == 1.0f);
+    CHECK(!SSAOSceneFormula());
+
+    // review: the process-wide switch is NOT capped at strength 1. The editor's "AO strength" slider goes to 2 and
+    // the original formula (1 - strength * occlusion) darkens more above 1; with the cap, 1.5 looked like 1.0.
+    post.ssao = false;
+    SSAOEnabled() = true; SSAORadius() = 0.5f;
+    SSAOStrength() = 1.0f;
+    const Raster s10 = Render(s);
+    SSAOStrength() = 1.5f;
+    const Raster s15 = Render(s);
+    SSAOEnabled() = false; SSAOStrength() = 0.6f;
+    std::printf("  process AO: strength 1.0 %.0f, strength 1.5 %.0f\n", Brightness(s10), Brightness(s15));
+    CHECK(Brightness(s15) < Brightness(s10));
     TEST_MAIN_RESULT();
 }

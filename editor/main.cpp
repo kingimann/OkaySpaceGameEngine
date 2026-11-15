@@ -11887,6 +11887,7 @@ static void DrawLookSections(EditorState& ed) {
         }
         if (ImGui::Checkbox("Anti-aliasing (FXAA)", &post.fxaa)) ed.dirty = true;
         if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &post.ssao)) ed.dirty = true;
+        tip("Darkens creases and contacts where surfaces meet.\nIn the software renderer it only darkens meshes lit per pixel.");
         DrawRendererNote(okay::RenderFeature::SceneSsao);
         if (post.ssao) {
             if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;

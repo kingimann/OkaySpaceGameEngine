@@ -1466,6 +1466,10 @@ inline bool&  SSAOEnabled()  { static bool v = false; return v; }     // off by 
 inline float& SSAORadius()   { static float v = 0.45f; return v; }  // world units
 inline float& SSAOStrength() { static float v = 0.6f; return v; }
 inline float& SSAOPower()    { static float v = 1.0f; return v; }   // 1 = the original curve (postq::ApplyPowered)
+/// Which formula ApplySSAO uses. false (the process-wide switch, the editor's "AO strength" slider up to 2):
+/// colour *= 1 - strength * occlusion, NOT capped, as it always was. true (a scene's own Post-processing Ambient
+/// Occlusion): the shared formula postq::ApplyPowered, strength capped at 1 like the GPU's ssao::Apply.
+inline bool&  SSAOSceneFormula() { static bool v = false; return v; }
 
 /// Darken creases/contacts using the per-pixel world position + normal G-buffer:
 /// sample a hemisphere around each pixel and count how many samples are occluded
@@ -1518,9 +1522,13 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
                     if (w > 0.0f) occWeighted += w;
                 }
             }
-            // colour *= 1 + (visibility^power - 1) * strength, the shared formula (PostQualityMath.hpp); with power 1
-            // this is 1 - strength * occlusion, as before.
-            if (tot > 0) { float a = postq::ApplyPowered(1.0f - occWeighted / tot, strength, SSAOPower()); ao[(std::size_t)hy * hw + hx] = a < 0 ? 0 : a; }
+            // Process path: 1 - strength * occlusion, uncapped (strength up to 2 darkens more, as before).
+            // Scene path: the shared formula (PostQualityMath.hpp), strength capped at 1 like the GPU.
+            if (tot > 0) {
+                const float occ = occWeighted / tot;
+                float a = SSAOSceneFormula() ? postq::ApplyPowered(1.0f - occ, strength, SSAOPower()) : 1.0f - strength * occ;
+                ao[(std::size_t)hy * hw + hx] = a < 0 ? 0 : a;
+            }
         }
     });
     // Blur the half-res AO (3x3 box) to kill the hemisphere-sampling noise — SSAO
@@ -2316,10 +2324,15 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); });
     if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
     else if (rs.post.ssao && !r.gvalid.empty()) {                    // the scene's own switch, with its settings
-        const float r0 = SSAORadius(), s0 = SSAOStrength(), p0 = SSAOPower();
+        // When both switches are on, the process-wide settings win (the branch above). The globals are put back
+        // by the guard even if ApplySSAO throws.
+        struct Restore {
+            float r0 = SSAORadius(), s0 = SSAOStrength(), p0 = SSAOPower(); bool f0 = SSAOSceneFormula();
+            ~Restore() { SSAORadius() = r0; SSAOStrength() = s0; SSAOPower() = p0; SSAOSceneFormula() = f0; }
+        } restore;
         SSAORadius() = rs.post.ssaoRadius; SSAOStrength() = rs.post.ssaoIntensity; SSAOPower() = rs.post.ssaoPower;
+        SSAOSceneFormula() = true;
         ApplySSAO(r, vp, eye);
-        SSAORadius() = r0; SSAOStrength() = s0; SSAOPower() = p0;
     }
     if (rs.post.bloom && !BloomEnabled()) {                          // the scene's own Bloom switch
         BloomEnabled() = true;

@@ -149,10 +149,10 @@ int LevelIndex(okay::Log::Level l) {
 
 std::string RowText(const okay::ConsoleRow& row) {
     const okay::ConsoleEntry& e = row.entry;
-    std::string s = ConsoleClockText(e.timeSec) + "  ";
+    std::string s = ConsoleClockText(row.repeat > 1 ? row.lastTimeSec : e.timeSec) + "  ";
+    if (row.repeat > 1) s += "x" + std::to_string(row.repeat) + "  ";
     if (!e.category.empty()) s += "[" + e.category + "] ";
     s += e.message;
-    if (row.repeat > 1) s += "  (" + std::to_string(row.repeat) + ")";
     return s;
 }
 

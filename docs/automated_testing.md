@@ -264,6 +264,30 @@ digest after one second of play); refresh them with
 `OKAY_UPDATE_GOLDEN=1 build/tests/test_regression` and
 `OKAY_UPDATE_GOLDEN=1 build/bin/okay-playtest selftest.world`.
 
+## Timing tests: rules
+
+A test that passes or fails on how fast the machine is turns a slow CI runner into a red PR that has nothing to do
+with the change (`ui_render_bench` did this to several PRs). The rules:
+
+1. **Prefer counting to timing.** Count operations, draw calls, allocations or work units. A count is the same on
+   every machine. Only time something when time is the thing under test.
+2. **No absolute wall-clock limit tighter than 10x the time measured on the slowest CI runner.** A limit is there to
+   catch "much slower" (an O(n^2) loop, a hang), not "a bit slower". A design target (for example "1 ms per frame")
+   belongs in a comment and in the printed output, not in the pass/fail check.
+3. **Calibrate.** Run a fixed piece of plain CPU work in the same process (`okaytest::CalibrationMs()` in
+   `tests/timing_guard.hpp`) and compare against a multiple of it, so a slow machine moves the limit with it.
+4. **Best of N, not the median or the mean.** Load only adds time, so the fastest of N runs
+   (`okaytest::BestOfMs`) is the least noisy. Use enough runs that at least one lands on a quiet moment.
+5. **State the unit** in the check and in the printed line (`ms per frame`, `s for 40000 entities`), and print the
+   measured number, so a failing log shows how far off it was.
+6. **Sleeps give a lower bound, never an upper one.** "A 60 ms sleep took at least 55 ms" is exact. "...less than
+   400 ms" fails when the runner pauses the process. Keep the upper bound only as a sanity limit of seconds.
+7. **Do not assert zero hitches or zero late frames on the real clock.** Assert the behaviour (for example "the
+   frame was clamped") and allow a few stalls.
+8. **A timeout in `tests/CMakeLists.txt` is a hang guard**, not a speed test. Set it at least 10x the usual run time.
+9. **Prove the test can still fail.** Add a deliberate 10x slowdown to the code under test, see the test go red, then
+   remove it. Say in the PR that you did.
+
 ## Not covered yet
 
 The editor's test-runner window, UI-widget and audio assertions, networked (multi-process)

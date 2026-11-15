@@ -53,10 +53,10 @@ void TestTime(Backend& b) {
     b.DelayMs(60);
     const uint64_t t1 = b.TicksMs(), p1 = b.PerfCounter();
     CHECK(t1 >= t0 + 55);
-    CHECK(t1 < t0 + 400);
+    CHECK(t1 < t0 + 10000);                   // sanity only: a loaded runner can stall a 60 ms sleep for a long time
     CHECK(b.PerfFrequency() > 0);
     const double sec = (double)(p1 - p0) / (double)b.PerfFrequency();
-    CHECK(sec > 0.055 && sec < 0.4);
+    CHECK(sec > 0.055 && sec < 10.0);        // lower bound is exact (a sleep is never short); upper bound is sanity only
     uint64_t prev = b.TicksMs();
     for (int i = 0; i < 1000; ++i) { const uint64_t n = b.TicksMs(); CHECK(n >= prev); prev = n; }
 }

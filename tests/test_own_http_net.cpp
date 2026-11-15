@@ -487,12 +487,12 @@ static void TestDownloadFeatures() {
       r = okay::http::RequestEx("GET", base + "/hang", {}, "", "", "", ro);
       auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
       t.join();
-      CHECK(!r.reached && r.error.find("aborted") != std::string::npos && ms < 3000); }
+      CHECK(!r.reached && r.error.find("aborted") != std::string::npos && ms < 15000); }   // the I/O limit is 20 s: 15 s still proves the cancel cut it short, and survives a loaded runner
     // Request(..., timeoutMs): a stalled server cannot hold the caller (the account layer's join-time ticket call)
     { auto t0 = Clock::now();
       okay::http::Result r = okay::http::Request("GET", base + "/hang", {}, "", "", "", 600);
       auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0).count();
-      CHECK(!r.reached && r.error.find("timeout") == 0 && ms < 3000); }
+      CHECK(!r.reached && r.error.find("timeout") == 0 && ms < 15000); }   // 600 ms timeout; the stalled server would hold it for much longer
     // cancel before connecting at all
     { okay::http::RequestOptions ro; ro.cancel = [] { return true; };
       auto t0 = Clock::now();

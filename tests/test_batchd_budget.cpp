@@ -52,9 +52,9 @@ void operator delete[](void* p, std::size_t) noexcept { CountedFree(p); }
 // comes before that is reached by much, so a few hundred MB is the stated limit (the old code went to 2 GB and beyond).
 static constexpr std::size_t kCapBytes = 640u * 1024u * 1024u;
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
-static constexpr double kMaxSeconds = 10.0;   // a sanitizer build is several times slower; the 2 second limit is for the normal build
+static constexpr double kMaxSeconds = 30.0;   // a sanitizer build is several times slower. A hang guard, not a speed test (see docs/automated_testing.md)
 #else
-static constexpr double kMaxSeconds = 2.0;
+static constexpr double kMaxSeconds = 10.0;   // the slowest case takes well under 1 s here; the old code took minutes. 10x+ headroom for a loaded runner
 #endif
 
 static double Now() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }

@@ -494,7 +494,7 @@ int main() {
             CHECK(rig.hook->frame == 20);
             CHECK(took >= 19 * 0.005 * 0.97);                         // 19 full waits at least (the first frame is not paced by the limiter)
             CHECK(took < 5.0);
-            CHECK(app.loop().HitchCount() == 0);
+            CHECK(app.loop().HitchCount() < 4);                      // 5 ms frames are not hitches; not == 0 because a loaded runner can stall a frame past 0.1 s
         }
         // targetFps <= 0 is uncapped in both modes
         for (int mode = 0; mode < 2; ++mode) {

@@ -176,7 +176,25 @@ public:
     virtual void SwapBuffers() = 0;
     virtual bool SetSwapInterval(int interval) = 0;   // 0 = off, 1 = vsync
     virtual void GetDrawableSize(int& w, int& h) const = 0;
+
+    // ---- State queries and focus: what the apps asked SDL_GetWindowFlags and SDL_SetWindowInputFocus ----
+    // Whatever the window manager decides (minimised, which window is under the pointer) is current only after the app has
+    // read its events (Backend::PollEvent or Backend::PumpEvents), as with SDL.
+    /// True while the window is minimised (iconified).
+    virtual bool IsMinimized() const { return false; }
+    /// False after Hide() and for a window created hidden; true after Show(). A minimised window still counts as visible.
+    virtual bool IsVisible() const { return true; }
+    /// True while the mouse pointer is over this window.
+    virtual bool HasMouseFocus() const { return false; }
+    /// Give this window the keyboard focus. False = refused (a hidden window cannot take it) or not supported here.
+    virtual bool SetInputFocus() { return false; }
 };
+
+/// A non-owning Window over an SDL_Window* that the app made itself with SDL_CreateWindow, so the Window methods (and the state
+/// queries above) work on it while the app still creates its windows. `sdlWindow` is an SDL_Window*. Destroying the wrapper does
+/// not destroy the SDL window; a GL context made through the wrapper is the wrapper's own. Null when `sdlWindow` is null or the sdl2
+/// backend is not compiled in. Transitional: it goes away when the apps create their windows with Backend::MakeWindow.
+std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
 
 // ---- Audio -------------------------------------------------------------------
 enum class SampleFormat { S16, F32 };   // native-endian, interleaved
@@ -316,6 +334,20 @@ public:
     virtual int GamepadDeviceCount() = 0;                  // device indices 0..n-1
     virtual bool IsGamepad(int deviceIndex) = 0;
     virtual std::unique_ptr<Gamepad> OpenGamepad(int deviceIndex) = 0;
+
+    // ---- Focus, pointer and event pump (the launcher and editor asked SDL for these directly) ----
+    /// Window::Id() of the window that has the keyboard focus; 0 when none of ours has it (SDL_GetKeyboardFocus).
+    virtual uint32_t KeyboardFocusWindowId() { return 0; }
+    /// Window::Id() of the window the mouse pointer is over; 0 when none of ours (SDL_GetMouseFocus).
+    virtual uint32_t MouseFocusWindowId() { return 0; }
+    /// Whether relative mouse mode is on: what SetRelativeMouse last set successfully (SDL_GetRelativeMouseMode).
+    virtual bool IsRelativeMouse() { return false; }
+    /// The pointer position on the whole desktop (not relative to a window; either pointer may be null) and the MouseMask
+    /// bits of the buttons held (SDL_GetGlobalMouseState).
+    virtual uint32_t GlobalMouseState(int* x, int* y) { if (x) *x = 0; if (y) *y = 0; return 0; }
+    /// Read the OS events that are waiting without taking one: window state and focus are current afterwards, and PollEvent still
+    /// returns every event (SDL_PumpEvents).
+    virtual void PumpEvents() {}
 };
 
 // ---- Free functions on the default backend ------------------------------------

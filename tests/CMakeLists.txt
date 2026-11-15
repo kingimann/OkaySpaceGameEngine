@@ -3580,6 +3580,12 @@ add_executable(test_item_durability test_item_durability.cpp)
 target_link_libraries(test_item_durability PRIVATE okay::engine)
 add_test(NAME item_durability COMMAND test_item_durability)
 
+# A host and a client in one process over loopback: wear and repair are refused on the client ("the host decides") and the
+# host's wear reaches the client's copy of the bag.
+add_executable(test_net_item_durability test_net_item_durability.cpp)
+target_link_libraries(test_net_item_durability PRIVATE okay::engine)
+add_test(NAME net_item_durability COMMAND test_net_item_durability)
+
 # Inventory finish: a refused use is never silent (log line + on_item_use_refused), and the Inventory template (a grid
 # bag, a Healing Potion with a cooldown, an Iron Sword with durability) with its shipped copy examples/inventory/.
 add_executable(test_inventory_refusals test_inventory_refusals.cpp)

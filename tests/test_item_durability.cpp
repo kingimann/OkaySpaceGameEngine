@@ -309,6 +309,33 @@ int main() {
         // (b) offline nobody else decides: the host check is false without a connected NetworkManager
         CHECK(!NetInventory::HostDecides(h));
     }
+    {   // the script in docs/try_it.md ("Item durability"): keep the two in step
+        Def("test_pick", "3", nullptr);
+        Scene ts("tryit");
+        GameObject* p = ts.CreateGameObject("Player");
+        auto* bag = p->AddComponent<Inventory>();
+        bag->capacity = 8;
+        auto* sc = p->AddComponent<ScriptComponent>("okayscript");
+        CHECK(sc->LoadSource(
+            "var last = -1;\n"
+            "function start() { inv_add(\"test_pick\", 1); }\n"
+            "function wear_once() { inv_wear(0, 1); print(\"durability \" + inv_durability(0) + \", broken \" + inv_broken(0)); }\n"
+            "function repair_all() { inv_repair(0); print(\"repaired: \" + inv_durability(0)); }\n"
+            "function update(dt) {\n"
+            "  if (key_pressed(\"f\")) { wear_once(); }\n"
+            "  if (key_pressed(\"r\")) { repair_all(); }\n"
+            "}\n"
+            "function on_durability_changed(item, v) { last = v; }\n"));
+        ts.Start(); ts.Update(0.016f);
+        CHECK(!bag->slots.empty() && bag->slots[0].item == "test_pick");
+        for (int i = 0; i < 3; ++i) sc->VM()->CallEventArgs("wear_once", {});
+        CHECK(bag->slots[0].data.durability == 0.0f && durability::Broken("test_pick", bag->slots[0].data));
+        CHECK(sc->VM()->GetGlobal("last").AsFloat() == 0.0f);
+        sc->VM()->CallEventArgs("wear_once", {});                          // a broken item wears no further
+        CHECK(bag->slots[0].data.durability == 0.0f);
+        sc->VM()->CallEventArgs("repair_all", {});
+        CHECK(bag->slots[0].data.durability == 3.0f && sc->VM()->GetGlobal("last").AsFloat() == 3.0f);
+    }
     ItemDatabase::Get().Clear();
     TEST_MAIN_RESULT();
 }

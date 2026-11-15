@@ -40,7 +40,7 @@ files=(
     engine/src/Crypto/ChaCha20.cpp
     engine/src/Crypto/Poly1305.cpp
     engine/src/Crypto/Blake2b.cpp
-    engine/src/Crypto/Sha256.cpp
+    engine/include/okay/Crypto/Sha256.hpp
     engine/src/Crypto/Sha512.cpp
     engine/src/Crypto/Fe25519.hpp
     engine/src/Crypto/Fe25519_64.hpp
@@ -150,7 +150,7 @@ done
 command -v "$CXX" >/dev/null || { echo "compiler $CXX not found"; exit 2; }
 
 CORE=()
-for f in Util Random ChaCha20 Poly1305 Aead Blake2b Sha256 Sha512 X25519 Ed25519; do CORE+=("engine/src/Crypto/$f.cpp"); done
+for f in Util Random ChaCha20 Poly1305 Aead Blake2b Sha512 X25519 Ed25519; do CORE+=("engine/src/Crypto/$f.cpp"); done
 BASE=(-std=c++17 -O2 -Iengine/include)
 have_sodium=0
 if command -v pkg-config >/dev/null && pkg-config --exists libsodium; then have_sodium=1; SODIUM_CF=($(pkg-config --cflags libsodium)); SODIUM_LD=($(pkg-config --libs libsodium)); fi

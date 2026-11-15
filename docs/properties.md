@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-1894 properties on 130 types, as `property_registry` counts them ("covered 130 component types, 1894 properties"; a number before a slash counts the authored ones; the rest are
+2011 properties on 143 types, as `property_registry` counts them ("covered 143 component types, 2011 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -314,6 +314,8 @@ has `enabled`.
 | Ragdoll, AutoSave, TurnManager, Decal, Cable | 11, 4, 3, 5, 8 | the turn manager's participant list is saved but is not a property; the cable's ends are object names |
 | SplineFollower, DollyCart, LineRenderer | 9, 4, 12 | `SplineFollower.drive` (Speed, Time) and `wrap` (Loop, PingPong, Once), `LineRenderer.alignment` (View, Flat) and `textureMode` (Stretch, Tile) are enums; the line's points, width curve and colour gradient are lists, not properties |
 | HealthStat, SurvivalStats | 21, 28 | health, armor and mitigation, overheal, death and respawn, and the Prefs / bar / message switches; survival adds hunger, thirst, stamina, oxygen and warmth. The current values (health, hunger ...) are runtime, not properties |
+| HungerStat, ThirstStat, StaminaStat, OxygenStat, TemperatureStat, SleepStat, SanityStat | 11, 11, 13, 8, 8, 10, 8 | the rates, thresholds, damage when empty, the optional slow-down, and the three publishing switches. Current values are runtime |
+| RadiationStat, BleedingStat, PoisonStat, WetnessStat, CarryWeightStat, StatusEffectStat | 8, 6, 6, 8, 6, 1 | rates and thresholds plus the publishing switches; status effects have only the message switch (the active effects are runtime) |
 
 How the new types are described, so a tool can rely on it:
 

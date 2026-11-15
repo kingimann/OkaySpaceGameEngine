@@ -5,6 +5,10 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/SoftwareRenderer.hpp"
+#include "okay/Graphics/Image.hpp"
+#include <cstdlib>
+#include <cstring>
+#include <string>
 #include <cstdio>
 
 using namespace okay;
@@ -29,6 +33,20 @@ Raster Render(const Scene& s) {
     return r;
 }
 
+// OKAY_SHOT_DIR=<folder>: also render the scene bigger and save it as a PNG (the before/after pictures in the docs).
+void Shot(const Scene& s, const char* name) {
+    const char* dir = std::getenv("OKAY_SHOT_DIR");
+    if (!dir || !*dir) return;
+    const int w = 640, h = 480;
+    Raster r; r.Resize(w, h); r.Clear(0xFF2A2420u);
+    const Vec3 eye{2.2f, 1.6f, 3.2f};
+    const Mat4 vp = Mat4::Perspective(60.0f, (float)w / h, 0.1f, 100.0f) * Mat4::LookAt(eye, {0, -0.4f, 0}, Vec3::Up);
+    RenderMeshes(r, s, vp, eye);
+    Image img(w, h);
+    std::memcpy(img.Data(), r.color.data(), (std::size_t)w * h * 4);   // ABGR8888 words = RGBA bytes
+    img.SavePNG(std::string(dir) + "/" + name);
+}
+
 double Brightness(const Raster& r) {
     double sum = 0;
     for (std::uint32_t v : r.color) sum += (double)(v & 0xFF) + ((v >> 8) & 0xFF) + ((v >> 16) & 0xFF);
@@ -46,8 +64,10 @@ int main() {
 
     post.ssao = false;
     const Raster off = Render(s);
+    Shot(s, "software_ssao_off.png");
     post.ssao = true; post.ssaoRadius = 0.5f; post.ssaoIntensity = 0.8f; post.ssaoPower = 1.0f;
     const Raster on = Render(s);
+    Shot(s, "software_ssao_on.png");
     std::printf("  light: off %.0f, scene AO on %.0f\n", Brightness(off), Brightness(on));
     CHECK(on.color != off.color);
     CHECK(Brightness(on) < Brightness(off));                                  // contacts darkened

@@ -292,6 +292,12 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
 bool ReadXglFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadIrrSceneFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Quick3D objects and scenes (.q3o, .q3s): meshes with polygon faces and materials; embedded textures and the scene chunk are not used.
+bool ReadQ3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadQ3dBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
+/// Raw triangle text files (.raw): nine numbers per triangle, non-numeric lines name groups.
+bool ReadRawFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadRawBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

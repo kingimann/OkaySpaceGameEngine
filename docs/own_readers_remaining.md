@@ -19,7 +19,8 @@ below were made by counting those files by extension; where I could not check so
 | Importers we covered **before batch C** (including Blender, merged as #829, off by default) | 19 |
 | Importers batch C added (MD2, MD3, Irrlicht mesh, B3D, DirectX .x) | 5 (24) |
 | Importers batch D adds (AC3D, XGL / ZGL, Irrlicht scene, NFF, and OGRE **for the XML form only**) | 5 (**29** of the 45 switched on; OGRE counts as half: its binary `.mesh` / `.skeleton` and the `.skeleton.xml` are row 1 below) |
-| Switched on in our build and still **without an own reader** | **16** (rows 2 to 17 below) plus OGRE's half |
+| Importers batch E adds (Q3D and RAW, written from public format descriptions, unverified against real files; SIB was not written, see row 9) | 2 (**31**) |
+| Switched on in our build and still **without an own reader** | **14** (rows 2 to 17 below, less Q3D and RAW) plus OGRE's half |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
@@ -46,13 +47,13 @@ none were invented.
 | 5 | **COB** (`.cob`) | Caligari trueSpace; binary and ASCII | low (old) | medium | 8 (dwarf, molecule, spider: binary and ASCII) | yes |
 | 6 | **LWS / MOT** (`.lws` `.mot`) | LightWave **scene** (objects by reference, cameras, lights, motion curves) | low-medium | medium (our LWO reader covers the objects it names) | 15 (envelopes, pre/post behaviours) | yes |
 | 7 | **MMD / PMX** (`.pmx`) | MikuMikuDance models: binary, bones, morphs, materials | medium in its community | medium | 1 (`Alicia_blade.pmx`) | yes |
-| 8 | **Q3D** (`.q3o` `.q3s`) | Quick3D | very low | easy | 4 | yes |
-| 9 | **SIB** (`.sib`) | Silo | very low | easy | 1 (`heffalump.sib`) | yes |
+| 8 | ~~**Q3D** (`.q3o` `.q3s`)~~ **done, off by default** (`docs/own_q3d_reader.md`, unverified against real files) | Quick3D | very low | easy | 4 | yes |
+| 9 | **SIB** (`.sib`): **not written**: no public description of the format and no sample file were available (`docs/own_sib_reader.md`) | Silo | very low | easy once a description or the sample is at hand | 1 (`heffalump.sib`) | yes |
 | 10 | **CSM** (`.csm`) | CharacterStudio motion capture (markers only, like BVH) | very low | easy | 1 | yes |
 | 11 | **MDC** (`.mdc`) | Return to Castle Wolfenstein models (MD3 with compressed frames) | very low | easy (MD3 is done) | 1 (`spider.mdc`) | yes |
 | 12 | **HMP** (`.hmp`) | 3D GameStudio terrain | very low | easy | 2 | yes |
 | 13 | **Terragen** (`.ter`) | Terragen heightfield | low | easy | 2 | yes |
-| 14 | **RAW** (`.raw`) | plain triangle list | very low | easy | 4 (one empty) | yes |
+| 14 | ~~**RAW** (`.raw`)~~ **done, off by default** (`docs/own_raw_reader.md`; text form only, unverified against real files) | plain triangle list | very low | easy | 4 (one empty) | yes |
 | 15 | **Quake III BSP** (`.bsp` in `.pk3`) | Quake 3 map in a zip | low | medium-hard (faces, patches, shaders) | 1 (`SGDTT3.pk3`) | yes |
 | 16 | **Nendo** (`.ndo`) | Nendo modeller | almost none | easy-medium | **0: no file in the tree, so it cannot be checked against Assimp** | yes |
 | 17 | **glTF 1.0** (`.gltf`, `.glb`) | the old glTF; our glTF reader reads 2.0 only | low (legacy, but real models exist) | medium | 7 (inside the 54 glTF files of the corpus, they fail in our reader on purpose) | yes |

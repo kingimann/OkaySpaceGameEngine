@@ -179,3 +179,7 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 3. `Fe25519_16.hpp` (F4): only after the owner's answer and the reviewer's view.
 4. The TweetNaCl port (F2): done (deleted on the owner's say-so, replaced by `okay::crypto`; the outside review of `okay::crypto` is still open).
 5. Packaging notices (F6): not a rewrite, but it is a licence obligation that exists today.
+
+## Addendum: batch E readers (Q3D, RAW), branch `claude/readers-e2`
+
+`engine/src/Render/Q3dReader.cpp` and `engine/src/Render/RawReader.cpp` were written from the format descriptions only: Paul Bourke's "Quick3D Object File" page (header, chunk types, field lists) and his "POV-Ray RAW triangle format" page (nine numbers per triangle, the colour and texture-name variants, group identifiers). **No importer source was read**: not Assimp's, not any other project's, and no code snippet from the web. Where a description was silent (the Q3D byte order, a few Q3D fields, RAW comments) the choice made is written down in `docs/own_q3d_reader.md` and `docs/own_raw_reader.md`. No sample file was available for either, so no output was compared with another reader. The SIB reader (`docs/own_sib_reader.md`) was **not written** because no public description or sample could be found; a reader written from memory of another importer would have broken rule 19a.

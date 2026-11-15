@@ -39,6 +39,10 @@
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/ChestInventory.hpp"
 #include "okay/Components/Minimap.hpp"
+#include "okay/Components/UITextBind.hpp"
+#include "okay/Components/UIBarBind.hpp"
+#include "okay/Components/UIAnimation.hpp"
+#include "okay/Math/Easing.hpp"
 
 namespace okay {
 namespace detail {
@@ -696,6 +700,42 @@ void RegisterMinimap() {
     b.Commit();
 }
 
+// UITextBind (record "uibind")
+void RegisterUITextBind() {
+    PropertyBuilder<UITextBind> b("UITextBind", "uibind", "UI");
+    b.AddString("format", &UITextBind::format).Tooltip("Text with {name} parts filled from values, for example \"HP {health}\"");
+    b.Commit();
+}
+
+// UIBarBind (record "uibarbind")
+void RegisterUIBarBind() {
+    PropertyBuilder<UIBarBind> b("UIBarBind", "uibarbind", "UI");
+    b.AddString("var", &UIBarBind::var).Tooltip("Value that fills the bar")
+     .AddFloat("min", &UIBarBind::min).Range(-kBig, kBig, 0.1).Tooltip("Value at an empty bar")
+     .AddFloat("max", &UIBarBind::max).Range(-kBig, kBig, 0.1).Tooltip("Value at a full bar");
+    b.Commit();
+}
+
+// UIAnimation (record "uianim")
+void RegisterUIAnimation() {
+    std::vector<std::string> eases;
+    for (int i = 0; i < (int)Ease::Count; ++i) eases.push_back(Easing::Name((Ease)i));
+    PropertyBuilder<UIAnimation> b("UIAnimation", "uianim", "UI");
+    b.AddEnum("intro", &UIAnimation::intro, {"None", "FadeIn", "SlideLeft", "SlideRight", "SlideTop", "SlideBottom", "Pop", "Drop", "Grow"}).Tooltip("How the widget appears")
+     .AddEnum("loop", &UIAnimation::loop, {"None", "Pulse", "Bob", "Sway", "Blink", "Breathe"}).Tooltip("Movement while it is shown")
+     .AddEnum("outro", &UIAnimation::outro, {"FadeOut", "SlideLeft", "SlideRight", "SlideTop", "SlideBottom", "Shrink"}).Tooltip("How it leaves")
+     .AddFloat("duration", &UIAnimation::duration).Range(0, 1e4, 0.01).Tooltip("Intro and outro length in seconds")
+     .AddFloat("delay", &UIAnimation::delay).Range(0, 1e4, 0.01).Tooltip("Wait before the intro, in seconds")
+     .AddFloat("distance", &UIAnimation::distance).Range(0, kBig, 1).Tooltip("Slide distance in design pixels")
+     .AddEnum("ease", &UIAnimation::ease, eases).Tooltip("Easing curve")
+     .AddFloat("loopSpeed", &UIAnimation::loopSpeed).Range(0, 1e3, 0.05).Tooltip("Loop cycles per second")
+     .AddFloat("loopAmount", &UIAnimation::loopAmount).Range(0, 1e3, 0.01).Tooltip("Pulse and breathe: scale amount; bob and sway: pixels / 100")
+     .AddBool("playOnStart", &UIAnimation::playOnStart).Tooltip("Run the intro when the scene starts")
+     .AddBool("replayOnShow", &UIAnimation::replayOnShow).Tooltip("Run it again each time the object is shown")
+     .AddBool("hideAfterOutro", &UIAnimation::hideAfterOutro).Tooltip("Hide the object when the outro ends");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -974,6 +1014,9 @@ void RegisterUIProperties() {
     RegisterChestInventory();
     RegisterUIDropTarget();
     RegisterMinimap();
+    RegisterUITextBind();
+    RegisterUIBarBind();
+    RegisterUIAnimation();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

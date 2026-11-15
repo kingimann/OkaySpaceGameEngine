@@ -20,6 +20,8 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/AimOffset.hpp"
+#include "okay/Components/SequencePlayer.hpp"
 #include "okay/Components/NetInventory.hpp"
 #include "okay/Components/RootMotion.hpp"
 #include "okay/Components/TerrainDigger.hpp"
@@ -1635,6 +1637,34 @@ void RegisterConsumables() {
     b.Commit();
 }
 
+// AimOffset (record "aimoffset")
+void RegisterAimOffset() {
+    PropertyBuilder<AimOffset> b("AimOffset", "aimoffset", "Animation");
+    b.AddBool("useCamera", &AimOffset::useCamera).Tooltip("Aim where the camera looks (off = at the target object)")
+     .AddString("targetName", &AimOffset::targetName).Tooltip("Object to aim at, by name")
+     .AddFloat("weight", &AimOffset::weight).Range(0, 1, 0.01).Tooltip("How much of the aim is applied")
+     .AddFloat("pitchClamp", &AimOffset::pitchClamp).Range(0, 180, 1).Tooltip("Largest up or down turn in degrees")
+     .AddFloat("yawClamp", &AimOffset::yawClamp).Range(0, 180, 1).Tooltip("Largest side turn in degrees")
+     .AddFloat("spineWeight", &AimOffset::spineWeight).Range(0, 1, 0.01).Tooltip("Share of the turn the spine takes")
+     .AddFloat("chestWeight", &AimOffset::chestWeight).Range(0, 1, 0.01).Tooltip("Share of the turn the chest takes")
+     .AddFloat("armWeight", &AimOffset::armWeight).Range(0, 1, 0.01).Tooltip("Share of the turn the arms take")
+     .AddFloat("kick", &AimOffset::kick).Range(0, 1e3, 0.1).Tooltip("Recoil kick in degrees per shot")
+     .AddFloat("recovery", &AimOffset::recovery).Range(0, 1e3, 0.1).Tooltip("How quickly the kick settles");
+    b.Commit();
+}
+
+// SequencePlayer (record "sequenceplayer")
+void RegisterSequencePlayer() {
+    PropertyBuilder<SequencePlayer> b("SequencePlayer", "sequenceplayer", "Gameplay");
+    b.AddAssetPath("sequencePath", &SequencePlayer::sequencePath, "file").Tooltip("The .okayseq cutscene file")
+     .AddBool("playOnStart", &SequencePlayer::playOnStart).Tooltip("Play when the scene starts")
+     .AddBool("loop", &SequencePlayer::loop).Tooltip("Wrap at the loop markers")
+     .AddFloat("timeScale", &SequencePlayer::timeScale).Range(0, 1e3, 0.05).Tooltip("Playback speed (the game's time scale applies on top)")
+     .AddKey("skipKey", &SequencePlayer::skipKey).Tooltip("Jumps to the end (Escape by default; 0 = none)")
+     .AddBool("lockPlayer", &SequencePlayer::lockPlayer).Tooltip("The player's controls ignore input while it plays");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2274,6 +2304,8 @@ void RegisterGameplayProperties() {
     RegisterVoxelDigger();
     RegisterWorldStreamer();
     RegisterConsumables();
+    RegisterAimOffset();
+    RegisterSequencePlayer();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

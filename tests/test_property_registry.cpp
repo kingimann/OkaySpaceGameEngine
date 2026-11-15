@@ -387,7 +387,8 @@ static void TestRegistryBasics() {
         "LogicSource", "QuestLog", "Saveable", "SpriteAnimator",
         "VirtualCamera", "CinemachineBrain", "DollyPath", "Minimap",
         "HoldableObject", "LookAtIK", "FootIK", "LimbIK",
-        "NetInventory", "RootMotion", "TerrainDigger", "VoxelDigger", "WorldStreamer", "Consumables"};
+        "NetInventory", "RootMotion", "TerrainDigger", "VoxelDigger", "WorldStreamer", "Consumables",
+        "UITextBind", "UIBarBind", "UIAnimation", "AimOffset", "SequencePlayer"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

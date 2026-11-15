@@ -56,10 +56,10 @@ with the same tooling (translucent shape, resize handles, visibility switch).
 
 ## In the editor
 
-* **Draw one:** GameObject > Volume > Draw Checkpoint / Kill / Force / Atmosphere / Ambience / Reverb, then drag on the
+* **Draw one:** GameObject > Effects > Volume > Draw Checkpoint / Kill / Force / Atmosphere / Ambience / Reverb, then drag on the
   ground in the Scene view. The drag is the footprint; the height comes from the Height field in that menu. A click
   without a drag makes a 4 m one. Esc stops drawing. Pick the shape (Box, Sphere, Cylinder) in the same menu.
-* **Create one:** GameObject > Volume > New ... Volume puts one where the Scene view looks. Add Component > Gameplay
+* **Create one:** GameObject > Effects > Volume > New ... Volume puts one where the Scene view looks. Add Component > Gameplay
   has a row per kind.
 * **Resize:** select a volume (or a Logic Source plate or trigger zone): six coloured dots appear on its faces. Drag
   one to move that face; the opposite face stays put. The size shows while you drag.

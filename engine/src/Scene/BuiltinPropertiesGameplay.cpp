@@ -8,6 +8,10 @@
 // docs/properties.md.
 #include "BuiltinPropertiesShared.hpp"
 
+#include "okay/Components/LootSource.hpp"
+#include "okay/Components/Seat.hpp"
+#include "okay/Components/Stats.hpp"
+#include "okay/Components/WorldUI.hpp"
 #include "okay/Components/CharacterController2D.hpp"
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/ClickToMoveController.hpp"
@@ -709,6 +713,64 @@ void RegisterProjectile3D() {
     b.Commit();
 }
 
+// Seat (record "seat")
+void RegisterSeat() {
+    PropertyBuilder<Seat> b("Seat", "seat", "Gameplay");
+    b.AddFloat("seatHeight", &Seat::seatHeight).Range(0, 100, 0.01).Tooltip("Metres; the chair clips are made for this height")
+     .AddVec3("sitPoint", &Seat::sitPoint).Range(-kBig, kBig, 0.01).Tooltip("Local point the body moves to")
+     .AddFloat("facing", &Seat::facing).Range(-360, 360, 1).Tooltip("Extra turn in degrees (0 = this object's forward)")
+     .AddInt("type", &Seat::type).Range(0, 2, 1).Tooltip("0 chair, 1 ground, 2 bench")
+     .AddVec3("exitPoint", &Seat::exitPoint).Range(-kBig, kBig, 0.01).Tooltip("Local point the sitter stands up to")
+     .AddFloat("useRadius", &Seat::useRadius).Range(0, 1000, 0.05).Tooltip("How close a player must be to sit")
+     .AddString("prompt", &Seat::prompt).Tooltip("Shown while a player is in range");
+    b.Commit();
+}
+
+// Stats (record "stats")
+void RegisterStats() {
+    PropertyBuilder<Stats> b("Stats", "stats", "Gameplay");
+    b.Section("Health and mana")
+     .AddFloat("health", &Stats::health).Range(0, kBig, 1).Tooltip("Current health")
+     .AddFloat("maxHealth", &Stats::maxHealth).Range(0, kBig, 1).Tooltip("Full health")
+     .AddFloat("mana", &Stats::mana).Range(0, kBig, 1).Tooltip("Current mana")
+     .AddFloat("maxMana", &Stats::maxMana).Range(0, kBig, 1).Tooltip("Full mana")
+     .Section("Level")
+     .AddInt("level", &Stats::level).Range(1, 100000, 1).Tooltip("Character level")
+     .AddInt("xp", &Stats::xp).Range(0, 2000000000, 1).Tooltip("Experience towards the next level")
+     .AddInt("xpToNext", &Stats::xpToNext).Range(1, 2000000000, 1).Tooltip("Experience needed for the next level")
+     .Section("Attributes")
+     .AddInt("strength", &Stats::strength).Range(0, 100000, 1).Tooltip("Used by TakeDamage and your own formulas")
+     .AddInt("defense", &Stats::defense).Range(0, 100000, 1).Tooltip("Subtracted from damage taken")
+     .AddInt("intelligence", &Stats::intelligence).Range(0, 100000, 1).Tooltip("For your own formulas")
+     .AddInt("agility", &Stats::agility).Range(0, 100000, 1).Tooltip("For your own formulas");
+    b.Commit();
+}
+
+// WorldUI (record "worldui")
+void RegisterWorldUI() {
+    PropertyBuilder<WorldUI> b("WorldUI", "worldui", "UI");
+    b.AddString("text", &WorldUI::text).Tooltip("The label")
+     .AddColor("color", &WorldUI::color).Range(0, 1, 0.01).Tooltip("Text colour")
+     .AddColor("background", &WorldUI::background).Range(0, 1, 0.01).Tooltip("Panel behind the text (alpha 0 = none)")
+     .AddVec3("worldOffset", &WorldUI::worldOffset).Range(-kBig, kBig, 0.01).Tooltip("Offset from the object (default: above it)")
+     .AddFloat("pixelSize", &WorldUI::pixelSize).Range(0, 1000, 0.05).Tooltip("Font pixel size at the reference distance")
+     .AddBool("scaleWithDistance", &WorldUI::scaleWithDistance).Tooltip("Shrink as it gets farther from the camera")
+     .AddFloat("maxDistance", &WorldUI::maxDistance).Range(0, kBig, 0.5).Tooltip("0 = always draw; else hide beyond this")
+     .AddFloat("bar", &WorldUI::bar).Range(-1, 1, 0.01).Tooltip("0 to 1 fill of a bar under the text; below 0 = no bar")
+     .AddColor("barColor", &WorldUI::barColor).Range(0, 1, 0.01).Tooltip("Bar fill colour");
+    b.Commit();
+}
+
+// LootSource (record "lootsource")
+void RegisterLootSource() {
+    PropertyBuilder<LootSource> b("LootSource", "lootsource", "Gameplay");
+    b.AddAssetPath("table", &LootSource::table, "loot").Tooltip(".okayloot table to roll")
+     .AddEnum("when", &LootSource::when, {"Start", "Open", "Death"}).Tooltip("When it rolls: at start, on first open, or on death")
+     .AddFloat("refill", &LootSource::refill).Range(0, 1e6, 1).Tooltip("Seconds after being emptied before it fills again (0 = only once)")
+     .AddInt("seed", &LootSource::seed).Range(0, 2000000000, 1).Tooltip("0 = different every time; another number repeats the rolls");
+    b.Commit();
+}
+
 // Volume
 void RegisterVolume() {
     PropertyBuilder<Volume> b("Volume", "volume", "Gameplay");
@@ -1252,6 +1314,10 @@ void RegisterGameplayProperties() {
     RegisterNavMeshModifier();
     RegisterNavMeshLink();
     RegisterNavMeshSurface();
+    RegisterSeat();
+    RegisterStats();
+    RegisterWorldUI();
+    RegisterLootSource();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

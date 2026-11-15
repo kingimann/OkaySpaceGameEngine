@@ -309,6 +309,7 @@ has `enabled`.
 | Destructible, Draggable, DropZone, Flashlight | 15, 10, 2, 7 | |
 | Joint2D, Joint3D | 16, 17 | `mode` (Distance, Spring, Pin, Hinge); the motor spins either way. A 3D hinge stops when `useLimits` is on (`minAngle` / `maxAngle`, degrees from the start pose) |
 | DayNightCycle, Water | 16, 16 | `DayNightCycle.time` is 0..24 hours; `Water.color` is red, green and blue (its alpha is `opacity`) |
+| Seat, Stats, WorldUI, LootSource | 7, 11, 9, 4 | the place to sit (sit and exit points, facing, type 0 chair / 1 ground / 2 bench, prompt), the RPG stats (health, mana, level, experience, attributes), the in-world label with its optional bar, and the loot roll (`when` is Start, Open or Death) |
 
 How the new types are described, so a tool can rely on it:
 

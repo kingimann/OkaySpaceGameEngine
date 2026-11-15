@@ -375,7 +375,7 @@ static void TestRegistryBasics() {
         "UILayoutGroup", "UIFrame", "UIFlexItem", "UIRawImage", "UIKeybindField", "UIDraggable", "LoadingScreen",
         "UITheme", "UIStyleVariant", "UIDamageNumbers", "UIDialogueBox", "UIInventoryBind",
         "UISearchBar", "UIDateTimePicker", "UIFilePicker", "UIAccordion", "UIBreadcrumbs",
-        "UIPagination", "UISkeleton", "UIBottomSheet"};
+        "UIPagination", "UISkeleton", "UIBottomSheet", "Seat", "Stats", "WorldUI", "LootSource"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

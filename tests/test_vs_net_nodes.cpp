@@ -118,14 +118,19 @@ int main() {
     }
     cs.Start();
     NetworkManager* guestNet = nullptr;
+    auto frames = [&](int n) { for (int i = 0; i < n; ++i) { ss.Update(0.02f); cs.Update(0.02f); Nap(); } };
+    // Waits are bounded by wall-clock time (5 s), not a frame count, so a loaded CI runner cannot fail them by being
+    // slow; `frames` is the least number of frames to run (a few frames for every OnUpdate to read a new state).
     auto pump = [&](int frames, auto&& until) {
-        for (int i = 0; i < frames; ++i) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        for (int i = 0;; ++i) {
             ss.Update(0.02f); cs.Update(0.02f); Nap();
             if (until()) break;
+            if (i + 1 >= frames && std::chrono::steady_clock::now() >= deadline) break;
         }
     };
     pump(400, [&] { guestNet = NetOf(cs); return guestNet && guestNet->Joined() && sv->GetVariable("peers").AsFloat() >= 1.0f; });
-    pump(10, [] { return false; });   // a few frames so every OnUpdate has read the joined state
+    frames(10);   // a few frames so every OnUpdate has read the joined state
     CHECK(cv->GetVariable("joinOk").AsFloat() == 1.0f);
     CHECK(guestNet && guestNet->Joined());
     CHECK(cv->GetVariable("connected").AsFloat() == 1.0f);
@@ -156,7 +161,7 @@ int main() {
     // ---- leave: net_disconnect stops the guest, and the host sees the peer go ---------------------------------------
     cv->Send("Leave");
     pump(400, [&] { return sv->GetVariable("peers").AsFloat() == 0.0f; });
-    pump(3, [] { return false; });
+    frames(3);
     CHECK(cv->GetVariable("connected").AsFloat() == 0.0f);
     CHECK(sv->GetVariable("peers").AsFloat() == 0.0f);
     TEST_MAIN_RESULT();

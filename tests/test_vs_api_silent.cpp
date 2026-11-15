@@ -75,5 +75,7 @@ int main() {
     CHECK(std::fabs(rb->angularVelocity.x) < 1e-4f && std::fabs(rb->angularVelocity.z) < 1e-4f);
     AudioMixer::masterVolume = 1.0f;
     Prefs::Clear();
+    InputActions::Restore();                                              // the graph defined Dash and Steer: put the defaults back
+    CHECK(!InputActions::Has("Dash") && !InputActions::Has("Steer"));
     TEST_MAIN_RESULT();
 }

@@ -143,8 +143,8 @@ under the red roof. Lying down you get under both. While you are under a roof, a
 want numbers: select `Player` in the Hierarchy and watch **Box Collider 3D > Size Y** in the Inspector while you play
 (1.8 standing, 1.17 crouched, 0.59 prone; unverified in the real editor).
 
-**Keys.** **Ctrl** crouch, **Z** prone, tap to toggle. **Hold** mode and the keys are in the Inspector under the Player
-Controller's **Crouch / prone** fold (Toggle Stance, Allow Prone, speeds, heights). Gamepad: tap **B** to crouch, hold it
+**Keys.** **Ctrl** crouch, **Z** prone, tap to toggle. The keys, hold mode (switch Toggle Stance off), Allow Prone, speeds
+and heights are in the Inspector under the Player Controller's **Crouch / prone** fold. Gamepad: tap **B** to crouch, hold it
 for prone. Careful: running (**Shift**) and then pressing **Z** is a dive, not a crawl.
 
 **Pictures (headless software renders of this scene, not the editor window; no on-screen help text).** The course from the
@@ -157,8 +157,9 @@ see it go down. A character with your own imported model needs its own **Prone**
 (Model Animator, `docs/animation.md` "Crouch and prone for imported characters"). Without them the model keeps its
 standing animation while its body shrinks. No clip was added or invented here.
 
-**Multiplayer.** The host decides your stance from the Crouch and Prone buttons in your input (the same code the test runs).
-What other players see of a player lying prone was **not** tested or tried on two machines.
+**Multiplayer.** When the host's Network Manager has **Authoritative movement** on (off by default), the host runs your
+player from the buttons in your input, Crouch and Prone included (the same code the test runs). What other players see of
+a player lying prone was **not** tested or tried on two machines.
 
 **Tested here (Linux, headless):** `prone_ceiling` loads the sample scene from disk and plays steps 2 to 7 with key
 presses in third and first person, then checks the low-roof rule on the First Person, Third Person and Third Person Shooter

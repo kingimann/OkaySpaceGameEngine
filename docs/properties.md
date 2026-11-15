@@ -272,7 +272,7 @@ More of the builder:
 
 ## What is registered
 
-2771 properties on 198 types, as `property_registry` counts them ("covered 198 component types, 2771 properties"; a number before a slash counts the authored ones; the rest are
+2793 properties on 201 types, as `property_registry` counts them ("covered 201 component types, 2793 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -340,6 +340,7 @@ has `enabled`.
 | CraftingStation | 21 | key, range, player, recipe book, station tag, title and style. The recipes are a list; `open` is play state |
 | UIListView, UISlotGrid, Spline | 10, 13, 4 | list layout, colours, row size and selection (the items are a list); slot grid layout, colours and selection, plus `fontScale`, `textColor` and `numberEmptySlots` from the shared `uix` record (the labels are a list); spline type, loop, up mode and resolution (the points are `splinept` records) |
 | UITabs | 32 | layout (style, sizing and shape as enums), colours and behaviour (keys, wrap, focus, animation). The tab names, pages, icons, badges and disabled flags are lists |
+| Inventory, Equipment, GridInventory | 7, 2, 10 | capacity, stack and weight limits and keep-on-load; equipment display and keep-on-load; grid size (1..64, the component's own cap), key, title, weight, stack, role and keep-on-load. Slots, items and overflow are lists |
 
 How the new types are described, so a tool can rely on it:
 

@@ -16,6 +16,8 @@ struct PoseHistory {
     Quat prevLocalRot = Quat::Identity, physLocalRot = Quat::Identity, shownLocalRot = Quat::Identity;
     bool shownLocalValid = false;
     bool prevHadParent = false;
+    /// Game code changed the body's rotation since it was drawn: keep that rotation, restore only the position.
+    bool rotByGame = false;
 };
 
 } // namespace okay

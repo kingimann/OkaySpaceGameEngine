@@ -1487,6 +1487,11 @@ target_link_libraries(test_anim_jitter PRIVATE okay::engine)
 target_compile_definitions(test_anim_jitter PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME anim_jitter COMMAND test_anim_jitter)
 
+add_executable(test_controller_interpolation test_controller_interpolation.cpp)
+target_link_libraries(test_controller_interpolation PRIVATE okay::engine)
+target_compile_definitions(test_controller_interpolation PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME controller_interpolation COMMAND test_controller_interpolation)
+
 add_executable(test_rig_sweep test_rig_sweep.cpp)
 target_link_libraries(test_rig_sweep PRIVATE okay::engine)
 target_compile_definitions(test_rig_sweep PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -3341,6 +3346,10 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+
+add_executable(test_turn_interpolation test_turn_interpolation.cpp)
+target_link_libraries(test_turn_interpolation PRIVATE okay::engine)
+add_test(NAME turn_interpolation COMMAND test_turn_interpolation)
 
 # Our own Terragen (.ter) reader (docs/own_terragen_reader.md): synthetic files built in memory, values worked out by hand
 # from the specification, the import seam; and the hostile-input test, which builds without the engine library.

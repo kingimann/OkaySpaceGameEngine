@@ -10,6 +10,7 @@
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
+#include "okay/Components/VehicleSeat.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -2302,6 +2303,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << c->exitPoint.x << " " << c->exitPoint.y << " " << c->exitPoint.z << " "
             << c->useRadius << " " << Quote(c->prompt) << "\n";
     }
+    for (auto* c : go->GetComponents<VehicleSeat>()) {
+        out << "  vehicleseat " << (c->driver ? 1 : 0) << " "
+            << c->sitPoint.x << " " << c->sitPoint.y << " " << c->sitPoint.z << " "
+            << c->exitPoint.x << " " << c->exitPoint.y << " " << c->exitPoint.z << " "
+            << c->useRadius << " " << (int)(unsigned char)c->enterKey << " " << Quote(c->prompt) << "\n";
+    }
     for (auto* c : go->GetComponents<HungerStat>()) {
         out << "  stat_hunger " << c->maxHunger << " " << c->drainPerSecond << " "
             << c->sprintMultiplier << " " << c->lowThreshold;
@@ -3863,7 +3870,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
 }
 } // namespace
 
+namespace {
+// While a scene or object is written, whoever sits in a vehicle gets their own controller, colliders
+// and gravity back, so a copy, undo snapshot or save never holds a frozen player.
+struct VehicleSeatSaveGuard {
+    VehicleSeatSaveGuard() { VehicleSeat::SuspendAllForSave(); }
+    ~VehicleSeatSaveGuard() { VehicleSeat::ResumeAllAfterSave(); }
+};
+} // namespace
+
 std::string SceneSerializer::Serialize(const Scene& scene) {
+    VehicleSeatSaveGuard seatGuard;
     std::ostringstream out;
     UseRoundTripFloats(out);
     out << "okayscene 3\n";
@@ -6184,6 +6201,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                        >> c->facing >> c->type
                        >> c->exitPoint.x >> c->exitPoint.y >> c->exitPoint.z
                        >> c->useRadius;
+                    in >> std::ws;
+                    if (in.peek() == '"') c->prompt = ReadQuoted(in);
+                } else if (field == "vehicleseat") {
+                    auto* c = go->AddComponent<VehicleSeat>();
+                    int dr = 1, ek = 'e';
+                    in >> dr >> c->sitPoint.x >> c->sitPoint.y >> c->sitPoint.z
+                       >> c->exitPoint.x >> c->exitPoint.y >> c->exitPoint.z
+                       >> c->useRadius >> ek;
+                    c->driver = (dr != 0); c->enterKey = (char)ek;
                     in >> std::ws;
                     if (in.peek() == '"') c->prompt = ReadQuoted(in);
                 } else if (field == "stat_hunger") {
@@ -9166,6 +9192,7 @@ bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
 
 
 std::string SceneSerializer::SerializeObject(const GameObject& root) {
+    VehicleSeatSaveGuard seatGuard;
     // Gather the object and all its descendants (depth-first, in sibling order). A stack, not a
     // recursion: a hierarchy 100000 deep must not overflow the call stack. `skipBits` says why an
     // object is not written (see OwnSkipBits): inherited from its parent inside the subtree. Above

@@ -73,7 +73,7 @@ std::wstring Backslashes(std::wstring w) {
 std::wstring FullPath(const std::wstring& p) {
     if (p.empty()) return {};
     DWORD n = GetFullPathNameW(p.c_str(), 0, nullptr, nullptr);
-    if (n == 0) return {};
+    if (n == 0 || n > 32768) return {};   // (a Windows path is at most 32767 characters)
     std::wstring out(static_cast<std::size_t>(n), L'\0');
     n = GetFullPathNameW(p.c_str(), n, &out[0], nullptr);
     if (n == 0 || n >= out.size()) return {};
@@ -98,7 +98,7 @@ bool IsFile(const std::wstring& p) {
 
 std::wstring Env(const wchar_t* name) {
     DWORD n = GetEnvironmentVariableW(name, nullptr, 0);
-    if (n == 0) return {};
+    if (n == 0 || n > 32768) return {};   // (Windows limits a variable to 32767 characters)
     std::wstring v(static_cast<std::size_t>(n), L'\0');
     n = GetEnvironmentVariableW(name, &v[0], n);
     v.resize(n);
@@ -144,7 +144,7 @@ std::wstring FindVsCode() {
         std::size_t end = path.find(L';', start);
         if (end == std::wstring::npos) end = path.size();
         std::wstring dir = path.substr(start, end - start);
-        if (dir.size() >= 2 && dir.front() == L'"' && dir.back() == L'"') dir = dir.substr(1, dir.size() - 2);
+        if (dir.size() >= 2 && dir.front() == L'"' && dir.back() == L'"') { dir.pop_back(); dir.erase(0, 1); }
         while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
         if (IsAbsolute(dir) && IsFile(dir + L"\\code.cmd")) {
             const std::size_t sl = dir.find_last_of(L"\\/");

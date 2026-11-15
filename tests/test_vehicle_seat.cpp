@@ -390,7 +390,7 @@ int main() {
     }
 
     // --- THE MAIN PROOF: load the real sample scene file from disk and play it --------
-    // examples/vehicle/vehicle_test.okayscene is what "Vehicle Test (seats)" in the editor makes.
+    // examples/vehicle/vehicle_test.okayscene is a hand-kept copy of Templates::VehicleSeats3D (not in the editor chooser; open it with File > Open).
     {
         Scene s("sample");
         std::string err;

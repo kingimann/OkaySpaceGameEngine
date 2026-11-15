@@ -70,7 +70,7 @@ handbrake). `Speed()` returns the signed forward speed.
 
 ## Driver seat and getting in (`VehicleSeat`)
 
-Add *Add Component ▸ Gameplay ▸ Vehicle Seat* on the car (or on a child of it). Then the
+Add *Add Component ▸ Gameplay ▸ Vehicle Seat (get in and drive)* on the car (or on a child of it). Then the
 player gets in and out instead of the car always listening to the keyboard.
 
 - **Get in:** walk within `useRadius` of the seat and press **E** (`enterKey`). The

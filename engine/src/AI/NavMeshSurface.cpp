@@ -1,11 +1,11 @@
 #include "okay/Components/NavMeshSurface.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Debug/DebugUtil.hpp"
 #include "okay/Scene/Scene.hpp"
 
 #include <cstring>
 #include <filesystem>
 #include <map>
-#include <mutex>
 #include <vector>
 
 namespace okay {
@@ -77,7 +77,7 @@ std::string NormPath(const std::string& p) {
     const auto c = std::filesystem::weakly_canonical(std::filesystem::u8path(p), ec);
     return ec ? p : c.generic_u8string();
 }
-std::mutex& BakeRecordMutex() { static std::mutex m; return m; }
+debugutil::SpinLock& BakeRecordLock() { static debugutil::SpinLock l; return l; }
 std::map<std::string, BakeRecord>& BakeRecords() { static std::map<std::string, BakeRecord> r; return r; }
 
 bool FileStamp(const std::string& path, std::uintmax_t& size, std::int64_t& time) {
@@ -169,7 +169,7 @@ bool NavMeshSurface::BakeIfChanged(Scene& scene, bool* skipped, NavBakeStats* st
             std::uintmax_t size = 0; std::int64_t time = 0;
             same = FileStamp(file, size, time);
             if (same) {
-                std::lock_guard<std::mutex> lock(BakeRecordMutex());
+                debugutil::SpinGuard lock(BakeRecordLock());
                 auto it = BakeRecords().find(file);
                 same = it != BakeRecords().end() && it->second.key == key && it->second.size == size && it->second.time == time;
             }
@@ -226,7 +226,7 @@ bool NavMeshSurface::Save(const std::string& path) const {
     if (!m_bakeKey.empty()) {   // remember which input this file was baked from (see BakeIfChanged)
         std::uintmax_t size = 0; std::int64_t time = 0;
         if (FileStamp(p, size, time)) {
-            std::lock_guard<std::mutex> lock(BakeRecordMutex());
+            debugutil::SpinGuard lock(BakeRecordLock());
             BakeRecords()[NormPath(p)] = BakeRecord{m_bakeKey, size, time};
         }
     }

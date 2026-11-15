@@ -9,6 +9,7 @@
 #include "okay/Audio/VorbisDecoder.hpp"
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Debug/DebugUtil.hpp"
 #include "AudioInternal.hpp"
 
 #include <algorithm>
@@ -18,7 +19,6 @@
 #include <fstream>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <vector>
 
 namespace okay {
@@ -129,7 +129,7 @@ namespace {
 // The shared decode cache. An entry remembers the file's size and write time when it was decoded; a hit whose
 // file has changed since is decoded again (so an edited or replaced sound never plays stale).
 struct CacheEntry { std::shared_ptr<const AudioClip> clip; std::uintmax_t size = 0; std::int64_t time = 0; std::uint64_t used = 0; };
-std::mutex& CacheMutex() { static std::mutex mu; return mu; }
+debugutil::SpinLock& CacheLock() { static debugutil::SpinLock l; return l; }
 std::map<std::pair<std::string, int>, CacheEntry>& CacheMap() { static std::map<std::pair<std::string, int>, CacheEntry> m; return m; }
 std::uint64_t& CacheTick() { static std::uint64_t t = 0; return t; }
 
@@ -154,7 +154,7 @@ std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, 
     std::uintmax_t size = 0; std::int64_t time = 0;
     FileStamp(path, size, time);
     {
-        std::lock_guard<std::mutex> lock(CacheMutex());
+        debugutil::SpinGuard lock(CacheLock());
         auto& cache = CacheMap();
         auto it = cache.find(key);
         if (it != cache.end()) {
@@ -170,7 +170,7 @@ std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, 
         return nullptr;
     }
     auto shared = std::make_shared<const AudioClip>(rate > 0 && c.sampleRate != rate ? c.Resampled(rate) : std::move(c));
-    std::lock_guard<std::mutex> lock(CacheMutex());
+    debugutil::SpinGuard lock(CacheLock());
     auto& cache = CacheMap();
     auto it = cache.find(key);   // another thread may have decoded it meanwhile: keep one shared copy
     if (it != cache.end() && it->second.size == size && it->second.time == time) { it->second.used = ++CacheTick(); return it->second.clip; }
@@ -179,24 +179,24 @@ std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, 
 }
 
 void AudioClip::ClearCache() {
-    std::lock_guard<std::mutex> lock(CacheMutex());
+    debugutil::SpinGuard lock(CacheLock());
     CacheMap().clear();
 }
 
 std::size_t AudioClip::CacheBytes() {
-    std::lock_guard<std::mutex> lock(CacheMutex());
+    debugutil::SpinGuard lock(CacheLock());
     std::size_t n = 0;
     for (const auto& kv : CacheMap()) n += EntryBytes(kv.second);
     return n;
 }
 
 std::size_t AudioClip::CacheCount() {
-    std::lock_guard<std::mutex> lock(CacheMutex());
+    debugutil::SpinGuard lock(CacheLock());
     return CacheMap().size();
 }
 
 void AudioClip::TrimCache(std::size_t maxBytes) {
-    std::lock_guard<std::mutex> lock(CacheMutex());
+    debugutil::SpinGuard lock(CacheLock());
     auto& cache = CacheMap();
     std::size_t total = 0;
     for (const auto& kv : cache) total += EntryBytes(kv.second);

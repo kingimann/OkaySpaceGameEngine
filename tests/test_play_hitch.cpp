@@ -8,7 +8,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
-#include <thread>
+#include <thread>   // tests only (Linux); the engine itself uses spin locks, MinGW win32 has no <mutex>
 
 using namespace okay;
 namespace fs = std::filesystem;

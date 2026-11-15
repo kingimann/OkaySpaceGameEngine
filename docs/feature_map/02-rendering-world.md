@@ -121,7 +121,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.6.7 Tilemap - `Components/Tilemap`, `Components/TilemapCollider2D` - integer tile grid with cell/world conversion; static box colliders merged per row
 - **Code:** `Components/Terrain`, `Components/TerrainDigger`, `Components/VoxelTerrain`, `Components/VoxelDigger`, `Components/Water`, `Components/WorldStreamer`, `Components/Tilemap`, `Components/TilemapCollider2D`
 - **API:** `Terrain::RaiseAt`, `Terrain::Erode`, `VoxelTerrain::Dig`, `TerrainDigger`, `Water`, `WorldStreamer`, `Tilemap`, `TilemapCollider2D`
-- **Editor:** GameObject > Create > Terrain, Voxel Terrain (caves), Water, Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
+- **Editor:** GameObject > 3D Object > Terrain, Voxel Terrain (caves), Water and GameObject > 2D Object > Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
 - **Docs:** `docs/terrain_water.md`
 - **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
 - **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
@@ -218,11 +218,11 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
   - 2.11.1 Spline curve - `Components/Spline` - cubic Bezier or Catmull-Rom, open or closed, per-point roll and width/height scale, arc-length table, rotation-minimising frames
   - 2.11.2 Spline follower - `Components/Spline` - moves an object along a spline (platforms, carts, patrols, dolly cameras)
   - 2.11.3 Spline mesh and instancer - `Components/SplineMesh` - sweep a profile or bend a source mesh along the curve (roads, pipes, fences); place objects, prefabs or built-in meshes at a spacing
-  - 2.11.4 Editor tools - `editor/SplineTools.*` - Scene-view overlay (points, handles, insert, delete, snap to ground), inspectors, GameObject > Spline, live rebuild of meshes and trail previews
+  - 2.11.4 Editor tools - `editor/SplineTools.*` - Scene-view overlay (points, handles, insert, delete, snap to ground), inspectors, GameObject > Effects > Spline, live rebuild of meshes and trail previews
   - 2.11.5 Lines and trails on splines - see 2.7.4 and 2.7.5
 - **Code:** `Components/Spline`, `Components/SplineMesh`, `editor/SplineTools.*`
 - **API:** `Spline`, `SplineFollower`, `SplineMesh`, `SplineInstancer`, `DrawSplineOverlay`
-- **Editor:** GameObject > Spline; Scene-view spline overlay and the Spline, Follower, Spline Mesh and Instancer inspectors (`editor/SplineTools.*`)
+- **Editor:** GameObject > Effects > Spline; Scene-view spline overlay and the Spline, Follower, Spline Mesh and Instancer inspectors (`editor/SplineTools.*`)
 - **Docs:** `docs/splines.md`
 - **Tests:** `splines`
 - **Status:** Works - read the headers and `SplineTools.hpp`; the 928-line `splines` test covers evaluation, arc length, frames, editing, meshes, instancers and scene records

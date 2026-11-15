@@ -74,8 +74,8 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 18.2 Web and mobile export [Partial]. Where: File > Build Settings > Platform: Web (WebGL / WASM), Android (project)
     - 18.3 CI jobs [Works].
     - 18.4 Release workflow [Works].
-    - 18.5 Update feed [Works]. Where: Engine > Check for Updates... (editor updater dialog with the changelog)
-    - 18.6 Desktop game export (Build Game) and the export check [Works]. Where: File > Build Settings or Engine > Build Settings (Ctrl+B): scenes in build, window, platform, Output page...
+    - 18.5 Update feed [Works]. Where: Help > Check for Updates... (editor updater dialog with the changelog)
+    - 18.6 Desktop game export (Build Game) and the export check [Works]. Where: File > Build Settings (Ctrl+B): scenes in build, window, platform, Output page (layout, build number...
     - 18.7 Dedicated server export and Linux server build [Works]. Where: File > Build Settings > Platform: Server
     - 18.8 Steam release (SteamPipe) [Basic].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
@@ -128,7 +128,7 @@ Areas: 18, 19, 28, 33, 41, 56, 57, 58. Rows ids start `V-BX-`. `V-BX-S<area>` ro
     - 41.6 Supabase functions and SQL schema [Works].
     - 41.7 Steam upload kit [Basic].
     - 41.8 GitHub workflows and templates [Works].
-    - 41.9 Versioning and release prep [Works]. Where: Engine > Check for Updates...
+    - 41.9 Versioning and release prep [Works]. Where: Help > Check for Updates...
     - 41.10 Dependencies and pinned versions [Works].
     - 41.11 Own-stack dogfood switch and startup line [Works]. Where: Help > About OkaySpace (the stack line)
     - 41.12 Collaboration tooling (lanes, claims, find-existing... [Works].

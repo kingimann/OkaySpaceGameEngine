@@ -10,7 +10,6 @@ add_library(okay_crypto STATIC
     src/Crypto/Poly1305.cpp
     src/Crypto/Aead.cpp
     src/Crypto/Blake2b.cpp
-    src/Crypto/Sha256.cpp
     src/Crypto/Sha512.cpp
     src/Crypto/X25519.cpp
     src/Crypto/Ed25519.cpp

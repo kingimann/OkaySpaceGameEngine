@@ -27,6 +27,10 @@ public:
     float age = 0.0f;
     float life = 4.0f;
     int serial = 0;
+    /// Set the moment the card is queued for removal (it was pushed out by a newer toast, timed out or
+    /// clicked). Scene::Destroy only frees it at the end of the frame, so until then the card must not
+    /// count towards the stack or take a slot.
+    bool leaving = false;
 };
 
 /// Host for toast notifications. Push() slides a card in at `corner`, stacks up
@@ -64,12 +68,12 @@ private:
 
 inline int UIToast::Count() const {
     if (!gameObject || !gameObject->transform) return 0;
-    const Scene* sc = gameObject->scene();
     int n = 0;
-    for (Transform* ch : gameObject->transform->Children())
-        if (ch && ch->gameObject && ch->gameObject->GetComponent<UIToastItem>() &&
-            !(sc && sc->IsDestroyPending(ch->gameObject)))   // a card already asked to go is no longer on the stack
-            ++n;
+    for (Transform* ch : gameObject->transform->Children()) {
+        if (!ch || !ch->gameObject) continue;
+        const auto* item = ch->gameObject->GetComponent<UIToastItem>();
+        if (item && !item->leaving) ++n;   // a card queued for removal no longer counts
+    }
     return n;
 }
 
@@ -97,18 +101,21 @@ inline GameObject* UIToast::Push(const std::string& title, const std::string& bo
     Scene* sc = gameObject->scene();
     kind = std::clamp(kind, 0, 3);
     SetMaxStack(maxStack);
-    // Make room: the oldest card goes. Destroy only queues (the card leaves at the end of the frame), so a card already
-    // queued is skipped here and not counted by Count(); without that this loop never ended once the stack was full.
-    for (int guard = 0; guard < 256 && Count() >= maxStack; ++guard) {
+    // Make room by pushing out the oldest cards. Scene::Destroy only QUEUES the removal (the object is freed
+    // at the end of the frame), so Count() would never drop inside this loop: the old code looked at the same
+    // card again and again and froze the editor on the fifth toast of a four-card stack. A pushed-out card is
+    // marked `leaving` at once, which takes it out of Count(); the cap is a backstop that cannot spin.
+    for (int guard = 0; Count() >= maxStack && guard < 4096; ++guard) {
         UIToastItem* oldest = nullptr;
         GameObject* og = nullptr;
         for (Transform* ch : gameObject->transform->Children()) {
-            if (!ch || !ch->gameObject || sc->IsDestroyPending(ch->gameObject)) continue;
+            if (!ch || !ch->gameObject) continue;
             auto* item = ch->gameObject->GetComponent<UIToastItem>();
-            if (!item) continue;
+            if (!item || item->leaving) continue;
             if (!oldest || item->serial < oldest->serial) { oldest = item; og = ch->gameObject; }
         }
         if (!og) break;
+        oldest->leaving = true;
         sc->Destroy(og);
     }
 
@@ -216,7 +223,7 @@ inline void UIToast::Update(float dt) {
         if (!ch || !ch->gameObject) continue;
         auto* item = ch->gameObject->GetComponent<UIToastItem>();
         auto* btn = ch->gameObject->GetComponent<UIButton>();
-        if (!item || !btn) continue;
+        if (!item || !btn || item->leaving) continue;   // a card already queued for removal is left alone
         rows.push_back({item, btn, ch->gameObject, false});
     }
     std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) { return a.item->serial > b.item->serial; });
@@ -229,7 +236,7 @@ inline void UIToast::Update(float dt) {
     Scene* sc = gameObject->scene();
     int index = 0;
     for (Row& r : rows) {
-        if (r.dead) { sc->Destroy(r.go); continue; }
+        if (r.dead) { r.item->leaving = true; sc->Destroy(r.go); continue; }
         float u = r.item->age / 0.18f;
         if (u > 1.0f) u = 1.0f;
         const float e = u * u * (3.0f - 2.0f * u);

@@ -4,7 +4,7 @@ A short, honest status of survival-game inventory in the engine. The to-do item
 "Improve inventory systems (survival-game style)" is **mostly done**: the move,
 stack, weight and equipment logic is solid and tested, and item cooldowns, durability,
 scripted slot-to-grid moves and the typed-script inventory classes are in. You can try
-the new parts without writing anything: [try_it.md](try_it.md) section 14. The gaps are
+the new parts without writing anything: [try_it.md](try_it.md) section 18. The gaps are
 listed under "Not done".
 
 ## What exists
@@ -64,9 +64,9 @@ What was added on top, so that every one of these can be tried (CLAUDE.md rule 4
   (cooldown 5 s) and an Iron Sword (durability 4), the keys below and a status line. `Templates::InventoryItems()` is its
   `items.okayitems`, written into a new project and shipped with the example. `examples/inventory/` is a copy of the template
   (regenerate with `OKAY_WRITE_EXAMPLE=1 ./tests/test_inventory_sample`), checked against it by the test `inventory_sample`, which also
-  plays every step of [try_it.md](try_it.md) section 14 with simulated keys. The Windows zip and installer ship it
+  plays every step of [try_it.md](try_it.md) section 18 with simulated keys. The Windows zip and installer ship it
   (`scripts/build-windows-dist.sh`); the editor opens it from File > Examples > Inventory.
-* **The item editor shows the fields.** Window > Items, Loot & Recipes > an item > Custom Fields > **+ Known field...** adds
+* **The item editor shows the fields.** View > Editors & Tools > Items, Loot & Recipes > an item > Custom Fields > **+ Known field...** adds
   `cooldown`, `maxDurability`, `breakAction`, `wearPerHit`, `wearPerStrike` and `wearPerShot` with a one-line explanation each.
 * **The visual-script nodes are easy to find.** The `Fn.inv_*` and `Fn.item_def` nodes sit under Add Node > Objects > Items beside Add
   Item and Has Item (before this a keyword rule scattered them: most in Advanced, `inv_move` in Movement, `inv_cooldown` in Time). Test `vs_inventory_palette` lists them.

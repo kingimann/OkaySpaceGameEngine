@@ -96,13 +96,14 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.5.1 Arcade vehicle - `Components/VehicleController` - maxSpeed, reverseSpeed, acceleration, brakeForce, drag, turnSpeed, grip, handbrakeGrip, followCamera, Speed(), IsGrounded()
   - 4.5.2 Raycast suspension - `Components/VehicleController` - four down-rays at wheelBase x trackWidth, spring to rideHeight, chassis roll and pitch, maxTilt
   - 4.5.3 2D vehicle - `Components/VehicleController2D` - top-down (local +Y) or side view
-  - 4.5.4 Driver seat - `Components/VehicleSeat` - driver, sitPoint, exitPoint, useRadius, enterKey, prompt, Enter, Exit, Occupant
+  - 4.5.4 Driver seat - `Components/VehicleSeat` - driver, sitPoint, exitPoint, useRadius, enterKey, prompt, Enter, Exit, Occupant, sit pose (BeginVehicleSit), ride camera (CameraTarget)
+  - 4.5.5 Wheel visuals - `Components/VehicleController` - objects named Wheel... with a Tire child roll with the speed, Front wheels steer; WheelSpin(), SteerAngle()
 - **Code:** `Components/VehicleController`, `Components/VehicleController2D`, `Components/VehicleSeat`
 - **API:** `VehicleController`, `VehicleController2D`, `VehicleSeat`, `Speed()`, `IsGrounded()`, `Driver()`, `Enter()`, `Exit()`
 - **Editor:** Add Component > Gameplay > Vehicle Controller (Car) / Vehicle Controller 2D / Vehicle Seat; File > Open examples/vehicle/vehicle_test.okayscene
 - **Docs:** `docs/vehicle_controller.md`
 - **Tests:** `vehicle`, `vehicle_seat`
-- **Status:** Works - vehicle test covers throttle, steering, grip and serialization; suspension is opt-in; the seat test covers get in and out, one driver, exit fallback, destroy and save
+- **Status:** Works - vehicle test covers throttle, steering, grip and serialization; suspension is opt-in; the seat test covers get in and out, sitting pose set and cleared, ride camera, rolling and steering wheels, one driver, exit fallback, destroy and save
 - **Open:** no script or visual-script access to seats; seat state is not replicated over the network; no sit animation; torque-based body dynamics are a roadmap item in the doc
 - **Related:** 4.4, 6.2
 - **Words:** vehicle, car, drift, handbrake, grip, suspension, ride height, VehicleController
@@ -198,7 +199,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.10.4 Pixel-perfect 2D - `Components/Camera` - pixelPerfect and pixelsPerUnit snapping in RenderPosition
 - **Code:** `Components/Camera`
 - **API:** `Camera`, `Camera::Shake`, `ZoomTo`, `WorldToScreen`, `ScreenPointToRay`, `ViewMatrix`, `ProjectionMatrix`; scripts such as `look_at`, camera builtins; visual-script Camera Shake node
-- **Editor:** Camera inspector; GameObject > Create Camera
+- **Editor:** Camera inspector; GameObject > Camera > Camera
 - **Docs:** `docs/layers_tags_cameras.md`
 - **Tests:** `camera_cine`, `script_camera`, `scene_cameras`
 - **Status:** Works - camera_cine checks projection and visibility maths; script_camera covers script control

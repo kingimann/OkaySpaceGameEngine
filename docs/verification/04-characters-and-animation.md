@@ -110,7 +110,7 @@ Areas: 3, 4, 5, 30. Rows ids start `V-CH-`. `V-CH-S<area>` rows are smoke tests 
     - 4.7 First-person camera and hands [Works]. Where: First Person Hands component panel (Open Preview), "First Person Hands" window
     - 4.8 Virtual cameras and dollies [Works]. Where: Inspector panels for Virtual Camera, Cinemachine Brain, Dolly Path, Dolly Cart; Add Component menu "Virtual...
     - 4.9 Blocky Character and customization [Works]. Where: Character inspector, "Separate Into Parts (editable rig)", Unrig, Animation tab
-    - 4.10 Camera component, shake and zoom [Works]. Where: Camera inspector; GameObject > Create Camera
+    - 4.10 Camera component, shake and zoom [Works]. Where: Camera inspector; GameObject > Camera > Camera
     - 4.11 Seats and sitting [Works]. Where: Seat inspector panel
     - 4.12 Premade players [Works]. Where: GameObject > Player submenu
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).

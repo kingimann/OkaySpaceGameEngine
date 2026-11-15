@@ -59,7 +59,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 | Step | State | Who |
 |---|---|---|
-| Consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto` (not done: `AccountService.hpp` `Sha256` is under the PBKDF2 password hashing and uses a copy-state shortcut, `OfficialGame.hpp` `FileSha256` and `AntiCheatChecks.hpp` `HmacSha256` sit on it; moving them is not a small change and needs a new HMAC with RFC 4231 tests), and fix `SecureChannel` key wiping, before the review (recommended, not done) | Open | Team, owner decides |
+| Consolidate the extra SHA-256 copies and the hand-written HMAC onto `okay::crypto`: **done on branch `claude/one-sha256` (owner approved 2026-11-15, not merged yet)**. One header-only `engine/include/okay/Crypto/Sha256.hpp` now holds SHA-256, HMAC-SHA256 (RFC 4231 tests) and PBKDF2-HMAC-SHA256 (RFC 7914 tests); `AccountService.hpp`, `AntiCheatChecks.hpp` and `launcher/VoiceChat.hpp` are thin wrappers; every output is byte-identical to the old copies (differential test, stored password records made by the old code, Python hashlib), and it is as fast or faster (`docs/sha256_comparison.md`). Still open from this step: `SecureChannel` key wiping (recommended, not done) | Done (SHA-256 / HMAC); key wiping open | Team |
 | Say in the outside review request that the non-libsodium path of the anti-cheat and launcher Ed25519 now relies on `okay::crypto` (done in `docs/crypto_review_request.md`); a real signed manifest and `versions.json` from the release pipeline still have to be checked with a no-libsodium build | Open | Team |
 | Choose a reviewer, a budget and a date; send the request and the bundle | Decided: **no hired reviewer** (owner, 2026-11-14). libsodium stays the default; the package and request stay in the repo in case that changes | Owner |
 | Extra assurance without a hired reviewer: an internal review by a fresh agent, and a review by a second AI (Grok) from `review/CRYPTO_REVIEW_REQUEST.md` on branch `claude/crypto-review-grok` (pinned to commit `0a857395`). Reported as "not independently reviewed"; every claimed bug is reproduced by a test before any change | Internal review running; Grok review waiting for the owner to run it | Team and owner |
@@ -98,6 +98,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 - Admin: create test servers without a game (not started: "test server" needs a definition from the owner; see unfinished_launcher.md)
 - Improve the editor Plugins menu
+- Editor menus, follow-ups from the 2026-11-15 clean-up ([editor_menus.md](editor_menus.md), section 5): Ctrl+X with several objects selected deletes them all but keeps only one on the clipboard (the menus refuse Cut for several, the key does not); Copy and the clipboard hold one object, not a selection; what a menu click does (`RunMenuAction`, `HierRowAction`) has no test, only the lists do; the Inspector and Project menus are separate branches
 - Improve inventory systems (survival-game style): mostly done (moves, stack and weight rules, slot-to-grid moves for UI and scripts, item cooldowns, durability, typed-script classes; try it with `examples/inventory/`); see [inventory.md](inventory.md) for what is left (networking of cooldowns and grid moves, tool wear, a durability bar, container rules)
 - Scene Manager window in the editor
 - Full UI component library (essential, game, app, layout, data-driven)
@@ -363,7 +364,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [44.3](feature_map/43-proposals.md#443-measuring-and-level-metrics) | Measuring and level metrics | Planned | first step: a Measure tool (click two points, show distance and slope) and a reference-figure toggle showing a 1.8 m person and... |
-| [44.4](feature_map/43-proposals.md#444-volumes-and-zones) | Volumes and zones | Partial | first step: a GameObject > Volume menu (trigger, kill, music, spawn) drawn as a tinted box with its name in the Scene view; one... |
+| [44.4](feature_map/43-proposals.md#444-volumes-and-zones) | Volumes and zones | Partial | first step: a GameObject > Effects > Volume menu (trigger, kill, music, spawn) drawn as a tinted box with its name in the Scene view; one... |
 
 ### 45. Open-world streaming and world partition
 

@@ -65,6 +65,27 @@ Small behaviour differences, said plainly (none is covered by a check, so none w
 - The highlighter is run per line through the model's tokenizer hook; tokens that the callback gives out of range are clamped to the line.
 - `Version()` counts model changes (a replace counts two); only equality was ever used.
 
+## How to try it
+
+Everything below was written from reading the code. NOTHING here was run in a real editor window (no window or GPU in the build machine), so every "you should see" is **unverified** unless it says otherwise.
+
+**The switch.** The script editor has no switch of its own: its code view follows the editor's UI backend. The own code editor (`OkayUI::CodeEdit`) is used exactly when the OkayUI backend is on; the default (Dear ImGui backend) uses ImGuiColorTextEdit. Two ways to turn it on:
+1. Start the editor with the environment variable `OKAY_UI_BACKEND=okayui` (Windows: `set OKAY_UI_BACKEND=okayui` then run `OkayEngine.exe`; Linux: `OKAY_UI_BACKEND=okayui ./OkayEngine`). It is honoured without any other flag and it wins over the saved setting.
+2. Or with the developer flag `OKAY_DEV=1` set, open View > Rendering & Performance > UI backend and pick "OkayUI (preview)". It applies at once and is saved in `okay_settings.txt`. Pick "Dear ImGui (default)" to go back.
+Turning the backend on also draws the Console, Crash Log and Audio Mixer with OkayUI; that is expected.
+
+**What to open.** In a project, put a script file in the Project panel (for a quick test, copy `examples/editor-plugins/AlignTools.okay` into a project folder) and double-click it: it opens as a tab in the Script Editor window. Typing in a script attached to an object works the same way.
+
+**Which backend is active** (these lines were added in this slice; they compile in a host syntax check but were not seen on screen):
+- the Console's first lines say `Script editor: our own code editor (OkayUI backend, preview)` or `Script editor: ImGuiColorTextEdit (default)`;
+- Help > About OkaySpace shows the same `Script editor:` line;
+- the stderr line printed at startup (`okay::ownstack`) shows the UI toolkit (`ui=okayui` or `ui=imgui`).
+Look of the editor itself: the own editor has a number gutter with a blue breakpoint column, a current-line band, and its own Darcula-like colours; ImGuiColorTextEdit has no breakpoint column of that kind. The picture of the own editor drawn by the headless renderer is in the screenshots named in the report of this change (not committed to the repo).
+
+**What you should see in the own editor (unverified).** Keywords, strings, numbers and comments in different colours; Enter keeps the indent and goes one level deeper after `{`; Tab inserts spaces, Shift+Tab removes them; Ctrl+Z / Ctrl+Y undo and redo; Ctrl+C / X / V use the clipboard; clicking the narrow column left of the line numbers toggles a breakpoint; a script error shows a red mark in the gutter and a wavy underline; the caret next to a bracket highlights its partner; the autocomplete popup appears under the caret. Known to be rougher than the old editor: no code font (the cell width assumes a monospaced font, so the caret can drift with a proportional one), the editor's own palette is not used, show-whitespace and the left margin setting do nothing, and an ImGui popup that overlaps the code area is hidden behind it (see "NOT DONE" in `docs/own_ui_code_editor.md`).
+
+**If it is wrong,** switch back with `OKAY_UI_BACKEND=imgui` (or the menu) and report what you saw; the text, caret and selection are copied across when the backend changes while a script is open.
+
 ## NOT DONE
 
 - Multiple carets in the widget: `Buffer` supports them (typing, Backspace, Delete, word delete as one undo step), but `CodeEdit` still has one caret and one anchor (`Caret()`, `Anchor()`, the draw code, the mouse), so wiring them in is a widget change, not a cheap one. Left out.

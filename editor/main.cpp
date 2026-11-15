@@ -6688,7 +6688,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
                     SaveSettings();
                 }
             ImGui::Separator();
-            ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: only the Console panel is ported.");
+            ImGui::TextDisabled(src == 2 ? "OKAY_UI_BACKEND is set and decides this." : "Preview: the Console, Crash Log, Audio Mixer and the Script editor's code view are ported.");
             ImGui::EndMenu();
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dear ImGui draws the editor. OkayUI (preview) is our own toolkit: pick it to draw the Console panel with it.\nEverything else stays Dear ImGui. Applies at once; the OKAY_UI_BACKEND environment variable overrides it.");
@@ -19046,6 +19046,7 @@ void DrawAboutPopup() {
                             SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL, IMGUI_VERSION,
                             okay::AssimpAvailable() ? "on" : "off");
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 380.0f); ImGui::TextDisabled("%s", okay::ownstack::Describe(okayuibackend::Name(g_uiBackend)).c_str()); ImGui::PopTextWrapPos();   // which parts are ours (docs/own_stack_rollout.md)
+        ImGui::TextDisabled("Script editor: %s", UseOkayUIBackend() ? "our own code editor (OkayUI backend, preview)" : "ImGuiColorTextEdit (default)");
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::SameLine();
@@ -48203,6 +48204,9 @@ int main(int argc, char** argv) {
 
     ConsoleLog("Welcome to OkaySpace v" OKAY_ENGINE_VERSION
                ". Choose a 2D or 3D project to begin.");
+    // Which code editor the Script editor uses: ours (OkayUI CodeEdit, only with the OkayUI backend) or ImGuiColorTextEdit (default).
+    ConsoleLog(std::string("Script editor: ") + (UseOkayUIBackend() ? "our own code editor (OkayUI backend, preview)" : "ImGuiColorTextEdit (default)")
+               + ". To try ours: OKAY_UI_BACKEND=okayui (docs/own_code_editor.md).");
 
     // Automatically check for a newer build at startup, in the background so it
     // never blocks the editor. The result is picked up in the main loop and, if

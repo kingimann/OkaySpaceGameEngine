@@ -8,6 +8,9 @@
 #include "okay/UI/UIRenderer.hpp"
 #include <chrono>
 #include <climits>
+#include <string>
+#include <cstdlib>
+#include "okay/Graphics/Image.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -192,5 +195,23 @@ int main() {
         CHECK(rp.Of(255, 0, 0).n > 0 && rp.Of(0, 255, 0).n > 0);
     }
 
+    if (const char* dir = std::getenv("OKAY_SHOT_DIR"); dir && *dir) {   // a picture of what the player draws
+        tr->shadow = false; tr->outline = false; tr->color = Color::FromBytes(235, 235, 240);
+        tr->text = "Rich world text\n[color=#ffcc33]gold[/color] [size=250][color=#ff5555]BIG[/color][/size] [b]bold[/b]\nthe next line is clear";
+        RecordPainter rp;
+        ui2d::DrawWorldText(rp, *tr, 16.0f, 16.0f, 3.0f);
+        const int w = 520, h = 220;
+        std::vector<std::uint8_t> px((std::size_t)w * h * 4, 0);
+        for (std::size_t i = 0; i < px.size(); i += 4) { px[i] = 30; px[i + 1] = 34; px[i + 2] = 44; px[i + 3] = 255; }
+        for (const auto& f : rp.fills)
+            for (int y = std::max(0, f.y); y < std::min(h, f.y + f.h); ++y)
+                for (int x = std::max(0, f.x); x < std::min(w, f.x + f.w); ++x) {
+                    std::uint8_t* p = &px[((std::size_t)y * w + x) * 4];
+                    p[0] = f.r; p[1] = f.g; p[2] = f.b; p[3] = 255;
+                }
+        Image img;
+        img.Set(w, h, std::move(px));
+        img.SavePNG(std::string(dir) + "/world_text_rich.png");
+    }
     TEST_MAIN_RESULT();
 }

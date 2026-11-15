@@ -995,7 +995,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 29.2.7 Surface ray cast - `Render/SurfaceRaycast` - `RaycastSurfaces` finds the first mesh surface under a ray with no colliders needed (foliage, decals and the measuring tool use it)
 - **Code:** `Components/Foliage`, `Render/SurfaceRaycast`, `editor/LevelTools.*`, `Components/SplineMesh`, `Components/Terrain`, `Render/Mesh`
 - **API:** `Foliage::Paint`, `Erase`, `Rescale`, `ScatterOnTerrain`, `TerrainSurface`, `SceneSurface`, `EnsureBuilt`, `RaycastSurfaces`, `Terrain::SampleHeight`, `SlopeAt`, `SplineInstancer`, `Mesh::FromNameSeeded`
-- **Editor:** GameObject > Foliage Layer, Add Component > Foliage, Foliage Inspector (brush), Terrain Inspector > Scatter props, Spline tools
+- **Editor:** GameObject > Effects > Foliage Layer, Add Component > Foliage, Foliage Inspector (brush), Terrain Inspector > Scatter props, Spline tools
 - **Docs:** `docs/level_tools.md`, `docs/modeling.md`, `docs/splines.md`
 - **Tests:** `foliage`, `save_coverage`, `splines`, `mesh_variant_hash`, `terrain_ops`
 - **Status:** Works - the foliage layer, brush, scatter and checks are covered by the `foliage` suite and were driven with the mouse in the real editor; no grass or detail layer, no wind, no hardware instancing.
@@ -1018,7 +1018,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 29.4.2 Cable - `Components/Cable` - a parabola with sag between this object (or a named one) and another, laid on a Line Renderer; follows its end objects in the editor and in Play; visual only
 - **Code:** `Components/Decal`, `Components/Cable`, `Render/SurfaceRaycast`, `editor/LevelTools.*`
 - **API:** `Decal::Project`, `Cable::Curve`, `Cable::Rebuild`, `Cable::Length`
-- **Editor:** GameObject > Decal Projector, GameObject > Cable, Add Component > Rendering, Inspector with a Project button
+- **Editor:** GameObject > Effects > Decal Projector, GameObject > Effects > Cable, Add Component > Rendering, Inspector with a Project button
 - **Docs:** `docs/level_tools.md`
 - **Tests:** `foliage`, `save_coverage`
 - **Status:** Works - both are covered by the `foliage` suite (geometry, save and load); the cable and decal were shown in the real editor.

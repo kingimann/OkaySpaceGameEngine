@@ -198,7 +198,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
   - 4.10.4 Pixel-perfect 2D - `Components/Camera` - pixelPerfect and pixelsPerUnit snapping in RenderPosition
 - **Code:** `Components/Camera`
 - **API:** `Camera`, `Camera::Shake`, `ZoomTo`, `WorldToScreen`, `ScreenPointToRay`, `ViewMatrix`, `ProjectionMatrix`; scripts such as `look_at`, camera builtins; visual-script Camera Shake node
-- **Editor:** Camera inspector; GameObject > Create Camera
+- **Editor:** Camera inspector; GameObject > Camera > Camera
 - **Docs:** `docs/layers_tags_cameras.md`
 - **Tests:** `camera_cine`, `script_camera`, `scene_cameras`
 - **Status:** Works - camera_cine checks projection and visibility maths; script_camera covers script control

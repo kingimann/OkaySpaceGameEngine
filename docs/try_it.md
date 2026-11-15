@@ -49,6 +49,8 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 14 for what was and was not seen |
+| 15 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 15 |
 
 ---
 
@@ -211,6 +213,54 @@ controller at 30, 60 and 144 fps; the test failed on the old code and passes now
 The before-and-after of the bug needs the old release to compare.
 
 ---
+
+## 14. Main menu bar (cleaned up)
+
+What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
+Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start the editor from the launcher). Open any project.
+
+1. Click **File**. You should see, in this order: New 2D Scene, New 3D Scene, Open Scene... (Ctrl+O), Open Recent, **one** Examples
+   (it used to be three), then Save Scene / Save Scene As... / Save Project with their keys, then New Project... / Open Project Folder... /
+   Project Upgrade..., then Import Model... / Merge Scene into Current..., then Autosave and Build Settings... (Ctrl+B), then Exit.
+   Open **Examples**: UI Gallery, UI Gallery (phone), Visual Script Node Playground, Node Playground (flow and variables).
+   With no recent scenes, hover **Open Recent**: the tip says why it is greyed. Press Play, then open File: **Save Scene** is greyed and
+   the tip says "Stop Play first ...".
+2. Click **Edit**. Undo and Redo name the step ("Undo Move") and are grey, with a tip, when there is nothing to undo. With nothing selected,
+   Cut, Copy, Duplicate and Delete are grey ("Select an object ... first."). Select an object: they work. Ctrl+click three objects in the
+   Hierarchy, open Edit again: the labels read **Duplicate 3 Objects** and **Delete 3 Objects**, and Cut is grey with the reason. **Preferences**
+   holds UI Scale, Density, Theme and Accent color (they used to be View > Appearance). **Project Settings...** is at the bottom.
+3. Click **GameObject**. Create Empty, Create Empty Child and Create Empty Parent (Ctrl+Shift+G) come first; Child and Parent need a selection.
+   Then the categories: **2D Object, 3D Object, Player, Light, Camera, Audio, Effects, UI**. **Audio > Audio Source** (new) puts a sound object in
+   the scene and selects it; its Audio Source component is in the Inspector. Everything the old menu offered is in one of the categories
+   (the table in editor_menus.md says which).
+4. Click **View**. **Panels**, **Editors & Tools** and **Layout** are where they always were. Below: **Frame Selected (F)**, **Isolate Selection
+   (Shift+I)**, **UI Editing Mode**, **Scene Overlays**, **Camera Bookmarks** (hover "Go to slot 1" before saving one: the tip says to save
+   first), **Rendering & Performance**. There is no loose "Reset Layout" any more: it is inside **Layout**.
+5. Click **Help**. **Documentation (online)** opens the docs folder on GitHub in your browser. **Report a Bug...** opens the issue page and
+   puts `OkaySpace v<version>` on the clipboard (paste it somewhere to see). **Check for Updates...** moved here from the old Engine menu.
+6. The **Window** and **Engine** menus are gone: their items were duplicates (Items, Loot & Recipes is in View > Editors & Tools; Build
+   Settings is in File) or moved (Check for Updates to Help).
+
+Status: see "Checks run for this change" in section 15.
+
+## 15. Hierarchy right-click menus
+
+Where: the **Hierarchy** panel (left side by default). Map and the Existing / Gap table: [editor_menus.md](editor_menus.md), section 2.
+
+1. Right-click an object. The menu starts with Copy, Cut, Paste, Paste as Child, then Rename (F2), Duplicate, Delete, Delete Children, then
+   Create Empty Child, **Create Child**, Create Parent, Parent To, Unparent, Order, then Select, Expand All Below, then Deactivate, Lock, Focus in
+   Scene, Isolate, Transform, then **Add Component...**, Prefab, Save As Prefab..., Rig & IK, Copy Name or Path.
+2. **Create Child > 3D Object > Cube** (the submenu used to hold only 7 shapes; it now has 2D Object, 3D Object, Player, Light, Camera,
+   Audio, Effects, UI). A cube appears inside the object you clicked, at its origin, and is selected. **Ctrl+Z** removes it.
+3. Ctrl+click three objects, right-click one: the menu says **Delete 3 Objects**, **Duplicate 3 Objects**, **Deactivate 3 Objects**,
+   **Group 3 Objects**, and Cut is grey with the reason.
+4. **Select > Same Type (Light)** (the kind is the row's icon: Camera, Light, Mesh, Sprite, ...): every object of that kind is selected.
+   If there is no other one the item is grey and says so.
+5. **Add Component...**: the object is selected, the Inspector comes forward and its Add Component browser opens, ready to type in.
+6. Right-click the first row: **Move Up** and **Move to Top** are grey ("It is already the first of its siblings."). Right-click an object with
+   no children: **Delete Children** is grey ("This object has no children.").
+7. Right-click the empty space under the rows: Create Empty, the eight Create categories, Paste, Select All, Deselect, Expand All, Collapse All,
+   Sort A-Z. The **[+]** button at the top has Create Empty, Create Empty Child, Group Selected and the same categories.
 
 ## Switches that are off by default (own code)
 

@@ -99,7 +99,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.5.4 Notes - `scripts/publish-supabase.sh` - `NOTES.txt` is the launcher's "what's new" card (default: the last 6 non-merge commit subjects; `NOTES_FILE` to choose)
 - **Code:** `scripts/publish-supabase.sh`, `.github/workflows/release.yml`, `launcher/main.cpp`, `editor/main.cpp`, `docs/sql/official_game_admin.sql`
 - **API:** `SUPABASE_ACCESS_TOKEN` or `SUPABASE_SERVICE_KEY` (environment only), `DIST_DIR`, `NOTES_FILE`, `KEEP`, `DRY_RUN`, `SUPABASE_URL`, `OKAY_UPDATE_SERVER`
-- **Editor:** Engine > Check for Updates... (editor updater dialog with the changelog)
+- **Editor:** Help > Check for Updates... (editor updater dialog with the changelog)
 - **Docs:** `docs/releasing.md`
 - **Tests:** `publish_supabase_checks`
 - **Status:** Works - script read; its early failure messages are tested; the live upload is only exercised by real releases
@@ -123,7 +123,7 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.6.9 Player build info - `player/main.cpp` - `--build-info`, the development overlay and log line, `Paths::StreamingAssetsDir`
 - **Code:** `editor/main.cpp`, `editor/ProjectState.hpp`, `engine/src/Core/BuildPipeline.cpp`, `player/main.cpp`, `Core/DataPack`, `tests/export/verify.sh`, `tests/export/verify.ps1`, `tests/export/verify_layout.sh`
 - **API:** `builder::Build`, `okay::buildpipe::*`, `Paths::StreamingAssetsDir`, `OkayEngine --build-game`, `<Game> --build-info`, `OKAY_AC_SIGNING_KEY_FILE`
-- **Editor:** File > Build Settings or Engine > Build Settings (Ctrl+B): scenes in build, window, platform, Output page (layout, build number, stripping, compression, archive name), Dry Run, anti-cheat, build profiles
+- **Editor:** File > Build Settings (Ctrl+B): scenes in build, window, platform, Output page (layout, build number, stripping, compression, archive name), Dry Run, anti-cheat, build profiles
 - **Docs:** `docs/build_pipeline.md`, `docs/making_a_game.md`, `docs/editor.md`, `docs/packaging.md`
 - **Tests:** `build_pipeline` (ctest; layout, data-folder lookup, dependency walk, manifest, report, zip, settings text); the layout check and the export check run in CI (18.3)
 - **Status:** Works - the layout check exports and runs real builds; no pack file, no `Plugins/`, no separate symbol files (docs/build_pipeline.md, known gaps)

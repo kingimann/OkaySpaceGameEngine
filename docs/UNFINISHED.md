@@ -363,7 +363,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [44.3](feature_map/43-proposals.md#443-measuring-and-level-metrics) | Measuring and level metrics | Planned | first step: a Measure tool (click two points, show distance and slope) and a reference-figure toggle showing a 1.8 m person and... |
-| [44.4](feature_map/43-proposals.md#444-volumes-and-zones) | Volumes and zones | Partial | first step: a GameObject > Volume menu (trigger, kill, music, spawn) drawn as a tinted box with its name in the Scene view; one... |
+| [44.4](feature_map/43-proposals.md#444-volumes-and-zones) | Volumes and zones | Partial | first step: a GameObject > Effects > Volume menu (trigger, kill, music, spawn) drawn as a tinted box with its name in the Scene view; one... |
 
 ### 45. Open-world streaming and world partition
 

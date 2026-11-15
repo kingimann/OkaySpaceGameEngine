@@ -5,6 +5,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -36,7 +37,10 @@ std::string DrawContextMenu(const std::vector<okaypb::ctx::Item>& items) {
 
 void DrawPropertyRows(const std::vector<okaypb::ctx::Property>& rows) {
     if (!ImGui::BeginTable("##proptable", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) return;
-    ImGui::TableSetupColumn("##l", ImGuiTableColumnFlags_WidthFixed, 130.0f);
+    // The label column is as wide as the longest label ("Path in project" was cut off by a fixed width at larger text sizes).
+    float labelWidth = 130.0f;
+    for (const okaypb::ctx::Property& p : rows) labelWidth = std::max(labelWidth, ImGui::CalcTextSize(p.label.c_str()).x + ImGui::GetStyle().CellPadding.x * 2.0f);
+    ImGui::TableSetupColumn("##l", ImGuiTableColumnFlags_WidthFixed, labelWidth);
     ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
     for (const okaypb::ctx::Property& p : rows) {
         ImGui::TableNextRow();
@@ -44,7 +48,7 @@ void DrawPropertyRows(const std::vector<okaypb::ctx::Property>& rows) {
         ImGui::TextDisabled("%s", p.label.c_str());
         ImGui::TableSetColumnIndex(1);
         if (p.warn) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.72f, 0.25f, 1.0f));
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 400.0f);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(400.0f, ImGui::GetFontSize() * 26.0f));
         ImGui::TextWrapped("%s", p.value.c_str());
         ImGui::PopTextWrapPos();
         if (p.warn) ImGui::PopStyleColor();

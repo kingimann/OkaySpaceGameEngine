@@ -1,6 +1,13 @@
 #include "test_framework.hpp"
 #include "CrashScrub.hpp"
+#include <cstdlib>
 #include <string>
+
+#if defined(_WIN32)
+static void SetEnv(const char* k, const char* v) { _putenv_s(k, v); }
+#else
+static void SetEnv(const char* k, const char* v) { setenv(k, v, 1); }
+#endif
 
 // The scrubber (shared/CrashScrub.hpp): hostile text in, no personal data out. Each block names what it is guarding.
 using namespace okaycrash;
@@ -93,7 +100,7 @@ int main() {
     CHECK(S("local 127.0.0.1 any 0.0.0.0") == "local 127.0.0.1 any 0.0.0.0");
     CHECK(S("v2.874.0 build 10.0.19045.2006 and 999.1.1.1 and 1.2.3.4.5") == "v2.874.0 build 10.0.19045.2006 and 999.1.1.1 and 1.2.3.4.5");   // versions are not addresses
     CHECK(S("peer fe80::1ff:fe23:4567:890a and 2001:db8:85a3:0:0:8a2e:370:7334") == "peer <ip> and <ip>");
-    CHECK(S("mac aa:bb:cc:dd:ee:ff") == "mac <ip>");
+    CHECK(S("mac aa:bb:cc:dd:ee:ff") == "mac <mac>");
     CHECK(S("at 21:14:05 and 12:30:45:123, okay::Scene::Update and std::string") == "at 21:14:05 and 12:30:45:123, okay::Scene::Update and std::string");
 
     // ---- Markdown / control characters / line endings / huge input -----------------------------------------------------------------------
@@ -123,6 +130,73 @@ int main() {
         const std::string a(200000, 'a'), at(50000, '@'), sep(50000, '\\'), col(50000, ':'), dots(50000, '.');
         CHECK(S(a).size() <= a.size() && S(at).size() <= at.size() * 8 && S(sep) == sep && S(col) == col && S(dots) == dots);
         CHECK(S("C:" + sep + "Users" + sep).size() > 0);
+    }
+
+    // ---- Leaks the security review found (2026-11-15) -----------------------------------------------------------------------------------
+    // A name inside a longer word: after '_', a digit or a camelCase step it is still the name; inside a lower-case word it is not ("malice").
+    CHECK(S("alice_project.scene") == "<user>_project.scene");
+    CHECK(S("AliceGame") == "<user>Game" && S("MyAliceGame.okayscene") == "My<user>Game.okayscene" && S("my_alice_save") == "my_<user>_save");
+    CHECK(S("D:\\Games\\alice_stuff\\a.png") == "D:\\Games\\<user>_stuff\\a.png");
+    CHECK(S("alice123 and alice2024_final and 2024alice") == "<user>123 and <user>2024_final and 2024<user>");
+    CHECK(S("malice Malice MALICE alicia aliceland ALICEGAME") == "malice Malice MALICE alicia aliceland ALICEGAME");   // not the name, or no way to tell
+    CHECK(S("ALICE-PC_backup and ALICE-PCs") == "<host>_backup and <user>-PCs");   // (ALICE-PCs is not the computer's name, but it starts with the login name)
+    {   // a surname: the home folder's own name (here a full name, "C:\Users\Alice Smith") is a name of this person too
+        ScrubContext c; c.usernames = {"alice"}; c.homeDirs = {"C:\\Users\\Alice Smith"};
+        CHECK(Scrub("Hello Alice Smith and alice", c) == "Hello <user> and <user>");   // (before: "Hello <user> Smith and <user>")
+        CHECK(Scrub("alice smith's game, ALICE SMITH", c) == "<user>'s game, <user>");
+        std::string saved[4]; const char* names[4] = {"USERNAME", "USER", "LOGNAME", "USERPROFILE"};
+        for (int i = 0; i < 4; ++i) { const char* v = std::getenv(names[i]); saved[i] = v ? v : ""; }
+        SetEnv("USERNAME", "alice"); SetEnv("USER", "alice"); SetEnv("LOGNAME", "alice"); SetEnv("USERPROFILE", "C:\\Users\\Alice Smith");
+        const ScrubContext lc = LocalContext();   // from the environment of this process
+        for (int i = 0; i < 4; ++i) SetEnv(names[i], saved[i].c_str());
+        CHECK(Scrub("Hello Alice Smith and alice, Alice Smith's game", lc) == "Hello <user> and <user>, <user>'s game");
+        CHECK(Scrub("saved by Alice Smith to C:\\Users\\Alice Smith\\Documents\\x", lc) == "saved by <user> to %USERPROFILE%\\Documents\\x");
+    }
+    {   // a home folder called Users, root or home says nothing about the person
+        ScrubContext c; c.homeDirs = {"C:\\Users", "/root", "/home"};
+        CHECK(Scrub("the users of root at home", c) == "the users of root at home");
+        ScrubContext z; z.homeDirs = {"/home/zelda"};
+        CHECK(Scrub("welcome zelda", z) == "welcome <user>");
+    }
+    // OneDrive's folder carries the employer's name.
+    CHECK(S("C:\\Users\\bob\\OneDrive - Acme Corp\\Documents\\x.scene") == "%USERPROFILE%\\OneDrive - <org>\\Documents\\x.scene");
+    CHECK(S("saved to D:\\OneDrive - Contoso Ltd\\Games and e:/onedrive - Initech/x") == "saved to D:\\OneDrive - <org>\\Games and e:/OneDrive - <org>/x");
+    CHECK(S("OneDrive\\Documents and OneDrive - ") == "OneDrive\\Documents and OneDrive - ");
+    // MAC addresses with dashes, and GUIDs.
+    CHECK(S("adapter AA-BB-CC-DD-EE-FF up, aa-bb-cc-dd-ee-ff and 00:1A:2B:3C:4D:5E") == "adapter <mac> up, <mac> and <mac>");
+    CHECK(S("device {3F2504E0-4F89-11D3-9A0C-0305E82C3301} and 3f2504e0-4f89-11d3-9a0c-0305e82c3301.") == "device <guid> and <guid>.");
+    CHECK(S("2026-11-15 and 12-11-20 and 1-2-3-4-5-6 and 10-20-30-40-50 and a1b2-c3d4") == "2026-11-15 and 12-11-20 and 1-2-3-4-5-6 and 10-20-30-40-50 and a1b2-c3d4");
+    // \\?\UNC\server\share
+    CHECK(S("loaded \\\\?\\UNC\\fileserver01\\share\\x.png and \\\\?\\unc\\Srv\\s") == "loaded \\\\?\\UNC\\<host>\\share\\x.png and \\\\?\\unc\\<host>\\s");
+    CHECK(S("\\\\?\\C:\\Windows\\x and \\\\.\\pipe\\foo") == "\\\\?\\C:\\Windows\\x and \\\\.\\pipe\\foo");
+    // The home folder is only replaced as a whole folder: an 8.3 short name is still a user folder (the user-folder rule takes it).
+    {
+        ScrubContext c; c.homeDirs = {"C:\\Users\\alice"}; c.usernames = {"alice"};
+        CHECK(Scrub("C:\\Users\\ALICES~1\\Desktop\\x.png", c) == "%USERPROFILE%\\Desktop\\x.png");
+        CHECK(Scrub("C:\\Users\\alice\\x and C:\\Users\\alice", c) == "%USERPROFILE%\\x and %USERPROFILE%");
+        ScrubContext d; d.homeDirs = {"E:\\Players\\Zed"};
+        CHECK(Scrub("E:\\Players\\Zed\\Saves and E:\\Players\\Zed2\\x", d) == "%USERPROFILE%\\Saves and E:\\Players\\<user>2\\x");   // another folder, still carrying the name
+    }
+    // Invisible characters: the Unicode tag block (hidden text that a program reading the report can see), direction overrides, zero-width
+    // characters, the byte order mark and the soft hyphen go; ordinary non-ASCII text stays.
+    CHECK(S("a\xF3\xA0\x81\x81" "b\xF3\xA0\x80\x81\xF3\xA0\x81\xBF" "c") == "abc");                        // U+E0041, U+E0001, U+E007F
+    CHECK(S("a\xE2\x80\xAE" "b\xE2\x80\x8B" "c\xE2\x81\xA6" "d\xEF\xBB\xBF" "e\xC2\xAD" "f\xE2\x80\x8D" "g") == "abcdefg");   // U+202E U+200B U+2066 U+FEFF U+00AD U+200D
+    CHECK(S("caf\xC3\xA9 \xE2\x82\xAC \xE6\x97\xA5\xE6\x9C\xAC \xF0\x9F\x98\x80") == "caf\xC3\xA9 \xE2\x82\xAC \xE6\x97\xA5\xE6\x9C\xAC \xF0\x9F\x98\x80");
+    CHECK(S("\xF3\xA0\x81") == "\xF3\xA0\x81");   // (a cut-off sequence is not a tag character; the sender's UTF-8 cleaning deals with it)
+    {   // none of it is idempotence-breaking
+        const std::string t = "AA-BB-CC-DD-EE-FF {3F2504E0-4F89-11D3-9A0C-0305E82C3301} \\\\?\\UNC\\srv\\s C:\\Users\\bob\\OneDrive - Acme\\x alice_project AliceGame";
+        const std::string once = S(t);
+        CHECK(once.find("AA-BB") == std::string::npos && once.find("3F2504E0") == std::string::npos && once.find("srv") == std::string::npos &&
+              once.find("Acme") == std::string::npos && once.find("alice") == std::string::npos && once.find("Alice") == std::string::npos);
+        CHECK(S(once) == once);
+    }
+    {   // and still linear on hostile runs of every new shape
+        const std::string dash(200000, '-'), hex2("aa-"), od("OneDrive - ");
+        std::string many; for (int i = 0; i < 30000; ++i) many += "aa-";
+        std::string guids; for (int i = 0; i < 6000; ++i) guids += "3f2504e0-4f89-11d3-9a0c-0305e82c33";
+        std::string drives; for (int i = 0; i < 15000; ++i) drives += "OneDrive - ";
+        std::string unc; for (int i = 0; i < 20000; ++i) unc += "\\\\?\\UNC\\";
+        CHECK(S(dash).size() <= dash.size() && S(many).size() <= many.size() * 2 && S(guids).size() <= guids.size() * 2 && S(drives).size() <= drives.size() * 2 && S(unc).size() <= unc.size() * 2);
     }
 
     // ---- The context from the environment ---------------------------------------------------------------------------------------------

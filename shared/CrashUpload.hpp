@@ -9,14 +9,18 @@
 //
 // What it guarantees:
 //   * Nothing is sent unless sending is on (Enabled): the Settings switch is ON by default (owner's choice, 2026-11-15) and
-//     OKAY_CRASH_UPLOAD=0 turns it off whatever the switch says.
-//   * What is sent is the SCRUBBED report (shared/CrashScrub.hpp) plus a few columns taken from it, at most 100 KB, and never anything
+//     OKAY_CRASH_UPLOAD=0 turns it off whatever the switch says. Because it is on by default, the person is told once, in plain words and before
+//     the first report leaves the computer, what is sent, that it becomes a PUBLIC GitHub issue and how to turn it off (NextStep, NoticeText);
+//     Settings shows the same words (DisclosureLine).
+//   * What is sent is the SCRUBBED report (shared/CrashScrub.hpp) plus a few columns taken from it, at most 64 KB, and never anything
 //     but those fields (BuildPayload is the only place a body is made).
 //   * A report is sent at most once: the ledger (okay_crash_sent.txt) records every id it sent, and a report the server refuses for good
 //     (too big, malformed) is recorded too and never retried. If the ledger cannot be written, nothing is sent.
 //   * Only crashes from the moment sending was switched on are sent: the ledger records that moment ("since", in the same local time the
 //     editor writes), and a report from before it stays on the computer. Reports already on a machine when the launcher first runs this
-//     feature are therefore never sent behind the person's back, and neither are reports from a time sending was off.
+//     feature are therefore never sent behind the person's back, and neither are reports from a time sending was off, however it was off
+//     (the Settings switch, OKAY_CRASH_UPLOAD=0): the ledger is marked "paused" while it is off and "since" moves to now at the first look after
+//     (FollowSwitch).
 //   * At most 5 uploads in any 24 hours. Offline, a server error or a table that is not set up keeps the reports and tries again later,
 //     with a growing wait (5 minutes up to 6 hours).
 //   * Only the public anon key is used: the table accepts inserts from it and nothing else (the SQL says so; the tests there check it).
@@ -39,7 +43,7 @@
 namespace okaycrash {
 namespace upload {
 
-constexpr std::size_t kMaxBodyBytes = 100 * 1024;   // the whole JSON body
+constexpr std::size_t kMaxBodyBytes = 64 * 1024;    // the whole JSON body (the table takes 64 KB of report text)
 constexpr int kMaxPerDay = 5;
 constexpr long kMaxAgeSeconds = 30L * 24 * 3600;    // a report older than this is history, not news
 constexpr const char* kTablePath = "/rest/v1/crash_reports";
@@ -62,10 +66,28 @@ inline std::string StatusLine(bool settingOn, const char* envValue) {
     if (!settingOn) return "Off: you turned it off. Reports stay on this computer.";
     return "On: new crash reports are sent soon after they happen. Reports from before it was switched on stay on this computer.";
 }
-// What is sent, in the one line the Settings page shows next to the switch.
+// What is sent and where it ends up, in plain words: shown next to the switch in Settings and again in the one-time notice.
 inline const char* DisclosureLine() {
-    return "Sends: the editor version, your Windows version, CPU, memory and graphics card, which scene and mode it was in, the last 200 Console lines, "
-           "the steps it took and the crash location. Your name, folders, email, computer name and IP address are removed first.";
+    return "Sends a cleaned copy of the crash report: the editor version, your Windows version, CPU, memory and graphics card, the scene's file name "
+           "and whether it was playing, the last 200 Console lines, the steps it took and the crash location. It is published as a PUBLIC issue on "
+           "GitHub, so anyone can read it. Your name, folders, email, computer name and IP address are removed from the report first; the server "
+           "that receives it still sees the network address your connection comes from, as any website does.";
+}
+inline const char* NoticeTitle() { return "Crash reports are sent automatically"; }
+// The one-time notice (a window the first time a report would be sent): the same words as Settings, and how to turn it off.
+inline std::string NoticeText() {
+    return std::string(DisclosureLine()) +
+           "\n\nThis is on by default so that crashes get fixed. You can look at exactly what would be sent, and turn it off, in Settings > Crash reports "
+           "(or start the launcher with OKAY_CRASH_UPLOAD=0). Reports that happened before sending was on, or while it was off, are never sent.";
+}
+
+enum class Step { Idle, ShowNotice, Send };
+// What the launcher does now. `sendingOn`: Enabled(); `noticeSeen`: the person has seen the one-time notice (kept in launcher.cfg); `pending`: how
+// many reports would be sent. The notice comes before the FIRST send, once, and only when something is about to be sent; nothing is sent until it has
+// been shown (and answered).
+inline Step NextStep(bool sendingOn, bool noticeSeen, std::size_t pending) {
+    if (!sendingOn || pending == 0) return Step::Idle;
+    return noticeSeen ? Step::Send : Step::ShowNotice;
 }
 
 // ---- Text helpers -------------------------------------------------------------------------------------------------------------------
@@ -108,11 +130,7 @@ inline std::string Column(const std::string& raw, const ScrubContext& ctx, std::
     std::string v = Utf8Clean(Scrub(raw, ctx));
     for (char& c : v) if (c == '\n' || c == '\t') c = ' ';
     v = Trim(v);
-    if (v.size() > cap) {
-        v.resize(cap);
-        while (!v.empty() && ((unsigned char)v.back() & 0xC0) == 0x80) v.pop_back();   // not in the middle of a character
-        if (!v.empty() && (unsigned char)v.back() >= 0xC0) v.pop_back();
-    }
+    if (v.size() > cap) v.resize(Utf8CutAt(v, cap));   // not in the middle of a character
     return v;
 }
 
@@ -179,8 +197,7 @@ inline void FitBody(Payload& p, std::size_t maxBytes) {
         const double ratio = (double)maxBytes / (double)p.json.size();
         std::size_t keep = (std::size_t)((double)p.report.size() * ratio * 0.9);
         if (keep >= p.report.size()) keep = p.report.size() - 1;
-        p.report.resize(keep);
-        while (!p.report.empty() && ((unsigned char)p.report.back() & 0xC0) == 0x80) p.report.pop_back();
+        p.report.resize(Utf8CutAt(p.report, keep));   // never in the middle of a character: the server refuses a row with half of one, for good
         p.report += "\n--- cut: the report was too long ---\n";
         p.json = BodyOf(p);
     }
@@ -209,7 +226,7 @@ inline std::string PreviewText(const Payload& p, const std::string& host) {
     std::string t;
     t += "Sent to: " + (host.empty() ? std::string("(no server set)") : host) + "  (table crash_reports, insert only)\n";
     t += "Size: " + std::to_string(p.json.size()) + " bytes";
-    if (p.trimmed) t += " (older Console lines were left out to stay under 100 KB)";
+    if (p.trimmed) t += " (older Console lines were left out to stay under 64 KB)";
     t += "\n\nColumns\n  report id:  " + p.reportId + "\n  signature:  " + p.signature + "\n  version:    " + p.version + "\n  build:      " + p.build +
          "\n  os:         " + p.os + "\n  exception:  " + p.exception + "\n  last step:  " + p.lastStep + "\n  top frame:  " + p.topFrame + "\n\nReport text\n";
     t += p.report;
@@ -240,6 +257,9 @@ public:
     // "2026-11-15 12:00:00" (local time, the format of a report's When line); "" = not set (no report is held back).
     const std::string& Since() const { return since_; }
     void SetSince(const std::string& when) { since_ = LooksLikeWhen(when) ? when : std::string(); }
+    // "Sending was off the last time we looked": reports from while it was off must not be sent when it comes back on (FollowSwitch).
+    bool Paused() const { return paused_; }
+    void SetPaused(bool p) { paused_ = p; }
     long RetryAfter() const { return retryAfter_; }
     int Fails() const { return fails_; }
     void SetRetry(long notBefore, int fails) { retryAfter_ = notBefore; fails_ = fails; }
@@ -249,6 +269,7 @@ public:
     std::string Serialize() const {
         std::string s = "# crash reports this computer has sent or been told to keep (docs/crash_reports.md). Deleting it is safe: sending starts again from that moment on.\n";
         if (!since_.empty()) s += "since " + since_ + "\n";
+        if (paused_) s += "paused 1\n";
         for (const auto& kv : sent_) s += "sent " + kv.first + " " + std::to_string(kv.second) + "\n";
         for (const auto& kv : refused_) s += "refused " + kv.first + " " + std::to_string(kv.second) + "\n";
         if (retryAfter_ > 0 || fails_ > 0) s += "retry " + std::to_string(retryAfter_) + " " + std::to_string(fails_) + "\n";
@@ -266,12 +287,14 @@ public:
             else if (kind == "refused" && (ls >> id >> t) && Plausible(id)) l.refused_[id] = t;
             else if (kind == "retry" && (ls >> t >> f)) { l.retryAfter_ = t; l.fails_ = (int)std::max(0L, std::min(f, 30L)); }
             else if (kind == "since") { std::string d, tm; if ((ls >> d >> tm) && LooksLikeWhen(d + " " + tm)) l.since_ = d + " " + tm; }
+            else if (kind == "paused") { int v = 0; if ((ls >> v) && v == 1) l.paused_ = true; }
         }
         return l;
     }
 private:
     static bool Plausible(const std::string& id) { return id.size() == 16 && id.find_first_not_of("0123456789abcdef") == std::string::npos; }
     std::string since_;
+    bool paused_ = false;
     std::map<std::string, long> sent_, refused_;
     long retryAfter_ = 0;
     int fails_ = 0;
@@ -300,6 +323,22 @@ inline bool SaveLedger(const std::string& path, const Ledger& l) {
     return !ec;
 }
 
+// Called on every look (every few seconds) with the effective switch (Enabled()). While sending is off the ledger is marked "paused"; the first
+// look with sending on after that moves "since" to now, so a crash from while it was off is never sent when it comes back on, whether it was off
+// through the Settings switch, OKAY_CRASH_UPLOAD=0, or the launcher not running with it on. True when the ledger changed (save it). With no usable
+// time it stays paused (nothing is sent on a guess).
+inline bool FollowSwitch(Ledger& l, bool sendingOn, const std::string& nowLocal) {
+    if (!sendingOn) {
+        if (l.Paused()) return false;
+        l.SetPaused(true);
+        return true;
+    }
+    if (!l.Paused() || !LooksLikeWhen(nowLocal)) return false;
+    l.SetSince(nowLocal);
+    l.SetPaused(false);
+    return true;
+}
+
 // ---- The network, as the launcher sees it -------------------------------------------------------------------------------------------
 struct Request { std::string method = "POST", path, header, body; };
 struct Reply { bool reached = false; long status = 0; std::string body; };
@@ -317,13 +356,13 @@ enum class Outcome { Sent, Duplicate, NoNetwork, NotSetUp, Denied, Refused, Retr
 
 // 201 / 204: stored.  409: the same report id is already there (unique violation).  400 / 413 / 422: the server will never take this
 // body (kept, not retried).  404 with PGRST205 / 42P01: the table is not set up yet.  401 / 403: this key may not insert.  429, 5xx,
-// "crash_rate_limit" (the table's cap of 300 rows an hour) and anything else: try again later.
+// "crash_rate_limit" (the table's cap of 60 rows an hour), "crash_table_full" and anything else: try again later.
 inline Outcome Classify(const Reply& r) {
     if (!r.reached || r.status == 0) return Outcome::NoNetwork;
     if (r.status == 200 || r.status == 201 || r.status == 204) return Outcome::Sent;
     const std::string low = ScrubLower(r.body.size() < 65536 ? r.body : r.body.substr(0, 65536));
     auto has = [&](const char* s) { return low.find(s) != std::string::npos; };
-    if (has("crash_rate_limit")) return Outcome::Retry;   // the table's flood cap (docs/sql/crash_reports.sql): a 400, but only for now
+    if (has("crash_rate_limit") || has("crash_table_full")) return Outcome::Retry;   // the table's flood cap and size limit (docs/sql/crash_reports.sql): a 400, but only for now
     if (r.status == 409 || has("23505") || has("duplicate key")) return Outcome::Duplicate;
     if (r.status == 404 || has("pgrst205") || has("42p01") || has("could not find the table")) return Outcome::NotSetUp;
     if (r.status == 401 || r.status == 403 || has("row-level security") || has("42501") || has("jwt")) return Outcome::Denied;
@@ -394,6 +433,10 @@ inline std::vector<const Report*> Pending(const std::vector<Report>& reports, co
 // Send what is waiting: newest first, one request each, stopping at the first sign that the next would fail the same way.
 inline Result Run(const std::vector<Report>& reports, Ledger& ledger, const Transport& send, const ScrubContext& ctx, const Options& o) {
     Result res;
+    if (ledger.Paused()) {   // sending was off and nobody has switched the ledger back on (FollowSwitch): nothing goes
+        res.note = "Sending was off. Reports from before it was switched back on stay on this computer.";
+        return res;
+    }
     if (ledger.Since().empty() && !o.nowLocal.empty()) { ledger.SetSince(o.nowLocal); res.changedLedger = !ledger.Since().empty(); }   // sending starts now: nothing older is sent
     for (const Report& r : reports) {   // counts for the note
         if (r.text.empty()) continue;

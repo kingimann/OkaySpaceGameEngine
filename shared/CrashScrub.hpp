@@ -3,14 +3,18 @@
 // Header only, no I/O except reading a few environment variables in LocalContext(); the tests give it hostile text.
 //
 // What goes, in this order:
+//   0. Invisible characters: control characters, direction overrides, zero-width characters, the byte order mark, the soft hyphen and the Unicode
+//      "tag" block U+E0000-E007F (invisible to a person, readable by a program that reads the report).
 //   1. User folders:  C:\Users\<name>\...  ->  %USERPROFILE%\...   /home/<name>/ and /Users/<name>/  ->  ~/   (a name inside a longer path keeps the
-//      path and becomes <user>); \\SERVER\share  ->  \\<host>\share.
+//      path and becomes <user>); \\SERVER\share and \\?\UNC\SERVER\share  ->  \\<host>\share; "OneDrive - <employer>"  ->  "OneDrive - <org>".
 //   2. Web addresses with a name and password in them (https://name:pass@host).
 //   3. Secrets: GitHub / Slack / Stripe / AWS / Google / Supabase style keys, JSON web tokens, "Bearer ...", "Authorization: ...",
 //      and the value of password=, token=, secret=, api_key= ... ; long opaque strings (hex of 32+, letters and digits of 40+).
-//   4. Email addresses.  5. IP addresses (127.x and 0.0.0.0 stay; they say nothing about the person).
-//   6. The names this machine goes by: the login name and the computer name (whole words, 3+ letters, not common words), and the home folder.
-// Scrub() is idempotent: scrubbing scrubbed text changes nothing. Everything is plain byte scanning (UTF-8 passes through untouched).
+//   4. Email addresses.  5. MAC addresses (aa:bb:cc:dd:ee:ff and aa-bb-cc-dd-ee-ff) and GUIDs.  6. IP addresses (127.x and 0.0.0.0 stay).
+//   7. The names this machine goes by: the login name, the computer name and the NAME OF THE HOME FOLDER (a full name such as "Alice Smith" when
+//      the folder is C:\Users\Alice Smith). Whole words, 3+ letters, not common words; after '_', a digit or a camelCase step a name still counts
+//      (alice_project, AliceGame, alice2024), inside a lower-case word it does not (malice).
+// Scrub() is idempotent: scrubbing scrubbed text changes nothing. Everything is plain byte scanning (UTF-8 passes through untouched) and linear.
 // Written from the shapes of these identifiers, not from any other project's rules.
 #include <algorithm>
 #include <cctype>
@@ -26,6 +30,15 @@ struct ScrubContext {
     std::vector<std::string> hostnames;   // computer names ("ALICE-PC")
     std::vector<std::string> homeDirs;    // "C:\Users\alice", "/home/alice"
 };
+
+// The largest n <= max such that the first n bytes of `s` do not end in the middle of a UTF-8 character (the byte at n is where a character
+// starts, or the end). Valid UTF-8 in, valid UTF-8 out: a cut at an arbitrary byte count must never leave half of a character, which a server
+// refuses for good.
+inline std::size_t Utf8CutAt(const std::string& s, std::size_t max) {
+    if (max >= s.size()) return s.size();
+    while (max > 0 && ((unsigned char)s[max] & 0xC0) == 0x80) --max;
+    return max;
+}
 
 inline std::string ScrubLower(std::string s) {
     for (char& c : s) c = (char)std::tolower((unsigned char)c);
@@ -107,6 +120,20 @@ inline std::string UserFolders(const std::string& in) {
                 else out += in.substr(i, nameAt - i) + "<user>";
                 i = end; continue;
             }
+        }
+        // OneDrive's folder carries the employer's name: "OneDrive - Acme Corp" -> "OneDrive - <org>"
+        if ((in[i] == 'O' || in[i] == 'o') && IEquals(in, i, "OneDrive - ") && (i == 0 || !WordCh((unsigned char)in[i - 1]))) {
+            const std::size_t nameAt = i + 11;
+            const std::size_t end = NameEnd(in, nameAt);
+            if (end > nameAt && in[nameAt] != ' ') { out += "OneDrive - <org>"; i = end; continue; }
+        }
+        // The verbatim form of a network path: \\?\UNC\HOST\share
+        if (in[i] == '\\' && i + 8 < in.size() && in[i + 1] == '\\' && (in[i + 2] == '?' || in[i + 2] == '.') && in[i + 3] == '\\' && IEquals(in, i + 4, "UNC\\") &&
+            (i == 0 || !(WordCh((unsigned char)in[i - 1]) || in[i - 1] == '%'))) {
+            std::size_t j = i + 8;
+            const std::size_t hostAt = j;
+            while (j < in.size() && (std::isalnum((unsigned char)in[j]) || in[j] == '.' || in[j] == '-' || in[j] == '_')) ++j;
+            if (j > hostAt && j < in.size() && in[j] == '\\') { out += in.substr(i, 8) + "<host>"; i = j; continue; }
         }
         // UNC: \\HOST\share  (not \\?\ or \\.\)
         if (in[i] == '\\' && i + 2 < in.size() && in[i + 1] == '\\' && (i == 0 || !(WordCh((unsigned char)in[i - 1]) || in[i - 1] == '%' || in[i - 1] == '\\' || in[i - 1] == ':' || in[i - 1] == '/'))) {
@@ -299,7 +326,46 @@ inline std::string Emails(const std::string& in) {
     return out;
 }
 
-// ---- 5. IP addresses -----------------------------------------------------------------------------------------------------------------------
+// ---- 5. MAC addresses and GUIDs -----------------------------------------------------------------------------------------------------------
+// aa:bb:cc:dd:ee:ff and aa-bb-cc-dd-ee-ff (six pairs, one kind of separator, not part of a longer run of hex and separators).
+inline std::string Macs(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    std::size_t i = 0;
+    auto run = [](char c) { return IsHex(c) || c == ':' || c == '-'; };
+    while (i < in.size()) {
+        if (IsHex(in[i]) && (i == 0 || !run(in[i - 1])) && i + 17 <= in.size() && (in[i + 2] == ':' || in[i + 2] == '-') && (i + 17 == in.size() || !run(in[i + 17]))) {
+            const char sep = in[i + 2];
+            bool ok = true;
+            for (std::size_t k = 0; k < 17 && ok; ++k) ok = (k % 3 == 2) ? in[i + k] == sep : IsHex(in[i + k]);
+            if (ok) { out += "<mac>"; i += 17; continue; }
+        }
+        out += in[i++];
+    }
+    return out;
+}
+
+// 3F2504E0-4F89-11D3-9A0C-0305E82C3301, with or without braces.
+inline std::string Guids(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    std::size_t i = 0;
+    while (i < in.size()) {
+        const bool brace = in[i] == '{';
+        const std::size_t p = brace ? i + 1 : i;
+        if ((brace || IsHex(in[i])) && (i == 0 || !(IsHex(in[i - 1]) || in[i - 1] == '-')) && p + 36 <= in.size()) {
+            bool ok = true;
+            for (std::size_t k = 0; k < 36 && ok; ++k) ok = (k == 8 || k == 13 || k == 18 || k == 23) ? in[p + k] == '-' : IsHex(in[p + k]);
+            std::size_t end = p + 36;
+            if (ok && brace && end < in.size() && in[end] == '}') ++end;
+            if (ok && (end >= in.size() || !(IsHex(in[end]) || in[end] == '-'))) { out += "<guid>"; i = end; continue; }
+        }
+        out += in[i++];
+    }
+    return out;
+}
+
+// ---- 6. IP addresses -----------------------------------------------------------------------------------------------------------------------
 inline std::string Ips(const std::string& in) {
     std::string out;
     std::size_t i = 0;
@@ -347,7 +413,7 @@ inline std::string Ips(const std::string& in) {
     return out;
 }
 
-// ---- 6. this machine's own names -----------------------------------------------------------------------------------------------------
+// ---- 7. this machine's own names -----------------------------------------------------------------------------------------------------
 inline bool CommonWord(const std::string& lowered) {
     static const char* const kCommon[] = {"user", "users", "admin", "administrator", "test", "main", "root", "guest", "default", "public", "game", "dev",
         "app", "server", "editor", "okayspace", "okay", "engine", "scene", "player", "build", "runner", "ubuntu", "debian", "nobody", "system",
@@ -355,34 +421,92 @@ inline bool CommonWord(const std::string& lowered) {
     for (const char* w : kCommon) if (lowered == w) return true;
     return false;
 }
+// A name is a name when it stands alone or is joined to other text by '_', a digit, punctuation or a camelCase step ("alice_project", "alice2024",
+// "AliceGame", "MyAlice"); it is not inside a lower-case word ("malice", "aliceland") or a non-ASCII word.
+inline bool NameLeftOk(const std::string& s, std::size_t at) {
+    if (at == 0) return true;
+    const unsigned char p = (unsigned char)s[at - 1], c = (unsigned char)s[at];
+    if (p >= 0x80) return false;
+    if (!std::isalnum(p) || std::isdigit(p)) return true;
+    return std::islower(p) && std::isupper(c);
+}
+inline bool NameRightOk(const std::string& s, std::size_t end) {
+    if (end >= s.size()) return true;
+    const unsigned char n = (unsigned char)s[end], l = (unsigned char)s[end - 1];
+    if (n >= 0x80) return false;
+    if (!std::isalnum(n) || std::isdigit(n)) return true;
+    return std::islower(l) && std::isupper(n);
+}
 inline std::string ReplaceWord(const std::string& in, const std::string& word, const char* with) {
     if (word.size() < 3 || CommonWord(ScrubLower(word))) return in;
     std::string out;
     std::size_t i = 0;
     while (i < in.size()) {
-        if (IEquals(in, i, word.c_str()) && (i == 0 || !WordCh((unsigned char)in[i - 1])) && (i + word.size() >= in.size() || !WordCh((unsigned char)in[i + word.size()]))) {
+        if (IEquals(in, i, word.c_str()) && NameLeftOk(in, i) && NameRightOk(in, i + word.size())) {
             out += with; i += word.size();
         } else out += in[i++];
     }
     return out;
 }
+// The home folder as a whole folder: "C:\Users\alice" in "C:\Users\alice\x", not in the 8.3 name "C:\Users\ALICES~1\x" (the user-folder rule takes that).
 inline std::string ReplaceFolder(const std::string& in, const std::string& folder, const char* with) {
     if (folder.size() < 4) return in;
     std::string out;
     std::size_t i = 0;
     const std::string alt = [&] { std::string a = folder; for (char& c : a) c = c == '\\' ? '/' : c == '/' ? '\\' : c; return a; }();
+    const bool endsInSep = IsSep(folder.back());
+    auto whole = [&](std::size_t end) {
+        if (endsInSep || end >= in.size()) return true;
+        const unsigned char n = (unsigned char)in[end];
+        return !(std::isalnum(n) || n == '_' || n == '~' || n >= 0x80);
+    };
     while (i < in.size()) {
-        if (IEquals(in, i, folder.c_str())) { out += with; i += folder.size(); }
-        else if (IEquals(in, i, alt.c_str())) { out += with; i += alt.size(); }
+        if (IEquals(in, i, folder.c_str()) && whole(i + folder.size())) { out += with; i += folder.size(); }
+        else if (IEquals(in, i, alt.c_str()) && whole(i + alt.size())) { out += with; i += alt.size(); }
         else out += in[i++];
     }
     return out;
 }
 
+// The last part of a folder path: "Alice Smith" for "C:\Users\Alice Smith" (a trailing separator is ignored).
+inline std::string LastComponent(const std::string& path) {
+    std::size_t e = path.size();
+    while (e > 0 && IsSep(path[e - 1])) --e;
+    std::size_t b = e;
+    while (b > 0 && !IsSep(path[b - 1])) --b;
+    return path.substr(b, e - b);
+}
+
+// A UTF-8 character that a person cannot see (or that changes how a line reads): the soft hyphen, the Arabic letter mark, the Mongolian vowel
+// separator, zero-width characters and direction marks U+200B-200F, direction overrides U+202A-202E, the word joiner, invisible operators and
+// direction isolates U+2060-2069, the byte order mark, and the Unicode "tag" block U+E0000-E007F (a program that reads the report can read
+// text written in them). Its length in bytes, 0 if the bytes at `i` are not one.
+inline std::size_t InvisibleLen(const std::string& s, std::size_t i) {
+    const std::size_t left = s.size() - i;
+    const unsigned char a = (unsigned char)s[i];
+    auto at = [&](std::size_t k) { return (unsigned char)s[i + k]; };
+    if (a == 0xC2 && left >= 2 && at(1) == 0xAD) return 2;
+    if (a == 0xD8 && left >= 2 && at(1) == 0x9C) return 2;
+    if (a == 0xE1 && left >= 3 && at(1) == 0xA0 && at(2) == 0x8E) return 3;
+    if (a == 0xE2 && left >= 3) {
+        if (at(1) == 0x80 && ((at(2) >= 0x8B && at(2) <= 0x8F) || (at(2) >= 0xAA && at(2) <= 0xAE))) return 3;
+        if (at(1) == 0x81 && at(2) >= 0xA0 && at(2) <= 0xA9) return 3;
+    }
+    if (a == 0xEF && left >= 3 && at(1) == 0xBB && at(2) == 0xBF) return 3;
+    if (a == 0xF3 && left >= 4 && at(1) == 0xA0 && (at(2) == 0x80 || at(2) == 0x81) && at(3) >= 0x80 && at(3) <= 0xBF) return 4;   // F3 A0 80 80 .. F3 A0 81 BF
+    return 0;
+}
+
 inline std::string StripControl(const std::string& in) {
     std::string out;
     out.reserve(in.size());
-    for (char c : in) { const unsigned char u = (unsigned char)c; if (u >= 0x20 || c == '\n' || c == '\t') out += c; else if (c == '\r') {} }
+    for (std::size_t i = 0; i < in.size();) {
+        const char c = in[i];
+        const unsigned char u = (unsigned char)c;
+        if (u >= 0xC2) { const std::size_t n = InvisibleLen(in, i); if (n) { i += n; continue; } }
+        if (u >= 0x20 || c == '\n' || c == '\t') out += c; else if (c == '\r') {}
+        ++i;
+    }
     return out;
 }
 
@@ -400,13 +524,19 @@ inline std::string ScrubOnce(const std::string& in, const ScrubContext& ctx) {
     s = Jwt(s);
     s = SecretValues(s);
     s = Emails(s);
+    s = Guids(s);
+    s = Macs(s);
     s = Ips(s);
     s = OpaqueRuns(s);
     // Longest names first ("Alice Smith" before "alice", "ALICE-PC" before "alice"), so a short name never eats part of a longer one.
+    // The home folder's own name counts as a name of the person: for C:\Users\Alice Smith that is the full name, surname included.
     struct Named { const std::string* name; const char* with; };
+    std::vector<std::string> folderNames;
+    for (const std::string& h : ctx.homeDirs) { std::string n = LastComponent(h); if (n.size() >= 3) folderNames.push_back(n); }
     std::vector<Named> names;
     for (const std::string& h : ctx.hostnames) names.push_back({&h, "<host>"});
     for (const std::string& u : ctx.usernames) names.push_back({&u, "<user>"});
+    for (const std::string& f : folderNames) names.push_back({&f, "<user>"});
     std::stable_sort(names.begin(), names.end(), [](const Named& a, const Named& b) { return a.name->size() > b.name->size(); });
     for (const Named& n : names) s = ReplaceWord(s, *n.name, n.with);
     return s;
@@ -434,7 +564,7 @@ inline std::string LimitLines(const std::string& in, std::size_t maxLen = 600) {
         std::size_t e = in.find('\n', i);
         const bool last = e == std::string::npos;
         if (last) e = in.size();
-        if (e - i > maxLen) { out += in.substr(i, maxLen); out += "...[cut]"; }
+        if (e - i > maxLen) { out += in.substr(i, Utf8CutAt(in.substr(i, maxLen + 1), maxLen)); out += "...[cut]"; }   // (never in the middle of a character)
         else out += in.substr(i, e - i);
         if (!last) out += '\n';
         i = e + 1;

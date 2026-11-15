@@ -85,6 +85,23 @@ int main() {
     CHECK(Enabled(true, nullptr) && Enabled(true, "1") && !Enabled(false, nullptr) && !Enabled(true, "0") && !Enabled(false, "1"));   // the variable can only turn it off
     CHECK(StatusLine(true, nullptr).find("On:") == 0 && StatusLine(false, nullptr).find("turned it off") != std::string::npos && StatusLine(true, "0").find("OKAY_CRASH_UPLOAD") != std::string::npos);
     CHECK(std::string(DisclosureLine()).find("last 200 Console lines") != std::string::npos);
+    {   // the words the person reads next to the switch (and in the one-time notice): what is sent, that it becomes PUBLIC, what the server sees
+        const std::string d = DisclosureLine();
+        CHECK(d.find("PUBLIC issue on GitHub") != std::string::npos && d.find("anyone can read it") != std::string::npos);
+        CHECK(d.find("scene's file name") != std::string::npos && d.find("Windows version") != std::string::npos && d.find("graphics card") != std::string::npos);
+        CHECK(d.find("name, folders, email, computer name and IP address are removed") != std::string::npos);
+        CHECK(d.find("still sees the network address your connection comes from") != std::string::npos);   // the server sees the connection address
+        const std::string n = NoticeText();
+        CHECK(n.find(d) != std::string::npos);                                                      // the notice says exactly what Settings says
+        CHECK(n.find("Settings > Crash reports") != std::string::npos && n.find("OKAY_CRASH_UPLOAD=0") != std::string::npos);
+        CHECK(std::string(NoticeTitle()).find("sent automatically") != std::string::npos);
+    }
+    {   // the one-time notice: before the FIRST report leaves this computer, and never when nothing would be sent
+        CHECK(NextStep(true, false, 1) == Step::ShowNotice && NextStep(true, false, 7) == Step::ShowNotice);
+        CHECK(NextStep(true, true, 1) == Step::Send && NextStep(true, true, 3) == Step::Send);
+        CHECK(NextStep(true, false, 0) == Step::Idle && NextStep(true, true, 0) == Step::Idle);          // nothing waiting: nothing to say, nothing to send
+        CHECK(NextStep(false, false, 5) == Step::Idle && NextStep(false, true, 5) == Step::Idle);        // sending off: no notice and no sending
+    }
 
     // ---- What a row holds ---------------------------------------------------------------------------------------------------------------
     {
@@ -110,6 +127,22 @@ int main() {
     {   // an empty report is never sent
         CHECK(!BuildPayload(Report(), Alice()).ok);
     }
+    {   // the columns are cleaned too, not only the report text (dropping Scrub from Column() must fail this)
+        Report r = MakeReport(1);
+        r.build = "pe-1-2, built by alice@example.com on ALICE-PC";
+        r.os = "Windows 10 C:\\Users\\alice\\x 203.0.113.9";
+        r.exception = "0xC0000005 ALICE-PC alice";
+        r.lastStep = "step C:\\Users\\alice\\Documents";
+        r.version = "1.0 ghp_abcdefghijklmnopqrstuvwxyz0123456789";   // lint-allow: secret (a made-up value the scrubber must catch)
+        r.backtrace = {"#00 OkayEngine.exe + 0x1A2B3C  Load_alice@example.com +0x40"};
+        const Payload p = BuildPayload(r, Alice());
+        CHECK(p.ok);
+        for (const std::string* col : {&p.build, &p.os, &p.exception, &p.lastStep, &p.version, &p.topFrame})
+            CHECK(col->find("alice") == std::string::npos && col->find("ALICE") == std::string::npos && col->find("203.0.113.9") == std::string::npos && col->find("ghp_") == std::string::npos);
+        CHECK(p.build.find("<email>") != std::string::npos && p.build.find("<host>") != std::string::npos && p.os.find("%USERPROFILE%") != std::string::npos);
+        CHECK(p.exception == "0xC0000005 <host> <user>" && p.topFrame == "OkayEngine.exe!<email>");
+        CHECK(p.json.find("alice") == std::string::npos);
+    }
     {   // hostile text: quotes, backslashes, control characters, a stray byte, markdown, a huge line
         Report r = MakeReport(3);
         r.text += "\nhostile: \"quote\" \\ back \x01\x02 ctrl \xC3\x28 bad \xF0\x28\x8C\x28 utf8 <script>alert(1)</script> [x](javascript:1) @everyone\n";
@@ -128,7 +161,8 @@ int main() {
         CHECK(back["report"].find("zzzz...[cut]") != std::string::npos);                  // the huge line is cut
     }
 
-    // ---- The size limit: 100 KB, whatever the report holds ------------------------------------------------------------------------------
+    // ---- The size limit: 64 KB, whatever the report holds ------------------------------------------------------------------------------
+    CHECK(kMaxBodyBytes == 64 * 1024);   // (the table takes 64 KB of report; 100 KB was too much to hand to anyone with the public key)
     {
         const Report big = MakeReport(4, "2026-11-15 10:00:00", 2000);   // 2000 Console lines, over the limit once escaped
         const Payload p = BuildPayload(big, Alice(), kMaxBodyBytes);
@@ -144,6 +178,29 @@ int main() {
         const Payload h = BuildPayload(huge, Alice(), kMaxBodyBytes);
         CHECK(h.ok && h.json.size() <= kMaxBodyBytes && h.trimmed);
         CHECK(!BuildPayload(MakeReport(6), Alice(), 300).ok);   // cannot be made that small: refused, not sent in pieces
+    }
+    {   // a cut in the middle of a multi-byte character must not leave half of it: the server refuses the whole row for bad UTF-8 (a permanent 400)
+        int made = 0; bool allValid = true;
+        for (int extra = 0; extra < 90; ++extra) {
+            Report huge = MakeReport(5);
+            std::string filler;
+            for (int i = 0; i < 90000 + extra * 11; ++i) filler += (i % 100 == 99) ? "\n" : extra % 3 == 0 ? "\xE2\x82\xAC" : extra % 3 == 1 ? "\xC3\xA9" : "\xF0\x9F\x98\x80";   // 3, 2 and 4 byte characters
+            huge.text += filler;
+            const Payload h = BuildPayload(huge, Alice(), kMaxBodyBytes);
+            if (!h.ok) { allValid = false; continue; }
+            ++made;
+            if (Utf8Clean(h.report) != h.report || Utf8Clean(h.json) != h.json || h.json.size() > kMaxBodyBytes) allValid = false;
+        }
+        CHECK(made == 90 && allValid);
+        // the same for a very long line of such characters (the line cut at 600 bytes)
+        std::string line; for (int i = 0; i < 400; ++i) line += "\xC3\xA9";
+        Report longLine = MakeReport(5); longLine.text += "\n" + line + "\n";
+        const Payload l = BuildPayload(longLine, Alice());
+        CHECK(l.ok && Utf8Clean(l.report) == l.report && l.report.find("...[cut]") != std::string::npos);
+        CHECK(LimitLines(line, 601) == line.substr(0, 600) + "...[cut]" && Utf8Clean(LimitLines(line, 601)) == LimitLines(line, 601));
+        CHECK(Utf8CutAt("ab\xC3\xA9" "cd", 3) == 2 && Utf8CutAt("ab\xC3\xA9" "cd", 4) == 4 && Utf8CutAt("abc", 9) == 3 && Utf8CutAt("\xE2\x82\xAC", 1) == 0 && Utf8CutAt("\xE2\x82\xAC", 2) == 0);
+        const std::string col = Column(std::string(10, 'a') + "\xE2\x82\xAC" "bbb", ScrubContext(), 11);   // cap falls inside the euro sign
+        CHECK(col == std::string(10, 'a'));
     }
 
     // ---- The ledger -----------------------------------------------------------------------------------------------------------------------
@@ -183,6 +240,7 @@ int main() {
         CHECK(c(true, 401) == Outcome::Denied && c(true, 403, "new row violates row-level security policy") == Outcome::Denied);
         CHECK(c(true, 400, "{\"code\":\"23514\",\"message\":\"violates check constraint\"}") == Outcome::Refused && c(true, 413) == Outcome::Refused && c(true, 422) == Outcome::Refused);
         CHECK(c(true, 400, "{\"code\":\"P0001\",\"message\":\"crash_rate_limit\"}") == Outcome::Retry);   // the flood cap is a 400, but only for now
+        CHECK(c(true, 400, "{\"code\":\"P0001\",\"message\":\"crash_table_full\"}") == Outcome::Retry);    // so is the table's size limit
         CHECK(c(true, 429) == Outcome::Retry && c(true, 500) == Outcome::Retry && c(true, 503, "upstream") == Outcome::Retry && c(true, 302) == Outcome::Retry);
         CHECK(BackoffSeconds(1) == 300 && BackoffSeconds(2) == 600 && BackoffSeconds(3) == 1200 && BackoffSeconds(30) == 6 * 3600 && BackoffSeconds(0) == 300);
         CHECK(EpochFromWhen("1970-01-02 00:00:01") == 86401 && EpochFromWhen("2026-11-15 10:00:00") == 1794736800 && EpochFromWhen("nonsense") == 0 && EpochFromWhen("2026-13-01 00:00:00") == 0);
@@ -321,6 +379,35 @@ int main() {
         CHECK(Ledger::Parse("since garbage\nsince 2026-11-15\nsince 2026-13-99 25:61:61x\n").Since().empty());
         CHECK(Ledger::Parse("since 2026-11-15 12:00:00\n").Since() == "2026-11-15 12:00:00" && Ledger::Parse("since 2026-11-15 12:00:00\r\n").Since() == "2026-11-15 12:00:00");
         Ledger bad; bad.SetSince("../../etc"); CHECK(bad.Since().empty());
+    }
+
+    // ---- OKAY_CRASH_UPLOAD=0 (or the switch off) and later on again must not send the backlog from while it was off ---------------------
+    {
+        Ledger l; l.SetSince("2026-11-01 08:00:00");
+        CHECK(!FollowSwitch(l, true, "2026-11-15 09:00:00") && !l.Paused() && l.Since() == "2026-11-01 08:00:00");   // on all the time: nothing changes
+        CHECK(FollowSwitch(l, false, "2026-11-15 10:00:00") && l.Paused() && l.Since() == "2026-11-01 08:00:00");    // seen off: marked
+        CHECK(!FollowSwitch(l, false, "2026-11-15 10:00:20") && l.Paused());                                         // still off: no new write
+        const Ledger saved = Ledger::Parse(l.Serialize());                                                           // (the launcher was closed and started again)
+        CHECK(saved.Paused() && saved.Since() == "2026-11-01 08:00:00");
+        Ledger again = saved;
+        CHECK(FollowSwitch(again, true, "2026-11-15 12:00:00") && !again.Paused() && again.Since() == "2026-11-15 12:00:00");   // the next look with sending on
+        Server srv;
+        std::vector<Report> reports = {MakeReport(3, "2026-11-15 12:00:05"), MakeReport(2, "2026-11-15 11:00:00"), MakeReport(1, "2026-11-15 10:30:00")};
+        Result r = Run(reports, again, srv.Transport_(), Alice(), opts(kNow));
+        CHECK(r.sent == 1 && srv.got.size() == 1 && srv.got[0].body.find("DrawThing3") != std::string::npos && r.beforeSwitch == 2);   // only the crash after it was switched back on
+        // Without the fix this is what happened: the old ledger (since the first run) let both reports from while it was off go.
+        Server srv2; Ledger old = Ledger::Parse(saved.Serialize()); old.SetPaused(false);
+        CHECK(Run(reports, old, srv2.Transport_(), Alice(), opts(kNow)).sent == 3);
+        // A paused ledger sends nothing even if the caller forgot to follow the switch.
+        Server srv3; Ledger held = saved;
+        Result h = Run(reports, held, srv3.Transport_(), Alice(), opts(kNow));
+        CHECK(h.sent == 0 && srv3.got.empty());
+        // Turning it on with no usable time keeps it paused (nothing is sent on a guess).
+        Ledger g = saved;
+        CHECK(!FollowSwitch(g, true, "") && g.Paused() && !FollowSwitch(g, true, "garbage") && g.Paused());
+        // Hostile ledger text.
+        CHECK(!Ledger::Parse("paused x\npaused\npaused 2\n").Paused() && Ledger::Parse("paused 1\r\n").Paused() && !Ledger::Parse("paused 0\n").Paused());
+        CHECK(Ledger::Parse(Ledger().Serialize()).Paused() == false && Ledger::Parse("# comment\n").Paused() == false);
     }
 
     // ---- Report it yourself on GitHub: the prefilled address -------------------------------------------------------------------------------

@@ -98,7 +98,7 @@ int main() {
             CHECK(pn.level->text == "Lv 1");                                  // no Stats: level 1, not the global 30
             CHECK_NEAR(pn.bar->value, 0.4f, 1e-4f);                          // from the NPC Controller
             CHECK(ps.name->text == "Shade");
-            CHECK(std::fabs(ps.bar->value - 0.9f) > 0.1f);                   // no health: not the player's 0.9
+            CHECK_NEAR(ps.bar->value, 0.72f, 1e-4f);                        // no health: keeps its built fill, never the player's 0.9
         }
     }
 

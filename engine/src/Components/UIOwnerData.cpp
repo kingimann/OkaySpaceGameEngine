@@ -10,6 +10,7 @@
 #include "okay/Scene/Transform.hpp"
 
 #include <cmath>
+#include <cstdio>
 
 namespace okay {
 namespace uiowner {

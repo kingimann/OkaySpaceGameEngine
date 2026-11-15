@@ -46,6 +46,10 @@ target_link_libraries(test_scene_records PRIVATE okay::engine)
 add_test(NAME scene_records COMMAND test_scene_records)
 
 # Safe loading: bad / cut-short / newer documents never damage the live scene
+add_executable(test_switch_off_settings test_switch_off_settings.cpp)
+target_link_libraries(test_switch_off_settings PRIVATE okay::engine)
+add_test(NAME switch_off_settings COMMAND test_switch_off_settings)
+
 add_executable(test_scene_safe_load test_scene_safe_load.cpp)
 target_link_libraries(test_scene_safe_load PRIVATE okay::engine)
 target_compile_definitions(test_scene_safe_load PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

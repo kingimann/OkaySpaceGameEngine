@@ -194,6 +194,9 @@ public:
         std::int64_t modified = 0;          ///< seconds since the epoch (file clock), 0 when unknown (the Properties window)
     };
     AssetInfo Info(const std::string& path);
+    /// The tags (labels) of one asset and nothing else: Info also walks the dependency graph, which is too much to do every
+    /// time a menu opens.
+    std::vector<std::string> LabelsOf(const std::string& path);
     /// What a folder holds, below it too: files, folders and total bytes, from the database (no disk walk).
     struct FolderStats { int files = 0; int folders = 0; std::uint64_t bytes = 0; };
     FolderStats StatsOf(const std::string& absDir);
@@ -260,6 +263,10 @@ public:
     void SetFailureHook(std::function<bool(const char* op, const std::string& path)> hook) { m_fail = std::move(hook); }
 
     Result CreateFolder(const std::string& dir, const std::string& name);
+    /// Several folders at once ("Standard Folders"): the ones that are already there are left alone (and named in `note`), the
+    /// rest are made all together or not at all, and one Ctrl+Z takes them away again. `dir` must be inside Assets (links that
+    /// point out are refused, like every other operation here).
+    Result CreateFolders(const std::string& dir, const std::vector<std::string>& names);
     /// A new file with `content`, written atomically. Fails if it already exists.
     Result MakeFile(const std::string& dir, const std::string& fileName, const std::string& content);
     /// Rename in place. Files keep their extension: if `newName` has none, the old one is added; a different
@@ -271,6 +278,9 @@ public:
     Result Copy(const std::vector<std::string>& paths, const std::string& destDir);
     /// A copy next to the original named "<name> copy".
     Result Duplicate(const std::string& path);
+    /// Copies of a whole selection, each next to its original: all or nothing, one Ctrl+Z. An item inside another selected one
+    /// ({A, A/x}) is not copied twice: the copy of A has its own x. `r.paths` are the copies.
+    Result DuplicateMany(const std::vector<std::string>& paths);
     /// Delete: moves to <project>/.okay/trash so Undo brings them back.
     Result Trash(const std::vector<std::string>& paths);
 

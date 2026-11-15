@@ -128,12 +128,13 @@ namespace {
 struct PickState {
     bool pending = false, active = false;
     okaypb::Browser* browser = nullptr;
-    std::vector<std::string> items;
+    std::vector<std::string> items;             // the outermost of what is being moved ({A, A/x} is just A)
+    okaypb::ctx::MoveSources sources;           // what the rule needs to know about them, worked out once when the window opens
     std::string selected;       // the folder chosen (absolute), "" until one is clicked
     std::string reveal;         // a folder to show open on the first frame
     bool firstFrame = false;
     std::string root;
-    std::map<std::string, std::string> reasons;   // folder -> why the items cannot go there ("" = fine); asked once per folder, the items do not change while the window is open
+    std::map<std::string, std::string> reasons;   // folder -> why the items cannot go there ("" = fine); asked once per folder
     std::function<void(const std::string&)> onPick;
 };
 PickState g_pick;
@@ -142,7 +143,7 @@ PickState g_pick;
 void PickNode(const std::string& dir, bool isRoot) {
     const std::vector<okaypb::Browser::FolderRow> kids = g_pick.browser->SubFolders(dir);
     auto known = g_pick.reasons.find(dir);
-    if (known == g_pick.reasons.end()) known = g_pick.reasons.emplace(dir, okaypb::ctx::MoveBlockedReason(g_pick.root, g_pick.items, dir)).first;
+    if (known == g_pick.reasons.end()) known = g_pick.reasons.emplace(dir, okaypb::ctx::MoveBlockedReason(g_pick.sources, dir)).first;
     const std::string why = known->second;
     const std::string label = isRoot ? std::string("Assets") : NameOf(dir);
     ImGuiTreeNodeFlags f = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -174,9 +175,10 @@ PropState g_props;
 void AskFolder(okaypb::Browser& browser, std::vector<std::string> items, std::string reveal, std::function<void(const std::string&)> onPick) {
     browser.Sync();
     g_pick.browser = &browser;
-    g_pick.items = std::move(items);
+    g_pick.items = okaypb::paths::Outermost(items);   // (a long selection costs one sort here, then a text comparison per folder)
     g_pick.reveal = std::move(reveal);
     g_pick.root = browser.Root();
+    g_pick.sources = okaypb::ctx::PrepareMove(g_pick.root, g_pick.items);
     g_pick.selected.clear();
     g_pick.reasons.clear();
     g_pick.onPick = std::move(onPick);
@@ -223,30 +225,6 @@ void ShowProperties(okaypb::Browser& browser, const std::string& pathIn, const P
     g_props.title = in.name;
     g_props.copyPath = in.projectPath;
     g_props.pending = true;
-}
-
-std::string DrawContextMenu(const std::vector<okaypb::ctx::Item>& items) {
-    std::string chosen;
-    for (const okaypb::ctx::Item& it : items) {
-        if (it.separator) { ImGui::Separator(); continue; }
-        if (it.heading) { ImGui::TextDisabled("%s", it.label.c_str()); continue; }
-        if (!it.submenu.empty()) {
-            const bool open = ImGui::BeginMenu(it.label.c_str(), it.enabled);
-            if (!it.enabled && !it.reason.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", it.reason.c_str());
-            if (open) {
-                const std::string sub = DrawContextMenu(it.children);
-                if (!sub.empty()) chosen = sub;
-                ImGui::EndMenu();
-            }
-            continue;
-        }
-        if (ImGui::MenuItem(it.label.c_str(), it.shortcut.empty() ? nullptr : it.shortcut.c_str(), it.checked, it.enabled)) chosen = it.id;
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-            const std::string& tip = it.enabled ? it.tip : it.reason;
-            if (!tip.empty()) ImGui::SetTooltip("%s", tip.c_str());
-        }
-    }
-    return chosen;
 }
 
 void DrawDialogs() {
@@ -465,22 +443,7 @@ void DrawDialogs() {
         if (ImGui::BeginPopupModal("##projprops", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Properties: %s", g_props.title.c_str());
             ImGui::Spacing();
-            if (ImGui::BeginTable("##proptable", 2, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
-                ImGui::TableSetupColumn("##l", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-                ImGui::TableSetupColumn("##v", ImGuiTableColumnFlags_WidthStretch);
-                for (const okaypb::ctx::Property& p : g_props.rows) {
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextDisabled("%s", p.label.c_str());
-                    ImGui::TableSetColumnIndex(1);
-                    if (p.warn) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.72f, 0.25f, 1.0f));
-                    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 400.0f);
-                    ImGui::TextWrapped("%s", p.value.c_str());
-                    ImGui::PopTextWrapPos();
-                    if (p.warn) ImGui::PopStyleColor();
-                }
-                ImGui::EndTable();
-            }
+            DrawPropertyRows(g_props.rows);
             ImGui::Spacing();
             if (ImGui::Button("Copy Path", ImVec2(110, 0))) ImGui::SetClipboardText(g_props.copyPath.c_str());
             ImGui::SameLine();

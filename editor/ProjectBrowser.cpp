@@ -26,37 +26,16 @@ std::string Lower(std::string s) {
     return s;
 }
 
+// The path text helpers are shared with the menus (ProjectPaths.hpp, tested without the engine).
 // Windows file names ignore case; elsewhere they do not.
-std::string Fold(const std::string& s) {
-#ifdef _WIN32
-    return Lower(s);
-#else
-    return s;
-#endif
-}
+std::string Fold(const std::string& s) { return paths::Fold(s); }
 
-std::string StripSlash(std::string s) {
-    while (s.size() > 1 && s.back() == '/') s.pop_back();
-    return s;
-}
+std::string StripSlash(std::string s) { return paths::StripSlash(std::move(s)); }
 
 // Absolute-ish, lexically cleaned, '/' separated, no trailing slash.
-std::string Norm(const std::string& s) {
-    if (s.empty()) return s;
-    fs::path p = P(Slash(s));
-    std::error_code ec;
-    if (p.is_relative()) {
-        fs::path a = fs::absolute(p, ec);
-        if (!ec) p = a;
-    }
-    return StripSlash(U(p.lexically_normal()));
-}
+std::string Norm(const std::string& s) { return paths::Normalize(s); }
 
-bool UnderOrEqual(const std::string& parent, const std::string& child) {
-    const std::string a = Fold(StripSlash(parent)), b = Fold(StripSlash(child));
-    if (a == b) return true;
-    return b.size() > a.size() && b.compare(0, a.size(), a) == 0 && (a.empty() || a.back() == '/' || b[a.size()] == '/');
-}
+bool UnderOrEqual(const std::string& parent, const std::string& child) { return paths::SameOrInside(parent, child); }
 
 std::string FileNameOf(const std::string& path) {
     const std::string s = StripSlash(Slash(path));
@@ -122,7 +101,8 @@ ctx::Kind MenuKind(const std::string& path, bool isDir) {
         case okay::AssetType::BehaviorTree: case okay::AssetType::Sequence: case okay::AssetType::Data: return K::Data;
         default: break;
     }
-    static const char* kText[] = {"md", "xml", "csv", "ini", "cfg", "yml", "yaml", "html", "css", "js", "shader", "glsl", "hlsl", "log"};
+    // (no "js" or "html": a script file runs when the system opens it, and a web page is not something to edit here)
+    static const char* kText[] = {"md", "xml", "csv", "ini", "cfg", "yml", "yaml", "css", "shader", "glsl", "hlsl", "log"};
     for (const char* t : kText) if (ext == t) return K::Data;
     return K::Other;
 }
@@ -746,6 +726,12 @@ Browser::AssetInfo Browser::Info(const std::string& path) {
     return info;
 }
 
+std::vector<std::string> Browser::LabelsOf(const std::string& path) {
+    if (!m_indexed) Sync();
+    const okay::AssetRecord* rec = m_db.Find(m_db.ToProjectPath(Norm(path)));
+    return rec ? rec->labels : std::vector<std::string>();
+}
+
 Browser::FolderStats Browser::StatsOf(const std::string& absDirIn) {
     FolderStats st;
     if (!m_indexed && !Sync()) return st;
@@ -1097,6 +1083,33 @@ Result Browser::CreateFolder(const std::string& dir, const std::string& name) {
     return r;
 }
 
+Result Browser::CreateFolders(const std::string& dir, const std::vector<std::string>& names) {
+    Result r;
+    if (std::string e = CheckInside(dir, true); !e.empty()) { r.error = e; return r; }
+    std::error_code ec;
+    if (!fs::is_directory(P(dir), ec)) { r.error = "That is not a folder."; return r; }
+    std::vector<std::string> todo;
+    int existed = 0;
+    for (const std::string& name : names) {
+        if (std::string e = ValidateName(name); !e.empty()) { r.error = e; return r; }
+        std::string nm = name;
+        while (!nm.empty() && nm.front() == ' ') nm.erase(nm.begin());
+        while (!nm.empty() && nm.back() == ' ') nm.pop_back();
+        const std::string path = Norm(dir) + "/" + nm;
+        if (Exists(path)) { ++existed; continue; }
+        todo.push_back(path);
+    }
+    if (existed > 0) r.note = std::to_string(existed) + (existed == 1 ? " folder was" : " folders were") + " already there and left alone.";
+    if (todo.empty()) { r.ok = true; return r; }
+    Tx tx(*this);
+    for (const std::string& path : todo)
+        if (!tx.Mkdir(path)) { tx.Rollback(); r.error = tx.error + " Nothing was created."; r.note.clear(); return r; }
+    r.ok = true;
+    r.paths = todo;
+    PushUndo("Create folders", [this, todo]() { return TrashCore(todo, false); });
+    return r;
+}
+
 Result Browser::MakeFile(const std::string& dir, const std::string& fileName, const std::string& content) {
     Result r;
     if (std::string e = ValidateName(fileName); !e.empty()) { r.error = e; return r; }
@@ -1116,19 +1129,7 @@ Result Browser::MakeFile(const std::string& dir, const std::string& fileName, co
 
 namespace {
 // Keep only the outermost paths (a folder and a file inside it: just the folder), dropping duplicates.
-std::vector<std::string> Outermost(const std::vector<std::string>& in) {
-    std::vector<std::string> v;
-    for (const std::string& p : in) v.push_back(Norm(p));
-    std::sort(v.begin(), v.end());
-    v.erase(std::unique(v.begin(), v.end()), v.end());
-    std::vector<std::string> out;
-    for (const std::string& p : v) {
-        bool nested = false;
-        for (const std::string& o : v) if (o != p && UnderOrEqual(o, p)) { nested = true; break; }
-        if (!nested) out.push_back(p);
-    }
-    return out;
-}
+std::vector<std::string> Outermost(const std::vector<std::string>& in) { return paths::Outermost(in); }
 } // namespace
 
 Result Browser::MoveCore(const std::vector<std::pair<std::string, std::string>>& items, const std::string& label, bool pushUndo) {
@@ -1295,18 +1296,29 @@ Result Browser::Copy(const std::vector<std::string>& pathsIn, const std::string&
     return CopyCore(src, dst, "Copy");
 }
 
-Result Browser::Duplicate(const std::string& path) {
+Result Browser::Duplicate(const std::string& path) { return DuplicateMany({path}); }
+
+Result Browser::DuplicateMany(const std::vector<std::string>& pathsIn) {
     Result r;
-    if (std::string e = CheckInside(path, false); !e.empty()) { r.error = e; return r; }
-    const std::string from = Norm(path);
-    if (!Exists(from)) { r.error = "\"" + FileNameOf(from) + "\" is not there any more."; return r; }
-    std::error_code ec;
-    const std::string name = FileNameOf(from);
-    std::string stem = name, ext;
-    if (!fs::is_directory(P(from), ec)) { ext = ExtOf(name); stem = name.substr(0, name.size() - ext.size()); }
-    const std::string dir = ParentOf(from);
-    const std::string cand = UniqueName(dir, stem + " copy", ext, " ");
-    return CopyCore({from}, {dir + "/" + cand}, "Duplicate " + name);
+    const std::vector<std::string> from = Outermost(pathsIn);   // {A, A/x}: the copy of A has x in it, so only A is copied
+    if (from.empty()) { r.ok = true; return r; }
+    std::vector<std::string> src, dst;
+    std::set<std::string> taken;                                 // the names handed out in this call
+    for (const std::string& f : from) {
+        if (std::string e = CheckInside(f, false); !e.empty()) { r.error = e; return r; }
+        if (!Exists(f)) { r.error = "\"" + FileNameOf(f) + "\" is not there any more."; return r; }
+        std::error_code ec;
+        const std::string name = FileNameOf(f);
+        std::string stem = name, ext;
+        if (!fs::is_directory(P(f), ec)) { ext = ExtOf(name); stem = name.substr(0, name.size() - ext.size()); }
+        const std::string dir = ParentOf(f);
+        std::string cand = UniqueName(dir, stem + " copy", ext, " ");
+        for (int n = 2; taken.count(Fold(dir + "/" + cand)); ++n) cand = stem + " copy " + std::to_string(n) + ext;
+        taken.insert(Fold(dir + "/" + cand));
+        src.push_back(f);
+        dst.push_back(dir + "/" + cand);
+    }
+    return CopyCore(src, dst, from.size() == 1 ? "Duplicate " + FileNameOf(from[0]) : "Duplicate " + std::to_string(from.size()) + " items");
 }
 
 namespace {

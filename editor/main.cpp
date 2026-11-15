@@ -908,6 +908,8 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
 #include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings
 #include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
+#include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
+#include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
 
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
@@ -3823,46 +3825,11 @@ void RevealInFiles(const std::string& path) {
     (void)rc;
 }
 
-// Show a file in the OS file manager with the file picked (Windows Explorer and macOS Finder select it; elsewhere
-// the file manager opens its folder). The caller checks okaypb::ctx::IsShellSafe(path) first.
-void RevealFileSelected(const std::string& path) {
-#if defined(_WIN32)
-    std::string p = path;
-    for (char& c : p) if (c == '/') c = '\\';
-    int rc = SysNoWindow(("explorer /select,\"" + p + "\"").c_str());
-#elif defined(__APPLE__)
-    int rc = SysNoWindow(("open -R \"" + path + "\" 2>/dev/null").c_str());
-#else
-    const std::string parent = fs::path(path).parent_path().string();
-    int rc = SysNoWindow(("xdg-open \"" + (parent.empty() ? path : parent) + "\" >/dev/null 2>&1").c_str());
-#endif
-    (void)rc;
-}
-// Open a file with the program the OS uses for its type (not VS Code first, unlike OpenExternal). The caller checks IsShellSafe.
-void OpenDefault(const std::string& path) {
-#if defined(_WIN32)
-    int rc = SysNoWindow(("start \"\" \"" + path + "\"").c_str());
-#elif defined(__APPLE__)
-    int rc = SysNoWindow(("open \"" + path + "\"").c_str());
-#else
-    int rc = SysNoWindow(("xdg-open \"" + path + "\" >/dev/null 2>&1").c_str());
-#endif
-    (void)rc;
-}
-
 void OpenExternal(const std::string& path) {
-    // Prefer VS Code if present, otherwise the OS default handler.
-#if defined(_WIN32)
-    int rc = SysNoWindow(("code \"" + path + "\"").c_str());
-    if (rc != 0) rc = SysNoWindow(("start \"\" \"" + path + "\"").c_str());
-#elif defined(__APPLE__)
-    int rc = SysNoWindow(("code \"" + path + "\" 2>/dev/null").c_str());
-    if (rc != 0) rc = SysNoWindow(("open \"" + path + "\"").c_str());
-#else
-    int rc = SysNoWindow(("code \"" + path + "\" >/dev/null 2>&1").c_str());
-    if (rc != 0) rc = SysNoWindow(("xdg-open \"" + path + "\" >/dev/null 2>&1").c_str());
-#endif
-    (void)rc;
+    // A named text editor (VS Code when it is installed, else Notepad or the system's text editor), never the system's "open"
+    // for the file: a script type (.js, .bat, ...) would be run by it. See editor/LaunchFile.hpp.
+    const oked::launch::Result r = oked::launch::OpenInTextEditor(path);
+    if (!r.ok) ConsoleLog("Couldn't open " + path + " in an editor: " + r.error, 1);
 }
 std::string ExtFor(const std::string& lang) {
     return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
@@ -8093,7 +8060,21 @@ static int g_treeActMode = 0;
 static std::string g_treeActPath;
 static std::map<std::string, ImGuiID> g_treeIds;   // each drawn tree folder's node id (to reset the ones inside a collapsed folder)
 static std::string g_createIn;                     // "Create" from a folder's menu: make it in that folder, not the one being shown
+// What a menu action applies to when it is not the grid's selection: the one folder of a tree menu, the one starred item of the
+// Favourites list. Set by the request handler, used by the action and the Duplicate / Reimport / Delete / Copy code that follows in
+// the same frame, then cleared. Those items are not selected, so the selection (and what the details strip shows) stays as it was.
+static std::vector<std::string> g_projTargets;
+// The folder the panel must show next frame: the one it was showing was renamed or moved (ProjectApplyMoves sets it).
+static std::string g_projGoto;
 static void ProjectCtxFill(okaypb::ctx::State& st, const std::string& full, bool isDir);   // what every Project menu needs to know (defined after the colour labels)
+// A menu's State is made when its popup opens and kept while it stays open (the popup runs every frame): making it asks the
+// database and the disk, which a big folder or a long selection turned into a freeze.
+static okaypb::ctx::State& ProjectCtxState(const std::string& key, const std::function<void(okaypb::ctx::State&)>& fill) {
+    static okaypb::ctx::State s_state;
+    static std::string s_key;
+    if (ImGui::IsWindowAppearing() || s_key != key) { s_state = okaypb::ctx::State(); fill(s_state); s_key = key; }
+    return s_state;
+}
 // A model's "Scale" import setting (Project panel > Import Settings): multiplies its size when it is added to a scene.
 static void ApplyModelImportScale(GameObject* root, const std::string& path) {
     const float s = okay::ModelImportScale(path);
@@ -8757,14 +8738,17 @@ static void ProjectCopyText(const std::string& what, const std::vector<std::stri
     const char* word = what == "name" ? "name" : what == "rel" ? "relative path" : "full path";
     ConsoleLog("Copied " + std::to_string(paths.size()) + " " + word + (paths.size() == 1 ? "" : "s") + " to the clipboard");
 }
-// Show in Explorer / File Manager: a file is picked in its folder where the OS allows it. A path with a quote, $, % or `
-// in it is not put into a command line (it can still be opened from the file manager by hand).
+// Show in Explorer / File Manager: a file is picked in its folder where the OS allows it. No command line is built (LaunchFile.hpp),
+// so no character in a name matters.
 static void ProjectReveal(const std::string& path, bool selectFile) {
-    if (!okaypb::ctx::IsShellSafe(path)) {
-        ConsoleLog("Can't show it from here: its path has a quote, $, % or ` in it, which can't be passed safely to the file manager. Open the folder by hand.", 1);
-        return;
-    }
-    if (selectFile) extide::RevealFileSelected(path); else extide::RevealInFiles(path);
+    const oked::launch::Result r = oked::launch::Reveal(path, selectFile);
+    if (!r.ok) ConsoleLog("Can't show it in the file manager: " + r.error, 1);
+}
+// A folder is inside the project's Assets folder, links resolved (a link in Assets that points out does not count). The file
+// operations of okaypb::Browser check this themselves; code that writes files another way asks here first.
+static bool ProjectFolderInsideAssets(const std::string& folder) {
+    if (!g_pb || folder.empty()) return false;
+    return okayproj::IsSameOrInside(okayproj::Normalized(std::filesystem::u8path(folder)), okayproj::Normalized(std::filesystem::u8path(g_pb->Root())));
 }
 
 // Keyboard use of the folder tree: the tree remembers the folders it drew (last frame) and whether each is open, so
@@ -8834,10 +8818,11 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
         // Right-click a folder: the same folder menu as the grid (Create here, Rename, Delete, Move to..., Paste Into,
         // Expand / Collapse, Favourites, Copy Text, Show in Explorer, Properties). DrawProject runs the chosen item.
         if (ImGui::BeginPopupContextItem()) {
-            okaypb::ctx::State st;
-            st.where = okaypb::ctx::Where::Tree;
-            ProjectCtxFill(st, s.string(), true);
-            st.hasSubfolders = hasKids;
+            const okaypb::ctx::State& st = ProjectCtxState("tree|" + s.string(), [&](okaypb::ctx::State& fresh) {
+                fresh.where = okaypb::ctx::Where::Tree;
+                ProjectCtxFill(fresh, s.string(), true);
+                fresh.hasSubfolders = hasKids;
+            });
             const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::FolderTreeMenu(st));
             if (!act.empty()) g_projReq = {act, s.string()};
             ImGui::EndPopup();
@@ -9893,6 +9878,10 @@ static void ProjectApplyMoves(const okaypb::Result& r) {
         }
     }
     g_fav.Remap(r.moved);   // stars follow
+    {   // the folder on screen follows its own rename or move (or the one it is inside): DrawProject shows it from there next frame
+        const std::string shown = okaypb::RemapPath(r.moved, okaypb::Slash(g_assetImportDir));
+        if (!shown.empty()) g_projGoto = NativePath(shown);
+    }
     {   // the build list (Scenes In Build) follows a renamed or moved scene
         std::vector<oked::SceneBuildEntry> list = oked::SceneBuildSnapshot();
         std::vector<std::string> paths;
@@ -9943,8 +9932,12 @@ static void ProjectCtxFill(okaypb::ctx::State& st, const std::string& full, bool
     st.canUndo = g_pb && g_pb->CanUndo();
     st.undoLabel = g_pb ? g_pb->UndoLabel() : std::string();
     st.hierarchySelection = g_projEd && g_projEd->selected() != nullptr;
-    st.shellSafe = okaypb::ctx::IsShellSafe(full);
     st.indexed = g_pb && g_pb->Indexed();
+    {
+        std::error_code ge;
+        st.gone = !std::filesystem::exists(std::filesystem::path(full), ge);          // (a folder renamed or deleted behind the panel's back)
+    }
+    if (!isDir) st.runsCode = !okaypb::ctx::LaunchRefusal(full).empty();   // a program or script: never given to the system's open
 #if defined(_WIN32)
     st.fileManager = "Explorer";
 #endif
@@ -9954,7 +9947,7 @@ static void ProjectCtxFill(okaypb::ctx::State& st, const std::string& full, bool
         st.label = AssetLabelOf(g_assetLabelsProj, full);
     }
     if (!isDir && g_pb) {
-        st.tags = g_pb->Info(full).labels;
+        st.tags = g_pb->LabelsOf(full);   // (just the tags: Info also walks the dependency graph)
         if (st.kind == okaypb::ctx::Kind::Scene) st.isStartScene = IsStartSceneFile(full);
     }
     if (isDir && g_pb) st.hasSubfolders = !g_pb->SubFolders(okaypb::Slash(full)).empty();
@@ -10023,7 +10016,21 @@ void DrawProject(EditorState& ed) {
         lastProject = ed.projectDir();
         std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
     }
+    if (!g_projGoto.empty()) {   // the folder on screen was renamed or moved (here or from the tree): follow it
+        std::strncpy(dirBuf, g_projGoto.c_str(), sizeof(dirBuf) - 1);
+        dirBuf[sizeof(dirBuf) - 1] = '\0';
+        g_projGoto.clear();
+    }
     fs::path dir(dirBuf);
+    if (!ed.projectDir().empty()) {   // a folder that is gone (deleted, or renamed from another program) is not shown: the nearest parent that is
+        std::error_code de;
+        if (!fs::is_directory(dir, de) && fs::is_directory(root, de)) {
+            const std::string nearestDir = okaypb::paths::NearestFolder(root.generic_string(), dir.generic_string());
+            std::strncpy(dirBuf, NativePath(nearestDir).c_str(), sizeof(dirBuf) - 1);
+            dirBuf[sizeof(dirBuf) - 1] = '\0';
+            dir = fs::path(dirBuf);
+        }
+    }
     const std::string labelProj = ed.projectDir().empty() ? root.string() : ed.projectDir();
     EnsureAssetLabels(labelProj);
     if (!g_pb || g_pbRoot != root.generic_string()) {   // one file-operations object per project
@@ -10227,9 +10234,10 @@ void DrawProject(EditorState& ed) {
                 }
                 if (fdir) AssetDropTarget(fs::path(fp));
                 if (ImGui::BeginPopupContextItem("favctx")) {   // Open / Show in Project, Remove, Copy Text, Show in Explorer, Properties
-                    okaypb::ctx::State st;
-                    st.where = okaypb::ctx::Where::Favourite;
-                    ProjectCtxFill(st, fp, fdir);
+                    const okaypb::ctx::State& st = ProjectCtxState("fav|" + fp, [&](okaypb::ctx::State& fresh) {
+                        fresh.where = okaypb::ctx::Where::Favourite;
+                        ProjectCtxFill(fresh, fp, fdir);
+                    });
                     const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::FavouriteMenu(st));
                     if (!act.empty()) g_projReq = {act, fp};   // run below, with the grid menu's code
                     ImGui::EndPopup();
@@ -10254,11 +10262,12 @@ void DrawProject(EditorState& ed) {
         g_treeFocused = true;
     }
     if (ImGui::BeginPopupContextItem("rootctx")) {   // the Assets folder: the folder menu with the changes that can't apply to it greyed
-        okaypb::ctx::State st;
-        st.where = okaypb::ctx::Where::Tree;
-        ProjectCtxFill(st, root.string(), true);
-        st.atRoot = true;
-        st.hasSubfolders = !pb.SubFolders(root.generic_string()).empty();
+        const okaypb::ctx::State& st = ProjectCtxState("root|" + root.string(), [&](okaypb::ctx::State& fresh) {
+            fresh.where = okaypb::ctx::Where::Tree;
+            ProjectCtxFill(fresh, root.string(), true);
+            fresh.atRoot = true;
+            fresh.hasSubfolders = !pb.SubFolders(root.generic_string()).empty();
+        });
         const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::FolderTreeMenu(st));
         if (!act.empty()) g_projReq = {act, root.string()};
         ImGui::EndPopup();
@@ -10318,8 +10327,11 @@ void DrawProject(EditorState& ed) {
     };
     // Fill the clipboard from the current multi-selection (falling back to one path).
     auto clipFromSelection = [&](const std::string& fallback, bool cut) {
-        s_assetClip.assign(s_multi.begin(), s_multi.end());
-        if (s_assetClip.empty() && !fallback.empty()) s_assetClip.push_back(fallback);
+        if (!g_projTargets.empty()) s_assetClip = g_projTargets;   // a tree folder or a starred item: just that one
+        else {
+            s_assetClip.assign(s_multi.begin(), s_multi.end());
+            if (s_assetClip.empty() && !fallback.empty()) s_assetClip.push_back(fallback);
+        }
         s_assetClipCut = cut;
     };
     // Every "create" asks for the name first (a prompt), then makes the file under that name.
@@ -10400,12 +10412,13 @@ void DrawProject(EditorState& ed) {
             return g_pb->MakeFile(d, n, okay::editor::vsed::VsEditGraph{}.toText());
         }, [](const std::string& p) { okay::editor::vsed::OpenFile(NativePath(p)); g_showVisualScript = true; });
     };
-    auto mkStdFolders = [&]{
-        const fs::path base = g_createIn.empty() ? dir : fs::path(fs::u8path(okaypb::Slash(g_createIn)));
-        int made = 0; std::error_code ce;
-        for (const char* f : {"Scenes", "Scripts", "Prefabs", "Materials", "Models", "Textures", "Audio"})
-            if (!fs::exists(base / f, ce) && fs::create_directory(base / f, ce)) ++made;
-        ConsoleLog("Created " + std::to_string(made) + " standard folder(s) in " + base.filename().string());
+    auto mkStdFolders = [&]{   // all or nothing, inside Assets (links that point out are refused), one Ctrl+Z takes them away
+        const std::string base = g_createIn.empty() ? dir.generic_string() : okaypb::Slash(g_createIn);
+        const okaypb::Result r = g_pb->CreateFolders(base, {"Scenes", "Scripts", "Prefabs", "Materials", "Models", "Textures", "Audio"});
+        if (!r.ok) { ConsoleLog("Standard folders: " + r.error, 2); return; }
+        ConsoleLog("Created " + std::to_string(r.paths.size()) + " standard folder(s) in " + fs::path(fs::u8path(base)).filename().string() +
+                   (r.paths.empty() ? "" : " (Ctrl+Z in the Project panel takes them away)"));
+        if (!r.note.empty()) ConsoleLog(r.note);
     };
     // The story and AI files: each starts from the document its own window makes for "New" (editor/ProjectNewAssets.hpp)
     // and opens in that window.
@@ -10607,8 +10620,10 @@ void DrawProject(EditorState& ed) {
     auto runAction = [&](const std::string& act, const std::string& full, bool isDir) {
         const std::string ext = Lower(fs::path(full).extension().string());
         auto starts = [&](const char* pre) { return act.compare(0, std::strlen(pre), pre) == 0; };
-        // What the action applies to: the whole selection when `full` is part of it, else just `full`.
+        // What the action applies to: the one item of a tree or Favourites menu, else the whole selection when `full` is part of it,
+        // else just `full`.
         auto targets = [&]() -> std::vector<std::string> {
+            if (!g_projTargets.empty()) return g_projTargets;
             if (s_multi.size() > 1 && s_multi.count(full)) return std::vector<std::string>(s_multi.begin(), s_multi.end());
             return {full};
         };
@@ -10627,8 +10642,12 @@ void DrawProject(EditorState& ed) {
             else if (what == "material")     mkMaterial();
             else if (what == "data")         mkData();
             else if (what == "item")         mkItem();
-            else if (what == "loot")         ContentCreateLoot(ed);
-            else if (what == "recipe")       ContentCreateRecipe(ed);
+            else if (what == "loot" || what == "recipe") {   // made by the Items window, in this folder (not in a folder outside Assets)
+                const std::string target = g_createIn.empty() ? dir.generic_string() : okaypb::Slash(g_createIn);
+                if (!ProjectFolderInsideAssets(target)) ConsoleLog("Can't make it there: that folder is outside the project's Assets folder.", 1);
+                else if (what == "loot") ContentCreateLoot(ed, target);
+                else ContentCreateRecipe(ed, target);
+            }
             else if (what == "stdfolders")   mkStdFolders();
             g_createIn.clear();                          // (the name prompt has already taken the folder)
             return;
@@ -10649,8 +10668,9 @@ void DrawProject(EditorState& ed) {
         if (starts("tree:"))  { g_treeActMode = act == "tree:expand" ? 1 : act == "tree:collapse" ? 2 : 3; g_treeActPath = full; return; }
         // -- open outside the editor --
         if (act == "open:external" || act == "open:default") {
-            if (!okaypb::ctx::IsShellSafe(full)) { ConsoleLog("Can't open it from here: its path has a quote, $, % or ` in it. Open it from the file manager.", 1); return; }
-            if (act == "open:external") extide::OpenExternal(full); else extide::OpenDefault(full);
+            // (OpenWithDefaultApp refuses a program or script again, whatever the menu said; the editor is named, never asked from the file type)
+            const oked::launch::Result lr = act == "open:external" ? oked::launch::OpenInTextEditor(full) : oked::launch::OpenWithDefaultApp(full);
+            if (!lr.ok) ConsoleLog("Can't open " + fs::path(full).filename().string() + ": " + lr.error, 1);
             return;
         }
         if (act == "reveal")       { ProjectReveal(full, !isDir); return; }
@@ -10717,13 +10737,16 @@ void DrawProject(EditorState& ed) {
         if (act == "moveto") {
             std::vector<std::string> items = targets();
             const std::string from = fs::path(full).parent_path().generic_string();
-            oked::projectpanel::AskFolder(pb, items, from, [items](const std::string& dest) {
+            const bool reselect = g_projTargets.empty();   // the grid's selection moves with its items; a tree folder leaves the selection alone
+            oked::projectpanel::AskFolder(pb, items, from, [items, reselect](const std::string& dest) {
                 const okaypb::Result r = g_pb->Move(items, dest);
                 if (!r.ok) { ConsoleLog("Move failed: " + r.error, 2); return; }
                 ProjectApplyMoves(r);
-                s_multi.clear();
-                for (const std::string& np : r.paths) s_multi.insert(NativePath(np));
-                if (!r.paths.empty()) selected = NativePath(r.paths.back());
+                if (reselect) {
+                    s_multi.clear();
+                    for (const std::string& np : r.paths) s_multi.insert(NativePath(np));
+                    if (!r.paths.empty()) selected = NativePath(r.paths.back());
+                }
                 ConsoleLog("Moved " + std::to_string(r.paths.size()) + " item" + (r.paths.size() == 1 ? "" : "s") + " into " + fs::path(fs::u8path(dest)).filename().string() + " (Ctrl+Z in the Project panel moves " + (r.paths.size() == 1 ? "it" : "them") + " back)");
                 if (!r.note.empty()) ConsoleLog(r.note, 1);
             });
@@ -10792,10 +10815,11 @@ void DrawProject(EditorState& ed) {
             // just it; right-clicking one that's already selected keeps the group.
             if (!s_multi.count(full)) { s_multi.clear(); s_multi.insert(full); }
             selected = full;
-            okaypb::ctx::State st;
-            st.where = okaypb::ctx::Where::Item;
-            ProjectCtxFill(st, full, isDir);
-            st.count = (int)s_multi.size();
+            const okaypb::ctx::State& st = ProjectCtxState("item|" + full, [&](okaypb::ctx::State& fresh) {
+                fresh.where = okaypb::ctx::Where::Item;
+                ProjectCtxFill(fresh, full, isDir);
+                fresh.count = (int)s_multi.size();
+            });
             const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::ItemMenu(st));
             if (act == "open") wantOpen = true;
             else if (!act.empty()) runAction(act, full, isDir);
@@ -11041,10 +11065,11 @@ void DrawProject(EditorState& ed) {
     // scroll child so it opens over the grid's empty area, not the details strip. The items are made by ProjectContextModel.hpp.
     if (ImGui::BeginPopupContextWindow("bgctx",
             ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-        okaypb::ctx::State st;
-        st.where = okaypb::ctx::Where::Background;
-        ProjectCtxFill(st, dir.string(), true);
-        viewState(st);
+        const okaypb::ctx::State& st = ProjectCtxState("bg|" + dir.string(), [&](okaypb::ctx::State& fresh) {
+            fresh.where = okaypb::ctx::Where::Background;
+            ProjectCtxFill(fresh, dir.string(), true);
+            viewState(fresh);
+        });
         const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::BackgroundMenu(st));
         if (!act.empty()) runAction(act, dir.string(), true);
         ImGui::EndPopup();
@@ -11206,8 +11231,9 @@ void DrawProject(EditorState& ed) {
     // ---- Actions: each one goes through okaypb (safe, undo-able, references kept) ---------
     const bool panelFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
                             !oked::projectpanel::NamePromptOpen();
-    // The items an action applies to: the multi-selection, or the active item.
-    auto selectionList = [&]() {
+    // The items an action applies to: the one item of a tree or Favourites menu, else the multi-selection, or the active item.
+    auto selectionList = [&]() -> std::vector<std::string> {
+        if (!g_projTargets.empty()) return g_projTargets;
         std::vector<std::string> v(s_multi.begin(), s_multi.end());
         if (v.empty() && !selected.empty()) v.push_back(selected);
         return v;
@@ -11219,15 +11245,14 @@ void DrawProject(EditorState& ed) {
         if (!ps.empty()) { selected = NativePath(ps.back()); s_scrollToSel = true; }
     };
     // A menu item chosen in the folder tree or the Favourites list (drawn before this function's own state existed): the
-    // grid menu's code runs it. Most of them act on the selection, so it becomes that one item first.
+    // grid menu's code runs it, on that one item. The item is NOT selected: it may be in a folder that is not on screen, and a
+    // later Del must not reach something the person cannot see (g_projTargets carries it to the code below for this frame).
     if (!g_projReq.action.empty()) {
         const std::string act = g_projReq.action, path = g_projReq.path;
         g_projReq = {};
         std::error_code qe;
         const bool pIsDir = fs::is_directory(path, qe);
-        const bool plain = act == "reveal" || act == "properties" || act == "show" || act == "open" || act == "paste" ||
-                           act.compare(0, 5, "tree:") == 0 || act.compare(0, 5, "copy:") == 0 || act.compare(0, 7, "create:") == 0;
-        if (!plain) { selected = NativePath(path); s_multi.clear(); s_multi.insert(selected); }
+        g_projTargets.assign(1, path);
         if (act == "open") openAsset(path, Lower(fs::path(path).extension().string()), pIsDir);   // a tree folder: show it
         else if (act == "show") {   // the Favourites list: a folder opens, a file is shown in its folder
             if (pIsDir) { std::strncpy(dirBuf, path.c_str(), sizeof(dirBuf) - 1); dirBuf[sizeof(dirBuf) - 1] = '\0'; search[0] = '\0'; s_smart = -1; g_treeFocused = true; }
@@ -11257,8 +11282,8 @@ void DrawProject(EditorState& ed) {
                 std::string out = extide::RenameScriptClass(srcTxt, extide::ClassIdent(fs::path(np).stem().string()));
                 if (out != srcTxt && okayproj::WriteTextAtomic(np, out)) ConsoleLog("Renamed class to " + extide::ClassIdent(fs::path(np).stem().string()));
             }
-            if (selected == target) selected = np;
-            s_multi.clear(); s_multi.insert(selected);
+            if (selected == target) selected = np;                 // (a folder renamed from the tree may not be selected at all: then the selection stays)
+            if (s_multi.erase(target)) s_multi.insert(np);
             ConsoleLog("Renamed to " + fs::path(np).filename().string() +
                        (r.referencesRewritten ? " (" + std::to_string(r.referencesRewritten) + " reference" + (r.referencesRewritten == 1 ? "" : "s") + " in " +
                                                 std::to_string(r.filesRewritten) + " file" + (r.filesRewritten == 1 ? "" : "s") + " updated)" : std::string()));
@@ -11270,30 +11295,43 @@ void DrawProject(EditorState& ed) {
     // Delete: confirm (it lists what uses the asset), then move to the project's trash.
     if (!deleteTarget.empty()) {
         std::vector<std::string> victims;
-        if (s_multi.size() > 1 && s_multi.count(deleteTarget)) victims.assign(s_multi.begin(), s_multi.end());
+        if (!g_projTargets.empty()) victims = g_projTargets;   // a tree folder or a starred item: just that one
+        else if (s_multi.size() > 1 && s_multi.count(deleteTarget)) victims.assign(s_multi.begin(), s_multi.end());
         else victims.push_back(deleteTarget);
+        const bool fromSelection = g_projTargets.empty();
         deleteTarget.clear();
-        oked::projectpanel::AskDelete(pb, victims, [victims]() {
-            const okaypb::Result r = g_pb->Trash(victims);
+        // What really goes: {A, A/x} is just A. The confirmation lists it that way, and so does Trash.
+        const std::vector<std::string> outer = okaypb::paths::Outermost(victims);
+        oked::projectpanel::AskDelete(pb, outer, [victims, outer, fromSelection]() {
+            const okaypb::Result r = g_pb->Trash(outer);
             if (!r.ok) { ConsoleLog("Delete failed: " + r.error, 2); return; }
             for (const std::string& v : victims) s_assetClip.erase(std::remove(s_assetClip.begin(), s_assetClip.end(), v), s_assetClip.end());
-            selected.clear(); s_multi.clear();
+            if (fromSelection) { selected.clear(); s_multi.clear(); }
+            else {   // only what was deleted leaves the selection
+                auto deleted = [&](const std::string& p) {
+                    const std::string n = okaypb::paths::Normalize(p);
+                    for (const std::string& o : outer) if (okaypb::paths::SameOrInside(o, n)) return true;
+                    return false;
+                };
+                for (auto it = s_multi.begin(); it != s_multi.end();) it = deleted(*it) ? s_multi.erase(it) : std::next(it);
+                if (deleted(selected)) selected.clear();
+            }
             ConsoleLog("Deleted " + std::to_string(r.paths.size()) + " item" + (r.paths.size() == 1 ? "" : "s") + " (Ctrl+Z in the Project panel brings " + (r.paths.size() == 1 ? "it" : "them") + " back)");
         });
     }
     if (duplicateSel) {
         duplicateSel = false;
-        std::vector<std::string> made;
-        for (const std::string& p : selectionList()) {
-            const okaypb::Result r = pb.Duplicate(p);
-            if (r.ok) made.push_back(r.paths[0]); else ConsoleLog("Duplicate failed: " + r.error, 2);
+        const okaypb::Result r = pb.DuplicateMany(selectionList());   // all or nothing, one Ctrl+Z; {A, A/x} copies A once (the copy has its own x)
+        if (!r.ok) ConsoleLog("Duplicate failed: " + r.error, 2);
+        else if (!r.paths.empty()) {
+            if (g_projTargets.empty()) selectPaths(r.paths);   // (the copy of a tree folder is not in the folder on screen: no selection jump)
+            ConsoleLog("Duplicated " + std::to_string(r.paths.size()) + " item" + (r.paths.size() == 1 ? "" : "s") + " (Ctrl+Z in the Project panel takes " + (r.paths.size() == 1 ? "it" : "them") + " away)");
         }
-        if (!made.empty()) { selectPaths(made); ConsoleLog("Duplicated " + std::to_string(made.size()) + " item" + (made.size() == 1 ? "" : "s")); }
     }
     if (reimportSel) {
         reimportSel = false;
         int n = 0;
-        for (const std::string& p : selectionList()) {
+        for (const std::string& p : okaypb::paths::Outermost(selectionList())) {   // (a folder covers what is inside it)
             ProjectForgetThumb(p);                 // the picture is made again
             std::error_code re;
             if (fs::is_directory(p, re)) n += pb.ReimportFolder(p);   // a folder: every asset in it, below it too
@@ -11329,6 +11367,7 @@ void DrawProject(EditorState& ed) {
         oked::projectpanel::AskName(std::move(rq));
         tagFor.clear();
     }
+    g_projTargets.clear();   // (the menus of the tree and the Favourites list have been served for this frame)
     if (panelFocus) {
         ImGuiIO& kio = ImGui::GetIO();
         const bool ctrl = kio.KeyCtrl;
@@ -11432,10 +11471,11 @@ void DrawProject(EditorState& ed) {
         if (importHovered) ImGui::SetTooltip("Copy textures, fonts, audio, models... into this folder.\nTip: you can also drag files from your file explorer onto the window.");
         if (openCreate) ImGui::OpenPopup("createmenu");
         if (ImGui::BeginPopup("createmenu")) {
-            okaypb::ctx::State st;
-            st.where = okaypb::ctx::Where::Background;
-            ProjectCtxFill(st, dir.string(), true);
-            viewState(st);
+            const okaypb::ctx::State& st = ProjectCtxState("plus|" + dir.string(), [&](okaypb::ctx::State& fresh) {
+                fresh.where = okaypb::ctx::Where::Background;
+                ProjectCtxFill(fresh, dir.string(), true);
+                viewState(fresh);
+            });
             const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::CreateItems(st));
             if (!act.empty()) runAction(act, dir.string(), true);
             ImGui::EndPopup();

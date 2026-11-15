@@ -3,8 +3,11 @@
 //     the text reads back with the engine's own parsers and checks clean, is written atomically and never over a file,
 //   * Reimport All in Folder (Browser::ReimportFolder) and the numbers the Properties window shows (Browser::StatsOf,
 //     AssetInfo::modified),
-//   * the safety of the file operations the menu reaches: Duplicate on a whole selection, Paste twice, Move to... with a
-//     name that is taken, and that the picker's rule (ProjectContextModel.hpp) says "no" exactly where Browser::Move refuses.
+//   * the safety of the file operations the menu reaches: Duplicate on a whole selection (all or nothing, one undo, an item
+//     inside another selected one is not copied twice), Standard Folders (CreateFolders: inside Assets, all or nothing, one
+//     undo), Paste twice, Move to... with a name that is taken, and that the picker's rule (ProjectContextModel.hpp) says
+//     "no" exactly where Browser::Move refuses,
+//   * which types are text (a script file is not: .js, .html), and the tags LabelsOf reads for a menu.
 // Nothing sleeps and no threads are used.
 #include "test_framework.hpp"
 #include <Okay.hpp>
@@ -46,6 +49,7 @@ std::string ReadFile(const std::string& p) {
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 bool Exists(const std::string& p) { std::error_code ec; return fs::exists(fs::u8path(p), ec); }
+bool Contains(const std::string& hay, const std::string& needle) { return hay.find(needle) != std::string::npos; }
 using Tree = std::map<std::string, std::string>;
 Tree Snap(const fs::path& root) {
     Tree t;
@@ -73,19 +77,31 @@ int main() {
             {"a/d.okaydata", K::Data}, {"a/d.okaydialog", K::Data}, {"a/q.okayquest", K::Data}, {"a/b.okaybt", K::Data},
             {"a/c.okayseq", K::Data}, {"a/c.okayclip", K::Data}, {"a/x.json", K::Data}, {"a/x.txt", K::Data}, {"a/x.md", K::Data},
             {"a/blob.bin", K::Other}, {"a/f.ttf", K::Other}, {"a/z.zip", K::Other}, {"a/noext", K::Other}, {"a/.hidden", K::Other},
+            // a script or web page is not a text asset: Windows runs a .js, and a page is not edited here
+            {"a/x.js", K::Other}, {"a/x.JS", K::Other}, {"a/x.html", K::Other}, {"a/x.htm", K::Other}, {"a/x.bat", K::Other}, {"a/x.ps1", K::Other},
+            {"a/x.vbs", K::Other}, {"a/x.hta", K::Other}, {"a/x.exe", K::Other}, {"a/x.sh", K::Other}, {"a/x.css", K::Data}, {"a/x.csv", K::Data},
         };
         for (const auto& t : table) {
             if (MenuKind(t.path, false) != t.kind) std::cerr << "  MenuKind(" << t.path << ") gave " << (int)MenuKind(t.path, false) << ", wanted " << (int)t.kind << "\n";
             CHECK(MenuKind(t.path, false) == t.kind);
         }
         CHECK(MenuKind("a/Textures", true) == K::Folder && MenuKind("a/Assets.v2", true) == K::Folder && MenuKind("a/x.png", true) == K::Folder);
-        // text kinds are the ones "Open in External Editor" is offered for
+        // text kinds are the ones "Open in External Editor" is offered for, and never a type that runs code
         ctx::State st;
         for (const auto& t : table) {
             st.kind = MenuKind(t.path, false);
+            st.runsCode = ctx::RunsCode(t.path);
             const bool offered = ctx::Find(ctx::ItemMenu(st), "open:external") != nullptr;
             const bool text = st.kind == K::Script || st.kind == K::VisualScript || st.kind == K::Material || st.kind == K::Data || st.kind == K::Scene || st.kind == K::Prefab;
-            CHECK(offered == text);
+            CHECK(offered == (text && !st.runsCode));
+            if (st.runsCode) { const ctx::Item* d = ctx::Find(ctx::ItemMenu(st), "open:default"); CHECK(d && !d->enabled); }   // a program or script is never handed to the system
+        }
+        // .js is not text-openable, whichever way the kind is worked out
+        {
+            ctx::State js; js.kind = MenuKind("a/b.js", false); js.runsCode = ctx::RunsCode("a/b.js");
+            CHECK(!ctx::Find(ctx::ItemMenu(js), "open:external"));
+            ctx::State forced; forced.kind = K::Data; forced.runsCode = ctx::RunsCode("a/b.js");   // (even if a table said Data)
+            CHECK(!ctx::Find(ctx::ItemMenu(forced), "open:external"));
         }
     }
 
@@ -201,6 +217,132 @@ int main() {
         CHECK(all.files == 3 && all.folders == 4 && all.bytes == 26);
         CHECK(b.StatsOf(td.at("Nope")).files == 0 && b.StatsOf(td.path.generic_u8string()).files == 0);
         CHECK(b.Info(td.at("Other/c.png")).modified > 0);
+    }
+
+    // ---- Standard Folders: inside Assets, all or nothing, one undo ----
+    {
+        TempDir td;
+        WriteFile(td.at("Existing/keep.txt"), "k");
+        Browser b(td.assets());
+        b.Sync();
+        const std::vector<std::string> seven = {"Scenes", "Scripts", "Prefabs", "Materials", "Models", "Textures", "Audio"};
+        const Result r = b.CreateFolders(td.assets(), seven);
+        CHECK(r.ok && r.paths.size() == 7 && r.note.empty());
+        for (const std::string& n : seven) CHECK(fs::is_directory(fs::u8path(td.at(n))));
+        CHECK(b.UndoLabel() == "Create folders");
+        CHECK(b.Undo().ok);                                                   // one Ctrl+Z takes all seven away
+        for (const std::string& n : seven) CHECK(!Exists(td.at(n)));
+        CHECK(Exists(td.at("Existing/keep.txt")));
+        // some are there already: they are left alone and named, the rest are made
+        fs::create_directories(fs::u8path(td.at("Models")));
+        WriteFile(td.at("Models/model.fbx"), "m");
+        const Result again = b.CreateFolders(td.assets(), seven);
+        CHECK(again.ok && again.paths.size() == 6 && Contains(again.note, "1 folder was already there"));
+        CHECK(ReadFile(td.at("Models/model.fbx")) == "m");
+        CHECK(b.Undo().ok && Exists(td.at("Models/model.fbx")) && !Exists(td.at("Scenes")));   // (the folder that was there stays, with its file)
+        // everything there already: nothing to do, nothing to undo
+        const Result none = b.CreateFolders(td.assets(), {"Models"});
+        CHECK(none.ok && none.paths.empty());
+        // in a sub folder
+        const Result sub = b.CreateFolders(td.at("Existing"), {"A", "B"});
+        CHECK(sub.ok && Exists(td.at("Existing/A")) && Exists(td.at("Existing/B")));
+        CHECK(b.Undo().ok && !Exists(td.at("Existing/A")));
+        // refused: a bad name makes nothing (not even the good ones before it), outside Assets, not a folder
+        const Tree before = Snap(td.path);
+        CHECK(!b.CreateFolders(td.assets(), {"Good", "../Evil"}).ok && Snap(td.path) == before);
+        CHECK(!b.CreateFolders(td.assets(), {"Good", "bad:name"}).ok && Snap(td.path) == before);
+        CHECK(!b.CreateFolders(td.path.generic_u8string(), {"Outside"}).ok && !Exists((td.path / "Outside").generic_u8string()));
+        CHECK(!b.CreateFolders(td.assets() + "/../Elsewhere", {"Outside"}).ok);
+        CHECK(!b.CreateFolders(td.at("Existing/keep.txt"), {"X"}).ok && Snap(td.path) == before);
+        CHECK(!b.CreateFolders(td.at("Missing"), {"X"}).ok && Snap(td.path) == before);
+        CHECK(b.CreateFolders(td.assets(), {}).ok);
+        // a link in Assets that points out: nothing is made through it
+        fs::create_directories(td.path / "Outside");
+        std::error_code lec;
+        fs::create_directory_symlink(td.path / "Outside", td.path / "Assets" / "Link", lec);
+        if (!lec) {
+            CHECK(!b.CreateFolders(td.at("Link"), {"Scenes", "Scripts"}).ok);
+            CHECK(!Exists((td.path / "Outside" / "Scenes").generic_u8string()) && !Exists((td.path / "Outside" / "Scripts").generic_u8string()));
+        } else std::cout << "  (symlinks not available here: link case skipped)\n";
+        // the disk refuses the third folder: nothing is left behind and there is nothing to undo
+        {
+            Browser fb(td.assets());
+            fb.Sync();
+            const Tree snap = Snap(td.path);
+            int seen = 0;
+            fb.SetFailureHook([&](const char* op, const std::string&) { return std::string(op) == "mkdir" && ++seen == 3; });
+            const Result failed = fb.CreateFolders(td.assets(), seven);
+            fb.SetFailureHook(nullptr);
+            CHECK(!failed.ok && Contains(failed.error, "Nothing was created"));
+            CHECK(Snap(td.path) == snap && !fb.CanUndo());
+        }
+    }
+
+    // ---- DuplicateMany: a whole selection, all or nothing, one undo, nothing copied twice ----
+    {
+        TempDir td;
+        WriteFile(td.at("A/x.png"), "x"); WriteFile(td.at("A/y.png"), "y"); WriteFile(td.at("b.png"), "B"); WriteFile(td.at("C/c.png"), "c");
+        Browser b(td.assets());
+        b.Sync();
+        // {A, A/x}: A is copied (with its own x); A/x is not copied again next to itself
+        const Result nested = b.DuplicateMany({td.at("A"), td.at("A/x.png")});
+        CHECK(nested.ok && nested.paths.size() == 1 && nested.paths[0] == td.at("A copy"));
+        CHECK(ReadFile(td.at("A copy/x.png")) == "x" && ReadFile(td.at("A copy/y.png")) == "y");
+        CHECK(!Exists(td.at("A/x copy.png")) && !Exists(td.at("A/y copy.png")));
+        CHECK(b.UndoLabel() == "Duplicate A" && b.Undo().ok && !Exists(td.at("A copy")));
+        // the same selection the other way round, and twice the same path
+        const Result rev = b.DuplicateMany({td.at("A/x.png"), td.at("A"), td.at("A")});
+        CHECK(rev.ok && rev.paths.size() == 1 && Exists(td.at("A copy/x.png")) && !Exists(td.at("A/x copy.png")));
+        CHECK(b.Undo().ok);
+        // several: each next to its own original, one Ctrl+Z for all
+        const Result many = b.DuplicateMany({td.at("b.png"), td.at("C/c.png"), td.at("A/y.png")});
+        CHECK(many.ok && many.paths.size() == 3);
+        CHECK(ReadFile(td.at("b copy.png")) == "B" && ReadFile(td.at("C/c copy.png")) == "c" && ReadFile(td.at("A/y copy.png")) == "y");
+        CHECK(b.UndoLabel() == "Duplicate 3 items");
+        CHECK(b.Undo().ok && !Exists(td.at("b copy.png")) && !Exists(td.at("C/c copy.png")) && !Exists(td.at("A/y copy.png")));
+        // two selected files where one is the copy-name of the other
+        WriteFile(td.at("d.png"), "d");
+        CHECK(b.Duplicate(td.at("d.png")).ok);                                                    // "d copy.png"
+        const Result both = b.DuplicateMany({td.at("d.png"), td.at("d copy.png")});
+        CHECK(both.ok && both.paths.size() == 2 && Exists(td.at("d copy 2.png")) && Exists(td.at("d copy copy.png")));
+        CHECK(ReadFile(td.at("d copy 2.png")) == "d" && ReadFile(td.at("d copy copy.png")) == "d");
+        // Duplicate of one is DuplicateMany of one
+        const Result one = b.Duplicate(td.at("b.png"));
+        CHECK(one.ok && one.paths.size() == 1 && one.paths[0] == td.at("b copy.png") && b.UndoLabel() == "Duplicate b.png");
+        // refused: the Assets folder, outside Assets, a file that is gone. Nothing is made, not even for the good ones in the selection.
+        const Tree before = Snap(td.path);
+        CHECK(!b.DuplicateMany({td.at("b.png"), td.assets()}).ok && Snap(td.path) == before);
+        CHECK(!b.DuplicateMany({td.at("b.png"), (td.path / "outside.png").generic_u8string()}).ok && Snap(td.path) == before);
+        CHECK(!b.DuplicateMany({td.at("b.png"), td.at("gone.png")}).ok && Snap(td.path) == before);
+        CHECK(b.DuplicateMany({}).ok);
+        // the disk refuses the second copy: the first one is taken away again
+        {
+            Browser fb(td.assets());
+            fb.Sync();
+            int seen = 0;
+            fb.SetFailureHook([&](const char* op, const std::string&) { return std::string(op) == "copy" && ++seen == 2; });
+            const Result failed = fb.DuplicateMany({td.at("b.png"), td.at("C/c.png")});
+            fb.SetFailureHook(nullptr);
+            CHECK(!failed.ok && Snap(td.path) == before && !fb.CanUndo());
+        }
+    }
+
+    // ---- the tags a menu lists ----
+    {
+        TempDir td;
+        WriteFile(td.at("Textures/hero.png"), "h"); WriteFile(td.at("plain.png"), "p");
+        Browser b(td.assets());
+        b.Sync();
+        CHECK(b.LabelsOf(td.at("Textures/hero.png")).empty() && b.LabelsOf(td.at("plain.png")).empty());
+        CHECK(b.AddLabel(td.at("Textures/hero.png"), "hero") && b.AddLabel(td.at("Textures/hero.png"), "wip"));
+        const std::vector<std::string> tags = b.LabelsOf(td.at("Textures/hero.png"));
+        CHECK(tags.size() == 2 && ((tags[0] == "hero" && tags[1] == "wip") || (tags[0] == "wip" && tags[1] == "hero")));
+        CHECK(b.LabelsOf(td.at("plain.png")).empty());
+        CHECK(b.LabelsOf(td.at("Textures")).empty());                            // a folder has none
+        CHECK(b.LabelsOf(td.at("missing.png")).empty());
+        CHECK(b.LabelsOf((td.path / "outside.png").generic_u8string()).empty());
+        CHECK(b.LabelsOf(td.at("Textures/hero.png")) == b.Info(td.at("Textures/hero.png")).labels);   // the same list Info gives
+        CHECK(b.RemoveLabel(td.at("Textures/hero.png"), "wip") && b.LabelsOf(td.at("Textures/hero.png")).size() == 1);
     }
 
     // ---- Duplicate on a whole selection, Paste twice ----

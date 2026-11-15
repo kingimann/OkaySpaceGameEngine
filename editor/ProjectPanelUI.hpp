@@ -44,6 +44,9 @@ void ShowReferenceProblems(okaypb::Browser& browser, std::function<void(const st
 /// separators, headings, ticks, shortcuts and submenus of `items`; a greyed item shows its reason as a tooltip and an
 /// enabled one its tip. Returns the id of the item that was clicked in this frame, "" when none.
 std::string DrawContextMenu(const std::vector<okaypb::ctx::Item>& items);
+/// The rows of the Properties window (label in grey, value beside it, a warning in orange) as a two column table. Drawn here and
+/// not inside ShowProperties so a test program can draw the same rows without a Browser. (Both are in ProjectMenuDraw.cpp.)
+void DrawPropertyRows(const std::vector<okaypb::ctx::Property>& rows);
 
 /// "Move to...": a folder picker over the project's folders (read from the asset database). A folder the items cannot go
 /// to (themselves, a folder inside them, where they already are) is greyed with the reason. `onPick(destDir)` runs when

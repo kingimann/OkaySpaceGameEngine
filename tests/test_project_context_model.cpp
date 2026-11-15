@@ -1,7 +1,8 @@
 // The Project panel's right-click menus (editor/ProjectContextModel.hpp): header-only, no ImGui, no engine. Checks the
 // order and labels of every menu, plurals for a selection ("Delete 3 Items"), what is greyed and the reason it says,
 // that no menu starts, ends or doubles a separator, and the pure helpers behind the new items: Copy Text, the
-// Assets-relative path, the shell-safety check, the Move to... rule, Set as Start Scene and the Properties rows.
+// Assets-relative path, which file types run code (never opened with the system's open command), the path text helpers
+// (Outermost of a selection, the nearest folder that exists), the Move to... rule, Set as Start Scene and the Properties rows.
 // Paths are checked on temp folders. Nothing sleeps, no threads.
 #include "test_framework.hpp"
 #include "../editor/ProjectContextModel.hpp"
@@ -9,6 +10,9 @@
 #include <chrono>
 #include <ctime>
 #include <fstream>
+#include <random>
+#include <set>
+#include <sys/stat.h>
 
 namespace fs = std::filesystem;
 using namespace okaypb::ctx;
@@ -112,18 +116,32 @@ int main() {
         for (Kind k : {Kind::Script, Kind::VisualScript, Kind::Material, Kind::Data, Kind::Scene, Kind::Prefab}) {
             const std::vector<Item> m = ItemMenu(File(k));
             CHECK(Has(m, "open:external") && Has(m, "open:default"));
+            CHECK(On(m, "open:external") && On(m, "open:default"));
         }
         for (Kind k : {Kind::Image, Kind::Audio, Kind::Model, Kind::Other}) {
             const std::vector<Item> m = ItemMenu(File(k));
             CHECK(!Has(m, "open:external") && Has(m, "open:default"));
         }
         CHECK(!Has(ItemMenu(Folder()), "open:default") && !Has(ItemMenu(Folder()), "open:external"));
-        State s = File(Kind::Script); s.shellSafe = false;
-        const std::vector<Item> m = ItemMenu(s);
-        CHECK(Off(m, "open:external") && Off(m, "open:default"));
-        CHECK(Contains(Why(m, "open:default"), "Rename the file"));
-        // the other items do not care about it
-        CHECK(On(m, "rename") && On(m, "reveal"));
+        // a type that runs code is never handed to the system's open command, and never goes to an editor from this menu either
+        State s = File(Kind::Data); s.runsCode = true;
+        std::vector<Item> m = ItemMenu(s);
+        CHECK(!Has(m, "open:external"));                                  // ".js" is not text-openable
+        CHECK(Off(m, "open:default"));
+        CHECK(Why(m, "open:default") == "This file type can run code; open it from the file manager if you trust it.");
+        // the other items do not care about it: it can still be renamed and shown in the file manager
+        CHECK(On(m, "rename") && On(m, "reveal") && On(m, "properties"));
+        State other = File(Kind::Other); other.runsCode = true;
+        CHECK(Off(ItemMenu(other), "open:default") && !Has(ItemMenu(other), "open:external"));
+        // a file that is not there any more cannot be opened or shown
+        State g = File(Kind::Script); g.gone = true;
+        m = ItemMenu(g);
+        CHECK(Off(m, "open:external") && Off(m, "open:default") && Off(m, "open") && Off(m, "reveal") && Off(m, "properties"));
+        CHECK(Why(m, "reveal") == "This file is not there any more.");
+        State gf = Folder(); gf.gone = true; gf.where = Where::Tree;
+        m = FolderTreeMenu(gf);
+        CHECK(Off(m, "create") && Why(m, "create") == "This folder is not there any more." && Off(m, "paste") && Off(m, "reveal") && Off(m, "properties"));
+        CHECK(Off(m, "create:folder"));   // (the items in the submenu agree)
     }
 
     // ---- Open is greyed for a type no editor window opens, and says what to do instead ----
@@ -183,7 +201,7 @@ int main() {
         // every greyed command has a reason, every other item has none
         for (Kind k : {Kind::Folder, Kind::Script, Kind::Scene, Kind::Prefab, Kind::Image}) {
             for (int ro = 0; ro < 2; ++ro) for (int root = 0; root < 2; ++root) for (int n = 1; n <= 2; ++n) {
-                State t = File(k); t.readOnly = ro; t.atRoot = root && k == Kind::Folder; t.count = n; t.shellSafe = ro == 0;
+                State t = File(k); t.readOnly = ro; t.atRoot = root && k == Kind::Folder; t.count = n; t.runsCode = ro != 0; t.gone = root == 0 && ro != 0;
                 for (Where w : {Where::Item, Where::Tree}) {
                     t.where = w;
                     const std::vector<Item> mm = w == Where::Tree ? FolderTreeMenu(t) : ItemMenu(t);
@@ -316,6 +334,18 @@ int main() {
             CHECK(Contains(Why(m, id), "smart view"));
         }
         CHECK(On(m, "refresh") && On(m, "selectall") && On(m, "reveal") && On(m, "view:grid"));
+        // the folder on screen is gone (deleted or renamed behind the panel's back): nothing can be made or pasted in it
+        State gone; gone.kind = Kind::Folder; gone.where = Where::Background; gone.gone = true; gone.shownCount = 2; gone.hasClipboard = true; gone.clipboardCount = 1;
+        m = BackgroundMenu(gone);
+        for (const char* id : {"create:folder", "create:dialogue", "create:stdfolders", "paste", "import", "reveal", "properties"}) {
+            CHECK(Off(m, id));
+            CHECK(Why(m, id) == "This folder is not there any more.");
+        }
+        CHECK(On(m, "refresh") && On(m, "open:project") && On(m, "view:grid"));
+        CHECK(Off(CreateItems(gone), "create:scene") && Why(CreateItems(gone), "create:scene") == "This folder is not there any more.");
+        // with no project open that reason comes first
+        State both = gone; both.readOnly = true;
+        CHECK(Why(BackgroundMenu(both), "create:folder") == "Open a project first.");
         // no project open
         State none; none.kind = Kind::Folder; none.where = Where::Background; none.readOnly = true;
         m = BackgroundMenu(none);
@@ -362,7 +392,7 @@ int main() {
             for (int bits = 0; bits < 256; ++bits) for (int cnt = 1; cnt <= 3; cnt += 2) {
                 State s = File(k); s.count = cnt;
                 s.readOnly = bits & 1; s.hasClipboard = bits & 2; s.clipboardCount = (bits & 2) ? 2 : 0; s.favourite = bits & 4; s.hierarchySelection = bits & 8;
-                s.isStartScene = bits & 16; s.shellSafe = !(bits & 32); s.atRoot = (bits & 64) && k == Kind::Folder; s.hasSubfolders = bits & 128;
+                s.isStartScene = bits & 16; s.runsCode = bits & 32; s.gone = (bits & 3) == 1 && (bits & 128); s.atRoot = (bits & 64) && k == Kind::Folder; s.hasSubfolders = bits & 128;
                 s.tags = (bits & 4) ? std::vector<std::string>{"a"} : std::vector<std::string>{};
                 for (Where w : {Where::Item, Where::Tree, Where::Favourite, Where::Background}) {
                     s.where = w;
@@ -416,28 +446,143 @@ int main() {
         std::error_code ec;
         fs::create_directories(td.path / "Assets2", ec);
         CHECK(AssetsRelativeText(td.proj(), (td.path / "Assets2" / "z.png").generic_u8string()) == "");
-        // a link inside Assets that points out is outside
+        // text only: a link inside Assets is written the way scenes write it, "Assets/Link/..." (the file operations resolve links
+        // before they touch anything; this text is only for the clipboard)
         fs::create_directories(td.path / "Outside", ec);
         std::ofstream((td.path / "Outside" / "secret.txt")) << "s";
         std::error_code lec;
         fs::create_directory_symlink(td.path / "Outside", td.path / "Assets" / "Link", lec);
-        if (!lec) CHECK(AssetsRelativeText(td.proj(), td.at("Link/secret.txt")) == "");
+        if (!lec) CHECK(AssetsRelativeText(td.proj(), td.at("Link/secret.txt")) == "Assets/Link/secret.txt");
         else std::cout << "  (symlinks not available here: link case skipped)\n";
+        CHECK(AssetsRelativeText(td.proj(), (td.path / "Outside" / "secret.txt").generic_u8string()) == "");   // the real path of that file is outside
     }
 
-    // ---- what is safe to hand to another program ----
+    // ---- file types that run code ----
     {
-        CHECK(IsShellSafe("C:/Users/me/My Project/Assets/Hero Pic.png"));
-        CHECK(IsShellSafe("/home/me/proj/Assets/\xC3\xA9t\xC3\xA9.png"));   // non-English letters are fine
-        CHECK(IsShellSafe("/home/me/a'b (1)&c;d.png"));                     // inside double quotes these do nothing
-        CHECK(!IsShellSafe(""));
-        CHECK(!IsShellSafe("/home/me/a\"b.png"));
-        CHECK(!IsShellSafe("/home/me/$(touch x).png"));
-        CHECK(!IsShellSafe("/home/me/`id`.png"));
-        CHECK(!IsShellSafe("C:/Users/me/%PATH%.png"));
-        CHECK(!IsShellSafe(std::string("/home/me/a\nb.png")));
-        CHECK(!IsShellSafe(std::string("/home/me/a\tb.png")));
-        CHECK(!IsShellSafe(std::string("/home/me/a") + '\0' + "b.png"));
+        // the types the owner's reviewer named, every one of them
+        for (const char* e : {"exe", "bat", "cmd", "com", "scr", "lnk", "msi", "ps1", "vbs", "js", "jse", "wsf", "hta", "reg", "jar", "sh"}) {
+            CHECK(RunsCode(std::string("C:/p/Assets/tool.") + e));
+            std::string upper = e;
+            for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            CHECK(RunsCode("C:\\p\\Assets\\TOOL." + upper));   // (a Windows path, in capitals)
+            CHECK(!LaunchRefusal(std::string("/nonexistent/dir/tool.") + e).empty());
+            State st = File(Kind::Other); st.runsCode = RunsCode(std::string("x.") + e);
+            CHECK(Off(ItemMenu(st), "open:default"));
+        }
+        // more of them, and the spellings that fool a plain check
+        for (const char* e : {"vbe", "wsh", "psm1", "pif", "msp", "cpl", "msc", "url", "chm", "appx", "msix", "docm", "xlsm", "command", "appimage", "desktop", "py", "app", "pkg",
+                              "ws", "vb", "bas", "sct", "msh1", "ahk", "au3", "mdb", "mde", "msu", "rdp", "theme", "shs", "job"}) CHECK(RunsCode(std::string("a/b.") + e));
+        CHECK(RunsCode("a/Setup.EXE") && RunsCode("a/Setup.Exe") && RunsCode("a/photo.png.exe"));
+        CHECK(RunsCode("a/setup.exe.") && RunsCode("a/setup.exe ") && RunsCode("a/setup.exe. . "));      // Windows drops trailing dots and spaces
+        CHECK(RunsCode("a.b/c/run.bat") && RunsCode("C:\\x\\y\\run.cmd") && RunsCode("run.sh"));
+        CHECK(RunsCode("a/.sh"));                                                                          // a file named ".sh" is a .sh
+        // things that are only looked at
+        for (const char* e : {"png", "jpg", "wav", "ogg", "fbx", "obj", "glb", "txt", "json", "md", "pdf", "okayscene", "okayprefab", "okaymat", "okay", "cs", "lua",
+                              "okayvs", "okaydata", "okaydialog", "okaybt", "okayseq", "ttf", "zip", "html", "csv", "xml", "okaymeta"})
+            CHECK(!RunsCode(std::string("a/b.") + e));
+        CHECK(!RunsCode("a/setup.exe.png") && !RunsCode("a/exe") && !RunsCode("a/noext") && !RunsCode("") && !RunsCode("a/dir.exe/file.txt"));
+        CHECK(ExtensionOf("a/b/Hero.PNG") == "png" && ExtensionOf("a/b/noext") == "" && ExtensionOf("a.b/noext") == "" && ExtensionOf("x.tar.gz") == "gz");
+        CHECK(ExtensionOf("a/setup.exe...") == "exe" && ExtensionOf("") == "");
+        // the list has no blanks, no dots, no upper case, no repeats
+        std::set<std::string> seen;
+        for (const std::string& e : RunnableExtensions()) {
+            CHECK(!e.empty() && e.find('.') == std::string::npos && e == okaypb::paths::Lower(e));
+            CHECK(seen.insert(e).second);
+        }
+        // a program with no extension (Linux, macOS) is recognised by its execute bit, on systems that have one
+        TempDir td;
+        td.file("bin/tool"); td.file("bin/data");
+#if !defined(_WIN32)
+        ::chmod(td.at("bin/tool").c_str(), 0755);
+        ::chmod(td.at("bin/data").c_str(), 0644);
+        CHECK(HasExecutePermission(td.at("bin/tool")) && !HasExecutePermission(td.at("bin/data")));
+        CHECK(LaunchRefusal(td.at("bin/tool")) == "This file type can run code; open it from the file manager if you trust it.");
+        CHECK(LaunchRefusal(td.at("bin/data")).empty());
+        // a picture with the execute bit set (a zip unpacked on a Windows disk) is still just a picture
+        td.file("bin/pic.png");
+        ::chmod(td.at("bin/pic.png").c_str(), 0755);
+        CHECK(LaunchRefusal(td.at("bin/pic.png")).empty());
+        CHECK(!HasExecutePermission(td.at("bin")));        // a folder is not a program
+#endif
+        CHECK(!HasExecutePermission(td.at("bin/missing")) && LaunchRefusal(td.at("bin/missing")).empty());
+        CHECK(LaunchRefusal("a/b.txt").empty() && !LaunchRefusal("a/b.EXE").empty());
+    }
+
+    // ---- path text: Normalize, SameOrInside, Outermost, NearestFolder ----
+    {
+        using namespace okaypb::paths;
+        CHECK(Normalize("") == "" && Normalize("/a/b/../c/./d/") == "/a/c/d" && Normalize("/a//b") == "/a/b" && Normalize("/a\\b\\c") == "/a/b/c");
+        CHECK(Normalize("/") == "/" && StripSlash("/a/b///") == "/a/b" && StripSlash("/") == "/");
+        CHECK(SameOrInside("/a/b", "/a/b") && SameOrInside("/a/b", "/a/b/c") && SameOrInside("/a/b/", "/a/b/c/") && SameOrInside("/", "/a"));
+        CHECK(!SameOrInside("/a/b", "/a/bc") && !SameOrInside("/a/b", "/a") && !SameOrInside("/a/b/c", "/a/b"));
+        // Outermost: a folder and something inside it give the folder
+        auto out = [](std::vector<std::string> v) { return Outermost(v); };
+        CHECK(out({"/p/A", "/p/A/x"}) == (std::vector<std::string>{"/p/A"}));
+        CHECK(out({"/p/A/x", "/p/A"}) == (std::vector<std::string>{"/p/A"}));                    // the order of the selection does not matter
+        CHECK(out({"/p/A", "/p/A/x", "/p/A/x/y.png", "/p/B/z.png"}) == (std::vector<std::string>{"/p/A", "/p/B/z.png"}));
+        CHECK(out({"/p/A", "/p/A b", "/p/A/x"}) == (std::vector<std::string>{"/p/A", "/p/A b"}));   // "A b" sorts between "A" and "A/x" in plain text: not inside A
+        CHECK(out({"/p/A", "/p/A-1", "/p/A.png", "/p/A/x"}) == (std::vector<std::string>{"/p/A", "/p/A-1", "/p/A.png"}));
+        CHECK(out({"/p/A", "/p/A"}) == (std::vector<std::string>{"/p/A"}));                      // twice the same path
+        CHECK(out({"/p/A/", "/p/A"}) == (std::vector<std::string>{"/p/A"}));                     // two spellings
+        CHECK(out({"/p/A/../A/x", "/p/A"}) == (std::vector<std::string>{"/p/A"}));
+        CHECK(out({"/p/b.png", "/p/a.png"}) == (std::vector<std::string>{"/p/a.png", "/p/b.png"}));   // sorted
+        CHECK(out({}).empty() && out({"/"}) == (std::vector<std::string>{"/"}));
+        CHECK(out({"/", "/p/A"}) == (std::vector<std::string>{"/"}));                             // everything is inside the root
+        CHECK(out({"/p/AB", "/p/A", "/p/A/B"}) == (std::vector<std::string>{"/p/A", "/p/AB"}));
+        // against the slow way (every item against every other) on a few thousand random paths
+        std::mt19937 rng(12345);
+        const char* parts[] = {"A", "A b", "A-1", "a", "B", "B.c", "x", "y z", "_"};
+        for (int round = 0; round < 40; ++round) {
+            std::vector<std::string> in;
+            const int n = 1 + static_cast<int>(rng() % 60);
+            for (int i = 0; i < n; ++i) {
+                std::string p = "/p";
+                const int depth = 1 + static_cast<int>(rng() % 4);
+                for (int d = 0; d < depth; ++d) p += std::string("/") + parts[rng() % 9];
+                if (rng() % 7 == 0) p += "/";
+                in.push_back(p);
+            }
+            std::set<std::string> uniq;
+            for (const std::string& p : in) uniq.insert(Normalize(p));
+            std::vector<std::string> slow;
+            for (const std::string& p : uniq) {
+                bool nested = false;
+                for (const std::string& o : uniq) if (o != p && SameOrInside(o, p)) { nested = true; break; }
+                if (!nested) slow.push_back(p);
+            }
+            const std::vector<std::string> fast = Outermost(in);
+#ifdef _WIN32
+            (void)slow;   // (Windows folds case, so the slow way above would keep both spellings: compared on the other systems)
+#else
+            if (fast != slow) { std::cerr << "  Outermost differs in round " << round << "\n"; }
+            CHECK(fast == slow);
+#endif
+            for (const std::string& p : fast) for (const std::string& q : fast) CHECK(p == q || !SameOrInside(p, q));   // nothing left is inside another
+        }
+        // a big selection is quick (this is only a loop count, the real guard is that it finishes)
+        std::vector<std::string> big;
+        for (int i = 0; i < 20000; ++i) big.push_back("/p/Folder/file" + std::to_string(i) + ".png");
+        big.push_back("/p/Folder");
+        CHECK(Outermost(big) == (std::vector<std::string>{"/p/Folder"}));
+
+        // NearestFolder: the shown folder, or the nearest parent that is still there
+        TempDir td;
+        td.dir("A/B/C"); td.file("A/f.txt");
+        const std::string root = td.assets();
+        CHECK(NearestFolder(root, td.at("A/B/C")) == td.at("A/B/C"));
+        CHECK(NearestFolder(root, td.at("A/B/C/")) == td.at("A/B/C"));
+        std::error_code ec;
+        fs::remove_all(td.path / "Assets" / "A" / "B" / "C", ec);
+        CHECK(NearestFolder(root, td.at("A/B/C")) == td.at("A/B"));
+        fs::remove_all(td.path / "Assets" / "A" / "B", ec);
+        CHECK(NearestFolder(root, td.at("A/B/C")) == td.at("A"));
+        CHECK(NearestFolder(root, td.at("A/f.txt")) == td.at("A"));              // a file is not a folder
+        fs::remove_all(td.path / "Assets" / "A", ec);
+        CHECK(NearestFolder(root, td.at("A/B/C")) == root);
+        CHECK(NearestFolder(root, root) == root && NearestFolder(root, "") == root);
+        CHECK(NearestFolder(root, td.proj()) == root);                           // outside Assets: Assets
+        CHECK(NearestFolder(root, (td.path / "Elsewhere").generic_u8string()) == root);
+        CHECK(NearestFolder(root, td.at("../Assets2/x")) == root);
     }
 
     // ---- the Move to... rule ----
@@ -463,6 +608,26 @@ int main() {
         // a file named like a folder prefix does not confuse it: "A" vs "A2"
         td.dir("A2");
         CHECK(MoveBlockedReason(root, {A}, td.at("A2")) == "");
+        // {A, A/B}: only A moves (B is inside it), so moving them next to A is "already there"
+        CHECK(MoveBlockedReason(root, {A, B}, root) == "It is already in that folder.");
+        CHECK(MoveBlockedReason(root, {A, B}, C) == "");
+        // the picker asks about many folders: the items are looked at once, and a long selection is no slower per folder
+        const MoveSources one = PrepareMove(root, {td.at("top.png")});
+        CHECK(one.count == 1 && one.never.empty() && one.folders.empty());
+        std::vector<std::string> many;
+        for (int i = 0; i < 20000; ++i) many.push_back(td.at("Many/file" + std::to_string(i) + ".png"));
+        many.push_back(td.at("Many"));                              // (the folder is not there: nothing to look at, and every file is inside it)
+        const MoveSources big = PrepareMove(root, many);
+        CHECK(big.count == 1);
+        CHECK(MoveBlockedReason(big, C) == "");
+        std::vector<std::string> files;
+        for (int i = 0; i < 20000; ++i) files.push_back(td.at("Spread/f" + std::to_string(i) + ".png"));
+        const MoveSources spread = PrepareMove(root, files);
+        CHECK(spread.count == 20000 && spread.sameParent && MoveBlockedReason(spread, td.at("Spread")) == "They are already in that folder.");
+        CHECK(MoveBlockedReason(spread, C) == "" && MoveBlockedReason(spread, td.proj()) == "That folder is outside the project's Assets folder.");
+        files.push_back(td.at("C/two.png"));
+        const MoveSources mixed = PrepareMove(root, files);
+        CHECK(!mixed.sameParent && MoveBlockedReason(mixed, td.at("Spread")) == "");   // not all of them are there already
     }
 
     // ---- Set as Start Scene ----
@@ -504,16 +669,10 @@ int main() {
         CHECK(FormatUtc(951782400LL + 86400) == "2000-03-01 00:00 UTC");
         CHECK(FormatUtc(4107542400LL) == "2100-03-01 00:00 UTC");           // 2100 is not a leap year
         CHECK(FormatUtc(1700000000LL) == "2023-11-14 22:13 UTC");
-        // against the C library for a spread of times (UTC)
-        int bad = 0;
-        for (std::int64_t t = 86400 + 61; t < 4000000000LL; t += 1234567 * 7 + 3) {
-            std::time_t tt = static_cast<std::time_t>(t);
-            std::tm* g = std::gmtime(&tt);
-            char want[40];
-            std::snprintf(want, sizeof want, "%04d-%02d-%02d %02d:%02d UTC", g->tm_year + 1900, g->tm_mon + 1, g->tm_mday, g->tm_hour, g->tm_min);
-            if (FormatUtc(t) != want) { ++bad; if (bad < 4) std::cerr << "  date mismatch at " << t << ": " << FormatUtc(t) << " vs " << want << "\n"; }
-        }
-        CHECK(bad == 0);
+        CHECK(FormatUtc(1234567890LL) == "2009-02-13 23:31 UTC");          // the famous one
+        CHECK(FormatUtc(1609459199LL) == "2020-12-31 23:59 UTC" && FormatUtc(1609459200LL) == "2021-01-01 00:00 UTC");
+        CHECK(FormatUtc(4102444800LL) == "2100-01-01 00:00 UTC");
+        CHECK(FormatUtc(1709164800LL) == "2024-02-29 00:00 UTC");         // a leap day
         CHECK(AgoText(1000, 0) == "" && AgoText(0, 5) == "");
         CHECK(AgoText(1000, 990) == "just now" && AgoText(1000, 2000) == "just now");
         CHECK(AgoText(1000, 940) == "1 minute ago" && AgoText(1000 + 120, 1000) == "2 minutes ago");

@@ -18,16 +18,18 @@
 //   * No separator is ever first, last or doubled.
 //
 // Also here, as pure functions with tests: text for Copy Name / Relative Path / Full Path (several items: one per
-// line), the Assets-relative path, a check that a path is safe to hand to another program, the "can this move there"
-// rule of the Move to... picker, "Set as Start Scene" for the Scenes In Build list, and the rows of the Properties window.
-// Paths are checked with okayproj::Normalized / IsSameOrInside (shared/ProjectDelete.hpp), the same test the launcher uses.
+// line), the Assets-relative path, which file types run code (never opened with the system's open command), the "can this
+// move there" rule of the Move to... picker, "Set as Start Scene" for the Scenes In Build list, and the rows of the Properties
+// window. Path text comes from ProjectPaths.hpp. These checks only decide what is greyed: the file operations
+// (ProjectBrowser.cpp) check every path again, with links resolved, before they touch anything.
 //
-// Written from this repository's own panel behaviour and the owner's request; no outside code.
-#include "../shared/ProjectDelete.hpp"
+// Written for this panel from its own behaviour and the owner's request. Dates use the C library's gmtime.
+#include "ProjectPaths.hpp"
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -71,7 +73,8 @@ struct State {
     std::string undoLabel;          ///< "Rename Hero.png"
     bool hierarchySelection = false;///< an object is selected in the Hierarchy (Prefab from Selection, Place as Child)
     bool isStartScene = false;      ///< the clicked scene already starts the game (first in Scenes In Build)
-    bool shellSafe = true;          ///< the path can be handed to another program (see IsShellSafe)
+    bool runsCode = false;          ///< the file's type runs code when the system opens it (a program, installer, shortcut or script: see LaunchRefusal)
+    bool gone = false;              ///< the item (or the folder being shown) is not on the disk any more
     bool hasSubfolders = false;     ///< the clicked folder has folders in it
     bool canOpen = true;            ///< an editor window opens this type (false for pictures, audio, fonts, ...: Open is greyed and points to Open with Default App)
     bool indexed = true;            ///< the asset database knows the item (References and Properties need it)
@@ -89,6 +92,9 @@ namespace detail {
 
 /// Why nothing can be created, pasted or imported "here" while a smart filter is showing.
 inline const char* const kSmartViewReason = "Leave the smart view first (the x next to the path at the top), then you can do this in a folder.";
+
+/// Why "Open with Default App" is greyed for a program or script.
+inline const char* const kRunsCodeReason = "This file type can run code; open it from the file manager if you trust it.";
 
 inline Item Sep() { Item i; i.separator = true; return i; }
 inline Item Head(std::string text) { Item i; i.heading = true; i.label = std::move(text); i.enabled = false; return i; }
@@ -132,8 +138,8 @@ inline bool IsTextKind(Kind k) {
 
 inline std::vector<Item> CreateItems(const State& st) {
     using namespace detail;
-    const bool ok = !st.readOnly && !st.smartView;
-    const std::string no = st.readOnly ? "Open a project first." : kSmartViewReason;
+    const bool ok = !st.readOnly && !st.smartView && !st.gone;
+    const std::string no = st.readOnly ? "Open a project first." : (st.gone ? "This folder is not there any more." : kSmartViewReason);
     std::vector<Item> v;
     v.push_back(Cmd("create:folder", "Folder", "", ok, no));
     v.push_back(Sep());
@@ -155,9 +161,9 @@ inline std::vector<Item> CreateItems(const State& st) {
     v.push_back(Head("Looks and data"));
     v.push_back(Cmd("create:material", "Material", "", ok, no));
     v.push_back(Cmd("create:data", "Data Asset", "", ok, no, "Fields as key = value."));
-    v.push_back(Cmd("create:item", "Item", "", ok, no));
-    v.push_back(Cmd("create:loot", "Loot Table", "", ok, no));
-    v.push_back(Cmd("create:recipe", "Recipe Book", "", ok, no));
+    v.push_back(Cmd("create:item", "Item", "", ok, no, "Adds an item to the project's item list in the Items window. It makes no file in this folder and asks for no name there."));
+    v.push_back(Cmd("create:loot", "Loot Table", "", ok, no, "Makes a loot table file in this folder named Loot Table (then Loot Table 2, ...) and opens it in the Items window. Rename it with F2."));
+    v.push_back(Cmd("create:recipe", "Recipe Book", "", ok, no, "Makes a recipe book file in this folder named Recipe Book (then Recipe Book 2, ...) and opens it in the Items window. Rename it with F2."));
     v.push_back(Sep());
     v.push_back(Cmd("create:stdfolders", "Standard Folders", "", ok, no, "Create Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio folders here."));
     return v;
@@ -216,6 +222,7 @@ inline std::vector<Item> ItemMenu(const State& s) {
     const bool ro = s.readOnly;
     const std::string noProject = "Open a project first.";
     const std::string rootMsg = "The Assets folder itself can't be changed.";
+    const std::string goneWhy = !s.gone ? std::string() : (isDir ? "This folder is not there any more." : "This file is not there any more.");
     // why a change is refused (one reason, in the order a person would hit them)
     auto changeBlock = [&](bool needOne = false) -> std::string {
         if (ro) return noProject;
@@ -230,8 +237,8 @@ inline std::vector<Item> ItemMenu(const State& s) {
     // ---- Open ----
     {
         const char* openLabel = isDir ? "Open Folder" : (s.kind == Kind::Prefab ? "Open Prefab" : "Open");
-        v.push_back(Cmd("open", openLabel, tree ? "" : "Enter", !many && s.canOpen,
-                        many ? "Select one item to open it." : "No editor window opens this type. Use Open with Default App.",
+        v.push_back(Cmd("open", openLabel, tree ? "" : "Enter", !many && s.canOpen && !s.gone,
+                        many ? "Select one item to open it." : (s.gone ? goneWhy : "No editor window opens this type. Use Open with Default App."),
                         s.kind == Kind::Prefab ? "Edit this prefab on its own: the Scene view shows only the prefab, and Save updates every instance." : ""));
         if (one && s.kind == Kind::Prefab) {
             v.push_back(Cmd("prefab:place", "Place in Scene", "", true, "", "Adds a copy of this prefab to the open scene."));
@@ -252,19 +259,17 @@ inline std::vector<Item> ItemMenu(const State& s) {
             v.push_back(Cmd("model:player", "Make Playable Character", "", true, "",
                             "Add a Third Person player wearing this model, with humanoid IK.\nIf one player is selected, the model is attached to it.\nOtherwise other active players are deactivated (not deleted)."));
         if (one && s.kind == Kind::Script) v.push_back(Cmd("script:edit", "Edit Script", "", true, "", "Open it in the Script Editor."));
-        if (one && file && IsTextKind(s.kind))
-            v.push_back(Cmd("open:external", "Open in External Editor", "", s.shellSafe,
-                            "The path has a character (a quote, $, % or `) that can't be passed safely to another program. Rename the file or its folders.",
-                            "Opens it in Visual Studio Code when that is installed, otherwise in the program your system uses for this file type."));
+        if (one && file && IsTextKind(s.kind) && !s.runsCode)   // a program or script never goes to an editor from here either: the type decides, not the kind
+            v.push_back(Cmd("open:external", "Open in External Editor", "", !s.gone, goneWhy,
+                            "Opens it in Visual Studio Code when that is installed, otherwise in Notepad (the system's text editor). It is only edited, never run."));
         if (one && file)
-            v.push_back(Cmd("open:default", "Open with Default App", "", s.shellSafe,
-                            "The path has a character (a quote, $, % or `) that can't be passed safely to another program. Rename the file or its folders.",
+            v.push_back(Cmd("open:default", "Open with Default App", "", !s.runsCode && !s.gone, s.runsCode ? kRunsCodeReason : goneWhy,
                             "Opens it in the program your system uses for this file type."));
     }
     // ---- Create (inside this folder) ----
     if (one && isDir) {
         v.push_back(Sep());
-        v.push_back(Sub("create", "Create", CreateItems(s), !ro, noProject));
+        v.push_back(Sub("create", "Create", CreateItems(s), !ro && !s.gone, ro ? noProject : goneWhy));
     }
     v.push_back(Sep());
     // ---- Edit ----
@@ -276,7 +281,8 @@ inline std::vector<Item> ItemMenu(const State& s) {
     {
         std::string base = isDir ? "Paste Into" : "Paste";
         if (s.clipboardCount > 1) base = "Paste " + std::to_string(s.clipboardCount) + " Items" + (isDir ? " Into" : "");
-        v.push_back(Cmd("paste", base, tree ? "" : "Ctrl+V", s.hasClipboard && !ro, ro ? noProject : "Nothing was copied or cut yet.",
+        const bool pasteGone = s.gone && isDir;
+        v.push_back(Cmd("paste", base, tree ? "" : "Ctrl+V", s.hasClipboard && !ro && !pasteGone, ro ? noProject : (pasteGone ? goneWhy : "Nothing was copied or cut yet."),
                         isDir ? "" : "Pastes into the folder being shown."));
     }
     v.push_back(Cmd("moveto", "Move to...", "", changeBlock().empty(), changeBlock(), "Pick the folder to move it to. A name that is taken gets a number, and links to it are updated."));
@@ -326,9 +332,9 @@ inline std::vector<Item> ItemMenu(const State& s) {
     }
     v.push_back(Sep());
     // ---- Show ----
-    v.push_back(Cmd("reveal", "Show in " + s.fileManager, "", true, "",
+    v.push_back(Cmd("reveal", "Show in " + s.fileManager, "", !s.gone, goneWhy,
                     file ? "Shows the file in a window of your file manager (on Windows it is selected there)." : "Opens the folder in your file manager."));
-    if (one) v.push_back(Cmd("properties", "Properties...", "", true, "", "Type, size, date, path, GUID and how many assets use it."));
+    if (one) v.push_back(Cmd("properties", "Properties...", "", !s.gone, goneWhy, "Type, size, date, path, GUID and how many assets use it."));
     Tidy(v);
     return v;
 }
@@ -362,8 +368,9 @@ inline std::vector<Item> BackgroundMenu(const State& s) {
     using namespace detail;
     const std::string noProject = "Open a project first.";
     const std::string smart = kSmartViewReason;
-    const bool here = !s.readOnly && !s.smartView;
-    const std::string hereWhy = s.readOnly ? noProject : smart;
+    const std::string goneWhy = "This folder is not there any more.";
+    const bool here = !s.readOnly && !s.smartView && !s.gone;
+    const std::string hereWhy = s.readOnly ? noProject : (s.gone ? goneWhy : smart);
     std::vector<Item> v;
     v.push_back(Sub("create", "Create", CreateItems(s), here, hereWhy));
     {
@@ -389,9 +396,9 @@ inline std::vector<Item> BackgroundMenu(const State& s) {
         v.push_back(Cmd("favourite", s.favourite ? "Remove Folder from Favourites" : "Add Folder to Favourites", "", why.empty() && !s.smartView, s.smartView ? smart : why));
     }
     v.push_back(CopyTextMenu(s));
-    v.push_back(Cmd("reveal", "Show in " + s.fileManager, "", !s.readOnly, noProject, "Opens this folder in your file manager."));
+    v.push_back(Cmd("reveal", "Show in " + s.fileManager, "", !s.readOnly && !s.gone, s.readOnly ? noProject : goneWhy, "Opens this folder in your file manager."));
     v.push_back(Cmd("open:project", "Open Project Folder in " + s.fileManager, "", !s.readOnly, noProject, "Opens the folder that holds Assets and project.okayproj."));
-    v.push_back(Cmd("properties", "Properties...", "", !s.readOnly && !s.smartView, s.readOnly ? noProject : smart, "How many files and folders this folder holds, and how big it is."));
+    v.push_back(Cmd("properties", "Properties...", "", !s.readOnly && !s.smartView && !s.gone, s.readOnly ? noProject : (s.gone ? goneWhy : smart), "How many files and folders this folder holds, and how big it is."));
     Tidy(v);
     return v;
 }
@@ -434,17 +441,16 @@ inline std::string NameOf(const std::string& path) {
 }
 
 /// "Assets/Models/Hero.fbx" for a path inside <projectDir>/Assets (the Assets folder itself gives "Assets"); "" for a
-/// path that is outside it (or when either path is empty). Links that point out of the project are refused too.
+/// path that is outside it (or when either path is empty). Plain text work, no disk access: `..` is resolved first, so
+/// "Assets/../x" is outside. (A link inside Assets that points elsewhere is still "Assets/..." here: that is how scenes
+/// write its path. The file operations resolve links before they touch anything.)
 inline std::string AssetsRelativeText(const std::string& projectDir, const std::string& path) {
     if (projectDir.empty() || path.empty()) return {};
-    namespace fs = std::filesystem;
-    const fs::path assets = okayproj::Normalized(fs::u8path(projectDir) / "Assets");
-    const fs::path p = okayproj::Normalized(fs::u8path(path));
-    if (!okayproj::IsSameOrInside(p, assets)) return {};
-    std::error_code ec;
-    const fs::path rel = p.lexically_relative(assets);
-    if (rel.empty() || rel == ".") return "Assets";
-    return "Assets/" + rel.generic_u8string();
+    const std::string assets = paths::Normalize(projectDir + "/Assets");
+    const std::string p = paths::Normalize(path);
+    if (!paths::SameOrInside(assets, p)) return {};
+    if (paths::Fold(p) == paths::Fold(assets)) return "Assets";
+    return "Assets" + p.substr(assets.size());   // p is longer than assets and starts with it, so this is "/Sub/x.png"
 }
 
 /// The lines Copy Text puts on the clipboard for `paths`: names, Assets-relative paths or full paths ('/' separators).
@@ -459,41 +465,128 @@ inline std::string CopyText(const std::string& what, const std::string& projectD
     return JoinLines(lines);
 }
 
-/// True when the path can be put between double quotes in a command line for another program without the shell doing
-/// something with it: no control characters, quote, $, % or backtick (and no backslash off Windows, where it escapes).
-/// A name with one of these can be opened from the file manager; the panel just will not build a command from it.
-inline bool IsShellSafe(const std::string& path) {
-    if (path.empty()) return false;
-    for (unsigned char c : path) {
-        if (c < 0x20 || c == 0x7f || c == '"' || c == '$' || c == '%' || c == '`') return false;
-#if !defined(_WIN32)
-        if (c == '\\') return false;
-#endif
-    }
-    return true;
+// ---- types that run code ---------------------------------------------------------------------------------
+
+/// The file name's extension, lower case, without the dot, "" for none. Windows ignores trailing dots and spaces in a name
+/// ("setup.exe." is setup.exe), so they are cut first.
+inline std::string ExtensionOf(const std::string& path) {
+    std::string name = NameOf(path);
+    while (!name.empty() && (name.back() == ' ' || name.back() == '.')) name.pop_back();
+    const auto d = name.find_last_of('.');
+    if (d == std::string::npos) return {};
+    return paths::Lower(name.substr(d + 1));
 }
 
-/// Why the Move to... picker cannot offer `destDir` for these items, "" when it can. `assetsRoot` is the project's
-/// Assets folder. Checked: the folder is inside Assets, none of the items is the Assets folder, a folder is not moved into
-/// itself or a folder inside it, and not every item is already there (moving nothing is not a move).
-inline std::string MoveBlockedReason(const std::string& assetsRoot, const std::vector<std::string>& items, const std::string& destDir) {
+/// Extensions (lower case, no dot) of files the system RUNS or installs when asked to "open" them: programs, installers,
+/// shortcuts, screen savers, script files (Windows Script Host, PowerShell, batch, shell, Python), Java, macro-enabled
+/// Office files and the like, for Windows, macOS and Linux. A project's assets come from outside (the marketplace, a zip a
+/// friend sent), so the Project panel never hands one of these to the system's open command; it still shows it in the file
+/// manager and the owner can start it from there on purpose.
+inline const std::vector<std::string>& RunnableExtensions() {
+    static const std::vector<std::string> list = {
+        // Windows programs, installers, shortcuts, settings
+        "exe", "com", "scr", "pif", "bat", "cmd", "msi", "msp", "mst", "cpl", "msc", "gadget", "application", "appref-ms",
+        "lnk", "url", "website", "scf", "inf", "reg", "dll", "sys", "drv", "ocx", "xbap", "diagcab", "diagpkg",
+        "library-ms", "search-ms", "searchconnector-ms", "settingcontent-ms", "chm", "hlp",
+        "appx", "appxbundle", "msix", "msixbundle", "appinstaller", "msu", "rdp", "theme", "themepack", "shb", "shs", "xnk", "ins", "isp", "job",
+        // script hosts: Windows Script Host, HTML applications, PowerShell, Visual Basic, AutoHotkey, AutoIt
+        "vbs", "vbe", "vb", "bas", "js", "jse", "ws", "wsf", "wsh", "wsc", "sct", "hta", "ps1", "ps1xml", "ps2", "ps2xml", "psc1", "psc2", "psd1", "psm1",
+        "msh", "msh1", "msh2", "mshxml", "msh1xml", "msh2xml", "ahk", "au3",
+        // Access files (they carry macros and code)
+        "ade", "adp", "mda", "mdb", "mde", "mdt", "mdw", "mdz",
+        // Java
+        "jar", "jnlp",
+        // Office files that can carry macros
+        "docm", "dotm", "xlsm", "xltm", "xlam", "xll", "pptm", "potm", "ppam", "ppsm", "sldm", "wll",
+        // macOS and Linux programs, installers and scripts
+        "sh", "bash", "zsh", "csh", "tcsh", "ksh", "fish", "command", "tool", "run", "appimage", "desktop", "elf", "out",
+        "app", "pkg", "workflow", "scpt", "scptd", "action", "osx", "terminal",
+        // scripting languages that are installed on many machines and run on a double click
+        "py", "pyw", "pyz", "rb", "pl"};
+    return list;
+}
+
+/// True when the file's type is one of RunnableExtensions (on the last extension: "photo.png.exe" runs, "setup.exe.png" does not).
+inline bool RunsCode(const std::string& path) {
+    const std::string e = ExtensionOf(path);
+    if (e.empty()) return false;
+    const std::vector<std::string>& v = RunnableExtensions();
+    return std::find(v.begin(), v.end(), e) != v.end();
+}
+
+/// True when a file has an execute permission bit set (always false on Windows, where there is none). Used only for a file
+/// with no extension, the usual look of a Linux or macOS program.
+inline bool HasExecutePermission(const std::string& path) {
+#if defined(_WIN32)
+    (void)path;
+    return false;
+#else
     namespace fs = std::filesystem;
-    if (items.empty()) return "Nothing is selected.";
-    const fs::path root = okayproj::Normalized(fs::u8path(assetsRoot));
-    const fs::path dest = okayproj::Normalized(fs::u8path(destDir));
-    if (!okayproj::IsSameOrInside(dest, root)) return "That folder is outside the project's Assets folder.";
-    int alreadyThere = 0;
-    for (const std::string& it : items) {
-        const fs::path p = okayproj::Normalized(fs::u8path(it));
-        if (!okayproj::IsSameOrInside(p, root)) return "That item is outside the project's Assets folder.";
-        if (okayproj::IsSameOrInside(root, p)) return "The Assets folder itself can't be moved.";
-        std::error_code ec;
-        if (okayproj::IsSameOrInside(dest, p) && fs::is_directory(p, ec)) return "A folder can't be moved into itself.";
-        const fs::path parent = okayproj::Normalized(p.parent_path());
-        if (okayproj::IsSameOrInside(dest, parent) && okayproj::IsSameOrInside(parent, dest)) ++alreadyThere;
-    }
-    if (alreadyThere == static_cast<int>(items.size())) return items.size() == 1 ? "It is already in that folder." : "They are already in that folder.";
+    std::error_code ec;
+    const fs::file_status st = fs::status(fs::u8path(path), ec);   // follows a link to the real file
+    if (ec || !fs::is_regular_file(st)) return false;
+    return (st.permissions() & (fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec)) != fs::perms::none;
+#endif
+}
+
+/// "" when the file may be handed to the system's open command, else the reason it may not: its type runs code, or it has no
+/// extension and is marked executable. (Looks at the disk only for a file with no extension.)
+inline std::string LaunchRefusal(const std::string& path) {
+    if (RunsCode(path)) return detail::kRunsCodeReason;
+    if (ExtensionOf(path).empty() && HasExecutePermission(path)) return detail::kRunsCodeReason;
     return {};
+}
+
+// ---- Move to... --------------------------------------------------------------------------------------------
+
+/// What the Move to... picker needs to know about the items, found once (the picker asks about many folders; the items do
+/// not change while it is open). Text work plus one folder check per item: no link resolving, so a long selection is cheap.
+struct MoveSources {
+    std::string root;                      ///< the Assets folder (normalized, case folded on Windows)
+    std::vector<std::string> folders;      ///< the items that are folders (same form)
+    std::string commonParent;              ///< the folder every item is in; "" when they are in different folders
+    bool sameParent = false;
+    std::size_t count = 0;                 ///< items, outermost only ({A, A/x} is one)
+    std::string never;                     ///< a reason no destination can fix ("The Assets folder itself can't be moved.")
+};
+
+inline MoveSources PrepareMove(const std::string& assetsRoot, const std::vector<std::string>& itemsIn) {
+    namespace fs = std::filesystem;
+    MoveSources m;
+    const std::vector<std::string> items = paths::Outermost(itemsIn);
+    m.count = items.size();
+    m.root = paths::Fold(paths::Normalize(assetsRoot));
+    if (items.empty()) { m.never = "Nothing is selected."; return m; }
+    bool first = true;
+    m.sameParent = true;
+    for (const std::string& it : items) {
+        const std::string key = paths::Fold(it);
+        if (!paths::SameOrInside(m.root, key)) { if (m.never.empty()) m.never = "That item is outside the project's Assets folder."; continue; }
+        if (key == m.root) { m.never = "The Assets folder itself can't be moved."; continue; }
+        std::error_code ec;
+        if (fs::is_directory(fs::u8path(it), ec)) m.folders.push_back(key);
+        const auto sl = key.find_last_of('/');
+        const std::string parent = sl == std::string::npos ? std::string() : key.substr(0, sl);
+        if (first) { m.commonParent = parent; first = false; }
+        else if (parent != m.commonParent) m.sameParent = false;
+    }
+    if (!m.sameParent) m.commonParent.clear();
+    return m;
+}
+
+/// Why the picker cannot offer `destDir`, "" when it can: the folder is outside Assets, an item is outside Assets or is the
+/// Assets folder, a folder would go into itself or a folder inside it, or every item is already there.
+inline std::string MoveBlockedReason(const MoveSources& m, const std::string& destDir) {
+    if (m.count == 0) return "Nothing is selected.";
+    const std::string d = paths::Fold(paths::Normalize(destDir));
+    if (!paths::SameOrInside(m.root, d)) return "That folder is outside the project's Assets folder.";
+    if (!m.never.empty()) return m.never;
+    for (const std::string& f : m.folders) if (paths::SameOrInside(f, d)) return "A folder can't be moved into itself.";
+    if (m.sameParent && d == m.commonParent) return m.count == 1 ? "It is already in that folder." : "They are already in that folder.";
+    return {};
+}
+inline std::string MoveBlockedReason(const std::string& assetsRoot, const std::vector<std::string>& items, const std::string& destDir) {
+    return MoveBlockedReason(PrepareMove(assetsRoot, items), destDir);
 }
 
 // ---- Scenes In Build: Set as Start Scene -------------------------------------------------------------
@@ -521,23 +614,16 @@ bool MakeStartScene(std::vector<E>& list, const std::string& scenePath, Same sam
 
 // ---- time text for Properties --------------------------------------------------------------------------
 
-/// "2026-11-15 14:03 UTC" for seconds since the Unix epoch (days counted with the usual civil-calendar arithmetic:
-/// 400-year eras, March-based years). "" for 0 or a negative value.
+/// "2026-11-15 14:03 UTC" for seconds since the Unix epoch. "" for 0, a negative value or one the C library cannot convert.
+/// (The conversion is the C library's gmtime; it is called from the editor's one UI thread.)
 inline std::string FormatUtc(std::int64_t secs) {
     if (secs <= 0) return {};
-    const std::int64_t days = secs / 86400, rem = secs % 86400;
-    const std::int64_t z = days + 719468;                         // days since 0000-03-01
-    const std::int64_t era = (z >= 0 ? z : z - 146096) / 146097;
-    const std::int64_t doe = z - era * 146097;                    // day of era, 0..146096
-    const std::int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    const std::int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);   // day of the March-based year, 0..365
-    const std::int64_t mp = (5 * doy + 2) / 153;                  // month, March = 0
-    const int day = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
-    const int month = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
-    const std::int64_t year = yoe + era * 400 + (month <= 2 ? 1 : 0);
+    const std::time_t t = static_cast<std::time_t>(secs);
+    if (static_cast<std::int64_t>(t) != secs) return {};
+    const std::tm* g = std::gmtime(&t);
+    if (!g) return {};
     char buf[40];
-    std::snprintf(buf, sizeof buf, "%04d-%02d-%02d %02d:%02d UTC", static_cast<int>(year), month, day,
-                  static_cast<int>(rem / 3600), static_cast<int>((rem % 3600) / 60));
+    std::snprintf(buf, sizeof buf, "%04d-%02d-%02d %02d:%02d UTC", g->tm_year + 1900, g->tm_mon + 1, g->tm_mday, g->tm_hour, g->tm_min);
     return buf;
 }
 

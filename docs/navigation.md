@@ -53,7 +53,7 @@ changed since the last one: the same surface settings and bounds and the same co
 and terrain (shape, size, world position and rotation, area), compared exactly on the
 gathered bake input (`NavMeshSurface::BakeIfChanged`). After Stop the saved `.okaynav` counts
 only if it is the file that bake wrote (same size and write time). If that cannot be
-shown, it bakes. Not yet covered: Mesh Collider triangles (a branch adds them to the bake input); the key must hash them when that lands, see the TODO in `BakeKey`. **Clear** drops the mesh and its file.
+shown, it bakes. Mesh Collider triangles (world-space corners, area, two-sided) and the mesh work limits are part of the compared input. **Clear** drops the mesh and its file.
 
 What is baked: every enabled, non-trigger `BoxCollider3D` (an oriented box),
 `MeshCollider3D` (its real triangles; see below), `SphereCollider3D`, `CapsuleCollider3D` /

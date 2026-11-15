@@ -48,15 +48,19 @@ namespace {
 // What a bake was made from, as plain numbers: equal keys mean equal bake input, bit for bit.
 void PutF(std::vector<std::uint32_t>& k, float f) { std::uint32_t u; std::memcpy(&u, &f, 4); k.push_back(u); }
 void PutV(std::vector<std::uint32_t>& k, const Vec3& v) { PutF(k, v.x); PutF(k, v.y); PutF(k, v.z); }
-// TODO(play-start-hitch): NavBakeInput::meshes (Mesh Collider triangles) is NOT hashed here yet. When
-// claude/navmesh-mesh-collider is on main, add the mesh corners, area, twoSided, maxMeshTriangles and
-// maxMeshColumnVisits to the key, or editing a Mesh Collider would be skipped as "unchanged".
 std::vector<std::uint32_t> BakeKey(const NavBakeInput& in, const NavMeshBuildSettings& s) {
     std::vector<std::uint32_t> k;
     PutF(k, s.agentRadius); PutF(k, s.agentHeight); PutF(k, s.maxSlope); PutF(k, s.maxStep); PutF(k, s.cellSize); PutF(k, s.cellHeight);
     k.push_back(in.hasBounds ? 1u : 0u); PutV(k, in.boundsMin); PutV(k, in.boundsMax);
     k.push_back((std::uint32_t)in.boxes.size());
     for (const auto& b : in.boxes) { PutV(k, b.center); PutV(k, b.half); PutF(k, b.rot.x); PutF(k, b.rot.y); PutF(k, b.rot.z); PutF(k, b.rot.w); k.push_back((std::uint32_t)b.area); }
+    k.push_back((std::uint32_t)in.meshes.size());   // Mesh Collider triangles, already in world space
+    for (const auto& m : in.meshes) {
+        k.push_back((std::uint32_t)m.area); k.push_back(m.twoSided ? 1u : 0u); k.push_back((std::uint32_t)m.corners.size());
+        for (const Vec3& c : m.corners) PutV(k, c);
+    }
+    k.push_back((std::uint32_t)in.maxMeshTriangles); k.push_back((std::uint32_t)((std::uint64_t)in.maxMeshTriangles >> 32));
+    k.push_back((std::uint32_t)in.maxMeshColumnVisits); k.push_back((std::uint32_t)((std::uint64_t)in.maxMeshColumnVisits >> 32));
     k.push_back((std::uint32_t)in.spheres.size());
     for (const auto& b : in.spheres) { PutV(k, b.center); PutF(k, b.radius); k.push_back((std::uint32_t)b.area); }
     k.push_back((std::uint32_t)in.capsules.size());

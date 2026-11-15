@@ -199,5 +199,45 @@ int main() {
         other->settings = ns->settings; other->navPath = (root / "never.okaynav").string();
         CHECK(other->BakeIfChanged(s, &skipped) && !skipped);
     }
+
+    // ---- (2b) Mesh Colliders are part of the compared input ----
+    {
+        Scene s("NavMesh"); s.physicsEnabled = false;
+        GameObject* floor = s.CreateGameObject("Floor");
+        floor->transform->localPosition = {0, -0.5f, 0}; floor->transform->localScale = {12, 1, 12};
+        floor->AddComponent<BoxCollider3D>()->size = {1, 1, 1};
+        GameObject* pillar = s.CreateGameObject("Pillar");
+        pillar->transform->localPosition = {0, 1.0f, 0};
+        pillar->transform->localScale = {1, 2, 3};
+        pillar->AddComponent<MeshRenderer>()->mesh = Mesh::Cube(1.0f);
+        pillar->AddComponent<MeshCollider3D>();
+        auto* ns = s.CreateGameObject("Nav")->AddComponent<NavMeshSurface>();
+        ns->settings.cellSize = 0.5f;
+        NavBakeInput in; ns->GatherInput(s, in);
+        CHECK(!in.meshes.empty());   // the pillar really arrives as triangles, so the checks below test the mesh part of the key
+
+        bool skipped = true;
+        CHECK(ns->BakeIfChanged(s, &skipped) && !skipped);
+        CHECK(ns->BakeIfChanged(s, &skipped) && skipped);         // unchanged scene with a Mesh Collider: skip
+        CHECK(ns->BakeIfChanged(s, &skipped) && skipped);
+
+        pillar->transform->localPosition = {1, 1.0f, 0};          // moved
+        CHECK(ns->BakeIfChanged(s, &skipped) && !skipped);
+        CHECK(ns->BakeIfChanged(s, &skipped) && skipped);
+        pillar->transform->localScale = {1, 2, 4};                // scaled
+        CHECK(ns->BakeIfChanged(s, &skipped) && !skipped);
+        CHECK(ns->BakeIfChanged(s, &skipped) && skipped);
+        pillar->GetComponent<MeshRenderer>()->mesh = Mesh::Cube(2.0f);   // swapped for another mesh
+        CHECK(ns->BakeIfChanged(s, &skipped) && !skipped);
+        CHECK(ns->BakeIfChanged(s, &skipped) && skipped);
+        pillar->AddComponent<Rigidbody3D>();                      // dynamic: left out of the bake until includeDynamic
+        CHECK(ns->BakeIfChanged(s, &skipped) && !skipped);
+        CHECK(ns->BakeIfChanged(s, &skipped) && skipped);
+        ns->includeDynamic = true;                                // ... and toggling it brings the mesh back
+        CHECK(ns->BakeIfChanged(s, &skipped) && !skipped);
+        CHECK(ns->BakeIfChanged(s, &skipped) && skipped);
+        pillar->GetComponent<MeshCollider3D>()->enabled = false;  // switched off
+        CHECK(ns->BakeIfChanged(s, &skipped) && !skipped);
+    }
     TEST_MAIN_RESULT();
 }

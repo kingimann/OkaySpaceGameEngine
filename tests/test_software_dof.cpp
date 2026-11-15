@@ -32,7 +32,7 @@ Raster Frame(float nearDist, float farDist) {
     return r;
 }
 // Mean and spread of the red channel over a column range (rows 8..23, away from the top and bottom edges).
-void Stats(const Raster& r, int x0, int x1, float& mean, float& spread) {
+void ChannelStats(const Raster& r, int x0, int x1, float& mean, float& spread) {
     double s = 0, s2 = 0; int n = 0;
     for (int y = 8; y < 24; ++y)
         for (int x = x0; x < x1; ++x) {
@@ -57,8 +57,8 @@ int main() {
                 if (r.color[(std::size_t)y * W + x] != before.color[(std::size_t)y * W + x]) nearSame = false;
         CHECK(nearSame);                                                  // coc 0: untouched, bit for bit
         float m0, s0, m1, s1;
-        Stats(before, W / 2 + 4, W - 4, m0, s0);
-        Stats(r, W / 2 + 4, W - 4, m1, s1);
+        ChannelStats(before, W / 2 + 4, W - 4, m0, s0);
+        ChannelStats(r, W / 2 + 4, W - 4, m1, s1);
         std::printf("  far half: spread %.1f -> %.1f, mean %.1f -> %.1f\n", s0, s1, m0, m1);
         CHECK(s0 > 100.0f);
         CHECK(s1 < s0 * 0.25f);                                           // blurred
@@ -69,8 +69,8 @@ int main() {
         const Raster before = r;
         ApplyDof(r, 40.0f, 4.0f);
         float m0, s0, m1, s1;
-        Stats(r, 4, W / 2 - 4, m1, s1);
-        Stats(before, 4, W / 2 - 4, m0, s0);
+        ChannelStats(r, 4, W / 2 - 4, m1, s1);
+        ChannelStats(before, 4, W / 2 - 4, m0, s0);
         CHECK(s1 < s0 * 0.25f);
         bool farSame = true;
         for (int y = 0; y < H; ++y)

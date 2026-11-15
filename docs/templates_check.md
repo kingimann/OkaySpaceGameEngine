@@ -153,7 +153,7 @@ suite stays green. A listed failure that stops happening fails the test, so the 
   call.
 * **Duplicate names in the Problems panel.** Brand new First Person, Third Person, Third Person Shooter, Top-Down Shooter, Point
   and Click, Vehicle (3D), Vehicle (get in and drive), Vehicle (2D), Coin Collector and Humanoid projects show one or more
-  "N objects are named 'Crate' at the scene root" warnings (Crate, Target, Cover, Block, Wheel, Cone, Coin, Step). They are
+  "N objects are named 'Crate' at the scene root" warnings (Crate, Target, Target Dummy, Cover, Block, Lane Dash, Cone, Coin, Step). They are
   warnings, not errors, and the scripts and tests look the objects up by those names, so they were not renamed.
 
 ## What the first run found, and what was done (2026-11-15)

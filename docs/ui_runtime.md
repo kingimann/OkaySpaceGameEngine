@@ -204,6 +204,18 @@ Character (`okay/Components/UIOwnerData.hpp`).
 With no owner at all, a key falls back to the global variable of the same name without `owner.` (so a nameplate on its
 own still follows the player's `healthFrac`). An owner that lacks the data gives nothing: a text shows its `|default`, a
 bar keeps its fill. It never shows the player's value on another character. Test: `ui_nameplate_bound`.
+
+What it looks like: two characters, each with **Nameplate (in the world)** as a child, in Play. "Goblin Scout" has
+Stats level 4 and health 30 of 100; "Orc Chief" has level 9 and 90 of 120. Each plate shows its own character's name,
+level and health; none of the text was typed into the plates.
+
+![Two characters in Play, each with its own nameplate: Goblin Scout Lv 4 with a short bar, Orc Chief Lv 9 with a long bar](images/ui_nameplate/two_characters_play.png)
+
+![Close-up of the two plates](images/ui_nameplate/two_plates_closeup.png)
+
+*Linux build of this change, headless (Xvfb), software rendering. The scene was written by hand for the picture (two
+objects with Stats, a cube body and a nameplate child each, with the same objects and bindings the menu item makes); the Game camera was
+placed by the editor's screenshot hook. Not yet tried on Windows.*
 `BuildGallery(scene, preset, true)` (File > Examples > UI Gallery (phone)) lays the same widgets in one scrolling
 column on a 440 x 960 canvas inside a Safe Area, for portrait phones.
 

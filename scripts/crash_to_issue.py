@@ -484,12 +484,13 @@ class Supabase:
 
 
 class GitHub:
-    def __init__(self, repo, token):
+    def __init__(self, repo, token, api="https://api.github.com"):
         self.repo = repo
+        self.api = api.rstrip("/")   # GitHub Actions sets GITHUB_API_URL (https://api.github.com, or an enterprise server's address)
         self.h = {"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "okayspace-crash-issues"}
 
     def _api(self, method, path, data=None):
-        return _http(method, "https://api.github.com/repos/%s%s" % (self.repo, path), self.h, data)
+        return _http(method, "%s/repos/%s%s" % (self.api, self.repo, path), self.h, data)
 
     def ensure_label(self):
         try:
@@ -509,7 +510,7 @@ class GitHub:
     def search_signature(self, sig):
         q = urllib.parse.quote("repo:%s is:issue %s in:body" % (self.repo, sig))
         try:
-            _, res, _ = _http("GET", "https://api.github.com/search/issues?q=%s&per_page=5" % q, self.h)
+            _, res, _ = _http("GET", "%s/search/issues?q=%s&per_page=5" % (self.api, q), self.h)
         except RuntimeError:
             return None
         found = existing_from_issues(res.get("items", []) if isinstance(res, dict) else [])
@@ -583,7 +584,11 @@ def main(argv=None, env=None):
     if not token or not re.match(r"^[\w.-]+/[\w.-]+$", repo):
         print("::error::GITHUB_TOKEN and GITHUB_REPOSITORY (owner/name) are needed.")
         return 1
-    sb, gh = Supabase(url, key), GitHub(repo, token)
+    api = env.get("GITHUB_API_URL") or "https://api.github.com"
+    if not args.allow_any_host and not api.startswith("https://"):
+        print("::error::GITHUB_API_URL must be an https address.")
+        return 1
+    sb, gh = Supabase(url, key), GitHub(repo, token, api)
     try:
         rows = sb.fetch_rows()
     except RuntimeError as e:

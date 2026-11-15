@@ -1,6 +1,19 @@
 OkaySpace Game Engine — Changelog
 
 v2.875.0
+  Gameplay
+  - Vehicles: you now sit in the car. Walk up, press E, and your character
+    sits in the driver seat; the camera follows the car and comes back to you
+    when you get out (E again). The wheels roll and the front wheels steer.
+    Moving a seat to another car, unticking "driver" or removing only the
+    vehicle part no longer leaves the old car driving by itself. D now turns
+    right and A turns left (they were mirrored, so an old scene that relied
+    on that steers the other way now). The chase camera (followCamera) looks
+    at the car instead of away from it. To try it: open
+    examples\vehicle\vehicle_test.okayscene and press Play, or start a project
+    from the "Vehicle (get in and drive)" template. Not tried in a real
+    window yet.
+
   Launcher
   - Clicking a template card on the Templates page no longer creates a
     project on the spot. It opens the New Project wizard on that template,
@@ -19,13 +32,23 @@ v2.875.0
     in Settings > "Check for updates when the launcher starts", or with the
     environment variable OKAY_UPDATE_ON_LAUNCH=0.
 
+  Editor
+  - Console: a new Collapse button in the toolbar merges identical messages
+    anywhere in the log into one line with a count.
+  - The UI Notify screen (GameObject > UI > Prebuilt Screens > UI Notify) no
+    longer freezes the editor when you click its buttons more than four times
+    in a row. The fifth notification used to hang it. Now at most four cards
+    show, the oldest goes away, and each card disappears by itself after about
+    six seconds. Checked with a headless test and a headless repro of the
+    hang; not tried in a real window yet.
+
   Download
   - The examples folder is now part of the Windows download. It has the
-    vehicle test scene, three tiny sample model files for our older own
-    readers (examples/own_readers: cube.off, cube.3ds, skinned_strip.dae) and
-    one sound sample for our own WAV reader (examples/own_wav). There is also
-    a "Vehicle (get in and drive)" template and a plain how-to-try-it guide
-    (docs/try_it.md).
+    vehicle test scene, five tiny sample model files for our older own
+    readers (examples/own_readers: cube.off, cube.3ds, skinned_strip.dae,
+    cube_gzip.blend, cube_compressed_arrays.fbx) and one sound sample for our
+    own WAV reader (examples/own_wav). There is also a "Vehicle (get in and
+    drive)" template and a plain how-to-try-it guide (docs/try_it.md).
 
   Our own code, off by default (nothing changes unless you switch it on)
   - Ten more of our own model readers: Terragen, MDC, HMP, CSM, Q3D, RAW,
@@ -38,6 +61,17 @@ v2.875.0
   - Our own WAV reader can load the launcher's sound clips and the engine's
     whole-file sounds. Switch: OKAY_OWN_WAV=1. Sample: examples/own_wav
     (open own_wav_test.okayscene and press Play).
+
+  Under the hood
+  - Importing an OBJ model with absurdly large face numbers can no longer
+    overflow while it is read.
+  - One SHA-256 (with HMAC and PBKDF2) instead of three copies, and one
+    DEFLATE (zlib, gzip) decoder instead of three. Nothing should look
+    different: sign-in, the update check, anti-cheat servers, PNG textures and
+    .blend, .x, 3MF, AMF and FBX files should work exactly as before. The new
+    code was compared byte for byte with the old copies. Tell us if any of
+    those break. The hashing code was read by an AI only, not by an outside
+    reviewer. libsodium is still what protects the network.
 
   Team tooling
   - New checks that stop two people building the same thing and catch common

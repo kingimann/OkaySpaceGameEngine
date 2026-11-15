@@ -1,5 +1,7 @@
 // Decisions of the start-up update screen (shared/StartupUpdate.hpp). Prints a line per failure and exits 1 if any failed.
 #include "StartupUpdate.hpp"
+#include "LauncherDemo.hpp"
+#include <string>
 #include <cstdio>
 using namespace okay::startupupdate;
 
@@ -38,6 +40,24 @@ int main() {
     CHECK(v.visible && v.locked && !v.canSkip && v.text == "Restarting");
     s.relaunchNeeded = false; CHECK(!EvaluateScreen(s).visible);
     for (Phase p : {Phase::Idle, Phase::UpToDate, Phase::Failed}) { s = {}; s.phase = p; CHECK(!EvaluateScreen(s).visible); }
+
+    // The restart must never leave a full-screen locked panel (finding: antivirus / spawn failure / editor open).
+    s = {}; s.phase = Phase::Updated; s.relaunchNeeded = true; s.restartFailed = true; v = EvaluateScreen(s);
+    CHECK(!v.visible && !v.locked && v.restartGaveUp);
+    s = {}; s.phase = Phase::Updated; s.relaunchNeeded = true; s.sinceUpdatedMs = kRestartGiveUpMs - 1; CHECK(EvaluateScreen(s).visible);
+    s.sinceUpdatedMs = kRestartGiveUpMs; v = EvaluateScreen(s); CHECK(!v.visible && !v.locked && v.restartGaveUp);
+    s = {}; s.phase = Phase::Updated; s.relaunchNeeded = false; s.restartFailed = true; CHECK(!EvaluateScreen(s).restartGaveUp);
+
+    // The failure toast says the real reason, not always "offline".
+    CHECK(FailureToast("Couldn't reach the update server (offline?).") == "Could not check for updates (offline)");
+    CHECK(FailureToast("") == "Could not check for updates (offline)");
+    CHECK(FailureToast("The update to v2.9.0 failed 2 times, so it is not tried again automatically.") == "The update to v2.9.0 failed 2 times, so it is not tried again automatically.");
+
+    // Demo modes: all seven variables, nothing else.
+    for (const char* n : okay::kLauncherDemoEnv) { std::string want = n; CHECK(okay::IsLauncherDemoMode([&](const char* x) { return want == x; })); }
+    CHECK(!okay::IsLauncherDemoMode([](const char*) { return false; }));
+    CHECK(!okay::IsLauncherDemoMode([](const char* x) { return std::string(x) == "OKAY_UPDATE_ON_LAUNCH"; }));
+    { int n = 0; for (const char* e : okay::kLauncherDemoEnv) { (void)e; ++n; } CHECK(n == 7); }
 
     std::printf(g_fail ? "startup_update: %d FAILED\n" : "startup_update: all passed\n", g_fail);
     return g_fail ? 1 : 0;

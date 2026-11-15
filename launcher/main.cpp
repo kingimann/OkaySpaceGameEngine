@@ -12,6 +12,7 @@
 #include "AppIcon.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
+#include "LauncherDemo.hpp"   // okay::IsLauncherDemoMode(): the one list of demo / screenshot env variables
 #include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/updater.md)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
@@ -179,9 +180,21 @@ SDL_Thread* g_upThread = nullptr;
 // The editor has to close (with its project saved) before the launcher exits or
 // installs an update. A pending action waits for it: 1 = exit, 2 = update.
 static bool EditorRunning();
+static bool AnyProgramRunning();   // the editor or a game started from the launcher is running
 static int  g_afterEditor = 0;
 static long long g_suLastCheckEpoch = 0;   // when the last start-up check began (unix seconds, persisted: stops a restart loop)
 static bool g_suLocked = false;   // the start-up screen is installing an update: no editor or game may start (set each frame by StartupUpdateFrame)
+static SDL_atomic_t g_upCommitting;       // the worker is swapping the program files in right now: nothing may start
+static SDL_atomic_t g_programsRunning;    // the editor or a game is running (main thread writes each frame, the update worker reads before it swaps files)
+static SDL_atomic_t g_upReachedInstall;   // the worker got as far as downloading (set by the worker, so a fast Downloading -> Failed is never missed)
+static bool g_suRestartFailed = false;    // the restart helper could not start after the update
+void Toast(const std::string& m, int kind);
+// True while an update is being installed: starting the editor or a game now would put a program in the way of the file swap.
+static bool UpdateBlocksLaunch() {
+    if (!g_suLocked && !SDL_AtomicGet(&g_upCommitting)) return false;
+    Toast("An update is installing. Please wait a moment.", 1);
+    return true;
+}
 static bool g_afterEditorShowDialog = true;   // the update's showDialog, kept for later
 
 // Rich update progress, so the updater can show a real dialog (from/to version,
@@ -1068,6 +1081,7 @@ int RunUpdateCheck(void*) {
             return 0;
         }
     }
+    SDL_AtomicSet(&g_upReachedInstall, 1);
     SetState(Up_Downloading);
     bool ok = true;
     bool launcherOk = false;
@@ -1139,16 +1153,24 @@ int RunUpdateCheck(void*) {
             items.push_back({"OkaySpace.exe", selfExe, true});
         } else ok = false;
     }
+    // The editor or a game was started while this was downloading (the person pressed Skip, or the check ran long): replacing programs that
+    // are running would fail half way. Stop with a plain reason; nothing has been replaced yet.
+    if (ok && SDL_AtomicGet(&g_programsRunning)) {
+        UpFail("The editor or a game is running, and an update replaces those programs. Close them, then use Retry. Nothing was installed and your current version is unchanged.");
+        ok = false;
+    }
     if (!ok) {
         for (const Item& it : items) okayupdater::Discard(it.dest);   // nothing was replaced: the install is as it was
     } else {
         SetUpMsg("Installing...");
+        SDL_AtomicSet(&g_upCommitting, 1);
         // The launcher goes first (the swap most likely to be refused: a security scanner holding the file) and the others only if it worked;
         // if any swap fails everything already swapped is put back, so the install stays whole (okayupdater::CommitAll).
         std::vector<okayupdater::CommitItem> order;
         for (const Item& it : items) if (it.inUse) order.push_back({it.name, it.dest, true});
         for (const Item& it : items) if (!it.inUse) order.push_back({it.name, it.dest, false});
         const okayupdater::Outcome co = okayupdater::CommitAll(order, 100000);
+        SDL_AtomicSet(&g_upCommitting, 0);
         if (!co.ok) {
             UpFail(co.reason + " The launcher's own file could not be replaced while it is running (security software often locks it); your current version is unchanged.");
             ok = false;
@@ -1194,6 +1216,7 @@ void StartUpdateCheck(bool showDialog = true) {
     // Updating replaces OkayEngine.exe: the editor must be closed (and saved) first.
     if (EditorRunning()) { g_afterEditor = 2; g_afterEditorShowDialog = showDialog; return; }
     g_upAutomatic = !showDialog;
+    SDL_AtomicSet(&g_upReachedInstall, 0);
     if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
@@ -1204,19 +1227,28 @@ void StartUpdateCheck(bool showDialog = true) {
 // At launch: when the rules in shared/StartupUpdate.hpp say so, run the EXISTING update check without a dialog and show a small centred panel
 // ("Checking for updates", then "Downloading 2 of 3", "Installing", "Restarting") instead of the launcher. The install and its checksum /
 // signature checks are RunUpdateCheck's; this only starts it and draws its progress. It runs before any sign-in screen and needs no account.
-static bool g_suActive = false, g_suSkipped = false, g_suTimedOutShown = false, g_suSawInstall = false, g_suFailHandled = false;
-static Uint32 g_suStartTicks = 0;
+static bool g_suActive = false, g_suSkipped = false, g_suTimedOutShown = false, g_suFailHandled = false, g_suGaveUpRestart = false;
+static Uint32 g_suStartTicks = 0, g_suUpdatedTicks = 0;
 static bool g_suToastedFail = false;   // the offline notice was already given: the generic "Update check failed" toast stays quiet
 
 extern bool g_updateOnLaunch;   // (defined with the other preferences below)
 void SavePrefs();
-void Toast(const std::string& m, int kind);
+
+// Records when this start-up check began by editing just the `last_startup_check` line of launcher.cfg.
+static void SaveLastStartupCheck() {
+    const fs::path file = fs::path(g_exeDir) / "launcher.cfg";
+    std::vector<std::string> lines; std::string line;
+    { std::ifstream f(file); while (std::getline(f, line)) { if (line.rfind("last_startup_check=", 0) != 0) lines.push_back(line); } }
+    lines.push_back("last_startup_check=" + std::to_string(g_suLastCheckEpoch));
+    std::ofstream f(file, std::ios::trunc);
+    for (const std::string& l : lines) f << l << "\n";
+}
 
 static void StartupUpdateBegin() {
     okay::startupupdate::StartInputs in;
     in.settingOn = g_updateOnLaunch;
     if (const char* e = std::getenv("OKAY_UPDATE_ON_LAUNCH")) in.envValue = e;
-    in.demoMode = std::getenv("OKAY_UI_DEMO_USER") || std::getenv("OKAY_UI_DEMO_TAB") || std::getenv("OKAY_UI_DEMO_UPDATE") || std::getenv("OKAY_CHAT_DEMO");
+    in.demoMode = okay::IsLauncherDemoMode();
     in.editorRunning = EditorRunning();   // updating replaces OkayEngine.exe: never while the editor runs
     in.verdictShown = g_upVerdictShown;
     const long long now = (long long)std::time(nullptr);
@@ -1225,29 +1257,36 @@ static void StartupUpdateBegin() {
     StartUpdateCheck(false);
     SDL_AtomicCAS(&g_upState, (int)Up_UpToDate, (int)Up_Checking);   // so the first frame already shows "Checking" (the worker sets it too)
     g_suActive = true; g_suStartTicks = okay::platform::TicksMs32();
-    g_suLastCheckEpoch = now; SavePrefs();
+    g_suLastCheckEpoch = now; SaveLastStartupCheck();   // (only that one line of launcher.cfg: SavePrefs this early could write back a default)
 }
 
 // Once per frame, last thing before the toasts: decides what the person sees and draws the panel. Sets g_suLocked while an install runs.
 static void StartupUpdateFrame() {
     using namespace okay::startupupdate;
     g_suLocked = false;
+    SDL_AtomicSet(&g_programsRunning, AnyProgramRunning() ? 1 : 0);
     if (!g_suActive) return;
     const UpState us = GetState();
     ScreenInputs si;
     si.phase = us == Up_Checking ? Phase::Checking : us == Up_Downloading ? Phase::Downloading : us == Up_Updated ? Phase::Updated
              : us == Up_Failed ? Phase::Failed : us == Up_UpToDate ? Phase::UpToDate : Phase::Idle;
     si.elapsedMs = (long long)(Uint32)(okay::platform::TicksMs32() - g_suStartTicks);
-    si.skipped = g_suSkipped; si.timedOutShown = g_suTimedOutShown; si.relaunchNeeded = g_upRelaunchNeeded;
+    si.skipped = g_suSkipped; si.timedOutShown = g_suTimedOutShown; si.relaunchNeeded = g_upRelaunchNeeded; si.restartFailed = g_suRestartFailed || (us == Up_Updated && EditorRunning());
+    if (us == Up_Updated && g_suUpdatedTicks == 0) g_suUpdatedTicks = okay::platform::TicksMs32();
+    si.sinceUpdatedMs = (us == Up_Updated && g_suUpdatedTicks) ? (long long)(Uint32)(okay::platform::TicksMs32() - g_suUpdatedTicks) : 0;
     si.step = SDL_AtomicGet(&g_upStepIdx); si.steps = SDL_AtomicGet(&g_upStepTotal);
     si.installing = GetUpMsg().rfind("Installing", 0) == 0;
     const ScreenView v = EvaluateScreen(si);
-    if (us == Up_Downloading) g_suSawInstall = true;
-    if (v.giveUpNow) { g_suTimedOutShown = true; g_suToastedFail = true; Toast("Could not check for updates (offline)", 2); }
+    if (v.restartGaveUp && !g_suGaveUpRestart) {   // never a locked screen with no way out: say what to do, open the dialog that has "Restart now"
+        g_suGaveUpRestart = true; g_suActive = false;
+        Toast(okay::startupupdate::kRestartGaveUpText, 2);
+        g_upModalOpen = true;
+    }
+    if (v.giveUpNow) { g_suTimedOutShown = true; g_suToastedFail = true; Toast("Could not check for updates (offline)", 2); }   // (a slow check: still running in the background)
     if (us == Up_Failed && !g_suFailHandled) {   // plain reason, then on into the launcher: the update dialog has Retry
         g_suFailHandled = true;
-        if (g_suSawInstall) g_upModalOpen = true;   // an install that went wrong: the existing dialog says why and offers Retry
-        else if (!g_suTimedOutShown) { g_suToastedFail = true; Toast("Could not check for updates (offline)", 2); }
+        if (SDL_AtomicGet(&g_upReachedInstall)) g_upModalOpen = true;   // an install that went wrong: the existing dialog says why and offers Retry
+        else if (!g_suTimedOutShown) { g_suToastedFail = true; Toast(okay::startupupdate::FailureToast(GetUpMsg()), 2); }   // the updater's own words (paused after failures, LTS ...)
     }
     if (us == Up_UpToDate || us == Up_Failed || (us == Up_Updated && !g_upRelaunchNeeded)) g_suActive = false;   // nothing more to show
     g_suLocked = v.locked;
@@ -1372,7 +1411,7 @@ static std::string PlaytimeLabel(std::string s) {   // safe for the '|' file and
 }
 // Start `exe args` and track how long it runs. False if it couldn't start.
 static bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title) {
-    if (g_suLocked) return false;   // an update is being installed (start-up screen)
+    if (UpdateBlocksLaunch()) return false;   // an update is being installed
     PlayProc pp; pp.key = PlaytimeLabel(key); pp.title = PlaytimeLabel(title); pp.lastCredit = okay::platform::TicksMs32();
 #if defined(_WIN32)
     std::string cmd = "\"" + exe + "\"" + (args.empty() ? std::string() : " " + args);
@@ -1415,6 +1454,7 @@ static void PumpPlaytime() {
         } else ++i;
     }
 }
+static bool AnyProgramRunning() { return !g_playProcs.empty(); }   // (finished ones are dropped by PumpPlaytime)
 static bool EditorRunning() {
     for (const auto& pp : g_playProcs) {
         if (pp.key != "editor") continue;
@@ -1516,7 +1556,7 @@ static bool AntiCheatAllowsSceneLaunch(const std::string& scene) {
 // game (the player with a scene) is tracked for playtime.
 void Launch(const std::string& exe, const std::string& arg = "") {
     if (exe.empty()) return;
-    if (g_suLocked && exe != g_selfPath) return;   // an update is being installed (start-up screen)
+    if (exe != g_selfPath && UpdateBlocksLaunch()) return;   // an update is being installed
     if (!arg.empty() && exe != g_selfPath && !AntiCheatAllowsSceneLaunch(arg)) return;
     if (!arg.empty() && exe != g_selfPath) {
         const std::string title = GameTitleFromPath(arg);
@@ -1589,7 +1629,7 @@ std::string g_editorStartedVersion;
 void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
                   const std::string& newProjectDir = "", const std::string& openScene = "",
                   const std::string& projectVersion = "", int gpu = -1) {
-    if (exe.empty() || g_suLocked) return;   // (g_suLocked: an update is being installed)
+    if (exe.empty() || UpdateBlocksLaunch()) return;   // (an update is being installed)
     std::string args = "--launcher " + std::to_string(CurrentPid());
     // Every value is quoted for the platform's command line (spaces, quotes and `$` in a name or path stay one argument).
     if (!tmpl.empty()) args += " --template " + okayversions::QuoteArg(tmpl);
@@ -18304,8 +18344,9 @@ int main(int argc, char** argv) {
             if (relaunchAt == 0) relaunchAt = okay::platform::TicksMs32() + 1600;
             else if (okay::platform::TicksMs32() >= relaunchAt) {
                 relaunchAt = 0xFFFFFFFFu;   // one attempt; a failure must not spawn a helper every frame
-                if (EditorRunning()) g_afterEditor = 3;
+                if (EditorRunning()) { g_afterEditor = 3; g_suRestartFailed = true; }
                 else if (BeginUpdatedRestart()) running = false;
+                else g_suRestartFailed = true;   // (it already said why) the start-up screen steps aside instead of staying up
             }
         }
 

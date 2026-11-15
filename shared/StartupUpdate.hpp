@@ -7,6 +7,7 @@
 namespace okay::startupupdate {
 
 inline constexpr long long kCheckTimeoutMs = 8000;      // the check may take this long before we go on (slow or no network)
+inline constexpr long long kRestartGiveUpMs = 12 * 1000;  // "Restarting" must end by itself: after this the person is told to reopen the launcher
 inline constexpr long long kRecentCheckMs = 60 * 1000;  // a launcher started again within this long of a start-up check does not repeat it (no restart loops)
 
 enum class Skip { No, SettingOff, EnvOff, DemoMode, EditorRunning, VerdictShown, RecentCheck };
@@ -43,6 +44,8 @@ struct ScreenInputs {
     bool relaunchNeeded = false;      // the launcher itself was replaced: restart to finish
     int step = 0, steps = 0;          // download step (0-based) of how many
     bool installing = false;          // the downloads are done and the files are being swapped in
+    bool restartFailed = false;       // the restart helper could not start (or the editor is open and has to be closed first)
+    long long sinceUpdatedMs = 0;     // how long the state has been "Updated"
 };
 
 struct ScreenView {
@@ -50,6 +53,7 @@ struct ScreenView {
     bool canSkip = false;             // never while an update is being installed
     bool locked = false;              // an install is running: the editor and games must not start
     bool giveUpNow = false;           // the check took too long: continue and tell the person (once)
+    bool restartGaveUp = false;       // the restart did not happen: step aside and say "Update installed; close and reopen OkaySpace"
     float progress = -1.0f;           // 0..1, or -1 for "unknown" (a moving bar)
     std::string text;                 // plain status
 };
@@ -73,7 +77,9 @@ inline ScreenView EvaluateScreen(const ScreenInputs& in) {
         }
         break;
     case Phase::Updated:
-        if (in.relaunchNeeded) { v.visible = true; v.locked = true; v.text = "Restarting"; v.progress = 1.0f; }
+        if (!in.relaunchNeeded) break;
+        if (in.restartFailed || in.sinceUpdatedMs >= kRestartGiveUpMs) { v.restartGaveUp = true; break; }   // never a screen with no way out
+        v.visible = true; v.locked = true; v.text = "Restarting"; v.progress = 1.0f;
         break;   // an update that needs no restart: carry on into the launcher
     case Phase::Failed:   // the existing Failed state (reason + Retry) is shown by the update panel; the screen steps aside
     case Phase::UpToDate:
@@ -82,5 +88,14 @@ inline ScreenView EvaluateScreen(const ScreenInputs& in) {
     }
     return v;
 }
+
+// What to tell the person when the update check failed before anything was installed: the updater's own words, except for the plain
+// "no network" case which gets the short offline line. (An install that failed is explained by the update dialog instead.)
+inline std::string FailureToast(const std::string& upMsg) {
+    if (upMsg.empty() || upMsg.rfind("Couldn't reach", 0) == 0) return "Could not check for updates (offline)";
+    return upMsg;
+}
+
+inline constexpr const char* kRestartGaveUpText = "Update installed. Close and reopen OkaySpace to finish.";
 
 } // namespace okay::startupupdate

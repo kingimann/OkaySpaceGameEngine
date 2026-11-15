@@ -151,23 +151,31 @@ read from the environment only and never printed, the publish script's guards). 
 ## The start-up update screen
 
 When the launcher opens it checks for updates, like Steam, and installs one before you start. It is on by default for new installs
-(Settings > Behavior > "Check for updates when the launcher starts"). Someone who saved `update_on_launch=0` keeps that choice; only a
-missing key means on. For developers, CI and screenshots, `OKAY_UPDATE_ON_LAUNCH=0` switches it off, and the demo modes
-(`OKAY_UI_DEMO_USER`, `OKAY_UI_DEMO_TAB`, `OKAY_UI_DEMO_UPDATE`, `OKAY_CHAT_DEMO`) skip it so they work without a network.
+(Settings > Behavior > "Check for updates when the launcher starts"). "On by default" means new installs and "Reset to defaults" only:
+the launcher has always written `update_on_launch=0/1` into `launcher.cfg`, so most existing installs already hold a saved 0 and keep it.
+Only a missing key means on. For developers, CI and screenshots, `OKAY_UPDATE_ON_LAUNCH=0` switches it off, and the demo modes
+(`okay::IsLauncherDemoMode()` in `shared/LauncherDemo.hpp`: `OKAY_UI_DEMO_USER`, `OKAY_UI_DEMO_TAB`, `OKAY_UI_DEMO_UPDATE`, `OKAY_CHAT_DEMO`,
+`OKAY_MP_DEMO`, `OKAY_VOICE_DEMO`, `OKAY_VOICE_DEMO_SERVER`) skip it so they work without a network.
 
 - A small centred panel replaces the launcher: "Checking for updates", then "Downloading 2 of 3", "Installing", "Restarting", with a
   progress bar. **Skip** shows only while it is just checking, never while an update is being installed.
 - No update: the panel goes away by itself. If the check takes longer than 8 seconds (slow or no network) the launcher carries on and
-  a toast says "Could not check for updates (offline)". A check that fails at once says the same.
+  a toast says "Could not check for updates (offline)". A check that fails at once says why in the updater's own words (offline, "paused
+  after repeated failures", no long-term-support version).
 - An update: it is downloaded, verified and installed by the same updater as the button (same checksum and signature checks, same
-  restart helper). While it runs the panel stays up (even past 8 seconds) and `OkayEngine`, games and the editor cannot be started.
+  restart helper). While it runs the panel stays up (even past 8 seconds) and the editor and games cannot be started (a toast says why).
+  If the person pressed Skip or the check ran long and an editor or game was started meanwhile, the update stops before replacing any file
+  ("close them, then Retry") instead of swapping programs that are running.
+- The restart cannot hang the screen: if the restart helper cannot start, the editor is open, or 12 seconds pass, the panel goes away,
+  a toast says "Update installed. Close and reopen OkaySpace to finish." and the update dialog opens with "Restart now".
 - An install that fails opens the usual update dialog with the plain reason and Retry; the person can close it and carry on.
 - Never while the editor is running (updating replaces `OkayEngine.exe`): the check is skipped. A launcher started again within a
   minute of a start-up check does not repeat it (`last_startup_check` in `launcher.cfg`), so a restart can never loop.
 - It runs before any sign-in screen and needs no account.
 
 The rules are in `shared/StartupUpdate.hpp` (tests: `tests/test_startup_update.cpp`); the drawing and the start are `StartupUpdateBegin` /
-`StartupUpdateFrame` in `launcher/main.cpp`. Not run: a real download or restart, Windows, or how it feels on a slow network.
+`StartupUpdateFrame` in `launcher/main.cpp`. Not run: a real download or restart, Windows, or how it feels on a slow network. The OkayUI backend draw order (the panel is drawn with
+Dear ImGui after the OkayUI frame) is unverified.
 
 ## Manual check
 

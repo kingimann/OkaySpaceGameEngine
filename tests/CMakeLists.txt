@@ -3540,6 +3540,9 @@ add_test(NAME own_reader_cmake_defaults
 add_executable(test_item_durability test_item_durability.cpp)
 target_link_libraries(test_item_durability PRIVATE okay::engine)
 add_test(NAME item_durability COMMAND test_item_durability)
+add_executable(test_net_item_durability test_net_item_durability.cpp)
+target_link_libraries(test_net_item_durability PRIVATE okay::engine)
+add_test(NAME net_item_durability COMMAND test_net_item_durability)
 
 add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)

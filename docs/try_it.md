@@ -50,6 +50,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Item durability: wear, break, repair | New Project, the Items editor and a short script (steps below) | Branch `claude2/item-durability`, not merged or released yet; editor steps unverified |
 
 ---
 
@@ -413,6 +414,45 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
+
+## Item durability (branch `claude2/item-durability`, not merged or released yet)
+
+**What it is.** An item whose definition has a custom field `maxDurability` wears down, breaks at 0 (a broken item
+cannot be used, a broken worn piece gives no armor) and can be repaired. See [inventory.md](inventory.md). There is no
+example scene for it: no example under `examples` has an item file, and the editor reads items only from a project's
+own `items.okayitems`, so the steps use a new project.
+
+1. Launcher > **New Project**, any 3D template (for example Third Person). The editor opens the project.
+2. **View > Editors & Tools > Items, Loot & Recipes**, Items tab. Add an item with id `test_pick`. Open **Custom
+   Fields**, add one, and set the key to `maxDurability` and the value to `3`. Save.
+3. Select the player object. **Add Component > Inventory** (skip it if the player already has one; the bag's first
+   slot must be empty). **Add Component > Script > New Script...**, name it `Durability`, and replace the text of the new
+   `Durability.okayscript` with this (save it):
+
+   ```
+   var last = -1;
+   function start() { inv_add("test_pick", 1); }
+   function wear_once() { inv_wear(0, 1); print("durability " + inv_durability(0) + ", broken " + inv_broken(0)); }
+   function repair_all() { inv_repair(0); print("repaired: " + inv_durability(0)); }
+   function update(dt) {
+     if (key_pressed("f")) { wear_once(); }
+     if (key_pressed("r")) { repair_all(); }
+   }
+   function on_durability_changed(item, v) { last = v; }
+   ```
+
+4. Show **View > Console** and press **Play**. Press **F** three times: the Console shows `durability 2, broken 0`,
+   then `1`, then `durability 0, broken 1`. A fourth F changes nothing (a broken item does not wear further).
+5. Press **R**: `repaired: 3`.
+6. Optional, a weapon that wears when it hits: give the item the Equip Slot **Main Hand** and a custom field
+   `wearPerStrike` `1`, put it in the player's **Equipment** Main Hand slot, and strike something with a Melee
+   Attacker: each swing that lands takes 1. At 0 the player fights bare-handed until repaired. Armor uses
+   `wearPerHit` and wears when its wearer's Health Stat is hit.
+
+**Status.** The script above is run headless by test `item_durability` (it adds the item, wears it to 0, breaks it,
+repairs it to 3); the key presses and the editor steps (Items editor, Add Component, Console) are **unverified**: they
+were read from the code, not done in an editor. Multiplayer: test `net_item_durability` runs a host and a client in one
+process; a client's weapons do not wear from combat yet (see inventory.md).
 
 ## Team tooling (not part of the Windows release)
 

@@ -19,13 +19,14 @@ below were made by counting those files by extension; where I could not check so
 | Importers we covered **before batch C** (including Blender, merged as #829, off by default) | 19 |
 | Importers batch C added (MD2, MD3, Irrlicht mesh, B3D, DirectX .x) | 5 (24) |
 | Importers batch D adds (AC3D, XGL / ZGL, Irrlicht scene, NFF, and OGRE **for the XML form only**) | 5 (**29** of the 45 switched on; OGRE counts as half: its binary `.mesh` / `.skeleton` and the `.skeleton.xml` are row 1 below) |
-| Switched on in our build and still **without an own reader** | **16** (rows 2 to 17 below) plus OGRE's half |
+| Importers batch E adds (MDC, HMP, CSM; `docs/own_mdc_reader.md`, `own_hmp_reader.md`, `own_csm_reader.md`) | 3 (**32** of the 45 switched on, not counting Terragen, which is on its own branch) |
+| Switched on in our build and still **without an own reader** | **13** (rows 2 to 17 below, except rows 10 to 12 which have readers now) plus OGRE's half; Terragen (row 13) is also done on branch `claude/terragen-fix` and not counted here |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
-tree. **Nothing was flipped.** Which formats the 29 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
+tree. **Nothing was flipped.** Which formats the 29 (32 with batch E) are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
 COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x,
-AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF. How the batch D readers compare with Assimp on the real files is in
+AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF, and in batch E MDC, HMP and CSM. How the batch D readers compare with Assimp on the real files is in
 `docs/model_corpus.md` and in each reader's own page (`docs/own_ac3d_reader.md`, `own_ogre_reader.md`, `own_xgl_reader.md`,
 `own_irr_reader.md`, `own_nff_reader.md`).
 
@@ -48,9 +49,9 @@ none were invented.
 | 7 | **MMD / PMX** (`.pmx`) | MikuMikuDance models: binary, bones, morphs, materials | medium in its community | medium | 1 (`Alicia_blade.pmx`) | yes |
 | 8 | **Q3D** (`.q3o` `.q3s`) | Quick3D | very low | easy | 4 | yes |
 | 9 | **SIB** (`.sib`) | Silo | very low | easy | 1 (`heffalump.sib`) | yes |
-| 10 | **CSM** (`.csm`) | CharacterStudio motion capture (markers only, like BVH) | very low | easy | 1 | yes |
-| 11 | **MDC** (`.mdc`) | Return to Castle Wolfenstein models (MD3 with compressed frames) | very low | easy (MD3 is done) | 1 (`spider.mdc`) | yes |
-| 12 | **HMP** (`.hmp`) | 3D GameStudio terrain | very low | easy | 2 | yes |
+| 10 | **CSM** (`.csm`): **own reader written, off by default** (`OKAY_OWN_CSM`, `docs/own_csm_reader.md`) | CharacterStudio motion capture (markers only, like BVH) | very low | easy | 1 (read; checked against numbers from the file, not against Assimp) | yes |
+| 11 | **MDC** (`.mdc`): **own reader written, off by default** (`OKAY_OWN_MDC`, `docs/own_mdc_reader.md`) | Return to Castle Wolfenstein models (MD3 with compressed frames) | very low | easy (MD3 is done) | 1 (`spider.mdc`, read; not compared with Assimp) | yes |
+| 12 | **HMP** (`.hmp`): **own reader written for HMP7 only, off by default** (`OKAY_OWN_HMP`, `docs/own_hmp_reader.md`) | 3D GameStudio terrain | very low | easy | 2 (both are HMP7 and read; not compared with Assimp; other HMP versions are refused) | yes |
 | 13 | **Terragen** (`.ter`) | Terragen heightfield | low | easy | 2 | yes |
 | 14 | **RAW** (`.raw`) | plain triangle list | very low | easy | 4 (one empty) | yes |
 | 15 | **Quake III BSP** (`.bsp` in `.pk3`) | Quake 3 map in a zip | low | medium-hard (faces, patches, shaders) | 1 (`SGDTT3.pk3`) | yes |
@@ -75,15 +76,15 @@ Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real
 1. **Ogre, the rest**: `.skeleton.xml` (bones, bind pose, animations, vertex weights) on the XML reader, then the binary `.mesh` and `.skeleton`: many real game assets.
 2. **MDL**, in this order: Quake 1, then Half-Life 1, then 3D GameStudio 3/5/7 (43 real files).
 3. **IQM**, **OpenGEX**, **COB**, **LWS**, **PMX**: one real file or a handful each; each is a few days.
-4. The tiny ones in one batch: **Q3D, SIB, CSM, MDC, HMP, Terragen, RAW, Unreal**.
+4. The tiny ones in one batch: **Q3D, SIB, Terragen, RAW, Unreal** (CSM, MDC and HMP are done, batch E: off by default, written from format descriptions and sample files only, with no importer source read and Assimp not run on them).
 5. **Quake III BSP** and **glTF 1.0**: medium; glTF 1.0 is the one with the largest real-file count (7) after MDL.
 6. **Nendo**: last, and only from a published description, because no file exists to check it against; honest status "unverified".
 7. Not in our build, so not needed to remove Assimp from the Windows distribution: **M3D, USD, IFC, Assbin, C4D**. If the owner wants them anyway: USD `usda` first, then `usdc`; IFC is a project of its own; Assbin can be dropped; C4D needs a decision about reverse engineering.
 
 ## How far this is from removing Assimp
 
-See the last section of `docs/own_code_roadmap.md` (the Assimp row) and `docs/model_corpus.md` ("Flip readiness"). In short: 16 importers
-our build still switches on have no own reader and OGRE has half of one; the 29 that have one are all off by default; none was checked on real Windows (only
+See the last section of `docs/own_code_roadmap.md` (the Assimp row) and `docs/model_corpus.md` ("Flip readiness"). In short: 13 importers
+our build still switches on have no own reader (not counting Terragen) and OGRE has half of one; the 32 that have one are all off by default; none was checked on real Windows (only
 MinGW under wine for the first batch); no default may be flipped without the owner's approval; and the release note that announces
 the dropped formats one release ahead is not written. The remaining formats are almost all small; the real cost is the
 hostile-input work and the real-file comparison for each, about the same per format as the ten done in batches C and D.

@@ -98,7 +98,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".mdc", ".hmp", ".csm"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -524,6 +524,24 @@ constexpr bool kOwnNffDefault = true;
 constexpr bool kOwnNffDefault = false;
 #endif
 
+#ifdef OKAY_OWN_MDC_DEFAULT
+constexpr bool kOwnMdcDefault = true;
+#else
+constexpr bool kOwnMdcDefault = false;
+#endif
+
+#ifdef OKAY_OWN_HMP_DEFAULT
+constexpr bool kOwnHmpDefault = true;
+#else
+constexpr bool kOwnHmpDefault = false;
+#endif
+
+#ifdef OKAY_OWN_CSM_DEFAULT
+constexpr bool kOwnCsmDefault = true;
+#else
+constexpr bool kOwnCsmDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -558,8 +576,12 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_XGL",     "XGL",     kOwnXglDefault},       // 24
     {"OKAY_OWN_IRR",     "IRR",     kOwnIrrDefault},       // 25
     {"OKAY_OWN_NFF",     "NFF",     kOwnNffDefault},       // 26
+    {"",                 "",        false},                // 27: reserved for Terragen (branch claude/terragen-fix); no extension maps here until that merges
+    {"OKAY_OWN_MDC",     "MDC",     kOwnMdcDefault},       // 28
+    {"OKAY_OWN_HMP",     "HMP",     kOwnHmpDefault},       // 29
+    {"OKAY_OWN_CSM",     "CSM",     kOwnCsmDefault},       // 30
 };
-constexpr int kOwnSlots = 27;   // slots 22 to 26 are batch D; raise this (and add rows above) when a reader needs a slot beyond 26
+constexpr int kOwnSlots = 31;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM; raise this (and add rows above) when a reader needs a slot beyond 30
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -591,6 +613,9 @@ int OwnSlot(const std::string& ext) {
     if (e == ".xgl" || e == ".zgl") return 24;
     if (e == ".irr") return 25;
     if (e == ".nff" || e == ".enff") return 26;
+    if (e == ".mdc") return 28;
+    if (e == ".hmp") return 29;
+    if (e == ".csm") return 30;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -756,7 +781,11 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 23 ? ReadOgreXmlFile(path, out, &e1)
                   : s == 24 ? ReadXglFile(path, out, &e1)
                   : s == 25 ? ReadIrrSceneFile(path, out, &e1, &irrLoader)
-                  : ReadNffFile(path, out, &e1); }, e1);   // 26
+                  : s == 26 ? ReadNffFile(path, out, &e1)
+                  : s == 28 ? ReadMdcFile(path, out, &e1)
+                  : s == 29 ? ReadHmpFile(path, out, &e1)
+                  : s == 30 ? ReadCsmFile(path, out, &e1)
+                  : (e1 = "no reader is wired to this slot", false); }, e1);   // slot 27 is Terragen's and is not wired in this branch
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {

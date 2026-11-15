@@ -12,6 +12,8 @@ list in the sense that it is conditional on the flip criteria in `docs/model_cor
 modifiers (subdivision, mirror, ...), constraints, shape keys, vertex colours, lights, cameras, curves and text objects, pre-2.5
 Ipo animation, packed images; zstd compressed files (Blender 3.0+ "Compress File") and the Blender 5.0 container.
 
+Update (batch E): **MDC, HMP (HMP7 only) and CSM now have own readers** (`docs/own_mdc_reader.md`, `own_hmp_reader.md`, `own_csm_reader.md`; off by default, written from format descriptions and sample files, read on the one or two real files of each, not compared with Assimp). Like `.blend` they are conditional on the owner's approval and the flip criteria; the lists below were not changed.
+
 Decision made (owner delegated it): **`.3ds` and `.bvh` are covered, not dropped.** Our own 3DS reader and BVH reader exist
 (PR #795, `docs/own_3ds_reader.md`, `docs/own_bvh_reader.md`) and were checked on real files (15 of 16 and 3 of 3). Both
 are off by default until the release that makes our readers the default; the sequence is: this announcement in the next

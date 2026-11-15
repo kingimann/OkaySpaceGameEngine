@@ -64,9 +64,9 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
   - **Map:** 42. **Where:** editor
   - **Steps:**
     1. Open `examples/physics/step_and_parent.okayscene` and press Play.
-    2. Open **File > Examples > Node Playground** (or the other Examples list) and pick a scene.
+    2. Open **File > Examples > Node Playground (flow and variables)** and pick a scene.
   - **You should see (expected, not yet seen on Windows):** the physics example runs; the playground scenes open.
-  - **Known partial:** the Examples menus show a scene only when the `examples` folder is found next to the editor.
+  - **Known partial:** the Examples menu shows a scene only when the `examples` folder is found next to the editor.
 
 - [ ] **V-GP-S10** Area 10: Story & cinematics (smoke test, steps unverified)
   - **Map:** [10](../feature_map/10-story-cinematics.md), 4 sub-areas, 4 built.
@@ -110,7 +110,7 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
   - **Ask me like:** "make the Save Slots screen show a screenshot"; "sync saves to Steam Cloud"
 
 - [ ] **V-GP-S42** Area 42: Examples, samples & sandbox (smoke test, steps unverified)
-  - **Map:** [42](../feature_map/42-examples-samples.md), 7 sub-areas, 7 built.
+  - **Map:** [42](../feature_map/42-examples-samples.md), 8 sub-areas, 8 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 42.1 Sandbox demo (solar system) [Works].
     - 42.2 Network demo [Works].
@@ -119,8 +119,9 @@ Areas: 10, 11, 35, 42, 46, 47, 51. Rows ids start `V-GP-`. `V-GP-S<area>` rows a
     - 42.5 Editor plugin examples [Works]. Where: Plugins menu, Plugins > Plugin Manager...
     - 42.6 Standalone player runtime [Works]. Where: File > Build Settings builds the folder that contains it (18.6); Play in the editor is a different code path
     - 42.7 Starter assets [Basic]. Where: Project panel (Assets/Textures, Assets/Fonts after install)
+    - 42.8 Example scenes and their check [Works]. Where: File > Examples, File > Open
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/42-examples-samples.md](../feature_map/42-examples-samples.md) (area 42, sections 42.1, 42.2, 42.3, 42.4, 42.5, 42.6, 42.7): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/42-examples-samples.md](../feature_map/42-examples-samples.md) (area 42, sections 42.1, 42.2, 42.3, 42.4, 42.5, 42.6, 42.7, 42.8): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "run the sandbox for 300 frames", "make the sandbox ship fire"
 
 - [ ] **V-GP-S46** Area 46: Replay system (smoke test, steps unverified)

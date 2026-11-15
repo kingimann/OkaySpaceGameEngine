@@ -21,9 +21,11 @@ bool DrawThemePresetCombo(okay::UITheme& th, okay::editor::EditorState& ed);
 /// Extra items for GameObject > UI > Prebuilt Screens / Widgets. `parent` is where new pieces go.
 void DrawUIAddMenuExtras(okay::editor::EditorState& ed, okay::GameObject* parent, bool& created);
 
-/// File > Examples: the list of built-in example scenes. `open` runs a loader after the unsaved-changes check.
+/// File > Examples: the list of built-in example scenes. `afterSavePrompt` runs a loader after the unsaved-changes check.
+/// `more`, when given, draws more entries inside the same menu after the UI Gallery ones: the editor has ONE Examples menu.
 void DrawExamplesMenu(okay::editor::EditorState& ed,
-                      const std::function<void(const std::function<void()>&)>& afterSavePrompt);
+                      const std::function<void(const std::function<void()>&)>& afterSavePrompt,
+                      const std::function<void()>& more = nullptr);
 
 /// Replace the open scene with the UI Gallery example.
 void OpenUIGalleryExample(okay::editor::EditorState& ed, bool portrait = false);

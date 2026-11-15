@@ -84,7 +84,7 @@ Areas: 12, 13, 14, 31, 32. Rows ids start `V-UI-`. `V-UI-S<area>` rows are smoke
     1. Open **File > Examples > Visual Script Node Playground** and pick a demo.
     2. Press Play and follow the text on the screen.
   - **You should see (expected, not yet seen on Windows):** each demo explains and runs one group of nodes.
-  - **Known partial:** the other **Node Playground (flow and variables)** list needs the `node_playground` examples to be found next to the editor.
+  - **Known partial:** the **Node Playground (flow and variables)** list, in the same **Examples** menu, needs the `node_playground` examples to be found next to the editor.
   - **More:** [../../visual_scripting.md](../../visual_scripting.md)
 
 - [ ] **V-UI-010** Localization window (steps unverified)

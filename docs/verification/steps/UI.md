@@ -89,7 +89,7 @@
   1. Open **File > Examples > Visual Script Node Playground** and pick a demo.
   2. Press Play and follow the text on the screen.
 - **See:** each demo explains and runs one group of nodes.
-- **Partial:** the other **Node Playground (flow and variables)** list needs the `node_playground` examples to be found next to the editor.
+- **Partial:** the **Node Playground (flow and variables)** list, in the same **Examples** menu, needs the `node_playground` examples to be found next to the editor.
 - **Link:** [../../visual_scripting.md](../../visual_scripting.md)
 
 ### V-UI-010 Localization window

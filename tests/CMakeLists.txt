@@ -902,6 +902,7 @@ add_test(NAME save_coverage COMMAND test_save_coverage)
 
 add_executable(test_pausemenu_save test_pausemenu_save.cpp)
 target_link_libraries(test_pausemenu_save PRIVATE okay::engine)
+target_compile_definitions(test_pausemenu_save PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME pausemenu_save COMMAND test_pausemenu_save)
 
 add_executable(test_unsaved_fields test_unsaved_fields.cpp)

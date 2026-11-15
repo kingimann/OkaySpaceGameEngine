@@ -1,0 +1,24 @@
+okayscene 3
+name "Property registry: try it"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 1.7 -6 0 0 0 1 1 1 1
+    camera 1 5 52 0.11 0.13 0.17 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Player"
+  active 1
+  parent -1
+  transform 0 0.5 0 0 0 0 1 1 1 1
+    mesh "Cube" 0.35 0.7 0.95 1 0 "" 0
+    material 0 0 0 0 8 1 "" 1 1
+    stat_health 250000 5 2 1.5 25 1 1 1 0.1 1 0 0.5 0 0 0 3 0 1 0
+end
+gameobject 2 "Pause Menu"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+    pausemenu 27 1 1 0.03 0.04 0.06 0.7 0.11 0.13 0.17 0.92 "Paused" "" "Saved with this scene since the fix" 1 0 "registry_try.okayscene"
+end

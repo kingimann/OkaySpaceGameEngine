@@ -88,7 +88,28 @@ static void TestRegistered() {
     CHECK(PropertyRegistry::SetProperty(*go, "PauseMenu.localized", PropertyValue::MakeBool(true)) && pm->localized);
 }
 
+// The hand-written sample scene in examples/property_registry loads with the values its How to try it uses.
+static void TestExampleScene() {
+    RUN_SUITE("pausemenu: the sample scene loads with its values");
+    Scene s("s");
+    std::string err;
+    CHECK(SceneSerializer::LoadFromFile(s, std::string(OKAY_SOURCE_DIR) + "/examples/property_registry/registry_try.okayscene", &err));
+    if (!err.empty()) std::cerr << "  " << err << "\n";
+    PauseMenu* pm = FirstMenu(s);
+    CHECK(pm && pm->hint == "Saved with this scene since the fix" && pm->showRestart && !pm->showVolume &&
+          pm->restartScene == "registry_try.okayscene");
+    HealthStat* hs = nullptr;
+    for (GameObject* go : s.Roots()) if (auto* h = go->GetComponent<HealthStat>()) hs = h;
+    CHECK(hs && hs->maxHealth == 250000.0f);   // above the old 1e5 bound: test registry_large_values
+    if (!hs) return;
+    // a registry write of the same value does not cut it down
+    GameObject* go = nullptr;
+    for (GameObject* g : s.Roots()) if (g->GetComponent<HealthStat>()) go = g;
+    CHECK(go && PropertyRegistry::SetProperty(*go, "HealthStat.maxHealth", PropertyValue::MakeFloat(250000.0f)) && hs->maxHealth == 250000.0f);
+}
+
 int main() {
+    TestExampleScene();
     TestRoundTrip();
     TestOldLineLoads();
     TestRegistered();

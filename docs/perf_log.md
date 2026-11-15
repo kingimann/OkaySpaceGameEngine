@@ -354,6 +354,17 @@ of seven lists with a fresh walk; the copy stays as it was when the scene change
 leave a kept list stale. None was found in the engine. `ComponentCacheDisabled() = true` (bench `--no-query-cache`) brings the
 plain walk back, and the test fails if the two ever disagree.
 
+### Checks that cover every change
+
+* Original program against this branch: the same `frame_hash` and `state_hash` on all six scenes (4.1), on 50 pairs of scene,
+  size and sun setting, and after long runs (610 frames of `bodies500` and `mixed`).
+* The four new tests (`broadphase` 293 checks, `triangle_span` 19,088,086, `component_cache` 6 with 1,500 random edits,
+  `software_perf_paths` 360 renders) and the benchmark's tiny smoke run: all pass. They were also run under valgrind
+  memcheck (all four, plus all six scenes of the benchmark at a small scale): no memory errors. CI's own sanitizer job (address, undefined, float-cast-overflow, no recovery) has not been run on this
+  branch; every float-to-int conversion this branch added is guarded (one that was not, in the vertical ray grid, was fixed
+  in the last code commit).
+* No `<mutex>`, `<thread>`, `condition_variable`, `call_once` or `thread_local` was added anywhere under `engine/`.
+
 ### Not kept
 
 Nothing was reverted for lack of a win: every change above shows its win in the phase it targets (tables 4.1 and 4.2).

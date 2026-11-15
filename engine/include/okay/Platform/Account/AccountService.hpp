@@ -509,9 +509,11 @@ inline bool IsRefreshTokenRefusalBody(const std::string& body) {
     const std::string code = lower(detail::JsonField(body, "error_code"));
     if (err == "invalid_grant") return true;
     if (code == "refresh_token_not_found" || code == "refresh_token_already_used" || code == "session_not_found" ||
-        code == "session_expired" || code == "invalid_grant") return true;
-    for (const char* k : {"msg", "message", "error_description"})
-        if (lower(detail::JsonField(body, k)).find("refresh token") != std::string::npos) return true;
+        code == "session_expired" || code == "invalid_grant" || code == "user_banned") return true;   // a banned account cannot renew either
+    for (const char* k : {"msg", "message", "error_description"}) {
+        const std::string m = lower(detail::JsonField(body, k));
+        if (m.find("refresh token") != std::string::npos || m.find("user is banned") != std::string::npos) return true;
+    }
     return false;
 }
 
@@ -522,6 +524,26 @@ inline RefreshResult ClassifyRefresh(bool reached, long status, bool hasToken, c
     if (status >= 200 && status < 300) return hasToken ? RefreshResult::Ok : RefreshResult::Unreachable;   // malformed reply: not a refusal
     if ((status == 400 || status == 401 || status == 403) && IsRefreshTokenRefusalBody(body)) return RefreshResult::Refused;
     return RefreshResult::Unreachable;   // 429, 5xx, a portal's 403, anything else
+}
+
+/// After a refusal: what the saved session file says about it. `Final` = nothing changed on disk (or the file is gone), the refusal stands;
+/// `Retry` = the same account's refresh token was rotated by another instance (the editor), try that one; `Inconclusive` = the file is
+/// empty / half-written / another account: do nothing. Pure, so it is unit tested.
+enum class DiskVerdict { Final, Retry, Inconclusive };
+inline DiskVerdict ClassifyDiskAfterRefusal(bool fileExists, const std::string& diskUser, const std::string& diskRefresh,
+                                            const std::string& ourUser, const std::string& usedRefresh) {
+    if (!fileExists) return DiskVerdict::Final;                       // nothing to re-read
+    if (diskUser.empty()) return DiskVerdict::Inconclusive;           // another instance is mid-write
+    if (diskUser != ourUser) return DiskVerdict::Inconclusive;        // a different account signed in meanwhile
+    if (diskRefresh == usedRefresh) return DiskVerdict::Final;        // (an old session file with no refresh token: nothing to renew with)
+    if (diskRefresh.empty()) return DiskVerdict::Inconclusive;        // token line not written yet
+    return DiskVerdict::Retry;
+}
+/// May this process overwrite or delete the saved session? Only while the file still holds the same account and the refresh token we
+/// started from. (A missing file is never overwritten: someone signed out.)
+inline bool SavedSessionUnchanged(bool fileExists, const std::string& diskUser, const std::string& diskRefresh,
+                                  const std::string& ourUser, const std::string& ourRefresh) {
+    return fileExists && diskUser == ourUser && diskRefresh == ourRefresh;
 }
 
 /// What a failed/successful renewal means for the saved session (VerifySession): only a refusal signs out.
@@ -857,6 +879,10 @@ public:
             // Only a clear refusal signs out; an outage (network, 5xx, 429, bad reply) keeps the session.
             const RefreshResult rr = RefreshSupabaseTokenEx();
             if (KeepSessionAfterRefresh(rr)) return true;
+            // Never delete a session file another instance changed (a rotated token, another account) since we read it.
+            std::string du, dt, dr;
+            const bool ex = ReadSaved(du, dt, dr);
+            if (ex && !SavedSessionUnchanged(ex, du, dr, loadedUser_, session_.refreshToken)) return true;
             Logout();
             return false;
         }
@@ -1007,6 +1033,7 @@ private:
 
     fs::path SessionPath() const { return configDir_ / "session.txt"; }
     long serverConfirmedAt_ = 0;   // see ServerConfirmedAt()
+    std::string loadedUser_;       // the user line of the saved session this process started from (raw, as in the file)
 
     // A claim from a JWT's payload (base64url JSON), without verifying it — we
     // only read our own token's id / expiry.
@@ -1082,6 +1109,7 @@ private:
         };
         trim(user); trim(token); trim(refresh);
         if (!user.empty() && !token.empty()) {
+            loadedUser_ = user;   // as written in the file (before the display tweak below)
             // Older sessions may have been saved with the email as the display
             // name; show only the local-part so the UI never shows a raw email.
             if (provider_ == Provider::Supabase) {
@@ -1097,6 +1125,7 @@ private:
 
     void SaveSession() {
         if (IsOnline()) serverConfirmedAt_ = (long)std::time(nullptr);   // only called after the server accepted a sign-in or a renewal
+        loadedUser_ = session_.username;
         std::ofstream f(SessionPath(), std::ios::trunc);
         f << session_.username << "\n" << session_.token << "\n" << session_.refreshToken << "\n";
     }
@@ -1115,27 +1144,31 @@ private:
     // true and updates the session on success. Used by VerifySession so a
     // signed-in player isn't kicked out just because the 1-hour token expired.
     bool RefreshSupabaseToken() { return RefreshSupabaseTokenEx() == RefreshResult::Ok; }
-    /// The refresh token saved on disk (another instance, e.g. the editor, may have rotated it), "" when none.
-    std::string SavedRefreshToken() const {
+    /// The saved session as it is on disk right now (another instance, e.g. the editor, may have rotated the token). False = no file.
+    bool ReadSaved(std::string& user, std::string& token, std::string& refresh) const {
         std::ifstream f(SessionPath());
-        std::string a, b, c;
-        std::getline(f, a); std::getline(f, b); std::getline(f, c);
-        while (!c.empty() && (c.back() == '\r' || c.back() == '\n')) c.pop_back();
-        return c;
+        if (!f) return false;
+        std::getline(f, user); std::getline(f, token); std::getline(f, refresh);
+        for (std::string* v : {&user, &token, &refresh})
+            while (!v->empty() && (v->back() == '\r' || v->back() == '\n')) v->pop_back();
+        return true;
     }
     // Supabase rotates refresh tokens, so a "refused" token may just be one another instance (the editor) already used. A refusal is
-    // therefore final only when the saved file still holds the very token we sent; if it changed, retry once with the new one.
-    // Two refusals in a row with a changing file are inconclusive (Unreachable): nothing is signed out on a guess.
+    // final only when the saved file still holds the very token we sent (ClassifyDiskAfterRefusal); a rotated token of the same
+    // account is tried once; an empty, half-written or other-account file is inconclusive (Unreachable): nothing is signed out.
   public:
     RefreshResult RefreshSupabaseTokenEx() {
         for (int attempt = 0; attempt < 2; ++attempt) {
             const std::string used = session_.refreshToken;
             const RefreshResult rr = RefreshOnce();
             if (rr != RefreshResult::Refused) return rr;
-            const std::string disk = SavedRefreshToken();
-            if (disk.empty() || disk == used) return RefreshResult::Refused;
-            ReloadSessionToken();
-            session_.refreshToken = disk;   // adopt the rotated token and try again
+            std::string du, dt, dr;
+            const bool ex = ReadSaved(du, dt, dr);
+            switch (ClassifyDiskAfterRefusal(ex, du, dr, loadedUser_, used)) {
+                case DiskVerdict::Final: return RefreshResult::Refused;
+                case DiskVerdict::Inconclusive: return RefreshResult::Unreachable;
+                case DiskVerdict::Retry: ReloadSessionToken(); session_.refreshToken = dr; break;   // adopt the rotated token, try again
+            }
         }
         return RefreshResult::Unreachable;
     }
@@ -1152,10 +1185,16 @@ private:
         const std::string tok = r.ok ? detail::JsonField(r.body, "access_token") : std::string();
         const RefreshResult rr = ClassifyRefresh(r.reached, r.status, !tok.empty(), r.body);
         if (rr != RefreshResult::Ok) return rr;
+        const std::string used = session_.refreshToken;
         session_.token = tok;
         std::string nr = detail::JsonField(r.body, "refresh_token");
         if (!nr.empty()) session_.refreshToken = nr;   // Supabase rotates refresh tokens
-        SaveSession();
+        // Save only if the file still holds the account and token we started from; otherwise another instance has moved on (a newer
+        // token, another account, signed out) and overwriting it would undo that.
+        std::string du, dt, dr;
+        const bool ex = ReadSaved(du, dt, dr);
+        if (SavedSessionUnchanged(ex, du, dr, loadedUser_, used)) SaveSession();
+        else serverConfirmedAt_ = (long)std::time(nullptr);
         return RefreshResult::Ok;
     }
 

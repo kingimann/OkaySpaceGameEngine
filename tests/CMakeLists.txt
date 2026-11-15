@@ -1742,6 +1742,7 @@ add_test(NAME self_update COMMAND test_self_update)
 add_executable(test_login_gate test_login_gate.cpp)
 target_compile_features(test_login_gate PRIVATE cxx_std_17)
 target_include_directories(test_login_gate PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+target_link_libraries(test_login_gate PRIVATE Threads::Threads)
 add_test(NAME login_gate COMMAND test_login_gate)
 
 # Signed releases: versions.json must verify under a trusted ed25519 key (shared/UpdateSignature.hpp, LoadIndex), key rotation, refusal wording,

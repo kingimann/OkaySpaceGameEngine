@@ -5,6 +5,7 @@
 // OkaySpacePlayer.exe directly, and a modified launcher can skip it. See docs/UNFINISHED.md ("Launcher sign-in gate").
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -12,18 +13,20 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 namespace okay::logingate {
 
 // How long an EXPIRED access token that cannot be renewed (network down) keeps working, counted from the last time the server
-// confirmed the session. A renewal the server REFUSES does not wait for this: it signs the person out at once.
+// confirmed the session (a sign-in, a renewal or a /verify, or an unexpired token seen). A renewal the auth server clearly REFUSES does
+// not wait for this: the refresh worker signs the person out as soon as it sees it (after the access token expires, up to 30 s later).
 constexpr long kOfflineGraceSeconds = 7L * 24 * 60 * 60;
 // A last-check time this far in the future is a clock that moved (or a hand-edited file); it is not trusted.
 constexpr long kClockSkewSeconds = 5L * 60;
 
 enum class Verdict {
     Allowed,         // gate off, or signed in with a valid token (or the local backend)
-    NeedSignIn,      // nobody is signed in (a session the server refused is signed out by the launcher first, so it lands here too)
+    NeedSignIn,      // nobody is signed in (after a clear refusal the launcher has already signed the person out, so it lands here too)
     GraceExpired,    // signed in, token expired, and the last server confirmation is too old (or unknown / untrustworthy)
 };
 
@@ -96,10 +99,25 @@ inline long SeedLastCheckFromSession(const std::string& sessionFile) {
         t - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
     return (long)std::chrono::system_clock::to_time_t(sys);
 }
+// Written to a temp file and renamed over the real one, so a reader on another thread (worker and main thread both write) never sees a
+// half-written file.
 inline bool WriteLastCheck(const std::string& cfgDir, long when) {
-    std::ofstream f(LastCheckFile(cfgDir), std::ios::trunc);
-    f << (long long)when << "\n";
-    return (bool)f;
+    namespace fs = std::filesystem;
+    static std::atomic<unsigned> counter{0};
+    const std::string target = LastCheckFile(cfgDir);
+    const std::string tmp = target + ".tmp" + std::to_string(counter.fetch_add(1)) + "_" +
+                            std::to_string((unsigned long long)std::hash<std::thread::id>()(std::this_thread::get_id()));
+    {
+        std::ofstream f(tmp, std::ios::trunc);
+        f << (long long)when << "\n";
+        f.flush();
+        if (!f) { std::error_code e; fs::remove(tmp, e); return false; }
+    }
+    std::error_code ec;
+    fs::rename(tmp, target, ec);
+    if (ec) { fs::remove(target, ec); ec.clear(); fs::rename(tmp, target, ec); }   // a platform whose rename will not replace
+    if (ec) { std::error_code e2; fs::remove(tmp, e2); return false; }
+    return true;
 }
 
 }  // namespace okay::logingate

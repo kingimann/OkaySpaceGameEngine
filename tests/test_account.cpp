@@ -267,6 +267,23 @@ int main() {
         CHECK(acct::ClassifyRefresh(true, 503, false, "") == RR::Unreachable);
         CHECK(acct::ClassifyRefresh(false, 0, false, "") == RR::Unreachable);
         CHECK(acct::ClassifyRefresh(false, 400, false, grant) == RR::Unreachable);
+        // A banned account cannot renew either (Supabase user_banned): refusal, so it is signed out instead of losing access after 7 days.
+        CHECK(acct::ClassifyRefresh(true, 403, false, "{\"code\":403,\"error_code\":\"user_banned\",\"msg\":\"User is banned\"}") == RR::Refused);
+        CHECK(acct::ClassifyRefresh(true, 400, false, "{\"msg\":\"User is banned\"}") == RR::Refused);
+        // What the saved file says after a refusal.
+        using DV = acct::DiskVerdict;
+        CHECK(acct::ClassifyDiskAfterRefusal(false, "", "", "al", "r1") == DV::Final);          // no file: nothing to re-read
+        CHECK(acct::ClassifyDiskAfterRefusal(true, "al", "r1", "al", "r1") == DV::Final);       // unchanged: the refusal stands
+        CHECK(acct::ClassifyDiskAfterRefusal(true, "al", "r2", "al", "r1") == DV::Retry);       // the editor rotated it: try the new one
+        CHECK(acct::ClassifyDiskAfterRefusal(true, "", "", "al", "r1") == DV::Inconclusive);    // empty file: editor mid-write
+        CHECK(acct::ClassifyDiskAfterRefusal(true, "al", "", "al", "r1") == DV::Inconclusive);  // token line not there yet
+        CHECK(acct::ClassifyDiskAfterRefusal(true, "bo", "r9", "al", "r1") == DV::Inconclusive);   // another account signed in
+        CHECK(acct::ClassifyDiskAfterRefusal(true, "al", "", "al", "") == DV::Final);           // old file with no refresh token at all
+        // May this process overwrite / delete the saved session?
+        CHECK(acct::SavedSessionUnchanged(true, "al", "r1", "al", "r1"));
+        CHECK(!acct::SavedSessionUnchanged(true, "al", "r2", "al", "r1"));   // token rotated elsewhere
+        CHECK(!acct::SavedSessionUnchanged(true, "bo", "r1", "al", "r1"));   // another account
+        CHECK(!acct::SavedSessionUnchanged(false, "", "", "al", "r1"));      // signed out elsewhere: never re-create
         // VerifySession keeps the session on everything except a refusal.
         CHECK(acct::KeepSessionAfterRefresh(RR::Ok));
         CHECK(acct::KeepSessionAfterRefresh(RR::Unreachable));

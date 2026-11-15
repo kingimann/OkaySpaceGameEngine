@@ -19,11 +19,11 @@ starts the editor, a game, a project or a server join refuses too (a toast says 
   session (`kOfflineGraceSeconds` in `shared/LoginGate.hpp`). After that the launcher shows "Sign in to continue" with a
   Try again button; it needs the internet once.
 * **The server refuses the session:** only when the auth server itself answers 400, 401 or 403 with a body saying the refresh
-  token is invalid or revoked (for example `invalid_grant`, `refresh_token_not_found`). Then the person is signed out, no grace.
+  token is invalid or revoked or the account is banned (for example `invalid_grant`, `refresh_token_not_found`, `user_banned`). Then the person is signed out, no grace.
   This is noticed by the background refresh worker once the access token has expired (up to about 30 seconds after it, and a
   revoked refresh token with a still-valid access token is not seen for up to an hour). Before it signs anyone out it re-reads
-  the saved session: Supabase rotates refresh tokens, so if the editor already used the old one, the new one is tried and nothing
-  is deleted.
+  the saved session: Supabase rotates refresh tokens, so if the editor already used the old one, the new one is tried; an empty or
+  half-written file, or a different account in it, means nothing is signed out and nothing is deleted or overwritten.
 * **Anything else is not a refusal** (no network, timeout, DNS, a 5xx, a 429, an unreadable reply, or an HTML / proxy / captive
   portal page with a 403): the session is kept and the 7-day grace applies, so an outage does not lock people out. This also
   applies to the start-up check and `account_verify` (`AccountService::VerifySession`).
@@ -35,9 +35,7 @@ starts the editor, a game, a project or a server join refuses too (a toast says 
   toast also say valid when the server could not be reached. A game must not treat them as proof of who someone is; use
   `AccountService::VerifyToken` (server side) for trust.
 * **Local (dev) backend:** being signed in is enough, there is no server to ask.
-* **Turn it off** (developers, screenshots, CI): set `OKAY_REQUIRE_LOGIN=0`. The UI-demo and chat/voice/multiplayer demo
-  variables (`OKAY_UI_DEMO_USER`, `OKAY_UI_DEMO_TAB`, `OKAY_CHAT_DEMO`, `OKAY_MP_DEMO`, `OKAY_VOICE_DEMO`) turn it off
-  by themselves; `OKAY_REQUIRE_LOGIN=1` turns it on again. There is also `require_login=0|1` in `launcher.cfg`
+* **Turn it off** (developers, screenshots, CI): set `OKAY_REQUIRE_LOGIN=0`. Every launcher demo / screenshot variable (the list is `kLauncherDemoEnv` in `shared/LauncherDemo.hpp`: `OKAY_UI_DEMO_USER`, `OKAY_UI_DEMO_TAB`, `OKAY_UI_DEMO_UPDATE`, `OKAY_CHAT_DEMO`, `OKAY_MP_DEMO`, `OKAY_VOICE_DEMO`, `OKAY_VOICE_DEMO_SERVER`) turns it off by itself; `OKAY_REQUIRE_LOGIN=1` turns it on again. There is also `require_login=0|1` in `launcher.cfg`
   (default 1, no switch in the Settings page on purpose).
 
 **Limit, said plainly:** this is a check inside the launcher. Anyone can still start `OkayEngine.exe` or

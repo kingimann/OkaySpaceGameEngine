@@ -1,7 +1,9 @@
 #include "test_framework.hpp"
 #include "LoginGate.hpp"
 
+#include <atomic>
 #include <cstdio>
+#include <thread>
 #include <filesystem>
 
 using namespace okay::logingate;
@@ -126,6 +128,25 @@ int main() {
     CHECK(Required("", true, false));             // empty = unset
     CHECK(Required("maybe", true, false));        // unknown word ignored: default stays ON
     CHECK(!Required("maybe", true, true));
+
+    // ---- The last-check file is replaced atomically: a reader never sees a partial file ----
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_login_gate_atomic";
+        std::error_code ec; fs::remove_all(dir, ec); fs::create_directories(dir, ec);
+        CHECK(WriteLastCheck(dir.string(), 1111111111L));
+        std::atomic<bool> stop{false}; std::atomic<int> bad{0}, reads{0};
+        std::thread reader([&] {
+            while (!stop) { const long v = ReadLastCheck(dir.string()); ++reads; if (v != 1111111111L && v != 2222222222L) ++bad; }
+        });
+        std::thread w2([&] { for (int i = 0; i < 400; ++i) WriteLastCheck(dir.string(), 2222222222L); });
+        for (int i = 0; i < 400; ++i) WriteLastCheck(dir.string(), 1111111111L);
+        w2.join(); stop = true; reader.join();
+        CHECK(bad == 0);
+        int tmps = 0; for (auto& e : fs::directory_iterator(dir)) if (e.path().filename().string().find(".tmp") != std::string::npos) ++tmps;
+        CHECK(tmps == 0);   // no leftovers
+        fs::remove_all(dir, ec);
+    }
 
     // ---- The last-check file ----
     {

@@ -57,6 +57,7 @@
 // The opt-in OkayUI backend (docs/own_ui_toolkit.md, section 5): the setting and, when OkayUI is compiled in, the host.
 #include "OkayUIBackend.hpp"
 #include "LauncherTips.hpp"
+#include "LauncherDemo.hpp"    // okay::IsLauncherDemoMode()
 #include "LoginGate.hpp"      // the sign-in gate decision (header only, unit tested)
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIHost.hpp"
@@ -13155,8 +13156,7 @@ static void PumpTokenRefresh(okay::account::AccountService& account) {
 // not noticed until that token expires, up to an hour). "Confirmed by the server" = a sign-in, renewal or /verify that succeeded
 // (AccountService::ServerConfirmedAt), or an unexpired token; it is kept in login_lastcheck.txt so it survives a restart while offline.
 static bool LoginGateRequired() {
-    static const bool demo = std::getenv("OKAY_UI_DEMO_USER") || std::getenv("OKAY_UI_DEMO_TAB") || std::getenv("OKAY_CHAT_DEMO") ||
-                             std::getenv("OKAY_MP_DEMO") || std::getenv("OKAY_VOICE_DEMO") || std::getenv("OKAY_VOICE_DEMO_SERVER");
+    static const bool demo = okay::IsLauncherDemoMode();   // shared/LauncherDemo.hpp: the one list of demo / screenshot env variables
     return okay::logingate::Required(std::getenv("OKAY_REQUIRE_LOGIN"), g_requireLoginSetting, demo);
 }
 static void UpdateLoginGate(okay::account::AccountService& a, const std::string& cfgDir) {

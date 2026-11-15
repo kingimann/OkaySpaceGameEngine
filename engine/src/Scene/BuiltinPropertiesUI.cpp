@@ -590,7 +590,8 @@ void RegisterWorldSpaceUI() {
     b.Commit();
 }
 
-// PauseMenu (record "pausemenu"). Only the fields the record saves.
+// PauseMenu (record "pausemenu"; `localized` is in the localization record). Only
+// the fields that are saved: hint, showRestart, showVolume and restartScene are not.
 void RegisterPauseMenu() {
     PropertyBuilder<PauseMenu> b("PauseMenu", "pausemenu", "UI");
     b.AddKey("toggleKey", &PauseMenu::toggleKey).Tooltip("Key that opens and closes the menu (Escape by default)")
@@ -599,7 +600,8 @@ void RegisterPauseMenu() {
      .AddBool("showQuit", &PauseMenu::showQuit).Tooltip("Show the Quit button")
      .AddString("mainMenuScene", &PauseMenu::mainMenuScene).Tooltip("Scene the Main Menu button loads (empty = no button)")
      .AddColor("dimColor", &PauseMenu::dimColor).Range(0, 1, 0.01).Tooltip("Tint laid over the game")
-     .AddColor("panelColor", &PauseMenu::panelColor).Range(0, 1, 0.01).Tooltip("Colour of the menu card");
+     .AddColor("panelColor", &PauseMenu::panelColor).Range(0, 1, 0.01).Tooltip("Colour of the menu card")
+     .AddBool("localized", &PauseMenu::localized).Tooltip("Take the texts from the string table in the current language");
     b.Commit();
 }
 
@@ -921,8 +923,8 @@ void RegisterUIListView() {
     b.Commit();
 }
 
-// UISlotGrid (record "uislotgrid"). The labels are a list. textColor and
-// numberEmptySlots are not saved by the record, so they are not properties yet.
+// UISlotGrid (record "uislotgrid"). The labels are a list. fontScale,
+// numberEmptySlots and textColor are saved in the shared "uix" record.
 void RegisterUISlotGrid() {
     PropertyBuilder<UISlotGrid> b("UISlotGrid", "uislotgrid", "UI");
     b.AddVec2("position", &UISlotGrid::position).Range(-kBig, kBig, 1).Tooltip("Pixels from the anchor")
@@ -934,7 +936,10 @@ void RegisterUISlotGrid() {
      .AddInt("value", &UISlotGrid::value).Range(-1, 65535, 1).Tooltip("Selected slot (-1 = none)")
      .AddColor("color", &UISlotGrid::color).Range(0, 1, 0.01).Tooltip("Slot colour")
      .AddColor("selectedColor", &UISlotGrid::selectedColor).Range(0, 1, 0.01).Tooltip("Selected slot colour")
-     .AddColor("hoverColor", &UISlotGrid::hoverColor).Range(0, 1, 0.01).Tooltip("Colour of the slot under the pointer");
+     .AddColor("hoverColor", &UISlotGrid::hoverColor).Range(0, 1, 0.01).Tooltip("Colour of the slot under the pointer")
+     .AddFloat("fontScale", &UISlotGrid::fontScale).Range(0.1, 64, 0.05).Tooltip("Slot label text size")
+     .AddColor("textColor", &UISlotGrid::textColor).Range(0, 1, 0.01).Tooltip("Slot label colour")
+     .AddBool("numberEmptySlots", &UISlotGrid::numberEmptySlots).Tooltip("A slot with no label shows its number (off = blank)");
     b.Commit();
 }
 

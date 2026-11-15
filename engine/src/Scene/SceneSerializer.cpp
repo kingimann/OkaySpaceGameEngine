@@ -8915,8 +8915,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // written back by the next save, so an older build does not drop what a newer one stored.
                     warn("skipped unknown field '" + field + "' on object " + std::to_string(idx));
                     const std::string rest = ReadRecordLine(in);
-                    if (go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
-                        go->unknownRecords.push_back(field + rest);
+                    const bool fieldName = !field.empty() && ((field[0] >= 'a' && field[0] <= 'z') || (field[0] >= 'A' && field[0] <= 'Z'));
+                    if (fieldName && go->unknownRecords.size() < kMaxUnknownRecords && field.size() + rest.size() <= kMaxUnknownRecordSize)
+                        go->unknownRecords.push_back(field + rest);   // a stray number is not a field name: not kept
                 }
             }
             // A read that ran off the end (or choked) leaves the stream failed, so
@@ -8951,7 +8952,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
             // looks like a record name (a stray word in a damaged file is not worth carrying along).
             warn("skipped unknown record '" + token + "'");
             const std::string rest = ReadRecordLine(in);
-            bool name = !token.empty() && token.size() < 64;
+            // A record name starts with a letter: a stray number (a value a record did not read, like the third number
+            // after a 2D gravity) is not one, so it is not kept and written back on every save.
+            bool name = !token.empty() && token.size() < 64 && token[0] >= 'a' && token[0] <= 'z';
             for (char ch : token) if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_')) name = false;
             if (clear && name && scene.unknownRecords.size() < kMaxUnknownRecords && token.size() + rest.size() <= kMaxUnknownRecordSize)
                 scene.unknownRecords.push_back(token + rest);

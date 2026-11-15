@@ -1,6 +1,6 @@
 okayscene 3
 name "Own WAV decoder test"
-gravity 0 -9.81 0
+gravity 0 -9.81
 gravity3 0 -9.81 0
 gameobject 0 "Main Camera"
   active 1

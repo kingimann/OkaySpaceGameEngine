@@ -73,6 +73,13 @@ target_link_libraries(test_audio_formats PRIVATE okay::engine)
 target_compile_definitions(test_audio_formats PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME audio_formats COMMAND test_audio_formats)
 
+# Own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): hand-computed values, hostile input, the opt-in switch, and an
+# IMA differential against Python's audioop (python3 optional: SKIP; OKAY_REQUIRE_DIFFERENTIAL=1 makes a skip a failure).
+add_executable(test_own_wav test_own_wav.cpp)
+target_link_libraries(test_own_wav PRIVATE okay::engine)
+add_test(NAME own_wav COMMAND test_own_wav WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(own_wav PROPERTIES TIMEOUT 240)
+
 # FLAC decoding against known samples, and audio import settings (mono, stream).
 add_executable(test_flac_import test_flac_import.cpp)
 target_link_libraries(test_flac_import PRIVATE okay::engine)
@@ -3334,3 +3341,20 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+
+# Our own Terragen (.ter) reader (docs/own_terragen_reader.md): synthetic files built in memory, values worked out by hand
+# from the specification, the import seam; and the hostile-input test, which builds without the engine library.
+add_executable(test_terragen_reader test_terragen_reader.cpp)
+target_link_libraries(test_terragen_reader PRIVATE okay::engine)
+add_test(NAME terragen_reader COMMAND test_terragen_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+add_executable(test_terragen_hostile test_terragen_hostile.cpp ${PROJECT_SOURCE_DIR}/engine/src/Render/TerragenReader.cpp)
+target_include_directories(test_terragen_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render)
+target_compile_definitions(test_terragen_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME terragen_hostile COMMAND test_terragen_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(terragen_hostile PROPERTIES TIMEOUT 300)
+add_executable(test_own_ter_default test_own_ter_default.cpp)
+target_link_libraries(test_own_ter_default PRIVATE okay::engine)
+if(OKAY_OWN_TER)
+    target_compile_definitions(test_own_ter_default PRIVATE OKAY_EXPECT_OWN_TER)
+endif()
+add_test(NAME own_ter_default COMMAND test_own_ter_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

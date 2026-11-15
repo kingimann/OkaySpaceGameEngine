@@ -191,6 +191,7 @@ add_library(okay_engine
     src/Audio/VorbisDecoder.cpp
     src/Audio/Mp3Decoder.cpp
     src/Audio/FlacDecoder.cpp
+    src/Audio/WavDecoder.cpp
     src/AI/Pathfinding.cpp
     src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp
@@ -263,6 +264,7 @@ add_library(okay_engine
     src/Render/XglReader.cpp
     src/Render/IrrSceneReader.cpp
     src/Render/NffReader.cpp
+    src/Render/TerragenReader.cpp
     src/Render/MdcReader.cpp
     src/Render/HmpReader.cpp
     src/Render/CsmReader.cpp
@@ -601,6 +603,12 @@ if(OKAY_OWN_BVH)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_BVH_DEFAULT)
     message(STATUS "OkaySpace: model import reads .bvh with the built-in BVH reader")
 endif()
+# Our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM): AudioClip::LoadWAV uses it when this is ON
+# or when the environment says OKAY_OWN_WAV=1 (OKAY_OWN_WAV=0 turns it off again).
+if(OKAY_OWN_WAV)
+    target_compile_definitions(okay_engine PRIVATE OKAY_OWN_WAV_DEFAULT)
+    message(STATUS "OkaySpace: AudioClip::LoadWAV uses the built-in WAV decoder")
+endif()
 # Our own OFF (.off) reader (same opt-in rules; env OKAY_OWN_OFF=0/1 and SetImportBackend override the build default).
 if(OKAY_OWN_OFF)
     target_compile_definitions(okay_engine PRIVATE OKAY_OWN_OFF_DEFAULT)
@@ -639,8 +647,8 @@ foreach(_fmt 3MF AMF X3D DXF LWO)
     endif()
 endforeach()
 
-# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C) and AC3D / OGRE / XGL / IRR / NFF (batch D) and MDC / HMP / CSM (batch E), same opt-in rules as 3DS: default OFF.
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF MDC HMP CSM)
+# Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C), AC3D / OGRE / XGL / IRR / NFF (batch D), Terragen and MDC / HMP / CSM (batch E), same opt-in rules as 3DS: default OFF.
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER MDC HMP CSM)
     if(OKAY_OWN_${_fmt})
         target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")

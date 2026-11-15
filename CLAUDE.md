@@ -8,13 +8,16 @@ then this file gets updated. Keep this file short and true.
 
 1. **Keep working.** Do not stop to ask or to wait. When a decision is the owner's, pick the safe default, say what
    you picked, and carry on. Use several agents at once for independent work.
-2. **Always be working on something real.** At every moment the main session and every agent is doing one of four
-   things: finishing an unfinished feature (`docs/UNFINISHED.md`), fixing a bug, building our own replacement for
-   a third-party library (`docs/own_code_roadmap.md`), or checking on the second Claude (`claude2/*`, issue #422):
-   reading its reports, answering it, reviewing its work. Waiting for CI is not a reason to stop: start or continue
-   one of those three while it runs, and never sit polling GitHub. Reviews, merges and releases happen in between.
-   (Owner rule, 2026-11-15: "you should be always working finishing a feature, fixing a bug or working on a third
-   party".) If an agent or the main session has nothing running, start more agents on the next items.
+2. **Always be working on something real, and keep the two Claudes apart.** (Owner rule, 2026-11-15: "have Claude 2
+   work on unfinished features, you only work on third party".)
+   - **Claude 2 (`claude2/*`, issue #422)** works on unfinished features (`docs/UNFINISHED.md` and its audits) and
+     bugs.
+   - **The coordinator session and its agents** work on building our own replacements for third-party libraries
+     (`docs/own_code_roadmap.md`) and on coordinating: checking on Claude 2 (reading its reports, answering it,
+     reviewing its branches), reviews, merges and releases. The coordinator finishes a feature or bug branch that is
+     already in progress but does not start new feature work.
+   - Waiting for CI is not a reason to stop: start or continue one of those things while it runs, and never sit
+     polling GitHub. If an agent or the main session has nothing running, start more agents on the next items.
 3. **Explain plainly.** Short, simple sentences. Say what you did, what it means and what is left. No jargon
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something

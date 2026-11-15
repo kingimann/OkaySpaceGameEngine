@@ -49,6 +49,7 @@
 #include "okay/Components/UIListView.hpp"
 #include "okay/Components/UISlotGrid.hpp"
 #include "okay/Components/UITabs.hpp"
+#include "okay/Components/UIColorPicker.hpp"
 #include "okay/Math/Easing.hpp"
 
 namespace okay {
@@ -985,6 +986,17 @@ void RegisterUITabs() {
     b.Commit();
 }
 
+// UIColorPicker (record "uicolorpicker"). The swatches are a list.
+void RegisterUIColorPicker() {
+    PropertyBuilder<UIColorPicker> b("UIColorPicker", "uicolorpicker", "UI");
+    b.AddVec2("position", &UIColorPicker::position).Range(-kBig, kBig, 1).Tooltip("Pixels from the anchor")
+     .AddEnum("anchor", &UIColorPicker::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddFloat("swatch", &UIColorPicker::swatch).Range(1, 1e3, 1).Tooltip("Swatch size in pixels")
+     .AddFloat("gap", &UIColorPicker::gap).Range(0, 1e3, 1).Tooltip("Pixels between swatches")
+     .AddInt("value", &UIColorPicker::value).Range(0, 65535, 1).Tooltip("Selected swatch");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -1273,6 +1285,7 @@ void RegisterUIProperties() {
     RegisterUIListView();
     RegisterUISlotGrid();
     RegisterUITabs();
+    RegisterUIColorPicker();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

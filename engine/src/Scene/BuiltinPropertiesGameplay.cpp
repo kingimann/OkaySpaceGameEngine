@@ -20,6 +20,9 @@
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Components/LimbIK.hpp"
+#include "okay/Components/BlockBuilder.hpp"
+#include "okay/Components/StructureBuilder.hpp"
+#include "okay/Components/BuildMode.hpp"
 #include "okay/Components/Inventory.hpp"
 #include "okay/Components/Equipment.hpp"
 #include "okay/Components/GridInventory.hpp"
@@ -1898,6 +1901,104 @@ void RegisterGridInventory() {
     b.Commit();
 }
 
+// BlockBuilder (record "blockbuilder"). previewFree and previewBusy are not saved by
+// the record, so they are not properties yet.
+void RegisterBlockBuilder() {
+    PropertyBuilder<BlockBuilder> b("BlockBuilder", "blockbuilder", "Gameplay");
+    b.AddFloat("blockSize", &BlockBuilder::blockSize).Range(0.001, kBig, 0.05).Tooltip("Cube size and grid step")
+     .AddFloat("reach", &BlockBuilder::reach).Range(0, kBig, 0.1).Tooltip("Furthest place or remove distance")
+     .AddColor("blockColor", &BlockBuilder::blockColor).Range(0, 1, 0.01).Tooltip("Colour of placed blocks")
+     .AddAssetPath("blockTexture", &BlockBuilder::blockTexture, "image").Tooltip("Optional texture for placed blocks")
+     .AddString("blockTag", &BlockBuilder::blockTag).Tooltip("Tag placed blocks carry (only these can be removed)")
+     .AddInt("placeButton", &BlockBuilder::placeButton).Range(-1, 7, 1).Tooltip("Mouse button that places (0 = left)")
+     .AddInt("removeButton", &BlockBuilder::removeButton).Range(-1, 7, 1).Tooltip("Mouse button that removes (1 = right)")
+     .AddBool("showPreview", &BlockBuilder::showPreview).Tooltip("Outline where the next block lands")
+     .AddBool("showCrosshair", &BlockBuilder::showCrosshair).Tooltip("Add an aim mark")
+     .AddBool("placeInAir", &BlockBuilder::placeInAir).Tooltip("Allow placing in empty space");
+    b.Commit();
+}
+
+// StructureBuilder (record "structurebuilder"). rotateKey, upgradeKey, repairKey,
+// pieceHotkeys, previewFree and previewBusy are not saved by the record, so they are
+// not properties yet.
+void RegisterStructureBuilder() {
+    PropertyBuilder<StructureBuilder> b("StructureBuilder", "structurebuilder", "Gameplay");
+    b.AddEnum("piece", &StructureBuilder::piece, {"Foundation", "FoundationTri", "Wall", "Doorway", "Window", "Floor", "Pillar", "Ramp"}).Tooltip("Piece placed next")
+     .AddFloat("cellSize", &StructureBuilder::cellSize).Range(0.01, kBig, 0.1).Tooltip("Grid cell size")
+     .AddFloat("wallHeight", &StructureBuilder::wallHeight).Range(0.01, kBig, 0.1).Tooltip("Wall height")
+     .AddFloat("slabThickness", &StructureBuilder::slabThickness).Range(0.001, kBig, 0.01).Tooltip("Foundation and floor thickness")
+     .AddFloat("wallThickness", &StructureBuilder::wallThickness).Range(0.001, kBig, 0.01).Tooltip("Wall thickness")
+     .AddFloat("pillarThickness", &StructureBuilder::pillarThickness).Range(0.001, kBig, 0.01).Tooltip("Pillar thickness")
+     .AddFloat("reach", &StructureBuilder::reach).Range(0, kBig, 0.1).Tooltip("Furthest place or remove distance")
+     .AddInt("rotSteps", &StructureBuilder::rotSteps).Range(0, 3, 1).Tooltip("Starting quarter turns")
+     .AddInt("placeButton", &StructureBuilder::placeButton).Range(-1, 7, 1).Tooltip("Mouse button that places (0 = left)")
+     .AddInt("removeButton", &StructureBuilder::removeButton).Range(-1, 7, 1).Tooltip("Mouse button that removes (1 = right)")
+     .AddBool("showPreview", &StructureBuilder::showPreview).Tooltip("Show a ghost of the next piece")
+     .AddBool("showCrosshair", &StructureBuilder::showCrosshair).Tooltip("Add an aim mark")
+     .AddString("structureTag", &StructureBuilder::structureTag).Tooltip("Tag placed pieces carry")
+     .AddAssetPath("structureTexture", &StructureBuilder::structureTexture, "image").Tooltip("Optional texture for placed pieces")
+     .Section("Resources")
+     .AddBool("requireResources", &StructureBuilder::requireResources).Tooltip("Building costs items (off = free)")
+     .AddFloat("refundFraction", &StructureBuilder::refundFraction).Range(0, 1, 0.01).Tooltip("Part of the cost returned on demolish")
+     .AddString("woodItem", &StructureBuilder::woodItem).Tooltip("Item spent for wood pieces")
+     .AddString("stoneItem", &StructureBuilder::stoneItem).Tooltip("Item spent for stone pieces")
+     .AddString("metalItem", &StructureBuilder::metalItem).Tooltip("Item spent for metal pieces")
+     .AddInt("costWood", &StructureBuilder::costWood).Range(0, 1000000, 1).Tooltip("Wood cost to build or upgrade")
+     .AddInt("costStone", &StructureBuilder::costStone).Range(0, 1000000, 1).Tooltip("Stone cost to upgrade")
+     .AddInt("costMetal", &StructureBuilder::costMetal).Range(0, 1000000, 1).Tooltip("Metal cost to upgrade");
+    b.Commit();
+}
+
+// BuildMode (record "buildmode"). The palette is a list. The key and pad bindings
+// are fields of the `bindings` struct.
+void RegisterBuildMode() {
+    PropertyBuilder<BuildMode> b("BuildMode", "buildmode", "Gameplay");
+    b.AddFloat("gridSize", &BuildMode::gridSize).Range(0, kBig, 0.05).Tooltip("Snap step (0 = no grid)")
+     .AddFloat("rotationStep", &BuildMode::rotationStep).Range(0, 360, 1).Tooltip("Degrees per rotate press")
+     .AddFloat("maxReach", &BuildMode::maxReach).Range(0, kBig, 0.1).Tooltip("How far from the player you can build")
+     .AddInt("buildLayers", &BuildMode::buildLayers).Tooltip("Collision layers you may build on (bit n = layer n)")
+     .AddInt("maxObjects", &BuildMode::maxObjects).Range(0, 1000000, 1).Tooltip("Most placed objects (0 = no cap)")
+     .AddBool("allowAirPlacement", &BuildMode::allowAirPlacement).Tooltip("Place in mid-air at full reach when aiming at nothing")
+     .AddBool("startActive", &BuildMode::startActive).Tooltip("Start in build mode")
+     .AddBool("showHotbar", &BuildMode::showHotbar).Tooltip("Draw the palette hotbar")
+     .AddBool("showGhost", &BuildMode::showGhost).Tooltip("Draw the placement preview")
+     .AddString("creationFolder", &BuildMode::creationFolder).Tooltip("Save subfolder that creations go in")
+     .Section("Colours")
+     .AddColor("validColor", &BuildMode::validColor).Range(0, 1, 0.01).Tooltip("Preview colour where it can be placed")
+     .AddColor("invalidColor", &BuildMode::invalidColor).Range(0, 1, 0.01).Tooltip("Preview colour where it cannot")
+     .AddColor("highlightColor", &BuildMode::highlightColor).Range(0, 1, 0.01).Tooltip("Colour of the aimed object")
+     .AddColor("wireColor", &BuildMode::wireColor).Range(0, 1, 0.01).Tooltip("Link wire colour")
+     .AddColor("wireOnColor", &BuildMode::wireOnColor).Range(0, 1, 0.01).Tooltip("Link wire colour while powered")
+     .Section("Keys")
+     .AddKey("toggleKey", &BuildMode::bindings, &BuildBindings::toggle).Tooltip("Enters and leaves build mode")
+     .AddInt("placeButton", &BuildMode::bindings, &BuildBindings::place).Range(-1, 7, 1).Tooltip("Mouse button that places")
+     .AddInt("removeButton", &BuildMode::bindings, &BuildBindings::remove).Range(-1, 7, 1).Tooltip("Mouse button that deletes")
+     .AddKey("removeKey", &BuildMode::bindings, &BuildBindings::removeKey).Tooltip("Key that deletes")
+     .AddKey("rotateKey", &BuildMode::bindings, &BuildBindings::rotate).Tooltip("Turns the piece")
+     .AddKey("moveKey", &BuildMode::bindings, &BuildBindings::move).Tooltip("Picks up the aimed object to move it")
+     .AddKey("duplicateKey", &BuildMode::bindings, &BuildBindings::duplicate).Tooltip("Copies the aimed object")
+     .AddKey("linkKey", &BuildMode::bindings, &BuildBindings::link).Tooltip("Switches link mode")
+     .AddKey("undoKey", &BuildMode::bindings, &BuildBindings::undo).Tooltip("Undo")
+     .AddKey("redoKey", &BuildMode::bindings, &BuildBindings::redo).Tooltip("Redo")
+     .AddKey("nextItemKey", &BuildMode::bindings, &BuildBindings::nextItem).Tooltip("Next palette slot (0 = none)")
+     .AddKey("prevItemKey", &BuildMode::bindings, &BuildBindings::prevItem).Tooltip("Previous palette slot (0 = none)")
+     .AddBool("numberKeys", &BuildMode::bindings, &BuildBindings::numberKeys).Tooltip("Keys 1 to 9 pick a palette slot")
+     .AddBool("mouseWheel", &BuildMode::bindings, &BuildBindings::mouseWheel).Tooltip("The wheel cycles palette slots")
+     .Section("Gamepad")
+     .AddInt("padToggle", &BuildMode::bindings, &BuildBindings::padToggle).Range(-1, 31, 1).Tooltip("Pad button that enters and leaves (-1 = none)")
+     .AddInt("padPlace", &BuildMode::bindings, &BuildBindings::padPlace).Range(-1, 31, 1).Tooltip("Pad button that places")
+     .AddInt("padRemove", &BuildMode::bindings, &BuildBindings::padRemove).Range(-1, 31, 1).Tooltip("Pad button that deletes")
+     .AddInt("padRotate", &BuildMode::bindings, &BuildBindings::padRotate).Range(-1, 31, 1).Tooltip("Pad button that turns")
+     .AddInt("padNext", &BuildMode::bindings, &BuildBindings::padNext).Range(-1, 31, 1).Tooltip("Pad button for the next slot")
+     .AddInt("padPrev", &BuildMode::bindings, &BuildBindings::padPrev).Range(-1, 31, 1).Tooltip("Pad button for the previous slot")
+     .AddInt("padUndo", &BuildMode::bindings, &BuildBindings::padUndo).Range(-1, 31, 1).Tooltip("Pad button for undo")
+     .AddInt("padRedo", &BuildMode::bindings, &BuildBindings::padRedo).Range(-1, 31, 1).Tooltip("Pad button for redo")
+     .AddInt("padMove", &BuildMode::bindings, &BuildBindings::padMove).Range(-1, 31, 1).Tooltip("Pad button that moves")
+     .AddInt("padDuplicate", &BuildMode::bindings, &BuildBindings::padDuplicate).Range(-1, 31, 1).Tooltip("Pad button that copies")
+     .AddInt("padLink", &BuildMode::bindings, &BuildBindings::padLink).Range(-1, 31, 1).Tooltip("Pad button for link mode");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2551,6 +2652,9 @@ void RegisterGameplayProperties() {
     RegisterInventory();
     RegisterEquipment();
     RegisterGridInventory();
+    RegisterBlockBuilder();
+    RegisterStructureBuilder();
+    RegisterBuildMode();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

@@ -10,7 +10,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 ### 9.1 Nav mesh bake and queries
 - **What:** Bakes the scene's static colliders and terrain into a mesh of walkable polygons (on a background thread), saves it to a `.okaynav` file, and answers path, nearest-point, raycast, random-point and height queries through one facade that falls back to a probe grid when no mesh was baked.
 - **Parts:**
-  - 9.1.1 Bake - `AI/NavMeshBake` - copies colliders and heightmap terrains, rasterizes them into a heightfield, applies slope, step, head room and agent radius, merges cells into rectangles; runs on a worker thread with progress
+  - 9.1.1 Bake - `AI/NavMeshBake` - copies colliders (a Mesh Collider as its world triangles) and heightmap terrains, rasterizes them into a heightfield, applies slope, step, head room and agent radius, merges cells into rectangles; runs on a worker thread with progress
   - 9.1.2 Mesh data and queries - `AI/NavMesh` - polygons and portals, A* over the polygon graph, funnel string pulling, `SamplePosition`, `Raycast`, `RandomPoint`, `HeightAt`, text save and load
   - 9.1.3 Surface component - `Components/NavMeshSurface`, `engine/src/AI/NavMeshSurface.cpp` - bake settings, `.okaynav` path next to the scene, `Bake`, `StartBake`, `PollBake`, bake before Play
   - 9.1.4 Facade and grid fallback - `AI/Navigation`, `AI/NavGrid3D` - `Navigation::FindPath` uses the baked mesh, else lazily sampled grid A* over probe spheres; NPCs, click-to-move and agents all go through it
@@ -19,7 +19,7 @@ The `nav_*`, `grid_*`, `bt_*` and `npc_*` script builtins live in `Scripting/Oka
 - **API:** `NavMeshSurface`, `NavMesh`, `NavMeshBuildSettings`, `Navigation::FindPath`, `Navigation::SamplePosition`, `Navigation::Raycast`, `Navigation::RandomPoint`, `NavGrid3D::FindPath`, script `nav_path_exists`, `nav_path_length`, `nav_point_walkable`, `nav_nearest_point`
 - **Editor:** View > Editors & Tools > Navigation (Add Nav Mesh Surface, Bake, Clear); Scene view mesh overlay; Add Component > Gameplay > Nav Mesh Surface
 - **Docs:** `docs/navigation.md`
-- **Tests:** `navmesh`, `navmesh_carving`, `script_nav`
+- **Tests:** `navmesh`, `navmesh_carving`, `script_nav`, `navmesh_mesh_collider`
 - **Status:** Works - NavMesh.cpp, NavMeshSurface.cpp, Navigation.cpp and the facade header read; bake and path behaviour (walls, doorways, ramps, islands) covered by `navmesh` and `script_nav`; a `.okaynav` with a non-finite vertex is refused and the lookup grid is capped at 2048 cells a side (`navmesh`)
 - **Open:** per docs: polygons are axis-aligned rectangles (angled walls get a one-cell staircase); one agent radius per bake; obstacle carving is 9.2.5 (area types and off-mesh links are 9.6); Navigation uses only the first enabled surface in a scene; with no mesh `FindPath` always returns a path (a straight line when the grid finds none), so the grid cannot report an unreachable goal
 - **Related:** 9.2, 9.5, 4.4, 6.2, 2.6, 27.4

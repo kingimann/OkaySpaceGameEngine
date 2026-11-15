@@ -98,7 +98,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -524,6 +524,72 @@ constexpr bool kOwnNffDefault = true;
 constexpr bool kOwnNffDefault = false;
 #endif
 
+#ifdef OKAY_OWN_TER_DEFAULT
+constexpr bool kOwnTerDefault = true;
+#else
+constexpr bool kOwnTerDefault = false;
+#endif
+
+#ifdef OKAY_OWN_MDC_DEFAULT
+constexpr bool kOwnMdcDefault = true;
+#else
+constexpr bool kOwnMdcDefault = false;
+#endif
+
+#ifdef OKAY_OWN_HMP_DEFAULT
+constexpr bool kOwnHmpDefault = true;
+#else
+constexpr bool kOwnHmpDefault = false;
+#endif
+
+#ifdef OKAY_OWN_CSM_DEFAULT
+constexpr bool kOwnCsmDefault = true;
+#else
+constexpr bool kOwnCsmDefault = false;
+#endif
+
+#ifdef OKAY_OWN_Q3D_DEFAULT
+constexpr bool kOwnQ3dDefault = true;
+#else
+constexpr bool kOwnQ3dDefault = false;
+#endif
+
+#ifdef OKAY_OWN_RAW_DEFAULT
+constexpr bool kOwnRawDefault = true;
+#else
+constexpr bool kOwnRawDefault = false;
+#endif
+
+#ifdef OKAY_OWN_IQM_DEFAULT
+constexpr bool kOwnIqmDefault = true;
+#else
+constexpr bool kOwnIqmDefault = false;
+#endif
+
+#ifdef OKAY_OWN_COB_DEFAULT
+constexpr bool kOwnCobDefault = true;
+#else
+constexpr bool kOwnCobDefault = false;
+#endif
+
+#ifdef OKAY_OWN_NDO_DEFAULT
+constexpr bool kOwnNdoDefault = true;
+#else
+constexpr bool kOwnNdoDefault = false;
+#endif
+
+#ifdef OKAY_OWN_PMX_DEFAULT
+constexpr bool kOwnPmxDefault = true;
+#else
+constexpr bool kOwnPmxDefault = false;
+#endif
+
+#ifdef OKAY_OWN_LWS_DEFAULT
+constexpr bool kOwnLwsDefault = true;
+#else
+constexpr bool kOwnLwsDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -558,8 +624,23 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_XGL",     "XGL",     kOwnXglDefault},       // 24
     {"OKAY_OWN_IRR",     "IRR",     kOwnIrrDefault},       // 25
     {"OKAY_OWN_NFF",     "NFF",     kOwnNffDefault},       // 26
+    {"OKAY_OWN_TER",     "Terragen", kOwnTerDefault},      // 27
+    {"OKAY_OWN_MDC",     "MDC",     kOwnMdcDefault},       // 28
+    {"OKAY_OWN_HMP",     "HMP",     kOwnHmpDefault},       // 29
+    {"OKAY_OWN_CSM",     "CSM",     kOwnCsmDefault},       // 30
+    // Slot 32 is kept for SIB (no reader yet): an empty row, never reached (OwnSlot returns none of it), so that Q3D and RAW sit at the agreed numbers.
+    {"OKAY_OWN_Q3D",     "Q3D",     kOwnQ3dDefault},       // 31
+    {"", "", false},                                       // 32 (SIB, not written yet)
+    {"OKAY_OWN_RAW",     "RAW",     kOwnRawDefault},       // 33
+    {"OKAY_OWN_IQM",     "IQM",     kOwnIqmDefault},       // 34
+    {"OKAY_OWN_COB",     "COB",     kOwnCobDefault},       // 35
+    {"OKAY_OWN_NDO",     "NDO",     kOwnNdoDefault},       // 36
+    {"", "", false},                                       // 37 (reader e4: OpenGEX, not on main yet; reserved, never reached)
+    {"", "", false},                                       // 38 (reader e4: MDL, not on main yet; reserved, never reached)
+    {"OKAY_OWN_PMX",     "PMX",     kOwnPmxDefault},       // 39
+    {"OKAY_OWN_LWS",     "LWS",     kOwnLwsDefault},       // 40 (.lws and .mot)
 };
-constexpr int kOwnSlots = 27;   // slots 22 to 26 are batch D; raise this (and add rows above) when a reader needs a slot beyond 26
+constexpr int kOwnSlots = 41;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are reserved for reader e4 (OpenGEX, MDL), 39 and 40 are PMX and LWS/MOT (batch E5); raise this (and add rows above) when a reader needs a slot beyond 40
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -591,6 +672,17 @@ int OwnSlot(const std::string& ext) {
     if (e == ".xgl" || e == ".zgl") return 24;
     if (e == ".irr") return 25;
     if (e == ".nff" || e == ".enff") return 26;
+    if (e == ".ter") return 27;
+    if (e == ".mdc") return 28;
+    if (e == ".hmp") return 29;
+    if (e == ".csm") return 30;
+    if (e == ".q3o" || e == ".q3s") return 31;
+    if (e == ".raw") return 33;
+    if (e == ".iqm") return 34;
+    if (e == ".cob") return 35;
+    if (e == ".ndo") return 36;
+    if (e == ".pmx") return 39;
+    if (e == ".lws" || e == ".mot") return 40;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -727,7 +819,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         // reader where it is switched on, else Assimp when the build has it); one level only, so a scene cannot name a scene
         thread_local int loaderDepth = 0;
         const IrrMeshLoader irrLoader = [&](const std::string& p, ImportedModel& m, std::string* e) {
-            if (loaderDepth >= 1 || EndsWith(Lower(p), ".irr")) { if (e) *e = "a scene file may not load another scene"; return false; }
+            if (loaderDepth >= 1 || EndsWith(Lower(p), ".irr") || EndsWith(Lower(p), ".lws") || EndsWith(Lower(p), ".mot")) { if (e) *e = "a scene file may not load another scene"; return false; }
             ++loaderDepth;
             const bool r = ImportModelData(p, m, ImportBackend::Default, false, e);
             --loaderDepth;
@@ -756,7 +848,19 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 23 ? ReadOgreXmlFile(path, out, &e1)
                   : s == 24 ? ReadXglFile(path, out, &e1)
                   : s == 25 ? ReadIrrSceneFile(path, out, &e1, &irrLoader)
-                  : ReadNffFile(path, out, &e1); }, e1);   // 26
+                  : s == 26 ? ReadNffFile(path, out, &e1)
+                  : s == 27 ? ReadTerragenFile(path, out, &e1)
+                  : s == 28 ? ReadMdcFile(path, out, &e1)
+                  : s == 29 ? ReadHmpFile(path, out, &e1)
+                  : s == 30 ? ReadCsmFile(path, out, &e1)
+                  : s == 31 ? ReadQ3dFile(path, out, &e1)
+                  : s == 33 ? ReadRawFile(path, out, &e1)
+                  : s == 34 ? ReadIqmFile(path, out, &e1)
+                  : s == 35 ? ReadCobFile(path, out, &e1)
+                  : s == 36 ? ReadNdoFile(path, out, &e1)
+                  : s == 39 ? ReadPmxFile(path, out, &e1)
+                  : s == 40 ? ReadLwsFile(path, out, &e1, &irrLoader)
+                  : (e1 = "no reader is wired to this slot", false); }, e1);   // slots 27 (Terragen) to 31 (Q3D), 33 (RAW) and 34 to 36 (IQM, COB, NDO), 39 (PMX) and 40 (LWS) are wired above; 37 and 38 are reserved for reader e4
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {

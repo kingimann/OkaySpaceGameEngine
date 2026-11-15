@@ -10,6 +10,7 @@
 #include "okay/Animation/HumanoidLibrary.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Seat.hpp"
+#include "okay/Components/VehicleSeat.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -2302,6 +2303,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << c->exitPoint.x << " " << c->exitPoint.y << " " << c->exitPoint.z << " "
             << c->useRadius << " " << Quote(c->prompt) << "\n";
     }
+    for (auto* c : go->GetComponents<VehicleSeat>()) {
+        out << "  vehicleseat " << (c->driver ? 1 : 0) << " "
+            << c->sitPoint.x << " " << c->sitPoint.y << " " << c->sitPoint.z << " "
+            << c->exitPoint.x << " " << c->exitPoint.y << " " << c->exitPoint.z << " "
+            << c->useRadius << " " << (int)(unsigned char)c->enterKey << " " << Quote(c->prompt) << "\n";
+    }
     for (auto* c : go->GetComponents<HungerStat>()) {
         out << "  stat_hunger " << c->maxHunger << " " << c->drainPerSecond << " "
             << c->sprintMultiplier << " " << c->lowThreshold;
@@ -2462,6 +2469,16 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // load back into a Player Controller.
     const auto playerControllers = go->GetComponents<PlayerController>();
     const auto* pcOwner = playerControllers.empty() ? nullptr : playerControllers.front();
+    // A bare First or Third Person controller on its own (no Player View, no Player Controller)
+    // is written the way the loader will hold it, as a Player Controller of that one view, so
+    // that saving the loaded scene gives the same text. Combinations with a Player View or both
+    // controllers keep the old records: the loader decides their View on load.
+    const auto bareFp = go->GetComponents<FirstPersonController>();
+    const auto bareTp = go->GetComponents<ThirdPersonController>();
+    const bool bareSingle = !pcOwner && go->GetComponents<PlayerView>().empty() &&
+                            bareFp.size() + bareTp.size() == 1;
+    const bool newForm = pcOwner || bareSingle;
+    if (bareSingle) out << "  playercontroller view=" << (bareFp.empty() ? 1 : 0) << "\n";
     for (const PlayerController* pc : playerControllers) {
         out << "  playercontroller";
         KvOut k{out};
@@ -2475,8 +2492,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         }
         out << "\n";
     }
-    const char* fpName = pcOwner ? "pcfirst" : "fpctrl";
-    const char* tpName = pcOwner ? "pcthird" : "tpctrl";
+    const char* fpName = newForm ? "pcfirst" : "fpctrl";
+    const char* tpName = newForm ? "pcthird" : "tpctrl";
     for (auto* fp : go->GetComponents<FirstPersonController>()) {
         out << "  " << fpName << " " << fp->walkSpeed << " " << fp->runSpeed << " " << fp->jumpForce << " "
             << fp->mouseSensitivity << " " << (fp->canJump ? 1 : 0) << " " << (fp->driveAnimation ? 1 : 0)
@@ -2499,7 +2516,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     for (auto* fp : go->GetComponents<FirstPersonController>()) {
         // Feel / slide / hooks (separate record: older builds skip it).
-        out << "  " << (pcOwner ? "pcfirstfeel" : "fpfeel") << " " << fp->lookSmoothing << " " << fp->sprintFovBoost << " " << fp->fovLerp
+        out << "  " << (newForm ? "pcfirstfeel" : "fpfeel") << " " << fp->lookSmoothing << " " << fp->sprintFovBoost << " " << fp->fovLerp
             << " " << (fp->zoomWithRightMouse ? 1 : 0) << " " << fp->zoomFov << " " << fp->zoomSensitivity
             << " " << fp->landDip << " " << (fp->canSlide ? 1 : 0) << " " << fp->slideSpeed << " " << fp->slideTime
             << " " << fp->slideEyeHeight << " " << (fp->driveStateMachine ? 1 : 0) << " " << (fp->ikLook ? 1 : 0)
@@ -2511,7 +2528,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << fp->dodge.stamina << " " << (fp->dodge.iFrames ? 1 : 0)
             // Traversal flags. Older loaders do not skip these trailing ints.
             << " " << (fp->canVault ? 1 : 0) << " " << (fp->canMantle ? 1 : 0) << " " << (fp->canLedgeGrab ? 1 : 0) << "\n";
-        out << "  " << (pcOwner ? "pcfirststance" : "fpstance");
+        out << "  " << (newForm ? "pcfirststance" : "fpstance");
         KvOut k{out};
         k.b("prone", fp->allowProne).b("resize", fp->resizeBody)("crouchH", fp->crouchHeight)("proneH", fp->proneHeight)
          ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
@@ -2551,7 +2568,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << tp->pivotDampingXZ << " " << tp->pivotDampingY << " " << tp->maxPivotLag
             << " " << tp->orbitSmoothing << " " << tp->cameraCollisionRadius << " " << tp->cameraCollisionMask
             << " " << tp->cameraCollisionPullIn << " " << tp->cameraCollisionRecover << "\n";
-        out << "  " << (pcOwner ? "pcthirdstance" : "tpstance");
+        out << "  " << (newForm ? "pcthirdstance" : "tpstance");
         KvOut k{out};
         k.b("prone", tp->allowProne).b("resize", tp->resizeBody)("crouchH", tp->crouchHeight)("proneH", tp->proneHeight)
          ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
@@ -2562,7 +2579,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "\n";
     }
     for (auto* tp : go->GetComponents<ThirdPersonController>()) {
-        out << "  " << (pcOwner ? "pcthirdfeel" : "tpfeel") << " " << tp->lookSmoothing << " " << tp->sprintFovBoost << " " << tp->fovLerp
+        out << "  " << (newForm ? "pcthirdfeel" : "tpfeel") << " " << tp->lookSmoothing << " " << tp->sprintFovBoost << " " << tp->fovLerp
             << " " << (tp->aimWithRightMouse ? 1 : 0) << " " << tp->aimDistance << " " << tp->aimShoulder
             << " " << tp->aimFov << " " << tp->aimSensitivity << " " << tp->aimLerp
             << " " << (tp->autoRecenter ? 1 : 0) << " " << tp->recenterDelay << " " << tp->recenterSpeed
@@ -3853,7 +3870,17 @@ void WriteComponents(std::ostream& out, GameObject* go) {
 }
 } // namespace
 
+namespace {
+// While a scene or object is written, whoever sits in a vehicle gets their own controller, colliders
+// and gravity back, so a copy, undo snapshot or save never holds a frozen player.
+struct VehicleSeatSaveGuard {
+    VehicleSeatSaveGuard() { VehicleSeat::SuspendAllForSave(); }
+    ~VehicleSeatSaveGuard() { VehicleSeat::ResumeAllAfterSave(); }
+};
+} // namespace
+
 std::string SceneSerializer::Serialize(const Scene& scene) {
+    VehicleSeatSaveGuard seatGuard;
     std::ostringstream out;
     UseRoundTripFloats(out);
     out << "okayscene 3\n";
@@ -6174,6 +6201,15 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                        >> c->facing >> c->type
                        >> c->exitPoint.x >> c->exitPoint.y >> c->exitPoint.z
                        >> c->useRadius;
+                    in >> std::ws;
+                    if (in.peek() == '"') c->prompt = ReadQuoted(in);
+                } else if (field == "vehicleseat") {
+                    auto* c = go->AddComponent<VehicleSeat>();
+                    int dr = 1, ek = 'e';
+                    in >> dr >> c->sitPoint.x >> c->sitPoint.y >> c->sitPoint.z
+                       >> c->exitPoint.x >> c->exitPoint.y >> c->exitPoint.z
+                       >> c->useRadius >> ek;
+                    c->driver = (dr != 0); c->enterKey = (char)ek;
                     in >> std::ws;
                     if (in.peek() == '"') c->prompt = ReadQuoted(in);
                 } else if (field == "stat_hunger") {
@@ -9156,6 +9192,7 @@ bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
 
 
 std::string SceneSerializer::SerializeObject(const GameObject& root) {
+    VehicleSeatSaveGuard seatGuard;
     // Gather the object and all its descendants (depth-first, in sibling order). A stack, not a
     // recursion: a hierarchy 100000 deep must not overflow the call stack. `skipBits` says why an
     // object is not written (see OwnSkipBits): inherited from its parent inside the subtree. Above

@@ -18515,6 +18515,7 @@ static TplFn TemplateFn(const std::string& title) {
         {"Point & Click",        &EditorState::NewPointAndClick},
         {"Sandbox",              &EditorState::NewVoxelSandbox},
         {"Vehicle (3D)",         &EditorState::NewVehicle3D},
+        {"Vehicle (get in and drive)", &EditorState::NewVehicleSeats3D},
         {"Vehicle (2D)",         &EditorState::NewVehicle2D},
         {"Platformer",           &EditorState::NewPlatformer},
         {"Top-Down",             &EditorState::NewTopDown},
@@ -34695,6 +34696,27 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::SmallButton("Remove##seat")) toRemove = c;
         }
     }
+    if (auto* c = dynamic_cast<VehicleSeat*>(curComp)) {
+        if (CompHeader("Vehicle Seat", c, &toRemove)) {
+            if (ImGui::Checkbox("Driver Seat##vseat", &c->driver)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: sitting here drives the vehicle with the keyboard. Off: a passenger seat.");
+            if (ImGui::DragFloat3("Sit Point##vseat", &c->sitPoint.x, 0.01f)) ed.dirty = true;
+            oked::FieldTip("Sit Point##vseat");
+            if (ImGui::DragFloat3("Exit Point##vseat", &c->exitPoint.x, 0.01f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Where the player steps out (local). If something solid is there, the mirrored sides are tried, then the roof.");
+            if (ImGui::DragFloat("Use Radius##vseat", &c->useRadius, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+            oked::FieldTip("Use Radius##vseat");
+            char pbuf[128];
+            std::snprintf(pbuf, sizeof(pbuf), "%s", c->prompt.c_str());
+            if (ImGui::InputText("Prompt##vseat", pbuf, sizeof(pbuf))) { c->prompt = pbuf; ed.dirty = true; }
+            oked::FieldTip("Prompt##vseat");
+            char kb[2] = {c->enterKey, 0};
+            if (ImGui::InputText("Enter / Exit Key##vseat", kb, sizeof(kb)) && kb[0]) { c->enterKey = kb[0]; ed.dirty = true; }
+            if (!c->Vehicle()) ImGui::TextDisabled("Needs a Vehicle Controller on this object or a parent.");
+            if (c->occupied) ImGui::TextDisabled("Occupied");
+            if (ImGui::SmallButton("Remove##vseat")) toRemove = c;
+        }
+    }
     if (auto* c = dynamic_cast<HungerStat*>(curComp)) {
         if (CompHeader("Stat: Hunger", c, &toRemove)) {
             statValue(&c->hunger, c->maxHunger, "sthu");
@@ -36911,7 +36933,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Load this file now to hear it with the Play button here");
             }
             ImGui::TextDisabled("WAV, OGG, MP3 or FLAC; loads on Play and in the built game; %.2fs %s%s", a->Duration(),
-                                a->IsStreaming() ? "stream" : "clip", a->clip.channels == 2 ? ", stereo" : (a->IsStreaming() && a->Stream()->Channels() == 2 ? ", stereo" : ""));
+                                a->IsStreaming() ? "stream" : "clip", a->Clip().channels == 2 ? ", stereo" : (a->IsStreaming() && a->Stream()->Channels() == 2 ? ", stereo" : ""));
             if (ImGui::Checkbox("3D (spatial)", &a->spatial)) ed.dirty = true;
             oked::FieldTip("3D (spatial)");
             if (a->spatial) {
@@ -40321,6 +40343,7 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<HealthStat>(), "Stat: Health")) { go->AddComponent<HealthStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<Ragdoll>(), "Ragdoll (death + hit reactions)")) { ed.PushUndo(); go->AddComponent<Ragdoll>(); ed.dirty = true; }
             if (item(!go->GetComponent<Seat>(), "Seat")) { go->AddComponent<Seat>(); ed.dirty = true; }
+            if (item(!go->GetComponent<VehicleSeat>(), "Vehicle Seat (get in and drive)")) { go->AddComponent<VehicleSeat>(); ed.dirty = true; }
             if (item(!go->GetComponent<HungerStat>(), "Stat: Hunger")) { go->AddComponent<HungerStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<ThirstStat>(), "Stat: Thirst")) { go->AddComponent<ThirstStat>(); ed.dirty = true; }
             if (item(!go->GetComponent<StaminaStat>(), "Stat: Stamina")) { go->AddComponent<StaminaStat>(); ed.dirty = true; }

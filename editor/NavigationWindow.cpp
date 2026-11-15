@@ -89,6 +89,7 @@ void StoreBake(EditorState& ed, NavMeshSurface* ns) {
     else
         std::snprintf(buf, sizeof(buf), "Navigation: baked %d polygons, %d links from %d cells in %.2f s",
                       st.polys, st.links, st.walkable, st.seconds);
+    if (st.incomplete) ConsoleLog("Navigation: the bake may be missing geometry. " + st.warning, 1);
     if (ns->Save()) ConsoleLog(std::string(buf) + " -> " + ns->navPath);
     else ConsoleLog(std::string(buf) + "; could not write " + ns->navPath, 1);
 }
@@ -266,6 +267,7 @@ void StatsUI(NavMeshSurface* ns) {
         if (st.seconds < 0.1) ImGui::Text("Baked in %.0f ms from %d columns (%d walkable cells)", st.seconds * 1000.0, st.columns, st.walkable);
         else ImGui::Text("Baked in %.2f s from %d columns (%d walkable cells)", st.seconds, st.columns, st.walkable);
     }
+    if (st.incomplete) ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "Warning: %s", st.warning.c_str());
     ImGui::Text("Walkable area: %.1f m2", mesh->Area());
     const std::string file = ns->ResolvedPath();
     if (!file.empty()) {
@@ -768,7 +770,15 @@ void NavigationBeforePlay(EditorState& ed) {
     for (NavMeshSurface* ns : ed.scene().FindObjectsOfType<NavMeshSurface>()) {
         if (!ns || !ns->bakeBeforePlay || !ns->enabled) continue;
         ns->CancelBake();
-        BakeNow(ed, ns);
+        // Skip the bake when nothing it reads has changed since the last one (same settings, same colliders,
+        // same terrain): the mesh in memory, or the saved .okaynav this surface was baked into, is still right.
+        std::string err;
+        bool skipped = false;
+        if (!ns->BakeIfChanged(ed.scene(), &skipped, nullptr, &err)) { ConsoleLog("Navigation: " + err, 2); continue; }
+        if (skipped) ConsoleLog("Navigation: bake skipped, nothing the bake reads has changed since the last one");
+        // Always store: after a skip this just rewrites the same mesh, so the in-memory mesh and the .okaynav file
+        // cannot disagree (a reverted or deleted file is written back).
+        StoreBake(ed, ns);
     }
 }
 

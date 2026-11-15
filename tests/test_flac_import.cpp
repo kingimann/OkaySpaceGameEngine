@@ -192,8 +192,8 @@ int main() {
         a->stream = false;
         CHECK(LoadSceneAudio(decoded, "", 8000) == 1);
         CHECK(!a->IsStreaming());
-        CHECK(a->clip.FrameCount() == 400);
-        CHECK(a->clip.channels == 1);
+        CHECK(a->Clip().FrameCount() == 400);
+        CHECK(a->Clip().channels == 1);
 
         Scene streaming("Streaming");
         streaming.physicsEnabled = false;
@@ -202,11 +202,11 @@ int main() {
         b->stream = false;
         CHECK(LoadSceneAudio(streaming, "", 8000) == 1);
         CHECK(b->IsStreaming());
-        CHECK(b->clip.samples.empty());
+        CHECK(b->Clip().samples.empty());
         CHECK(b->Stream() && b->Stream()->Channels() == 1);
         std::vector<float> fromStream(400);
         CHECK(b->Stream()->Read(fromStream.data(), 400) == 400);
-        CHECK(MaxAbsDiff(fromStream, a->clip.samples) < 1.0e-5f);
+        CHECK(MaxAbsDiff(fromStream, a->Clip().samples) < 1.0e-5f);
 
         // An older sidecar (stream / mono) still takes effect.
         const std::string legacy = "import_legacy.wav";

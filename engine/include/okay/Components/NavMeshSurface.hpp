@@ -72,6 +72,12 @@ public:
 
     /// Bake now, on this thread. False (with `error`) when it was refused.
     bool Bake(Scene& scene, NavBakeStats* stats = nullptr, std::string* error = nullptr);
+    /// Bake unless a bake already on this surface was made from exactly the same input: the same settings and bounds
+    /// and the same colliders and terrains (shape, size, world position and rotation, area), judged on the
+    /// gathered bake input itself, so nothing that could change the mesh is missed. The mesh must also still be
+    /// there, and when it came from its .okaynav file that file must be the one this bake wrote (same size and
+    /// write time). Anything not provable bakes. `*skipped` says which happened. Used before Play.
+    bool BakeIfChanged(Scene& scene, bool* skipped = nullptr, NavBakeStats* stats = nullptr, std::string* error = nullptr);
     /// Bake on a worker thread. False when one is already running.
     bool StartBake(Scene& scene);
     bool IsBaking() const { return m_job != nullptr; }
@@ -104,9 +110,11 @@ private:
         std::atomic<float> progress{0.0f};
         std::atomic<bool> done{false}, cancel{false}, ok{false};
         std::unique_ptr<NavMesh> result;
+        std::vector<std::uint32_t> key;
         NavBakeStats stats;
     };
     std::unique_ptr<NavMesh> m_mesh;
+    std::vector<std::uint32_t> m_bakeKey;   // the input the current m_mesh was baked from (empty: unknown)
     std::unique_ptr<Job> m_job;
     NavBakeStats m_stats;
     std::string m_triedPath;   // the navPath the lazy load last attempted

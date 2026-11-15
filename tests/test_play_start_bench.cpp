@@ -133,6 +133,9 @@ int main() {
         std::vector<Row> rows;
         NavMeshSurface::SetAssetBaseDir(root.string());
         rows.push_back({"Nav bake (NavigationBeforePlay, editor only)", Timed([&] { std::string e; ns->Bake(s, nullptr, &e); })});
+        bool skipped = false;
+        rows.push_back({"Nav BakeIfChanged, nothing changed (skips)", Timed([&] { ns->BakeIfChanged(s, &skipped); })});
+        CHECK(skipped);   // the same input as the bake just above: the skip is what Play now does
         std::string snap;
         rows.push_back({"SceneSerializer::Serialize (undo snapshot)", Timed([&] { snap = SceneSerializer::Serialize(s); })});
         rows.push_back({"PoseCapture::ImportFolder x animators", Timed([&] {

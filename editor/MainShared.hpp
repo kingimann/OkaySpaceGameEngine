@@ -18,6 +18,8 @@ namespace oked {
 extern bool g_showConsole;
 extern bool g_paused;              // the simulation is paused while staying in Play
 extern bool g_clearConsoleOnPlay;  // wipe the Console each time Play starts
+extern bool g_consoleCollapse;     // Console 'Collapse' toggle: merge identical messages into one row with a count (okay_settings.txt)
+void SaveSettings();               // writes okay_settings.txt
 extern float g_editorFov;          // the Scene view's vertical field of view (degrees)
 extern float g_uiScale;            // the editor's UI scale (1.0 = 100%)
 // The opt-in OkayUI backend (docs/own_ui_toolkit.md, section 5). True when the setting or OKAY_UI_BACKEND picked OkayUI and this

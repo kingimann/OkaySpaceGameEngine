@@ -274,9 +274,10 @@ Tested on main (Linux): the line format and that each variable changes it, by th
 
 ### 9. Own WAV decoder
 
-* **Variable.** `OKAY_OWN_WAV=1` (and `0` to force the old one). It is **not** part of `OKAY_OWN_STACK=1` and **not** in
-  the startup line; it is only in the engine's `AudioClip::LoadWAV` (whole-file loads; streamed large files still use
-  the old parser).
+* **Variable.** `OKAY_OWN_WAV=1` (and `0` to force the old one), or `-DOKAY_OWN_WAV=ON` at build time. It is **not** part
+  of `OKAY_OWN_STACK=1` and **not** in the startup line. It switches two places in the engine: `AudioClip::LoadWAV`
+  (whole-file loads) and `AudioStream` (a source or music track that plays **streamed**, which long files use; the
+  AudioSource **Stream** box, or a file whose import setting says to read it while it plays).
 * **Sample file.** `examples\own_wav\mulaw_tone.wav` (2 s of a 440 Hz sine, 8-bit mu-law, 22,050 Hz; we generated it
   from our own signal, no outside source) and the scene `own_wav_test.okayscene` that plays it.
 * **Steps.**
@@ -289,6 +290,18 @@ Tested on main (Linux): the line format and that each variable changes it, by th
 * **Verified here:** `okay::wav::DecodeWav` (compiled on its own) reads this file as 22,050 Hz mono, 44,100 frames,
   mu-law, peak 0.512, and every sample within 0.016 of an ideal 440 Hz sine of amplitude 0.5. The
   `own_wav` test covers mu-law. **Unverified:** what you hear on Windows.
+* **Streaming (second sample).** `examples\own_wav\ima_tone.wav` (4 s of a 440 Hz sine, mono, 22,050 Hz, **IMA ADPCM**; made by
+  `scripts/gen_own_wav_samples.py` from our own signal and our own encoder, no outside source) and the scene
+  `own_wav_stream_test.okayscene`, whose speaker has the **Stream** box on (the 12th number of its `audio` line is `1`).
+  1. Start the editor with no variable. **File > Open...** `examples\own_wav\own_wav_stream_test.okayscene`, Play. The old
+     streaming reader cannot read ADPCM, so you should hear **nothing**, and the Console should show an audio error for
+     `ima_tone.wav` (the exact wording was not checked on Windows).
+  2. Close the editor, `set OKAY_OWN_WAV=1`, start it again, open the same scene, Play. You should hear the **clean steady
+     tone**, now read in pieces while it plays. Silence versus tone is the proof the own streaming decoder is in use.
+  * **Verified here (Linux):** `own_wav_sample` decodes the file to a 440 Hz sine (peak 0.5, worst error under 0.02, about 0.01
+    against Python's `audioop` decoder), checks that the stream with `OKAY_OWN_WAV=1` equals the whole-file decode sample for
+    sample, and that with `OKAY_OWN_WAV=0` the stream does not open. `own_wav_stream` covers the streaming decoder. **Not run on
+    Windows:** what you hear, and what the Console says.
 
 ### 10. Own HTTP client
 

@@ -90,6 +90,12 @@ add_executable(test_own_wav_stream test_own_wav_stream.cpp)
 target_link_libraries(test_own_wav_stream PRIVATE okay::engine)
 add_test(NAME own_wav_stream COMMAND test_own_wav_stream WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(own_wav_stream PROPERTIES TIMEOUT 240)
+# The shipped IMA ADPCM sample (examples/own_wav/ima_tone.wav) and the scene that streams it: decodes to the documented tone, the stream equals the
+# whole-file decode, and only the own decoder opens it (docs/try_it.md section 9).
+add_executable(test_own_wav_sample test_own_wav_sample.cpp)
+target_link_libraries(test_own_wav_sample PRIVATE okay::engine)
+target_compile_definitions(test_own_wav_sample PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_wav_sample COMMAND test_own_wav_sample WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # FLAC decoding against known samples, and audio import settings (mono, stream).
 add_executable(test_flac_import test_flac_import.cpp)

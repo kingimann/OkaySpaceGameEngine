@@ -2,6 +2,10 @@
 
 Status: **side by side, off by default.** Part of `docs/own_code_roadmap.md` (the SDL2 row: `SDL_LoadWAV` in the launcher is the last WAV use of a library; the engine already had its own, narrower, WAV reader).
 
+## How to try it
+
+Full steps: `docs/try_it.md`, section 9. Short form: the whole-file path is tried with `examples\own_wav\own_wav_test.okayscene` (mu-law), the **streaming** path with `examples\own_wav\own_wav_stream_test.okayscene` (an IMA ADPCM file, `ima_tone.wav`, played with the Stream box on): without `OKAY_OWN_WAV=1` it is silent (the old streaming reader cannot read ADPCM), with it you hear a clean 440 Hz tone. `own_wav_sample` checks the committed file and that behaviour on Linux; not heard on Windows.
+
 ## Why this one
 
 It is small, it has a public specification, it is fully testable on Linux, and it is not crypto, networking or a model reader. It does two jobs: it is the own replacement for `SDL_LoadWAV` (which also reads MS and IMA ADPCM and A-law / mu-law), and it makes the engine's `AudioClip::LoadWAV` safe against hostile files (budgets) and wider (ADPCM, A-law, mu-law, 64-bit float, WAVE_FORMAT_EXTENSIBLE, odd bit depths).

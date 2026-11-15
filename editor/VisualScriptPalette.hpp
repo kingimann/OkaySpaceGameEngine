@@ -194,8 +194,6 @@ inline void DrawCategoryIcon(ImDrawList* dl, ImVec2 c, float r, int cat, ImU32 c
 /// exact list, so it cannot grow without a reason being written here.
 struct VsHiddenUntilTested { const char* type; const char* reason; };
 inline const VsHiddenUntilTested kHiddenUntilTested[] = {
-    {"Fn.net_join_link",         "no suite joins by an okay:// link, and it needs a live host"},
-    {"Fn.net_pin_host",          "no suite covers pinning the host, and it needs a live session"},
     {"Fn.pf_delete",             "PlayFab web request; no suite exercises it"},
     {"Fn.pf_leaderboard_top",    "PlayFab web request; no suite exercises it"},
     {"Fn.pf_load",               "PlayFab web request; no suite exercises it"},

@@ -3549,3 +3549,7 @@ add_test(NAME vs_net_nodes COMMAND test_vs_net_nodes)
 add_executable(test_vs_api_silent test_vs_api_silent.cpp)
 target_link_libraries(test_vs_api_silent PRIVATE okay::engine)
 add_test(NAME vs_api_silent COMMAND test_vs_api_silent)
+
+add_executable(test_vs_net_link_pin test_vs_net_link_pin.cpp)
+target_link_libraries(test_vs_net_link_pin PRIVATE okay::engine)
+add_test(NAME vs_net_link_pin COMMAND test_vs_net_link_pin)

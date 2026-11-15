@@ -946,7 +946,7 @@ int main() {
     }
     // Online nodes no suite covers are hidden from the Add Node menu (factory kept). The list is fixed here.
     {
-        static const char* const expected[] = {"Fn.net_join_link", "Fn.net_pin_host", "Fn.pf_delete", "Fn.pf_leaderboard_top", "Fn.pf_load", "Fn.pf_login", "Fn.pf_login_password", "Fn.pf_register", "Fn.pf_save", "Fn.pf_set_stat"};
+        static const char* const expected[] = {"Fn.pf_delete", "Fn.pf_leaderboard_top", "Fn.pf_load", "Fn.pf_login", "Fn.pf_login_password", "Fn.pf_register", "Fn.pf_save", "Fn.pf_set_stat"};
         std::set<std::string> have, want(std::begin(expected), std::end(expected));
         for (const VsHiddenUntilTested& h : kHiddenUntilTested) {
             have.insert(h.type);

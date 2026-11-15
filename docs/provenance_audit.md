@@ -17,7 +17,7 @@ that nothing else was copied; see "Method and limits".
 
 | # | Severity | Where | Possible source and licence | Action |
 |---|---|---|---|---|
-| 1 | **Clear copy / close port** | `engine/src/Render/LwoReader.cpp` lines 70 to 134 (`ProjectUvs`) | Assimp `ComputeUVMappingProcess.cpp`, BSD 3-clause | Rewrite from the idea (section F1) |
+| 1 | Clear copy / close port: **reimplemented** (owner decision 2026-11-14) | `engine/src/Render/LwoReader.cpp` `ProjectUvs` | Assimp `ComputeUVMappingProcess.cpp`, BSD 3-clause | Reimplemented as new code; the placement convention is deliberately kept identical to the old output and the seam rule is new (F1) |
 | 2 | ~~Close port of public-domain code (listed)~~ **CLOSED: deleted** | was `shared/AntiCheatCrypto.hpp` lines 1 to about 400 (SHA-512, Ed25519) | TweetNaCl, public domain | Done: the owner approved the replacement; the header is now a thin wrapper over `okay::crypto` and libsodium (F2). The replacement is `okay::crypto`, which has not had its outside review yet, and row 4 below still stands |
 | 3 | ~~Probable copy of public-domain constants (not listed)~~ **CLOSED: replaced** | was `engine/src/Audio/SpatialFx.cpp` lines 12 to 15 | Freeverb by Jezar, public domain | Done: the owner said nothing may be copied; the whole reverb was rewritten as our own feedback delay network from the papers (F3) |
 | 4 | Possible close re-derivation, unverified | `engine/src/Crypto/Fe25519_16.hpp` (16 limbs of 16 bits, fold by 38) | TweetNaCl's field code, public domain | Unverified; part of the outside crypto review (F4) |
@@ -59,6 +59,17 @@ tinyfiledialogs (#640), stb_decompress (engine side).
 ## Findings in detail
 
 ### F1. LWO planar, cylindrical and spherical UV projection (clear copy / close port)
+
+**Reimplemented (2026-11-14, branch `claude2/lwo-uv-rewrite`); owner decision: keeping the old placement convention with the new seam rule is acceptable.** This is described honestly as a reimplementation, not as code derived only from geometry.
+- **What is new code.** `ProjectUvs` was deleted and written again in a new structure. Neither the old function body nor Assimp's code was read for the rewrite; only the old function's first 14 lines were seen once by accident (the bounding-box idea).
+- **What is deliberately the same.** The placement convention: the projection on the surface's bounding box, the pair of axes per main axis, and where the turn starts and which way it runs on each axis. These were fitted to the old reader's output so that textures stay where they were. A point on the axis (a sphere's pole) gets the turn's starting value and a flat box gives 0, both as before.
+- **What is new behaviour.** The seam rule. A triangle crosses the seam only when the gap between its U values that runs through the seam is not the largest. Then the corners on one side of the largest gap move onto the seam, whichever side moves less. There are no thresholds or flags.
+- **Measured against the old reader** on the corpus's projected-map files (the 15 `earth_*` cylindrical, spherical and planar files, `UglyVertexColors.lwo` and `bluewithcylindrictexz.lwo`): planar files are identical. On the cylindrical and spherical files all positions keep a UV they had before, and between 2 and 8 seam positions per file get a different set of UVs.
+- **Tests.** `lwo_reader` has hand-computed UVs for a cylinder band (exact U at the four compass points and a seam split), a sphere with poles and a flat planar quad. A mutation check confirmed that changing the turn start, switching off the seam repair, forcing poles to 0 or flat boxes to 0.5 each makes the test fail.
+- **Open owner question:** whether matching the old convention is acceptable under rule 19a. Answered for now: yes.
+
+What follows is the original finding.
+
 
 - **File and lines:** `engine/src/Render/LwoReader.cpp`, `ProjectUvs`, about lines 70 to 134; the call site near 495 to 505.
 - **Evidence from our own text:** line 71, "This is Assimp's ComputeUVMappingProcess"; line 83, "the two axes after `ax` in Assimp's formulas"; line 498, "the same mapping as Assimp's GenUVCoords step"; `docs/own_lwo_reader.md` line 23 says the same. The file's first lines say "no code from any other importer", which is therefore wrong for this function.

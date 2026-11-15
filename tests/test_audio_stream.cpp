@@ -650,8 +650,8 @@ int main() {
         b->stream = true;
         CHECK(LoadSceneAudio(whole, "", rate) == 1);
         CHECK(LoadSceneAudio(strm, "", rate) == 1);
-        CHECK(!a->IsStreaming() && b->IsStreaming() && b->clip.samples.empty());
-        CHECK(a->clip.channels == 2);
+        CHECK(!a->IsStreaming() && b->IsStreaming() && b->Clip().samples.empty());
+        CHECK(a->Clip().channels == 2);
         whole.Start(); strm.Start();
         a->Play(); b->Play();
         CHECK_NEAR(b->Duration(), a->Duration(), 1e-5);

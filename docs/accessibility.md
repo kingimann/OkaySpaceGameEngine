@@ -8,7 +8,7 @@ The engine side of accessibility. What a player can change today, and what reall
 | Text size (75%, 100%, 125%, 150%, 200%) | Screen-space Text objects (their wrap width too), button, toggle, keybind, tooltip and context-menu labels draw that much larger. Best Fit text already fills its box and is not scaled again. World text is not scaled. Slider, dropdown, input and progress text keep their size; widgets do not resize, so a long label can overflow its box |
 | Colour filter (Off, Protanopia, Deuteranopia, Tritanopia) | The rendered 3D frame (every renderer: it is the pixel buffer the player uploads) and every flat colour and text colour of the screen UI are daltonized (`DaltonizeRgba8`, `Accessibility::FilterColor`). UI images are not filtered |
 | High contrast | UI text is pushed to 7:1 against the last large solid fill drawn before it (the panel or button under it); text over the bare scene is measured against near black. A panel with a thin gradient or image under the text can be misjudged |
-| Reduce motion | `Camera::Shake` is ignored and a shake in progress stops. UI Animation slides, pop, drop and grow become a quarter-length fade and its loops (pulse, breathe, bob, sway) hold still |
+| Reduce motion | `Camera::Shake` is ignored and a shake in progress stops. The first person head bob and sway ease out (footstep events still fire) and a hard landing no longer dips the camera (test `reduce_motion_bob`). UI Animation slides, pop, drop and grow become a quarter-length fade and its loops (pulse, breathe, bob, sway) hold still |
 | Reduce flashing | The `flash` action does nothing and the UI Animation blink loop holds still |
 | Subtitles | Spoken lines (cutscene subtitles and dialogue) are drawn by the caption widget. Off, those lines are not shown |
 | Sound captions | While on, an Audio Source with a caption shows it, for example `[door slams]`. Off by default |
@@ -321,8 +321,8 @@ These settings exist in `AccessibilitySettings` but nothing reads them yet, so t
 screen does not show them:
 
 * **Screen reader hints**: no platform announcer reads them.
-* **Reduce motion** does not yet change first person head bob, the landing dip, parallax or sprite sway;
-  only camera shake and UI animation.
+* **Reduce motion** does not yet change parallax or sprite sway; it changes camera shake, UI animation and
+  the first person head bob and landing dip.
 * **Achromatopsia** has no correction (a grayscale user has no hue to recover), so it is not offered as a filter.
 * **okayui** (the editor and launcher chrome) does not read the settings; only the in-game UI does.
 * Subtitle size, background, speaker names and the top-or-bottom choice are saved with the other

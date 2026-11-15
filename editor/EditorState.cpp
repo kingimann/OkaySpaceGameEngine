@@ -817,6 +817,18 @@ void EditorState::NewVehicle3D() {
     StartDocument();
 }
 
+void EditorState::NewVehicleSeats3D() {
+    NewScene();
+    m_suppressUndo = true;
+    Templates::VehicleSeats3D(m_scene);
+    m_suppressUndo = false;
+    view3D = true;
+    camTarget = {0, 1, 0};
+    camDist = 12.0f;
+    m_selected = m_scene.Find("Car");
+    StartDocument();
+}
+
 void EditorState::NewVehicle2D() {
     NewScene();
     m_suppressUndo = true;
@@ -1166,6 +1178,7 @@ void EditorState::Stop() {
     for (const auto& up : m_scene.Objects())
         if (auto* ma = up->GetComponent<ModelAnimator>())
             PoseCapture::ImportFolder(*ma, PoseCapture::AssetBaseDir());
+    AudioClip::TrimCache(256u * 1024u * 1024u);   // the sources let go of their sounds: keep recent ones for the next Play, within a budget
     dirty = m_dirtyAtPlay;   // edits made to the running game are thrown away, so they leave no mark
     if (okay::FirstPersonHands::RestoreApplied(m_scene)) dirty = true;   // Apply during Play
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)

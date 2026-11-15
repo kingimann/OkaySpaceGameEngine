@@ -250,6 +250,7 @@
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/VehicleController2D.hpp"
+#include "okay/Components/VehicleSeat.hpp"
 #include "okay/Components/BlockBuilder.hpp"
 #include "okay/Components/BuildPiece.hpp"
 #include "okay/Components/StructureBuilder.hpp"

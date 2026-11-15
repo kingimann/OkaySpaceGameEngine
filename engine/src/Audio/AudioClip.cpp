@@ -1,4 +1,5 @@
 #include "okay/Audio/AudioClip.hpp"
+#include "okay/Audio/WavDecoder.hpp"
 #include "AudioInternal.hpp"
 
 #include <algorithm>
@@ -135,6 +136,19 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
     if (!f) { if (error) *error = "cannot open " + path; return false; }
     std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
                                    std::istreambuf_iterator<char>());
+    if (wav::OwnWavEnabled()) {   // opt-in own decoder (OKAY_OWN_WAV); the code below stays the default
+        wav::WavAudio a;
+        std::string e;
+        if (!wav::DecodeWav(buf.data(), buf.size(), a, &e)) { if (error) *error = e; return false; }
+        sampleRate = a.sampleRate;
+        channels = audio_detail::KeptChannels(a.channels, downmix);
+        if (channels == a.channels) samples = std::move(a.samples);
+        else {
+            samples.resize(a.FrameCount());
+            audio_detail::DownmixToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
+        }
+        return true;
+    }
     auto src = AudioByteSource::FromPointer(buf.data(), buf.size());
     audio_detail::WavInfo w;
     if (const char* err = audio_detail::ParseWav(*src, w)) { if (error) *error = err; return false; }

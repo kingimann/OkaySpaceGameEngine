@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -124,15 +125,42 @@ bool AudioClip::IsAudioFile(const std::string& path) {
     return ext == "wav" || ext == "ogg" || ext == "mp3" || ext == "flac";
 }
 
+namespace {
+// The shared decode cache. An entry remembers the file's size and write time when it was decoded; a hit whose
+// file has changed since is decoded again (so an edited or replaced sound never plays stale).
+struct CacheEntry { std::shared_ptr<const AudioClip> clip; std::uintmax_t size = 0; std::int64_t time = 0; std::uint64_t used = 0; };
+std::mutex& CacheMutex() { static std::mutex mu; return mu; }
+std::map<std::pair<std::string, int>, CacheEntry>& CacheMap() { static std::map<std::pair<std::string, int>, CacheEntry> m; return m; }
+std::uint64_t& CacheTick() { static std::uint64_t t = 0; return t; }
+
+std::string CacheName(const std::string& path) {   // one key for "a/./b.wav", "a/b.wav" and an absolute spelling of it
+    std::error_code ec;
+    const auto p = std::filesystem::weakly_canonical(std::filesystem::u8path(path), ec);
+    return ec ? path : p.generic_u8string();
+}
+void FileStamp(const std::string& path, std::uintmax_t& size, std::int64_t& time) {
+    std::error_code ec;
+    const auto fp = std::filesystem::u8path(path);
+    size = std::filesystem::file_size(fp, ec); if (ec) size = 0;
+    const auto t = std::filesystem::last_write_time(fp, ec);
+    time = ec ? 0 : (std::int64_t)t.time_since_epoch().count();
+}
+std::size_t EntryBytes(const CacheEntry& e) { return e.clip ? e.clip->samples.size() * sizeof(float) : 0; }
+}  // namespace
+
 std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, int rate, std::string* error, bool downmix) {
-    static std::mutex mu;
-    static std::map<std::pair<std::string, int>, std::shared_ptr<const AudioClip>> cache;
     const bool mono = downmix || ReadAudioImportOptions(path).forceMono;
-    const auto key = std::make_pair(path + (mono ? "\n:mono" : ""), rate);
+    const auto key = std::make_pair(CacheName(path) + (mono ? "\n:mono" : ""), rate);
+    std::uintmax_t size = 0; std::int64_t time = 0;
+    FileStamp(path, size, time);
     {
-        std::lock_guard<std::mutex> lock(mu);
+        std::lock_guard<std::mutex> lock(CacheMutex());
+        auto& cache = CacheMap();
         auto it = cache.find(key);
-        if (it != cache.end()) return it->second;
+        if (it != cache.end()) {
+            if (it->second.size == size && it->second.time == time) { it->second.used = ++CacheTick(); return it->second.clip; }
+            cache.erase(it);   // the file changed: decode it again (clips already handed out keep playing their copy)
+        }
     }
     AudioClip c;
     std::string loadErr;
@@ -142,9 +170,44 @@ std::shared_ptr<const AudioClip> AudioClip::LoadCached(const std::string& path, 
         return nullptr;
     }
     auto shared = std::make_shared<const AudioClip>(rate > 0 && c.sampleRate != rate ? c.Resampled(rate) : std::move(c));
-    std::lock_guard<std::mutex> lock(mu);
-    cache[key] = shared;
+    std::lock_guard<std::mutex> lock(CacheMutex());
+    auto& cache = CacheMap();
+    auto it = cache.find(key);   // another thread may have decoded it meanwhile: keep one shared copy
+    if (it != cache.end() && it->second.size == size && it->second.time == time) { it->second.used = ++CacheTick(); return it->second.clip; }
+    cache[key] = CacheEntry{shared, size, time, ++CacheTick()};
     return shared;
+}
+
+void AudioClip::ClearCache() {
+    std::lock_guard<std::mutex> lock(CacheMutex());
+    CacheMap().clear();
+}
+
+std::size_t AudioClip::CacheBytes() {
+    std::lock_guard<std::mutex> lock(CacheMutex());
+    std::size_t n = 0;
+    for (const auto& kv : CacheMap()) n += EntryBytes(kv.second);
+    return n;
+}
+
+std::size_t AudioClip::CacheCount() {
+    std::lock_guard<std::mutex> lock(CacheMutex());
+    return CacheMap().size();
+}
+
+void AudioClip::TrimCache(std::size_t maxBytes) {
+    std::lock_guard<std::mutex> lock(CacheMutex());
+    auto& cache = CacheMap();
+    std::size_t total = 0;
+    for (const auto& kv : cache) total += EntryBytes(kv.second);
+    while (total > maxBytes) {   // drop the least recently used clip that no source or voice is holding
+        auto victim = cache.end();
+        for (auto it = cache.begin(); it != cache.end(); ++it)
+            if (it->second.clip.use_count() == 1 && (victim == cache.end() || it->second.used < victim->second.used)) victim = it;
+        if (victim == cache.end()) break;   // everything left is in use
+        total -= EntryBytes(victim->second);
+        cache.erase(victim);
+    }
 }
 
 // ---------------------------------------------------------------------------

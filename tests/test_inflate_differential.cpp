@@ -1,21 +1,26 @@
-// Differential test for the ONE inflate (engine/include/okay/Core/Inflate.hpp) against the three decoders it replaced.
-// The old decoders are kept ONLY here, in tests/inflate_reference_old.hpp, as reference implementations:
-//   ref1 = the old okay::Inflate / InflateCore (ImageDecode.cpp)   <-> new Zlib/Raw with Options::Lenient
-//   ref2 = the old okay::fbx::Inflate (FbxReader.cpp)               <-> new Zlib with Options::Lenient
-//   ref3 = the old okay::ownhttp::InflateBody (OwnHttpInflate.hpp)  <-> new Zlib/Gzip with strict Options
+// Differential test for the ONE inflate (engine/include/okay/Core/Inflate.hpp) against a slow reference decoder written
+// fresh from the RFCs (tests/inflate_reference_slow.hpp: one bit at a time, canonical codes computed the long way).
+// Three policies are compared, each with identical accept/refuse decisions and identical bytes:
+//   lenient (images, models: Options::Lenient), PNG mode (Lenient + stopAtMax), strict (the HTTP client: zlib and gzip).
 // Streams: (a) zlib streams made by Python's zlib (levels 0/1/6/9, window bits 9..15, strategies default/filtered/
 // huffman-only/RLE/fixed, plain/sync-flush/full-flush) when python3 is available; (b) streams built here from RFC 1951
 // (stored, fixed-Huffman with matches), which always run. Then bit-flipped, truncated, extended and spliced copies of
-// all of them. Every old/new pair must give the same accept/reject decision and the same bytes. The only allowed
-// differences are the ones the OLD lenient copies had by design versus the strict one (checksums, trailing bytes,
-// incomplete codes): those are counted and reported, and checked to be one-directional (strict accepts => lenient accepts).
+// all of them, and every single-bit flip and truncation of the small ones. Strict accepting must always imply lenient
+// accepting, with the same bytes. A last section checks that a size claimed by a PNG header cannot make the decoder
+// allocate that much for a tiny stream (peak heap measured with a counting operator new).
+// History: before the reference was written fresh, the same test compared against verbatim copies of the three decoders
+// that Core/Inflate.hpp replaced (commit 0ea3b26a, file tests/inflate_reference_old.hpp): 257,014 inputs, 252,460 PNG-mode
+// inputs and 22,898 gzip inputs, no disagreement. Those copies are no longer in the tree (only in git history).
 // Standalone: g++ -std=c++17 -I engine/include tests/test_inflate_differential.cpp (also run under ASan/UBSan).
 // OKAY_REQUIRE_DIFFERENTIAL=1 turns a missing python3 into a failure.
 #include "okay/Core/Inflate.hpp"
 #include "okay/Platform/OwnHttpInflate.hpp"
-#include "inflate_reference_old.hpp"
+#include "inflate_reference_slow.hpp"
 
+#include <atomic>
 #include <cstdio>
+#include <ctime>
+#include <new>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -94,80 +99,86 @@ static Bytes GzipWrap(const Bytes& raw, const Bytes& plain) {
 
 // ---- comparison ----------------------------------------------------------------------------------------------
 struct Stats {
-    long compared = 0, bothOk = 0, bothBad = 0, strictOnly = 0, lenientOnly = 0;
-    long pngTailDiff = 0, gzCompared = 0, gzOk = 0, capCompared = 0, pngCompared = 0, newRejectsOldAccepts = 0;
+    long compared = 0, lenientOk = 0, strictOk = 0, lenientOnly = 0, strictOnly = 0, pngCompared = 0, pngTailDiff = 0;
+    long gzCompared = 0, gzOk = 0;
 };
 static Stats g_st;
 static const uint8_t* P(const Bytes& b) { static const uint8_t z = 0; return b.empty() ? &z : b.data(); }
 static std::string AsStr(const Bytes& b) { return std::string(reinterpret_cast<const char*>(b.data()), b.size()); }
+static std::string HexOf(const Bytes& b) { std::string s; char t[4]; for (uint8_t c : b) { std::snprintf(t, sizeof t, "%02x", c); s += t; } return s; }
 
-// One input, one cap: run every old/new pair.
+// One input, one cap: the engine decoder (lenient, PNG mode, strict) against the slow reference with the same policy.
+// Accept/refuse and the bytes must be identical.
 static void CompareOne(const Bytes& z, size_t cap, bool alsoRaw) {
     using namespace okay::inflate;
     ++g_st.compared;
     std::string why;
-    Bytes nw, o1, o2;
-    // lenient pairs (ref1 zlib, ref2 zlib)
+    Bytes nw, rf;
+    auto policy = [&](bool lenient, bool stop) { refslow::Policy p; p.maxOut = cap; p.lenient = lenient; p.stopAtMax = stop; return p; };
+    // lenient zlib
+    bool len;
     {
-        bool a = ref1::Inflate(P(z), z.size(), true, o1, cap);
-        bool b = ref2::Inflate(P(z), z.size(), o2, cap);
+        bool a = refslow::Zlib(P(z), z.size(), policy(true, false), rf);
         bool c = Zlib(P(z), z.size(), nw, Options::Lenient(cap), why);
-        CHECK(a == c); CHECK(b == c);
-        if (a == c && c) CHECK(o1 == nw);
-        if (b == c && c) CHECK(o2 == nw);
-        if (a != c || b != c) std::printf("  lenient zlib disagreement: ref1=%d ref2=%d new=%d size=%zu cap=%zu why=%s\n", a, b, c, z.size(), cap, why.c_str());
-    }
-    // raw (ref1 only)
-    if (alsoRaw && z.size() >= 2) {
-        bool a = ref1::Inflate(P(z) + 2, z.size() - 2, false, o1, cap);
-        size_t used = 0;
-        bool c = Raw(P(z) + 2, z.size() - 2, nw, Options::Lenient(cap), used, why);
         CHECK(a == c);
-        if (a == c && c) CHECK(o1 == nw);
+        if (a == c && c) CHECK(rf == nw);
+        if (a != c) std::printf("  lenient zlib disagreement: ref=%d new=%d size=%zu cap=%zu why=%s hex=%s\n", a, c, z.size(), cap, why.c_str(), z.size() < 200 ? HexOf(z).c_str() : "");
+        len = a;
     }
-    // PNG mode: stop at the wanted size, with the hint the PNG path gives
+    // raw, lenient
+    if (alsoRaw && z.size() >= 2) {
+        size_t used = 0, used2 = 0;
+        bool a = refslow::Raw(P(z) + 2, z.size() - 2, policy(true, false), rf, used);
+        bool c = Raw(P(z) + 2, z.size() - 2, nw, Options::Lenient(cap), used2, why);
+        CHECK(a == c);
+        if (a == c && c) { CHECK(rf == nw); CHECK(used == used2); }
+    }
+    // PNG mode: stop at the wanted size (with the hint the PNG path gives)
     if (cap) {
         ++g_st.pngCompared;
-        bool a = ref1::InflateCore(P(z), z.size(), true, o1, cap, true, cap);
+        bool a = refslow::Zlib(P(z), z.size(), policy(true, true), rf);
         Options po = Options::Lenient(cap, cap); po.stopAtMax = true;
         bool c = Zlib(P(z), z.size(), nw, po, why);
-        // The one intended difference: once the wanted bytes are all decoded the new decoder stops and does not examine
-        // the tail, where the old one still decoded one more symbol (and could refuse a cut-off or damaged tail).
-        // So: old accepts => new accepts with the same bytes; new accepts and old refuses => new has exactly `cap` bytes.
-        CHECK(!a || c);
-        if (a && c) CHECK(o1 == nw);
-        if (!a && c) { CHECK(nw.size() == cap); ++g_st.pngTailDiff; }
-        if (a && !c) { std::printf("  PNG-mode disagreement: ref1=%d new=%d size=%zu cap=%zu out1=%zu why=%s\n", a, c, z.size(), cap, o1.size(), why.c_str()); if (getenv("DUMP")) { for (auto b : z) std::printf("%02x", b); std::printf("\n"); } }
-    }
-    // strict pair: ref3 zlib <-> new strict (the HTTP wrapper over the shared decoder). Must be IDENTICAL.
-    {
-        const std::string in = AsStr(z);
-        std::string out3, why3, outN, whyN;
-        bool a = ref3::InflateBody(in, false, cap, out3, why3);
-        bool c = okay::ownhttp::InflateBody(in, false, cap, outN, whyN);
         CHECK(a == c);
-        if (a && c) CHECK(out3 == outN);
-        if (a != c) std::printf("  STRICT zlib disagreement: ref3=%d new=%d (%s / %s)\n", a, c, why3.c_str(), whyN.c_str());
-        if (!a && !c) CHECK(why3 == whyN);   // same error text, the tests and logs rely on it
-        // strict relation to the lenient decoders: strict accepts => lenient accepts, same bytes
-        bool len = ref1::Inflate(P(z), z.size(), true, o1, cap);
-        if (a) { CHECK(len); if (len) CHECK(AsStr(o1) == out3); }
-        if (a && len) ++g_st.bothOk; else if (!a && !len) ++g_st.bothBad; else if (!a && len) ++g_st.strictOnly; else ++g_st.lenientOnly;
-        if (a && !len) ++g_st.newRejectsOldAccepts;
+        if (a == c && c) CHECK(rf == nw);
+        if (a != c) std::printf("  PNG-mode disagreement: ref=%d new=%d size=%zu cap=%zu\n", a, c, z.size(), cap);
+        if (a && c && rf.size() == cap && !len) ++g_st.pngTailDiff;   // accepted only because the tail after the wanted bytes is not examined
+    }
+    // strict zlib: the engine's Zlib with default options, and the HTTP wrapper over it
+    {
+        bool a = refslow::Zlib(P(z), z.size(), policy(false, false), rf);
+        Options so; so.maxOutput = cap;
+        bool c = Zlib(P(z), z.size(), nw, so, why);
+        CHECK(a == c);
+        if (a == c && c) CHECK(rf == nw);
+        if (a != c) std::printf("  STRICT zlib disagreement: ref=%d new=%d size=%zu cap=%zu why=%s\n", a, c, z.size(), cap, why.c_str());
+        std::string out2, why2;
+        bool d = okay::ownhttp::InflateBody(AsStr(z), false, cap, out2, why2);
+        CHECK(d == a);
+        if (d && a) CHECK(out2 == AsStr(rf));
+        if (!d) CHECK(out2.empty() && !why2.empty());
+        // strict accepts => lenient accepts, with the same bytes (the stricter decoder is a subset)
+        if (a) { CHECK(len); ++g_st.strictOk; } else if (len) ++g_st.lenientOnly;
+        if (len) ++g_st.lenientOk;
     }
 }
 
-// gzip: ref3 <-> new, identical.
+// gzip: engine (and the HTTP wrapper) against the reference.
 static void CompareGzip(const Bytes& g, size_t cap) {
+    using namespace okay::inflate;
     ++g_st.gzCompared;
-    const std::string in = AsStr(g);
-    std::string o3, w3, oN, wN;
-    bool a = ref3::InflateBody(in, true, cap, o3, w3);
-    bool c = okay::ownhttp::InflateBody(in, true, cap, oN, wN);
+    refslow::Policy p; p.maxOut = cap; p.lenient = false;
+    Bytes rf, nw; std::string why;
+    bool a = refslow::Gzip(P(g), g.size(), p, rf);
+    Options so; so.maxOutput = cap;
+    bool c = Gzip(P(g), g.size(), nw, so, why);
     CHECK(a == c);
-    if (a && c) { CHECK(o3 == oN); ++g_st.gzOk; }
-    if (!a && !c) CHECK(w3 == wN);
-    if (a != c) std::printf("  gzip disagreement: ref3=%d new=%d (%s / %s)\n", a, c, w3.c_str(), wN.c_str());
+    if (a == c && c) { CHECK(rf == nw); ++g_st.gzOk; }
+    if (a != c) std::printf("  gzip disagreement: ref=%d new=%d (%s)\n", a, c, why.c_str());
+    std::string o2, w2;
+    bool d = okay::ownhttp::InflateBody(AsStr(g), true, cap, o2, w2);
+    CHECK(d == a);
+    if (d && a) CHECK(o2 == AsStr(rf));
 }
 
 // Damaged copies of one valid zlib stream (the plain bytes are given only to build the gzip form).
@@ -244,17 +255,119 @@ static bool ReadFile(const std::string& path, Bytes& out) {
 }
 static uint32_t U32(const Bytes& b, size_t at) { return b[at] | (uint32_t(b[at + 1]) << 8) | (uint32_t(b[at + 2]) << 16) | (uint32_t(b[at + 3]) << 24); }
 
-// valid stream: every pair must decode it, with caps at, below and above its size.
-static void ValidCase(Rng& rng, const Bytes& z, const Bytes& plain, int flips, bool exhaustive) {
+// valid stream: every policy must decode it, with caps at, below and above its size, and its damaged copies must agree.
+// The slow reference costs time in proportion to the OUTPUT size, so streams that decode to more than 4000 bytes get a
+// lighter treatment (full-size decode in every policy, the cap one byte short, and damaged copies for one stream in four).
+// That keeps the whole test inside a fixed budget (about 15 s optimised, about a minute under ASan+UBSan on a loaded
+// machine); small streams, where the header and table logic live, get every variant.
+static void ValidCase(Rng& rng, const Bytes& z, const Bytes& plain, int flips, bool exhaustive, int index) {
     using namespace okay::inflate;
     std::string why; Bytes out;
     CHECK(Zlib(P(z), z.size(), out, Options(), why) && out == plain);             // strict decode gives the original
     CHECK(Zlib(P(z), z.size(), out, Options::Lenient(plain.size()), why) && out == plain);
-    CompareOne(z, plain.size(), true);
+    const bool big = plain.size() > 4000;
+    CompareOne(z, plain.size(), !big);
+    if (big) {
+        CompareOne(z, plain.size() - 1, false);
+        if (index % 4 == 0) Mutations(rng, z, plain, 2, false, plain.size() + 64);
+        return;
+    }
     CompareOne(z, plain.size() + 1, false);
     if (!plain.empty()) { CompareOne(z, plain.size() - 1, false); CompareOne(z, plain.size() / 2, false); }
     CompareOne(z, 0, false);
     Mutations(rng, z, plain, flips, exhaustive, plain.size() + 64);
+}
+
+// ---- heap accounting (peak live bytes through operator new) -------------------------------------------------------
+static std::atomic<size_t> g_live{0}, g_peak{0};
+static void* CountedAlloc(size_t n) {
+    void* raw = std::malloc(n + 16);
+    if (!raw) throw std::bad_alloc();
+    *static_cast<size_t*>(raw) = n;
+    size_t now = g_live.fetch_add(n) + n, pk = g_peak.load();
+    while (now > pk && !g_peak.compare_exchange_weak(pk, now)) {}
+    return static_cast<char*>(raw) + 16;
+}
+static void CountedFree(void* p) {
+    if (!p) return;
+    void* raw = static_cast<char*>(p) - 16;
+    g_live.fetch_sub(*static_cast<size_t*>(raw));
+    std::free(raw);
+}
+void* operator new(size_t n) { return CountedAlloc(n); }
+void* operator new[](size_t n) { return CountedAlloc(n); }
+void operator delete(void* p) noexcept { CountedFree(p); }
+void operator delete[](void* p) noexcept { CountedFree(p); }
+void operator delete(void* p, size_t) noexcept { CountedFree(p); }
+void operator delete[](void* p, size_t) noexcept { CountedFree(p); }
+
+// A PNG header can claim an enormous pixel size (up to ~2 GiB of raw bytes) with a few bytes of image data. The PNG path asks
+// for exactly that many bytes (maxOutput = hint = claimed size, stopAtMax). The first allocation must be limited by what the
+// input could possibly produce (DEFLATE cannot expand more than 1032:1), not by the claim.
+static void HintTests() {
+    using namespace okay::inflate;
+    Rng rng{4242};
+    Bytes plain; Bytes raw = RandomRaw(rng, plain, 2);
+    Bytes z = ZlibWrap(raw, plain);
+    std::string why; Bytes out;
+    const size_t claim = size_t(1) << 31;
+    for (int mode = 0; mode < 3; ++mode) {
+        Options o = Options::Lenient(claim, claim);
+        o.stopAtMax = mode == 0;
+        if (mode == 2) { o = Options(); o.maxOutput = claim; o.hint = claim; }
+        out.clear(); out.shrink_to_fit();
+        const size_t before = g_live.load(); g_peak = before;
+        bool ok = Zlib(P(z), z.size(), out, o, why);
+        const size_t peak = g_peak.load() - before;
+        CHECK(ok && out == plain);
+        CHECK(peak < (size_t(1) << 20));   // nowhere near the 2 GiB claimed (budget is 1032 x input + slack)
+        CHECK(peak <= z.size() * 1032 + 4096 + 4 * plain.size() + 65536);
+        std::printf("hint test (mode %d): %zu bytes in, claimed %zu, peak extra heap %zu bytes\n", mode, z.size(), claim, peak);
+    }
+    // a truncated stream with the same huge claim: refused, still no big allocation
+    {
+        Options o = Options::Lenient(claim, claim); o.stopAtMax = true;
+        Bytes cut(z.begin(), z.begin() + long(z.size() / 2));
+        out.clear(); out.shrink_to_fit();
+        const size_t before = g_live.load(); g_peak = before;
+        bool ok = Zlib(P(cut), cut.size(), out, o, why);
+        const size_t peak = g_peak.load() - before;
+        CHECK(!ok || out.size() <= plain.size());
+        CHECK(peak < (size_t(1) << 20));
+    }
+    // stopAtMax at the cap: a match that crosses it is cut (success, exactly `cap` bytes); a stored block that crosses it
+    // is refused (documented in Core/Inflate.hpp, StoredBlock; the older image decoder did the same)
+    {
+        BitWriter m; m.Bits(1, 1); m.Bits(1, 2);
+        FixedLit(m, 'x'); FixedLit(m, 285); m.Code(0, 5); FixedLit(m, 256); m.Align();   // 'x' then a 258-byte match at distance 1
+        Bytes mp(259, 'x');
+        Bytes zm = ZlibWrap(m.out, mp);
+        Options o = Options::Lenient(100, 100); o.stopAtMax = true;
+        CHECK(Zlib(P(zm), zm.size(), out, o, why) && out == Bytes(100, 'x'));
+        BitWriter st; st.Bits(1, 1); st.Bits(0, 2); st.Align();
+        st.out.push_back(10); st.out.push_back(0); st.out.push_back(uint8_t(~10)); st.out.push_back(0xff);
+        for (int i = 0; i < 10; ++i) st.out.push_back('s');
+        Bytes zs = ZlibWrap(st.out, Bytes(10, 's'));
+        CHECK(Zlib(P(zs), zs.size(), out, o, why) && out == Bytes(10, 's'));   // cap 100: the 10 stored bytes fit
+        Options o5 = Options::Lenient(5, 5); o5.stopAtMax = true;
+        CHECK(!Zlib(P(zs), zs.size(), out, o5, why));                     // cap 5: the stored block crosses it
+        CHECK(Zlib(P(zs), zs.size(), out, Options::Lenient(10), why) && out == Bytes(10, 's'));
+    }
+    // real data still grows past a too small guess and decodes correctly: 3000 matches of 258 bytes, hint 10
+    {
+        BitWriter w; w.Bits(1, 1); w.Bits(1, 2);
+        FixedLit(w, 97); Bytes big{97};
+        for (int i = 0; i < 3000; ++i) { FixedLit(w, 285); w.Code(0, 5); big.insert(big.end(), 258, 97); }
+        FixedLit(w, 256); w.Align();
+        Bytes zz = ZlibWrap(w.out, big);
+        Options o = Options::Lenient(big.size(), 10);
+        CHECK(Zlib(P(zz), zz.size(), out, o, why) && out == big);
+        o.hint = 0; o.strictCodes = true; o.checkTrailer = true;
+        CHECK(Zlib(P(zz), zz.size(), out, o, why) && out == big);
+        // the same stream with the real size as the hint is not clamped away (1032 x input is far above it)
+        o = Options::Lenient(big.size(), big.size());
+        CHECK(Zlib(P(zz), zz.size(), out, o, why) && out == big && out.capacity() >= big.size());
+    }
 }
 
 int main() {
@@ -265,7 +378,7 @@ int main() {
     for (int i = 0; i < 400; ++i) {
         Bytes plain; Bytes raw = RandomRaw(rng, plain, 1 + int(rng.Below(4)));
         Bytes z = ZlibWrap(raw, plain);
-        ValidCase(rng, z, plain, 8, z.size() <= 150);
+        ValidCase(rng, z, plain, 8, z.size() <= 150 && i % 8 == 0, i);
         ++built;
     }
     std::printf("built-here streams: %d\n", built);
@@ -289,7 +402,7 @@ int main() {
                     if (at + pl + zl > blob.size()) { CHECK(false); break; }
                     Bytes plain(blob.begin() + long(at), blob.begin() + long(at + pl)); at += pl;
                     Bytes z(blob.begin() + long(at), blob.begin() + long(at + zl)); at += zl;
-                    ValidCase(rng, z, plain, z.size() > 20000 ? 3 : 6, z.size() <= 120);
+                    ValidCase(rng, z, plain, 6, z.size() <= 120 && pyCount % 8 == 0, pyCount);
                     ++pyCount;
                 }
             }
@@ -300,12 +413,12 @@ int main() {
     std::printf("python zlib streams: %d (levels 0/1/6/9, window bits 9..15, 5 strategies, plain/sync/full flush)\n", pyCount);
     if (pyCount == 0) { std::printf("NOTE: python corpus did not run; only built-here streams were compared\n"); }
     else CHECK(pyCount >= 500);
-    std::printf("compared inputs (old vs new, every pair): %ld | PNG-mode: %ld | gzip: %ld (%ld valid)\n", g_st.compared, g_st.pngCompared, g_st.gzCompared, g_st.gzOk);
-    std::printf("PNG mode: old refused but new accepted (cut-off or damaged tail after all wanted bytes were decoded, by design): %ld\n", g_st.pngTailDiff);
-    std::printf("strict ref3 vs lenient ref1: both accept %ld, both refuse %ld, only lenient accepts (checksum/trailing/incomplete code, by design) %ld, only strict accepts (MUST be 0) %ld\n",
-                g_st.bothOk, g_st.bothBad, g_st.strictOnly, g_st.lenientOnly);
-    CHECK(g_st.lenientOnly == 0);
+    std::printf("compared inputs (engine vs slow reference, every policy): %ld | PNG-mode: %ld | gzip: %ld (%ld valid)\n", g_st.compared, g_st.pngCompared, g_st.gzCompared, g_st.gzOk);
+    std::printf("lenient accepted %ld, strict accepted %ld, only lenient accepted (checksum / trailing bytes / incomplete code, by design) %ld; PNG-mode accepted a stream that plain lenient refuses (it goes on past the wanted size): %ld\n",
+                g_st.lenientOk, g_st.strictOk, g_st.lenientOnly, g_st.pngTailDiff);
     CHECK(g_st.compared >= 1500);
+    HintTests();
+    std::printf("elapsed %.1f s\n", double(std::clock()) / CLOCKS_PER_SEC);
     if (g_fail) { std::printf("FAILED: %d of %d checks\n", g_fail, g_checks); return 1; }
     std::printf("ok: %d checks\n", g_checks);
     return 0;

@@ -276,6 +276,9 @@ inline bool StoredBlock(BitReader& br, Output& out, std::string& why) {
     br.pos += 4;
     if ((n ^ 0xffffu) != inv) { why = "stored block length check failed"; return false; }
     if (n > br.len - br.pos) { why = "deflate data ends early"; return false; }
+    // A stored block is all or nothing, even with stopAtMax: its length is declared up front, so a block that does not
+    // fit is a stream that does not match what the caller expects (the older image decoder refused it too, and the
+    // differential test pins that). Matches are different: they are cut at the cap, as the older decoder did.
     if (n > out.limit - out.size) { why = "decoded body larger than the limit"; return false; }
     out.Room(n);
     if (n) std::memcpy(out.Data() + out.size, br.src + br.pos, n);
@@ -284,7 +287,10 @@ inline bool StoredBlock(BitReader& br, Output& out, std::string& why) {
 }
 
 inline bool FixedBlock(BitReader& br, Output& out, const Options& op, std::string& why) {
-    static const FixedCodes fixed;   // built once; thread-safe initialisation
+    // Built on first use (a function-local static). C++11 makes that initialisation thread-safe, but this has not been
+    // proven under MinGW's "win32" thread model; nothing here uses <mutex>, <thread> or call_once (CLAUDE.md rule 21a).
+    // If it ever matters, build FixedCodes at compile time like CrcTable, or construct it per call (it is small).
+    static const FixedCodes fixed;
     return RunBlock(br, fixed.lit, fixed.dist, out, op, why);
 }
 
@@ -377,7 +383,15 @@ inline bool Raw(const uint8_t* in, size_t n, std::vector<uint8_t>& out, const Op
     out.clear();
     BitReader br(in, n);
     Output o(out, op.maxOutput);
-    if (op.hint) o.Room(op.hint < op.maxOutput ? op.hint : op.maxOutput);
+    if (op.hint) {
+        // The first allocation is only a guess, so it never needs to be more than the stream could possibly produce:
+        // DEFLATE cannot expand more than 1032:1 (a 258-byte match costs at least two bits plus a code). A header that
+        // claims gigabytes with a few bytes of data therefore allocates (and zero-fills) next to nothing; real data
+        // just grows the buffer as it goes.
+        size_t first = op.hint < op.maxOutput ? op.hint : op.maxOutput;
+        const size_t possible = n > (SIZE_MAX - 4096) / 1032 ? SIZE_MAX : n * 1032 + 4096;
+        o.Room(first < possible ? first : possible);
+    }
     bool ok = true, final = false;
     do {
         if (op.stopAtMax && o.size == o.limit) break;   // all the wanted bytes are here

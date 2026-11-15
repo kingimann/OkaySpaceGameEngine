@@ -3401,6 +3401,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Project tag and layer lists (1.3.8)
 - project tags (1.3)
 - project template (25.1)
+- Project upgrade (editor) (25.3.5)
 - project.okayproj (1.3, 25.2)
 - projectile (6.6, 6.6.4)
 - Projectile and explosion physics (52.4.2)

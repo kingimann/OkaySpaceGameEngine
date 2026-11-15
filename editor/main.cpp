@@ -3168,8 +3168,10 @@ void SaveProjectSettings() { SaveProjectSettingsTo(g_settingsProjectDir); }
 
 // Read <dir>/project.okayproj: defaults first, so nothing of the previous project is left over. A project
 // from before settings were kept per project has no file of its own; it takes the working folder's old
-// project.okayproj once (what it effectively had), and writes its own copy so the two part ways.
-void LoadProjectSettingsFrom(const std::string& dir) {
+// project.okayproj once (what it effectively had), and writes its own copy so the two part ways. A folder that
+// is not a project (a loose scene's folder, a project's Levels/) uses the shared file and gets no copy (#888).
+void LoadProjectSettingsFrom(const std::string& wanted) {
+    const std::string dir = okayup::SettingsFolderFor(wanted);
     g_project = ProjectSettings{};
     okay::ProjectLists::Reset();
     g_settingsProjectDir = dir;
@@ -47908,9 +47910,7 @@ int main(int argc, char** argv) {
     {
         std::string startDir;
         if (!g_openScenePath.empty()) {
-            std::filesystem::path d = std::filesystem::path(g_openScenePath).parent_path();
-            if (d.filename() == "Assets") d = d.parent_path();
-            startDir = d.string();
+            startDir = okayup::ProjectRootForScene(g_openScenePath);   // the gate's rule: <project>/Levels/a.okayscene is Game's (#888)
             // A project whose version has not been asked about yet is not even looked at (reading its settings can create files in it).
             if (!ProjectMayOpenSilently(g_openScenePath)) startDir.clear();
         }

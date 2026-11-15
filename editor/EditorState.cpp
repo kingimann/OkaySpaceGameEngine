@@ -1032,7 +1032,10 @@ bool EditorState::Load(const std::string& path, std::string* error) {
     // Re-home the project to the scene's own project folder (the parent of its
     // Assets/ dir), so opening another project's scene switches the Project panel
     // and asset paths over instead of keeping the previous project's files around.
-    {
+    if (projectRootOf) {
+        const std::string root = projectRootOf(path);
+        if (!root.empty()) setProjectDir(root);
+    } else {
         namespace fs = std::filesystem;
         std::error_code ec;
         for (fs::path p = fs::absolute(fs::path(path), ec).parent_path(); !p.empty(); p = p.parent_path()) {

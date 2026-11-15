@@ -174,6 +174,11 @@ public:
     /// the project version gate here, so a scene of a project nobody has answered the version question for can't be
     /// opened by a path that skipped it. Unset (tests, tools): every file may be opened.
     static inline std::function<bool(const std::string& path, std::string* why)> beforeLoad;
+    /// The project folder a scene that was just opened belongs to ("" = none: the open project stays as it is). The editor
+    /// puts okayup::ProjectRootForScene here, the same rule the version gate and File > Project Upgrade use, so a scene in
+    /// <project>/Levels/ roots the project like one in <project>/Assets/. Unset (tests, tools): the folder that holds the
+    /// nearest "Assets" folder above the scene.
+    static inline std::function<std::string(const std::string& path)> projectRootOf;
 
     // ---- Project (a folder on disk holding the scenes + assets) ---------
     const std::string& projectDir() const { return m_projectDir; }

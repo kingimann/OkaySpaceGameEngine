@@ -6,7 +6,7 @@ Feature map: 29.1.6, 29.2.4 to 29.2.7, 29.4, 15.3.12, 44.3.3.
 ## Foliage brush
 
 A **Foliage** layer is one kind of plant (a built-in prop, a mesh file or a prefab) and the list of copies
-you painted. Create one with GameObject > Foliage Layer (it goes under the first terrain), with
+you painted. Create one with GameObject > Effects > Foliage Layer (it goes under the first terrain), with
 Add Component > Rendering > Foliage, or with Terrain Inspector > Scatter props > Add Foliage Layer.
 
 With the layer selected, tick **Paint in the 3D view** and drag in the Scene view:
@@ -64,7 +64,7 @@ the object's height.
 
 ## Decal projector
 
-GameObject > Decal Projector. Aim the blue (forward) axis at a wall or floor, set a **Texture** and a **Size**
+GameObject > Effects > Decal Projector. Aim the blue (forward) axis at a wall or floor, set a **Texture** and a **Size**
 (width, height, reach), press **Project** (also done when you change a setting or move the decal). The decal is a
 thin mesh cut from the triangles inside the box, so it follows bumps and corners and works in every renderer. Surfaces
 turned more than **Max Angle** away get none. It is not updated when the surfaces move: press Project again.
@@ -72,7 +72,7 @@ Foliage and other decals are never projected onto.
 
 ## Cable
 
-GameObject > Cable. Pick the **From** and **To** objects (or leave From empty to start at the cable's object and
+GameObject > Effects > Cable. Pick the **From** and **To** objects (or leave From empty to start at the cable's object and
 give a To Offset). **Sag** is how far the middle hangs. It keeps a Line Renderer along a parabola and follows its
 ends in the editor and in Play. It is a visual: it has no physics (Joint3D is the physical one).
 

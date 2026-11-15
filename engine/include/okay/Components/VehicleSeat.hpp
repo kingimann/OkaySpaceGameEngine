@@ -19,6 +19,16 @@
 //   - A car whose only seats are passenger seats (or that has none) keeps the old behaviour: it always
 //     reads the keys. Only a driver seat that is switched on makes the car wait for a driver.
 //   - Multiplayer: nothing is sent over the network. Seat state is not replicated.
+//   - Sitting: the occupant plays the same chair sit clips as a chair Seat (HumanoidActions::BeginVehicleSit,
+//     SitDown then Sit) and plays StandUp on exit. Only a body with the humanoid animator sits; any other body
+//     is just carried upright. The body is turned to face the car's forward (humanoids face -Z, cars drive +Z).
+//     sitPoint is where the body's FEET root goes: the floor under the seat, not the seat cushion (the sit
+//     clip puts the hip joint 0.57 m above the feet, so a seat surface about 0.45 m above sitPoint matches).
+//   - Camera: if the scene's main camera is the occupant's own (the player's camera), it is taken over while
+//     seated. Third person: a chase view behind and above the car (VehicleController camDistance, camHeight,
+//     camLerp; it eases in from where the orbit was). First person: at the seated eyes, looking along the car.
+//     On exit the camera gets its old local pose back and the player controller takes over again. A camera that
+//     is not the occupant's is left alone (VehicleController followCamera still works for it).
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -26,6 +36,8 @@
 #include "okay/Components/VehicleController.hpp"
 #include "okay/Components/Seat.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
+#include "okay/Components/Camera.hpp"
+#include "okay/Components/PlayerController.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
@@ -55,6 +67,11 @@ public:
     }
 
     GameObject* Occupant() const { return m_who; }
+    /// The car the camera is following (the vehicle's object, else the root of this seat) while this seat
+    /// has taken over the occupant's camera; nullptr otherwise.
+    GameObject* CameraTarget() const { return m_cam ? CarRoot()->gameObject : nullptr; }
+    /// True while the occupant plays the sit animation (false for a body with no humanoid animator).
+    bool PoseApplied() const { return m_posed; }
     /// The vehicle this seat belongs to: this object or the nearest parent with one.
     VehicleController* Vehicle() const {
         return gameObject ? gameObject->GetComponentInParent<VehicleController>(true) : nullptr;
@@ -85,6 +102,7 @@ public:
             if (v->Driver()) return false;                       // one driver per vehicle
         }
         m_who = who;
+        m_driverCar.set((driver && v) ? v : nullptr);      // the car this seat makes `who` the driver of (cleared exactly this on exit)
         occupied = true;
         m_off.clear(); m_offColliders.clear();
         for (Behaviour* b : who->GetComponents<Behaviour>())     // player controllers: off while seated
@@ -100,6 +118,8 @@ public:
         ApplyState(who, true);
         Occupied().push_back(this);
         if (driver && v) v->SetDriver(who);
+        m_posed = HumanoidActions::BeginVehicleSit(who);
+        TakeCamera(who);
         Carry();
         return true;
     }
@@ -109,10 +129,12 @@ public:
         GameObject* who = m_who;
         if (!who) return;
         const bool alive = !who->IsDestroyed() && who->transform;
+        GiveCameraBack();
+        if (alive && m_posed && !HumanoidActions::IsDead(who)) HumanoidActions::RequestStandUp(who);   // a dead body stays in its death pose
         Vec3 where = alive && transform ? PickExit(who) : Vec3{};
         ReleaseState(who, alive);
         if (alive && transform) {
-            const Vec3 f = who->transform->Forward();
+            const Vec3 f = who->transform->Forward();   // the body faces -Z, so this is the car's rear
             const float yaw = std::atan2(f.x, f.z) * 57.2957795f;
             who->transform->SetRotation(Quat::Euler(0.0f, yaw, 0.0f));   // no roll or pitch from the car
             who->transform->SetPosition(where);
@@ -165,8 +187,8 @@ public:
         if (down && who != s_justExited()) Enter(who);
     }
 
-    void LateUpdate(float /*dt*/) override {
-        if (m_who && !m_who->IsDestroyed() && m_who->transform) Carry();
+    void LateUpdate(float dt) override {
+        if (m_who && !m_who->IsDestroyed() && m_who->transform) { Carry(); RideCamera(dt); }
     }
 
     void OnDisable() override { Exit(); Unregister(); }
@@ -186,12 +208,12 @@ private:
     void Sync() {
         VehicleController* v = Vehicle();
         const bool want = driver && enabled && v;
-        if (m_reg && (!want || m_reg != v)) Unregister();
-        if (want && !m_reg) { v->AddDriverSeat(); m_reg = v; }
+        if (m_reg.p && (!want || m_reg.get() != v)) Unregister();
+        if (want && !m_reg.p) { v->AddDriverSeat(); m_reg.set(v); }
     }
     void Unregister() {
-        if (m_reg && Vehicle() == m_reg) m_reg->RemoveDriverSeat();   // m_reg is only compared unless it is still live
-        m_reg = nullptr;
+        if (VehicleController* r = m_reg.get()) r->RemoveDriverSeat();   // the car this seat was counted on, even if the seat has moved since
+        m_reg.clear();
     }
 
     static bool SittingOnChair(GameObject* who) {
@@ -207,8 +229,81 @@ private:
     void Carry() {
         if (!m_who || !m_who->transform || !transform) return;
         m_who->transform->SetPosition(SitWorld());
-        m_who->transform->SetRotation(transform->Rotation());
+        m_who->transform->SetRotation((transform->Rotation() * Quat::Euler(0.0f, 180.0f, 0.0f)).Normalized());   // body faces -Z
         if (auto* rb = m_who->GetComponent<Rigidbody3D>()) rb->velocity = Vec3{0, 0, 0};
+    }
+
+    // ---- Ride camera ----
+    Transform* CarRoot() const {
+        VehicleController* v = Vehicle();
+        if (v && v->transform) return v->transform;
+        Transform* t = transform;
+        while (t && t->Parent()) t = t->Parent();
+        return t;
+    }
+    // Take over the occupant's own main camera (a camera on the occupant or one of its children).
+    void TakeCamera(GameObject* who) {
+        m_cam = nullptr;
+        Scene* sc = who->scene();
+        if (!sc || !sc->mainCamera || !sc->mainCamera->gameObject || !sc->mainCamera->gameObject->transform) return;
+        Transform* ct = sc->mainCamera->gameObject->transform;
+        bool mine = false;
+        for (Transform* t = ct; t; t = t->Parent()) if (t->gameObject == who) { mine = true; break; }
+        if (!mine) return;
+        m_cam = sc->mainCamera;
+        m_camPos = ct->localPosition;
+        m_camRot = ct->localRotation;
+        auto* pc = PlayerController::Of(who);
+        m_camFirst = pc && pc->CurrentView() == 0;
+        if (VehicleController* v = Vehicle()) { v->SetCameraDrivenBySeat(true); m_camCar.set(v); }
+    }
+    void ReleaseCameraFlag() {
+        if (VehicleController* c = m_camCar.get()) c->SetCameraDrivenBySeat(false);
+        m_camCar.clear();
+    }
+    void RestoreCameraPose() {
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (m_cam && sc && sc->mainCamera == m_cam && m_cam->gameObject && m_cam->gameObject->transform) {   // m_cam is only compared unless it is still the live main camera
+            m_cam->gameObject->transform->localPosition = m_camPos;
+            m_cam->gameObject->transform->localRotation = m_camRot;
+        }
+    }
+    void GiveCameraBack() {
+        RestoreCameraPose();
+        ReleaseCameraFlag();
+        m_cam = nullptr;
+    }
+    void RideCamera(float dt) {
+        if (!m_cam) return;
+        Scene* sc = gameObject ? gameObject->scene() : nullptr;
+        if (!sc || sc->mainCamera != m_cam || !m_cam->gameObject || !m_cam->gameObject->transform || !transform) {
+            ReleaseCameraFlag();
+            m_cam = nullptr;   // the camera was replaced or removed: let go
+            return;
+        }
+        Transform* ct = m_cam->gameObject->transform;
+        Transform* car = CarRoot();
+        if (!car) return;
+        const Quat rot = car->Rotation();
+        Vec3 fp = rot * Vec3::Forward; fp.y = 0.0f;
+        const float fl = fp.Magnitude();
+        fp = fl > 1e-5f ? fp * (1.0f / fl) : Vec3{0, 0, 1};
+        if (m_camFirst) {   // eyes: a little above and ahead of the sitting hips, looking along the car
+            ct->SetPosition(SitWorld() + rot * Vec3{0.0f, 1.2f, 0.12f});
+            ct->SetRotation((rot * Quat::Euler(0.0f, 180.0f, 0.0f)).Normalized());   // camera looks down its -Z
+            return;
+        }
+        VehicleController* v = Vehicle();
+        const float dist = v ? v->camDistance : 6.5f, high = v ? v->camHeight : 2.6f, lerp = v ? v->camLerp : 5.0f;
+        const Vec3 carPos = car->Position();
+        const Vec3 want = carPos - fp * dist + Vec3{0.0f, high, 0.0f};
+        float t = lerp > 0.0f ? 1.0f - std::exp(-lerp * dt) : 1.0f;
+        if (t > 1.0f) t = 1.0f; else if (t < 0.0f) t = 0.0f;
+        const Vec3 np = ct->Position() + (want - ct->Position()) * t;
+        ct->SetPosition(np);
+        const Vec3 look = (carPos + Vec3{0.0f, high * 0.3f, 0.0f} + fp * (dist * 0.35f)) - np;
+        if (look.SqrMagnitude() > 1e-6f)
+            ct->SetRotation(Quat::Slerp(ct->Rotation(), Quat::LookRotation(look * -1.0f), t));
     }
 
     // True when a standing person at `feet` would be inside something solid.
@@ -248,6 +343,7 @@ private:
     void SuspendForSave() {
         if (m_suspended || !m_who || m_who->IsDestroyed()) return;
         ApplyState(m_who, false);
+        RestoreCameraPose();                        // the saved camera is the player's own, not the chase pose
         m_suspended = true;
     }
     void ResumeAfterSave() {
@@ -264,11 +360,15 @@ private:
 
     // Free the seat without touching the (maybe gone) person.
     void Forget() {
-        if (driver)
-            if (VehicleController* v = Vehicle())
-                if (v->Driver() == m_who) v->SetDriver(nullptr);
+        // Free the car this seat put the person at the wheel of, whatever the seat's parent or `driver` flag is now.
+        if (VehicleController* d = m_driverCar.get()) if (d->Driver() == m_who) d->SetDriver(nullptr);
+        m_driverCar.clear();
         auto& occ = Occupied();
         for (size_t i = 0; i < occ.size(); ++i) if (occ[i] == this) { occ.erase(occ.begin() + (long)i); break; }
+        if (m_who && !m_who->IsDestroyed()) GiveCameraBack();
+        else ReleaseCameraFlag();
+        m_cam = nullptr;
+        m_posed = false;
         m_who = nullptr;
         occupied = false;
         m_suspended = false;
@@ -277,12 +377,26 @@ private:
     }
 
     GameObject* m_who = nullptr;
-    VehicleController* m_reg = nullptr;     // the car this seat is counted on (compared, not followed)
+    // A remembered car: the pointer is only used while VehicleController::IsLive says it is still that controller.
+    struct CarRef {
+        VehicleController* p = nullptr; unsigned uid = 0;
+        VehicleController* get() const { return p && VehicleController::IsLive(p, uid) ? p : nullptr; }
+        void set(VehicleController* v) { p = v; uid = v ? v->Uid() : 0; }
+        void clear() { p = nullptr; uid = 0; }
+    };
+    CarRef m_reg;        // the car this seat is counted on
+    CarRef m_driverCar;  // the car whose driver this seat set at Enter
+    CarRef m_camCar;     // the car whose camera flag TakeCamera set
     std::vector<Behaviour*> m_off;
     std::vector<Collider3D*> m_offColliders;
     float m_savedGravity = 1.0f;
     bool  m_gravityOwned = false;
     bool  m_suspended = false;
+    bool  m_posed = false;                  // the sit animation was started
+    Camera* m_cam = nullptr;                // the occupant's camera while this seat drives it (compared, not followed)
+    Vec3  m_camPos{0, 0, 0};                // its local pose before boarding
+    Quat  m_camRot = Quat::Identity;
+    bool  m_camFirst = false;               // first-person view: eyes at the seat
 };
 
 } // namespace okay

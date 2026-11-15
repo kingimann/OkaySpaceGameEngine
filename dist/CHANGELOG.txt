@@ -1,5 +1,82 @@
 OkaySpace Game Engine — Changelog
 
+v2.875.0
+  Gameplay
+  - Vehicles: you now sit in the car. Walk up, press E, and your character
+    sits in the driver seat; the camera follows the car and comes back to you
+    when you get out (E again). The wheels roll and the front wheels steer.
+    Moving a seat to another car, unticking "driver" or removing only the
+    vehicle part no longer leaves the old car driving by itself. D now turns
+    right and A turns left (they were mirrored, so an old scene that relied
+    on that steers the other way now). The chase camera (followCamera) looks
+    at the car instead of away from it. To try it: open
+    examples\vehicle\vehicle_test.okayscene and press Play, or start a project
+    from the "Vehicle (get in and drive)" template. Not tried in a real
+    window yet.
+
+  Launcher
+  - Clicking a template card on the Templates page no longer creates a
+    project on the spot. It opens the New Project wizard on that template,
+    and nothing is made until you press Create. (One click, or a double
+    click, used to make a project each time, which is how extra projects
+    piled up.) A single Create press can no longer run twice.
+  - "Remove from list" and "Delete project" now do what they say. A project
+    that was listed twice (in your Projects folder and in the opened-from-
+    elsewhere list) really disappears; the hide works whatever way the path
+    is written; the hidden list no longer forgets old entries after 100;
+    "Delete from disk" no longer leaves a ghost row; and on Windows the
+    Recycle Bin call uses the right path form. The toast tells you the files
+    stay on disk. Not tried on a real Windows machine yet.
+  - The start-up update screen is on by default for new installs and after
+    "Reset to defaults". An existing install keeps what it saved. Turn it off
+    in Settings > "Check for updates when the launcher starts", or with the
+    environment variable OKAY_UPDATE_ON_LAUNCH=0.
+
+  Editor
+  - Console: a new Collapse button in the toolbar merges identical messages
+    anywhere in the log into one line with a count.
+  - The UI Notify screen (GameObject > UI > Prebuilt Screens > UI Notify) no
+    longer freezes the editor when you click its buttons more than four times
+    in a row. The fifth notification used to hang it. Now at most four cards
+    show, the oldest goes away, and each card disappears by itself after about
+    six seconds. Checked with a headless test and a headless repro of the
+    hang; not tried in a real window yet.
+
+  Download
+  - The examples folder is now part of the Windows download. It has the
+    vehicle test scene, three tiny sample model files for our older own
+    readers (examples/own_readers: cube.off, cube.3ds, skinned_strip.dae) and
+    one sound sample for our own WAV reader (examples/own_wav). There is also
+    a "Vehicle (get in and drive)" template and a plain how-to-try-it guide
+    (docs/try_it.md).
+
+  Our own code, off by default (nothing changes unless you switch it on)
+  - Ten more of our own model readers: Terragen, MDC, HMP, CSM, Q3D, RAW,
+    IQM, COB, PMX and LWS. Switch one on with its own environment variable,
+    for example OKAY_OWN_IQM=1 (OKAY_OWN_STACK=1 does not turn these ten on,
+    and the startup line does not list them, so the only proof is an import
+    that works). There are no sample files for these ten in the download
+    yet. Q3D, RAW, PMX and LWS could not be checked against a real file.
+    SIB (Silo) and Nendo files still have no own reader.
+  - Our own WAV reader can load the launcher's sound clips and the engine's
+    whole-file sounds. Switch: OKAY_OWN_WAV=1. Sample: examples/own_wav
+    (open own_wav_test.okayscene and press Play).
+
+  Under the hood
+  - Importing an OBJ model with absurdly large face numbers can no longer
+    overflow while it is read.
+  - One SHA-256 (with HMAC and PBKDF2) instead of three copies. Nothing
+    should look different: signing in with an existing local account, the
+    update check, anti-cheat servers and voice rooms should work exactly as
+    before, a little faster. The new code was compared byte for byte with the
+    old copies. Tell us if any of those break. The hashing code was read by an
+    AI only, not by an outside reviewer. libsodium is still what protects the
+    network.
+
+  Team tooling
+  - New checks that stop two people building the same thing and catch common
+    mistakes early (docs/collaboration.md).
+
 v2.874.0
   Gameplay
   - Vehicles: a new Vehicle Seat component. Walk up to a car, press E to get

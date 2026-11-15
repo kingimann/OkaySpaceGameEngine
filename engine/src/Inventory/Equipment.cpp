@@ -16,6 +16,7 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Scene/Transform.hpp"
+#include <algorithm>
 #include <cstdlib>
 
 namespace okay {
@@ -166,7 +167,12 @@ InvResult Equipment::Unequip(int slot, Inventory& inv, int into) {
     if (slot < 0 || slot >= (int)slots.size() || slots[slot].item.empty()) return InvResult::No("nothing worn there");
     const std::string item = slots[slot].item;
     int placed = -1;
-    if (!PutBack(inv, into, item, CurrentData(slot), placed)) return InvResult::No("no room in the bag");
+    // The worn item's weight is already in the bag's wornWeight. Moving it into the bag must not count it twice, or a
+    // bag that enforces its weight limit refuses it early near the limit: take it off while the room is checked.
+    const float wornBefore = inv.wornWeight;
+    if (const ItemDefinition* d = ItemDatabase::Get().Find(item))
+        if (d->weight > 0.0f) inv.wornWeight = std::max(0.0f, wornBefore - d->weight);
+    if (!PutBack(inv, into, item, CurrentData(slot), placed)) { inv.wornWeight = wornBefore; return InvResult::No("no room in the bag"); }
     Hide(slot);
     slots[slot].item.clear(); slots[slot].data = ItemInstanceData{};
     m_dirty = true;

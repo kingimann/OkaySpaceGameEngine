@@ -6,6 +6,7 @@
 #include "MainShared.hpp"
 #include "ProblemsPanel.hpp"
 #include "ConsoleScriptLink.hpp"   // shared/: which script and line an entry points to (also used by the OkayUI port)
+#include "CrashContext.hpp"        // shared/: the last 200 lines are kept for the crash report (docs/crash_reports.md)
 
 #include <cstdlib>
 #include <ctime>
@@ -114,6 +115,7 @@ void ConsolePreferCategory(const std::string& category) {
 void ConsoleLog(const std::string& msg, int level) {
     if (level < 0) level = 0;
     if (level > 2) level = 2;
+    okaycrash::ctx::ConsoleLine(level, msg.c_str());   // a copy for the crash report, kept as logged
     if (!g_clockSet) { g_model.SetClock(WallClock); g_clockSet = true; }
     std::string category, text = msg;
     std::string cat, rest;

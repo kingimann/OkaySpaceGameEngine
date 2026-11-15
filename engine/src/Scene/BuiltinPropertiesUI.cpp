@@ -31,6 +31,10 @@
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIInventoryBind.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
+#include "okay/Components/UIToast.hpp"
+#include "okay/Components/UITooltip.hpp"
+#include "okay/Components/UIModal.hpp"
+#include "okay/Components/UIContextMenu.hpp"
 
 namespace okay {
 namespace detail {
@@ -562,6 +566,70 @@ void RegisterUIDamageNumbers() {
     b.Commit();
 }
 
+// UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
+void RegisterUIToast() {
+    PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
+    b.AddEnum("corner", &UIToast::corner, {"TopRight", "TopLeft", "BottomRight", "BottomLeft", "TopCenter"}).Tooltip("Screen corner the toasts stack from")
+     .AddFloat("duration", &UIToast::duration).Range(0, 1e6, 0.1).Tooltip("Seconds a toast stays")
+     .AddInt("maxStack", &UIToast::maxStack).Range(1, 1000, 1).Tooltip("Most toasts shown at once")
+     .AddFloat("margin", &UIToast::margin).Range(0, 1e4, 1).Tooltip("Pixels from the screen edge")
+     .AddFloat("gap", &UIToast::gap).Range(0, 1e4, 1).Tooltip("Pixels between toasts")
+     .AddFloat("width", &UIToast::width).Range(0, 1e4, 1).Tooltip("Toast width in pixels")
+     .AddFloat("height", &UIToast::height).Range(0, 1e4, 1).Tooltip("Toast height in pixels")
+     .AddBool("showIcon", &UIToast::showIcon).Tooltip("Show the info / success / warning / error icon");
+    b.Commit();
+}
+
+// UITooltip (record "uitooltip")
+void RegisterUITooltip() {
+    PropertyBuilder<UITooltip> b("UITooltip", "uitooltip", "UI");
+    b.AddString("text", &UITooltip::text).Tooltip("Text shown while the pointer rests on this widget")
+     .AddFloat("delay", &UITooltip::delay).Range(0, 1e4, 0.05).Tooltip("Seconds of hovering before it shows")
+     .AddColor("background", &UITooltip::background).Range(0, 1, 0.01).Tooltip("Box colour")
+     .AddColor("textColor", &UITooltip::textColor).Range(0, 1, 0.01).Tooltip("Text colour")
+     .AddColor("borderColor", &UITooltip::borderColor).Range(0, 1, 0.01).Tooltip("Border colour")
+     .AddBool("richText", &UITooltip::richText).Tooltip("Draw <b> and #rrggbb tags in the text")
+     .AddVec2("offset", &UITooltip::offset).Range(-1e4, 1e4, 1).Tooltip("Pixels from the pointer to the box");
+    b.Commit();
+}
+
+// UIModal (record "uimodal")
+void RegisterUIModal() {
+    PropertyBuilder<UIModal> b("UIModal", "uimodal", "UI");
+    b.Section("Behaviour")
+     .AddBool("dimBackground", &UIModal::dimBackground).Tooltip("Darken everything behind the dialog")
+     .AddColor("dimColor", &UIModal::dimColor).Range(0, 1, 0.01).Tooltip("Colour laid over the background")
+     .AddBool("closeOnCancel", &UIModal::closeOnCancel).Tooltip("Escape or gamepad B closes it when it is on top")
+     .AddBool("closeOnClickOutside", &UIModal::closeOnClickOutside).Tooltip("A click outside the dialog closes it")
+     .Section("Card style")
+     .AddBool("styleCard", &UIModal::styleCard).Tooltip("Restyle the Card, Title, Message and button children with the values below")
+     .AddFloat("cardRadius", &UIModal::cardRadius).Range(0, 1e3, 0.5).Tooltip("Corner radius of the card")
+     .AddColor("cardColor", &UIModal::cardColor).Range(0, 1, 0.01).Tooltip("Card colour")
+     .AddColor("titleColor", &UIModal::titleColor).Range(0, 1, 0.01).Tooltip("Title text colour")
+     .AddColor("bodyColor", &UIModal::bodyColor).Range(0, 1, 0.01).Tooltip("Message text colour")
+     .AddColor("confirmColor", &UIModal::confirmColor).Range(0, 1, 0.01).Tooltip("Confirm button colour")
+     .AddColor("cancelColor", &UIModal::cancelColor).Range(0, 1, 0.01).Tooltip("Cancel button colour")
+     .AddString("titleText", &UIModal::titleText).Tooltip("Title text (empty = keep the label's own text)")
+     .AddString("bodyText", &UIModal::bodyText).Tooltip("Message text (empty = keep the label's own text)")
+     .AddString("confirmText", &UIModal::confirmText).Tooltip("Confirm button text (empty = keep the label's own text)")
+     .AddString("cancelText", &UIModal::cancelText).Tooltip("Cancel button text (empty = keep the label's own text)");
+    b.Commit();
+}
+
+// UIContextMenu (record "uicontext"). The item list is a list, not a property.
+void RegisterUIContextMenu() {
+    PropertyBuilder<UIContextMenu> b("UIContextMenu", "uicontext", "UI");
+    b.AddBool("anywhere", &UIContextMenu::anywhere).Tooltip("Open on a right-click anywhere, not only on this widget")
+     .AddFloat("itemHeight", &UIContextMenu::itemHeight).Range(1, 1e4, 1).Tooltip("Pixels per item")
+     .AddFloat("width", &UIContextMenu::width).Range(1, 1e4, 1).Tooltip("Menu width in pixels")
+     .AddFloat("textSize", &UIContextMenu::textSize).Range(0.25, 64, 0.25).Tooltip("Text pixel size")
+     .AddColor("background", &UIContextMenu::background).Range(0, 1, 0.01).Tooltip("Menu colour")
+     .AddColor("hoverColor", &UIContextMenu::hoverColor).Range(0, 1, 0.01).Tooltip("Colour of the item under the pointer")
+     .AddColor("textColor", &UIContextMenu::textColor).Range(0, 1, 0.01).Tooltip("Text colour")
+     .AddColor("borderColor", &UIContextMenu::borderColor).Range(0, 1, 0.01).Tooltip("Border colour");
+    b.Commit();
+}
+
 void RegisterUIDialogueBox() {
     PropertyBuilder<UIDialogueBox> b("UIDialogueBox", "uidialoguebox", "UI");
     b.AddFloat("charsPerSecond", &UIDialogueBox::charsPerSecond).Range(0, 2000, 1).Tooltip("Typewriter speed (0 = the whole line at once)")
@@ -767,6 +835,10 @@ void RegisterUIProperties() {
     RegisterUIStyleVariant();
     RegisterUIDamageNumbers();
     RegisterUIDialogueBox();
+    RegisterUIToast();
+    RegisterUITooltip();
+    RegisterUIModal();
+    RegisterUIContextMenu();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

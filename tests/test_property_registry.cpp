@@ -380,7 +380,8 @@ static void TestRegistryBasics() {
         "Ragdoll", "AutoSave", "TurnManager", "Decal", "Cable",
         "SplineFollower", "DollyCart", "LineRenderer", "HealthStat", "SurvivalStats",
         "HungerStat", "ThirstStat", "StaminaStat", "OxygenStat", "TemperatureStat", "SleepStat", "SanityStat", "RadiationStat", "BleedingStat", "PoisonStat", "WetnessStat", "CarryWeightStat", "StatusEffectStat",
-        "TrailRenderer", "MinimapBlip", "AimIK", "SurvivalSave"};
+        "TrailRenderer", "MinimapBlip", "AimIK", "SurvivalSave",
+        "UIToast", "UITooltip", "UIModal", "UIContextMenu"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

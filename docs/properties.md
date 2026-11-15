@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2239 properties on 166 types, as `property_registry` counts them ("covered 166 component types, 2239 properties"; a number before a slash counts the authored ones; the rest are
+2244 properties on 166 types, as `property_registry` counts them ("covered 166 component types, 2244 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -318,7 +318,7 @@ has `enabled`.
 | RadiationStat, BleedingStat, PoisonStat, WetnessStat, CarryWeightStat, StatusEffectStat | 8, 6, 6, 8, 6, 1 | rates and thresholds plus the publishing switches; status effects have only the message switch (the active effects are runtime) |
 | TrailRenderer, MinimapBlip, AimIK, SurvivalSave | 10, 6, 8, 3 | trail life, width, colour and texture (the width curve and gradient are lists); blip colour, size, shape, icon and label (the old square switch is only for old files); aim bone, target and axes; the survival save key and switches |
 | UIToast, UITooltip, UIModal, UIContextMenu | 8, 7, 15, 8 | toast corner, timing and size; tooltip text, delay, colours and offset; modal dimming, close rules and card style; context menu sizes and colours (its item list is a list) |
-| WorldSpaceUI, PauseMenu, ChestInventory, UIDropTarget | 4, 7, 16, 10 | world UI scale and facing; pause menu key, title, buttons and colours (the record does not save `hint`, `showRestart`, `showVolume`, `restartScene` or `localized`, so they are not properties yet); chest key, range, grid and style; drop slot tag, background and hover tints |
+| WorldSpaceUI, PauseMenu, ChestInventory, UIDropTarget | 4, 12, 16, 10 | world UI scale and facing; pause menu key, title, hint, buttons, restart and main menu scenes, colours and `localized` (from the localization record). **Data-loss fix:** before this branch the `pausemenu` record did not save `hint`, `showRestart`, `showVolume` or `restartScene`, so they reset on every save, duplicate and prefab; they are now appended to the record and old lines still load (test `pausemenu_save`); chest key, range, grid and style; drop slot tag, background and hover tints |
 | IKTarget, NetValidator, DialogueRunner, LogicTarget | 4, 7, 13, 13 | IK limb, character, weight and blend; RPC limits (size, rate, cooldown, budget); dialogue file, start, key, prompt, typewriter and UI switches; logic target kind and mode, door/mover travel, light, spawner and event |
 | LogicSource, QuestLog, Saveable, SpriteAnimator | 13, 7, 8, 6 | logic source kind, button, timer and zone (links are lists); quest file and UI switches (records and the tracked quest are play state); save key, prefab and what to store (property paths are a list); sprite speed, loop and sheet layout (frames and clips are lists) |
 | VirtualCamera, CinemachineBrain, DollyPath | 34, 2, 1 | virtual camera priority, targets, offsets, damping, shake, free look, dolly and confiner (the confiner box allows +-1e9, its "no limit" default); brain blend; dolly path loop (the waypoints are a list) |

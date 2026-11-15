@@ -299,7 +299,17 @@ private:
             if (in == end) err |= std::ios_base::eofbit;
             return in;
         }
+        const iter_type start = in;
         iter_type r = std::num_get<char>::do_get(in, end, str, err, v);
+        // libc++ (clang on macOS, Emscripten for the WebGL build) sets failbit when strtof reports ERANGE for an
+        // underflow, although it stores the subnormal (or zero) value; libstdc++ does not. A scene holding a float
+        // between about 1.4e-45 and 1.17e-38 then failed to load in the browser only (Grok, issue #888 finding 4).
+        // Characters were read and the value is subnormal or zero: an underflow, not a malformed number, so it is
+        // kept. A malformed number reads no characters and still fails.
+        if ((err & std::ios_base::failbit) && r != start) {
+            const int cls = std::fpclassify(v);
+            if (cls == FP_SUBNORMAL || cls == FP_ZERO) err &= ~std::ios_base::failbit;
+        }
         if (neg && !(err & std::ios_base::failbit)) v = -v;
         return r;
     }
@@ -499,7 +509,7 @@ struct KvIn {
     std::unordered_map<std::string, std::string> m;
     explicit KvIn(std::istream& in) {
         const std::string line = ReadRecordLine(in);
-        std::istringstream ls(line);
+        std::istringstream ls(line); ls.imbue(TolerantLocale());
         while (true) {
             ls >> std::ws;
             if (!ls || ls.peek() == EOF) break;
@@ -606,7 +616,7 @@ std::string PointList(const std::vector<Vec3>& v) {
 std::vector<float> ReadNumberList(const KvIn& k, const char* key) {
     std::vector<float> out;
     if (const std::string* s = k.find(key)) {
-        std::istringstream in(*s);
+        std::istringstream in(*s); in.imbue(TolerantLocale());
         float f;
         while (in >> f) out.push_back(f);
     }
@@ -1545,7 +1555,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             if (s.ticketAnyAudience) rule("ticketAnyAudience true");
         }
         {   // the detection engine's keys (only those that differ from the defaults), one quoted ".okayac" line each
-            std::istringstream dl(s.detect.ToText());
+            std::istringstream dl(s.detect.ToText()); dl.imbue(TolerantLocale());
             for (std::string line; std::getline(dl, line);)
                 if (!line.empty()) out << "  anticheatdetect " << Quote(line) << "\n";
         }
@@ -4715,7 +4725,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ma->runClip  = ReadQuoted(in);
                     // Optional trailing fields (newer files): in-place playback.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); int ip;
+                      std::istringstream rs(rest); rs.imbue(TolerantLocale()); int ip;
                       if (rs >> ip) ma->inPlace = (ip != 0); }
                 } else if (field == "modelanimair") {
                     auto* ma = LastOf(go->GetComponents<ModelAnimator>());
@@ -4756,7 +4766,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ma->rootMotionNode = ReadQuoted(in);
                     // Optional trailing field (newer files): vertical root motion.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); int ry, rr, at;
+                      std::istringstream rs(rest); rs.imbue(TolerantLocale()); int ry, rr, at;
                       if (rs >> ry) ma->rootMotionY = (ry != 0);
                       if (rs >> rr) ma->rootMotionRotation = (rr != 0);
                       if (rs >> at) ma->rootMotionApplyTo = at; }
@@ -5323,7 +5333,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // Optional trailing fields (newer files): rest-of-line parse so
                     // older records still load cleanly.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); float sm;
+                      std::istringstream rs(rest); rs.imbue(TolerantLocale()); float sm;
                       if (rs >> sm) a->smoothing = sm; }
                 } else if (field == "iktarget") {
                     auto* t = go->AddComponent<IKTarget>();
@@ -5352,7 +5362,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     std::size_t n = 0; in >> n;
                     for (std::size_t k = 0; k < n && in; ++k) l->chainNames.push_back(ReadQuoted(in));
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); float sm;
+                      std::istringstream rs(rest); rs.imbue(TolerantLocale()); float sm;
                       if (rs >> sm) l->smoothing = sm;
                       // Files from before the clamp looked all the way round.
                       KvIn k(rs);
@@ -5385,7 +5395,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // Optional trailing fields (newer files): parse from the rest of
                     // the line so older records still load cleanly.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); float sm; int o;
+                      std::istringstream rs(rest); rs.imbue(TolerantLocale()); float sm; int o;
                       if (rs >> sm) f->smoothing = sm;
                       if (rs >> o)  f->orient = (o != 0);
                       KvIn k(rs);
@@ -5417,7 +5427,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // softness, target rotation. Files from before the pole mode bent toward
                     // the world direction.
                     { std::string rest; std::getline(in, rest);
-                      std::istringstream rs(rest); int o, pm;
+                      std::istringstream rs(rest); rs.imbue(TolerantLocale()); int o, pm;
                       if (rs >> o) lb->orient = (o != 0);
                       lb->poleMode = (rs >> pm) ? (LimbIK::PoleMode)std::clamp(pm, 0, 2) : LimbIK::PoleMode::World;
                       Quat q;
@@ -5861,7 +5871,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("reach", ls->pressReach);
                     std::string links; k.str("links", links);
                     std::replace(links.begin(), links.end(), ',', ' ');
-                    std::istringstream ids(links);
+                    std::istringstream ids(links); ids.imbue(TolerantLocale());
                     for (int id = 0; ids >> id;) if (id != 0) ls->links.push_back(id);
                     int nio = 0; k.i("io", nio);
                     for (int i = 0; i < nio && i < 256; ++i) {
@@ -6335,7 +6345,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int iv = 0; in >> iv; c->invulnerable = (iv != 0);
                         // Smarter-AI trailing fields: read whatever remains (old files stop here).
                         std::string rest; std::getline(in, rest);
-                        std::istringstream rs(rest); std::vector<float> v; float f;
+                        std::istringstream rs(rest); rs.imbue(TolerantLocale()); std::vector<float> v; float f;
                         while (rs >> f) v.push_back(f);
                         auto g = [&](std::size_t i, float d) { return i < v.size() ? v[i] : d; };
                         c->runSpeed       = g(0,  c->runSpeed);
@@ -7499,7 +7509,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     // followPitch, bobbing. (Some builds wrote extra arm-styling tokens
                     // between showLeftArm and these; a stray middle token is harmless.)
                     std::string rest; std::getline(in, rest);
-                    std::istringstream rs(rest);
+                    std::istringstream rs(rest); rs.imbue(TolerantLocale());
                     std::vector<float> v; float f;
                     while (rs >> f) v.push_back(f);
                     if (v.size() >= 1) fh->showLeftArm = (v[0] != 0.0f);
@@ -7532,7 +7542,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                                  : mode == 2 ? FirstPersonHands::HoldMode::Two
                                              : FirstPersonHands::HoldMode::Right;
                     std::string rest; std::getline(in, rest);
-                    std::istringstream rs(rest);
+                    std::istringstream rs(rest); rs.imbue(TolerantLocale());
                     side(hh->right, rs);
                     side(hh->left, rs);
                     rs >> hh->othersItemOffset.x >> hh->othersItemOffset.y >> hh->othersItemOffset.z
@@ -7561,7 +7571,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         a.forearm = on != 0;
                     };
                     std::string rest; std::getline(in, rest);
-                    std::istringstream rs(rest);
+                    std::istringstream rs(rest); rs.imbue(TolerantLocale());
                     extra(hh->right, rs); extra(hh->left, rs);
                     oarm(hh->othersRight, rs); oarm(hh->othersLeft, rs);
                 } else if (field == "npspawner") {
@@ -7765,7 +7775,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> hr->weight;   // bones re-detect + rest re-captures on first play frame
                     // The rest of this line only: "lean <scale>" and "map <slot> <name>" pairs.
                     std::string rest; std::getline(in, rest);
-                    std::istringstream ls(rest);
+                    std::istringstream ls(rest); ls.imbue(TolerantLocale());
                     std::string tag;
                     while (ls >> tag) {
                         if (tag == "lean") { if (!(ls >> hr->leanScale)) break; continue; }
@@ -8034,7 +8044,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "uilayout") {
                     auto* lg = go->AddComponent<UILayoutGroup>();
                     std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
-                    std::istringstream rs(rest);
+                    std::istringstream rs(rest); rs.imbue(TolerantLocale());
                     int dir = 0, an = 0, cols = -1; float sy = -1.0f;
                     rs >> dir >> an >> lg->origin.x >> lg->origin.y >> lg->spacing >> lg->padding;
                     rs >> cols; rs >> sy;                        // absent in older scenes -> keep defaults
@@ -8059,7 +8069,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     auto* fr = go->AddComponent<UIFrame>();
                     std::string rest;
                     std::getline(in, rest);
-                    std::istringstream rs(rest);
+                    std::istringstream rs(rest); rs.imbue(TolerantLocale());
                     rs >> fr->anchorMin.x >> fr->anchorMin.y >> fr->anchorMax.x >> fr->anchorMax.y
                        >> fr->pivot.x >> fr->pivot.y >> fr->position.x >> fr->position.y >> fr->size.x >> fr->size.y;
                     float rot = 0.0f, sx = 1.0f, sy = 1.0f;
@@ -8112,7 +8122,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> inter >> foc;
                     {   // optional (newer files): the InputActions action it rebinds
                         std::string rest; std::getline(in, rest);
-                        std::istringstream rs(rest);
+                        std::istringstream rs(rest); rs.imbue(TolerantLocale());
                         int gp = 0, pt = -1;
                         if (rs >> std::ws && rs.peek() == '"') {
                             kb->inputAction = ReadQuoted(rs);
@@ -8137,7 +8147,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (field == "uiscroll") {
                     auto* sv = go->AddComponent<UIScrollView>();
                     std::string rest; std::getline(in, rest);   // whole line: newer files carry extra fields
-                    std::istringstream rs(rest);
+                    std::istringstream rs(rest); rs.imbue(TolerantLocale());
                     int an = 0; Color c;
                     rs >> sv->position.x >> sv->position.y >> sv->size.x >> sv->size.y
                        >> an >> sv->contentHeight >> c.r >> c.g >> c.b >> c.a;
@@ -8608,7 +8618,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     auto* ps = LastOf(go->GetComponents<ParticleSystem>());   // the one that line made, when an object has several
                     if (!ps) ps = go->AddComponent<ParticleSystem>();
                     std::string rest; std::getline(in, rest);   // whole line: tolerant of short/extended data
-                    std::istringstream rs(rest);
+                    std::istringstream rs(rest); rs.imbue(TolerantLocale());
                     int ver = 0, space = 0, spdLife = 0;
                     rs >> ver >> space >> ps->inheritVelocity
                        >> ps->noiseStrength >> ps->noiseFrequency >> ps->noiseScroll
@@ -8900,7 +8910,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     compOff.push_back({key, occ});
                 } else if (field == "comporder") {
                     std::string rest; std::getline(in, rest);
-                    std::istringstream ls(rest);
+                    std::istringstream ls(rest); ls.imbue(TolerantLocale());
                     while (ls >> std::ws && ls.peek() == '"') compOrder.push_back(ReadQuoted(ls));
                 } else if (field == "override") {
                     GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
@@ -8908,7 +8918,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                 } else if (auto reg = ComponentSerializerRegistry::Find(field)) {
                     // A component that registered itself (no branch in this chain).
                     std::string rest; std::getline(in, rest);
-                    std::istringstream ls(rest);
+                    std::istringstream ls(rest); ls.imbue(TolerantLocale());
                     reg->read(*go, ls);
                 } else {
                     // A newer build's field: one record per line, so step over it. Its text is kept on the object and
@@ -9833,7 +9843,7 @@ struct TextObject {
 
 // Split serialized scene text into the lines before the first object and the objects.
 void SplitObjects(const std::string& text, std::string& preamble, std::vector<TextObject>& objs) {
-    std::istringstream in(text);
+    std::istringstream in(text); in.imbue(TolerantLocale());
     std::string line;
     bool inObj = false;
     while (std::getline(in, line)) {
@@ -9857,7 +9867,7 @@ std::string JoinObjects(const std::string& preamble, const std::vector<TextObjec
 }
 
 std::string FirstToken(const std::string& line) {
-    std::istringstream ls(line);
+    std::istringstream ls(line); ls.imbue(TolerantLocale());
     std::string t; ls >> t;
     return t;
 }
@@ -10038,11 +10048,11 @@ void ScanSceneLinks(const std::string& text, std::vector<ScanObj>& objs, SceneVa
     std::unordered_map<std::string, std::string> guidOwner;   // guid -> object label
     std::unordered_map<int, bool> known;
     {
-        std::istringstream in(text);
+        std::istringstream in(text); in.imbue(TolerantLocale());
         std::string line;
         ScanObj* cur = nullptr;
         while (std::getline(in, line)) {
-            std::istringstream ls(line);
+            std::istringstream ls(line); ls.imbue(TolerantLocale());
             std::string word;
             if (!(ls >> word)) continue;
             const bool indented = !line.empty() && (line[0] == ' ' || line[0] == '\t');

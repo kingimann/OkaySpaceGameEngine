@@ -256,14 +256,17 @@ bool ReadObjBuffer(const std::string& data, const std::string& baseDir, Imported
     std::vector<ImportedMaterial> mtl;
     for (const std::string& lib : mtllibs) {
         std::string bytes;
-        std::string name = lib; for (char& c : name) if (c == '\\') c = '/';
-        if (ReadAllBytes(baseDir + name, kMaxMtlBytes, bytes, nullptr)) { ParseMtl(bytes, baseDir, mtl); continue; }
+        // The material file is held to the same place as textures (okay/Render/TexturePath.hpp): the model's folder, or
+        // an allowed root; a network path or one leading elsewhere is not opened.
+        const std::string whole = ResolveModelTexturePath(lib, baseDir);
+        if (!whole.empty() && ReadAllBytes(whole, kMaxMtlBytes, bytes, nullptr)) { ParseMtl(bytes, baseDir, mtl); continue; }
         // A name with spaces may list several files.
         std::size_t a = 0;
         while (a < lib.size()) {
             while (a < lib.size() && IsSpace(lib[a])) ++a;
             std::size_t b = a; while (b < lib.size() && !IsSpace(lib[b])) ++b;
-            if (b > a && ReadAllBytes(baseDir + lib.substr(a, b - a), kMaxMtlBytes, bytes, nullptr)) ParseMtl(bytes, baseDir, mtl);
+            const std::string one = b > a ? ResolveModelTexturePath(lib.substr(a, b - a), baseDir) : std::string();
+            if (!one.empty() && ReadAllBytes(one, kMaxMtlBytes, bytes, nullptr)) ParseMtl(bytes, baseDir, mtl);
             a = b;
         }
     }

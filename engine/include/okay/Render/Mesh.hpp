@@ -1594,8 +1594,10 @@ struct Mesh {
             }
         }
         NormalizeImportScale(m);   // cm/mm exports (Meshy AI etc.) land at a usable size
-        if (outTexture && !mtllib.empty()) {                    // read .mtl for map_Kd
-            std::ifstream mf(dir + mtllib); std::string ml;
+        // The .mtl is held to the same place as textures: the model's folder or an allowed root (TexturePath.hpp).
+        const std::string mtlPath = mtllib.empty() ? std::string() : ResolveModelTexturePath(mtllib, dir);
+        if (outTexture && !mtlPath.empty()) {                   // read .mtl for map_Kd
+            std::ifstream mf(mtlPath); std::string ml;
             while (mf && std::getline(mf, ml)) {
                 std::istringstream ms(ml); std::string mt; ms >> mt;
                 if (mt == "map_Kd") { std::string tex; std::getline(ms, tex);

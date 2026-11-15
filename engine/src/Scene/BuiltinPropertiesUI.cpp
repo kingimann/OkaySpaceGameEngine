@@ -38,6 +38,7 @@
 #include "okay/Components/WorldSpaceUI.hpp"
 #include "okay/Components/PauseMenu.hpp"
 #include "okay/Components/ChestInventory.hpp"
+#include "okay/Components/Minimap.hpp"
 
 namespace okay {
 namespace detail {
@@ -634,6 +635,67 @@ void RegisterUIDropTarget() {
     b.Commit();
 }
 
+// Minimap (record "minimap"). The markers and map shapes are lists; the placed
+// waypoint (hasUserWaypoint, userWaypoint) is play state.
+void RegisterMinimap() {
+    PropertyBuilder<Minimap> b("Minimap", "minimap", "UI");
+    b.Section("Layout")
+     .AddVec2("position", &Minimap::position).Range(-kBig, kBig, 1).Tooltip("Pixels from the anchor")
+     .AddVec2("size", &Minimap::size).Range(-kBig, kBig, 1).Tooltip("Width and height in pixels")
+     .AddEnum("anchor", &Minimap::anchor, AnchorNames()).Tooltip("The screen point the position is measured from")
+     .AddColor("background", &Minimap::background).Range(0, 1, 0.01).Tooltip("Map background colour")
+     .AddColor("border", &Minimap::border).Range(0, 1, 0.01).Tooltip("Border colour")
+     .AddFloat("borderWidth", &Minimap::borderWidth).Range(0, 1e3, 0.5).Tooltip("Border thickness in pixels")
+     .AddBool("circular", &Minimap::circular).Tooltip("Round map instead of a rectangle")
+     .Section("View")
+     .AddString("target", &Minimap::target).Tooltip("Object the map centres on (empty = the world origin)")
+     .AddColor("targetColor", &Minimap::targetColor).Range(0, 1, 0.01).Tooltip("Colour of the centre marker")
+     .AddFloat("worldPerPixel", &Minimap::worldPerPixel).Range(0.0001, kBig, 0.01).Tooltip("Zoom: world units per map pixel")
+     .AddBool("useXZ", &Minimap::useXZ).Tooltip("3D: plot X and Z (off = 2D X and Y)")
+     .AddBool("rotateWithTarget", &Minimap::rotateWithTarget).Tooltip("Turn the map so the target faces up")
+     .AddBool("showSelf", &Minimap::showSelf).Tooltip("Draw the centre marker")
+     .AddBool("playerArrow", &Minimap::playerArrow).Tooltip("Draw the centre marker as an arrow showing the facing")
+     .Section("Blips")
+     .AddFloat("blipSize", &Minimap::blipSize).Range(0, 1e3, 0.5).Tooltip("Default half-size of a blip in pixels")
+     .AddFloat("blipRange", &Minimap::blipRange).Range(0, kBig, 1).Tooltip("Hide blips farther than this (0 = no limit)")
+     .AddBool("clampBlips", &Minimap::clampBlips).Tooltip("Pin blips outside the map to its edge")
+     .Section("Grid, cone, rings and north")
+     .AddBool("showGrid", &Minimap::showGrid).Tooltip("Draw a faint reference grid")
+     .AddColor("gridColor", &Minimap::gridColor).Range(0, 1, 0.01).Tooltip("Grid colour")
+     .AddFloat("gridSpacing", &Minimap::gridSpacing).Range(1, 1e4, 1).Tooltip("Grid line spacing in map pixels")
+     .AddBool("viewCone", &Minimap::viewCone).Tooltip("Draw the target's view cone")
+     .AddFloat("viewConeAngle", &Minimap::viewConeAngle).Range(0, 360, 1).Tooltip("Full cone angle in degrees")
+     .AddFloat("viewConeLength", &Minimap::viewConeLength).Range(0, 1e4, 1).Tooltip("Cone reach in map pixels")
+     .AddColor("viewConeColor", &Minimap::viewConeColor).Range(0, 1, 0.01).Tooltip("Cone colour")
+     .AddInt("rangeRings", &Minimap::rangeRings).Range(0, 64, 1).Tooltip("Number of range rings (0 = off)")
+     .AddColor("ringColor", &Minimap::ringColor).Range(0, 1, 0.01).Tooltip("Ring colour")
+     .AddBool("showNorth", &Minimap::showNorth).Tooltip("Draw a north mark")
+     .AddColor("northColor", &Minimap::northColor).Range(0, 1, 0.01).Tooltip("North mark colour")
+     .Section("Labels and route")
+     .AddBool("showLabels", &Minimap::showLabels).Tooltip("Draw name labels by blips and markers")
+     .AddColor("labelColor", &Minimap::labelColor).Range(0, 1, 0.01).Tooltip("Label colour")
+     .AddFloat("labelSize", &Minimap::labelSize).Range(1, 512, 0.5).Tooltip("Label text height in pixels")
+     .AddInt("routeMarker", &Minimap::routeMarker).Range(-1, 1000000, 1).Tooltip("Marker to draw a route line to (-1 = none)")
+     .AddColor("routeColor", &Minimap::routeColor).Range(0, 1, 0.01).Tooltip("Route line colour")
+     .AddFloat("routeWidth", &Minimap::routeWidth).Range(0, 1e3, 0.5).Tooltip("Route line width in pixels")
+     .Section("Map image and full screen")
+     .AddAssetPath("mapTexture", &Minimap::mapTexture, "image").Tooltip("Image drawn under the blips (empty = none)")
+     .AddFloat("mapWorldSize", &Minimap::mapWorldSize).Range(0.001, kBig, 1).Tooltip("World units the image spans")
+     .AddVec2("mapWorldCenter", &Minimap::mapWorldCenter).Range(-kBig, kBig, 1).Tooltip("World point (east, north) at the image centre")
+     .AddKey("fullscreenKey", &Minimap::fullscreenKey).Tooltip("Opens the full-screen map (0 = off)")
+     .AddFloat("fullscreenZoom", &Minimap::fullscreenZoom).Range(0.001, 1e4, 0.1).Tooltip("Zoom multiplier while full screen")
+     .AddFloat("fullscreenFrac", &Minimap::fullscreenFrac).Range(0.05, 1, 0.01).Tooltip("Part of the screen the full map fills")
+     .AddBool("mapClickWaypoint", &Minimap::mapClickWaypoint).Tooltip("Left-click the open map to place a waypoint, right-click to clear it")
+     .AddColor("userWaypointColor", &Minimap::userWaypointColor).Range(0, 1, 0.01).Tooltip("Placed waypoint colour")
+     .Section("Zoom keys")
+     .AddKey("zoomInKey", &Minimap::zoomInKey).Tooltip("Zooms in (0 = off)")
+     .AddKey("zoomOutKey", &Minimap::zoomOutKey).Tooltip("Zooms out (0 = off)")
+     .AddFloat("minZoom", &Minimap::minZoom).Range(0.0001, kBig, 0.01).Tooltip("Smallest world units per pixel")
+     .AddFloat("maxZoom", &Minimap::maxZoom).Range(0.0001, kBig, 0.1).Tooltip("Largest world units per pixel")
+     .AddFloat("zoomStep", &Minimap::zoomStep).Range(1, 100, 0.01).Tooltip("Zoom multiplier per key press");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -911,6 +973,7 @@ void RegisterUIProperties() {
     RegisterPauseMenu();
     RegisterChestInventory();
     RegisterUIDropTarget();
+    RegisterMinimap();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

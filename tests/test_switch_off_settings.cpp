@@ -72,7 +72,23 @@ static void TestVehicle() {
     CHECK(SceneSerializer::Serialize(c).find("vehiclesusp") == std::string::npos);   // defaults: no record, as before
 }
 
+// Review: an older build keeps "outlineoff" as unknown text and writes it after the components, so a file can hold an
+// "outline" record (switched on there) and a stale "outlineoff" after it. The outline that is on wins.
+static void TestMixedBuilds() {
+    RUN_SUITE("switch-off settings: a stale outlineoff after an outline does not switch it off");
+    const std::string text =
+        "okayscene 3\nname \"Mixed\"\ngameobject 0 \"T\"\n  active 1\n  parent -1\n  transform 0 0 0 0 0 0 1 1 1 1\n"
+        "    mesh \"Cube\" 1 1 1 1 0 \"\" 0\n    outline 0.2 1 0 0\n  outlineoff 0.7 0 1 0\nend\n";
+    Scene s("s");
+    std::string err;
+    CHECK(SceneSerializer::Deserialize(s, text, &err));
+    const auto roots = s.Roots();
+    auto* m = roots.empty() ? nullptr : roots[0]->GetComponent<MeshRenderer>();
+    CHECK(m && m->outline && m->outlineWidth == 0.2f && m->outlineColor.r == 1.0f && m->outlineColor.g == 0.0f);
+}
+
 int main() {
+    TestMixedBuilds();
     TestMeshRenderer();
     TestVehicle();
     TEST_MAIN_RESULT();

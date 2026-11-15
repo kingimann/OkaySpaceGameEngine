@@ -5152,8 +5152,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                 } else if (field == "outlineoff") {   // the outline's width and colour while it is switched off
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {
-                        in >> mr->outlineWidth >> mr->outlineColor.r >> mr->outlineColor.g >> mr->outlineColor.b;
-                        mr->outline = false;
+                        float w = 0.0f; Color c;
+                        in >> w >> c.r >> c.g >> c.b;
+                        // An older build keeps this record as unknown text and writes it after the components, so a
+                        // file can hold an "outline" (switched on in that build) and a stale "outlineoff": the outline
+                        // that is on wins.
+                        if (!mr->outline) { mr->outlineWidth = w; mr->outlineColor.r = c.r; mr->outlineColor.g = c.g; mr->outlineColor.b = c.b; }
                     }
                 } else if (field == "uvanim") {
                     if (auto* mr = LastOf(go->GetComponents<MeshRenderer>())) {

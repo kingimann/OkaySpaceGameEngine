@@ -1408,8 +1408,8 @@ void RegisterVirtualCamera() {
      .AddBool("autoDolly", &VirtualCamera::autoDolly).Tooltip("Slide to the path point nearest the follow target")
      .Section("Confiner")
      .AddBool("confine", &VirtualCamera::confine).Tooltip("Keep the camera inside a box")
-     .AddVec3("confineMin", &VirtualCamera::confineMin).Range(-kBig, kBig, 0.1).Tooltip("Lowest corner of the box")
-     .AddVec3("confineMax", &VirtualCamera::confineMax).Range(-kBig, kBig, 0.1).Tooltip("Highest corner of the box");
+     .AddVec3("confineMin", &VirtualCamera::confineMin).Range(-1e9, 1e9, 0.1).Tooltip("Lowest corner of the box (the default, -1e9, means no limit)")
+     .AddVec3("confineMax", &VirtualCamera::confineMax).Range(-1e9, 1e9, 0.1).Tooltip("Highest corner of the box (the default, 1e9, means no limit)");
     b.Commit();
 }
 

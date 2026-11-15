@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2084 properties on 151 types, as `property_registry` counts them ("covered 151 component types, 2084 properties"; a number before a slash counts the authored ones; the rest are
+2125 properties on 155 types, as `property_registry` counts them ("covered 155 component types, 2125 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -318,6 +318,7 @@ has `enabled`.
 | RadiationStat, BleedingStat, PoisonStat, WetnessStat, CarryWeightStat, StatusEffectStat | 8, 6, 6, 8, 6, 1 | rates and thresholds plus the publishing switches; status effects have only the message switch (the active effects are runtime) |
 | TrailRenderer, MinimapBlip, AimIK, SurvivalSave | 10, 6, 8, 3 | trail life, width, colour and texture (the width curve and gradient are lists); blip colour, size, shape, icon and label (the old square switch is only for old files); aim bone, target and axes; the survival save key and switches |
 | UIToast, UITooltip, UIModal, UIContextMenu | 8, 7, 15, 8 | toast corner, timing and size; tooltip text, delay, colours and offset; modal dimming, close rules and card style; context menu sizes and colours (its item list is a list) |
+| WorldSpaceUI, PauseMenu, ChestInventory, UIDropTarget | 4, 7, 16, 10 | world UI scale and facing; pause menu key, title, buttons and colours (the record does not save `hint`, `showRestart`, `showVolume`, `restartScene` or `localized`, so they are not properties yet); chest key, range, grid and style; drop slot tag, background and hover tints |
 
 How the new types are described, so a tool can rely on it:
 

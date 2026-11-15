@@ -266,6 +266,20 @@ More of the builder:
    another one goes into `Companions()` in the test (the record names the writer needs).
 5. Add the type's name to `expected[]` in `TestRegistryBasics` and update the counts in this page.
 
+### Large values
+
+Every registry write (an Inspector edit, undo and redo, a Saveable's property paths on load, `tween_prop`, prefab
+edits) clamps a number to the property's range. The built-in registrations bound sizes, distances, speeds and
+amounts with `kBig`, which was 1e5: a scene with a position 250 km out or 250000 health was cut down to 100000 the
+first time it went through the registry (623 of 684 such fields). `kBig` is now 1e9, and test
+`registry_large_values` writes 250000 and -250000 through the registry for every field it bounds. A few fields keep
+a deliberate cap of 100000: `Camera.depth`, `Canvas.sortOrder`, `Canvas.referenceResolution`,
+`Canvas.designResolution`, `Canvas.worldPixelsPerUnit`, `ParticleSystem.maxParticles`, `ParticleSystem.burstCount`,
+`FirstPersonController.dodgeStamina`, `ThirdPersonController.dodgeStamina`, `RangedWeapon.magazine`,
+`Spawner.count`, `LoadingScreen.objectsPerFrame`, `QuestTrigger.objective`, `TurnManager.current`, `Stats.level`,
+`Stats.strength`, `Stats.agility`, `Stats.intelligence`, `Stats.defense`, `UIPagination.page`,
+`UIPagination.pageCount`, `UIPagination.pageSize` and `UISearchBar.value`.
+
 ### Fields the scene file does not save
 
 These authored settings are not kept by their component's record, so they go back to the default on save,

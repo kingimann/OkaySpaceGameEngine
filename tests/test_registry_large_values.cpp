@@ -5,6 +5,11 @@
 // registry. For every registered number field whose range reaches the old kBig (100000) this plants 250000 (and
 // -250000 where the range goes negative) with the raw setter, checks the field holds it, then writes the same
 // value through PropertyRegistry::SetProperty and checks it is unchanged.
+//
+// It checks the fields bounded by kBig (a range that reaches 1e8 or more). At the old kBig of 1e5 this
+// failed for 623 of 684 values (commit 47f886c); kBig is now 1e9. Some fields keep a deliberate literal
+// 100000 cap (counts, levels, sort orders, resolutions, page numbers: Camera.depth, Canvas.sortOrder,
+// ParticleSystem.maxParticles, Stats.level ...); they are listed in docs/properties.md and not checked here.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Scene/PropertyRegistry.hpp"
@@ -38,8 +43,8 @@ int main() {
                 d.type != PropertyType::Vec3 && d.type != PropertyType::Vec4) continue;
             if (!d.hasRange || !d.setter || !d.getter || d.IsReadOnly()) continue;
             for (double v : {250000.0, -250000.0}) {
-                if (v > 0 && d.rangeMax < 100000.0) continue;     // bounded on purpose below the old kBig
-                if (v < 0 && d.rangeMin > -100000.0) continue;
+                if (v > 0 && d.rangeMax < 1.0e8) continue;      // a deliberate, smaller cap
+                if (v < 0 && d.rangeMin > -1.0e8) continue;
                 Scene s("s");
                 GameObject* go = s.CreateGameObject("o");
                 Component* c = info->add(*go);
@@ -63,6 +68,6 @@ int main() {
     std::cout << "\n";
     if (failures) std::cerr << "  " << failures << " clamped\n";
     CHECK(failures == 0);
-    CHECK(cases >= 50);
+    CHECK(cases >= 500);
     TEST_MAIN_RESULT();
 }

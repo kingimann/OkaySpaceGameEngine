@@ -167,6 +167,26 @@ Fixed in the templates and examples (data and builders):
 * The Windows release did not carry `examples/visual_script/playground`, so File > Examples > Visual Script Node Playground said
   "scenes not found" there. It is in `EXAMPLE_DIRS` now.
 
+## Pictures: the cameras that looked away, before and after
+
+These are **headless software renders**, not window screenshots: 640 x 360, meshes only (no on-screen text, no UI), after 30
+frames of Play. Each pair is the same scene file from `main` before this change (left) and from this branch (right). They were
+made with a throwaway 30-line program that loads the scene, runs 30 frames and calls `okay::testing::RenderSceneToImage`
+(`engine/include/okay/Testing/Regression.hpp`); that program is not in the repo. A blank sky on the left is the bug: the scene
+runs, the camera looks the other way.
+
+| Scene | Before | After |
+|---|---|---|
+| `examples/weapons/arena.okayscene` | ![blank sky](images/templates_check/weapons_arena_before.png) | ![arena](images/templates_check/weapons_arena_after.png) |
+| `examples/behavior_trees/breakpoint_demo.okayscene` | ![blank sky](images/templates_check/behavior_trees_breakpoint_demo_before.png) | ![demo](images/templates_check/behavior_trees_breakpoint_demo_after.png) |
+| `examples/own_wav/own_wav_test.okayscene` | ![blank sky](images/templates_check/own_wav_test_before.png) | ![test](images/templates_check/own_wav_test_after.png) |
+| `examples/visual_script/playground/movement.okayscene` | ![blank sky](images/templates_check/vs_playground_movement_before.png) | ![playground](images/templates_check/vs_playground_movement_after.png) |
+| `examples/spatial_audio/spatial_audio.okayscene` | ![floor only](images/templates_check/spatial_audio_before.png) | ![wall and crate](images/templates_check/spatial_audio_after.png) |
+| `examples/physics/step_and_parent.okayscene` | no picture: the scene had no camera, the renderer refused | ![crate, ball and slab on a floor](images/templates_check/physics_step_and_parent_after.png) |
+
+The other 37 of the 42 scenes whose camera was turned to face the content are not pictured; `examples_work` checks every one of
+them (`DrawnInView`: at least one drawn object is inside the picture).
+
 ## Not covered, and not verified
 
 * A real window, the launcher's pages, the editor's menus and Windows itself. These tests call `EditorState::Tick` the way the

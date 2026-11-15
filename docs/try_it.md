@@ -385,8 +385,9 @@ the checks are headless, so every "you should see" line is unverified until you 
    `examples\touch_controls`.
 6. **Card text.** The launcher's cards for Vehicle (3D), Vehicle (2D) and Sandbox now say what the templates do.
 
-Status: tested on Linux (headless, 4 seconds). Not run: a real window, the launcher, Windows. Headless renders of the changed
-example scenes (`RenderSceneToImage`, meshes only) were looked at; they are not stored in the repo.
+Status: tested on Linux (headless, 4 seconds). Not run: a real window, the launcher, Windows. Before and after pictures of six
+of the changed example scenes are in [templates_check.md](templates_check.md#pictures-the-cameras-that-looked-away-before-and-after);
+they are headless software renders (meshes only, no on-screen text), not window screenshots.
 
 ## How the packaging was checked (and what was not)
 

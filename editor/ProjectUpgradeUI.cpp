@@ -1,6 +1,7 @@
 // The editor's windows for "upgrade project": the version question, the progress and the result, File > Project Upgrade...
 // (re-run and restore from a backup). The decisions are okayup::ProjectGate's and the work okayup::UpgradeJob's
 // (ProjectUpgrade.hpp, no ImGui); this file only draws them and wires them into the editor. See docs/project_upgrade.md.
+#include "LaunchArgs.hpp"
 #include "ProjectUpgradeUI.hpp"
 #include "EditorCommon.hpp"
 #include "EditorWidgets.hpp"
@@ -451,11 +452,10 @@ void ProjectUpgradeInit(int argc, char** argv) {
     std::string open, keepFor;
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
-        if (a == "--open" && i + 1 < args.size()) open = args[++i];
-        else if (a.rfind("--open=", 0) == 0) open = a.substr(7);
-        else if (a == okayver::KeepVersionFlag()) g_keepFlag = true;
+        if (a == okayver::KeepVersionFlag()) g_keepFlag = true;
         else if (a.rfind(std::string(okayver::KeepVersionFlag()) + "=", 0) == 0) { g_keepFlag = true; keepFor = a.substr(std::strlen(okayver::KeepVersionFlag()) + 1); }
     }
+    open = okay::editor::LaunchSceneFromArgs(args);   // --open <scene> or a bare .okayscene path
     if (g_keepFlag && !open.empty()) g_gate.NoteKeepRequest(open, keepFor);
     okay::editor::EditorState::beforeLoad = [](const std::string& path, std::string* why) { return g_gate.MayLoad(path, why); };
 }

@@ -22,7 +22,8 @@ Since this change the zip and the installer carry an `examples` folder next to `
 | The zip | the unzipped `OkaySpace-<version>\examples\` folder |
 
 The editor is `Tools\OkayEngine.exe` in the same folder (or start it from the launcher). In the editor, **File > Open...**
-asks for a scene path: type or paste it, or press **Browse...**. A scene finds the files it uses (sounds, scripts,
+asks for a scene path: type or paste it, or press **Browse...**. You can also give the scene on the command line:
+`Tools\OkayEngine.exe examples\vehicle\vehicle_test.okayscene` opens the car scene. A scene finds the files it uses (sounds, scripts,
 sequences) next to itself, so the folder works from any install path.
 
 What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,

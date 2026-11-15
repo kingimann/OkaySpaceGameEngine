@@ -760,7 +760,10 @@ unchanged.
   grouped by panel, with a filter box.
 - **Projects live in the Launcher**: create (Name + Location + template)
   and reopen projects from the Launcher's Create tab; the editor receives
-  `--new-project` / `--open` and starts ready to work.
+  `--new-project` / `--open` and starts ready to work. A bare `.okayscene` path works
+  too (`OkayEngine.exe examples\vehicle\vehicle_test.okayscene`, "Open with", or a
+  drop on the exe); `--open` wins when both are given (`editor/LaunchArgs.hpp`, test
+  `editor_launch_args`). Before this a bare path opened an empty Untitled scene.
 - **NPC & Spawner presets**: NPC archetypes (Guard / Villager / Predator /
   Skittish) and Spawner shapes (Drip / Horde / 3 Rounds / Triggered) set the
   whole component in one click — all values stay editable.

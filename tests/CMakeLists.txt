@@ -820,6 +820,11 @@ target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)
 target_link_libraries(test_ui_frame PRIVATE okay::engine)
 add_test(NAME ui_frame COMMAND test_ui_frame)
 
+# The editor's startup scene from its command line (editor/LaunchArgs.hpp, header-only): --open or a bare path.
+add_executable(test_editor_launch_args test_editor_launch_args.cpp)
+target_include_directories(test_editor_launch_args PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME editor_launch_args COMMAND test_editor_launch_args)
+
 # The editor's hooks into the core systems (Play on GameLoop, Pause / Step, Duplicate, tag lists); links the ImGui-free EditorState.
 add_executable(test_editor_hooks test_editor_hooks.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)   # EditorState cancels queued built-in dialogs on scene rebuilds (#732)
 target_include_directories(test_editor_hooks PRIVATE ${PROJECT_SOURCE_DIR}/editor)

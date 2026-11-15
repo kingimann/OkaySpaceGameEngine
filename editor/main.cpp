@@ -903,6 +903,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
 #include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
+#include "LaunchArgs.hpp"         // which scene the command line asks for (--open or a bare .okayscene path)
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
@@ -47769,14 +47770,19 @@ int main(int argc, char** argv) {
         else if (a.rfind("--template=", 0) == 0) g_newProjectTemplate = a.substr(11);
         else if (a == "--new-project" && i + 1 < argc) { g_newProjectRoot = argv[i + 1]; ++i; }
         else if (a.rfind("--new-project=", 0) == 0) g_newProjectRoot = a.substr(14);
-        else if (a == "--open" && i + 1 < argc) { g_openScenePath = argv[i + 1]; ++i; }
-        else if (a.rfind("--open=", 0) == 0) g_openScenePath = a.substr(7);
+        else if (a == "--open" && i + 1 < argc) { ++i; }   // read below by LaunchSceneFromArgs
         else if (a == "--project-version" && i + 1 < argc) { g_newProjectVersion = argv[i + 1]; ++i; }
         else if (a.rfind("--project-version=", 0) == 0) g_newProjectVersion = a.substr(18);
         else if (a == "--gpu" && i + 1 < argc) { g_newProjectGpu = std::string(argv[i + 1]) == "0" ? 0 : 1; ++i; }
         else if (a.rfind("--gpu=", 0) == 0) g_newProjectGpu = a.substr(6) == "0" ? 0 : 1;
     }
 
+    {   // --open <scene>, or a bare .okayscene path (file association, drag onto the exe, typed by hand)
+        std::vector<std::string> args;
+        for (int i = 1; i < argc; ++i) if (argv[i]) args.emplace_back(argv[i]);
+        const std::string scene = okay::editor::LaunchSceneFromArgs(args);
+        if (!scene.empty()) g_openScenePath = scene;
+    }
     ProjectUpgradeInit(argc, argv);   // --keep-version, and the version question that comes before any project is opened
 
     // Single-instance: if an editor is already running, hand this launch's

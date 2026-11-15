@@ -33,7 +33,7 @@ v2.874.0
     escape the model folder are refused before the disk is touched.
 
   Behind the scenes (switched off by default, nothing changes for you)
-  - Own model readers for Quake 3 models (Q3D) and plain triangle text (RAW).
+  - Own model readers for Quick3D files (Q3D) and plain triangle text (RAW).
 
 v2.873.0
   Gameplay

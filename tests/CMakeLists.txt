@@ -857,6 +857,11 @@ add_executable(test_software_perf_paths test_software_perf_paths.cpp)
 target_link_libraries(test_software_perf_paths PRIVATE okay::engine)
 add_test(NAME software_perf_paths COMMAND test_software_perf_paths)
 
+# CachedComponents: the cached scene-wide component lists always equal a fresh walk (docs/perf_log.md)
+add_executable(test_component_cache test_component_cache.cpp)
+target_link_libraries(test_component_cache PRIVATE okay::engine)
+add_test(NAME component_cache COMMAND test_component_cache)
+
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
 add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)

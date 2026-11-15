@@ -5,6 +5,7 @@
 #include "okay/Physics/Collider2D.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/ComponentCache.hpp"
 #include "okay/Scene/NearestLookup.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -322,7 +323,7 @@ void Physics2D::Step(Scene& scene, float dt) {
     constexpr float kSleepTime = 0.5f;   // seconds at rest before sleeping
 
     // 1) Integrate dynamic / kinematic bodies.
-    auto bodies = scene.FindObjectsOfType<Rigidbody2D>();
+    auto bodies = CachedComponents<Rigidbody2D>(scene);
     for (Rigidbody2D* rb : bodies) {
         if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
         Transform* t = rb->transform;
@@ -368,7 +369,7 @@ void Physics2D::Step(Scene& scene, float dt) {
     }
 
     // 2) Broad+narrow phase over every collider pair.
-    auto colliders = scene.FindObjectsOfType<Collider2D>();
+    auto colliders = CachedComponents<Collider2D>(scene);
     std::set<Pair> current;
     // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
     // them at once); every raw pointer held across a callback is checked first.
@@ -547,7 +548,7 @@ void Physics2D::Step(Scene& scene, float dt) {
     }
 
     // 4.5) Joints: positional constraints (after collisions, mirrors Physics3D).
-    for (Joint2D* j : scene.FindObjectsOfType<Joint2D>()) {
+    for (Joint2D* j : CachedComponents<Joint2D>(scene)) {
         if (j->broken || !j->gameObject || !j->transform) continue;
         Rigidbody2D* ra = j->gameObject->GetComponent<Rigidbody2D>();
         if (!ra) continue;                          // the joint moves THIS body

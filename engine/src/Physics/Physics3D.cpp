@@ -12,6 +12,7 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Scene/ComponentCache.hpp"
 #include "okay/Scene/NearestLookup.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -511,7 +512,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     constexpr float kSleepTime = 0.5f;   // seconds at rest before sleeping
 
     // 1) Integrate dynamic / kinematic bodies.
-    auto bodies = scene.FindObjectsOfType<Rigidbody3D>();
+    auto bodies = CachedComponents<Rigidbody3D>(scene);
     for (Rigidbody3D* rb : bodies) {
         if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
         Transform* t = rb->transform;
@@ -554,7 +555,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     }
 
     // 2) Broad + narrow phase over every collider pair.
-    auto colliders = scene.FindObjectsOfType<Collider3D>();
+    auto colliders = CachedComponents<Collider3D>(scene);
     std::set<Pair> current;
     // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
     // them at once); every raw pointer held across a callback is checked first.
@@ -764,14 +765,14 @@ void Physics3D::Step(Scene& scene, float dt) {
     // Clear the per-frame terrain-grounded flag on every body first, so both the
     // heightmap and the voxel pass below can set it (and it falls back to false
     // when a body is airborne over either kind of terrain).
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+    for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
         rb->groundedOnTerrain = false;
         rb->groundNormal = Vec3{0.0f, 1.0f, 0.0f};
     }
 
-    auto terrains = scene.FindObjectsOfType<Terrain>();
+    auto terrains = CachedComponents<Terrain>(scene);
     if (!terrains.empty()) {
-        for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+        for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
             if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
             if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
             Transform* t = rb->transform;
@@ -844,9 +845,9 @@ void Physics3D::Step(Scene& scene, float dt) {
     // blocked by walls and ceilings. The clamped density reads as an approximate
     // signed distance (positive inside solid), so a sphere of radius r at centre c
     // overlaps solid by (r + density(c)); push it out along the surface normal.
-    auto voxels = scene.FindObjectsOfType<VoxelTerrain>();
+    auto voxels = CachedComponents<VoxelTerrain>(scene);
     if (!voxels.empty()) {
-        for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+        for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
             if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
             if (rb->bodyType == Rigidbody3D::BodyType::Static) continue;
             Transform* t = rb->transform;
@@ -944,7 +945,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     {
         struct MeshRef { MeshCollider3D* mc; Mat4 m; Vec3 mn, mx; };
         std::vector<MeshRef> meshes;
-        for (Collider3D* col : scene.FindObjectsOfType<Collider3D>()) {
+        for (Collider3D* col : CachedComponents<Collider3D>(scene)) {
             if (!Alive(col) || col->shape() != Collider3D::Shape::Mesh || col->isTrigger) continue;
             if (!col->gameObject->transform) continue;
             auto* mc = static_cast<MeshCollider3D*>(col);
@@ -964,7 +965,7 @@ void Physics3D::Step(Scene& scene, float dt) {
         }
         std::set<Pair> meshNow;
         if (!meshes.empty()) {
-            for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+            for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
                 if (!rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
                 if (rb->bodyType != Rigidbody3D::BodyType::Dynamic) continue;
                 Collider3D* self = rb->gameObject->GetComponent<Collider3D>();
@@ -1079,7 +1080,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     }
 
     // ---- Joints: positional constraints (after collisions) ----
-    for (Joint3D* j : scene.FindObjectsOfType<Joint3D>()) {
+    for (Joint3D* j : CachedComponents<Joint3D>(scene)) {
         if (j->broken || !j->gameObject || !j->transform) continue;
         Rigidbody3D* ra = j->gameObject->GetComponent<Rigidbody3D>();
         if (!ra) continue;                          // the joint moves THIS body
@@ -1208,13 +1209,13 @@ void Physics3D::Step(Scene& scene, float dt) {
 
     // A box floor has no swept catch of its own. Do this before prevPos is stored
     // so the next step sees the recovered feet.
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+    for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
         if (gone.Gone(rb)) continue;
         CatchTunneledFloor(scene, rb);
     }
 
     // Record where every dynamic body ended up, for next step's swept collision.
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+    for (Rigidbody3D* rb : CachedComponents<Rigidbody3D>(scene)) {
         if (rb->bodyType == Rigidbody3D::BodyType::Static || !rb->transform) continue;
         rb->prevPos = rb->transform->Position();
         rb->hasPrevPos = true;

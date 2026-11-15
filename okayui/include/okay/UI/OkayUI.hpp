@@ -16,6 +16,8 @@
 //     OkayUI::EndFrame(renderer);                       // flush — AFTER ImGui draws,
 //                                                       // so OkayUI sits on top
 // ---------------------------------------------------------------------------
+#include <cstddef>   // std::size_t (kClipboardStoreMax)
+
 struct SDL_Renderer;
 struct SDL_Texture;
 namespace okay { class TtfFont; }
@@ -41,8 +43,10 @@ enum KeyId : int {
 };
 
 struct Input;
-/// The most text the clipboard holds (bytes, with the end mark).
+/// The most a one-line text field copies or cuts at once (bytes, with the end mark).
 inline constexpr int kClipboardMax = 4096;
+/// The most text the clipboard itself holds (bytes, with the end mark): 16 MiB, so a code editor can copy and paste a whole big script.
+inline constexpr std::size_t kClipboardStoreMax = (std::size_t)16 << 20;
 struct Input {
     float       mouseX    = 0.0f;
     float       mouseY    = 0.0f;

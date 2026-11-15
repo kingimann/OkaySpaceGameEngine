@@ -26,7 +26,8 @@ asks for a scene path: type or paste it, or press **Browse...**. A scene finds t
 sequences) next to itself, so the folder works from any install path.
 
 What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
-`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
+`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`,
+`script_editor`.
 Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
 `visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
 `scripts/build-windows-dist.sh` on Linux (see "How the packaging was checked" at the end); nobody has run the whole
@@ -49,6 +50,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Own code editor in the Script Editor (off by default) | `OKAY_UI_BACKEND=okayui`, then `examples\script_editor\script_editor_sample.okayscene` | Switch and sample are in this change; the editor window itself is unverified |
 
 ---
 
@@ -310,7 +312,7 @@ through SDL2 anyway, so only the seam parts (timers, audio, gamepads, voice) wou
 ### 12. OkayUI
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only
-the screens that have an OkayUI port change (in the editor, the Console panel today); everything else stays Dear ImGui.
+the screens that have an OkayUI port change (in the editor, the Console panel and the Script Editor's code view, see 14); everything else stays Dear ImGui.
 The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains OkayUI is unverified: if not,
 the line stays `ui=imgui`. Nothing was run in a real window.
 
@@ -319,6 +321,20 @@ the line stays `ui=imgui`. Nothing was run in a real window.
 Not switchable, by owner decision (2026-11-14, CLAUDE.md rule 18). libsodium is the only crypto in a release, the
 environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup line must say `crypto=libsodium`.
 Nothing to try.
+
+### 14. Own code editor in the Script Editor (off by default)
+
+**What it is.** `OkayUI::CodeEdit` (our own code editor widget, on our own text model `okay::text::Buffer`) instead of the vendored ImGuiColorTextEdit. It replaces the Script Editor's code view only when the OkayUI backend is on. Details, the table of what the script editor needs and what is still missing, and the criteria for making it the default: `docs/own_code_editor.md`.
+
+**Steps.**
+1. Start the editor with the switch: Windows `set OKAY_UI_BACKEND=okayui` then `Tools\OkayEngine.exe`; or set `OKAY_DEV=1` and pick View > Rendering & Performance > UI backend > "OkayUI (preview)".
+2. Check it is on (any one of these): the Console's first lines say `Script editor: our own code editor (OkayUI backend, preview)`; Help > About OkaySpace shows the same `Script editor:` line; the startup stderr line says `ui=okayui`.
+3. File > Open, type or browse to `examples\script_editor\script_editor_sample.okayscene` (installer: `%LOCALAPPDATA%\OkaySpace\examples\script_editor\`, zip: the unzipped `examples\script_editor\`). Click **Script sample** in the Hierarchy: its script opens in the Script Editor window (if it does not, use the **Open in Script Editor** button of its Script component in the Inspector).
+4. Press Play: the Console shows `Script sample is ready, speed 5`.
+
+**What you should see (unverified in a real window).** Coloured code (keywords orange, types teal, strings green, numbers blue, comments grey); a hover tooltip with a signature when the pointer rests on `Log`, `GetAxis` or `deltaTime`; a blue breakpoint column on the left; Enter keeps the indent; Ctrl+Z / Ctrl+Y; copy of the whole script (Ctrl+A, Ctrl+C) pastes all of it into Notepad; View > Zoom In enlarges the code. A line such as `unknownName(` gets a red bar and a message on hover. Known to be rough: no code font (letters are evenly spaced), and the autocomplete popup and the inline error text under the code may be hidden (listed as open in the doc). To go back: `OKAY_UI_BACKEND=imgui`.
+
+**Without a window (run on Linux for this change).** The headless renders `docs/images/own_code_editor/launcher.png` and `classic.png` show the own editor drawing the sample (they are renders of the widget, not screenshots of the running editor); `tests/test_script_editor_sample.cpp` loads the sample scene, runs Start and checks the Console line and that no error appears. Regenerate a picture with `okayui_codeedit_shot examples/script_editor/highlight_sample.okay out.png launcher`.
 
 ---
 
@@ -349,3 +365,8 @@ Run on Linux, on the branch `claude/try-it`:
 code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3D`, the one-line launcher glyph change
 and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
 Anything on Windows. The NSIS installer and the zip.
+
+## Checks run for row 14 (own code editor), on Linux
+
+Built and run two ways: a direct `g++` build of the okayui library against an engine library borrowed from another build tree (fast, used while working, and for the sanitizer runs), and the real CMake build with `ninja -j1` of the okayui test targets and `test_script_editor_sample` followed by `ctest`:
+`test_okayui_codeedit_parity` (1,098 checks), `test_okayui_codeedit` (407), `test_okayui_codeedit_fuzz` (36), `test_okayui_script_adapter` (69), `test_okayui_values` (389), `test_okayui_widgets` (14,484), `test_okayui_host` (50) and `test_text_buffer` (83,050): 0 failures, also with `-fsanitize=address,undefined,float-cast-overflow`. The okayui ctest set (25 tests, without the EGL one), `text_buffer` and `script_editor_sample` ran through the CMake build too: 27 of 27 passed. `tests/test_script_editor_sample.cpp` (14 checks): the sample scene loads, carries the same text as `highlight_sample.okay`, compiles, and Play logs `Script sample is ready, speed 5` with no error. The `examples` copy block of `scripts/build-windows-dist.sh` copies `examples/script_editor` (2 files). `editor/main.cpp` was checked with `g++ -fsyntax-only` against the pinned Dear ImGui and SDL2 headers; the editor was not linked or run. **Not run:** the editor window, Windows, GitHub CI.

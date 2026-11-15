@@ -22,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -182,11 +183,29 @@ public:
     void SetUserTypes(const std::vector<std::string>& names);
     /// Colour tokens of line `i` (what the highlighter says), for tests and for tooltips.
     void LineTokens(int i, std::vector<CodeToken>& out);
+    /// Names the caller documents (the script editor's built-in functions, properties and types): `docs` maps a word to the text shown
+    /// as a tooltip while the pointer rests on that word. Each word is also coloured CodeColor_Known, unless it is a keyword or a type
+    /// of the language. Needs SetLanguage first for the colour; the tooltip works with any highlighter. Setting the same docs again
+    /// changes nothing. An empty name is ignored.
+    void SetIdentifierDocs(const std::unordered_map<std::string, std::string>& docs);
+    /// The identifier (letters, digits, '_' and any non-ASCII character) whose cell is under a screen point of the last Draw, or "" when the
+    /// point is not on a character of one (gutter, past the end of the line, a blank, a tab's filler, NaN).
+    std::string IdentifierAt(float x, float y) const;
+    /// The tooltip text the last Draw showed (a marker's message and/or an identifier's doc), "" when none.
+    const std::string& HoverTip() const { return hoverTip_; }
+    /// Counts how often the highlighter was rebuilt by SetLanguage, SetUserTypes or SetIdentifierDocs (they do nothing when nothing changed).
+    int LanguageRevision() const { return langRev_; }
+    /// True when the font is not monospaced (the launcher look's Roboto): every glyph is then drawn in its own character cell, so the
+    /// caret, the selection and the columns stay on the grid the text is measured on. False with the 8x8 font (runs of text are drawn).
+    bool CellsAreGrid() const { return grid_; }
 
     // ---- markers and breakpoints ----
     void SetMarkers(const std::vector<CodeMarker>& m);
     const std::vector<CodeMarker>& Markers() const { return markers_; }
     void ClearMarkers() { SetMarkers({}); }
+    /// Also draw the first marker message of each line, dimmed, after the end of the line's text ("<  message", on one line, about 90 characters
+    /// at most; the marker's colour). Off by default. The script editor shows its errors this way next to the code.
+    void SetInlineMessages(bool on) { inlineMsgs_ = on; }
     /// Breakpoint lines (kept sorted). They move with the text when lines are inserted or removed above them.
     void SetBreakpoints(const std::vector<int>& lines);
     const std::vector<int>& Breakpoints() const { return breakpoints_; }
@@ -261,6 +280,10 @@ private:
     void handleMouse(const Rect& item, int wid, bool hovered);
     void drawAll(const Rect& item, bool hovered);
     bool matchBracketImpl(CodePos& a, CodePos& b);
+    void rebuildLanguage();
+    bool simpleLine(int line) const;
+    int byteAtCell(int line, int cell) const;
+    void drawGlyphs(int firstCell, const std::string& text, Color32 color, float y);
 
     okay::text::Buffer buf_;
     std::size_t bpSet_ = 0, markSet_ = 0;      // the model's line-mark sets: breakpoints, markers
@@ -274,6 +297,18 @@ private:
     CodeHighlighter highlighter_;
 
     std::string find_; bool findCase_ = false;
+    // A long line of plain ASCII (no tab) has byte == display column, which lets the view skip the walk from the line start. The answer
+    // is remembered per (line, text version) for the few lines in play.
+    struct SimpleLine { std::int64_t line = -1; std::uint64_t version = 0; bool simple = false; };
+    mutable SimpleLine simple_[4];
+    mutable int simpleNext_ = 0;
+    std::vector<float> glyphW_;      // advance of each printable ASCII glyph (index c - 32) while the font is proportional
+    std::unordered_set<std::string> userTypes_;
+    std::unordered_map<std::string, std::string> docs_;
+    std::string hoverTip_;
+    bool inlineMsgs_ = false;
+    int langRev_ = 0;
+    bool grid_ = false;
     std::vector<CodeMarker> markers_;
     std::vector<int> breakpoints_;
     std::function<void(int, bool)> onBreakpoint_; bool autoToggle_ = true;

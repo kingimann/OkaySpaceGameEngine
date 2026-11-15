@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -33,12 +34,22 @@ public:
     scripteditor::ScriptEditorCodeEdit& okay() { return okay_; }
 
     // ---- one-time configuration (the ImGui editor's look; the OkayUI editor has its own palette) ----
-    void SetLanguageDefinition(const TextEditor::LanguageDefinition& d) { imgui_.SetLanguageDefinition(d); }
+    void SetLanguageDefinition(const TextEditor::LanguageDefinition& d) {
+        imgui_.SetLanguageDefinition(d);
+        // The OkayUI editor colours with its own OkayScript language; what it takes from the definition is the identifiers: every
+        // built-in name with its declaration text (coloured as a known word, shown as the hover tooltip), as the ImGui editor does.
+        std::unordered_map<std::string, std::string> docs;
+        for (const auto& id : d.mIdentifiers) docs[id.first] = id.second.mDeclaration;
+        okay_.SetIdentifierDocs(docs);
+    }
     void SetPalette(const TextEditor::Palette& p) { imgui_.SetPalette(p); }
     void SetShowWhitespaces(bool b) { imgui_.SetShowWhitespaces(b); }
     void SetTabSize(int n) { imgui_.SetTabSize(n); okay_.SetTabSize(n); }
     void SetLineSpacing(float s) { imgui_.SetLineSpacing(s); okay_.SetLineSpacing(s); }
     void SetLeftMargin(int m) { imgui_.SetLeftMargin(m); }
+    /// The editor's zoom (View > Zoom, Ctrl+Wheel: 1 is the UI font size). The ImGui editor gets it through the code font the caller
+    /// pushes; the OkayUI editor scales its text by it.
+    void SetZoom(float z) { zoom_ = z < 0.5f ? 0.5f : (z > 4.0f ? 4.0f : z); }
 
     // ---- text ----
     void SetText(const std::string& t) { if (Okay()) okay_.SetText(t); else imgui_.SetText(t); }
@@ -81,6 +92,9 @@ public:
     /// True while the code has the keyboard. The ImGui editor is a child window the script editor finds through ImGui's nav
     /// window; the OkayUI one reports its own focus (call after Render).
     bool OkayHasKeyboard() const { return okayFocused_; }
+    /// Lines (1-based) whose breakpoint column the user clicked in the OkayUI editor since the last call (always empty with the ImGui
+    /// editor). The caller toggles its own bookmark set; a click changes nothing by itself.
+    std::vector<int> TakeGutterClicks() { return okay_.TakeGutterClicks(); }
     bool UsingOkayUI() { return Okay(); }
 
     /// Draw it. `size` as ImGui: <= 0 means "what is left, plus this".
@@ -95,7 +109,7 @@ public:
         ImGui::InvisibleButton(id, a);                          // the rectangle: an ImGui item, so ImGui does not scroll under it
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
         oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-        OkayUI::PushTextScale(oked::g_uiScale);
+        OkayUI::PushTextScale(oked::g_uiScale * zoom_);
         OkayUI::BareNextWindow();
         if (OkayUI::Begin(id, p.x, p.y, a.x, a.y)) okay_.Edit().Draw("##codeedit", a.x, a.y);
         OkayUI::End();
@@ -140,4 +154,5 @@ private:
     scripteditor::ScriptEditorCodeEdit okay_;
     bool lastOkay_ = false;
     bool okayFocused_ = false;
+    float zoom_ = 1.0f;
 };

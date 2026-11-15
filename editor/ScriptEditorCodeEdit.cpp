@@ -8,6 +8,8 @@ ScriptEditorCodeEdit::ScriptEditorCodeEdit() {
     ed_.SetLanguage(OkayUI::OkayScriptLanguage());
     ed_.SetTabSize(4);
     ed_.SetLineSpacing(1.55f);          // what the script editor sets on the ImGui editor
+    ed_.SetInlineMessages(true);        // the script editor shows each line's first error or warning next to the code
+    ed_.SetBreakpointCallback([this](int line, bool) { gutterClicks_.push_back(line + 1); }, false);   // report the click, toggle nothing
     seenVersion_ = ed_.Version();
 }
 
@@ -83,6 +85,7 @@ void ScriptEditorCodeEdit::SetErrorMarkers(const std::map<int, std::string>& mar
         cm.line = m.first - 1;
         cm.colStart = 0; cm.colEnd = -1;                // the whole line's text, like the library's red line
         cm.message = m.second;
+        if (m.second.compare(0, 7, "warning") == 0) cm.color = OkayUI::RGBA(230, 195, 90);   // the script editor prefixes warnings with "warning: "
         out.push_back(std::move(cm));
     }
     ed_.SetMarkers(out);
@@ -93,6 +96,12 @@ void ScriptEditorCodeEdit::SetBreakpoints(const std::unordered_set<int>& lines) 
     for (int l : lines) if (l >= 1) out.push_back(l - 1);
     std::sort(out.begin(), out.end());
     ed_.SetBreakpoints(out);
+}
+
+std::vector<int> ScriptEditorCodeEdit::TakeGutterClicks() {
+    std::vector<int> out;
+    out.swap(gutterClicks_);
+    return out;
 }
 
 OkayUI::Vec2 ScriptEditorCodeEdit::ContentOrigin() const {

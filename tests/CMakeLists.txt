@@ -2119,6 +2119,11 @@ add_executable(test_input_actions test_input_actions.cpp)
 target_link_libraries(test_input_actions PRIVATE okay::engine)
 add_test(NAME input_actions COMMAND test_input_actions)
 
+# The Script Editor sample (examples/script_editor): the scene loads, carries the same text as the loose file, and it compiles.
+add_executable(test_script_editor_sample test_script_editor_sample.cpp)
+target_link_libraries(test_script_editor_sample PRIVATE okay::engine)
+target_compile_definitions(test_script_editor_sample PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME script_editor_sample COMMAND test_script_editor_sample)
 # Touch: gesture recogniser (synthetic finger streams) and on-screen controls driving the action map.
 add_executable(test_touch_controls test_touch_controls.cpp)
 target_link_libraries(test_touch_controls PRIVATE okay::engine)

@@ -387,12 +387,14 @@ void ClipboardTests() {
     CHECK(e.Copy() && std::string(UI::GetClipboardText()) == "abcdef");
     CHECK(!e.Cut() && !e.Paste() && e.GetText() == "abcdef");
     e.SetReadOnly(false);
-    // a selection too big for the clipboard is not cut (it could not be pasted back)
-    e.SetText(std::string(5000, 'x'));
+    // a selection too big for the clipboard (16 MiB, was 4 KiB before the clipboard became a growing buffer) is not cut: it could
+    // not be pasted back. Copy takes what fits. Selections up to the limit are in test_okayui_codeedit_parity.
+    e.SetText(std::string(UI::kClipboardStoreMax + 10, 'x'));
     e.SelectAll();
     UI::SetClipboardText("");
-    CHECK(!e.Cut() && e.GetText().size() == 5000);
-    CHECK(e.Copy() && std::string(UI::GetClipboardText()).size() < 5000);
+    CHECK(!e.Cut() && e.GetText().size() == UI::kClipboardStoreMax + 10);
+    CHECK(e.Copy() && std::string(UI::GetClipboardText()).size() == UI::kClipboardStoreMax - 1);
+    UI::SetClipboardText("");
 }
 
 void UndoTests() {

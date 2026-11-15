@@ -53,7 +53,7 @@ The list is from `grep "te\." editor/main.cpp` (the script editor's calls) plus 
 | `IsTextChanged` | HAVE | `Draw` returns it; also `Version()` |
 | Syntax highlighting with a language definition | HAVE | `CodeLanguage` (keywords, types, known words, line and block comments), `OkayScriptLanguage()`, `CLikeLanguage()`; or any callback `CodeHighlighter` (token ranges with a colour id, one line at a time with a state that carries block comments across lines). Not regex based |
 | `SetUserTypes` (classes and enums declared in the script) | HAVE | `SetUserTypes` |
-| Known identifiers (VM built-ins in a different colour) | HAVE | `CodeLanguage::known`, colour `CodeColor_Known`. The hover tooltip with the signature (the library had it) is the caller's: `LineTokens` and `ScreenToPos` give what is under the pointer |
+| Known identifiers (VM built-ins in a different colour) and the hover tooltip with the signature (`mIdentifiers`) | HAVE | `CodeLanguage::known`, colour `CodeColor_Known`; `SetIdentifierDocs(map name -> text)` colours each name as a known word and shows the text as a tooltip while the pointer is on it (`IdentifierAt`, `HoverTip`). Added in slice 3 (`docs/own_code_editor.md`) |
 | `SetColorizerEnable` | HAVE | `SetHighlighter(nullptr)` turns colouring off |
 | Palette | HAVE | `CodePalette`, `DefaultCodePalette()` is the script editor's Darcula-flavoured one |
 | `SetErrorMarkers` | HAVE | `SetMarkers`: a gutter mark, a wash over the line, a wavy underline under a column range, the message as a tooltip |
@@ -97,15 +97,15 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 
 ## Limits and decisions, said bluntly
 
-- **A monospaced font is assumed.** The cell width is the width of `0`. The 8x8 classic font is monospaced; the launcher look's Roboto is not, and with it the caret and selection would drift. OkayUI has no way yet to choose a code font (family 23 in `own_ui_toolkit.md`); JetBrains Mono is in `shared/` but not hooked up.
+- **The cell width is the width of `0`.** The 8x8 classic font is monospaced and its text is drawn in runs. The launcher look's Roboto is not: since slice 3 the widget notices (`CellsAreGrid()`) and draws every character in its own cell, centred, so the caret, the selection and the columns stay on the text (evenly spaced, not pretty). OkayUI still has no way to choose a code font (family 23 in `own_ui_toolkit.md`); JetBrains Mono is in `shared/` but not hooked up. That is the real fix and is NOT DONE.
 - **One character is one cell.** Wide (CJK, emoji) characters are drawn one cell wide and may overlap their neighbour; combining marks take a cell. The 8x8 font has only ASCII glyphs, so other characters show as the font's fallback.
-- **The clipboard holds 4095 bytes** (`kClipboardMax`). Copy of a bigger selection is cut; Cut of a bigger selection does nothing (it never deletes text it could not copy). This is the OkayUI clipboard's limit, not the editor's.
+- **The clipboard holds 16 MiB** (`kClipboardStoreMax`; it was 4095 bytes before slice 3, and a text field still copies at most `kClipboardMax` = 4096 from itself). Copy of a bigger selection is cut at a character boundary; Cut of a bigger selection does nothing (it never deletes text it could not copy).
 - **Columns are byte offsets** (on character boundaries). The library counted columns; a port has to convert (`ByteToColumn`, `ColumnToByte`).
 - Tab size 1 to 16; tab characters are kept as they are, Tab inserts spaces by default.
 - Breakpoints and markers move with inserted and removed lines. A marker on a removed line is dropped. A breakpoint at the line where a cut begins stays there. Undo does not bring a dropped marker or breakpoint back.
 - Line endings are normalised to `\n` on input; the caller converts back on save if it wants `\r\n`.
 - Typed text is read from `Input::text` only while the widget has focus. The host (not on this branch) still has to send key edges and Ctrl+C / X / V for OkayUI at all.
-- Very long lines (hundreds of thousands of characters on one line) are walked from their start each frame; only the visible columns are drawn but the walk is linear in the line length.
+- Very long lines: a line of plain ASCII without tabs has its columns without a walk and the draw loop starts at the first visible column (slice 3); a long line with a tab or a non-ASCII character is still walked from its start each frame, linear in its length (measured: fine at the sizes the tests use). Typing into a 4 MB line tokenises it again (about 0.1 s).
 - The highlighter state is cached per line from the top; an edit near the top of a 100,000 line file re-tokenises downwards only as far as the view needs.
 
 ## NOT DONE
@@ -116,7 +116,7 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 - **Code folding.**
 - **Word wrap.** Long lines scroll sideways.
 - **Auto-close brackets and quotes**, **auto-dedent when typing `}`**, **toggle comment (Ctrl+/)**, **move line up and down**, **duplicate line**: not in the library the script editor uses either, or done by the editor itself on top of the API (`FormatOkayScript`, comment toggle in `editor/main.cpp` work on the text through `SetSelection`, `InsertText`).
-- **Autocomplete popup and the hover tooltip**: the editor draws them itself (they use `CaretScreenPosBelow`, `ScreenToPos`, `LineTokens`); the widget only offers the geometry and `SetHandleKeyboardInput`.
+- **Autocomplete popup**: the editor draws it itself (it uses `CaretScreenPosBelow`, `ScreenToPos`, `LineTokens`); the widget only offers the geometry and `SetHandleKeyboardInput`. The hover tooltip for built-in names is the widget's since slice 3 (`SetIdentifierDocs`).
 - **Drag and drop of selected text**, **drop of files onto the editor**.
 - **Show whitespace**, **minimap**, **indent guides**, **matching word highlight**.
 - **Replace across several lines of the needle** (a find text with a newline matches nothing).
@@ -145,3 +145,7 @@ Not done, said plainly:
 `CodeEdit` no longer keeps its own text model. Lines, edits, the undo log, search, bracket scanning, word movement, the highlighter's state cache and the line marks (breakpoints and error markers that move with the text) are `okay::text::Buffer` (`docs/own_code_editor.md`, "Slice 2"). The public API of `CodeEdit` is unchanged, as are `ScriptEditorCodeEdit` and `ScriptEditorWidget`; `Model()` gives read-only access to the buffer. The 407 checks of `test_okayui_codeedit` and the fuzzers are unchanged and pass; no check was edited.
 
 What this changes in the HAVE and GAP table above: breakpoints and markers "move with the text" is now implemented and tested in the library (`Buffer` line marks) as well as through the widget; multiple carets exist in `Buffer` but are NOT in the widget (one caret and one anchor). Small differences from before (find previous with overlapping matches, replace all with newlines in the replacement and markers inside the span, clamped out-of-range tokens) are listed in `docs/own_code_editor.md`.
+
+## Slice 3: what the script editor was still missing (step 29)
+
+Read `docs/own_code_editor.md`, "Slice 3" and the parity table, for the full list. In short, `CodeEdit` gained: `SetIdentifierDocs`, `IdentifierAt`, `HoverTip` (known-word colours and hover help for built-in names), `LanguageRevision` (the highlighter is rebuilt only when the language, the user types or the docs really changed), `CellsAreGrid` (proportional fonts are drawn cell by cell), `SetInlineMessages` (the first error message of a line drawn after the code), checked float-to-int conversions, a fast path for long plain lines, and a 16 MiB clipboard (`OkayUI::kClipboardStoreMax`). The adapter gained `SetIdentifierDocs` and `TakeGutterClicks`. The tests are `okayui/tests/test_okayui_codeedit_parity.cpp` (ctest `okayui_codeedit_parity`).

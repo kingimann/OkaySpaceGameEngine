@@ -15,6 +15,7 @@
 
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -32,6 +33,8 @@ struct Coord {
 class ScriptEditorCodeEdit {
 public:
     ScriptEditorCodeEdit();
+    ScriptEditorCodeEdit(const ScriptEditorCodeEdit&) = delete;              // the gutter callback points at this object
+    ScriptEditorCodeEdit& operator=(const ScriptEditorCodeEdit&) = delete;
 
     OkayUI::CodeEdit&       Edit()       { return ed_; }
     const OkayUI::CodeEdit& Edit() const { return ed_; }
@@ -70,6 +73,12 @@ public:
     /// Colour with the OkayScript language (the script editor's keywords and types); `false` turns colouring off.
     void SetColorizerEnable(bool on);
     void SetUserTypes(const std::unordered_set<std::string>& types);
+    /// The built-in names of the language (the script editor's completion list) with the text each shows as a hover tooltip
+    /// (TextEditor::LanguageDefinition::mIdentifiers, name -> declaration). The names are also drawn as known words.
+    void SetIdentifierDocs(const std::unordered_map<std::string, std::string>& docs) { ed_.SetIdentifierDocs(docs); }
+    /// Lines (1-based) whose breakpoint column the user clicked since the last call. A click does not toggle anything by itself: the
+    /// script editor owns its bookmarks and hands them back every frame with SetBreakpoints, so it decides what a click means.
+    std::vector<int> TakeGutterClicks();
     /// Error markers by 1-based line, as TextEditor::ErrorMarkers.
     void SetErrorMarkers(const std::map<int, std::string>& markers);
     /// Breakpoint marks by 1-based line, as TextEditor::Breakpoints.
@@ -93,6 +102,7 @@ private:
     OkayUI::CodeEdit ed_;
     unsigned seenVersion_ = 0;
     bool colorize_ = true;
+    std::vector<int> gutterClicks_;
 };
 
 } // namespace scripteditor

@@ -2162,7 +2162,10 @@ static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, flo
 }
 
 void End() {
-    if (g_curWin.valid && g_winBaseScale > 0.0f) g_theme.textScale = g_winBaseScale;   // SetWindowFontScale ends with its window
+    // SetWindowFontScale ends with its window. The base scale is forgotten here: left set, the next BeginFrame took it for a window left
+    // open and made it the text scale for good, so PushTextScale before Begin and PopTextScale after End (as the script editor does for
+    // its zoom) multiplied the scale once per frame.
+    if (g_curWin.valid && g_winBaseScale > 0.0f) { g_theme.textScale = g_winBaseScale; g_winBaseScale = 0.0f; }
     g_curWin.valid = false;
     g_posOverride = false;
     if (g_lay.winClip) { PopClipRect(); g_lay.winClip = false; }
@@ -4790,24 +4793,52 @@ const Input& GetFrameInput() { return g_in; }
 int GetKeyboardFocusId() { return g_focus; }
 void SetKeyboardFocusId(int id) { g_focus = id; if (id != 0) g_focusClaimed = true; }
 
-// The clipboard: kept here, and mirrored to the system clipboard when a window system is up (so it works headless too).
-static char g_clip[kClipboardMax] = {0};
+// The clipboard: kept here (one heap buffer that grows to what was copied, up to kClipboardStoreMax), and mirrored to the system
+// clipboard when a window system is up (so it works headless too). Text fields copy at most kClipboardMax from themselves; a code
+// editor copies a whole script.
+namespace {
+char* g_clip = nullptr;
+std::size_t g_clipCap = 0;
+// Length of `b[0..len)` shortened so it does not end inside a UTF-8 character (a lead byte whose continuation bytes were cut off).
+std::size_t wholeCharsLen(const char* b, std::size_t len) {
+    std::size_t j = len;
+    while (j > 0 && len - j < 4 && ((unsigned char)b[j - 1] & 0xC0) == 0x80) --j;   // back over continuation bytes
+    if (j == 0) return len;                                                          // only continuation bytes: leave as they are
+    const unsigned char c = (unsigned char)b[j - 1];
+    const std::size_t need = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+    return need > len - (j - 1) ? j - 1 : len;
+}
+// Make the buffer hold the first `n` bytes of `src` (cut at a character boundary) plus the end mark.
+void clipStore(const char* src, std::size_t n) {
+    if (n > kClipboardStoreMax - 1) n = kClipboardStoreMax - 1;
+    n = wholeCharsLen(src, n);
+    const bool shrink = g_clipCap > ((std::size_t)1 << 20) && n + 1 <= (std::size_t)kClipboardMax;   // a one-off big copy does not pin its memory
+    if (g_clipCap < n + 1 || shrink) {
+        const std::size_t cap = n + 1 < (std::size_t)kClipboardMax ? (std::size_t)kClipboardMax : n + 1;
+        char* nb = (char*)std::malloc(cap);
+        if (!nb) { if (g_clip) g_clip[0] = 0; return; }                      // out of memory: the clipboard is left empty
+        std::memcpy(nb, src, n);                                              // copy before the old buffer goes: `src` may point into it
+        nb[n] = 0;
+        std::free(g_clip);
+        g_clip = nb; g_clipCap = cap;
+        return;
+    }
+    std::memmove(g_clip, src, n);                                             // in place: `src` may be the old text itself
+    g_clip[n] = 0;
+}
+} // namespace
 void SetClipboardText(const char* text) {
     if (!text) text = "";
-    std::size_t n = std::strlen(text); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
-    std::memcpy(g_clip, text, n); g_clip[n] = 0;
-    trimPartialChar(g_clip);
-    SDL_SetClipboardText(g_clip);                      // fails quietly with no video: the copy above is enough
+    clipStore(text, std::strlen(text));
+    SDL_SetClipboardText(g_clip ? g_clip : "");        // fails quietly with no video: the copy above is enough
 }
 const char* GetClipboardText() {
     if (char* sys = SDL_GetClipboardText()) {          // someone else may have copied something since
-        if (sys[0] && std::strcmp(sys, g_clip) != 0) {
-            std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
-            std::memcpy(g_clip, sys, n); g_clip[n] = 0; trimPartialChar(g_clip);
-        }
+        if (sys[0] && (!g_clip || std::strcmp(sys, g_clip) != 0)) clipStore(sys, std::strlen(sys));
         SDL_free(sys);
     }
-    return g_clip;
+    if (!g_clip) clipStore("", 0);
+    return g_clip ? g_clip : "";
 }
 
 // ---------------------------------------------------------------------------------------------

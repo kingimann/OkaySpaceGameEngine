@@ -164,6 +164,52 @@ int main() {
         CHECK(r.se.ScreenToCoords(tx + 1.0f, o.y + 1.0f) == Coord(0, 0));
         CHECK(r.se.ScreenToCoords(tx + 3.0f * r.se.CharWidth() + 1.0f, o.y + 1.5f * r.se.RowHeight()) == Coord(1, 4));   // inside the tab: the nearer edge (the tab is columns 0..3)
     }
+    {   // identifier docs (the script editor's built-in names with their signatures): known-word colour, hover tooltip, and they survive
+        // the colouring being switched off and on and user types being set every frame, as the script editor does
+        Rig r;
+        r.se.SetText("Debug.Log(x)\nvar Enemy e");
+        r.se.SetIdentifierDocs({{"Log", "Log(message)"}, {"Enemy", "a class"}});
+        r.se.SetUserTypes({"Enemy"});
+        r.Frame(); r.Frame();
+        std::vector<UI::CodeToken> t;
+        r.se.Edit().LineTokens(0, t);
+        bool known = false; for (const auto& k : t) if (k.color == UI::CodeColor_Known && k.start == 6 && k.end == 9) known = true;
+        CHECK(known);
+        const int rev = r.se.Edit().LanguageRevision();
+        for (int i = 0; i < 5; ++i) { r.se.SetUserTypes({"Enemy"}); r.se.SetErrorMarkers({}); r.se.SetBreakpoints({}); r.Frame(); }
+        CHECK(r.se.Edit().LanguageRevision() == rev);              // per-frame settings that did not change rebuild nothing
+        r.sim.Move(r.se.TextStartX() + 7.5f * r.se.CharWidth(), r.se.ContentOrigin().y + 0.5f * r.se.RowHeight());   // over "Log"
+        r.Frame();
+        CHECK(r.se.Edit().HoverTip() == "Log(message)");
+        r.se.SetColorizerEnable(false); r.se.SetColorizerEnable(true);
+        r.Frame();
+        r.se.Edit().LineTokens(0, t);
+        known = false; for (const auto& k : t) if (k.color == UI::CodeColor_Known) known = true;
+        CHECK(known);                                              // docs and user types are kept when colouring is turned back on
+        r.se.Edit().LineTokens(1, t);
+        bool ty = false; for (const auto& k : t) if (k.color == UI::CodeColor_Type && k.start == 4) ty = true;
+        CHECK(ty);
+    }
+    {   // a click on the breakpoint column is reported (1-based) and changes nothing by itself: the script editor owns its bookmarks and
+        // hands them back every frame
+        Rig r;
+        r.se.SetText("a\nb\nc");
+        r.se.SetBreakpoints({3});
+        r.Frame(); r.Frame();
+        const UI::Rect item = r.se.Edit().ItemRect();
+        const float x = item.x + r.se.RowHeight() * 0.5f, y = r.se.ContentOrigin().y + 1.5f * r.se.RowHeight();
+        r.sim.Click(x, y, [&] { if (UI::Begin("W", 10, 10, r.sim.W - 20, r.sim.H - 20, &r.open)) r.se.Edit().Draw("ed", 500, 300); UI::End(); });
+        CHECK((r.se.TakeGutterClicks() == std::vector<int>{2}));
+        CHECK(r.se.TakeGutterClicks().empty());                    // taken once
+        CHECK((r.se.Edit().Breakpoints() == std::vector<int>{2}));  // still the one the caller set (line 3, 1-based)
+    }
+    {   // errors and warnings: the first message of a line is shown next to the code, a warning in amber, an error in the palette's red
+        ScriptEditorCodeEdit s;
+        s.SetText("a\nb\nc");
+        s.SetErrorMarkers({{1, "unknown name 'a'"}, {2, "warning: unused variable"}});
+        const auto& m = s.Edit().Markers();
+        CHECK(m.size() == 2 && m[0].color == 0 && m[1].color == UI::RGBA(230, 195, 90));
+    }
     {   // the keyboard flag, read-only and the tab size are passed through
         ScriptEditorCodeEdit s;
         s.SetReadOnly(true);

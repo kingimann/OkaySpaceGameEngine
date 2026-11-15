@@ -133,7 +133,7 @@ void ModelFuzz(std::uint64_t seed) {
             }
             case 3: if (e.Backspace()) {} want = sel ? ref.substr(0, lo) + ref.substr(hi) : (lo ? ref.substr(0, PrevChar(ref, lo)) + ref.substr(lo) : ref); break;
             case 4: if (e.DeleteForward()) {} want = sel ? ref.substr(0, lo) + ref.substr(hi) : (lo < ref.size() ? ref.substr(0, lo) + ref.substr(NextChar(ref, lo)) : ref); break;
-            case 5: { const std::string c = ref.substr(lo, hi - lo); e.Cut(); if (sel && c.size() < (size_t)UI::kClipboardMax) want = ref.substr(0, lo) + ref.substr(hi); break; }
+            case 5: { const std::string c = ref.substr(lo, hi - lo); e.Cut(); if (sel && c.size() < UI::kClipboardStoreMax) want = ref.substr(0, lo) + ref.substr(hi); break; }
             case 6: e.Copy(); break;
             case 7: { const std::string clip = UI::GetClipboardText(); e.Paste(); if (!clip.empty()) want = ref.substr(0, lo) + clip + ref.substr(hi); break; }
             case 8: e.Undo(); want = e.GetText(); expectChange = true; break;

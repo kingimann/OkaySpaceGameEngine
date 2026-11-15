@@ -9,6 +9,10 @@
 
 namespace OkayUI {
 
+// float to int without undefined behaviour (a NaN, an infinity or 1e30 must not reach a bare cast): NaN gives 0, anything outside
+// [-1e9, 1e9] is clamped. Every float that comes from the caller, the pointer or a scroll offset goes through this.
+static int SafeInt(float v) { return v != v ? 0 : (v < -1.0e9f ? -1000000000 : (v > 1.0e9f ? 1000000000 : (int)v)); }
+
 // ================================================================================================
 // Small text helpers
 // ================================================================================================
@@ -55,6 +59,18 @@ bool inSkipToken(const std::vector<okay::text::Token>& t, std::size_t j) {
 }
 
 int digitsOf(int n) { int d = 1; while (n >= 10) { n /= 10; ++d; } return d; }
+
+// Display columns of byte offsets that only grow, over one line, without starting from the line start each time (a long line with
+// thousands of find matches must cost one pass, not one pass per match).
+struct ColumnWalker {
+    const std::string& s; int tab; int b = 0, c = 0;
+    int at(int byte) {
+        const int n = (int)s.size();
+        if (byte > n) byte = n;
+        while (b < byte) { c = s[(size_t)b] == '\t' ? nextTab(c, tab) : c + 1; b = nextIdx(s, b); }
+        return c;
+    }
+};
 
 } // namespace
 
@@ -253,13 +269,41 @@ CodePos CodeEdit::Clamp(CodePos p) const {
 
 std::string CodeEdit::SelectedText() const { return buf_.Slice(ToPos(SelectionStart()), ToPos(SelectionEnd())); }
 
+// A line shorter than this is simply walked; a longer one is checked once per text version (one pass over its bytes, no tab and no byte
+// above 127) so that its columns need no walk at all.
+static const std::size_t kSimpleScanMin = 256;
+
+bool CodeEdit::simpleLine(int line) const {
+    if (line < 0 || line >= (int)buf_.LineCount()) return false;
+    const std::string& s = buf_.LineRef((size_t)line);
+    auto scan = [&s] {
+        unsigned char bad = 0;
+        for (const char ch : s) { const unsigned char c = (unsigned char)ch; bad |= (unsigned char)((c >= 0x80) | (c == '\t')); }
+        return bad == 0;
+    };
+    if (s.size() < kSimpleScanMin) return scan();
+    const std::uint64_t v = buf_.Version();
+    for (const SimpleLine& e : simple_) if (e.line == line && e.version == v) return e.simple;
+    SimpleLine& e = simple_[simpleNext_]; simpleNext_ = (simpleNext_ + 1) & 3;
+    e.line = line; e.version = v; e.simple = scan();
+    return e.simple;
+}
+
 int CodeEdit::ByteToColumn(int line, int byte) const {
-    return line < 0 ? 0 : (int)buf_.DisplayColumn((std::size_t)line, byte < 0 ? 0u : (std::size_t)byte);
+    if (line < 0) return 0;
+    if (line < (int)buf_.LineCount() && buf_.LineRef((size_t)line).size() >= kSimpleScanMin && simpleLine(line))
+        return std::min(std::max(byte, 0), (int)buf_.LineRef((size_t)line).size());
+    return (int)buf_.DisplayColumn((std::size_t)line, byte < 0 ? 0u : (std::size_t)byte);
 }
 
 int CodeEdit::ColumnToByte(int line, float column) const {
     const std::string& s = Line(line);
     const int n = (int)s.size();
+    if (n >= (int)kSimpleScanMin && simpleLine(line)) {
+        if (column != column) return n;
+        const float v = std::floor(column + 0.5f);       // the same rounding as the walk below: the first i with column < i + 0.5
+        return v <= 0.0f ? 0 : (v >= (float)n ? n : (int)v);
+    }
     int i = 0, col = 0;
     while (i < n) {
         const int next = s[(size_t)i] == '\t' ? nextTab(col, tabSize_) : col + 1;
@@ -268,6 +312,23 @@ int CodeEdit::ColumnToByte(int line, float column) const {
         i = nextIdx(s, i);
     }
     return n;
+}
+
+// The byte offset of the character whose cell (display column) is `cell`, or -1 when that cell is past the end of the line or is the
+// filler of a tab.
+int CodeEdit::byteAtCell(int line, int cell) const {
+    if (cell < 0 || line < 0 || line >= (int)buf_.LineCount()) return -1;
+    const std::string& s = buf_.LineRef((size_t)line);
+    const int n = (int)s.size();
+    if (n >= (int)kSimpleScanMin && simpleLine(line)) return cell < n ? cell : -1;
+    int i = 0, col = 0;
+    while (i < n) {
+        const int next = s[(size_t)i] == '\t' ? nextTab(col, tabSize_) : col + 1;
+        if (cell < next) return s[(size_t)i] == '\t' ? -1 : i;
+        col = next;
+        i = nextIdx(s, i);
+    }
+    return -1;
 }
 
 // ================================================================================================
@@ -482,7 +543,7 @@ bool CodeEdit::Copy() const {
 bool CodeEdit::Cut() {
     if (readOnly_ || !HasSelection()) return false;
     const std::string s = SelectedText();
-    if ((int)s.size() >= kClipboardMax) return false;   // the clipboard could not hold it all: never delete what was not copied
+    if (s.size() >= kClipboardStoreMax) return false;   // the clipboard could not hold it all: never delete what was not copied
     SetClipboardText(s.c_str());
     return replaceSelection("", Kind_Other);
 }
@@ -614,14 +675,51 @@ void CodeEdit::installTokenizer() {
     });
 }
 
-void CodeEdit::SetHighlighter(CodeHighlighter h) { highlighter_ = std::move(h); installTokenizer(); haveLanguage_ = false; }
-void CodeEdit::SetLanguage(const CodeLanguage& lang) { SetHighlighter(MakeCLikeHighlighter(lang)); language_ = lang; haveLanguage_ = true; }
-void CodeEdit::SetUserTypes(const std::vector<std::string>& names) {
-    if (!haveLanguage_) return;
+void CodeEdit::SetHighlighter(CodeHighlighter h) { highlighter_ = std::move(h); installTokenizer(); haveLanguage_ = false; ++langRev_; }
+
+// The highlighter for the language plus the names the caller added: user types are types, documented identifiers are known words.
+void CodeEdit::rebuildLanguage() {
     CodeLanguage l = language_;
-    for (const std::string& n : names) l.types.insert(n);
+    for (const std::string& n : userTypes_) l.types.insert(n);
+    for (const auto& d : docs_) l.known.insert(d.first);
     highlighter_ = MakeCLikeHighlighter(l);
     installTokenizer();
+    haveLanguage_ = true;
+    ++langRev_;
+}
+void CodeEdit::SetLanguage(const CodeLanguage& lang) { language_ = lang; rebuildLanguage(); }
+void CodeEdit::SetUserTypes(const std::vector<std::string>& names) {
+    std::unordered_set<std::string> set(names.begin(), names.end());
+    if (set == userTypes_) return;                        // nothing new: do not throw away the colouring of the whole text
+    userTypes_ = std::move(set);
+    if (haveLanguage_) rebuildLanguage();
+}
+void CodeEdit::SetIdentifierDocs(const std::unordered_map<std::string, std::string>& docs) {
+    std::unordered_map<std::string, std::string> d;
+    for (const auto& kv : docs) if (!kv.first.empty()) d.insert(kv);
+    if (d == docs_) return;
+    docs_ = std::move(d);
+    if (haveLanguage_) rebuildLanguage();
+}
+
+// The identifier under a screen point: its cell must hold one of its characters (not a blank, not a tab's filler, not past the end).
+std::string CodeEdit::IdentifierAt(float x, float y) const {
+    if (!std::isfinite(x) || !std::isfinite(y) || !(lineH_ >= 1.0f) || !(charW_ >= 1.0f)) return std::string();
+    if (!(x >= view_.x && x < view_.x + view_.w && y >= view_.y && y < view_.y + view_.h)) return std::string();
+    const float rowF = std::floor((y - view_.y + scrollY_) / lineH_);
+    if (!(rowF >= 0.0f && rowF < (float)buf_.LineCount())) return std::string();
+    const int row = (int)rowF;
+    const float cellF = std::floor((x - textLeft_ + scrollX_) / charW_);
+    if (!(cellF >= 0.0f && cellF < 2.0e9f)) return std::string();
+    const int at = byteAtCell(row, (int)cellF);
+    if (at < 0) return std::string();
+    const std::string& s = buf_.LineRef((size_t)row);
+    auto isWord = [](unsigned char c) { return c == '_' || c >= 0x80 || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
+    if (!isWord((unsigned char)s[(size_t)at])) return std::string();
+    int lo = at, hi = at + 1;
+    while (lo > 0 && isWord((unsigned char)s[(size_t)lo - 1])) --lo;
+    while (hi < (int)s.size() && isWord((unsigned char)s[(size_t)hi])) ++hi;
+    return s.substr((size_t)lo, (size_t)(hi - lo));
 }
 
 void CodeEdit::LineTokens(int i, std::vector<CodeToken>& out) {
@@ -761,7 +859,7 @@ Vec2 CodeEdit::PosToScreen(CodePos p) const {
 }
 
 CodePos CodeEdit::ScreenToPos(float x, float y) const {
-    int row = (int)std::floor((y - view_.y + scrollY_) / lineH_);
+    int row = SafeInt(std::floor((y - view_.y + scrollY_) / lineH_));
     row = std::min(std::max(row, 0), (int)buf_.LineCount() - 1);
     return CodePos{row, ColumnToByte(row, (x - textLeft_ + scrollX_) / charW_)};
 }
@@ -792,8 +890,8 @@ void CodeEdit::layout(const Rect& item) {
         const float tw = std::min(hTrack_.w, std::max(20.0f, hTrack_.w * (contentW_ > 0 ? view_.w / contentW_ : 1.0f)));
         hThumb_ = Rect{hTrack_.x + (maxX > 0 ? scrollX_ / maxX * (hTrack_.w - tw) : 0.0f), hTrack_.y + 1, tw, sb - 2};
     }
-    firstLine_ = std::min(std::max(0, (int)std::floor(scrollY_ / lineH_)), (int)buf_.LineCount() - 1);
-    visLines_ = std::max(1, (int)(view_.h / lineH_));
+    firstLine_ = std::min(std::max(0, SafeInt(std::floor(scrollY_ / lineH_))), (int)buf_.LineCount() - 1);
+    visLines_ = std::max(1, SafeInt(view_.h / lineH_));
 }
 
 bool CodeEdit::Focused() const { return wid_ != 0 && GetKeyboardFocusId() == wid_; }
@@ -858,7 +956,8 @@ void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
             if (inRect(hThumb_, mx, my)) { dragHBar_ = true; dragOff_ = mx - hThumb_.x; }
             else { scrollX_ += (mx < hThumb_.x ? -1.0f : 1.0f) * view_.w; clampScroll(); }
         } else if (mx < view_.x) {
-            const int line = (int)std::floor((my - view_.y + scrollY_) / lineH_);
+            const float lineF = std::floor((my - view_.y + scrollY_) / lineH_);
+            const int line = (lineF >= 0.0f && lineF < 2.0e9f) ? (int)lineF : -1;     // NaN, infinity or a huge value: no line
             if (line >= 0 && line < (int)buf_.LineCount()) {
                 if (showBreakpoints_ && mx < item.x + lineH_) {
                     if (autoToggle_) ToggleBreakpoint(line);
@@ -899,6 +998,7 @@ void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
 
 bool CodeEdit::Draw(const char* id, float w, float h) {
     const unsigned v0 = Version();
+    hoverTip_.clear();
     const Vec2 avail = GetContentRegionAvail();
     if (w <= 0.0f) w = avail.x;
     if (h <= 0.0f) h = avail.y;
@@ -907,6 +1007,13 @@ bool CodeEdit::Draw(const char* id, float w, float h) {
     if (!(lineH_ >= 1.0f)) lineH_ = 1.0f;
     charW_ = CalcTextSize("0").x;
     if (!(charW_ >= 1.0f)) charW_ = 1.0f;
+    // A proportional font (the launcher look's Roboto) cannot be drawn as runs of text: the caret, the selection and the columns count
+    // cells of one width. Then every glyph is drawn in its own cell (centred), and the widths are measured once per frame.
+    grid_ = std::fabs(CalcTextSize("i").x - CalcTextSize("m").x) > 0.5f;
+    if (grid_) {
+        glyphW_.assign(95, 0.0f);
+        for (int c = 32; c < 127; ++c) { const char one[2] = {(char)c, 0}; glyphW_[(size_t)(c - 32)] = CalcTextSize(one).x; }
+    }
     InvisibleButton(id ? id : "codeedit", w, h);
     const int wid = (int)GetItemID();
     if (!wid) return false;
@@ -917,9 +1024,9 @@ bool CodeEdit::Draw(const char* id, float w, float h) {
     comp_ = (Focused() && !readOnly_) ? GetComposition() : Composition();
     compCells_ = compCaretCells_ = 0;
     if (comp_.active) {
-        compCells_ = (int)std::ceil(CalcTextSize(comp_.text).x / charW_ - 0.001f);
+        compCells_ = SafeInt(std::ceil(CalcTextSize(comp_.text).x / charW_ - 0.001f));
         const std::string pre(comp_.text, (size_t)comp_.caret);
-        compCaretCells_ = pre.empty() ? 0 : (int)std::ceil(CalcTextSize(pre.c_str()).x / charW_ - 0.001f);
+        compCaretCells_ = pre.empty() ? 0 : SafeInt(std::ceil(CalcTextSize(pre.c_str()).x / charW_ - 0.001f));
         if (compCells_ < 1) compCells_ = 1;
     }
     layout(item_);
@@ -944,6 +1051,24 @@ bool CodeEdit::Draw(const char* id, float w, float h) {
     return Version() != v0;
 }
 
+// Draw `text` with each character in its own cell starting at cell `firstCell` of a row (centred in the cell; a blank leaves its cell empty).
+void CodeEdit::drawGlyphs(int firstCell, const std::string& text, Color32 color, float y) {
+    const DrawList& dl = GetWindowDrawList();
+    int cell = firstCell;
+    for (std::size_t i = 0; i < text.size();) {
+        const std::size_t j = (std::size_t)nextIdx(text, (int)i);
+        const unsigned char c = (unsigned char)text[i];
+        if (c != ' ') {
+            const std::string one = text.substr(i, j - i);
+            float w = (c >= 32 && c < 127 && (std::size_t)(c - 32) < glyphW_.size()) ? glyphW_[(size_t)(c - 32)] : CalcTextSize(one.c_str()).x;
+            if (!(w >= 0.0f)) w = charW_;
+            dl.AddText(Vec2{textLeft_ + (float)cell * charW_ - scrollX_ + (charW_ - w) * 0.5f, y}, color, one.c_str());
+        }
+        ++cell;
+        i = j;
+    }
+}
+
 static unsigned colorFor(const CodePalette& p, unsigned char id) { return p.text[id < (unsigned char)CodeColor_COUNT ? (int)id : (int)CodeColor_Default]; }
 
 void CodeEdit::drawAll(const Rect& item, bool hovered) {
@@ -953,7 +1078,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
     const Vec2 i0{item.x, item.y}, i1{item.x + item.w, item.y + item.h};
     const int n = (int)buf_.LineCount();
     const int first = firstLine_;
-    const int last = std::min(n - 1, (int)std::floor((scrollY_ + view_.h) / lineH_));
+    const int last = std::min(n - 1, SafeInt(std::floor((scrollY_ + view_.h) / lineH_)));
     auto rowY = [&](int l) { return view_.y + (float)l * lineH_ - scrollY_; };
     dl.PushClipRect(i0, i1);
     dl.AddRectFilled(i0, i1, pal_.background);
@@ -981,9 +1106,8 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
     const CodePos sa = SelectionStart(), sb = SelectionEnd();
     const bool sel = HasSelection();
     const float textH = GetTextLineHeight(), dy = (lineH_ - textH) * 0.5f;
-    const int c0 = std::max(0, (int)std::floor(scrollX_ / charW_) - 1), c1 = c0 + (int)(view_.w / charW_) + 4;
+    const int c0 = std::max(0, SafeInt(std::floor(scrollX_ / charW_)) - 1), c1 = c0 + SafeInt(view_.w / charW_) + 4;
     auto xOf = [&](int col) { return textLeft_ + (float)col * charW_ - scrollX_; };
-    std::vector<CodeToken> toks;
     std::string run;
     for (int l = first; l <= last; ++l) {
         const std::string& s = buf_.LineRef((size_t)l);
@@ -997,9 +1121,13 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
             const int to = l == sb.line ? ByteToColumn(l, sb.col) : ByteToColumn(l, (int)s.size()) + 1;
             if (to > from) dl.AddRectFilled(Vec2{xOf(from), y}, Vec2{xOf(to), y + lineH_}, focused ? pal_.selection : pal_.selectionInactive);
         }
+        const bool longSimple = s.size() >= kSimpleScanMin && simpleLine(l);   // byte == column: no walk needed
         if (!find_.empty()) {
+            ColumnWalker walk{s, tabSize_};
+            const int needleLen = (int)find_.size();
             for (const std::size_t st : buf_.FindInLine((std::size_t)l, find_, findFlags())) {
-                const int a = ByteToColumn(l, (int)st), b = ByteToColumn(l, (int)st + (int)find_.size());
+                const int b0 = (int)st, b1 = b0 + needleLen;
+                const int a = longSimple ? b0 : walk.at(b0), b = longSimple ? b1 : walk.at(b1);
                 if (xOf(b) < view_.x) continue;
                 if (xOf(a) > vend.x) break;
                 dl.AddRectFilled(Vec2{xOf(a), y}, Vec2{xOf(b), y + lineH_}, pal_.findMatch);
@@ -1012,7 +1140,8 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
             }
         }
         // the text, in runs of one colour
-        LineTokens(l, toks);
+        static const std::vector<okay::text::Token> kNoTok;
+        const std::vector<okay::text::Token>& toks = highlighter_ ? buf_.LineTokens((size_t)l) : kNoTok;   // good until the next LineTokens call
         size_t ti = 0; int col = 0, runStart = 0, runCells = 0; Color32 runColor = 0; bool inRun = false;
         // composing: the preedit goes where the selection starts, in place of the selected part of this line; the rest moves right
         const bool compHere = comp_.active && focused && l == sa.line;
@@ -1033,12 +1162,22 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         auto flush = [&] {
             if (inRun) {
                 while (!run.empty() && run.back() == ' ') run.pop_back();
-                if (!run.empty()) dl.AddText(Vec2{xOf(runStart), y + dy}, runColor, run.c_str());
+                if (!run.empty()) {
+                    if (grid_) drawGlyphs(runStart, run, runColor, y + dy);
+                    else dl.AddText(Vec2{xOf(runStart), y + dy}, runColor, run.c_str());
+                }
                 run.clear(); inRun = false;
             }
         };
         const int len = (int)s.size();
-        for (int p = 0; p < len;) {
+        int p0 = 0;
+        if (longSimple && !compHere && c0l > 0) {          // a long plain line: start at the first visible column, not at the line start
+            p0 = std::min(c0l, len); col = p0;
+            std::size_t lo = 0, hi = toks.size();
+            while (lo < hi) { const std::size_t m = (lo + hi) / 2; if (toks[m].end <= (std::size_t)p0) lo = m + 1; else hi = m; }
+            ti = lo;
+        }
+        for (int p = p0; p < len;) {
             const int q = nextIdx(s, p);
             if (compHere && !insDone && col >= insCol) { flush(); drawPreedit(); insDone = true; colShift = compCells_ - (hideTo - insCol); }
             if (compHere && col >= insCol && col < hideTo) {   // replaced by the preedit
@@ -1048,8 +1187,8 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
             if (s[(size_t)p] == '\t') { flush(); col = nextTab(col, tabSize_); p = q; continue; }
             if (col >= c1) break;
             if (col >= c0l) {
-                while (ti < toks.size() && toks[ti].end <= p) ++ti;
-                const unsigned char cid = (ti < toks.size() && toks[ti].start <= p) ? toks[ti].color : (unsigned char)CodeColor_Default;
+                while (ti < toks.size() && toks[ti].end <= (std::size_t)p) ++ti;
+                const unsigned char cid = (ti < toks.size() && toks[ti].begin <= (std::size_t)p) ? (unsigned char)toks[ti].kind : (unsigned char)CodeColor_Default;
                 const Color32 cc = colorFor(pal_, cid);
                 if (inRun && (cc != runColor || col + colShift != runStart + runCells)) flush();
                 if (!inRun) {
@@ -1058,7 +1197,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
                 }
                 run.append(s, (size_t)p, (size_t)(q - p)); ++runCells;
             } else {
-                while (ti < toks.size() && toks[ti].end <= p) ++ti;
+                while (ti < toks.size() && toks[ti].end <= (std::size_t)p) ++ti;
             }
             ++col; p = q;
         }
@@ -1083,8 +1222,43 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
                 dl.AddLine(Vec2{x, yy + ((k & 1) ? 0.0f : 2.0f)}, Vec2{xe, yy + ((k & 1) ? 2.0f : 0.0f)}, uc, 1.0f);
             }
         }
-        if (hovered && !in.blocked && in.mouseY >= y && in.mouseY < y + lineH_ && in.mouseX >= item.x && in.mouseX < vend.x)
-            for (const CodeMarker& m : markers_) if (m.line == l && !m.message.empty()) { SetTooltip("%s", m.message.c_str()); break; }
+        // the first message of the line, dimmed, after the end of its text
+        if (inlineMsgs_) {
+            for (const CodeMarker& m : markers_) {
+                if (m.line != l || m.message.empty()) continue;
+                std::string txt = "<  ";
+                int chars = 0;
+                for (std::size_t i = 0; i < m.message.size() && chars < 90; ++chars) {          // one line, at most 90 characters, whole characters
+                    const std::size_t j = (std::size_t)nextIdx(m.message, (int)i);
+                    const char c = m.message[i];
+                    txt += (c == '\n' || c == '\r' || c == '\t') ? std::string(" ") : m.message.substr(i, j - i);
+                    i = j;
+                }
+                if (chars >= 90) txt += "...";
+                const float tx = xOf(ByteToColumn(l, len) + 2);
+                if (tx < vend.x) dl.AddText(Vec2{tx, y + dy}, ColorMulAlpha(m.color ? m.color : pal_.errorUnderline, 0.65f), txt.c_str());
+                break;
+            }
+        }
+    }
+    // ---- tooltip: the message of a marker on the line under the pointer, then the doc of the identifier under it
+    hoverTip_.clear();
+    if (hovered && !in.blocked && !dragging_ && !dragVBar_ && !dragHBar_ && !comp_.active && std::isfinite(in.mouseX) && std::isfinite(in.mouseY) &&
+        in.mouseX >= item.x && in.mouseX < vend.x && in.mouseY >= view_.y && in.mouseY < vend.y) {
+        const float rowF = std::floor((in.mouseY - view_.y + scrollY_) / lineH_);
+        if (rowF >= 0.0f && rowF < (float)n) {
+            const int row = (int)rowF;
+            std::string tip;
+            for (const CodeMarker& m : markers_) if (m.line == row && !m.message.empty()) { tip = m.message; break; }
+            if (!docs_.empty()) {
+                const std::string w = IdentifierAt(in.mouseX, in.mouseY);
+                const auto it = w.empty() ? docs_.end() : docs_.find(w);
+                if (it != docs_.end() && !it->second.empty()) { if (!tip.empty()) tip += "\n\n"; tip += it->second; }
+            }
+            if (tip.size() > 1000) { std::size_t cut = 1000; while (cut > 0 && ((unsigned char)tip[cut] & 0xC0) == 0x80) --cut; tip.resize(cut); }   // the tooltip box holds 1023 bytes
+            hoverTip_ = std::move(tip);
+            if (!hoverTip_.empty()) SetTooltip("%s", hoverTip_.c_str());
+        }
     }
     // the caret (while composing: the caret inside the preedit) and where the host should put the candidate window
     imeCaret_ = imeComp_ = Rect{};

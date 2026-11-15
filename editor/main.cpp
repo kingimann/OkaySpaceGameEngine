@@ -15889,6 +15889,7 @@ void DrawScriptEditor(EditorState& ed) {
             for (const auto& d : s_diags) if (d.line > 0) em[d.line] = d.message;   // errors win
             te.SetErrorMarkers(em);
             te.SetUserTypes(s_userTypes);
+            for (int ln : te.TakeGutterClicks()) if (!bookmarks.erase(ln)) bookmarks.insert(ln);   // OkayUI editor: a click on the blue column toggles a bookmark
             te.SetBreakpoints(ScriptEditorWidget::Breakpoints(bookmarks.begin(), bookmarks.end()));
         }
 
@@ -16173,6 +16174,7 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::SetKeyOwner(ImGuiKey_Tab, codeKeys);
         }
         if (g_codeFont) ImGui::PushFont(g_codeFont, kCodeFontDispPx * s_zoom);
+        te.SetZoom(s_zoom);   // the OkayUI editor scales its text by the same zoom
         te.Render("##code", ImVec2(showMap ? -(mmW + 6.0f) : 0.0f, av.y), true);
         if (g_codeFont) ImGui::PopFont();
         te.SetHandleKeyboardInputs(true);

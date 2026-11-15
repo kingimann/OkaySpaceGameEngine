@@ -1,0 +1,57 @@
+okayscene 3
+name "Script Editor sample"
+gravity 0 0
+gravity3 0 0 0
+rendersettings 1 0.12 0.14 0.18 0.2 0.22 0.28 0.35 0.38 0.42 0.15
+fog 0 0.2 0.22 0.28 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "5e1ec7ed170a4b5c8d9e0f1a2b3c4d5e"
+  active 1
+  parent -1
+  transform 0 1 -14 0 0 0 1 1 1 1
+  camera 1 5 60 0.12 0.14 0.18 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Script sample"
+  guid "5e1ec7ed270a4b5c8d9e0f1a2b3c4d5f"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "// Script Editor sample. Open it in the Script Editor to try the code editor:
+// colours for keywords, types, strings, numbers and comments, matching brackets,
+// hover help on built-in names, and a red mark when something is wrong.
+# A line that starts with # is a comment in OkayScript too.
+/* A block comment
+   that runs over two lines. */
+
+[Header(\"Movement\")]
+public float speed = 5;        // public: shows in the Inspector
+public int maxHops = 3;
+int hops = 0;
+
+enum State { Idle, Run }
+
+void Start()
+{
+    Debug.Log($\"{gameObject.name} is ready, speed {speed}\");
+}
+
+void Update()
+{
+    float h = Input.GetAxis(\"Horizontal\");
+    transform.position += new Vector3(h, 0, 0) * speed * Time.deltaTime;
+
+    if (Input.GetKeyDown(KeyCode.Space) && hops < maxHops)
+    {
+        hops++;
+        StartCoroutine(Hop());
+    }
+}
+
+IEnumerator Hop()
+{
+    transform.position += Vector3.up * 1.5;
+    yield return new WaitForSeconds(0.25);
+    transform.position -= Vector3.up * 1.5;
+}" "" 0
+end

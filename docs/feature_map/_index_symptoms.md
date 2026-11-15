@@ -299,6 +299,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a variable differs between players | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
 | a variable is empty after loading another scene | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
 | a very deep hierarchy crashed or hung | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
+| a very long line froze the editor (fixed) | [40.8](40-okayui-library.md#408-code-editor-widget-and-text-model-own-replaces-imguicolortextedit) Code editor widget and text model (own, replaces ImGuiColorTextEdit) |
 | a voice call won't connect | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
 | a Wait node never resumes | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
 | a wall floats after its base is shot out | [6.6](06-physics.md#66-destructibles-and-projectiles) Destructibles and projectiles |
@@ -460,6 +461,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | contact points and rays are hard to see while debugging | [6.5](06-physics.md#65-queries-and-debug-draw) Queries and debug draw |
 | copies all face the same way | [44.2](43-proposals.md#442-prefab-brush-and-placement) Prefab brush and placement |
 | copy and paste invents wires | [14.1](14-visual-scripting.md#141-graph-editor) Graph editor |
+| copy of a long script loses the end (fixed: 16 MiB) | [40.8](40-okayui-library.md#408-code-editor-widget-and-text-model-own-replaces-imguicolortextedit) Code editor widget and text model (own, replaces ImGuiColorTextEdit) |
 | corners are square when they should be round | [12.2](12-ingame-ui.md#122-widgets-button-image-raw-image-text-panel-progress-rating) Widgets: button, image, raw image, text, panel, progress, rating |
 | corrections pile up | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | corrupt save refuses to load | [1.7](01-core-scene.md#17-saves-and-prefs) Saves and prefs |
@@ -640,6 +642,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | layer switch gets stuck between two layers | [4.3](04-characters-cameras.md#43-2d-and-25d-controllers) 2D and 2.5D controllers |
 | leaderboard empty | [16.9](16-networking.md#169-match-results-stats-and-leaderboards) Match results, stats and leaderboards |
 | legs bend backwards | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
+| letters are evenly spaced | [40.8](40-okayui-library.md#408-code-editor-widget-and-text-model-own-replaces-imguicolortextedit) Code editor widget and text model (own, replaces ImGuiColorTextEdit) |
 | letters show as boxes | [2.9](02-rendering-world.md#29-fonts-and-images) Fonts and images |
 | Load screen is empty | [35.1](20-35-planned.md#351-save-slots) Save slots |
 | loading a scene crashes or loses things | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
@@ -918,6 +921,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the About popup lists the stack | [41.11](41-build-tools-infra.md#4111-own-stack-dogfood-switch-and-startup-line) Own-stack dogfood switch and startup line |
 | the Animation tab loses a key | [15.5](15-editor.md#155-animator-animation-tab-timeline) Animator, Animation tab, Timeline |
 | the API page diverges from the engine | [19.1](19-docs-tests-health.md#191-readme-and-docs) README and docs |
+| the autocomplete popup is missing | [40.8](40-okayui-library.md#408-code-editor-widget-and-text-model-own-replaces-imguicolortextedit) Code editor widget and text model (own, replaces ImGuiColorTextEdit) |
 | the bag empties when the scene changes | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |
 | the bag is not saved per user on the server | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
 | the bag will not open or opens with the wrong key | [11.1](11-gameplay-systems.md#111-inventory-bag-grid-chests-equipment) Inventory: bag, grid, chests, equipment |
@@ -1089,6 +1093,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the sanitizer job reports a leak or undefined behaviour | [18.3](18-build-export-release.md#183-ci-jobs) CI jobs |
 | the scene is too dark | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
 | the screen shakes too long or never | [4.10](04-characters-cameras.md#410-camera-component-shake-and-zoom) Camera component, shake and zoom |
+| the script editor looks different with `OKAY_UI_BACKEND=okayui | [40.8](40-okayui-library.md#408-code-editor-widget-and-text-model-own-replaces-imguicolortextedit) Code editor widget and text model (own, replaces ImGuiColorTextEdit) |
 | the Scripts bar is big and I do not know which script | [55.3](43-proposals.md#553-script-profiler) Script profiler |
 | the search shows nothing | [15.1](15-editor.md#151-hierarchy) Hierarchy |
 | the server console prints nothing on Windows (needs `--log`) | [16.5](16-networking.md#165-dedicated-server-export-relay) Dedicated server, export, relay |

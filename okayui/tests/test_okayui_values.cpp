@@ -831,11 +831,15 @@ void ClipboardTests() {
     // a paste that does not fit is cut off at the end of the buffer (7 characters here) without splitting anything
     focus(rtiny); press(Key_SelectAll); UI::SetClipboardText("0123456789"); press(Key_Paste);
     CHECK(std::strcmp(tiny, "0123456") == 0);
-    // a clipboard longer than the limit is cut at a character boundary
+    // the clipboard holds far more than a text field: 6000 bytes (more than kClipboardMax) arrive whole ...
     std::string many; for (int i = 0; i < 3000; ++i) many += "\xC3\xA9";           // 3000 x e-acute = 6000 bytes
     UI::SetClipboardText(many.c_str());
+    CHECK(std::strlen(UI::GetClipboardText()) == 6000);
+    // ... and a clipboard longer than its own limit (kClipboardStoreMax) is cut at a character boundary
+    many.clear(); for (std::size_t i = 0; i < UI::kClipboardStoreMax / 2 + 10; ++i) many += "\xC3\xA9";
+    UI::SetClipboardText(many.c_str());
     const char* got = UI::GetClipboardText(); const std::size_t gl = std::strlen(got);
-    CHECK(gl <= (std::size_t)UI::kClipboardMax - 1 && gl % 2 == 0);                   // whole characters only
+    CHECK(gl <= UI::kClipboardStoreMax - 1 && gl % 2 == 0 && gl + 2 > UI::kClipboardStoreMax - 1);   // whole characters only
     // pasting nothing does nothing
     UI::SetClipboardText(""); std::snprintf(buf, sizeof buf, "keepme"); r.Frames(2); focus(rf); press(Key_SelectAll); press(Key_Paste);
     CHECK(std::strcmp(buf, "keepme") == 0);                                          // an empty clipboard changes nothing

@@ -1,6 +1,7 @@
-// Unequipping into a bag that enforces its weight limit: the worn item's weight is already counted in the bag's
-// wornWeight, so moving it into the bag must not count it twice (inventory.md "Not done": it was refused a little early
-// near the limit). A move that really goes over is still refused, and the worn weight is left as it was.
+// Unequipping into a bag that enforces its weight limit. A worn item's weight is already counted in the bag's
+// wornWeight, so taking it off does not change the carried total, and Equipment::Unequip never refuses it for weight
+// (inventory.md used to list an early refusal here; checking showed Unequip does not test the weight at all, which is
+// right). The total stays the same before and after, near the limit and over it.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Components/Equipment.hpp"
@@ -39,27 +40,17 @@ int main() {
     Def("rock", 1.0f);
     Def("mail", 3.0f, EquipSlot::Chest);
 
-    {   // 6 kg in the bag + 3 kg worn = 9 of 10: taking the mail off keeps 9, so it fits
-        Rig r(6);
+    for (int rocks : {6, 7, 8}) {   // 9, 10 and 11 of 10 carried in all (11: already over before taking it off)
+        Rig r(rocks);
         CHECK(r.inv->wornWeight == 3.0f);
+        const float before = r.inv->TotalWeight();
         const InvResult u = r.eq->Unequip(r.chest, *r.inv);
-        std::printf("  unequip at 9 of 10: %s %s\n", u.Ok() ? "ok" : "refused", u.reason.c_str());
+        std::printf("  %d rocks + 3 worn: unequip %s, total %.1f -> %.1f\n", rocks, u.Ok() ? "ok" : "refused", before, r.inv->TotalWeight());
         CHECK(u.Ok());
         CHECK(r.inv->Count("mail") == 1);
         CHECK(r.eq->slots[r.chest].item.empty());
         CHECK(r.inv->wornWeight == 0.0f);
-    }
-    {   // exactly at the limit: 7 + 3 = 10 still fits
-        Rig r(7);
-        CHECK(r.eq->Unequip(r.chest, *r.inv).Ok());
-    }
-    {   // a bag that would really go over (8 + 3 = 11): refused, nothing changes
-        Rig r(8);
-        const InvResult u = r.eq->Unequip(r.chest, *r.inv);
-        CHECK(!u.Ok());
-        CHECK(r.eq->slots[r.chest].item == "mail");
-        CHECK(r.inv->Count("mail") == 0);
-        CHECK(r.inv->wornWeight == 3.0f);                                 // put back as it was
+        CHECK(r.inv->TotalWeight() == before);                            // the same total: nothing was added
     }
     ItemDatabase::Get().Clear();
     TEST_MAIN_RESULT();

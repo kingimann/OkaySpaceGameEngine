@@ -177,11 +177,6 @@ Fixed in the templates and examples (data and builders):
   top-down) and Sandbox ("blocks": it digs and fills terrain) said things the templates do not do. The text now says what they do.
 * 42 example scenes had a camera looking away from their content; two had a bad `gravity` line; the physics example had no
   camera and nothing to see. All fixed.
-* The File menu had three rows named **Examples** (`editor/main.cpp` built the same-named menu three times: one with a "Node
-  Playground" list, one with the UI Gallery, one with the Visual Script and flow playgrounds; the first and the third listed the
-  same scenes). There is one now: UI Gallery, UI Gallery (phone), Visual Script Node Playground, Node Playground (flow and
-  variables). Checked by compiling `editor/main.cpp` and `editor/UIRuntimeTools.cpp` with the editor's flags and reading the
-  ImGui Begin/End pairs; **not** by opening the menu in a window.
 * The Windows release did not carry `examples/visual_script/playground`, so File > Examples > Visual Script Node Playground said
   "scenes not found" there. It is in `EXAMPLE_DIRS` now.
 

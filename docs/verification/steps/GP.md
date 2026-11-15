@@ -67,6 +67,6 @@
 - **Where:** editor
 - **Steps:**
   1. Open `examples/physics/step_and_parent.okayscene` and press Play.
-  2. Open **File > Examples > Node Playground (flow and variables)** and pick a scene.
+  2. Open **File > Examples > Node Playground** (or the other Examples list) and pick a scene.
 - **See:** the physics example runs; the playground scenes open.
-- **Partial:** the Examples menu shows a scene only when the `examples` folder is found next to the editor.
+- **Partial:** the Examples menus show a scene only when the `examples` folder is found next to the editor.

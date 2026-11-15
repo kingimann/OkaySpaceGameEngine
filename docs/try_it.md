@@ -385,9 +385,7 @@ the checks are headless, so every "you should see" line is unverified until you 
    walking through it.
 4. **Humanoid and Sandbox.** New Project > Humanoid (or Sandbox), press Play, then Stop. The title bar must not show unsaved
    changes and the editor must not ask to save when you close it. (Before: it did.)
-5. **Examples.** Open the **File** menu: there is one **Examples** row now (before, there were three with that name). In it: UI
-   Gallery, UI Gallery (phone), Visual Script Node Playground and Node Playground (flow and variables). Pick Visual Script Node
-   Playground > any demo, then Play. The coloured shapes are now in the
+5. **Examples.** File > Examples > Visual Script Node Playground > any demo, then Play. The coloured shapes are now in the
    picture (before, the camera looked away and only the on-screen text showed). The same for `examples\behavior_trees\*`,
    `examples\weapons\arena.okayscene`, `examples\spatial_audio\spatial_audio.okayscene`, `examples\own_wav\own_wav_test.okayscene`,
    `examples\physics\step_and_parent.okayscene` (it now has a camera, a light and a crate that falls onto a floor) and

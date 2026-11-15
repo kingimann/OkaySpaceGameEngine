@@ -6444,38 +6444,26 @@ void DrawMenuAndToolbar(EditorState& ed) {
         ImGui::Separator();
         if (ImGui::MenuItem("New 2D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene2D(); ConsoleLog("New 2D scene"); });
         if (ImGui::MenuItem("New 3D Scene")) RunAfterSavePrompt(ed, "starting a new scene", [&ed] { ed.NewScene3D(); ConsoleLog("New 3D scene"); });
+        if (ImGui::BeginMenu("Examples")) {
+            const auto playground = okay::editor::NodePlaygroundScenes();
+            if (ImGui::BeginMenu("Node Playground", !playground.empty())) {
+                for (const std::string& p : playground) {
+                    const std::string name = std::filesystem::path(p).stem().string();
+                    if (ImGui::MenuItem(name.c_str())) {
+                        std::string err;
+                        if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                        else ConsoleLog("Open failed: " + err, 2);
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Import Model...")) PickAndImportModel();   // OS file explorer, then settings
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("FBX, glTF, GLB, OBJ, STL, PLY%s", okay::AssimpAvailable() ? ", DAE, 3DS, ..." : "");
         if (ImGui::MenuItem("Open...", "Ctrl+O")) g_showOpen = true;
-        // One Examples menu (it used to be three rows with the same name): the UI Gallery items, then the node playgrounds.
-        oked::DrawExamplesMenu(ed, [&ed](const std::function<void()>& run) { RunAfterSavePrompt(ed, "opening an example", run); },
-            [&] {
-                if (ImGui::BeginMenu("Visual Script Node Playground")) {
-                    ImGui::TextDisabled("Press Play and follow the text on screen.");
-                    int nDemos = 0;
-                    const okay::editor::vsed::VsPlaygroundDemo* demos = okay::editor::vsed::VsPlaygroundDemos(&nDemos);
-                    for (int i = 0; i < nDemos; ++i) {
-                        if (ImGui::MenuItem(demos[i].title)) OpenVsPlayground(ed, demos[i].id);
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", demos[i].blurb);
-                    }
-                    ImGui::EndMenu();
-                }
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Ready-made scenes for the high-level visual script nodes.");
-                const auto basics = okay::editor::NodePlaygroundScenes();
-                if (ImGui::BeginMenu("Node Playground (flow and variables)", !basics.empty())) {
-                    for (const std::string& p : basics) {
-                        const std::string name = std::filesystem::path(p).stem().string();
-                        if (ImGui::MenuItem(name.c_str())) {
-                            std::string err;
-                            if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
-                            else ConsoleLog("Open failed: " + err, 2);
-                        }
-                    }
-                    ImGui::EndMenu();
-                }
-            });
+        oked::DrawExamplesMenu(ed, [&ed](const std::function<void()>& run) { RunAfterSavePrompt(ed, "opening an example", run); });
         if (ImGui::BeginMenu("Open Recent", !g_recent.empty())) {
             for (const std::string& p : g_recent) {
                 // Tiny rendered preview beside each recent scene (cached snapshot).
@@ -6493,6 +6481,34 @@ void DrawMenuAndToolbar(EditorState& ed) {
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Clear")) { g_recent.clear(); SaveRecent(); }
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Examples")) {
+            if (ImGui::BeginMenu("Visual Script Node Playground")) {
+                ImGui::TextDisabled("Press Play and follow the text on screen.");
+                int nDemos = 0;
+                const okay::editor::vsed::VsPlaygroundDemo* demos = okay::editor::vsed::VsPlaygroundDemos(&nDemos);
+                for (int i = 0; i < nDemos; ++i) {
+                    if (ImGui::MenuItem(demos[i].title)) OpenVsPlayground(ed, demos[i].id);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", demos[i].blurb);
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Ready-made scenes for the high-level visual script nodes.");
+            const auto basics = okay::editor::NodePlaygroundScenes();
+            if (ImGui::BeginMenu("Node Playground (flow and variables)", !basics.empty())) {
+                for (const std::string& p : basics) {
+                    const std::string name = std::filesystem::path(p).stem().string();
+                    if (ImGui::MenuItem(name.c_str())) {
+                        std::string err;
+                        if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                        else ConsoleLog("Open failed: " + err, 2);
+                    }
+                }
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
         ImGui::Separator();

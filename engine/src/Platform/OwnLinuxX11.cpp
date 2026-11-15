@@ -227,6 +227,10 @@ public:
     void Restore() override;
     void SetFullscreen(bool on) override;
     bool IsFocused() const override;
+    bool IsMinimized() const override;
+    bool IsVisible() const override { return !m_hidden; }
+    bool HasMouseFocus() const override { return m_mouseInside; }
+    bool SetInputFocus() override;
     bool IsFullscreen() const override { return m_fullscreen; }
     bool SetIcon(const uint8_t* rgba, int w, int h) override;
     bool PresentPixels(const uint8_t* rgba, int w, int h) override;
@@ -243,6 +247,8 @@ public:
     GLXFBConfig m_fbc = nullptr;
     GLXContext m_ctx = nullptr;
     bool m_focused = false;
+    bool m_hidden = false;        // Hide() was called (or the window was made hidden): what IsVisible() reports
+    bool m_mouseInside = false;   // the pointer is over the window (EnterNotify / LeaveNotify)
     bool m_fullscreen = false;
     bool m_resizable = true;
     int m_minW = 0, m_minH = 0;
@@ -321,7 +327,7 @@ public:
         swa.override_redirect = False;
         swa.event_mask = KeyPressMask | KeyReleaseMask | ButtonPressMask | ButtonReleaseMask |
                          PointerMotionMask | StructureNotifyMask | ExposureMask | FocusChangeMask |
-                         PropertyChangeMask;
+                         PropertyChangeMask | EnterWindowMask | LeaveWindowMask;
         ::Window w = m_x.XCreateWindow(m_dpy, m_root, x, y, (unsigned)d.width, (unsigned)d.height, 0, depth,
             InputOutput, visual, CWColormap | CWBorderPixel | CWBackPixel | CWEventMask, &swa);
         if (!w) { err = "XCreateWindow failed"; m_x.XFreeColormap(m_dpy, cmap); return nullptr; }
@@ -356,6 +362,7 @@ public:
             else if (d.maximized && d.resizable) { st[n++] = m_aMaxH; st[n++] = m_aMaxV; }
             if (n) m_x.XChangeProperty(m_dpy, w, m_aNetState, XA_ATOM, 32, PropModeReplace, (const unsigned char*)st, n);
         }
+        win->m_hidden = d.hidden;
         if (!d.hidden) win->Show();
         m_x.XSync(m_dpy, False);
         return std::unique_ptr<Window>(win);
@@ -368,6 +375,15 @@ public:
         for (;;) {
             if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }
             if (!m_x.XPending(m_dpy)) return false;
+            XEvent ev;
+            m_x.XNextEvent(m_dpy, &ev);
+            if (m_x.XFilterEvent(&ev, None)) continue;   // eaten by the input method
+            Handle(ev);
+        }
+    }
+
+    void PumpEvents() override {
+        while (m_x.XPending(m_dpy)) {
             XEvent ev;
             m_x.XNextEvent(m_dpy, &ev);
             if (m_x.XFilterEvent(&ev, None)) continue;   // eaten by the input method
@@ -413,6 +429,12 @@ public:
             break;
         case Expose:
             if (win && ev.xexpose.count == 0) { e.type = EventType::WindowExposed; m_pending.push_back(e); }
+            break;
+        case EnterNotify:   // the pointer came over the window: HasMouseFocus / MouseFocusWindowId
+            if (win) { win->m_mouseInside = true; m_mouseWin = win->m_win; }
+            break;
+        case LeaveNotify:
+            if (win) { win->m_mouseInside = false; if (m_mouseWin == win->m_win) m_mouseWin = 0; }
             break;
         case KeyPress: case KeyRelease: if (win) HandleKey(ev, win, e); break;
         case ButtonPress: case ButtonRelease: if (win) HandleButton(ev, e); break;
@@ -541,6 +563,20 @@ public:
         m_x.XQueryPointer(m_dpy, target, &root, &child, &rx, &ry, &wx, &wy, &mask);
         if (x) *x = wx;
         if (y) *y = wy;
+        uint32_t r = 0;
+        if (mask & Button1Mask) r |= MouseMask(MouseLeft);
+        if (mask & Button2Mask) r |= MouseMask(MouseMiddle);
+        if (mask & Button3Mask) r |= MouseMask(MouseRight);
+        return r;
+    }
+    uint32_t KeyboardFocusWindowId() override { return (uint32_t)m_focus; }
+    uint32_t MouseFocusWindowId() override { return m_wins.count(m_mouseWin) ? (uint32_t)m_mouseWin : 0; }   // 0 once that window is gone
+    bool IsRelativeMouse() override { return m_relative; }
+    uint32_t GlobalMouseState(int* x, int* y) override {
+        ::Window root, child; int rx = 0, ry = 0, wx = 0, wy = 0; unsigned mask = 0;
+        m_x.XQueryPointer(m_dpy, m_root, &root, &child, &rx, &ry, &wx, &wy, &mask);   // the root's coordinates are the desktop's
+        if (x) *x = rx;
+        if (y) *y = ry;
         uint32_t r = 0;
         if (mask & Button1Mask) r |= MouseMask(MouseLeft);
         if (mask & Button2Mask) r |= MouseMask(MouseMiddle);
@@ -715,6 +751,8 @@ public:
     std::unordered_map<::Window, X11Win*> m_wins;
     std::deque<Event> m_pending;
     ::Window m_focus = 0;
+    ::Window m_mouseWin = 0;      // the window the pointer is over (EnterNotify), 0 when none of ours
+    Atom m_aWmState = 0, m_aNetHidden = 0;   // interned on first use by X11Win::IsMinimized
     bool m_textInput = false, m_relative = false, m_warped = false, m_cursorHidden = false;
     Cursor m_blankCursor = 0;
     int m_lastX = 0, m_lastY = 0;
@@ -776,8 +814,8 @@ void X11Win::SetMinimumSize(int w, int h) {
     XF.XSetWMNormalHints(XD, m_win, sh);
     XF.XFree(sh);
 }
-void X11Win::Show() { XF.XMapWindow(XD, m_win); XF.XFlush(XD); }
-void X11Win::Hide() { XF.XUnmapWindow(XD, m_win); XF.XFlush(XD); }
+void X11Win::Show() { m_hidden = false; XF.XMapWindow(XD, m_win); XF.XFlush(XD); }
+void X11Win::Hide() { m_hidden = true; XF.XUnmapWindow(XD, m_win); XF.XFlush(XD); }
 void X11Win::Raise() {
     XF.XRaiseWindow(XD, m_win);
     XF.XSync(XD, False);
@@ -786,7 +824,7 @@ void X11Win::Raise() {
     XF.XSync(XD, False);
 }
 void X11Win::Minimize() { XF.XIconifyWindow(XD, m_win, m_sys->m_screen); XF.XFlush(XD); }
-void X11Win::Restore() { XF.XMapWindow(XD, m_win); XF.XRaiseWindow(XD, m_win); XF.XFlush(XD); }
+void X11Win::Restore() { m_hidden = false; XF.XMapWindow(XD, m_win); XF.XRaiseWindow(XD, m_win); XF.XFlush(XD); }
 bool X11Win::SetIcon(const uint8_t* rgba, int w, int h) {
     if (!rgba || w <= 0 || h <= 0) return false;
     std::vector<unsigned long> data((size_t)w * h + 2);   // _NET_WM_ICON: CARD32 as long: w, h, ARGB...
@@ -855,6 +893,37 @@ void X11Win::SetFullscreen(bool on) {
     XF.XFlush(XD);
 }
 bool X11Win::IsFocused() const { return m_focused; }
+bool X11Win::SetInputFocus() {
+    g_lastXError = 0;
+    XF.XSetInputFocus(XD, m_win, RevertToParent, CurrentTime);   // BadMatch when the window is not viewable
+    XF.XSync(XD, False);
+    const bool ok = g_lastXError == 0;
+    g_lastXError = 0;
+    return ok;
+}
+bool X11Win::IsMinimized() const {
+    // A window manager that iconifies a window says so in two ways: ICCCM sets WM_STATE = IconicState (3), and EWMH adds
+    // _NET_WM_STATE_HIDDEN to _NET_WM_STATE. Either one counts. With no window manager (Xvfb) nothing minimises a window.
+    X11Impl* sys = m_sys;
+    if (!sys->m_aWmState) {
+        sys->m_aWmState = XF.XInternAtom(XD, "WM_STATE", False);
+        sys->m_aNetHidden = XF.XInternAtom(XD, "_NET_WM_STATE_HIDDEN", False);
+    }
+    Atom type = None; int fmt = 0; unsigned long n = 0, rest = 0; unsigned char* data = nullptr;
+    bool minimized = false;
+    if (XF.XGetWindowProperty(XD, m_win, sys->m_aWmState, 0, 2, False, AnyPropertyType, &type, &fmt, &n, &rest, &data) == Success && data) {
+        if (type == sys->m_aWmState && fmt == 32 && n >= 1 && ((const long*)data)[0] == 3) minimized = true;   // IconicState
+        XF.XFree(data);
+    }
+    data = nullptr;
+    if (!minimized && XF.XGetWindowProperty(XD, m_win, sys->m_aNetState, 0, 32, False, XA_ATOM, &type, &fmt, &n, &rest, &data) == Success && data) {
+        if (type == XA_ATOM && fmt == 32)
+            for (unsigned long i = 0; i < n; ++i)
+                if ((Atom)((const long*)data)[i] == sys->m_aNetHidden) { minimized = true; break; }
+        XF.XFree(data);
+    }
+    return minimized;
+}
 
 bool X11Win::CreateGLContext(const GLAttributes& a) {
     DestroyGLContext();

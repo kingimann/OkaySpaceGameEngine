@@ -76,8 +76,14 @@ Backend* Default() {
     return Get(DefaultKind() == BackendKind::Own ? BackendKind::Sdl2 : BackendKind::Own);
 }
 
-// STUB (tests first): the real function is written in the next commit.
-std::unique_ptr<Window> WrapSdl2Window(void*) { return nullptr; }
+std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow) {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+    return sdlWindow ? WrapSdl2WindowImpl(sdlWindow) : nullptr;
+#else
+    (void)sdlWindow;
+    return nullptr;
+#endif
+}
 
 // ---- Backend defaults (shared by both backends) ----------------------------------
 Key Backend::KeyForChar(char c) {

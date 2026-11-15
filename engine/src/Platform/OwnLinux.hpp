@@ -25,6 +25,12 @@ public:
     virtual void StartTextInput() = 0;
     virtual void StopTextInput() = 0;
     virtual bool IsKeyDown(Key k) = 0;
+    virtual uint32_t KeyboardFocusWindowId() = 0;
+    virtual uint32_t MouseFocusWindowId() = 0;
+    virtual bool IsRelativeMouse() = 0;
+    virtual uint32_t GlobalMouseState(int* x, int* y) = 0;
+    /// Read the events the server has sent into the queue, without taking one (PollEvent returns them).
+    virtual void PumpEvents() = 0;
     virtual uint32_t MouseState(int* x, int* y) = 0;
     virtual bool SetRelativeMouse(bool on) = 0;
     virtual void ShowCursor(bool show) = 0;

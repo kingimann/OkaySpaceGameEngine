@@ -20,6 +20,8 @@ add_test(NAME structure_version COMMAND test_structure_version)
 find_program(OKAY_PYTHON NAMES python3 python)
 if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
+    # scripts/sdl_inventory.py (docs/sdl_inventory.md): the counting rules, on made-up sources.
+    add_test(NAME sdl_inventory_script COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_sdl_inventory.py)
     # The collaboration scripts (docs/collaboration.md): throw-away git repos only, no GitHub, no feature map.
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
@@ -2744,21 +2746,6 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_window> ${_okay_pb})
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
-
-    # Window state, focus and pointer queries (IsMinimized / IsVisible / HasMouseFocus / SetInputFocus, KeyboardFocusWindowId /
-    # MouseFocusWindowId / IsRelativeMouse / GlobalMouseState / PumpEvents) and WrapSdl2Window, on both backends under Xvfb with
-    # xdotool. platform_fakewm.cpp plays the window manager (Xvfb has none) through dlopen'd libX11, so no X library is linked.
-    add_executable(test_platform_state test_platform_state.cpp platform_fakewm.cpp)
-    target_link_libraries(test_platform_state PRIVATE okay::platform ${CMAKE_DL_LIBS})
-    if(TARGET SDL2::SDL2)
-        target_link_libraries(test_platform_state PRIVATE SDL2::SDL2)   # raw SDL windows for WrapSdl2Window, SDL_GetWindowFlags to compare with
-    endif()
-    target_include_directories(test_platform_state PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
-    foreach(_okay_pb sdl2 own)
-        add_test(NAME platform_state_${_okay_pb}
-                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_state> ${_okay_pb})
-        set_tests_properties(platform_state_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
-    endforeach()
 endif()
 
 # The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what
@@ -2776,6 +2763,23 @@ endif()
 add_executable(test_platform_gamepad test_platform_gamepad.cpp)
 target_link_libraries(test_platform_gamepad PRIVATE okay::engine)
 add_test(NAME platform_gamepad COMMAND test_platform_gamepad)
+
+# Window state, focus and pointer queries (Window::IsMinimized / IsVisible / HasMouseFocus / SetInputFocus, Backend::KeyboardFocusWindowId /
+# MouseFocusWindowId / IsRelativeMouse / GlobalMouseState / PumpEvents) and WrapSdl2Window, on both backends under Xvfb with xdotool.
+# platform_fakewm.cpp plays the window manager (Xvfb has none) through dlopen'd libX11, so no X library is linked.
+if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_platform_state test_platform_state.cpp platform_fakewm.cpp)
+    target_link_libraries(test_platform_state PRIVATE okay::platform ${CMAKE_DL_LIBS})
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_platform_state PRIVATE SDL2::SDL2)   # raw SDL windows for WrapSdl2Window, SDL_GetWindowFlags to compare with
+    endif()
+    target_include_directories(test_platform_state PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_state_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_state> ${_okay_pb})
+        set_tests_properties(platform_state_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endforeach()
+endif()
 
 # Safety nets for library code that previously had no test naming it.
 add_executable(test_lightmap test_lightmap.cpp)

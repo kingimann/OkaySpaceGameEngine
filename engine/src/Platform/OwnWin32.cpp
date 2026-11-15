@@ -180,6 +180,22 @@ public:
     RECT m_rect = {0, 0, 0, 0};
     wchar_t m_highSurrogate = 0;
     std::vector<uint8_t> m_present;   // PresentPixels: the frame as BGRX
+
+    // Window state queries (Window::IsMinimized / IsVisible / HasMouseFocus / SetInputFocus; docs/platform_layer.md, stage 4).
+    // Kept after the members so they sit clear of the other platform edits.
+    bool IsMinimized() const override { return IsIconic(m_hwnd) != 0; }
+    bool IsVisible() const override { return IsWindowVisible(m_hwnd) != 0; }   // a minimised window keeps WS_VISIBLE, as the seam wants
+    bool HasMouseFocus() const override {
+        POINT p;
+        if (!GetCursorPos(&p)) return false;
+        HWND under = WindowFromPoint(p);
+        return under == m_hwnd || (under && IsChild(m_hwnd, under));
+    }
+    bool SetInputFocus() override {
+        SetForegroundWindow(m_hwnd);
+        SetFocus(m_hwnd);                 // its return value is the PREVIOUS focus window (NULL is not a failure): ask who has it now
+        return GetFocus() == m_hwnd;
+    }
 };
 
 class WinPad final : public Gamepad {
@@ -292,6 +308,39 @@ public:
         if (GetAsyncKeyState(VK_MBUTTON) & 0x8000) m |= MouseMask(MouseMiddle);
         if (GetAsyncKeyState(VK_RBUTTON) & 0x8000) m |= MouseMask(MouseRight);
         return m;
+    }
+    uint32_t KeyboardFocusWindowId() override {
+        HWND f = GetFocus();
+        return f && m_wins.count(f) ? (uint32_t)(uintptr_t)f : 0;
+    }
+    uint32_t MouseFocusWindowId() override {
+        POINT p;
+        if (!GetCursorPos(&p)) return 0;
+        HWND under = WindowFromPoint(p);
+        HWND top = under ? GetAncestor(under, GA_ROOT) : nullptr;
+        return top && m_wins.count(top) ? (uint32_t)(uintptr_t)top : 0;
+    }
+    bool IsRelativeMouse() override { return m_relative; }
+    uint32_t GlobalMouseState(int* x, int* y) override {
+        POINT p = {0, 0};
+        GetCursorPos(&p);                 // screen coordinates
+        if (x) *x = p.x;
+        if (y) *y = p.y;
+        // GetAsyncKeyState reads the PHYSICAL buttons; with "swap mouse buttons" on, the logical left button is the physical right one.
+        const bool swapped = GetSystemMetrics(SM_SWAPBUTTON) != 0;
+        uint32_t m = 0;
+        if (GetAsyncKeyState(swapped ? VK_RBUTTON : VK_LBUTTON) & 0x8000) m |= MouseMask(MouseLeft);
+        if (GetAsyncKeyState(VK_MBUTTON) & 0x8000) m |= MouseMask(MouseMiddle);
+        if (GetAsyncKeyState(swapped ? VK_LBUTTON : VK_RBUTTON) & 0x8000) m |= MouseMask(MouseRight);
+        return m;
+    }
+    void PumpEvents() override {          // the message loop of PollEvent, without taking an event
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) { Event e; e.type = EventType::Quit; m_pending.push_back(e); continue; }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
     }
     bool SetRelativeMouse(bool on) override {
         m_relative = on;

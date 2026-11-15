@@ -61,6 +61,14 @@ public:
     void StartTextInput() override { if (m_x11) m_x11->StartTextInput(); }
     void StopTextInput() override { if (m_x11) m_x11->StopTextInput(); }
     bool IsKeyDown(Key k) override { return m_x11 && m_x11->IsKeyDown(k); }
+    uint32_t KeyboardFocusWindowId() override { return m_x11 ? m_x11->KeyboardFocusWindowId() : 0; }
+    uint32_t MouseFocusWindowId() override { return m_x11 ? m_x11->MouseFocusWindowId() : 0; }
+    bool IsRelativeMouse() override { return m_x11 && m_x11->IsRelativeMouse(); }
+    uint32_t GlobalMouseState(int* x, int* y) override {
+        if (!m_x11) { if (x) *x = 0; if (y) *y = 0; return 0; }
+        return m_x11->GlobalMouseState(x, y);
+    }
+    void PumpEvents() override { if (m_x11) m_x11->PumpEvents(); }
     uint32_t MouseState(int* x, int* y) override {
         if (!m_x11) { if (x) *x = 0; if (y) *y = 0; return 0; }
         return m_x11->MouseState(x, y);

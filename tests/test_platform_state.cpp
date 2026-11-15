@@ -285,6 +285,7 @@ int main(int argc, char** argv) {
                     pw->SetTitle("Renamed through the seam");
                     CHECK(std::string(SDL_GetWindowTitle(raw)) == "Renamed through the seam");
                     pw->SetSize(300, 200);
+                    Pump(*b, 200);   // the size is current once the resize event has been read
                     SDL_GetWindowSize(raw, &sw, &sh);
                     CHECK(sw == 300 && sh == 200);
 

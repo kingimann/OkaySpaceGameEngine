@@ -763,7 +763,7 @@ int main() {
         const char* channels[] = {"__xform", "__hit", "__spawn", "__despawn", "__rpc/fire", "chat", "__dmg", "__respawn"};
         for (int i = 0; i < 400; ++i) {
             std::string junk((std::size_t)(rng.F() * 60.0f), 'x');
-            for (char& c : junk) c = (char)(rng.F() * 255.0f);
+            for (char& c : junk) c = (char)(unsigned char)(rng.F() * 255.0f);
             const std::string ch = channels[(int)(rng.F() * 8.0f) % 8];
             if (i % 3 == 0) r.b->SendReliable(ch, junk); else r.b->Send(ch, junk);
             if (i % 4 == 0) r.b->SendReliable("__hit", "dummy|rifle|1|nope|1 0 0");

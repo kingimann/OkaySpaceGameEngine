@@ -7,6 +7,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <set>
 
 using namespace okay;
 using okay::testing::SceneValidator;
@@ -599,6 +600,27 @@ int main() {
         auto* rdc = r2.Find("Stain")->GetComponent<Decal>();
         CHECK(rdc && !rdc->Projected());
         CHECK(rdc->Project() == saved);                                  // the loaded scene has the floor: the same cut comes back
+    }
+
+    // Chunk keys left of and behind the origin (negative indices). The old key shifted a negative
+    // signed value left, which is undefined in C++17 (UBSan traps on it). Each key must be
+    // distinct, and both indices must come back out of it.
+    {
+        const int idx[] = {-2147483647 - 1, -65536, -2, -1, 0, 1, 2, 65535, 2147483647};
+        std::set<long long> seen;
+        int bad = 0;
+        for (int cx : idx)
+            for (int cz : idx) {
+                const long long k = Foliage::ChunkKey(cx, cz);
+                const unsigned long long u = (unsigned long long)k;
+                if ((int)(unsigned)(u >> 32) != cx || (int)(unsigned)(u & 0xFFFFFFFFull) != cz) ++bad;
+                seen.insert(k);
+            }
+        CHECK(bad == 0);
+        CHECK(seen.size() == 81);
+        CHECK(Foliage::ChunkKey(-1, -1) == -1);                 // all 64 bits set
+        CHECK(Foliage::ChunkKey(0, -1) == 0xFFFFFFFFll);         // cz fills only the low half
+        CHECK(Foliage::ChunkKey(-1, 0) == (long long)0xFFFFFFFF00000000ull);
     }
 
     TEST_MAIN_RESULT();

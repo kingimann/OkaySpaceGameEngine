@@ -147,7 +147,7 @@ int main() {
         namespace fs = std::filesystem;
         const fs::path dir = fs::temp_directory_path() / fs::u8path("okay_dxf_m\xC3\xBCller");
         fs::create_directories(dir);
-        const fs::path file = dir / fs::u8path("pi\xC3\xA8ce.dxf");
+        const fs::path file = dir / fs::u8path("pi\xC3\xA8" "ce.dxf");
         { std::ofstream f(file, std::ios::binary); const std::string x = Dxf(Face("L", O, X, Y)); f.write(x.data(), (std::streamsize)x.size()); }
         const std::string path = file.u8string();
         CHECK(HasOwnReader(".dxf"));

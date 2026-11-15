@@ -11,6 +11,7 @@
 #include "okay/Scene/SceneSerializer.hpp"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <fstream>
 #include <filesystem>
@@ -137,15 +138,20 @@ private:
 
 bool SaveShot(Image& image, const std::string& name) {
     namespace fs = std::filesystem;
-    const fs::path tmp = fs::path("/tmp/okay-touch-controls") / name;
-    const fs::path art = fs::path("/opt/cursor/artifacts") / name;
+    // Always written to the temp folder. A second copy goes to OKAY_SHOT_DIR only when that is set
+    // (the old hard-coded /opt/cursor/artifacts made the test fail on every other machine).
     std::error_code ec;
+    const fs::path tmp = fs::temp_directory_path(ec) / "okay-touch-controls" / name;
     fs::create_directories(tmp.parent_path(), ec);
-    fs::create_directories(art.parent_path(), ec);
     const bool a = image.SavePNG(tmp.string());
-    const bool b = image.SavePNG(art.string());
     if (!a) std::cerr << "  could not write " << tmp << "\n";
-    if (!b) std::cerr << "  could not write " << art << "\n";
+    bool b = true;
+    if (const char* dir = std::getenv("OKAY_SHOT_DIR"); dir && *dir) {
+        const fs::path art = fs::path(dir) / name;
+        fs::create_directories(art.parent_path(), ec);
+        b = image.SavePNG(art.string());
+        if (!b) std::cerr << "  could not write " << art << "\n";
+    }
     return a && b;
 }
 

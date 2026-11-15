@@ -607,7 +607,7 @@ int main() {
             for (int e = 0; e < edits && !m.empty(); ++e) {
                 const std::size_t at = (std::size_t)(Rand() * (float)m.size()) % m.size();
                 switch ((int)(Rand() * 4)) {
-                    case 0: m[at] = (char)(Rand() * 255.0f); break;
+                    case 0: m[at] = (char)(unsigned char)(Rand() * 255.0f); break;
                     case 1: m.erase(at, 1 + (std::size_t)(Rand() * 8.0f)); break;
                     case 2: m.insert(at, 1, "{}[],:\"\\-.e0"[(int)(Rand() * 12.0f) % 12]); break;
                     default: m.resize(at); break;

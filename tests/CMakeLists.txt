@@ -2211,6 +2211,8 @@ add_test(NAME quests COMMAND test_quests)
 # Behavior trees: file round trip, composites, decorators, guards, blackboard, perception, navigation tasks, scripts, scene record
 add_executable(test_behavior_tree test_behavior_tree.cpp)
 target_link_libraries(test_behavior_tree PRIVATE okay::engine)
+# The example scenes are found from the source folder, so the test passes whatever folder ctest runs it from.
+target_compile_definitions(test_behavior_tree PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME behavior_tree COMMAND test_behavior_tree)
 
 # Splines, spline meshes / instancers / followers, line and trail renderers: evaluation, records, scripts

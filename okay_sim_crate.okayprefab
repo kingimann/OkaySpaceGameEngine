@@ -1,0 +1,6 @@
+okayscene 3
+gameobject 0 "Crate"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+end

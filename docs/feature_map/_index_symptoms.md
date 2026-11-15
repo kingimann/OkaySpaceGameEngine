@@ -120,6 +120,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a huge clone because of binaries | [19.6](19-docs-tests-health.md#196-repository-hygiene) Repository hygiene |
 | a huge image crashes the load | [2.9](02-rendering-world.md#29-fonts-and-images) Fonts and images |
 | a huge map in one scene is slow to edit and load | [45.1](43-proposals.md#451-cell-authoring-and-baking) Cell authoring and baking |
+| a huge paste is refused with a message | [40.8](40-okayui-library.md#408-code-editor-widget-and-text-model-own-replaces-imguicolortextedit) Code editor widget and text model (own, replaces ImGuiColorTextEdit) |
 | a hundred NPCs make the game slow | [52.5](43-proposals.md#525-crowds) Crowds |
 | a join refused with "no encryption" or a pinned-key mismatch | [39.2](39-security-anticheat.md#392-transport-security-encryption-replay-protection-sealed-join-host-keys) Transport security: encryption, replay protection, sealed join, host keys |
 | a joint snaps unexpectedly | [6.3](06-physics.md#63-joints) Joints |
@@ -330,6 +331,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an agent jitters when it arrives | [9.2](09-ai-navigation.md#92-nav-agents-and-obstacles) Nav agents and obstacles |
 | an agent slides instead of walking | [9.2](09-ai-navigation.md#92-nav-agents-and-obstacles) Nav agents and obstacles |
 | an agent walks into lava | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
+| an amber line above the code says a script is read-only because it is not valid UTF-8 | [40.8](40-okayui-library.md#408-code-editor-widget-and-text-model-own-replaces-imguicolortextedit) Code editor widget and text model (own, replaces ImGuiColorTextEdit) |
 | an angle jumps at 360 | [36.3](36-math-geometry.md#363-scalars-interpolation-and-easing) Scalars, interpolation and easing |
 | an animation overshoots or snaps | [36.3](36-math-geometry.md#363-scalars-interpolation-and-easing) Scalars, interpolation and easing |
 | an animation runs during pause when it should not (or the reverse) | [1.2](01-core-scene.md#12-timers-and-tweens) Timers and tweens |

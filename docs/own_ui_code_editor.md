@@ -86,7 +86,7 @@ From `test_okayui_codeedit` (it prints them):
 | select all, delete, undo | about 12 ms |
 | vertices drawn at the top / at the end | about 27,000 / 36,000 (batch limit 262,144; nothing dropped) |
 
-The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) and multiplies them by 20 under ASan or UBSan.
+The test asserts how many lines the highlighter colours (a steady frame colours only the lines on screen, a jump to the end colours every line above once, an edit re-colours from the edit down the screen) plus hang limits of seconds that are multiplied by 20 under ASan or UBSan. The numbers above were measured with the size limits lifted (`SetLimits`, below).
 
 ## How it was tested
 
@@ -99,6 +99,7 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 
 - **The cell width is the width of `0`.** The 8x8 classic font is monospaced and its text is drawn in runs. The launcher look's Roboto is not: since slice 3 the widget notices (`CellsAreGrid()`) and draws every character in its own cell, centred, so the caret, the selection and the columns stay on the text (evenly spaced, not pretty). OkayUI still has no way to choose a code font (family 23 in `own_ui_toolkit.md`); JetBrains Mono is in `shared/` but not hooked up. That is the real fix and is NOT DONE.
 - **One character is one cell.** Wide (CJK, emoji) characters are drawn one cell wide and may overlap their neighbour; combining marks take a cell. The 8x8 font has only ASCII glyphs, so other characters show as the font's fallback.
+- **The text has limits: 4 MiB and 200,000 lines by default** (`SetLimits`, `kDefaultMaxBytes`, `kDefaultMaxLines`; slice 4). A paste, typed text, Enter or replace all that would go over is refused with nothing changed and `Status()` says why; `SetText` of a bigger text keeps the longest start that fits and makes the editor read-only (`Truncated()`). The reason is memory: a line costs about 32 bytes even when empty, and a paste of 16 MiB of newlines used to make 16.7 million lines and about a gigabyte of temporary memory. The multi-line text field (`InputTextMultiline`) is built on `CodeEdit` and gets the same defaults.
 - **The clipboard holds 16 MiB** (`kClipboardStoreMax`; it was 4095 bytes before slice 3, and a text field still copies at most `kClipboardMax` = 4096 from itself). Copy of a bigger selection is cut at a character boundary; Cut of a bigger selection does nothing (it never deletes text it could not copy).
 - **Columns are byte offsets** (on character boundaries). The library counted columns; a port has to convert (`ByteToColumn`, `ColumnToByte`).
 - Tab size 1 to 16; tab characters are kept as they are, Tab inserts spaces by default.
@@ -145,6 +146,10 @@ Not done, said plainly:
 `CodeEdit` no longer keeps its own text model. Lines, edits, the undo log, search, bracket scanning, word movement, the highlighter's state cache and the line marks (breakpoints and error markers that move with the text) are `okay::text::Buffer` (`docs/own_code_editor.md`, "Slice 2"). The public API of `CodeEdit` is unchanged, as are `ScriptEditorCodeEdit` and `ScriptEditorWidget`; `Model()` gives read-only access to the buffer. The 407 checks of `test_okayui_codeedit` and the fuzzers are unchanged and pass; no check was edited.
 
 What this changes in the HAVE and GAP table above: breakpoints and markers "move with the text" is now implemented and tested in the library (`Buffer` line marks) as well as through the widget; multiple carets exist in `Buffer` but are NOT in the widget (one caret and one anchor). Small differences from before (find previous with overlapping matches, replace all with newlines in the replacement and markers inside the span, clamped out-of-range tokens) are listed in `docs/own_code_editor.md`.
+
+## Slice 4: fixes from an independent review (step 30)
+
+Read `docs/own_code_editor.md`, "Slice 4", for the table (what was wrong, what was done, the tests, what is not done). In short, `CodeEdit` gained: `SetLimits`, `Truncated`, `Status` (size limits and the reason for a refusal), `SetAutoPair` and `TypeText` (bracket and quote pairing and step-over for typed characters, off by default so a plain text field does not do it), and `ReadOnly()` now also reports a text that `SetText` had to cut. `okay::text::Buffer` gained `Options::maxLines` and `WouldFit`, and its replace all no longer stops at a million matches. The adapter keeps a byte order mark in a flag, opens a script it cannot show (not UTF-8, control characters, too big) read-only with the exact bytes kept (`ReadOnlyBecauseDamaged`, `Notice`), and refuses inserted text it cannot keep. `editor/ScriptEditorKeys.hpp` says that the script editor's old key helpers (autocomplete popup, pairing, Tab spaces) do not run with this widget.
 
 ## Slice 3: what the script editor was still missing (step 29)
 

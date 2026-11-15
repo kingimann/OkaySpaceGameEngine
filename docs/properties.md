@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2011 properties on 143 types, as `property_registry` counts them ("covered 143 component types, 2011 properties"; a number before a slash counts the authored ones; the rest are
+2042 properties on 147 types, as `property_registry` counts them ("covered 147 component types, 2042 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -316,6 +316,7 @@ has `enabled`.
 | HealthStat, SurvivalStats | 21, 28 | health, armor and mitigation, overheal, death and respawn, and the Prefs / bar / message switches; survival adds hunger, thirst, stamina, oxygen and warmth. The current values (health, hunger ...) are runtime, not properties |
 | HungerStat, ThirstStat, StaminaStat, OxygenStat, TemperatureStat, SleepStat, SanityStat | 11, 11, 13, 8, 8, 10, 8 | the rates, thresholds, damage when empty, the optional slow-down, and the three publishing switches. Current values are runtime |
 | RadiationStat, BleedingStat, PoisonStat, WetnessStat, CarryWeightStat, StatusEffectStat | 8, 6, 6, 8, 6, 1 | rates and thresholds plus the publishing switches; status effects have only the message switch (the active effects are runtime) |
+| TrailRenderer, MinimapBlip, AimIK, SurvivalSave | 10, 6, 8, 3 | trail life, width, colour and texture (the width curve and gradient are lists); blip colour, size, shape, icon and label (the old square switch is only for old files); aim bone, target and axes; the survival save key and switches |
 
 How the new types are described, so a tool can rely on it:
 

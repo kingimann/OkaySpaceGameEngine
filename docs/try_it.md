@@ -49,6 +49,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Upgrade project: which folder is the project, held opens, byte-order marks | File > Open, File > Project Upgrade..., the launcher's Open | Waiting for the next release (issue #888 review fixes) |
 
 ---
 
@@ -211,6 +212,38 @@ controller at 30, 60 and 144 fps; the test failed on the old code and passes now
 The before-and-after of the bug needs the old release to compare.
 
 ---
+
+## 14. Upgrade project: the review fixes (issue #888)
+
+**What it is.** The editor asks before it upgrades a project made with another version (`docs/project_upgrade.md`). These fixes make it
+pick the right folder as "the project", never a folder that only holds a copy of the old shared settings file, and never write such
+copies into scene folders. Use a development build's fake version to try it without two releases: start the editor with the environment
+variables `OKAY_DEV=1` and `OKAY_FAKE_VERSION=2.855.0` (the editor then calls itself v2.855.0).
+
+**Steps.**
+1. **A scene outside Assets.** Make `C:\Test\Game\project.okayproj` holding the line `engine_version=2.850.0`, and copy any scene to
+   `C:\Test\Game\Levels\a.okayscene`. File > Open... `a.okayscene`. You see "This project was made with v2.850.0" for **Game**. Choose
+   **Upgrade project**. The result window lists what was done under **WHAT WAS DONE**. The Project panel is rooted at `Game`, File >
+   Project Upgrade... shows `Game`, and there is no `C:\Test\Game\Levels\project.okayproj`.
+2. **A folder above that is not a project.** Put a `project.okayproj` holding only `company=Me` in `C:\Test`, and copy a scene to
+   `C:\Test\Loose\t.okayscene`. Open it: it opens with no question, and no `C:\Test\Loose\project.okayproj` appears.
+3. **The examples.** Open `<install folder>\examples\vehicle\vehicle_test.okayscene` twice (close the editor in between). No question
+   either time, and no `project.okayproj` is written into `examples\vehicle`. (If one is there from an older editor and holds an
+   `engine_version` line, delete it first.)
+4. **A byte-order mark.** In the `Game` project of step 1, set `project.okayproj` back to `engine_version=2.850.0`, open `Levels\a.okayscene`
+   in Notepad and save it with Encoding "UTF-8 with BOM" (or, in Windows PowerShell, `type a.okayscene > b.okayscene`, which writes UTF-16).
+   Open it in the editor and choose Upgrade: it finishes, and **WHAT WAS DONE** says "removed the UTF-8 byte-order mark" (or "converted from
+   UTF-16 to UTF-8") for that file.
+5. **A second project while the question is on screen.** Make another older project `C:\Test\Game2` like step 1. Open `Game` from the
+   launcher so its question is on screen, then click **Open** on `Game2` in the launcher. Answer **Cancel** for `Game`: the question for
+   `Game2` comes up next (before the fix the second Open was lost).
+
+**How you know it worked.** Each step behaves as written; before the fixes, step 2 asked "This project has no version recorded" for
+`C:\Test` and Upgrade would have copied all of it, step 1 left a `Levels\project.okayproj` behind, and step 5 dropped `Game2`.
+
+**Status.** The rules are tested on Linux (`project_upgrade`, `editor_hooks`: run for this change). The editor was built and the result
+window with its new list was seen in a headless screenshot (`docs/images/upgrade/`). Nothing was run on Windows: the any-case `assets` rule,
+8.3 / `\\?\` / mapped-drive spellings of the working folder and the launcher hand-off are unverified there.
 
 ## Switches that are off by default (own code)
 

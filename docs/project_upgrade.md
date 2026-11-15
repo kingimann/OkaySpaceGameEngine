@@ -48,42 +48,87 @@ look at `project.okayproj` the loading screen takes. The old shared `project.oka
 As a safety net, `EditorState::Load` itself refuses a scene of a project nobody has answered for (`EditorState::beforeLoad`), so a future
 way of opening scenes that forgot the question cannot skip it.
 
-One question at a time. **Cancel** changes nothing and the editor stays where it was (or shows the project chooser, when nothing was open).
+One question at a time. A request to open another project while a window is on screen (the launcher handing over a project while the
+question for the first one is open) is **held**, not dropped: once the window closes (answered, cancelled, upgraded) the held project is
+opened, with its own question if it needs one. A newer request replaces a held one. When the answer closes this editor (**Keep** starts
+another version), the held request is dropped with the editor. Before the review of issue #888 the second request was thrown away with no
+message and the hand-off file was already deleted, so clicking Open on project B in the launcher did nothing.
+**Cancel** changes nothing and the editor stays where it was (or shows the project chooser, when nothing was open).
 Answering is remembered for the session: once a project is upgraded, opened anyway, or made in this session, it is not asked about again.
 
 ### Which folder is the project
 
-`okayup::ProjectRootForScene` finds the project a scene belongs to, in this order:
+`okayup::ProjectRootForScene` finds the project a scene belongs to. It is the one rule for everything: the version question and its
+safety net (`ProjectGate::Open`, `MayLoad`), File > Open and the launcher's `--open` (where the Project panel is rooted:
+`EditorState::projectRootOf`), the settings the loading screen reads at startup, and File > Project Upgrade (the folder the window shows is
+the folder its Upgrade button upgrades and its Restore button restores: `UpgradeRootFor`). From the scene's folder upwards, the nearest
+folder that is clearly a project wins:
 
-1. The nearest folder called `Assets` above the scene: the project is the folder that holds it. On Windows any spelling counts
-   (`assets`, `ASSETS`), because Windows folder names ignore case; elsewhere it must be `Assets` exactly. (The Windows rule is unverified:
-   it is only compiled and run on Windows.)
-2. The scene's own folder, when it is a project (the old flat layout). A folder is a project when it holds an `Assets` folder or a
-   `project.okayproj` file. A `.okay` folder alone does **not** count: the editor leaves one (autosave, the build list) next to any scene it
-   opened, project or not.
-3. Otherwise the nearest folder above the scene that holds `project.okayproj`, so a scene in `Levels/` or `Scenes/World1/` belongs to its
-   project too. The editor's working folder is skipped here: while no project is open the editor keeps its settings in a
-   `project.okayproj` there (the old shared file), and that must not turn every scene below it into a "project".
+1. A folder that holds the scene through a folder called `Assets` (`<project>/Assets/.../scene`). On Windows any spelling counts
+   (`assets`, `ASSETS`), because Windows folder names ignore case; elsewhere it must be `Assets` exactly. The case rule is a parameter
+   (`RootRules::assetsAnyCase`), so both answers are tested on Linux; on Windows itself it is unverified.
+2. A folder that holds a `project.okayproj` with an `engine_version` stamp (every project made or saved since versions were recorded has
+   one). So a scene in `Levels/` or `Scenes/World1/` belongs to its project, and a stamped project inside another project's folder is its
+   own project (the nearer one wins).
+3. Only when no folder up the path is clearly a project: the scene's own folder, when it holds a `project.okayproj` (stamped or not) or an
+   `Assets` folder (the old flat layout).
 4. Nothing found: the scene is a loose file. No question is asked and File > Project Upgrade does nothing for it.
 
-Before issue #888 step 3 did not exist: a project's scene outside `Assets/` was treated as a loose file, so it opened with no version
-question, the safety net let it load, and File > Project Upgrade silently did nothing.
+What is **not** evidence of a project:
 
-Also before issue #888, a `.okay` folder alone made a folder a project (`IsProjectRoot`). Opening a loose scene such as
-`examples/vehicle/vehicle_test.okayscene` a second time (the first time left a `.okay` folder beside it) asked the "Unknown" version
-question, and choosing Upgrade would have copied the whole folder as a backup and written a `project.okayproj` into it.
+- A `project.okayproj` **without a stamp** in a folder above the scene. That is the old shared settings file, or a copy of it: editors before
+  issue #888 copied it into the folder of any scene they opened (see "Settings files" below), so Documents, Desktop, a Projects folder or a
+  repository root could hold one. Before this rule such a folder became a "project": the "no version recorded" question came up, and
+  Upgrade would have copied the whole folder.
+- An `Assets` folder **beside** a folder above the scene. The release folder holds `Assets/` (starter textures) next to `examples/`, so that
+  rule would make the release folder the project of every example scene.
+- A `.okay` folder alone: the editor leaves one (autosave, the build list) next to any scene it opened, project or not.
+- A drive root (`C:\`, `/`, `\\server\share`) and the home folder: never a project, whatever they hold.
+- The editor's **working folder**, for rules 2 and 3. While no project is open the editor keeps its settings in a `project.okayproj` there
+  (the shared file), and a release editor stamps that file too. The working folder is compared as a folder on disk (`SameFolder`: a link,
+  a `..`, another case on Windows, an 8.3 name or a `\\?\` spelling are the same folder), not as text. Rule 1 still applies there: a project
+  that is the working folder is found through its `Assets` folder.
+
+**The limit we accepted.** A real project that is itself the editor's working folder, opened through a scene **outside** its `Assets`
+folder, is not found (it is treated as a loose file: no question, no upgrade). Such a folder can't be told apart from the release folder
+when the editor is started there: both hold `Assets/` and a stamped `project.okayproj`. Scenes in its `Assets` folder are found as usual.
+
+**A very big folder.** As a last guard, the upgrade counts what it would copy while it looks through the folder. Past 50,000 files or 8 GB
+it stops before anything is made and asks: "\"<Name>\" is very big for a backup copy", with the counts so far, **Copy it anyway and
+upgrade** (or **Copy it anyway, then open** for a newer project) and **Cancel**. Cancel changes nothing.
+
+Before issue #888 only rule 1 and the old form of rule 3 existed: a project's scene outside `Assets/` was treated as a loose file (no version
+question, the safety net let it load, File > Project Upgrade silently did nothing). The first fix added "the nearest folder above with any
+`project.okayproj`", which made the shared file's copies into projects; the review of that fix gave the rules above.
+
+### Settings files: no more copies in scene folders
+
+`LoadProjectSettingsFrom` (`editor/main.cpp`) reads a project's settings. For a project with no `project.okayproj` of its own it starts from the
+shared file and writes the project its own copy. It used to do that for **any** folder it was given: the folder of a loose scene, or
+`Game/Levels` for `Game/Levels/a.okayscene` (the loading screen picked the scene's folder). Now the folder is first checked with
+`okayup::SettingsFolderFor`: only a project folder (it has `project.okayproj` or an `Assets` folder) gets its own file; any other folder uses the
+shared file and gets nothing. The loading screen uses `ProjectRootForScene` to pick the folder. Copies made by older editors are still on disk:
+an unstamped one above a scene is ignored (see above); a stamped one (a release editor stamped them) still makes its folder a project, and is
+safe to delete.
 
 **How to try it (scene outside Assets).** Make a project folder `Game` with a `project.okayproj` that says `engine_version=2.850.0` and a scene in
 `Game/Levels/a.okayscene` (no `Assets` folder). Open `a.okayscene` in the editor (File > Open, or `--open`). You now see the "Upgrade project
 to v..." question for **Game**; before the fix it opened with no question. Choose Upgrade: the backup `Game (backup v2.850.0)` appears next
-to `Game`, and `Game/project.okayproj` now has the editor's version. File > Project Upgrade... on that scene works on `Game` too.
+to `Game`, and `Game/project.okayproj` now has the editor's version. The Project panel shows **Game**, and File > Project Upgrade... shows
+**Game** too (before the review fix File > Open left the Project panel where it was, so the window showed another folder than the one its
+button upgraded). No `Game/Levels/project.okayproj` is written.
 
 **How to try it (loose scene folder).** Open `examples/vehicle/vehicle_test.okayscene` (File > Open), close the editor, and open it again.
-It opens straight away with no version question, also the second time when `examples/vehicle/.okay` exists; before the fix the second
-open asked "Upgrade project ... (no version recorded)". File > Project Upgrade does nothing for it, and no `vehicle (backup ...)` folder
-appears next to it. One thing is left (not changed here, it is in `editor/main.cpp`): when the editor's working folder has the old
-shared `project.okayproj`, opening a loose scene copies that file into the scene's folder, and a folder with `project.okayproj` is a
-project. Delete `examples/vehicle/project.okayproj` (if it is there) before you try this.
+It opens straight away with no version question, also the second time when `examples/vehicle/.okay` exists, and also when the editor's
+working folder (or any folder above `examples`) has the shared `project.okayproj`. File > Project Upgrade... is greyed out, or (when the Project panel
+is rooted at the scene's folder) shows "The open scene is not part of a project" with the Upgrade button greyed out; no `vehicle (backup ...)`
+folder appears. No `project.okayproj` is written into
+`examples/vehicle` any more. If one is there from an older editor and it has an `engine_version` line, delete it first (a stamped file there
+makes the folder a project).
+
+**How to try it (a folder above that is not a project).** Put any scene in `Documents\Test\t.okayscene`, and a `project.okayproj` with just
+`company=Me` in `Documents`. Open the scene: no version question (before the review fix: "This project has no version recorded", and
+Upgrade would have copied all of Documents).
 
 ### Older: upgrade or keep
 
@@ -123,6 +168,9 @@ until the first file is rewritten.
    A file that starts with a UTF-8 byte-order mark (the bytes EF BB BF, which some text editors such as Notepad add when they save) is
    checked without the mark and written back without it, even when it is otherwise current: the engine's scene loader does not read a
    file with the mark (see "Byte-order marks" below). The log says "removed the UTF-8 byte-order mark"; the backup keeps the original.
+   A UTF-16 file with its mark (FF FE or FE FF; Windows PowerShell's `>` and Notepad's "Unicode" write those) is converted to UTF-8 the
+   same way ("converted from UTF-16 to UTF-8"). UTF-16 that is not whole (an odd number of bytes, half a surrogate pair) is a damaged
+   file and stops the upgrade, naming it.
 6. **Stamp** `engine_version` last.
 
 **It stops at the first failure and puts everything back.** The files rewritten so far are restored from the backup (their content is
@@ -143,7 +191,16 @@ yet (the sibling place is also the only one the Restore list can find).
 
 ### The result
 
-"Upgraded 14 scenes, 3 prefabs; 2 files rewritten. Backup at ...", with **Open project** and **Open backup folder**. A failure shows the
+"Upgraded 14 scenes, 3 prefabs; 2 files rewritten. Backup at ...", with **Open project** and **Open backup folder**. Under it,
+**WHAT WAS DONE (n)** lists the upgrade's log, one line per file it changed or noticed (`Assets/Old.okayscene: removed the UTF-8 byte-order
+mark ...`, a migration step, records this version doesn't know).
+
+![The result window after an upgrade started from Game/Levels/a.okayscene: the WHAT WAS DONE list names the byte-order mark and the migration](images/upgrade/review_done_log.png)
+
+![The version question for a scene in Game/Levels: the project shown is Game](images/upgrade/review_levels_question.png)
+
+(Headless screenshots on Linux, `OKAY_DEV=1 OKAY_FAKE_VERSION=2.855.0`, with `OKAY_UI_UPGRADE_ANSWER=upgrade` for the first: a development-build
+switch that answers the question with Upgrade once, for screenshots.) A failure shows the
 reason (in plain words, with the file) and the restore result ("Every file that had been rewritten was put back from the backup: the
 project is exactly as it was", or the files that could not be put back, whose originals are in the backup).
 
@@ -212,6 +269,7 @@ that version highlighted; a launcher that is already running is brought forward 
 |---|---|
 | `--keep-version` / `--keep-version=<ver>` | the version was chosen on purpose for the `--open` project (see above) |
 | `OKAY_DEV=1` with `OKAY_FAKE_VERSION=2.855.0` | development builds only: the editor reports and stamps that version, so a project stamped `2.850.0` can be opened by "another" editor and the question tried |
+| `OKAY_DEV=1` with `OKAY_UI_UPGRADE_ANSWER=upgrade` | development builds only (screenshots): the version question is answered with Upgrade once |
 
 ## Failure cases
 
@@ -219,6 +277,8 @@ that version highlighted; a launcher that is already running is brought forward 
 |---|---|
 | A scene or prefab is damaged, can't be loaded, or is newer than the editor reads | the upgrade stops before the backup is started; the file is named; nothing changed |
 | A scene or prefab starts with a UTF-8 byte-order mark | not a failure: the mark is taken off and the file is written back without it (the backup has the original) |
+| A scene or prefab is UTF-16 with its mark | not a failure: converted to UTF-8 (the backup has the original); broken UTF-16 stops the upgrade before the backup |
+| The folder holds more than 50,000 files or 8 GB | stops while looking through it, before anything is made, and asks: copy it anyway, or Cancel |
 | A file that has to change (or `project.okayproj`) is read-only | stops before the backup, says which file; nothing changed |
 | Not enough free space, or the backup place is read-only or missing | stops before the copy; says how much is needed and free |
 | The disk fails while copying | the unfinished backup is removed; the project was never touched |
@@ -242,8 +302,10 @@ fails; running the upgrade on its project removes the mark and the scene then op
 
 **How to try it.** In a project made with an older version (or File > Project Upgrade... on any project), open one of its scenes in a text
 editor and save it as "UTF-8 with BOM" (Notepad: Save as, Encoding "UTF-8 with BOM"; or put the three bytes EF BB BF at the start). Run the
-upgrade. It finishes; the result's log names the file with "removed the UTF-8 byte-order mark", and the file now starts with
-`okayscene 3`. Before the fix the upgrade stopped with "missing 'okayscene' header" and changed nothing.
+upgrade. It finishes; the result window's **WHAT WAS DONE** list names the file with "removed the UTF-8 byte-order mark", and the file now
+starts with `okayscene 3`. Before the fix the upgrade stopped with "missing 'okayscene' header" and changed nothing. For UTF-16: in Windows
+PowerShell 5, `Get-Content Assets\Main.okayscene | Out-File -Encoding Unicode Assets\Main2.okayscene` (or `type Assets\Main.okayscene >
+Assets\Main2.okayscene` in Windows PowerShell); the upgrade lists "converted from UTF-16 to UTF-8" for `Main2.okayscene`.
 
 ## Design choices
 
@@ -261,10 +323,15 @@ upgrade. It finishes; the result's log names the file with "removed the UTF-8 by
 
 `project_version` (parse and compare matrix, Decide table, the stamp line in text and in files, CRLF, BOM, read-only, release lines, the
 keep target, the Versions layout; links nothing), `project_upgrade` (the upgrade end to end, backup completeness, space refusal, the disk
-failing at every step in turn, damaged and read-only files, restore, the whole gate state machine, which folder is the project: a scene
-outside `Assets/`, the nearest `project.okayproj`, the working folder's shared file, a bare `.okay` folder is no project, scenes and prefabs with a byte-order mark: upgraded, backed up and restored byte for byte) and `editor_hooks` (`EditorState::Load` under the gate).
-`upgrade_bug_project_upgrade` (`tests/test_upgrade_bugs.cpp`) holds the issue #888 known-bug checks and `scene_bom_bug_load_from_file`
-(`tests/test_scene_bom_bug.cpp`) the loader's byte-order-mark check; both only run with `-DOKAY_RUN_KNOWN_BUG_TESTS=ON`.
+failing at every step in turn (with a byte-order-mark scene among the rewritten files), damaged and read-only files, restore, the whole gate
+state machine with held opens, which folder is the project: a scene outside `Assets/`, the nearest stamped `project.okayproj`, unstamped copies
+and `Assets` beside an ancestor are no evidence, the release folder layout, the working folder by any spelling, the home folder, both case rules,
+a bare `.okay` folder is no project, scenes and prefabs with a UTF-8 or UTF-16 byte-order mark: upgraded, backed up and restored byte for byte,
+the very-big-folder limit; the loose-file checks stop their search at the test's own temp folder, so a project.okayproj above it can't change
+them) and `editor_hooks` (`EditorState::Load` under the gate, and File > Open rooting the project where the gate finds it).
+`scene_bom_bug_load_from_file` (`tests/test_scene_bom_bug.cpp`) is the loader's byte-order-mark check; it only runs with
+`-DOKAY_RUN_KNOWN_BUG_TESTS=ON`. The issue #888 known-bug file `tests/test_upgrade_bugs.cpp` is gone: every check in it is fixed and lives in
+`project_upgrade` (and `startup_modals` for the two startup windows).
 
 ## What changed
 

@@ -19,6 +19,7 @@
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/LookAtIK.hpp"
 #include "okay/Components/FootIK.hpp"
+#include "okay/Components/LimbIK.hpp"
 #include "okay/Components/NetValidator.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/LogicLinks.hpp"
@@ -1521,6 +1522,34 @@ void RegisterFootIK() {
     b.Commit();
 }
 
+// LimbIK (record "limbik"). The upper and lower joint limits are nested limit
+// structs; they are not properties yet.
+void RegisterLimbIK() {
+    PropertyBuilder<LimbIK> b("LimbIK", "limbik", "Animation");
+    b.Section("Bones")
+     .AddString("upperName", &LimbIK::upperName).Tooltip("Upper bone (upper arm or thigh), by name")
+     .AddString("lowerName", &LimbIK::lowerName).Tooltip("Lower bone (forearm or shin), by name")
+     .AddString("endName", &LimbIK::endName).Tooltip("End bone (hand or foot), by name")
+     .Section("Goal")
+     .AddString("targetName", &LimbIK::targetName).Tooltip("Object to reach for, by name (empty = the fixed point)")
+     .AddVec3("target", &LimbIK::target).Range(-kBig, kBig, 0.01).Tooltip("World point to reach when there is no target object")
+     .AddQuat("targetRotation", &LimbIK::targetRotation).Tooltip("End bone rotation to match when there is no target object")
+     .AddBool("matchTargetRotation", &LimbIK::matchTargetRotation).Tooltip("Turn the end bone to the target's rotation (a grab)")
+     .AddFloat("targetBlendTime", &LimbIK::targetBlendTime).Range(0, 1e4, 0.01).Tooltip("Seconds to swing over when the goal changes or jumps")
+     .Section("Bend")
+     .AddString("poleName", &LimbIK::poleName).Tooltip("Object the elbow or knee bends toward, by name")
+     .AddEnum("poleMode", &LimbIK::poleMode, {"Auto", "Character", "World"}).Tooltip("Without a pole object: keep the animation's bend, or bend toward the pole direction")
+     .AddVec3("pole", &LimbIK::pole).Range(-kBig, kBig, 0.01).Tooltip("Bend direction")
+     .AddFloat("minBend", &LimbIK::minBend).Range(0, 180, 1).Tooltip("Smallest inside joint angle in degrees")
+     .AddFloat("maxBend", &LimbIK::maxBend).Range(0, 180, 1).Tooltip("Largest inside joint angle in degrees")
+     .Section("Solve")
+     .AddFloat("weight", &LimbIK::weight).Range(0, 1, 0.01).Tooltip("0 = pure animation, 1 = full reach")
+     .AddFloat("softness", &LimbIK::softness).Range(0, 100, 0.01).Tooltip("Ease the last stretch to full reach over this distance")
+     .AddFloat("stretch", &LimbIK::stretch).Range(0, 10, 0.01).Tooltip("Let the limb lengthen by this fraction when the target is out of reach")
+     .AddBool("orient", &LimbIK::orient).Tooltip("Also turn the upper and lower bones toward the moved joints");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -2153,6 +2182,7 @@ void RegisterGameplayProperties() {
     RegisterHoldableObject();
     RegisterLookAtIK();
     RegisterFootIK();
+    RegisterLimbIK();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-1844 properties on 128 types, as `property_registry` counts them ("covered 128 component types, 1844 properties"; a number before a slash counts the authored ones; the rest are
+1894 properties on 130 types, as `property_registry` counts them ("covered 130 component types, 1894 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 

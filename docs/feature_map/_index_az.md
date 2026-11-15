@@ -2238,6 +2238,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Launcher look, theme and fonts (40.2)
 - Launcher shell and updater (17.1)
 - Launcher shell guard (39.9.5)
+- Launcher sign-in gate (17.2.9)
 - Launcher views (16.9.3)
 - launcher.cfg (17.1)
 - layer (1.3, 5.1)

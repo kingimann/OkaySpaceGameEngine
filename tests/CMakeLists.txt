@@ -1738,6 +1738,12 @@ if(WIN32)
 endif()
 add_test(NAME self_update COMMAND test_self_update)
 
+# The launcher's sign-in gate decision (shared/LoginGate.hpp): signed in / valid token / 7-day offline grace / rejected, the on-off switch.
+add_executable(test_login_gate test_login_gate.cpp)
+target_compile_features(test_login_gate PRIVATE cxx_std_17)
+target_include_directories(test_login_gate PRIVATE ${PROJECT_SOURCE_DIR}/shared)
+add_test(NAME login_gate COMMAND test_login_gate)
+
 # Signed releases: versions.json must verify under a trusted ed25519 key (shared/UpdateSignature.hpp, LoadIndex), key rotation, refusal wording,
 # the transition without a key, and the publish tool scripts/sign_index.py against the C++ verifier. Throwaway keys, fake server, no network.
 add_executable(test_update_signature test_update_signature.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)

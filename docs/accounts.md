@@ -7,6 +7,28 @@ in two places that share the same code:
 * the **engine** — a process-wide `okay::Account` plus `account_*` OkayScript
   builtins, so a game can sign players in from script.
 
+## The launcher requires sign-in
+
+Since this change the **launcher** asks you to sign in before anything else works. Until someone is signed in it shows
+one page, "Sign in to continue" (sign in, create account, forgot password), plus Settings (about, quit) and the update
+card. Create, Play, Library, Market, Servers, Forums, Downloads, Chat and the rest are hidden, and the code that
+starts the editor, a game, a project or a server join refuses too (a toast says "Sign in to ...").
+
+* **Saved session still valid:** counts as signed in, even offline, so nobody is locked out the moment they lose the network.
+* **Token expired and the network is down:** keeps working for **7 days** after the last time the server confirmed the
+  session (`kOfflineGraceSeconds` in `shared/LoginGate.hpp`). After that the launcher shows "Sign in to continue" with a
+  Try again button; it needs the internet once.
+* **The server refuses the session** (revoked or bad refresh token): signed out at once, no grace.
+* **Local (dev) backend:** being signed in is enough, there is no server to ask.
+* **Turn it off** (developers, screenshots, CI): set `OKAY_REQUIRE_LOGIN=0`. The UI-demo and chat/voice/multiplayer demo
+  variables (`OKAY_UI_DEMO_USER`, `OKAY_UI_DEMO_TAB`, `OKAY_CHAT_DEMO`, `OKAY_MP_DEMO`, `OKAY_VOICE_DEMO`) turn it off
+  by themselves; `OKAY_REQUIRE_LOGIN=1` turns it on again. There is also `require_login=0|1` in `launcher.cfg`
+  (default 1, no switch in the Settings page on purpose).
+
+**Limit, said plainly:** this is a check inside the launcher. Anyone can still start `OkayEngine.exe` or
+`OkaySpacePlayer.exe` by hand, and a changed launcher can skip the check. So the launcher requires sign-in; the engine is
+not locked. See "Launcher sign-in gate" in [UNFINISHED.md](UNFINISHED.md) for phase 2.
+
 It picks a backend automatically at runtime from what's configured:
 
 | Backend | When | Identifier | Where credentials live |

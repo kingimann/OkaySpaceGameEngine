@@ -57,6 +57,7 @@
 // The opt-in OkayUI backend (docs/own_ui_toolkit.md, section 5): the setting and, when OkayUI is compiled in, the host.
 #include "OkayUIBackend.hpp"
 #include "LauncherTips.hpp"
+#include "LoginGate.hpp"      // the sign-in gate decision (header only, unit tested)
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIHost.hpp"
 #include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of the hosted rectangle?
@@ -153,6 +154,20 @@ bool g_chatInOwnWindow = false;          // true while drawing the chat window's
 // Resolve an engine/player exe by name, searching next to the launcher and in the
 // Tools/ subfolder (defined fully below; forward-declared for the updater).
 std::string FindExe(std::initializer_list<const char*> names);
+
+// ---- Sign-in gate (phase 1: the launcher requires sign-in) -------------------------------------------------------------------------
+// g_loginVerdict is recomputed once a frame by UpdateLoginGate (see the pump below) from the saved session and shared/LoginGate.hpp.
+// Until the first computation it is "NeedSignIn", so nothing starts before the check ran. EVERY way this launcher starts the editor, a
+// game or a server join calls RequireSignedIn first, so hiding a button is not the only thing in the way. It is a client-side check:
+// OkayEngine.exe / OkaySpacePlayer.exe can still be started by hand (docs/UNFINISHED.md, "Launcher sign-in gate").
+okay::logingate::Verdict g_loginVerdict = okay::logingate::Verdict::NeedSignIn;
+bool g_requireLoginSetting = true;          // launcher.cfg require_login (default ON); OKAY_REQUIRE_LOGIN overrides it
+void Toast(const std::string& m, int kind);
+static bool RequireSignedIn(const char* what) {
+    if (g_loginVerdict == okay::logingate::Verdict::Allowed) return true;
+    Toast(std::string("Sign in to ") + what + ".", 2);
+    return false;
+}
 
 // Where published builds live: the assets of the latest GitHub Release (this is
 // what the release workflow uploads). "releases/latest/download/<name>" always
@@ -1294,6 +1309,7 @@ static std::string PlaytimeLabel(std::string s) {   // safe for the '|' file and
 }
 // Start `exe args` and track how long it runs. False if it couldn't start.
 static bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title) {
+    if (!RequireSignedIn("start the editor or a game")) return false;   // the one place editor, player and official-game starts go through
     PlayProc pp; pp.key = PlaytimeLabel(key); pp.title = PlaytimeLabel(title); pp.lastCredit = okay::platform::TicksMs32();
 #if defined(_WIN32)
     std::string cmd = "\"" + exe + "\"" + (args.empty() ? std::string() : " " + args);
@@ -1437,6 +1453,7 @@ static bool AntiCheatAllowsSceneLaunch(const std::string& scene) {
 // game (the player with a scene) is tracked for playtime.
 void Launch(const std::string& exe, const std::string& arg = "") {
     if (exe.empty()) return;
+    if (exe != g_selfPath && !RequireSignedIn("start a game or the editor")) return;
     if (!arg.empty() && exe != g_selfPath && !AntiCheatAllowsSceneLaunch(arg)) return;
     if (!arg.empty() && exe != g_selfPath) {
         const std::string title = GameTitleFromPath(arg);
@@ -1510,6 +1527,7 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
                   const std::string& newProjectDir = "", const std::string& openScene = "",
                   const std::string& projectVersion = "", int gpu = -1) {
     if (exe.empty()) return;
+    if (!RequireSignedIn("open the editor")) return;
     std::string args = "--launcher " + std::to_string(CurrentPid());
     // Every value is quoted for the platform's command line (spaces, quotes and `$` in a name or path stay one argument).
     if (!tmpl.empty()) args += " --template " + okayversions::QuoteArg(tmpl);
@@ -1534,6 +1552,7 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
 // Open `scene` with an installed editor of another version, the way the editor expects (docs/project_upgrade.md):
 // --launcher <pid> --open <scene> --keep-version. False when that version's editor is not there.
 bool LaunchEditorVersion(const std::string& version, const std::string& scene) {
+    if (!RequireSignedIn("open a project")) return true;   // true: "handled", so the caller does not also say the version is missing
     const fs::path exe = okayver::InstalledEditorPath(LauncherDirPath(), version);
     std::error_code ec;
     if (exe.empty() || scene.empty() || !fs::is_regular_file(exe, ec)) return false;
@@ -1562,6 +1581,7 @@ std::vector<std::string> g_hiddenProjects;  // project folders removed from the 
 std::string CreateProject(const std::string& location, const std::string& rawName,
                           const std::string& templateTitle, const std::string& editorExe,
                           const std::string& projectVersion = "", int gpu = -1, bool gitInit = false) {
+    if (!RequireSignedIn("create a project")) return "";
     std::error_code ec;
     // The same checks the Create form shows: a bad name or place is said so, and nothing is made.
     const std::string asked = rawName.empty() ? std::string("MyGame") : rawName;
@@ -4551,6 +4571,7 @@ void LoadPrefs() {
         }
         else if (k == "win_w") { try { g_winW = std::stoi(v); } catch (...) {} }
         else if (k == "chat_window") g_chatSeparate = (v != "0");
+        else if (k == "require_login") g_requireLoginSetting = (v != "0");
         else if (k == "voice_relay") g_voiceRelay = v;
         else if (k == "voice_in") g_voiceInDev = v;
         else if (k == "voice_out") g_voiceOutDev = v;
@@ -4623,6 +4644,7 @@ void SavePrefs() {
     }
     f << "win_w=" << g_winW << "\n";
     f << "chat_window=" << (g_chatSeparate ? 1 : 0) << "\n";
+    f << "require_login=" << (g_requireLoginSetting ? 1 : 0) << "\n";
     f << "voice_relay=" << g_voiceRelay << "\nvoice_gate=" << g_voiceGate << "\n";
     f << "voice_in=" << g_voiceInDev << "\nvoice_out=" << g_voiceOutDev << "\n";
     f << "voice_in_gain=" << g_voiceInGain << "\nvoice_out_vol=" << g_voiceOutVol << "\n";
@@ -7960,6 +7982,7 @@ static std::string CallClock(long secs) {
     return b;
 }
 static bool VoiceJoin(const std::string& room, const std::string& key) {
+    if (!RequireSignedIn("join a voice channel")) return false;
     std::string host = g_voiceRelay; std::uint16_t port = 45100;
     while (!host.empty() && host.back() == ' ') host.pop_back();
     if (host.empty()) host = g_siteVoiceRelay;   // the site-wide voice server
@@ -7999,6 +8022,7 @@ static void VoiceJoinDmCall(const std::string& uid, const std::string& name, con
     g_call.code = code; g_call.title = name; g_call.answered = true; g_call.started = okay::platform::TicksMs32();
 }
 static void VoiceJoinServer(long serverId, const std::string& serverName, const std::string& invite) {
+    if (!RequireSignedIn("join a server")) return;
     if (g_call.kind == 2 && g_call.serverId == serverId) return;
     if (g_call.kind) VoiceHangup();
     if (!VoiceJoin("sv-" + std::to_string(serverId), "server|" + std::to_string(serverId) + "|" + invite)) return;
@@ -10957,6 +10981,7 @@ static std::string g_mpPassLink;  static bool g_mpPassReq = false;   // ask for 
 static std::string g_mpPickLink;  static bool g_mpPickReq = false;   // "which of your games is this?"
 static bool TicketPreflightHolds(const okay::JoinLink& l, const std::string& scene);   // (defined with the anti-cheat ban code below)
 static void MpLaunch(const okay::JoinLink& in) {
+    if (!RequireSignedIn("join a game")) return;
     okay::JoinLink l = in;
     const std::string link = l.Format();
     // Already playing it: the running game switches to this session.
@@ -10988,6 +11013,7 @@ static void MpLaunch(const okay::JoinLink& in) {
 // match of `players` in `mode` and connects when one is found (its own banner
 // shows progress + Cancel). A party leader brings the party; members follow.
 static void MpFindMatch(const std::string& game, const std::string& mode, int players, const std::string& region) {
+    if (!RequireSignedIn("find a match")) return;
     auto enc = [](const std::string& v) {
         std::string o;
         for (unsigned char c : v) { if (std::isalnum(c) || c == '-' || c == '_' || c == '.') o += (char)c; else { char b[4]; std::snprintf(b, sizeof(b), "%%%02X", c); o += b; } }
@@ -13080,10 +13106,17 @@ static int RoleCheckWorker(void*) {
 // from the saved session a few minutes before expiry and saves it; the main
 // session and every worker (on a 401) then pick the new token up from disk.
 static volatile bool g_tokRefreshBusy = false;
+static volatile bool g_loginRejected = false;   // set by TokenRefreshWorker when the server refused the session; UpdateLoginGate signs out
 static int TokenRefreshWorker(void*) {
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
-        a.RefreshIfExpiring(600);
+        const bool renewed = a.RefreshIfExpiring(600);
+        // Sign-in gate: the token is expired and could not be renewed. Offline keeps the session (the 7-day grace applies); a server that
+        // refuses it (VerifySession clears the saved session on 401/403) means the person is signed out at once.
+        if (!renewed && a.IsLoggedIn() && a.TokenExpiresAt() <= (long)std::time(nullptr)) {
+            a.VerifySession();
+            if (!a.IsLoggedIn()) g_loginRejected = true;
+        }
     } catch (...) {}
     g_tokRefreshBusy = false;
     return 0;
@@ -13099,6 +13132,38 @@ static void PumpTokenRefresh(okay::account::AccountService& account) {
     g_tokRefreshBusy = true;
     if (SDL_Thread* t = SDL_CreateThread(TokenRefreshWorker, "okay-token", nullptr)) SDL_DetachThread(t);
     else g_tokRefreshBusy = false;
+}
+
+// Sign-in gate, once a frame (main thread): works out g_loginVerdict from the saved session. See shared/LoginGate.hpp for the rules:
+// a valid saved session is signed in (offline too); an expired token that cannot be renewed keeps working for
+// okay::logingate::kOfflineGraceSeconds (7 days) after the last time the server confirmed it; a session the server refused signs out.
+// "Confirmed by the server" = the token is unexpired, because the server issued it at most an hour ago; that moment is written to
+// login_lastcheck.txt (at most every 10 minutes) so it survives a restart while offline.
+static bool LoginGateRequired() {
+    static const bool demo = std::getenv("OKAY_UI_DEMO_USER") || std::getenv("OKAY_UI_DEMO_TAB") || std::getenv("OKAY_CHAT_DEMO") ||
+                             std::getenv("OKAY_MP_DEMO") || std::getenv("OKAY_VOICE_DEMO") || std::getenv("OKAY_VOICE_DEMO_SERVER");
+    return okay::logingate::Required(std::getenv("OKAY_REQUIRE_LOGIN"), g_requireLoginSetting, demo);
+}
+static void UpdateLoginGate(okay::account::AccountService& a, const std::string& cfgDir) {
+    namespace lg = okay::logingate;
+    if (g_loginRejected) {   // the refresh worker saw the server refuse the session
+        g_loginRejected = false;
+        if (a.IsLoggedIn()) { a.Logout(); Toast("You were signed out. Please sign in again.", 2); }
+    }
+    static long lastCheck = -1; static std::string lastDir;
+    if (lastCheck < 0 || lastDir != cfgDir) { lastCheck = lg::ReadLastCheck(cfgDir); lastDir = cfgDir; }
+    const long now = (long)std::time(nullptr);
+    lg::Inputs in;
+    in.required = LoginGateRequired();
+    in.signedIn = a.IsLoggedIn();
+    in.onlineBackend = a.IsOnline();
+    in.tokenExpiresAt = in.signedIn ? a.TokenExpiresAt() : 0;
+    in.now = now;
+    if (in.signedIn && in.onlineBackend && in.tokenExpiresAt > now && !cfgDir.empty() && (lastCheck <= 0 || now - lastCheck > 600 || lastCheck > now)) {
+        if (lg::WriteLastCheck(cfgDir, now)) lastCheck = now;
+    }
+    in.lastOnlineCheck = lastCheck;
+    g_loginVerdict = lg::Decide(in);
 }
 
 static void PumpRoleCheck(bool signedIn) {
@@ -16798,6 +16863,7 @@ static bool OfficialRunning() {
 }
 
 static void PlayOfficial() {
+    if (!RequireSignedIn("play")) return;
     const std::string name = g_offInstalled.name;
     const fs::path exe = og::ResolveInside(OfficialDir(), g_offInstalled.exe);
     std::error_code ec;
@@ -17990,6 +18056,7 @@ int main(int argc, char** argv) {
         if (vt) SDL_WaitThread(vt, nullptr);
     }
 
+    UpdateLoginGate(*accountPtr, acctCfgDir.string());   // sign-in gate: decide before anything can launch (command line, protocol link)
     // Start the background friends/DM poll (its own service, read from disk each
     // cycle) so the nav badges never block the UI on the network.
     g_pollCfgDir = acctCfgDir.string(); g_pollUrl = serverUrl; g_pollKey = apiKey;
@@ -18105,6 +18172,7 @@ int main(int argc, char** argv) {
                     else { StartChatUpload(dropped, g_chatDropUid, g_chatDropGroup); Toast("Sending " + fs::path(dropped).filename().string(), 1); }
                     continue;
                 }
+                if (!RequireSignedIn("open or install games")) continue;   // a dropped game / project / package
                 std::string ext;
                 auto dot = dropped.rfind('.');
                 if (dot != std::string::npos) for (char ch : dropped.substr(dot)) ext += (char)std::tolower((unsigned char)ch);
@@ -18293,6 +18361,9 @@ int main(int argc, char** argv) {
         // While minimized or hidden, idle cheaply instead of spinning the render
         // loop (there's nothing to draw until the window is restored).
         // Voice: ring on new calls, notice hang-ups, keep my name current.
+        UpdateLoginGate(account, acctCfgDir.string());   // sign-in gate: recomputed before anything this frame can start something
+        const bool loginGated = g_loginVerdict != okay::logingate::Verdict::Allowed;
+        if (loginGated) { g_chatWinOpen = false; g_notifPanelOpen = false; ClosePublicProfile(); }   // no Chat / Notifications / profiles behind the gate
         if (account.IsLoggedIn()) g_voiceMe = account.CurrentSession().username;
         VoiceHandleSignals();
         VoicePump();
@@ -18956,6 +19027,8 @@ int main(int argc, char** argv) {
         // beside it, separated by a single hairline.
         static const char* kUiDemoUser = std::getenv("OKAY_UI_DEMO_USER");   // dev screenshot hook
         const bool navSignedIn = account.IsLoggedIn() || kUiDemoUser;
+        // Sign-in gate: only Account (sign in / sign up / forgot password) and Settings (about, quit) are reachable.
+        if (loginGated && tab != 3 && tab != 4) { tab = 3; ClosePublicProfile(); }
         const float kNavExpandedW = 232.0f, kNavCollapsedW = 64.0f;
         const float navW = g_navCollapsed ? kNavCollapsedW : kNavExpandedW;
         const float navRowH = g_navCollapsed ? 40.0f : 36.0f;
@@ -19106,6 +19179,11 @@ int main(int argc, char** argv) {
             if (navRow(id, navs[i], i, tab == i, badge, badgeCol)) { tab = i; ClosePublicProfile(); }
         };
         const ImU32 navSoft = ImGui::GetColorU32(ImVec4(kAccent.x, kAccent.y, kAccent.z, 0.40f));
+        if (loginGated) {
+            ImGui::Dummy(ImVec2(0, 10));
+            if (!g_navCollapsed) { ImGui::PushTextWrapPos(0); ImGui::TextDisabled("Sign in to use OkaySpace."); ImGui::PopTextWrapPos(); }
+        }
+        if (!loginGated) {
         navSection("MENU");
         tabRow(0);
         tabRow(1, LibraryGameCount(scenes), navSoft);     // built + web games (not editor projects)
@@ -19133,6 +19211,7 @@ int main(int argc, char** argv) {
             navSection("MODERATION");
             if (navRow("##navadmin", "Admin", kIcoShield, tab == 11 && !g_pfOpen, 0, 0)) { tab = 11; ClosePublicProfile(); }
         }
+        }   // !loginGated
         ImGui::EndChild();   // end scrollable nav items
 
         {   // ---- Update card (only while checking/downloading, or with news) ----
@@ -19216,14 +19295,14 @@ int main(int argc, char** argv) {
         }
         {   // ---- Notifications + Settings ----
             int unread = NotifUnread();
-            if (navRow("##navbell", "Notifications", kIcoBell, g_notifPanelOpen, unread, navRed)) {
+            if (!loginGated && navRow("##navbell", "Notifications", kIcoBell, g_notifPanelOpen, unread, navRed)) {
                 g_notifPanelOpen = !g_notifPanelOpen;
                 if (g_notifPanelOpen) {
                     g_notifFresh.clear();
                     for (auto& n : g_notifs) { if (!n.read) g_notifFresh.insert(n.key); n.read = true; }   // opening clears unread
                 }
             }
-            g_notifBellMin = ImGui::GetItemRectMin(); g_notifBellMax = ImGui::GetItemRectMax();
+            if (!loginGated) { g_notifBellMin = ImGui::GetItemRectMin(); g_notifBellMax = ImGui::GetItemRectMax(); }
             if (navRow("##nav4", navs[4], 4, tab == 4, 0, 0)) { tab = 4; ClosePublicProfile(); }
         }
         {   // ---- Profile card (opens the Account tab) ----
@@ -19363,10 +19442,26 @@ int main(int argc, char** argv) {
                 if (dp && *dp && std::getenv("OKAY_UI_DEMO_USER")) OpenPublicProfile("", dp);
             }
         }
-        DrawBanBanner();
-        DrawAcBanBanner();
+        if (loginGated) { ClosePublicProfile(); if (tab != 3 && tab != 4) tab = 3; }   // something earlier this frame may have changed the page
+        const bool gateStale = loginGated && account.IsLoggedIn();   // signed in, but the server could not confirm it for too long
+        if (!loginGated) { DrawBanBanner(); DrawAcBanBanner(); }
         DrawReportPopup();
-        if (g_pfOpen) {
+        if (gateStale && tab == 3) {                      // ---- Sign-in gate: session needs the server ----
+            sectionHeader("Sign in to continue", nullptr);
+            ImGui::PushTextWrapPos(520.0f);
+            ImGui::TextUnformatted("OkaySpace could not confirm your account with the server for more than 7 days (or ever), so it needs the internet once before you can continue.");
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(0, 10));
+            ImGui::BeginDisabled(g_tokRefreshBusy);
+            if (PrimaryButton(g_tokRefreshBusy ? "Checking\xE2\x80\xA6" : "Try again", ImVec2(180, 40)) && !g_tokRefreshBusy) {
+                g_tokRefreshBusy = true;
+                if (SDL_Thread* t = SDL_CreateThread(TokenRefreshWorker, "okay-token", nullptr)) SDL_DetachThread(t);
+                else g_tokRefreshBusy = false;
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Sign out", ImVec2(120, 40))) account.Logout();
+        } else if (g_pfOpen) {
             PfPageOut po = DrawPublicProfilePage(account, tab);
             if (po.gotoTab >= 0) {
                 tab = po.gotoTab;
@@ -21299,7 +21394,7 @@ int main(int argc, char** argv) {
                 ImGui::EndPopup();
             }
         } else if (tab == 3) {                            // ---- Account ----
-            sectionHeader("Account", nullptr);
+            sectionHeader(loginGated ? "Sign in to continue" : "Account", loginGated ? "Sign in or create an account to use the launcher." : nullptr);
 
             if (account.IsLoggedIn() || kUiDemoUser) {
                 const bool acDemo = !account.IsLoggedIn();   // OKAY_UI_DEMO_USER screenshots
@@ -25474,7 +25569,8 @@ int main(int argc, char** argv) {
                     bool jnBtn = ImGui::Button("Join server", ImVec2(-1, 34));
                     ImGui::EndDisabled();
                     if ((jnBtn || jn) && svJoin[0]) {
-                        if (sv.JoinServer(svJoin, &svErr)) { svJoin[0] = '\0'; svErr.clear(); svNextList = 0; Toast("Joined server", 1); ImGui::CloseCurrentPopup(); }
+                        if (!RequireSignedIn("join a server")) {}
+                        else if (sv.JoinServer(svJoin, &svErr)) { svJoin[0] = '\0'; svErr.clear(); svNextList = 0; Toast("Joined server", 1); ImGui::CloseCurrentPopup(); }
                     }
                     if (!svErr.empty()) { ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.5f, 0.5f, 1)); ImGui::TextWrapped("%s", svErr.c_str()); ImGui::PopStyleColor(); }
                     ImGui::Dummy(ImVec2(0, 4));

@@ -1699,6 +1699,10 @@ add_executable(test_crash_context test_crash_context.cpp)
 target_include_directories(test_crash_context PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_context COMMAND test_crash_context)
 
+add_executable(test_crash_upload test_crash_upload.cpp)
+target_include_directories(test_crash_upload PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME crash_upload COMMAND test_crash_upload)
+
 add_executable(test_crash_scrub test_crash_scrub.cpp)
 target_include_directories(test_crash_scrub PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME crash_scrub COMMAND test_crash_scrub)

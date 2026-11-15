@@ -3256,6 +3256,11 @@ set_tests_properties(batche_hostile PROPERTIES TIMEOUT 600)
 
 add_executable(test_own_dispatch_e test_own_dispatch_e.cpp)
 target_link_libraries(test_own_dispatch_e PRIVATE okay::engine)
+foreach(_f MDC HMP CSM)   # -DOKAY_OWN_<FMT>=ON: the test then requires the own reader to be the default
+    if(OKAY_OWN_${_f})
+        target_compile_definitions(test_own_dispatch_e PRIVATE OKAY_EXPECT_OWN_${_f})
+    endif()
+endforeach()
 add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}

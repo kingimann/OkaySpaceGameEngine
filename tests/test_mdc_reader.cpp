@@ -48,6 +48,18 @@ int main() {
         CHECK(m.nodes[2].name == "tag_weapon" && fx::Near(m.nodes[2].position.x, -0.5f) && fx::Near(m.nodes[2].position.y, 0) && fx::Near(m.nodes[2].position.z, 0.25f));
         CHECK(HasNote(m, "3 frames") && HasNote(m, "2 tag(s)") && HasNote(m, "shader names"));
     }
+    {   // a shader name that climbs out or is absolute loses those parts (no file is opened, but the name stays inside)
+        for (const char* in : {"../../etc/passwd", "/abs/x.tga", "a/../../b.tga", "C:\\\\x\\y.tga"}) {
+            fx::MdcSpec sp; sp.shader = in;
+            ImportedModel m; std::string err;
+            CHECK(ReadMdcBuffer(fx::BuildMdc(sp), m, &err) && m.materials.size() == 1);
+            const std::string t = m.materials[0].texture;
+            CHECK(t.find("..") == std::string::npos && (t.empty() || t[0] != '/') && HasNote(m, "segments"));
+        }
+        fx::MdcSpec sp; sp.shader = "../../etc/passwd";
+        ImportedModel m; std::string err;
+        CHECK(ReadMdcBuffer(fx::BuildMdc(sp), m, &err) && m.materials[0].texture == "etc/passwd");
+    }
     {   // frame 0 is a compressed frame: its offsets (units of 0.05, 127 = zero) move the base vertices
         fx::MdcSpec sp; sp.compFirst = true;
         ImportedModel m; std::string err;

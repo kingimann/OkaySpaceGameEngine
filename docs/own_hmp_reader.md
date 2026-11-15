@@ -40,7 +40,7 @@ Position of grid point (row r, column c): `x = origin.x + c * cellX`, `y = origi
 
 Mesh: one vertex per grid point, two triangles per cell, counter clockwise seen from above (+Z), smooth normals (area weighted sum of the face normals at each point), texture coordinates `u = c / (columns - 1)`, `v = 1 - r / (rows - 1)` (generated: the file has none). The root node turns Z-up into Y-up.
 
-**Guessed, not verified:** which end of the rows is "up" in the skin picture (so `v` could be flipped), whether a row is a line of constant y (the sample is square, so the other reading cannot be told apart by size; the symmetric -80..80 range cannot tell either), and the meaning of the stored normal bytes.
+**Guessed, not verified:** which end of the rows is "up" in the skin picture (so `v` could be flipped), whether a row is a line of constant y (the sample is square, so the other reading cannot be told apart by size; the symmetric -80..80 range cannot tell either), the meaning of the stored normal bytes, that origin x and y are the start of the grid (the symmetric -80..80 range supports it but does not prove it), that the first integer of a skin is a type and that type 4 means 3 bytes per pixel (only one skin, of one size, was seen), and that the 36-byte frame header can be skipped unread (it is the same in both files).
 
 ## Not handled
 

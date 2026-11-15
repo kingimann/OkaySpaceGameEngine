@@ -37,7 +37,24 @@ static void TestUnsetEnv(const char* n) {
 static void WriteFile(const fs::path& p, const std::string& s) { std::ofstream f(p, std::ios::binary); f.write(s.data(), (std::streamsize)s.size()); }
 static std::size_t Verts(const ImportedModel& m) { std::size_t n = 0; for (const ImportedPart& p : m.parts) n += p.mesh.vertices.size(); return n; }
 
-struct Case { const char* file; const char* ext; const char* env; std::string bytes; std::size_t tris, nodes, clips; bool (*direct)(const std::string&, ImportedModel&, std::string*); };
+// tests/CMakeLists.txt defines OKAY_EXPECT_OWN_<FMT> when the build was configured with -DOKAY_OWN_<FMT>=ON.
+#ifdef OKAY_EXPECT_OWN_MDC
+constexpr bool EXPECT_MDC = true;
+#else
+constexpr bool EXPECT_MDC = false;
+#endif
+#ifdef OKAY_EXPECT_OWN_HMP
+constexpr bool EXPECT_HMP = true;
+#else
+constexpr bool EXPECT_HMP = false;
+#endif
+#ifdef OKAY_EXPECT_OWN_CSM
+constexpr bool EXPECT_CSM = true;
+#else
+constexpr bool EXPECT_CSM = false;
+#endif
+
+struct Case { const char* file; const char* ext; const char* env; std::string bytes; std::size_t tris, nodes, clips; bool expectOwn; bool (*direct)(const std::string&, ImportedModel&, std::string*); };
 static bool DMdc(const std::string& p, ImportedModel& m, std::string* e) { return ReadMdcFile(p, m, e); }
 static bool DHmp(const std::string& p, ImportedModel& m, std::string* e) { return ReadHmpFile(p, m, e); }
 static bool DCsm(const std::string& p, ImportedModel& m, std::string* e) { return ReadCsmFile(p, m, e); }
@@ -47,10 +64,27 @@ int main() {
     const fs::path dir = fs::temp_directory_path() / "okay_own_dispatch_e";
     fs::create_directories(dir);
     const Case cases[] = {
-        {"t.mdc", ".mdc", "OKAY_OWN_MDC", fx::BuildMdc(), 2, 3, 0, DMdc},     // the quad (2 triangles) and two tags as nodes
-        {"t.hmp", ".hmp", "OKAY_OWN_HMP", fx::BuildHmp(), 8, 1, 0, DHmp},     // 3 x 3 grid points: 8 triangles
-        {"t.csm", ".csm", "OKAY_OWN_CSM", fx::BuildCsm(), 0, 4, 1, DCsm},     // three markers and a root; one clip
+        {"t.mdc", ".mdc", "OKAY_OWN_MDC", fx::BuildMdc(), 2, 3, 0, EXPECT_MDC, DMdc},     // the quad (2 triangles) and two tags as nodes
+        {"t.hmp", ".hmp", "OKAY_OWN_HMP", fx::BuildHmp(), 8, 1, 0, EXPECT_HMP, DHmp},     // 3 x 3 grid points: 8 triangles
+        {"t.csm", ".csm", "OKAY_OWN_CSM", fx::BuildCsm(), 0, 4, 1, EXPECT_CSM, DCsm},     // three markers and a root; one clip
     };
+    // The build default, before anything is switched at run time: with -DOKAY_OWN_<FMT>=ON the own reader must be the default and a
+    // file must import through it (this fails if the engine did not get OKAY_OWN_<FMT>_DEFAULT); with the option OFF it must not be.
+    for (const Case& c : cases) {
+        TestUnsetEnv(c.env);
+        const std::string path = (dir / (std::string("default_") + c.file)).string();
+        WriteFile(path, c.bytes);
+        ImportedModel m; std::string err;
+        const bool ok = ImportModelData(path, m, ImportBackend::Default, false, &err);
+        if (c.expectOwn) {
+            if (!ok) std::fprintf(stderr, "  %s: %s\n", c.file, err.c_str());
+            CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
+            CHECK(ok && m.backend == "own" && fx::TriCount(m) == c.tris);
+        } else {
+            CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
+            CHECK(!ok || m.backend != "own");
+        }
+    }
     for (const Case& c : cases) {
         const std::string path = (dir / c.file).string();
         WriteFile(path, c.bytes);
@@ -74,14 +108,14 @@ int main() {
         SetImportBackend(c.ext, ImportBackend::Default);
         TestSetEnv(c.env, "1");
         CHECK(EffectiveImportBackend(c.ext) == ImportBackend::Own);
-        for (const Case& other : cases) if (&other != &c) CHECK(EffectiveImportBackend(other.ext) != ImportBackend::Own);
+        for (const Case& other : cases) if (&other != &c && !other.expectOwn) CHECK(EffectiveImportBackend(other.ext) != ImportBackend::Own);
         ImportedModel e1;
         CHECK(ImportModelData(path, e1, ImportBackend::Default, false, &err) && e1.backend == "own");
         TestSetEnv(c.env, "0");
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         TestUnsetEnv(c.env);
         // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
-        if (!AssimpAvailable()) {
+        if (!AssimpAvailable() && !c.expectOwn) {
             CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
             CHECK((" " + ImportableExtensions() + " ").find(std::string(" ") + c.ext + " ") == std::string::npos);
             ImportedModel d; std::string e2;

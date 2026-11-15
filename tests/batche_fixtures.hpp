@@ -27,12 +27,13 @@ struct MdcSpec {
     bool compFirst = false;
     int frames = 3;
     int tags = 2;
+    std::string shader = "textures\\base\\a.tga";
     bool secondSurface = false;   // a second surface "tri" (3 vertices, 1 triangle) with its own shader
 };
 inline std::string BuildMdc(const MdcSpec& sp = MdcSpec{}) {
     struct Surf { std::string name, shader; std::vector<std::array<int, 3>> pos; std::vector<std::array<float, 2>> uv; std::vector<std::array<int, 3>> tris; };
     std::vector<Surf> surfs;
-    surfs.push_back(Surf{"quad", "textures\\base\\a.tga", {{0, 0, 0}, {64, 0, 0}, {64, 64, 0}, {0, 64, 0}}, {{0, 0}, {0.5f, 0}, {0.5f, 0.25f}, {0, 0.25f}}, {{0, 2, 1}, {0, 3, 2}}});
+    surfs.push_back(Surf{"quad", sp.shader, {{0, 0, 0}, {64, 0, 0}, {64, 64, 0}, {0, 64, 0}}, {{0, 0}, {0.5f, 0}, {0.5f, 0.25f}, {0, 0.25f}}, {{0, 2, 1}, {0, 3, 2}}});
     if (sp.secondSurface) surfs.push_back(Surf{"tri", "models/b", {{0, 0, 64}, {64, 0, 64}, {0, 64, 64}}, {{0, 0}, {1, 0}, {0, 1}}, {{0, 2, 1}}});
     const int tags = sp.tags;
     std::string o;

@@ -2,9 +2,11 @@
 // part per surface (texture coordinates, the stored normals, the first shader name as the texture) and the tags
 // (attachment points) of the first frame as empty child nodes. MDC is MD3 with "compressed" frames: a few full base
 // frames and, for the other frames, small per-vertex offsets from a base frame.
-// Written from the public description of the format (id Software's published model structures, mdcHeader_t /
-// mdcSurface_t / mdcXyzCompressed_t, and the MD3 notes they build on) and from the field-by-field analysis of one real
-// file (docs/own_mdc_reader.md says what was checked and what was not). No other project's importer source was read.
+// Written from my own memory of the layout of the format (a 112 byte file header, a 124 byte surface header, a 56 byte frame
+// record, 8 byte base vertices, 4 byte compressed vertices, 12 byte tags; the MD3 notes of this repository) and from the
+// field-by-field analysis of one real file (docs/own_mdc_reader.md says what was checked and what was not). The
+// compressed-offset constants (0.05 scale, bias 127, 1/64 position scale) were typed from memory and are NOT verified on any
+// real file (frame 0 of the only sample is not compressed). No other project's source was read.
 // Bounds-checked, per-file budgets, no recursion, no allocation from an unchecked count.
 // See okay/Render/ModelData.hpp and docs/own_mdc_reader.md.
 #include "BinReader.hpp"
@@ -75,7 +77,7 @@ static bool ReadMdcImpl(const std::string& bytes, ImportedModel& out, std::strin
     root.name = modelName.empty() ? "MDC" : modelName;
     out.nodes.push_back(root);
 
-    int badVert = 0, emptySurfaces = 0, degenerate = 0, noShader = 0, nonFiniteUv = 0, compressedFirst = 0;
+    int badVert = 0, emptySurfaces = 0, degenerate = 0, noShader = 0, oddShader = 0, nonFiniteUv = 0, compressedFirst = 0;
     std::uint64_t totalVerts = 0, totalTris = 0;
     std::uint64_t surf = (std::uint64_t)ofsSurfaces;
     for (std::int32_t si = 0; si < numSurfaces; ++si) {
@@ -175,6 +177,17 @@ static bool ReadMdcImpl(const std::string& bytes, ImportedModel& out, std::strin
         ImportedMaterial mat;
         mat.name = surfName;
         for (char& ch : shader) if (ch == '\\') ch = '/';
+        {   // keep the name relative and inside: drop empty, "." and ".." segments (an absolute or climbing name cannot survive)
+            std::string clean, seg;
+            for (std::size_t k = 0; k <= shader.size(); ++k) {
+                if (k == shader.size() || shader[k] == '/') {
+                    if (!seg.empty() && seg != "." && seg != ".." && seg.find(':') == std::string::npos) { if (!clean.empty()) clean += '/'; clean += seg; }
+                    seg.clear();
+                } else seg += shader[k];
+            }
+            if (clean != shader) ++oddShader;
+            shader = clean;
+        }
         mat.texture = shader;
         if (shader.empty()) ++noShader;
         mat.hasDiffuse = true;
@@ -210,6 +223,7 @@ static bool ReadMdcImpl(const std::string& bytes, ImportedModel& out, std::strin
     if (numTags > 0) note(std::to_string(numTags) + " tag(s) became empty child nodes of the root at their first-frame position; their rotation angles and their animation are not read");
     note("texture names are the shader names as written (relative to the game folder, not to the model); .skin and .shader files are not read");
     if (compressedFirst) note(std::to_string(compressedFirst) + " surface(s) whose first frame is a compressed frame: offsets applied to the base vertices, smooth normals generated (the compressed normal table is not read)");
+    if (oddShader) note(std::to_string(oddShader) + " shader name(s) had empty, '.', '..' or drive-letter segments (or began with a slash): those segments were removed so the texture name stays relative");
     if (noShader) note(std::to_string(noShader) + " surface(s) name no shader: no texture");
     if (badVert) note(std::to_string(badVert) + " triangle(s) with an out-of-range vertex index skipped");
     if (degenerate) note(std::to_string(degenerate) + " degenerate triangle(s) skipped");

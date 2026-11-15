@@ -264,6 +264,7 @@ add_library(okay_engine
     src/Render/XglReader.cpp
     src/Render/IrrSceneReader.cpp
     src/Render/NffReader.cpp
+    src/Render/TerragenReader.cpp
     src/Modeling/EditTransform.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
@@ -644,7 +645,7 @@ foreach(_fmt 3MF AMF X3D DXF LWO)
 endforeach()
 
 # Our own MD2 / MD3 / IRRMESH / B3D / X readers (batch C) and AC3D / OGRE / XGL / IRR / NFF (batch D), same opt-in rules as 3DS: default OFF.
-foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF)
+foreach(_fmt MD2 MD3 IRRMESH B3D X AC3D OGRE XGL IRR NFF TER)
     if(OKAY_OWN_${_fmt})
         target_compile_definitions(okay_engine PRIVATE OKAY_OWN_${_fmt}_DEFAULT)
         message(STATUS "OkaySpace: model import reads .${_fmt} with the built-in ${_fmt} reader first")

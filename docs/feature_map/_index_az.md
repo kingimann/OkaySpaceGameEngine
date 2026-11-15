@@ -3001,6 +3001,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Own OGRE XML mesh reader (side by side, off by default) (3.6.32)
 - own stack (41.11)
 - Own STL and PLY readers, import seam (3.6.9)
+- Own Terragen reader (side by side, off by default) (3.6.37)
 - Own Windows backend (17.17.4)
 - Own X3D reader (side by side, off by default) (3.6.23)
 - Own XGL / ZGL reader (side by side, off by default) (3.6.33)

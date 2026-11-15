@@ -1,4 +1,4 @@
-# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF readers: what each reader gave on each file when this
+# Real-file corpus for the own FBX / COLLADA / 3DS / BVH / OBJ / STL / PLY / glTF / Blender / 3MF / AMF / X3D / DXF / LWO / MD2 / MD3 / IRRMESH / B3D / X / AC3D / OGRE / XGL / IRR / NFF / Terragen readers: what each reader gave on each file when this
 # manifest was written. The files are not in this repository (see docs/model_corpus.md): they come from the
 # test/models and test/models-nonbsd directories of an Assimp 5.4.3 source checkout; paths below are relative to
 # that checkout's "test" directory (OKAY_MODEL_CORPUS points at it). Tab separated:
@@ -428,3 +428,6 @@ nff	models/NFF/NFF/octahedron.nff	ok	area=173.2051	meshes=1	tris=8	bones=0	skinn
 nff	models/NFF/NFF/positionTest.nff	ok	area=2690.3634	meshes=15	tris=72704	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-8.000,-8.000,-5.000,68.000,8.000,5.000	verts=36894	tex=0	nodes=1	uv=0	nrm=1
 nff	models/NFF/NFF/spheres.nff	ok	area=734.9215	meshes=4	tris=15380	bones=0	skinned=0	clips=0	dur=0.000	mat=4	bbox=-3.000,-21.805,-4.805,8.000,8.000,11.000	verts=7698	tex=1	nodes=1	uv=0	nrm=1
 nff	models/NFF/NFF/tetrahedron.nff	ok	area=115.4700	meshes=1	tris=4	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-2.357,-4.082,-1.667,4.714,4.082,5.000	verts=12	tex=0	nodes=1	uv=0	nrm=1
+# ter: own Terragen reader
+ter	models/TER/RealisticTerrain.ter	ok	area=75029649.9144	meshes=1	tris=131072	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,-78.987,-7680.000,7680.000,874.531,0.000	verts=66049	tex=0	nodes=1	uv=1	nrm=1
+ter	models/TER/RealisticTerrain_Large.ter	ok	area=138372472.3154	meshes=1	tris=524288	bones=0	skinned=0	clips=0	dur=0.000	mat=0	bbox=0.000,-226.736,-10000.000,10000.000,1170.394,0.000	verts=263169	tex=0	nodes=1	uv=1	nrm=1

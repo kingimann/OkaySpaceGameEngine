@@ -16,6 +16,11 @@ Short words used below:
 * **ASan and UBSan**: tools that stop a program when it touches bad memory or does something the language leaves undefined.
 * **Wine**: a program that runs Windows programs on Linux. It is not Windows. **MinGW**: the compiler that builds our
   Windows programs on Linux.
+* **Hostile-input test**: feeds a reader broken or malicious files and checks that it refuses them without crashing. **Fuzz test**:
+  changes bytes of a good file thousands of times to look for crashes. **Standalone**: built from the reader's source only, without the
+  whole engine.
+* **Startup line** (or stack line): the one line each program writes at start, such as `[okay] stack: ... readers=own(...)`. The editor's
+  Help > About OkaySpace shows it. It is how you see which parts are ours.
 * **Step 0**: prep work in section 3.1. It changes no default.
 
 ## 1. Summary for the owner
@@ -115,6 +120,10 @@ announced drop is approved (section 4). For FBX, delete ufbx. For WAV, delete th
 
 ## 3. What an agent does when the owner says yes
 
+Who runs this: PR #915 (open, not merged) moves third-party work to Claude 2 (`claude2/*`, issue #422) and keeps the coordinator on
+releases and merges. The steps are written so either can run them. Whoever runs a flip pushes only their own branch and opens no PR (rule 10);
+the coordinator opens and merges it.
+
 ### 3.1 Step 0: prep work (changes no default)
 
 Do these in small PRs, each with its "How to try it" (rule 4a). They are in the order I would do them.
@@ -142,7 +151,7 @@ with `ninja -j2` and only the targets you need, and delete the build trees you m
 **C1. Announcement.** The previous release's `dist/CHANGELOG.txt` must already say "next version: ...". If it does not, ship that
 note first. The flip comes one release later.
 
-**C2. Branch.** `claude/flip-<name>` off a fresh `origin/main`. Do not reuse `claude/flip-model-readers` (see 1.1). Plain push, no force.
+**C2. Branch.** `claude/flip-<name>` (or `claude2/flip-<name>`) off a fresh `origin/main`. Do not reuse `claude/flip-model-readers` (see 1.1). Plain push, no force.
 
 **C3. The change.** In the root `CMakeLists.txt` change `option(OKAY_OWN_<FMT> "..." OFF)` to `ON` and fix the option text. Fix
 the error text in `ModelImport.cpp` that says "our own reader is off by default". Find every test and doc that says "off by default"

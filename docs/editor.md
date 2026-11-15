@@ -66,7 +66,7 @@ cmake --build build-win-editor -j
 
 ### Self-updating
 
-The **Engine → Check for Updates** menu pulls the latest engine from GitHub
+The **Help ▸ Check for Updates...** menu pulls the latest engine from GitHub
 (`git fetch` + fast-forward `pull`) when the app is run from a source checkout,
 then prompts you to rebuild. This is the same updater the standalone launcher
 uses, built right into the engine app.
@@ -131,7 +131,7 @@ Recent additions (v2.12–2.14):
 - **Material inspector** — double-click a `.okaymat` to edit albedo / emissive /
   specular / texture / tiling, then Save or **Apply to Selection**; or drag a
   `.okaymat`/image onto an object to apply it.
-- **Save Manager** (Window ▸ Save Manager) — browse and edit `.okaysave` runtime
+- **Save Manager** (View ▸ Panels ▸ Save Manager) — browse and edit `.okaysave` runtime
   save files (typed key/value table); the editor side of `save()` / `load()`.
 - **Drag & drop from Project** — drop prefabs/scenes/images/`.obj` into the Scene
   to place them; drop scripts/materials onto the Inspector or Hierarchy.
@@ -277,9 +277,12 @@ Recent additions (v2.12–2.14):
 - **Game view** — a separate *Game* panel renders the scene through its **main
   camera** with no editor chrome (grid, gizmos, selection) — what the built game
   shows. 2D or 3D follows the camera's projection; press **Play** to make it live.
-- **GameObject menu** — create Empty / Sprite / Camera / 3D primitives, and a
-  **UI** submenu that adds each UI element (Button, Panel, Image, Text, Progress
-  Bar, Slider, Toggle) as its own GameObject.
+- **GameObject menu** — **Create Empty**, **Create Empty Child** and **Create Empty
+  Parent** (Ctrl+Shift+G), then the categories **2D Object, 3D Object, Player,
+  Light, Camera, Audio, Effects** and **UI** (each UI element is its own GameObject).
+  The same categories are in the Hierarchy's **[+]** button and right-click menus
+  and in **Create Child**. The whole menu bar, and where every item went in the
+  2026-11-15 clean-up, is in [editor_menus.md](editor_menus.md).
 - **Add Component** is grouped into sections (Rendering, Physics, Camera,
   Scripting, Audio, Gameplay, UI); the search box filters across all of them.
 - **3D meshes render solid** (flat-shaded, depth-sorted) by default in both the
@@ -300,8 +303,10 @@ Recent additions (v2.12–2.14):
   the menu), and **Find References in Scene** selects the objects that use an
   asset (texture, mesh, font, script) — the most-used Project action.
 - **File menu** — New / Open / Save scenes using the engine's `SceneSerializer`
-  (`.okayscene` text files), and **Build Settings…** (Ctrl+B) to export a
-  standalone, double-clickable game.
+  (`.okayscene` text files), **Examples** (one submenu), and **Build Settings…**
+  (Ctrl+B) to export a standalone, double-clickable game. **Edit** has Undo / Redo,
+  Cut / Copy / Paste / Duplicate / Delete, Select All and **Preferences** (UI scale,
+  density, theme, accent colour). Greyed-out items say why when you hover them.
 - **Toolbar** — **Play** runs the scene's real lifecycle (Awake/Start/Update +
   scripts, physics, etc.); **Stop** restores the exact pre-play edit state;
   **Step** advances a single frame. While the game runs the toolbar also shows
@@ -430,7 +435,7 @@ MyGame/
     scene_build.txt         Scenes In Build, in order (Scene Manager)
   items.okayitems           item definitions            strings.okayloc   the string table (Localization window)
   Assets/**/*.okayloot      loot tables                 Assets/**/*.okayrecipes   crafting recipes
-                            (Window > Items, Loot & Recipes edits all three)
+                            (View > Editors & Tools > Items, Loot & Recipes edits all three)
   weapons.okayweapon        the weapon list             (View > Editors & Tools > Weapons)
 ```
 
@@ -662,7 +667,7 @@ unchanged.
   for every label, the leading tools (Move, Rotate, Scale, ...) keep theirs and the rest stay bare icons; when
   even bare icons do not fit the last tools move into the `...` menu under **Tools**. The remembered choice
   is only a preference: a wide Scene view shows all the labels, a narrow one fewer.
-- **Density** (View ▸ Appearance ▸ Density): **Comfortable** (the default) or **Compact**. It sets the row
+- **Density** (Edit ▸ Preferences ▸ Density): **Comfortable** (the default) or **Compact**. It sets the row
   spacing and field height of every panel and, in the Inspector, how wide the value column is next to the
   label (the label keeps at least about 96 px, so it stays readable in a 440 px wide Inspector) and the
   space above each component.
@@ -682,13 +687,17 @@ unchanged.
 
 - **Hierarchy right-click**:
   - On an object: Cut / Copy / Paste, **Select** (children, everything below,
-    parent, siblings, same name), **Expand / Collapse All Below**, **Transform**
-    (reset position, rotation, scale or all; move to the view centre), **Order**
-    (move up, down, to top or bottom), **Copy Text** (name or hierarchy path),
-    **Delete Children** (empties a container and keeps the object; one undo
-    step), plus create, parent and prefab actions.
-  - On empty space: create objects, **Select All**, **Deselect**,
-    **Expand / Collapse All** and **Sort A-Z**.
+    parent, siblings, same name, **same type**), **Expand / Collapse All Below**,
+    **Transform** (reset position, rotation, scale or all; move to the view
+    centre), **Order** (move up, down, to top or bottom; greyed at the ends),
+    **Copy Name or Path**, **Delete Children** (empties a container and keeps the
+    object; one undo step), **Create Child** (every Create category, the same as
+    GameObject), **Add Component...** (opens the Inspector's browser) plus parent
+    and prefab actions. With several objects selected the labels count them
+    ("Delete 3 Objects"), and an item that cannot work says why when you hover it.
+    The full list and what changed: [editor_menus.md](editor_menus.md).
+  - On empty space: **Create Empty** and the Create categories, **Paste**,
+    **Select All**, **Deselect**, **Expand / Collapse All** and **Sort A-Z**.
 - **Project right-click**:
   - On an asset: **Add to Open Scene** (scenes), **Place in Scene** or **Place
     as Child of Selected** (prefabs), **Add to Favorites** (folders), and **Copy

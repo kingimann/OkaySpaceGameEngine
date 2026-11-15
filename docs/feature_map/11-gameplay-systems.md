@@ -42,7 +42,7 @@ No open PR touches this area.
   - 11.2.5 Items, Loot & Recipes window - `editor/ContentEditors.cpp` - Window menu and View > Editors & Tools; items, loot tables (weights, quantity, roll preview) and the same window's recipe tab
 - **Code:** `Inventory/ItemDatabase`, `Inventory/LootTable`, `Components/ItemPickup`, `Components/LootSource`, `editor/ContentEditors.cpp`
 - **API:** `ItemDatabase::Get`, `ItemDefinition`, `ItemInstanceData`, `EquipSlot`, `LootTable::Roll`, `LootTable::Shares`, `LootTable::Issues`, `ItemPickup`, `LootSource`, `ItemPickup::Spawn`, script `loot_roll`, visual-script Loot Roll, Spawn Pickup
-- **Editor:** Window > Items, Loot & Recipes; View > Editors & Tools > Items, Loot & Recipes; Add Component > RPG / Turn-Based > Item Pickup, Loot Source (Edit Loot Table)
+- **Editor:** View > Editors & Tools > Items, Loot & Recipes; Add Component > RPG / Turn-Based > Item Pickup, Loot Source (Edit Loot Table)
 - **Docs:** `docs/asset_database.md` (lists the extensions only); `docs/editor.md`
 - **Tests:** `item_database`, `item_loot_recipes`, `inventory_gameplay`, `inventory_build_charge`, `vs_inventory`
 - **Status:** Works - ItemDatabase.hpp, LootTable.hpp and ItemPickup.hpp read; item definitions, pickups, drops, loot rolls, file round trip and roll distribution covered by `item_database`, `item_loot_recipes` and `inventory_gameplay`
@@ -61,7 +61,7 @@ No open PR touches this area.
   - 11.3.4 Crafting station - `Components/CraftingStation` - bench with its own panel, station tag, shift-click to craft many, nearest-in-range only
 - **Code:** `Inventory/Recipe`, `Components/Crafting`, `Components/CraftingMenu`, `Components/CraftingStation`, `editor/main.cpp` (crafting inspectors)
 - **API:** `Recipe`, `Ingredient`, `RecipeBook`, `CraftQueue`, `Crafting::Craft`, `CraftingStation`, script `craft`, visual-script Craft, `on_craft`, `on_craft_failed`
-- **Editor:** Window > Items, Loot & Recipes (Recipes tab) edits `.okayrecipes` (inputs, outputs, crafting time, bench, unlock); Add Component > Gameplay > Crafting, Crafting Menu; RPG / Turn-Based > Crafting Station (Edit Recipe Book); recipe rows in the inspector; optional `.okayrecipes` picker
+- **Editor:** View > Editors & Tools > Items, Loot & Recipes (Recipes tab) edits `.okayrecipes` (inputs, outputs, crafting time, bench, unlock); Add Component > Gameplay > Crafting, Crafting Menu; RPG / Turn-Based > Crafting Station (Edit Recipe Book); recipe rows in the inspector; optional `.okayrecipes` picker
 - **Docs:** `docs/npcs_and_crafting.md`, `docs/asset_database.md` (lists the `.okayrecipes` extension only), `docs/editor.md`
 - **Tests:** `inventory_persist_craft`, `item_loot_recipes`, `npc_crafting`, `vs_inventory`
 - **Status:** Works - Recipe.hpp and the CraftQueue functions in Recipe.cpp read; queue, bench tags, unlocks, craft counts and the recipe file round trip covered by `inventory_persist_craft` and `item_loot_recipes`
@@ -227,11 +227,11 @@ No open PR touches this area.
   - 11.12.3 Force - `Components/Volume` - pushes dynamic Rigidbody 3D bodies each physics step: one direction (turning with the object or fixed to the world) or radial, in m/s squared
   - 11.12.4 Atmosphere and Ambience - `Components/Volume` - while the camera is inside, the scene fog and vignette blend to the volume's (several volumes blend, the scene's own values come back on exit); an Audio Source on the object fades in and out
   - 11.12.7 Reverb - `Components/Volume`, `Audio/SpatialFx` - while the listener is inside, 3D sources are sent to the Schroeder reverb at the zone's preset (room, hall, cave, outdoor) and strength; `blend` fades that from the edge; overlapping zones mix; 2D sources are not sent
-  - 11.12.5 Scene view tooling - `editor/VolumeTools.*` - translucent shape and label per volume in a colour per kind, six face handles on the selection, GameObject > Volume (draw by dragging on the ground, or create at the view), Scene Overlays > Volumes (show or hide by kind), Inspector, Add Component rows; Logic Source plates and trigger zones get the same shape, handles and switch
+  - 11.12.5 Scene view tooling - `editor/VolumeTools.*` - translucent shape and label per volume in a colour per kind, six face handles on the selection, GameObject > Effects > Volume (draw by dragging on the ground, or create at the view), Scene Overlays > Volumes (show or hide by kind), Inspector, Add Component rows; Logic Source plates and trigger zones get the same shape, handles and switch
   - 11.12.6 Save and checks - `Scene/SceneSerializer`, `Testing/SceneValidator` - `volume` scene and prefab record (several per object), property registry entries, validator codes `volume.zero_size`, `volume.force_zero`, `volume.no_audio`
 - **Code:** `Components/Volume`, `editor/VolumeTools.*`, `Scene/SceneSerializer`, `Scene/BuiltinPropertiesGameplay`, `Testing/SceneValidator`
 - **API:** `Volume`, `Volume::Kind`, `VolumeGeometry`, `Volume::RespawnPoint`, `Volume::SetRespawnPoint`, `Volume::Occupants`, `Volume::ViewerWeight`
-- **Editor:** GameObject > Volume; Scene Overlays > Volumes; Add Component > Gameplay > Volume rows; Inspector "Volume (zone)"
+- **Editor:** GameObject > Effects > Volume; Scene Overlays > Volumes; Add Component > Gameplay > Volume rows; Inspector "Volume (zone)"
 - **Docs:** `docs/volumes.md`
 - **Tests:** `volumes`, `spatial_audio`, `save_coverage`, `property_registry`
 - **Status:** Works - all six kinds act in Play and are covered by the `volumes` test (shapes, handle math, respawn, force, fog and sound blend, reverb weight and tail, scene and prefab round trip, validator) and `spatial_audio` (presets, edge blend, the demo scene); the Scene view tools were driven in the real editor

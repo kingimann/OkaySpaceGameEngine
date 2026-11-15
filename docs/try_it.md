@@ -49,6 +49,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Editor looks: only Dark and Light, no blue anywhere | Editor (`Tools\OkayEngine.exe`): **View > Appearance > Theme** has two items, Dark and Light. There is no "Accent color" menu. See "Editor looks" below | New in this change; compiled and screenshotted on Linux, **not run on Windows** |
 
 ---
 
@@ -321,6 +322,37 @@ environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup
 Nothing to try.
 
 ---
+
+## Editor looks: Dark and Light, nothing blue (row 14)
+
+Owner request (2026-11-15): the editor has exactly two looks, Dark and Light, and no blue. What changed: **View > Appearance >
+Theme** now lists only **Dark** and **Light** (the old Slate, Classic and the 13 colours of **Accent color** are gone). Both
+looks are neutral greys with one neutral accent: a light graphite on Dark, a dark graphite on Light.
+
+1. Start the editor (launcher > open a project, or `Tools\OkayEngine.exe`) and open any scene, for example
+   `examples\physics\step_and_parent.okayscene` (File > Open...).
+2. Open **View > Appearance > Theme**. You should see exactly two items, **Dark** (ticked at first) and **Light**. Open the
+   **Appearance** menu: **UI Scale** and **Density** are still there, there is no **Accent color**.
+3. Click **Light**. The whole editor turns light grey and white with dark text, at once. Click **Dark** to go back. The choice
+   is remembered (`okay_settings.txt` next to the editor: `theme 0` Dark, `theme 1` Light).
+4. In both looks look for blue in these places; you should find none: the menu bar and its open menus; a selected row in the
+   **Hierarchy** (a grey wash; a prefab instance is lime green); the **Inspector** fields, sliders, check boxes and the
+   **Add Component** button (graphite or white, never blue); a selected file in the **Project** panel; the **Console** rows and
+   filter chips; the panel **tabs** (the active tab has a grey line); the **script editor** (open a script: the background,
+   selection and current line are grey; keywords orange, strings green, numbers amber); and the **Play** button area (a darker
+   toolbar while the game runs).
+5. The only blue left on purpose: the **Z** axis (X red, Y green, Z blue) on the move handles, the Vector3 fields and the
+   view cube, and the asset label called "Blue" (a colour you pick for your own files). Game UI shown in the **Game** view is
+   still drawn exactly as the player draws it.
+6. An old settings file keeps working: close the editor, change `theme` in `okay_settings.txt` to `2` (the removed Classic
+   look) or add an `accent 7` line, start the editor: it opens as Dark and no error appears.
+7. For the check that no blue colour is left in the code: `python3 scripts/find_blue_ui.py --check` (Linux checkout) lists
+   every blue colour literal; it prints `0 unmarked`.
+
+How it was checked: `tests/test_editor_theme.cpp` (no blue in any palette colour, text at least 4.5:1 and the accent at least
+3:1 against every surface in both looks, Light is the inverse of Dark, the old saved values map to Dark or Light) and
+`scripts/find_blue_ui.py --check`, both run on Linux. The editor was compiled on Linux and screenshots of both looks were
+taken from the real editor in a virtual display (software renderer); nothing was run on Windows.
 
 ## How the packaging was checked (and what was not)
 

@@ -1,4 +1,5 @@
 #include "UIRuntimeTools.hpp"
+#include "EditorWidgets.hpp"
 #include "ConsolePanel.hpp"
 #include "ExampleScenes.hpp"
 #include "imgui.h"
@@ -182,12 +183,12 @@ void DrawUIThemeWindowBody(EditorState& ed) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float rad = std::min(t.cornerRadius, 12.0f);
         // a light look on a dark editor needs an edge; glass needs something behind it
-        dl->AddRectFilled(a, b, IM_COL32(40, 44, 56, 255), rad);
+        dl->AddRectFilled(a, b, IM_COL32(47, 47, 47, 255), rad);
         dl->AddRectFilled(ImVec2(a.x + 3, a.y + 3), ImVec2(b.x - 3, b.y - 3), U32(t.panel), std::max(0.0f, rad - 2.0f));
         dl->AddRectFilled(ImVec2(a.x + 10, a.y + 32), ImVec2(a.x + 10 + cw * 0.42f, a.y + 48), U32(t.button), std::min(rad, 7.0f));
         dl->AddRectFilled(ImVec2(b.x - 24, a.y + 36), ImVec2(b.x - 12, a.y + 48), U32(t.accent), 3.0f);
         dl->AddText(ImVec2(a.x + 10, a.y + 9), U32(t.text), UITheme::PresetName(i));
-        if (sel == i) dl->AddRect(a, b, IM_COL32(90, 170, 255, 255), rad, 0, 2.0f);
+        if (sel == i) dl->AddRect(a, b, oked::AccentU32(255), rad, 0, 2.0f);
         else if (hov) dl->AddRect(a, b, IM_COL32(255, 255, 255, 120), rad, 0, 1.0f);
         ImGui::PopID();
     }
@@ -198,7 +199,7 @@ void DrawUIThemeWindowBody(EditorState& ed) {
         const float pw = ImGui::GetContentRegionAvail().x, ph = 128.0f;
         const ImVec2 a = ImGui::GetCursorScreenPos(), b(a.x + pw, a.y + ph);
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(a, b, IM_COL32(30, 34, 46, 255), 6.0f);
+        dl->AddRectFilled(a, b, IM_COL32(37, 37, 37, 255), 6.0f);
         const ImVec2 pa(a.x + 12, a.y + 10), pb(b.x - 12, b.y - 10);
         const float rad = std::min(pv.cornerRadius, 16.0f);
         if (pv.shadow) dl->AddRectFilled(ImVec2(pa.x + pv.shadowOffset.x * 0.4f, pa.y + pv.shadowOffset.y * 0.4f), ImVec2(pb.x + pv.shadowOffset.x * 0.4f, pb.y + pv.shadowOffset.y * 0.4f), U32(pv.shadowCol, 0.5f), rad);

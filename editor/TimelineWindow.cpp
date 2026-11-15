@@ -117,14 +117,14 @@ const char* KindName(Kind k) {
 
 ImU32 KindColor(Kind k) {
     switch (k) {
-    case Kind::Camera: return IM_COL32(90, 160, 240, 255);
+    case Kind::Camera: return IM_COL32(240, 120, 150, 255);
     case Kind::Transform: return IM_COL32(120, 205, 130, 255);
     case Kind::Animation: return IM_COL32(240, 160, 80, 255);
     case Kind::Audio: return IM_COL32(230, 210, 90, 255);
-    case Kind::Events: return IM_COL32(200, 130, 230, 255);
-    case Kind::Letterbox: return IM_COL32(176, 184, 198, 255);
+    case Kind::Events: return IM_COL32(215, 130, 215, 255);
+    case Kind::Letterbox: return IM_COL32(184, 184, 184, 255);
     case Kind::Shake: return IM_COL32(220, 96, 96, 255);
-    case Kind::Fade: return IM_COL32(120, 150, 230, 255);
+    case Kind::Fade: return IM_COL32(225, 195, 150, 255);
     case Kind::Nest: return IM_COL32(70, 186, 168, 255);
     default: return IM_COL32(200, 200, 200, 255);
     }
@@ -852,8 +852,8 @@ void DrawGrid(EditorState& ed, const std::vector<Row>& rows) {
     const float loopEnd = s.seq.LoopEndTime();
     float lx0 = tToX(s.seq.loopStart), lx1 = tToX(loopEnd);
     if (s.seq.loop) {
-        dl->AddRectFilled(ImVec2(lx0, rowsTop), ImVec2(lx1, bottom), IM_COL32(90, 160, 240, 20));
-        const ImU32 mc = IM_COL32(90, 160, 240, 255);
+        dl->AddRectFilled(ImVec2(lx0, rowsTop), ImVec2(lx1, bottom), AccentU32(20));
+        const ImU32 mc = AccentU32(255);
         dl->AddTriangleFilled(ImVec2(lx0, o.y + kRulerH), ImVec2(lx0, o.y + kRulerH - 9.0f), ImVec2(lx0 + 8.0f, o.y + kRulerH), mc);
         dl->AddTriangleFilled(ImVec2(lx1, o.y + kRulerH), ImVec2(lx1, o.y + kRulerH - 9.0f), ImVec2(lx1 - 8.0f, o.y + kRulerH), mc);
     }

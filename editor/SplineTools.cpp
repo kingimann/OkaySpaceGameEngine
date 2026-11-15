@@ -346,7 +346,7 @@ void DrawSplineOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, const Ve
                        ImVec2 canvasSize, ImVec2 canvasPos, bool clickable, ImGuiIO& io) {
     const View v{&vp, center, canvasSize};
     Spline* sel = SelectedSpline(ed);
-    const ImU32 curveCol = IM_COL32(110, 190, 255, 150), selCurveCol = IM_COL32(255, 205, 90, 255);
+    const ImU32 curveCol = IM_COL32(150, 230, 130, 150), selCurveCol = IM_COL32(255, 205, 90, 255);
     std::vector<Vec3> pts;
     std::vector<float> ts;
     // Every spline's curve; a click on one that isn't selected selects it.
@@ -456,7 +456,7 @@ void DrawSplineOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, const Ve
                 if (!handleUsed(i, h == 1)) continue;
                 const Vec3 hw = handleWorld(i, h == 1);
                 const ImU32 col = picked ? (hoverHandle == h || (s_pick.drag == 3 + h) ? IM_COL32(255, 240, 120, 255) : IM_COL32(240, 150, 255, 255))
-                                         : IM_COL32(200, 140, 230, 110);
+                                         : IM_COL32(215, 140, 215, 110);
                 v.Line(dl, p, hw, col, picked ? 2.0f : 1.0f);
                 ImVec2 hs;
                 if (v.ToScreen(hw, hs)) {
@@ -482,7 +482,7 @@ void DrawSplineOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, const Ve
     }
     // The picked point's move gizmo.
     if (pickOk) {
-        const ImU32 axc[3] = {IM_COL32(230, 80, 80, 255), IM_COL32(90, 210, 100, 255), IM_COL32(90, 150, 240, 255)};
+        const ImU32 axc[3] = {IM_COL32(230, 80, 80, 255), IM_COL32(90, 210, 100, 255), IM_COL32(90, 150, 240, 255)};   // blue-ok: the picked point's move gizmo: Z axis blue (X red / Y green / Z blue convention)
         for (int a = 0; a < 3; ++a) {
             if (!tipOk[a]) continue;
             const ImU32 c = (hoverAxis == a || (s_pick.drag == 2 && s_pick.axis == a)) ? IM_COL32(255, 230, 90, 255) : axc[a];

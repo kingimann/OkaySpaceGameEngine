@@ -5,6 +5,7 @@
 #include "SceneManagerPanel.hpp"
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "EditorCommon.hpp"
+#include "EditorWidgets.hpp"
 #include "ConsolePanel.hpp"
 
 #include <unordered_set>
@@ -372,7 +373,7 @@ void DrawSceneManager(EditorState& ed) {
         }
         const bool isOpen = !openPath.empty() && openPath == r.path;
         if (!r.exists) ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.42f, 1), "%s (missing)", stem.c_str());
-        else if (isOpen) ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1), "%s", stem.c_str());
+        else if (isOpen) ImGui::TextColored(oked::StatusCol(0), "%s", stem.c_str());
         else ImGui::TextUnformatted(stem.c_str());
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.path.c_str());
 

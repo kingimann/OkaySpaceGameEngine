@@ -1905,7 +1905,7 @@ void QuestLogInspector(EditorState& ed, QuestLog& ql) {
         for (const QuestDef* q : ql.Defs()) {
             ImGui::PushID(q->id.c_str());
             const QuestStatus st = ql.Status(q->id);
-            const ImVec4 c = st == QuestStatus::Active ? ImVec4(0.5f, 0.85f, 0.55f, 1) : st == QuestStatus::Completed ? ImVec4(0.6f, 0.7f, 1.0f, 1) : st == QuestStatus::Failed ? ImVec4(0.95f, 0.45f, 0.4f, 1) : ImVec4(0.6f, 0.6f, 0.65f, 1);
+            const ImVec4 c = st == QuestStatus::Active ? ImVec4(0.5f, 0.85f, 0.55f, 1) : st == QuestStatus::Completed ? ImVec4(0.80f, 0.80f, 0.80f, 1) : st == QuestStatus::Failed ? ImVec4(0.95f, 0.45f, 0.4f, 1) : ImVec4(0.617f, 0.617f, 0.617f, 1);
             ImGui::TextColored(c, "%s", QuestStatusName(st));
             ImGui::SameLine(90);
             ImGui::Text("%s", q->id.c_str());

@@ -370,10 +370,11 @@ void DrawNavigationWindow(EditorState& ed) {
         ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, AccentCol(0.75f));
+        ImGui::PushStyleColor(ImGuiCol_Text, AccentOnCol());
         if (ImGui::Button("Bake", ImVec2(120, 28))) {
             if (!ns->StartBake(sc)) ConsoleLog("Navigation: a bake is already running", 1);
         }
-        ImGui::PopStyleColor(3);
+        ImGui::PopStyleColor(4);
         Tip("Bake on a background thread; the editor stays responsive. The result is written to the .okaynav file.");
         ImGui::SameLine();
         if (ImGui::Button("Clear", ImVec2(90, 28))) {
@@ -520,11 +521,11 @@ void DrawNavigationOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, ImVe
         for (NavMeshAgent* a : Navigation::Agents(sc)) {
             if (!a || !a->transform || !a->gameObject || !a->gameObject->active) continue;
             const bool sel = ed.selected() == a->gameObject;
-            const ImU32 todo = sel ? IM_COL32(90, 240, 255, 255) : IM_COL32(70, 220, 235, 200);
-            const ImU32 done = IM_COL32(70, 140, 150, 110);
+            const ImU32 todo = sel ? IM_COL32(150, 240, 120, 255) : IM_COL32(130, 225, 110, 200);
+            const ImU32 done = IM_COL32(120, 150, 110, 110);
             const ImU32 corner = IM_COL32(255, 110, 230, 255);
             const Vec3 pos = a->transform->Position();
-            v.Ring(dl, Vec3{pos.x, pos.y - a->baseOffset + 0.03f, pos.z}, a->radius, sel ? todo : IM_COL32(70, 220, 235, 120), 1.0f);
+            v.Ring(dl, Vec3{pos.x, pos.y - a->baseOffset + 0.03f, pos.z}, a->radius, sel ? todo : IM_COL32(130, 225, 110, 120), 1.0f);
             if (!a->HasPath()) continue;
             const std::vector<Vec3>& path = a->Path();
             const int cur = a->CurrentCorner();
@@ -556,7 +557,7 @@ void DrawNavigationOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, ImVe
         const ImVec2 ts = ImGui::CalcTextSize(hint);
         const ImVec2 hp(canvasPos.x + 12.0f, canvasPos.y + canvasSize.y - ts.y - 14.0f);
         dl->AddRectFilled(ImVec2(hp.x - 8, hp.y - 4), ImVec2(hp.x + ts.x + 8, hp.y + ts.y + 4), IM_COL32(0, 0, 0, 160), 5.0f);
-        dl->AddText(hp, IM_COL32(120, 230, 255, 255), hint);
+        dl->AddText(hp, IM_COL32(210, 240, 190, 255), hint);
         if (a && clickable && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             const float nx = (io.MousePos.x - canvasPos.x) / canvasSize.x * 2.0f - 1.0f;
             const float ny = 1.0f - (io.MousePos.y - canvasPos.y) / canvasSize.y * 2.0f;

@@ -143,7 +143,7 @@ inline void VsNodeTooltip(const char* title, const VsNodeDoc* doc, const VsDef* 
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.62f, 0.85f, 0.65f, 1), "Does");   ImGui::SameLine(); ImGui::TextWrapped("%s", b.does.c_str());
         ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.45f, 1), "Needs");  ImGui::SameLine(); ImGui::TextWrapped("%s", b.needs.c_str());
-        ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.00f, 1), "Gives");  ImGui::SameLine(); ImGui::TextWrapped("%s", b.gives.c_str());
+        ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextLink), "Gives");  ImGui::SameLine(); ImGui::TextWrapped("%s", b.gives.c_str());
         ImGui::Separator();
     }
     if (doc) {
@@ -351,13 +351,13 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     auto catColor = [&](int index) {
         // Stable hues so a topic keeps its dot. Common topics stay in the documented order.
         static const ImU32 cols[] = {
-            IM_COL32(158, 96, 102, 255), IM_COL32(86, 112, 158, 255), IM_COL32(72, 138, 116, 255),
-            IM_COL32(64, 132, 150, 255), IM_COL32(120, 150, 170, 255), IM_COL32(90, 140, 120, 255),
-            IM_COL32(176, 114, 78, 255), IM_COL32(70, 146, 146, 255), IM_COL32(90, 120, 170, 255),
+            IM_COL32(158, 96, 102, 255), IM_COL32(118, 116, 112, 255), IM_COL32(72, 138, 116, 255),
+            IM_COL32(128, 118, 56, 255), IM_COL32(150, 148, 140, 255), IM_COL32(90, 140, 120, 255),
+            IM_COL32(176, 114, 78, 255), IM_COL32(70, 146, 146, 255), IM_COL32(160, 110, 130, 255),
             IM_COL32(170, 110, 150, 255), IM_COL32(180, 140, 70, 255), IM_COL32(168, 132, 78, 255),
-            IM_COL32(110, 130, 180, 255), IM_COL32(150, 120, 90, 255), IM_COL32(100, 140, 100, 255),
-            IM_COL32(130, 130, 160, 255), IM_COL32(84, 114, 170, 255), IM_COL32(140, 140, 140, 255),
-            IM_COL32(120, 110, 150, 255),
+            IM_COL32(170, 120, 150, 255), IM_COL32(150, 120, 90, 255), IM_COL32(100, 140, 100, 255),
+            IM_COL32(150, 140, 150, 255), IM_COL32(160, 96, 128, 255), IM_COL32(140, 140, 140, 255),
+            IM_COL32(150, 110, 150, 255),
         };
         const int n = (int)(sizeof cols / sizeof cols[0]);
         return cols[(index >= 0 && index < n) ? index : 0];
@@ -487,9 +487,9 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (st.linkPending) { s_side = -3; s_sub = -1; s_subName.clear(); }
     }
     if (st.linkPending && st.linkExec)
-        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit this flow pin");
+        ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextLink), "Suggested first: nodes that fit this flow pin");
     else if (st.linkPending)
-        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Suggested first: nodes that fit a %s pin", okay::vs::PinTypeName(dragged));
+        ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextLink), "Suggested first: nodes that fit a %s pin", okay::vs::PinTypeName(dragged));
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::InputTextWithHint("##vssearch", "Search nodes and actions...  (Up / Down, Enter to add)", search, sizeof search))
         s_kb = 0;
@@ -498,7 +498,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     for (int fi = 0; fi < 4; ++fi) {
         if (fi) ImGui::SameLine();
         const bool on = s_filter == fi;
-        if (on) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 110, 160, 255));
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetColorU32(ImGuiCol_SliderGrab));
         if (ImGui::Button(VsLevelFilterName((VsLevelFilter)fi), ImVec2(filterW, 0))) {
             s_filter = fi; s_kb = 0; saveLists();
         }
@@ -782,7 +782,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         rdl->AddCircleFilled(ImVec2(p.x + 8, p.y + (lh + 14) * 0.5f), 5.0f, e.col);
         // Title, matched letters in the accent colour.
         float x = p.x + 18;
-        const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = IM_COL32(110, 180, 255, 255);
+        const ImU32 normal = ImGui::GetColorU32(ImGuiCol_Text), hit = ImGui::GetColorU32(ImGuiCol_TextLink);
         for (int c = 0; c < (int)e.title.size(); ++c) {
             const char buf[2] = {e.title[c], 0};
             const bool h = std::find(hitsNow.begin(), hitsNow.end(), c) != hitsNow.end();
@@ -797,10 +797,10 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             if (x + 8.0f + bw < p.x + w - ImGui::CalcTextSize(e.cat.c_str()).x - 36.0f) {
                 const ImVec2 b0(x + 8.0f, p.y + 4.0f), b1(b0.x + bw, b0.y + bh);
                 const ImU32 bg = e.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
-                               : e.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255)
-                               : IM_COL32(52, 78, 120, 255);
+                               : e.level == VsLevel::Advanced ? IM_COL32(120, 72, 120, 255)
+                               : IM_COL32(124, 96, 44, 255);
                 rdl->AddRectFilled(b0, b1, bg, 3.0f);
-                rdl->AddText(ImVec2(b0.x + 4.0f, b0.y + 1.0f), IM_COL32(230, 236, 244, 255), badge);
+                rdl->AddText(ImVec2(b0.x + 4.0f, b0.y + 1.0f), IM_COL32(237, 237, 237, 255), badge);
             }
         }
         // Category on the right, then the favourite star.
@@ -825,7 +825,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 const float a = -1.5707963f + k * 0.6283185f, r = (k % 2) ? 2.6f : 6.0f;
                 pts[k] = ImVec2(c.x + std::cos(a) * r, c.y + std::sin(a) * r);
             }
-            const ImU32 sc = fav ? IM_COL32(255, 204, 64, 255) : sh ? IM_COL32(200, 200, 210, 200) : IM_COL32(120, 124, 134, 120);
+            const ImU32 sc = fav ? IM_COL32(255, 204, 64, 255) : sh ? IM_COL32(203, 203, 203, 200) : IM_COL32(126, 126, 126, 120);
             if (fav) rdl->AddConcavePolyFilled(pts, 10, sc); else rdl->AddPolyline(pts, 10, sc, ImDrawFlags_Closed, 1.2f);
         }
         ImGui::PopID();

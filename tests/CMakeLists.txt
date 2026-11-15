@@ -3013,6 +3013,13 @@ add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
 
+# The editor's two looks (editor/ThemeModel.hpp, UI-library free): neutral palettes with no blue, WCAG contrast for text and the accent, Light as the inverse of Dark, and the old saved theme / accent values mapping to Dark or Light.
+add_executable(test_editor_theme test_editor_theme.cpp)
+target_include_directories(test_editor_theme PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+add_test(NAME editor_theme COMMAND test_editor_theme)
+# No blue in the editor's UI colours: scripts/find_blue_ui.py lists colour literals whose blue channel dominates (or greys with a blue cast); every one left must carry a `blue-ok: <reason>` comment (axis colours, user label colours).
+add_test(NAME editor_no_blue_ui COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/find_blue_ui.py --check)
+
 add_executable(test_net_reconnect test_net_reconnect.cpp)
 target_link_libraries(test_net_reconnect PRIVATE okay::engine)
 add_test(NAME net_reconnect COMMAND test_net_reconnect)

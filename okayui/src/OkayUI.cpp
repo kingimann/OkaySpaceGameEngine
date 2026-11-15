@@ -3040,7 +3040,8 @@ void drawTooltipBox(const char* text) {
     if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);   // and above it
     g_toOverlay = true;
     if (g_look) {
-        const unsigned char tip[4] = {38, 42, 51, 250};
+        const unsigned char tipDefault[4] = {38, 42, 51, 250};
+        const unsigned char* tip = pick(Col_PopupBg, tipDefault);   // (an editor panel sets Col_PopupBg to its Dark / Light look)
         rrect(bx, by, bw, bh, 7.0f, g_theme.border);
         rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
     } else {
@@ -4685,7 +4686,8 @@ void BeginCard(const char* id) {
     g_lay.cy = py;                           // (no spacing yet: the card grows to fit)
     const float pad = 14.0f, rad = g_look ? 10.0f : rnd();
     if (*height > 0.0f) {
-        const unsigned char raised[4] = {38, 42, 51, 255};
+        const unsigned char raisedDefault[4] = {38, 42, 51, 255};
+        const unsigned char* raised = pick(Col_ChildBg, raisedDefault);   // (an editor panel sets Col_ChildBg to its Dark / Light look)
         rrect(px, py, w, *height, rad, g_theme.border);
         rrect(px + 1.0f, py + 1.0f, w - 2.0f, *height - 2.0f, rad > 1.0f ? rad - 1.0f : 0.0f, g_look ? raised : g_theme.bg);
     }

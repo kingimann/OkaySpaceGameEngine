@@ -1,35 +1,42 @@
 #pragma once
-// Shared editor widgets (EditorWidgets.cpp): the theme accent, component category
+// Shared editor widgets (EditorWidgets.cpp): the two looks (Dark / Light) and their one accent, component category
 // tints, drawn toolbar icons, and the icon / search / toggle buttons.
 #include "imgui.h"
+#include "ThemeModel.hpp"
 #include <cstddef>
 
 namespace oked {
 
-extern int g_accent;   // accent colour preset (index into kAccents; saved in settings)
+// The editor's look: 0 Dark, 1 Light (saved in okay_settings.txt as `theme`; the old Classic look and the accent presets are gone).
+// The palettes are plain numbers in ThemeModel.hpp; every colour here follows the current look.
+extern int g_theme;
 
-// Selectable editor accent colours (the highlight used on selections, buttons,
-// checks, tabs, etc.). Index persists in settings.
-struct AccentPreset { const char* name; float r, g, b; };
-inline constexpr AccentPreset kAccents[] = {
-    {"Classic", 0.235f, 0.475f, 0.800f}, // muted selection blue (default)
-    {"Blue",    0.26f, 0.59f, 0.98f},
-    {"Teal",    0.18f, 0.78f, 0.74f},
-    {"Violet",  0.56f, 0.46f, 0.96f},
-    {"Green",   0.36f, 0.80f, 0.46f},
-    {"Amber",   0.95f, 0.66f, 0.26f},
-    {"Rose",    0.96f, 0.42f, 0.56f},
-    {"Slate",   0.52f, 0.58f, 0.68f},
-    {"Cyan",    0.30f, 0.80f, 0.92f},
-    {"Orange",  0.96f, 0.55f, 0.22f},
-    {"Crimson", 0.92f, 0.34f, 0.40f},
-    {"Mint",    0.40f, 0.86f, 0.66f},
-    {"Indigo",  0.42f, 0.40f, 0.92f},
-};
-inline constexpr int kAccentCount = (int)(sizeof(kAccents) / sizeof(kAccents[0]));
+const okay::edtheme::Palette& ThemePalette();    // the current look's chrome palette
+const okay::edtheme::CodePalette& ThemeCodePalette();   // ... and its script editor palette
+bool ThemeIsLight();
+// The whole ImGui style palette for the current look (called by ApplyTheme in main.cpp). Neutral greys, one neutral accent,
+// and a last pass that turns any colour still leaning blue (an ImGui default nobody set) into the grey of the same brightness.
+void ApplyEditorColors(ImGuiStyle& s);
 
-// The current accent colour, for panels that tint their own widgets to match the theme.
+// The ONE accent colour of the current look, for panels that tint their own widgets (selection bars, active toggles, links).
+// Dark: light graphite. Light: dark graphite. There is no accent menu and no blue.
 ImVec4 AccentCol(float alpha = 1.0f);
+ImU32  AccentU32(int alpha255 = 255);
+// The accent pushed further from the surface (hovered / active accent text, links).
+ImVec4 AccentLitCol(float alpha = 1.0f);
+// Text drawn ON an accent fill (a primary button, an active toolbar toggle): dark on Dark, light on Light.
+ImVec4 AccentOnCol();
+// The look's normal / secondary text, the hairline-and-hover-lift colour (white on Dark, black on Light) and a surface colour,
+// for the few places that draw their own chrome with a draw list instead of an ImGui style colour.
+ImVec4 TextCol(float alpha = 1.0f);
+ImVec4 DimCol(float alpha = 1.0f);
+ImVec4 InkCol(float alpha = 1.0f);
+ImVec4 SurfaceCol(int which);   // 0 deep, 1 sunken, 2 base, 3 raised, 4 field, 5 control
+// Status colours (never blue): 0 good, 1 warning, 2 error. Readable on every surface of the look.
+ImVec4 StatusCol(int kind, float alpha = 1.0f);
+// The colour that marks prefab instances, prefab changes and Prefab Mode (a lime green; it was blue once). Darker on the light look.
+ImVec4 PrefabCol(float alpha = 1.0f);
+ImU32  PrefabU32(int alpha255 = 255);
 // A category tint for a component header, from its label (physics, render, audio, UI, ...).
 ImVec4 CategoryColor(const char* label);
 // The icon family for a component header (0 dot, 1 square, 2 circle, 3 triangle, 4 diamond, 5 speaker, 6 ring).

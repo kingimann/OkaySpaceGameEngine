@@ -55,7 +55,7 @@ bool Accent(const char* label, float w = 0.0f) {
     ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
-    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text,          AccentOnCol());
     const bool b = ImGui::Button(label, ImVec2(w, 0));
     ImGui::PopStyleColor(4);
     return b;

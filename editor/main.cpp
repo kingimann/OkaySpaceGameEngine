@@ -691,7 +691,7 @@ int main(int argc, char** argv) {
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "AppIcon.hpp"
-#include "OkayTheme.hpp"   // shared Slate palette (launcher + editor)
+#include "OkayTheme.hpp"   // shared metrics (rounding, borders) used by the launcher and the editor; the editor's colours are in ThemeModel.hpp
 #include "imgui.h"
 #include "AnimatorPreview.hpp"          // inspector / graph live preview (not the Animation window's)
 #include "imgui_internal.h" // DockBuilder for the default layout
@@ -2329,7 +2329,7 @@ okayuihost::Region g_okayRegion;          // where the hosted panel was last fra
 okayuihost::Region& OkayUIRegion() { return g_okayRegion; }
 #endif
 bool g_multiWindow = true;        // always on: panels can be dragged out to other OS windows/monitors (no toggle)
-int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
+int  g_theme = 0;                // 0 = Dark, 1 = Light (the editor has exactly these two looks; see ThemeModel.hpp)
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
@@ -2361,7 +2361,6 @@ bool g_uiSmartSnap = true;       // UI editor: alignment snapping + blue guide l
 bool g_uiShowSubdiv = false;     // UI-Only: draw an N×M subdivision grid over the game screen (+ snap UI to it), like subdividing a 3D model
 int  g_uiSubdivX = 3;            // UI-Only: subdivision columns
 int  g_uiSubdivY = 3;            // UI-Only: subdivision rows
-int  g_accent = 0;               // accent colour preset (see kAccents)
 
 // Theme accent, category tints and toolbar widgets: EditorWidgets.cpp / .hpp.
 // A layer mask as the friendly list the physics accepts ("" = every layer).
@@ -2404,7 +2403,7 @@ static bool TriggerFilterFields(Col* c, const char* id) {
 static bool DragVec3Axis(const char* label, float v[3], float speed = 0.05f,
                          const char* fmt = "%.3f", bool* activated = nullptr) {
     static const ImU32 axCol[3] = { IM_COL32(206, 84, 84, 255), IM_COL32(120, 194, 110, 255),
-                                    IM_COL32(88, 150, 235, 255) };
+                                    IM_COL32(88, 150, 235, 255) };   // blue-ok: Z axis colour of the Vector3 drag field (X red / Y green / Z blue convention)
     bool changed = false;
     if (activated) *activated = false;
     ImGuiStyle& st = ImGui::GetStyle();
@@ -2460,7 +2459,7 @@ static void SectionHeader(const char* label) {
     ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 1.0f), ImVec2(p.x + 3.0f, p.y + h),
                                               ImGui::GetColorU32(AccentCol(1.0f)), 1.5f);
     ImGui::Indent(9.0f);
-    ImGui::TextColored(ImVec4(0.90f, 0.92f, 0.97f, 1.0f), "%s", label);
+    ImGui::TextColored(TextCol(), "%s", label);
     ImGui::Unindent(9.0f);
     if (g_headingFont) ImGui::PopFont();
     ImGui::Separator();
@@ -2507,15 +2506,15 @@ static void EmptyState(const char* glyph, const char* title, const char* hint = 
         ImVec2 cp = ImGui::GetCursorScreenPos();
         ImVec2 c(cp.x + avail.x * 0.5f, cp.y + gs * 0.6f);
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImU32 col = ImGui::GetColorU32(ImVec4(0.40f, 0.42f, 0.47f, 1.0f));
+        ImU32 col = ImGui::GetColorU32(ImVec4(0.43f, 0.43f, 0.43f, 1.0f));
         dl->AddQuad(ImVec2(c.x, c.y - gs * 0.55f), ImVec2(c.x + gs * 0.55f, c.y),
                     ImVec2(c.x, c.y + gs * 0.55f), ImVec2(c.x - gs * 0.55f, c.y), col, 2.0f);
         dl->AddCircleFilled(c, gs * 0.14f, col);
         ImGui::Dummy(ImVec2(0, gs * 1.3f));
         ImGui::Spacing();
     }
-    centered(title, ImVec4(0.66f, 0.68f, 0.72f, 1.0f), 1.0f);
-    if (hint) { ImGui::Spacing(); centered(hint, ImVec4(0.46f, 0.47f, 0.51f, 1.0f), 1.0f); }
+    centered(title, ImVec4(0.687f, 0.687f, 0.687f, 1.0f), 1.0f);
+    if (hint) { ImGui::Spacing(); centered(hint, ImVec4(0.48f, 0.48f, 0.48f, 1.0f), 1.0f); }
 }
 bool g_autosave = true;          // recovery-folder autosave (File > Autosave)
 float  g_docAutosaveSec = 30.0f;     // seconds between recovery copies (graphs, scripts, scene)
@@ -2579,8 +2578,7 @@ void LoadSettings() {
         else if (g_view.Apply(k, v)) {}   // camera overlay, stats line, names, toolbar labels, density
         else if (k == "editorfovx10") g_editorFov = (v < 200 ? 200 : (v > 1100 ? 1100 : v)) / 10.0f;
         else if (k == "editornearx100") g_editorNear = (v < 1 ? 1 : (v > 5000 ? 5000 : v)) / 100.0f;
-        else if (k == "theme") g_theme = (v < 0 ? 0 : (v > 2 ? 2 : v));
-        else if (k == "accent") g_accent = (v < 0 ? 0 : (v >= kAccentCount ? 0 : v));
+        else if (okay::edtheme::ApplySavedSetting(k, v, g_theme)) {}   // `theme`: 0 and the old Classic (2) -> Dark, 1 -> Light; the old `accent` line is ignored
         else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
@@ -2642,8 +2640,7 @@ void SaveSettings() {
       << g_view.Write()
       << "editorfovx10 " << (int)(g_editorFov * 10 + 0.5f) << "\n"
       << "editornearx100 " << (int)(g_editorNear * 100 + 0.5f) << "\n"
-      << "theme " << g_theme << "\n"
-      << "accent " << g_accent << "\n"
+      << okay::edtheme::SavedThemeLine(g_theme)
       << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
       << "gameres " << g_gameResPreset << "\n"
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
@@ -4967,11 +4964,9 @@ builder::BuildReport g_buildReport;   // per-file size breakdown of the last bui
 
 // Console log + panel: ConsolePanel.cpp / .hpp.
 
-// ---- Editor theme (default: the shared Slate palette) ----------------------
+// ---- Editor theme: exactly two looks, Dark and Light (ThemeModel.hpp; colours in ApplyEditorColors) ----
 void ApplyTheme() {
-    if (g_theme == 1)      ImGui::StyleColorsLight();
-    else if (g_theme == 2) ImGui::StyleColorsClassic();
-    else                   ImGui::StyleColorsDark();
+    g_theme = okay::edtheme::NormalizeSavedTheme(g_theme);   // 0 Dark, 1 Light: nothing else exists
     ImGuiStyle& s = ImGui::GetStyle();
     // One spacing system for every panel: readable type, room between controls,
     // and hit targets you can land on. View > UI Scale still scales all of this.
@@ -4987,10 +4982,8 @@ void ApplyTheme() {
     s.WindowMenuButtonPosition = ImGuiDir_None;
     s.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     s.DockingSeparatorSize = 1.5f;
-    if (g_theme == 0) {   // Slate: rounded controls + hairline borders (shared with the launcher)
-        okaytheme::ApplySlateMetrics(s);
-        s.WindowBorderSize = 0.0f;   // docked panels: no outline (floating ones get the popup border)
-    }
+    okaytheme::ApplySlateMetrics(s);   // rounded controls + hairline borders (shared with the launcher; the metrics only)
+    s.WindowBorderSize = 0.0f;         // docked panels: no outline (floating ones get the popup border)
     // Panel tabs: a tab's close button shows only while it's hovered,
     // there's no extra "close the whole group" X at the end of each tab strip, the
     // active tab gets a thicker accent overline, and short names ("Game") still
@@ -5002,7 +4995,7 @@ void ApplyTheme() {
     s.TabBarBorderSize   = 1.0f;
     s.TabMinWidthBase    = 92.0f;
     s.TabMinWidthShrink  = 120.0f;   // squeezed dock tabs still show the icon + a few letters
-    if (g_theme == 0) s.TabRounding = 6.0f;
+    s.TabRounding = 6.0f;
     // Density (Appearance > Density): Compact trims the vertical padding of every panel; Comfortable is the metrics above.
     if (g_view.density == (int)okay::edlayout::Density::Compact) {
         s.FramePadding.y *= 0.6f; s.ItemSpacing.y *= 0.7f; s.CellPadding.y *= 0.7f; s.WindowPadding.y *= 0.75f;
@@ -5011,24 +5004,8 @@ void ApplyTheme() {
     if (g_uiScale != 1.0f) s.ScaleAllSizes(g_uiScale);
     ImGui::GetIO().FontGlobalScale = g_uiScale;
 
-    // Light / Classic keep ImGui's own palette (only the metrics above apply).
-    if (g_theme != 0) return;
-
-    // The shared OkaySpace "Slate" palette (same as the launcher and its chat),
-    // with the user's chosen accent colour.
-    const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
-    okaytheme::ApplySlateColors(s, ImVec4(ap.r, ap.g, ap.b, 1.0f));
-    // The selected tab of every group matches the panel under it (so it reads as
-    // "connected"), focused or not; only the overline says which group has focus.
-    ImVec4* c = s.Colors;
-    c[ImGuiCol_Tab]                 = okaytheme::kSunken;
-    c[ImGuiCol_TabHovered]          = okaytheme::Mix(okaytheme::kSunken, okaytheme::kControl, 0.55f);
-    c[ImGuiCol_TabSelected]         = okaytheme::kBase;
-    c[ImGuiCol_TabDimmed]           = okaytheme::kSunken;
-    c[ImGuiCol_TabDimmedSelected]   = okaytheme::kBase;
-    c[ImGuiCol_TabDimmedSelectedOverline] = okaytheme::WithAlpha(okaytheme::kTextDim, 0.35f);
-    // Disabled text was easy to miss on the slate background.
-    c[ImGuiCol_TextDisabled] = ImVec4(0.70f, 0.74f, 0.82f, 1.0f);
+    // The colours of the current look: neutral greys and one neutral accent, no blue (EditorWidgets.cpp).
+    ApplyEditorColors(s);
 }
 
 // ---- Panel tabs, layouts and the panel switcher ------------------------------
@@ -6353,7 +6330,7 @@ static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, tb * 0.3f);
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-    const ImU32 ic = IM_COL32(215, 219, 228, 235);
+    const ImU32 ic = IM_COL32(221, 221, 221, 235);
     auto centre = [] { const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
                        return ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f); };
     // Slower: two triangles pointing left (rewind).
@@ -6420,16 +6397,17 @@ void DrawMenuAndToolbar(EditorState& ed) {
     SceneBuildSync(ed);
     // play tint: while the game runs, darken the editor chrome a
     // touch so edit vs play is unmistakable at a glance. Only the custom dark
-    // theme (its palette constants are known); reset exactly on stop.
-    if (g_theme == 0) {
+    // theme (its palette constants are known); reset exactly on stop. Both looks (Dark, Light) do it.
+    {
         ImGuiStyle& st = ImGui::GetStyle();
-        if (ed.isPlaying()) {
-            st.Colors[ImGuiCol_WindowBg]  = okaytheme::Mix(okaytheme::kBase, ImVec4(0, 0, 0, 1), 0.22f);
-            st.Colors[ImGuiCol_MenuBarBg] = okaytheme::Mix(okaytheme::kSunken, ImVec4(0, 0, 0, 1), 0.22f);
-        } else {
-            st.Colors[ImGuiCol_WindowBg]  = okaytheme::kBase;
-            st.Colors[ImGuiCol_MenuBarBg] = okaytheme::kSunken;
-        }
+        const float tint = ed.isPlaying() ? ThemePalette().playTint : 0.0f;
+        const ImVec4 black(0, 0, 0, 1);
+        const ImVec4 base = SurfaceCol(2), sunken = SurfaceCol(1);
+        auto toward = [&](const ImVec4& c) {
+            return ImVec4(c.x + (black.x - c.x) * tint, c.y + (black.y - c.y) * tint, c.z + (black.z - c.z) * tint, 1.0f);
+        };
+        st.Colors[ImGuiCol_WindowBg]  = toward(base);
+        st.Colors[ImGuiCol_MenuBarBg] = toward(sunken);
     }
     if (!ImGui::BeginMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
@@ -6744,23 +6722,9 @@ void DrawMenuAndToolbar(EditorState& ed) {
             ImGui::TextDisabled("Row spacing and field height in the Inspector and every panel.");
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Theme")) {
-            if (ImGui::MenuItem("Slate", nullptr, g_theme == 0))    { g_theme = 0; ApplyTheme(); SaveSettings(); }
-            if (ImGui::MenuItem("Light", nullptr, g_theme == 1))   { g_theme = 1; ApplyTheme(); SaveSettings(); }
-            if (ImGui::MenuItem("Classic", nullptr, g_theme == 2)) { g_theme = 2; ApplyTheme(); SaveSettings(); }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Accent color")) {
-            for (int i = 0; i < kAccentCount; ++i) {
-                char albl[48]; std::snprintf(albl, sizeof(albl), "     %s", kAccents[i].name);
-                if (ImGui::MenuItem(albl, nullptr, g_accent == i)) { g_accent = i; ApplyTheme(); SaveSettings(); }
-                // Drawn swatch dot in the leading space, in that accent's color.
-                ImVec2 amn = ImGui::GetItemRectMin(), amx = ImGui::GetItemRectMax();
-                ImGui::GetWindowDrawList()->AddCircleFilled(
-                    ImVec2(amn.x + 11.0f, (amn.y + amx.y) * 0.5f),
-                    ImGui::GetFontSize() * 0.28f,
-                    ImGui::GetColorU32(ImVec4(kAccents[i].r, kAccents[i].g, kAccents[i].b, 1.0f)), 16);
-            }
+        if (ImGui::BeginMenu("Theme")) {   // exactly two looks: Dark and Light (no blue, no accent colour menu)
+            if (ImGui::MenuItem("Dark",  nullptr, g_theme == 0)) { g_theme = 0; ApplyTheme(); SaveSettings(); }
+            if (ImGui::MenuItem("Light", nullptr, g_theme == 1)) { g_theme = 1; ApplyTheme(); SaveSettings(); }
             ImGui::EndMenu();
         }
         ImGui::EndMenu();   // Appearance
@@ -7253,7 +7217,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     {
         ImVec2 c = iconC(); float s = tb * 0.2f, w = tb * 0.075f;
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImU32 col = playing || g_paused ? kIconWhite : IM_COL32(200, 204, 212, 200);
+        ImU32 col = playing || g_paused ? kIconWhite : IM_COL32(205, 205, 205, 200);
         dl->AddRectFilled(ImVec2(c.x - w * 2.4f, c.y - s), ImVec2(c.x - w * 0.6f, c.y + s), col, 1.0f);
         dl->AddRectFilled(ImVec2(c.x + w * 0.6f, c.y - s), ImVec2(c.x + w * 2.4f, c.y + s), col, 1.0f);
         // A Step or "Run N frames" that has not run yet: its count sits on the button's corner, counting down.
@@ -7261,7 +7225,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
             char pb[16]; std::snprintf(pb, sizeof(pb), "%d", pend);
             const ImVec2 mx = ImGui::GetItemRectMax(), ts = ImGui::CalcTextSize(pb);
             const ImVec2 b1(mx.x - 2.0f, mx.y - 1.0f), b0(b1.x - ts.x - 6.0f, b1.y - ts.y - 1.0f);
-            dl->AddRectFilled(b0, b1, IM_COL32(20, 22, 28, 235), 4.0f);
+            dl->AddRectFilled(b0, b1, IM_COL32(23, 23, 23, 235), 4.0f);
             dl->AddText(ImVec2(b0.x + 3.0f, b0.y), IM_COL32(245, 205, 90, 255), pb);
         }
     }
@@ -7277,7 +7241,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     {
         ImVec2 c = iconC(); float s = tb * 0.19f;
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImU32 col = IM_COL32(200, 204, 212, 220);
+        ImU32 col = IM_COL32(205, 205, 205, 220);
         dl->AddTriangleFilled(ImVec2(c.x - s * 1.1f, c.y - s), ImVec2(c.x - s * 1.1f, c.y + s), ImVec2(c.x + s * 0.5f, c.y), col);
         dl->AddRectFilled(ImVec2(c.x + s * 0.75f, c.y - s), ImVec2(c.x + s * 0.75f + tb * 0.075f, c.y + s), col, 1.0f);
     }
@@ -7322,7 +7286,7 @@ void DrawMenuAndToolbar(EditorState& ed) {
     const char* mode = !ed.isPlaying() ? "EDIT" : (g_paused ? "PAUSED" : "PLAYING");
     std::snprintf(status, sizeof(status), "%s   %s   %.0f FPS", EditorVersionLabel(ed.projectDir()).c_str(),   // "v2.850.0 (kept)" for a project kept at its version
                   mode, ImGui::GetIO().Framerate);
-    ImVec4 dotCol = !ed.isPlaying() ? ImVec4(0.55f, 0.57f, 0.60f, 1.0f)
+    ImVec4 dotCol = !ed.isPlaying() ? ImVec4(0.573f, 0.573f, 0.573f, 1.0f)
                   : (g_paused ? ImVec4(0.95f, 0.70f, 0.20f, 1.0f) : ImVec4(0.35f, 0.85f, 0.42f, 1.0f));
     // Draw the state dot as a real filled circle (the UI font has no ● glyph, which
     // would otherwise render as tofu).
@@ -7505,7 +7469,7 @@ void DrawStatusBar(EditorState& ed) {
     if (flatBtn(toolName)) g_tool = (Tool)(((int)g_tool + 1) % 3);   // cycle Move→Rotate→Scale
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Transform tool — click to cycle (W/E/R)");
     ImGui::SameLine(0, gap);
-    ImGui::TextColored(ed.isPlaying() ? ImVec4(0.45f, 0.85f, 0.5f, 1) : ImVec4(0.62f, 0.64f, 0.68f, 1), "%s", mode);
+    ImGui::TextColored(ed.isPlaying() ? ImVec4(0.45f, 0.85f, 0.5f, 1) : ImVec4(0.647f, 0.647f, 0.647f, 1), "%s", mode);
     ImGui::SameLine(0, gap);
     ImGui::TextDisabled("%s", c3);
     ImGui::SameLine(0, gap);
@@ -7956,23 +7920,23 @@ enum class AssetIcon { Folder, Script, Material, Scene, Prefab, Image, Audio, Me
 struct AssetKind { ImU32 col; const char* letter; AssetIcon icon; };
 static AssetKind KindOf(const std::string& extLower, bool isDir) {
     if (isDir) return {IM_COL32(235, 200, 90, 255), "", AssetIcon::Folder};
-    if (extLower == ".okayscene")  return {IM_COL32(90, 150, 240, 255), "SCN", AssetIcon::Scene};
-    if (extLower == ".okayprefab") return {IM_COL32(80, 210, 225, 255), "PFB", AssetIcon::Prefab};
+    if (extLower == ".okayscene")  return {IM_COL32(235, 115, 105, 255), "SCN", AssetIcon::Scene};
+    if (extLower == ".okayprefab") return {IM_COL32(150, 220, 120, 255), "PFB", AssetIcon::Prefab};
     if (extLower == ".png" || extLower == ".jpg" || extLower == ".jpeg" ||
         extLower == ".bmp" || extLower == ".tga") return {IM_COL32(110, 200, 120, 255), "IMG", AssetIcon::Image};
     if (extLower == ".wav")        return {IM_COL32(230, 160, 70, 255), "WAV", AssetIcon::Audio};
-    if (extLower == ".okay")       return {IM_COL32(120, 180, 255, 255), "OKS", AssetIcon::Script};
-    if (extLower == ".lua" || extLower == ".cs") return {IM_COL32(150, 140, 235, 255), "SCR", AssetIcon::Script};
+    if (extLower == ".okay")       return {IM_COL32(215, 220, 110, 255), "OKS", AssetIcon::Script};
+    if (extLower == ".lua" || extLower == ".cs") return {IM_COL32(205, 140, 215, 255), "SCR", AssetIcon::Script};
     if (extLower == ".okaymat")    return {IM_COL32(235, 110, 170, 255), "MAT", AssetIcon::Material};
     if (extLower == ".okaydata")   return {IM_COL32(110, 205, 190, 255), "DAT", AssetIcon::Data};
-    if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ", AssetIcon::Mesh};
+    if (extLower == ".obj")        return {IM_COL32(200, 185, 155, 255), "OBJ", AssetIcon::Mesh};
     if (extLower == ".okayvs")     return {IM_COL32(150, 200, 170, 255), "VS",  AssetIcon::Visual};
-    if (extLower == ".okayseq")    return {IM_COL32(200, 130, 230, 255), "SEQ", AssetIcon::Visual};
+    if (extLower == ".okayseq")    return {IM_COL32(215, 135, 215, 255), "SEQ", AssetIcon::Visual};
     if (extLower == ".okaydialog") return {IM_COL32(220, 170, 110, 255), "DLG", AssetIcon::Visual};
     if (extLower == ".okayquest")  return {IM_COL32(170, 190, 110, 255), "QST", AssetIcon::Data};
     if (extLower == ".okaybt")     return {IM_COL32(120, 190, 150, 255), "BT",  AssetIcon::Visual};
-    if (extLower == ".okayclip")   return {IM_COL32(190, 160, 240, 255), "CLIP", AssetIcon::Visual};
-    return {IM_COL32(150, 152, 162, 255), "FILE", AssetIcon::Generic};
+    if (extLower == ".okayclip")   return {IM_COL32(225, 160, 225, 255), "CLIP", AssetIcon::Visual};
+    return {IM_COL32(155, 155, 155, 255), "FILE", AssetIcon::Generic};
 }
 
 // A readable type name for an asset category (list view + details strip).
@@ -8009,7 +7973,7 @@ static void DrawAssetIcon(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const AssetKind&
         }
         case AssetIcon::Script: {  // a page with text lines
             ImVec2 a(mn.x + w*0.28f, mn.y + h*0.18f), b(mx.x - w*0.28f, mx.y - h*0.18f);
-            dl->AddRectFilled(a, b, IM_COL32(235,238,245,255), 2.0f);
+            dl->AddRectFilled(a, b, IM_COL32(239, 239, 239, 255), 2.0f);
             for (int i = 0; i < 4; ++i) {
                 float y = a.y + (b.y - a.y) * (0.22f + i * 0.2f);
                 dl->AddLine(ImVec2(a.x + w*0.06f, y), ImVec2(b.x - w*0.06f, y), c, 1.5f);
@@ -8023,7 +7987,7 @@ static void DrawAssetIcon(ImDrawList* dl, ImVec2 mn, ImVec2 mx, const AssetKind&
         }
         case AssetIcon::Scene:  dl->AddNgonFilled(ctr, r, c, 6); break;       // hex
         case AssetIcon::Prefab: dl->AddNgonFilled(ctr, r, c, 6);
-                                dl->AddCircleFilled(ctr, r*0.4f, IM_COL32(20,30,40,255), 12); break;
+                                dl->AddCircleFilled(ctr, r*0.4f, IM_COL32(30, 30, 30, 255), 12); break;
         case AssetIcon::Audio: {
             dl->AddRectFilled(ImVec2(ctr.x - r*0.7f, ctr.y - r*0.3f), ImVec2(ctr.x, ctr.y + r*0.3f), c);
             dl->AddTriangleFilled(ImVec2(ctr.x, ctr.y - r*0.7f), ImVec2(ctr.x, ctr.y + r*0.7f), ImVec2(ctr.x + r*0.6f, ctr.y), c);
@@ -8406,7 +8370,7 @@ static void CharacterModelPanel(EditorState& ed, GameObject* go) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Humanoid bones found by name (hips, spine, arms, legs...).\nThe built-in animations need at least 8.");
     ImGui::TextUnformatted("Animation source:");
     ImGui::SameLine();
-    ImGui::TextColored(info.source == 1 ? good : (info.source == 0 ? warn : ImVec4(0.55f, 0.75f, 1.0f, 1.0f)),
+    ImGui::TextColored(info.source == 1 ? good : (info.source == 0 ? warn : AccentLitCol()),
                        "%s", okay::CharacterAnimationSourceName(info.source));
     ImGui::TextDisabled("%d slot%s from clips, %d built-in", info.importedSlots, info.importedSlots == 1 ? "" : "s", info.builtinSlots);
     if (ImGui::IsItemHovered())
@@ -8418,7 +8382,7 @@ static void CharacterModelPanel(EditorState& ed, GameObject* go) {
         ImGui::TableSetupColumn("Plays", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
         std::vector<std::string> names = ma ? ma->ClipNames() : std::vector<std::string>();
-        const ImVec4 builtinCol(0.55f, 0.75f, 1.0f, 1.0f);
+        const ImVec4 builtinCol = AccentLitCol();
         for (const auto& sl : info.slots) {
             ImGui::TableNextRow();
             ImGui::PushID(sl.slot);
@@ -8451,7 +8415,7 @@ static void CharacterModelPanel(EditorState& ed, GameObject* go) {
         ImGui::EndTable();
     }
     ImGui::TextColored(good, "Imported clip"); ImGui::SameLine(0.0f, 14.0f);
-    ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "Built-in animation");
+    ImGui::TextColored(AccentLitCol(), "Built-in animation");
     ImGui::PushStyleColor(ImGuiCol_Text, dim);
     ImGui::TextWrapped("A slot with no clip plays the built-in animation on this skeleton, so the character always moves. Pick a clip to use your own.");
     ImGui::PopStyleColor();
@@ -8961,9 +8925,9 @@ static void DrawAssetManager(EditorState& ed) {
         else std::snprintf(s, sizeof(s), "%lldd ago", d / 86400);
         return std::string(s);
     };
-    static const ImU32 kCatCol[] = {IM_COL32(150, 155, 165, 255), IM_COL32(110, 170, 255, 255), IM_COL32(235, 160, 90, 255),
-                                    IM_COL32(120, 210, 140, 255), IM_COL32(230, 205, 90, 255), IM_COL32(175, 135, 240, 255),
-                                    IM_COL32(90, 200, 210, 255), IM_COL32(220, 130, 180, 255)};
+    static const ImU32 kCatCol[] = {IM_COL32(157, 157, 157, 255), IM_COL32(240, 125, 110, 255), IM_COL32(235, 160, 90, 255),
+                                    IM_COL32(120, 210, 140, 255), IM_COL32(230, 205, 90, 255), IM_COL32(215, 140, 215, 255),
+                                    IM_COL32(205, 175, 135, 255), IM_COL32(220, 130, 180, 255)};
     // Type tile: a thumbnail for images, else a coloured badge with the extension.
     auto tile = [&](const DlAsset& a, float sz) {
         ImVec2 p = ImGui::GetCursorScreenPos();
@@ -9669,7 +9633,7 @@ static bool ProjectFilterMatches(int f, const std::string& ext) { return okaypb:
 // ---- Asset color labels (per project, stored in <project>/.okaylabels) ----------
 static const char* kAssetLabelNames[] = {"None", "Red", "Orange", "Yellow", "Green", "Blue", "Purple"};
 static const ImU32 kAssetLabelCols[] = {0, IM_COL32(230, 80, 80, 255), IM_COL32(240, 150, 60, 255), IM_COL32(235, 205, 70, 255),
-                                        IM_COL32(100, 200, 110, 255), IM_COL32(90, 150, 240, 255), IM_COL32(170, 110, 230, 255)};
+                                        IM_COL32(100, 200, 110, 255), IM_COL32(90, 150, 240, 255), IM_COL32(185, 110, 200, 255)};   // blue-ok: asset label colours: the user-facing label named "Blue" (like Finder tags) is blue on purpose
 static const int kAssetLabelCount = 7;
 static std::map<std::string, int> g_assetLabels;   // project-relative path -> label index
 static std::string g_assetLabelsProj = "\x01";
@@ -10000,10 +9964,10 @@ void DrawProject(EditorState& ed) {
         const int* s_cnt = cnt.byFilter; const int s_cntRecent = cnt.recent;
         ImGui::TextDisabled("SMART FILTERS");
         struct SF { int id; ImU32 col; };
-        static const SF kSF[] = {{8, IM_COL32(110, 170, 255, 255)}, {2, IM_COL32(235, 160, 90, 255)},
+        static const SF kSF[] = {{8, IM_COL32(240, 125, 110, 255)}, {2, IM_COL32(235, 160, 90, 255)},
                                  {7, IM_COL32(120, 210, 140, 255)}, {1, IM_COL32(230, 205, 90, 255)},
-                                 {3, IM_COL32(175, 135, 240, 255)}, {5, IM_COL32(90, 200, 210, 255)},
-                                 {4, IM_COL32(220, 130, 180, 255)}, {100, IM_COL32(200, 200, 210, 255)}};
+                                 {3, IM_COL32(215, 140, 215, 255)}, {5, IM_COL32(205, 175, 135, 255)},
+                                 {4, IM_COL32(220, 130, 180, 255)}, {100, IM_COL32(203, 203, 203, 255)}};
         for (const SF& sf : kSF) {
             int n = sf.id == kSmartRecent ? s_cntRecent : s_cnt[sf.id];
             if (n == 0 && sf.id != kSmartRecent && s_smart != sf.id) continue;   // hide empty categories
@@ -10038,8 +10002,8 @@ void DrawProject(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Assets no scene, prefab, material or script mentions.\nCheck before deleting: code can load files by building names at runtime.");
             ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
             float cy = (mn.y + mx.y) * 0.5f, r = ImGui::GetFontSize() * 0.26f;
-            ImGui::GetWindowDrawList()->AddCircle(ImVec2(mn.x + 8.0f, cy), r, IM_COL32(160, 160, 170, 255), 12, 1.5f);
-            ImGui::GetWindowDrawList()->AddLine(ImVec2(mn.x + 8.0f - r * 0.7f, cy + r * 0.7f), ImVec2(mn.x + 8.0f + r * 0.7f, cy - r * 0.7f), IM_COL32(160, 160, 170, 255), 1.5f);
+            ImGui::GetWindowDrawList()->AddCircle(ImVec2(mn.x + 8.0f, cy), r, IM_COL32(163, 163, 163, 255), 12, 1.5f);
+            ImGui::GetWindowDrawList()->AddLine(ImVec2(mn.x + 8.0f - r * 0.7f, cy + r * 0.7f), ImVec2(mn.x + 8.0f + r * 0.7f, cy - r * 0.7f), IM_COL32(163, 163, 163, 255), 1.5f);
         }
         // Labels in use (right-click an asset > Label to add one).
         {
@@ -10627,7 +10591,7 @@ void DrawProject(EditorState& ed) {
             } else {
                 // Neutral cell background; the drawn icon carries the category color.
                 ImVec4 bg = isSel ? ImVec4(cv.x * 0.28f, cv.y * 0.28f, cv.z * 0.28f, 1.0f)
-                                  : ImVec4(0.16f, 0.17f, 0.19f, 1.0f);
+                                  : ImVec4(0.173f, 0.173f, 0.173f, 1.0f);
                 ImGui::PushStyleColor(ImGuiCol_Button, bg);
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                                       ImVec4(cv.x * 0.45f, cv.y * 0.45f, cv.z * 0.45f, 1.0f));
@@ -10656,7 +10620,7 @@ void DrawProject(EditorState& ed) {
             if (int lb = AssetLabelOf(labelProj, full)) {   // color label dot (top-right)
                 ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, kAssetLabelCols[lb]);
-                ImGui::GetWindowDrawList()->AddCircle(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, IM_COL32(20, 22, 26, 200), 12, 1.2f);
+                ImGui::GetWindowDrawList()->AddCircle(ImVec2(mx.x - 8.0f, mn.y + 8.0f), 5.0f, IM_COL32(23, 23, 23, 200), 12, 1.2f);
             }
             {   // a plain click on one of several selected tiles waits for the release, so you can drag the whole selection
                 const bool inGroup = s_multi.size() > 1 && s_multi.count(full) && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift;
@@ -10842,11 +10806,11 @@ void DrawProject(EditorState& ed) {
         bool pIsMat = !selDir && sk.icon == AssetIcon::Material && GetMaterialSwatch(selected, pmat);
         ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + pv, p0.y + pv);
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(p0, p1, IM_COL32(28, 30, 34, 255), 4.0f);
+        dl->AddRectFilled(p0, p1, IM_COL32(31, 31, 31, 255), 4.0f);
         if (pthumb) dl->AddImage((ImTextureID)pthumb, ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2));
         else if (pIsMat) DrawMaterialBall(dl, p0, p1, pmat);
         else        DrawAssetIcon(dl, p0, p1, sk);
-        dl->AddRect(p0, p1, IM_COL32(70, 74, 82, 255), 4.0f);
+        dl->AddRect(p0, p1, IM_COL32(75, 75, 75, 255), 4.0f);
         ImGui::Dummy(ImVec2(pv, pv));
         ImGui::SameLine();
         // Right: metadata (name heading, type/size/dimensions, path, scene usage, actions).
@@ -11203,7 +11167,7 @@ void DrawProject(EditorState& ed) {
         ImGui::SameLine();
         if (s_view == 0 && tbSliderW > 0.0f) {   // how big the tiles are
             ImGui::SetNextItemWidth(tbSliderW);
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.26f, 0.28f, 0.33f, 1.0f));   // a visible track
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.29f, 0.29f, 0.29f, 1.0f));   // a visible track
             ImGui::SliderFloat("##tilesize", &s_cell, 48.0f, 128.0f, "");
             ImGui::PopStyleColor();
             prefsChanged |= ImGui::IsItemDeactivatedAfterEdit();
@@ -11634,7 +11598,7 @@ void DrawMaterialEditor(EditorState& ed) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         ImVec2 pv = ImGui::GetCursorScreenPos();
         float pw = ImGui::GetContentRegionAvail().x, ph = 74.0f;
-        dl->AddRectFilled(pv, ImVec2(pv.x + pw, pv.y + ph), IM_COL32(28, 29, 34, 255), 5.0f);
+        dl->AddRectFilled(pv, ImVec2(pv.x + pw, pv.y + ph), IM_COL32(30, 30, 30, 255), 5.0f);
         ImVec4 shown(mat.color.r + mat.emissive.r * 0.6f,
                      mat.color.g + mat.emissive.g * 0.6f,
                      mat.color.b + mat.emissive.b * 0.6f, 1.0f);
@@ -11715,7 +11679,7 @@ void DrawStats(EditorState& ed) {
         SameLineRight(ImGui::CalcTextSize(mm).x);
         ImGui::TextDisabled("%s", mm);
     }
-    ImGui::PushStyleColor(ImGuiCol_PlotLines, ImVec4(0.45f, 0.70f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_PlotLines, AccentLitCol());
     ImGui::PlotLines("##fps", hist, 120, hi, nullptr, 0.0f, fscale, ImVec2(-1, 48));
     ImGui::PopStyleColor();
     {   // 60 FPS guide line over the plot
@@ -12356,7 +12320,7 @@ void DrawShortcutsWindow() {
             if (!any && (lc(r.keys).find(q) != std::string::npos ||
                          lc(r.what).find(q) != std::string::npos)) any = true;
         if (!any) return;
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.8f, 1.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, AccentLitCol());
         ImGui::SeparatorText(title);
         ImGui::PopStyleColor();
         for (const Row& r : rows) {
@@ -12449,7 +12413,7 @@ void DrawScriptDocs() {
 
     auto header = [](const char* s) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "%s", s);
+        ImGui::TextColored(AccentLitCol(), "%s", s);
         ImGui::Separator();
     };
     // Each API entry reads as a card: the signature in a code color, then its
@@ -12470,7 +12434,7 @@ void DrawScriptDocs() {
         }
         if (desc && desc[0]) {
             ImGui::Indent(24.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.66f, 0.69f, 0.75f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, DimCol());
             ImGui::TextWrapped("%s", desc);
             ImGui::PopStyleColor();
             ImGui::Unindent(24.0f);
@@ -13496,9 +13460,9 @@ static AcKind ClassifyCompletion(const std::string& name) {
 static void AcKindTag(AcKind k, char& letter, ImU32& col) {
     switch (k) {
         case AcKind::Keyword:  letter = 'k'; col = IM_COL32(204, 120, 50, 255);  break; // orange
-        case AcKind::Type:     letter = 'T'; col = IM_COL32(102, 197, 204, 255); break; // teal
+        case AcKind::Type:     letter = 'T'; col = IM_COL32(170, 210, 110, 255); break; // teal
         case AcKind::Function: letter = 'f'; col = IM_COL32(220, 200, 120, 255); break; // yellow
-        default:               letter = 'v'; col = IM_COL32(140, 175, 220, 255); break; // blue
+        default:               letter = 'v'; col = IM_COL32(190, 190, 190, 255); break; // blue
     }
 }
 
@@ -14259,10 +14223,11 @@ static void DrawCodeSnippet(const std::string& code) {
         "List","Dictionary","GameObject","Transform","Rigidbody","Rigidbody2D","SpriteRenderer",
         "Animator","AudioSource","Collision","Collision2D","IEnumerator","WaitForSeconds",
         "SceneManager","State","Coin"};
-    const ImU32 cDef = IM_COL32(169, 183, 198, 255), cKw = IM_COL32(204, 120, 50, 255),
-                cTy = IM_COL32(78, 201, 176, 255), cStr = IM_COL32(106, 135, 89, 255),
-                cNum = IM_COL32(104, 151, 187, 255), cFn = IM_COL32(255, 198, 109, 255),
-                cCm = IM_COL32(128, 138, 128, 255), cMem = IM_COL32(176, 154, 196, 255);
+    const okay::edtheme::CodePalette& cp = ThemeCodePalette();   // the script editor's colours of the current look (no blue)
+    const ImU32 cDef = okay::edtheme::PackAbgr(cp.text), cKw = okay::edtheme::PackAbgr(cp.keyword),
+                cTy = okay::edtheme::PackAbgr(cp.typeName), cStr = okay::edtheme::PackAbgr(cp.string),
+                cNum = okay::edtheme::PackAbgr(cp.number), cFn = okay::edtheme::PackAbgr(cp.function),
+                cCm = okay::edtheme::PackAbgr(cp.comment), cMem = okay::edtheme::PackAbgr(cp.member);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (g_codeFont) ImGui::PushFont(g_codeFont, ImGui::GetFontSize());
     const float lh = ImGui::GetTextLineHeight();
@@ -14313,36 +14278,28 @@ static void DrawCodeSnippet(const std::string& code) {
 }
 
 // ---- ImGuiColorTextEdit integration ----------------------------------------
-// A Darcula-flavoured palette matching the old hand-drawn highlighter (ABGR, so
-// 0xAABBGGRR). Known identifiers (our builtins) render yellow like function calls.
+// The script editor's palette, one per look (Dark / Light): a neutral background, selection and line highlights (no blue)
+// and the same Darcula-style syntax hues (keywords orange, strings green, numbers amber, calls yellow, builtins purple,
+// types leaf green). The numbers are in ThemeModel.hpp (unit tested for contrast and for no blue); this packs them as ABGR.
+// Known identifiers (our builtins) render like the other highlighted names.
 static const TextEditor::Palette& OkayScriptPalette() {
-    static const TextEditor::Palette p = { {
-        0xffc6b7a9,  // Default            (169,183,198) soft gray
-        0xff3278cc,  // Keyword            (204,120,50)  orange
-        0xffbb9768,  // Number             (104,151,187) blue
-        0xff59876a,  // String             (106,135,89)  green
-        0xff59876a,  // CharLiteral        green
-        0xffc8c8c8,  // Punctuation        light gray
-        0xff808080,  // Preprocessor
-        0xffc6b7a9,  // Identifier         default text
-        0xffaa7698,  // KnownIdentifier    (152,118,170) purple — builtin properties (transform, deltaTime)
-        0xffaa7698,  // PreprocIdentifier  purple
-        0xff808a80,  // Comment            (128,138,128) gray
-        0xff808a80,  // MultiLineComment   gray
-        0xff241f1c,  // Background         (28,31,36) calm blue-grey
-        0xffe8e6e2,  // Cursor
-        0x8c915c3a,  // Selection          Rider blue, translucent
-        0x80302820,  // ErrorMarker        soft red wash
-        0x40eca25c,  // Breakpoint         bookmark blue (92,162,236)
-        0xffc4bbb0,  // LineNumber         readable
-        0x3a403028,  // CurrentLineFill
-        0x22403028,  // CurrentLineFillInactive
-        0x55ffffff,  // CurrentLineEdge
-        0xffb0c94e,  // TypeName           (78,201,176)  teal — Vector3, List, your classes
-        0xff6dc6ff,  // Function           (255,198,109) yellow — calls + method declarations
-        0xffc49ab0,  // Member             (176,154,196) light purple — .position, .x
-    } };
-    return p;
+    namespace et = okay::edtheme;
+    static TextEditor::Palette pal[2];
+    static bool built[2] = {false, false};
+    const int look = ThemeIsLight() ? 1 : 0;
+    if (!built[look]) {
+        const et::CodePalette& c = look ? et::kLightCode : et::kDarkCode;
+        auto P = [](const et::Rgba& v) { return et::PackAbgr(v); };
+        const et::Rgba bp{c.breakpoint.r, c.breakpoint.g, c.breakpoint.b, 0.26f};   // the editor tints the whole line, so a light wash
+        pal[look] = { {
+            P(c.text), P(c.keyword), P(c.number), P(c.string), P(c.string), P(c.punct), P(c.preproc), P(c.text),
+            P(c.known), P(c.known), P(c.comment), P(c.comment), P(c.background), P(c.caret), P(c.selection),
+            P(c.errorLine), P(bp), P(c.lineNumber), P(c.currentLine), P(c.currentLineInactive), P(c.currentLineEdge),
+            P(c.typeName), P(c.function), P(c.member),
+        } };
+        built[look] = true;
+    }
+    return pal[look];
 }
 
 // OkayScript language definition: our keywords + every VM builtin as a "known
@@ -14423,14 +14380,16 @@ static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     if (it == g_codeEditors.end()) {
         auto te = std::make_unique<ScriptEditorWidget>();
         te->SetLanguageDefinition(OkayScriptLangDef());
-        te->SetPalette(OkayScriptPalette());
         te->SetShowWhitespaces(false);
         te->SetTabSize(4);
         te->SetLineSpacing(1.55f);
         te->SetLeftMargin(22);
         it = g_codeEditors.emplace(sc, std::move(te)).first;
     }
-    return *it->second;
+    ScriptEditorWidget& w = *it->second;
+    const int look = ThemeIsLight() ? 1 : 0;   // View > Appearance > Theme: repaint the code area with the new look's palette
+    if (w.PaletteLook() != look) { w.SetPalette(OkayScriptPalette()); w.SetPaletteLook(look); }
+    return w;
 }
 
 
@@ -15088,7 +15047,7 @@ void DrawScriptEditor(EditorState& ed) {
                 for (auto& r : kRows) {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.80f, 0.86f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, TextCol());
                     ImGui::TextWrapped("%s", r[0]);
                     ImGui::PopStyleColor();
                     ImGui::TableSetColumnIndex(1);
@@ -15392,10 +15351,10 @@ void DrawScriptEditor(EditorState& ed) {
                 if (ImGui::IsItemHovered()) {
                     // Preview the actual code before inserting it.
                     ImGui::BeginTooltip();
-                    ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1.0f), "%s", s.name);
+                    ImGui::TextColored(TextCol(), "%s", s.name);
                     ImGui::TextDisabled("%s", s.desc);
                     ImGui::Separator();
-                    ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "Inserts:");
+                    ImGui::TextColored(AccentLitCol(), "Inserts:");
                     ImGui::TextUnformatted(s.text);
                     ImGui::EndTooltip();
                 }
@@ -15602,7 +15561,7 @@ void DrawScriptEditor(EditorState& ed) {
         if (s_showFind) {
             static char s_replace[128] = "";
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 7.0f));
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.13f, 0.145f, 0.175f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
             ImGui::BeginChild("##findbar", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
             if (sfFocusField) { ImGui::SetKeyboardFocusHere(); s_findCursor = caret.pos; }
             ImGui::AlignTextToFramePadding();
@@ -16025,7 +15984,7 @@ void DrawScriptEditor(EditorState& ed) {
                     ImDrawList* d = ImGui::GetWindowDrawList();
                     const ImVec2 bmin = ImGui::GetItemRectMin(), bmax = ImGui::GetItemRectMax();
                     if (h) { d->AddRectFilled(bmin, bmax, IM_COL32(255, 255, 255, 22), 5.0f); ImGui::SetTooltip("Hide scripts  (Alt+1)"); }
-                    chevron(d, ImVec2((bmin.x + bmax.x) * 0.5f, (bmin.y + bmax.y) * 0.5f), true, h ? IM_COL32(240, 244, 250, 255) : IM_COL32(170, 176, 188, 255));
+                    chevron(d, ImVec2((bmin.x + bmax.x) * 0.5f, (bmin.y + bmax.y) * 0.5f), true, h ? IM_COL32(245, 245, 245, 255) : IM_COL32(178, 178, 178, 255));
                 }
                 ImGui::SetNextItemWidth(-1);
                 ImGui::InputTextWithHint("##sefilter", "Filter scripts", s_sideFilter, sizeof s_sideFilter);
@@ -16223,7 +16182,7 @@ void DrawScriptEditor(EditorState& ed) {
                 int lead = 0; const char* p = s;
                 while (p < e && (*p == ' ' || *p == '\t')) { lead += (*p == '\t' ? 4 : 1); ++p; }
                 int len = (int)(e - p); if (len <= 0) return;
-                ImU32 col = IM_COL32(150, 152, 160, 200);
+                ImU32 col = IM_COL32(154, 154, 154, 200);
                 if (len >= 2 && p[0] == '/' && p[1] == '/') col = IM_COL32(106, 153, 85, 200);
                 float y = mp.y + 4.0f + idx * step;
                 if (y > mp.y + mh - 2.0f) return;
@@ -16242,7 +16201,7 @@ void DrawScriptEditor(EditorState& ed) {
                 if (left) mdl->AddRectFilled(ImVec2(mp.x + 1.0f, y), ImVec2(mp.x + 5.0f, y + 2.5f), col);
                 else      mdl->AddRectFilled(ImVec2(mp.x + mmW - 6.0f, y), ImVec2(mp.x + mmW - 2.0f, y + 2.5f), col);
             };
-            for (int bm : bookmarks)       tick(bm, IM_COL32(92, 162, 236, 235), true);
+            for (int bm : bookmarks)       tick(bm, IM_COL32(240, 150, 90, 235), true);
             for (const auto& w : s_warns)  tick(w.line, IM_COL32(230, 190, 70, 235), false);
             for (const auto& d : s_diags)  tick(d.line, IM_COL32(240, 80, 80, 235), false);
             // Visible-region box from the widget's scroll state.
@@ -16375,7 +16334,7 @@ void DrawScriptEditor(EditorState& ed) {
                             if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
                             if (matchAt(i)) {
                                 ImVec2 a(textX + col * chW, corg.y + ln * rowH);
-                                fdl->AddRect(a, ImVec2(a.x + wl * chW, a.y + rowH), IM_COL32(120, 150, 200, 110));
+                                fdl->AddRect(a, ImVec2(a.x + wl * chW, a.y + rowH), IM_COL32(230, 180, 60, 140));
                                 i += (int)wl; col += (int)wl; continue;
                             }
                             ++i; ++col;
@@ -16412,7 +16371,7 @@ void DrawScriptEditor(EditorState& ed) {
                         float ux0 = textX + (ws - off) * chW;
                         float uy = corg.y + (mc.mLine + 1) * rowH - 1.0f;
                         fdl->AddLine(ImVec2(ux0, uy), ImVec2(ux0 + (we - ws) * chW, uy),
-                                     IM_COL32(110, 168, 255, 255), 1.0f);
+                                     AccentU32(255), 1.0f);
                         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) jumpTo(defLine);
                     }
@@ -16492,7 +16451,7 @@ void DrawScriptEditor(EditorState& ed) {
                 if (s_dfB >= s_dfA) {
                     float y0 = corg.y + (s_dfA - 1) * rowH, y1 = corg.y + s_dfB * rowH;
                     fdl->AddRectFilled(ImVec2(teMin.x + 1.0f, y0), ImVec2(teMin.x + 3.5f, y1),
-                                       IM_COL32(90, 150, 220, 220));
+                                       IM_COL32(230, 175, 60, 220));
                 } else if (s_dfDel) {
                     float y0 = corg.y + (s_dfA - 1) * rowH;
                     fdl->AddTriangleFilled(ImVec2(teMin.x + 1.0f, y0 - 3.0f), ImVec2(teMin.x + 6.0f, y0),
@@ -16526,9 +16485,9 @@ void DrawScriptEditor(EditorState& ed) {
                             std::string head(t + hb, t + he);
                             if (head.size() > 120) head = head.substr(0, 117) + "...";
                             float hh2 = rowH + 4.0f;
-                            fdl->AddRectFilled(teMin, ImVec2(teMax.x, teMin.y + hh2), IM_COL32(43, 45, 52, 245));
+                            fdl->AddRectFilled(teMin, ImVec2(teMax.x, teMin.y + hh2), IM_COL32(47, 47, 47, 245));
                             fdl->AddLine(ImVec2(teMin.x, teMin.y + hh2), ImVec2(teMax.x, teMin.y + hh2),
-                                         IM_COL32(70, 74, 86, 255));
+                                         IM_COL32(77, 77, 77, 255));
                             fdl->AddText(ImVec2(te.TextStartX(), teMin.y + 2.0f),
                                          IM_COL32(255, 198, 109, 235), head.c_str());
                             if (ImGui::IsMouseHoveringRect(teMin, ImVec2(teMax.x, teMin.y + hh2)) &&
@@ -16661,7 +16620,7 @@ void DrawScriptEditor(EditorState& ed) {
                     if (sg) {
                         ImVec2 hp = te.CaretScreenPosBelow();
                         ImGui::SetNextWindowPos(ImVec2(hp.x, hp.y - ImGui::GetTextLineHeightWithSpacing() * 2.4f));
-                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(34, 34, 40, 245));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(36, 36, 36, 245));
                         if (ImGui::Begin("##sighelp", nullptr,
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
@@ -16761,7 +16720,7 @@ void DrawScriptEditor(EditorState& ed) {
                         if (at.y + s_acSize.y > vpB) at.y = std::max(vp->WorkPos.y, acPos.y - te.RowHeight() - 2 - s_acSize.y);
                         if (at.x + s_acSize.x > vpR) at.x = std::max(vp->WorkPos.x, vpR - s_acSize.x);
                         ImGui::SetNextWindowPos(at);
-                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(38, 38, 44, 255));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(40, 40, 40, 255));
                         if (ImGui::Begin("##autocomplete", nullptr,
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
@@ -16775,7 +16734,7 @@ void DrawScriptEditor(EditorState& ed) {
                                 const bool isMethod = memberMode && !full.empty() && (full.back() == '(' || full.back() == '<');
                                 const std::string nm = isMethod ? full.substr(0, full.size() - 1) : full;
                                 char letter; ImU32 tcol;
-                                if (memberMode) { letter = isMethod ? 'm' : 'p'; tcol = isMethod ? IM_COL32(220, 200, 120, 255) : IM_COL32(150, 190, 230, 255); }
+                                if (memberMode) { letter = isMethod ? 'm' : 'p'; tcol = isMethod ? IM_COL32(220, 200, 120, 255) : IM_COL32(205, 150, 215, 255); }
                                 else AcKindTag(ClassifyCompletion(nm), letter, tcol);
                                 ImGui::TextColored(ImColor(tcol), "%c", letter);
                                 ImGui::SameLine(0, 6);
@@ -16814,7 +16773,7 @@ void DrawScriptEditor(EditorState& ed) {
                                     ImGui::BeginGroup();
                                     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + paneW);
                                     char letter; ImU32 tcol;
-                                    if (memberMode) { letter = isMethod ? 'm' : 'p'; tcol = isMethod ? IM_COL32(220, 200, 120, 255) : IM_COL32(150, 190, 230, 255); }
+                                    if (memberMode) { letter = isMethod ? 'm' : 'p'; tcol = isMethod ? IM_COL32(220, 200, 120, 255) : IM_COL32(205, 150, 215, 255); }
                                     else AcKindTag(ClassifyCompletion(nm), letter, tcol);
                                     static const char* kKind[] = {"keyword", "type", "function", "variable"};
                                     const char* kind = memberMode ? (isMethod ? "method" : "property")
@@ -16822,12 +16781,12 @@ void DrawScriptEditor(EditorState& ed) {
                                     ImGui::TextColored(ImColor(tcol), "%s", kind);
                                     ImGui::SameLine(0, 8);
                                     if (sg) ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.55f, 1.0f), "%s", sg->c_str());
-                                    else ImGui::TextColored(ImVec4(0.92f, 0.92f, 0.92f, 1.0f), "%s%s%s",
+                                    else ImGui::TextColored(TextCol(), "%s%s%s",
                                                             receiver.empty() ? "" : receiver.c_str(), receiver.empty() ? "" : ".",
                                                             (nm + (isMethod ? (full.back() == '<' ? "<T>()" : "()") : "")).c_str());
                                     if (!doc.empty()) {
                                         ImGui::Dummy(ImVec2(0, 2));
-                                        ImGui::TextColored(ImVec4(0.80f, 0.82f, 0.86f, 1.0f), "%s", doc.c_str());
+                                        ImGui::TextColored(TextCol(0.88f), "%s", doc.c_str());
                                     }
                                     ImGui::PopTextWrapPos();
                                     if (!example.empty()) {
@@ -16845,14 +16804,14 @@ void DrawScriptEditor(EditorState& ed) {
                                         const ImVec2 b1(std::max(b0.x + paneW, ImGui::GetItemRectMax().x + 8.0f), ImGui::GetCursorScreenPos().y - 2.0f);
                                         dl->ChannelsSetCurrent(0);
                                         dl->AddRectFilled(b0, b1, IM_COL32(24, 24, 28, 255), 4.0f);
-                                        dl->AddRect(b0, b1, IM_COL32(70, 70, 80, 255), 4.0f);
+                                        dl->AddRect(b0, b1, IM_COL32(73, 73, 73, 255), 4.0f);
                                         dl->ChannelsMerge();
                                     }
                                     ImGui::EndGroup();
                                     // Divider between the list and the details.
                                     const ImVec2 g0 = ImGui::GetItemRectMin(), g1 = ImGui::GetItemRectMax();
                                     ImGui::GetWindowDrawList()->AddLine(ImVec2(g0.x - 6, g0.y), ImVec2(g0.x - 6, g1.y),
-                                                                       IM_COL32(80, 80, 92, 255));
+                                                                       IM_COL32(84, 84, 84, 255));
                                 }
                             }
                         }
@@ -16891,13 +16850,13 @@ void DrawScriptEditor(EditorState& ed) {
                         ImVec2 cp2 = te.CaretScreenPosBelow();
                         float y = cp2.y - te.RowHeight() * 2.0f - 6.0f;
                         ImGui::SetNextWindowPos(ImVec2(cp2.x, y < 0 ? cp2.y + 2.0f : y));
-                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(48, 44, 60, 245));
+                        ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(51, 51, 51, 245));
                         if (ImGui::Begin("##sighint", nullptr,
                                 ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize |
                                 ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                                 ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs)) {
-                            const ImVec4 dim(0.62f, 0.62f, 0.72f, 1.0f), hot(1.0f, 0.86f, 0.45f, 1.0f);
+                            const ImVec4 dim = DimCol(), hot(1.0f, 0.86f, 0.45f, 1.0f);
                             const std::string& sig = *sgn;
                             std::size_t lpar = sig.find('('), rpar = sig.rfind(')');
                             bool simple = lpar != std::string::npos && rpar != std::string::npos &&
@@ -16922,7 +16881,7 @@ void DrawScriptEditor(EditorState& ed) {
                                 }
                                 ImGui::SameLine(0,0); ImGui::TextColored(dim, ")");
                             } else {
-                                ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.95f, 1.0f), "%s", sig.c_str());
+                                ImGui::TextColored(TextCol(), "%s", sig.c_str());
                             }
                             if (const std::string* dc = ScriptDoc(name)) {
                                 ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
@@ -17779,7 +17738,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (on) {
                     ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+                    ImGui::PushStyleColor(ImGuiCol_Text, AccentOnCol());
                 }
                 if (ImGui::Button(platShort[pi], ImVec2(86, 0))) g_buildPlatform = pi;
                 if (on) ImGui::PopStyleColor(3);
@@ -17845,7 +17804,7 @@ void DrawFileDialogs(EditorState& ed) {
                 if (exists) ImGui::TextUnformatted(sp.stem().string().c_str());
                 else ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.45f, 1), "%s (missing)", sp.stem().string().c_str());
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L[i].path.c_str());
-                if (!ed.path().empty() && samePath(L[i].path, ed.path())) { ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.80f, 1.0f, 1), "(open)"); }
+                if (!ed.path().empty() && samePath(L[i].path, ed.path())) { ImGui::SameLine(); ImGui::TextColored(StatusCol(0), "(open)"); }
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x + ImGui::GetCursorPosX() - 92);
                 ImGui::BeginDisabled(i == 0);
                 if (ImGui::ArrowButton("##up", ImGuiDir_Up)) { move = i; moveDir = -1; }
@@ -18452,8 +18411,8 @@ void DrawFileDialogs(EditorState& ed) {
                 ImGui::ProgressBar(frac, ImVec2(-1, 0), t);
                 ImGui::PopStyleColor();
             };
-            catRow("Executable", builder::CAT_EXE,  ImVec4(0.7f,0.7f,0.75f,1));
-            catRow("Libraries ", builder::CAT_LIB,  ImVec4(0.55f,0.7f,0.95f,1));
+            catRow("Executable", builder::CAT_EXE,  ImVec4(0.717f, 0.717f, 0.717f, 1));
+            catRow("Libraries ", builder::CAT_LIB,  ImVec4(0.80f,0.60f,0.85f,1));
             catRow("Game data ", builder::CAT_DATA, ImVec4(0.55f,0.9f,0.6f,1));
             catRow("Assets    ", builder::CAT_ASSET,ImVec4(1.0f,0.78f,0.45f,1));
             ImGui::Text("Total: %s   (%d file%s)", builder::HumanBytes(R.total).c_str(),
@@ -18601,7 +18560,7 @@ static void DrawSavePrompt(EditorState& ed) {
     ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
-    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text,          AccentOnCol());
     const bool save = ImGui::Button("Save", ImVec2(120, 0));
     ImGui::PopStyleColor(4);
     if (save) {
@@ -18795,7 +18754,7 @@ static bool DrawNewProjectForm(NewProjectForm& f) {
     ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
-    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text,          AccentOnCol());
     const bool pressed = ImGui::Button("Create project", ImVec2(170, 32));
     ImGui::PopStyleColor(4);
     ImGui::EndDisabled();
@@ -19031,7 +18990,7 @@ void DrawAboutPopup() {
             float bsz = ImGui::GetFontSize() * 1.45f;
             ImVec2 tp = ImGui::GetCursorScreenPos();
             dl->AddText(bf, bsz, ImVec2(tp.x, tp.y + 2.0f),
-                        ImGui::GetColorU32(ImVec4(0.93f, 0.95f, 0.99f, 1.0f)), "OkaySpace");
+                        ImGui::GetColorU32(TextCol()), "OkaySpace");
             ImGui::Dummy(ImVec2(0, bsz + 4.0f));
         }
         ImGui::TextDisabled("Game Engine  ·  v%s", OKAY_ENGINE_VERSION);
@@ -19259,7 +19218,7 @@ void DrawProjectSettings(EditorState& ed) {
         ImGui::Separator();
         ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, AccentOnCol());
         if (ImGui::Button("Save", ImVec2(110, 0))) { SaveProjectSettings(); ConsoleLog("Project settings saved"); }
         ImGui::PopStyleColor(3);
         ImGui::SameLine();
@@ -19316,7 +19275,7 @@ void DrawUpdatePopup(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Later", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         } else {
-            ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1), "You're up to date.");
+            ImGui::TextColored(StatusCol(0), "You're up to date.");
             ImGui::Text("Installed version: v%s", u.current.c_str());
             ImGui::Separator();
             if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
@@ -19332,7 +19291,7 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
     float r = sz * 0.36f;
     auto col = [](int cr, int cg, int cb) { return IM_COL32(cr, cg, cb, 235); };
     if (go->GetComponent<Camera>()) {
-        ImU32 ic = col(120, 170, 250);
+        ImU32 ic = col(235, 150, 110);
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.7f), ImVec2(c.x + r * 0.45f, c.y + r * 0.7f), ic, 1.5f, 0, 1.6f);
         dl->AddTriangleFilled(ImVec2(c.x + r * 0.5f, c.y), ImVec2(c.x + r, c.y - r * 0.55f),
                               ImVec2(c.x + r, c.y + r * 0.55f), ic);
@@ -19345,13 +19304,13 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
                         ImVec2(c.x + std::cos(a) * r * 1.05f, c.y + std::sin(a) * r * 1.05f), ic, 1.4f);
         }
     } else if (go->GetComponent<Canvas>()) {                 // UI canvas: a screen
-        ImU32 ic = col(120, 200, 235);
+        ImU32 ic = col(230, 160, 200);
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.75f), ImVec2(c.x + r, c.y + r * 0.55f), ic, 1.5f, 0, 1.5f);
         dl->AddLine(ImVec2(c.x - r * 0.4f, c.y + r * 0.95f), ImVec2(c.x + r * 0.4f, c.y + r * 0.95f), ic, 1.5f);
     } else if (go->GetComponent<UIButton>()) {               // button: rounded box with a click point
-        ImU32 ic = col(110, 170, 250);
+        ImU32 ic = col(215, 150, 215);
         dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x + r, c.y + r * 0.55f), ic, r * 0.45f);
-        dl->AddCircleFilled(c, r * 0.22f, IM_COL32(20, 24, 32, 255), 8);
+        dl->AddCircleFilled(c, r * 0.22f, IM_COL32(25, 25, 25, 255), 8);
     } else if (go->GetComponent<UIToggle>()) {               // switch
         ImU32 ic = col(110, 200, 150);
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.5f), ImVec2(c.x + r, c.y + r * 0.5f), ic, r * 0.5f, 0, 1.4f);
@@ -19361,7 +19320,7 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.28f), ImVec2(c.x + r, c.y + r * 0.28f), ic, r * 0.28f, 0, 1.3f);
         dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.28f), ImVec2(c.x + r * 0.15f, c.y + r * 0.28f), ic, r * 0.28f);
     } else if (go->GetComponent<UIInputField>() || go->GetComponent<UIDropdown>()) {   // field
-        ImU32 ic = col(170, 180, 200);
+        ImU32 ic = col(180, 180, 180);
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x + r, c.y + r * 0.55f), ic, 2.0f, 0, 1.4f);
         if (go->GetComponent<UIDropdown>())
             dl->AddTriangleFilled(ImVec2(c.x + r * 0.2f, c.y - r * 0.15f), ImVec2(c.x + r * 0.7f, c.y - r * 0.15f), ImVec2(c.x + r * 0.45f, c.y + r * 0.2f), ic);
@@ -19371,19 +19330,19 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.8f), ImVec2(c.x + r, c.y + r * 0.8f), ic, 1.5f, 0, 1.4f);
         dl->AddTriangleFilled(ImVec2(c.x - r * 0.7f, c.y + r * 0.6f), ImVec2(c.x, c.y - r * 0.1f), ImVec2(c.x + r * 0.7f, c.y + r * 0.6f), ic);
     } else if (go->GetComponent<UIPanel>() || go->GetComponent<UIScrollView>() || go->GetComponent<UITabs>()) {
-        ImU32 ic = col(150, 165, 195);                        // panel: a card
-        dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.75f), ImVec2(c.x + r, c.y + r * 0.75f), IM_COL32(150, 165, 195, 60), 2.5f);
+        ImU32 ic = col(170, 170, 170);                        // panel: a card
+        dl->AddRectFilled(ImVec2(c.x - r, c.y - r * 0.75f), ImVec2(c.x + r, c.y + r * 0.75f), IM_COL32(170, 170, 170, 60), 2.5f);
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.75f), ImVec2(c.x + r, c.y + r * 0.75f), ic, 2.5f, 0, 1.4f);
     } else if (go->GetComponent<UIRadialProgress>()) {
         ImU32 ic = col(110, 200, 150);
         dl->AddCircle(c, r * 0.8f, IM_COL32(110, 200, 150, 90), 16, 1.6f);
         dl->PathArcTo(c, r * 0.8f, -1.57f, 1.2f, 10); dl->PathStroke(ic, 0, 1.8f);
     } else if (go->GetComponent<EventSystem>()) {            // pointer arrow
-        ImU32 ic = col(170, 180, 200);
+        ImU32 ic = col(180, 180, 180);
         const ImVec2 pts[] = {ImVec2(c.x - r * 0.6f, c.y - r), ImVec2(c.x - r * 0.6f, c.y + r * 0.6f), ImVec2(c.x - r * 0.15f, c.y + r * 0.2f), ImVec2(c.x + r * 0.5f, c.y + r * 0.2f)};
         dl->AddPolyline(pts, 4, ic, ImDrawFlags_Closed, 1.4f);
     } else if (go->GetComponent<MeshRenderer>()) {
-        ImU32 ic = col(120, 170, 250);   // little isometric cube
+        ImU32 ic = col(235, 125, 115);   // little isometric cube
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.45f), ImVec2(c.x + r * 0.45f, c.y + r), ic, 0, 0, 1.5f);
         dl->AddLine(ImVec2(c.x - r, c.y - r * 0.45f), ImVec2(c.x - r * 0.45f, c.y - r), ic, 1.5f);
         dl->AddLine(ImVec2(c.x - r * 0.45f, c.y - r), ImVec2(c.x + r, c.y - r), ic, 1.5f);
@@ -19391,7 +19350,7 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
         dl->AddLine(ImVec2(c.x + r, c.y + r * 0.45f), ImVec2(c.x + r * 0.45f, c.y + r), ic, 1.5f);
         dl->AddLine(ImVec2(c.x + r * 0.45f, c.y - r * 0.45f), ImVec2(c.x + r, c.y - r), ic, 1.2f);
     } else if (go->GetComponent<TextRenderer>()) {
-        ImU32 ic = col(190, 160, 250);
+        ImU32 ic = col(215, 150, 215);
         dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y - r), ic, 1.8f);
         dl->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), ic, 1.8f);
     } else if (go->GetComponent<ParticleSystem>()) {
@@ -19400,7 +19359,7 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
         dl->AddCircleFilled(ImVec2(c.x + r * 0.45f, c.y - r * 0.05f), r * 0.24f, ic, 8);
         dl->AddCircleFilled(ImVec2(c.x - r * 0.05f, c.y - r * 0.6f), r * 0.18f, ic, 8);
     } else if (go->GetComponent<Tilemap>()) {
-        ImU32 ic = col(110, 210, 210);
+        ImU32 ic = col(170, 210, 110);
         dl->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), ic, 0, 0, 1.4f);
         dl->AddLine(ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), ic, 1.2f);
         dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), ic, 1.2f);
@@ -19416,13 +19375,13 @@ static void HierKindIcon(GameObject* go, const ImVec2& pos, float sz, ImDrawList
         dl->AddTriangleFilled(ImVec2(c.x - r * 0.35f, c.y), ImVec2(c.x + r * 0.5f, c.y - r * 0.8f),
                               ImVec2(c.x + r * 0.5f, c.y + r * 0.8f), ic);
     } else if (go->transform && go->transform->ChildCount() > 0 && go->Components().size() <= 1) {
-        ImU32 ic = col(170, 175, 190);   // an empty group of children: a folder
+        ImU32 ic = col(178, 178, 178);   // an empty group of children: a folder
         dl->AddRect(ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x + r, c.y + r * 0.75f), ic, 1.5f, 0, 1.3f);
         dl->AddLine(ImVec2(c.x - r, c.y - r * 0.55f), ImVec2(c.x - r * 0.6f, c.y - r * 0.9f), ic, 1.3f);
         dl->AddLine(ImVec2(c.x - r * 0.6f, c.y - r * 0.9f), ImVec2(c.x - r * 0.05f, c.y - r * 0.9f), ic, 1.3f);
         dl->AddLine(ImVec2(c.x - r * 0.05f, c.y - r * 0.9f), ImVec2(c.x + r * 0.15f, c.y - r * 0.55f), ic, 1.3f);
     } else {
-        dl->AddCircleFilled(c, r * 0.32f, IM_COL32(150, 155, 165, 200), 8);
+        dl->AddCircleFilled(c, r * 0.32f, IM_COL32(157, 157, 157, 200), 8);
     }
 }
 
@@ -19464,12 +19423,12 @@ static void HierComponentBadges(GameObject* go, ImVec2 rowMin, ImVec2 rowMax, fl
     bool hasCol = go->GetComponent<BoxCollider2D>() != nullptr ||
                   go->GetComponent<CircleCollider2D>() != nullptr;
     Badge badges[] = {
-        { !go->GetComponents<ScriptComponent>().empty(), IM_COL32(150, 140, 235, 255), "S" },
+        { !go->GetComponents<ScriptComponent>().empty(), IM_COL32(205, 140, 215, 255), "S" },
         { go->GetComponent<Light>()    != nullptr,       IM_COL32(235, 205, 90, 255),  "L" },
         { hasRb,                                         IM_COL32(235, 140, 70, 255),  "R" },
         { hasCol,                                        IM_COL32(120, 200, 130, 255), "C" },
         { go->GetComponent<Animator>() != nullptr,       IM_COL32(110, 200, 160, 255), "A" },
-        { go->GetComponent<ParticleSystem>() != nullptr, IM_COL32(110, 200, 235, 255), "P" },
+        { go->GetComponent<ParticleSystem>() != nullptr, IM_COL32(235, 135, 120, 255), "P" },
     };
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float x = rowMax.x - 4.0f, cy = (rowMin.y + rowMax.y) * 0.5f;
@@ -19494,7 +19453,7 @@ static constexpr float kHierEyeW = 20.0f;
 static void HierEye(GameObject* go, ImVec2 rowMin, ImVec2 rowMax) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float cx = rowMax.x - kHierEyeW * 0.5f, cy = (rowMin.y + rowMax.y) * 0.5f;
-    ImU32 col = go->active ? IM_COL32(190, 195, 205, 200) : IM_COL32(120, 124, 132, 160);
+    ImU32 col = go->active ? IM_COL32(197, 197, 197, 200) : IM_COL32(125, 125, 125, 160);
     dl->AddCircle(ImVec2(cx, cy), 4.5f, col, 0, 1.5f);
     dl->AddCircleFilled(ImVec2(cx, cy), 1.8f, col);
     if (!go->active)
@@ -19507,7 +19466,7 @@ static void HierLock(GameObject* go, bool rowHovered, ImVec2 rowMin, ImVec2 rowM
     if (!go->editorLocked && !rowHovered) return;
     ImDrawList* dl = ImGui::GetWindowDrawList();
     float cx = rowMax.x - kHierEyeW * 1.5f, cy = (rowMin.y + rowMax.y) * 0.5f;
-    ImU32 col = go->editorLocked ? IM_COL32(235, 190, 90, 230) : IM_COL32(140, 144, 152, 110);
+    ImU32 col = go->editorLocked ? IM_COL32(235, 190, 90, 230) : IM_COL32(145, 145, 145, 110);
     dl->AddCircle(ImVec2(cx, cy - 2.0f), 2.8f, col, 12, 1.4f);           // shackle
     dl->AddRectFilled(ImVec2(cx - 3.5f, cy - 0.5f), ImVec2(cx + 3.5f, cy + 5.0f), col, 1.0f);  // body
 }
@@ -19546,15 +19505,15 @@ static void HierPrefabBadge(GameObject* go, ImVec2 pos, float sz, ImDrawList* dl
     const bool root = !go->prefabSource.empty();
     const ImVec2 a(pos.x + sz - 6.0f, pos.y + sz - 6.0f), b(pos.x + sz + 1.0f, pos.y + sz + 1.0f);
     if (!root) {
-        dl->AddRectFilled(a, b, IM_COL32(90, 165, 255, 130), 1.5f);
-        dl->AddRect(a, b, IM_COL32(20, 24, 32, 200), 1.5f);
+        dl->AddRectFilled(a, b, PrefabU32(130), 1.5f);
+        dl->AddRect(a, b, IM_COL32(25, 25, 25, 200), 1.5f);
         return;
     }
     const bool variant = oked::PrefabKindOfFile(go->prefabSource) == oked::PrefabKind::Variant;
     const bool nested = PrefabTools::PrefabRoot(*go) != go;
-    dl->AddRectFilled(a, b, variant ? IM_COL32(176, 128, 255, 255) : IM_COL32(90, 165, 255, 255), 1.5f);
-    dl->AddRect(a, b, IM_COL32(20, 24, 32, 200), 1.5f);
-    if (nested) dl->AddRectFilled(ImVec2(a.x + 2.0f, a.y + 2.0f), ImVec2(b.x - 2.0f, b.y - 2.0f), IM_COL32(20, 24, 32, 230));
+    dl->AddRectFilled(a, b, variant ? IM_COL32(205, 130, 215, 255) : PrefabU32(255), 1.5f);
+    dl->AddRect(a, b, IM_COL32(25, 25, 25, 200), 1.5f);
+    if (nested) dl->AddRectFilled(ImVec2(a.x + 2.0f, a.y + 2.0f), ImVec2(b.x - 2.0f, b.y - 2.0f), IM_COL32(25, 25, 25, 230));
     if (oked::PrefabOverrideCount(*go) > 0) dl->AddCircleFilled(ImVec2(b.x - 1.0f, a.y - 2.0f), 3.0f, IM_COL32(255, 160, 40, 255));
     if (ImGui::IsMouseHoveringRect(ImVec2(a.x - 4.0f, a.y - 6.0f), ImVec2(b.x + 3.0f, b.y + 3.0f)) && ImGui::IsWindowHovered()) {
         oked::PrefabInstanceInfo info;
@@ -19776,8 +19735,8 @@ void DrawHierarchy(EditorState& ed) {
                 ? (ed.scene().Name().empty() ? std::string("Main Scene")
                                              : ed.scene().Name() + " (main)")
                 : go->sourceScene;
-            ImU32 col = go->sourceScene.empty() ? IM_COL32(150, 152, 160, 255)
-                                                : IM_COL32(120, 190, 255, 255);
+            ImU32 col = go->sourceScene.empty() ? IM_COL32(154, 154, 154, 255)
+                                                : AccentU32(255);
             ImGui::Spacing();
             ImGui::PushStyleColor(ImGuiCol_Text, col);
             ImGui::TextUnformatted(("    " + lbl).c_str());   // scene section header
@@ -19818,7 +19777,7 @@ void DrawHierarchy(EditorState& ed) {
             bool dim = !node->active || (g_isolate && !node->IsSelfOrDescendantOf(g_isolate));
             const bool prefabRoot = !dim && !node->prefabSource.empty();   // prefab instances read blue
             if (dim) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
-            else if (prefabRoot) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.76f, 1.0f, 1.0f));
+            else if (prefabRoot) ImGui::PushStyleColor(ImGuiCol_Text, PrefabCol());
             visRows.push_back(node);   // for arrow-key navigation, in draw order
             // Zebra striping: a whisper-faint band on every other row keeps deep
             // hierarchies scannable (the count is per visible row, top to bottom).
@@ -20601,8 +20560,8 @@ static void AnchorCombo(const char* id, okay::UIAnchor& anchor, EditorState& ed)
     if (GameObject* sel = ed.selected()) { okay::UIRect r = okay::GetUIRect(sel); if (r.valid && r.anchorPtr == &anchor) owner = sel; }
     // Draw a tiny diagram of anchor `a` into [p0, p1].
     auto diagram = [&](ImDrawList* dl, ImVec2 p0, ImVec2 p1, int a, bool active) {
-        const ImU32 frame = active ? IM_COL32(150, 190, 255, 255) : IM_COL32(150, 154, 166, 255);
-        const ImU32 fill  = active ? IM_COL32(110, 160, 255, 255) : IM_COL32(205, 208, 216, 255);
+        const ImU32 frame = active ? AccentU32(255) : IM_COL32(157, 157, 157, 255);
+        const ImU32 fill  = active ? AccentU32(255) : IM_COL32(210, 210, 210, 255);
         dl->AddRect(p0, p1, frame, 2.0f, 0, 1.2f);
         float w = p1.x - p0.x, h = p1.y - p0.y;
         if (a <= 8) {
@@ -20633,7 +20592,7 @@ static void AnchorCombo(const char* id, okay::UIAnchor& anchor, EditorState& ed)
             bool clicked = ImGui::InvisibleButton("##a", size);
             bool hov = ImGui::IsItemHovered();
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), hov ? IM_COL32(70, 76, 92, 255) : IM_COL32(44, 46, 54, 255), 4.0f);
+            dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), hov ? IM_COL32(74, 74, 74, 255) : IM_COL32(48, 48, 48, 255), 4.0f);
             diagram(dl, ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + size.x - 6, p.y + size.y - 6), a, a == ai);
             if (hov) ImGui::SetTooltip("%s", kAnchors[a]);
             ImGui::PopID();
@@ -21669,7 +21628,7 @@ static bool ScriptRecipePicker(const char* popupId, ActionList* al, bool& dirty)
     bool applied = false;
     ImGui::SetNextWindowSizeConstraints(ImVec2(380, 0), ImVec2(480, 560));
     if (ImGui::BeginPopup(popupId)) {
-        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "Starter Scripts");
+        ImGui::TextColored(AccentLitCol(), "Starter Scripts");
         ImGui::TextDisabled("Pick a ready-made behaviour — it's added as a trigger you can tweak.");
         static char filter[64] = "";
         ImGui::SetNextItemWidth(-1);
@@ -21692,7 +21651,7 @@ static bool ScriptRecipePicker(const char* popupId, ActionList* al, bool& dirty)
             if (ImGui::IsItemHovered()) {
                 // A structured preview of exactly what the recipe sets up.
                 ImGui::BeginTooltip();
-                ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1.0f), "%s", rc.name);
+                ImGui::TextColored(TextCol(), "%s", rc.name);
                 ImGui::TextDisabled("%s", rc.desc);
                 ImGui::Separator();
                 ImGui::TextColored(ImVec4(0.86f, 0.62f, 0.36f, 1.0f), "When: %s",
@@ -21702,7 +21661,7 @@ static bool ScriptRecipePicker(const char* popupId, ActionList* al, bool& dirty)
                     for (const auto& c : rc.conditions)
                         ImGui::BulletText("%s  %s", ActionOpLabel(kCondOps, IM_ARRAYSIZE(kCondOps), c.op), ActionOpSummary(c).c_str());
                 }
-                ImGui::TextColored(ImVec4(0.5f, 0.64f, 0.86f, 1.0f), "Do:");
+                ImGui::TextColored(DimCol(), "Do:");
                 if (rc.instructions.empty()) ImGui::BulletText("(nothing yet)");
                 for (const auto& in : rc.instructions)
                     ImGui::BulletText("%s  %s", ActionOpLabel(kInstrOps, IM_ARRAYSIZE(kInstrOps), in.op), ActionOpSummary(in).c_str());
@@ -22161,8 +22120,8 @@ static const AnimBindSlot kAnimBindSlots[] = {
 static ImU32 AnimBoneColor(int bone) {
     const char* n = Character::BoneName(bone);
     if (n[0] == 'L' && n[1] == ' ') return IM_COL32(235, 165, 90, 255);
-    if (n[0] == 'R' && n[1] == ' ') return IM_COL32(110, 190, 245, 255);
-    return IM_COL32(205, 205, 225, 255);
+    if (n[0] == 'R' && n[1] == ' ') return IM_COL32(125, 215, 135, 255);
+    return IM_COL32(212, 212, 212, 255);
 }
 static float& AnimComp(Vec3& v, int c) { return c == 0 ? v.x : c == 1 ? v.y : v.z; }
 static float  AnimComp(const Vec3& v, int c) { return c == 0 ? v.x : c == 1 ? v.y : v.z; }
@@ -22777,7 +22736,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         AnimDrawRuler(dl, ImVec2(kx0, o.y), KW, rulerH, o.y + H, view, pad, dur, d.fps);
         if (clip.loop && clip.length > 0.0f && clip.length > (clip.keys.empty() ? 0.0f : clip.keys.back().time)) {   // the loop's seam
             const float xl = tToX(clip.length);
-            dl->AddLine(ImVec2(xl, o.y + rulerH * 0.3f), ImVec2(xl, o.y + H), IM_COL32(170, 140, 240, 160), 1.0f);
+            dl->AddLine(ImVec2(xl, o.y + rulerH * 0.3f), ImVec2(xl, o.y + H), IM_COL32(215, 140, 215, 160), 1.0f);
         }
         ImGui::SetCursorScreenPos(ImVec2(kx0, o.y));
         ImGui::InvisibleButton("##caruler", ImVec2(KW, rulerH));
@@ -22859,8 +22818,8 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
         // with its name on the left and its keys on the right, scrolling together.
         struct DsRow { int kind; int bone; const char* label; ImU32 col; };   // kind: 0 all keys, 1 root, 2 bone
         std::vector<DsRow> rows;
-        rows.push_back({0, -1, "All keys", IM_COL32(230, 230, 240, 255)});
-        rows.push_back({1, -1, "Root", IM_COL32(190, 140, 235, 255)});
+        rows.push_back({0, -1, "All keys", IM_COL32(233, 233, 233, 255)});
+        rows.push_back({1, -1, "Root", IM_COL32(210, 140, 215, 255)});
         for (int b = 0; b < nb; ++b) rows.push_back({2, b, Character::BoneName(b), AnimBoneColor(b)});
         int menuAt = -1;   // right-click: a key's index, or -2 for a row itself
         ImGui::SetCursorScreenPos(ImVec2(o.x, rowsTop));
@@ -22990,8 +22949,8 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
                 if (d.boxing && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     const ImVec2 a = d.boxFrom, b = io.MousePos;
                     const ImVec2 mn(std::min(a.x, b.x), std::min(a.y, b.y)), mx(std::max(a.x, b.x), std::max(a.y, b.y));
-                    rl->AddRectFilled(mn, mx, IM_COL32(120, 160, 255, 40));
-                    rl->AddRect(mn, mx, IM_COL32(120, 160, 255, 200));
+                    rl->AddRectFilled(mn, mx, AccentU32(40));
+                    rl->AddRect(mn, mx, AccentU32(200));
                 }
                 ImGui::SetCursorScreenPos(ImVec2(o.x, r0.y + rows.size() * rowH));
                 ImGui::Dummy(ImVec2(1.0f, 1.0f));
@@ -23011,7 +22970,7 @@ static void DrawCharacterAnim(EditorState& ed, GameObject* go, Character* ch, in
                 const float cTop = r0.y + 6.0f;
                 float cBot = r0.y + childH - 8.0f;
                 if (cBot - cTop < 40.0f) cBot = cTop + 40.0f;
-                static const ImU32 kChanCol[3] = {IM_COL32(235, 95, 95, 255), IM_COL32(120, 210, 110, 255), IM_COL32(100, 150, 255, 255)};
+                static const ImU32 kChanCol[3] = {IM_COL32(235, 95, 95, 255), IM_COL32(120, 210, 110, 255), IM_COL32(100, 150, 255, 255)};   // blue-ok: Z channel colour (x red / y green / z blue convention)
                 static const char* const kChanName[3] = {"x", "y", "z"};
                 auto keyVal = [&](const AnimKey& k) -> Vec3 { return rootTrack ? k.root : (cb < (int)k.pose.size() ? k.pose[cb] : Vec3{0, 0, 0}); };
                 auto valueAt = [&](float tt) -> Vec3 {
@@ -23563,7 +23522,7 @@ static void DrawAnimPreview(EditorState& ed, GameObject* go,
             ImVec2 bp = ImGui::GetCursorScreenPos();
             ImDrawList* bdl = ImGui::GetWindowDrawList();
             bdl->AddRectFilledMultiColor(bp, ImVec2(bp.x + w, bp.y + h),
-                IM_COL32(58, 66, 84, 255), IM_COL32(58, 66, 84, 255), IM_COL32(30, 33, 40, 255), IM_COL32(30, 33, 40, 255));
+                IM_COL32(64, 64, 64, 255), IM_COL32(64, 64, 64, 255), IM_COL32(34, 34, 34, 255), IM_COL32(34, 34, 34, 255));
         }
         ImGui::Image((ImTextureID)tex, ImVec2(w, h));
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
@@ -24038,7 +23997,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
             ImVec2 p0 = ImGui::GetCursorScreenPos();
             float w = dsW;
             const float h = 12.0f;
-            ddl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(40, 44, 54, 255), 3.0f);
+            ddl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(46, 46, 46, 255), 3.0f);
             // Faint grid lines aligned with the ruler's ticks.
             for (float ts2 = dsStep; ts2 < span; ts2 += dsStep) {
                 float x = p0.x + (ts2 / span) * w;
@@ -24060,7 +24019,7 @@ static void DrawModelAnim(EditorState& ed, GameObject* go, ModelAnimator* ma) {
                 float kx = p0.x + (q / span) * w;
                 float ky = p0.y + h * 0.5f, kr = 3.4f;
                 bool atHead = std::fabs(q - t) < 0.02f;
-                ImU32 kcol = atHead ? IM_COL32(255, 230, 120, 255) : IM_COL32(120, 200, 255, 255);
+                ImU32 kcol = atHead ? IM_COL32(255, 230, 120, 255) : IM_COL32(205, 205, 205, 255);
                 ddl->AddQuadFilled(ImVec2(kx, ky - kr), ImVec2(kx + kr, ky),
                                    ImVec2(kx, ky + kr), ImVec2(kx - kr, ky), kcol);
             }
@@ -24297,7 +24256,7 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
     // Track groups shown as timeline rows (prefix match on the track name).
     struct Grp { const char* label; const char* prefix; ImU32 col; };
     static const Grp kGroups[] = {
-        {"Position", "position.", IM_COL32(110, 170, 255, 255)},
+        {"Position", "position.", IM_COL32(215, 140, 215, 255)},
         {"Rotation", "rotation.", IM_COL32(120, 210, 140, 255)},
         {"Scale",    "scale.",    IM_COL32(235, 180,  90, 255)},
     };
@@ -24306,8 +24265,8 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
         char a = track.empty() ? 0 : track.back();
         if (a == 'x') return IM_COL32(235, 95, 95, 255);
         if (a == 'y') return IM_COL32(120, 210, 110, 255);
-        if (a == 'z') return IM_COL32(100, 150, 255, 255);
-        return IM_COL32(190, 190, 200, 255);
+        if (a == 'z') return IM_COL32(100, 150, 255, 255);   // blue-ok: z track colour (x red / y green / z blue convention)
+        return IM_COL32(193, 193, 193, 255);
     };
     auto keyTimes = [&](const std::string& prefix) {
         std::vector<float> ts;
@@ -24627,7 +24586,7 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
     }
     for (const auto& kv : clip.Tracks())
         if (kv.first.rfind("position.", 0) && kv.first.rfind("rotation.", 0) && kv.first.rfind("scale.", 0))
-            rows.push_back({kv.first, kv.first, IM_COL32(190, 190, 200, 255), -1, false});
+            rows.push_back({kv.first, kv.first, IM_COL32(193, 193, 193, 255), -1, false});
 
     // ---- Body: [preview] [properties + track names] [timeline] -------------------
     float bodyH = ImGui::GetContentRegionAvail().y;
@@ -24926,8 +24885,8 @@ static void DrawObjectAnimTimeline(EditorState& ed, GameObject* go, Animator* an
             if (st.boxing && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                 ImVec2 a = st.boxFrom, b = ImGui::GetIO().MousePos;
                 ImVec2 mn(std::min(a.x, b.x), std::min(a.y, b.y)), mx(std::max(a.x, b.x), std::max(a.y, b.y));
-                dl->AddRectFilled(mn, mx, IM_COL32(120, 160, 255, 40));
-                dl->AddRect(mn, mx, IM_COL32(120, 160, 255, 200));
+                dl->AddRectFilled(mn, mx, AccentU32(40));
+                dl->AddRect(mn, mx, AccentU32(200));
             }
             ImGui::PopClipRect();
             // Scroll hint: a thin bar on the right when rows overflow.
@@ -25166,16 +25125,16 @@ static ImU32 FlowNodeColor(const std::string& g) {
     if (g == "Flow")                       return IM_COL32(150, 96, 44, 255);   // control flow — amber
     if (g == "Juice")                      return IM_COL32(150, 76, 128, 255);  // tweens/shake — magenta
     if (g == "Variables")                  return IM_COL32(52, 110, 86, 255);   // green
-    if (g == "Arrays" || g == "Maps")      return IM_COL32(96, 68, 140, 255);   // purple
-    if (g == "Text")                       return IM_COL32(38, 108, 120, 255);  // teal
+    if (g == "Arrays" || g == "Maps")      return IM_COL32(124, 68, 124, 255);   // purple
+    if (g == "Text")                       return IM_COL32(44, 112, 92, 255);  // teal
     if (g == "Events")                     return IM_COL32(150, 110, 46, 255);  // gold
     if (g.rfind("Physics", 0) == 0)        return IM_COL32(128, 72, 72, 255);   // red
-    if (g == "Animation" || g == "Character") return IM_COL32(108, 78, 132, 255);
+    if (g == "Animation" || g == "Character") return IM_COL32(132, 78, 132, 255);
     if (g == "Audio")                      return IM_COL32(96, 96, 52, 255);
-    if (g == "Render" || g == "Look" || g == "Camera") return IM_COL32(56, 92, 132, 255);
+    if (g == "Render" || g == "Look" || g == "Camera") return IM_COL32(140, 96, 60, 255);
     if (g == "Survival")                   return IM_COL32(80, 110, 70, 255);
     if (g == "PlayFab")                    return IM_COL32(140, 90, 40, 255);   // cloud services — orange
-    return IM_COL32(50, 82, 142, 255);   // default blue
+    return IM_COL32(96, 96, 96, 255);   // default blue
 }
 static bool FlowIsOpener(const std::string& o) {
     return o == "repeat" || o == "while" || o == "for_each" || o == "for_each_tag" || o == "if";
@@ -25365,7 +25324,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
         { ImVec2 mn=ImGui::GetItemRectMin(), mx=ImGui::GetItemRectMax();
           ImGui::GetWindowDrawList()->AddRectFilled(mn, ImVec2(mn.x+4.0f, mx.y), IM_COL32(240,189,107,255), 4.0f, ImDrawFlags_RoundCornersLeft); }
         if (open) {
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f,0.16f,0.20f,1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.17f, 0.17f, 0.17f, 1.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12,10));
             ImGui::BeginChild("card", ImVec2(0,0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
 
@@ -25398,7 +25357,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
             if (ImGui::SmallButton("+ only if...")) addCondTo=h;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a check - the actions run only when all checks pass.");
 
-            ImGui::Dummy(ImVec2(0,2)); ImGui::TextColored(ImVec4(0.52f,0.66f,0.88f,1.0f),"DO");
+            ImGui::Dummy(ImVec2(0,2)); ImGui::TextColored(AccentLitCol(),"DO");
             auto& is = insOf(h);
             if (is.empty()){ ImGui::SameLine(); ImGui::TextDisabled("(nothing yet - click + do...)"); }
             int iAct=0,iActI=-1;
@@ -25410,7 +25369,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
             if (iAct==1&&iActI>=0&&iActI<(int)is.size()){is.erase(is.begin()+iActI);ed.dirty=true;}
             else if (iAct==2&&iActI>0){std::swap(is[iActI],is[iActI-1]);ed.dirty=true;}
             else if (iAct==3&&iActI+1<(int)is.size()){std::swap(is[iActI],is[iActI+1]);ed.dirty=true;}
-            ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f)); ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
+            ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f)); ImGui::PushStyleColor(ImGuiCol_Text, AccentOnCol());
             bool addDo = ImGui::SmallButton("+ do..."); ImGui::PopStyleColor(2);
             if (addDo) addInsTo=h;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add an action to run when this rule fires.");
@@ -25422,7 +25381,7 @@ static void DrawSimpleRules(EditorState& ed, ActionList* al, GameObject* go) {
     }
     s_forceOpen = -1;
 
-    ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f)); ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
+    ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f)); ImGui::PushStyleColor(ImGuiCol_Text, AccentOnCol());
     bool newRule = ImGui::Button("+ New Rule", ImVec2(140,30)); ImGui::PopStyleColor(2);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another WHEN -> DO rule to this object.");
     ImGui::EndChild();   // ##vswrap
@@ -25762,7 +25721,7 @@ static const char* ActionOpScalarLabel(const std::string& op) {
 // the Transform inspector. Returns true if any component changed.
 static bool VectorFields(ActionList::Item& it, int start, int n, bool& dirty) {
     static const char* labels[3] = {"X", "Y", "Z"};
-    static const ImU32 cols[3] = {IM_COL32(224,84,84,255), IM_COL32(122,196,122,255), IM_COL32(88,148,232,255)};
+    static const ImU32 cols[3] = {IM_COL32(224,84,84,255), IM_COL32(122,196,122,255), IM_COL32(88,148,232,255)};   // blue-ok: Z field colour of the vector fields (X red / Y green / Z blue convention)
     bool changed = false;
     for (int k = 0; k < n; ++k) {
         int ai = start + k;
@@ -26197,7 +26156,7 @@ static int DrawActionItem(ActionList::Item& it, const ActionOpInfo* ops, int nop
     ImGui::SameLine(); if (ImGui::SmallButton("X")) { action = 1; dirty = true; }
     // Spell out what this action needs to work, so it's obvious what to add first.
     if (const char* rq = ActionOpRequires(it.op))
-        ImGui::TextColored(ImVec4(0.60f, 0.64f, 0.72f, 1.0f), "   needs %s", rq);
+        ImGui::TextColored(DimCol(), "   needs %s", rq);
     ImGui::PopID();
     return action;
 }
@@ -26635,11 +26594,11 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
     st->SetFloat(yKey, yMax);
     auto toScreen = [&](float t, float v) { return ImVec2(p0.x + t * w, p1.y - (v / yMax) * h); };
 
-    dl->AddRectFilled(p0, p1, IM_COL32(28, 30, 36, 255), 3.0f);
+    dl->AddRectFilled(p0, p1, IM_COL32(31, 31, 31, 255), 3.0f);
     const float y1 = toScreen(0.0f, 1.0f).y;   // the "x1" line (no change)
-    dl->AddLine(ImVec2(p0.x, y1), ImVec2(p1.x, y1), IM_COL32(70, 74, 86, 255));
+    dl->AddLine(ImVec2(p0.x, y1), ImVec2(p1.x, y1), IM_COL32(77, 77, 77, 255));
     for (int gx = 1; gx < 4; ++gx)
-        dl->AddLine(ImVec2(p0.x + w * gx * 0.25f, p0.y), ImVec2(p0.x + w * gx * 0.25f, p1.y), IM_COL32(48, 50, 60, 255));
+        dl->AddLine(ImVec2(p0.x + w * gx * 0.25f, p0.y), ImVec2(p0.x + w * gx * 0.25f, p1.y), IM_COL32(53, 53, 53, 255));
     const ImU32 lineCol = ImGui::GetColorU32(AccentCol(1.0f));
     ImVec2 prev = toScreen(0.0f, c.Evaluate(0.0f));
     for (int i = 1; i <= 48; ++i) {
@@ -26650,12 +26609,12 @@ static bool ParticleCurveEditor(EditorState& ed, const char* id, okay::ParticleC
     }
     for (int i = 0; i < c.count; ++i) {
         ImVec2 kp = toScreen(c.keys[i].time, c.keys[i].value);
-        dl->AddCircleFilled(kp, i == sel ? 5.0f : 4.0f, i == sel ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 205, 215, 255));
+        dl->AddCircleFilled(kp, i == sel ? 5.0f : 4.0f, i == sel ? IM_COL32(255, 255, 255, 255) : IM_COL32(207, 207, 207, 255));
         if (i == sel) dl->AddCircle(kp, 6.5f, lineCol, 12, 1.5f);
     }
     dl->AddRect(p0, p1, IM_COL32(20, 20, 24, 255), 3.0f);
     char ylab[16]; std::snprintf(ylab, sizeof(ylab), "x%.2g", yMax);
-    dl->AddText(ImVec2(p0.x + 3.0f, p0.y + 1.0f), IM_COL32(140, 145, 160, 255), ylab);
+    dl->AddText(ImVec2(p0.x + 3.0f, p0.y + 1.0f), IM_COL32(148, 148, 148, 255), ylab);
 
     ImGui::InvisibleButton("##curveplot", ImVec2(w, h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     const ImVec2 m = ImGui::GetIO().MousePos;
@@ -26741,7 +26700,7 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     if (sCompForceOpen != -1) want = sCompForceOpen == 1;   // Expand/Collapse All
     if (g_inspSectionGap > 0.0f) ImGui::Dummy(ImVec2(0, g_inspSectionGap));   // air between components
     ImGui::SetNextItemOpen(want, ImGuiCond_Always);
-    if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.62f, 0.66f, 1.0f));
+    if (!en) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.627f, 0.627f, 0.627f, 1.0f));
     bool open = ImGui::CollapsingHeader(title.c_str(), ImGuiTreeNodeFlags_AllowOverlap);
     if (sCompHeaderTip) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", sCompHeaderTip);
@@ -26761,9 +26720,9 @@ static bool CompHeader(const char* label, okay::Component* comp, okay::Component
     const ImVec2 hmn = ImGui::GetItemRectMin(), hmx = ImGui::GetItemRectMax();
     {   // accent bar down the left edge: each component reads as a titled card
         ImVec4 barCol = CategoryColor(label); barCol.w = 0.95f;
-        if (oked::PrefabChangedFor(comp)) barCol = ImVec4(0.30f, 0.62f, 1.0f, 1.0f);   // changed from its prefab
+        if (oked::PrefabChangedFor(comp)) barCol = PrefabCol();   // changed from its prefab
         ImGui::GetWindowDrawList()->AddRectFilled(hmn, ImVec2(hmn.x + 3.0f, hmx.y),
-            ImGui::GetColorU32(en ? barCol : ImVec4(0.45f, 0.47f, 0.51f, 0.8f)), 1.5f);
+            ImGui::GetColorU32(en ? barCol : ImVec4(0.477f, 0.477f, 0.477f, 0.8f)), 1.5f);
     }
     const bool hdrRightClick = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right);
     // Enable box, inside the bar after the fold arrow.
@@ -27362,7 +27321,7 @@ static void DrawUVEditor(EditorState& ed) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 p1(p0.x + size, p0.y + size);
     dl->PushClipRect(p0, p1, true);
-    dl->AddRectFilled(p0, p1, IM_COL32(26, 28, 34, 255));
+    dl->AddRectFilled(p0, p1, IM_COL32(29, 29, 29, 255));
     const ImVec2 q0 = toScreen({0, 0}), q1 = toScreen({1, 1});
     SDL_Texture* tex = (mr->texture.empty() || mr->texture[0] == '@') ? nullptr : GetThumb(mr->texture);   // '@...' is a picture made in memory (a terrain's baked layers): there is no file to show
     if (tex) dl->AddImage((ImTextureID)tex, q0, q1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 170));
@@ -27371,10 +27330,10 @@ static void DrawUVEditor(EditorState& ed) {
         for (int y = 0; y < n; ++y)
             for (int x = 0; x < n; ++x) {
                 const ImVec2 a = toScreen({(float)x / n, (float)y / n}), b = toScreen({(float)(x + 1) / n, (float)(y + 1) / n});
-                dl->AddRectFilled(a, b, ((x + y) & 1) ? IM_COL32(60, 64, 74, 255) : IM_COL32(44, 47, 56, 255));
+                dl->AddRectFilled(a, b, ((x + y) & 1) ? IM_COL32(66, 66, 66, 255) : IM_COL32(49, 49, 49, 255));
             }
     }
-    dl->AddRect(q0, q1, IM_COL32(200, 205, 215, 140));
+    dl->AddRect(q0, q1, IM_COL32(207, 207, 207, 140));
     if (anyUV) {
         // Faces selected in 3D, lightly filled.
         if (g_meshSelMode == 1)
@@ -27383,10 +27342,10 @@ static void DrawUVEditor(EditorState& ed) {
                     dl->AddTriangleFilled(toScreen(uvOf(f * 3)), toScreen(uvOf(f * 3 + 1)), toScreen(uvOf(f * 3 + 2)), IM_COL32(255, 170, 40, 45));
         for (const auto& e : st.outline) {
             const bool sel = st.sel.count(e.first) && st.sel.count(e.second);
-            dl->AddLine(toScreen(uvOf(e.first)), toScreen(uvOf(e.second)), sel ? IM_COL32(255, 170, 40, 255) : IM_COL32(190, 205, 230, 200), sel ? 2.0f : 1.0f);
+            dl->AddLine(toScreen(uvOf(e.first)), toScreen(uvOf(e.second)), sel ? IM_COL32(255, 170, 40, 255) : IM_COL32(205, 205, 205, 200), sel ? 2.0f : 1.0f);
         }
         if (nc <= 120000)
-            for (int c = 0; c < nc; ++c) dl->AddCircleFilled(toScreen(uvOf(c)), 2.0f, IM_COL32(150, 180, 230, 200));
+            for (int c = 0; c < nc; ++c) dl->AddCircleFilled(toScreen(uvOf(c)), 2.0f, IM_COL32(190, 190, 190, 200));
         for (int c : st.sel) dl->AddCircleFilled(toScreen(uvOf(c)), 3.5f, IM_COL32(255, 170, 40, 255));
     }
 
@@ -27584,7 +27543,7 @@ void DrawModeling(EditorState& ed) {
             if (it != s_meshSig.end() && it->second != sig) FitColliders(go);   // mesh edited → resync colliders
             s_meshSig[go] = sig;
         }
-        ImGui::TextColored(ImVec4(0.86f, 0.88f, 0.94f, 1.0f), "%s", go->name.c_str());
+        ImGui::TextColored(TextCol(), "%s", go->name.c_str());
         ImGui::Spacing();
         // Grouped into tabs so the long modeling toolset is easy to navigate
         // (Shape / Edit / Modifiers / Edit Mesh / Import) instead of one long scroll.
@@ -28779,7 +28738,7 @@ void DrawInspector(EditorState& ed) {
     // Header: an active toggle + a type chip + the object name on
     // a tinted bar, then a Tag field + Save-as-Prefab, then a divider. The child
     // auto-sizes to its contents so there's no empty gap at the top.
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.177f, 0.177f, 0.177f, 1.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
     ImGui::BeginChild("##objheader", ImVec2(0, 0),
                       ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
@@ -28997,7 +28956,7 @@ void DrawInspector(EditorState& ed) {
             if (ps.x > 1.0f && ps.y > 1.0f) { refW = ps.x; refH = ps.y; hasParent = true; }
         }
         UIRect ar = GetUIRect(go);
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.177f, 0.177f, 0.177f, 1.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
         ImGui::BeginChild("##uilayoutcard", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
         const float capW = ImGui::CalcTextSize("ARRANGE").x + 12.0f;
@@ -29033,7 +28992,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::PopID();
                     const bool sel = *ar.anchorPtr == cand;
                     dl->AddCircleFilled(c, sel ? 5.0f : 3.5f, sel ? ImGui::GetColorU32(AccentCol(1.0f))
-                                                            : hov ? IM_COL32(220, 225, 235, 255) : IM_COL32(140, 146, 160, 255));
+                                                            : hov ? IM_COL32(227, 227, 227, 255) : IM_COL32(149, 149, 149, 255));
                     if (hov) ImGui::SetTooltip("%s", kAnchorNames[row * 3 + col]);
                     if (clicked) {
                         *ar.anchorPtr = cand;   // keep the on-screen position
@@ -36451,7 +36410,7 @@ void DrawInspector(EditorState& ed) {
                 for (int i = n - 1; i >= 0; --i) {
                     float y = p0.y + (float)(n - 1 - i) * (rowH + 3.0f);
                     float inset = (float)i * 10.0f;
-                    ImU32 c = i == pc->layer ? IM_COL32(110, 170, 255, 220) : IM_COL32(120, 125, 140, 110);
+                    ImU32 c = i == pc->layer ? AccentU32(220) : IM_COL32(128, 128, 128, 110);
                     dl->AddRectFilled(ImVec2(p0.x + inset, y), ImVec2(p0.x + w - inset, y + rowH), c, 2.0f);
                 }
                 ImGui::Dummy(ImVec2(w, (float)n * (rowH + 3.0f)));
@@ -40035,7 +39994,7 @@ void DrawInspector(EditorState& ed) {
     ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.85f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.75f));
-    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text,          AccentOnCol());
     float acW = ImGui::GetContentRegionAvail().x;
     float acPad = acW > 300.0f ? (acW - 260.0f) * 0.5f : 0.0f;   // centre it on wide panels
     if (acPad > 0.0f) ImGui::Indent(acPad);
@@ -40078,12 +40037,12 @@ void DrawInspector(EditorState& ed) {
         // Category labels are tinted to match the Inspector's component-header colors.
         auto catColor = [](const char* name) -> ImVec4 {
             auto is = [&](const char* k) { return std::strstr(name, k) != nullptr; };
-            if (is("Rendering") || is("Lighting") || is("Camera")) return ImVec4(0.55f, 0.72f, 0.98f, 1.0f);
+            if (is("Rendering") || is("Lighting") || is("Camera")) return ImVec4(0.94f, 0.62f, 0.52f, 1.0f);
             if (is("Physics"))                                     return ImVec4(0.55f, 0.84f, 0.60f, 1.0f);
-            if (is("Animation"))                                   return ImVec4(0.45f, 0.82f, 0.84f, 1.0f);
+            if (is("Animation"))                                   return ImVec4(0.92f, 0.58f, 0.78f, 1.0f);
             if (is("Scripts"))                                     return ImVec4(0.90f, 0.82f, 0.45f, 1.0f);
             if (is("Audio"))                                       return ImVec4(0.95f, 0.70f, 0.42f, 1.0f);
-            if (is("UI"))                                          return ImVec4(0.74f, 0.62f, 0.98f, 1.0f);
+            if (is("UI"))                                          return ImVec4(0.82f, 0.62f, 0.86f, 1.0f);
             if (is("Gameplay") || is("No-Code") || is("RPG"))      return ImVec4(0.92f, 0.60f, 0.66f, 1.0f);
             return ImGui::GetStyleColorVec4(ImGuiCol_Text);
         };
@@ -40523,7 +40482,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine(acLeftW - 34.0f);
             ImGui::TextDisabled("%d", count);
         };
-        catRow("Recent", acRecentCount, ImVec4(0.86f, 0.88f, 0.94f, 1.0f));
+        catRow("Recent", acRecentCount, TextCol());
         ImGui::Separator();
         for (const auto& c : acCats) if (c.second > 0 || c.first == s_acCat) catRow(c.first, c.second, catColor(c.first.c_str()));
         ImGui::EndChild();
@@ -40855,7 +40814,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             if (GetUIScreenRect(g, canvasSize.x, canvasSize.y, o, sz)) {
                 ImVec2 a(canvasPos.x + o.x, canvasPos.y + o.y);
                 ImVec2 b(a.x + sz.x, a.y + sz.y);
-                dl->AddRect(a, b, IM_COL32(80, 210, 230, 220), 0.0f, 0, 1.5f);
+                dl->AddRect(a, b, AccentU32(220), 0.0f, 0, 1.5f);
             }
         }
     }
@@ -40880,11 +40839,11 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
             ImVec2 ra, rb; UIAnchorRefRect(ed.selected(), canvasPos, canvasSize, ra, rb);
             ImVec2 pips[9]; UIAnchorPips(ra, rb, pips);
             ImVec2 wc((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-            if (!stretchAnchor) dl->AddLine(pips[markAi], wc, IM_COL32(90, 170, 240, 150), 1.0f);
+            if (!stretchAnchor) dl->AddLine(pips[markAi], wc, AccentU32(150), 1.0f);
             for (int pi = 0; pi < 9; ++pi) {
                 bool cur = (pi == markAi && !stretchAnchor);
                 dl->AddNgonFilled(pips[pi], cur ? 5.0f : 3.0f,
-                                  cur ? IM_COL32(90, 170, 240, 235) : IM_COL32(90, 170, 240, 110), 4);
+                                  cur ? AccentU32(235) : AccentU32(110), 4);
             }
             // Selection box.
             dl->AddRect(ImVec2(a.x - 1, a.y - 1), ImVec2(b.x + 1, b.y + 1),
@@ -40914,7 +40873,7 @@ void DrawUIOverlay(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos,
         // Smart-snap alignment guides, full canvas extent —
         // shown while dragging an edge/center that lines up with a canvas/parent/sibling
         // edge or center.
-        const ImU32 kSnapBlue = IM_COL32(70, 150, 255, 235);
+        const ImU32 kSnapBlue = IM_COL32(255, 90, 170, 235);   // (named when the guides were blue; they are magenta now)
         if (g_uiGuideX >= 0.0f)
             dl->AddLine(ImVec2(canvasPos.x + g_uiGuideX, canvasPos.y),
                         ImVec2(canvasPos.x + g_uiGuideX, canvasPos.y + canvasSize.y), kSnapBlue, 1.5f);
@@ -42017,7 +41976,7 @@ static void SceneObjectDragChipAt(okay::GameObject* go, ImVec2 topLeft, float al
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.40f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.28f, 0.42f, 0.94f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(SurfaceCol(5).x, SurfaceCol(5).y, SurfaceCol(5).z, 0.94f));
     ImGui::Button(nm, sz);
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(2);
@@ -42078,7 +42037,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         int x1 = (int)Mathf::Ceil(camPos.x + halfW);
         int y0 = (int)Mathf::Floor(camPos.y - halfH);
         int y1 = (int)Mathf::Ceil(camPos.y + halfH);
-        ImU32 grid = IM_COL32(40, 40, 52, 255);
+        ImU32 grid = IM_COL32(44, 44, 44, 255);
         if (x1 - x0 < 200) // avoid drawing thousands of lines when zoomed way out
             for (int x = x0; x <= x1; ++x)
                 dl->AddLine(worldToScreen({(float)x, (float)y0, 0}),
@@ -42229,7 +42188,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (!up->active) continue;
             for (Collider2D* col : up->GetComponents<Collider2D>()) {
                 if (!col->enabled) continue;
-                ImU32 cc = col->isTrigger ? IM_COL32(90, 170, 255, 230) : IM_COL32(90, 230, 120, 230);
+                ImU32 cc = col->isTrigger ? IM_COL32(255, 200, 70, 230) : IM_COL32(90, 230, 120, 230);
                 if (auto* bx = dynamic_cast<BoxCollider2D*>(col)) {   // oriented box
                     Vec2 c = bx->WorldCenter(), h = bx->HalfExtents();
                     float a = bx->WorldAngle(), ca = Mathf::Cos(a), sa = Mathf::Sin(a);
@@ -42250,7 +42209,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
         }
         for (const PhysicsDebugContact2D& ct : ed.scene().physics().DebugContacts()) {
-            ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
+            ImU32 kc = ct.trigger ? IM_COL32(255, 200, 70, 255) : IM_COL32(255, 80, 70, 255);
             dl->AddLine(P(ct.point), P(ct.point + ct.normal * 0.5f), kc, 2.0f);
             dl->AddCircleFilled(P(ct.point), 3.5f, kc);
         }
@@ -42288,7 +42247,7 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             dl->AddTriangleFilled(ImVec2(g.x - 4, g.y - 36), ImVec2(g.x + 4, g.y - 36),
                                   ImVec2(g.x, g.y - 44), IM_COL32(80, 210, 90, 255));
         } else if (g_tool == Tool::Rotate) {
-            dl->AddCircle(g, 34.0f, IM_COL32(90, 170, 240, 255), 32, 2.0f);
+            dl->AddCircle(g, 34.0f, IM_COL32(235, 235, 235, 255), 32, 2.0f);
         } else { // Scale — axis lines capped with square handles
             dl->AddLine(g, ImVec2(g.x + 36, g.y), IM_COL32(230, 70, 70, 255), 2.0f);
             dl->AddRectFilled(ImVec2(g.x + 32, g.y - 4), ImVec2(g.x + 40, g.y + 4), IM_COL32(230, 70, 70, 255));
@@ -42653,15 +42612,15 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     if (!gameView && g_showGrid)
     for (int i = -10; i <= 10; ++i) {
         clipLine(vp * Vec4{Vec3{(float)i, 0, -10}, 1},
-                 vp * Vec4{Vec3{(float)i, 0, 10}, 1}, IM_COL32(50, 50, 64, 255), 1.0f);
+                 vp * Vec4{Vec3{(float)i, 0, 10}, 1}, IM_COL32(55, 55, 55, 255), 1.0f);
         clipLine(vp * Vec4{Vec3{-10, 0, (float)i}, 1},
-                 vp * Vec4{Vec3{10, 0, (float)i}, 1}, IM_COL32(50, 50, 64, 255), 1.0f);
+                 vp * Vec4{Vec3{10, 0, (float)i}, 1}, IM_COL32(55, 55, 55, 255), 1.0f);
     }
     // World axes at the origin (debug): X red, Y green, Z blue.
     if (!gameView && g_showWorldAxes) {
         clipLine(vp * Vec4{Vec3{0,0,0},1}, vp * Vec4{Vec3{5,0,0},1}, IM_COL32(230,70,70,255), 2.0f);
         clipLine(vp * Vec4{Vec3{0,0,0},1}, vp * Vec4{Vec3{0,5,0},1}, IM_COL32(90,220,90,255), 2.0f);
-        clipLine(vp * Vec4{Vec3{0,0,0},1}, vp * Vec4{Vec3{0,0,5},1}, IM_COL32(90,150,255,255), 2.0f);
+        clipLine(vp * Vec4{Vec3{0,0,0},1}, vp * Vec4{Vec3{0,0,5},1}, IM_COL32(90,150,255,255), 2.0f);   // blue-ok: world axes: Z axis blue (X red / Y green / Z blue convention)
     }
 
     const auto& objs = ed.scene().Objects();
@@ -42708,10 +42667,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             float bw = 11.0f, bh = 8.0f;                 // body half-size
             ImVec2 a(s.x - bw, s.y - bh), b(s.x + bw * 0.4f, s.y + bh);
             if (sel) dl->AddRectFilled(ImVec2(a.x-2,a.y-2), ImVec2(b.x+2,b.y+2), IM_COL32(255,220,90,60), 2.0f);
-            dl->AddRectFilled(a, b, IM_COL32(30, 34, 42, 220), 2.0f);
+            dl->AddRectFilled(a, b, IM_COL32(35, 35, 35, 220), 2.0f);
             dl->AddRect(a, b, col, 2.0f, 0, 1.6f);
             ImVec2 lp[3] = { ImVec2(b.x, s.y - 5), ImVec2(b.x + 7, s.y - 8), ImVec2(b.x + 7, s.y + 8) };
-            dl->AddTriangleFilled(lp[0], lp[1], lp[2], IM_COL32(30, 34, 42, 220));
+            dl->AddTriangleFilled(lp[0], lp[1], lp[2], IM_COL32(35, 35, 35, 220));
             dl->AddTriangle(lp[0], lp[1], lp[2], col, 1.4f);
         };
         // A fixed-size light glyph whose shape hints at the light type.
@@ -42731,7 +42690,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 dl->AddTriangleFilled(ImVec2(s.x - r, s.y + r), ImVec2(s.x + r, s.y + r),
                                       ImVec2(s.x, s.y + r + 8), IM_COL32(((col>>0)&0xFF),((col>>8)&0xFF),((col>>16)&0xFF),90));
             } else {                                        // point: hollow bulb + base
-                dl->AddCircleFilled(s, r, IM_COL32(30, 34, 42, 220), 16);
+                dl->AddCircleFilled(s, r, IM_COL32(35, 35, 35, 220), 16);
                 dl->AddCircle(s, r, col, 16, 1.8f);
                 dl->AddLine(ImVec2(s.x - 3, s.y + r + 1), ImVec2(s.x + 3, s.y + r + 1), col, 1.6f);
             }
@@ -42761,7 +42720,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 for (Transform* j : sm->joints) if (j && j->gameObject && j->gameObject->active) bones.insert(j);
             }
             if (!bones.empty()) {
-                const ImU32 kFill = IM_COL32(150, 175, 215, 70), kEdge = IM_COL32(170, 195, 235, 230);
+                const ImU32 kFill = IM_COL32(190, 190, 190, 70), kEdge = IM_COL32(215, 215, 215, 230);
                 const ImU32 kHot = IM_COL32(255, 255, 255, 255), kSel = IM_COL32(255, 175, 70, 255);
                 float bestD = 7.0f * 7.0f;
                 struct Seg { Transform* b; ImVec2 h, t; };
@@ -42851,7 +42810,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 auto boneP = [&](const std::string& nm, Vec3 fb) -> Vec3 { Vec3 o; return scenePos(nm, o) ? o : fb; };
                 const ImU32 kBoneCol = IM_COL32(120, 220, 160, 255);
                 const ImU32 kTgtCol  = IM_COL32(255, 170, 70, 255);
-                const ImU32 kPoleCol = IM_COL32(90, 190, 255, 255);
+                const ImU32 kPoleCol = IM_COL32(240, 120, 210, 255);
                 auto marker = [&](const Vec3& w, ImU32 col, float r) {
                     ImVec2 s; if (!project(w, s)) return;
                     dl->AddCircle(s, r, col, 20, 2.0f);
@@ -42944,7 +42903,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         const float sw = la->clampAngle * 0.01745329f;
                         const float len = 0.45f;
                         const float rad = len * std::sin(sw), h = len * std::cos(sw);
-                        const ImU32 kCone = IM_COL32(190, 150, 255, 220);
+                        const ImU32 kCone = IM_COL32(225, 150, 225, 220);
                         Vec3 prev2; const int N = 20;
                         for (int s2 = 0; s2 <= N; ++s2) {
                             const float a2 = 6.2831853f * s2 / N;
@@ -42956,10 +42915,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     }
                     char buf[48];
                     std::snprintf(buf, sizeof(buf), "look %d%%", (int)std::lround(la->EffectiveWeight() * 100.0f));
-                    QueueIkText(origin, IM_COL32(210, 180, 255, 255), 8.0f, -14.0f, buf);
+                    QueueIkText(origin, IM_COL32(235, 185, 235, 255), 8.0f, -14.0f, buf);
                 }
                 if (auto* ft = up->GetComponent<FootIK>()) {
-                    const ImU32 kRay = IM_COL32(120, 210, 255, 230);
+                    const ImU32 kRay = IM_COL32(240, 230, 120, 230);
                     const ImU32 kPlant = IM_COL32(80, 230, 140, 255);
                     const ImU32 kLock = IM_COL32(255, 210, 80, 255);
                     const char* sides[2] = {"L", "R"};
@@ -43000,7 +42959,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
             if (up->GetComponent<Camera>()) {
                 ImU32 col = (up.get() == ed.selected()) ? IM_COL32(255, 220, 90, 255)
-                                                        : IM_COL32(120, 200, 255, 255);
+                                                        : IM_COL32(225, 225, 225, 255);
                 // A camera looks down its local -Z, so the frustum must extend along
                 // -Forward (it used to point the opposite way to the actual view).
                 Vec3 f = t->Forward() * -1.0f, r = t->Right(), u = t->Up();
@@ -43017,7 +42976,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
             if (auto* lod = up->GetComponent<LODGroup>(); lod && up.get() == ed.selected() && !lod->useScreenSize) {
                 const ImU32 cols[4] = {IM_COL32(255, 90, 90, 180), IM_COL32(90, 220, 110, 160),
-                                       IM_COL32(90, 150, 255, 140), IM_COL32(255, 210, 70, 120)};
+                                       IM_COL32(230, 110, 200, 140), IM_COL32(255, 210, 70, 120)};
                 for (int i = 0; i < (int)lod->levels.size() && i < 4; ++i) {
                     const float rad = lod->levels[(std::size_t)i].distance;
                     if (rad <= 0.05f) continue;
@@ -43139,7 +43098,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     }
                     if (wnc->hearingRange > 0.0f)
                         ring(p, Vec3{1, 0, 0}, Vec3{0, 0, 1}, wnc->hearingRange,
-                             IM_COL32(110, 175, 255, 150));
+                             IM_COL32(255, 170, 90, 150));
                 }
                 bool showRoute = (ed.selected() == up.get() || g_wpPlace == wnc) && !wnc->waypoints.empty();
                 if (showRoute) {
@@ -43176,7 +43135,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (auto* nc = up->GetComponent<NPCController>()) { dbgPath = &nc->CurrentPath(); dbgIdx = nc->CurrentPathIndex(); }
                 else if (auto* cc = up->GetComponent<ClickToMoveController>()) { dbgPath = &cc->CurrentPath(); dbgIdx = cc->CurrentPathIndex(); }
                 if (dbgPath && dbgPath->size() > 1) {
-                    const ImU32 done = IM_COL32(70, 140, 150, 120), todo = IM_COL32(70, 220, 235, 220);
+                    const ImU32 done = IM_COL32(120, 150, 110, 120), todo = IM_COL32(130, 225, 110, 220);
                     for (std::size_t i = 0; i + 1 < dbgPath->size(); ++i) {
                         Vec3 a = (*dbgPath)[i], b = (*dbgPath)[i + 1];
                         a.y += 0.1f; b.y += 0.1f;
@@ -43501,7 +43460,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                                     (int)pw, (int)ph, 2, pc->ignoreObject))
                 dl->AddImage((ImTextureID)ptex, pmin, pmax);
             dl->AddRect(pmin, pmax, IM_COL32(255, 255, 255, 180));
-            dl->AddText(ImVec2(pmin.x + 4, pmin.y - 16), IM_COL32(220, 220, 230, 255),
+            dl->AddText(ImVec2(pmin.x + 4, pmin.y - 16), IM_COL32(223, 223, 223, 255),
                         "Camera Preview");
         }
     }
@@ -43589,7 +43548,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             auto* rb = up->GetComponent<Rigidbody3D>();
             for (Collider3D* col : up->GetComponents<Collider3D>()) {
                 if (!col->enabled) continue;
-                ImU32 cc = col->isTrigger ? IM_COL32(90, 170, 255, 230)
+                ImU32 cc = col->isTrigger ? IM_COL32(255, 200, 70, 230)
                          : (rb && rb->sleeping) ? IM_COL32(140, 150, 140, 200) : IM_COL32(90, 230, 120, 230);
                 if (auto* mcol = dynamic_cast<MeshCollider3D*>(col); mcol && mcol->HasTriangles()) {
                     // The real collision geometry: exact triangles, or the convex hull on a dynamic body.
@@ -43625,7 +43584,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             }
         }
         for (const PhysicsDebugContact3D& ct : ed.scene().physics3D().DebugContacts()) {
-            ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
+            ImU32 kc = ct.trigger ? IM_COL32(255, 200, 70, 255) : IM_COL32(255, 80, 70, 255);
             line(ct.point, ct.point + ct.normal * 0.5f, kc, 2.0f);
             ImVec2 sp; if (toScreen(C(ct.point), sp)) dl->AddCircleFilled(sp, 3.5f, kc);
         }
@@ -43827,8 +43786,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             const float w = ImGui::CalcTextSize(p.label).x + pad * 2.0f;
             ImVec2 a(x, y), b(x + w, y + hgt);
             const bool over = io.MousePos.x >= a.x && io.MousePos.x < b.x && io.MousePos.y >= a.y && io.MousePos.y < b.y;
-            dl->AddRectFilled(a, b, p.on ? IM_COL32(60, 120, 205, 235) : over ? IM_COL32(70, 74, 86, 230) : IM_COL32(32, 35, 42, 215), 4.0f);
-            dl->AddText(ImVec2(a.x + pad, a.y + 4.0f), p.on ? IM_COL32(255, 255, 255, 255) : IM_COL32(200, 204, 212, 255), p.label);
+            dl->AddRectFilled(a, b, p.on ? AccentU32(235) : over ? IM_COL32(77, 77, 77, 230) : IM_COL32(36, 36, 36, 215), 4.0f);
+            dl->AddText(ImVec2(a.x + pad, a.y + 4.0f), p.on ? IM_COL32(255, 255, 255, 255) : IM_COL32(205, 205, 205, 255), p.label);
             if (over && hovered) {
                 const char* tip = p.id == 0 ? "Object mode: move the whole object (Tab)"
                                 : p.id == 1 ? "Edit mode: select and move vertices, edges and faces (Tab)"
@@ -43875,7 +43834,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         for (const auto& e : EditPolyEdges(mesh)) {
             ImVec2 a, b;
             if (vScreen(e.first, a) && vScreen(e.second, b))
-                dl->AddLine(a, b, IM_COL32(150, 172, 205, 150), 1.0f);
+                dl->AddLine(a, b, IM_COL32(205, 205, 205, 150), 1.0f);
         }
         // UV seams, in red (Modeling > Edit Mesh > UVs & Seams).
         for (const auto& e : mesh.seams) {
@@ -43885,7 +43844,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         }
         // Draw all vertices; selected verts/faces highlighted.
         for (int i = 0; i < (int)mesh.vertices.size(); ++i) {
-            ImVec2 sp; if (vScreen(i, sp)) dl->AddCircleFilled(sp, 2.5f, IM_COL32(120, 180, 255, 170));
+            ImVec2 sp; if (vScreen(i, sp)) dl->AddCircleFilled(sp, 2.5f, IM_COL32(235, 235, 235, 170));
         }
         if (g_meshSelMode == 0) {
             for (int vi : g_meshSelVerts) { ImVec2 sp; if (vi >= 0 && vi < (int)mesh.vertices.size() && vScreen(vi, sp)) dl->AddCircleFilled(sp, 4.5f, IM_COL32(255, 170, 40, 255)); }
@@ -43987,9 +43946,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                 float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
                 ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
-                dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
+                dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(23, 23, 23, 215), 5.0f);
                 dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
-                dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);
+                dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(197, 197, 197, 255), help);
             };
             auto typeInto = [&](okay::modeling::NumericInput& in) {
                 if (io.WantTextInput) return;
@@ -44359,7 +44318,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
                 // The locked axis through the pivot, and a line from the pivot to the mouse.
                 if (!lock.Free() && !lock.plane) {
-                    ImU32 axc[3] = {IM_COL32(230, 80, 80, 220), IM_COL32(90, 210, 100, 220), IM_COL32(90, 150, 240, 220)};
+                    ImU32 axc[3] = {IM_COL32(230, 80, 80, 220), IM_COL32(90, 210, 100, 220), IM_COL32(90, 150, 240, 220)};   // blue-ok: the locked-axis line of a modelling move: Z axis blue (X red / Y green / Z blue convention)
                     Vec3 ax{lock.axis == 0 ? 1.0f : 0.0f, lock.axis == 1 ? 1.0f : 0.0f, lock.axis == 2 ? 1.0f : 0.0f};
                     ImVec2 a, b;
                     if (toScreen(vp * Vec4{pivot - ax * 1000.0f, 1}, a) && toScreen(vp * Vec4{pivot + ax * 1000.0f, 1}, b))
@@ -44378,9 +44337,9 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                     float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
                     ImVec2 p0(canvasPos.x + (canvasSize.x - w) * 0.5f, canvasPos.y + canvasSize.y - lh * 2.0f - 22.0f);
-                    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(20, 22, 28, 215), 5.0f);
+                    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + lh * 2.0f + 14.0f), IM_COL32(23, 23, 23, 215), 5.0f);
                     dl->AddText(ImVec2(p0.x + 10, p0.y + 5), IM_COL32(255, 200, 90, 255), line.c_str());
-                    dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(190, 195, 205, 255), help);
+                    dl->AddText(ImVec2(p0.x + 10, p0.y + 8 + lh), IM_COL32(197, 197, 197, 255), help);
                 }
 
                 // Confirm: keep the result as one undo step. Cancel: back to where it started.
@@ -44410,7 +44369,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             for (int vi : affected) cen += vWorld(vi);
             if (!affected.empty()) cen = cen * (1.0f / (float)affected.size());
             Vec3 axisW[3] = {{1,0,0},{0,1,0},{0,0,1}};
-            ImU32 col[3] = {IM_COL32(230,80,80,255), IM_COL32(90,210,100,255), IM_COL32(90,150,240,255)};
+            ImU32 col[3] = {IM_COL32(230,80,80,255), IM_COL32(90,210,100,255), IM_COL32(90,150,240,255)};   // blue-ok: modelling gizmo: Z axis blue (X red / Y green / Z blue convention)
             float L = ed.camDist * 0.16f;
             ImVec2 so; bool oOk = !affected.empty() && !g_meModal.Active() && g_ptool == PolyTool::None && toScreen(vp * Vec4{cen, 1}, so);
             ImVec2 tip[3]; bool tipOk[3] = {false,false,false};
@@ -44590,7 +44549,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         Vec3 h = bc->HalfExtents();
         Vec3 lossy = ed.selected()->transform ? ed.selected()->transform->LossyScale() : Vec3::One;
         const Vec3 ax[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-        ImU32 axc[3] = {IM_COL32(230, 90, 90, 255), IM_COL32(100, 220, 110, 255), IM_COL32(100, 160, 240, 255)};
+        ImU32 axc[3] = {IM_COL32(230, 90, 90, 255), IM_COL32(100, 220, 110, 255), IM_COL32(100, 160, 240, 255)};   // blue-ok: collider box handles: Z axis blue (X red / Y green / Z blue convention)
         // Box wireframe (visible even without Show Colliders).
         {
             Vec3 cr[8];
@@ -44679,7 +44638,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             axis[0] = {1, 0, 0}; axis[1] = {0, 1, 0}; axis[2] = {0, 0, 1};
         }
         ImU32 col[3] = {IM_COL32(230, 80, 80, 255), IM_COL32(90, 210, 100, 255),
-                        IM_COL32(90, 150, 240, 255)};
+                        IM_COL32(90, 150, 240, 255)};   // blue-ok: gizmo axes: Z axis blue (X red / Y green / Z blue convention)
         ImVec2 so; bool oOk = toScreen(vp * Vec4{o, 1}, so);
         ImVec2 tip[3]; bool tipOk[3];
         for (int i = 0; i < 3; ++i) tipOk[i] = toScreen(vp * Vec4{o + axis[i] * L, 1}, tip[i]);
@@ -44740,7 +44699,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             // Faint silhouette sphere behind the rings (radius = projected view ring).
             ImVec2 vr; if (ringPt(3, 0.0f, vr)) {
                 float sr = Mathf::Sqrt((vr.x - so.x) * (vr.x - so.x) + (vr.y - so.y) * (vr.y - so.y));
-                dl->AddCircleFilled(so, sr, IM_COL32(120, 130, 145, 22), 48);
+                dl->AddCircleFilled(so, sr, IM_COL32(130, 130, 130, 22), 48);
             }
             for (int i = 3; i >= 0; --i) {   // view ring first (behind), axes on top
                 bool active = (g_gizmoGrab && g_gizmoAxis == i);
@@ -44928,7 +44887,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             // Mark the source vertex so the user sees what will be glued.
             ImVec2 sp;
             if (toScreen(vp * Vec4{srcW, 1}, sp))
-                dl->AddCircle(sp, 6.0f, IM_COL32(120, 220, 255, 255), 0, 2.0f);
+                dl->AddCircle(sp, 6.0f, IM_COL32(255, 225, 110, 255), 0, 2.0f);
             // Nearest target vertex across every other visible mesh.
             Vec3 tgtW{}; float tgtD2 = 0.0f; bool tgtOk = false;
             for (const auto& up : objs) {
@@ -44952,7 +44911,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 ed.PushUndo();
             }
             dl->AddText(ImVec2(canvasPos.x + 10, canvasEnd.y - 24),
-                        IM_COL32(180, 220, 255, 220),
+                        IM_COL32(235, 235, 235, 220),
                         "Vertex snap: drag near another mesh's vertex to glue");
         }
     }
@@ -45312,7 +45271,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             ImGui::SameLine();
         } else if (uiPanel) {
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "%s", chip.c_str());
+            ImGui::TextColored(AccentLitCol(), "%s", chip.c_str());
             ImGui::SameLine();
         }
         if (g_max.on && !uiPanel) {
@@ -45495,7 +45454,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                             float fx = col * 0.5f, fy = row * 0.5f;
                             ImVec2 dot(mn.x + 5 + (mx.x - mn.x - 10) * fx, mn.y + 5 + (mx.y - mn.y - 10) * fy);
                             ImGui::GetWindowDrawList()->AddCircleFilled(dot, 3.0f,
-                                cur ? IM_COL32(90, 170, 240, 255) : IM_COL32(180, 180, 190, 200));
+                                cur ? AccentU32(255) : IM_COL32(183, 183, 183, 200));
                             ImGui::PopID();
                         }
                     }
@@ -45599,8 +45558,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             {{-1, 0, 0}, IM_COL32(150,  60,  60, 255), "",  -90.0f,  0.0f},
             {{ 0, 1, 0}, IM_COL32( 96, 210,  96, 255), "Y",   0.0f, 89.0f},
             {{ 0,-1, 0}, IM_COL32( 60, 130,  60, 255), "",    0.0f,-89.0f},
-            {{ 0, 0, 1}, IM_COL32( 90, 140, 240, 255), "Z",   0.0f,  0.0f},
-            {{ 0, 0,-1}, IM_COL32( 60,  90, 150, 255), "",  180.0f,  0.0f},
+            {{ 0, 0, 1}, IM_COL32( 90, 140, 240, 255), "Z",   0.0f,  0.0f},   // blue-ok: view cube +Z face: Z axis blue (X red / Y green / Z blue convention)
+            {{ 0, 0,-1}, IM_COL32( 60,  90, 150, 255), "",  180.0f,  0.0f},   // blue-ok: view cube -Z face: dark Z axis blue (X red / Y green / Z blue convention)
         };
         ImVec2 mp = ImGui::GetIO().MousePos;
         for (const Ax& ax : axes) {
@@ -45654,8 +45613,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     okay::UIResolutionScale() = uiResScale * (uiOnly ? g_uiEditZoom : 1.0f);
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(canvasPos, canvasEnd, ed.InPrefabMode() ? IM_COL32(16, 38, 58, 255) : IM_COL32(15, 15, 30, 255));   // prefab mode: a blue-green ground and frame, so you know you are not in the scene
-    if (ed.InPrefabMode()) dl->AddRect(canvasPos, canvasEnd, IM_COL32(70, 200, 225, 255), 0.0f, 0, 3.0f);
+    dl->AddRectFilled(canvasPos, canvasEnd, ed.InPrefabMode() ? IM_COL32(22, 40, 24, 255) : IM_COL32(17, 17, 17, 255));   // prefab mode: a green ground and frame, so you know you are not in the scene
+    if (ed.InPrefabMode()) dl->AddRect(canvasPos, canvasEnd, PrefabU32(255), 0.0f, 0, 3.0f);
 
     ImGui::SetNextItemAllowOverlap();   // the selection's drag chip sits on top of the picture
     ImGui::InvisibleButton("canvas", canvasSize,
@@ -45788,7 +45747,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         // The game "screen" rect: this is exactly what the player sees. UI is edited
         // against it, so anything you place inside it is guaranteed visible in-game.
         dl->AddRectFilled(viewPos, uiEnd, IM_COL32(28, 28, 32, 255));
-        dl->AddRect(viewPos, uiEnd, IM_COL32(120, 130, 150, 220), 0.0f, 0, 1.5f);
+        dl->AddRect(viewPos, uiEnd, IM_COL32(135, 135, 135, 220), 0.0f, 0, 1.5f);
         // Rule-of-thirds guides + a brighter center cross, relative to the game screen.
         if (g_uiShowGuides) {
             for (int i = 1; i <= 2; ++i) {
@@ -45807,11 +45766,11 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
             int nx = g_uiSubdivX < 1 ? 1 : g_uiSubdivX, ny = g_uiSubdivY < 1 ? 1 : g_uiSubdivY;
             for (int i = 1; i < nx; ++i) {
                 float gx = viewPos.x + viewSize.x * ((float)i / nx);
-                dl->AddLine(ImVec2(gx, viewPos.y), ImVec2(gx, uiEnd.y), IM_COL32(120, 180, 255, 40));
+                dl->AddLine(ImVec2(gx, viewPos.y), ImVec2(gx, uiEnd.y), AccentU32(40));
             }
             for (int j = 1; j < ny; ++j) {
                 float gy = viewPos.y + viewSize.y * ((float)j / ny);
-                dl->AddLine(ImVec2(viewPos.x, gy), ImVec2(uiEnd.x, gy), IM_COL32(120, 180, 255, 40));
+                dl->AddLine(ImVec2(viewPos.x, gy), ImVec2(uiEnd.x, gy), AccentU32(40));
             }
         }
         OKAY_BREADCRUMB(uiPanel ? "UItab:overlay" : "UIonly:overlay");
@@ -45837,7 +45796,7 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
                     if (offScreen)                 // runs off the game screen — warn in red
                         dl->AddRect(a, b, IM_COL32(240, 90, 90, 220), 0.0f, 0, 2.0f);
                     else if (g_uiShowAllBounds && g != ed.selected())
-                        dl->AddRect(a, b, IM_COL32(120, 160, 220, 90), 0.0f, 0, 1.0f);
+                        dl->AddRect(a, b, IM_COL32(180, 180, 180, 90), 0.0f, 0, 1.0f);
                 }
             }
         }
@@ -45876,8 +45835,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
         if (g_uiMarquee) {
             ImVec2 ma(std::min(g_uiMarqueeA.x, g_uiMarqueeB.x), std::min(g_uiMarqueeA.y, g_uiMarqueeB.y));
             ImVec2 mb(std::max(g_uiMarqueeA.x, g_uiMarqueeB.x), std::max(g_uiMarqueeA.y, g_uiMarqueeB.y));
-            dl->AddRectFilled(ma, mb, IM_COL32(90, 160, 240, 40));
-            dl->AddRect(ma, mb, IM_COL32(120, 180, 255, 220));
+            dl->AddRectFilled(ma, mb, AccentU32(40));
+            dl->AddRect(ma, mb, AccentU32(220));
         }
         dl->PopClipRect();   // balance the flat-UI clip pushed above
     } else if (ed.view3D) {
@@ -45894,8 +45853,8 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     if (g_view.statsLine) {
         const std::string overlay = SceneStatsLineText(ed, canvasPos, canvasSize);
         const Rc r = SceneStatsLineRect(canvasPos, overlay);
-        dl->AddRectFilled(ImVec2(r.x0, r.y0), ImVec2(r.x1, r.y1), IM_COL32(12, 14, 20, 110), 4.0f);
-        DrawOutlinedText(dl, ImVec2(r.x0 + 6.0f, r.y0 + 3.0f), IM_COL32(215, 218, 228, 255), overlay.c_str());
+        dl->AddRectFilled(ImVec2(r.x0, r.y0), ImVec2(r.x1, r.y1), IM_COL32(15, 15, 15, 110), 4.0f);
+        DrawOutlinedText(dl, ImVec2(r.x0 + 6.0f, r.y0 + 3.0f), IM_COL32(220, 220, 220, 255), overlay.c_str());
     }
 
     OKAY_BREADCRUMB(uiPanel ? "UItab:end" : "Scene:end");
@@ -45982,9 +45941,9 @@ void DrawSpriteEditor(EditorState& ed) {
     for (int i = 0; i < 4; ++i) {
         if (i) ImGui::SameLine();
         bool on = (tool == i);
-        if (on) ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f));   // follow the accent theme
+        if (on) { ImGui::PushStyleColor(ImGuiCol_Button, AccentCol(0.85f)); ImGui::PushStyleColor(ImGuiCol_Text, AccentOnCol()); }   // follow the accent theme
         if (ImGui::Button(toolNames[i])) tool = i;
-        if (on) ImGui::PopStyleColor();
+        if (on) ImGui::PopStyleColor(2);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s (%s)", toolNames[i], toolKeys[i]);
     }
     // Single-key tool switching while the window has focus (and nothing is typing).
@@ -46003,8 +45962,8 @@ void DrawSpriteEditor(EditorState& ed) {
     // Small preset palette.
     static const ImU32 kPal[] = {
         IM_COL32(0,0,0,255), IM_COL32(255,255,255,255), IM_COL32(230,60,60,255), IM_COL32(240,150,40,255),
-        IM_COL32(245,220,60,255), IM_COL32(90,200,90,255), IM_COL32(60,150,240,255), IM_COL32(150,90,220,255),
-        IM_COL32(120,80,50,255), IM_COL32(150,150,160,255), IM_COL32(250,180,200,255), IM_COL32(0,0,0,0) };
+        IM_COL32(245,220,60,255), IM_COL32(90,200,90,255), IM_COL32(60,150,240,255), IM_COL32(150,90,220,255),   // blue-ok: the pixel-art paint palette: user content colours, so it includes blue and violet like any palette
+        IM_COL32(120,80,50,255), IM_COL32(153, 153, 153, 255), IM_COL32(250,180,200,255), IM_COL32(0,0,0,0) };
     for (int i = 0; i < (int)(sizeof(kPal) / sizeof(kPal[0])); ++i) {
         ImGui::SameLine();
         ImVec4 c = ImGui::ColorConvertU32ToFloat4(kPal[i]);
@@ -46035,7 +45994,7 @@ void DrawSpriteEditor(EditorState& ed) {
     // Checkerboard behind (shows transparency), then the sprite, then the grid.
     for (int y = 0; y < img.Height(); ++y) for (int x = 0; x < img.Width(); ++x) {
         ImVec2 p0(origin.x + x * disp, origin.y + y * disp), p1(p0.x + disp, p0.y + disp);
-        dl->AddRectFilled(p0, p1, ((x ^ y) & 1) ? IM_COL32(70, 70, 78, 255) : IM_COL32(48, 48, 54, 255));
+        dl->AddRectFilled(p0, p1, ((x ^ y) & 1) ? IM_COL32(73, 73, 73, 255) : IM_COL32(50, 50, 50, 255));
     }
     if (t) dl->AddImage((ImTextureID)t, origin, ImVec2(origin.x + canvasSz.x, origin.y + canvasSz.y));
     if (grid && disp >= 5.0f) {
@@ -46044,7 +46003,7 @@ void DrawSpriteEditor(EditorState& ed) {
         for (int y = 0; y <= img.Height(); ++y)
             dl->AddLine(ImVec2(origin.x, origin.y + y * disp), ImVec2(origin.x + canvasSz.x, origin.y + y * disp), IM_COL32(255, 255, 255, 22));
     }
-    dl->AddRect(origin, ImVec2(origin.x + canvasSz.x, origin.y + canvasSz.y), IM_COL32(120, 130, 150, 220));
+    dl->AddRect(origin, ImVec2(origin.x + canvasSz.x, origin.y + canvasSz.y), IM_COL32(135, 135, 135, 220));
 
     // Painting: pencil/eraser draw continuously (interpolated so fast drags don't gap);
     // fill + pick act once per click. One undo snapshot per stroke.
@@ -46065,7 +46024,7 @@ void DrawSpriteEditor(EditorState& ed) {
                       origin.y + canvasSz.y - ImGui::GetTextLineHeight() - 5.0f);
             dl->AddRectFilled(ImVec2(lp.x - 4, lp.y - 2), ImVec2(lp.x + cs.x + 4, lp.y + cs.y + 2),
                               IM_COL32(0, 0, 0, 140), 3.0f);
-            dl->AddText(lp, IM_COL32(230, 230, 240, 235), cb);
+            dl->AddText(lp, IM_COL32(233, 233, 233, 235), cb);
         }
     }
     if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
@@ -46228,7 +46187,7 @@ void DrawProfiler(EditorState& ed) {
     // ---- Readouts ----
     const okay::Profiler::Frame& F = P.Displayed();
     ImGui::Text("Frame %.2f ms (%.0f FPS)", F.total, F.total > 0.001 ? 1000.0 / F.total : 0.0);
-    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f,0.8f,1,1), "CPU %.2f", F.cpu);
+    ImGui::SameLine(); ImGui::TextColored(AccentLitCol(), "CPU %.2f", F.cpu);
     ImGui::SameLine(); ImGui::TextColored(ImVec4(1,0.78f,0.45f,1), "GPU %.2f", F.gpu);
     ImGui::SameLine(); ImGui::Text("| avg %.2f  peak %.2f", avg, peak);
     ImGui::Text("Meshes %d    Triangles %d    Particles %d", F.objects, F.triangles, F.particles);
@@ -46245,10 +46204,10 @@ void DrawProfiler(EditorState& ed) {
     double cPh = okay::Profiler::CategorySelf(F, "Physics");
     double cRd = okay::Profiler::CategorySelf(F, "Render");
     double cOt = F.cpu - cSc - cPh - cRd; if (cOt < 0) cOt = 0;
-    bar("Scripts", cSc, ImVec4(0.45f,0.75f,1.0f,1));
+    bar("Scripts", cSc, ImVec4(0.90f,0.70f,0.50f,1));
     bar("Physics", cPh, ImVec4(0.55f,0.9f,0.55f,1));
     bar("Render",  cRd, ImVec4(1.0f,0.75f,0.4f,1));
-    bar("Other",   cOt, ImVec4(0.7f,0.7f,0.75f,1));
+    bar("Other",   cOt, ImVec4(0.717f, 0.717f, 0.717f, 1));
 
     // Plain-language diagnosis: tell the user what to look at, so the profiler is
     // actually actionable instead of just numbers.
@@ -46271,7 +46230,7 @@ void DrawProfiler(EditorState& ed) {
             else if (fps >= 28) diag += "  ~30 FPS.";
             else diag += "  Below 30 FPS — optimise the heaviest section above.";
         }
-        ImGui::TextColored(ImVec4(0.85f,0.9f,1.0f,1.0f), "Diagnosis:");
+        ImGui::TextColored(TextCol(), "Diagnosis:");
         ImGui::SameLine(); ImGui::TextWrapped("%s", diag.c_str());
     }
     ImGui::Separator();
@@ -46349,10 +46308,10 @@ static void DrawDeviceBody(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDev
     const ImVec2 b0(sp.x - bl, sp.y - bt), b1(se.x + br, se.y + bb);
     const float bodyR = shortSide * d.corner + bezel;
     dl->AddRectFilled(ImVec2(b0.x + 3, b0.y + 6), ImVec2(b1.x + 3, b1.y + 6), IM_COL32(0, 0, 0, 90), bodyR + 4);   // shadow
-    dl->AddRectFilled(b0, b1, IM_COL32(28, 29, 34, 255), bodyR + 2);
-    dl->AddRect(b0, b1, IM_COL32(92, 96, 108, 255), bodyR + 2, 0, 2.0f);       // metal rim
+    dl->AddRectFilled(b0, b1, IM_COL32(30, 30, 30, 255), bodyR + 2);
+    dl->AddRect(b0, b1, IM_COL32(99, 99, 99, 255), bodyR + 2, 0, 2.0f);       // metal rim
     // Side buttons (volume / power), on the long edges.
-    const ImU32 btn = IM_COL32(70, 73, 82, 255);
+    const ImU32 btn = IM_COL32(75, 75, 75, 255);
     if (!land) {
         const float x0 = b0.x - 3, x1 = b1.x;
         dl->AddRectFilled(ImVec2(x0, b0.y + (b1.y - b0.y) * 0.22f), ImVec2(x0 + 3, b0.y + (b1.y - b0.y) * 0.30f), btn, 1.5f);
@@ -46367,7 +46326,7 @@ static void DrawDeviceBody(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDev
     if (d.cutout == DevCutout::HomeButton) {   // the round home button in the chin
         const ImVec2 c = land ? ImVec2(se.x + br * 0.5f, (sp.y + se.y) * 0.5f) : ImVec2((sp.x + se.x) * 0.5f, se.y + bb * 0.5f);
         const float r = shortSide * 0.075f;
-        dl->AddCircle(c, r, IM_COL32(90, 94, 104, 255), 40, 2.0f);
+        dl->AddCircle(c, r, IM_COL32(96, 96, 96, 255), 40, 2.0f);
     }
 }
 
@@ -46376,7 +46335,7 @@ static void DrawDeviceBody(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDev
 // areas a game's UI should keep clear of.
 static void DrawDeviceScreenOverlay(ImDrawList* dl, ImVec2 sp, ImVec2 se, const MobileDevice& d, bool land, bool safeArea) {
     const float sw = se.x - sp.x, sh = se.y - sp.y, shortSide = std::min(sw, sh), longSide = std::max(sw, sh);
-    const ImU32 body = IM_COL32(28, 29, 34, 255), black = IM_COL32(0, 0, 0, 255);
+    const ImU32 body = IM_COL32(30, 30, 30, 255), black = IM_COL32(0, 0, 0, 255);
     const float r = shortSide * d.corner;
     if (safeArea) {   // unsafe insets, tinted + outlined
         const float top = longSide * d.safeTop, bot = longSide * d.safeBottom;
@@ -46485,7 +46444,7 @@ void DrawGameView(EditorState& ed) {
         // Drawn status dot: green while the game runs, gray in edit mode.
         ImVec2 dp = ImGui::GetCursorScreenPos();
         float dr = ImGui::GetFontSize() * 0.26f;
-        ImU32 dc = ed.isPlaying() ? IM_COL32(90, 215, 110, 255) : IM_COL32(130, 134, 142, 255);
+        ImU32 dc = ed.isPlaying() ? IM_COL32(90, 215, 110, 255) : IM_COL32(135, 135, 135, 255);
         ImGui::GetWindowDrawList()->AddCircleFilled(
             ImVec2(dp.x + dr, dp.y + ImGui::GetTextLineHeight() * 0.55f), dr, dc);
         ImGui::Dummy(ImVec2(dr * 2.0f + 5.0f, 0));
@@ -46627,7 +46586,7 @@ void DrawGameView(EditorState& ed) {
         dl->AddRectFilled(ImVec2(tp.x - 3, tp.y - 2),
                           ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
-        dl->AddText(tp, IM_COL32(220, 220, 230, 220), resLbl);
+        dl->AddText(tp, IM_COL32(223, 223, 223, 220), resLbl);
         topLeftRects.push_back({ImVec2(tp.x - 3, tp.y - 2), ImVec2(tp.x + ImGui::CalcTextSize(resLbl).x + 3, tp.y + ImGui::GetTextLineHeight() + 2)});
     }
 
@@ -46655,7 +46614,7 @@ void DrawGameView(EditorState& ed) {
             const ImVec2 f0(pillRight + 8.0f, p0.y), f1(f0.x + fs.x + 10.0f, p0.y + ts.y + 3);
             if (f1.x < canvasEnd.x - 8.0f) {   // no room (a very narrow view): leave it out
                 dl->AddRectFilled(ImVec2(f0.x, f0.y - 3), f1, IM_COL32(0, 0, 0, 150), 4.0f);
-                dl->AddText(ImVec2(f0.x + 5.0f, f0.y), IM_COL32(225, 228, 235, 235), fpsText.c_str());
+                dl->AddText(ImVec2(f0.x + 5.0f, f0.y), IM_COL32(229, 229, 229, 235), fpsText.c_str());
                 topLeftRects.push_back({ImVec2(f0.x, f0.y - 3), f1});
             }
         }
@@ -46674,7 +46633,7 @@ void DrawGameView(EditorState& ed) {
             const char* sub = "Resume from the toolbar, or Step to advance one frame";
             ImVec2 ss = ImGui::CalcTextSize(sub);
             dl->AddText(ImVec2((canvasPos.x + canvasEnd.x - ss.x) * 0.5f, bp.y + bs.y + 10),
-                        IM_COL32(222, 224, 230, 220), sub);
+                        IM_COL32(225, 225, 225, 220), sub);
         }
     } else {
         // Below the resolution label (they used to print on top of each other).
@@ -46682,7 +46641,7 @@ void DrawGameView(EditorState& ed) {
         ImVec2 ip(canvasPos.x + 6 + labelIn, canvasPos.y + 8 + ImGui::GetTextLineHeight() + labelDrop);
         dl->AddRectFilled(ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2),
                           IM_COL32(0, 0, 0, 120), 3.0f);
-        dl->AddText(ip, IM_COL32(200, 202, 212, 230), idle);
+        dl->AddText(ip, IM_COL32(205, 205, 205, 230), idle);
         topLeftRects.push_back({ImVec2(ip.x - 3, ip.y - 2), ImVec2(ip.x + ImGui::CalcTextSize(idle).x + 3, ip.y + ImGui::GetTextLineHeight() + 2)});
     }
     // In-view Stats overlay, drawn over the view's top-right corner: while playing, the Play loop's performance
@@ -46733,7 +46692,7 @@ void DrawGameView(EditorState& ed) {
         const float lh = ImGui::GetTextLineHeight();
         const float pad = 6.0f, graphH = lh * 2.6f;
         const bool graphOn = g_gameStatsGraph && playingNow;
-        const ImU32 txt = IM_COL32(225, 228, 235, 235), dim = IM_COL32(170, 178, 192, 220), warn = IM_COL32(245, 205, 90, 255);
+        const ImU32 txt = IM_COL32(229, 229, 229, 235), dim = IM_COL32(176, 176, 176, 220), warn = IM_COL32(245, 205, 90, 255);
         dl->PushClipRect(canvasPos, canvasEnd, true);
         float top = canvasPos.y + 6.0f;
         // One box: the rows in `rows` (a row starting with two spaces is a detail line), the graph above them when asked.
@@ -46967,13 +46926,13 @@ static void DrawPrefabModeBar(EditorState& ed) {
     if ((s_tick++ % 20) == 0 && !ed.isPlaying()) ed.SyncDirty();   // an edit that forgot to say so still shows
     const auto crumbs = ed.PrefabCrumbs();
     const bool unsaved = ed.dirty;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.09f, 0.29f, 0.38f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.14f, 0.24f, 0.15f, 1.0f));
     ImGui::BeginChild("##prefabbar", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
     const std::string backTo = crumbs.size() >= 2 ? crumbs[crumbs.size() - 2].label : std::string("the scene");
     if (ImGui::Button("< Back")) RequestLeavePrefab(ed, ed.PrefabDepth() - 1);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Leave the prefab and return to %s, with its selection and view as you left them.", backTo.c_str());
     ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.55f, 0.90f, 1.0f, 1.0f), "PREFAB MODE");
+    ImGui::TextColored(PrefabCol(), "PREFAB MODE");
     for (size_t i = 0; i < crumbs.size(); ++i) {
         ImGui::SameLine();
         ImGui::TextDisabled(">");
@@ -47561,7 +47520,7 @@ static void OkayVp_RenderWindow(ImGuiViewport* vp, void*) {
         } else ++it;
     }
 
-    SDL_SetRenderDrawColor(d->ren, 15, 16, 20, 255);
+    { const ImVec4 bg = SurfaceCol(0); SDL_SetRenderDrawColor(d->ren, (Uint8)(bg.x * 255.0f + 0.5f), (Uint8)(bg.y * 255.0f + 0.5f), (Uint8)(bg.z * 255.0f + 0.5f), 255); }   // the look's deepest surface (neutral)
     SDL_RenderClear(d->ren);
     OkayRenderDrawData(vp->DrawData, d->ren, d);
     SDL_RenderPresent(d->ren);
@@ -49660,7 +49619,7 @@ int main(int argc, char** argv) {
 #endif
         { OKAY_PROFILE("ImGui.Render"); ImGui::Render(); }
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
-        SDL_SetRenderDrawColor(renderer, 30, 30, 34, 255);
+        { const ImVec4 bg = SurfaceCol(0); SDL_SetRenderDrawColor(renderer, (Uint8)(bg.x * 255.0f + 0.5f), (Uint8)(bg.y * 255.0f + 0.5f), (Uint8)(bg.z * 255.0f + 0.5f), 255); }   // the look's deepest surface (neutral)
         SDL_RenderClear(renderer);
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
             // Multi-window mode: draw data is in absolute desktop coordinates,

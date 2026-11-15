@@ -174,7 +174,7 @@ ImU32 FiredCol(float a = 1.0f) { return Col(0.35f, 0.95f, 0.55f, a); }
 ImU32 AnyCol(float a = 1.0f) { return Col(0.62f, 0.48f, 0.88f, a); }
 // A layer's tint (the base layer uses the theme accent).
 ImVec4 LayerTint(int layer) {
-    static const ImVec4 k[] = {ImVec4(0.62f, 0.45f, 0.85f, 1), ImVec4(0.25f, 0.70f, 0.65f, 1), ImVec4(0.85f, 0.55f, 0.30f, 1),
+    static const ImVec4 k[] = {ImVec4(0.78f, 0.46f, 0.80f, 1), ImVec4(0.25f, 0.70f, 0.65f, 1), ImVec4(0.85f, 0.55f, 0.30f, 1),
                                ImVec4(0.80f, 0.40f, 0.55f, 1), ImVec4(0.45f, 0.70f, 0.30f, 1)};
     if (layer <= 0) return AccentCol();
     return k[(layer - 1) % (int)(sizeof(k) / sizeof(k[0]))];

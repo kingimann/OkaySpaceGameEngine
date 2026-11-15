@@ -67,8 +67,8 @@ ImU32 PlayCol(float a = 1.0f) { return Col(0.95f, 0.70f, 0.20f, a); }
 ImU32 AbortCol(float a = 1.0f) { return Col(0.80f, 0.45f, 0.95f, a); }
 ImVec4 KindTint(BtNodeKind k) {
     switch (k) {
-        case BtNodeKind::Composite: return ImVec4(0.35f, 0.62f, 0.90f, 1);
-        case BtNodeKind::Decorator: return ImVec4(0.62f, 0.48f, 0.88f, 1);
+        case BtNodeKind::Composite: return ImVec4(0.92f, 0.60f, 0.35f, 1);
+        case BtNodeKind::Decorator: return ImVec4(0.80f, 0.52f, 0.80f, 1);
         case BtNodeKind::Task:      return ImVec4(0.30f, 0.75f, 0.55f, 1);
         case BtNodeKind::Service:   return ImVec4(0.90f, 0.60f, 0.30f, 1);
     }

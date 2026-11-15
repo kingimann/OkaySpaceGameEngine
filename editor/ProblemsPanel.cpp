@@ -91,7 +91,7 @@ const char* SevName(DiagSeverity s) {
 ImVec4 SevColor(DiagSeverity s) {
     if (s == DiagSeverity::Error) return ImVec4(0.96f, 0.45f, 0.42f, 1.0f);
     if (s == DiagSeverity::Warning) return ImVec4(0.95f, 0.80f, 0.35f, 1.0f);
-    return ImVec4(0.70f, 0.78f, 0.88f, 1.0f);
+    return DimCol();
 }
 
 void OpenDiagnostic(okay::editor::EditorState& ed, const Diagnostic& d) {

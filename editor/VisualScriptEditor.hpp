@@ -62,17 +62,17 @@ inline ImU32 CatColor(int cat) {
     // Calm, distinct header colours: readable at a glance, not neon.
     switch (cat) {
         case CAT_EVENT:  return IM_COL32(158, 96, 102, 255);
-        case CAT_FLOW:   return IM_COL32(86, 112, 158, 255);
+        case CAT_FLOW:   return IM_COL32(118, 116, 112, 255);
         case CAT_VAR:    return IM_COL32(72, 138, 116, 255);
-        case CAT_MATH:   return IM_COL32(64, 132, 150, 255);
-        case CAT_LOGIC:  return IM_COL32(124, 104, 158, 255);
+        case CAT_MATH:   return IM_COL32(128, 118, 56, 255);
+        case CAT_LOGIC:  return IM_COL32(150, 100, 150, 255);
         case CAT_INPUT:  return IM_COL32(168, 132, 78, 255);
         case CAT_XFORM:  return IM_COL32(70, 146, 146, 255);
         case CAT_ACTION: return IM_COL32(176, 114, 78, 255);
-        case CAT_NET:    return IM_COL32(84, 114, 170, 255);
+        case CAT_NET:    return IM_COL32(160, 96, 128, 255);
         case CAT_API:    return IM_COL32(122, 142, 88, 255);
         case CAT_SCRIPT: return IM_COL32(150, 118, 72, 255);
-        default:         return IM_COL32(108, 114, 128, 255);
+        default:         return IM_COL32(117, 117, 117, 255);
     }
 }
 
@@ -879,7 +879,7 @@ inline bool KeyPicker(std::string& arg, float width) {
     if (ImGui::Button(lbl.c_str(), ImVec2(width, 0))) ImGui::OpenPopup("##keypickpop");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click, then press the key you want (or pick it from the list).");
     if (ImGui::BeginPopup("##keypickpop")) {
-        ImGui::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "Press any key...");
+        ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextLink), "Press any key...");
         ImGui::TextDisabled("or pick one below (Esc closes)");
         if (!ImGui::IsWindowAppearing()) {   // not the click that opened it
             std::string got = VsCapturedKey();
@@ -2615,11 +2615,11 @@ inline ImU32 VsPinColor(okay::vs::PinType t) {
         case PinType::Bool:   return IM_COL32(225, 95, 95, 255);
         case PinType::Text:   return IM_COL32(235, 130, 205, 255);
         case PinType::Vec3:   return IM_COL32(235, 200, 80, 255);
-        case PinType::Object: return IM_COL32(95, 165, 255, 255);
-        case PinType::List:   return IM_COL32(90, 215, 220, 255);
-        case PinType::Map:    return IM_COL32(180, 140, 230, 255);
+        case PinType::Object: return IM_COL32(205, 205, 205, 255);
+        case PinType::List:   return IM_COL32(150, 225, 120, 255);
+        case PinType::Map:    return IM_COL32(215, 140, 215, 255);
         case PinType::Color:  return IM_COL32(250, 150, 60, 255);
-        default:              return IM_COL32(185, 185, 195, 255);
+        default:              return IM_COL32(188, 188, 188, 255);
     }
 }
 /// Can output `outPin` of `producer` feed input `inPin` of `consumer`? `why` says
@@ -3683,7 +3683,7 @@ inline void Draw(EditorState& ed, bool* open) {
         for (int i = 0; i < 4; ++i) {
             if (i) ImGui::SameLine();
             const bool on = tlevel == i;
-            if (on) ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(70, 110, 160, 255));
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetColorU32(ImGuiCol_SliderGrab));
             if (ImGui::Button(VsLevelFilterName((VsLevelFilter)i), ImVec2(120, 0))) tlevel = i;
             if (on) ImGui::PopStyleColor();
         }
@@ -3710,10 +3710,10 @@ inline void Draw(EditorState& ed, bool* open) {
             const char* badge = VsLevelBadge(t.level);
             const float bw = ImGui::CalcTextSize(badge).x + 10;
             const ImU32 bg = t.level == VsLevel::Basic ? IM_COL32(46, 110, 78, 255)
-                           : t.level == VsLevel::Advanced ? IM_COL32(96, 72, 120, 255)
-                           : IM_COL32(52, 78, 120, 255);
+                           : t.level == VsLevel::Advanced ? IM_COL32(120, 72, 120, 255)
+                           : IM_COL32(124, 96, 44, 255);
             dl->AddRectFilled(ImVec2(p.x + 220, p.y + 3), ImVec2(p.x + 220 + bw, p.y + ImGui::GetTextLineHeight() + 4), bg, 3);
-            dl->AddText(ImVec2(p.x + 225, p.y + 3), IM_COL32(230, 236, 244, 255), badge);
+            dl->AddText(ImVec2(p.x + 225, p.y + 3), IM_COL32(237, 237, 237, 255), badge);
             if (ImGui::IsItemHovered()) {
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(320);
@@ -3728,7 +3728,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     const ImVec2 a = ImGui::GetCursorScreenPos();
                     ImGui::Dummy(ImVec2(36, 16));
                     ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(a.x + x, a.y), ImVec2(a.x + x + 28, a.y + 14),
-                                                              IM_COL32(80, 120, 160, 255), 2);
+                                                              IM_COL32(120, 120, 120, 255), 2);
                     x += 32; ++shown; i += 4;
                 }
                 ImGui::PopTextWrapPos();
@@ -4094,7 +4094,7 @@ inline void Draw(EditorState& ed, bool* open) {
     // Canvas (leaves room on the right for the OkayScript preview when open).
     const float scriptPanelW = 420.0f;
     const float detailsW = 340.0f;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.102f, 0.110f, 0.135f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.116f, 0.116f, 0.116f, 1.0f));
     const float watchW = 340.0f;   // the debugger's watch panel replaces the preview while paused
     const float rightW = dv.stopped ? watchW : st.showScript ? scriptPanelW : st.showDetails ? detailsW : 0.0f;
     ImGui::BeginChild("vscanvas", ImVec2(rightW > 0.0f ? -rightW : 0.0f, 0), true,
@@ -4187,7 +4187,7 @@ inline void Draw(EditorState& ed, bool* open) {
 
     // Grid: minor lines + a major line every 4 cells.
     const float grid = 32.0f * z;
-    const ImU32 gridMinor = IM_COL32(255, 255, 255, 12), gridMajor = IM_COL32(180, 196, 220, 28);
+    const ImU32 gridMinor = IM_COL32(255, 255, 255, 12), gridMajor = IM_COL32(200, 200, 200, 28);
     {
         int i = (int)std::floor(-st.pan.x / grid);
         for (float x = std::fmod(st.pan.x, grid); x < canvasMax.x - canvasMin.x; x += grid, ++i)
@@ -4228,8 +4228,8 @@ inline void Draw(EditorState& ed, bool* open) {
 
     // ---- Comment frames -----------------------------------------------------------
     dl->ChannelsSetCurrent(0);
-    static const ImU32 kCommentCols[6] = {IM_COL32(90, 110, 140, 255), IM_COL32(80, 130, 90, 255), IM_COL32(150, 110, 60, 255),
-                                          IM_COL32(140, 70, 80, 255), IM_COL32(110, 80, 150, 255), IM_COL32(100, 100, 106, 255)};
+    static const ImU32 kCommentCols[6] = {IM_COL32(120, 104, 84, 255), IM_COL32(80, 130, 90, 255), IM_COL32(150, 110, 60, 255),
+                                          IM_COL32(140, 70, 80, 255), IM_COL32(140, 80, 140, 255), IM_COL32(102, 102, 102, 255)};
     int pendingCommentDelete = -1;
     for (int ci = 0; ci < (int)g.comments.size(); ++ci) {
         VsComment& c = g.comments[ci];
@@ -4240,7 +4240,7 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddRect(a, b, ImGui::ColorConvertFloat4ToU32(ImVec4(cv.x, cv.y, cv.z, 0.75f)), ROUND, 0, 1.5f);
         const float th = HEADER_H * 1.05f;
         dl->AddRectFilled(a, ImVec2(b.x, a.y + th), ImGui::ColorConvertFloat4ToU32(ImVec4(cv.x, cv.y, cv.z, 0.55f)), ROUND, ImDrawFlags_RoundCornersTop);
-        dl->AddText(font, fs * 1.08f, ImVec2(a.x + PAD, a.y + (th - fs * 1.08f) * 0.5f), IM_COL32(240, 242, 248, 255), c.text.c_str());
+        dl->AddText(font, fs * 1.08f, ImVec2(a.x + PAD, a.y + (th - fs * 1.08f) * 0.5f), IM_COL32(243, 243, 243, 255), c.text.c_str());
         ImGui::PushID(100000 + ci);
         ImGui::SetCursorScreenPos(a);
         ImGui::SetNextItemAllowOverlap();
@@ -4429,16 +4429,16 @@ inline void Draw(EditorState& ed, bool* open) {
         if (errNode)
             dl->AddRect(ImVec2(p0.x - 5 * z, p0.y - 5 * z), ImVec2(p1.x + 5 * z, p1.y + 5 * z),
                         IM_COL32(255, 90, 80, 255), ROUND + 5 * z, 0, 3.0f * z);
-        dl->AddRectFilled(p0, p1, IM_COL32(30, 33, 42, 248), ROUND);
+        dl->AddRectFilled(p0, p1, IM_COL32(35, 35, 35, 248), ROUND);
         ImU32 hc = CatColor(d->cat);
         dl->AddRectFilled(p0, ImVec2(p1.x, p0.y + HEADER_H), hc, ROUND, ImDrawFlags_RoundCornersTop);
         dl->AddLine(ImVec2(p0.x, p0.y + HEADER_H), ImVec2(p1.x, p0.y + HEADER_H), IM_COL32(0, 0, 0, 120), 1.0f);
         if (isSel) {
-            dl->AddRect(ImVec2(p0.x - 2 * z, p0.y - 2 * z), ImVec2(p1.x + 2 * z, p1.y + 2 * z), IM_COL32(120, 170, 255, 255), ROUND + 2 * z, 0, 2.5f);
+            dl->AddRect(ImVec2(p0.x - 2 * z, p0.y - 2 * z), ImVec2(p1.x + 2 * z, p1.y + 2 * z), ImGui::GetColorU32(ImGuiCol_SliderGrab), ROUND + 2 * z, 0, 2.5f);
         } else {
-            dl->AddRect(p0, p1, hovered ? IM_COL32(150, 154, 166, 200) : IM_COL32(0, 0, 0, 170), ROUND, 0, hovered ? 1.5f : 1.0f);
+            dl->AddRect(p0, p1, hovered ? IM_COL32(157, 157, 157, 200) : IM_COL32(0, 0, 0, 170), ROUND, 0, hovered ? 1.5f : 1.0f);
         }
-        text(ImVec2(p0.x + PAD, p0.y + 6.0f * z), IM_COL32(244, 246, 250, 255), title.c_str());
+        text(ImVec2(p0.x + PAD, p0.y + 6.0f * z), IM_COL32(247, 247, 247, 255), title.c_str());
         {
             const char* help = VsNodeHelp(d->type);
             std::string hint = help ? help : (d->paramHint ? std::string("Needs: ") + d->paramHint : std::string());
@@ -4446,7 +4446,7 @@ inline void Draw(EditorState& ed, bool* open) {
             while (hint.size() > 8 && ImGui::CalcTextSize(hint.c_str()).x > maxW) hint.pop_back();
             if (help && hint.size() < std::strlen(help)) hint += "...";
             if (!hint.empty())
-                text(ImVec2(p0.x + PAD, p0.y + 8.0f * z + fs), IM_COL32(230, 236, 244, 210), hint.c_str());
+                text(ImVec2(p0.x + PAD, p0.y + 8.0f * z + fs), IM_COL32(237, 237, 237, 210), hint.c_str());
             bool hasErr = false;
             std::string miss;
             for (const auto& is : st.issues) if (is.node == n.id && is.severity == 0) hasErr = true;
@@ -4555,7 +4555,7 @@ inline void Draw(EditorState& ed, bool* open) {
             ImGui::EndPopup();
         }
 
-        const ImU32 labelCol = IM_COL32(205, 209, 216, 255);
+        const ImU32 labelCol = IM_COL32(210, 210, 210, 255);
         const ImU32 execCol = IM_COL32(235, 236, 240, 255), dataCol = IM_COL32(120, 200, 140, 255);
         float ly = p0.y + HEADER_H + PAD * 0.5f;
         auto execTri = [&](ImVec2 pp) {
@@ -4564,7 +4564,7 @@ inline void Draw(EditorState& ed, bool* open) {
         };
         auto dataDot = [&](ImVec2 pp, bool linked, ImU32 col = 0) {
             if (!col) col = dataCol;
-            dl->AddCircleFilled(pp, PIN_R, linked ? col : IM_COL32(38, 39, 44, 255), 16);
+            dl->AddCircleFilled(pp, PIN_R, linked ? col : IM_COL32(40, 40, 40, 255), 16);
             dl->AddCircle(pp, PIN_R, col, 16, 2.0f * z);
         };
         // Left pins (exec-in then data-in).
@@ -4681,7 +4681,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     ImGui::SetWindowFontScale(1.0f);
                     if (d->param == 4) {   // a list of steps
                         auto list = okay::ActionList::DecodeItems(n.arg);
-                        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), "Steps (run top to bottom; Wait pauses)");
+                        ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextLink), "Steps (run top to bottom; Wait pauses)");
                         ImGui::Separator();
                         bool ch = false; int act = 0, actAt = -1;
                         for (std::size_t i = 0; i < list.size(); ++i) {
@@ -4697,7 +4697,7 @@ inline void Draw(EditorState& ed, bool* open) {
                     } else {
                         okay::ActionList::Item it = okay::ActionList::DecodeItem(n.arg);
                         if (it.op.empty()) it.op = cond ? "always" : "log";
-                        ImGui::TextColored(ImVec4(0.6f, 0.85f, 1.0f, 1.0f), cond ? "Check" : "Action");
+                        ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_TextLink), cond ? "Check" : "Action");
                         ImGui::Separator();
                         bool ch = false;
                         if (StepEditor) StepEditor(it, cond, 0, ch);
@@ -5009,7 +5009,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (execIdx == altExec) { bezier(a->second, b->second, IM_COL32(255, 120, 100, 255), 4.2f * std::max(0.7f, z)); continue; }
         const bool hot = hotNode(l.from) || hotNode(l.to);
         const bool ran = live && st.flash.count(l.to) && st.flash[l.to] > 0.0f;
-        ImU32 col = ran ? IM_COL32(255, 205, 90, 255) : hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(215, 216, 222, 200);
+        ImU32 col = ran ? IM_COL32(255, 205, 90, 255) : hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(218, 218, 218, 200);
         bezier(a->second, b->second, col, (hot || ran ? 3.6f : 2.8f) * std::max(0.7f, z));
     }
     int dataIdx = -1;
@@ -5139,8 +5139,8 @@ inline void Draw(EditorState& ed, bool* open) {
     if (st.boxing) {
         ImVec2 a(std::min(st.boxStart.x, mouse.x), std::min(st.boxStart.y, mouse.y));
         ImVec2 b(std::max(st.boxStart.x, mouse.x), std::max(st.boxStart.y, mouse.y));
-        dl->AddRectFilled(a, b, IM_COL32(120, 170, 255, 40));
-        dl->AddRect(a, b, IM_COL32(120, 170, 255, 200), 0.0f, 0, 1.5f);
+        dl->AddRectFilled(a, b, ImGui::GetColorU32(ImGuiCol_SliderGrab, 40.0f / 255.0f));
+        dl->AddRect(a, b, ImGui::GetColorU32(ImGuiCol_SliderGrab, 200.0f / 255.0f), 0.0f, 0, 1.5f);
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             if (b.x - a.x > 3.0f || b.y - a.y > 3.0f)
                 for (const auto& kv : nodeRect) {
@@ -5169,13 +5169,13 @@ inline void Draw(EditorState& ed, bool* open) {
         x1 = std::max(x1, v1.x * kLayout); y1 = std::max(y1, v1.y * kLayout);
         float sc = std::min((mmSize.x - 8.0f) / std::max(1.0f, x1 - x0), (mmSize.y - 8.0f) / std::max(1.0f, y1 - y0));
         auto M = [&](float wx, float wy) { return ImVec2(mmMin.x + 4.0f + (wx - x0) * sc, mmMin.y + 4.0f + (wy - y0) * sc); };
-        dl->AddRectFilled(mmMin, mmMax, IM_COL32(22, 26, 34, 230), 10.0f);
-        dl->AddRect(mmMin, mmMax, IM_COL32(120, 136, 160, 180), 10.0f, 0, 1.5f);
+        dl->AddRectFilled(mmMin, mmMax, IM_COL32(27, 27, 27, 230), 10.0f);
+        dl->AddRect(mmMin, mmMax, IM_COL32(136, 136, 136, 180), 10.0f, 0, 1.5f);
         for (const auto& n : g.nodes) {
             const VsDef* d = FindDef(n.type);
             ImVec2 a = M(n.x * kLayout, n.y * kLayout), b = M(n.x * kLayout + 220.0f, n.y * kLayout + 110.0f);
             dl->AddRectFilled(a, b, d ? CatColor(d->cat) : IM_COL32(120, 120, 120, 255), 2.0f);
-            if (st.sel.count(n.id)) dl->AddRect(a, b, IM_COL32(140, 190, 255, 255), 2.0f);
+            if (st.sel.count(n.id)) dl->AddRect(a, b, ImGui::GetColorU32(ImGuiCol_SliderGrab), 2.0f);
         }
         dl->AddRect(M(v0.x * kLayout, v0.y * kLayout), M(v1.x * kLayout, v1.y * kLayout), IM_COL32(255, 255, 255, 200), 0.0f, 0, 1.5f);
         ImGui::SetCursorScreenPos(mmMin);
@@ -5259,22 +5259,22 @@ inline void Draw(EditorState& ed, bool* open) {
         const char* msg = "This graph file could not be opened.";
         const std::string path = g.path.empty() ? std::string("(no path)") : g.path;
         dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 24.0f), IM_COL32(255, 170, 150, 255), msg);
-        dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 48.0f), IM_COL32(200, 206, 216, 255), path.c_str());
+        dl->AddText(ImVec2(canvasMin.x + 24.0f, canvasMin.y + 48.0f), IM_COL32(207, 207, 207, 255), path.c_str());
     } else if (g.nodes.empty()) {
         const float cardW = 480.0f, cardH = 220.0f;
         const ImVec2 c0((canvasMin.x + canvasMax.x - cardW) * 0.5f, (canvasMin.y + canvasMax.y - cardH) * 0.5f);
         const ImVec2 c1(c0.x + cardW, c0.y + cardH);
-        dl->AddRectFilled(c0, c1, IM_COL32(32, 36, 46, 245), 16.0f);
-        dl->AddRect(c0, c1, IM_COL32(120, 140, 168, 160), 16.0f, 0, 1.5f);
+        dl->AddRectFilled(c0, c1, IM_COL32(38, 38, 38, 245), 16.0f);
+        dl->AddRect(c0, c1, IM_COL32(140, 140, 140, 160), 16.0f, 0, 1.5f);
         const char* title = "This graph is empty";
         const char* hint = "Right-click the canvas, or press Space, to add a node.";
         const char* hint2 = "Start with an event such as On Start, then wire what happens next.";
         const ImVec2 ts = ImGui::CalcTextSize(title);
-        dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 36.0f), IM_COL32(236, 240, 246, 255), title);
+        dl->AddText(ImVec2(c0.x + (cardW - ts.x) * 0.5f, c0.y + 36.0f), IM_COL32(241, 241, 241, 255), title);
         const ImVec2 hs = ImGui::CalcTextSize(hint);
-        dl->AddText(ImVec2(c0.x + (cardW - hs.x) * 0.5f, c0.y + 72.0f), IM_COL32(170, 180, 196, 255), hint);
+        dl->AddText(ImVec2(c0.x + (cardW - hs.x) * 0.5f, c0.y + 72.0f), IM_COL32(178, 178, 178, 255), hint);
         const ImVec2 h2 = ImGui::CalcTextSize(hint2);
-        dl->AddText(ImVec2(c0.x + (cardW - h2.x) * 0.5f, c0.y + 96.0f), IM_COL32(150, 160, 176, 255), hint2);
+        dl->AddText(ImVec2(c0.x + (cardW - h2.x) * 0.5f, c0.y + 96.0f), IM_COL32(162, 162, 162, 255), hint2);
         ImGui::SetCursorScreenPos(ImVec2(c0.x + (cardW - 180.0f) * 0.5f, c0.y + 148.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16.0f, 10.0f));
         if (ImGui::Button("Add a node", ImVec2(180.0f, 0.0f))) st.addAtCenter = true;
@@ -5287,7 +5287,7 @@ inline void Draw(EditorState& ed, bool* open) {
         dl->AddText(ImVec2(bp.x + 12.0f, bp.y + 8.0f), IM_COL32(245, 214, 150, 255), msg);
     } else if (st.showHint) {
         const char* msg = "Right-click or press Space to add a node    ·    Scroll to zoom    ·    Drag empty space to select";
-        dl->AddText(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 28.0f), IM_COL32(168, 178, 194, 180), msg);
+        dl->AddText(ImVec2(canvasMin.x + 16.0f, canvasMax.y - 28.0f), IM_COL32(178, 178, 178, 180), msg);
     }
     // Why the last wire was refused. Wrapped, so the suggestion is not cut off.
     if (st.refuseTime > 0.0f && !st.refuseMsg.empty()) {
@@ -5317,7 +5317,7 @@ inline void Draw(EditorState& ed, bool* open) {
     if (st.showIssues && !st.issues.empty()) {
         const float w = std::min(820.0f, canvasMax.x - canvasMin.x - 36.0f);
         ImGui::SetCursorScreenPos(ImVec2(canvasMax.x - w - 14, canvasMin.y + 40));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(28, 29, 34, 245));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(30, 30, 30, 245));
         ImGui::BeginChild("##vsissuelist", ImVec2(w, std::min(260.0f, 34.0f + 26.0f * (float)st.issues.size())), ImGuiChildFlags_Borders);
         ImGui::TextDisabled("Problems the checker found");
         ImGui::Separator();

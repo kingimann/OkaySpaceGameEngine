@@ -15,6 +15,7 @@
 #include "OkayUIHost.hpp"        // the hosted region
 #include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of it?
 #include "OkayUIScreens.hpp"     // the OkayUI port of this panel
+#include "OkayPanels.hpp"         // OkayUILookScope: the editor's Dark / Light colours for it
 #endif
 
 namespace oked {
@@ -161,6 +162,7 @@ void DrawConsoleOkayUI(const char* title) {
         host.activateSource = [](const okay::ConsoleSource& s) { ActivateBoundConsoleSource(s); };
         host.openScript = [](const std::string& path, int line) { OpenScriptFileInEditorAt(path, line); };
         host.cleared = [] { RefreshCounts(); };
+        OkayUILookScope look;   // the editor's Dark / Light colours (not the launcher's)
         OkayUI::PushTextScale(g_uiScale);
         okayuiscreens::DrawConsole(g_model, g_okayView, host, p.x, p.y, a.x, a.y);
         OkayUI::PopTextScale();
@@ -200,9 +202,9 @@ void DrawConsole() {
     }
 #endif
     if (ImGui::Begin(conTitle, &g_showConsole)) {
-        const ImVec4 cInfo(0.82f, 0.84f, 0.88f, 1.0f);
-        const ImVec4 cWarn(0.95f, 0.80f, 0.35f, 1.0f);
-        const ImVec4 cErr (0.96f, 0.45f, 0.42f, 1.0f);
+        const ImVec4 cInfo = TextCol();        // the look's text (Dark or Light), warning and error colours readable on both
+        const ImVec4 cWarn = StatusCol(1);
+        const ImVec4 cErr  = StatusCol(2);
         const ImGuiStyle& cst = ImGui::GetStyle();
 
         std::vector<std::string> cats;

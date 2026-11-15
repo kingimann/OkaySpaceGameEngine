@@ -1,4 +1,5 @@
 #include "FpHandsWindow.hpp"
+#include "EditorWidgets.hpp"
 #include "okay/Components/FpHandsPreview.hpp"
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
@@ -32,7 +33,7 @@ void Section(const char* label) {
     ImVec2 p = ImGui::GetCursorScreenPos();
     float h = ImGui::GetTextLineHeight();
     ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + 1.0f), ImVec2(p.x + 3.0f, p.y + h),
-                                              IM_COL32(120, 170, 230, 255), 1.5f);
+                                              oked::AccentU32(255), 1.5f);
     ImGui::Indent(9.0f);
     ImGui::TextUnformatted(label);
     ImGui::Unindent(9.0f);

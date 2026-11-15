@@ -376,7 +376,7 @@ ImU32 CellTint(LocCellState state) {
     switch (state) {
         case LocCellState::Missing: return IM_COL32(130, 52, 40, 90);
         case LocCellState::PlaceholderMismatch: return IM_COL32(176, 120, 32, 120);
-        case LocCellState::SameAsSource: return IM_COL32(64, 96, 140, 80);
+        case LocCellState::SameAsSource: return IM_COL32(128, 128, 128, 70);
         case LocCellState::Extra: return IM_COL32(120, 72, 140, 80);
         case LocCellState::Translated: break;
     }

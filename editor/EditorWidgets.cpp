@@ -1,32 +1,154 @@
-// Shared editor widgets: the accent colour, component category tints, the drawn
+// Shared editor widgets: the two looks (Dark / Light) and their one accent, component category tints, the drawn
 // toolbar icons and the icon / search / toggle buttons every panel uses.
 #include "EditorCommon.hpp"
 #include "EditorWidgets.hpp"
 
 namespace oked {
 
-// The current accent colour, for panels that want to tint their own widgets to
-// match the theme (component headers, the Add Component button, ...).
-ImVec4 AccentCol(float alpha) {
-    const AccentPreset& ap = kAccents[(g_accent < 0 || g_accent >= kAccentCount) ? 0 : g_accent];
-    return ImVec4(ap.r, ap.g, ap.b, alpha);
+using okay::edtheme::Rgb;
+
+// ---- the looks --------------------------------------------------------------------------------------------------
+// The palettes are numbers in ThemeModel.hpp (neutral greys, one accent per look, unit tested); this is the ImGui side.
+const okay::edtheme::Palette& ThemePalette() { return okay::edtheme::PaletteFor(okay::edtheme::LookFromSaved(g_theme)); }
+const okay::edtheme::CodePalette& ThemeCodePalette() { return okay::edtheme::CodePaletteFor(okay::edtheme::LookFromSaved(g_theme)); }
+bool ThemeIsLight() { return okay::edtheme::LookFromSaved(g_theme) == okay::edtheme::Look::Light; }
+
+static ImVec4 V4(const Rgb& c, float a = 1.0f) { return ImVec4(c.r, c.g, c.b, a); }
+static ImVec4 MixV(const ImVec4& a, const ImVec4& b, float t) {
+    return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
 }
+
+// The current accent colour, for panels that want to tint their own widgets to match the theme (component headers, the
+// Add Component button, selection bars, ...). One fixed neutral accent per look; no menu.
+ImVec4 AccentCol(float alpha) { return V4(ThemePalette().accent, alpha); }
+ImU32  AccentU32(int alpha255) {   // (no style alpha, like an IM_COL32 literal)
+    return ImGui::ColorConvertFloat4ToU32(AccentCol((float)(alpha255 < 0 ? 0 : (alpha255 > 255 ? 255 : alpha255)) / 255.0f));
+}
+ImVec4 AccentLitCol(float alpha) { return V4(ThemePalette().accentLit, alpha); }
+ImVec4 AccentOnCol() { return V4(ThemePalette().accentOn); }
+ImVec4 TextCol(float alpha) { return V4(ThemePalette().text, alpha); }
+ImVec4 DimCol(float alpha) { return V4(ThemePalette().textDim, alpha); }
+ImVec4 InkCol(float alpha) { return V4(ThemePalette().ink, alpha); }
+ImVec4 SurfaceCol(int which) {
+    const okay::edtheme::Palette& p = ThemePalette();
+    switch (which) {
+        case 0: return V4(p.deep);   case 1: return V4(p.sunken); case 2: return V4(p.base);
+        case 3: return V4(p.raised); case 4: return V4(p.field);  default: return V4(p.control);
+    }
+}
+ImVec4 StatusCol(int kind, float alpha) {
+    const okay::edtheme::Palette& p = ThemePalette();
+    return V4(kind == 0 ? p.good : (kind == 1 ? p.warn : p.bad), alpha);
+}
+
+ImVec4 PrefabCol(float alpha) {
+    const ImVec4 c(0.62f, 0.86f, 0.55f, alpha);
+    return ThemeIsLight() ? MixV(c, ImVec4(0, 0, 0, alpha), 0.55f) : c;
+}
+ImU32 PrefabU32(int alpha255) {
+    return ImGui::ColorConvertFloat4ToU32(PrefabCol((float)(alpha255 < 0 ? 0 : (alpha255 > 255 ? 255 : alpha255)) / 255.0f));
+}
+
+// The whole ImGui palette for the current look. Starts from ImGui's dark style for the few entries nobody sets, sets every
+// colour the editor draws from the palette, then turns anything that still leans blue into a grey.
+void ApplyEditorColors(ImGuiStyle& s) {
+    ImGui::StyleColorsDark(&s);
+    const okay::edtheme::Palette& p = ThemePalette();
+    const bool light = ThemeIsLight();
+    const float hl = light ? 1.8f : 1.0f;   // hairlines and washes are stronger on the light look so they still show
+    const ImVec4 deep = V4(p.deep), sunken = V4(p.sunken), base = V4(p.base), raised = V4(p.raised), field = V4(p.field),
+                 control = V4(p.control), text = V4(p.text), dim = V4(p.textDim), accent = V4(p.accent),
+                 accentLit = V4(p.accentLit), ink = V4(p.ink);
+    auto lift = [&](const ImVec4& c, float t) { return MixV(c, ink, t); };
+    auto inkA = [&](float a) { return V4(p.ink, a * hl > 1.0f ? 1.0f : a * hl); };
+    auto withA = [](const ImVec4& c, float a) { return ImVec4(c.x, c.y, c.z, a); };
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_Text]                  = text;
+    c[ImGuiCol_TextDisabled]          = dim;
+    c[ImGuiCol_WindowBg]              = base;
+    c[ImGuiCol_ChildBg]               = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_PopupBg]               = withA(MixV(raised, base, 0.35f), 0.985f);
+    c[ImGuiCol_Border]                = inkA(0.075f);
+    c[ImGuiCol_BorderShadow]          = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_FrameBg]               = field;
+    c[ImGuiCol_FrameBgHovered]        = lift(field, 0.05f);
+    c[ImGuiCol_FrameBgActive]         = lift(field, 0.09f);
+    c[ImGuiCol_TitleBg]               = deep;
+    c[ImGuiCol_TitleBgActive]         = MixV(deep, sunken, 0.6f);
+    c[ImGuiCol_TitleBgCollapsed]      = deep;
+    c[ImGuiCol_MenuBarBg]             = sunken;
+    c[ImGuiCol_ScrollbarBg]           = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_ScrollbarGrab]         = inkA(0.12f);
+    c[ImGuiCol_ScrollbarGrabHovered]  = inkA(0.24f);
+    c[ImGuiCol_ScrollbarGrabActive]   = accent;
+    c[ImGuiCol_CheckMark]             = accentLit;
+    c[ImGuiCol_CheckboxSelectedBg]    = lift(field, 0.09f);
+    c[ImGuiCol_SliderGrab]            = accent;
+    c[ImGuiCol_SliderGrabActive]      = accentLit;
+    c[ImGuiCol_Button]                = control;
+    c[ImGuiCol_ButtonHovered]         = lift(control, 0.08f);
+    c[ImGuiCol_ButtonActive]          = lift(control, 0.16f);   // (normal text stays on it, so it is a lift, not the accent fill)
+    c[ImGuiCol_Header]                = MixV(control, accent, 0.18f);
+    c[ImGuiCol_HeaderHovered]         = lift(control, 0.07f);
+    c[ImGuiCol_HeaderActive]          = MixV(control, accent, 0.28f);
+    c[ImGuiCol_Separator]             = inkA(0.08f);
+    c[ImGuiCol_SeparatorHovered]      = withA(accent, 0.70f);
+    c[ImGuiCol_SeparatorActive]       = accent;
+    c[ImGuiCol_ResizeGrip]            = inkA(0.06f);
+    c[ImGuiCol_ResizeGripHovered]     = withA(accent, 0.60f);
+    c[ImGuiCol_ResizeGripActive]      = accent;
+    c[ImGuiCol_InputTextCursor]       = text;
+    // The selected tab of every group matches the panel under it (so it reads as "connected"), focused or not; only the
+    // overline says which group has focus.
+    c[ImGuiCol_Tab]                   = sunken;
+    c[ImGuiCol_TabHovered]            = MixV(sunken, control, 0.55f);
+    c[ImGuiCol_TabSelected]           = base;
+    c[ImGuiCol_TabSelectedOverline]   = accent;
+    c[ImGuiCol_TabDimmed]             = sunken;
+    c[ImGuiCol_TabDimmedSelected]     = base;
+    c[ImGuiCol_TabDimmedSelectedOverline] = withA(dim, 0.35f);
+    c[ImGuiCol_DockingPreview]        = withA(accent, 0.55f);
+    c[ImGuiCol_DockingEmptyBg]        = deep;
+    c[ImGuiCol_TableHeaderBg]         = MixV(sunken, base, 0.5f);
+    c[ImGuiCol_TableBorderStrong]     = inkA(0.07f);
+    c[ImGuiCol_TableBorderLight]      = inkA(0.04f);
+    c[ImGuiCol_TableRowBg]            = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_TableRowBgAlt]         = inkA(0.022f);
+    c[ImGuiCol_TextLink]              = accentLit;
+    c[ImGuiCol_TextSelectedBg]        = withA(accent, 0.32f);
+    c[ImGuiCol_TreeLines]             = inkA(0.12f);
+    c[ImGuiCol_DragDropTarget]        = accentLit;
+    c[ImGuiCol_DragDropTargetBg]      = withA(accent, 0.10f);
+    c[ImGuiCol_UnsavedMarker]         = text;
+    c[ImGuiCol_NavCursor]             = accent;
+    c[ImGuiCol_NavWindowingHighlight] = withA(ink, 0.70f);
+    c[ImGuiCol_NavWindowingDimBg]     = ImVec4(0, 0, 0, light ? 0.25f : 0.45f);
+    c[ImGuiCol_ModalWindowDimBg]      = ImVec4(0, 0, 0, light ? 0.35f : 0.55f);
+    // Plot colours: ImGui's own (grey / orange) are fine; they are not blue. Last pass for anything still leaning blue.
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+        ImVec4& v = c[i];
+        if (v.z > v.x + 0.02f) { const float l = 0.299f * v.x + 0.587f * v.y + 0.114f * v.z; v = ImVec4(l, l, l, v.w); }
+    }
+}
+
 // A tasteful category tint for a component header, derived from its label — so the
 // Inspector groups visually by system (physics/render/audio/UI/animation/script)
 // while staying cohesive. Falls back to the theme accent.
 ImVec4 CategoryColor(const char* label) {
+    // The tints are for the dark look; on the light look they are darkened so they still read on a pale header.
+    auto Cat = [](ImVec4 c) { return ThemeIsLight() ? MixV(c, ImVec4(0, 0, 0, c.w), 0.38f) : c; };
     auto has = [&](const char* k) { return std::strstr(label, k) != nullptr; };
-    if (has("Collider") || has("Rigidbody") || has("Joint"))          return ImVec4(0.42f, 0.80f, 0.50f, 1.0f); // physics — green
-    if (has("Audio"))                                                 return ImVec4(0.95f, 0.62f, 0.30f, 1.0f); // audio — orange
-    if (has("Animat") || has("IK") || has("Root Motion"))            return ImVec4(0.30f, 0.78f, 0.80f, 1.0f); // animation — teal
-    if (has("Script") || has("Visual Script"))                       return ImVec4(0.90f, 0.80f, 0.35f, 1.0f); // scripting — yellow
+    if (has("Collider") || has("Rigidbody") || has("Joint"))          return Cat(ImVec4(0.42f, 0.80f, 0.50f, 1.0f)); // physics — green
+    if (has("Audio"))                                                 return Cat(ImVec4(0.95f, 0.62f, 0.30f, 1.0f)); // audio — orange
+    if (has("Animat") || has("IK") || has("Root Motion"))            return Cat(ImVec4(0.92f, 0.50f, 0.74f, 1.0f)); // animation — pink
+    if (has("Script") || has("Visual Script"))                       return Cat(ImVec4(0.90f, 0.80f, 0.35f, 1.0f)); // scripting — yellow
     if (has("UI ") || has("Canvas") || has("Button") || has("Panel") || has("Slider") ||
         has("Toggle") || has("Tabs") || has("Dropdown") || has("Scroll") || has("Layout") ||
         has("Progress") || has("Rating") || has("Stepper") || has("Input Field") || has("Tooltip"))
-                                                                       return ImVec4(0.66f, 0.52f, 0.96f, 1.0f); // UI — violet
+                                                                       return Cat(ImVec4(0.78f, 0.54f, 0.84f, 1.0f)); // UI — purple
     if (has("Renderer") || has("Sprite") || has("Mesh") || has("Text") || has("Particle") ||
         has("Light") || has("Camera") || has("Tilemap") || has("Terrain") || has("Water"))
-                                                                       return ImVec4(0.42f, 0.66f, 0.98f, 1.0f); // rendering — blue
+                                                                       return Cat(ImVec4(0.94f, 0.56f, 0.46f, 1.0f)); // rendering — coral
     return AccentCol(1.0f);
 }
 // Icon family for a component header, matching CategoryColor's keywords:
@@ -56,7 +178,7 @@ bool AccentToggleButton(const char* label, bool active, const ImVec2& size) {
         ImGui::PushStyleColor(ImGuiCol_Button,        AccentCol(0.90f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, AccentCol(1.00f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  AccentCol(0.80f));
-        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1, 1, 1, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text,          AccentOnCol());
     }
     bool clicked = ImGui::Button(label, size);
     if (active) ImGui::PopStyleColor(4);
@@ -186,7 +308,7 @@ bool IconButton(const char* id, TbIcon ic, const char* tip, bool active) {
     float h = ImGui::GetFrameHeight();
     bool clicked = AccentToggleButton(id, active, ImVec2(h, h));
     ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-    ImU32 col = ImGui::GetColorU32(active ? ImVec4(1, 1, 1, 1)
+    ImU32 col = ImGui::GetColorU32(active ? AccentOnCol()
                                           : ImGui::GetStyleColorVec4(ImGuiCol_Text));
     if (!active && !ImGui::IsItemHovered()) col = ImGui::GetColorU32(ImGuiCol_Text, 0.8f);
     DrawTbIcon(ImGui::GetWindowDrawList(), ic, ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f),
@@ -201,7 +323,7 @@ bool IconLabelButton(const char* id, TbIcon ic, const char* label, const char* t
     bool clicked = AccentToggleButton(id, active, ImVec2(h + textW + ImGui::GetStyle().FramePadding.x * 1.4f, h));
     const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
     const bool hot = ImGui::IsItemHovered();
-    ImU32 col = ImGui::GetColorU32(active ? ImVec4(1, 1, 1, 1) : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+    ImU32 col = ImGui::GetColorU32(active ? AccentOnCol() : ImGui::GetStyleColorVec4(ImGuiCol_Text));
     if (!active && !hot) col = ImGui::GetColorU32(ImGuiCol_Text, 0.8f);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     DrawTbIcon(dl, ic, ImVec2(mn.x + h * 0.5f, (mn.y + mx.y) * 0.5f), h * 0.5f, col);

@@ -2,6 +2,7 @@
 // play them, and save a screenshot of each with the live run highlight.
 //   OkayEngine --vs-shot <outdir> [graph-directory]
 #include "VisualScriptEditor.hpp"
+#include "EditorWidgets.hpp"   // oked::ApplyEditorColors
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_sdlrenderer2.h"
 
@@ -58,7 +59,7 @@ int RunVsGraphShot(int argc, char** argv) {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    ImGui::StyleColorsDark();
+    oked::ApplyEditorColors(ImGui::GetStyle());   // the editor's Dark look (neutral greys, no blue), like the real editor
     ImGui_ImplSDL2_InitForSDLRenderer(window, renderer);
     ImGui_ImplSDLRenderer2_Init(renderer);
 
@@ -76,7 +77,7 @@ int RunVsGraphShot(int argc, char** argv) {
         bool open = true;
         okay::editor::vsed::Draw(ed, &open);
         ImGui::Render();
-        SDL_SetRenderDrawColor(renderer, 24, 26, 32, 255);
+        SDL_SetRenderDrawColor(renderer, 26, 26, 26, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);

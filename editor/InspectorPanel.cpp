@@ -582,7 +582,7 @@ bool s_openVariant = false;
 bool s_variantSeed = false;   // fill the name box with the default on the next Create Variant button / dialog open
 char s_variantName[160] = "";
 
-ImVec4 PrefabBlue() { return ImVec4(0.45f, 0.70f, 1.0f, 1.0f); }
+ImVec4 PrefabBlue() { return PrefabCol(); }   // (the name is from when prefabs were blue; they are lime green now)
 
 void Queue(PrefabReq::Kind k, GameObject* root, std::vector<PrefabTarget> t = {}) {
     s_req = PrefabReq(); s_req.kind = k; s_req.root = root; s_req.targets = std::move(t);
@@ -641,7 +641,7 @@ void PrefabFieldMark(const char* label) {
     // A blue bar at the left edge of the row, so overridden fields stand out in a long card.
     const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
     const float x = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMin().x - 5.0f;
-    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x, mn.y), ImVec2(x + 3.0f, mx.y), IM_COL32(90, 165, 255, 255), 1.5f);
+    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(x, mn.y), ImVec2(x + 3.0f, mx.y), PrefabU32(255), 1.5f);
     const ImGuiID id = ImGui::GetItemID();
     char pid[40];
     std::snprintf(pid, sizeof(pid), "##prefabprop%08x", (unsigned)id);
@@ -688,7 +688,7 @@ void DrawPrefabHeader(okay::editor::EditorState& ed, okay::GameObject* go) {
     if (!go || !DescribePrefabInstance(*go, info)) return;
     GameObject* root = info.root;
     const int nChanges = s_changesRoot == root ? (int)(s_changes.size() + s_objChanges.size()) : 0;
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.17f, 0.27f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, SurfaceCol(3));
     ImGui::BeginChild("##prefabbanner", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
     if (info.exists) ImGui::TextColored(PrefabBlue(), "Prefab: %s", info.name.c_str());
     else ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "Prefab: %s (missing)", info.name.c_str());
@@ -841,7 +841,7 @@ void DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go) {
         return;
     }
     const std::string pname = std::filesystem::path(root->prefabSource).filename().string();
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.11f, 0.17f, 0.25f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, SurfaceCol(3));
     ImGui::BeginChild("##prefabchanges", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
     ImGui::TextColored(PrefabBlue(), "Changed from the prefab");
     ImGui::SameLine();
@@ -850,7 +850,7 @@ void DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go) {
     for (const PrefabChange* c : mine) {
         ImGui::PushID(id++);
         const char* what = c->added ? "Added component" : c->removed ? "Removed component" : "Component";
-        ImGui::TextColored(ImVec4(0.82f, 0.88f, 1.0f, 1.0f), "%s: %s", what, PrettyName(c->record).c_str());
+        ImGui::TextColored(TextCol(), "%s: %s", what, PrettyName(c->record).c_str());
         ImGui::SameLine();
         if (ImGui::SmallButton("Revert")) Queue(PrefabReq::Revert, root, {TargetOf(*c)});
         if (ImGui::IsItemHovered()) ImGui::SetTooltip(c->added ? "Remove the component: the prefab does not have it." : c->removed ? "Bring the component back from the prefab." : "Put every value of this component back to the prefab's.");
@@ -880,7 +880,7 @@ void DrawPrefabChanges(okay::editor::EditorState& ed, okay::GameObject* go) {
         const std::string blocked = ApplyObjectBlockedReason(info);
         for (const PrefabObjectChange& o : s_objChanges) {
             ImGui::PushID(id++);
-            ImGui::TextColored(ImVec4(0.82f, 0.88f, 1.0f, 1.0f), "%s", o.description.c_str());
+            ImGui::TextColored(TextCol(), "%s", o.description.c_str());
             if (!o.path.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", o.path.c_str());
             ImGui::SameLine();
             if (ImGui::SmallButton("Revert")) { Queue(PrefabReq::RevertObject, root); s_req.object = o; }

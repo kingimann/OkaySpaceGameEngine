@@ -267,7 +267,7 @@ bool DrawVolumeOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, const Ve
     if (!haveSel) { if (s_handleAxis >= 0) s_handleAxis = -1; }
     else {
         const Transform& t = *rs.go->transform;
-        const ImU32 axc[3] = {IM_COL32(230, 90, 90, 255), IM_COL32(100, 220, 110, 255), IM_COL32(100, 160, 240, 255)};
+        const ImU32 axc[3] = {IM_COL32(230, 90, 90, 255), IM_COL32(100, 220, 110, 255), IM_COL32(100, 160, 240, 255)};   // blue-ok: volume resize handles: Z axis blue (X red / Y green / Z blue convention)
         struct H { int axis, sign; ImVec2 sp; bool ok; };
         H hs[6]; int n = 0;
         for (int a = 0; a < 3; ++a)

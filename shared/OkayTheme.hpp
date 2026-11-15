@@ -1,11 +1,12 @@
-// OkaySpace "Slate" look, shared by the launcher and the editor.
+// OkaySpace "Slate" look: the LAUNCHER's palette (and the game-UI look of OkayUI). The editor no longer uses these colours: since
+// 2026-11-15 it has exactly two looks, Dark and Light, in neutral greys with no blue (editor/ThemeModel.hpp, applied by
+// oked::ApplyEditorColors). The editor still takes the rounding and border metrics below (ApplySlateMetrics).
 //
 // It grew out of the chat window: blue-tinted dark surfaces in three depths
 // (sunken rails/toolbars, the base panel, raised cards/popups), soft white
 // hairlines instead of black borders, rounded controls, light text, and the
 // accent colour reserved for interactive states (selection bars, checks,
-// sliders, the active tab, primary buttons). Keep both apps on these values so
-// they read as one product.
+// sliders, the active tab, primary buttons). Keep the launcher on these values.
 #pragma once
 #include "imgui.h"
 

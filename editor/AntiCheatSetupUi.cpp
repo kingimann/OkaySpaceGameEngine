@@ -35,7 +35,7 @@ ImVec4 Colour(as::Status s) {
     case as::Status::Ok: return ImVec4(0.45f, 0.85f, 0.50f, 1);
     case as::Status::Warn: return ImVec4(0.95f, 0.80f, 0.35f, 1);
     case as::Status::Missing: return ImVec4(0.95f, 0.45f, 0.40f, 1);
-    default: return ImVec4(0.65f, 0.70f, 0.78f, 1);
+    default: return ImVec4(0.70f, 0.70f, 0.70f, 1);
     }
 }
 const char* Mark(as::Status s) {

@@ -250,7 +250,7 @@ void LayerBrush(EditorState& ed, ImDrawList* dl, const View& v, const Mat4& vp, 
     Cast c; c.ok = true; c.pos = hit; c.terrain = t;
     const Foliage::Surface ground = Foliage::TerrainSurface(*t);
     const bool erase = io.KeyShift;
-    DrawRing(dl, v, c, s_layerRadius, ground, erase ? IM_COL32(255, 90, 90, 230) : IM_COL32(110, 200, 255, 230));
+    DrawRing(dl, v, c, s_layerRadius, ground, erase ? IM_COL32(255, 90, 90, 230) : IM_COL32(120, 225, 140, 230));
     if (!s_layerStroke.active) {
         if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left) || io.KeyAlt) return;
         ed.PushUndo("Paint Terrain Layer");
@@ -293,7 +293,7 @@ void MeasureTool(EditorState& ed, ImDrawList* dl, const View& v, const Mat4& vp,
         const ImVec2 ts = ImGui::CalcTextSize(text);
         const ImVec2 p0(s.x - ts.x * 0.5f - 6, s.y - ts.y - 12), p1(s.x + ts.x * 0.5f + 6, s.y - 6);
         dl->AddRectFilled(p0, p1, IM_COL32(20, 22, 28, live ? 190 : 235), 4.0f);
-        dl->AddText(ImVec2(p0.x + 6, p0.y + 2), live ? IM_COL32(200, 205, 215, 255) : IM_COL32(255, 235, 120, 255), text);
+        dl->AddText(ImVec2(p0.x + 6, p0.y + 2), live ? IM_COL32(207, 207, 207, 255) : IM_COL32(255, 235, 120, 255), text);
     };
     const ImU32 col = IM_COL32(255, 220, 80, 255);
     for (int i = 0; i < s_mn; ++i) { ImVec2 s; if (v.ToScreen(s_mp[i], s)) { dl->AddCircleFilled(s, 5.0f, col); dl->AddCircle(s, 7.0f, IM_COL32(20, 20, 20, 255), 16, 1.5f); } }
@@ -357,8 +357,8 @@ void DrawLevelOverlay(EditorState& ed, ImDrawList* dl, const Mat4& vp, ImVec2 ce
         char t[64]; std::snprintf(t, sizeof(t), "%s  Orthographic", nm);
         const ImVec2 ts = ImGui::CalcTextSize(t);
         const ImVec2 p(center.x - ts.x * 0.5f, center.y - canvasSize.y * 0.5f + 12);   // top centre: the stats box owns the left corner
-        dl->AddRectFilled(ImVec2(p.x - 6, p.y - 3), ImVec2(p.x + ts.x + 6, p.y + ts.y + 3), IM_COL32(20, 22, 28, 190), 4.0f);
-        dl->AddText(p, IM_COL32(190, 215, 255, 255), t);
+        dl->AddRectFilled(ImVec2(p.x - 6, p.y - 3), ImVec2(p.x + ts.x + 6, p.y + ts.y + 3), IM_COL32(23, 23, 23, 190), 4.0f);
+        dl->AddText(p, IM_COL32(225, 225, 225, 255), t);
     }
 }
 

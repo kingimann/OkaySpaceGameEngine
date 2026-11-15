@@ -6,7 +6,30 @@
 #include <functional>
 #include <string>
 
+#ifdef OKAY_HAVE_OKAYUI
+#include "okay/UI/OkayUI.hpp"
+#include "okay/UI/OkayUICodeEdit.hpp"
+#endif
+
 namespace oked {
+
+#ifdef OKAY_HAVE_OKAYUI
+/// While one of these is alive, every OkayUI widget is drawn in the editor's current look (Dark or Light: neutral greys and the
+/// one neutral accent, editor/ThemeModel.hpp) instead of the launcher / game look the OkayUI theme otherwise holds. The Game
+/// view's game UI is drawn outside any scope, so it keeps looking exactly as the player draws it. Put one around the OkayUI
+/// calls of an editor panel (the Console, Crash Log, Audio Mixer, the script editor's code area).
+class OkayUILookScope {
+public:
+    OkayUILookScope();
+    ~OkayUILookScope();
+    OkayUILookScope(const OkayUILookScope&) = delete;
+    OkayUILookScope& operator=(const OkayUILookScope&) = delete;
+private:
+    OkayUI::Theme saved_;
+};
+/// The script editor palette of the current look for OkayUI::CodeEdit (the same numbers the ImGui text editor gets).
+OkayUI::CodePalette EditorCodePalette();
+#endif
 
 struct CrashLogActions {
     std::function<void()> refresh, openFolder, clear;   // the host reloads, reveals the folder, deletes the files

@@ -20,6 +20,7 @@
 
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIHost.hpp"
+#include "OkayPanels.hpp"
 #endif
 
 class ScriptEditorWidget {
@@ -35,6 +36,8 @@ public:
     // ---- one-time configuration (the ImGui editor's look; the OkayUI editor has its own palette) ----
     void SetLanguageDefinition(const TextEditor::LanguageDefinition& d) { imgui_.SetLanguageDefinition(d); }
     void SetPalette(const TextEditor::Palette& p) { imgui_.SetPalette(p); }
+    int  PaletteLook() const { return paletteLook_; }          // which look (0 Dark, 1 Light) the ImGui palette was last set for; -1 = never
+    void SetPaletteLook(int look) { paletteLook_ = look; }
     void SetShowWhitespaces(bool b) { imgui_.SetShowWhitespaces(b); }
     void SetTabSize(int n) { imgui_.SetTabSize(n); okay_.SetTabSize(n); }
     void SetLineSpacing(float s) { imgui_.SetLineSpacing(s); okay_.SetLineSpacing(s); }
@@ -95,6 +98,8 @@ public:
         ImGui::InvisibleButton(id, a);                          // the rectangle: an ImGui item, so ImGui does not scroll under it
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
         oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+        oked::OkayUILookScope look;                                 // the editor's Dark / Light colours, not the launcher's
+        okay_.Edit().SetPalette(oked::EditorCodePalette());         // and the script palette of the current look
         OkayUI::PushTextScale(oked::g_uiScale);
         OkayUI::BareNextWindow();
         if (OkayUI::Begin(id, p.x, p.y, a.x, a.y)) okay_.Edit().Draw("##codeedit", a.x, a.y);
@@ -105,6 +110,7 @@ public:
     }
 
 private:
+    int paletteLook_ = -1;
     bool Okay() {
 #ifdef OKAY_HAVE_OKAYUI
         const bool want = oked::UseOkayUIBackend();

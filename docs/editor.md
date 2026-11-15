@@ -2,7 +2,7 @@
 
 A desktop editor built with **Dear ImGui (docking) + SDL2**. It opens
 a real window with **docked** panels (Hierarchy / Scene / **Game** / Inspector /
-Console / Project), a Play·Stop·Step toolbar, and a dark theme, and edits live
+Console / Project), a Play·Stop·Step toolbar, and two looks (**Dark** and **Light**), and edits live
 `okay::Scene`s. The UI renders through SDL's 2D renderer (Direct3D on Windows,
 Metal on macOS), so no OpenGL driver is required.
 
@@ -662,6 +662,17 @@ unchanged.
   for every label, the leading tools (Move, Rotate, Scale, ...) keep theirs and the rest stay bare icons; when
   even bare icons do not fit the last tools move into the `...` menu under **Tools**. The remembered choice
   is only a preference: a wide Scene view shows all the labels, a narrow one fewer.
+- **Theme** (View ▸ Appearance ▸ Theme): the editor has exactly two looks, **Dark** (the default) and **Light**. Both are
+  neutral greys with one neutral accent for selections, the active tab line, checks, sliders and primary buttons
+  (a light graphite on Dark, a dark graphite on Light): there is no blue anywhere in the chrome and no accent colour
+  menu. The choice is saved in `okay_settings.txt` (`theme 0` Dark, `theme 1` Light). An older settings file with the
+  removed Classic look (`theme 2`), or with an `accent` line, opens as Dark and the `accent` line is ignored. The
+  script editor (both the default code editor and the OkayUI one), the Console, Crash Log and Audio Mixer in the
+  OkayUI backend, and the prefab, selection and hover colours all follow the look. The palettes are numbers in
+  `editor/ThemeModel.hpp` and are unit tested (`tests/test_editor_theme.cpp`: no blue, text contrast at least 4.5:1,
+  the accent at least 3:1 on every surface). Colours that are not chrome stay: the X red / Y green / Z blue axis
+  convention, the asset label named "Blue", and the user's own colours; `python3 scripts/find_blue_ui.py` lists every
+  blue colour literal and the reason for each one that was kept.
 - **Density** (View ▸ Appearance ▸ Density): **Comfortable** (the default) or **Compact**. It sets the row
   spacing and field height of every panel and, in the Inspector, how wide the value column is next to the
   label (the label keeps at least about 96 px, so it stays readable in a 440 px wide Inspector) and the

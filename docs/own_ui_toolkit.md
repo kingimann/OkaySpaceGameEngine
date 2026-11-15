@@ -665,6 +665,17 @@ Headless (run by `ctest`, no window or GPU; every suite also passes with `SDL_VI
 - `okayui_screens` (`okayui/tests/test_okayui_screens.cpp`, 83 checks): the library additions; What's New in every state (idle, available, installed with and without restart, checking, failed, up to date): the right button shows, does the right thing once, and a disabled button does nothing; the GitHub link; earlier releases fold and unfold; long notes and many releases drop no geometry; the page clips to its rectangle. Console: every control (Clear, search typed through the keyboard, category dropdown, the three level toggles, collapse, auto-scroll, Clear on Play, Pause on error, Copy all, Save, row select, the source jump, per-entry Copy, Open Script with its line), a hidden control when the host did not supply its callback, 5,000 lines (only the visible rows are laid out, nothing dropped, auto-scroll follows the newest, the wheel scrolls up and stays there), hostile messages. Six golden images in the launcher look in `okayui/tests/golden/`: `whatsnew_idle`, `whatsnew_available`, `whatsnew_placeholder`, `console_mixed`, `console_filtered`, `console_empty`.
 - The earlier OkayUI suites (`okayui_soft`, `okayui_behaviour`, `okayui_golden`, `okayui_drawlist`, `okayui_fuzz`, `okayui`) and the editor self-test (`editor`) still pass with the library changes. The fuzz test was not re-run under the sanitizers for this step.
 
+### 5.4a The editor's two looks reach the hosted panels (2026-11-15)
+
+The editor now has exactly two looks, Dark and Light, with no blue (`editor/ThemeModel.hpp`). OkayUI itself still holds the
+launcher "Slate" look (`UseLauncherLook`) because the Game view draws game UI exactly as the player does. So an editor panel that
+OkayUI draws (the Console, Crash Log, Audio Mixer, and the script editor's code area) puts a `oked::OkayUILookScope`
+(`editor/OkayPanels.cpp`) around its OkayUI calls: for as long as the scope lives the eleven base colours of `Style()` and a few
+`Col_*` overrides are the editor's current look, and the destructor puts the old ones back. The code area also gets
+`EditorCodePalette()` (the same numbers the ImGui text editor uses). Two spots in the library read a fixed colour; they now follow
+`Col_PopupBg` (tooltips) and `Col_ChildBg` (cards) when it is set, and draw exactly the old pixels when it is not (the goldens did not change).
+Left as it was: the Audio Mixer meter groove `RGBA(26, 28, 34)` in `okayui/screens/OkayUIPanels.cpp` (it is in the golden images).
+
 ### 5.5 Differences from the Dear ImGui screens, and what is not done (blunt)
 
 What the ported screens do differently or not at all:

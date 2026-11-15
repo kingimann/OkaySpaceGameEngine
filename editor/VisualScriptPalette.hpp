@@ -1,6 +1,6 @@
 #pragma once
-// The add-node panel: search, collapsible categories, favourites, and a details
-// pane. Shared by the right-click menu, a wire dropped in empty space, and Add node.
+// The add-node panel: search, a topic list on the left (grouped under section headings), favourites, and a
+// details pane. Shared by the right-click menu, a wire dropped in empty space, and Add node.
 #include "VisualScriptNodeDocs.hpp"
 #include "imgui.h"
 
@@ -13,6 +13,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -349,7 +350,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         mutable bool blobBuilt = false;
     };
     auto catColor = [&](int index) {
-        // Stable hues so a topic keeps its dot. Common topics stay in the documented order.
+        // One hue per section (Events, Flow, Data ...), so the topics of a section share a dot colour and the
+        // list of ~70 topics still reads in groups. Common sections stay in the documented order.
         static const ImU32 cols[] = {
             IM_COL32(158, 96, 102, 255), IM_COL32(86, 112, 158, 255), IM_COL32(72, 138, 116, 255),
             IM_COL32(64, 132, 150, 255), IM_COL32(120, 150, 170, 255), IM_COL32(90, 140, 120, 255),
@@ -360,7 +362,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             IM_COL32(120, 110, 150, 255),
         };
         const int n = (int)(sizeof cols / sizeof cols[0]);
-        return cols[(index >= 0 && index < n) ? index : 0];
+        const int section = VsPaletteSectionIndex(index);
+        return cols[section >= 0 ? section % n : 0];
     };
     // The list is built once and reused every frame: rebuilding ~2300 entries (a dozen strings and several
     // lookups each) 60 times a second is what made the pop-up drop the frame rate. It is rebuilt only when
@@ -378,8 +381,9 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         const okay::vs::VsApiEntry* api = okay::vs::VsApiFind(d.type);
         VsPlace place = api ? VsPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsPlaceForNode(d.type);
         if (VsPaletteHidden(d)) continue;   // one row per job; untested nodes wait
+        const VsPlace was = api ? VsOldPlaceForApi(api->apiType.c_str(), api->member.c_str()) : VsOldPlaceForNode(d.type);
         const bool dup = false;
-        Entry e; e.def = &d; e.title = d.title; e.key = std::string("n:") + d.type;
+        Entry e; e.def = &d; e.title = d.title; e.key = VsPaletteNodeKey(d.type);
         e.cat = place.category ? place.category : "";
         e.sub = place.subcategory ? place.subcategory : "";
         e.catIndex = VsPaletteCategoryIndex(place.category);
@@ -393,6 +397,12 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
         if (const char* ex = VsNodeExample(d.type)) e.example = ex;
         e.keywords = VsNodeSearchText(d.type);
         if (api) { if (!e.keywords.empty()) e.keywords += ' '; e.keywords += "engine api"; }
+        // Where this node used to sit (Scene Atmosphere, Objects Survival ...): people who remember the old topic
+        // still find it by typing that name.
+        if (const std::string moved = VsMovedFromWords(was, place); !moved.empty()) {
+            if (!e.keywords.empty()) e.keywords += ' ';
+            e.keywords += moved;
+        }
         if (d.cat >= 0 && d.cat < CAT_COUNT) {
             static const char* oldCat[] = {"Events","Flow","Variables","Math","Logic","Input","Transform","Actions","Data","Multiplayer & Steam","Engine API","Script builtins"};
             if (!e.keywords.empty()) e.keywords += ' ';
@@ -425,6 +435,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             for (const auto& si : *cat) {
                 if (si.listOnly) continue;
                 VsPlace place = VsPlaceForStep(si.op.c_str(), si.group.c_str());
+                const VsPlace was = VsOldPlaceForStep(si.op.c_str(), si.group.c_str());
                 if (VsPaletteStepIsDuplicate(si.label)) continue;   // the hand-written node is the one row
                 const bool sameAsNode = false;
                 Entry e; e.def = sd; e.step = &si; e.cond = cond; e.title = si.label;
@@ -435,8 +446,9 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                 e.level = VsLevelForStep(si.op.c_str(), si.group.c_str());
                 e.helpLine = si.desc;
                 e.rank = 1;
-                e.key = std::string(cond ? "c:" : "a:") + si.op; e.desc = si.desc;
+                e.key = VsPaletteStepKey(cond, si.op.c_str()); e.desc = si.desc;
                 e.keywords = si.group + (cond ? " check something" : " do something");
+                if (const std::string moved = VsMovedFromWords(was, place); !moved.empty()) e.keywords += " " + moved;
                 e.col = bright(catColor(e.catIndex));
                 e.titleLower = lower(e.title);
                 all.push_back(std::move(e));
@@ -571,6 +583,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
             const char* blurb = (id >= 0 && id < VsPaletteCategoryCount()) ? kPaletteCategories[id].blurb
                               : id == -4 ? "The 26 nodes a first script is built from."
                               : id == -2 ? "Nodes you have added lately."
+                              : id >= 1000 ? VsPaletteSubBlurb(label)   // a subcategory row: its label is its name
                               : nullptr;
             if (blurb && *blurb) {
                 ImGui::BeginTooltip(); ImGui::PushTextWrapPos(ImGui::GetFontSize() * 22.0f);
@@ -623,9 +636,37 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     if (sideItem(-3, "All", 0, browseAll, s_side == -3, 0)) { s_side = -3; s_sub = -1; s_subName.clear(); }
     if (sideItem(-1, "Favourites", 0, (int)s_fav.size(), s_side == -1, 0)) { s_side = -1; s_sub = -1; s_subName.clear(); }
     ImGui::Separator();
+    // The topics sit under section headings (Events, Flow, Math ...). Click a heading to fold its topics away; the
+    // section of the topic you are in stays open. Folding is kept for this session only.
+    static std::set<std::string> s_closedSections;
+    const char* lastSection = nullptr;
+    bool sectionOpen = true;
     for (int c = 0; c < VsPaletteCategoryCount(); ++c) {
         const int n = c < (int)s_catCount.size() ? s_catCount[(std::size_t)c] : 0;
         if (!n) continue;
+        if (!lastSection || std::strcmp(lastSection, kPaletteCategories[c].section) != 0) {   // a new section of topics
+            lastSection = kPaletteCategories[c].section;
+            const bool holdsSelection = s_side >= 0 && s_side < VsPaletteCategoryCount() &&
+                                        std::strcmp(kPaletteCategories[s_side].section, lastSection) == 0;
+            sectionOpen = holdsSelection || s_closedSections.count(lastSection) == 0;
+            ImGui::Spacing();
+            ImGui::PushID(lastSection);
+            const float h = ImGui::GetTextLineHeight();
+            const ImVec2 hp = ImGui::GetCursorScreenPos();
+            const bool toggled = ImGui::Selectable("##section", false, 0, ImVec2(0, h + 2));
+            ImDrawList* hdl = ImGui::GetWindowDrawList();
+            const ImU32 hcol = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+            if (sectionOpen) hdl->AddTriangleFilled(ImVec2(hp.x + 3, hp.y + h * 0.35f), ImVec2(hp.x + 11, hp.y + h * 0.35f), ImVec2(hp.x + 7, hp.y + h * 0.35f + 6), hcol);
+            else             hdl->AddTriangleFilled(ImVec2(hp.x + 4, hp.y + h * 0.2f), ImVec2(hp.x + 4, hp.y + h * 0.2f + 9), ImVec2(hp.x + 10, hp.y + h * 0.2f + 4.5f), hcol);
+            hdl->AddText(ImVec2(hp.x + 16, hp.y + 1), hcol, lastSection);
+            ImGui::PopID();
+            if (toggled) {
+                if (holdsSelection) { s_side = -3; s_sub = -1; s_subName.clear(); sectionOpen = false; s_closedSections.insert(lastSection); }
+                else if (sectionOpen) { s_closedSections.insert(lastSection); sectionOpen = false; }
+                else { s_closedSections.erase(lastSection); sectionOpen = true; }
+            }
+        }
+        if (!sectionOpen) continue;
         if (sideItem(c, kPaletteCategories[c].name, bright(catColor(c)), n, s_side == c && s_sub < 0, 0)) {
             s_side = c; s_sub = -1; s_subName.clear();
         }

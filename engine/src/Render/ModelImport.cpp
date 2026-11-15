@@ -98,7 +98,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".q3o", ".q3s", ".raw"})
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw"})
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -524,6 +524,30 @@ constexpr bool kOwnNffDefault = true;
 constexpr bool kOwnNffDefault = false;
 #endif
 
+#ifdef OKAY_OWN_TER_DEFAULT
+constexpr bool kOwnTerDefault = true;
+#else
+constexpr bool kOwnTerDefault = false;
+#endif
+
+#ifdef OKAY_OWN_MDC_DEFAULT
+constexpr bool kOwnMdcDefault = true;
+#else
+constexpr bool kOwnMdcDefault = false;
+#endif
+
+#ifdef OKAY_OWN_HMP_DEFAULT
+constexpr bool kOwnHmpDefault = true;
+#else
+constexpr bool kOwnHmpDefault = false;
+#endif
+
+#ifdef OKAY_OWN_CSM_DEFAULT
+constexpr bool kOwnCsmDefault = true;
+#else
+constexpr bool kOwnCsmDefault = false;
+#endif
+
 #ifdef OKAY_OWN_Q3D_DEFAULT
 constexpr bool kOwnQ3dDefault = true;
 #else
@@ -570,17 +594,16 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_XGL",     "XGL",     kOwnXglDefault},       // 24
     {"OKAY_OWN_IRR",     "IRR",     kOwnIrrDefault},       // 25
     {"OKAY_OWN_NFF",     "NFF",     kOwnNffDefault},       // 26
-    // Slots 27 to 30 belong to other branches (Terragen 27; MDC 28, HMP 29, CSM 30) and slot 32 is kept for SIB (no reader yet): empty rows,
-    // never reached (OwnSlot returns none of them), so that Q3D and RAW sit at the numbers agreed between the branches.
-    {"", "", false},                                       // 27 (Terragen)
-    {"", "", false},                                       // 28 (MDC)
-    {"", "", false},                                       // 29 (HMP)
-    {"", "", false},                                       // 30 (CSM)
+    {"OKAY_OWN_TER",     "Terragen", kOwnTerDefault},      // 27
+    {"OKAY_OWN_MDC",     "MDC",     kOwnMdcDefault},       // 28
+    {"OKAY_OWN_HMP",     "HMP",     kOwnHmpDefault},       // 29
+    {"OKAY_OWN_CSM",     "CSM",     kOwnCsmDefault},       // 30
+    // Slot 32 is kept for SIB (no reader yet): an empty row, never reached (OwnSlot returns none of it), so that Q3D and RAW sit at the agreed numbers.
     {"OKAY_OWN_Q3D",     "Q3D",     kOwnQ3dDefault},       // 31
     {"", "", false},                                       // 32 (SIB, not written yet)
     {"OKAY_OWN_RAW",     "RAW",     kOwnRawDefault},       // 33
 };
-constexpr int kOwnSlots = 34;   // slots 22 to 26 are batch D, 31 and 33 batch E; raise this (and add rows above) when a reader needs a slot beyond 33
+constexpr int kOwnSlots = 34;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB); raise this (and add rows above) when a reader needs a slot beyond 33
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -612,6 +635,10 @@ int OwnSlot(const std::string& ext) {
     if (e == ".xgl" || e == ".zgl") return 24;
     if (e == ".irr") return 25;
     if (e == ".nff" || e == ".enff") return 26;
+    if (e == ".ter") return 27;
+    if (e == ".mdc") return 28;
+    if (e == ".hmp") return 29;
+    if (e == ".csm") return 30;
     if (e == ".q3o" || e == ".q3s") return 31;
     if (e == ".raw") return 33;
     return -1;
@@ -780,8 +807,13 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 24 ? ReadXglFile(path, out, &e1)
                   : s == 25 ? ReadIrrSceneFile(path, out, &e1, &irrLoader)
                   : s == 26 ? ReadNffFile(path, out, &e1)
+                  : s == 27 ? ReadTerragenFile(path, out, &e1)
+                  : s == 28 ? ReadMdcFile(path, out, &e1)
+                  : s == 29 ? ReadHmpFile(path, out, &e1)
+                  : s == 30 ? ReadCsmFile(path, out, &e1)
                   : s == 31 ? ReadQ3dFile(path, out, &e1)
-                  : ReadRawFile(path, out, &e1); }, e1);   // 33
+                  : s == 33 ? ReadRawFile(path, out, &e1)
+                  : (e1 = "no reader is wired to this slot", false); }, e1);   // slots 27 (Terragen) to 31 (Q3D) and 33 (RAW) are wired above
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {

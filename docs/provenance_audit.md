@@ -17,7 +17,7 @@ that nothing else was copied; see "Method and limits".
 
 | # | Severity | Where | Possible source and licence | Action |
 |---|---|---|---|---|
-| 1 | **Clear copy / close port** | `engine/src/Render/LwoReader.cpp` lines 70 to 134 (`ProjectUvs`) | Assimp `ComputeUVMappingProcess.cpp`, BSD 3-clause | Rewrite from the idea (section F1) |
+| 1 | Clear copy / close port: **reimplemented** (owner decision 2026-11-14) | `engine/src/Render/LwoReader.cpp` `ProjectUvs` | Assimp `ComputeUVMappingProcess.cpp`, BSD 3-clause | Reimplemented as new code; the placement convention is deliberately kept identical to the old output and the seam rule is new (F1) |
 | 2 | ~~Close port of public-domain code (listed)~~ **CLOSED: deleted** | was `shared/AntiCheatCrypto.hpp` lines 1 to about 400 (SHA-512, Ed25519) | TweetNaCl, public domain | Done: the owner approved the replacement; the header is now a thin wrapper over `okay::crypto` and libsodium (F2). The replacement is `okay::crypto`, which has not had its outside review yet, and row 4 below still stands |
 | 3 | ~~Probable copy of public-domain constants (not listed)~~ **CLOSED: replaced** | was `engine/src/Audio/SpatialFx.cpp` lines 12 to 15 | Freeverb by Jezar, public domain | Done: the owner said nothing may be copied; the whole reverb was rewritten as our own feedback delay network from the papers (F3) |
 | 4 | Possible close re-derivation, unverified | `engine/src/Crypto/Fe25519_16.hpp` (16 limbs of 16 bits, fold by 38) | TweetNaCl's field code, public domain | Unverified; part of the outside crypto review (F4) |
@@ -27,7 +27,9 @@ that nothing else was copied; see "Method and limits".
 | 8 | Standard table / standard algorithm | MP3 Huffman tables and window, SHA-2 constants, CRC-32, inflate tables, JPEG tables, Ed25519 constants | ISO, FIPS, RFC, ITU specs | Keep; say so in the file headers (F8) |
 | 9 | Test data from elsewhere (licensed, notice present) | `tests/wycheproof/*.json` | Project Wycheproof, Apache 2.0, `LICENSE` and `README.md` present | Keep; owner to confirm that test data counts as allowed (F9) |
 | 11 | **Rewritten 2026-11-14** (was: close following of a public reference decoder) | `engine/include/okay/Platform/OwnHttpInflate.hpp` | The earlier version (#850) was flagged by an outside review as closely following Mark Adler's puff.c (same count/symbol table builder, same bit-by-bit decode loop, near-identical extra-bit table names, same incomplete-code rule and an identical error text). Replaced by a different design written from RFC 1950, 1951 and 1952 only (table-driven canonical decoder, derived base and extra-bit tables, 64-bit bit buffer); no decoder source consulted | Done; the rewrite is covered by `tests/test_own_http_inflate.cpp` (differential against Python zlib) and still wants an outside look |
+| 12 | Written with no importer source read (checked by the author, not by a scan) | `engine/src/Render/MdcReader.cpp`, `HmpReader.cpp`, `CsmReader.cpp` (batch E) | The formats: my own memory of the MDC layout (no struct names or code used), and the sample files `spider.mdc`, `terrain.hmp`, `terrain_withtexture.hmp`, `ThomasFechten.csm` read as data | None needed; see F12 |
 | 10 | False alarm | "mirrors Box2D / PhysX", ImGui start-up calls, `0x9E3779B97F4A7C15`, `copy of`, "Blender-style" | none | None |
+| 12 | **New code, 2026-11-15 (what was and was not read)** | `engine/src/Audio/WavDecoder.cpp`, `engine/include/okay/Audio/WavDecoder.hpp` | Own WAV decoder. Written from the public format descriptions only (Microsoft RIFF / WAVE format registration notes, ITU-T G.711, the Microsoft ADPCM and IMA ADPCM block descriptions). **Not read:** SDL, libsndfile, dr_wav, ffmpeg or any other decoder source; nothing copied or ported. The IMA step table (89 entries), the IMA index adjust table, the Microsoft adaptation table (16 entries) and the seven standard Microsoft coefficient pairs are standard published constants typed from memory; the IMA ones were checked at test time against Python's `audioop` output (not its source), the Microsoft ones by hand | Done; needs the same "constants are standard" note as row 8 |
 
 Counts: **1 clear copy or close port (not approved)**, **1 close port of public-domain code (listed, approval pending)**,
 **1 probable public-domain constants (not listed)**, **1 unverified**, **2 vendored libraries (listed)**, **2 notice
@@ -58,6 +60,17 @@ tinyfiledialogs (#640), stb_decompress (engine side).
 ## Findings in detail
 
 ### F1. LWO planar, cylindrical and spherical UV projection (clear copy / close port)
+
+**Reimplemented (2026-11-14, branch `claude2/lwo-uv-rewrite`); owner decision: keeping the old placement convention with the new seam rule is acceptable.** This is described honestly as a reimplementation, not as code derived only from geometry.
+- **What is new code.** `ProjectUvs` was deleted and written again in a new structure. Neither the old function body nor Assimp's code was read for the rewrite; only the old function's first 14 lines were seen once by accident (the bounding-box idea).
+- **What is deliberately the same.** The placement convention: the projection on the surface's bounding box, the pair of axes per main axis, and where the turn starts and which way it runs on each axis. These were fitted to the old reader's output so that textures stay where they were. A point on the axis (a sphere's pole) gets the turn's starting value and a flat box gives 0, both as before.
+- **What is new behaviour.** The seam rule. A triangle crosses the seam only when the gap between its U values that runs through the seam is not the largest. Then the corners on one side of the largest gap move onto the seam, whichever side moves less. There are no thresholds or flags.
+- **Measured against the old reader** on the corpus's projected-map files (the 15 `earth_*` cylindrical, spherical and planar files, `UglyVertexColors.lwo` and `bluewithcylindrictexz.lwo`): planar files are identical. On the cylindrical and spherical files all positions keep a UV they had before, and between 2 and 8 seam positions per file get a different set of UVs.
+- **Tests.** `lwo_reader` has hand-computed UVs for a cylinder band (exact U at the four compass points and a seam split), a sphere with poles and a flat planar quad. A mutation check confirmed that changing the turn start, switching off the seam repair, forcing poles to 0 or flat boxes to 0.5 each makes the test fail.
+- **Open owner question:** whether matching the old convention is acceptable under rule 19a. Answered for now: yes.
+
+What follows is the original finding.
+
 
 - **File and lines:** `engine/src/Render/LwoReader.cpp`, `ProjectUvs`, about lines 70 to 134; the call site near 495 to 505.
 - **Evidence from our own text:** line 71, "This is Assimp's ComputeUVMappingProcess"; line 83, "the two axes after `ax` in Assimp's formulas"; line 498, "the same mapping as Assimp's GenUVCoords step"; `docs/own_lwo_reader.md` line 23 says the same. The file's first lines say "no code from any other importer", which is therefore wrong for this function.
@@ -141,6 +154,10 @@ These are numeric data or algorithms fixed by a specification. Typing the same n
 - ImGui start-up and shutdown calls in `editor/VsGraphShot.cpp` and `launcher/main.cpp`: the documented API sequence for using the library, not copied library code.
 - `okayui/` is a Dear ImGui style API ("ImGui-style" auto layout). API shape is an idea. An overlap run against a Dear ImGui source tree found no matching runs in `okayui/`.
 - "taken from", "copy of", "derived from" in comments, almost all about program data ("a copy of the prefab"), not about code origin.
+
+### F12. Batch E readers (MDC, HMP, CSM): written from the format description, no importer source read
+
+`MdcReader.cpp`, `HmpReader.cpp` and `CsmReader.cpp` were written to the rule that the formats are fine to implement and another project's code is not. **What was used:** (MDC) the layout of the format from my own memory, then checked and corrected field by field against the one real file `spider.mdc` (the offsets of every table add up to the byte). **The compressed-offset constants (0.05 scale, bias 127, 1/64) were typed from memory of the game's headers, are NOT verified on any real file (frame 0 of `spider.mdc` is not compressed), and the mutation test only shows the code agrees with itself. This is flagged for the owner (`docs/own_mdc_reader.md`).** The four sample files' licence is unchecked: see `docs/THIRD_PARTY.md`; (HMP) only the two sample files `terrain.hmp` and `terrain_withtexture.hmp` and what they share with the Quake / GameStudio MDL header: no written specification was found, so the layout is the author's reading of the data; (CSM) the one sample file `ThomasFechten.csm` and the Character Studio keyword names from memory. The four sample files come from the `test/` directory of an Assimp checkout and were opened **as data files only**; **no Assimp source file, header or comment was opened for these readers, no other project's code was looked at (not on the web either), and Assimp was not run on the samples** (the earlier batches used it as a black box; these did not). The headers of the three files say the same. The pre-existing shared helpers (`BinReader.hpp`, `ReaderCommon.hpp`, `TextReaderUtil.hpp`) are our own. A text scan cannot prove this; it is the author's statement, and a reviewer can check it by reading the three files (166 to 234 lines each) against the sample files.
 
 ## Method and limits
 

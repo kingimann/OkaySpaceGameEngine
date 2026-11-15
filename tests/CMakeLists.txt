@@ -3542,6 +3542,9 @@ target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
 
+# Prone under a low ceiling (first and third person), and the sample scene examples/stance/stance_course.okayscene played
+# from disk with key presses (the scene the owner opens from docs/try_it.md).
 add_executable(test_prone_ceiling test_prone_ceiling.cpp)
 target_link_libraries(test_prone_ceiling PRIVATE okay::engine)
+target_compile_definitions(test_prone_ceiling PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME prone_ceiling COMMAND test_prone_ceiling)

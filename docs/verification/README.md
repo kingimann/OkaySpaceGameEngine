@@ -44,7 +44,7 @@ Screenshots help. One comment per row. The row id is how we find the feature in 
 | [Launcher and accounts](01-launcher-and-accounts.md) | 23 | 19 | 4 |
 | [Editor basics](02-editor-basics.md) | 24 | 17 | 7 |
 | [Scene and components](03-scene-and-components.md) | 15 | 9 | 6 |
-| [Characters and animation](04-characters-and-animation.md) | 12 | 8 | 4 |
+| [Characters and animation](04-characters-and-animation.md) | 13 | 9 | 4 |
 | [Physics, vehicles and navigation](05-physics-vehicles-navigation.md) | 11 | 8 | 3 |
 | [Rendering and post-processing](06-rendering-and-post-processing.md) | 18 | 9 | 9 |
 | [Audio and input](07-audio-and-input.md) | 7 | 5 | 2 |

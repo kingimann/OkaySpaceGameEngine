@@ -8,7 +8,7 @@
   2. Press Play (Ctrl+P). Walk with W A S D and look with the mouse.
   3. Press Ctrl to crouch and Z to go prone (crouch toggles with a tap by default; prone key is Z).
 - **See:** you walk and look in first person; the camera lowers when you crouch and lowers more when prone; running is off while crouched or prone.
-- **Partial:** map 4.2: prone on first and third person is listed as "verify"; hands-on-ledge IK is not wired.
+- **Partial:** prone on first and third person was checked headless on 2026-11-15 (V-CH-009 has the low roof to try it under); hands-on-ledge IK is not wired.
 - **Link:** [../../try_it.md](../../try_it.md)
 
 ### V-CH-002 Third person player
@@ -84,3 +84,15 @@
 - **Partial:** what Import does with the texture after import was not checked; unverified in a real window.
 - **Link:** [../../try_it.md](../../try_it.md)
 - **Grounded:** no
+
+### V-CH-009 Crouch and prone under a low roof
+- **Map:** 4.1, 4.2
+- **Where:** editor
+- **Steps:**
+  1. Choose **File > Open...** and open `examples\stance\stance_course.okayscene` (in the zip: the `examples` folder next to `OkaySpace.exe`; installer: `%LOCALAPPDATA%\OkaySpace\examples`). Press Play (Ctrl+P).
+  2. Walk forward with W. Standing, you stop at the orange beam. Tap Ctrl to crouch, wait a second, and walk under it. Tap Ctrl again while under it, then walk out.
+  3. Walk on to the red tunnel. Standing or crouched you stop at its mouth. Tap Z, wait a second, and crawl in with W. Tap Z again inside, then crawl out of the far end.
+  4. Press Stop, Play again, press V at once (first person) and repeat steps 2 and 3.
+- **See:** under the beam you stay crouched until you are out from under it, then you stand up by yourself; in the tunnel you stay down until you are out the far end. The character visibly crouches and crawls in third person.
+- **Partial:** a model you import yourself needs its own Prone, Crawl and Get up clips (otherwise it keeps its standing animation); what other players see of a prone player is untested; a gamepad was not tried.
+- **Link:** [../../try_it.md](../../try_it.md)

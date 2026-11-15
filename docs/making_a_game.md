@@ -176,6 +176,11 @@ share these movement niceties:
   collider, the camera and the speed limit all follow the body through the
   change, and changing your mind halfway carries on from where the body is.
   Set the times under **Stance changes** on the player's Animator.
+- **Try it:** open `examples/stance/stance_course.okayscene` (in the Windows
+  zip and installer: the `examples` folder) and press Play. An orange beam
+  1.4 m up is for crouching, a red tunnel 0.8 m high is for crawling; standing
+  up under a roof waits until you are out from under it. `docs/try_it.md` 2b
+  has the steps.
 - The other movement controllers — Character Controller 3D, Third Person
   Shooter, Top Down, Click To Move and NPC — have the same options under
   their **Crouch / prone** fold (keys, toggle or hold, Allow Prone, Resize

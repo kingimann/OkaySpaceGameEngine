@@ -25,7 +25,7 @@ The editor is `Tools\OkayEngine.exe` in the same folder (or start it from the la
 asks for a scene path: type or paste it, or press **Browse...**. A scene finds the files it uses (sounds, scripts,
 sequences) next to itself, so the folder works from any install path.
 
-What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
+What is in `examples\` (about 0.5 MB, all small): `vehicle`, `stance`, `own_wav`, `own_readers`, `obj_texture_paths`,
 `spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
 Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
 `visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
@@ -38,6 +38,7 @@ release job or the installer build for this change.
 |---|---|---|---|
 | 1 | Vehicle: get in a car and drive | New Project template **Vehicle (get in and drive)**, or `examples\vehicle\vehicle_test.okayscene` | Template and example new in this change |
 | 2 | First person head bob follows Reduce Motion | New Project > First Person, plus the Settings screen | Shipped (2.873.0 and earlier) |
+| 2b | Crouch and prone: a low beam and a crawl tunnel (standing up waits for room) | `examples\stance\stance_course.okayscene`; the keys also work in New Project > First Person / Third Person | Sample scene new in this change; the feature itself shipped earlier |
 | 3 | Dropdown: drag scrolls a long list | Any UI Dropdown with Max Visible set | Shipped |
 | 4 | Play start: shared audio, skipped navmesh bake | `examples\spatial_audio`, the Navigation window | Shipped; only the nav skip is visible |
 | 5 | Navmesh from a Mesh Collider | View > Editors & Tools > Navigation | Shipped |
@@ -112,6 +113,53 @@ saved as `a11y.reduceMotion` in the game's prefs). The editor itself has no acce
 
 **Status.** Tested on main: the headless test `reduce_motion_bob`. Unverified: steps 2 to 5 in the real editor (the menu
 path and that Done hides the panel and gives you the mouse back for walking were read from code, not clicked).
+
+## 2b. Crouch and prone: a low beam and a crawl tunnel
+
+**What it is.** The first and third person player can crouch (**Ctrl**) and lie prone (**Z**). The body really gets
+shorter, so you can go under low things. If something is overhead, getting up waits until there is room, and in the
+default tap-to-toggle mode you get up by yourself once you are out from under it. The feature shipped earlier (Player
+Controller, `docs/making_a_game.md` "Crouch and prone"). What this change adds is a sample scene with a low roof to try
+it in, and tests that play that scene with simulated key presses.
+
+**Steps.**
+1. Open the editor (`Tools\OkayEngine.exe`). **File > Open...** and paste the scene path (see "Where the files are"):
+   `<install folder>\examples\stance\stance_course.okayscene`. Press **Play**. A help text is in the top left corner.
+2. You start in third person on a green field. Walk straight ahead with **W**. An orange beam hangs ahead at head
+   height. Standing, you stop at its edge.
+3. Tap **Ctrl**: the character crouches. Wait a second, then hold **W**: you walk under the beam.
+4. Stop under the beam and tap **Ctrl** again (stand up). Your body stays crouched. Walk on out from under the beam: now
+   you stand up by yourself.
+5. Keep going to the red tunnel (about 5 m past the beam; its roof is 0.8 m above the ground, with a wall on each side).
+   Standing, and crouched, you stop at its mouth.
+6. Tap **Z**: the character lies down (about 0.8 s). Hold **W** and crawl into the tunnel. Inside, tap **Z** again (stand
+   up): you stay down. Crawl out of the far end: you get up by yourself. A green pad marks the end.
+7. Press **Stop** and **Play** again, then press **V** at once: the camera goes to the character's eyes (first person).
+   Do steps 2 to 6 again.
+
+**How you know it worked.** Standing you cannot get under either obstacle. Crouched you get under the orange beam but not
+under the red roof. Lying down you get under both. While you are under a roof, asking to stand does nothing. If you
+want numbers: select `Player` in the Hierarchy and watch **Box Collider 3D > Size Y** in the Inspector while you play
+(1.8 standing, 1.17 crouched, 0.59 prone; unverified in the real editor).
+
+**Keys.** **Ctrl** crouch, **Z** prone, tap to toggle. **Hold** mode and the keys are in the Inspector under the Player
+Controller's **Crouch / prone** fold (Toggle Stance, Allow Prone, speeds, heights). Gamepad: tap **B** to crouch, hold it
+for prone. Careful: running (**Shift**) and then pressing **Z** is a dive, not a crawl.
+
+**What has no animation.** The built-in blocky character has crouch, crouch walk, prone, crawl and get-up clips, so you
+see it go down. A character with your own imported model needs its own **Prone**, **Crawl** and **Get up** clips
+(Model Animator, `docs/animation.md` "Crouch and prone for imported characters"). Without them the model keeps its
+standing animation while its body shrinks. No clip was added or invented here.
+
+**Multiplayer.** The host decides your stance from the Crouch and Prone buttons in your input (the same code the test runs).
+What other players see of a player lying prone was **not** tested or tried on two machines.
+
+**Tested here (Linux, headless):** `prone_ceiling` loads the sample scene from disk and plays steps 2 to 7 with key
+presses in third and first person, then checks the low-roof rule on the First Person, Third Person and Third Person Shooter
+controllers, and the buttons the host runs (the Prone button, the pad's hold): 133 checks, 0 failures. The existing
+`stance`, `stance_save`, `player`, `player_controller`, `jump`, `run_feel`, `view_ground`, `view_upgrade`, `player_fixes`
+and `vehicle_seat` suites also pass. **Unverified:** the real editor window, the Windows exe, how it looks and feels, the
+Inspector numbers above, a gamepad, and two machines.
 
 ## 3. Dropdown: drag scrolls a long list
 

@@ -40,10 +40,10 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **Code:** `Components/Stance`, `Components/StanceControl`, `Components/StepUp`, `Components/ControllerFeel`, `Components/Traversal`, `Components/DodgeAction`, `Components/DiveAction`, `Physics/PlayerCollision`
 - **API:** `StanceControl`, `StanceTimes`, `GroundLatch`, `TraverseKind`; scripts `crouch()`, `prone()`, `stand()`, `set_stance(0|1|2)`, `SetStance`, `dodge(dir)`, `dive()`, `vault()`, `mantle()`
 - **Editor:** Player Controller panel sections (Crouch / prone, Slide, Dodge, Vault and mantle, Stance changes on the Animator)
-- **Docs:** `docs/making_a_game.md` (Crouch and prone), `docs/animation.md` (Actions: dive, roll, vault)
-- **Tests:** `stance`, `stance_save`, `jump`, `stop_settle`, `run_feel`, `view_ground`, `player_fixes`
-- **Status:** Works - stance, stance_save, jump and stop_settle exist; vault, dodge and dive default off by design
-- **Open:** old map: verify prone on first and third person; hands-on-ledge Limb IK is not wired (Traversal.hpp comment); dive, hit, vault and emote actions are not sent to remote players (per docs, see 5.12)
+- **Docs:** `docs/making_a_game.md` (Crouch and prone), `docs/animation.md` (Actions: dive, roll, vault), `docs/try_it.md` 2b (the sample scene `examples/stance/stance_course.okayscene`)
+- **Tests:** `stance`, `stance_save`, `prone_ceiling` (the low-roof stand-up rule on First Person, Third Person and Third Person Shooter, the Prone button and pad hold, and the sample scene played with key presses), `jump`, `stop_settle`, `run_feel`, `view_ground`, `player_fixes`
+- **Status:** Works - stance, stance_save, prone_ceiling, jump and stop_settle exist and pass; vault, dodge and dive default off by design
+- **Open:** prone on first and third person is verified (checked 2026-11-15, headless; try it in `examples/stance`), what other players see of a prone player is untested (the stance is not in the sync stream) and an imported model without Prone, Crawl or Get up clips keeps its standing animation; hands-on-ledge Limb IK is not wired (Traversal.hpp comment); dive, hit, vault and emote actions are not sent to remote players (per docs, see 5.12)
 - **Related:** 4.1, 5.12, 5.6, 5.9, 6.2
 - **Words:** crouch, prone, crawl, stance, step up, stairs, curb, slope limit, coyote, wall slide, slide, dodge, dive, vault, mantle, ledge, fall reset, swim
 - **Seen as:** the player cannot crouch or go prone; stands up inside low cover; snags on stairs or sills; falls through the floor forever; saved crouched player stands up inside a ceiling; slide or dodge does nothing

@@ -176,7 +176,9 @@ int main() {
         RecordPainter first;
         ui2d::DrawWorldText(first, *tr, 0.0f, 100.0f, 2.0f);
         CHECK(first.Of(255, 0, 0).y0 >= 100);                               // not above the text's own top
-        CHECK(std::abs(first.Of(255, 0, 0).y1 - first.Of(0, 255, 0).y1) <= 2);   // still one bottom line
+        // Still one bottom line: the character cells end together. The visible ink differs by the glyph's empty bottom
+        // row, which is 3 x 2 = 6 px tall at size 300 against 2 px at size 100, so allow those 4 px.
+        CHECK(std::abs(first.Of(255, 0, 0).y1 - first.Of(0, 255, 0).y1) <= 4);
     }
 
     {   // shadow and outline follow the runs and keep their own colours

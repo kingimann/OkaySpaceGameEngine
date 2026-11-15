@@ -13,6 +13,7 @@
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Culling.hpp"
 #include "okay/Render/Visibility.hpp"
+#include "okay/Render/TriangleSpan.hpp"
 #include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
@@ -981,26 +982,7 @@ inline void RenderCascadeDepth(const Scene& scene, ShadowCascade& cas, bool cull
                 szv[k] = c.z * iw;
             }
             if (!ok) continue;
-            int minx = (int)std::floor(std::fmin(sxv[0], std::fmin(sxv[1], sxv[2])));
-            int maxx = (int)std::ceil (std::fmax(sxv[0], std::fmax(sxv[1], sxv[2])));
-            int miny = (int)std::floor(std::fmin(syv[0], std::fmin(syv[1], syv[2])));
-            int maxy = (int)std::ceil (std::fmax(syv[0], std::fmax(syv[1], syv[2])));
-            if (minx < 0) minx = 0; if (miny < 0) miny = 0;
-            if (maxx >= S) maxx = S - 1; if (maxy >= S) maxy = S - 1;
-            float area = (sxv[1] - sxv[0]) * (syv[2] - syv[0]) - (sxv[2] - sxv[0]) * (syv[1] - syv[0]);
-            if (area == 0.0f) continue;
-            float inv = 1.0f / area;
-            for (int y = miny; y <= maxy; ++y)
-                for (int x = minx; x <= maxx; ++x) {
-                    float px = x + 0.5f, py = y + 0.5f;
-                    float w0 = ((sxv[1] - px) * (syv[2] - py) - (sxv[2] - px) * (syv[1] - py)) * inv;
-                    float w1 = ((sxv[2] - px) * (syv[0] - py) - (sxv[0] - px) * (syv[2] - py)) * inv;
-                    float w2 = 1.0f - w0 - w1;
-                    if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-                    float z = w0 * szv[0] + w1 * szv[1] + w2 * szv[2];
-                    float& dref = cas.depth[(std::size_t)y * S + x];
-                    if (z < dref) dref = z;
-                }
+            RasterDepthTriangle(cas.depth.data(), S, sxv, syv, szv);   // (TriangleSpan.hpp: the same per texel test, only texels that can be covered)
         }
     }
 }

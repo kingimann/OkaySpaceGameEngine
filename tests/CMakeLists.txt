@@ -848,6 +848,12 @@ add_executable(test_broadphase test_broadphase.cpp)
 target_link_libraries(test_broadphase PRIVATE okay::engine)
 add_test(NAME broadphase COMMAND test_broadphase)
 
+# Software renderer speed-ups change no pixel: row spans and four texel loop for the sun's shadow maps (TriangleSpan.hpp),
+# band skipping and per-mesh light culling in RenderMeshes (docs/perf_log.md)
+add_executable(test_triangle_span test_triangle_span.cpp)
+target_link_libraries(test_triangle_span PRIVATE okay::engine)
+add_test(NAME triangle_span COMMAND test_triangle_span)
+
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
 add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)

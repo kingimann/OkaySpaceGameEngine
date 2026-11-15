@@ -8,7 +8,12 @@
 // docs/properties.md.
 #include "BuiltinPropertiesShared.hpp"
 
+#include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
+#include "okay/Components/Occluder.hpp"
+#include "okay/Components/QuestLog.hpp"
+#include "okay/Components/SurvivalZone.hpp"
 #include "okay/Components/Seat.hpp"
 #include "okay/Components/Stats.hpp"
 #include "okay/Components/WorldUI.hpp"
@@ -771,6 +776,60 @@ void RegisterLootSource() {
     b.Commit();
 }
 
+// ItemPickup (record "itempickup"; the item's instance data is kept too, but it is a list, not a property)
+void RegisterItemPickup() {
+    PropertyBuilder<ItemPickup> b("ItemPickup", "itempickup", "Gameplay");
+    b.AddString("item", &ItemPickup::item).Tooltip("Item id in the project's item database")
+     .AddInt("count", &ItemPickup::count).Range(1, 1000000, 1).Tooltip("How many it gives")
+     .AddString("collectorTag", &ItemPickup::collectorTag).Tooltip("Who can pick it up (tag or name; empty = anyone with an Inventory)")
+     .AddBool("pickupOnTouch", &ItemPickup::pickupOnTouch).Tooltip("Collect when the collector enters its trigger")
+     .AddFloat("autoRadius", &ItemPickup::autoRadius).Range(0, 1000, 0.1).Tooltip("Collect when the player is this close (0 = off)")
+     .AddKey("interactKey", &ItemPickup::interactKey).Tooltip("Press near it to collect (0 = off)")
+     .AddFloat("interactRange", &ItemPickup::interactRange).Range(0, 1000, 0.1).Tooltip("How close the interact key works")
+     .AddFloat("magnetRadius", &ItemPickup::magnetRadius).Range(0, 1000, 0.1).Tooltip("Drift toward the player inside this range (0 = off)")
+     .AddFloat("magnetSpeed", &ItemPickup::magnetSpeed).Range(0, 1000, 0.1).Tooltip("Drift speed, units per second")
+     .AddBool("holdInHands", &ItemPickup::holdInHands).Tooltip("Picked up into the hands instead of the bag");
+    b.Commit();
+}
+
+// SurvivalZone (record "survivalzone")
+void RegisterSurvivalZone() {
+    PropertyBuilder<SurvivalZone> b("SurvivalZone", "survivalzone", "Gameplay");
+    b.AddInt("effect", &SurvivalZone::effect).Range(0, 11, 1)
+         .Tooltip("0 Radiation, 1 Water, 2 Cold, 3 Fire, 4 Danger, 5 Submerged, 6 Poison, 7 Status, 8 Damage, 9 Heal, 10 Eat, 11 Drink")
+     .AddFloat("amount", &SurvivalZone::amount).Range(-kBig, kBig, 0.5).Tooltip("Poison, damage or heal amount, or a status effect's health per second")
+     .AddFloat("duration", &SurvivalZone::duration).Range(0, 1e6, 0.1).Tooltip("Status effect length, seconds (Status only)")
+     .AddString("effectName", &SurvivalZone::effectName).Tooltip("Status effect name (Status only)");
+    b.Commit();
+}
+
+// QuestTrigger (record "questtrigger")
+void RegisterQuestTrigger() {
+    PropertyBuilder<QuestTrigger> b("QuestTrigger", "questtrigger", "Gameplay");
+    b.AddString("zone", &QuestTrigger::zone).Tooltip("What Reach objectives target (empty = this object's name)")
+     .AddString("triggerTag", &QuestTrigger::triggerTag).Tooltip("Who fires it (tag or name; empty = anyone)")
+     .AddBool("once", &QuestTrigger::once).Tooltip("Fire only the first time")
+     .AddString("questId", &QuestTrigger::questId).Tooltip("Optionally complete this quest's objective directly")
+     .AddInt("objective", &QuestTrigger::objective).Range(-1, 100000, 1).Tooltip("That objective's index (-1 = none)");
+    b.Commit();
+}
+
+// HoldPrompt (record "holdprompt")
+void RegisterHoldPrompt() {
+    PropertyBuilder<HoldPrompt> b("HoldPrompt", "holdprompt", "Gameplay");
+    b.AddKey("dropKey", &HoldPrompt::dropKey).Tooltip("Press again to let go (0 = off)")
+     .AddKey("altDropKey", &HoldPrompt::altDropKey).Tooltip("The same let-go on another key")
+     .AddString("promptObject", &HoldPrompt::promptObject).Tooltip("Name of the UI object that shows the prompt");
+    b.Commit();
+}
+
+// Occluder (record "occluder")
+void RegisterOccluder() {
+    PropertyBuilder<Occluder> b("Occluder", "occluder", "Rendering");
+    b.AddBool("useMesh", &Occluder::useMesh).Tooltip("Hide things behind this object's mesh (off: its bounding box)");
+    b.Commit();
+}
+
 // Volume
 void RegisterVolume() {
     PropertyBuilder<Volume> b("Volume", "volume", "Gameplay");
@@ -1318,6 +1377,11 @@ void RegisterGameplayProperties() {
     RegisterStats();
     RegisterWorldUI();
     RegisterLootSource();
+    RegisterItemPickup();
+    RegisterSurvivalZone();
+    RegisterQuestTrigger();
+    RegisterHoldPrompt();
+    RegisterOccluder();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

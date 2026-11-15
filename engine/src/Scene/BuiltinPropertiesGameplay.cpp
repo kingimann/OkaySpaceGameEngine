@@ -8,7 +8,12 @@
 // docs/properties.md.
 #include "BuiltinPropertiesShared.hpp"
 
+#include "okay/Components/AutoSave.hpp"
+#include "okay/Components/Cable.hpp"
+#include "okay/Components/Decal.hpp"
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/Ragdoll.hpp"
+#include "okay/Components/TurnManager.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/LootSource.hpp"
 #include "okay/Components/Occluder.hpp"
@@ -830,6 +835,69 @@ void RegisterOccluder() {
     b.Commit();
 }
 
+// Ragdoll (record "ragdoll")
+void RegisterRagdoll() {
+    PropertyBuilder<Ragdoll> b("Ragdoll", "ragdoll", "Physics");
+    b.Section("Simulation")
+     .AddFloat("gravity", &Ragdoll::gravity).Range(-1000, 1000, 0.1).Tooltip("Downward pull, m/s^2")
+     .AddFloat("damping", &Ragdoll::damping).Range(0, 1, 0.005).Tooltip("Velocity lost per step (0..1)")
+     .AddFloat("friction", &Ragdoll::friction).Range(0, 1, 0.01).Tooltip("Sliding speed lost on contact (0..1)")
+     .AddFloat("radius", &Ragdoll::radius).Range(0, 10, 0.005).Tooltip("Skin above surfaces, metres")
+     .AddInt("iterations", &Ragdoll::iterations).Range(1, 100, 1).Tooltip("Constraint passes per step")
+     .AddFloat("maxSpeed", &Ragdoll::maxSpeed).Range(0, 10000, 0.5).Tooltip("Speed cap, m/s")
+     .Section("Death and hits")
+     .AddBool("ragdollOnDeath", &Ragdoll::ragdollOnDeath).Tooltip("Go limp when the Health Stat dies")
+     .AddFloat("deathImpulse", &Ragdoll::deathImpulse).Range(0, 1000, 0.1).Tooltip("Push away from the hit on death, m/s")
+     .AddBool("hitReactions", &Ragdoll::hitReactions).Tooltip("Flinch on hits that do not kill")
+     .AddFloat("hitImpulse", &Ragdoll::hitImpulse).Range(0, 1000, 0.1).Tooltip("Push at the struck point, m/s")
+     .AddFloat("hitRecover", &Ragdoll::hitRecover).Range(0, 60, 0.01).Tooltip("Seconds to spring back to the animated pose");
+    b.Commit();
+}
+
+// AutoSave (record "autosave")
+void RegisterAutoSave() {
+    PropertyBuilder<AutoSave> b("AutoSave", "autosave", "Gameplay");
+    b.AddFloat("interval", &AutoSave::interval).Range(0, 1e6, 1).Tooltip("Seconds between saves (0 = only on start)")
+     .AddBool("saveOnStart", &AutoSave::saveOnStart).Tooltip("Also save when the scene starts")
+     .AddString("slot", &AutoSave::slot).Tooltip("Save slot name")
+     .AddString("label", &AutoSave::label).Tooltip("Label shown for the save");
+    b.Commit();
+}
+
+// TurnManager (record "turnmgr"; the participant list is saved too but is a list, not a property)
+void RegisterTurnManager() {
+    PropertyBuilder<TurnManager> b("TurnManager", "turnmgr", "Gameplay");
+    b.AddInt("current", &TurnManager::current).Range(0, 100000, 1).Tooltip("Index of the active participant")
+     .AddInt("round", &TurnManager::round).Range(0, 2000000000, 1).Tooltip("Round number")
+     .AddBool("autoStart", &TurnManager::autoStart).Tooltip("Start the first turn when the scene starts");
+    b.Commit();
+}
+
+// Decal (record "decal")
+void RegisterDecal() {
+    PropertyBuilder<Decal> b("Decal", "decal", "Rendering");
+    b.AddAssetPath("texture", &Decal::texture, "texture").Tooltip("Picture; empty = a plain tinted patch")
+     .AddColor("tint", &Decal::tint).Range(0, 1, 0.01).Tooltip("Multiplies the picture; alpha fades the whole decal")
+     .AddVec3("size", &Decal::size).Range(0, 10000, 0.05).Tooltip("Width (x), height (y) and reach along +Z (z)")
+     .AddFloat("maxAngle", &Decal::maxAngle).Range(0, 180, 1).Tooltip("Surfaces turned further than this from the projector get none")
+     .AddFloat("lift", &Decal::lift).Range(0, 10, 0.001).Tooltip("How far it floats above the surface (stops flicker)");
+    b.Commit();
+}
+
+// Cable (record "cable")
+void RegisterCable() {
+    PropertyBuilder<Cable> b("Cable", "cable", "Rendering");
+    b.AddString("startObject", &Cable::startObject).Tooltip("Object the cable leaves from (empty = this object)")
+     .AddString("endObject", &Cable::endObject).Tooltip("Object it ends on (empty = a point endOffset from the start)")
+     .AddVec3("startOffset", &Cable::startOffset).Range(-kBig, kBig, 0.01).Tooltip("Offset in the start object's space")
+     .AddVec3("endOffset", &Cable::endOffset).Range(-kBig, kBig, 0.01).Tooltip("Offset in the end object's space")
+     .AddFloat("sag", &Cable::sag).Range(-1000, 1000, 0.05).Tooltip("How far the middle hangs below the straight line")
+     .AddInt("segments", &Cable::segments).Range(2, 200, 1).Tooltip("Pieces the curve is cut into")
+     .AddFloat("width", &Cable::width).Range(0, 100, 0.005).Tooltip("Thickness, world units")
+     .AddColor("color", &Cable::color).Range(0, 1, 0.01).Tooltip("Cable colour");
+    b.Commit();
+}
+
 // Volume
 void RegisterVolume() {
     PropertyBuilder<Volume> b("Volume", "volume", "Gameplay");
@@ -1382,6 +1450,11 @@ void RegisterGameplayProperties() {
     RegisterQuestTrigger();
     RegisterHoldPrompt();
     RegisterOccluder();
+    RegisterRagdoll();
+    RegisterAutoSave();
+    RegisterTurnManager();
+    RegisterDecal();
+    RegisterCable();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

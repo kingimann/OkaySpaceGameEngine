@@ -253,9 +253,10 @@ scene's name, the last 64 steps, the last 200 Console lines, a backtrace). The l
 default**), and a GitHub job turns it into an issue. Full story: [crash_reports.md](crash_reports.md).
 
 > **The server half (steps 9 and 10) cannot work until the owner has done two one-time steps, in the browser, in this order:**
-> 1. Run `docs/sql/crash_reports.sql` once in the Supabase SQL editor (open the project, **SQL editor**, paste the whole file, run it; it is safe to run again).
-> 2. Set the repository variable `CRASH_ISSUES_ENABLED` to `true` (GitHub repository > **Settings > Secrets and variables > Actions > Variables >
->    New repository variable**). Until it is `true`, the 30-minute schedule skips the job (it shows as skipped, never red).
+> - **Owner step A:** run `docs/sql/crash_reports.sql` once in the Supabase SQL editor (open the project, **SQL editor**, paste the whole file,
+>   run it; it is safe to run again).
+> - **Owner step B:** set the repository variable `CRASH_ISSUES_ENABLED` to `true` (GitHub repository > **Settings > Secrets and variables >
+>   Actions > Variables > New repository variable**). Until it is `true`, the 30-minute schedule skips the job (it shows as skipped, never red).
 >
 > The GitHub secret `SUPABASE_SERVICE_KEY` must exist too (releases already use it, so it normally does). Never paste a key in chat.
 > Steps 1 to 8 and 11 need none of this.
@@ -288,11 +289,11 @@ default**), and a GitHub job turns it into an issue. Full story: [crash_reports.
 8. **Turn it off:** switch **Send crash reports automatically** off: the card says "not sent (sending is off)". (Or start the launcher with
    `set OKAY_CRASH_UPLOAD=0`.) Crashes that happen while it is off are never sent later, even after you switch it on again or unset the variable.
    Switch it on again to continue.
-9. **Sending** (needs the owner's step 1): after you answered the notice the card changes to **sent** within about 20 seconds and a toast says "Crash report
+9. **Sending** (needs owner step A): after you answered the notice the card changes to **sent** within about 20 seconds and a toast says "Crash report
    sent. Thank you." If the table is missing, the page says "The server has no crash_reports table yet ... run docs/sql/crash_reports.sql" and the
    report is kept. To see the row: Supabase > Table editor > `crash_reports` (or SQL editor:
    `select created_at, signature, version, exception, top_frame, processed_at, issue_number from crash_reports order by created_at desc;`).
-10. **The issue** (needs the owner's steps 1 and 2): GitHub > Actions > **Crash reports to issues** > Run workflow. The **dry run** box is ticked by default:
+10. **The issue** (needs owner steps A and B): GitHub > Actions > **Crash reports to issues** > Run workflow. The **dry run** box is ticked by default:
     the log shows the issue text and changes nothing. Untick it to make the issue for real, or wait up to 30 minutes for the schedule once the variable is
     `true`. An issue `Crash: Access violation in ...` appears with label `crash`; it says the text is untrusted data. Crash again the same way and send: the
     issue gets a **comment**, not a second issue. (The schedule only runs once this change is on `main`.)

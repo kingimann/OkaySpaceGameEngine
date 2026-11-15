@@ -173,7 +173,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.9.5 Stale copy - `dist/VERSION.txt` - says 2.412.0 and is not used by the build
 - **Code:** `CMakeLists.txt`, `dist/VERSION.txt`, `dist/CHANGELOG.txt`, `ROADMAP.md`
 - **API:** `project(... VERSION ...)`, `OKAY_ENGINE_VERSION`, `VERSION.txt`
-- **Editor:** Engine > Check for Updates...
+- **Editor:** Help > Check for Updates...
 - **Docs:** `docs/releasing.md`
 - **Tests:** none
 - **Status:** Works - the 2.849.0 diff (PR #573) and the open 2.852.0 PR (#588) touch exactly those three files (per the PR file lists)

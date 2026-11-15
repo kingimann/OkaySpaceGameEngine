@@ -11,7 +11,7 @@ projectile leaves behind.
 
 ## Making a spline
 
-**GameObject > Spline** adds an object with three points in front of the Scene
+**GameObject > Effects > Spline** adds an object with three points in front of the Scene
 camera, dropped onto whatever is under the camera's target, and picks the
 middle point so you can drag it straight away. **Add Component > Gameplay >
 Spline** puts one on an existing object.

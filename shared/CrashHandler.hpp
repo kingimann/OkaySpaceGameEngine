@@ -49,6 +49,12 @@
 #  include <csignal>
 #  if defined(__x86_64__) || defined(__i386__)
 #    include <cpuid.h>
+// <cpuid.h> defines __cpuid(...) and __cpuid_count(...) as 4-output macros. The MinGW <intrin.h> (which SDL.h
+// pulls in later, in editor/main.cpp) declares a real function named __cpuid(int[4], int), and the macro breaks
+// that declaration ("macro __cpuid requires 5 arguments"). We only call __get_cpuid(), an inline function whose
+// body was already expanded, so dropping the two macros here costs nothing and keeps the include order free.
+#    undef __cpuid
+#    undef __cpuid_count
 #  endif
 #else
 #  include <execinfo.h>

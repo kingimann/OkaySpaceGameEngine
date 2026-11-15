@@ -325,17 +325,85 @@ jobs:
           grep -q 'OKAY_OWN_HTTP=1' build-http/build.ninja
 
       - name: Build
-        run: cmake --build build-http -j2 --target test_own_http test_own_http_net test_launcher_download_own
+        run: cmake --build build-http -j2 --target test_own_http test_own_http_inflate test_own_http_net test_launcher_download_own test_native_fetch test_playfab_own
 
       - name: Test (a skipped TLS case fails)
         env:
           OKAY_REQUIRE_TLS_TESTS: "1"
-        run: ctest --test-dir build-http --output-on-failure -R '^(own_http|own_http_net|launcher_download_own)$'
+          OKAY_REQUIRE_DIFFERENTIAL: "1"
+        run: ctest --test-dir build-http --output-on-failure -R '^(own_http|own_http_inflate|own_http_net|launcher_download_own|native_fetch|playfab_own)$'
 
       - name: Sanitizers (ASan + UBSan)
         env:
           OKAY_REQUIRE_TLS_TESTS: "1"
+          OKAY_REQUIRE_DIFFERENTIAL: "1"
         run: scripts/own_http_sanitized.sh 100000
+
+  # The whole own stack at once (docs/own_stack_rollout.md): a build with -DOKAY_OWN_STACK=ON, so our own model readers,
+  # HTTP client, okay::platform backend and OkayUI are the defaults, and no libsodium. -DOKAY_OWN_STACK_CRYPTO_TEST=ON also
+  # lets our own (unreviewed) crypto run in THESE tests; it is for test builds only and releases refuse it
+  # (scripts/check_release_own_stack.sh). Not a required check: it tells us how ready the own stack is, it does not gate
+  # merges. Only the test targets of the own pieces are built, and the compiler cache is reused.
+  own-stack:
+    name: Own stack (OKAY_OWN_STACK=ON, no libsodium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install toolchain
+        run: |
+          bash scripts/ci-apt-mirror.sh
+          sudo apt-get update && sudo apt-get install -y cmake g++ ninja-build libsdl2-dev ccache openssl libssl-dev xvfb
+
+      - name: Restore compiler cache
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-ubuntu-ownstack-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-ownstack-
+            ccache-ubuntu-ci-
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-own -G Ninja -DCMAKE_BUILD_TYPE=Release -DOKAY_OWN_STACK=ON -DOKAY_OWN_STACK_CRYPTO_TEST=ON \
+            -DOKAY_USE_SODIUM=OFF -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_TESTS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache | tee configure.log
+          grep -q "OKAY_OWN_STACK=ON" configure.log
+          # the switches must really reach the compiler, or this job would test the old stack
+          grep -q 'OKAY_OWN_STACK_BUILD' build-own/build.ninja
+          grep -q 'OKAY_OWN_HTTP_DEFAULT_ON' build-own/build.ninja
+          grep -q 'OKAY_OWN_FBX_DEFAULT' build-own/build.ninja
+          grep -q 'OKAY_PLATFORM_DEFAULT_OWN' build-own/build.ninja
+          grep -q 'OKAY_OWN_CRYPTO' build-own/build.ninja
+
+      # Only the own pieces' tests: model readers, own_http*, platform*, okayui*, anticheat_*, net_crypto_own and the
+      # own-stack switch itself. The target names come from the configured build (some are made in loops, so they are not
+      # all in tests/CMakeLists.txt as literal text), so new tests of these kinds join the job. The same names give the ctest filter.
+      - name: Build the own-stack tests
+        run: |
+          ninja -C build-own -t targets all | grep -oE '^test_[a-z0-9_]+' | sort -u \
+            | grep -E '^test_([a-z0-9_]*(reader|hostile|fbx|3ds|bvh|collada|glb|gltf|obj_import)[a-z0-9_]*|model_(readers|readers_fuzz|corpus|import_rig)|own_[a-z0-9_]+|platform[a-z0-9_]*|net_crypto_own|net_crypto|anticheat_[a-z0-9_]+|net_anticheat[a-z0-9_]*|ui_backend|okayui[a-z0-9_]*)$' > own-stack-targets.txt
+          wc -l own-stack-targets.txt
+          cmake --build build-own -j 2 --target $(cat own-stack-targets.txt | tr '\n' ' ')
+          echo "OWN_STACK_TESTS=^($(sed 's/^test_//' own-stack-targets.txt | tr '\n' '|' | sed 's/|$//')|release_refuses_own_crypto)" >> "$GITHUB_ENV"
+
+      - name: Show the stack line (the job must be testing our own stack)
+        run: |
+          ./build-own/tests/test_own_stack | tee stack.txt
+          grep -q 'platform=own' stack.txt
+          grep -q 'http=own' stack.txt
+          grep -q 'readers=own(fbx,dae,3ds,bvh' stack.txt
+          grep -q 'crypto=own(test)' stack.txt
+
+      - name: Test
+        # net_crypto_sodium is the libsodium side-by-side test: this job has no libsodium on purpose
+        run: ctest --test-dir build-own --output-on-failure -j 2 -R "$OWN_STACK_TESTS" -E 'net_crypto_sodium|anticheat_sql' 
 
   # The no-libsodium path of the anti-cheat and launcher crypto: shared/AntiCheatCrypto.hpp is a thin wrapper over okay::crypto
   # (our own Ed25519 and SHA-512; the TweetNaCl-derived port is deleted). These targets do not link the engine, so this is quick.
@@ -434,10 +502,7 @@ jobs:
             "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
           mkdir -p sdl2-mingw && tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
           echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
-          bash scripts/fetch-tarball.sh libsodium-mingw.tar.gz \
-            "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-mingw.tar.gz"
-          mkdir -p libsodium-mingw && tar xzf libsodium-mingw.tar.gz -C libsodium-mingw
-          echo "OKAY_SODIUM_MINGW_PREFIX=$PWD/libsodium-mingw/libsodium-win64" >> "$GITHUB_ENV"
+          echo "OKAY_SODIUM_MINGW_PREFIX=$(bash scripts/fetch-libsodium-mingw.sh "$PWD")" >> "$GITHUB_ENV"   # pinned SHA-256
 
       - name: Restore compiler cache
         uses: actions/cache@v5

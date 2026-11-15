@@ -194,7 +194,7 @@ struct MotionMemory {
     std::uint64_t scene = 0;
 };
 MotionMemory& Motion() { static MotionMemory m; return m; }
-SchroederReverb& ReverbBus() { static SchroederReverb bus; return bus; }
+RoomReverb& ReverbBus() { static RoomReverb bus; return bus; }
 
 // The listener's reverb: a weighted blend of every Reverb volume that reaches
 // it. Wet is scaled by each zone's weight, so the edge fades to dry. Room,
@@ -418,7 +418,7 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
     // Outside, the bus keeps decaying but is not added, so a dry scene stays
     // exactly as it was. 2D sources are never sent.
     if (runReverb && frames > 0) {
-        SchroederReverb& bus = ReverbBus();
+        RoomReverb& bus = ReverbBus();
         if (bus.Rate() != outRate) bus.Prepare(outRate);
         bus.BeginBlock();
         bus.Configure(zone.settings);

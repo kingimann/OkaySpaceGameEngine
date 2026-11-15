@@ -1,5 +1,58 @@
 OkaySpace Game Engine — Changelog
 
+v2.871.0
+  Editor
+  - Pressing Play: the first game frame no longer jumps, and the editor takes
+    one less snapshot of your scene when you press Play, so the frame rate
+    dips less. Whether that is the whole dip you saw on Windows is not
+    confirmed yet.
+  - Play now passes function keys, Tab, Alt and the left and right Shift,
+    Ctrl and Alt keys to your game, and every connected controller works,
+    not only the first (the built game already did this).
+  - One-click anti-cheat: Add Component > "Anti-Cheat (one click, safe
+    preset)" with presets for co-op, competitive and economy games, plus a
+    checklist in Build Settings that shows what is on and what is missing.
+    Anti-cheat stays opt-in.
+
+  Graphics
+  - The software renderer now draws shadows by default, including spot and
+    point lights, and it applies the scene's post-processing settings.
+  - Direct3D 11 now has Ambient Occlusion (SSAO) and depth of field, and new
+    Bloom Softness and Ambient Occlusion Power sliders. These have never been
+    run on a real graphics card yet, so treat them as untested.
+  - Direct3D 12 is now labelled a preview in Build Settings.
+
+  Audio and gameplay
+  - FLAC audio files can be imported. There are new UI widgets, weighted
+    grid paths for AI, shared perception between NPCs, new weapons, an
+    adjustable physics step rate and crisper UI text.
+
+  Multiplayer
+  - Build-mode changes and quest progress are now shared between players,
+    players who join late see who is already down or hurt, and death,
+    respawn and damage arrive in order. Tested on a simulated bad network.
+
+  Importing models
+  - We now have our own readers for many more model formats, including
+    Blender (.blend) files. They are all OFF by default, so nothing changes
+    for you yet. They also read point clouds, camera-only and light-only
+    COLLADA files.
+
+  Behind the scenes
+  - The anti-cheat's signature checks now use our own crypto code instead of
+    a copied one. The game still uses libsodium for them; our own code is off
+    until it has been properly reviewed.
+  - The OkayUI toolkit gets its script editor; it is off by default.
+  - A new internet client of our own is built but off by default; the game
+    still uses the old one.
+  - Room and cave reverb now uses our own code instead of a borrowed design.
+    It is tuned to be about as loud as before (within about 1 dB), but we
+    have only measured it, not listened to it, so it may sound a little
+    different.
+  - Release builds now refuse to be made without the libsodium crypto
+    library, so our own crypto code can never be shipped by accident.
+  - Fixed a timing check that failed on busy build servers.
+
 v2.870.0
   Multiplayer and anti-cheat
   - The relay program now refuses old game versions that do not send the

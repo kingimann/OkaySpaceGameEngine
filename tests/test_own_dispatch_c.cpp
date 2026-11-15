@@ -85,10 +85,12 @@ int main() {
         CHECK(EffectiveImportBackend(c.ext) != ImportBackend::Own);
         TestUnsetEnv(c.env);
         // off by default (when the build has no Assimp the format cannot be read at all, and the message names the switch)
+#if !defined(OKAY_OWN_STACK_BUILD)   // a -DOKAY_OWN_STACK=ON build (docs/own_stack_rollout.md) has every own reader on by default
         if (!AssimpAvailable()) {
             ImportedModel d; std::string e2;
             CHECK(!ImportModelData(path, d, ImportBackend::Default, false, &e2) && e2.find(c.env) != std::string::npos);
         }
+#endif
     }
     // a different extension is not absorbed by a neighbour's reader: an .md3 file named .md2 is refused by the MD2 reader
     {

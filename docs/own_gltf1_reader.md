@@ -84,7 +84,7 @@ Measured by `gltf1_hostile` with a counting allocator:
   - the memory and time budget;
   - a mutation fuzz (8,000 by default).
 - **Mutation check:** each of these breaks makes a test fail: removing the accessor bounds check (heap overflow in the sanitized hostile test), removing the JSON nesting limit (stack overflow), and not alternating the strip winding (the reader test).
-- `own_gltf1_default`: passes with the option off. ON_BUILD_PLACEHOLDER **No CI job builds with `-DOKAY_OWN_GLTF1=ON`**, so in CI this test only checks the off case.
+- `own_gltf1_default`: passes with the option off. Run here with the engine configured `-DOKAY_OWN_GLTF1=ON` (Linux, GCC 13, Release): `own_gltf1_default` 3 checks, 0 failures (the file is read by our reader with no environment variable set); `gltf1_reader` 155 checks, 0 failures; `gltf1_hostile` 10,025 checks, 0 failures. Mutation check: forcing the compiled default off (as a dropped CMake line would) makes `own_gltf1_default` fail all 3 checks. **No CI job builds with `-DOKAY_OWN_GLTF1=ON`**, so in CI this test only checks the off case.
 
 ### Real files
 

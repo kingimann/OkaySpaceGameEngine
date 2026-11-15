@@ -1693,6 +1693,10 @@ add_executable(test_project_delete test_project_delete.cpp)
 target_compile_features(test_project_delete PRIVATE cxx_std_17)
 target_include_directories(test_project_delete PRIVATE ${CMAKE_SOURCE_DIR}/shared)
 add_test(NAME project_delete COMMAND test_project_delete)
+add_executable(test_project_list test_project_list.cpp)
+target_compile_features(test_project_list PRIVATE cxx_std_17)
+target_include_directories(test_project_list PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+add_test(NAME project_list COMMAND test_project_list)
 
 # New-project rules shared by the editor and the launcher: name, location, folder choice, skeleton, atomic writes.
 add_executable(test_project_create test_project_create.cpp)

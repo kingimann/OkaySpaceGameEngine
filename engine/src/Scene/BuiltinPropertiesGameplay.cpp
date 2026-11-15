@@ -1495,8 +1495,8 @@ void RegisterLookAtIK() {
     b.Commit();
 }
 
-// FootIK (record "footik"). The hip and knee limits are nested limit structs and
-// groundMask is an unsigned layer mask; neither is a property yet.
+// FootIK (record "footik"). The hip and knee limits are nested limit structs; they
+// are not properties yet.
 void RegisterFootIK() {
     PropertyBuilder<FootIK> b("FootIK", "footik", "Animation");
     b.Section("Bones")
@@ -1514,6 +1514,7 @@ void RegisterFootIK() {
      .AddBool("useRaycast", &FootIK::useRaycast).Tooltip("Find the ground with rays (off = use groundY)")
      .AddFloat("groundY", &FootIK::groundY).Range(-kBig, kBig, 0.01).Tooltip("Ground height when not using rays")
      .AddFloat("maxRayUp", &FootIK::maxRayUp).Range(0, 100, 0.01).Tooltip("How far above the foot the ray starts")
+     .AddInt("groundMask", &FootIK::groundMask).Tooltip("Collision layers the rays hit (bit n = layer n)")
      .AddFloat("maxRayDown", &FootIK::maxRayDown).Range(0, 100, 0.01).Tooltip("How far below the foot the ground may be")
      .AddBool("adjustPelvis", &FootIK::adjustPelvis).Tooltip("Lower the pelvis so a foot on lower ground reaches it")
      .AddBool("plantDown", &FootIK::plantDown).Tooltip("Also press feet down onto lower ground")
@@ -1749,8 +1750,8 @@ void RegisterBehaviorTreeRunner() {
     b.Commit();
 }
 
-// SplineMesh (record "splinemesh"). The custom profile is a list; meshAxis has the
-// values 0 and 2, which the enum builder cannot map yet.
+// SplineMesh (record "splinemesh"). The custom profile is a list. meshAxis has the
+// values 0 and 2, so it uses the AddEnum overload with explicit values.
 void RegisterSplineMesh() {
     PropertyBuilder<SplineMesh> b("SplineMesh", "splinemesh", "Rendering");
     b.AddString("spline", &SplineMesh::spline).Tooltip("Object holding the Spline (empty = this object)")
@@ -1766,6 +1767,7 @@ void RegisterSplineMesh() {
      .AddFloat("uvTileLength", &SplineMesh::uvTileLength).Range(0.001, kBig, 0.1).Tooltip("The texture repeats every this many units")
      .Section("Repeat")
      .AddString("sourceMesh", &SplineMesh::sourceMesh).Tooltip("Built-in mesh name or a .obj / .okaymesh file")
+     .AddEnum("meshAxis", &SplineMesh::meshAxis, {"X", "Z"}, {0, 2}).Tooltip("The mesh's own axis laid along the curve")
      .AddFloat("spacing", &SplineMesh::spacing).Range(0, kBig, 0.05).Tooltip("Gap between copies")
      .AddVec3("meshScale", &SplineMesh::meshScale).Range(0, kBig, 0.05).Tooltip("Scale of each copy")
      .AddBool("stretchToFit", &SplineMesh::stretchToFit).Tooltip("Stretch the copies a little to fill the whole length")
@@ -1773,7 +1775,7 @@ void RegisterSplineMesh() {
     b.Commit();
 }
 
-// SplineInstancer (record "splineinstancer"). seed is an unsigned int; not a property yet.
+// SplineInstancer (record "splineinstancer")
 void RegisterSplineInstancer() {
     PropertyBuilder<SplineInstancer> b("SplineInstancer", "splineinstancer", "Rendering");
     b.AddString("spline", &SplineInstancer::spline).Tooltip("Object holding the Spline (empty = this object)")
@@ -1788,6 +1790,7 @@ void RegisterSplineInstancer() {
      .AddFloat("rotationJitter", &SplineInstancer::rotationJitter).Range(0, 360, 1).Tooltip("Random turn about the up axis in degrees")
      .AddFloat("scaleMin", &SplineInstancer::scaleMin).Range(0, 1e3, 0.05).Tooltip("Smallest random scale")
      .AddFloat("scaleMax", &SplineInstancer::scaleMax).Range(0, 1e3, 0.05).Tooltip("Largest random scale")
+     .AddInt("seed", &SplineInstancer::seed).Tooltip("The same seed places the same items")
      .AddEnum("align", &SplineInstancer::align, {"Upright", "Curve"}).Tooltip("Keep items upright, or tilt them with the curve")
      .AddVec3("rotationOffset", &SplineInstancer::rotationOffset).Range(-360, 360, 1).Tooltip("Extra turn of every item in degrees")
      .AddInt("maxCount", &SplineInstancer::maxCount).Range(0, 1000000, 1).Tooltip("Most items placed");

@@ -1825,6 +1825,10 @@ struct KeyWidget : Component {
     char sprint = 0;
     Dodge dodge;
 };
+struct AxisWidget : Component {
+    enum class Axis : int { X = 0, Z = 2 };
+    Axis axis = Axis::X;
+};
 }
 
 static void TestBuilderKeyBindings() {
@@ -1866,6 +1870,29 @@ static void TestBuilderKeyBindings() {
     const auto diff = DiffProperties(before, SnapshotProperties(*go));
     CHECK(diff.size() == 1 && diff[0].path == "KeyWidget.dodgeKey");
     CHECK(ApplyPropertyDiff(*go, diff, false) == 1 && w->dodge.key == 'z');
+}
+
+// AddEnum with explicit values: option i stands for values[i], so an enum whose
+// stored numbers skip (X = 0, Z = 2) still reads and writes the right field value.
+static void TestBuilderEnumValues() {
+    RUN_SUITE("builder: enum options with explicit values");
+    PropertyBuilder<AxisWidget> b("AxisWidget", "axiswidget", "Test");
+    b.AddEnum("axis", &AxisWidget::axis, {"X", "Z"}, {0, 2});
+    b.Commit();
+    Scene s("s");
+    GameObject* go = s.CreateGameObject("w");
+    auto* w = go->AddComponent<AxisWidget>();
+    CHECK(PropertyRegistry::GetProperty(*go, "AxisWidget.axis").AsEnum() == 0);
+    CHECK(PropertyRegistry::SetProperty(*go, "AxisWidget.axis", PropertyValue::MakeEnum(1)) && w->axis == AxisWidget::Axis::Z);
+    CHECK(PropertyRegistry::GetProperty(*go, "AxisWidget.axis").AsEnum() == 1);
+    CHECK(PropertyRegistry::SetProperty(*go, "AxisWidget.axis", PropertyValue::MakeEnum(0)) && w->axis == AxisWidget::Axis::X);
+    CHECK(!PropertyRegistry::SetProperty(*go, "AxisWidget.axis", PropertyValue::MakeEnum(2)) && w->axis == AxisWidget::Axis::X);   // no option 2
+    w->axis = static_cast<AxisWidget::Axis>(7);   // a value not in the list reads as option 0
+    CHECK(PropertyRegistry::GetProperty(*go, "AxisWidget.axis").AsEnum() == 0);
+    // the real user: SplineMesh.meshAxis (Axis::X = 0, Axis::Z = 2)
+    auto* sm = go->AddComponent<SplineMesh>();
+    CHECK(PropertyRegistry::SetProperty(*go, "SplineMesh.meshAxis", PropertyValue::MakeEnum(1)) && sm->meshAxis == SplineMesh::Axis::Z);
+    CHECK(PropertyRegistry::GetProperty(*go, "SplineMesh.meshAxis").AsEnum() == 1);
 }
 
 static void TestAuditRegistryTable() {
@@ -2259,6 +2286,7 @@ int main() {
     TestAuditWriteResult();
     TestAuditBuilderEdges();
     TestBuilderKeyBindings();
+    TestBuilderEnumValues();
     TestAuditTextCoercion();
     TestAuditRegistryTable();
     TestAuditSceneEdges();

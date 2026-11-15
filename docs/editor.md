@@ -687,13 +687,17 @@ unchanged.
 
 - **Hierarchy right-click**:
   - On an object: Cut / Copy / Paste, **Select** (children, everything below,
-    parent, siblings, same name), **Expand / Collapse All Below**, **Transform**
-    (reset position, rotation, scale or all; move to the view centre), **Order**
-    (move up, down, to top or bottom), **Copy Text** (name or hierarchy path),
-    **Delete Children** (empties a container and keeps the object; one undo
-    step), plus create, parent and prefab actions.
-  - On empty space: create objects, **Select All**, **Deselect**,
-    **Expand / Collapse All** and **Sort A-Z**.
+    parent, siblings, same name, **same type**), **Expand / Collapse All Below**,
+    **Transform** (reset position, rotation, scale or all; move to the view
+    centre), **Order** (move up, down, to top or bottom; greyed at the ends),
+    **Copy Name or Path**, **Delete Children** (empties a container and keeps the
+    object; one undo step), **Create Child** (every Create category, the same as
+    GameObject), **Add Component...** (opens the Inspector's browser) plus parent
+    and prefab actions. With several objects selected the labels count them
+    ("Delete 3 Objects"), and an item that cannot work says why when you hover it.
+    The full list and what changed: [editor_menus.md](editor_menus.md).
+  - On empty space: **Create Empty** and the Create categories, **Paste**,
+    **Select All**, **Deselect**, **Expand / Collapse All** and **Sort A-Z**.
 - **Project right-click**:
   - On an asset: **Add to Open Scene** (scenes), **Place in Scene** or **Place
     as Child of Selected** (prefabs), **Add to Favorites** (folders), and **Copy

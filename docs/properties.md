@@ -238,10 +238,6 @@ More of the builder:
   `.Adder([](GameObject& go) -> Component* { return PlayerController::Add(&go); })`.
 - **A key binding** held in a `char` field: `.AddKey("jumpKey", &C::jumpKey)` (also for a `char` in a struct
   member). It is an Int property 0..255 holding the key code.
-- **An enum whose stored numbers skip** (an axis enum with `X = 0, Z = 2`): `.AddEnum("meshAxis", &C::meshAxis,
-  {"X", "Z"}, {0, 2})`. Option i stands for `values[i]`; a field value that is not in the list reads as option 0.
-- **An unsigned field** (a layer mask, a seed): plain `.AddInt`, which takes any integer type and starts its range
-  at that type's own limits.
 - **Not addable** (a Transform): `.NoAdd()`.
 - A modifier called before the first property (`Tooltip` right after the constructor) is ignored
   instead of writing through an empty list, and a `Custom` with an empty getter adds nothing.
@@ -272,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2874 properties on 205 types, as `property_registry` counts them ("covered 205 component types, 2874 properties"; a number before a slash counts the authored ones; the rest are
+2239 properties on 166 types, as `property_registry` counts them ("covered 166 component types, 2239 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -322,26 +318,10 @@ has `enabled`.
 | RadiationStat, BleedingStat, PoisonStat, WetnessStat, CarryWeightStat, StatusEffectStat | 8, 6, 6, 8, 6, 1 | rates and thresholds plus the publishing switches; status effects have only the message switch (the active effects are runtime) |
 | TrailRenderer, MinimapBlip, AimIK, SurvivalSave | 10, 6, 8, 3 | trail life, width, colour and texture (the width curve and gradient are lists); blip colour, size, shape, icon and label (the old square switch is only for old files); aim bone, target and axes; the survival save key and switches |
 | UIToast, UITooltip, UIModal, UIContextMenu | 8, 7, 15, 8 | toast corner, timing and size; tooltip text, delay, colours and offset; modal dimming, close rules and card style; context menu sizes and colours (its item list is a list) |
-| WorldSpaceUI, PauseMenu, ChestInventory, UIDropTarget | 4, 8, 16, 10 | world UI scale and facing; pause menu key, title, buttons, colours and `localized` (from the localization record; the record does not save `hint`, `showRestart`, `showVolume` or `restartScene`, so they are not properties yet); chest key, range, grid and style; drop slot tag, background and hover tints |
+| WorldSpaceUI, PauseMenu, ChestInventory, UIDropTarget | 4, 7, 16, 10 | world UI scale and facing; pause menu key, title, buttons and colours (the record does not save `hint`, `showRestart`, `showVolume`, `restartScene` or `localized`, so they are not properties yet); chest key, range, grid and style; drop slot tag, background and hover tints |
 | IKTarget, NetValidator, DialogueRunner, LogicTarget | 4, 7, 13, 13 | IK limb, character, weight and blend; RPC limits (size, rate, cooldown, budget); dialogue file, start, key, prompt, typewriter and UI switches; logic target kind and mode, door/mover travel, light, spawner and event |
 | LogicSource, QuestLog, Saveable, SpriteAnimator | 13, 7, 8, 6 | logic source kind, button, timer and zone (links are lists); quest file and UI switches (records and the tracked quest are play state); save key, prefab and what to store (property paths are a list); sprite speed, loop and sheet layout (frames and clips are lists) |
 | VirtualCamera, CinemachineBrain, DollyPath | 34, 2, 1 | virtual camera priority, targets, offsets, damping, shake, free look, dolly and confiner (the confiner box allows +-1e9, its "no limit" default); brain blend; dolly path loop (the waypoints are a list) |
-| Minimap | 48 | layout, view, blips, grid, view cone, rings, north mark, labels, route line, map image, full-screen map and zoom keys. The markers and map shapes are lists; the placed waypoint is play state |
-| HoldableObject, LookAtIK | 23, 12 | hold style, hands, weight, socket, the custom / first-person / third-person placement and both hand grips (`leftGripCurl` and so on); look target, axis, weight, limits, eyes and distance fade (the bone chain, per-bone weights and eye bones are lists) |
-| FootIK | 32 | bone names, planting (weight, rays, ground mask, pelvis, knee bend), foot axes and probes, foot lock. The hip and knee limits are not properties yet |
-| LimbIK | 18 | bone names, goal (target, rotation, blend), bend (pole, pole mode, bend limits) and solve settings. The upper and lower joint limits are not properties yet |
-| NetInventory, RootMotion, TerrainDigger, VoxelDigger, WorldStreamer, Consumables | 6, 5, 11, 9, 8, 3 | net inventory limits; root motion mode and options; terrain and voxel brush settings (the record does not save `VoxelDigger.removeFloaters`, so it is not a property yet); world streaming cells and files; consumable switches (the recipes are a list) |
-| UITextBind, UIBarBind, UIAnimation, AimOffset, SequencePlayer | 1, 3, 12, 10, 6 | the bound text format; the bound bar value and range; widget intro, loop and outro with the ease (options from `Easing::Name`); aim offset weights, clamps and recoil; cutscene file, playback and skip key |
-| ProceduralObjectHolding, BuildPiece, BuilderMode, PoseCapture, CraftingMenu | 14, 5, 20, 2, 6 | hands, style and throw settings; build piece tier, health and cost; builder shapes, grid, scale and buttons (the record does not save the seven hotkeys, so they are not properties yet); pose capture clip and length; crafting menu key and layout |
-| BehaviorTreeRunner, SplineMesh, SplineInstancer | 6, 16, 16 | tree file, tick rate and home point (the blackboard overrides are a list); spline mesh extrude and repeat settings (the custom profile is a list; `meshAxis` uses the explicit-values enum); spline instancer source, spacing, seed, jitter, scale and alignment |
-| NPCController | 38 | behaviour and target, movement, senses, temper, wander and patrol, combat and animation switches. The waypoints are a list (`npcwp` records); current health is play state |
-| InventoryUI | 58 | hotbar and backpack, keys and clicks (sort mode as an enum), layout, text, panel and colours. The rarity rules are a list; open, scroll and the drag state are play state. The record does not save `gamepadNav`, so it is not a property yet |
-| GridInventoryUI | 42 | grid, containers (the nearby column and stacked bags), style and colours. The rarity rules are a list; the drag state and scroll are play state |
-| CraftingStation | 21 | key, range, player, recipe book, station tag, title and style. The recipes are a list; `open` is play state |
-| UIListView, UISlotGrid, Spline | 10, 13, 4 | list layout, colours, row size and selection (the items are a list); slot grid layout, colours and selection, plus `fontScale`, `textColor` and `numberEmptySlots` from the shared `uix` record (the labels are a list); spline type, loop, up mode and resolution (the points are `splinept` records) |
-| UITabs | 32 | layout (style, sizing and shape as enums), colours and behaviour (keys, wrap, focus, animation). The tab names, pages, icons, badges and disabled flags are lists |
-| Inventory, Equipment, GridInventory | 7, 2, 10 | capacity, stack and weight limits and keep-on-load; equipment display and keep-on-load; grid size (1..64, the component's own cap), key, title, weight, stack, role and keep-on-load. Slots, items and overflow are lists |
-| BlockBuilder, StructureBuilder, BuildMode, UIColorPicker | 10, 22, 40, 5 | block size, reach, look and buttons (the record does not save `previewFree` or `previewBusy`); structure piece, sizes, buttons and resources (the record does not save `rotateKey`, `upgradeKey`, `repairKey`, `pieceHotkeys`, `previewFree` or `previewBusy`); build mode grid, reach, layers, colours and every key and pad binding (the palette is a list); colour picker layout and selection (the swatches are a list) |
 
 How the new types are described, so a tool can rely on it:
 

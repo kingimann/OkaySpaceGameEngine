@@ -122,28 +122,6 @@ public:
         m_info.properties.back().enumOptions = std::move(options);
         return *this;
     }
-    /// An enum field whose stored values are not 0, 1, 2 ...: option i stands for
-    /// `values[i]` (for example an axis enum with the values 0 and 2). A field value
-    /// that is not in the list reads as option 0. `options` and `values` must be the
-    /// same length.
-    template <class Owner, class E> PropertyBuilder& AddEnum(const char* name, E Owner::*m, std::vector<std::string> options,
-                                                            std::vector<int> values) {
-        Prop(name, PropertyType::Enum,
-            [m, values](const Component& c) {
-                const int v = static_cast<int>(As<Owner>(c).*m);
-                for (std::size_t i = 0; i < values.size(); ++i)
-                    if (values[i] == v) return PropertyValue::MakeEnum(static_cast<int>(i));
-                return PropertyValue::MakeEnum(0);
-            },
-            [m, values](Component& c, const PropertyValue& v) {
-                const int i = v.AsEnum();
-                if (i < 0 || static_cast<std::size_t>(i) >= values.size()) return false;
-                As<Owner>(c).*m = static_cast<E>(values[static_cast<std::size_t>(i)]);
-                return true;
-            });
-        m_info.properties.back().enumOptions = std::move(options);
-        return *this;
-    }
 
     // ---- Fields of a nested struct ---------------------------------------------------
     // A field of a struct member: `AddFloat("agentRadius", &Surface::settings, &Settings::agentRadius)`.

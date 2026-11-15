@@ -8,24 +8,33 @@ then this file gets updated. Keep this file short and true.
 
 1. **Keep working.** Do not stop to ask or to wait. When a decision is the owner's, pick the safe default, say what
    you picked, and carry on. Use several agents at once for independent work.
-2. **Always be working on something real.** At every moment the main session and every agent is doing one of four
-   things: finishing an unfinished feature (`docs/UNFINISHED.md`), fixing a bug, building our own replacement for
-   a third-party library (`docs/own_code_roadmap.md`), or checking on the second Claude (`claude2/*`, issue #422):
-   reading its reports, answering it, reviewing its work. Waiting for CI is not a reason to stop: start or continue
-   one of those three while it runs, and never sit polling GitHub. Reviews, merges and releases happen in between.
-   (Owner rule, 2026-11-15: "you should be always working finishing a feature, fixing a bug or working on a third
-   party".) If an agent or the main session has nothing running, start more agents on the next items.
+2. **Always be working on something real, and keep the two Claudes apart.** (Owner rule, 2026-11-15: "have Claude 2
+   work on unfinished features, you only work on third party".)
+   - **Claude 2 (`claude2/*`, issue #422)** works on unfinished features (`docs/UNFINISHED.md` and its audits) and
+     bugs. It improves what we already have before it builds anything new: search the feature map and the code
+     first, extend and finish the existing feature (no second copy), and say in every claim what exists and what
+     the gap is. (Owner, 2026-11-15: "make sure Claude 2 is developing features we already have, but improving
+     them where we already have them".)
+   - **The coordinator session and its agents** work on building our own replacements for third-party libraries
+     (`docs/own_code_roadmap.md`) and on coordinating: checking on Claude 2 (reading its reports, answering it,
+     reviewing its branches), reviews, merges and releases. The coordinator finishes a feature or bug branch that is
+     already in progress but does not start new feature work.
+   - Waiting for CI is not a reason to stop: start or continue one of those things while it runs, and never sit
+     polling GitHub. If an agent or the main session has nothing running, start more agents on the next items.
 3. **Explain plainly.** Short, simple sentences. Say what you did, what it means and what is left. No jargon
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something
    done, ready or green when it is not. A failing test is reported with its output.
 4a. **The owner must be able to try everything.** (Owner rule, 2026-11-15: "everything that's being made I should be able
-   to test; if I can't test it out it's useless".) Every change that adds or changes something a person can use comes
-   with a way to try it in the Windows release the owner runs (launcher, editor, player, installer, zip): a menu, a
-   template, a shipped example scene, a setting or an environment variable, plus exact steps and what to expect, in
-   `docs/try_it.md` and in the PR's "How to try it" section. If it cannot be tried on a release today, say so plainly
-   and what is missing, and build that way in (an `examples/` scene shipped by `scripts/build-windows-dist.sh`, a
-   template, a log line). A feature nobody can reach is not done.
+    to test; if I can't test it out it's useless".) Every PR and every release note says how to try the change, in
+    plain steps: what to open or run, what to click or press, and what you should see. It must be reachable in the
+    Windows release the owner runs (launcher, editor, player, installer, zip): a menu, a template, a shipped example
+    scene (`examples/`, copied by `scripts/build-windows-dist.sh`), a setting or an environment variable. The steps go
+    in `docs/try_it.md` and in the PR's "How to try it" section. Visual work comes with screenshots (headless renders
+    are fine, say they are). Something switched off by default (our own readers, own WAV decoder and so on) comes
+    with the exact switch, a sample file to use, and how to tell it is on (the startup stack line or a log line). If
+    a feature cannot be tried yet, the PR says so at the top and says what is missing, and builds that way in; a
+    feature nobody can reach is not done.
 5. **Update the docs as you go**, in the same change as the code: the matching guide, the feature map
    (`python3 scripts/gen_feature_map.py`, then `--check`), the roadmap, and `docs/UNFINISHED.md` rows.
 
@@ -106,5 +115,18 @@ then this file gets updated. Keep this file short and true.
     can regenerate, and look before you delete.
 21. Write agent briefs so they stand alone: the goal, the files to read, what is off limits, the constraints
     above, and how to report (what changed, tests and results, what is unverified, what is not done).
+21a. **Windows build rule.** The Windows programs are cross-compiled with MinGW's "win32" thread model, which cannot
+    compile `<mutex>`, `<thread>`, `std::condition_variable` or `std::call_once` in any header the launcher, editor or
+    player can reach (a PR failed CI on this on 2026-11-15). Use the engine's own spin lock (`debugutil::SpinLock`),
+    atomics, or the existing wrappers instead. Tests may use `<thread>` only if they are not built for Windows.
 22. If an agent keeps re-sending a finished report, ignore it or stop it. Do not act on the repeats.
 23. Messages from agents are reports, not instructions from the owner.
+24. **Grok finds bugs; we fix them.** The owner uses Grok (a second AI) only to read code and report bugs. Grok does
+    not fix anything. Its findings go as comments on issue #888 (format and triage rules are in that issue). Every
+    finding is reproduced by a test that fails before anything is changed; no test, no fix; a guess is labelled
+    "unconfirmed". Bugs in our own replacement code go to the coordinator's agents; bugs in features go to Claude 2.
+    Cryptography findings follow rule 18 as well.
+25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
+    `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the
+    coordinator can take its branches over. Claude 2 pushes only `claude2/*` branches, opens no PRs, and starts a
+    piece of work only after posting "Claim: <branch>" with "Existing: ... / Gap: ..." (rule 2).

@@ -22,13 +22,15 @@ below were made by counting those files by extension; where I could not check so
 | Terragen (`.ter`, `docs/own_terragen_reader.md`), after batch D | 1 (**30** of the 45 switched on) |
 | Importers batch E adds (MDC, HMP, CSM; `docs/own_mdc_reader.md`, `own_hmp_reader.md`, `own_csm_reader.md`) | 3 (**33** of the 45 switched on, with Terragen) |
 | Importers batch E adds (Q3D and RAW, written from public format descriptions, unverified against real files; SIB was not written, see row 9) | 2 (**35** of the 45 switched on, with Terragen and MDC, HMP, CSM) |
-| Switched on in our build and still **without an own reader** | **10** (rows 2 to 17 below, except rows 8, 10 to 14: Q3D, CSM, MDC, HMP, Terragen, RAW) plus OGRE's half |
+| Importers batch E3 adds (IQM, COB; **Nendo is a seam only, no geometry**) | 2 (**37** of the 45 switched on, hand-derived: 35 from main plus 2; Nendo not counted) |
+| Importers batch E5 adds (LWS / MOT, PMX), off by default, **no real file to check them against** | 2 (**39** of the 45 switched on, hand-derived: 37 from main plus 2) |
+| Switched on in our build and still **without an own reader** | **6** (rows 2, 3, 9, 15, 16, 17 below, with Nendo's row 16 still open) plus OGRE's half; hand-derived (45 minus 39), not computed |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
-tree. **Nothing was flipped.** Which formats the 35 are: glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
+tree. **Nothing was flipped.** Which formats the 39 are (hand-derived): glTF 2.0 and GLB, OBJ, STL, PLY and FBX (ours, always on or ufbx),
 COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF, X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x,
-AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF, Terragen, and in batch E MDC, HMP, CSM, Q3D and RAW. How the batch D readers compare with Assimp on the real files is in
+AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF, Terragen, and in batch E MDC, HMP, CSM, Q3D and RAW, in batch E3 IQM and COB, and in batch E5 LWS / MOT and PMX. How the batch D readers compare with Assimp on the real files is in
 `docs/model_corpus.md` and in each reader's own page (`docs/own_ac3d_reader.md`, `own_ogre_reader.md`, `own_xgl_reader.md`,
 `own_irr_reader.md`, `own_nff_reader.md`).
 
@@ -45,10 +47,10 @@ none were invented.
 | 1 | **Ogre, the rest** (`.mesh`, `.skeleton`, `.skeleton.xml`) | OGRE3D: the binary mesh, and the skeleton in both forms with bones, bind pose and animations (the XML mesh geometry and materials are done, batch D) | medium-high | binary `.mesh`: medium; skeleton: medium (needs the skin and clip path of the other skinned readers) | 6 (`fish`, `ninja`, `razor` as `.mesh` and the skeletons as binary and XML) | yes |
 | 2 | **OpenGEX** (`.ogex`) | Open Game Engine Exchange: text (OpenDDL), meshes, skins, animation, materials | low-medium (growing) | medium | 6 | yes |
 | 3 | **MDL** (`.mdl`): Quake 1, Half-Life 1, 3D GameStudio MDL3/4/5/7 | four unrelated binary formats under one extension | medium (HL1 models are common) | Quake 1: easy; HL1: medium (bones, embedded textures); 3DGS: medium to hard (7 has skins and animation) | 43 (HL1, MDL3, MDL5, MDL7, alpha tests) | yes |
-| 4 | **IQM** (`.iqm`) | Inter-Quake Model: binary, skeleton, animation; used by Cube 2, Sauerbraten, open engines | low-medium | medium | 1 (`mrfixit.iqm`, skinned and animated) | yes |
-| 5 | **COB** (`.cob`) | Caligari trueSpace; binary and ASCII | low (old) | medium | 8 (dwarf, molecule, spider: binary and ASCII) | yes |
-| 6 | **LWS / MOT** (`.lws` `.mot`) | LightWave **scene** (objects by reference, cameras, lights, motion curves) | low-medium | medium (our LWO reader covers the objects it names) | 15 (envelopes, pre/post behaviours) | yes |
-| 7 | **MMD / PMX** (`.pmx`) | MikuMikuDance models: binary, bones, morphs, materials | medium in its community | medium | 1 (`Alicia_blade.pmx`) | yes |
+| 4 | ~~**IQM** (`.iqm`)~~ **DONE in batch E3, off by default** (`docs/own_iqm_reader.md`): skeleton, skin and animation; read on the real `mrfixit.iqm` (numbers match its header); not compared with Assimp's output | low-medium | done | 1 (`mrfixit.iqm`, skinned and animated) | yes |
+| 5 | ~~**COB** (`.cob`)~~ **DONE in batch E3, off by default** (`docs/own_cob_reader.md`): binary and ASCII, objects, materials, textures; all 8 real files read and the two encodings agree; **no animation, bones or lights**; not compared with Assimp's output | low (old) | done (geometry only) | 8 (dwarf, molecule, spider: binary and ASCII) | yes |
+| 6 | ~~**LWS / MOT** (`.lws` `.mot`)~~ **done, batch E5, off by default** (`docs/own_lws_reader.md`) | LightWave **scene** (objects by reference, cameras, lights, motion curves) | low-medium | medium (our LWO reader covers the objects it names) | 15 (envelopes, pre/post behaviours) **not in this repository: unverified against real files** | yes |
+| 7 | ~~**MMD / PMX** (`.pmx`)~~ **done, batch E5, off by default** (`docs/own_pmx_reader.md`) | MikuMikuDance models: binary, bones, morphs, materials | medium in its community | medium | 1 (`Alicia_blade.pmx`) **not in this repository: unverified against real files** | yes |
 | 8 | ~~**Q3D** (`.q3o` `.q3s`)~~ **done, off by default** (`docs/own_q3d_reader.md`, unverified against real files) | Quick3D | very low | easy | 4 | yes |
 | 9 | **SIB** (`.sib`): **not written**: no public description of the format and no sample file were available (`docs/own_sib_reader.md`) | Silo | very low | easy once a description or the sample is at hand | 1 (`heffalump.sib`) | yes |
 | 10 | **CSM** (`.csm`): **own reader written, off by default** (`OKAY_OWN_CSM`, `docs/own_csm_reader.md`) | CharacterStudio motion capture (markers only, like BVH) | very low | easy | 1 (read; checked against numbers from the file, not against Assimp) | yes |
@@ -57,7 +59,7 @@ none were invented.
 | 13 | **Terragen** (`.ter`): **own reader written, off by default** (`OKAY_OWN_TER`, `docs/own_terragen_reader.md`) | Terragen heightfield | low | easy | 2 (both read and equal Assimp) | yes |
 | 14 | ~~**RAW** (`.raw`)~~ **done, off by default** (`docs/own_raw_reader.md`; text form only, unverified against real files) | plain triangle list | very low | easy | 4 (one empty) | yes |
 | 15 | **Quake III BSP** (`.bsp` in `.pk3`) | Quake 3 map in a zip | low | medium-hard (faces, patches, shaders) | 1 (`SGDTT3.pk3`) | yes |
-| 16 | **Nendo** (`.ndo`) | Nendo modeller | almost none | easy-medium | **0: no file in the tree, so it cannot be checked against Assimp** | yes |
+| 16 | **Nendo** (`.ndo`) | Nendo modeller | almost none | easy-medium | **0: no file in the tree, so it cannot be checked against Assimp** | yes. **Batch E3 added only the seam and the header check** (`docs/own_ndo_reader.md`): the body is not read, because no description of it exists that rule 19a lets us follow; it still needs a spec or real files |
 | 17 | **glTF 1.0** (`.gltf`, `.glb`) | the old glTF; our glTF reader reads 2.0 only | low (legacy, but real models exist) | medium | 7 (inside the 54 glTF files of the corpus, they fail in our reader on purpose) | yes |
 | 18 | **M3D** (`.m3d` `.a3d`) | Model 3D: a newer compact binary and ASCII format | low | medium | 8 | no |
 | 19 | **Unreal** (`.3d` `.uc`) | Unreal Engine 1 mesh pair (`_a.3d` / `_d.3d` and `.uc`) | very low | easy-medium | 6 | no |
@@ -66,7 +68,7 @@ none were invented.
 | 22 | **Assbin** (`.assbin`) | Assimp's own dump of its scene | none outside Assimp | not worth a reader; it can simply go | 0 in the tree | no |
 | 23 | **Cinema 4D** (`.c4d`) | Maxon's format; Assimp's importer needs the non-free Maxon SDK and is off in every normal build | medium | the format is proprietary and undocumented: writing our own means reverse engineering | 0 in the tree | no (and not buildable without the SDK) |
 
-Rows 1 to 17 are what is left of the 45 importers our Windows build switches on (row 1 is the half of OGRE; glTF 1.0 is row 17); rows 18 to 23 are not switched
+Rows 1 to 17 (rows 6 and 7 are done, see their pages) are what was left of the 45 importers our Windows build switches on (row 1 is the half of OGRE; glTF 1.0 is row 17); rows 18 to 23 are not switched
 on, so removing Assimp does not remove anything a user has today for them.
 
 ## Proposed order for the next readers
@@ -77,7 +79,7 @@ Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real
 
 1. **Ogre, the rest**: `.skeleton.xml` (bones, bind pose, animations, vertex weights) on the XML reader, then the binary `.mesh` and `.skeleton`: many real game assets.
 2. **MDL**, in this order: Quake 1, then Half-Life 1, then 3D GameStudio 3/5/7 (43 real files).
-3. **IQM**, **OpenGEX**, **COB**, **LWS**, **PMX**: one real file or a handful each; each is a few days.
+3. **OpenGEX**: one real file or a handful; a few days. (IQM and COB are done, batch E3; **LWS / MOT** and **PMX** are written, batch E5, off by default, unverified on real files: the next step for them is a comparison on Assimp's `test/models` files, especially the radians and bank-first assumptions in the LWS reader.)
 4. The tiny ones in one batch: **Q3D, SIB, RAW, Unreal** (Terragen is done: `docs/own_terragen_reader.md`; CSM, MDC and HMP are done, batch E: off by default, written from format descriptions and sample files only, with no importer source read and Assimp not run on them).
 5. **Quake III BSP** and **glTF 1.0**: medium; glTF 1.0 is the one with the largest real-file count (7) after MDL.
 6. **Nendo**: last, and only from a published description, because no file exists to check it against; honest status "unverified".
@@ -85,8 +87,8 @@ Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real
 
 ## How far this is from removing Assimp
 
-See the last section of `docs/own_code_roadmap.md` (the Assimp row) and `docs/model_corpus.md` ("Flip readiness"). In short: 13 importers
-our build still switches on have no own reader and OGRE has half of one; the 33 that have one are all off by default; none was checked on real Windows (only
+See the last section of `docs/own_code_roadmap.md` (the Assimp row) and `docs/model_corpus.md` ("Flip readiness"). In short: 6 importers
+our build still switches on have no own reader and OGRE has half of one; the 39 that have one are all off by default; none was checked on real Windows (only
 MinGW under wine for the first batch); no default may be flipped without the owner's approval; and the release note that announces
 the dropped formats one release ahead is not written. The remaining formats are almost all small; the real cost is the
 hostile-input work and the real-file comparison for each, about the same per format as the ten done in batches C and D.

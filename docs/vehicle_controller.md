@@ -166,7 +166,7 @@ line, a slalom of cones and some crates ahead, and a third-person player standin
 driver door.
 
 1. In the editor use *File ▸ Open* and pick `examples/vehicle/vehicle_test.okayscene` from the engine
-   folder. (It is not in the New Project chooser.) In code: `Templates::VehicleSeats3D(scene)`.
+   folder. It is also in the New Project chooser as "Vehicle (get in and drive)", and the Windows zip and installer ship it under `examples/vehicle/`. In code: `Templates::VehicleSeats3D(scene)`.
 2. Press **Play**.
 3. Walk to the driver door (the -X side of the car, which is the car's right side seen from behind; WASD) and press **E**. You sit in the driver seat and the camera
    swings behind the car.

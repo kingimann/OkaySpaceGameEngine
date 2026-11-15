@@ -34,6 +34,15 @@ enum class AudioRolloff {
 class AudioSource : public Behaviour {
 public:
     AudioClip clip;
+    /// The sound this source plays from memory: `clip` when it holds samples, otherwise the shared clip set by
+    /// UseSharedClip (loading a scene's files shares one decoded copy between sources on the same file).
+    /// Read this, not `clip`, when the sound might have come from a file.
+    const AudioClip& Clip() const { return (clip.samples.empty() && m_shared) ? *m_shared : clip; }
+    /// Use one decoded clip shared with other sources (no copy of the samples). Clears `clip` and any stream.
+    /// Setting `clip` yourself afterwards wins over the shared clip.
+    void UseSharedClip(std::shared_ptr<const AudioClip> c) { m_stream = nullptr; clip = AudioClip(); m_shared = std::move(c); m_pos = 0.0; }
+    /// True when the in-memory sound is a shared clip (not this source's own copy).
+    bool UsesSharedClip() const { return clip.samples.empty() && m_shared && !m_shared->samples.empty(); }
     /// Optional WAV file to load into `clip` (the windowed runtime loads it,
     /// resampled to the output rate). Empty means use whatever `clip` holds.
     std::string clipPath;
@@ -94,22 +103,23 @@ public:
             const double left = static_cast<double>(total) - at;
             return left > 0.0 ? static_cast<float>(left / m_stream->SampleRate() / pitch) : 0.0f;
         }
-        if (clip.sampleRate <= 0) return 0.0f;
-        const double left = static_cast<double>(clip.FrameCount()) - m_pos;
-        return left > 0.0 ? static_cast<float>(left / clip.sampleRate / pitch) : 0.0f;
+        const AudioClip& c = Clip();
+        if (c.sampleRate <= 0) return 0.0f;
+        const double left = static_cast<double>(c.FrameCount()) - m_pos;
+        return left > 0.0 ? static_cast<float>(left / c.sampleRate / pitch) : 0.0f;
     }
     /// The playhead in sample frames of the clip or stream (not wrapped when a stream loops).
     std::size_t Playhead() const { return static_cast<std::size_t>(m_pos); }
 
     /// True when there is something to play: a loaded clip or an open stream.
-    bool HasAudio() const { return !clip.samples.empty() || m_stream != nullptr; }
+    bool HasAudio() const { return !Clip().samples.empty() || m_stream != nullptr; }
     /// True when the source plays from a stream (it has one and no clip in memory).
-    bool IsStreaming() const { return clip.samples.empty() && m_stream != nullptr; }
+    bool IsStreaming() const { return Clip().samples.empty() && m_stream != nullptr; }
     /// Length of the clip or stream in seconds (0 when unknown or empty).
-    float Duration() const { return IsStreaming() ? m_stream->Duration() : clip.Duration(); }
+    float Duration() const { return IsStreaming() ? m_stream->Duration() : Clip().Duration(); }
     /// Playhead in seconds of the sound itself (the pitch does not scale it).
     float Time() const {
-        const int rate = IsStreaming() ? m_stream->SampleRate() : clip.sampleRate;
+        const int rate = IsStreaming() ? m_stream->SampleRate() : Clip().sampleRate;
         if (rate <= 0) return 0.0f;
         double at = m_pos;
         if (IsStreaming() && loop && m_stream->TotalFrames() > 0) at = std::fmod(at, static_cast<double>(m_stream->TotalFrames()));
@@ -118,7 +128,7 @@ public:
     /// Jump to `seconds` into the clip or stream (clamped to its length; a stream
     /// refills from there, so the next buffer is already the new position).
     void Seek(float seconds) {
-        const int rate = IsStreaming() ? m_stream->SampleRate() : clip.sampleRate;
+        const int rate = IsStreaming() ? m_stream->SampleRate() : Clip().sampleRate;
         if (rate <= 0) return;
         double frame = static_cast<double>(seconds) * rate;
         if (frame < 0.0) frame = 0.0;
@@ -127,12 +137,12 @@ public:
             m_stream->Seek(static_cast<std::int64_t>(frame));
             m_pos = static_cast<double>(m_stream->HeadFrame());
         } else {
-            const double len = static_cast<double>(clip.FrameCount());
+            const double len = static_cast<double>(Clip().FrameCount());
             m_pos = frame < len ? frame : len;
         }
     }
     /// Use `s` as this source's sound (clears the in-memory clip).
-    void UseStream(std::shared_ptr<AudioStream> s) { m_stream = std::move(s); clip = AudioClip(); m_pos = 0.0; }
+    void UseStream(std::shared_ptr<AudioStream> s) { m_stream = std::move(s); clip = AudioClip(); m_shared.reset(); m_pos = 0.0; }
     /// Open `path` as a stream and use it. False (with `*error`) when it cannot be read.
     bool OpenStream(const std::string& path, std::string* error = nullptr) {
         auto s = AudioStream::OpenFile(path, error);
@@ -182,7 +192,12 @@ public:
         m_shots.push_back({std::make_shared<const AudioClip>(shot), 0.0, volumeScale});
     }
     /// Play this source's own clip as a one-shot.
-    void PlayOneShot(float volumeScale = 1.0f) { PlayOneShot(clip, volumeScale); }
+    void PlayOneShot(float volumeScale = 1.0f) {
+        if (UsesSharedClip()) {   // the shared clip is already immutable and counted: no copy
+            if (m_shots.size() >= kMaxOneShots) m_shots.erase(m_shots.begin());
+            m_shots.push_back({m_shared, 0.0, volumeScale});
+        } else PlayOneShot(clip, volumeScale);
+    }
 
     void Awake() override { if (playOnAwake) Play(); }
 
@@ -199,6 +214,7 @@ private:
     Vec3  m_spatialPos{};          // last mixed world position, for doppler
     bool  m_hasSpatialPos = false;
     float m_occlusion = 0.0f;      // 0 clear .. 1 fully behind a wall, smoothed
+    std::shared_ptr<const AudioClip> m_shared;   // see UseSharedClip
     std::shared_ptr<AudioStream> m_stream;   // the streamed sound, when `clip` is empty
     void RewindStream() { if (IsStreaming()) { m_stream->loop = loop; m_stream->Seek(0); } }
     std::vector<Shot> m_shots;

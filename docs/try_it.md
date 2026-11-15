@@ -52,6 +52,8 @@ release job or the installer build for this change.
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
+| 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
+| 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 
 ---
 
@@ -271,6 +273,82 @@ fix each item are in `docs/install_audit.md`; the comparison with other launcher
 
 ---
 
+## 16. Main menu bar (cleaned up)
+
+What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
+Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start the editor from the launcher). Open any project.
+
+1. Click **File**. You should see, in this order: New 2D Scene, New 3D Scene, Open Scene... (Ctrl+O), Open Recent, **one** Examples
+   (it used to be three), then Save Scene / Save Scene As... / Save Project with their keys, then New Project... / Open Project Folder... /
+   Project Upgrade..., then Import Model... / Merge Scene into Current..., then Autosave and Build Settings... (Ctrl+B), then Exit.
+   Open **Examples**: UI Gallery, UI Gallery (phone), Visual Script Node Playground, Node Playground (flow and variables).
+   With no recent scenes, hover **Open Recent**: the tip says why it is greyed. Press Play, then open File: **Save Scene** is greyed and
+   the tip says "Stop Play first ...".
+2. Click **Edit**. Undo and Redo name the step ("Undo Move") and are grey, with a tip, when there is nothing to undo. With nothing selected,
+   Cut, Copy, Duplicate and Delete are grey ("Select an object ... first."). Select an object: they work. Ctrl+click three objects in the
+   Hierarchy, open Edit again: the labels read **Duplicate 3 Objects** and **Delete 3 Objects**, and Cut is grey with the reason. **Preferences**
+   holds UI Scale, Density, Theme and Accent color (they used to be View > Appearance). **Project Settings...** is at the bottom.
+3. Click **GameObject**. Create Empty, Create Empty Child and Create Empty Parent (Ctrl+Shift+G) come first; Child and Parent need a selection.
+   Then the categories: **2D Object, 3D Object, Player, Light, Camera, Audio, Effects, UI**. **Audio > Audio Source** (new) puts a sound object in
+   the scene and selects it; its Audio Source component is in the Inspector. Everything the old menu offered is in one of the categories
+   (the table in editor_menus.md says which).
+4. Click **View**. **Panels**, **Editors & Tools** and **Layout** are where they always were. Below: **Frame Selected (F)**, **Isolate Selection
+   (Shift+I)**, **UI Editing Mode**, **Scene Overlays**, **Camera Bookmarks** (hover "Go to slot 1" before saving one: the tip says to save
+   first), **Rendering & Performance**. There is no loose "Reset Layout" any more: it is inside **Layout**.
+5. Click **Help**. **Documentation (online)** opens the docs folder on GitHub in your browser. **Report a Bug...** opens the issue page and
+   puts `OkaySpace v<version>` on the clipboard (paste it somewhere to see). **Check for Updates...** moved here from the old Engine menu.
+6. The **Window** and **Engine** menus are gone: their items were duplicates (Items, Loot & Recipes is in View > Editors & Tools; Build
+   Settings is in File) or moved (Check for Updates to Help).
+
+Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): [docs/images/editor_menus/](images/editor_menus/)
+(`file.png`, `file_examples.png`, `file_play_save_greyed.png`, `edit_undo_named.png`, `gameobject.png`, `view.png`, `help.png`). What was and
+was not clicked is listed in [editor_menus.md](editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
+
+## 17. Hierarchy right-click menus
+
+Where: the **Hierarchy** panel (left side by default). Map and the Existing / Gap table: [editor_menus.md](editor_menus.md), section 2.
+
+1. Right-click an object. The menu starts with Copy, Cut, Paste, Paste as Child, then Rename (F2), Duplicate, Delete, Delete Children, then
+   Create Empty Child, **Create Child**, Create Parent, Parent To, Unparent, Order, then Select, Expand All Below, then Deactivate, Lock, Focus in
+   Scene, Isolate, Transform, then **Add Component...**, Prefab, Save As Prefab..., Rig & IK, Copy Name or Path.
+2. **Create Child > 3D Object > Cube** (the submenu used to hold only 7 shapes; it now has 2D Object, 3D Object, Player, Light, Camera,
+   Audio, Effects, UI). A cube appears inside the object you clicked, at its origin, and is selected. **Ctrl+Z** removes it.
+3. Ctrl+click three objects, right-click one: the menu says **Delete 3 Objects**, **Duplicate 3 Objects**, **Deactivate 3 Objects**,
+   **Group 3 Objects**, and Cut is grey with the reason.
+4. **Select > Same Type (Light)** (the kind is the row's icon: Camera, Light, Mesh, Sprite, ...): every object of that kind is selected.
+   If there is no other one the item is grey and says so.
+5. **Add Component...**: the object is selected, the Inspector comes forward and its Add Component browser opens, ready to type in.
+6. Right-click the first row: **Move Up** and **Move to Top** are grey ("It is already the first of its siblings."). Right-click an object with
+   no children: **Delete Children** is grey ("This object has no children.").
+7. Right-click the empty space under the rows: Create Empty, the eight Create categories, Paste, Select All, Deselect, Expand All, Collapse All,
+   Sort A-Z. The **[+]** button at the top has Create Empty, Create Empty Child, Group Selected and the same categories.
+
+Screenshots of the real editor (Linux, virtual display): [docs/images/editor_menus/](images/editor_menus/) (`hierarchy_row_menu.png`,
+`hierarchy_create_child.png`, `hierarchy_create_child_result.png`, `hierarchy_three_selected.png`, `hierarchy_same_type_reason.png`,
+`hierarchy_add_component.png`, `hierarchy_empty_space.png`).
+
+**Checks run for this change** (menus, rows 16 and 17). Run here, on Linux, and seen:
+
+* `tests/test_menu_bar_model.cpp` (ctest `menu_bar_model`) and `tests/test_hierarchy_context_model.cpp` (`hierarchy_context_model`), built
+  with `g++ -std=c++17 -Wall -Wextra` and run: no failures (3079 and 2064 checks). The two tests also read `editor/*.cpp` and fail if a
+  menu id has no handler: that was shown by renaming a handler and seeing the test fail, then restoring it.
+* `editor/main.cpp` and `editor/UIRuntimeTools.cpp` with the editor's flags and `-fsyntax-only -Wall -Wextra`: no error and no warning in the
+  files changed.
+* **The real editor**, built from this branch (`okay-editor`, Linux, engine `-O1`, `main.cpp` `-O0`, asserts on) and run under Xvfb with the
+  software renderer, started with `--dev`, the mouse driven by `xdotool`: the clicks listed in [editor_menus.md](editor_menus.md) section 3b
+  worked as described (Create Child and its undo, Add Component, Same Type, Cut / Paste, Delete, Create Empty Parent / Child, Isolate, Panels,
+  Audio Source, the greyed items and their reasons, also while the game runs). No crash and no
+  Dear ImGui assert while clicking, in 15 sessions of this kind. The one assert seen was at shutdown, in two sessions that were closed with a
+  menu still open (`ImGui::DestroyPlatformWindow`, a pop-out menu's window still alive when the context is destroyed); asserts are off in a
+  release build, and it was not looked into further.
+* `python3 scripts/gen_feature_map.py --check`, `scripts/branch_lint.py all`, `scripts/bug_patterns.py`: clean.
+
+**Not seen:** anything on Windows (the editor was never run there); the Windows build (MinGW) of the changed files was not compiled; the
+items listed as "not clicked" in editor_menus.md section 3b (among them the Order submenu and Open Recent greyed with no history: the test
+project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
+have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
+
+
 ## Switches that are off by default (own code)
 
 CLAUDE.md rule 17 and `docs/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
@@ -460,3 +538,15 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
+
+## UI Notify template: no freeze when toasts pile up (bug fix)
+
+The **UI Notify** prebuilt screen froze the editor when the fifth toast was pushed into its stack of four. Fixed: a toast that is
+pushed out now stops counting at once.
+
+1. Windows editor: open or create a scene, then **GameObject > UI > Prebuilt Screens > UI Notify** (or the same entry under the
+   UI menu), press **Play**.
+2. Click the buttons **Info**, **Saved**, **Error**, **Confirm** and **Cancel** one after another, quickly, more than five times.
+3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
+   and each card goes away by itself after about six seconds. The editor keeps responding.
+4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).

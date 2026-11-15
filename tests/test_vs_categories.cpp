@@ -200,6 +200,25 @@ std::string Lower(std::string s) {
     return s;
 }
 
+// Words of a text, lower case, lightly stemmed (splines -> spline, building -> build), to compare a name with a description.
+std::set<std::string> StemmedWords(const std::string& text) {
+    std::set<std::string> out;
+    std::string cur;
+    auto flush = [&] {
+        if (cur.empty()) return;
+        if (cur.size() > 5 && cur.compare(cur.size() - 3, 3, "ing") == 0) cur.resize(cur.size() - 3);
+        else if (cur.size() > 3 && cur.back() == 's' && cur[cur.size() - 2] != 's') cur.pop_back();
+        out.insert(cur);
+        cur.clear();
+    };
+    for (char c : text) {
+        if (std::isalnum((unsigned char)c)) cur += (char)std::tolower((unsigned char)c);
+        else flush();
+    }
+    flush();
+    return out;
+}
+
 std::string PlaceName(const VsPlace& p) {
     return std::string(p.category ? p.category : "(none)") + (p.subcategory && p.subcategory[0] ? std::string(" / ") + p.subcategory : "");
 }
@@ -208,6 +227,23 @@ std::string PlaceName(const VsPlace& p) {
 int FirstMatch(const VsRule* rules, std::size_t n, const char* key) {
     for (std::size_t i = 0; i < n; ++i) if (VsRuleMatches(rules[i].match, key)) return (int)i;
     return -1;
+}
+
+// The topic list that docs/visual_scripting_naming.md shows (between the two markers there). One source: this test
+// prints it with --topic-table and checks the page against it, so the page cannot go stale.
+std::string TopicTable() {
+    std::string out = "| Section | Topic | What goes here | Subcategories |\n|---|---|---|---|\n";
+    std::string lastSection;
+    for (int i = 0; i < VsPaletteCategoryCount(); ++i) {
+        const VsPaletteCategory& c = kPaletteCategories[i];
+        std::string subs;
+        for (int k = 0; k < VsPaletteSubCount(); ++k)
+            if (std::strcmp(kPaletteSubs[k].category, c.name) == 0) subs += (subs.empty() ? "" : ", ") + std::string(kPaletteSubs[k].name);
+        const std::string section = lastSection == c.section ? "" : std::string("**") + c.section + "**";
+        lastSection = c.section;
+        out += "| " + section + " | " + c.name + " | " + c.blurb + " | " + subs + " |\n";
+    }
+    return out;
 }
 
 int RunDump(const char* path) {
@@ -234,6 +270,7 @@ int RunDump(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc >= 3 && std::string(argv[1]) == "--dump") return RunDump(argv[2]);
+    if (argc >= 2 && std::string(argv[1]) == "--topic-table") { std::fputs(TopicTable().c_str(), stdout); return 0; }
     RUN_SUITE("vs_categories");
 
     // ======================================================================================================
@@ -306,6 +343,17 @@ int main(int argc, char** argv) {
         }
         CHECK(VsSubOrder("") == -1);
         CHECK(VsSubOrder("No Such Subcategory") == 1000);
+        // The description of a topic (the hover text) mentions everything inside it: each subcategory shares a word with
+        // its topic's name or description, so nobody finds a subcategory the hover text never hinted at.
+        for (int i = 0; i < VsPaletteSubCount(); ++i) {
+            const int ti = VsPaletteCategoryIndex(kPaletteSubs[i].category);
+            if (ti < 0) continue;
+            const std::set<std::string> topicWords = StemmedWords(std::string(kPaletteCategories[ti].name) + " " + kPaletteCategories[ti].blurb);
+            bool shared = false;
+            for (const std::string& w : StemmedWords(kPaletteSubs[i].name)) if (topicWords.count(w)) shared = true;
+            CHECK(shared);
+            if (!shared) std::printf("  the description of '%s' does not mention its subcategory '%s'\n", kPaletteCategories[ti].name, kPaletteSubs[i].name);
+        }
     }
 
     // ======================================================================================================
@@ -566,6 +614,26 @@ int main(int argc, char** argv) {
         }
         CHECK(oldAdvanced > 400);
         CHECK(stillThere == 0);
+    }
+
+    // ======================================================================================================
+    // 9. The docs say what the code says
+    // ======================================================================================================
+    {
+        const std::string doc = ReadFile(std::string(OKAY_SOURCE_DIR) + "/docs/visual_scripting_naming.md");
+        const std::string a = "<!-- topics:start -->\n", b = "<!-- topics:end -->";
+        const std::size_t i = doc.find(a), j = doc.find(b);
+        CHECK(i != std::string::npos && j != std::string::npos && j > i);
+        if (i != std::string::npos && j != std::string::npos && j > i) {
+            const std::string shown = doc.substr(i + a.size(), j - i - a.size());
+            CHECK(shown == TopicTable());
+            if (shown != TopicTable())
+                std::printf("  docs/visual_scripting_naming.md lists other topics than the code. Run: test_vs_categories --topic-table\n"
+                            "  and paste its output between the <!-- topics:start --> and <!-- topics:end --> markers.\n");
+        }
+        // The generated pages exist (scripts/vs_category_report.py writes them from test_vs_categories --dump).
+        CHECK(!ReadFile(std::string(OKAY_SOURCE_DIR) + "/docs/visual_script_category_audit.md").empty());
+        CHECK(!ReadFile(std::string(OKAY_SOURCE_DIR) + "/docs/visual_scripting_topics.md").empty());
     }
 
     TEST_MAIN_RESULT();

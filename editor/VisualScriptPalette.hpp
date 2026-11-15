@@ -563,7 +563,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     // ---- Sidebar ----
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 1.0f));
-    ImGui::BeginChild("##vspside", ImVec2(214, -4), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("##vspside", ImVec2(262, -4), ImGuiChildFlags_Borders);   // wide enough for "Collision & Trigger Events"
     auto sideItem = [&](int id, const char* label, ImU32 dot, int count, bool selected, int indent) {
         ImGui::PushID(id + 10);
         const ImVec2 p = ImGui::GetCursorScreenPos();

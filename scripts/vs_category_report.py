@@ -11,10 +11,12 @@ then this script (standard library only) reads that file:
     python3 scripts/vs_category_report.py nodes.tsv --legacy        # the same tables for the OLD places (before the split)
     python3 scripts/vs_category_report.py nodes.tsv --moved         # every node that moved: old place -> new place
     python3 scripts/vs_category_report.py nodes.tsv --tree          # the topic tree with counts
-    python3 scripts/vs_category_report.py nodes.tsv --markdown-audit > docs/visual_script_category_audit.md
+    python3 scripts/vs_category_report.py nodes.tsv --markdown-audit --update docs/visual_script_category_audit.md
     python3 scripts/vs_category_report.py nodes.tsv --markdown-topics > docs/visual_scripting_topics.md
 
---markdown-audit needs a "before" dump as well when the dump has no old places in it (--before before.tsv).
+The dump holds the old place of every row next to the new one (the old places are frozen in
+editor/VisualScriptLegacyPlaces.hpp), so one dump is enough for the before and after tables. The audit page keeps its
+hand-written parts and only the block between its two "generated" markers is rewritten.
 
 A row is one palette entry: a node, an engine-API node, or an Actions step. A "listed" row is one the menu shows
 (duplicates and the nodes waiting to be tested are not listed). "Browse" rows are the listed ones that also show while
@@ -140,7 +142,7 @@ HINTS = collections.OrderedDict([
                 "matchmaking", "leaderboard", "account", "cloud", "achievement"]),
     ("audio", ["sound", "music", "audio", "volume", "pitch", "mute"]),
     ("camera", ["camera", "fov"]),
-    ("ui", ["screen", "button", "slider", "toast", "tooltip", "modal", "tab", "tabs", "dropdown", "ui"]),
+    ("ui", ["screen", "slider", "toast", "tooltip", "modal", "tab", "tabs", "dropdown", "ui"]),
     ("saving", ["save", "saved", "load", "slot", "checkpoint", "prefs", "autosave"]),
     ("tween", ["tween", "ease", "easing"]),
     ("input", ["key", "keys", "mouse", "gamepad", "touch", "gesture", "axis", "swipe", "pinch"]),
@@ -188,9 +190,11 @@ def home_words(d, cat, sub, legacy):
 
 
 def stem(w):
-    for suf in ("ing", "es", "s"):
-        if w.endswith(suf) and len(w) > len(suf) + 2:
-            return w[: -len(suf)]
+    """A very light stemmer: splines -> spline, quests -> quest, building -> build. Enough to compare words."""
+    if w.endswith("ing") and len(w) > 5:
+        return w[:-3]
+    if w.endswith("s") and not w.endswith("ss") and len(w) > 3:
+        return w[:-1]
     return w
 
 
@@ -230,7 +234,7 @@ def blurb_gaps(d, legacy, out):
     for (c, s), n in sorted(by_place.items(), key=lambda kv: -kv[1]):
         if not s:
             continue
-        bw = {stem(w) for w in words(pool.get(c, ""))}
+        bw = {stem(w) for w in words(c + " " + pool.get(c, ""))}
         if not ({stem(w) for w in words(s)} & bw):
             gaps.append((c, s, n))
     for c, s, n in gaps:
@@ -297,98 +301,163 @@ def md_counts_table(d, legacy, lines):
         lines.append(f"| {md_escape(c)} | {by_cat[c]} | {direct[c]} | " + md_escape(", ".join(f"{s} ({v})" for s, v in subs)) + " |")
 
 
-def markdown_audit(d, before, out):
+GEN_START = "<!-- generated:start -->"
+GEN_END = "<!-- generated:end -->"
+
+
+def flagged_table(d, legacy, lines, limit=12):
+    rows = browse_rows(d)
+    flagged = collections.defaultdict(list)
+    for r in rows:
+        hints = node_hints(r)
+        if not hints:
+            continue
+        c, s = r.place(legacy)
+        home = {stem(w) for w in home_words(d, c, s, legacy)}
+        if not any({stem(w) for w in HINTS[h]} & home for h in hints):
+            flagged[(c, hints[0])].append(r)
+    total = sum(len(v) for v in flagged.values())
+    lines.append(f"{total} rows. The biggest groups:")
+    lines.append("")
+    lines.append("| Rows | Sat in | The name talks about | Examples |")
+    lines.append("|---:|---|---|---|")
+    for (c, h), rs in sorted(flagged.items(), key=lambda kv: -len(kv[1]))[:limit]:
+        sample = ", ".join(x.title or x.id for x in rs[:5]) + (" ..." if len(rs) > 5 else "")
+        lines.append(f"| {len(rs)} | {md_escape(c)} | {h} | {md_escape(sample)} |")
+    return total
+
+
+def blurb_gap_lines(d, legacy, lines, limit=14):
+    rows = browse_rows(d)
+    by_place = collections.Counter(r.place(legacy) for r in rows)
+    pool = {c: b for c, b in (d.legacy_cats if legacy else [(c, b) for c, _, b in d.cats])}
+    gaps = []
+    for (c, s), n in sorted(by_place.items(), key=lambda kv: -kv[1]):
+        if not s:
+            continue
+        bw = {stem(w) for w in words(c + " " + pool.get(c, ""))}
+        if not ({stem(w) for w in words(s)} & bw):
+            gaps.append((c, s, n))
+    lines.append(f"{sum(n for _, _, n in gaps)} rows sit in {len(gaps)} subcategories that the one-line description of their topic does not mention"
+                 + (":" if gaps else "."))
+    if gaps:
+        lines.append("")
+        lines.append("| Rows | Subcategory |")
+        lines.append("|---:|---|")
+        for c, s, n in gaps[:limit]:
+            lines.append(f"| {n} | {md_escape(c)} / {md_escape(s)} |")
+        if len(gaps) > limit:
+            lines.append(f"| | and {len(gaps) - limit} more |")
+
+
+def duplicate_lines(d, legacy, lines, limit=14):
+    out = []
+    found = duplicates(d, legacy, out, limit=limit)
+    lines.append(f"{len(found)} groups of rows have the same name, or the same job under another name, and sit in different places:")
+    lines.append("")
+    lines.append("| Name | The rows | Where |")
+    lines.append("|---|---|---|")
+    for kind, key, rs in sorted(found, key=lambda x: (-len({r.place(legacy) for r in x[2]}), x[1]))[:limit]:
+        rows_txt = "; ".join(f"{r.title or r.id} ({r.kind})" for r in rs[:3])
+        where = "; ".join(sorted({fmt_place(*r.place(legacy)) for r in rs}))
+        lines.append(f"| {md_escape(key)} | {md_escape(rows_txt)} | {md_escape(where)} |")
+
+
+def markdown_audit(d, out):
+    """The generated block of docs/visual_script_category_audit.md. d has the old places in it (was_*)."""
     lines = out
-    old = before if before else d
-    old_legacy = before is None
-    rows_old = browse_rows(old)
-    rows_new = browse_rows(d)
-    lines.append("# Visual script category audit")
+    if not d.has_old_places:
+        lines.append("(This dump has no old places, so there is nothing to compare.)")
+        return
+    new_rows = browse_rows(d)
+    old_cat, old_sub, old_direct = counts(new_rows, True)
+    new_cat, new_sub, new_direct = counts(new_rows, False)
+    moved = [r for r in new_rows if (r.was_cat, r.was_sub) != (r.cat, r.sub)]
+    kinds = collections.Counter(r.kind for r in d.rows)
+    listed = [r for r in d.rows if r.listed]
+    lines.append("### Numbers at a glance")
     lines.append("")
-    lines.append("Generated by `scripts/vs_category_report.py` from the dump of `tests/test_vs_categories.cpp`")
-    lines.append("(`test_vs_categories --dump nodes.tsv`). Do not edit by hand. The tree and the rules for new nodes are in")
-    lines.append("[visual_scripting_naming.md](visual_scripting_naming.md); the full node list by topic is in")
-    lines.append("[visual_scripting_topics.md](visual_scripting_topics.md).")
+    lines.append(f"There are {len(d.rows)} palette rows ({', '.join(f'{v} {k}' for k, v in sorted(kinds.items()))}). {len(listed)} are listed in the menu;")
+    lines.append(f"{len(new_rows)} of those also show while you click through a topic. All the counts below are those {len(new_rows)} rows.")
     lines.append("")
-    lines.append("A *palette row* is a node, an engine-API node or an Actions step. *Listed* rows are the ones the Add Node menu")
-    lines.append("shows (a duplicate of another row, or a node waiting to be tested, is not listed). *Browse* rows are listed rows")
-    lines.append("that also show while you click through a topic (an Actions step that is the same job as a node is found by search only).")
-    lines.append("All counts below are browse rows.")
+    lines.append("| | Before | After |")
+    lines.append("|---|---:|---:|")
+    lines.append(f"| Topics | {len(old_cat)} | {len(new_cat)} |")
+    lines.append(f"| Subcategories | {len(old_sub)} | {len(new_sub)} |")
+    lines.append(f"| Sections (headings in the sidebar) | 0 | {len({sec for _, sec, _ in d.cats})} |")
+    lines.append(f"| Most nodes directly in one topic | {max(old_direct.values())} ({max(old_direct, key=old_direct.get)}) | {max(new_direct.values())} ({max(new_direct, key=new_direct.get)}) |")
+    lines.append(f"| Largest single bucket (topic or subcategory) | {max(counts_bucket(new_rows, True).values())} | {max(counts_bucket(new_rows, False).values())} |")
+    lines.append(f"| Topics holding more than 30 nodes directly | {sum(1 for v in old_direct.values() if v > 30)} | {sum(1 for v in new_direct.values() if v > 30)} |")
+    lines.append(f"| Rows whose name sounds like another topic (heuristic) | {flagged_count(d, True)} | {flagged_count(d, False)} |")
+    lines.append(f"| Rows in a subcategory their topic's description never mentions | {blurb_gap_rows(d, True)} | {blurb_gap_rows(d, False)} |")
+    lines.append(f"| Rows that changed place | | {len(moved)} of {len(new_rows)} |")
     lines.append("")
-    # ---- before
-    lines.append("## Before (the old 19 topics)")
+    lines.append("### Before: the old 19 topics")
     lines.append("")
-    o = []
-    tables(old, old_legacy, o)
-    lines.append("```")
-    lines.extend(o)
-    lines.append("```")
-    lines.append("")
-    lines.append("| Topic | Nodes | Directly in the topic | Subcategories (nodes) |")
-    lines.append("|---|---:|---:|---|")
     md = []
-    md_counts_table(old, old_legacy, md)
-    lines.extend(md[2:])
-    lines.insert(len(lines) - len(md) + 2, "")  # keep the table header from md_counts_table out; header added above
+    md_counts_table(d, True, md)
+    lines.extend(md)
     lines.append("")
-    lines.append("### What was wrong")
+    lines.append("The 15 biggest buckets:")
     lines.append("")
-    o = []
-    flagged = suspects(old, old_legacy, o)
-    blurb_gaps(old, old_legacy, o)
-    dups = duplicates(old, old_legacy, o)
-    lines.append("```")
-    lines.extend(o)
-    lines.append("```")
+    lines.append("| Nodes | Bucket |")
+    lines.append("|---:|---|")
+    for (c, sname), n in collections.Counter(r.place(True) for r in new_rows).most_common(15):
+        lines.append(f"| {n} | {md_escape(fmt_place(c, sname))} |")
     lines.append("")
-    # ---- after
-    lines.append("## After (the new topics)")
+    lines.append("Nodes whose name or description sounds like another topic than the one they sat in (a heuristic: whole words in the id and the title):")
     lines.append("")
-    o = []
-    tables(d, False, o)
-    lines.append("```")
-    lines.extend(o)
-    lines.append("```")
+    flagged_table(d, True, lines)
+    lines.append("")
+    blurb_gap_lines(d, True, lines)
+    lines.append("")
+    duplicate_lines(d, True, lines)
+    lines.append("")
+    lines.append("### After: the new topics")
     lines.append("")
     md = []
     md_counts_table(d, False, md)
     lines.extend(md)
     lines.append("")
-    o = []
-    suspects(d, False, o)
-    blurb_gaps(d, False, o)
-    lines.append("```")
-    lines.extend(o)
-    lines.append("```")
+    lines.append("The 15 biggest buckets now:")
+    lines.append("")
+    lines.append("| Nodes | Bucket |")
+    lines.append("|---:|---|")
+    for (c, sname), n in collections.Counter(r.place(False) for r in new_rows).most_common(15):
+        lines.append(f"| {n} | {md_escape(fmt_place(c, sname))} |")
+    lines.append("")
+    lines.append("Same heuristic, new places:")
+    lines.append("")
+    flagged_table(d, False, lines)
+    lines.append("")
+    blurb_gap_lines(d, False, lines)
+    lines.append("")
+    duplicate_lines(d, False, lines)
     lines.append("")
     # ---- moved
-    moved = [r for r in rows_new if (r.was_cat, r.was_sub) != (r.cat, r.sub)] if d.has_old_places else []
-    lines.append("## Every node that moved")
+    lines.append("### Every node that moved")
     lines.append("")
-    if not d.has_old_places:
-        lines.append("(This dump has no old places, so there is nothing to compare.)")
-        return
-    stayed = len(rows_new) - len(moved)
-    lines.append(f"{len(moved)} of {len(rows_new)} browse rows changed place; {stayed} kept the same topic and subcategory.")
+    lines.append(f"{len(moved)} of {len(new_rows)} rows changed place; {len(new_rows) - len(moved)} kept the same topic name and subcategory (for example Debug).")
     lines.append("")
-    lines.append("### By old place")
+    lines.append("#### By old place")
     lines.append("")
     lines.append("| Old place | Rows | Went to (rows) |")
     lines.append("|---|---:|---|")
     by_old = collections.defaultdict(collections.Counter)
     for r in moved:
         by_old[(r.was_cat, r.was_sub)][(r.cat, r.sub)] += 1
-    for (c, s), dest in sorted(by_old.items(), key=lambda kv: -sum(kv[1].values())):
+    for (c, sname), dest in sorted(by_old.items(), key=lambda kv: -sum(kv[1].values())):
         total = sum(dest.values())
         where = ", ".join(f"{fmt_place(dc, ds)} ({n})" for (dc, ds), n in dest.most_common(8))
         if len(dest) > 8:
             where += f", and {len(dest) - 8} more"
-        lines.append(f"| {md_escape(fmt_place(c, s))} | {total} | {md_escape(where)} |")
+        lines.append(f"| {md_escape(fmt_place(c, sname))} | {total} | {md_escape(where)} |")
     lines.append("")
-    lines.append("### The full list")
+    lines.append("#### The full list")
     lines.append("")
-    lines.append("Sorted by the new place. `Kind` is node (hand-written), library (Lb), gameplay (Gl), builtin (a text-script function),")
-    lines.append("api (an engine-API property or method), step (an Actions step) or check (an Actions condition).")
+    lines.append("Sorted by the new place. Kind is node (hand-written), library (`Lb`), gameplay (`Gl`), builtin (a text-script function),")
+    lines.append("api (an engine-API property or method), step (an Actions step) or check (an Actions condition). The Id is what a graph file")
+    lines.append("stores (a builtin starts with `Fn.`), or the step's short name.")
     lines.append("")
     cur = None
     for r in sorted(moved, key=lambda r: (topic_index(d, r.cat), sub_index(d, r.cat, r.sub), r.title.lower(), r.id)):
@@ -396,11 +465,54 @@ def markdown_audit(d, before, out):
         if place != cur:
             cur = place
             lines.append("")
-            lines.append(f"#### {place}")
+            lines.append(f"##### {place}")
             lines.append("")
             lines.append("| Node | Kind | Id | Was |")
             lines.append("|---|---|---|---|")
         lines.append(f"| {md_escape(r.title)} | {r.kind} | `{md_escape(r.id)}` | {md_escape(fmt_place(r.was_cat, r.was_sub))} |")
+
+
+def counts_bucket(rows, legacy):
+    return collections.Counter(r.place(legacy) for r in rows)
+
+
+def flagged_count(d, legacy):
+    n = 0
+    for r in browse_rows(d):
+        hints = node_hints(r)
+        if not hints:
+            continue
+        c, s = r.place(legacy)
+        home = {stem(w) for w in home_words(d, c, s, legacy)}
+        if not any({stem(w) for w in HINTS[h]} & home for h in hints):
+            n += 1
+    return n
+
+
+def blurb_gap_rows(d, legacy):
+    rows = browse_rows(d)
+    by_place = collections.Counter(r.place(legacy) for r in rows)
+    pool = {c: b for c, b in (d.legacy_cats if legacy else [(c, b) for c, _, b in d.cats])}
+    total = 0
+    for (c, sname), n in by_place.items():
+        if not sname:
+            continue
+        bw = {stem(w) for w in words(c + " " + pool.get(c, ""))}
+        if not ({stem(w) for w in words(sname)} & bw):
+            total += n
+    return total
+
+
+def update_block(path, text):
+    """Replace what stands between the two generated markers of a page and keep the rest."""
+    with open(path, encoding="utf-8") as fh:
+        page = fh.read()
+    i, j = page.find(GEN_START), page.find(GEN_END)
+    if i < 0 or j < i:
+        raise SystemExit(f"{path}: the page has no {GEN_START} ... {GEN_END} block")
+    page = page[: i + len(GEN_START)] + "\n\n" + text.rstrip("\n") + "\n\n" + page[j:]
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(page)
 
 
 def topic_index(d, cat):
@@ -500,16 +612,20 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dump", help="the file written by test_vs_categories --dump")
     ap.add_argument("--legacy", action="store_true", help="use the old places (before the split)")
-    ap.add_argument("--before", help="a dump taken from the old code (only needed for --markdown-audit when the dump has no old places)")
     ap.add_argument("--moved", action="store_true", help="list every node that moved")
     ap.add_argument("--tree", action="store_true", help="print the topic tree with counts")
-    ap.add_argument("--markdown-audit", action="store_true")
-    ap.add_argument("--markdown-topics", action="store_true")
+    ap.add_argument("--markdown-audit", action="store_true", help="print the generated block of docs/visual_script_category_audit.md")
+    ap.add_argument("--markdown-topics", action="store_true", help="print docs/visual_scripting_topics.md")
+    ap.add_argument("--update", metavar="PAGE", help="with --markdown-audit: rewrite the generated block of this page in place")
     a = ap.parse_args()
     d = Dump(a.dump)
     out = []
     if a.markdown_audit:
-        markdown_audit(d, Dump(a.before) if a.before else None, out)
+        markdown_audit(d, out)
+        if a.update:
+            update_block(a.update, "\n".join(out))
+            print(f"updated {a.update}")
+            return
     elif a.markdown_topics:
         markdown_topics(d, out)
     elif a.tree:

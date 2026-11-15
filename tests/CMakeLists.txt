@@ -1328,6 +1328,13 @@ target_link_libraries(test_vs_palette_categories PRIVATE okay::engine)
 target_compile_definitions(test_vs_palette_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_palette_categories COMMAND test_vs_palette_categories)
 
+# Where every node sits in the Add Node menu: one place each, no catch-all, no oversized topic, old topic names still search.
+add_executable(test_vs_categories test_vs_categories.cpp)
+target_include_directories(test_vs_categories PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_categories PRIVATE okay::engine)
+target_compile_definitions(test_vs_categories PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_categories COMMAND test_vs_categories)
+
 add_executable(test_vs_palette_levels test_vs_palette_levels.cpp)
 target_include_directories(test_vs_palette_levels PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_palette_levels PRIVATE okay::engine)

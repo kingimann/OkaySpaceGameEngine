@@ -62,7 +62,14 @@ InvResult Drop(Inventory* inv, int i, int n = 1);
 /// through a Consumables on the user (its recipe, else the item definition's use
 /// action), pick the matching piece in the user's BuildMode palette, or equip it
 /// through the user's Equipment when its definition has an equip slot.
+/// An item whose definition has a custom "cooldown" (seconds of game time) can be used again from the same inventory
+/// only once that time has passed; until then Use refuses it with reason "cooldown". Cooldowns are runtime only (not
+/// saved) and pause with the game clock.
 InvResult Use(Inventory* inv, int i, GameObject* user);
+/// Seconds of game time before `item` can be used again from `inv` (0 = ready).
+float CooldownLeft(const Inventory* inv, const std::string& item);
+/// Forget every cooldown (a new game, a test).
+void ResetCooldowns();
 
 /// Atomically remove `take` and add `give` (crafting).
 InvResult Craft(Inventory* inv, const std::vector<Inventory::Stack>& take, const std::vector<Inventory::Stack>& give);

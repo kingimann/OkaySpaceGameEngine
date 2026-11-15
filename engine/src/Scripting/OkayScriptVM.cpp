@@ -7144,6 +7144,10 @@ struct OkayScriptVM::Impl {
             if (ui && i >= 0 && i < ui->hotbarSlots) ui->selected = i;
             return Value{};
         };
+        b["inv_cooldown"] = [invAt, itemArg](std::vector<Value>& a) {   // (item, [bag]) -> seconds before it can be used again
+            Inventory* inv = invAt(a, 1);
+            return Value{inv ? InventoryOps::CooldownLeft(inv, itemArg(a, 0)) : 0.0f};
+        };
         b["inv_move"] = [invAt, intArg](std::vector<Value>& a) {   // (from, to, n = whole stack) -> bool
             Inventory* inv = invAt(a, 3);
             return Value{inv && InventoryOps::Move(inv, intArg(a, 0, -1), inv, intArg(a, 1, -1), intArg(a, 2, 0),

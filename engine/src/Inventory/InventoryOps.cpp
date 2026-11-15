@@ -4,7 +4,11 @@
 #include "okay/Components/Consumables.hpp"
 #include "okay/Components/Equipment.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
+#include "okay/Core/Time.hpp"
 #include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <map>
 #include <utility>
 
 namespace okay {
@@ -263,10 +267,38 @@ static InvResult UseItem(Inventory* inv, int i, GameObject* user) {
     return InvResult::No("nothing uses it");
 }
 
+namespace {
+// When each (inventory object, item) may be used again, in game time. Keyed by the object's InstanceId (never reused)
+// rather than the pointer, so a destroyed bag's cooldowns cannot carry over to a new one at the same address.
+std::map<std::pair<std::uint64_t, std::string>, double>& Cooldowns() {
+    static std::map<std::pair<std::uint64_t, std::string>, double> m;
+    return m;
+}
+float CooldownOf(const ItemDefinition* def) {
+    if (!def) return 0.0f;
+    const std::string v = def->Custom("cooldown");
+    const float f = v.empty() ? 0.0f : (float)std::atof(v.c_str());
+    return std::isfinite(f) && f > 0.0f ? f : 0.0f;
+}
+std::uint64_t BagId(const Inventory* inv) { return inv && inv->gameObject ? inv->gameObject->InstanceId() : 0; }
+} // namespace
+
+float CooldownLeft(const Inventory* inv, const std::string& item) {
+    const auto it = Cooldowns().find({BagId(inv), item});
+    if (it == Cooldowns().end()) return 0.0f;
+    const double left = it->second - Time::ElapsedTimeD();
+    return left > 0.0 ? (float)left : 0.0f;
+}
+
+void ResetCooldowns() { Cooldowns().clear(); }
+
 InvResult Use(Inventory* inv, int i, GameObject* user) {
     const std::string item = ValidSlot(inv, i) ? inv->slots[i].item : std::string();
     const ItemDefinition* def = item.empty() ? nullptr : ItemDatabase::Get().Find(item);
+    const float cooldown = CooldownOf(def);
+    if (cooldown > 0.0f && CooldownLeft(inv, item) > 0.0f) return InvResult::No("cooldown");
     const InvResult r = UseItem(inv, i, user);
+    if (r.Ok() && cooldown > 0.0f) Cooldowns()[{BagId(inv), item}] = Time::ElapsedTimeD() + cooldown;
     if (r.Ok()) {
         InventoryEvents::Fire(inv->gameObject, "on_item_used", "OnItemUsed", {vs::VsValue(item)});
         if (!def || def->equip == EquipSlot::None) NetInventory::NoticeUse(inv, i, true);

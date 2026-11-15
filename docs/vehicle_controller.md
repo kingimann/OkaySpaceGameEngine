@@ -68,6 +68,35 @@ Rigidbody2D). Two modes:
 Same feel knobs (max/reverse speed, acceleration, brake, drag, turn, grip,
 handbrake). `Speed()` returns the signed forward speed.
 
+## Driver seat and getting in (`VehicleSeat`)
+
+Add *Add Component ▸ Gameplay ▸ Vehicle Seat* on the car (or on a child of it). Then the
+player gets in and out instead of the car always listening to the keyboard.
+
+- **Get in:** walk within `useRadius` of the seat and press **E** (`enterKey`). The
+  player controller and the body collider switch off, gravity is paused, and the body is
+  carried at `sitPoint`. The car now reads the driver's keys (W/S/A/D, Space).
+- **Get out:** press **E** again. The player is put at `exitPoint` (local to the seat) and
+  the controller, collider and gravity come back. If something solid is there, the
+  mirrored sides are tried, then the roof (2.5 m above the seat).
+- **Driver leaves:** the car brakes to a stop (`brakeForce`) and ignores the keys. The
+  chase camera only follows while someone drives.
+- **One driver per car.** A second get-in on a driver seat is refused. Turn off `driver`
+  for a passenger seat: it carries the player but does not give them the wheel. One person
+  sits in one seat at a time.
+- **A car with no driver seat** keeps the old behaviour: it always reads the keys.
+- **Safe on destroy:** if the driver, the seat or the car is destroyed while seated, the
+  seat is freed and no pointer is left dangling; a surviving player is put back on foot.
+- **Saved:** `driver`, `sitPoint`, `exitPoint`, `useRadius`, `enterKey`, `prompt`. The seat
+  finds its car through the object hierarchy, so it survives save, load and scene copy.
+  Who sits in it is runtime only and is not saved.
+- **From C++:** `VehicleSeat::Enter(go)` (returns false if refused), `Exit()`,
+  `Occupant()`, `VehicleController::Driver()`.
+
+Not done: no script or visual-script node for enter / exit / driver yet; **multiplayer
+does not replicate seat state** (each machine decides on its own); no sit or steering
+animation on the character; no per-seat camera.
+
 ## Roadmap
 
 The arcade model is the default; raycast suspension (above) is the opt-in sim layer.

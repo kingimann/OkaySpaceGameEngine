@@ -1208,6 +1208,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - drawn culled (27.2)
 - drawUI (10.4)
 - drift (4.5)
+- Driver seat (4.5.4)
 - drop (9.6, 11.2)
 - Drop from Project (44.2.1)
 - drop target (12.4)

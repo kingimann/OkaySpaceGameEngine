@@ -10,6 +10,7 @@
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
+#include <unordered_set>
 
 namespace okay {
 
@@ -62,6 +63,16 @@ public:
     // shared WASD/arrow axis. The handbrake key is remappable.
     char handbrakeKey = ' ';
 
+    /// ---- Driver seat (see VehicleSeat.hpp) ----
+    /// A vehicle with a driver VehicleSeat only reads the keyboard while someone sits in it.
+    /// With nobody at the wheel it brakes to a stop (brakeForce) and does not chase a camera.
+    /// A vehicle with no driver seat keeps the old behaviour: it always reads the keys.
+    GameObject* Driver() const { return m_driver; }
+    bool  HasDriverSeat() const { return m_hasDriverSeat; }
+    /// Called by VehicleSeat only.
+    void  SetDriver(GameObject* who) { m_driver = who; }
+    void  NoteDriverSeat() { m_hasDriverSeat = true; }
+
     float Speed() const { return m_speed; }              // signed forward speed (units/s)
     bool  IsGrounded() const { return m_grounded; }
 
@@ -70,9 +81,15 @@ public:
         if (!IsLocallyControlled(gameObject)) return;   // remote proxy: NetworkSync drives it
 
         // ---- Read input: WASD/arrow axis (y = throttle, x = steer) ----
-        Vec2 axis = Input::AxisWASD();
-        float throttle = axis.y, steer = axis.x;
-        bool handbrake = handbrakeKey && Input::GetKey(handbrakeKey);
+        // With a driver seat, only a seated driver's keys count; empty = no input.
+        const bool unmanned = m_hasDriverSeat && !m_driver;
+        float throttle = 0.0f, steer = 0.0f;
+        bool handbrake = false;
+        if (!unmanned) {
+            Vec2 axis = Input::AxisWASD();
+            throttle = axis.y; steer = axis.x;
+            handbrake = handbrakeKey && Input::GetKey(handbrakeKey);
+        }
 
         // Planar facing axes (flatten Y so slopes don't change the drive plane).
         Vec3 F = transform->Forward(); Vec3 R = transform->Right();
@@ -105,7 +122,8 @@ public:
         // ---- Longitudinal: ease forward speed toward the throttle target ----
         float target = throttle > 0.0f ? maxSpeed * throttle
                      : throttle < 0.0f ? -reverseSpeed * (-throttle) : 0.0f;
-        float rate = (throttle == 0.0f) ? drag
+        float rate = unmanned ? brakeForce                           // driver left: brake to a stop
+                   : (throttle == 0.0f) ? drag
                    : (throttle < 0.0f && speedF > 0.1f) ? brakeForce      // pressing back while rolling fwd = brake
                    : acceleration;
         speedF = MoveToward(speedF, target, rate * dt);
@@ -131,7 +149,11 @@ public:
             }
         }
 
-        if (followCamera) UpdateCamera(dt);
+        if (followCamera && !unmanned) UpdateCamera(dt);
+    }
+
+    void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
+        if (m_driver && dying.count(m_driver)) m_driver = nullptr;   // never keep a freed driver
     }
 
 private:
@@ -239,6 +261,8 @@ private:
             ct->localRotation = Quat::LookRotation(look);   // orient +Z (engine forward) at the target
     }
 
+    GameObject* m_driver = nullptr;      // runtime only, set by VehicleSeat
+    bool  m_hasDriverSeat = false;       // runtime only, set by VehicleSeat
     float m_speed = 0.0f;
     bool  m_grounded = true;
     Vec3  m_kinematicVel{0, 0, 0};

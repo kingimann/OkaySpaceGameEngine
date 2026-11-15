@@ -70,6 +70,7 @@ static const char* kKnownUnproven[] = {
 // Engine-API bindings (Class.Method nodes) that do nothing a headless scene can see: they need a rumble
 // motor, the input map, a settings file or a physics step with inertia. Everything else in the 1497 is
 // proven above. This list is a ratchet: a new silent binding fails the test, and a proven one must leave.
+// The four engine-API ones are proven outside the snapshot by test_vs_api_silent.cpp (input map, Prefs, spin).
 static const char* kKnownSilentBindings[] = {
     "Rigidbody.AddTorque/1", "Input.DefineAction/3", "Input.DefineDirection/3", "Audio.SaveSettings/0",
     // Drawing between steps does not move the saved pose. With one step per frame the

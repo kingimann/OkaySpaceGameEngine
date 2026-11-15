@@ -3541,3 +3541,11 @@ add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
+
+add_executable(test_vs_net_nodes test_vs_net_nodes.cpp)
+target_link_libraries(test_vs_net_nodes PRIVATE okay::engine)
+add_test(NAME vs_net_nodes COMMAND test_vs_net_nodes)
+
+add_executable(test_vs_api_silent test_vs_api_silent.cpp)
+target_link_libraries(test_vs_api_silent PRIVATE okay::engine)
+add_test(NAME vs_api_silent COMMAND test_vs_api_silent)

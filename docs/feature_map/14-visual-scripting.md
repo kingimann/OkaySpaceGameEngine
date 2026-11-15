@@ -147,7 +147,7 @@ Graphs are saved as `.okayvs` text (OkayVS); about 250 node types across eight n
 - **API:** `vs::VsApiEntries()`, node types such as `Transform.Translate/3`, `Rigidbody.AddForce/1`, `Mathf.Clamp/3`
 - **Editor:** palette group "Engine API" (appended by `VsWithApiDefs` in the graph editor)
 - **Docs:** `docs/visual_scripting.md` ("Engine API nodes"), `docs/engine_api.md`
-- **Tests:** `vs_acceptance` (API nodes end to end), `vs_types`, `vs_pin_defaults`
+- **Tests:** `vs_acceptance` (API nodes end to end), `vs_types`, `vs_pin_defaults`, `vs_api_silent` (Input.DefineAction, Input.DefineDirection, Audio.SaveSettings, Rigidbody.AddTorque)
 - **Status:** Works - one binding table feeds scripts, nodes and docs
 - **Open:** the binding table is a different list from the old VM's built-ins (13.7)
 - **Related:** 13.6, 13.2, 14.4

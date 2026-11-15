@@ -329,7 +329,7 @@ EngineApi Build() {
             "Kick it at once (a jump, a hit)."));
         r.methods.push_back(method("AddTorque", {tVec}, {"torque"}, tVoid,
             [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddTorque(V(a[0])); return Value{}; },
-            "Twist it around X / Y / Z."));
+            "Twist it around X / Y / Z. Nothing happens while Freeze Rotation is on (the default for a new Rigidbody)."));
         r.methods.push_back(method("AddForceAtPosition", {tVec, tVec}, {"force", "point"}, tVoid,
             [](const Value& s, std::vector<Value>& a, CallContext& c) { Body(s, c)->AddForceAtPosition(V(a[0]), V(a[1])); return Value{}; },
             "Push it at a world point (off-centre pushes also spin it)."));

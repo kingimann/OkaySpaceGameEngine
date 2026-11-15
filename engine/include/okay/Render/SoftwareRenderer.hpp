@@ -16,6 +16,7 @@
 #include <unordered_set>
 #include "okay/Graphics/Image.hpp"
 #include "okay/Render/ProcTexture.hpp"
+#include "okay/Core/Profiler.hpp"
 #include "okay/Core/Time.hpp"
 #include <algorithm>
 #include <cmath>
@@ -1897,9 +1898,16 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // The scene's Ambient Mode (shared with the GPU shaders).
     SceneLights::Hemisphere() = rs.ambientMode != Scene::RenderSettings::AmbientFlat;
     SceneAmbientColors(rs, SceneLights::AmbientColor(), SceneLights::SkyAmbient(), SceneLights::GroundAmbient());
-    const visibility::Frame& vis = visibility::Build(scene, vp, eye, r.width, r.height, visibility::RenderViewFovY(), ignore);
-    RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
-    RenderLocalShadowMaps(scene, vp, eye);   // spot / point / area light shadow maps
+    // (OKAY_PROFILE scopes: free while the profiler is off; with it on they split a frame into the editor's Profiler rows
+    // and tests/bench_frame.cpp's phase table.)
+    const visibility::Frame* visPtr = nullptr;
+    { OKAY_PROFILE("Render.Visibility"); visPtr = &visibility::Build(scene, vp, eye, r.width, r.height, visibility::RenderViewFovY(), ignore); }
+    const visibility::Frame& vis = *visPtr;
+    {
+        OKAY_PROFILE("Render.ShadowMaps");
+        RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
+        RenderLocalShadowMaps(scene, vp, eye);   // spot / point / area light shadow maps
+    }
     if (SSAOEnabled()) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;
         r.gpos.assign(n, Vec3{0, 0, 0}); r.gnrm.assign(n, Vec3{0, 0, 0});
@@ -1916,6 +1924,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     (void)viewFrustum;
     std::unordered_set<const GameObject*> swCulled;
     int swDrawn = 0;
+    {
+    OKAY_PROFILE("Render.Prewarm");
     for (const auto& go : scene.Objects()) {
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr) continue;
@@ -1928,6 +1938,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!mr->metallicRoughnessMap.empty()) GetCachedMips(mr->metallicRoughnessMap);
         if (!mr->emissiveMap.empty()) GetCachedMips(mr->emissiveMap);
         if (!mr->matcap.empty() && !mr->unlit && mr->shader != MeshRenderer::Shader::Unlit) GetCachedTexture(mr->matcap);
+    }
     }
     // Rasterize the meshes across CPU cores: each worker owns a horizontal band
     // of scanlines [bandY0, bandY1] and only fills pixels inside it, so colour /
@@ -2308,7 +2319,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     }
     };  // renderBand
     // Split the frame into horizontal bands across hardware threads.
-    ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); });
+    { OKAY_PROFILE("Render.Raster"); ParallelRows(0, r.height, [&](int ya, int yb) { renderBand(ya, yb - 1); }); }
+    OKAY_PROFILE("Render.Post");
     if (SSAOEnabled() && !r.gvalid.empty()) ApplySSAO(r, vp, eye);   // contact AO post-pass
     if (rs.post.bloom && !BloomEnabled()) {                          // the scene's own Bloom switch
         BloomEnabled() = true;
@@ -2337,11 +2349,11 @@ inline const std::uint32_t* RenderMeshesSS(Raster& work, std::vector<std::uint32
     if (w < 1) w = 1; if (h < 1) h = 1; if (ss < 1) ss = 1;
     while (ss > 1 && ((long)w * ss > 4096 || (long)h * ss > 4096)) --ss;
     const int iw = w * ss, ih = h * ss;
-    work.Resize(iw, ih);
-    work.Clear(0u);
+    { OKAY_PROFILE("Render.Clear"); work.Resize(iw, ih); work.Clear(0u); }
     RenderMeshes(work, scene, vp, eye, ignore);
     // Publish the depth (1/w) at the OUTPUT resolution for particle occlusion: take the
     // nearest (max 1/w) sample over each supersample block so thin geometry still occludes.
+    OKAY_PROFILE("Render.Resolve");
     {
         OcclusionDepth& od = SceneOcclusionDepth();
         od.w = w; od.h = h; od.valid = true;

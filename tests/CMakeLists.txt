@@ -831,6 +831,17 @@ target_compile_definitions(test_play_start_bench PRIVATE OKAY_TEST_OUTPUT_DIR="$
 target_link_libraries(test_play_start_bench PRIVATE okay::engine)
 add_test(NAME play_start_bench COMMAND test_play_start_bench)
 
+# Frame-time benchmark: whole frames (scene update, physics, animation, software render, UI) split by phase, with output
+# hashes to prove a speed-up changed nothing. NOT a test: run `bench_frame` by hand (docs/perf_log.md, docs/try_it.md).
+# The ctest below only checks that it still builds and runs, on a tiny scale.
+add_executable(bench_frame bench_frame.cpp)
+target_link_libraries(bench_frame PRIVATE okay::engine)
+target_compile_definitions(bench_frame PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+if(NOT MSVC)
+    target_compile_options(bench_frame PRIVATE -g)   # line numbers for callgrind / perf; no effect on speed
+endif()
+add_test(NAME bench_frame_smoke COMMAND bench_frame --scale 0.05 --frames 3 --warmup 1)
+
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
 add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_inspector_model PRIVATE ${PROJECT_SOURCE_DIR}/editor)

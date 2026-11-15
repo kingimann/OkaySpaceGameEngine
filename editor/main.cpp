@@ -11,6 +11,7 @@
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "ActionExport.hpp"
 #include "ProjectState.hpp"           // project settings + build settings: the files inside the project folder
+#include "CodeBufferText.hpp"         // the script editor's text buffers (sized to the script; NUL-byte files read-only)
 #include "okay/Input/PlatformGamepad.hpp"   // controller -> Input (sticks, triggers, rumble), via okay::platform
 #include "okay/Input/PlatformKeys.hpp"      // F-keys, Tab, navigation block, left / right modifiers
 #include "FpHandsWindow.hpp"
@@ -268,25 +269,12 @@ static std::vector<ScriptLint> AnalyzeScriptWarnings(
 
 // Editable text buffers for script components, keyed by pointer. Lives above
 // the GUI split so Play (and --selftest) can compile what is on screen.
-std::unordered_map<void*, std::vector<char>> g_codeBuf;
-const char* PeekCodeBuffer(void* key) {
-    auto it = g_codeBuf.find(key);
-    return it == g_codeBuf.end() ? nullptr : it->second.data();
-}
-std::vector<char>& CodeBuffer(void* key, const std::string& initial) {
-    auto it = g_codeBuf.find(key);
-    if (it == g_codeBuf.end()) {
-        std::vector<char> b(65536, 0);
-        std::strncpy(b.data(), initial.c_str(), b.size() - 1);
-        it = g_codeBuf.emplace(key, std::move(b)).first;
-    }
-    return it->second;
-}
-void SetCodeBuffer(void* key, const std::string& text) {
-    auto& b = g_codeBuf[key];
-    if (b.size() < 65536) b.assign(65536, 0); else std::fill(b.begin(), b.end(), 0);
-    std::strncpy(b.data(), text.c_str(), b.size() - 1);
-}
+// The store (editor/CodeBufferText.hpp) grows each buffer to fit its script and marks a script with a NUL byte, so
+// no save writes back fewer bytes than were loaded (the old fixed 64 KiB strncpy buffer cut both cases silently).
+okay::editor::CodeBufferStore g_codeBuf;
+const char* PeekCodeBuffer(void* key) { return g_codeBuf.Peek(key); }
+std::vector<char>& CodeBuffer(void* key, const std::string& initial) { return g_codeBuf.Get(key, initial); }
+void SetCodeBuffer(void* key, const std::string& text) { g_codeBuf.Set(key, text); }
 
 // Play runs the scene as it is. An open script tab can be ahead of that, so
 // copy each live buffer into its component and compile it first.
@@ -928,6 +916,14 @@ extern "C" {
 // The editor application: panels, tools and their shared state. A named
 // namespace (not an anonymous one) so the panels can live in their own files.
 namespace oked {
+
+// Script editor saves: true when the buffer of `key` may be written to `path`; otherwise logs why not to the Console (error) and returns false.
+bool CodeBufferSaveAllowed(void* key, const std::string& path) {
+    const std::string why = g_codeBuf.SaveRefusal(key, path);
+    if (why.empty()) return true;
+    ConsoleLog(why, 2);
+    return false;
+}
 
 // Run a shell command WITHOUT flashing a console window. On Windows std::system
 // spawns a visible cmd window for every call (the "command prompts popping up");
@@ -14443,6 +14439,7 @@ static std::unordered_map<okay::ScriptComponent*, std::string> g_scriptSaved;
 static bool ScriptTabDirty(okay::ScriptComponent* t) {
     const char* live = PeekCodeBuffer(t);
     if (!live) return false;
+    if (g_codeBuf.LosesBytes(t)) return false;   // read-only (NUL byte): nothing of ours to save, never autosaved
     auto it = g_scriptSaved.find(t);
     return it != g_scriptSaved.end() && it->second != live;
 }
@@ -14580,6 +14577,9 @@ static void CloseScriptTab(okay::ScriptComponent* closeTab, bool remember) {
     if (g_activeScriptTab == closeTab)
         g_activeScriptTab = g_scriptTabs.empty() ? nullptr : g_scriptTabs.front();
     g_scriptSaved.erase(closeTab);
+    // A loose script is destroyed below: forget its buffer too, so a later script at the same address starts clean
+    // (and does not inherit a "contains a NUL byte" mark).
+    for (const auto& u : g_looseScripts) if (u.get() == closeTab) { g_codeBuf.Erase(closeTab); break; }
     g_looseScripts.erase(std::remove_if(g_looseScripts.begin(), g_looseScripts.end(),
         [&](const std::unique_ptr<okay::ScriptComponent>& u){ return u.get() == closeTab; }),
         g_looseScripts.end());
@@ -14619,7 +14619,7 @@ static void DrawScriptClosePrompt() {
         const char* live = PeekCodeBuffer(sc);
         std::string p = sc->Path();
         if (p.empty()) p = "Assets/Untitled.okay";
-        if (live && SaveEditorDocument(p, live)) {
+        if (live && CodeBufferSaveAllowed(sc, p) && SaveEditorDocument(p, live)) {
             sc->SetPath(p); sc->SetSource(live); g_scriptSaved[sc] = live;
         }
         CloseScriptTab(sc, false);
@@ -14786,6 +14786,13 @@ void DrawScriptEditor(EditorState& ed) {
         auto& buf = CodeBuffer(sc, sc->Source().empty()
             ? extide::StarterScript(sc->Language()) : sc->Source());
         g_scriptSaved.emplace(sc, std::string(buf.data()));   // clean baseline on first open
+        {   // say once why the script cannot be edited (the save refusal repeats it)
+            static std::unordered_set<void*> s_nulWarned;
+            if (g_codeBuf.LosesBytes(sc) && s_nulWarned.insert(sc).second)
+                ConsoleLog((sc->Path().empty() ? std::string("This script") : sc->Path()) +
+                           " contains a NUL byte. The script editor cannot keep it, so the script is open read-only "
+                           "and will not be saved from here; edit it in another editor.", 1);
+        }
         auto filePath = [&]() {
             return sc->Path().empty() ? go->name + "." + extide::ExtFor(sc->Language()) : sc->Path();
         };
@@ -14915,7 +14922,7 @@ void DrawScriptEditor(EditorState& ed) {
                 std::filesystem::path assets = std::filesystem::path(ed.projectDir()) / "Assets";
                 if (std::filesystem::is_directory(assets, sc_ec)) p = (assets / p).string();
             }
-            if (SaveEditorDocument(p, buf.data())) {
+            if (CodeBufferSaveAllowed(sc, p) && SaveEditorDocument(p, buf.data())) {
                 sc->SetPath(p);
                 sc->SetSource(buf.data());        // persist edits so a scene save keeps them
                 ConsoleLog("Saved " + p);
@@ -15050,7 +15057,8 @@ void DrawScriptEditor(EditorState& ed) {
         }
         if (rqIde) {
             std::string p = filePath();
-            extide::WriteFile(p, buf.data()); sc->SetPath(p);
+            if (CodeBufferSaveAllowed(sc, p)) extide::WriteFile(p, buf.data());   // a NUL-byte file is opened as it is
+            sc->SetPath(p);
             std::error_code mec; s_extMtime[sc] = std::filesystem::last_write_time(p, mec);
             s_liveSync = true;                 // seamless: adopt saves from the outside editor
             extide::OpenExternal(p);
@@ -15684,7 +15692,7 @@ void DrawScriptEditor(EditorState& ed) {
             struct Cmd { const char* name; std::function<void()> run; };
             std::vector<Cmd> cmds = {
                 {"Run (compile & execute)", [&]{ bool ok = sc->LoadSource(buf.data(), &s_error); if (ok) s_error.clear(); ed.dirty = true; }},
-                {"Save", [&]{ std::string p = filePath(); if (extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
+                {"Save", [&]{ std::string p = filePath(); if (CodeBufferSaveAllowed(sc, p) && extide::WriteFile(p, buf.data())) { sc->SetPath(p); g_scriptSaved[sc] = buf.data(); } ed.dirty = true; }},
                 {"Format Document", [&]{ caret.replaceAll = FormatOkayScript(buf.data()); ed.dirty = true; }},
                 {"Reload from disk", [&]{ if (!sc->Path().empty()) { std::string s = extide::ReadFile(sc->Path()); if (s.empty()) SetCodeBuffer(sc, s); else caret.replaceAll = s; std::string e; sc->LoadSource(s, &e); g_scriptSaved[sc] = s; } }},
                 {"Toggle Syntax Highlight", [&]{ s_highlight = !s_highlight; }},
@@ -15692,7 +15700,7 @@ void DrawScriptEditor(EditorState& ed) {
                 {"Find in Files (Ctrl+Shift+F)", [&]{ g_showFindInFiles = true; g_fifFocus = true; }},
                 {"Toggle Comment Line", [&]{ caret.toggleComment = true; }},
                 {"Open Scripting Docs", [&]{ g_showScriptDocs = true; }},
-                {"Open in External IDE", [&]{ std::string p = filePath(); extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p); }},
+                {"Open in External IDE", [&]{ std::string p = filePath(); if (CodeBufferSaveAllowed(sc, p)) extide::WriteFile(p, buf.data()); sc->SetPath(p); extide::OpenExternal(p); }},
                 {"Zoom In", [&]{ s_zoom = Mathf::Clamp(s_zoom + 0.1f, 0.7f, 3.0f); }},
                 {"Zoom Out", [&]{ s_zoom = Mathf::Clamp(s_zoom - 0.1f, 0.7f, 3.0f); }},
             };
@@ -15755,6 +15763,7 @@ void DrawScriptEditor(EditorState& ed) {
 
         ScriptEditorWidget& te = CodeEditorFor(sc);
         te.SetColorizerEnable(s_highlight);   // toolbar "Syntax" checkbox
+        te.SetReadOnly(g_codeBuf.LosesBytes(sc));   // a NUL byte cut the text: show it, never edit or save it
 
         // Sync widget <-> CodeBuffer. g_teHash is the text both sides last agreed on:
         // if buf changed underneath us (format, live-sync, first open, language switch)
@@ -47206,7 +47215,8 @@ static bool SaveProject(EditorState& ed, bool interactive) {
             for (int k = 2; fs::exists(p, ec); ++k) p = (dir / ("Untitled" + std::to_string(k) + ".okay")).string();
             t->SetPath(p);
         }
-        if (SaveEditorDocument(t->Path(), live)) { g_scriptSaved[t] = live; ++scripts; }
+        if (!CodeBufferSaveAllowed(t, t->Path())) { ok = false; g_lastSaveError = "Not saved (contains a NUL byte): " + t->Path(); }
+        else if (SaveEditorDocument(t->Path(), live)) { g_scriptSaved[t] = live; ++scripts; }
         else { ok = false; g_lastSaveError = "Couldn't write " + t->Path(); ConsoleLog("Couldn't save " + t->Path(), 2); }
     }
     if (scripts) saved.push_back(std::to_string(scripts) + (scripts == 1 ? " script" : " scripts"));
@@ -48835,7 +48845,7 @@ int main(int argc, char** argv) {
                 for (okay::ScriptComponent* t : g_scriptTabs) {
                     if (!t || t->Path().empty() || !ScriptTabDirty(t)) continue;
                     const char* live = PeekCodeBuffer(t);
-                    if (live && SaveEditorDocument(t->Path(), live)) g_scriptSaved[t] = live;
+                    if (live && CodeBufferSaveAllowed(t, t->Path()) && SaveEditorDocument(t->Path(), live)) g_scriptSaved[t] = live;
                 }
                 if (ed.dirty && !ed.isPlaying() && !ed.InPrefabMode() && !ed.path().empty()) SaveSceneTo(ed, ed.path());
             }

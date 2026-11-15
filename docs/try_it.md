@@ -415,6 +415,24 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Script Editor keeps big scripts whole (branch `claude2/script-buffer-no-cut`, not merged or released yet)
+
+Bug: the Script Editor held at most 64 KiB of a script and stopped at the first NUL byte. Save then wrote the shorter text
+back, so the end of the file was lost with no message.
+
+1. In a project, make a script bigger than 64 KB. Easiest: copy a small `.okay` script and paste its text into itself
+   until Windows Explorer shows more than 100 KB. Note the size in bytes (Properties).
+2. In the editor, open it from the Project panel (double-click). Scroll to the end: the last lines are there.
+3. Type one character anywhere and press **Ctrl+S**. The Console says `Saved ...`.
+4. Look at the file's Properties again: it is exactly one byte bigger. Before the fix it was cut to 65,535 bytes.
+5. Optional, a file with a NUL byte (for example a script saved as UTF-16 by mistake, or a damaged file): open it.
+   The Console shows a warning that it contains a NUL byte and is open read-only. You cannot type in it, and Ctrl+S
+   prints "Not saved: ... contains a NUL byte". The file on disk stays exactly as it was.
+
+**Status.** The buffer logic is tested headless (`test_code_buffer_text`, Linux): a 100 KiB script and a 1 MiB script
+keep every byte, and a NUL-byte script is never written back. The editor wiring is built on Linux; the steps above
+were not clicked through on Windows (unverified).
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -1102,3 +1102,7 @@ foreach (float w in new int[] { 1, 2 }) Debug.Log(w / 2);   // ints convert to f
 OkayScript is the engine's text scripting language, alongside a
 node-based **visual scripting** graph (see [visual_scripting.md](visual_scripting.md)).
 Scripts can be edited in the in-engine Script Editor panel or in an external IDE.
+The Script Editor holds a script of any size. A script that contains a NUL byte (a damaged
+file, or one saved as UTF-16 by mistake) opens read-only with a Console warning, and the editor
+refuses to save it, so the file is never written back shorter than it was
+(`editor/CodeBufferText.hpp`, test `code_buffer_text`).

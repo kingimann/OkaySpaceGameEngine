@@ -3553,3 +3553,9 @@ add_executable(test_wav_ffmpeg_diff test_wav_ffmpeg_diff.cpp)
 target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
+
+# The script editor's text buffers (editor/CodeBufferText.hpp, no GUI): a script over 64 KiB or with a NUL byte is
+# never written back shorter than it was loaded.
+add_executable(test_code_buffer_text test_code_buffer_text.cpp)
+target_include_directories(test_code_buffer_text PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+add_test(NAME code_buffer_text COMMAND test_code_buffer_text)

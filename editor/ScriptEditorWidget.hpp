@@ -38,6 +38,7 @@ public:
     void SetShowWhitespaces(bool b) { imgui_.SetShowWhitespaces(b); }
     void SetTabSize(int n) { imgui_.SetTabSize(n); okay_.SetTabSize(n); }
     void SetLineSpacing(float s) { imgui_.SetLineSpacing(s); okay_.SetLineSpacing(s); }
+    void SetReadOnly(bool on) { imgui_.SetReadOnly(on); okay_.SetReadOnly(on); }
     void SetLeftMargin(int m) { imgui_.SetLeftMargin(m); }
 
     // ---- text ----

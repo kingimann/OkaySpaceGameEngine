@@ -64,10 +64,17 @@ struct Rig {
 
 /// New scene, a ground box with its top at y = 0, and the rig at `file` made the
 /// playable character of a third-person player standing on it.
-inline Rig PlayableFromFile(const std::string& file) {
+/// `fixedStepHz` > 0 runs physics in fixed steps at that rate with render
+/// interpolation on, the way Play and a built game do (default 0: one step per frame).
+inline Rig PlayableFromFile(const std::string& file, float fixedStepHz = 0.0f) {
     Rig r;
     r.scene = std::make_unique<Scene>("Rig");
     Scene& s = *r.scene;
+    if (fixedStepHz > 0.0f) {
+        s.UseFixedStepPhysics(true);
+        s.SetPhysicsStepsPerSecond(fixedStepHz);
+        s.interpolatePhysics = true;
+    }
     GameObject* ground = s.CreateGameObject("Ground");
     ground->transform->localPosition = {0, -0.5f, 0};
     ground->transform->localScale = {200, 1, 200};

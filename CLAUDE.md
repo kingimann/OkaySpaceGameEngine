@@ -8,8 +8,13 @@ then this file gets updated. Keep this file short and true.
 
 1. **Keep working.** Do not stop to ask or to wait. When a decision is the owner's, pick the safe default, say what
    you picked, and carry on. Use several agents at once for independent work.
-2. **Work on things that matter.** Do not sit polling GitHub. Start agents on real engine work while CI runs, and
-   come back when something finishes.
+2. **Always be working on something real.** At every moment the main session and every agent is doing one of four
+   things: finishing an unfinished feature (`docs/UNFINISHED.md`), fixing a bug, building our own replacement for
+   a third-party library (`docs/own_code_roadmap.md`), or checking on the second Claude (`claude2/*`, issue #422):
+   reading its reports, answering it, reviewing its work. Waiting for CI is not a reason to stop: start or continue
+   one of those three while it runs, and never sit polling GitHub. Reviews, merges and releases happen in between.
+   (Owner rule, 2026-11-15: "you should be always working finishing a feature, fixing a bug or working on a third
+   party".) If an agent or the main session has nothing running, start more agents on the next items.
 3. **Explain plainly.** Short, simple sentences. Say what you did, what it means and what is left. No jargon
    without a word of explanation.
 4. **Be honest.** Say exactly what was run and what was not. Say "unverified" when it is. Never call something
@@ -19,9 +24,12 @@ then this file gets updated. Keep this file short and true.
 
 ## Pull requests and CI
 
-6. **Merge whatever is green.** Squash-merge with the title `<PR title> (#N)` and the exact head sha. Do not wait
-   for the slow "Build & test (Ubuntu)" job. A docs-only or version-only change may merge without waiting for the
-   rest of CI.
+6. **Merge only a PR with no problems.** Every CI job must be finished and green, including the slow "Build & test
+   (Ubuntu)" job. Wait for it; do not merge while any job is running, red or cancelled, and do not merge a PR whose
+   own text lists a failing or unrun test that CI could have run. Squash-merge with the title `<PR title> (#N)` and
+   the exact head sha. (The owner said on 2026-11-15: "stop merging PRs with problems". Before that this rule let
+   PRs merge without the Ubuntu job, and PRs #842 to #856 merged with the `player` test red.) A docs-only change
+   whose only jobs are docs checks may merge once those are green.
 7. **Never merge a red PR, and never just retry it.** Read the failing job's log, find the cause and fix it in
    the code. A re-run is only for a job that was cancelled by a runner shutdown, and if the same job keeps
    dying, find out why (this is how the WebGL job got its cache and timeout).

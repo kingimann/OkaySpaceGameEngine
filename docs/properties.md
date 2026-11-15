@@ -268,7 +268,7 @@ More of the builder:
 
 ## What is registered
 
-2125 properties on 155 types, as `property_registry` counts them ("covered 155 component types, 2125 properties"; a number before a slash counts the authored ones; the rest are
+2165 properties on 159 types, as `property_registry` counts them ("covered 159 component types, 2165 properties"; a number before a slash counts the authored ones; the rest are
 runtime-only, read-only or derived and the scene file does not keep them). Every type also
 has `enabled`.
 
@@ -319,6 +319,7 @@ has `enabled`.
 | TrailRenderer, MinimapBlip, AimIK, SurvivalSave | 10, 6, 8, 3 | trail life, width, colour and texture (the width curve and gradient are lists); blip colour, size, shape, icon and label (the old square switch is only for old files); aim bone, target and axes; the survival save key and switches |
 | UIToast, UITooltip, UIModal, UIContextMenu | 8, 7, 15, 8 | toast corner, timing and size; tooltip text, delay, colours and offset; modal dimming, close rules and card style; context menu sizes and colours (its item list is a list) |
 | WorldSpaceUI, PauseMenu, ChestInventory, UIDropTarget | 4, 7, 16, 10 | world UI scale and facing; pause menu key, title, buttons and colours (the record does not save `hint`, `showRestart`, `showVolume`, `restartScene` or `localized`, so they are not properties yet); chest key, range, grid and style; drop slot tag, background and hover tints |
+| IKTarget, NetValidator, DialogueRunner, LogicTarget | 4, 7, 13, 13 | IK limb, character, weight and blend; RPC limits (size, rate, cooldown, budget); dialogue file, start, key, prompt, typewriter and UI switches; logic target kind and mode, door/mover travel, light, spawner and event |
 
 How the new types are described, so a tool can rely on it:
 

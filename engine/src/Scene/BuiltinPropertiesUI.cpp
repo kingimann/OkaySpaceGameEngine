@@ -43,6 +43,7 @@
 #include "okay/Components/UIBarBind.hpp"
 #include "okay/Components/UIAnimation.hpp"
 #include "okay/Components/CraftingMenu.hpp"
+#include "okay/Components/InventoryUI.hpp"
 #include "okay/Math/Easing.hpp"
 
 namespace okay {
@@ -749,6 +750,77 @@ void RegisterCraftingMenu() {
     b.Commit();
 }
 
+// InventoryUI (record "inventoryui"). The rarity rules are a list; open, scroll and
+// the drag and navigation state are play state. gamepadNav is not saved by the
+// record, so it is not a property yet.
+void RegisterInventoryUI() {
+    PropertyBuilder<InventoryUI> b("InventoryUI", "inventoryui", "UI");
+    b.Section("Hotbar and backpack")
+     .AddInt("hotbarSlots", &InventoryUI::hotbarSlots).Range(0, 64, 1).Tooltip("Slots on the hotbar")
+     .AddInt("backpackRows", &InventoryUI::backpackRows).Range(0, 256, 1).Tooltip("Extra rows when open, if the Inventory has no capacity")
+     .AddInt("selected", &InventoryUI::selected).Range(0, 63, 1).Tooltip("Selected hotbar slot at the start")
+     .AddKey("toggleKey", &InventoryUI::toggleKey).Tooltip("Opens and closes the backpack")
+     .AddBool("selectHotkeys", &InventoryUI::selectHotkeys).Tooltip("Keys 1 to 9 select a hotbar slot")
+     .AddBool("scrollSelect", &InventoryUI::scrollSelect).Tooltip("The mouse wheel changes the selection")
+     .AddBool("dragItems", &InventoryUI::dragItems).Tooltip("Drag items between slots while the backpack is open")
+     .AddBool("darkenWhenOpen", &InventoryUI::darkenWhenOpen).Tooltip("Darken the game while the backpack is open")
+     .AddString("inventoryTarget", &InventoryUI::inventoryTarget).Tooltip("Object whose Inventory it shows, by name (empty = this object)")
+     .Section("Keys and clicks")
+     .AddKey("sortKey", &InventoryUI::sortKey).Tooltip("Sorts the bag (0 = off)")
+     .AddEnum("sortMode", &InventoryUI::sortMode, {"Compact", "Name", "Count", "Rarity", "Category", "Weight", "Value"}).Tooltip("How the sort key orders the bag")
+     .AddBool("sortOnClose", &InventoryUI::sortOnClose).Tooltip("Sort the bag when the backpack closes")
+     .AddKey("dropKey", &InventoryUI::dropKey).Tooltip("Drops one of the selected item (0 = off)")
+     .AddKey("useKey", &InventoryUI::useKey).Tooltip("Uses the selected item (0 = off)")
+     .AddBool("clickToUse", &InventoryUI::clickToUse).Tooltip("A left click uses the selected item while the backpack is closed")
+     .AddBool("splitRightClick", &InventoryUI::splitRightClick).Tooltip("Right-click a stack to pick up part of it")
+     .AddBool("splitHalf", &InventoryUI::splitHalf).Tooltip("Right-click lifts half the stack (off = one)")
+     .AddBool("shiftQuickMove", &InventoryUI::shiftQuickMove).Tooltip("Shift-click moves a stack between hotbar and backpack")
+     .Section("Layout")
+     .AddFloat("slotSize", &InventoryUI::slotSize).Range(1, 1e3, 1).Tooltip("Slot size in pixels at the reference height")
+     .AddFloat("slotGap", &InventoryUI::slotGap).Range(0, 1e3, 1).Tooltip("Pixels between slots")
+     .AddBool("scaleToScreen", &InventoryUI::scaleToScreen).Tooltip("Scale the whole UI with the screen height")
+     .AddFloat("referenceHeight", &InventoryUI::referenceHeight).Range(1, 1e5, 1).Tooltip("Screen height the sizes are set for")
+     .AddFloat("marginX", &InventoryUI::marginX).Range(-1e5, 1e5, 1).Tooltip("Sideways nudge from the centre in pixels")
+     .AddFloat("marginY", &InventoryUI::marginY).Range(-1e5, 1e5, 1).Tooltip("Distance from the screen edge in pixels")
+     .AddBool("anchorTop", &InventoryUI::anchorTop).Tooltip("Put the hotbar at the top")
+     .AddEnum("hAlign", &InventoryUI::hAlign, {"Left", "Center", "Right"}).Tooltip("Hotbar alignment")
+     .AddFloat("selectedScale", &InventoryUI::selectedScale).Range(0.1, 10, 0.01).Tooltip("Size of the selected slot (1 = the same as the others)")
+     .AddFloat("cornerRadius", &InventoryUI::cornerRadius).Range(0, 1e3, 0.5).Tooltip("Slot corner radius")
+     .AddFloat("borderWidth", &InventoryUI::borderWidth).Range(0, 1e3, 0.5).Tooltip("Slot border thickness in pixels")
+     .AddFloat("iconInset", &InventoryUI::iconInset).Range(0, 1e3, 0.5).Tooltip("Pixels between a slot's border and its icon")
+     .Section("Text")
+     .AddString("iconFolder", &InventoryUI::iconFolder).Tooltip("Folder of <item>.png icons")
+     .AddFloat("labelScale", &InventoryUI::labelScale).Range(0.1, 20, 0.05).Tooltip("Size of the name and count text")
+     .AddBool("showCounts", &InventoryUI::showCounts).Tooltip("Draw stack counts")
+     .AddBool("showNames", &InventoryUI::showNames).Tooltip("Draw the item name when there is no icon")
+     .AddInt("nameChars", &InventoryUI::nameChars).Range(0, 256, 1).Tooltip("Characters of the item name shown in a slot")
+     .AddBool("showSelectedName", &InventoryUI::showSelectedName).Tooltip("Show the held item's name above the hotbar")
+     .AddBool("slotNumbers", &InventoryUI::slotNumbers).Tooltip("Draw 1 to 9 in the hotbar slots")
+     .AddBool("showTooltips", &InventoryUI::showTooltips).Tooltip("Hovering a slot shows the item's name and count")
+     .AddBool("showTitle", &InventoryUI::showTitle).Tooltip("Show a title over the backpack")
+     .AddString("backpackTitle", &InventoryUI::backpackTitle).Tooltip("Backpack title text")
+     .Section("Panel")
+     .AddBool("showPanel", &InventoryUI::showPanel).Tooltip("Draw a rounded panel behind the slots")
+     .AddFloat("panelPad", &InventoryUI::panelPad).Range(0, 1e3, 1).Tooltip("Panel padding around the slots")
+     .AddFloat("panelBorderWidth", &InventoryUI::panelBorderWidth).Range(0, 1e3, 0.5).Tooltip("Panel outline thickness in pixels")
+     .Section("Colours")
+     .AddColor("slotColor", &InventoryUI::slotColor).Range(0, 1, 0.01).Tooltip("Slot colour")
+     .AddColor("emptySlotColor", &InventoryUI::emptySlotColor).Range(0, 1, 0.01).Tooltip("Empty slot colour")
+     .AddColor("hotbarColor", &InventoryUI::hotbarColor).Range(0, 1, 0.01).Tooltip("Hotbar slot colour")
+     .AddColor("slotBorder", &InventoryUI::slotBorder).Range(0, 1, 0.01).Tooltip("Slot border colour")
+     .AddColor("selectedColor", &InventoryUI::selectedColor).Range(0, 1, 0.01).Tooltip("Selected slot colour")
+     .AddColor("hoverColor", &InventoryUI::hoverColor).Range(0, 1, 0.01).Tooltip("Tint on the slot under the pointer")
+     .AddColor("textColor", &InventoryUI::textColor).Range(0, 1, 0.01).Tooltip("Text colour")
+     .AddColor("countColor", &InventoryUI::countColor).Range(0, 1, 0.01).Tooltip("Count colour")
+     .AddColor("numberColor", &InventoryUI::numberColor).Range(0, 1, 0.01).Tooltip("Slot number colour")
+     .AddColor("panelColor", &InventoryUI::panelColor).Range(0, 1, 0.01).Tooltip("Panel colour")
+     .AddColor("panelBorder", &InventoryUI::panelBorder).Range(0, 1, 0.01).Tooltip("Panel outline colour")
+     .AddColor("titleColor", &InventoryUI::titleColor).Range(0, 1, 0.01).Tooltip("Title colour")
+     .AddColor("tooltipColor", &InventoryUI::tooltipColor).Range(0, 1, 0.01).Tooltip("Tooltip background")
+     .AddColor("tooltipText", &InventoryUI::tooltipText).Range(0, 1, 0.01).Tooltip("Tooltip text colour");
+    b.Commit();
+}
+
 // UIToast (record "uitoast"). Live toast cards are ordinary children, not properties.
 void RegisterUIToast() {
     PropertyBuilder<UIToast> b("UIToast", "uitoast", "UI");
@@ -1031,6 +1103,7 @@ void RegisterUIProperties() {
     RegisterUIBarBind();
     RegisterUIAnimation();
     RegisterCraftingMenu();
+    RegisterInventoryUI();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
 }

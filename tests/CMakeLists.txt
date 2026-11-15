@@ -3555,3 +3555,11 @@ if(OKAY_OWN_MDL)
     target_compile_definitions(test_own_e4_default PRIVATE OKAY_EXPECT_OWN_MDL)
 endif()
 add_test(NAME own_e4_default COMMAND test_own_e4_default WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# The sample files shipped in examples/own_readers (cube_spin.ogex, quake_quad.mdl, halflife_tri.mdl) import through the seam with the own backend,
+# and the two .mdl files are still exactly the fixtures (docs/try_it.md section 8 tells the owner to open them in the editor).
+# `test_own_e4_samples --write <dir>` rewrites the two .mdl files.
+add_executable(test_own_e4_samples test_own_e4_samples.cpp)
+target_link_libraries(test_own_e4_samples PRIVATE okay::engine)
+target_compile_definitions(test_own_e4_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_e4_samples COMMAND test_own_e4_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

@@ -17,6 +17,9 @@
 //              moves. It runs twice: in the scene the template just built ("fresh") and in the project reopened from
 //              disk ("reopened"), because a template whose wiring is lost on save shows only in the second.
 //
+// A `void New...()` in EditorState.hpp that is not in the table is a scene nobody can start. It must be listed in
+// MakeNotOffered() with a reason (CheckNotOffered fails otherwise); those scenes run through the same seven columns.
+//
 // The table of checks prints at the end (run the binary directly to see it, with the numbers it measured). A template
 // with no row in MakeSpecs() fails: that is how a new template is forced to bring its own test (docs/templates_check.md).
 //
@@ -43,6 +46,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -618,6 +622,26 @@ void CheckVoxelDig(Ctx& c) {
     s.mouse = {640.0f, 360.0f}; s.Frames(3);
 }
 
+// The same for the heightmap terrain (TerrainDigger): the left button lowers the ground under the crosshair, the right raises it.
+void CheckTerrainDig(Ctx& c) {
+    Session& s = c.s;
+    GameObject* t = s.Obj("Terrain");
+    auto* terr = t ? t->GetComponent<Terrain>() : nullptr;
+    c.Expect(terr != nullptr, "there is no heightmap Terrain");
+    if (!terr) return;
+    auto sum = [&] { double v = 0; for (float h : terr->heights) v += h; return v; };
+    s.mouse = {640.0f, 360.0f}; s.Frames(3);
+    for (int i = 1; i <= 15; ++i) { s.mouse = {640.0f, 360.0f + 12.0f * (float)i}; s.Frame(); }   // look down at the ground
+    const double before = sum();
+    s.buttons = 1; s.Frames(40); s.buttons = 0; s.Frames(3);
+    const double dug = sum();
+    c.Fact("digging lowered the terrain by " + Num((float)(before - dug), 1) + " (summed heights)");
+    c.Expect(dug < before - 0.01, "holding the left mouse button did not lower the terrain");
+    s.buttons = 2; s.Frames(40); s.buttons = 0; s.Frames(3);
+    c.Expect(sum() > dug + 0.01, "holding the right mouse button did not raise the terrain");
+    s.mouse = {640.0f, 360.0f}; s.Frames(3);
+}
+
 // Top-down shooter: the body turns to the mouse, Space dashes, the left mouse fires and the magazine drains.
 void CheckTopDownShooter(Ctx& c) {
     Session& s = c.s;
@@ -701,6 +725,37 @@ std::vector<Spec> MakeSpecs() {
     };
 }
 
+// Scenes EditorState can build that no menu and no launcher entry reaches. Each is `void New...()` in EditorState.hpp and is
+// not in the table (editor/TemplateTable.hpp), so a person cannot start it: it would rot unseen. They are listed here, with
+// the reason, and run through the same checks as the templates, so the report can say they still work. CheckNotOffered()
+// fails when a builder is in neither the table nor this list, and when an entry here is stale (offered by now, or gone).
+// The way out of this list is to offer the scene (a row in okayproj::Templates(), in the table and in MakeSpecs()) or to
+// delete the builder.
+struct NotOffered {
+    const char* method;               // EditorState::<method>, and the name this scene goes by in the table below
+    oked::TemplateBuilder build;
+    const char* why;
+    Spec spec;                        // spec.title is `method`
+};
+
+std::vector<NotOffered> MakeNotOffered() {
+    auto mover = [](MoverSpec m, std::vector<Drive> then = {}) -> Drive {
+        return [m, then](Ctx& c) { DriveMover(c, m); for (const Drive& d : then) d(c); };
+    };
+    auto look = [](const char* who) -> Drive { return [who](Ctx& c) { CheckMouseLook(c, who); }; };
+    auto fixed = [](void (*f)(Ctx&)) -> Drive { return [f](Ctx& c) { f(c); }; };
+    return {
+        {"NewPlatformer3D", &EditorState::NewPlatformer3D,
+         "a 3D platformer (Templates::Platformer3D). The launcher lists the 2D and 2.5D platformers only; nothing calls this builder. "
+         "The engine builder has its own tests (test_templates, test_scene_cameras).",
+         {"NewPlatformer3D", true, false, "Player", "CharacterController3D", mover({"Player", {'d'}, true, true, 1.0f})}},
+        {"NewTerrainSandbox", &EditorState::NewTerrainSandbox,
+         "the heightmap terrain sandbox (Templates::TerrainSandbox), replaced in the launcher by the voxel Sandbox; nothing calls "
+         "this builder. The engine builder has its own tests (test_terrain, test_scene_cameras).",
+         {"NewTerrainSandbox", true, false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player"), fixed(&CheckTerrainDig)})}},
+    };
+}
+
 // ---- one template, start to finish --------------------------------------------------------------------------------
 
 // What the editor writes into a new project before the scene opens (editor/main.cpp, DrawNewProjectPopup): the settings
@@ -741,11 +796,10 @@ void RunDriven(Row& row, EditorState& ed, const Spec& spec, const char* world, L
     for (std::size_t i = errorsBefore; i < logs.errors.size(); ++i) ctx.Expect(false, "Console error while it was driven: " + logs.errors[i]);
 }
 
-void RunTemplate(const okayproj::TemplateInfo& info, const fs::path& location, const std::vector<Spec>& specs, Row& row) {
-    const std::string title = info.title;
+// `build` is what the editor runs for the title (oked::FindBuilder), or, for a scene nothing offers, the method itself.
+// `spec` is the title's row in MakeSpecs() (null when it has none, which fails).
+void RunTemplate(const std::string& title, oked::TemplateBuilder build, const Spec* spec, const fs::path& location, Row& row) {
     row.title = title;
-    const Spec* spec = nullptr;
-    for (const Spec& sp : specs) if (title == sp.title) spec = &sp;
     Expect(row, kInteract, spec != nullptr, "no row in MakeSpecs() for this template: add one (docs/templates_check.md)");
     LogCatch logs;
     GateHook hook(kRunning);
@@ -753,7 +807,6 @@ void RunTemplate(const okayproj::TemplateInfo& info, const fs::path& location, c
     // ---- create: the launcher's flow ---------------------------------------------------------------------------
     const okayproj::Plan plan = okayproj::PlanProject(location.string(), title);   // the wizard names the project after the template
     Expect(row, kCreate, plan.ok(), "the title can't be used as a project name: " + plan.Problem());
-    const oked::TemplateBuilder build = oked::FindBuilder(title);
     Expect(row, kCreate, build != nullptr, "the editor has no builder for this title");
     if (!plan.ok() || !build) return;
 
@@ -975,6 +1028,50 @@ void CheckTable() {
     CHECK(oked::BuilderOrDefault("Snake") == &EditorState::NewSnake);   // `known` is optional
 }
 
+// ---- every builder is offered, or listed as not offered ------------------------------------------------------------------
+
+// CheckTable() proves the table and the launcher agree. This closes the other side: a `void New...()` in EditorState.hpp that
+// is in neither (a scene nobody can start) fails here until it is offered or listed in MakeNotOffered() with a reason.
+void CheckNotOffered(const std::vector<NotOffered>& listed) {
+    const std::string hpp = ReadAll(fs::path(OKAY_SOURCE_DIR) / "editor" / "EditorState.hpp");
+    const std::string tab = ReadAll(fs::path(OKAY_SOURCE_DIR) / "editor" / "TemplateTable.hpp");
+    CHECK(!hpp.empty());
+    CHECK(!tab.empty());
+    auto ident = [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_'; };
+    std::set<std::string> declared, inTable;
+    for (std::size_t at = hpp.find("void New"); at != std::string::npos; at = hpp.find("void New", at + 1)) {   // "void NewSnake();"
+        const std::size_t b = at + 5;
+        std::size_t e = b;
+        while (e < hpp.size() && ident(hpp[e])) ++e;
+        if (hpp.compare(e, 3, "();") == 0) declared.insert(hpp.substr(b, e - b));
+    }
+    for (std::size_t at = tab.find("&E::"); at != std::string::npos; at = tab.find("&E::", at + 1)) {   // "{"Snake", &E::NewSnake}"
+        const std::size_t b = at + 4;
+        std::size_t e = b;
+        while (e < tab.size() && ident(tab[e])) ++e;
+        inTable.insert(tab.substr(b, e - b));
+    }
+    CHECK(declared.size() >= 20);   // the scan really found EditorState's builders (if the header changed shape, update this scan)
+    CHECK(inTable.size() == oked::TemplateTable().size());
+    std::set<std::string> listedNames;
+    for (const NotOffered& n : listed) {
+        listedNames.insert(n.method);
+        CHECK(n.build != nullptr);
+        CHECK(n.spec.title == std::string(n.method));
+        const bool gone = declared.count(n.method) == 0, offered = inTable.count(n.method) != 0;
+        CHECK(!gone);      // a stale entry: the builder is not in EditorState any more
+        CHECK(!offered);   // a stale entry: the launcher offers it now
+        if (gone) std::fprintf(stderr, "  MakeNotOffered() lists %s, which EditorState does not declare: remove the entry\n", n.method);
+        if (offered) std::fprintf(stderr, "  MakeNotOffered() lists %s, which the table offers now: remove the entry\n", n.method);
+    }
+    for (const std::string& name : declared) {
+        const bool ok = inTable.count(name) != 0 || listedNames.count(name) != 0;
+        CHECK(ok);
+        if (!ok) std::fprintf(stderr, "  EditorState::%s builds a scene that neither the launcher table offers nor MakeNotOffered() lists: offer it or delete it\n", name.c_str());
+    }
+    for (const std::string& name : inTable) CHECK(declared.count(name) == 1);
+}
+
 // ---- the version gate really looks ----------------------------------------------------------------------------------
 
 // A project with no stamp, and one from an older editor, DO ask, so "no question" for a new project means something.
@@ -1018,7 +1115,16 @@ int main() {
     fs::create_directories(location, ec);
     for (const okayproj::TemplateInfo& info : okayproj::Templates()) {
         rows.emplace_back();
-        RunTemplate(info, location, specs, rows.back());
+        const Spec* spec = nullptr;
+        for (const Spec& sp : specs) if (std::string(info.title) == sp.title) spec = &sp;
+        RunTemplate(info.title, oked::FindBuilder(info.title), spec, location, rows.back());
+    }
+    const std::size_t templateRows = rows.size();
+    const std::vector<NotOffered> notOffered = MakeNotOffered();
+    CheckNotOffered(notOffered);
+    for (const NotOffered& n : notOffered) {   // the same checks for the scenes nothing offers, so "it still works" is a fact
+        rows.emplace_back();
+        RunTemplate(n.method, n.build, &n.spec, location, rows.back());
     }
 
     // ---- judge the rows: a failure is excused only when kKnownFailures names it ----
@@ -1044,10 +1150,7 @@ int main() {
             std::fprintf(stderr, "  known failure [%s / %s] '%s' did not happen: remove it from kKnownFailures\n", kKnownFailures[k].title, kColName[kKnownFailures[k].col], kKnownFailures[k].needle);
         }
 
-    std::printf("\n%-28s", "template");
-    for (int c = 0; c < kColCount; ++c) std::printf(" %-9s", kColName[c]);
-    std::printf("  warnings (Play / Problems)\n");
-    for (const Row& r : rows) {
+    auto printRow = [](const Row& r) {
         std::printf("%-28s", r.title.c_str());
         for (int c = 0; c < kColCount; ++c) {
             const Cell& cell = r.cell[c];
@@ -1056,8 +1159,21 @@ int main() {
             std::printf(" %-9s", !cell.ran ? "-" : bad ? "FAIL" : known ? "KNOWN" : "PASS");
         }
         std::printf("  %zu / %zu\n", r.consoleWarnings.size(), r.problemWarnings.size());
+    };
+    std::printf("\n%-28s", "template");
+    for (int c = 0; c < kColCount; ++c) std::printf(" %-9s", kColName[c]);
+    std::printf("  warnings (Play / Problems)\n");
+    for (std::size_t i = 0; i < templateRows; ++i) printRow(rows[i]);
+    if (rows.size() > templateRows) {
+        std::printf("-- EditorState builders no menu or launcher entry reaches (MakeNotOffered) --\n");
+        for (std::size_t i = templateRows; i < rows.size(); ++i) printRow(rows[i]);
     }
-    std::printf("\n%zu templates, %d cells with a failure, %d cells with only known failures\n", rows.size(), failedCells, knownCells);
+    std::printf("\n%zu templates + %zu builders nothing offers, %d cells with a failure, %d cells with only known failures\n",
+                templateRows, rows.size() - templateRows, failedCells, knownCells);
+    if (!notOffered.empty()) {
+        std::printf("\nNot offered (a person cannot start these; offer them or delete them; their rows above say whether they still work):\n");
+        for (const NotOffered& n : notOffered) std::printf("  EditorState::%s: %s\n", n.method, n.why);
+    }
     if (!kKnownFailures.empty()) {
         std::printf("\nKnown failures (engine bugs, handed over):\n");
         for (const KnownFailure& k : kKnownFailures) std::printf("  %s / %s: %s\n", k.title, kColName[k.col], k.why);

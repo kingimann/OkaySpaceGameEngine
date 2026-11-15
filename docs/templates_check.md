@@ -5,10 +5,10 @@ and every example scene we ship, the way a person would, and fail when one is br
 
 | Test (ctest name) | Source | What it covers |
 |---|---|---|
-| `templates_work` | `tests/test_templates_work.cpp` | the 22 templates the launcher's Templates page and the editor's New Project form list (`okayproj::Templates()`) |
+| `templates_work` | `tests/test_templates_work.cpp` | the 22 templates the launcher's Templates page and the editor's New Project form list (`okayproj::Templates()`), and the two `EditorState` builders no menu reaches |
 | `examples_work` | `tests/test_examples_work.cpp` | every `examples/**/*.okayscene` (52 today), every File > Examples entry, and the Windows release's example list |
 
-Both are in the normal CI run (`ctest`), they take about four seconds together, and they need no window.
+Both are in the normal CI run (`ctest`), they take about six seconds together (measured on one core, `-O1`), and they need no window.
 
 ## Run them
 
@@ -68,8 +68,18 @@ Besides the per-template table, the test checks the table itself (`editor/Templa
   but now says so in the Console (`BuilderOrDefault`); an empty title (no `--template`) is the quiet default;
 * the launcher's second list, the quick templates behind the Templates page cards (`launcher/main.cpp`), names only real
   templates;
+* every `void New...()` in `editor/EditorState.hpp` is either in the table or listed in `MakeNotOffered()` with a reason (see
+  below), and an entry there that is offered by now, or gone, fails as stale;
 * the version gate really asks about an older project and about one with no stamp, so "no question" for a new project means
   something.
+
+**Scenes nothing offers.** `EditorState` has two builders that no menu, launcher card or New Project form calls:
+`NewPlatformer3D` (a 3D platformer) and `NewTerrainSandbox` (the older heightmap sandbox that the voxel Sandbox replaced in the
+launcher). A person cannot start them, so under the owner's rule 4a they are not "done"; they are listed in `MakeNotOffered()`
+with that reason and run through the same seven columns as the templates (all pass today: the 3D platformer's player walks 4.8 m
+in a second and jumps 2.4 m; the terrain sandbox's player walks, looks around, and digging lowers the ground). Offering one is
+the four steps under "Add a template"; deleting one is deleting its `EditorState` method and its row. Which of the two is the
+owner's call: nothing was added to the launcher here.
 
 ## examples_work: what is checked
 
@@ -138,6 +148,9 @@ suite stays green. A listed failure that stops happening fails the test, so the 
   test and was left to the owner of the serializer. The Humanoid template avoids it by object order. A scene a person builds
   by hand (Separate Into Parts, then add objects) can still hit it.
 * **Sandbox: the player creeps down the voxel terrain.** See "Known failures" above.
+* **Two scenes nothing offers.** `NewPlatformer3D` and `NewTerrainSandbox` in `EditorState` are not reachable from the launcher or
+  any editor menu (see "Scenes nothing offers" above). They work and are tested; whether to offer or delete them is the owner's
+  call.
 * **Duplicate names in the Problems panel.** Brand new First Person, Third Person, Third Person Shooter, Top-Down Shooter, Point
   and Click, Vehicle (3D), Vehicle (get in and drive), Vehicle (2D), Coin Collector and Humanoid projects show one or more
   "N objects are named 'Crate' at the scene root" warnings (Crate, Target, Cover, Block, Wheel, Cone, Coin, Step). They are

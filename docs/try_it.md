@@ -361,7 +361,7 @@ example, and the one known failure are in [templates_check.md](templates_check.m
 ```
 cmake --build build --target test_templates_work test_examples_work
 ctest --test-dir build -R "templates_work|examples_work" --output-on-failure
-build/tests/test_templates_work      # prints the table: 22 templates by 7 checks, and what was measured
+build/tests/test_templates_work      # prints the table: 22 templates by 7 checks (plus 2 builders no menu reaches), and what was measured
 build/tests/test_examples_work       # prints one line per example scene
 ```
 
@@ -385,7 +385,7 @@ the checks are headless, so every "you should see" line is unverified until you 
    `examples\touch_controls`.
 6. **Card text.** The launcher's cards for Vehicle (3D), Vehicle (2D) and Sandbox now say what the templates do.
 
-Status: tested on Linux (headless, 4 seconds). Not run: a real window, the launcher, Windows. Before and after pictures of six
+Status: tested on Linux (headless, about 6 seconds). Not run: a real window, the launcher, Windows. Before and after pictures of six
 of the changed example scenes are in [templates_check.md](templates_check.md#pictures-the-cameras-that-looked-away-before-and-after);
 they are headless software renders (meshes only, no on-screen text), not window screenshots.
 

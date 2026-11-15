@@ -180,6 +180,20 @@ Recent additions (v2.12–2.14):
   shows ONLY the selected object and its children in the Scene view — view-only,
   nothing in the scene changes, and a banner reminds you it's on. Rows outside
   the isolated subtree dim in the Hierarchy.
+- **Cut / Copy / Paste objects (Ctrl+X / Ctrl+C / Ctrl+V)** take the **whole
+  selection**: select three objects, Ctrl+X removes all three and Ctrl+V brings
+  all three back (with their children, names and components), half a unit away
+  and all selected. A selected child of a selected parent is copied once, with
+  its parent. Cut is one undo step and Paste is one undo step. Before this, the
+  clipboard kept only one of the selected objects, so a Cut of three lost two.
+  The logic is `editor/EditClipboard.hpp` (no ImGui), tested by
+  `tests/test_edit_clipboard.cpp`. The right-click and Edit menu **Paste** entries
+  read the same clipboard and also add every object, but select only the first;
+  **Edit ▸ Copy** and the right-click **Cut** / **Copy** entries still take one
+  object (these menus are being reworked separately; the shortcuts are fixed).
+  *How to try it:* open any scene, Ctrl+click three cubes in the Hierarchy,
+  press Ctrl+X (all three go), then Ctrl+V: all three come back, selected.
+  Ctrl+Z once removes the paste, Ctrl+Z again brings the three originals back.
 - **Project** — the same selection model: **Ctrl+click** to toggle,
   **Shift+click** for a range, **Ctrl+A** for everything shown. **Ctrl+C/X/V**
   copy, cut and paste whole multi-selections between folders, and **Delete**

@@ -80,6 +80,7 @@
 #include "AntiCheatIntegrity.hpp"       // Build Game's Data/manifest.json (opt-in anti-cheat)
 #include "FileDialog.hpp"                // open / save / folder dialogs: the system's own, or our built-in browser (asset import)
 #include "SdlClipboard.hpp"              // Play mode clipboard (SDL directly, not okay::platform)
+#include "EditClipboard.hpp"             // Ctrl+X / C / V of scene objects: the whole selection (tested)
 
 #include <numeric>
 #include <algorithm>
@@ -17340,27 +17341,22 @@ void HandleShortcuts(EditorState& ed) {
     if (ctrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_G, false) && ed.selected()) {
         ed.GroupSelected(); ConsoleLog("Grouped selection");
     }
-    // Copy / paste a GameObject via a serialized clipboard.
+    // Copy / cut / paste GameObjects via a serialized clipboard: EVERY selected object (a selected child of a
+    // selected parent once, with its parent); Cut is one undo step, Paste brings them all back (oked, EditClipboard.hpp).
     if (!animKeys && ctrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && ed.selected()) {
-        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
-        ConsoleLog("Copied " + ed.selected()->name);
+        const std::string what = oked::ClipboardLabel(oked::ClipboardRoots(ed.MultiSelection(), ed.selected()));
+        if (oked::CopySelection(ed, g_clipboard) > 0) ConsoleLog("Copied " + what);
     }
     // (Not while the Project panel is focused: there Ctrl+X cuts the selected files.)
     const bool projFocused = GImGui->NavWindow && GImGui->NavWindow->RootWindow &&
                              std::strcmp(GImGui->NavWindow->RootWindow->Name, "Project") == 0;
     if (!animKeys && !projFocused && ctrl && ImGui::IsKeyPressed(ImGuiKey_X, false) && ed.selected()) {
-        g_clipboard = SceneSerializer::SerializeObject(*ed.selected());
-        ConsoleLog("Cut " + ed.selected()->name + " (Ctrl+V to paste)");
-        ed.DeleteSelected();
+        const std::string what = oked::ClipboardLabel(oked::ClipboardRoots(ed.MultiSelection(), ed.selected()));
+        if (oked::CutSelection(ed, g_clipboard) > 0) ConsoleLog("Cut " + what + " (Ctrl+V to paste)");
     }
     if (!animKeys && ctrl && ImGui::IsKeyPressed(ImGuiKey_V, false) && !g_clipboard.empty()) {
-        ed.PushUndo();
-        if (GameObject* go = SceneSerializer::InstantiateFromText(ed.scene(), g_clipboard)) {
-            go->transform->localPosition += Vec3{0.5f, 0.5f, 0.0f}; // offset so it's visible
-            ed.Select(go);
-            ed.dirty = true;
-            ConsoleLog("Pasted " + go->name);
-        }
+        const std::vector<GameObject*> pasted = oked::PasteClipboard(ed, g_clipboard);   // offset so they're visible
+        if (!pasted.empty()) ConsoleLog("Pasted " + oked::ClipboardLabel(pasted));
     }
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_B, false) && !g_meshEdit) g_showBuildGame = true;   // in mesh edit mode Ctrl+B bevels
     // Ctrl+Up / Ctrl+Down reorder the selected object among its siblings.
@@ -49011,6 +49007,20 @@ int main(int argc, char** argv) {
             }
             if (const char* sn = std::getenv("OKAY_UI_SELECT"); sn && (s_focusFrames == 31 || s_focusFrames == 40))
                 for (const auto& up : ed.scene().Objects()) if (up->name == sn) { ed.Select(up.get()); break; }
+            // OKAY_UI_CUTPASTE="A,B,C": select those objects (frame 50), cut them as Ctrl+X does (52), paste as Ctrl+V does (56).
+            if (const char* cp = std::getenv("OKAY_UI_CUTPASTE")) {
+                if (s_focusFrames == 50) {
+                    ed.Select(nullptr);
+                    std::string cur;
+                    for (char c : std::string(cp) + ",") {
+                        if (c != ',') { cur += c; continue; }
+                        for (const auto& up : ed.scene().Objects()) if (up->name == cur && !ed.IsSelected(up.get())) { ed.ToggleSelect(up.get()); break; }
+                        cur.clear();
+                    }
+                }
+                if (s_focusFrames == 52) ConsoleLog("Cut " + std::to_string(oked::CutSelection(ed, g_clipboard)) + " (dev hook)");
+                if (s_focusFrames == 56) ConsoleLog("Pasted " + oked::ClipboardLabel(oked::PasteClipboard(ed, g_clipboard)) + " (dev hook)");
+            }
             if (std::getenv("OKAY_UI_ANIMGRAPH")) g_showAnimatorGraph = true;
             // OKAY_UI_TIMELINE=1 opens the Timeline window once the scene is up; a
             // .okayseq path opens that file in it.

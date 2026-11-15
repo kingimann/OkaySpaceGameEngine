@@ -4,6 +4,10 @@ Format and loading rules are in `engine/include/okay/Scene/SceneSerializer.hpp`.
 page covers what an object round trip keeps.
 
 - **Ids:** `guid` (see prefabs.md). Same id on reload, new id for a copy.
+- **Several objects in one text:** `SerializeObjects(roots)` writes each root with everything below it, in the given
+  order, into one `okayscene 3` text (the editor's Ctrl+C / Ctrl+X clipboard for a multi-selection). A root that is
+  below another listed root, repeated or null is skipped, so nothing is written twice. `SerializeObject(root)` is the
+  one-root case and gives the same text as before. `InstantiateFromText` adds every object of such a text.
 - **Prefab files:** `nestedprefab`, `variant`, `override`, `unset`, `remove` and `under` are prefab-file
   records (prefab_system.md). A build that does not know them skips them with a warning.
 - **Sibling order:** objects load in file order, so a reordered family writes a

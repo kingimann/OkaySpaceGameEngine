@@ -17,11 +17,12 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.1.6 Filtered search - `editor/main.cpp`, `editor/InspectorModel.*` (`HierFilter`) - words must all match (name, tag or kind word); `t:tag`, `c:component`, `l:layer`, `is:off|locked|static|prefab`, `-word` to exclude, and `Parent/Child` path search (`Scene::FindAllByPath`)
   - 15.1.7 Drag and drop - `editor/main.cpp`, `editor/InspectorModel.*` - reparent and reorder by dropping on the middle (child) or top or bottom edge (before or after) of a row, with a drop indicator; multi-selection moves together; prefabs, models and pictures from the Project panel can be dropped on a row or on empty space (one undo step each)
   - 15.1.8 Eye and lock toggles - `editor/main.cpp` (`HierEye`, `HierLock`) - per-row active (eye) and lock buttons at the row's right edge
+  - 15.1.9 Cut, copy and paste of objects - `editor/EditClipboard.hpp` (tested), `editor/main.cpp` (`HandleShortcuts`), `SceneSerializer::SerializeObjects` - Ctrl+X / Ctrl+C put every selected object on the clipboard (a selected child of a selected parent once, with the parent), Ctrl+V pastes them all and selects them; Cut and Paste are one undo step each
 - **Code:** `editor/main.cpp` (`DrawHierarchy`), `editor/EditorState.*`
 - **API:** menu View > Panels > Hierarchy; shortcuts for rename, duplicate, delete, focus
 - **Editor:** Hierarchy panel
 - **Docs:** `docs/editor.md` (Editor quality-of-life, Hierarchy right-click)
-- **Tests:** `editor` (selftest)
+- **Tests:** `editor` (selftest), `edit_clipboard` (Ctrl+X / C / V with several objects, undo steps; no ImGui)
 - **Status:** Works - used by every session; the GUI is not unit-tested; the undo menu entries, shortcuts and History panel are compiled but not run (`docs/editor_undo.md`: "The GUI was not run for this change"); the filter and drop rules are tested headless (`inspector_model`)
 - **Open:** polish (carried from the earlier map); #575 (scene hierarchy, search and validation) is engine-side (hierarchy-aware active state, FindByPath, Validate); the Hierarchy search calls `FindAllByPath` for `Parent/Child` paths, and the panel still does not call `Validate`; a pinned-object feature named in the old A-Z index is not found by name in the Hierarchy code
 - **Related:** 15.2, 1.3, 1.6, 21

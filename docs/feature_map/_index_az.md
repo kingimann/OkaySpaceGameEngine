@@ -947,6 +947,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Custom tags (25.2.2)
 - custom window (24.2)
 - customization (4.9, 30.1)
+- Cut, copy and paste of objects (15.1.9)
 - cutscene (10.1)
 - Cutscene camera shots (4.8.5)
 - cutscene editor (15.5)

@@ -848,6 +848,13 @@ target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
+# Cut / Copy / Paste of scene objects (editor/EditClipboard.hpp, ImGui-free): every selected object goes on the clipboard (a selected
+# child of a selected parent once, with its parent), Paste brings them all back, Cut and Paste are one undo step each.
+add_executable(test_edit_clipboard test_edit_clipboard.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_edit_clipboard PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_edit_clipboard PRIVATE okay::engine)
+add_test(NAME edit_clipboard COMMAND test_edit_clipboard)
+
 # Prefab mode (EditorState): open a prefab on its own, edit, save, go back; nested levels, per-level undo, instance refresh, Play refused.
 add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_mode PRIVATE ${PROJECT_SOURCE_DIR}/editor)

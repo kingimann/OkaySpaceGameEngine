@@ -9192,14 +9192,29 @@ bool SceneLoadJob::Step(Scene& scene, int maxObjects, std::string* error) {
 
 
 std::string SceneSerializer::SerializeObject(const GameObject& root) {
+    return SerializeObjects({&root});
+}
+
+std::string SceneSerializer::SerializeObjects(const std::vector<const GameObject*>& roots) {
     VehicleSeatSaveGuard seatGuard;
-    // Gather the object and all its descendants (depth-first, in sibling order). A stack, not a
-    // recursion: a hierarchy 100000 deep must not overflow the call stack. `skipBits` says why an
-    // object is not written (see OwnSkipBits): inherited from its parent inside the subtree. Above
-    // the root only a generated rig or a build mode object counts (as it always did), not `transient`.
+    // Gather each root and all its descendants (depth-first, in sibling order), root after root. A
+    // stack, not a recursion: a hierarchy 100000 deep must not overflow the call stack. `skipBits`
+    // says why an object is not written (see OwnSkipBits): inherited from its parent inside the
+    // subtree. Above a root only a generated rig or a build mode object counts (as it always did),
+    // not `transient`. A root that is null, repeated, or below another root is left out: its
+    // subtree is already written once with that root.
     std::vector<GameObject*> subtree;
     std::vector<unsigned> skipBits;
-    {
+    std::unordered_set<const GameObject*> rootSet;
+    for (const GameObject* r : roots) if (r) rootSet.insert(r);
+    std::unordered_set<const GameObject*> taken;
+    for (const GameObject* rootPtr : roots) {
+        if (!rootPtr || !taken.insert(rootPtr).second) continue;
+        const GameObject& root = *rootPtr;
+        bool underAnotherRoot = false;
+        for (const Transform* p = root.transform ? root.transform->Parent() : nullptr; p; p = p->Parent())
+            if (p->gameObject && rootSet.count(p->gameObject)) { underAnotherRoot = true; break; }
+        if (underAnotherRoot) continue;
         unsigned rootBits = 0;
         for (const Transform* p = root.transform ? root.transform->Parent() : nullptr; p; p = p->Parent())
             if (p->gameObject) rootBits |= OwnSkipBits(p->gameObject) & ~kSkipTransient;

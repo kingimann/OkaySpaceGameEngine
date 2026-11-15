@@ -110,6 +110,11 @@ public:
 
     /// Serialize a single GameObject and its descendants (a prefab).
     static std::string SerializeObject(const GameObject& root);
+    /// Serialize several objects and their descendants into ONE text (the editor's
+    /// clipboard for a multi-selection). Roots are written in the given order; a null
+    /// root, a repeated one, or one below another listed root is skipped (its subtree
+    /// comes with that root, once). InstantiateFromText / MergeFromText add them all.
+    static std::string SerializeObjects(const std::vector<const GameObject*>& roots);
     /// Clone `prefab` (and its descendants) into `scene`; returns the new root,
     /// or nullptr (nothing added) if the clone's text fails to parse.
     static GameObject* Instantiate(Scene& scene, const GameObject& prefab);

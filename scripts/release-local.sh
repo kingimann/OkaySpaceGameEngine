@@ -22,14 +22,14 @@
 #
 # Safety: refuses to publish unless the tree is clean and HEAD is already on
 # origin (the release tags that exact commit), and refuses to republish a
-# version whose GitHub release already exists unless --force is given (--force
-# also lets scripts/publish-supabase.sh replace a version that is already listed
-# with different files: ALLOW_REPUBLISH=1).
+# version whose GitHub release already exists unless --force is given.
 #
-# Releases may overlap (docs/release_channels.md, "Several releases at once"):
-# the Supabase publish takes a lock and waits for another publish to finish, it
-# never moves "latest" backwards, and the GitHub release only becomes "latest"
-# when no newer one already is (scripts/promote-latest.sh).
+# Which publish path (the same switch as PUBLISH_V2 at the top of .github/workflows/release.yml):
+#   default            scripts/publish-supabase-v1.sh (the old, proven script) and `gh release edit --latest`: what this script always did.
+#   PUBLISH_V2=1       scripts/publish-supabase.sh (a lock so releases publish one at a time, "latest" never backwards, safer reads) and
+#                      scripts/promote-latest.sh (only moves GitHub's latest forward). --force then also sets ALLOW_REPUBLISH=1, which lets the
+#                      new script replace a version that is already listed with different files. Use it only after the "Release rehearsal"
+#                      workflow has passed (docs/try_it.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -157,14 +157,18 @@ fi
 # ---- Supabase ----------------------------------------------------------------
 if [ -n "${SUPABASE_SERVICE_KEY:-}${SUPABASE_ACCESS_TOKEN:-}" ]; then
   say "Publishing to Supabase ($CHANNEL)"
-  CHANNEL=$CHANNEL DIST_DIR="$PWD/build-win-dist" ALLOW_REPUBLISH=$FORCE scripts/publish-supabase.sh
+  if [ "${PUBLISH_V2:-0}" = 1 ]; then
+    PUBLISH_V2=1 CHANNEL=$CHANNEL DIST_DIR="$PWD/build-win-dist" ALLOW_REPUBLISH=$FORCE scripts/publish-supabase.sh
+  else
+    CHANNEL=$CHANNEL DIST_DIR="$PWD/build-win-dist" scripts/publish-supabase-v1.sh
+  fi
   if [ $CHANNEL != lts ]; then
-    say "Checksums are published: marking $TAG as the latest release (unless a newer release already is)"
-    scripts/promote-latest.sh "$VER"
+    say "Checksums are published: marking $TAG as the latest release"
+    if [ "${PUBLISH_V2:-0}" = 1 ]; then scripts/promote-latest.sh "$VER"; else gh release edit "$TAG" --latest; fi
   fi
 else
   echo "warning: no SUPABASE_SERVICE_KEY / SUPABASE_ACCESS_TOKEN set: the checksums were NOT published, so launchers would refuse v$VER."
-  echo "         $TAG was left as NOT latest. Publish the checksums (scripts/publish-supabase.sh), then: scripts/promote-latest.sh $VER"
+  echo "         $TAG was left as NOT latest. Publish the checksums (scripts/publish-supabase.sh), then: gh release edit $TAG --latest"
 fi
 
 # ---- verify what users will download matches what we built --------------------

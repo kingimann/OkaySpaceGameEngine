@@ -742,9 +742,12 @@ jobs:
       - name: Publish script checks
         run: bash tests/scripts/test_publish_supabase_checks.sh
 
-      # Two publish-supabase.sh processes at a time against a local fake of the storage API: the lock, a stale lock, "latest" never
-      # moving back, no lost update in versions.json, the lock given back after an error or SIGTERM; promote-latest.sh with a stub gh.
-      # Takes a minute or two (the processes wait for each other on purpose).
+      # The release scripts that make overlapping releases safe, against a local fake of the storage API and a stub gh: two
+      # publish-supabase.sh processes at a time (the lock, a stale lock taken over through a claim, "latest" never moving back, no lost
+      # update in versions.json, a cut-off answer never wipes the history, the lock given back after an error, SIGTERM or a signal to the
+      # script alone), promote-latest.sh, the PUBLISH_V2 switch (off = the old script, byte for byte), check-unreleased.sh, the
+      # rehearsal script, the commands the guide tells a person to type, and the shape of release.yml / release-rehearsal.yml.
+      # Takes about three minutes (the processes wait for each other on purpose).
       - name: Overlapping releases (publish lock, latest only moves forward)
         run: python3 -I tests/scripts/test_publish_lock.py
 

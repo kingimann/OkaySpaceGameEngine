@@ -436,25 +436,52 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 
 ## Release tooling: several releases at once (not part of the Windows release)
 
-What it is: you can dispatch the release workflow again before the last release is out. Builds run side by side; publishing takes
+What it is: a way to dispatch the release workflow again before the last release is out. Builds run side by side; publishing takes
 turns (a lock file `release.lock` in the update bucket), "latest" never goes backwards, and the GitHub "latest" release follows the
 same rule. The full guide is [release_channels.md, "Several releases at once"](release_channels.md#several-releases-at-once).
-It changes the release workflow and scripts only; nothing in `OkaySpace.exe`, the editor or the installer. Status: **tested only
-against a fake storage service and a stub `gh` on Linux; it has not run on the real storage service or in a real Actions run.**
+It changes the release workflow and scripts only; nothing in `OkaySpace.exe`, the editor or the installer.
 
-1. **Run the automatic test** (Linux checkout, about two minutes):
-   `python3 -I tests/scripts/test_publish_lock.py`. You should see a line per test and `OK` at the end. It starts two copies of
-   `scripts/publish-supabase.sh` at the same time against a local fake, and checks that both versions end up in `versions.json`
-   with checksums, that `VERSION.txt` is the newer one even when the older one finishes last, and that the lock is gone at the end.
-   The same test runs in CI as the step "Overlapping releases" of the job "Ticket function, update signing and account server tests".
-2. **Rehearse it for real without touching the real bucket**: the command block under "Trying it" in the guide publishes two
-   throwaway versions into a throwaway bucket (`BUCKET=zz-publish-test`) at the same time. You should see one run take the lock, the
-   other say `release.lock is held by ...; waiting for it`, both say `gave the release lock back`, and `VERSION.txt` in that bucket say
-   `2.901.0`. Delete the bucket afterwards. The service key stays in your own shell.
-3. **On the next real release**: dispatch two releases a minute apart (each with its own version). In each run, open the step
-   "Publish to Supabase": you should see `took the release lock` and `gave the release lock back`; a run that had to wait shows
-   `is held by github-run-...; waiting for it` first. In the last job, "Make the release visible (latest)", the newer release says
-   `v... is now the latest release`; an older one that finished last says `A newer release (v...) is already latest on GitHub: ... stays a
-   normal release`.
-4. **A stuck lock**: delete `release.lock` in the Supabase dashboard (Storage > `releases`), or wait 20 minutes; the guide says what
-   the log shows.
+Status, plainly: **it is switched OFF.** One line at the top of `.github/workflows/release.yml` (`PUBLISH_V2: "0"`) decides, and the
+next real release uses the old publish script exactly as before. The new path has only been tested against a fake storage service and
+a stand-in for `gh` on Linux; it has **not** run on the real storage service or in a real Actions run. Steps 1 and 3 below can be done
+today from a checkout of this branch. **Step 2 (the rehearsal in GitHub) cannot be done until the pull request that adds
+`.github/workflows/release-rehearsal.yml` is merged:** GitHub lists a workflow that is started by hand only when its file is on the
+main branch.
+
+1. **Run the automatic tests** (Linux checkout, a few minutes): `python3 -I tests/scripts/test_publish_lock.py`. You should see a
+   line per test and `OK` at the end. It starts two copies of the new script at the same time against a local fake and checks that
+   both versions end up in `versions.json` with checksums, that `VERSION.txt` is the newer one even when the older one finishes last,
+   and that the lock is gone at the end. It also proves the switch: with it off, the script that runs is the old one, byte for byte
+   (its SHA-256 is pinned), and it leaves the same files in the bucket as before. The same test runs in CI as the step "Overlapping
+   releases" of the job "Ticket function, update signing and account server tests".
+2. **The real rehearsal, in GitHub** (after the merge): open the repository on GitHub > **Actions** > **Release rehearsal** (left list)
+   > **Run workflow** (button on the right, branch `main`) > **Run workflow**. Wait a few minutes (it stops itself after 20), open the
+   run and read its **Summary**.
+   * **Green and every row PASS:** the new path behaved on the real storage service as it does on the fake (two dummy versions
+     published at the same moment, one took the lock and the other waited, both versions listed in `versions.json` with SHA-256 of the
+     three programs, `VERSION.txt` the higher one, the same files again say "safe re-run", different files are refused, an older
+     version does not move "latest" back, a cached public read does not matter). The summary also lists what the real service
+     answered to the three questions the lock depends on. Only now may the coordinator change `PUBLISH_V2` to `"1"`.
+   * **Red, or any FAIL row:** do not switch it on. The row says what differed; send the run's address to the coordinator.
+   * It only ever touches a new throwaway bucket `zz-publish-test-<run number>`, never the real `releases` bucket, and it empties and
+     deletes it at the end, also when the run fails or is cancelled. If the summary says the bucket could not be deleted, delete it in
+     the Supabase dashboard (Storage). It uses the repository secret `SUPABASE_SERVICE_KEY`, the same one the release uses, and never
+     prints it. If the repository has no such secret the run stops at once and says so.
+3. **The same rehearsal from your computer** (the key stays in your own shell): in the repository folder run
+   `read -rs SUPABASE_SERVICE_KEY; export SUPABASE_SERVICE_KEY` (paste the key; nothing is shown), then
+   `BUCKET="zz-publish-test-$(date +%s)" scripts/release-rehearsal.sh run`. You should see `PASS` for each check and the bucket
+   deleted at the end. The script refuses any bucket name that does not start with `zz-publish-test-`.
+   To watch the lock yourself, use the two-publishes block under "Trying it" in the guide: one run says `took the release lock ...
+   after 0 s`, the other `release.lock is held by local-pid-...; waiting for it`, both say `gave the release lock back`, and
+   `VERSION.txt` in the throwaway bucket says `2.901.0`.
+4. **After the rehearsal is green and the switch is on, on a real release:** dispatch two releases a minute apart (each with its own
+   version). In each run, open the step "Publish to Supabase": you should see `took the release lock` and `gave the release lock
+   back`; a run that had to wait shows `is held by github-run-...; waiting for it` first. In the last job, "Make the release visible
+   (latest)", the newer release says `v... is now the latest release`; an older one that finished last says `A newer release
+   (v...) is already latest on GitHub: ... stays a normal release` (also shown as a warning on the run page). **To roll back, change
+   the line back to `PUBLISH_V2: "0"`**: the next release then runs the old script again.
+5. **A stuck lock:** delete `release.lock` (and any `release.lock.claim-...`) in the Supabase dashboard (Storage > `releases`), or wait
+   20 minutes; the guide says what the log shows.
+6. **A release whose Supabase step failed:** the guide's section "If the Supabase step of a run failed" has the exact commands: download
+   the run's artifact `OkaySpace-windows-v<version>`, unzip it, `DIST_DIR=<folder> scripts/publish-supabase.sh`, then
+   `scripts/promote-latest.sh <version>`. Do not run the workflow again and do not rebuild: the bytes would differ.

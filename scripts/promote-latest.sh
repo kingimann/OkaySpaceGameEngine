@@ -28,6 +28,13 @@ cd "$(dirname "$0")/.."
 
 say() { echo "promote-latest: $*"; if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then echo "$*" >> "$GITHUB_STEP_SUMMARY"; fi; return 0; }
 die() { echo "promote-latest: $*" >&2; exit 1; }
+# decline <message>: v<version> is NOT made latest because something newer is. A run that quietly does nothing looks like a bug, so this
+# is also an annotation on the run page in GitHub Actions.
+decline() {
+    say "$*"
+    if [ "${GITHUB_ACTIONS:-}" = true ]; then echo "::warning title=Release not made latest::$*"; fi
+    return 0
+}
 
 VER="${1:-}"; VER="${VER#v}"
 [[ "$VER" =~ ^[0-9]+(\.[0-9]+)+$ ]] || die "usage: scripts/promote-latest.sh <version, like 2.876.0>"
@@ -78,11 +85,11 @@ fi
 
 # 3. Decide.
 if [ -n "$GH_LATEST" ] && version_newer "$GH_LATEST" "$VER"; then
-    say "A newer release (v$GH_LATEST) is already latest on GitHub: v$VER stays a normal release (it is not made latest)."
+    decline "A newer release (v$GH_LATEST) is already latest on GitHub: v$VER stays a normal release (it is not made latest)."
     exit 0
 fi
 if [ -n "$PUB_LATEST" ] && version_newer "$PUB_LATEST" "$VER"; then
-    say "A newer release (v$PUB_LATEST) is already published: its own run makes it latest, so v$VER stays a normal release (it is not made latest)."
+    decline "A newer release (v$PUB_LATEST) is already published: its own run makes it latest, so v$VER stays a normal release (it is not made latest)."
     exit 0
 fi
 if [ -n "$GH_LATEST" ] && ! version_newer "$VER" "$GH_LATEST"; then   # equal

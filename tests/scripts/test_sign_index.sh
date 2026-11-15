@@ -50,16 +50,26 @@ case "$out" in *"not-hex-secret-value"*) bad "a malformed seed was echoed";; esa
 [ ! -e "$T/x.sig" ] || bad "a signature file was written without a valid seed"
 $S sign --seed "$seed" --file "$T/versions.json" --out "$T/y.sig" >/dev/null 2>&1 && bad "the seed was accepted on the command line"
 
-# publish-supabase.sh guards (they run before any network use).
+# publish-supabase.sh guards (they run before any network use), for every way into the publish: the default (scripts/publish-supabase.sh
+# hands over to the old script unless PUBLISH_V2=1), the old script directly, and the new script (PUBLISH_V2=1).
 mkdir -p "$T/dist"; printf '1.2.3\n' > "$T/dist/VERSION.txt"
-out="$(env -u SUPABASE_SERVICE_KEY -u SUPABASE_ACCESS_TOKEN OKAY_UPDATE_SIGNING_SEED="$seed" DIST_DIR="$T/dist" bash -x "$REPO/scripts/publish-supabase.sh" 2>&1)" && bad "ran under set -x with a seed"
-case "$out" in *"refusing to run with 'set -x'"*) ;; *) bad "set -x guard message missing";; esac
-# The trace of the guard itself must not hold the seed: the check happens before anything expands it.
-case "$out" in *"$seed"*) bad "the set -x trace printed the seed";; esac
-out="$(env -u SUPABASE_SERVICE_KEY -u SUPABASE_ACCESS_TOKEN OKAY_UPDATE_SIGNING_SEED="abc" DIST_DIR="$T/dist" bash "$REPO/scripts/publish-supabase.sh" 2>&1)" && bad "a short seed was accepted"
-case "$out" in *"not 64 hex digits"*) ;; *) bad "short seed message: $out";; esac
-out="$(env -u SUPABASE_SERVICE_KEY -u SUPABASE_ACCESS_TOKEN -u OKAY_UPDATE_SIGNING_SEED REQUIRE_SIGNED=1 DIST_DIR="$T/dist" bash "$REPO/scripts/publish-supabase.sh" 2>&1)" && bad "REQUIRE_SIGNED without a seed ran"
-case "$out" in *"REQUIRE_SIGNED=1 but OKAY_UPDATE_SIGNING_SEED is not set"*) ;; *) bad "REQUIRE_SIGNED message: $out";; esac
+for variant in default v1-direct v2; do
+    case "$variant" in
+        default)   script="$REPO/scripts/publish-supabase.sh";    v2=0 ;;
+        v1-direct) script="$REPO/scripts/publish-supabase-v1.sh"; v2=0 ;;
+        v2)        script="$REPO/scripts/publish-supabase.sh";    v2=1 ;;
+    esac
+    E=(env -u SUPABASE_SERVICE_KEY -u SUPABASE_ACCESS_TOKEN PUBLISH_V2="$v2")
+    out="$("${E[@]}" OKAY_UPDATE_SIGNING_SEED="$seed" DIST_DIR="$T/dist" bash -x "$script" 2>&1)" && bad "[$variant] ran under set -x with a seed"
+    case "$out" in *"refusing to run with 'set -x'"*) ;; *) bad "[$variant] set -x guard message missing";; esac
+    # The trace of the guard itself must not hold the seed: the check happens before anything expands it.
+    case "$out" in *"$seed"*) bad "[$variant] the set -x trace printed the seed";; esac
+    out="$("${E[@]}" OKAY_UPDATE_SIGNING_SEED="abc" DIST_DIR="$T/dist" bash "$script" 2>&1)" && bad "[$variant] a short seed was accepted"
+    case "$out" in *"not 64 hex digits"*) ;; *) bad "[$variant] short seed message: $out";; esac
+    E2=(env -u SUPABASE_SERVICE_KEY -u SUPABASE_ACCESS_TOKEN -u OKAY_UPDATE_SIGNING_SEED PUBLISH_V2="$v2")
+    out="$("${E2[@]}" REQUIRE_SIGNED=1 DIST_DIR="$T/dist" bash "$script" 2>&1)" && bad "[$variant] REQUIRE_SIGNED without a seed ran"
+    case "$out" in *"REQUIRE_SIGNED=1 but OKAY_UPDATE_SIGNING_SEED is not set"*) ;; *) bad "[$variant] REQUIRE_SIGNED message: $out";; esac
+done
 
 [ "$fail" = 0 ] && echo "sign_index: ok"
 exit "$fail"

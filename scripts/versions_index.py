@@ -14,7 +14,13 @@ the GitHub release listed in "archive".
       --lts 2.850.1 --repo owner/name --out NEW.json
   versions_index.py check --index NEW.json --version 2.856.0 --file OkayEngine.exe=path/to/OkayEngine.exe ...
   versions_index.py status --index OLD.json --version 2.856.0 --file OkayEngine.exe=path/to/OkayEngine.exe ...
+  versions_index.py validate --index F.json
+  versions_index.py superset --old OLD.json --new NEW.json
   versions_index.py --self-test
+
+`validate` exits 0 only when the file is JSON and a schema-1 index (a list of versions), and says why on stderr when it is not: the new
+publish script refuses to build on anything else instead of starting an index from nothing. `superset` exits 0 only when NEW is a usable
+index that lists every version OLD lists (a merge only adds or replaces one entry, so a smaller result means something went wrong).
 
 `status` prints one word, so the publish script can refuse to change what was already published (CLAUDE.md rule 12):
   new        the version is not in the index (or is listed without any file checksum)
@@ -195,6 +201,28 @@ def entry_status(existing, version, files):
     return "same"
 
 
+def index_problem(data):
+    """None when `data` (parsed JSON) is a usable schema-1 index, else a short reason."""
+    if not isinstance(data, dict):
+        return "it is not a JSON object"
+    if data.get("schema") != SCHEMA:
+        return "its schema is %r, not %d" % (data.get("schema"), SCHEMA)
+    if not isinstance(data.get("versions"), list):
+        return "it has no list of versions"
+    return None
+
+
+def listed_versions(data):
+    """The set of canonical versions an index lists (entries that are unusable are not counted)."""
+    out = set()
+    if isinstance(data, dict) and isinstance(data.get("versions"), list):
+        for e in data["versions"]:
+            c = _clean_entry(e)
+            if c is not None:
+                out.add(c["version"])
+    return out
+
+
 def _read_json(path):
     if not path or not os.path.isfile(path):
         return None
@@ -225,6 +253,35 @@ def _cmd_check(a):
     for p in problems:
         sys.stderr.write("versions_index: %s\n" % p)
     return 1 if problems else 0
+
+
+def _cmd_validate(a):
+    """Exit 0 only for a JSON file that is a schema-1 index; the reason goes to stderr."""
+    try:
+        with open(a.index, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as err:
+        sys.stderr.write("it is not valid JSON (%s)\n" % err)
+        return 1
+    why = index_problem(data)
+    if why:
+        sys.stderr.write(why + "\n")
+        return 1
+    return 0
+
+
+def _cmd_superset(a):
+    """Exit 0 only when --new is a usable index that lists every version --old lists."""
+    old, new = _read_json(a.old), _read_json(a.new)
+    why = index_problem(new)
+    if why:
+        sys.stderr.write("versions_index: the new index is not usable: %s\n" % why)
+        return 1
+    lost = sorted(listed_versions(old) - listed_versions(new), key=parse_version)
+    if lost:
+        sys.stderr.write("versions_index: the new index lacks %s, which the old one lists\n" % ", ".join(lost))
+        return 1
+    return 0
 
 
 def _cmd_status(a):
@@ -264,6 +321,12 @@ def _cmd_merge(a):
 
 
 # ---- self test --------------------------------------------------------------
+
+def contextlib_redirect_stderr():
+    import contextlib
+    import io
+    return contextlib.redirect_stderr(io.StringIO())
+
 
 def _self_test():
     fails = []
@@ -320,6 +383,15 @@ def _self_test():
     check(entry_status(idx2, "2.856.0", {"Other.exe": f1["OkayEngine.exe"]}) == "new", "status with no file in common")
     check(entry_status({"schema": 1, "versions": [{"version": "2.860.0"}]}, "2.860.0", f1) == "new", "status of an entry without checksums")
     check(entry_status({"schema": 2, "versions": idx2["versions"]}, "2.856.0", other) == "new", "status of an unknown schema")
+
+    # validate / superset: what the new publish script uses to refuse an index it does not understand and a merge that lost versions.
+    check(index_problem(idx2) is None, "a real index is usable")
+    for bad_index, what in (("text", "a string"), ([], "a list"), ({"schema": 2, "versions": []}, "another schema"),
+                            ({"schema": 1}, "no versions"), ({"schema": 1, "versions": "x"}, "versions that is not a list"), (None, "null")):
+        check(index_problem(bad_index) is not None, "index_problem refuses " + what)
+    check(listed_versions(idx4) == {"2.857.0", "2.856.0", "2.855.0", "2.850.1"}, "listed_versions lists every usable entry")
+    check(listed_versions({"schema": 1, "versions": [{"version": "nope"}, 5, {"version": "2.2.0"}]}) == {"2.2.0"}, "listed_versions skips junk")
+    check(listed_versions("junk") == set(), "listed_versions of garbage")
 
     # Garbage in the old index is ignored; good entries in a damaged one survive.
     check(merge("junk", "2.1.0", "latest", f1, "", None, None, None, "o/n")["versions"][0]["version"] == "2.1.0", "garbage index")
@@ -381,6 +453,23 @@ def _self_test():
         check(data and data["versions"][0]["files"]["OkayEngine.exe"] ==
               {"size": 5, "sha256": hashlib.sha256(b"hello").hexdigest()}, "cli hashes the file")
         check(not os.path.exists(out + ".tmp"), "no temp file left")
+        # validate and superset on real files
+        good_path, junk_path, small_path = os.path.join(d, "good.json"), os.path.join(d, "junk.json"), os.path.join(d, "small.json")
+        with open(good_path, "w", encoding="utf-8") as fh:
+            json.dump(idx4, fh)
+        with open(junk_path, "w", encoding="utf-8") as fh:
+            fh.write('{"schema": 1, "versions": [')   # (a read that was cut off)
+        with open(small_path, "w", encoding="utf-8") as fh:
+            json.dump(idx, fh)
+        with contextlib_redirect_stderr():
+            check(_cmd_validate(argparse.Namespace(index=good_path)) == 0, "validate accepts a good index")
+            check(_cmd_validate(argparse.Namespace(index=junk_path)) == 1, "validate refuses a cut-off index")
+            check(_cmd_validate(argparse.Namespace(index=os.path.join(d, "nope.json"))) == 1, "validate refuses a missing file")
+            check(_cmd_superset(argparse.Namespace(old=small_path, new=good_path)) == 0, "superset accepts a merge that only added")
+            check(_cmd_superset(argparse.Namespace(old=good_path, new=good_path)) == 0, "superset accepts the same index")
+            check(_cmd_superset(argparse.Namespace(old=good_path, new=small_path)) == 1, "superset refuses an index that lost versions")
+            check(_cmd_superset(argparse.Namespace(old=good_path, new=junk_path)) == 1, "superset refuses an unusable new index")
+            check(_cmd_superset(argparse.Namespace(old=junk_path, new=good_path)) == 0, "superset: an old index nobody can read lists nothing to lose")
         # status on the real files: the same bytes, then a changed one
         import contextlib
         import io
@@ -436,6 +525,11 @@ def main(argv):
     c.add_argument("--index", required=True)
     c.add_argument("--version", required=True)
     c.add_argument("--file", action="append")
+    v = sub.add_parser("validate")
+    v.add_argument("--index", required=True)
+    u = sub.add_parser("superset")
+    u.add_argument("--old", required=True)
+    u.add_argument("--new", required=True)
     s = sub.add_parser("status")
     s.add_argument("--index", required=True)
     s.add_argument("--version", required=True)
@@ -456,6 +550,10 @@ def main(argv):
         return _self_test()
     if a.cmd == "check":
         return _cmd_check(a)
+    if a.cmd == "validate":
+        return _cmd_validate(a)
+    if a.cmd == "superset":
+        return _cmd_superset(a)
     if a.cmd == "status":
         return _cmd_status(a)
     if a.cmd == "merge":

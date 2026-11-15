@@ -1,0 +1,55 @@
+name: Release rehearsal
+
+# A dress rehearsal of the NEW publish path (scripts/publish-supabase.sh with PUBLISH_V2=1: the lock, "latest" never backwards, safer reads)
+# against the REAL storage service, in a throwaway bucket that is always emptied and deleted. It never touches a real release or the bucket
+# "releases". It only runs when somebody starts it: Actions tab > "Release rehearsal" > "Run workflow" (docs/try_it.md has the steps and says
+# what green looks like). GitHub only lists a workflow that can be started by hand once its file is on the main branch.
+#
+# It uses the repository secret SUPABASE_SERVICE_KEY exactly like release.yml does, and never prints it: no `set -x`, no `curl -v`, and the
+# script reads the key from the environment only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rehearsal:
+    name: Rehearse overlapping publishes in a throwaway bucket
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # "true" when the repo has the secret that the publish needs (the same check release.yml makes).
+      SUPABASE_PUBLISH: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+      # A new throwaway bucket for every run. The script refuses any other name, and so does the first step below.
+      BUCKET: zz-publish-test-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Refuse anything but a throwaway bucket
+        run: |
+          case "$BUCKET" in
+            zz-publish-test-?*) echo "Throwaway bucket for this run: $BUCKET" ;;
+            *) echo "::error title=Not a throwaway bucket::the bucket name must start with zz-publish-test- (got '$BUCKET')"; exit 1 ;;
+          esac
+
+      - name: Check the secret exists
+        run: |
+          if [ "$SUPABASE_PUBLISH" != "true" ]; then
+            echo "::error title=No SUPABASE_SERVICE_KEY::The repository has no SUPABASE_SERVICE_KEY secret, so there is nothing to rehearse against (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+
+      # Builds two tiny dummy releases, publishes them at the same moment, checks the results (PASS or FAIL rows in this run's summary), and
+      # prints what the real service answered. Exit status 1 when any check failed.
+      - name: Rehearse the new publish path
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: bash scripts/release-rehearsal.sh run
+
+      # Always, also when the step above failed or the run was cancelled: the throwaway bucket must not be left behind.
+      - name: Empty and delete the throwaway bucket
+        if: always()
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: bash scripts/release-rehearsal.sh cleanup

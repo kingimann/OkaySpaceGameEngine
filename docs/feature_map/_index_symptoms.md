@@ -1113,6 +1113,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the stamina bar stays full | [11.4](11-gameplay-systems.md#114-survival-stats-afflictions-zones) Survival: stats, afflictions, zones |
 | the Steam overlay does not appear | [37.7](37-platform-windowing.md#377-steam-backend) Steam backend |
 | the story variable resets after loading | [10.3](10-story-cinematics.md#103-quests-and-story-variables) Quests and story variables |
+| the Supabase step of a release failed and the release stays hidden | [18.4](18-build-export-release.md#184-release-workflow) Release workflow |
 | the template object is visible in the scene | [11.6](11-gameplay-systems.md#116-spawners-turn-manager-minimap) Spawners, turn manager, minimap |
 | the toolbar button does nothing | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
 | the tracker overlaps the minimap | [10.4](10-story-cinematics.md#104-story-ui-dialogue-box-quest-tracker-and-journal) Story UI: dialogue box, quest tracker and journal |
@@ -1166,6 +1167,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | two players after Make Playable | [3.7](03-modeling-import.md#37-rigging-and-playable-setup) Rigging and playable setup |
 | two players see different object positions | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
 | two plugins with the same name clash | [15.8](15-editor.md#158-plugin-system-and-plugins-menu) Plugin system and Plugins menu |
+| two releases were started together and the second says "already released" or waits | [18.4](18-build-export-release.md#184-release-workflow) Release workflow |
 | two scenes will not merge cleanly | [1.5](01-core-scene.md#15-scene-serializer) Scene serializer |
 | two touching UI rectangles count as overlapping | [36.4](36-math-geometry.md#364-bounds-rectangles-and-shapes) Bounds, rectangles and shapes |
 | typed text misses capitals or symbols | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |

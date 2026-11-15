@@ -29,7 +29,7 @@ The bucket layout:
 | `VERSION.txt` | newest version, uploaded last (cached 30 s) |
 | `NOTES.txt` | "what's new" lines for the launcher (default: recent commit subjects; set `NOTES_FILE` to choose) |
 | `v<ver>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe`, `CHANGELOG.txt` | that version's files |
-| `release.lock` | only while a publish runs: the lock that makes publishes take turns (below) |
+| `release.lock` | only while a publish runs with the new path (`PUBLISH_V2=1`, off for now): the lock that makes publishes take turns (below) |
 
 `versions.json` is required: it lists the size and SHA-256 of `OkayEngine.exe`, `OkaySpacePlayer.exe` and `OkaySpace.exe`, and the launcher
 refuses to update any file without one. The script checks that it can compute all of them before it uploads anything (also under
@@ -42,11 +42,14 @@ on GitHub has no `versions.json`, so launchers show "cannot update: no checksum 
 Only the newest 3 versions are kept (`KEEP=n` to change). `DRY_RUN=1` checks
 the build and key without uploading (and takes no lock).
 
-**Several releases at once.** Builds can run in parallel, but publishing takes turns: the script holds a lock (`release.lock` in the
-bucket) while it rewrites `versions.json`, `VERSION.txt` and the old-version clean-up, waits if another publish holds it, and never
-moves "latest" backwards (an older version that finishes late is published but does not touch `VERSION.txt`). The GitHub "latest"
-release follows the same rule (`scripts/promote-latest.sh`). What you will see in the log, how to clear a stuck lock and how to
-rehearse it safely: [release_channels.md, "Several releases at once"](release_channels.md#several-releases-at-once).
+**Several releases at once.** Builds can run in parallel, but publishing has to take turns. The way to do that, a lock
+(`release.lock` in the bucket) held while the script rewrites `versions.json`, `VERSION.txt` and the old-version clean-up, plus a
+rule that "latest" never moves backwards (an older version that finishes late is published but does not touch `VERSION.txt`), is
+built and tested against a fake storage service but **switched off**: the workflow's `PUBLISH_V2` line is `"0"`, so a release runs the
+old script (`scripts/publish-supabase-v1.sh`) and overlapping releases are still not safe. It is turned on after the "Release
+rehearsal" workflow has passed on the real service. The switch, what the log shows, how to clear a stuck lock, how to finish a
+release whose Supabase step failed (from the run's artifact, never by a rebuild) and how to rehearse it:
+[release_channels.md, "Several releases at once"](release_channels.md#several-releases-at-once).
 
 Limits: each file must be at most 100 MB (the project and bucket limit, set in Supabase Settings > Storage; the script checks `MAX_MB`, default 100). The editor is
 about 23 MB because its debug info is split into `build-win-symbols/OkayEngine.debug`
@@ -149,7 +152,8 @@ game up to date" turns background updates off (the card then offers an
 
 The `Release Windows build` workflow builds, makes the zip + installer and
 publishes a GitHub Release. If the repo has a `SUPABASE_SERVICE_KEY` secret it
-also runs `scripts/publish-supabase.sh`, so both places stay in step.
+also runs the publish script (`scripts/publish-supabase-v1.sh`, the one that has always run there; the new
+`scripts/publish-supabase.sh` once `PUBLISH_V2` is switched on), so both places stay in step.
 
 Launchers older than v2.794.0 only know about GitHub, so the first release that
 contains the Supabase updater must also go out through GitHub Releases.

@@ -30,6 +30,15 @@ bool HasExt(const std::string& name, const char* ext) {
     const std::size_t n = std::strlen(ext);
     return name.size() > n && Lower(name.substr(name.size() - n)) == ext;
 }
+// A UTF-8 byte-order mark (EF BB BF) that some text editors put at the start of a file they save. It is not part of the scene
+// text: the scene loader reads the header as the very first word, so a file with the mark is taken off before it is checked.
+bool StripUtf8Bom(std::string& t) {
+    if (t.size() < 3 || static_cast<unsigned char>(t[0]) != 0xEF || static_cast<unsigned char>(t[1]) != 0xBB ||
+        static_cast<unsigned char>(t[2]) != 0xBF)
+        return false;
+    t.erase(0, 3);
+    return true;
+}
 std::string ErrnoText() { return errno ? std::error_code(errno, std::generic_category()).message() : std::string("unknown error"); }
 
 struct Fnv {
@@ -492,9 +501,13 @@ struct UpgradeJob::Impl {
             Entry& e = entries[candidates[idx++]];
             current = e.rel;
             if (Hook("analyze", e.rel)) return Fail("Couldn't read \"" + e.rel + "\": the disk refused.");
-            std::string text;
+            std::string raw;
             const fs::path abs = Abs(e.rel);
-            if (!okayproj::ReadText(abs.string(), text)) return Fail("Couldn't read \"" + e.rel + "\".");
+            if (!okayproj::ReadText(abs.string(), raw)) return Fail("Couldn't read \"" + e.rel + "\".");
+            std::string text = raw;
+            // The engine's loader refuses a file that starts with the mark, so such a file is checked without it and written
+            // back without it (the backup keeps the original bytes, and a restore puts them back).
+            const bool bom = StripUtf8Bom(text);
             const okay::SceneMigration::Result r = okay::SceneMigration::MigrateThroughEngine(text);
             if (!r.ok) return Fail("\"" + e.rel + "\" can't be upgraded: " + r.error + ".");
             const std::string& finalText = r.changed ? r.text : text;
@@ -505,11 +518,12 @@ struct UpgradeJob::Impl {
                 return Fail("\"" + e.rel + "\" can't be loaded" + (r.changed ? " after upgrading it" : "") + ": " + err + ".");
             if (!warns.empty()) res.log.push_back(e.rel + ": " + std::to_string(warns.size()) + (warns.size() == 1 ? " record" : " records") + " this version doesn't know (kept as they are).");
             (e.isPrefab ? res.prefabs : res.scenes)++;
+            if (bom) res.log.push_back(e.rel + ": removed the UTF-8 byte-order mark at the start of the file (the scene loader reads files without one).");
             for (const std::string& l : r.log) res.log.push_back(e.rel + ": " + l);
-            if (r.changed) {
+            if (r.changed || bom) {
                 if (ReadOnly(abs)) return Fail("\"" + e.rel + "\" is read-only, so it can't be upgraded. Make it writable and try again. Nothing was changed.");
                 Change c;
-                c.rel = e.rel; c.size = e.size; c.mtime = e.mtime; c.hash = HashText(text); c.text = r.text;
+                c.rel = e.rel; c.size = e.size; c.mtime = e.mtime; c.hash = HashText(raw); c.text = finalText;
                 changes.push_back(std::move(c));
             }
             return;

@@ -285,6 +285,58 @@ int main() {
         CHECK(!IsProjectRoot(dir) && ProjectRootForScene(scene).empty());
     }
 
+    // ---- scene files that start with a UTF-8 byte-order mark (issue #888, bug 3) ---------------------------------------
+    // Some text editors put EF BB BF at the start of a file they save. The upgrade reads past it, and writes such a scene or
+    // prefab back without it (the engine's loader refuses the mark: see test_scene_bom_bug.cpp); the backup keeps the original.
+    {
+        TempDir td;
+        const fs::path root = td.path / "Game";
+        const std::string bom = "\xEF\xBB\xBF";
+        WriteFile(root / "project.okayproj", "engine_version=2.850.0\n");
+        WriteFile(root / "Assets" / "Plain.okayscene", Current("Plain", 1));
+        WriteFile(root / "Assets" / "Bom.okayscene", bom + Current("Bom", 2));
+        WriteFile(root / "Assets" / "BomOld.okayscene", bom + kV1);
+        WriteFile(root / "Assets" / "Bom.okayprefab", bom + PrefabText());
+        WriteFile(root / "Assets" / "BomCrlf.okayscene", bom + [] { std::string o; for (char c : Current("C", 1)) { if (c == '\n') o += '\r'; o += c; } return o; }());
+        const Tree before = Snap(root);
+        Options o;
+        o.projectDir = root.string(); o.fromVersion = "2.850.0"; o.toVersion = "2.855.0";
+        UpgradeJob j(o);
+        j.Run();
+        const Result& r = j.result();
+        std::cerr << "[bug3_bom_scene] ok=" << r.ok << " error='" << r.error << "' rewritten=" << r.rewritten << "\n";
+        CHECK(r.ok && r.error.empty());
+        CHECK(r.scenes == 4 && r.prefabs == 1);
+        CHECK(r.rewritten == 4);                                                                  // the four files with a mark; Plain is untouched
+        CHECK(ReadFile(root / "Assets" / "Plain.okayscene") == before.at("Assets/Plain.okayscene"));
+        for (const char* f : {"Bom.okayscene", "BomOld.okayscene", "Bom.okayprefab", "BomCrlf.okayscene"}) {
+            const std::string now = ReadFile(root / "Assets" / f);
+            CHECK(now.compare(0, 10, "okayscene ") == 0);                                         // the mark is gone, the header is first
+            CHECK(ReadFile(fs::path(r.backupDir) / "Assets" / f) == before.at(std::string("Assets/") + f));   // the backup has the original bytes
+            bool logged = false;
+            for (const std::string& l : r.log) if (Has(l, f) && Has(l, "byte-order mark")) logged = true;
+            CHECK(logged);
+        }
+        CHECK(Loads(root / "Assets" / "Bom.okayscene") && Loads(root / "Assets" / "BomOld.okayscene") && Loads(root / "Assets" / "BomCrlf.okayscene"));
+        CHECK(Has(ReadFile(root / "Assets" / "BomOld.okayscene"), "okayscene 3"));               // the old one was upgraded as well
+        CHECK(okayver::ReadProjectVersion(root.string()) == "2.855.0");
+        // Restore puts the files back exactly as they were, mark included
+        const auto list = ListBackups(root.string());
+        CHECK(list.size() == 1);
+        if (list.size() == 1) {
+            const RestoreResult rr = RestoreBackup(list[0], root.string());
+            CHECK(rr.ok);
+            for (const char* f : {"Bom.okayscene", "BomOld.okayscene", "Bom.okayprefab", "BomCrlf.okayscene"})
+                CHECK(ReadFile(root / "Assets" / f) == before.at(std::string("Assets/") + f));
+        }
+        // A mark followed by something that is not a scene is still a damaged file: the upgrade stops before anything is made
+        WriteFile(root / "Assets" / "Junk.okayscene", bom + "hello\n");
+        const Tree mid = Snap(root);
+        UpgradeJob k(o);
+        k.Run();
+        CHECK(!k.result().ok && Has(k.result().error, "Junk.okayscene") && Snap(root) == mid);
+    }
+
     // ---- the keys project.okayproj's writer owns ---------------------------------------------------------------------
     {
         const std::string generated = oked::WriteProjectSettings(oked::ProjectSettings{}, "tag=Enemy\nstrict_tags=1\nlayer_name_3=Walls\n");

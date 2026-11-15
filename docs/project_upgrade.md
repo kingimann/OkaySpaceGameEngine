@@ -120,6 +120,9 @@ until the first file is rewritten.
    will be rewritten; a file that changes while it is being copied stops the upgrade.
 5. **Rewrite only what changes**: a scene or prefab that is already current is not touched (not even its date); one that needs it is
    written back as canonical text, one file at a time, each whole-or-nothing. A file may not have changed since step 2.
+   A file that starts with a UTF-8 byte-order mark (the bytes EF BB BF, which some text editors such as Notepad add when they save) is
+   checked without the mark and written back without it, even when it is otherwise current: the engine's scene loader does not read a
+   file with the mark (see "Byte-order marks" below). The log says "removed the UTF-8 byte-order mark"; the backup keeps the original.
 6. **Stamp** `engine_version` last.
 
 **It stops at the first failure and puts everything back.** The files rewritten so far are restored from the backup (their content is
@@ -215,6 +218,7 @@ that version highlighted; a launcher that is already running is brought forward 
 | What | What happens |
 |---|---|
 | A scene or prefab is damaged, can't be loaded, or is newer than the editor reads | the upgrade stops before the backup is started; the file is named; nothing changed |
+| A scene or prefab starts with a UTF-8 byte-order mark | not a failure: the mark is taken off and the file is written back without it (the backup has the original) |
 | A file that has to change (or `project.okayproj`) is read-only | stops before the backup, says which file; nothing changed |
 | Not enough free space, or the backup place is read-only or missing | stops before the copy; says how much is needed and free |
 | The disk fails while copying | the unfinished backup is removed; the project was never touched |
@@ -223,6 +227,23 @@ that version highlighted; a launcher that is already running is brought forward 
 | Cancel while working | same as a failure before the first rewrite: backup removed, nothing changed |
 | The editor is a development build | no question; File > Project Upgrade shows it has no version to upgrade to |
 | The editor crashes or loses power mid-upgrade | the stamp is written last, so the project asks again; the upgrade can be run again; the complete backup (if past its copy step) is there |
+
+### Byte-order marks
+
+Before issue #888 one scene or prefab that started with a byte-order mark stopped the whole upgrade with `"Assets/X.okayscene" can't be
+upgraded: not a scene: missing 'okayscene' header`, so no project with such a file could be upgraded. Now the mark is taken off (step 5).
+A file that is still not a scene after the mark is taken off is damaged, and stops the upgrade as before: the upgrade checks every file
+first and is all or nothing by design, so one damaged file is not skipped.
+
+The engine's own loader (`SceneSerializer::LoadFromFile`) still refuses a file with the mark ("missing 'okayscene' header", from the header
+check in `ParseStep` in `engine/src/Scene/SceneSerializer.cpp`). That is not changed here; `tests/test_scene_bom_bug.cpp`
+(`scene_bom_bug_load_from_file`, only with `-DOKAY_RUN_KNOWN_BUG_TESTS=ON`) shows it. Until the loader is fixed, File > Open of such a scene
+fails; running the upgrade on its project removes the mark and the scene then opens.
+
+**How to try it.** In a project made with an older version (or File > Project Upgrade... on any project), open one of its scenes in a text
+editor and save it as "UTF-8 with BOM" (Notepad: Save as, Encoding "UTF-8 with BOM"; or put the three bytes EF BB BF at the start). Run the
+upgrade. It finishes; the result's log names the file with "removed the UTF-8 byte-order mark", and the file now starts with
+`okayscene 3`. Before the fix the upgrade stopped with "missing 'okayscene' header" and changed nothing.
 
 ## Design choices
 
@@ -241,9 +262,9 @@ that version highlighted; a launcher that is already running is brought forward 
 `project_version` (parse and compare matrix, Decide table, the stamp line in text and in files, CRLF, BOM, read-only, release lines, the
 keep target, the Versions layout; links nothing), `project_upgrade` (the upgrade end to end, backup completeness, space refusal, the disk
 failing at every step in turn, damaged and read-only files, restore, the whole gate state machine, which folder is the project: a scene
-outside `Assets/`, the nearest `project.okayproj`, the working folder's shared file, a bare `.okay` folder is no project) and `editor_hooks` (`EditorState::Load` under the gate).
-`upgrade_bug_project_upgrade` (`tests/test_upgrade_bugs.cpp`) holds the issue #888 known-bug checks; it only runs with
-`-DOKAY_RUN_KNOWN_BUG_TESTS=ON`.
+outside `Assets/`, the nearest `project.okayproj`, the working folder's shared file, a bare `.okay` folder is no project, scenes and prefabs with a byte-order mark: upgraded, backed up and restored byte for byte) and `editor_hooks` (`EditorState::Load` under the gate).
+`upgrade_bug_project_upgrade` (`tests/test_upgrade_bugs.cpp`) holds the issue #888 known-bug checks and `scene_bom_bug_load_from_file`
+(`tests/test_scene_bom_bug.cpp`) the loader's byte-order-mark check; both only run with `-DOKAY_RUN_KNOWN_BUG_TESTS=ON`.
 
 ## What changed
 

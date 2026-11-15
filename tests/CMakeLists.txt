@@ -3532,3 +3532,11 @@ add_test(NAME upgrade_bug_project_upgrade COMMAND test_upgrade_bugs)
 if(NOT OKAY_RUN_KNOWN_BUG_TESTS)
   set_tests_properties(upgrade_bug_project_upgrade PROPERTIES DISABLED TRUE)
 endif()
+# KNOWN BUG (issue #888, bug 3): the engine's scene loader refuses a scene file that starts with a UTF-8 byte-order mark.
+# DISABLED unless -DOKAY_RUN_KNOWN_BUG_TESTS=ON, like the test above; the loader is not changed by the upgrade fix.
+add_executable(test_scene_bom_bug test_scene_bom_bug.cpp)
+target_link_libraries(test_scene_bom_bug PRIVATE okay::engine)
+add_test(NAME scene_bom_bug_load_from_file COMMAND test_scene_bom_bug)
+if(NOT OKAY_RUN_KNOWN_BUG_TESTS)
+  set_tests_properties(scene_bom_bug_load_from_file PROPERTIES DISABLED TRUE)
+endif()

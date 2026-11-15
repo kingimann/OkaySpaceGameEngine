@@ -43,6 +43,7 @@ release job or the installer build for this change.
 | 5 | Navmesh from a Mesh Collider | View > Editors & Tools > Navigation | Shipped |
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
+| 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
@@ -214,6 +215,29 @@ The before-and-after of the bug needs the old release to compare.
 
 ---
 
+## 7b. Template cards no longer make projects by themselves
+
+Why: some people found about ten projects in the Projects list that they never made. Before this change, one click
+(or a double click, or a click while scrolling) on a card on the Templates page made a project at once ("Platformer",
+"Platformer 2" and so on) and opened the editor.
+
+1. Open the launcher (`OkaySpace.exe`), go to **Templates** and click any card, for example Platformer.
+2. You should land on **Create** with the **New Project** window open on the Details step, that template chosen and the
+   name filled in. Look in your Projects folder: no new folder yet.
+3. Close the window with Esc (still nothing made), or press Next, then **Create project** to make it.
+
+Cleaning up the extra projects (this note deletes nothing for you): on **Create**, the projects list shows every
+folder in your Projects folder that has an Assets folder. The folder is shown on the Create page as the Location.
+For each one you do not want, right-click it (or use its menu) and choose **Remove from list** to only hide it, or
+**Delete project...** to delete its folder after a confirmation. Names like "Platformer 2" are the repeats. Projects
+you did not open since they were made are safe to remove; check the path before you delete.
+
+**Status.** Tested on main once merged: `test_project_create` (289 checks) covers the rule that a template shortcut opens
+the Details step and cannot start a second create. Unverified: the launcher screens themselves (the launcher was not
+compiled or run on this machine).
+
+---
+
 ## 14. Main menu bar (cleaned up)
 
 What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
@@ -381,6 +405,25 @@ Nothing to try.
 * Run here: `bash -n` on the script, and the new copy block on its own against the real source tree, then a listing of
   the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
 * `release.yml` was not changed and no workflow was run.
+
+## Remove from list and Delete project (launcher Create page)
+
+**Where.** Launcher > **Create**. Your projects are the folders inside the **Projects** folder next to `OkaySpace.exe`
+(the Location shown on the page), plus projects you opened from other places with **Open folder**.
+
+**Steps.**
+1. Make two projects (New Project), or open a project folder. Right-click a project card.
+2. Click **Remove from list**. A toast says "Removed <name> from the list (its files are still on disk)" and the card
+   goes at once. Close the launcher and open it again: it is still gone. Open the folder in Explorer: the files are there.
+   To get it back, use **Open folder** and pick it (it is also un-hidden when you make a project of the same name).
+3. Right-click another project > **Delete project...**. The popup names the folder. **Delete from disk** moves the whole
+   folder to the Recycle Bin (Linux: deletes it for good). The card goes and a toast says "Moved <name> to the Recycle Bin".
+   When it cannot, the popup stays open with a red line saying why: the editor is open ("close the editor first"), the
+   folder is your Projects folder / home / the launcher's folder, or it has no scene, or a file is in use.
+
+Status: the list logic (hide, restart, a project that is both in the folder and opened by path, slash and trailing-slash
+forms, more than 100 hidden projects, delete clean-up) is tested by `tests/test_project_list.cpp` (g++ on Linux). The
+Recycle Bin call and the clicks were not run on Windows.
 
 ## Checks run for this page
 

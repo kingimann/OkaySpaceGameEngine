@@ -485,6 +485,18 @@ inline WizardMove WizardOpen(NewProjectWizard& w) {
     return WizardMove::Opened;
 }
 
+/// A starter-template card is only a shortcut into the wizard: it opens the Details step with that
+/// template already chosen and creates nothing. `index` is the template's place in Templates()
+/// (a negative or too-large index keeps the wizard's current choice). A wizard that is already
+/// creating is left alone, so a second click can never start a second project.
+inline WizardMove WizardOpenOnTemplate(NewProjectWizard& w, int index, int templateCount) {
+    if (w.creating) return WizardMove::None;
+    WizardOpen(w);
+    if (index >= 0 && index < templateCount) w.selected = index;
+    w.step = 1;
+    return WizardMove::Opened;
+}
+
 inline WizardMove WizardClose(NewProjectWizard& w) {
     if (!w.open || w.creating) return WizardMove::None;
     w.open = false;

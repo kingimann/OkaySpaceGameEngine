@@ -50,6 +50,11 @@ Switches that bring the old code back one at a time (the same pictures and motio
 what each change is worth: `--legacy-sw` (all three software renderer ones), `--no-span`, `--no-bandskip`,
 `--no-lightcull`, `--no-query-cache`, `--legacy-physics`. `--perpixel 0|1` forces the lighting mode.
 `--save-scenes DIR` writes the three 3D scenes as `.okayscene` files (that is how `examples/perf/` was made).
+The three files are the scenes `cubes2000`, `bodies500` and `lights64` (under the names `many_colliders`, `falling_bodies`
+and `many_lights`). `--scene-file` gives the same picture and state hashes as the built-in scene for the first two. Not for
+`many_lights`: a scene file stores a sphere only as "Sphere", so its balls come back with the default radius 0.5 instead of
+the 0.6 of the built-in scene; the lamps, the positions and the counts are the same (`state_hash` is equal), the picture is a
+little different.
 
 To compare two command lines fairly, `scripts/bench_ab.py` runs them in turns and prints the median of each phase:
 
@@ -120,10 +125,15 @@ Default settings (sun shadows on), median of 5 alternating runs, ms per frame. *
 | `cubes2000` | 151.2 to 55.4 (2.7x) | 163.4 to 66.0 (2.5x) | 10.49 to 1.08 (9.7x) | shadow maps 114.6 to 35.5; physics 9.3 to 0.46; raster 18.6 to 12.9 |
 | `bodies500` | 216.0 to 93.1 (2.3x) | 212.0 to 93.4 (2.3x) | 5.40 to 0.73 (7.4x) | shadow maps 160.6 to 59.0; physics 4.9 to 0.45; raster 38.0 to 23.5 |
 | `skinned100` | 175.5 to 73.0 (2.4x) | 182.0 to 78.2 (2.3x) | 1.99 to 1.69 (1.2x) | shadow maps 138.8 to 46.9; raster 24.2 to 16.2 |
-| `lights64` (no sun) | 98.1 to 16.4 (6.0x) | 145.2 to 17.7 (8.2x) | 0.26 to 0.09 | raster 91.1 to 9.1 |
+| `lights64` (sun, no shadows) | 98.1 to 16.4 (6.0x) | 145.2 to 17.7 (8.2x) | 0.26 to 0.09 | raster 91.1 to 9.1 |
 | `mixed` | 196.5 to 70.2 (2.8x) | 219.1 to 89.5 (2.4x) | 2.00 to 0.73 (2.7x) | shadow maps 156.5 to 47.0; physics 1.40 to 0.30; raster 30.9 to 18.4 |
 | `ui500` | 1.96 to 1.95 (1.0x) | same | 1.00 to 0.97 | no change (see below) |
 
+* Same picture, same positions: besides the six runs above, the original program and this branch were run on the five 3D scenes
+  with the sun on and off at five picture sizes (96x54, 321x177, 640x360, 1000x563, 1280x720; the odd and tiny sizes move the
+  band boundaries): 50 of 50 pairs printed the same `frame_hash` and `state_hash`.
+  Long runs too (160x90, sun off): `bodies500` and `mixed` after 610 frames, `cubes2000` after 210, `skinned100` after 310:
+  the same hashes (the bodies have piled up and gone to sleep by then).
 * `Render.Prewarm` got more expensive (`cubes2000` 0.15 to 0.42 ms): the per-object work that every thread used to repeat
   inside `Render.Raster` is now done once, there. The totals above include it.
 * The three shadow-map scenes are still dominated by the shadow maps; see section 6.
@@ -190,7 +200,7 @@ the limit in section 1). These do not depend on the machine or on its load.
 | `bodies500` | shadows on | 2,200.0 | 508.5 | 4.33x |
 | `bodies500` | shadows off | 192.8 | 37.8 | 5.10x |
 | `skinned100` | shadows on | 1,892.1 | 391.6 | 4.83x |
-| `lights64` | no sun | 487.4 | 31.0 | 15.71x |
+| `lights64` | sun without shadows | 487.4 | 31.0 | 15.71x |
 | `mixed` | shadows on | 2,200.9 | 465.6 | 4.73x |
 | `mixed` | shadows off | 142.4 | 42.6 | 3.34x |
 | `ui500` | | 19.8 | 20.2 | 0.98x (see 4.1) |
@@ -389,6 +399,9 @@ the single threaded parts (physics, scene update, visibility, shadow maps) and o
 ## 7. What could not be measured or checked
 
 * **Windows, every GPU renderer, real hardware, a Debug build:** not run.
+* **`bench_frame` on Windows:** it uses `clock_gettime` for the CPU rows (POSIX), and the Windows CI job builds only six
+  named tests, so it is not built there. Shipping a `bench_frame.exe` in the release (so the exact benchmark runs on the
+  owner's PC) needs a `GetProcessTimes` branch there and a line in `scripts/build-windows-dist.sh`; not done.
 * **The MinGW (Windows) cross compile of the new headers:** see the status line at the end of this file.
 * **The editor's Profiler panel and the example scenes opened in the editor:** not run. The menu path in
   `docs/try_it.md` was read from `editor/main.cpp`; the three example scenes were written by `bench_frame --save-scenes`

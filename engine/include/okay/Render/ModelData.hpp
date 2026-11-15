@@ -8,7 +8,7 @@
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
-//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF) are
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, MDC, HMP, CSM) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -267,6 +267,26 @@ bool ReadIrrSceneBuffer(const std::string& text, const std::string& baseDir, Imp
 /// polygons by index with matid / texture / both, an `mtable` material file looked up in `baseDir`). Lights, the viewpoint,
 /// the background and the diffuse / specular / transmission coefficients are not read (reported in `out.notes`).
 bool ReadNffBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// Terragen terrain (.ter, binary): one mesh part, a regular grid of the file's XPTS by YPTS points (SIZE + 1 on a side when
+/// those are missing), in metres (SCAL, 30 m per terrain unit by default), heights BaseHeight + Elevation * HeightScale / 65536
+/// terrain units, curve mode 1 applied (draped over a sphere of radius CRAD), turned from Z-up to Y-up as (x, y, z) -> (x, z, -y).
+/// Normals come from the height grid, u and v run 0..1 along x and y. Grids above 2049 by 2049 points are refused.
+/// Unknown curve modes, a missing "EOF " marker and data after it are reported in `out.notes`.
+bool ReadTerragenBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
+
+/// MDC (Return to Castle Wolfenstein model, binary, version 2): MD3 with compressed frames. The first frame as one static part per
+/// surface (vertices welded, the stored normals decoded, winding reversed to counter clockwise, texture coordinates as written), the
+/// first shader name of each surface as its texture, and each tag of the first frame as an empty child node of the root, which turns
+/// Z-up into Y-up. Further frames, tag rotation and animation, `.skin` and `.shader` files are not read (reported in `out.notes`).
+bool ReadMdcBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
+/// HMP (3D GameStudio terrain model, version HMP7, binary): the height grid as one static part (two triangles per cell, smooth
+/// normals computed from the heights, texture coordinates spread over the grid). The embedded skin picture is skipped (reported in
+/// `out.notes`); other HMP versions are refused. The root node turns Z-up into Y-up.
+bool ReadHmpBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
+/// CSM (Character Studio motion capture, text; UTF-8 or UTF-16 with a byte order mark): the markers as empty nodes under one root
+/// and the motion as one clip ("csm") with a position key per frame and marker, at the file's $Rate. No mesh. Units are kept as
+/// written; the root node turns Z-up into Y-up.
+bool ReadCsmBuffer(const std::string& text, ImportedModel& out, std::string* err = nullptr);
 
 bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -292,6 +312,10 @@ bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* e
 bool ReadXglFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadIrrSceneFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadTerragenFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadMdcFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadHmpFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadCsmFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 
 // ---- Backend selection (the seam) ------------------------------------------
 

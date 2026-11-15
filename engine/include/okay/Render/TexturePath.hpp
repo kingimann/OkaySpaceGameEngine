@@ -7,6 +7,9 @@
 //     a wildcard or device character (? * " < > |), starts with two slashes or backslashes (a network share
 //     "\\host\share" or a device path "\\?\C:\x": opening one can make Windows connect to another machine and send the
 //     user's login hash), or holds a ':' other than one drive letter followed by a slash ("C:/x"; "C:x" is refused).
+//     The same screen, on every platform, also refuses a path component that is a Windows reserved device name (CON,
+//     PRN, AUX, NUL, COM1-COM9, LPT1-LPT9, in any case, with or without an extension: "con.png") and a component that
+//     ends in a '.' or a space (other than "." and ".."), which Windows silently trims to another name.
 //   * A relative path that stays inside the model's own folder is kept (its "." and ".." resolved on the text), as
 //     before, unless links on the disk lead it out of that folder (and out of every allowed root): then it is dropped.
 //   * An absolute path, or a relative one whose ".." climbs out of the model's folder, is kept only when its text lies
@@ -19,6 +22,7 @@
 //
 // Written for this engine from the path rules of the file systems (POSIX path resolution, the Windows path formats);
 // no other project's code was used.
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <cwctype>
@@ -34,9 +38,13 @@ namespace texture_path_detail {
 struct Root { std::filesystem::path lexical, canonical; };
 inline std::mutex& Mutex() { static std::mutex m; return m; }
 inline std::vector<Root>& Roots() { static std::vector<Root> r; return r; }
+// How many times a path was sent to the file system for canonicalisation (a test hook: a path refused on the text must
+// leave this unchanged).
+inline std::atomic<unsigned long>& CanonicalCalls() { static std::atomic<unsigned long> n{0}; return n; }
 
 // `p` made absolute and canonical as far as it exists (links followed), without throwing.
 inline bool Canonical(const std::filesystem::path& p, std::filesystem::path& out) {
+    ++CanonicalCalls();
     std::error_code ec;
     std::filesystem::path abs = std::filesystem::absolute(p, ec);
     if (ec) return false;
@@ -69,6 +77,26 @@ inline bool Inside(const std::filesystem::path& p, const std::filesystem::path& 
 
 enum class Kind { Refused, Relative, Absolute };
 
+// A Windows reserved device name: CON PRN AUX NUL COM1-9 LPT1-9, any case, with or without an extension ("con.png",
+// "NUL.tar.gz"); spaces before the extension are ignored ("con .png"). Text only.
+inline bool IsReservedDeviceName(const std::string& comp) {
+    std::string stem = comp.substr(0, comp.find('.'));
+    while (!stem.empty() && stem.back() == ' ') stem.pop_back();
+    if (stem.size() != 3 && stem.size() != 4) return false;
+    std::string u;
+    for (char c : stem) u += (char)std::toupper((unsigned char)c);
+    if (u == "CON" || u == "PRN" || u == "AUX" || u == "NUL") return true;
+    return u.size() == 4 && (u.compare(0, 3, "COM") == 0 || u.compare(0, 3, "LPT") == 0) && u[3] >= '1' && u[3] <= '9';
+}
+
+// A component Windows would not keep as written: a reserved device name, or a trailing '.' or space ("." and ".." are
+// the normal dot components). Refused on every platform so a model behaves the same everywhere.
+inline bool IsWindowsHostileComponent(const std::string& comp) {
+    if (comp.empty() || comp == "." || comp == "..") return false;
+    if (comp.back() == '.' || comp.back() == ' ') return true;
+    return IsReservedDeviceName(comp);
+}
+
 // The text-only screen (slashes already forward). Nothing here touches the disk.
 inline Kind Screen(const std::string& p, std::string* why) {
     auto refuse = [&](const char* w) { if (why) *why = w; return Kind::Refused; };
@@ -76,6 +104,16 @@ inline Kind Screen(const std::string& p, std::string* why) {
     if (p.find('\0') != std::string::npos) return refuse("a file name with a NUL character");
     if (p.find_first_of("?*\"<>|") != std::string::npos) return refuse("a file name with a wildcard or device character");
     if (p.size() >= 2 && p[0] == '/' && p[1] == '/') return refuse("a network or device path (\\\\host\\share, \\\\?\\) is not allowed");
+    {
+        std::size_t i = 0;
+        while (i <= p.size()) {
+            std::size_t j = p.find('/', i);
+            if (j == std::string::npos) j = p.size();
+            if (IsWindowsHostileComponent(p.substr(i, j - i)))
+                return refuse("a file name Windows reads as another name (a device name such as CON or NUL, or a trailing '.' or space)");
+            i = j + 1;
+        }
+    }
     const std::size_t colon = p.find(':');
     if (colon != std::string::npos) {
         const bool drive = colon == 1 && std::isalpha((unsigned char)p[0]) && p.size() > 2 && p[2] == '/' &&
@@ -112,13 +150,21 @@ inline int Depth(const std::filesystem::path& p) {
     return n;
 }
 
-inline std::filesystem::path HomeFolder() {
-    const char* h = std::getenv("HOME");
-#ifdef _WIN32
-    if (!h || !*h) h = std::getenv("USERPROFILE");
-#endif
-    std::filesystem::path out;
-    if (h && *h) Canonical(std::filesystem::u8path(h), out);
+// Every home folder the environment names: HOME, USERPROFILE, and HOMEDRIVE + HOMEPATH. All three are looked at on every
+// platform (so the check can be tested anywhere); the ones that are unset or empty are skipped.
+inline std::vector<std::filesystem::path> HomeFolders() {
+    std::vector<std::string> names;
+    auto add = [&](const char* v) { if (v && *v) names.push_back(v); };
+    add(std::getenv("HOME"));
+    add(std::getenv("USERPROFILE"));
+    const char* drive = std::getenv("HOMEDRIVE");
+    const char* path = std::getenv("HOMEPATH");
+    if (drive && *drive && path && *path) names.push_back(std::string(drive) + path);
+    std::vector<std::filesystem::path> out;
+    for (const std::string& n : names) {
+        std::filesystem::path c;
+        if (Canonical(std::filesystem::u8path(n), c)) out.push_back(std::move(c));
+    }
     return out;
 }
 } // namespace texture_path_detail
@@ -130,7 +176,7 @@ inline std::filesystem::path HomeFolder() {
 inline std::size_t SetModelTextureRoots(const std::vector<std::string>& roots) {
     namespace d = texture_path_detail;
     std::vector<d::Root> list;
-    const std::filesystem::path home = d::HomeFolder();
+    const std::vector<std::filesystem::path> homes = d::HomeFolders();
     for (const std::string& r : roots) {
         if (r.empty() || r.find('\0') != std::string::npos) continue;
         const std::filesystem::path given = std::filesystem::u8path(r);
@@ -141,7 +187,9 @@ inline std::size_t SetModelTextureRoots(const std::vector<std::string>& roots) {
         root.lexical = given.lexically_normal();
         if (!d::Canonical(given, root.canonical)) continue;
         if (d::Depth(root.lexical) < 2 || d::Depth(root.canonical) < 2) continue;   // "/", "C:/", "/home"
-        if (!home.empty() && d::Inside(home, root.canonical)) continue;            // the home folder or above it
+        bool holdsHome = false;                                                    // the home folder or above it
+        for (const auto& home : homes) if (d::Inside(home, root.canonical)) holdsHome = true;
+        if (holdsHome) continue;
         list.push_back(std::move(root));
     }
     const std::size_t kept = list.size();

@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 
 using namespace okay;
 namespace fs = std::filesystem;
@@ -117,6 +118,22 @@ int main() {
         CHECK(tp::Screen("C:/Textures/x.png", nullptr) == tp::Kind::Absolute);
         CHECK(tp::Screen("/abs/x.png", nullptr) == tp::Kind::Absolute);
         CHECK(tp::Screen("tex/x.png", nullptr) == tp::Kind::Relative);
+        // Windows reserved device names and components Windows trims (trailing '.' or space), refused on every platform.
+        for (const char* bad : {"con.png", "CON", "Prn.txt", "tex/aux.png", "a/NUL.tar.gz", "com1.png", "LPT9", "tex/Com9.x",
+                                "con .png", "tex/a.png.", "tex/a.png ", "tex./a.png", "tex /a.png", "...", "C:/Textures/nul.png"}) {
+            if (tp::Screen(bad, nullptr) != tp::Kind::Refused) std::printf("  not refused: '%s'\n", bad);
+            CHECK(tp::Screen(bad, nullptr) == tp::Kind::Refused);
+            const unsigned long before = tp::CanonicalCalls().load();
+            CHECK(ResolveModelTexturePath(bad, modelDir).empty());
+            CHECK(tp::CanonicalCalls().load() == before);   // no disk access
+        }
+        for (const char* good : {"console.png", "com0.png", "com10.png", "lpt.png", "tex/../tex/a.png", "./a.png", "a.b.png", "auxiliary/x.png"})
+            CHECK(tp::Screen(good, nullptr) != tp::Kind::Refused);
+        {   // through both readers, with a real file that a trimmed name would have found
+            Spit(models / "nul.png", "x");
+            Both b = TextureFor(models, "nul.png");
+            CHECK(b.seam.empty() && b.merged.empty());
+        }
         CHECK(ResolveModelTexturePath(".", modelDir).empty());              // the folder itself is not a file
         CHECK(ResolveModelTexturePath("./", modelDir).empty());
         CHECK(ResolveModelTexturePath("tex/..", modelDir).empty());
@@ -129,20 +146,46 @@ int main() {
         CHECK(SetModelTextureRoots({"/tmp"}) == 0);                           // one level deep
         CHECK(SetModelTextureRoots({proj.u8string(), "/"}) == 1);             // the bad one is left out
         CHECK(ModelTextureRoots().size() == 1);
-#ifndef _WIN32
-        // The home folder, and a folder holding it, are refused (HOME pointed at a folder made here).
-        const char* oldHome = std::getenv("HOME");
-        const std::string savedHome = oldHome ? oldHome : "";
+        // The home folder, and a folder holding it, are refused. Each of HOME, USERPROFILE and HOMEDRIVE+HOMEPATH is
+        // looked at on every platform, so this runs on Linux by setting the variables.
+        auto getv = [](const char* n) { const char* v = std::getenv(n); return std::pair<bool, std::string>(v != nullptr, v ? v : ""); };
+        auto setv = [](const char* n, const std::pair<bool, std::string>& v) {
+#ifdef _WIN32
+            _putenv_s(n, v.first ? v.second.c_str() : "");
+#else
+            if (v.first) setenv(n, v.second.c_str(), 1); else unsetenv(n);
+#endif
+        };
+        const auto sHome = getv("HOME"), sProf = getv("USERPROFILE"), sDrive = getv("HOMEDRIVE"), sPath = getv("HOMEPATH");
+        const std::pair<bool, std::string> unset(false, "");
         const fs::path home = base / "users" / "me";
-        fs::create_directories(home);
-        setenv("HOME", home.u8string().c_str(), 1);
+        fs::create_directories(home / "Project");
+        // 1. HOME alone
+        setv("HOME", {true, home.u8string()}); setv("USERPROFILE", unset); setv("HOMEDRIVE", unset); setv("HOMEPATH", unset);
         CHECK(SetModelTextureRoots({home.u8string()}) == 0);
         CHECK(SetModelTextureRoots({(base / "users").u8string()}) == 0);
-        CHECK(SetModelTextureRoots({(home / "Project").u8string()}) == 0);   // does not exist yet
-        fs::create_directories(home / "Project");
         CHECK(SetModelTextureRoots({(home / "Project").u8string()}) == 1);   // a project inside home is fine
-        if (oldHome) setenv("HOME", savedHome.c_str(), 1); else unsetenv("HOME");
-#endif
+        // 2. USERPROFILE alone (a Windows-style environment: no HOME)
+        const fs::path prof = base / "winusers" / "me";
+        fs::create_directories(prof / "Project");
+        setv("HOME", unset); setv("USERPROFILE", {true, prof.u8string()});
+        CHECK(SetModelTextureRoots({prof.u8string()}) == 0);
+        CHECK(SetModelTextureRoots({(base / "winusers").u8string()}) == 0);
+        CHECK(SetModelTextureRoots({(prof / "Project").u8string()}) == 1);
+        // 3. HOMEDRIVE + HOMEPATH alone: the drive part is the first component of an absolute path on this machine
+        const fs::path hp = base / "hpusers" / "me";
+        fs::create_directories(hp / "Project");
+        const std::string hpStr = hp.u8string();
+        setv("USERPROFILE", unset);
+        if (hp.root_name().empty()) { setv("HOMEDRIVE", {true, (base / "hpusers").u8string()}); setv("HOMEPATH", {true, std::string("/me")}); }
+        else { setv("HOMEDRIVE", {true, hp.root_name().u8string()}); setv("HOMEPATH", {true, hp.root_directory().u8string() + hp.relative_path().u8string()}); }
+        CHECK(SetModelTextureRoots({hpStr}) == 0);
+        CHECK(SetModelTextureRoots({(base / "hpusers").u8string()}) == 0);
+        CHECK(SetModelTextureRoots({(hp / "Project").u8string()}) == 1);
+        // 4. all unset: nothing is refused for being a home folder
+        setv("HOMEDRIVE", unset); setv("HOMEPATH", unset);
+        CHECK(SetModelTextureRoots({hpStr}) == 1);
+        setv("HOME", sHome); setv("USERPROFILE", sProf); setv("HOMEDRIVE", sDrive); setv("HOMEPATH", sPath);
     }
     {   // links: a root reached through a link, and a linked folder inside the model's folder
         std::error_code lec;
@@ -183,6 +226,20 @@ int main() {
         merged.clear();
         Mesh::LoadOBJ((models / "m3.obj").u8string(), &ok, &merged);
         CHECK(ok && merged.empty());
+        // The test above passes for any refusal, so also prove the network path never reached the disk: nothing was sent
+        // to the canonicalisation step (which opens a path on Windows), for either reader or the resolver.
+        namespace tp = texture_path_detail;
+        const unsigned long before = tp::CanonicalCalls().load();
+        merged.clear();
+        Mesh::LoadOBJ((models / "m3.obj").u8string(), &ok, &merged);
+        ImportedModel m3; std::string err3;
+        CHECK(ReadObjFile((models / "m3.obj").u8string(), m3, &err3));
+        CHECK(ResolveModelTexturePath("//host/share/evil.mtl", modelDir).empty());
+        CHECK(merged.empty());
+        CHECK(tp::CanonicalCalls().load() == before);
+        // control: a path that is allowed does reach the canonicalisation step, so the counter really counts
+        CHECK(!ResolveModelTexturePath("m.mtl", modelDir).empty());
+        CHECK(tp::CanonicalCalls().load() > before);
     }
     {   // closing the project (empty folder) empties the list again
         SetModelTextureRoots({std::string()});

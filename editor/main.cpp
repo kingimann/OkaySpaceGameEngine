@@ -6433,7 +6433,6 @@ static void DrawPlaybackSpeedControls(EditorState& ed, float tb) {
 // ============================================================================================================================
 static void HierSelectMany(EditorState& ed, const std::vector<GameObject*>& objs);   // (the Hierarchy section, below)
 static void FocusSelected(EditorState& ed);                                          // (the Scene view section, below)
-static bool g_openAddComponentFromHierarchy = false;   // Hierarchy > Add Component...: the Inspector opens its Add Component browser (read in the Inspector)
 
 // Wrap one object in a new empty parent that sits where the object is (Hierarchy > Create Parent, GameObject > Create Empty Parent).
 static void CreateEmptyParentOf(EditorState& ed, GameObject* node) {
@@ -19871,7 +19870,7 @@ static void HierRowAction(EditorState& ed, GameObject* node, const std::string& 
         ed.Select(node);
         g_showInspector = true;
         ImGui::SetWindowFocus("Inspector");
-        g_openAddComponentFromHierarchy = true;
+        oked::RequestAddComponentBrowser();   // the Inspector's Add Component browser opens (one request, shared with the Inspector's own menus)
     }
     else if (id == "h.copyname") ImGui::SetClipboardText(node->name.c_str());
     else if (id == "h.copypath") ImGui::SetClipboardText(HierPath(node).c_str());
@@ -40031,12 +40030,7 @@ void DrawInspector(EditorState& ed) {
     // on the right as a plain list; typing searches every category at once.
     static std::string s_acCat;                  // selected category ("Recent" = recently added)
     static std::vector<std::string> s_acRecent;  // labels, most recent first
-    if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30)) || oked::TakeAddComponentRequest()) {   // or "Add Component..." in a right-click menu
-        acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
-        s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
-    }
-    if (g_openAddComponentFromHierarchy) {   // Hierarchy right-click > Add Component...: open the same browser as the button above
-        g_openAddComponentFromHierarchy = false;
+    if (ImGui::Button("+  Add Component", ImVec2(acPad > 0.0f ? 260.0f : -1, 30)) || oked::TakeAddComponentRequest()) {   // or "Add Component..." in a right-click menu (the Inspector's, or the Hierarchy's)
         acFilter[0] = '\0'; ImGui::OpenPopup("AddComponent");
         s_acCat = s_acRecent.empty() ? std::string("Rendering") : std::string("Recent");
     }

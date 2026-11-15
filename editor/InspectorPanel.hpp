@@ -67,6 +67,8 @@ void DrawTransformMenu(okay::editor::EditorState& ed, okay::GameObject* go);
 void DrawObjectHeaderMenu(okay::editor::EditorState& ed, okay::GameObject* go);
 /// At the end of the Inspector window: a right click on empty space opens a menu (Add Component, Paste As New Component, Expand / Collapse All).
 void DrawInspectorBackgroundMenu(okay::editor::EditorState& ed, okay::GameObject* go);
+/// Ask the Inspector to open its Add Component browser (the Inspector's own menus and the Hierarchy's Add Component... row both use this one request).
+void RequestAddComponentBrowser();
 /// True once after a menu asked for the Add Component browser; the Add Component button opens it then, as if it was clicked.
 bool TakeAddComponentRequest();
 /// Run what the menus asked for that changes the list of components or several objects. After the component loop, with the object that was drawn.

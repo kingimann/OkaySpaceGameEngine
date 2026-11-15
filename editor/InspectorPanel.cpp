@@ -976,6 +976,7 @@ ctx::ValueKind KindOf(PropertyType t) {
 }   // namespace
 
 void SetInspectorMenuHooks(InspectorMenuHooks hooks) { s_menuHooks = std::move(hooks); }
+void RequestAddComponentBrowser() { s_addComponentRequest = true; }
 bool TakeAddComponentRequest() { const bool r = s_addComponentRequest; s_addComponentRequest = false; return r; }
 
 // ---- Component header ----
@@ -1132,7 +1133,7 @@ void ObjectAction(const std::string& id, GameObject* go) {
     else if (id == "obj.selectPrefabAsset") Ask(Act::SelectPrefabAsset);
     else if (id == "obj.copyName") ImGui::SetClipboardText(go->name.c_str());
     else if (id == "obj.copyPath") ImGui::SetClipboardText(go->Path().c_str());
-    else if (id == "obj.addComponent") s_addComponentRequest = true;
+    else if (id == "obj.addComponent") RequestAddComponentBrowser();
     else if (id == "comp.pasteNew") Ask(Act::PasteNew);
     else if (id == "comp.expandAll") SetCardsOpen(true);
     else if (id == "comp.collapseAll") SetCardsOpen(false);

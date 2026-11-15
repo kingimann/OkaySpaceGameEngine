@@ -119,6 +119,16 @@ int main() {
         const std::string dup = "LWSC\n3\nAddNullObject Same\nObjectMotion\nNumChannels 9\n" + fx::Chan(0, {{0, 1}}) + "AddNullObject Same\nObjectMotion\nNumChannels 9\n" + fx::Chan(0, {{0, 2}});
         CHECK(ReadLwsBuffer(dup, "", m, &err) && m.nodes[1].name == "Same" && m.nodes[2].name == "Same_1" && Chan(m, "Same") && Chan(m, "Same_1") && Near(Chan(m, "Same_1")->position[0].value.x, 2));
     }
+    {   // "a", "a_1", "a": three different node names, and the clip channel of each reaches its own node
+        const std::string s = "LWSC\n3\nAddNullObject a\nObjectMotion\nNumChannels 9\n" + fx::Chan(0, {{0, 1}}) + "AddNullObject a_1\nObjectMotion\nNumChannels 9\n" + fx::Chan(0, {{0, 2}}) + "AddNullObject a\nObjectMotion\nNumChannels 9\n" + fx::Chan(0, {{0, 3}});
+        ImportedModel m; std::string err;
+        CHECK(ReadLwsBuffer(s, "", m, &err) && m.nodes.size() == 4);
+        CHECK(m.nodes[1].name == "a" && m.nodes[2].name == "a_1" && m.nodes[3].name == "a_2");
+        CHECK(Chan(m, "a") && Chan(m, "a_1") && Chan(m, "a_2") && Near(Chan(m, "a_2")->position[0].value.x, 3) && Near(Chan(m, "a_1")->position[0].value.x, 2));
+        // very long names and paths are cut
+        ImportedModel m2;
+        CHECK(ReadLwsBuffer("LWSC\n3\nAddNullObject " + std::string(60000, 'n') + "\nLoadObject " + std::string(5000, 'p') + "\n", "", m2, &err) && m2.nodes[1].name.size() == 256 && HasNote(m2, "1 object path(s) longer than 4096"));
+    }
     // ---- header ----
     {
         CHECK(Refused("", "empty"));

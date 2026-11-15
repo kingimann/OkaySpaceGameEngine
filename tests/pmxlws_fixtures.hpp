@@ -19,6 +19,7 @@ struct PmxOpts {
     bool qdef = false;      // make vertex 5 a QDEF vertex (needs version 2.1)
     bool flipMorph = false; // add a flip morph (2.1)
     std::string texName = "tex\\a.png";
+    std::string boneName[3] = {"root", "child", "extra"};
     long long par[3] = {-1, 0, 1};   // the parent bone of each bone
 };
 
@@ -114,7 +115,7 @@ inline std::string BuildPmx(const PmxOpts& o = PmxOpts(), PmxMeta* meta = nullpt
     if (meta) meta->boneCount = w.s.size();
     w.I32(3);
     for (int b = 0; b < 3; ++b) {
-        w.Text(b == 0 ? "root" : b == 1 ? "child" : "extra"); w.Text("e");
+        w.Text(o.boneName[b]); w.Text("e");
         if (b == 0) w.V3(1, 2, 3); else if (b == 1) w.V3(4, 6, 10); else w.V3(0, 0, 0);
         w.Idx(o.bsz, o.par[b]);
         w.I32(0);
@@ -143,7 +144,7 @@ inline std::string BuildPmx(const PmxOpts& o = PmxOpts(), PmxMeta* meta = nullpt
 }
 
 // A PMX with n vertices (a fan of triangles over a grid), one material, no bones. For the memory and budget checks.
-inline std::string BuildPmxGrid(int nVerts, int nTris, int nMats = 1, int nBones = 0) {
+inline std::string BuildPmxGrid(int nVerts, int nTris, int nMats = 1, int nBones = 0, int boneNameLen = 1) {
     PmxOpts o; o.vsz = 4; o.bsz = 2; o.tsz = 1;
     PmxW w(o);
     w.Header();
@@ -160,7 +161,7 @@ inline std::string BuildPmxGrid(int nVerts, int nTris, int nMats = 1, int nBones
         w.I32(nMats == 1 ? nTris * 3 : (m < nTris ? 3 : 0));
     }
     w.I32(nBones);
-    for (int b = 0; b < nBones; ++b) { w.Text("b"); w.Text(""); w.V3((float)b, 0, 0); w.Idx(2, -1); w.I32(0); w.U16(0x0001); w.Idx(2, -1); }
+    for (int b = 0; b < nBones; ++b) { w.Text(std::string((std::size_t)boneNameLen, 'n')); w.Text(""); w.V3((float)b, 0, 0); w.Idx(2, -1); w.I32(0); w.U16(0x0001); w.Idx(2, -1); }
     w.I32(0);
     return w.s;
 }
@@ -224,8 +225,8 @@ inline std::string BuildMot() {
 struct FakeLoad {
     std::vector<std::string> paths;
     int fails = 0;
-    okay::IrrMeshLoader Fn(std::size_t tris = 1) {
-        return [this, tris](const std::string& p, okay::ImportedModel& m, std::string* e) {
+    okay::IrrMeshLoader Fn(std::size_t tris = 1, std::size_t bones = 0) {
+        return [this, tris, bones](const std::string& p, okay::ImportedModel& m, std::string* e) {
             paths.push_back(p);
             if (p.find("missing") != std::string::npos) { ++fails; if (e) *e = "no such file"; return false; }
             okay::ImportedNode n; n.name = "lwo";
@@ -237,6 +238,8 @@ struct FakeLoad {
                 part.mesh.triangles.push_back((int)(3 * i)); part.mesh.triangles.push_back((int)(3 * i + 1)); part.mesh.triangles.push_back((int)(3 * i + 2));
             }
             part.node = 0;
+            part.bones.resize(bones);
+            for (auto& b : part.bones) b.name = "bone";
             m.parts.push_back(std::move(part));
             return true;
         };

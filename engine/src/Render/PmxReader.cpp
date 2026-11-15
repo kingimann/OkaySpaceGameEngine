@@ -30,8 +30,9 @@ constexpr std::size_t kMaxVerts = 2000000, kMaxFaceIndices = 12000000;   // 4,00
 constexpr std::size_t kMaxOutVerts = 4000000, kMaxOutTris = 4000000;
 constexpr std::size_t kMaxBones = 100000, kMaxMorphs = 100000, kMaxMaterials = 100000, kMaxTextures = 100000;
 constexpr std::size_t kMaxMorphOffsets = 8000000, kMaxIkLinks = 4096;
-constexpr std::size_t kMaxBonePartProduct = 4000000;   // bones x parts: every part carries the whole bone list
+constexpr std::size_t kMaxBonePartProduct = 1000000;   // bones x parts: every part carries the whole bone list
 constexpr std::size_t kMaxText = 1u << 20;
+constexpr std::size_t kMaxBoneName = 64;   // longer bone names are cut: every part carries a copy of every name
 constexpr double kMaxCoord = 1e15;
 
 bool Fail(std::string* err, const std::string& m) { if (err) *err = "PMX: " + m; return false; }
@@ -235,6 +236,7 @@ static bool ReadPmxImpl(const std::string& bytes, const std::string& baseDir, Im
         std::string nameEn;
         if (!ReadText(b, h.utf8, bn.name, why) || !ReadText(b, h.utf8, nameEn, why)) return Fail(err, "bone " + std::to_string(i) + ": " + why);
         if (bn.name.empty()) bn.name = nameEn;
+        if (bn.name.size() > kMaxBoneName) bn.name.resize(kMaxBoneName);
         bn.p = Vec3{b.F32(), b.F32(), b.F32()};
         bn.parent = Idx(b, h.bsz, true);
         b.I32();   // deform layer
@@ -334,7 +336,7 @@ static bool ReadPmxImpl(const std::string& bytes, const std::string& baseDir, Im
         for (int bi : order) {
             std::string nm = bones[(std::size_t)bi].name.empty() ? "bone" + std::to_string(bi) : bones[(std::size_t)bi].name;
             int& u = used[nm];
-            if (u++) { nm += "_" + std::to_string(u - 1); used[nm] = 1; }
+            if (u++) { std::string cand; do { cand = nm + "_" + std::to_string(u - 1); ++u; } while (used.count(cand)); nm = cand; used[nm] = 1; }   // the new name must be unused too ("a", "a_1", "a")
             boneNodeName[(std::size_t)bi] = nm;
             ImportedNode nd;
             nd.name = nm;

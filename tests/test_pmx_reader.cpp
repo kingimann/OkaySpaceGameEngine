@@ -240,6 +240,16 @@ int main() {
         o.par[0] = 2; o.par[1] = 0; o.par[2] = 1;   // a ring of three
         CHECK(ReadPmxBuffer(fx::BuildPmx(o), "", m, &err) && fx::Sane(m) && HasNote(m, "parent loop"));
     }
+    {   // duplicate bone names: "a", "a_1", "a" must give three different node and skin names
+        fx::PmxOpts o; o.boneName[0] = "a"; o.boneName[1] = "a_1"; o.boneName[2] = "a";
+        ImportedModel m; std::string err;
+        CHECK(ReadPmxBuffer(fx::BuildPmx(o), "", m, &err) && m.nodes.size() == 4);
+        CHECK(m.nodes[1].name != m.nodes[2].name && m.nodes[1].name != m.nodes[3].name && m.nodes[2].name != m.nodes[3].name && m.nodes[0].name != m.nodes[1].name);
+        CHECK(m.nodes[1].name == "a" && m.nodes[2].name == "a_1" && m.nodes[3].name == "a_2");
+        CHECK(!m.parts.empty() && m.parts[0].bones[2].name == "a_2");
+        o.boneName[0] = std::string(500, 'x');   // a long name is cut
+        CHECK(ReadPmxBuffer(fx::BuildPmx(o), "", m, &err) && m.nodes[1].name.size() == 64);
+    }
     {   // IK link count and a bone flag that asks for IK in a truncated record
         fx::PmxMeta meta;
         const std::string s = fx::BuildPmx(fx::PmxOpts(), &meta);

@@ -56,6 +56,7 @@ static constexpr double kMaxSeconds = 20.0;   // a sanitizer build is several ti
 static constexpr double kMaxSeconds = 3.0;
 #endif
 
+static constexpr std::size_t kBonesCapMB = 440;   // about twice what the case above measured
 static double Now() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 static bool HasNote(const ImportedModel& m, const char* what) { for (const std::string& n : m.notes) if (n.find(what) != std::string::npos) return true; return false; }
 static void Put32(std::string& s, std::size_t off, std::uint32_t v) { for (int i = 0; i < 4; ++i) s[off + (std::size_t)i] = (char)((v >> (8 * i)) & 255); }
@@ -132,6 +133,17 @@ static void PmxHostile() {
         const Run r = Measure("1 big + 99,000 small materials", kMaxSeconds * 3, [&] { return ReadPmxBuffer(s, "", m, &err); });
         CHECK(r.ok && m.parts.size() == 99001 && fx::TriCount(m) == 399000);
     }
+    {   // the worst legal skin: 100,000 bones with long names in 9 parts (900,009 bone entries); the product limit is 1,000,000
+        const std::string s = fx::BuildPmxGrid(10, 9, 9, 100000, 200);
+        std::fprintf(stderr, "  PMX many-bones file: %zu bytes\n", s.size());
+        ImportedModel m; std::string err;
+        const Run r = Measure("100,000 bones x 9 parts", kMaxSeconds * 3, [&] { return ReadPmxBuffer(s, "", m, &err); });
+        CHECK(r.ok && m.parts.size() == 9 && m.parts[0].bones.size() == 100000 && m.parts[0].bones[0].name.size() == 64);
+        CHECK(r.peakMB < kBonesCapMB);
+        const std::string over = fx::BuildPmxGrid(10, 10, 10, 100000, 200);   // 100,001 x 10 > 1,000,000
+        ImportedModel m2; std::string e2;
+        CHECK(!ReadPmxBuffer(over, "", m2, &e2) && e2.find("(budget)") != std::string::npos);
+    }
     {   // a very long text: 1 MiB + 1 is over the limit
         std::string t = base;
         Put32(t, 17, (1u << 20) + 1);
@@ -199,6 +211,15 @@ static void LwsHostile() {
             fx::Chan(0, {{-1e7, 1e15}, {1e7, -1e15}}) + fx::Chan(3, {{0, 1e15}, {1, -1e15}}) + fx::Chan(4, {{0, 123456789.0}}) + fx::Chan(6, {{0, 1e15}, {2, 1e-15}});
         ImportedModel m; std::string err;
         CHECK(ReadLwsBuffer(s, "", m, &err) && fx::Sane(m) && m.clips.size() == 1);
+    }
+    {   // a loaded model with 1,000 bones placed 2,000 times: 2,000,000 bone entries, refused
+        std::string s = "LWSC\n3\n";
+        for (int i = 0; i < 2000; ++i) s += "LoadObject b.lwo\n";
+        fx::FakeLoad fake; const IrrMeshLoader l = fake.Fn(1, 1000);
+        ImportedModel m; std::string err;
+        const Run r = Measure("1,000 bones x 2,000 placements", kMaxSeconds, [&] { return ReadLwsBuffer(s, "d/", m, &err, &l); });
+        CHECK(!r.ok && err.find("bone entries") != std::string::npos && err.find("(budget)") != std::string::npos);
+        CHECK(r.peakMB < 192);
     }
     {   // a scene that names itself (the scene's own file), through the loader seam's rule and through the reader's
         fx::FakeLoad fake; const IrrMeshLoader l = fake.Fn();

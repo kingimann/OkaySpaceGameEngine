@@ -31,6 +31,8 @@ constexpr std::size_t kMaxKeys = 4000000;                  // envelope keys in t
 constexpr std::size_t kMaxNodes = 1000000, kMaxLoadedFiles = 256;
 constexpr std::size_t kMaxOutVerts = 4000000, kMaxOutTris = 4000000, kMaxLoadedVerts = 4000000, kMaxLoadedTris = 4000000;
 constexpr double kMaxTime = 1e7;
+constexpr std::size_t kMaxNameBytes = 256, kMaxPathBytes = 4096;   // item names and paths are kept this long at most (they are copied several times)
+constexpr std::size_t kMaxPlacedBones = 1000000, kMaxPlacedBoneBytes = 128u * 1024u * 1024u;
 
 bool Fail(std::string* err, const std::string& m) { if (err) *err = "LWS: " + m; return false; }
 
@@ -145,7 +147,7 @@ static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, Im
     std::vector<Key>* sink = nullptr;
     std::size_t totalKeys = 0, envDeclared = 0;
     int objCount = 0, lightCount = 0, camCount = 0, boneCount = 0;
-    int badKeys = 0, nonLinear = 0, longLines = 0, ignoredLines = 0, strayChannels = 0, strayParents = 0, badParentLines = 0, behaviors = 0, unclosedEnv = 0, strayKeys = 0;
+    int longPaths = 0, badKeys = 0, nonLinear = 0, longLines = 0, ignoredLines = 0, strayChannels = 0, strayParents = 0, badParentLines = 0, behaviors = 0, unclosedEnv = 0, strayKeys = 0;
     double fps = 30;
     auto isItemCmd = [&](const Tk& t) { return Is(line, t, "LoadObject") || Is(line, t, "LoadObjectLayer") || Is(line, t, "AddNullObject") || Is(line, t, "AddCamera") || Is(line, t, "AddLight") || Is(line, t, "AddBone") || Is(line, t, "Channel") || Is(line, t, "ParentItem"); };
 
@@ -196,6 +198,7 @@ static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, Im
             else it.kind = kBone;
             if (it.kind == kObject) {
                 it.path = Rest(line, tk, n, pathFrom);
+                if (it.path.size() > kMaxPathBytes) { it.path.clear(); ++longPaths; }
                 std::string stem = it.path;
                 const std::size_t sl = stem.find_last_of("/\\");
                 if (sl != std::string::npos) stem.erase(0, sl + 1);
@@ -215,6 +218,7 @@ static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, Im
                 else if (it.kind == kCamera) { it.name = "camera" + std::to_string(camCount); if (it.id < 0) it.id = 0x30000000 + camCount; ++camCount; }
                 else { it.name = "bone" + std::to_string(boneCount); if (it.id < 0) it.id = 0x40000000 + boneCount; ++boneCount; }
             }
+            if (it.name.size() > kMaxNameBytes) it.name.resize(kMaxNameBytes);
             items.push_back(std::move(it));
             cur = (int)items.size() - 1;
             curChan = -1;
@@ -238,7 +242,7 @@ static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, Im
             Item& it = items[(std::size_t)cur];
             const bool match = (Is(line, tk[0], "CameraName") && it.kind == kCamera) || (Is(line, tk[0], "LightName") && it.kind == kLight) || (Is(line, tk[0], "BoneName") && it.kind == kBone) || (Is(line, tk[0], "ObjectName") && (it.kind == kObject || it.kind == kNull));
             const std::string nm = Rest(line, tk, n, 1);
-            if (match && !nm.empty()) it.name = nm;
+            if (match && !nm.empty()) it.name = nm.substr(0, kMaxNameBytes);
             continue;
         }
         ++ignoredLines;
@@ -285,7 +289,7 @@ static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, Im
         const Item& it = items[(std::size_t)ii];
         std::string nm = it.name;
         int& u = used[nm];
-        if (u++) { nm += "_" + std::to_string(u - 1); used[nm] = 1; }
+        if (u++) { std::string cand; do { cand = nm + "_" + std::to_string(u - 1); ++u; } while (used.count(cand)); nm = cand; used[nm] = 1; }   // the new name must be unused too ("a", "a_1", "a")
         nodeName[(std::size_t)ii] = nm;
         ImportedNode nd;
         nd.name = nm;
@@ -330,7 +334,7 @@ static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, Im
     int refused = 0, unreadable = 0, noLoader = 0, droppedClips = 0, sceneRefs = 0;
     std::string firstMissing;
     std::map<std::string, std::unique_ptr<Loaded>> loadedFiles;
-    std::size_t loadedVerts = 0, loadedTris = 0, outVerts = 0, outTris = 0;
+    std::size_t loadedVerts = 0, loadedTris = 0, outVerts = 0, outTris = 0, placedBones = 0, placedBoneBytes = 0;
     auto triCount = [](const Mesh& m) { return m.triangles.size() / 3; };
     for (std::size_t ii = 0; ii < items.size(); ++ii) {
         const Item& it = items[ii];
@@ -371,6 +375,9 @@ static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, Im
             outTris += triCount(sp.mesh);
             if (outVerts > kMaxOutVerts || outTris > kMaxOutTris) return Fail(err, "over the budget of " + std::to_string(kMaxOutTris) + " triangles or " + std::to_string(kMaxOutVerts) + " vertices for the whole scene (an object file placed many times counts once per placement) (budget)");
             if (out.parts.size() >= kMaxNodes) return Fail(err, "too many parts (budget)");
+            placedBones += sp.bones.size();
+            for (const ImportedBone& pb : sp.bones) placedBoneBytes += pb.name.size() + sizeof(ImportedBone);
+            if (placedBones > kMaxPlacedBones || placedBoneBytes > kMaxPlacedBoneBytes) return Fail(err, "the skins of the placed objects hold more than " + std::to_string(kMaxPlacedBones) + " bone entries (or " + std::to_string(kMaxPlacedBoneBytes >> 20) + " MiB) in all (budget)");
             ImportedPart q = sp;
             q.node = base + std::max(0, std::min(sp.node, (int)L.m.nodes.size() - 1));
             if (sp.material >= 0 && (std::size_t)sp.material < L.matMap.size()) {
@@ -402,6 +409,7 @@ static bool ReadLwsImpl(const std::string& input, const std::string& baseDir, Im
     if (badKeys) note(std::to_string(badKeys) + " envelope key(s) that are not numbers or have a time out of range skipped");
     if (strayKeys || strayChannels) note(std::to_string(strayKeys) + " envelope(s) outside a motion channel (lighting, camera and other values) and " + std::to_string(strayChannels) + " misplaced Channel line(s) not imported");
     if (unclosedEnv) note(std::to_string(unclosedEnv) + " envelope(s) without a closing brace");
+    if (longPaths) note(std::to_string(longPaths) + " object path(s) longer than " + std::to_string(kMaxPathBytes) + " bytes ignored (the item is an empty node)");
     if (longLines) note(std::to_string(longLines) + " line(s) longer than " + std::to_string(kMaxLine) + " bytes skipped");
     note(std::to_string(ignoredLines) + " other line(s) not read (render settings, lighting values, plugins, bones' details, ...); cameras and lights are empty nodes");
     return true;

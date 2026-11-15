@@ -853,6 +853,9 @@ add_test(NAME broadphase COMMAND test_broadphase)
 add_executable(test_triangle_span test_triangle_span.cpp)
 target_link_libraries(test_triangle_span PRIVATE okay::engine)
 add_test(NAME triangle_span COMMAND test_triangle_span)
+add_executable(test_software_perf_paths test_software_perf_paths.cpp)
+target_link_libraries(test_software_perf_paths PRIVATE okay::engine)
+add_test(NAME software_perf_paths COMMAND test_software_perf_paths)
 
 # The Hierarchy and Inspector logic (editor/InspectorModel, EditUndo; ImGui-free): search filter, drag-and-drop reparenting, mixed values, copy / paste / reset, prefab changes, one undo step per edit.
 add_executable(test_inspector_model test_inspector_model.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)

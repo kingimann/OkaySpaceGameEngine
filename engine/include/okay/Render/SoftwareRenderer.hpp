@@ -5,6 +5,7 @@
 #include "okay/Math/Mat4.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Render/Lighting.hpp"
+#include "okay/Render/LightSubset.hpp"
 #include "okay/Render/LocalShadowMath.hpp"
 #include "okay/Render/Atmosphere.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -492,7 +493,7 @@ public:
                        int clipY0 = 0, int clipY1 = (1 << 30),
                        int shaderMode = 0, const float* gradTop = nullptr, const float* gradBot = nullptr,
                        const MipChain* aoMips = nullptr, float aoStrength = 1.0f,
-                       bool receiveShadows = true) {
+                       bool receiveShadows = true, const LightSubset* lightSubset = nullptr) {
         int minX = (int)std::floor(std::fmin(X[0], std::fmin(X[1], X[2])));
         int maxX = (int)std::ceil (std::fmax(X[0], std::fmax(X[1], X[2])));
         int minY = (int)std::floor(std::fmin(Y[0], std::fmin(Y[1], Y[2])));
@@ -594,9 +595,11 @@ public:
                         const int sunI = SceneLights::SunIndex();
                         if (sunI >= 0 && sunI < SceneLights::kMaxShadowedLights) lightSh[sunI] = sh;
                     }
-                    lit = SceneLights::ShadeNormalized(wpos, n, lightSh);
+                    lit = lightSubset ? ShadeNormalizedSubset(wpos, n, lightSh, *lightSubset)
+                                      : SceneLights::ShadeNormalized(wpos, n, lightSh);
                 } else {
-                    lit = SceneLights::ShadeNormalized(wpos, n);   // n already unit
+                    lit = lightSubset ? ShadeNormalizedSubset(wpos, n, nullptr, *lightSubset)
+                                      : SceneLights::ShadeNormalized(wpos, n);   // n already unit
                 }
                 // Specular/gloss map: a grayscale texture whose luminance scales the
                 // specular highlight + reflection per texel (shiny tape on a matte
@@ -650,7 +653,8 @@ public:
                 Vec3 spec{0, 0, 0};
                 if (specularK > 0.0f) {
                     Vec3 toEye = (eye - wpos).Normalized();
-                    spec = SceneLights::SpecularN(wpos, n, toEye, shininess, sh, perLightSh ? lightSh : nullptr);
+                    spec = lightSubset ? SpecularSubset(wpos, n, toEye, shininess, sh, perLightSh ? lightSh : nullptr, *lightSubset)
+                                       : SceneLights::SpecularN(wpos, n, toEye, shininess, sh, perLightSh ? lightSh : nullptr);
                     float ks = specularK * gloss;
                     spec.x *= ks; spec.y *= ks; spec.z *= ks;
                     // Toon: collapse the highlight to a single hard glint (on/off).
@@ -910,6 +914,11 @@ inline const MipChain* GetCachedMips(const std::string& path) {
 /// Per-pixel (Phong) lighting toggle. On by default for quality (smooth shading
 /// + correct specular on every pixel); turn off to fall back to faster per-vertex
 /// (Gouraud) shading on very large scenes.
+// Diagnostic switches for tests and the benchmark. Both are on by default, and each one only skips work that cannot change a
+// pixel (tests/test_software_perf_paths.cpp renders scenes with them on and off and compares every pixel).
+inline bool& BandSkipEnabled()     { static bool v = true; return v; }   // meshes and triangles wholly outside a thread's rows are not processed by that thread
+inline bool& LightCullingEnabled() { static bool v = true; return v; }   // each mesh shades with only the lights that can reach it
+
 inline bool& PerPixelLighting() { static bool v = false; return v; }  // default off (per request); flat/Gouraud path, now crack-free via double-precision rasterization. Opt-in in the Rendering panel.
 
 // ---- Directional shadow mapping --------------------------------------------
@@ -1904,14 +1913,85 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // the bands only read the result.
     const Frustum viewFrustum = Frustum::FromVP(vp);
     (void)viewFrustum;
-    std::unordered_set<const GameObject*> swCulled;
+    // What the bands need to know about each object, worked out here once instead of once per band:
+    // whether the visibility pass dropped it, which screen rows its drawn vertices can reach (a band of rows that does not meet
+    // them has nothing of it to draw), and which lights can reach it.
+    struct ObjInfo {
+        bool culled = false;                   // a mesh renderer the visibility pass dropped
+        bool rowsKnown = false;                // yRow0..yRow1 are the rows the mesh can touch (with a margin)
+        int  yRow0 = 0, yRow1 = -1;
+        int  lightFirst = 0, lightCount = -1;  // lightCount < 0: every light; otherwise lightPool[lightFirst ..]
+    };
+    const auto& sceneObjs = scene.Objects();
+    std::vector<ObjInfo> objInfo(sceneObjs.size());
+    std::vector<int> lightPool;
+    const bool bandSkipOn = BandSkipEnabled();
+    const bool lightCullOn = LightCullingEnabled();
+    const auto& sceneLights = SceneLights::List();
+    // From the vertices that are actually drawn this frame (so a mesh that is skinned, edited or deformed in place is as
+    // safe as a still one), the bounding box in the world: its eight corners give the rows it can reach, and its distance
+    // to each light says whether the light can reach it.
+    auto meshReach = [&](const GameObject* go, const MeshRenderer* mr, ObjInfo& oi) {
+        const Mesh* dm = vis.MeshFor(go);
+        if (!dm || dm->vertices.empty() || !go->transform) return;
+        const std::vector<Vec3>& vs = dm->vertices;
+        Vec3 lo = vs[0], hi = vs[0];
+        for (const Vec3& p : vs) {
+            lo.x = p.x < lo.x ? p.x : lo.x; lo.y = p.y < lo.y ? p.y : lo.y; lo.z = p.z < lo.z ? p.z : lo.z;
+            hi.x = p.x > hi.x ? p.x : hi.x; hi.y = p.y > hi.y ? p.y : hi.y; hi.z = p.z > hi.z ? p.z : hi.z;
+        }
+        if (!std::isfinite(lo.x + lo.y + lo.z + hi.x + hi.y + hi.z)) return;   // NaN or infinity in the data: no shortcut
+        const Mat4 model = go->transform->LocalToWorldMatrix();
+        Vec3 wlo{1e30f, 1e30f, 1e30f}, whi{-1e30f, -1e30f, -1e30f};
+        float yLo = 1e30f, yHi = -1e30f;
+        bool inFront = true;
+        for (int c = 0; c < 8; ++c) {
+            const Vec3 w = model.MultiplyPoint({(c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z});
+            wlo.x = std::fmin(wlo.x, w.x); wlo.y = std::fmin(wlo.y, w.y); wlo.z = std::fmin(wlo.z, w.z);
+            whi.x = std::fmax(whi.x, w.x); whi.y = std::fmax(whi.y, w.y); whi.z = std::fmax(whi.z, w.z);
+            const Vec4 cl = vp * Vec4{w, 1.0f};
+            if (!(cl.w > 1e-3f)) { inFront = false; continue; }
+            const float iw = 1.0f / cl.w;
+            const float sy = (1.0f - (cl.y * iw * 0.5f + 0.5f)) * H;
+            yLo = std::fmin(yLo, sy); yHi = std::fmax(yHi, sy);
+        }
+        // Rows: only when the whole box is in front of the camera, so the projection is a plain perspective divide of a convex
+        // box (a box crossing the camera plane could reach any row). Two rows of margin for the float rounding of the
+        // vertices. The outline shell is drawn outside the mesh by the outline width, so an outlined mesh is left alone.
+        if (bandSkipOn && inFront && !(mr->outline && mr->outlineWidth > 0.0f) && std::fabs(yLo) < 1.0e8f && std::fabs(yHi) < 1.0e8f) {
+            oi.rowsKnown = true;
+            oi.yRow0 = (int)std::floor(yLo) - 2;
+            oi.yRow1 = (int)std::ceil(yHi) + 2;
+        }
+        // Lights: a point, spot or area light whose range does not reach the box adds exactly nothing (see LightSubset).
+        if (lightCullOn && !sceneLights.empty() && !(mr->unlit || mr->shader == MeshRenderer::Shader::Unlit)) {
+            const float mag = std::fmax(std::fmax(std::fabs(wlo.x), std::fabs(whi.x)), std::fmax(std::fmax(std::fabs(wlo.y), std::fabs(whi.y)), std::fmax(std::fabs(wlo.z), std::fabs(whi.z))));
+            const float margin = 1e-3f + 1e-4f * mag + 1e-4f * ((whi.x - wlo.x) + (whi.y - wlo.y) + (whi.z - wlo.z));
+            const std::size_t first = lightPool.size();
+            for (std::size_t li = 0; li < sceneLights.size(); ++li) {
+                const LightSample& L = sceneLights[li];
+                bool reaches = true;
+                if (L.type != 0 && std::isfinite(L.range) && std::isfinite(L.pos.x + L.pos.y + L.pos.z) &&
+                    std::isfinite(L.color.x + L.color.y + L.color.z)) {
+                    auto gap = [margin](float p, float a, float b) { return p < a - margin ? (a - margin) - p : (p > b + margin ? p - (b + margin) : 0.0f); };
+                    const float dx = gap(L.pos.x, wlo.x, whi.x), dy = gap(L.pos.y, wlo.y, whi.y), dz = gap(L.pos.z, wlo.z, whi.z);
+                    const float reach = L.range * 1.0001f + 1e-3f;
+                    if (L.range <= 0.0f || dx * dx + dy * dy + dz * dz >= reach * reach) reaches = false;
+                }
+                if (reaches) lightPool.push_back((int)li);
+            }
+            if (lightPool.size() - first == sceneLights.size()) lightPool.resize(first);   // every light reaches it: use the plain list
+            else { oi.lightFirst = (int)first; oi.lightCount = (int)(lightPool.size() - first); }
+        }
+    };
     int swDrawn = 0;
     {
     OKAY_PROFILE("Render.Prewarm");
-    for (const auto& go : scene.Objects()) {
+    for (std::size_t oi = 0; oi < sceneObjs.size(); ++oi) {
+        const auto& go = sceneObjs[oi];
         auto* mr = go->GetComponent<MeshRenderer>();
         if (!mr) continue;
-        if (!vis.Visible(go.get())) { swCulled.insert(go.get()); continue; }
+        if (!vis.Visible(go.get())) { objInfo[oi].culled = true; continue; }
         ++swDrawn;
         if (!mr->texture.empty())     GetCachedMips(mr->texture);
         if (!mr->normalMap.empty())   GetCachedMips(mr->normalMap);
@@ -1920,6 +2000,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (!mr->metallicRoughnessMap.empty()) GetCachedMips(mr->metallicRoughnessMap);
         if (!mr->emissiveMap.empty()) GetCachedMips(mr->emissiveMap);
         if (!mr->matcap.empty() && !mr->unlit && mr->shader != MeshRenderer::Shader::Unlit) GetCachedTexture(mr->matcap);
+        if (bandSkipOn || lightCullOn) meshReach(go.get(), mr, objInfo[oi]);
     }
     }
     // Rasterize the meshes across CPU cores: each worker owns a horizontal band
@@ -1927,7 +2008,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     // depth / G-buffer writes never overlap between threads (no locks needed).
     // Vertex transforms are repeated per band, but pixel fill dominates.
     auto renderBand = [&](int bandY0, int bandY1) {
-    for (const auto& go : scene.Objects()) {
+    for (std::size_t objIndex = 0; objIndex < sceneObjs.size(); ++objIndex) {
+        const auto& go = sceneObjs[objIndex];
+        const ObjInfo& objI = objInfo[objIndex];
+        if (bandSkipOn && objI.rowsKnown && (objI.yRow1 < bandY0 || objI.yRow0 > bandY1)) continue;   // none of it falls in this band
         if (go->HiddenFromCamera(ignore)) continue;   // owner's body, except the parts that camera is meant to see (shirt, raised-arm copy)
         if (!(RenderCullingMask() & (1 << (go->layer & 31)))) continue;   // camera layer culling mask
         auto* mr = go->GetComponent<MeshRenderer>();
@@ -1982,7 +2066,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         // per-triangle work. ---
         // (A bounding sphere from bounds cached per mesh — recomputing the box of
         // every mesh every frame cost a full pass over its vertices.)
-        if (swCulled.count(go.get())) continue;
+        if (objI.culled) continue;
         // Inverted-hull outline pre-pass: draw an expanded shell of BACK faces in a
         // flat outline color behind the mesh, so only a clean silhouette edge survives
         // the main pass. A cosmetic pass — triangles crossing the near plane are
@@ -2028,6 +2112,40 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
         if (auto* lg = go->GetComponent<LODGroup>()) lg->DebugTint(lg->activeLevel, lodR, lodG, lodB);
         Color shaded = mr->color;
         shaded.r *= lodR; shaded.g *= lodG; shaded.b *= lodB;
+        // Per-pixel (Phong) shading for lit meshes that carry normals — smooth
+        // surfaces + correct specular, textured or not. Matcap/unlit meshes
+        // keep their existing paths. Meshes WITHOUT normals still go per-pixel:
+        // each vertex carries the (constant) face normal, so they stay flat
+        // shaded but gain per-pixel shadows, reflections, rim and hemisphere
+        // ambient — which the basic flat path can't do. (This is what lets
+        // primitives like Cube/Plane and the flat-shaded Character receive
+        // cast shadows.)
+        // Toon needs the per-pixel path (that's where the cel banding lives), so
+        // it forces per-pixel lighting for its mesh regardless of the global toggle.
+        const bool perPixel = (PerPixelLighting() || mr->shader == MeshRenderer::Shader::Toon
+                               || mr->shader == MeshRenderer::Shader::Gradient
+                               || mr->shader == MeshRenderer::Shader::Fresnel
+                               || mr->shader == MeshRenderer::Shader::Iridescent
+                               || mr->shader == MeshRenderer::Shader::Hologram
+                               || mr->shader == MeshRenderer::Shader::Posterize
+                               || mr->shader == MeshRenderer::Shader::Velvet
+                               || mr->rimStrength > 0.0f || mr->triplanar
+                               || (ShadowsUsePerPixel() && mr->receiveShadows
+                                   && (Shadows().enabled || LocalShadowsActive())))
+                              && !unlit && !useMatcap;
+        const int  shaderMode = (int)mr->shader;
+        const float gradTopC[3] = {mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b};
+        const float gradBotC[3] = {mr->gradientBottom.r, mr->gradientBottom.g, mr->gradientBottom.b};
+        // The flat path (unlit, untextured) is the only one that reads the per triangle colour worked out below: every other
+        // path shades per vertex or per pixel, so that colour, its lighting, specular and fog are not computed for them.
+        const bool flatPath = !perPixel && !tex && !smooth;
+        LightSubset lightSubsetStore;
+        const LightSubset* lightSubset = nullptr;     // the lights that can reach this mesh (nullptr: all of them)
+        if (objI.lightCount >= 0) {
+            lightSubsetStore.idx = lightPool.data() + objI.lightFirst;
+            lightSubsetStore.n = objI.lightCount;
+            lightSubset = &lightSubsetStore;
+        }
         for (std::size_t i = 0; i + 2 < t.size(); i += 3) {
             int idx[3] = {t[i], t[i + 1], t[i + 2]};
             Vec3 wp[3];
@@ -2042,6 +2160,23 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             if (facing < 0.0f) {
                 if (!mr->doubleSided) continue;
                 normal = normal * -1.0f;
+            }
+
+            // Clip coordinates of the three corners (used below as before).
+            Vec4 clip3[3];
+            for (int k = 0; k < 3; ++k) clip3[k] = vp * Vec4{wp[k], 1.0f};
+            // A triangle that is wholly in front of the near plane and whose rows miss this thread's band draws nothing in
+            // it (the rasterizers only visit rows floor(min y) .. ceil(max y)): do not shade it here, another band has it. The
+            // rows are worked out with the same arithmetic the rasterizers get them from.
+            if (bandSkipOn && clip3[0].z + clip3[0].w > 1e-5f && clip3[1].z + clip3[1].w > 1e-5f && clip3[2].z + clip3[2].w > 1e-5f) {
+                float yMin = 1e30f, yMax = -1e30f;
+                for (int k = 0; k < 3; ++k) {
+                    const float iwk = 1.0f / clip3[k].w;
+                    const float syk = (1.0f - (clip3[k].y * iwk * 0.5f + 0.5f)) * H;
+                    yMin = std::fmin(yMin, syk); yMax = std::fmax(yMax, syk);
+                }
+                if (std::fabs(yMin) < 1.0e8f && std::fabs(yMax) < 1.0e8f &&
+                    ((int)std::floor(yMin) > bandY1 || (int)std::ceil(yMax) < bandY0)) continue;
             }
 
             // Per-corner clip coords + UV (planar/box projection unless the mesh
@@ -2085,7 +2220,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             CV in[3];
             float uvx[3], uvy[3];
             for (int k = 0; k < 3; ++k) {
-                Vec4 c = vp * Vec4{wp[k], 1.0f};
+                const Vec4& c = clip3[k];
                 float uu, vt;
                 if (hasUV) { uu = drawMesh.uvs[idx[k]].x; vt = drawMesh.uvs[idx[k]].y; }
                 else {
@@ -2106,7 +2241,9 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 // matcap and Gouraud paths. Per-pixel (Phong) shading uses nk + the
                 // world position directly instead.
                 Vec3 lk{1.0f, 1.0f, 1.0f};
-                if (useMatcap) {
+                if (perPixel) {
+                    // (shaded per pixel: this per vertex colour is never read)
+                } else if (useMatcap) {
                     // Matcap: sample the lit-sphere by the camera-space normal.
                     Vec3 fwd = (wp[k] - eye).Normalized();
                     Vec3 rgt = Vec3::Cross(Vec3{0, 1, 0}, fwd);
@@ -2123,7 +2260,8 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                     // single per-face value) interpolates smoothly across each face, so
                     // a flat ground under a point light has no hard facet line on its
                     // triangle diagonal even without per-pixel lighting.
-                    lk = SceneLights::ShadeColor(wp[k], nk);
+                    lk = lightSubset ? ShadeNormalizedSubset(wp[k], nk.Normalized(), nullptr, *lightSubset)
+                                     : SceneLights::ShadeColor(wp[k], nk);
                 }
                 // Per-vertex fog factor (distance from the eye), interpolated across
                 // the triangle by the rasterizer. A single per-triangle factor made a
@@ -2134,7 +2272,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 // single per-triangle value (from the centroid) made a hard diagonal
                 // highlight seam on big quads like a shiny ground.
                 float spk = 0.0f;
-                if (!unlit && mr->specular > 0.0f) {
+                if (!perPixel && !unlit && mr->specular > 0.0f) {
                     Vec3 toL = SceneLight::Direction() * -1.0f;
                     Vec3 toE = (eye - wp[k]).Normalized();
                     Vec3 hv = (toL.Normalized() + toE).Normalized();
@@ -2189,36 +2327,30 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
             }
             if (pn < 3) continue;   // entirely behind the camera
 
-            // Material: diffuse (Lambert, or flat when unlit) + Blinn-Phong
-            // specular highlight + self-illuminating emissive.
-            // Colored multi-light diffuse (directional + point + spot + ambient).
-            Vec3 lit = unlit ? Vec3{1.0f, 1.0f, 1.0f}
-                             : SceneLights::ShadeColor(centroid, normal);
-            float spec = 0.0f;
-            if (!unlit && mr->specular > 0.0f) {
-                Vec3 toLight = SceneLight::Direction() * -1.0f;
-                Vec3 toEye = (eye - centroid).Normalized();
-                Vec3 h = (toLight.Normalized() + toEye).Normalized();
-                float nh = Vec3::Dot(normal, h);
-                if (nh > 0.0f) spec = std::pow(nh, faceShine) * faceSpec;
-            }
             // Per-face color when the mesh carries one (e.g. character skin /
             // outfit / hair); otherwise the renderer's albedo, including LOD tint.
             const Color& base = faceCols ? drawMesh.triColors[i / 3] : shaded;
-            const float metalK = mr->metallicRoughnessMap.empty() ? 1.0f : (1.0f - 0.9f * std::min(1.0f, std::max(0.0f, faceMetal)));
-            float cr = base.r * lit.x * metalK + spec + faceEr;
-            float cg = base.g * lit.y * metalK + spec + faceEg;
-            float cb = base.b * lit.z * metalK + spec + faceEb;
-            // Distance fog: blend the color toward the fog color by how far the
-            // triangle is, between fogStart and fogEnd (per-tri factor).
-            float fogF = 0.0f;
-            if (fogOn) {
-                fogF = FogFactor(rs, (centroid - eye).Magnitude(), eye.y, centroid.y);
-                cr = cr * (1.0f - fogF) + fogR * fogF;
-                cg = cg * (1.0f - fogF) + fogG * fogF;
-                cb = cb * (1.0f - fogF) + fogB * fogF;
+            // Material for the flat path: diffuse (1 when unlit) + Blinn-Phong specular + self-illuminating emissive. An
+            // unlit mesh has no lighting and no specular, so this is the same sum as ever; the other paths never read it.
+            std::uint32_t abgr = 0;
+            if (flatPath) {
+                const Vec3 lit{1.0f, 1.0f, 1.0f};
+                const float spec = 0.0f;
+                const float metalK = mr->metallicRoughnessMap.empty() ? 1.0f : (1.0f - 0.9f * std::min(1.0f, std::max(0.0f, faceMetal)));
+                float cr = base.r * lit.x * metalK + spec + faceEr;
+                float cg = base.g * lit.y * metalK + spec + faceEg;
+                float cb = base.b * lit.z * metalK + spec + faceEb;
+                // Distance fog: blend the color toward the fog color by how far the
+                // triangle is, between fogStart and fogEnd (per-tri factor).
+                float fogF = 0.0f;
+                if (fogOn) {
+                    fogF = FogFactor(rs, (centroid - eye).Magnitude(), eye.y, centroid.y);
+                    cr = cr * (1.0f - fogF) + fogR * fogF;
+                    cg = cg * (1.0f - fogF) + fogG * fogF;
+                    cb = cb * (1.0f - fogF) + fogB * fogF;
+                }
+                abgr = Raster::PackRGB(cr, cg, cb);
             }
-            std::uint32_t abgr = Raster::PackRGB(cr, cg, cb);
 
             // Fan-triangulate the (possibly clipped) polygon and rasterize.
             auto project = [&](const CV& c, float& sx, float& sy, float& sd, float& iw,
@@ -2229,30 +2361,6 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                 sd = iw;   // W-buffer depth (1/w): larger = nearer, uniform precision
                 uo = c.u * iw; vo = c.v * iw;
             };
-            // Per-pixel (Phong) shading for lit meshes that carry normals — smooth
-            // surfaces + correct specular, textured or not. Matcap/unlit meshes
-            // keep their existing paths. Meshes WITHOUT normals still go per-pixel:
-            // each vertex carries the (constant) face normal, so they stay flat
-            // shaded but gain per-pixel shadows, reflections, rim and hemisphere
-            // ambient — which the basic flat path can't do. (This is what lets
-            // primitives like Cube/Plane and the flat-shaded Character receive
-            // cast shadows.)
-            // Toon needs the per-pixel path (that's where the cel banding lives), so
-            // it forces per-pixel lighting for its mesh regardless of the global toggle.
-            const bool perPixel = (PerPixelLighting() || mr->shader == MeshRenderer::Shader::Toon
-                                   || mr->shader == MeshRenderer::Shader::Gradient
-                                   || mr->shader == MeshRenderer::Shader::Fresnel
-                                   || mr->shader == MeshRenderer::Shader::Iridescent
-                                   || mr->shader == MeshRenderer::Shader::Hologram
-                                   || mr->shader == MeshRenderer::Shader::Posterize
-                                   || mr->shader == MeshRenderer::Shader::Velvet
-                                   || mr->rimStrength > 0.0f || mr->triplanar
-                                   || (ShadowsUsePerPixel() && mr->receiveShadows
-                                       && (Shadows().enabled || LocalShadowsActive())))
-                                  && !unlit && !useMatcap;
-            const int  shaderMode = (int)mr->shader;
-            const float gradTopC[3] = {mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b};
-            const float gradBotC[3] = {mr->gradientBottom.r, mr->gradientBottom.g, mr->gradientBottom.b};
             for (int j = 1; j + 1 < pn; ++j) {
                 const CV* tri[3] = {&poly[0], &poly[j], &poly[j + 1]};
                 float sx[3], sy[3], sd[3], iw[3], uu[3], vv[3];
@@ -2278,7 +2386,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                     mr->rimColor.r, mr->rimColor.g, mr->rimColor.b,
                                     mr->triplanar, mr->tiling.x, mr->tiling.y,
                                     bandY0, bandY1, shaderMode, gradTopC, gradBotC,
-                                    aoMips, mr->aoStrength, mr->receiveShadows);
+                                    aoMips, mr->aoStrength, mr->receiveShadows, lightSubset);
                 } else if (tex) {
                     float lr[3] = {tri[0]->lr, tri[1]->lr, tri[2]->lr};
                     float lg[3] = {tri[0]->lg, tri[1]->lg, tri[2]->lg};

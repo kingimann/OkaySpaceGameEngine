@@ -579,7 +579,7 @@ void RegisterWorldSpaceUI() {
     b.Commit();
 }
 
-// PauseMenu (record "pausemenu"). Only the fields the record saves.
+// PauseMenu (record "pausemenu"; `localized` is in the localization record).
 void RegisterPauseMenu() {
     PropertyBuilder<PauseMenu> b("PauseMenu", "pausemenu", "UI");
     b.AddKey("toggleKey", &PauseMenu::toggleKey).Tooltip("Key that opens and closes the menu (Escape by default)")
@@ -588,7 +588,12 @@ void RegisterPauseMenu() {
      .AddBool("showQuit", &PauseMenu::showQuit).Tooltip("Show the Quit button")
      .AddString("mainMenuScene", &PauseMenu::mainMenuScene).Tooltip("Scene the Main Menu button loads (empty = no button)")
      .AddColor("dimColor", &PauseMenu::dimColor).Range(0, 1, 0.01).Tooltip("Tint laid over the game")
-     .AddColor("panelColor", &PauseMenu::panelColor).Range(0, 1, 0.01).Tooltip("Colour of the menu card");
+     .AddColor("panelColor", &PauseMenu::panelColor).Range(0, 1, 0.01).Tooltip("Colour of the menu card")
+     .AddString("hint", &PauseMenu::hint).Tooltip("Small line under the title")
+     .AddBool("showRestart", &PauseMenu::showRestart).Tooltip("Show the Restart button (needs the restart scene)")
+     .AddBool("showVolume", &PauseMenu::showVolume).Tooltip("Show the Volume, Music and Effects sliders")
+     .AddString("restartScene", &PauseMenu::restartScene).Tooltip("Scene the Restart button loads (empty = no button)")
+     .AddBool("localized", &PauseMenu::localized).Tooltip("Take the texts from the string table in the current language");
     b.Commit();
 }
 

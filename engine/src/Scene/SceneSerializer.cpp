@@ -1417,7 +1417,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << (pm->showResume ? 1 : 0) << " " << (pm->showQuit ? 1 : 0)
             << " " << pm->dimColor.r << " " << pm->dimColor.g << " " << pm->dimColor.b << " " << pm->dimColor.a
             << " " << pm->panelColor.r << " " << pm->panelColor.g << " " << pm->panelColor.b << " " << pm->panelColor.a
-            << " " << Quote(pm->title) << " " << Quote(pm->mainMenuScene) << "\n";
+            << " " << Quote(pm->title) << " " << Quote(pm->mainMenuScene)
+            // Appended (quote-peek guarded on read): before this, these four were lost on every save.
+            << " " << Quote(pm->hint) << " " << (pm->showRestart ? 1 : 0) << " " << (pm->showVolume ? 1 : 0)
+            << " " << Quote(pm->restartScene) << "\n";
     }
     // Saveable: flags, then the save id, prefab, and the property paths ("Light.intensity" ...).
     for (auto* sv : go->GetComponents<Saveable>()) {
@@ -7460,6 +7463,14 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     pm->toggleKey = (char)tk; pm->showResume = (sr != 0); pm->showQuit = (sq != 0);
                     pm->title = ReadQuoted(in);
                     pm->mainMenuScene = ReadQuoted(in);
+                    in >> std::ws;   // optional: hint, Restart / Volume switches, restart scene (added later)
+                    if (in.peek() == '"') {
+                        pm->hint = ReadQuoted(in);
+                        int rs = 0, sv = 1; in >> rs >> sv;
+                        pm->showRestart = (rs != 0); pm->showVolume = (sv != 0);
+                        in >> std::ws;
+                        if (in.peek() == '"') pm->restartScene = ReadQuoted(in);
+                    }
                 } else if (field == "saveable") {
                     auto* sv = go->AddComponent<Saveable>();
                     int dyn = 0, tr = 1, act = 1, comps = 1, vars = 0, svars = 0;

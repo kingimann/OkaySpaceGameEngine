@@ -20,6 +20,11 @@ add_test(NAME structure_version COMMAND test_structure_version)
 find_program(OKAY_PYTHON NAMES python3 python)
 if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
+    # The collaboration scripts (docs/collaboration.md): throw-away git repos only, no GitHub, no feature map.
+    find_program(OKAY_GIT NAMES git)
+    if(OKAY_GIT)
+        add_test(NAME collab_scripts COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/tests/test_collab.py)
+    endif()
 endif()
 
 add_executable(test_serialize test_serialize.cpp)

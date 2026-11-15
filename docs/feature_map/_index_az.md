@@ -4695,6 +4695,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - texture layers (29.1, 29.1.6)
 - texture load (2.9)
 - texture packer (43.2)
+- Texture paths named in model files (3.6.37)
 - textures (2.2, 3.6, 42.7, 42.7.1)
 - The loop (19.3.1)
 - The relay program (41.5.4)

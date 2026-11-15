@@ -3,6 +3,7 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Render/Color.hpp"
+#include "okay/Render/TexturePath.hpp"
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -1599,8 +1600,14 @@ struct Mesh {
                 std::istringstream ms(ml); std::string mt; ms >> mt;
                 if (mt == "map_Kd") { std::string tex; std::getline(ms, tex);
                     std::size_t a = tex.find_first_not_of(" \t");
-                    if (a != std::string::npos) { tex = tex.substr(a);
-                        *outTexture = (tex.find_first_of("/\\") == std::string::npos) ? dir + tex : tex; }
+                    if (a != std::string::npos) {
+                        tex = tex.substr(a);
+                        while (!tex.empty() && (tex.back() == ' ' || tex.back() == '\t' || tex.back() == '\r')) tex.pop_back();
+                        // Inside the model's folder, or inside an allowed root (#753; okay/Render/TexturePath.hpp);
+                        // otherwise no texture. (A relative path with a folder used to be kept as written, so it was
+                        // looked up from the working folder, and an absolute or "../" path was kept as is.)
+                        *outTexture = ResolveModelTexturePath(tex, dir);
+                    }
                     break;
                 }
             }

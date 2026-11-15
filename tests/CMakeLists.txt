@@ -3303,3 +3303,9 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+
+# Texture paths named in model files (okay/Render/TexturePath.hpp, #753): inside the model's folder, or inside an allowed root
+# (the open project) with links followed; both OBJ/MTL code paths (ReadObjFile and Mesh::LoadOBJ).
+add_executable(test_obj_texture_roots test_obj_texture_roots.cpp)
+target_link_libraries(test_obj_texture_roots PRIVATE okay::engine)
+add_test(NAME obj_texture_roots COMMAND test_obj_texture_roots WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})

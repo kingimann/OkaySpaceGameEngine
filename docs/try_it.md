@@ -322,6 +322,8 @@ items listed as "not clicked" in editor_menus.md section 3b (among them the Orde
 project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
 have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
 
+---
+
 ## 18. Inspector right-click menus
 
 **What it is.** The Inspector panel has right-click menus in five places (component header, Transform header, a field, the object

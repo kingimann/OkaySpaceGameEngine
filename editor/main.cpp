@@ -18515,6 +18515,7 @@ static TplFn TemplateFn(const std::string& title) {
         {"Point & Click",        &EditorState::NewPointAndClick},
         {"Sandbox",              &EditorState::NewVoxelSandbox},
         {"Vehicle (3D)",         &EditorState::NewVehicle3D},
+        {"Vehicle (get in and drive)", &EditorState::NewVehicleSeats3D},
         {"Vehicle (2D)",         &EditorState::NewVehicle2D},
         {"Platformer",           &EditorState::NewPlatformer},
         {"Top-Down",             &EditorState::NewTopDown},

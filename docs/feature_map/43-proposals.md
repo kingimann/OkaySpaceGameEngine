@@ -623,7 +623,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
 ### 51.1 Sample gallery
 - **What:** Ready-made example projects people can open, play, take apart and learn from.
 - **Parts:**
-  - 51.1.1 Create page templates - `launcher/main.cpp` - 21 templates in groups including "Game kits" and "Examples and systems" (Coin Collector, Snake, Brick Breaker, Inventory, Humanoid and more)
+  - 51.1.1 Create page templates - `launcher/main.cpp` - 22 templates in groups including "Game kits" and "Examples and systems" (Coin Collector, Snake, Brick Breaker, Inventory, Humanoid and more)
   - 51.1.2 Code demos - `examples/netdemo/main.cpp`, `examples/physicsdemo/main.cpp` - small C++ programs
   - 51.1.3 Editor plugin examples - `examples/editor-plugins/AlignTools.okay` - sample plugins
   - 51.1.4 Marketplace - `Platform/Workshop` - community templates and games

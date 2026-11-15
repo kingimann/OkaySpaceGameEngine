@@ -775,6 +775,7 @@ void NavigationBeforePlay(EditorState& ed) {
         std::string err;
         bool skipped = false;
         if (!ns->BakeIfChanged(ed.scene(), &skipped, nullptr, &err)) { ConsoleLog("Navigation: " + err, 2); continue; }
+        if (skipped) ConsoleLog("Navigation: bake skipped, nothing the bake reads has changed since the last one");
         // Always store: after a skip this just rewrites the same mesh, so the in-memory mesh and the .okaynav file
         // cannot disagree (a reverted or deleted file is written back).
         StoreBake(ed, ns);

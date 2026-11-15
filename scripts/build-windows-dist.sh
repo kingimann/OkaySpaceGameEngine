@@ -149,6 +149,23 @@ if [ -d assets/fonts ]; then
     cp assets/fonts/* "$OUT_DIR/Assets/Fonts/" 2>/dev/null || true
 fi
 
+# Example scenes and sample files to try in the editor (docs/try_it.md). A curated list: only folders whose
+# scenes are self-contained (every file a scene names sits beside it, and scenes find their files relative to
+# the scene file, so the folder works from any install path). About 0.5 MB. Left out on purpose: account-server
+# (a Python server), netdemo and physicsdemo (C++ sources), editor-plugins and visual_script (not scenes).
+EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls"
+for d in $EXAMPLE_DIRS; do
+    [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
+    mkdir -p "$OUT_DIR/examples/$d"
+    for f in examples/$d/*; do
+        case "$f" in *.py|*.cpp|*.hpp|*.txt|*.pyc|*/__pycache__) continue ;; esac
+        [ -f "$f" ] && cp "$f" "$OUT_DIR/examples/$d/"
+    done
+done
+# The texture the obj_texture_paths cubes name (the same starter file that ships in Assets/Textures).
+cp assets/textures/grid.png "$OUT_DIR/examples/obj_texture_paths/"
+[ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
+
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).
 if [ -n "${STEAMWORKS_SDK_PATH:-}" ] && [ -f "$STEAMWORKS_SDK_PATH/redistributable_bin/win64/steam_api64.dll" ]; then
@@ -169,6 +186,10 @@ Everything else lives in  Tools/:
   OkaySpacePlayer.exe   the standalone runtime that plays an exported game
   okayspace-relay.exe   optional multiplayer relay for NAT traversal
                         (run on a reachable host; see docs/relay.md)
+
+examples/ example scenes to try: in the editor use File > Open and pick
+                        examples\vehicle\vehicle_test.okayscene, then press Play
+                        (get in the car with E). More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the
 launcher and a copy sits in Tools/. Don't separate an .exe from its SDL2.dll.

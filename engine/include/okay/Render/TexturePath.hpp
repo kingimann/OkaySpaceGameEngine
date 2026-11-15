@@ -27,7 +27,6 @@
 #include <cstdlib>
 #include <cwctype>
 #include <filesystem>
-#include <mutex>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -36,7 +35,14 @@ namespace okay {
 
 namespace texture_path_detail {
 struct Root { std::filesystem::path lexical, canonical; };
-inline std::mutex& Mutex() { static std::mutex m; return m; }
+// A tiny spin lock (std::mutex is missing from the MinGW "win32" thread model); the guarded work is a vector copy or swap.
+inline std::atomic_flag& LockFlag() { static std::atomic_flag f = ATOMIC_FLAG_INIT; return f; }
+struct Guard {
+    Guard() { while (LockFlag().test_and_set(std::memory_order_acquire)) { } }
+    ~Guard() { LockFlag().clear(std::memory_order_release); }
+    Guard(const Guard&) = delete;
+    Guard& operator=(const Guard&) = delete;
+};
 inline std::vector<Root>& Roots() { static std::vector<Root> r; return r; }
 // How many times a path was sent to the file system for canonicalisation (a test hook: a path refused on the text must
 // leave this unchanged).
@@ -193,14 +199,14 @@ inline std::size_t SetModelTextureRoots(const std::vector<std::string>& roots) {
         list.push_back(std::move(root));
     }
     const std::size_t kept = list.size();
-    std::lock_guard<std::mutex> lock(d::Mutex());
+    d::Guard lock;
     d::Roots() = std::move(list);
     return kept;
 }
 
 /// The allowed roots (canonical, UTF-8).
 inline std::vector<std::string> ModelTextureRoots() {
-    std::lock_guard<std::mutex> lock(texture_path_detail::Mutex());
+    texture_path_detail::Guard lock;
     std::vector<std::string> out;
     for (const auto& p : texture_path_detail::Roots()) out.push_back(p.canonical.u8string());
     return out;
@@ -216,7 +222,7 @@ inline std::string ResolveModelTexturePath(std::string written, const std::strin
     if (kind == d::Kind::Refused) return {};
     std::vector<d::Root> roots;
     {
-        std::lock_guard<std::mutex> lock(d::Mutex());
+        d::Guard lock;
         roots = d::Roots();
     }
     auto insideARoot = [&](const fs::path& real) {

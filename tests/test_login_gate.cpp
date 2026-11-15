@@ -73,6 +73,16 @@ int main() {
         i.now -= 7 * D; i.tokenExpiresAt = i.now - 60; CHECK(Decide(i) == Verdict::GraceExpired);
     }
 
+    // ---- Refused vs unreachable (the launcher sets `rejected` only for a clear refusal; see AccountService ClassifyRefresh) ----
+    {
+        Inputs refused = base(); refused.tokenExpiresAt = refused.now - 60; refused.lastOnlineCheck = refused.now - 60; refused.rejected = true;
+        CHECK(Decide(refused) == Verdict::NeedSignIn);            // refused: gate at once, even with a fresh last check
+        Inputs outage = refused; outage.rejected = false;         // 5xx / timeout / DNS / 429: not rejected
+        CHECK(Decide(outage) == Verdict::Allowed);                // the session is kept (grace)
+        outage.lastOnlineCheck = outage.now - 7 * D - 1;
+        CHECK(Decide(outage) == Verdict::GraceExpired);           // ...until the grace is used up
+    }
+
     // ---- The switch ----
     CHECK(Required(nullptr, true, false));
     CHECK(!Required(nullptr, false, false));      // setting off

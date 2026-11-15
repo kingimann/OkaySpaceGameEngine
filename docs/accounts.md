@@ -18,7 +18,8 @@ starts the editor, a game, a project or a server join refuses too (a toast says 
 * **Token expired and the network is down:** keeps working for **7 days** after the last time the server confirmed the
   session (`kOfflineGraceSeconds` in `shared/LoginGate.hpp`). After that the launcher shows "Sign in to continue" with a
   Try again button; it needs the internet once.
-* **The server refuses the session** (revoked or bad refresh token): signed out at once, no grace.
+* **The server refuses the session** (the token endpoint answers 400, 401 or 403: revoked or bad refresh token): signed out at once, no grace.
+* **Anything else is not a refusal** (no network, timeout, DNS, a 5xx, a 429, an unreadable reply): the session is kept and the 7-day grace applies, so a server outage does not lock people out. This also applies to the start-up session check and `account_verify` (`AccountService::VerifySession`).
 * **Local (dev) backend:** being signed in is enough, there is no server to ask.
 * **Turn it off** (developers, screenshots, CI): set `OKAY_REQUIRE_LOGIN=0`. The UI-demo and chat/voice/multiplayer demo
   variables (`OKAY_UI_DEMO_USER`, `OKAY_UI_DEMO_TAB`, `OKAY_CHAT_DEMO`, `OKAY_MP_DEMO`, `OKAY_VOICE_DEMO`) turn it off

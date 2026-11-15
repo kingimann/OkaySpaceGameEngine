@@ -246,6 +246,23 @@ int main() {
         CHECK(names.size() == 2 && names[0] == "x>y" && names[1] == "z");
     }
 
+    // ---- Token renewal outcome: only a clear refusal is "Refused" (it signs out); an outage never does ----
+    {
+        using RR = acct::RefreshResult;
+        CHECK(acct::ClassifyRefresh(true, 200, true) == RR::Ok);
+        CHECK(acct::ClassifyRefresh(true, 200, false) == RR::Unreachable);   // 2xx without a token: malformed, not a refusal
+        CHECK(acct::ClassifyRefresh(true, 400, false) == RR::Refused);       // Supabase: invalid refresh token
+        CHECK(acct::ClassifyRefresh(true, 401, false) == RR::Refused);
+        CHECK(acct::ClassifyRefresh(true, 403, false) == RR::Refused);
+        CHECK(acct::ClassifyRefresh(false, 0, false) == RR::Unreachable);    // offline / DNS / TLS / timeout
+        CHECK(acct::ClassifyRefresh(false, 401, false) == RR::Unreachable);  // not reached wins over a stale status
+        CHECK(acct::ClassifyRefresh(true, 429, false) == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(true, 500, false) == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(true, 502, false) == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(true, 503, false) == RR::Unreachable);
+        CHECK(acct::ClassifyRefresh(true, 404, false) == RR::Unreachable);
+    }
+
     fs::remove_all(dir);
     TEST_MAIN_RESULT();
 }

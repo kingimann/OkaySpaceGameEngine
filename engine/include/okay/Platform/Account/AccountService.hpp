@@ -495,6 +495,19 @@ struct ApiResponse {
     std::string body;
 };
 
+/// How a token renewal ended. Only a CLEAR refusal (HTTP 400/401/403 from the token endpoint: the refresh token is invalid or revoked)
+/// is `Refused`; the network being down, a timeout, DNS, a 5xx, a 429 or an unreadable reply is `Unreachable`, which must never sign
+/// anyone out (the launcher's sign-in gate then relies on its offline grace period).
+enum class RefreshResult { Ok, Refused, Unreachable };
+
+/// Pure, so it is unit tested without a network. `hasToken`: the 2xx body held an access token.
+inline RefreshResult ClassifyRefresh(bool reached, long status, bool hasToken) {
+    if (!reached) return RefreshResult::Unreachable;
+    if (status >= 200 && status < 300) return hasToken ? RefreshResult::Ok : RefreshResult::Unreachable;   // malformed reply: not a refusal
+    if (status == 400 || status == 401 || status == 403) return RefreshResult::Refused;
+    return RefreshResult::Unreachable;   // 429, 5xx, anything else
+}
+
 /// One row of a server leaderboard: the player's name, their score, and their
 /// rank (1 = top).
 struct ScoreEntry {
@@ -818,7 +831,10 @@ public:
         if (r.status == 401 || r.status == 403) {    // token expired/revoked
             // Try to renew from the refresh token before giving up — a 1-hour
             // Supabase access token expiring shouldn't sign the player out.
-            if (RefreshSupabaseToken()) return true;
+            // Only a clear refusal signs out; an outage (network, 5xx, 429, bad reply) keeps the session.
+            const RefreshResult rr = RefreshSupabaseTokenEx();
+            if (rr == RefreshResult::Ok) return true;
+            if (rr == RefreshResult::Unreachable) return true;
             Logout();
             return false;
         }
@@ -1074,22 +1090,24 @@ private:
     // Renew the Supabase access token from the stored refresh token. Returns
     // true and updates the session on success. Used by VerifySession so a
     // signed-in player isn't kicked out just because the 1-hour token expired.
-    bool RefreshSupabaseToken() {
+    bool RefreshSupabaseToken() { return RefreshSupabaseTokenEx() == RefreshResult::Ok; }
+    RefreshResult RefreshSupabaseTokenEx() {
+        // Nothing to renew with: the 401 stands (same as before this was split).
         if (provider_ != Provider::Supabase || session_.refreshToken.empty() || !IsOnline())
-            return false;
+            return RefreshResult::Refused;
         std::string base = serverUrl_;
         if (!base.empty() && base.back() == '/') base.pop_back();
         ApiResponse r = HttpRequest("POST", base + "/auth/v1/token?grant_type=refresh_token",
                                     "{\"refresh_token\":\"" + detail::JsonEscape(session_.refreshToken) + "\"}",
                                     /*authToken=*/{});
-        if (!r.ok) return false;
-        std::string tok = detail::JsonField(r.body, "access_token");
-        if (tok.empty()) return false;
+        const std::string tok = r.ok ? detail::JsonField(r.body, "access_token") : std::string();
+        const RefreshResult rr = ClassifyRefresh(r.reached, r.status, !tok.empty());
+        if (rr != RefreshResult::Ok) return rr;
         session_.token = tok;
         std::string nr = detail::JsonField(r.body, "refresh_token");
         if (!nr.empty()) session_.refreshToken = nr;   // Supabase rotates refresh tokens
         SaveSession();
-        return true;
+        return RefreshResult::Ok;
     }
 
     // ---- local backend -------------------------------------------------

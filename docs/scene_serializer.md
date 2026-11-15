@@ -39,6 +39,7 @@ page covers what an object round trip keeps.
 - **Runtime-only objects:** an object with `transient` set is never written, and neither is
   anything below it (a child saved without its parent would load as a loose root). The same holds for
   a clone made with `Instantiate` / `Duplicate`.
+- **Byte-order mark:** a file that starts with a UTF-8 byte-order mark (EF BB BF, which Notepad's "UTF-8 with BOM" adds) loads; the mark is dropped before the `okayscene` header is read, on every load path (file, text, merge). Before, such a file failed with "missing 'okayscene' header" (issue #888; test `scene_bom_load`). How to try it: open a scene in Notepad, save it as "UTF-8 with BOM", open it in the editor.
 - **Numbers:** floats are written with the fewest digits that read back the same. The reader also
   takes `nan` and `inf`, so a file saved with one in it still opens. A `transform` record with a
   non-finite or all-zero part is reset to position 0, no rotation, scale 1 (a warning is reported).

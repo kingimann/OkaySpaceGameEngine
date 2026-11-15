@@ -159,7 +159,7 @@ int main() {
         ItemDefinition sword; sword.id = sword.name = "sword"; sword.equip = EquipSlot::MainHand;
         sword.custom = {{"maxDurability", "2"}, {"wearPerStrike", "1"}};
         ItemDatabase::Get().Put(sword);
-        WeaponDefinition wd; wd.id = "sword_w"; wd.name = "Sword"; wd.item = "sword"; wd.swingTime = 0.0f; wd.damage = 12.0f;
+        WeaponDefinition wd; wd.id = "sword_w"; wd.name = "Sword"; wd.item = "sword"; wd.swingTime = 0.0f; wd.damage = 12.0f; wd.arc = 360.0f; wd.range = 3.0f;
         WeaponBook::Get().Put(wd);
         Scene ws("swing");
         GameObject* fighter = ws.CreateGameObject("Fighter");
@@ -173,7 +173,10 @@ int main() {
         auto* dh = dummy->AddComponent<HealthStat>(); dh->publishPrefs = false;
         ws.Start(); ws.Update(0.016f);
         CHECK(WeaponForHolder(fighter) != nullptr);
+        const float hp0 = dh->health;
         melee->Swing(); ws.Update(0.016f);
+        std::printf("  sword swing: dummy health %.1f -> %.1f, sword durability %.1f\n", hp0, dh->health, eq->slots[hand].data.durability);
+        CHECK(dh->health < hp0);                                          // the swing landed
         CHECK(eq->slots[hand].data.durability == 1.0f);                   // one swing, one hit: worn by 1
         dummy->transform->localPosition = {0, 0, -50};                    // out of reach
         melee->Swing(); ws.Update(0.016f);

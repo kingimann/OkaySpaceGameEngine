@@ -19,6 +19,7 @@ It is small, it has a public specification, it is fully testable on Linux, and i
 | `engine/src/Audio/AudioClip.cpp` | The seam: `AudioClip::LoadWAV` calls the own decoder when `OwnWavEnabled()` is true; otherwise the old code runs unchanged |
 | `engine/src/Audio/AudioStream.cpp` | The second seam: `AudioStream` (streamed playback) uses `WavStream` for RIFF, RF64 and BW64 files when `OwnWavEnabled()` is true; otherwise the old header parser runs unchanged |
 | `tests/test_own_wav.cpp`, `tests/test_own_wav_stream.cpp` | Tests `own_wav` and `own_wav_stream` |
+| `tests/test_own_wav_sample.cpp`, `tests/test_own_wav_default.cpp`, `examples/own_wav/ima_tone.wav`, `own_wav_stream_test.okayscene`, `scripts/gen_own_wav_samples.py` | The shipped IMA ADPCM sample and the scene that streams it (`own_wav_sample`: decodes to the tone, streamed == whole-file, old reader refuses it); `-DOKAY_OWN_WAV=ON` makes the own decoder the default (`own_wav_default`) |
 
 ## Turning it on
 

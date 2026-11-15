@@ -3310,3 +3310,8 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+
+# Delta snapshots: pose quantization, baseline deltas, lost ack, hostile blobs
+add_executable(test_net_delta test_net_delta.cpp)
+target_link_libraries(test_net_delta PRIVATE okay::engine)
+add_test(NAME net_delta COMMAND test_net_delta)

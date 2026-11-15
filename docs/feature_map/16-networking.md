@@ -67,9 +67,9 @@ networking pull requests (net plan 5a to 5e, anti-cheat phases 1 to 5, hardening
 - **API:** `NetworkSync` (component), `NetworkObject`, `NetworkTransform`, `SyncVar`, `NetworkManager::RegisterSync`, `syncRate`, `binarySnapshots`, `interestRadius`, `ecs::NetWorld`, `WorldReplicator`
 - **Editor:** Inspector: Network Sync (authority, id, claimable), Add Component menu; Net panel shows bytes per object (16.13); `interestRadius` has no inspector field
 - **Docs:** `docs/launcher-multiplayer.md`
-- **Tests:** `net_sync`, `net_aoi`, `net_interp`, `net_anim_actions`, `ecs`, `ecs_commands`
+- **Tests:** `net_sync`, `net_aoi`, `net_interp`, `net_anim_actions`, `net_delta`, `ecs`, `ecs_commands`
 - **Status:** Works - transform replication, interest culling and the delta path are exercised by `net_sync`, `net_aoi`, `net_interp`; read `SendSnap` and `OnSnapDelta` in NetworkManager.cpp
-- **Open:** the old map listed "Delta snapshots" as open, but they exist and are on by default; no test names `NetDelta` or `QPose` directly; PR #571 (merged after this map was started) gave `ECS/NetWorld.hpp` delta snapshots against the newest acknowledged tick, a command buffer and `docs/ecs.md`; the header's top comment still says "full-state snapshots", and the `ecs_commands` test covers the new code
+- **Open:** the old map listed "Delta snapshots" as open, but they exist and are on by default; `net_delta` now names `NetDelta` and `QPose` (round trip, delta size, lost ack, hostile blobs); PR #571 (merged after this map was started) gave `ECS/NetWorld.hpp` delta snapshots against the newest acknowledged tick, a command buffer and `docs/ecs.md`; the header's top comment still says "full-state snapshots", and the `ecs_commands` test covers the new code
 - **Related:** 16.2, 16.8, 1.9, 16.13
 - **Words:** NetworkSync, netId, authority, snapshot, delta snapshot, quantized, baseline, ack, interest management, area of interest, culling, syncRate, NetWorld, WorldReplicator, replicate, SyncVar, claimable
 - **Seen as:** an object moves on the host but not on clients; two players see different object positions; too much bandwidth with many objects; a far-away player still pops in; a shared ball is owned by nobody

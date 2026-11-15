@@ -272,15 +272,15 @@ Run on Linux for this change, all passing (the counts are the ones printed by th
   the file. CI's `sql-tests` job runs it.
 * `tests/scripts/test_crash_to_issue.py` (72 tests): issue text, hostile input (every pattern on 80 hostile 100 KB shapes, a whole row of it, the
   time limit), the leaks above, caps, newest first, quarantine and attempts, dry-run output that cannot start an Actions command, `c++filt` with an
-  empty environment; `tests/scripts/test_crash_to_issue_http.py` (14): the same script end to end over real HTTP against two fake servers on
+  empty environment; `tests/scripts/test_crash_to_issue_http.py` (16): the same script end to end over real HTTP against two fake servers on
   127.0.0.1 (the order of the calls, the prune before the work, a junk backlog that cannot starve a real report, a poison row, a redirect that would
-  carry the keys to another host, a missing table); `tests/scripts/test_crash_workflow.py` (7): the workflow file's triggers, permissions and opt-in.
+  carry the keys to another host, a missing table, a GitHub outage, an answer that is not JSON); `tests/scripts/test_crash_workflow.py` (7): the workflow file's triggers, permissions and opt-in.
 * `editor/main.cpp`, `editor/ConsolePanel.cpp` and `launcher/main.cpp` with `g++ -fsyntax-only` (the launcher again after this change); every
   new header with the MinGW win32 compiler (x86-64 and i686, `-Wall -Wextra`); a small Windows program that installs the handler was cross-linked.
 
 **Mutation checks** (a deliberate break that the new tests must catch): without the advisory lock the 30-sender test fails (61 to 63 rows); without
 `Scrub` in `Column()` nine checks fail; with the old oldest-first read, the old regex or the old prune order, the new Python tests fail (the first
-version of the script fails 28 of the 72 unit tests and 9 of the 14 HTTP tests).
+version of the script fails 28 of the 72 unit tests and 11 of the 16 HTTP tests).
 
 **Not run, so unverified:** a real crash on **Windows** (the Windows handler, the unwind from the exception record, dbghelp names, the message box,
 the stack-overflow thread, the history-start change), the editor and launcher as programs (only syntax-checked here, so the one-time notice window has

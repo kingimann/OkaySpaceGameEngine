@@ -310,7 +310,7 @@ again a comment.
 **Status.** Verified here (Linux): the report builder, the parser and signature, the handler (a child process really faults: segmentation fault,
 divide by zero, abort, uncaught exception, stack overflow; the files are `0600` and a planted symlink is not followed), the scrubber, the upload logic
 against a fake server (the notice rule, the ledger that follows the switch), the SQL against a local PostgreSQL (insert-only, no reads, the caps,
-30 senders at once, the self-pruning, an upgrade from the first version), the issue script (72 unit tests, 14 over HTTP) and the workflow file's
+30 senders at once, the self-pruning, an upgrade from the first version), the issue script (72 unit tests, 16 over HTTP) and the workflow file's
 safety properties. **Unverified:** everything that needs Windows (the Windows handler, the message box, function names from dbghelp), the editor
 and launcher as running programs (they were only syntax-checked, so the notice window has not been seen on a screen), the upload to the real
 Supabase, the GitHub workflow on GitHub, the browser page of step 11, and `OKAY_TEST_CRASH_LATE` in a running editor.

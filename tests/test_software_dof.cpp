@@ -5,6 +5,10 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Render/SoftwareRenderer.hpp"
+#include "okay/Graphics/Image.hpp"
+#include <cstdlib>
+#include <cstring>
+#include <string>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -123,6 +127,32 @@ int main() {
         Raster far = Frame(5.0f, 40.0f);                                  // and a frame with blur does count one pass
         ApplyDof(far, 5.0f, 2.0f);
         CHECK(DofBlurPasses() == passes + 1);
+    }
+    if (const char* dir = std::getenv("OKAY_SHOT_DIR"); dir && *dir) {   // before / after pictures for the docs
+        Scene sc("dof shot");
+        GameObject* floor = sc.CreateGameObject("Floor");
+        floor->transform->localPosition = {0, -0.6f, -10}; floor->transform->localScale = {12, 0.2f, 40};
+        floor->AddComponent<MeshRenderer>()->color = Color::FromBytes(170, 170, 170);
+        GameObject* nearBox = sc.CreateGameObject("Near");
+        nearBox->transform->localPosition = {-0.8f, 0, 0};
+        nearBox->AddComponent<MeshRenderer>()->color = Color::FromBytes(60, 140, 230);
+        for (int k = 0; k < 4; ++k) {
+            GameObject* t = sc.CreateGameObject("Far");
+            t->transform->localPosition = {-3.0f + 2.2f * k, 1.0f, -22.0f};
+            t->transform->localScale = {1.2f, 3.0f, 1.2f};
+            t->AddComponent<MeshRenderer>()->color = k % 2 ? Color::FromBytes(230, 70, 60) : Color::FromBytes(240, 220, 90);
+        }
+        const int w = 640, h = 400;
+        const Vec3 eye{0, 0.6f, 4.0f};
+        const Mat4 vp = Mat4::Perspective(55.0f, (float)w / h, 0.1f, 100.0f) * Mat4::LookAt(eye, {0, 0.3f, -5}, Vec3::Up);
+        for (int on = 0; on < 2; ++on) {
+            sc.renderSettings.post.dof = on != 0; sc.renderSettings.post.dofFocus = 4.0f; sc.renderSettings.post.dofRange = 3.0f;
+            Raster r; r.Resize(w, h); r.Clear(0xFF2A2420u);
+            RenderMeshes(r, sc, vp, eye);
+            Image img(w, h);
+            std::memcpy(img.Data(), r.color.data(), (std::size_t)w * h * 4);
+            img.SavePNG(std::string(dir) + (on ? "/software_dof_on.png" : "/software_dof_off.png"));
+        }
     }
     {   // once per frame: two renders of the same scene with depth of field on give the same picture (no compounding)
         Scene sc("dof");

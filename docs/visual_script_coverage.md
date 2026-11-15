@@ -712,7 +712,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net_is_client` | `Fn.net_is_client` |
 | `net_is_server` | `Fn.net_is_server` |
 | `net_join` | `Fn.net_join` |
-| `net_join_link` | `Fn.net_join_link` |
+| `net_join_link` | `Fn.net_join_link` (run as a node: `vs_net_link_pin`) |
 | `net_join_relay` | `Fn.net_join_relay` |
 | `net_kick` | `Fn.net_kick` |
 | `net_launch_join` | `Fn.net_launch_join` |
@@ -737,7 +737,7 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `net_obj_rpc_to` | `Fn.net_obj_rpc_to` |
 | `net_peer_name` | `Fn.net_peer_name` |
 | `net_peers` | `Fn.net_peers` |
-| `net_pin_host` | `Fn.net_pin_host` |
+| `net_pin_host` | `Fn.net_pin_host` (run as a node: `vs_net_link_pin`) |
 | `net_ping` | `Fn.net_ping` |
 | `net_poll` | `Fn.net_poll` |
 | `net_queue_accept` | `Fn.net_queue_accept` |

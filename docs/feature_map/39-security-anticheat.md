@@ -45,7 +45,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
 - **API:** `NetworkManager::encryption`, `requireEncryption`, `pinnedHostKey`, `SetHostIdentity`, `authTokenToAnyHost`, scripts `net_encrypt`, `net_pin_host`, `net_encrypted`, flags `--no-encryption`, `--host-key`
 - **Editor:** Inspector: Anti-Cheat Config (Require encryption); the Network Manager inspector has no encryption field
 - **Docs:** `docs/anticheat.md` (P2, Network hardening), `docs/dedicated-server.md`
-- **Tests:** `net_crypto`, `net_anticheat_p2`, `net_anticheat_ph3`, `net_token_policy`, `net_auth`, `net_hardening`
+- **Tests:** `net_crypto`, `net_anticheat_p2`, `net_anticheat_ph3`, `net_token_policy`, `net_auth`, `net_hardening`, `vs_net_link_pin`
 - **Status:** Works - phases 2 and 3 have dedicated tests; throwaway keys are made at test time
 - **Open:** the main Ubuntu job still installs no libsodium-dev (unchanged: it is an existing job); the new `anticheat-crypto` CI job installs it, fails if configure does not enable it, runs these tests and fails if any prints its "built without libsodium" branch (written here, not yet run on a GitHub runner); without a pinned key a sealed join stops listeners but not a man in the middle (documented)
 - **Related:** 16.1, 39.3, 18.3

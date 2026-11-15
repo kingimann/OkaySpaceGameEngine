@@ -261,5 +261,5 @@ sound). Online nodes run with no session and must report or return a value; the
 ones that would open a connection are built only. Event nodes are fired by what
 raises them. A node that does none of this fails the test, so it has to be fixed
 or hidden from the Add Node menu (its factory stays so old graphs still load).
-Ten online nodes are hidden that way for now, in `kHiddenUntilTested` in `editor/VisualScriptPalette.hpp` with a reason each: `Fn.net_join_link`, `Fn.net_pin_host` and the eight PlayFab `Fn.pf_*` nodes. The registry test asserts that list, so it cannot grow quietly.
+Eight online nodes are hidden that way for now, in `kHiddenUntilTested` in `editor/VisualScriptPalette.hpp` with a reason each: the eight PlayFab `Fn.pf_*` nodes. (`Fn.net_join_link` and `Fn.net_pin_host` were hidden too until `vs_net_link_pin` ran them as nodes.) The registry test asserts that list, so it cannot grow quietly.
 `tests/vs_registry_known_gaps.inc` is the list of exceptions and is empty.

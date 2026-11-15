@@ -130,7 +130,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 ### 4.7 First-person camera and hands
 - **What:** The first-person eye, the owner's own body and hands in view, and the hands panel. The owner's camera skips the head and neck but still draws shirt and legs; a copy of the hand brick is drawn in the lower right, and other players see the real arms.
 - **Parts:**
-  - 4.7.1 First-person eye feel - `Components/FirstPersonController`, `Components/ControllerFeel` - bob (up and down only), landing dip, FOV kick, zoom, lean camera roll, eye height by stance
+  - 4.7.1 First-person eye feel - `Components/FirstPersonController`, `Components/ControllerFeel` - bob (up and down only), landing dip, FOV kick, zoom, lean camera roll, eye height by stance; bob and landing dip off under Reduce Motion
   - 4.7.2 Own body and head hiding - `Components/FirstPersonHand`, `Components/Character` - FirstPersonHand flags the viewmodel (shirt, legs, hand copy), head and neck active but unflagged, eye kept clear of body parts
   - 4.7.3 First Person Hands component - `Components/FirstPersonHands` - Show When Empty, hold mode (one hand, other hand, both), per-hand position, rotation, scale, size, colour, sleeve; shared bob, sway, punch and hand field of view; Others View
   - 4.7.4 Hands window and preview - `editor/FpHandsWindow.*`, `Components/FpHandsPreview` - Open Preview renders the owner's camera and a front view of a throwaway character in Edit and Play
@@ -139,7 +139,7 @@ Pull request #554 ("Integrate owned animation and IK work", landed 2026-11-10) b
 - **API:** `FirstPersonHands`, `FpHandsSnap`, `Character::ApplyOwnerVisibility`, `Character::SetViewmodelBlend`, `Character::SetHeldHiddenFromOwner`
 - **Editor:** First Person Hands component panel (Open Preview), "First Person Hands" window
 - **Docs:** `docs/animation.md` (Holding objects: first-person hands and view switch), `docs/making_a_game.md`
-- **Tests:** `fp_hand`, `fp_punch`, `view_ground`, `run_feel`
+- **Tests:** `fp_hand`, `fp_punch`, `view_ground`, `run_feel`, `reduce_motion_bob`
 - **Status:** Works - fp_hand is the largest test in the area (about 1,000 lines); view switch and hands described in docs
 - **Open:** old map: Blocky Character arms in first person; the hand is one block with no finger bones, finger joints are never posed (per docs); none of the first-person pose is sent over the network (per docs)
 - **Related:** 4.1, 4.9, 5.9, 16.8

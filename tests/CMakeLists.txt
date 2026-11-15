@@ -3303,3 +3303,7 @@ add_test(NAME dof_math COMMAND test_dof_math)
 add_executable(test_post_quality_math test_post_quality_math.cpp)
 target_link_libraries(test_post_quality_math PRIVATE okay::engine)
 add_test(NAME post_quality_math COMMAND test_post_quality_math)
+
+add_executable(test_reduce_motion_bob test_reduce_motion_bob.cpp)
+target_link_libraries(test_reduce_motion_bob PRIVATE okay::engine)
+add_test(NAME reduce_motion_bob COMMAND test_reduce_motion_bob)

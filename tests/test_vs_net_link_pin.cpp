@@ -6,6 +6,7 @@
 #include <Okay.hpp>
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Net/JoinLink.hpp"
+#include "okay/Net/SecureChannel.hpp"
 #include "okay/Net/SessionTicket.hpp"
 #include "okay/VisualScript/VsBuiltins.hpp"
 #include <chrono>
@@ -34,9 +35,9 @@ struct Client {
     NetworkManager* net = nullptr;
     VisualScriptComponent* vc = nullptr;
     std::string err;
-    Client(const std::string& pin, const std::string& link) {
+    Client(const std::string& pin, const std::string& link, bool encrypted) {
         net = scene.CreateGameObject("Net")->AddComponent<NetworkManager>();
-        net->encryption = true;
+        net->encryption = encrypted;
         GameObject* host = scene.CreateGameObject("Logic");
         vc = host->AddComponent<VisualScriptComponent>();
         const std::string graph =
@@ -66,56 +67,75 @@ int main() {
     RUN_SUITE("vs_net_link_pin");
     CHECK(vs::IsBuiltinNode("Fn.net_pin_host"));
     CHECK(vs::IsBuiltinNode("Fn.net_join_link"));
+    // Encrypted sessions need a crypto backend (libsodium, or okay::crypto when built in). Without one an encrypted
+    // server does not host, so the pinned-join cases run only with crypto; the rest runs on any build.
+    const bool crypto = net::SecureChannel::Available();
 
-    Scene ss("Server");
-    auto* srv = ss.CreateGameObject("Net")->AddComponent<NetworkManager>();
-    srv->encryption = true;
-    CHECK(srv->SetHostIdentity(RandomKey()));
-    const std::string hostPub = srv->HostIdentityPublicKey();
-    CHECK(srv->StartServer(0));
-    ss.Start();
-    JoinLink l;
-    l.game = "Test Game";
-    l.addr = "127.0.0.1:" + std::to_string(srv->ServerPort());
-    const std::string link = l.Format();
-    std::printf("  link: %s\n", link.c_str());
-
-    auto pump = [&](Client& c, int frames, bool untilJoined) {
+    struct Server {
+        Scene scene{"Server"};
+        NetworkManager* net = nullptr;
+        std::string hostPub, link;
+        explicit Server(bool encrypted) {
+            net = scene.CreateGameObject("Net")->AddComponent<NetworkManager>();
+            net->encryption = encrypted;
+            if (encrypted) { CHECK(net->SetHostIdentity(RandomKey())); hostPub = net->HostIdentityPublicKey(); }
+            CHECK(net->StartServer(0));
+            scene.Start();
+            JoinLink l;
+            l.game = "Test Game";
+            l.addr = "127.0.0.1:" + std::to_string(net->ServerPort());
+            link = l.Format();
+        }
+    };
+    auto pump = [](Server& sv, Client& c, int frames, bool untilJoined) {
         for (int i = 0; i < frames; ++i) {
-            ss.Update(0.02f); c.scene.Update(0.02f); Nap();
+            sv.scene.Update(0.02f); c.scene.Update(0.02f); Nap();
             if (untilJoined && c.net->Joined()) break;
         }
     };
 
-    {   // the right key: pinned, joined by the link, sealed
-        Client c(hostPub, link);
-        pump(c, 300, true);
+    {   // any build: join by link (no encryption); the pin node's result for good, bad and empty keys
+        Server sv(false);
+        std::printf("  link: %s\n", sv.link.c_str());
+        Client c("", sv.link, false);                                      // "" removes the pin: returns 1
+        pump(sv, c, 300, true);
         CHECK(c.Var("pinOk") == 1.0f);
-        CHECK(c.Var("joinOk") == 1.0f);
-        CHECK(c.net->pinnedHostKey == hostPub);
-        CHECK(c.net->Joined());
-        CHECK(c.net->SealedJoin());
-    }
-    {   // a malformed key: the node returns 0 and sets no pin (the join by link still runs, unpinned)
-        Client c("not-a-key", link);
-        pump(c, 300, true);
-        CHECK(c.Var("pinOk") == 0.0f);
         CHECK(c.net->pinnedHostKey.empty());
         CHECK(c.Var("joinOk") == 1.0f);
         CHECK(c.net->Joined());
+        Client bad("not-a-key", "okay://join?game=x", false);              // malformed key: 0, no pin; a link with no address: 0
+        CHECK(bad.Var("pinOk") == 0.0f);
+        CHECK(bad.net->pinnedHostKey.empty());
+        CHECK(bad.Var("joinOk") == 0.0f);
+        const std::string k = RandomKey();
+        Client good(k, "https://example.invalid/join", false);            // well-formed key: 1, pinned; not a link: 0
+        CHECK(good.Var("pinOk") == 1.0f);
+        CHECK(good.net->pinnedHostKey == k);
+        CHECK(good.Var("joinOk") == 0.0f);
+        CHECK(!good.net->Joined());
+    }
+
+    if (!crypto) {
+        std::printf("SKIP the pinned, encrypted join cases: this build has no crypto backend\n");
+        TEST_MAIN_RESULT();
+    }
+    {   // the right key: pinned, joined by the link, sealed
+        Server sv(true);
+        Client c(sv.hostPub, sv.link, true);
+        pump(sv, c, 300, true);
+        CHECK(c.Var("pinOk") == 1.0f);
+        CHECK(c.Var("joinOk") == 1.0f);
+        CHECK(c.net->pinnedHostKey == sv.hostPub);
+        CHECK(c.net->Joined());
+        CHECK(c.net->SealedJoin());
     }
     {   // a well-formed but wrong key: pinned, and the join never completes
-        Client c(RandomKey(), link);
-        pump(c, 200, true);
+        Server sv(true);
+        Client c(RandomKey(), sv.link, true);
+        pump(sv, c, 200, true);
         CHECK(c.Var("pinOk") == 1.0f);
         CHECK(c.Var("joinOk") == 1.0f);                                    // the attempt starts...
         CHECK(!c.net->Joined());                                           // ...but the wrong host is refused
-    }
-    {   // not a join link
-        Client c(hostPub, "https://example.invalid/join");
-        pump(c, 5, false);
-        CHECK(c.Var("joinOk") == 0.0f);
-        CHECK(!c.net->Joined());
     }
     TEST_MAIN_RESULT();
 }

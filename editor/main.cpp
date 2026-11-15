@@ -37569,12 +37569,9 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
             {
-                ImGui::BeginDisabled(!tr->screenSpace);
                 if (ImGui::Checkbox("Rich Text##txt", &tr->richText)) ed.dirty = true;
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip(tr->screenSpace ? "Colour and style tags inside the text:\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]\nThe tags take no room. Use [[ for a literal [."
-                                                      : "Rich text works on screen-space text only.\n3D text is drawn by the scene renderer, which does not read tags.");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Colour and style tags inside the text (screen and world text):\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]  [size=150]big[/size]\nThe tags take no room. Use [[ for a literal [.");
             }
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             oked::FieldTip("Letter Spacing##txt");
@@ -42177,6 +42174,26 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImVec2 o = worldToScreen(up->transform->Position());
         float px = tr->EffectivePixelSize() * scale;
         okay::TtfFont* fnt = tr->Font();
+        if (tr->richText && okay::RichTextHasTags(tr->text)) {
+            // Rich text (colour, bold, italic, size tags): each run in its own style, placed one after the other,
+            // as the player draws it (ui2d::DrawWorldText). The 8x8 line advance; sized runs share the bottom line.
+            const okay::RichText rt = okay::ParseRichText(tr->text);
+            const float lineAdv = (8.0f + 1.0f) * px;
+            int curLine = -1; float cx = o.x;
+            for (const okay::RichRun& run : okay::RichTextRuns(rt)) {
+                if (run.line != curLine) { curLine = run.line; cx = o.x + ui2d::UITextW(run.before, px); }
+                const float s = run.style.size > 0.0f ? run.style.size : 1.0f, rpx = px * s;
+                const float ry = o.y + (float)run.line * lineAdv + (1.0f - s) * 8.0f * px;
+                ImU32 rc = col;
+                if (run.style.hasColor) rc = IM_COL32(run.style.r, run.style.g, run.style.b, (int)(run.style.a * tr->color.a));
+                const bool it = tr->italic || run.style.italic;
+                if (tr->shadow) DrawBitmapText(dl, run.text, cx + tr->shadowOffset.x * px, ry + tr->shadowOffset.y * px, rpx, sh, 0, 0, it, false, 0, fnt);
+                DrawBitmapText(dl, run.text, cx, ry, rpx, rc, 0, 0, it, false, 0, fnt);
+                if (tr->bold || run.style.bold) DrawBitmapText(dl, run.text, cx + (fnt ? 1.0f : rpx), ry, rpx, rc, 0, 0, it, false, 0, fnt);
+                cx += ui2d::UITextW(run.text, rpx);
+            }
+            continue;
+        }
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
                            o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, 0, fnt);

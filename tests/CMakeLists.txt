@@ -3545,3 +3545,7 @@ add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
 add_executable(test_ui_nameplate_bound test_ui_nameplate_bound.cpp)
 target_link_libraries(test_ui_nameplate_bound PRIVATE okay::engine)
 add_test(NAME ui_nameplate_bound COMMAND test_ui_nameplate_bound)
+
+add_executable(test_world_text_rich test_world_text_rich.cpp)
+target_link_libraries(test_world_text_rich PRIVATE okay::engine)
+add_test(NAME world_text_rich COMMAND test_world_text_rich)

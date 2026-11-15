@@ -687,15 +687,27 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
         std::size_t runStart = 0;
         okay::RichStyle runStyle;
         bool haveRun = false;
+        // Runs are placed one after the other: each starts where the one before ended at its own size ([size=N]).
+        // With every size 1 this is the same as measuring the text before the run.
+        float cx = ox;
+        std::size_t cxAt = 0;
         auto flush = [&](std::size_t end) {
             if (!haveRun || end <= runStart) return;
+            if (runStart > cxAt) {   // leading spaces before the first run, at the text's own size
+                const std::string gap = line.substr(cxAt, runStart - cxAt);
+                cx += UITextW(gap, px) + letterSp * px * (float)okay::utf8::Length(gap);
+            }
             const std::string run = line.substr(runStart, end - runStart);
-            const std::string before = line.substr(0, runStart);
-            const float x = ox + UITextW(before, px) + letterSp * px * (float)okay::utf8::Length(before);
+            const float s = runStyle.size > 0.0f ? runStyle.size : 1.0f;
+            const float rpx = px * s;
             RGBA col = base;
             if (runStyle.hasColor) col = RGBA{runStyle.r, runStyle.g, runStyle.b, (std::uint8_t)(runStyle.a * base.a / 255)};
             const bool it = italic || runStyle.italic;
-            DrawUIText(r, run, x, y, px, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
+            // A bigger or smaller run sits on the same bottom line as the rest of the line.
+            const float ry = y + (1.0f - s) * (float)Font8x8::Height * px;
+            DrawUIText(r, run, cx, ry, rpx, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
+            cx += UITextW(run, rpx) + letterSp * rpx * (float)okay::utf8::Length(run);
+            cxAt = end;
         };
         for (std::size_t i = 0; i < line.size();) {
             const std::size_t at = i;
@@ -710,6 +722,39 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
         y += adv;
         if (lineEnd >= disp.size()) break;
         lineStart = lineEnd + 1;
+    }
+}
+
+void DrawWorldText(Painter& p, const TextRenderer& tr, float x, float y, float px, float opacity) {
+    auto rgba = [&](const Color& c) {
+        return RGBA{(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255), (std::uint8_t)(c.a * 255 * opacity)};
+    };
+    TtfFont* fnt = tr.Font();
+    const bool rich = tr.richText && RichTextHasTags(tr.text);
+    const okay::RichText rt = rich ? okay::ParseRichText(tr.text) : okay::RichText();
+    const std::string& shown = rich ? rt.plain : tr.text;
+    const float fo = fnt ? 1.0f : px;   // TTF: about one screen pixel, not a whole font pixel
+    const RGBA none{0, 0, 0, 0};
+    if (tr.shadow) {
+        if (rich) DrawRichRuns(p, shown, rt.styles, x + tr.shadowOffset.x * px, y + tr.shadowOffset.y * px, px, rgba(tr.shadowColor), 0, 0, tr.italic, tr.bold, fo, fnt);
+        else DrawUIText(p, shown, x + tr.shadowOffset.x * px, y + tr.shadowOffset.y * px, px, rgba(tr.shadowColor), 0, 0, false, false, none, fnt);
+    }
+    if (tr.outline) {
+        const float dx[4] = {-fo, fo, 0, 0}, dy[4] = {0, 0, -fo, fo};
+        for (int k = 0; k < 4; ++k) {
+            if (rich) {
+                // The outline keeps the outline colour: strip the colours, keep sizes and weights.
+                std::vector<okay::RichStyle> st = rt.styles;
+                for (auto& s : st) s.hasColor = false;
+                DrawRichRuns(p, shown, st, x + dx[k], y + dy[k], px, rgba(tr.outlineColor), 0, 0, tr.italic, tr.bold, fo, fnt);
+            } else DrawUIText(p, shown, x + dx[k], y + dy[k], px, rgba(tr.outlineColor), 0, 0, false, false, none, fnt);
+        }
+    }
+    if (rich) DrawRichRuns(p, shown, rt.styles, x, y, px, rgba(tr.color), 0, 0, tr.italic, tr.bold, fo, fnt);
+    else {
+        // Rich text off: exactly the look world text always had (no italic; bold is a second copy one step right).
+        DrawUIText(p, shown, x, y, px, rgba(tr.color), 0, 0, false, false, none, fnt);
+        if (tr.bold) DrawUIText(p, shown, x + fo, y, px, rgba(tr.color), 0, 0, false, false, none, fnt);
     }
 }
 

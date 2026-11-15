@@ -52,7 +52,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Docs:** `docs/game_ui.md` (Images, Building blocks), `docs/engine_api.md`
 - **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `uishape`, `text`, `minimap`, `ui_renderer_golden`
 - **Status:** Works - implemented per the headers; tests cover hit testing, serialization of every style field, nine-slice, fill, shapes, text options
-- **Open:** rich text exists (`TextRenderer::richText`, tags parsed by `UI/RichText.hpp`; see `docs/ui_runtime.md`) but works on screen-space text only: world (3D) text ignores the tags; no rating or progress "data source" beyond the Bar Bind (12.13)
+- **Open:** rich text (`TextRenderer::richText`, tags parsed by `UI/RichText.hpp`, including `[size=N]`; see `docs/ui_runtime.md`) works on screen-space and world text (`ui2d::DrawWorldText`, test `world_text_rich`); sized runs do not change line height, centring or wrapping; no rating or progress "data source" beyond the Bar Bind (12.13)
 - **Related:** 12.3, 12.7, 12.11, 2.9, 1.8
 - **Words:** button, panel, label, text, TextRenderer, image, UIImage, raw image, nine-slice, 9-slice, progress bar, health bar, radial, cooldown, rating, stars, crosshair, reticle, shape, rounded corners, pill, shadow, gradient
 - **Seen as:** a button does nothing on click; text is blurry or too small; an image shows a red box or "can't load"; a bar does not fill; corners are square when they should be round; text does not update when the language changes

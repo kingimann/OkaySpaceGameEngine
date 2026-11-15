@@ -120,7 +120,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "uiimage", "uiinput", "uikeybind", "uilayout", "uilist", "uimask", "uimodal",
     "uiorder", "uipanel", "uiprogress", "uiradial", "uirating", "uirawimage", "uisafearea",
     "uiscroll", "uislider", "uislotgrid", "uistepper", "uitabs", "uitheme", "uitoast",
-    "uitoggle", "uitooltip", "uvanim", "vcam", "vehicle", "vehicle2d", "vehiclesusp",
+    "uitoggle", "uitooltip", "uvanim", "vcam", "vehicle", "vehicle2d", "vehicleseat", "vehiclesusp",
     "visualscript", "visualscriptpath", "voxeldigger", "voxelterrain", "water", "worldstreamer", "worldui",
     "worldui3d",
     };

@@ -8,6 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "AppIcon.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
@@ -5338,12 +5339,9 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
         // SDL hands back a buffer that only SDL_FreeWAV may release. Copy the samples into the
         // clip's own storage and free SDL's at once, so no path (a converted clip, an
         // unsupported width, a replaced entry) can leave it behind (#718).
-        Uint8* wavBuf = nullptr; Uint32 wavLen = 0; SDL_AudioSpec wavSpec{};
-        if (!failed && SDL_LoadWAV(cache.string().c_str(), &wavSpec, &wavBuf, &wavLen)) {
+        SDL_AudioSpec wavSpec{};
+        if (!failed && okay::wav::LoadWavForSdl(cache.string(), wavSpec, c.owned)) {
             c.spec = wavSpec;
-            if (wavBuf && wavLen) c.owned.assign(wavBuf, wavBuf + wavLen);
-            else c.owned.clear();
-            SDL_FreeWAV(wavBuf);
             c.pcm = c.owned.empty() ? nullptr : c.owned.data();
             c.len = (Uint32)c.owned.size();
             VoiceClipToPlayable(c);

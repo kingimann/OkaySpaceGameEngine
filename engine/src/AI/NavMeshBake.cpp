@@ -239,8 +239,8 @@ bool LineBox(const NavBakeInput::Box& b, const Quat& inv, float x, float z, floa
     return true;
 }
 
-// The part of triangle abc above the column square [x0, x1] x [z0, z1]: false when none (or only an edge or a point,
-// so a mesh that ends on a column's border does not reach into the next column). Otherwise the lowest and highest
+// The part of triangle abc above the column square [x0, x1] x [z0, z1]: false when none (or, for a triangle that is not
+// a wall, only an edge or a point, so a mesh that ends on a column border does not reach into the next column). Otherwise the lowest and highest
 // y of that part. Sutherland-Hodgman clipping of the triangle against the square's four sides.
 bool ClipTriangleToColumn(const Vec3& a, const Vec3& b, const Vec3& c, float x0, float x1, float z0, float z1,
                           float& yLo, float& yHi) {
@@ -283,17 +283,22 @@ bool ClipTriangleToColumn(const Vec3& a, const Vec3& b, const Vec3& c, float x0,
         area2 += p.x * q.z - q.x * p.z;
         yLo = std::min(yLo, p.y); yHi = std::max(yHi, p.y);
     }
-    // A wall standing on the column's border has no area from above but must still block the column it stands in:
-    // keep a vertical piece when it lies strictly inside the square in at least one direction.
     if (std::fabs(area2) > 1e-6f * (x1 - x0) * (z1 - z0)) return true;
-    float pxMin = 1e30f, pxMax = -1e30f, pzMin = 1e30f, pzMax = -1e30f;
+    // No area seen from above. For a sloped or flat triangle that only means it touches the square along an edge or
+    // a corner (its neighbour column has it): skip. A vertical triangle (a wall, perhaps of no thickness) has no area
+    // in any column, so keep its piece here, but a piece lying on the square's far border (x = x1 or z = z1) belongs
+    // to the next column, so each wall is counted once even when it stands exactly on a border.
+    const Vec3 tn = Vec3::Cross(b - a, c - a);
+    const float nl = tn.Magnitude();
+    if (!(nl > 0.0f) || std::fabs(tn.y) > 1e-4f * nl) return false;
+    float pxMin = 1e30f, pzMin = 1e30f, pxMax = -1e30f, pzMax = -1e30f;
     for (int i = 0; i < n; ++i) {
         pxMin = std::min(pxMin, poly[i].x); pxMax = std::max(pxMax, poly[i].x);
         pzMin = std::min(pzMin, poly[i].z); pzMax = std::max(pzMax, poly[i].z);
     }
-    const bool alongX = pxMax - pxMin > 1e-6f && pzMin > z0 && pzMax < z1;   // a wall running along x, inside in z
-    const bool alongZ = pzMax - pzMin > 1e-6f && pxMin > x0 && pxMax < x1;
-    return (alongX || alongZ) && yHi - yLo > 1e-6f;
+    if (pxMin >= x1 && pxMax >= x1) return false;
+    if (pzMin >= z1 && pzMax >= z1) return false;
+    return yHi - yLo > 1e-6f;
 }
 
 struct Cell {

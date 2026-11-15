@@ -71,13 +71,9 @@ if [ ! -f "$CACHE/sdl2/x86_64-w64-mingw32/bin/SDL2.dll" ]; then
   mkdir -p "$CACHE/sdl2"; tar xzf "$CACHE/sdl2-mingw.tar.gz" -C "$CACHE/sdl2" --strip-components=1
 fi
 export SDL2_MINGW_PREFIX="$CACHE/sdl2/x86_64-w64-mingw32"
-if [ ! -d "$CACHE/libsodium/libsodium-win64" ]; then
-  say "Fetching libsodium (MinGW prebuilt)"
-  ( cd "$CACHE" && bash "$OLDPWD/scripts/fetch-tarball.sh" libsodium-mingw.tar.gz \
-      "https://download.libsodium.org/libsodium/releases/libsodium-1.0.20-stable-mingw.tar.gz" ) || echo "warning: libsodium download failed; the build will be unencrypted"
-  mkdir -p "$CACHE/libsodium"; tar xzf "$CACHE/libsodium-mingw.tar.gz" -C "$CACHE/libsodium" 2>/dev/null || true
-fi
-[ -d "$CACHE/libsodium/libsodium-win64" ] && export OKAY_SODIUM_MINGW_PREFIX="$CACHE/libsodium/libsodium-win64"
+say "Fetching libsodium (MinGW prebuilt, SHA-256 pinned; a release never builds without it)"
+OKAY_SODIUM_MINGW_PREFIX="$(bash scripts/fetch-libsodium-mingw.sh "$CACHE")" || die "libsodium: download, SHA-256 pin or layout check failed (see above)"
+export OKAY_SODIUM_MINGW_PREFIX
 [ -n "${OKAY_AC_TRUSTED_KEYS:-}" ] || echo "warning: OKAY_AC_TRUSTED_KEYS is empty: the launcher's anti-cheat checks are telemetry only in this build"
 
 # ---- build -------------------------------------------------------------------
@@ -119,8 +115,10 @@ if [ $SERVER = 1 ]; then
     say "Building the Linux game server"
     cmake -S . -B build-linux -G Ninja -DCMAKE_BUILD_TYPE=Release -DOKAY_BUILD_PLAYER=ON \
           -DOKAY_BUILD_EDITOR=OFF -DOKAY_BUILD_LAUNCHER=OFF -DOKAY_BUILD_TESTS=OFF \
-          -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_TOOLS=OFF >/dev/null
+          -DOKAY_BUILD_SANDBOX=OFF -DOKAY_BUILD_TOOLS=OFF -DOKAY_REQUIRE_SODIUM=ON >/dev/null
+    scripts/check_release_own_stack.sh --cache build-linux
     cmake --build build-linux --target okay-player
+    scripts/check_release_own_stack.sh --binary build-linux/bin/okay-player
     cp build-linux/bin/okay-player "$OUT/okay-server-linux-x64"; strip "$OUT/okay-server-linux-x64"
     "$OUT/okay-server-linux-x64" --help | head -n 1 >/dev/null
     SERVER_BIN="$OUT/okay-server-linux-x64"; ASSETS+=("$SERVER_BIN")

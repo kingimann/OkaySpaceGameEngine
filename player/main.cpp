@@ -7,6 +7,7 @@
 // game is just <Game>.exe + game.okayscene (+ any assets).
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#include "OwnStack.hpp"            // the OKAY_OWN_STACK=1 dogfood switch and the one-line startup stack report
 #include "okay/Platform/Platform.hpp"   // okay::platform: window, GL context, events, input, timers, audio, controllers
 
 #include <Okay.hpp>
@@ -1129,6 +1130,7 @@ static std::string ResolveGameBaseDir(const char* argv0) {
 }
 
 int main(int argc, char** argv) {
+    okay::ownstack::Startup("none");   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     // The window, events, input and GL context go through okay::platform (SDL2 is the default
     // backend; see docs/platform_layer.md). The 2D drawing below still needs an SDL window.
     okay::platform::Backend* pb = okay::platform::Default();

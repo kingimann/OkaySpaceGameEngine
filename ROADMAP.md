@@ -140,3 +140,4 @@ _Last updated: 2026-11-13 17:55 UTC_
 ## Later
 
 - Split the largest source files (editor, launcher, OkayScript VM).
+- Own-stack rollout (`docs/own_stack_rollout.md`): the `OKAY_OWN_STACK` dogfood switch and startup stack line are in (proposed for 2.871.0); next proposed steps are own readers FBX, COLLADA, 3DS and BVH to default on (2.872.0, owner approval), own HTTP opt-in for Linux builds (2.874.0), the player on the own platform backend (2.877.0). Every flip needs the owner's written approval; crypto waits for the outside review.

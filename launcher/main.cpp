@@ -12,6 +12,7 @@
 #include "AppIcon.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "OkayTheme.hpp"  // shared Slate palette (launcher + editor)
+#include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/updater.md)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
@@ -179,6 +180,8 @@ SDL_Thread* g_upThread = nullptr;
 // installs an update. A pending action waits for it: 1 = exit, 2 = update.
 static bool EditorRunning();
 static int  g_afterEditor = 0;
+static long long g_suLastCheckEpoch = 0;   // when the last start-up check began (unix seconds, persisted: stops a restart loop)
+static bool g_suLocked = false;   // the start-up screen is installing an update: no editor or game may start (set each frame by StartupUpdateFrame)
 static bool g_afterEditorShowDialog = true;   // the update's showDialog, kept for later
 
 // Rich update progress, so the updater can show a real dialog (from/to version,
@@ -1197,6 +1200,81 @@ void StartUpdateCheck(bool showDialog = true) {
     g_upThread = SDL_CreateThread(RunUpdateCheck, "okay-update", nullptr);
 }
 
+// ---- Start-up update screen (Steam-like) -------------------------------------
+// At launch: when the rules in shared/StartupUpdate.hpp say so, run the EXISTING update check without a dialog and show a small centred panel
+// ("Checking for updates", then "Downloading 2 of 3", "Installing", "Restarting") instead of the launcher. The install and its checksum /
+// signature checks are RunUpdateCheck's; this only starts it and draws its progress. It runs before any sign-in screen and needs no account.
+static bool g_suActive = false, g_suSkipped = false, g_suTimedOutShown = false, g_suSawInstall = false, g_suFailHandled = false;
+static Uint32 g_suStartTicks = 0;
+static bool g_suToastedFail = false;   // the offline notice was already given: the generic "Update check failed" toast stays quiet
+
+extern bool g_updateOnLaunch;   // (defined with the other preferences below)
+void SavePrefs();
+void Toast(const std::string& m, int kind);
+
+static void StartupUpdateBegin() {
+    okay::startupupdate::StartInputs in;
+    in.settingOn = g_updateOnLaunch;
+    if (const char* e = std::getenv("OKAY_UPDATE_ON_LAUNCH")) in.envValue = e;
+    in.demoMode = std::getenv("OKAY_UI_DEMO_USER") || std::getenv("OKAY_UI_DEMO_TAB") || std::getenv("OKAY_UI_DEMO_UPDATE") || std::getenv("OKAY_CHAT_DEMO");
+    in.editorRunning = EditorRunning();   // updating replaces OkayEngine.exe: never while the editor runs
+    in.verdictShown = g_upVerdictShown;
+    const long long now = (long long)std::time(nullptr);
+    in.msSinceLastStartupCheck = (g_suLastCheckEpoch > 0 && now >= g_suLastCheckEpoch) ? (now - g_suLastCheckEpoch) * 1000 : -1;
+    if (!okay::startupupdate::ShouldRunStartupCheck(in)) return;
+    StartUpdateCheck(false);
+    SDL_AtomicCAS(&g_upState, (int)Up_UpToDate, (int)Up_Checking);   // so the first frame already shows "Checking" (the worker sets it too)
+    g_suActive = true; g_suStartTicks = okay::platform::TicksMs32();
+    g_suLastCheckEpoch = now; SavePrefs();
+}
+
+// Once per frame, last thing before the toasts: decides what the person sees and draws the panel. Sets g_suLocked while an install runs.
+static void StartupUpdateFrame() {
+    using namespace okay::startupupdate;
+    g_suLocked = false;
+    if (!g_suActive) return;
+    const UpState us = GetState();
+    ScreenInputs si;
+    si.phase = us == Up_Checking ? Phase::Checking : us == Up_Downloading ? Phase::Downloading : us == Up_Updated ? Phase::Updated
+             : us == Up_Failed ? Phase::Failed : us == Up_UpToDate ? Phase::UpToDate : Phase::Idle;
+    si.elapsedMs = (long long)(Uint32)(okay::platform::TicksMs32() - g_suStartTicks);
+    si.skipped = g_suSkipped; si.timedOutShown = g_suTimedOutShown; si.relaunchNeeded = g_upRelaunchNeeded;
+    si.step = SDL_AtomicGet(&g_upStepIdx); si.steps = SDL_AtomicGet(&g_upStepTotal);
+    si.installing = GetUpMsg().rfind("Installing", 0) == 0;
+    const ScreenView v = EvaluateScreen(si);
+    if (us == Up_Downloading) g_suSawInstall = true;
+    if (v.giveUpNow) { g_suTimedOutShown = true; g_suToastedFail = true; Toast("Could not check for updates (offline)", 2); }
+    if (us == Up_Failed && !g_suFailHandled) {   // plain reason, then on into the launcher: the update dialog has Retry
+        g_suFailHandled = true;
+        if (g_suSawInstall) g_upModalOpen = true;   // an install that went wrong: the existing dialog says why and offers Retry
+        else if (!g_suTimedOutShown) { g_suToastedFail = true; Toast("Could not check for updates (offline)", 2); }
+    }
+    if (us == Up_UpToDate || us == Up_Failed || (us == Up_Updated && !g_upRelaunchNeeded)) g_suActive = false;   // nothing more to show
+    g_suLocked = v.locked;
+    if (!v.visible) return;
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(vp->Pos); ImGui::SetNextWindowSize(vp->Size);
+    ImGui::SetNextWindowBgAlpha(1.0f);
+    ImGui::SetNextWindowFocus();
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.09f, 0.09f, 0.10f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##startupupdate", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav);
+    const float w = 360.0f, h = 128.0f;
+    ImGui::SetCursorPos(ImVec2((vp->Size.x - w) * 0.5f, (vp->Size.y - h) * 0.5f));
+    ImGui::BeginChild("##suCard", ImVec2(w, h), true);
+    ImGui::TextUnformatted("OkaySpace");
+    ImGui::Dummy(ImVec2(0, 4));
+    ImGui::TextUnformatted(v.text.c_str());
+    float frac = v.progress;
+    if (frac < 0.0f) frac = -1.0f * (float)ImGui::GetTime();   // ImGui's moving bar for "unknown"
+    ImGui::ProgressBar(frac, ImVec2(-1, 8), "");
+    if (v.canSkip) { ImGui::Dummy(ImVec2(0, 6)); if (ImGui::Button("Skip", ImVec2(80, 26))) g_suSkipped = true; }
+    ImGui::EndChild();
+    ImGui::End();
+    ImGui::PopStyleVar(2); ImGui::PopStyleColor();
+}
+
 // ---- Periodic "is a newer version out?" check -------------------------------
 // The full updater (RunUpdateCheck) installs immediately, which would be rude
 // mid-session. While the launcher is open or minimized it only *looks* (10 s
@@ -1294,6 +1372,7 @@ static std::string PlaytimeLabel(std::string s) {   // safe for the '|' file and
 }
 // Start `exe args` and track how long it runs. False if it couldn't start.
 static bool SpawnTracked(const std::string& exe, const std::string& args, const std::string& key, const std::string& title) {
+    if (g_suLocked) return false;   // an update is being installed (start-up screen)
     PlayProc pp; pp.key = PlaytimeLabel(key); pp.title = PlaytimeLabel(title); pp.lastCredit = okay::platform::TicksMs32();
 #if defined(_WIN32)
     std::string cmd = "\"" + exe + "\"" + (args.empty() ? std::string() : " " + args);
@@ -1437,6 +1516,7 @@ static bool AntiCheatAllowsSceneLaunch(const std::string& scene) {
 // game (the player with a scene) is tracked for playtime.
 void Launch(const std::string& exe, const std::string& arg = "") {
     if (exe.empty()) return;
+    if (g_suLocked && exe != g_selfPath) return;   // an update is being installed (start-up screen)
     if (!arg.empty() && exe != g_selfPath && !AntiCheatAllowsSceneLaunch(arg)) return;
     if (!arg.empty() && exe != g_selfPath) {
         const std::string title = GameTitleFromPath(arg);
@@ -1509,7 +1589,7 @@ std::string g_editorStartedVersion;
 void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
                   const std::string& newProjectDir = "", const std::string& openScene = "",
                   const std::string& projectVersion = "", int gpu = -1) {
-    if (exe.empty()) return;
+    if (exe.empty() || g_suLocked) return;   // (g_suLocked: an update is being installed)
     std::string args = "--launcher " + std::to_string(CurrentPid());
     // Every value is quoted for the platform's command line (spaces, quotes and `$` in a name or path stay one argument).
     if (!tmpl.empty()) args += " --template " + okayversions::QuoteArg(tmpl);
@@ -1833,7 +1913,7 @@ const AccentPreset kAccentPresets[] = {
     {"Rose",   ImVec4(0.96f, 0.42f, 0.56f, 1), ImVec4(0.70f, 0.30f, 0.41f, 1)},
 };
 int g_accentIndex = 0;            // current accent preset (persisted)
-bool g_updateOnLaunch = false;    // check for updates at startup (persisted)
+bool g_updateOnLaunch = true;     // check for updates at startup, like Steam (persisted; default ON, a saved update_on_launch=0 is kept)
 bool g_officialAutoUpdate = true; // keep the installed official game up to date in the background (persisted)
 bool g_chatSounds = true;         // soft chime for new chat messages (persisted)
 bool g_linkPreviews = true;       // fetch title/image cards for links in chat (persisted)
@@ -4479,6 +4559,7 @@ void LoadPrefs() {
         else if (k == "ui_scale") { try { g_uiScale = std::stof(v); } catch (...) {} }
         else if (k == "ui_backend") g_uiBackendSetting = okayuibackend::Normalize(v);   // "" for anything unreadable
         else if (k == "update_on_launch") g_updateOnLaunch = (v == "1");
+        else if (k == "last_startup_check") { try { g_suLastCheckEpoch = std::stoll(v); } catch (...) {} }
         else if (k == "official_auto_update") g_officialAutoUpdate = (v != "0");
         else if (k == "anticheat") g_antiCheatMode = (int)okayac::ParseMode(v);
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
@@ -4596,6 +4677,7 @@ void SavePrefs() {
     f << "ui_scale=" << g_uiScale << "\n";
     if (!g_uiBackendSetting.empty()) f << "ui_backend=" << g_uiBackendSetting << "\n";
     f << "update_on_launch=" << (g_updateOnLaunch ? 1 : 0) << "\n";
+    if (g_suLastCheckEpoch > 0) f << "last_startup_check=" << g_suLastCheckEpoch << "\n";
     okayversions::WriteSettings(okayversions::GlobalSettings(), f);
     f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
     if (g_antiCheatMode) f << "anticheat=" << okayac::ModeName(okayac::Mode(g_antiCheatMode)) << "\n";
@@ -18043,7 +18125,7 @@ int main(int argc, char** argv) {
     if (const char* dt = std::getenv("OKAY_UI_DEMO_TAB")) tab = std::atoi(dt);   // dev screenshot hook
     if (launchArgs.versions) { okayversionsui::RequestPage(launchArgs.version); tab = 15; }
     bool focusSearch = false;     // Ctrl+F jumps to the current tab's search box
-    if (g_updateOnLaunch && !g_upVerdictShown) StartUpdateCheck(false);   // opt-in auto-check at startup (no dialog)
+    StartupUpdateBegin();   // check at start-up (default on; OKAY_UPDATE_ON_LAUNCH=0 / the Settings toggle turn it off) and show the start-up screen
     if (std::getenv("OKAY_CHAT_DEMO")) g_chatWinOpen = true;   // dev screenshot hook: open the chat
     if (std::getenv("OKAY_CHAT_DOCKED")) g_chatSeparate = false;
     if (const char* vr = std::getenv("OKAY_VOICE_DEMO")) {   // dev hook: join a local test call (relay at $OKAY_VOICE_DEMO)
@@ -18210,7 +18292,7 @@ int main(int argc, char** argv) {
                 if (us == (int)Up_Updated || us == (int)Up_Failed) okayversionsui::InvalidateInstalled();   // the update kept / pruned versions
                 if (us == (int)Up_Updated) Toast(g_upRelaunchNeeded ? "Updated — restarting..."
                                                                      : "Update installed", 1);
-                else if (us == (int)Up_Failed) Toast("Update check failed", 2);
+                else if (us == (int)Up_Failed) { if (!g_suToastedFail) Toast("Update check failed", 2); }
                 else if (us == (int)Up_UpToDate && lastUp == (int)Up_Checking) Toast("You're up to date", 1);
                 lastUp = us;
             }
@@ -22671,7 +22753,7 @@ int main(int argc, char** argv) {
                     cardEnd();
                 } else if (setCat == 3) {   // ---- Behavior ----
                     cardBegin("##sc_start", "STARTUP & UPDATES");
-                    settingRow("Check for updates when the launcher starts", "Looks for a new version in the background each time you open OkaySpace.", 40.0f, 22.0f, [&](float) {
+                    settingRow("Check for updates when the launcher starts", "Looks for a new version each time you open OkaySpace and installs it before you start (on by default).", 40.0f, 22.0f, [&](float) {
                         if (ToggleSwitch("##uponlaunch", &g_updateOnLaunch)) SavePrefs();
                     });
                     rowDivider();
@@ -23009,7 +23091,7 @@ int main(int argc, char** argv) {
                 ImGui::PopStyleColor(2);
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
-                    g_updateOnLaunch = false; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
+                    g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
                     { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); }   // update settings (the versions themselves stay)
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
                     ApplyAccent(g_accentIndex);   // re-applies theme + accent
@@ -26619,6 +26701,7 @@ int main(int argc, char** argv) {
 
         if (!g_chatHost.shown) DrawIncomingCall();   // (shown in the chat window when that's open)
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
+        StartupUpdateFrame();   // the start-up "Checking for updates" panel (over everything, under the toasts)
         DrawToastOverlay();
 
 #ifdef OKAY_HAVE_OKAYUI

@@ -40,7 +40,7 @@ page covers what an object round trip keeps.
   anything below it (a child saved without its parent would load as a loose root). The same holds for
   a clone made with `Instantiate` / `Duplicate`.
 - **Numbers:** floats are written with the fewest digits that read back the same. The reader also
-  takes `nan` and `inf`, so a file saved with one in it still opens. A `transform` record with a
+  takes `nan` and `inf`, so a file saved with one in it still opens. It also keeps a subnormal float (about 1.4e-45 to 1.17e-38): libc++ (macOS, the WebGL build) failed the read on that underflow although GCC's library did not (Grok, issue #888; test `scene_subnormal`). Every line the reader splits off uses the same number reader, not only the main stream. A `transform` record with a
   non-finite or all-zero part is reset to position 0, no rotation, scale 1 (a warning is reported).
 - **Layer:** a `layer` outside 0-31 is stored modulo 32 (what the renderers and the collision matrix
   always used) and reported as a warning (`BadLayer` in `Validate`).

@@ -125,8 +125,12 @@ static PlayerController* MigrateAndCompare(bool fp, bool tp, int pv, bool compar
     oldScene.physicsEnabled = true; loaded.physicsEnabled = true;
     LegacyPlayer(oldScene, fp, tp, pv);
     const std::string text = SceneSerializer::Serialize(oldScene);
-    CHECK(Has(text, "fpctrl") == fp);              // the legacy file has the separate records
-    CHECK(Has(text, "tpctrl") == tp);
+    // A lone controller with no Player View is written as a one-view Player Controller (stable re-save);
+    // the others keep the separate records.
+    const bool lone = pv == 0 && fp != tp;
+    CHECK(Has(text, "fpctrl") == (fp && !lone));
+    CHECK(Has(text, "tpctrl") == (tp && !lone));
+    CHECK(Has(text, "playercontroller") == lone);
     CHECK(SceneSerializer::Deserialize(loaded, text));
     GameObject* p = loaded.Find("Player");
     CHECK(p != nullptr);
@@ -414,6 +418,68 @@ int main() {
         Templates::FPS(fs);
         auto* fc = PlayerController::Of(fs.Find("Player"));
         CHECK(fc && fc->viewMode() == Mode::Both && fc->toggle() && fc->toggle()->defaultView == PlayerView::View::First);
+    }
+
+    // --- Save, load, save again: a bare First Person Controller round trip is stable ---
+    {
+        Scene a("a");
+        GameObject* p = a.CreateGameObject("Player");
+        auto* fp = p->AddComponent<FirstPersonController>();
+        fp->walkSpeed = 3.3f; fp->runSpeed = 9.1f; fp->jumpForce = 7.7f; fp->mouseSensitivity = 0.33f;
+        fp->invertY = true; fp->headBob = false; fp->bobAmount = 0.07f; fp->crouchSpeed = 1.9f;
+        fp->maxJumps = 3; fp->canSlide = true; fp->canVault = true;
+        const std::string t1 = SceneSerializer::Serialize(a);
+        Scene b("b");
+        CHECK(SceneSerializer::Deserialize(b, t1));
+        const std::string t2 = SceneSerializer::Serialize(b);
+        Scene c("c");
+        CHECK(SceneSerializer::Deserialize(c, t2));
+        const std::string t3 = SceneSerializer::Serialize(c);
+        CHECK(t1 == t2);   // saved from the first load: the same text
+        CHECK(t2 == t3);
+        for (Scene* sc : {&b, &c}) {
+            GameObject* g = sc->Find("Player");
+            auto* f = g ? g->GetComponent<FirstPersonController>() : nullptr;
+            CHECK(f != nullptr);
+            if (!f) continue;
+            CHECK_NEAR(f->walkSpeed, 3.3f, 1e-4f); CHECK_NEAR(f->runSpeed, 9.1f, 1e-4f);
+            CHECK_NEAR(f->jumpForce, 7.7f, 1e-4f); CHECK_NEAR(f->mouseSensitivity, 0.33f, 1e-4f);
+            CHECK(f->invertY); CHECK(!f->headBob); CHECK_NEAR(f->bobAmount, 0.07f, 1e-4f);
+            CHECK_NEAR(f->crouchSpeed, 1.9f, 1e-4f); CHECK(f->maxJumps == 3);
+            CHECK(f->canSlide); CHECK(f->canVault);
+        }
+        // Duplicate and prefab use the same writer and reader.
+        Scene d("d");
+        GameObject* src = a.Find("Player");
+        GameObject* h = SceneSerializer::InstantiateFromText(d, SceneSerializer::SerializeObject(*src));
+        CHECK(h && SceneSerializer::SerializeObject(*h) == SceneSerializer::SerializeObject(*src));
+    }
+
+    // --- A literal old-format file (fpctrl / tpctrl records) still loads, then re-saves stably ---
+    {
+        Scene a("a");
+        a.CreateGameObject("Player");
+        std::string text = SceneSerializer::Serialize(a);
+        // Put the old records on the Player object, straight after its header lines.
+        const std::size_t at = text.find("Player");
+        const std::size_t eol = text.find('\n', at);
+        CHECK(at != std::string::npos && eol != std::string::npos);
+        text.insert(eol + 1, "  fpctrl 3.3 9.1 7.7 0.33 1 1 1\n");
+        Scene b("b");
+        CHECK(SceneSerializer::Deserialize(b, text));
+        auto* f = b.Find("Player") ? b.Find("Player")->GetComponent<FirstPersonController>() : nullptr;
+        CHECK(f != nullptr);
+        if (f) {
+            CHECK_NEAR(f->walkSpeed, 3.3f, 1e-4f); CHECK_NEAR(f->runSpeed, 9.1f, 1e-4f);
+            CHECK_NEAR(f->jumpForce, 7.7f, 1e-4f); CHECK_NEAR(f->mouseSensitivity, 0.33f, 1e-4f);
+            CHECK(f->invertY);
+            CHECK(PlayerController::Of(b.Find("Player")) != nullptr);
+        }
+        const std::string t2 = SceneSerializer::Serialize(b);
+        Scene c("c");
+        CHECK(SceneSerializer::Deserialize(c, t2));
+        CHECK(SceneSerializer::Serialize(c) == t2);
+        CHECK(!Has(t2, "fpctrl") && Has(t2, "playercontroller"));
     }
 
     // --- Scripts: set_view / get_view go through the Player Controller ---

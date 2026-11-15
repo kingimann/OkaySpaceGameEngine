@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.871.0
+    VERSION 2.873.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -41,6 +41,7 @@ option(OKAY_BUILD_OKAYUI_TESTS "Build the headless OkayUI software backend, its 
 option(OKAY_OWN_COLLADA   "Read .dae with our own Collada reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .dae load at all; run-time env OKAY_OWN_COLLADA=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_3DS       "Read .3ds with our own 3DS reader by default (Assimp, when built, stays the fallback; without Assimp this is what lets .3ds load at all; run-time env OKAY_OWN_3DS=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_BVH       "Read .bvh motion capture with our own BVH reader by default (run-time env OKAY_OWN_BVH=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_WAV       "Load .wav with our own WAV decoder (PCM, float, A-law, mu-law, MS and IMA ADPCM) by default (run-time env OKAY_OWN_WAV=0/1 overrides)" OFF)
 option(OKAY_OWN_OFF       "Read .off meshes with our own OFF reader by default (run-time env OKAY_OWN_OFF=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_SMD       "Read .smd (Valve Studiomdl Data) with our own SMD reader by default (run-time env OKAY_OWN_SMD=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_MD5       "Read .md5mesh / .md5anim (id Tech 4 / Doom 3) with our own MD5 reader by default (run-time env OKAY_OWN_MD5=0/1 and SetImportBackend override)" OFF)
@@ -66,6 +67,12 @@ option(OKAY_OWN_NFF      "Read .nff / .enff (Neutral File Format) with our own N
 option(OKAY_OWN_IQM      "Read .iqm (Inter-Quake Models) with our own IQM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IQM=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_COB      "Read .cob (Caligari trueSpace) with our own COB reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_COB=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_NDO      "Read .ndo (Nendo; the reader is a header-only seam and refuses every file) with our own NDO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NDO=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_MDC      "Read .mdc (Return to Castle Wolfenstein models) with our own MDC reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MDC=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_HMP      "Read .hmp (3D GameStudio HMP7 terrain) with our own HMP reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_HMP=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_CSM      "Read .csm (Character Studio motion capture) with our own CSM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_CSM=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_TER      "Read .ter (Terragen terrain) with our own Terragen reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_TER=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_Q3D      "Read .q3o / .q3s (Quick3D) with our own Q3D reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_Q3D=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_RAW      "Read .raw (plain triangle text) with our own RAW reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_RAW=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_FBX       "Use our own FBX reader (okay::fbx) instead of ufbx by default (ufbx stays compiled in; run-time env OKAY_OWN_FBX=0/1 overrides)" OFF)
 option(OKAY_BUILD_TOOLS    "Build developer tools (texture generator, ...)"    OFF)
 

@@ -537,26 +537,33 @@ void Scene::Update(float deltaTime) {
 namespace {
 
 // Render interpolation: a body is drawn between its last two physics poses.
-bool SamePose(Transform* t, const Vec3& p, const Quat& r) {
-    return (t->Position() - p).SqrMagnitude() < 1e-10f && std::fabs(Quat::Dot(t->Rotation(), r)) > 1.0f - 1e-6f;
-}
 // Before stepping: put the body back at its real physics pose (it was drawn at an
 // in-between one). If game code moved it since, it was teleported: keep that.
 // A parent moving does not count: the local pose the solver wrote is still there,
 // and restoring it carries the body with the parent.
+// Turning does not count either. A character script sets its body's rotation every
+// Update (before this runs); if that cancelled the restore, the next step would start
+// from the drawn mid-step position and the body would move a different distance every
+// frame. So a rotation-only change still gets the physics POSITION back, the game's
+// rotation is kept, and ShowPose draws it as set (no blend) while game code owns it.
+// Only a position change beyond tolerance is a teleport and clears the history.
 void RestorePose(Transform* t, PoseHistory& h) {
+    h.rotByGame = false;
     if (!h.valid) return;
-    if (h.shownLocalValid) {
-        const bool moved =
-            (t->localPosition - h.shownLocal).SqrMagnitude() > 1e-10f ||
-            std::fabs(Quat::Dot(t->localRotation, h.shownLocalRot)) < 1.0f - 1e-6f;
-        if (moved) { h.valid = false; h.shownLocalValid = false; return; }
-        t->localPosition = h.physLocal;
-        t->localRotation = h.physLocalRot;
-        return;
-    }
-    if (SamePose(t, h.shownPos, h.shownRot)) { t->SetPosition(h.curPos); t->SetRotation(h.curRot); }
-    else h.valid = false;
+    // (ShowPose always records the local pose it drew, so valid implies shownLocalValid.)
+    if (!h.shownLocalValid) { h.valid = false; return; }
+    const bool moved = (t->localPosition - h.shownLocal).SqrMagnitude() > 1e-10f;
+    if (moved) { h.valid = false; h.shownLocalValid = false; return; }
+    // Any change at all counts, however small: a slow turn (a smoothed chase of a target
+    // moves a fraction of a degree per frame) must not be thrown away. Nothing but game
+    // code writes the rotation between ShowPose and here, so an untouched body compares
+    // equal. The squared quaternion difference of 0.001 degrees is about 1e-10, so 1e-14
+    // is far below any real turn and above float noise.
+    const Quat& q = t->localRotation; const Quat& r = h.shownLocalRot;
+    const float dx = q.x - r.x, dy = q.y - r.y, dz = q.z - r.z, dw = q.w - r.w;
+    h.rotByGame = dx * dx + dy * dy + dz * dz + dw * dw > 1e-14f;
+    t->localPosition = h.physLocal;
+    if (!h.rotByGame) t->localRotation = h.physLocalRot;
 }
 void BeginStep(Transform* t, PoseHistory& h) {
     h.prevPos = t->Position();
@@ -588,7 +595,7 @@ void ShowPose(Transform* t, PoseHistory& h, bool stepped, float alpha) {
         h.shownRot = Quat::Slerp(h.prevRot, h.curRot, alpha);
     }
     t->SetPosition(h.shownPos);
-    t->SetRotation(h.shownRot);
+    if (!h.rotByGame) t->SetRotation(h.shownRot);   // else keep the rotation game code set
     h.shownLocal = t->localPosition;
     h.shownLocalRot = t->localRotation;
     h.shownLocalValid = true;

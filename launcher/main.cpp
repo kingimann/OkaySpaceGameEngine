@@ -13056,6 +13056,7 @@ static std::string FormatDate(long t) {
 static int g_myRank = -1;                       // 3 admin, 2 staff, 1 moderator, 0 player, -1 unknown / not set up
 static okay::MyBanInfo g_myBan;                 // my own site ban, if any
 static volatile bool g_roleCheckBusy = false;
+static bool g_roleLastFailed = false;           // last check failed while I had a rank: keep the rank, retry sooner
 static SDL_mutex* g_roleMutex = nullptr;
 static int g_roleRankNew = -1; static okay::MyBanInfo g_roleBanNew; static bool g_roleReady = false;   // (guarded)
 static std::string g_roleSiteRelayNew;   // (guarded) app_config voice_relay
@@ -13064,6 +13065,7 @@ static int RoleCheckWorker(void*) {
     int rank = -1; okay::MyBanInfo ban; std::string siteRelay;
     try {
         okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+        a.RefreshIfExpiring(600);   // a long-open launcher: renew an old token before asking
         okay::Admin ad(a);
         rank = ad.MyRank();
         if (rank >= 0) ban = ad.MyBan();
@@ -13109,13 +13111,20 @@ static void PumpRoleCheck(bool signedIn) {
     const Uint32 now = okay::platform::TicksMs32();
     if (!wasIn) { wasIn = true; next = 0; }
     if (now >= next && !g_roleCheckBusy && !g_pollCfgDir.empty()) {
-        next = now + 300000;
+        next = now + (g_roleLastFailed ? 60000u : 300000u);   // a failed check is retried after a minute
         g_roleCheckBusy = true;
         if (SDL_Thread* t = SDL_CreateThread(RoleCheckWorker, "okay-role", nullptr)) SDL_DetachThread(t);
         else g_roleCheckBusy = false;
     }
     SDL_LockMutex(g_roleMutex);
-    if (g_roleReady) { g_roleReady = false; g_myRank = g_roleRankNew; g_myBan = g_roleBanNew; g_siteVoiceRelay = g_roleSiteRelayNew; }
+    if (g_roleReady) {
+        g_roleReady = false;
+        // A failed check (token expired after hours open, network blip) comes back as -1. It must not take the
+        // Admin page away from someone who already has a rank: keep the last known rank and ban, retry soon.
+        g_roleLastFailed = g_roleRankNew < 0 && g_myRank >= 0;
+        if (!g_roleLastFailed) { g_myRank = g_roleRankNew; g_myBan = g_roleBanNew; }
+        if (!g_roleLastFailed) g_siteVoiceRelay = g_roleSiteRelayNew;
+    }
     if (g_siteRelaySaveResult) {
         if (g_siteRelaySaveResult == 1) { g_siteVoiceRelay = g_roleSiteRelayNew; Toast("Voice server saved for everyone", 1); }
         else Toast("Couldn't save the voice server (is docs/sql/app_config.sql set up?)", 2);

@@ -860,19 +860,19 @@ int main() {
         (void)minXi; (void)minXp;
     }
 
-    // ---- 3D text does not read tags, and says so ----
+    // ---- World text reads tags too (claude2/world-text-rich; drawing is covered by world_text_rich) ----
     {
         Scene s("World");
         auto* tr = s.CreateGameObject("W")->AddComponent<TextRenderer>();   // world text: screenSpace is off
         tr->text = "[color=red]x[/color]"; tr->richText = true;
-        CHECK(tr->DisplayText() == "[color=red]x[/color]");                // the switch changes nothing there
+        CHECK(tr->DisplayText() == "x");                                   // the tags take no room on world text either
         auto* ctrl = s.CreateGameObject("Ctrl")->AddComponent<ScriptComponent>("okayscript");
         auto* scr = s.CreateGameObject("S")->AddComponent<TextRenderer>(); scr->screenSpace = true; scr->text = "[b]y[/b]";
         ctrl->LoadSource("var done = 0; function update() { if (done == 0) { done = 1; ui_set_rich(\"S\", true); ui_set_rich(\"W\", true); } }\n");
         tr->richText = false;
         s.Start(); s.Update(0.016f);
         CHECK(scr->richText && scr->DisplayText() == "y");                // the script turned it on for screen text
-        CHECK(!tr->richText);                                             // and refused for world text
+        CHECK(tr->richText);                                              // and for world text
     }
 
     // ---- Glass is a look of its own, built from layers (no blur is claimed) ----

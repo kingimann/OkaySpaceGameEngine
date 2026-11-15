@@ -15,6 +15,10 @@
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/Minimap.hpp"
 #include "okay/Components/AimIK.hpp"
+#include "okay/Components/IKTarget.hpp"
+#include "okay/Components/NetValidator.hpp"
+#include "okay/Components/DialogueRunner.hpp"
+#include "okay/Components/LogicLinks.hpp"
 #include "okay/Components/Spline.hpp"
 #include "okay/Components/SurvivalComponents.hpp"
 #include "okay/Components/SurvivalStats.hpp"
@@ -1239,6 +1243,70 @@ void RegisterSurvivalSave() {
     b.Commit();
 }
 
+// IKTarget (record "iktarget")
+void RegisterIKTarget() {
+    PropertyBuilder<IKTarget> b("IKTarget", "iktarget", "Animation");
+    b.AddEnum("limb", &IKTarget::limb, {"LeftHand", "RightHand", "LeftFoot", "RightFoot", "Head"}).Tooltip("Which limb reaches for this object")
+     .AddString("characterName", &IKTarget::characterName).Tooltip("The character whose limb it drives, found by name")
+     .AddFloat("weight", &IKTarget::weight).Range(0, 1, 0.01).Tooltip("How much of the reach is applied")
+     .AddFloat("blendTime", &IKTarget::blendTime).Range(0, 1e4, 0.05).Tooltip("Seconds to ease the reach in and out");
+    b.Commit();
+}
+
+// NetValidator (record "netvalidator")
+void RegisterNetValidator() {
+    PropertyBuilder<NetValidator> b("NetValidator", "netvalidator", "Networking");
+    b.AddString("rpc", &NetValidator::rpc).Tooltip("The RPC this rule covers (* = all)")
+     .AddInt("maxBytes", &NetValidator::maxBytes).Range(0, 1 << 30, 1).Tooltip("Longest payload a client may send (0 = any)")
+     .AddFloat("maxPerSecond", &NetValidator::maxPerSecond).Range(0, kBig, 0.5).Tooltip("Calls per second per client (0 = any)")
+     .AddBool("clientsMaySend", &NetValidator::clientsMaySend).Tooltip("Off: only the host may call it")
+     .AddFloat("cooldown", &NetValidator::cooldown).Range(0, 1e6, 0.05).Tooltip("Seconds a client must wait between calls (0 = none)")
+     .AddFloat("budget", &NetValidator::budget).Range(0, kBig, 1).Tooltip("Calls a client can bank (0 = no budget)")
+     .AddFloat("refillPerSecond", &NetValidator::refillPerSecond).Range(0, kBig, 0.1).Tooltip("Budget regained per second (0 = only TopUp refills it)");
+    b.Commit();
+}
+
+// DialogueRunner (record "dialoguerunner")
+void RegisterDialogueRunner() {
+    PropertyBuilder<DialogueRunner> b("DialogueRunner", "dialoguerunner", "Gameplay");
+    b.AddAssetPath("graphFile", &DialogueRunner::graphFile, "file").Tooltip("The .okaydialog conversation")
+     .AddEnum("startMode", &DialogueRunner::startMode, {"InteractKey", "ScriptsOnly"}).Tooltip("Start with the interact key in range, or only from scripts")
+     .AddKey("interactKey", &DialogueRunner::interactKey).Tooltip("Key that starts the conversation in range")
+     .AddFloat("interactRange", &DialogueRunner::interactRange).Range(0, kBig, 0.1).Tooltip("How close the player must be")
+     .AddString("promptText", &DialogueRunner::promptText).Tooltip("Prompt while in range (empty = \"<key> to talk\")")
+     .AddString("promptObject", &DialogueRunner::promptObject).Tooltip("Hold Prompt label the prompt shows on")
+     .AddBool("pausePlayer", &DialogueRunner::pausePlayer).Tooltip("Pause the player's look and movement while talking")
+     .AddFloat("typewriterSpeed", &DialogueRunner::typewriterSpeed).Range(0, 1e4, 1).Tooltip("Characters per second (0 = the whole line at once)")
+     .AddFloat("autoAdvance", &DialogueRunner::autoAdvance).Range(0, 1e4, 0.1).Tooltip("Seconds before moving on when the line sets none (0 = wait for confirm)")
+     .AddBool("drawUI", &DialogueRunner::drawUI).Tooltip("Off: the game draws its own box")
+     .AddBool("canCancel", &DialogueRunner::canCancel).Tooltip("Escape ends the conversation")
+     .AddInt("startNode", &DialogueRunner::startNode).Range(-1, 1 << 30, 1).Tooltip("Node to start at (-1 = the graph's start)")
+     .AddString("playerName", &DialogueRunner::playerName).Tooltip("Who talks (empty = the player)");
+    b.Commit();
+}
+
+// LogicTarget (record "logictarget")
+void RegisterLogicTarget() {
+    PropertyBuilder<LogicTarget> b("LogicTarget", "logictarget", "Gameplay");
+    b.AddEnum("kind", &LogicTarget::kind, {"Door", "Mover", "Light", "Spawner", "Event"}).Tooltip("What a signal does to this object")
+     .AddEnum("mode", &LogicTarget::mode, {"Follow", "Toggle"}).Tooltip("Follow the signal, or flip on each new signal")
+     .AddBool("invert", &LogicTarget::invert).Tooltip("Act when the signal is off")
+     .Section("Door and mover")
+     .AddVec3("openOffset", &LogicTarget::openOffset).Range(-kBig, kBig, 0.1).Tooltip("How far it travels, in its own frame")
+     .AddFloat("openYaw", &LogicTarget::openYaw).Range(-360, 360, 1).Tooltip("Degrees it turns about its up axis")
+     .AddFloat("moveTime", &LogicTarget::moveTime).Range(0, 1e4, 0.05).Tooltip("Seconds for one trip")
+     .Section("Light")
+     .AddFloat("lightIntensity", &LogicTarget::lightIntensity).Range(0, kBig, 0.1).Tooltip("Intensity when on")
+     .AddColor("onEmissive", &LogicTarget::onEmissive).Range(0, 1, 0.01).Tooltip("Mesh glow when on")
+     .Section("Spawner")
+     .AddAssetPath("spawnPrefab", &LogicTarget::spawnPrefab, "prefab").Tooltip("Prefab to spawn")
+     .AddVec3("spawnOffset", &LogicTarget::spawnOffset).Range(-kBig, kBig, 0.1).Tooltip("Where to spawn, from the object in its own frame")
+     .AddInt("maxAlive", &LogicTarget::maxAlive).Range(0, 1000000, 1).Tooltip("Most live spawns at once (0 = no cap)")
+     .Section("Event")
+     .AddString("eventName", &LogicTarget::eventName).Tooltip("Custom event to send (also the signal name)");
+    b.Commit();
+}
+
 // SurvivalStats (record "survival")
 void RegisterSurvivalStats() {
     PropertyBuilder<SurvivalStats> b("SurvivalStats", "survival", "Gameplay");
@@ -1857,6 +1925,10 @@ void RegisterGameplayProperties() {
     RegisterMinimapBlip();
     RegisterAimIK();
     RegisterSurvivalSave();
+    RegisterIKTarget();
+    RegisterNetValidator();
+    RegisterDialogueRunner();
+    RegisterLogicTarget();
     RegisterNetworkObject();
     RegisterNetworkSync();
     RegisterSyncVar();

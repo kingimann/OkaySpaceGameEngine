@@ -382,7 +382,8 @@ static void TestRegistryBasics() {
         "HungerStat", "ThirstStat", "StaminaStat", "OxygenStat", "TemperatureStat", "SleepStat", "SanityStat", "RadiationStat", "BleedingStat", "PoisonStat", "WetnessStat", "CarryWeightStat", "StatusEffectStat",
         "TrailRenderer", "MinimapBlip", "AimIK", "SurvivalSave",
         "UIToast", "UITooltip", "UIModal", "UIContextMenu",
-        "WorldSpaceUI", "PauseMenu", "ChestInventory", "UIDropTarget"};
+        "WorldSpaceUI", "PauseMenu", "ChestInventory", "UIDropTarget",
+        "IKTarget", "NetValidator", "DialogueRunner", "LogicTarget"};
     for (const char* n : expected) CHECK(PropertyRegistry::FindByName(n) != nullptr);
 
     auto light = PropertyRegistry::FindByName("Light");

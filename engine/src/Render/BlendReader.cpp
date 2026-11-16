@@ -12,6 +12,7 @@
 // and image textures, node based Principled colours and image textures), armatures and vertex group
 // skin weights, and action F-Curves (location, rotation, scale of objects and pose bones).
 // Everything it did not read is listed in ImportedModel::notes. See docs/own_blend_reader.md.
+#include "FileOpen.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Core/ImageDecode.hpp"
 #include <algorithm>
@@ -1879,6 +1880,7 @@ bool ReadBlendFile(const std::string& path, ImportedModel& out, std::string* err
     std::FILE* fp = std::fopen(path.c_str(), "rb");
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
+    detail::ReserveForFile(fp, bytes, blnd::kMaxFileBytes);
     char buf[65536];
     for (;;) {
         const std::size_t k = std::fread(buf, 1, sizeof(buf), fp);

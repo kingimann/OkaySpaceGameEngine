@@ -335,6 +335,7 @@ bool ReadBvhFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::FILE* fp = detail::OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
     std::string bytes;
+    detail::ReserveForFile(fp, bytes, bvh::kMaxFileBytes);
     char buf[65536];
     for (;;) {
         const std::size_t k = std::fread(buf, 1, sizeof(buf), fp);

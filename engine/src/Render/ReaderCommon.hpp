@@ -4,6 +4,7 @@
 //   * a triangle "soup" (corner positions, optional UVs / normals) turned into an ImportedPart: smooth normals
 //     with a crease angle, vertices welded per (position, normal cluster, uv), degenerate triangles dropped
 //   * 3x4 / 4x4 transform helpers in double precision, and the Z-up -> Y-up root of the model
+#include "FileOpen.hpp"
 #include "NumParse.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
@@ -287,6 +288,7 @@ inline bool PartInRange(const ImportedPart& p) {
 
 inline std::string ReadAllBounded(std::FILE* fp, std::size_t cap, bool* tooLarge) {
     std::string bytes;
+    ReserveForFile(fp, bytes, cap);
     char buf[65536];
     if (tooLarge) *tooLarge = false;
     for (;;) {

@@ -29,6 +29,7 @@ inline bool ReadFileCapped(const std::string& path, std::size_t cap, std::string
     bytes.clear();
     std::FILE* fp = OpenRead(path);
     if (!fp) { if (err) *err = "cannot open file"; return false; }
+    ReserveForFile(fp, bytes, cap);
     char buf[65536];
     for (;;) {
         const std::size_t k = std::fread(buf, 1, sizeof(buf), fp);

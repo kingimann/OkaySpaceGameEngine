@@ -552,6 +552,80 @@ What changed for scripts, exactly:
 **Status.** Headless test `okayscript_dupes` (run on Linux; it also runs the script above twice, as two Play
 presses). The editor steps are unverified until you look.
 
+## OkayScript: a list that holds itself, huge counts and NaN no longer crash or freeze the game (bug fix, branch `claude2/okayscript-robust`, not merged or released yet)
+
+Issue #888, findings 32, 33 (the script half), 35, 36, 37 and 48. One script line could kill the game or the editor
+during Play: printing a list that holds itself (`push(a, a)`, or a `parent` link in a tree) recursed until the stack
+ran out, and so did very deeply nested code. `str_repeat("x", inf)` and `spawn_wave(prefab, inf)` looped two billion
+times. `pad_left("", 1000000)` took seconds. `set_volume(5)` multiplied every sound by 5. Workshop item ids lost
+digits. Now each of these gives a short, clear result or a Console message, and the game keeps running.
+
+1. Open the editor (`Tools\OkayEngine.exe`, or Open from the launcher) and make a New Project (any template).
+2. Select any object in the Hierarchy (the camera is fine), then **Add Component > Scripts > New Script...**, and
+   replace the new script's text with:
+
+   ```csharp
+   void Start()
+   {
+       var a = []; push(a, a); print(a);
+       try { to_json(a); } catch (e) { print("to_json:", e); }
+       print("len:", len("hello"), len(pad_left("", 1000000)));
+       print("hex(1e30) =", hex(1e30));
+       spawn_wave("no_such_prefab", 1e30);
+       set_volume(5); print("volume:", volume());
+       var id = steam_workshop_publish("My Map", "maps/mine");
+       print("workshop id:", id, "path:", steam_workshop_path(id));
+       print("still running");
+       print(str_repeat("x", 1e30));
+   }
+   ```
+
+3. Save the script, press **Play** and look at **View > Console**. You should see, at once and with the game still
+   running:
+   * `[[...]]` (the list, with `[...]` where it holds itself);
+   * `to_json: this value contains itself (an array or map inside itself), and JSON can't write that; ...`;
+   * `len: 5 1000000`;
+   * `hex(1e30) = 0x7fffffff`;
+   * an error `spawn_wave: 1e+30 objects is too many for one wave (the most is 1000); nothing spawned`;
+   * `volume: 1` (clamped to 0..1);
+   * `workshop id: 2147483648123 path: maps/mine` (the release has no Steamworks SDK, so this is the built-in Steam
+     simulation; its ids are as long as real ones, and every digit is kept);
+   * `still running`;
+   * last, an error line from `Start()` that says `str_repeat: 1e+30 copies of a 1-character text is too long (the
+     most is 1048576 copies and 4 MiB of text)`. A script error stops the function it happens in, as always; the game
+     keeps running.
+
+   Before the fix: the editor closed (crashed) at `print(a)`; without that line it froze for seconds at `pad_left`,
+   for a very long time at `spawn_wave`, printed `hex(1e30) = 0x80000000` and `volume: 5`, `steam_workshop_path` found
+   nothing, and `str_repeat` ran until memory ran out.
+
+What changed for scripts, exactly (also in `docs/scripting.md`, "Limits"):
+
+* Printing or turning into text a list or map that holds itself writes `[...]` / `{...}` at the repeat. Text of a value
+  stops at 256 levels and 4 MiB. `to_json` refuses a value that holds itself, more than 256 levels, or more than
+  64 MiB, with an error (catch it with `try`/`catch`).
+* Code nested more than 256 levels deep (blocks, ifs, loops, ternaries, lambdas, `a = b = ...` chains, brackets) is a
+  parse error, "nested too deeply", in the Problems panel instead of a crash. A chain of more than about 250
+  `else if`s counts as that deep too.
+* `pad_left` / `pad_right`: same results, now fast. `len("text")` is the text's length (it was 0, or the number in the
+  text); `len(list)` and `len(map)` count; `len(x, y)` is still a 2D length.
+* `str_repeat`: more than 1,048,576 copies or 4 MiB of text is an error (it used to run until memory ran out).
+  `spawn_wave`: at most 1000 per call; more spawns nothing and says so; a prefab that does not load stops at the first try.
+* Numbers too big for a whole number saturate instead of giving garbage: `hex(1e30)` is `0x7fffffff`, `bit_and(1e30, 1)`
+  is 1, `int.Parse("nan")` is 0. NaN or inf grid cells, display sizes, refresh rates and monitor numbers change nothing
+  (the function returns 0); a NaN leaderboard score is not uploaded; a NaN layer mask means every layer.
+* `set_volume(x)` (and the `Fn.set_volume` node) is clamped to 0..1 like `Audio.masterVolume`; NaN or inf is ignored, in
+  every volume setter. A NaN saved in the prefs is not loaded back. A sound whose volume or position is NaN plays
+  silent instead of silencing all the others.
+* Workshop ids are text: `steam_workshop_publish` returns `"2147483648123"` (it returned a rounded number), and
+  `steam_workshop_subscribe` / `_unsubscribe` / `_path` take that text. Code that keeps the returned id and passes it
+  back works unchanged, and `if (id)` / `id == 0` still detect a failed publish (`"0"`). A plain number is accepted
+  only below 16,777,216; a bigger one, a negative one, NaN or inf is refused with a warning (it would have named a
+  different item). The Steam simulation now hands out ids that long.
+
+**Status.** Headless test `okayscript_robust` (run on Linux; the crash and freeze cases run in separate processes, and
+each of them crashed or hung before the fix). The editor steps are unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -73,6 +73,7 @@
 #include "okay/Components/NetworkObject.hpp"
 #include "okay/Net/Matchmaking.hpp"
 #include "okay/Platform/Steam/Steam.hpp"
+#include "okay/Platform/Steam/WorkshopId.hpp"
 #include "okay/Platform/PlayFab/PlayFab.hpp"
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Components/UIImage.hpp"
@@ -180,6 +181,53 @@ namespace okay {
 namespace {
 
 using Value = vs::VsValue;
+
+// ===================== Script text of any value (issue #888 finding 35) =====================
+// VsValue::AsString walks nested arrays and maps with no limit, so an array that holds
+// itself (push(a, a), a parent link in a tree) recursed until the stack ran out and the
+// whole process died. print, str, +, $"...", format, join and == turn values into text
+// through ValueText instead. It keeps the arrays and maps on the path from the top value
+// down to the one being written, and writes [...] (or {...}) for one already on that path
+// (a cycle) or once the path is kMaxTextDepth deep. The same array reached twice by
+// different routes is not a cycle and is written both times. The text stops growing at
+// kMaxTextBytes (shared sub-lists can make a small value print enormous) and ends in "...".
+// Everything else reads exactly as AsString writes it.
+constexpr std::size_t kMaxTextDepth = 256;
+constexpr std::size_t kMaxTextBytes = std::size_t(1) << 22;   // 4 MiB, the #719 result budget
+void AppendValueText(const Value& v, std::string& out, std::vector<const void*>& path) {
+    auto arr = v.AsArray();
+    auto map = arr ? nullptr : v.AsMap();
+    if (!arr && !map) { out += v.AsString(); return; }
+    const void* box = arr ? (const void*)arr.get() : (const void*)map.get();
+    if (path.size() >= kMaxTextDepth || std::find(path.begin(), path.end(), box) != path.end()) {
+        out += arr ? "[...]" : "{...}";
+        return;
+    }
+    path.push_back(box);
+    out += arr ? '[' : '{';
+    bool first = true;
+    auto item = [&](const std::string* key, const Value& x) {
+        if (!first) out += ", ";
+        first = false;
+        if (out.size() >= kMaxTextBytes) return false;
+        if (key) { out += *key; out += ": "; }
+        AppendValueText(x, out, path);
+        return true;
+    };
+    bool whole = true;
+    if (arr) { for (const Value& x : *arr) if (!(whole = item(nullptr, x))) break; }
+    else     { for (const auto& kv : *map) if (!(whole = item(&kv.first, kv.second))) break; }
+    if (!whole) out += "...";
+    out += arr ? ']' : '}';
+    path.pop_back();
+}
+std::string ValueText(const Value& v) {
+    if (!v.IsArray() && !v.IsMap()) return v.AsString();
+    std::string out;
+    std::vector<const void*> path;
+    AppendValueText(v, out, path);
+    return out;
+}
 
 static FirstPersonHands::HandSide* FpSide(FirstPersonHands* h, const std::string& p, std::string& rest) {
     if (!h) return nullptr;
@@ -291,16 +339,39 @@ inline void JsonEscape(const std::string& s, std::string& out) {
     out += '"';
 }
 
-inline void ToJson(const Value& v, std::string& out) {
+// Arrays and maps are shared references, so one can hold itself (push(a, a), or a parent
+// link in a tree). JSON has no way to write that, so a cycle is an error, as is nesting
+// deeper than from_json reads back (256) or text longer than kMaxJsonBytes (shared
+// sub-lists can make a small value write out enormous). `path` holds the arrays and
+// maps from the top value down to the one being written (issue #888 finding 35).
+constexpr std::size_t kMaxJsonDepth = 256;
+constexpr std::size_t kMaxJsonBytes = std::size_t(64) << 20;   // 64 MiB
+inline void ToJsonAt(const Value& v, std::string& out, std::vector<const void*>& path) {
+    if (out.size() > kMaxJsonBytes)
+        throw std::runtime_error("to_json: the text would be longer than 64 MiB");
+    const void* box = nullptr;
+    if (auto arr = v.AsArray()) box = arr.get();
+    else if (auto m = v.AsMap()) box = m.get();
+    if (box) {
+        if (std::find(path.begin(), path.end(), box) != path.end())
+            throw std::runtime_error("to_json: this value contains itself (an array or map inside itself), "
+                                     "and JSON can't write that; leave the link out (store a name or an index) before saving");
+        if (path.size() >= kMaxJsonDepth)
+            throw std::runtime_error("to_json: nested too deeply (more than 256 levels of arrays and maps)");
+    }
     if (auto arr = v.AsArray()) {
+        path.push_back(box);
         out += '[';
-        for (std::size_t i = 0; i < arr->size(); ++i) { if (i) out += ','; ToJson((*arr)[i], out); }
+        for (std::size_t i = 0; i < arr->size(); ++i) { if (i) out += ','; ToJsonAt((*arr)[i], out, path); }
         out += ']';
+        path.pop_back();
     } else if (auto m = v.AsMap()) {
+        path.push_back(box);
         out += '{';
         bool first = true;
-        for (auto& kv : *m) { if (!first) out += ','; first = false; JsonEscape(kv.first, out); out += ':'; ToJson(kv.second, out); }
+        for (auto& kv : *m) { if (!first) out += ','; first = false; JsonEscape(kv.first, out); out += ':'; ToJsonAt(kv.second, out, path); }
         out += '}';
+        path.pop_back();
     } else if (v.IsString()) {
         JsonEscape(v.AsString(), out);
     } else if (v.IsBool()) {
@@ -312,6 +383,10 @@ inline void ToJson(const Value& v, std::string& out) {
     } else {
         out += v.AsString();   // number -> its formatted form
     }
+}
+inline void ToJson(const Value& v, std::string& out) {
+    std::vector<const void*> path;
+    ToJsonAt(v, out, path);
 }
 
 // A tiny recursive-descent JSON parser. On malformed input it returns whatever it
@@ -1030,7 +1105,7 @@ struct InterpStringExpr : Expr {
     void AddExpr(ExprPtr e) { segs.push_back({true, "", std::move(e)}); }
     Value Eval(Runtime& r) override {
         std::string out;
-        for (auto& s : segs) out += s.isExpr ? s.expr->Eval(r).AsString() : s.lit;
+        for (auto& s : segs) out += s.isExpr ? ValueText(s.expr->Eval(r)) : s.lit;
         return Value{out};
     }
 };
@@ -1137,7 +1212,7 @@ struct BinaryExpr : Expr {
         }
         switch (op) {
             case Tok::Plus:
-                if (a.IsString() || b.IsString()) return a.AsString() + b.AsString();
+                if (a.IsString() || b.IsString()) return ValueText(a) + ValueText(b);
                 return a.AsFloat() + b.AsFloat();
             case Tok::Minus:   return a.AsFloat() - b.AsFloat();
             case Tok::Star:    return a.AsFloat() * b.AsFloat();
@@ -1197,7 +1272,7 @@ bool ValuesEqual(const Value& a, const Value& b) {
         if (IsClassInstance(a) && IsClassInstance(b)) return a.AsMap().get() == b.AsMap().get();
         return false;
     }
-    if (a.IsString() || b.IsString()) return a.AsString() == b.AsString();
+    if (a.IsString() || b.IsString()) return ValueText(a) == ValueText(b);
     return a.AsFloat() == b.AsFloat();
 }
 // s.ToUpper(), xs.Add(3), d.ContainsKey("a"), n.ToString("F2") ... Arrays and
@@ -1219,7 +1294,7 @@ bool CallValueMethod(const Value& v, const std::string& m, std::vector<Value>& a
             else if (!f.empty() && f.find_first_not_of('0') == std::string::npos) dec = 0;
             if (dec >= 0) { char buf[64]; std::snprintf(buf, sizeof buf, "%.*f", dec > 9 ? 9 : dec, v.AsFloat()); out = Value{std::string(buf)}; return true; }
         }
-        out = Value{v.AsString()}; return true;
+        out = Value{ValueText(v)}; return true;
     }
     if (m == "Equals")    { out = Value{ValuesEqual(v, arg(0))}; return true; }
     if (m == "CompareTo") { float x = v.AsFloat(), y = arg(0).AsFloat(); out = Value{x < y ? -1.0f : (x > y ? 1.0f : 0.0f)}; return true; }
@@ -1531,7 +1606,7 @@ struct IndexCompoundAssignExpr : Expr {
             Value cur = rt.GetMember(a, k, true);
             Value next;
             switch (op) {
-                case Tok::Plus:  next = (cur.IsString() || rhs.IsString()) ? Value{cur.AsString() + rhs.AsString()}
+                case Tok::Plus:  next = (cur.IsString() || rhs.IsString()) ? Value{ValueText(cur) + ValueText(rhs)}
                                                                            : Value{cur.AsFloat() + rhs.AsFloat()}; break;
                 case Tok::Minus: next = Value{cur.AsFloat() - rhs.AsFloat()}; break;
                 case Tok::Star:  next = Value{cur.AsFloat() * rhs.AsFloat()}; break;
@@ -1543,7 +1618,7 @@ struct IndexCompoundAssignExpr : Expr {
         }
         auto apply = [&](const Value& cur) -> Value {
             switch (op) {
-                case Tok::Plus:  if (cur.IsString() || rhs.IsString()) return cur.AsString() + rhs.AsString();
+                case Tok::Plus:  if (cur.IsString() || rhs.IsString()) return ValueText(cur) + ValueText(rhs);
                                  return cur.AsFloat() + rhs.AsFloat();
                 case Tok::Minus: return cur.AsFloat() - rhs.AsFloat();
                 case Tok::Star:  return cur.AsFloat() * rhs.AsFloat();
@@ -1584,7 +1659,7 @@ struct ContinueStmt : Stmt { void Exec(Runtime&) override { throw ContinueSignal
 // throw <expr>; — raise a script error carrying the value's text.
 struct ThrowStmt : Stmt {
     ExprPtr e; explicit ThrowStmt(ExprPtr x) : e(std::move(x)) {}
-    void Exec(Runtime& r) override { throw ScriptError(e ? e->Eval(r).AsString() : std::string("error")); }
+    void Exec(Runtime& r) override { throw ScriptError(e ? ValueText(e->Eval(r)) : std::string("error")); }
 };
 // try { ... } catch (e) { ... } — run the body; on a script/runtime error, bind the
 // message to the catch variable and run the handler. Control-flow signals (return/
@@ -2464,6 +2539,7 @@ public:
     // a `[public] class Name : OkaySource { ... }` wrapper (its methods/fields
     // are hoisted out, so pasted C# scripts work), or a statement.
     void ParseMember(std::vector<StmtPtr>& top, std::unordered_map<std::string, FunctionDecl>& funcs) {
+        NestGuard nest(*this, "code");   // namespaces and classes hold members
         SkipAttributes();   // C# attributes: [SerializeField], [Header("..")], ...
         // C# `using X;` lines — nothing to import.
         if (Check(Tok::Ident) && Peek().text == "using" && m_toks[m_pos + 1].type == Tok::Ident) {
@@ -2782,6 +2858,7 @@ private:
     // `class Item { fields, constructors, methods }`. No base type: this is data,
     // not the component. `static` and `const` aren't supported on these yet.
     void ParseUserClass() {
+        NestGuard nest(*this, "code");   // a class can hold a class
         while (Check(Tok::Ident) && Peek().text != "class" && Peek().text != "struct") ++m_pos;
         Expect(Tok::Ident, "'class'");
         const int line = Peek().line;
@@ -2870,6 +2947,7 @@ private:
     }
 
     StmtPtr ParseStatement() {
+        NestGuard nest(*this, "code");   // blocks, ifs, loops, switches and try recurse through here
         // yield return <expr>; / yield break;  (coroutines)
         if (Check(Tok::Ident) && Peek().text == "yield") {
             ++m_pos;
@@ -3076,7 +3154,7 @@ private:
 
     // Expression grammar with precedence climbing.
     ExprPtr ParseExpression() {
-        if (m_nesting == 0) m_operators = 0;   // a new top-level expression
+        if (m_exprNesting == 0) m_operators = 0;   // a new top-level expression
         return ParseAssignment();
     }
 
@@ -3084,6 +3162,7 @@ private:
     ExprPtr ParseTernary() {
         ExprPtr c = ParseCoalesce();
         if (Match(Tok::Question)) {
+            NestGuard nest(*this, "expression");   // a ? b : c ? d : ... nests in the branches
             ExprPtr a = ParseAssignment();
             Expect(Tok::Colon, "':'");
             ExprPtr b = ParseAssignment();
@@ -3105,6 +3184,7 @@ private:
         return false;
     }
     ExprPtr ParseLambda() {
+        NestGuard nest(*this, "expression");   // () => () => ... nests in the body
         static int s_nextLambda = 1;
         auto lam = std::make_unique<LambdaExpr>();
         lam->id = s_nextLambda++;
@@ -3131,16 +3211,21 @@ private:
         m_inVoid = prevVoid;
         return lam;
     }
+    // The right side of `a = b = c`, `a += b += c`, `a ??= b ??= c`: each one is a level deeper.
+    ExprPtr ParseAssignmentNested() {
+        NestGuard nest(*this, "expression");
+        return ParseAssignment();
+    }
     ExprPtr ParseAssignment() {
         if (IsLambdaAhead()) return ParseLambda();
         ExprPtr left = ParseTernary();
         if (Match(Tok::QuestionQuestionEq)) {
             if (auto* var = dynamic_cast<VarExpr*>(left.get()))
-                return std::make_unique<NullishAssignExpr>(var->n, ParseAssignment());
+                return std::make_unique<NullishAssignExpr>(var->n, ParseAssignmentNested());
             throw ScriptError("invalid ??=", Peek().line);
         }
         if (Match(Tok::Assign)) {
-            ExprPtr value = ParseAssignment();
+            ExprPtr value = ParseAssignmentNested();
             if (auto* var = dynamic_cast<VarExpr*>(left.get()))
                 return std::make_unique<AssignExpr>(var->n, std::move(value));
             // Assigning a member of an expression: GetComponent<SpriteRenderer>().color = c.
@@ -3167,7 +3252,7 @@ private:
             Tok t = Peek().type; ++m_pos;
             Tok bin = t == Tok::PlusEq ? Tok::Plus : t == Tok::MinusEq ? Tok::Minus
                     : t == Tok::StarEq ? Tok::Star : t == Tok::SlashEq ? Tok::Slash : Tok::Percent;
-            ExprPtr value = ParseAssignment();
+            ExprPtr value = ParseAssignmentNested();
             if (auto* var = dynamic_cast<VarExpr*>(left.get())) {
                 std::string name = var->n;
                 // += / -= on a name may subscribe a function. A number still adds.
@@ -3272,8 +3357,8 @@ private:
     ExprPtr ParseUnary() {
         // Every nested expression ('(', '-', '!', ...) comes through here: cap the
         // depth so thousands of them are a parse error, not a stack overflow.
-        if (m_nesting >= 256) throw ScriptError("parse error: expression nested too deeply", Peek().line, Peek().column);
-        struct NestGuard { int& n; explicit NestGuard(int& d) : n(d) { ++n; } ~NestGuard() { --n; } } guard(m_nesting);
+        NestGuard nest(*this, "expression");
+        struct ExprDepth { int& n; explicit ExprDepth(int& d) : n(d) { ++n; } ~ExprDepth() { --n; } } exprDepth(m_exprNesting);
         if (Check(Tok::Minus) || Check(Tok::Not)) { Tok op = Peek().type; ++m_pos; return std::make_unique<UnaryExpr>(op, ParseUnary()); }
         // Prefix ++x / --x  ->  x = x + 1 / x = x - 1.
         if (Check(Tok::Inc) || Check(Tok::Dec)) {
@@ -3412,6 +3497,8 @@ private:
                 }
                 Lexer lx(expr);
                 Parser p(lx.Scan());
+                p.m_nesting = m_nesting;   // {...} inside $"..." is one more level, not a fresh start
+                NestGuard nest(p, "expression");
                 node->AddExpr(p.ParseExpression());
             } else {
                 lit += c;
@@ -3514,7 +3601,26 @@ private:
 
     std::vector<Token> m_toks;
     std::size_t m_pos = 0;
-    int m_nesting = 0;                                      // ParseUnary recursion depth
+    // Every recursive step of the parser (a statement or block, a namespace or class, a
+    // nested expression, a ternary branch, a lambda body, the right side of `a = b = ...`)
+    // passes through a NestGuard, which counts the levels in m_nesting. Past kMaxNesting
+    // it is a parse error, not a stack overflow (issue #888 finding 36): Load, Validate
+    // and the editor's live diagnostics all parse.
+    static constexpr int kMaxNesting = 256;
+    struct NestGuard {
+        int& n;
+        NestGuard(Parser& p, const char* what) : n(p.m_nesting) {
+            if (n >= kMaxNesting)
+                throw ScriptError(std::string("parse error: ") + what + " nested too deeply (more than " +
+                                  std::to_string(kMaxNesting) + " levels)", p.Peek().line, p.Peek().column);
+            ++n;
+        }
+        ~NestGuard() { --n; }
+        NestGuard(const NestGuard&) = delete;
+        NestGuard& operator=(const NestGuard&) = delete;
+    };
+    int m_nesting = 0;                                      // levels deep, all kinds (NestGuard)
+    int m_exprNesting = 0;                                  // ParseUnary depth: 0 = a new top-level expression
     int m_operators = 0;                                    // binary operators in this expression
     std::set<std::string> m_enums;                          // enum type names
     std::set<std::string> m_userClasses;                    // plain classes (no base), from the prepass
@@ -3582,7 +3688,7 @@ struct OkayScriptVM::Impl {
         // All of these surface in the editor's Console (it installs a log sink).
         auto joinArgs = [](std::vector<Value>& a, const char* sep = " ") {
             std::string s;
-            for (std::size_t i = 0; i < a.size(); ++i) { if (i) s += sep; s += a[i].AsString(); }
+            for (std::size_t i = 0; i < a.size(); ++i) { if (i) s += sep; s += ValueText(a[i]); }
             return s;
         };
         b["print"]     = [joinArgs](std::vector<Value>& a) { Log::Info("[script] ", joinArgs(a)); return Value{}; };
@@ -3593,14 +3699,14 @@ struct OkayScriptVM::Impl {
         b["trace"]     = [joinArgs](std::vector<Value>& a) { Log::Trace("[script] ", joinArgs(a)); return Value{}; };
         // watch("hp", hp) -> logs "hp = 42" — quick variable inspection.
         b["watch"] = [](std::vector<Value>& a) {
-            if (a.size() >= 2) Log::Info("[watch] ", a[0].AsString(), " = ", a[1].AsString());
-            else if (!a.empty()) Log::Info("[watch] ", a[0].AsString());
+            if (a.size() >= 2) Log::Info("[watch] ", ValueText(a[0]), " = ", ValueText(a[1]));
+            else if (!a.empty()) Log::Info("[watch] ", ValueText(a[0]));
             return Value{};
         };
         // assert(cond [, "message"]) -> logs an error when cond is falsey.
         b["assert"] = [](std::vector<Value>& a) {
             bool ok = !a.empty() && a[0].AsFloat() != 0.0f;
-            if (!ok) Log::Error("[assert] failed", a.size() > 1 ? (": " + a[1].AsString()) : std::string{});
+            if (!ok) Log::Error("[assert] failed", a.size() > 1 ? (": " + ValueText(a[1])) : std::string{});
             return Value{ok ? 1.0f : 0.0f};
         };
         b["concat"] = [joinArgs](std::vector<Value>& a) { return Value{joinArgs(a, "")}; };
@@ -4568,16 +4674,27 @@ struct OkayScriptVM::Impl {
         };
         b["spawn_wave"] = [this, sceneOf](std::vector<Value>& a) {
             // spawn_wave("prefab", count[, radius]): ring of prefabs around self.
+            // At most kMaxWave in one call: a count of 1e30 or inf used to loop two billion
+            // times in one frame (issue #888 finding 33). Past that it says so and spawns none,
+            // like the loop guard; a prefab that does not load stops the wave at the first try.
+            constexpr int kMaxWave = 1000;
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{0.0f};
             Scene* s = sceneOf(); if (!s) return Value{0.0f};
-            int count = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 8;
+            const float want = a.size() > 1 ? a[1].AsFloat() : 8.0f;
+            if (!(want <= (float)kMaxWave)) {   // also NaN
+                Log::Error("[script] spawn_wave: ", want, " objects is too many for one wave (the most is ",
+                           kMaxWave, "); nothing spawned");
+                return Value{0.0f};
+            }
+            int count = SafeInt(want);
             if (count < 1) count = 1;
             float radius = a.size() > 2 ? a[2].AsFloat() : 3.0f;
             Vec3 c = rt.host->gameObject->transform->Position();
             int made = 0;
             for (int i = 0; i < count; ++i) {
                 GameObject* go = SceneSerializer::InstantiateFromFile(*s, a[0].AsString(), nullptr);
-                if (!go || !go->transform) continue;
+                if (!go) break;   // the prefab did not load: every other try would fail the same way
+                if (!go->transform) continue;
                 float ang = (6.2831853f * i) / count;
                 go->transform->localPosition = {c.x + Mathf::Cos(ang) * radius, c.y + Mathf::Sin(ang) * radius, c.z};
                 ++made;
@@ -5636,14 +5753,21 @@ struct OkayScriptVM::Impl {
         b["tile_w"] = [go](std::vector<Value>&) { GameObject* g = go(); auto* tm = g ? g->GetComponent<Tilemap>() : nullptr; return Value{tm ? (float)tm->Width() : 0.0f}; };
         b["tile_h"] = [go](std::vector<Value>&) { GameObject* g = go(); auto* tm = g ? g->GetComponent<Tilemap>() : nullptr; return Value{tm ? (float)tm->Height() : 0.0f}; };
         // Global audio settings (for options menus).
-        b["set_volume"] = [](std::vector<Value>& a) { AudioMixer::masterVolume = a.empty() ? 1.0f : a[0].AsFloat(); return Value{}; };
+        // Volumes are 0..1 like Audio.masterVolume; a value that is not a number (NaN, inf) is
+        // ignored, so one bad slider value can't silence or distort every sound for good: the
+        // master volume is saved with the prefs (issue #888 finding 48).
+        auto volume01 = [](float v, float keep) { return std::isfinite(v) ? Mathf::Clamp(v, 0.0f, 1.0f) : keep; };
+        b["set_volume"] = [volume01](std::vector<Value>& a) {
+            AudioMixer::masterVolume = a.empty() ? 1.0f : volume01(a[0].AsFloat(), AudioMixer::masterVolume);
+            return Value{};
+        };
         b["volume"]     = [](std::vector<Value>&) { return Value{AudioMixer::masterVolume}; };
         b["mute"]       = [](std::vector<Value>& a) { AudioMixer::muted = a.empty() ? true : a[0].AsBool(); return Value{}; };
         // Mixer groups ("music", "sfx", "ui", "voice"): their own volume and mute.
-        b["set_group_volume"] = [](std::vector<Value>& a) {
+        b["set_group_volume"] = [volume01](std::vector<Value>& a) {
             AudioGroup g;
             if (a.size() >= 2 && AudioMixer::GroupFromName(a[0].AsString().c_str(), g))
-                AudioMixer::groupVolume[(int)g] = Mathf::Clamp(a[1].AsFloat(), 0.0f, 1.0f);
+                AudioMixer::groupVolume[(int)g] = volume01(a[1].AsFloat(), AudioMixer::groupVolume[(int)g]);
             return Value{};
         };
         b["group_volume"] = [](std::vector<Value>& a) {
@@ -5737,13 +5861,15 @@ struct OkayScriptVM::Impl {
         b["set_monitor"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{0.0f};
             if (a[0].IsNumber()) {
-                DisplaySettings::SetMonitorIndex((int)a[0].AsFloat());
+                const float f = a[0].AsFloat();
+                if (!std::isfinite(f)) { Log::Warning("[script] set_monitor: ", f, " is not a monitor number"); return Value{0.0f}; }
+                DisplaySettings::SetMonitorIndex(SafeInt(f));
                 return Value{1.0f};
             }
             const std::string name = a[0].AsString();
             bool digits = !name.empty();
             for (char c : name) if (c < '0' || c > '9') digits = false;
-            if (digits) { DisplaySettings::SetMonitorIndex(std::atoi(name.c_str())); return Value{1.0f}; }
+            if (digits) { DisplaySettings::SetMonitorIndex(SafeInt(std::strtod(name.c_str(), nullptr))); return Value{1.0f}; }
             const bool ok = DisplaySettings::SetMonitorName(name);
             if (!ok) Log::Warning("[script] set_monitor: no connected monitor named \"", name, "\"");
             return Value{ok ? 1.0f : 0.0f};
@@ -5763,13 +5889,20 @@ struct OkayScriptVM::Impl {
         b["get_display_height"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::Height()}; };
         b["set_display_resolution"] = [](std::vector<Value>& a) {
             if (a.size() < 2) { Log::Warning("[script] set_display_resolution: needs a width and a height"); return Value{0.0f}; }
-            DisplaySettings::SetResolution((int)a[0].AsFloat(), (int)a[1].AsFloat());
+            const float w = a[0].AsFloat(), h = a[1].AsFloat();
+            if (!std::isfinite(w) || !std::isfinite(h)) {
+                Log::Warning("[script] set_display_resolution: ", w, " x ", h, " is not a size; nothing changed");
+                return Value{0.0f};
+            }
+            DisplaySettings::SetResolution(SafeInt(w), SafeInt(h));   // clamped to the supported range there
             return Value{1.0f};
         };
         b["get_refresh_rate"] = [](std::vector<Value>&) { return Value{(float)DisplaySettings::RefreshHz()}; };
         b["set_refresh_rate"] = [](std::vector<Value>& a) {
             if (a.empty()) { Log::Warning("[script] set_refresh_rate: needs a rate in hertz"); return Value{0.0f}; }
-            DisplaySettings::SetRefreshHz((int)a[0].AsFloat());
+            const float hz = a[0].AsFloat();
+            if (!std::isfinite(hz)) { Log::Warning("[script] set_refresh_rate: ", hz, " is not a rate; nothing changed"); return Value{0.0f}; }
+            DisplaySettings::SetRefreshHz(SafeInt(hz));   // clamped to 0..1000 there
             return Value{1.0f};
         };
         b["get_display_resolutions"] = [](std::vector<Value>&) {
@@ -5778,8 +5911,8 @@ struct OkayScriptVM::Impl {
             return list;
         };
         b["get_refresh_rates"] = [](std::vector<Value>& a) {
-            const int w = a.size() >= 2 ? (int)a[0].AsFloat() : DisplaySettings::Width();
-            const int h = a.size() >= 2 ? (int)a[1].AsFloat() : DisplaySettings::Height();
+            const int w = a.size() >= 2 ? SafeInt(a[0].AsFloat()) : DisplaySettings::Width();
+            const int h = a.size() >= 2 ? SafeInt(a[1].AsFloat()) : DisplaySettings::Height();
             Value list = Value::MakeArray();
             for (int hz : DisplaySettings::RefreshRatesForResolution(w, h)) list.AsArray()->push_back(Value{(float)hz});
             return list;
@@ -6043,7 +6176,8 @@ struct OkayScriptVM::Impl {
             if (!g || a.size() < i + 2) return Value{0.0f};
             auto* c = g->GetComponent<GridCostLayer>();
             if (!c) c = g->AddComponent<GridCostLayer>();
-            c->SetTileCost((int)a[i].AsFloat(), a[i + 1].AsFloat());
+            if (!std::isfinite(a[i].AsFloat())) return Value{0.0f};   // no such tile (finding 33)
+            c->SetTileCost(SafeInt(a[i].AsFloat()), a[i + 1].AsFloat());
             return Value{1.0f};
         };
         b["grid_set_cell_cost"] = [namedObject](std::vector<Value>& a) {
@@ -6051,7 +6185,8 @@ struct OkayScriptVM::Impl {
             if (!g || a.size() < i + 3) return Value{0.0f};
             auto* c = g->GetComponent<GridCostLayer>();
             if (!c) c = g->AddComponent<GridCostLayer>();
-            c->SetCellCost((int)a[i].AsFloat(), (int)a[i + 1].AsFloat(), a[i + 2].AsFloat());
+            if (!std::isfinite(a[i].AsFloat()) || !std::isfinite(a[i + 1].AsFloat())) return Value{0.0f};   // no such cell
+            c->SetCellCost(SafeInt(a[i].AsFloat()), SafeInt(a[i + 1].AsFloat()), a[i + 2].AsFloat());
             return Value{1.0f};
         };
         b["grid_block"] = [namedObject](std::vector<Value>& a) {
@@ -6059,7 +6194,8 @@ struct OkayScriptVM::Impl {
             if (!g || a.size() < i + 2) return Value{0.0f};
             auto* o = g->GetComponent<GridObstacle2D>();
             if (!o) o = g->AddComponent<GridObstacle2D>();
-            o->Place((int)a[i].AsFloat(), (int)a[i + 1].AsFloat());
+            if (!std::isfinite(a[i].AsFloat()) || !std::isfinite(a[i + 1].AsFloat())) return Value{0.0f};   // no such cell
+            o->Place(SafeInt(a[i].AsFloat()), SafeInt(a[i + 1].AsFloat()));
             return Value{1.0f};
         };
         b["grid_clear"] = [namedObject](std::vector<Value>& a) {
@@ -7854,7 +7990,10 @@ struct OkayScriptVM::Impl {
         };
         b["steam_store"] = [](std::vector<Value>&) { return Value{Steam::Get().StoreStats() ? 1.0f : 0.0f}; };
         b["steam_leaderboard"] = [](std::vector<Value>& a) {
-            if (a.size() >= 2) Steam::Get().UploadLeaderboardScore(a[0].AsString(), (std::int32_t)a[1].AsFloat());
+            if (a.size() < 2) return Value{};
+            const float score = a[1].AsFloat();
+            if (std::isnan(score)) { Log::Warning("[script] steam_leaderboard: the score is not a number; nothing uploaded"); return Value{}; }
+            Steam::Get().UploadLeaderboardScore(a[0].AsString(), SafeInt(score));   // past +-2147483647 saturates
             return Value{};
         };
         b["steam_cloud_write"] = [](std::vector<Value>& a) {
@@ -7901,25 +8040,47 @@ struct OkayScriptVM::Impl {
         b["steam_cloud_count"] = [](std::vector<Value>&) {
             return Value{(float)Steam::Get().CloudFiles().size()};
         };
-        // Steam Workshop (community content).
+        // Steam Workshop (community content). Item ids are 64-bit and a script number keeps
+        // only 24 bits, so ids travel as decimal text: publish returns "2847193562" ("0" when
+        // it failed) and subscribe / unsubscribe / path take that text back, exactly. A plain
+        // number still works below 16777216; a bigger, negative or fractional one, NaN or inf
+        // is refused with a Console warning instead of acting on another item (issue #888
+        // findings 32 and 33). okay/Platform/Steam/WorkshopId.hpp.
+        auto workshopId = [](const std::vector<Value>& a, const char* fn, std::uint64_t& id) {
+            if (a.empty()) return false;
+            if (a[0].IsString()) {
+                if (WorkshopIdFromText(a[0].AsString(), id)) return true;
+                Log::Warning("[script] ", fn, ": \"", a[0].AsString(), "\" is not a Workshop item id "
+                             "(use the text steam_workshop_publish returned)");
+                return false;
+            }
+            const float f = a[0].AsFloat();
+            if (WorkshopIdFromNumber(f, id)) return true;
+            Log::Warning("[script] ", fn, ": ", f, " is not a Workshop item id. Pass the id as text, for example "
+                         "\"2847193562\": a number above 16777215 has lost digits");
+            return false;
+        };
         b["steam_workshop_publish"] = [](std::vector<Value>& a) {
             WorkshopItem it;
             if (a.size() >= 1) it.title = a[0].AsString();
             if (a.size() >= 2) it.contentPath = a[1].AsString();
             if (a.size() >= 3) it.description = a[2].AsString();
-            return Value{(float)Steam::Get().WorkshopPublish(it)};
+            return Value{WorkshopIdToText(Steam::Get().WorkshopPublish(it))};
         };
-        b["steam_workshop_subscribe"] = [](std::vector<Value>& a) {
-            return Value{(!a.empty() && Steam::Get().WorkshopSubscribe((std::uint64_t)a[0].AsFloat())) ? 1.0f : 0.0f};
+        b["steam_workshop_subscribe"] = [workshopId](std::vector<Value>& a) {
+            std::uint64_t id = 0;
+            return Value{(workshopId(a, "steam_workshop_subscribe", id) && Steam::Get().WorkshopSubscribe(id)) ? 1.0f : 0.0f};
         };
-        b["steam_workshop_unsubscribe"] = [](std::vector<Value>& a) {
-            return Value{(!a.empty() && Steam::Get().WorkshopUnsubscribe((std::uint64_t)a[0].AsFloat())) ? 1.0f : 0.0f};
+        b["steam_workshop_unsubscribe"] = [workshopId](std::vector<Value>& a) {
+            std::uint64_t id = 0;
+            return Value{(workshopId(a, "steam_workshop_unsubscribe", id) && Steam::Get().WorkshopUnsubscribe(id)) ? 1.0f : 0.0f};
         };
         b["steam_workshop_count"] = [](std::vector<Value>&) {
             return Value{(float)Steam::Get().WorkshopSubscribedItems().size()};
         };
-        b["steam_workshop_path"] = [](std::vector<Value>& a) {
-            return Value{a.empty() ? std::string{} : Steam::Get().WorkshopItemPath((std::uint64_t)a[0].AsFloat())};
+        b["steam_workshop_path"] = [workshopId](std::vector<Value>& a) {
+            std::uint64_t id = 0;
+            return Value{workshopId(a, "steam_workshop_path", id) ? Steam::Get().WorkshopItemPath(id) : std::string{}};
         };
         // Integer stats (kills, wins, ...). Floats lose precision past 2^24, so
         // counters that climb high belong here rather than in steam_*_stat.
@@ -8249,7 +8410,13 @@ struct OkayScriptVM::Impl {
             float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0, t = a.size() > 2 ? a[2].AsFloat() : 0;
             return Value{Mathf::Lerp(x, y, t)};
         };
-        b["len"]   = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
+        // len(x, y): the length of a 2D vector. len(text) with one text argument is its length in
+        // bytes (like str_len), and len(list) / len(map) is the count: Python and JS habit, where
+        // len("hello") used to give 0 and len("12") gave 12 (issue #888 finding 37).
+        b["len"]   = [](std::vector<Value>& a) {
+            if (a.size() == 1 && a[0].IsString()) return Value{(float)a[0].AsString().size()};
+            float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)};
+        };
         b["hypot"] = [](std::vector<Value>& a) { float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0; return Value{Mathf::Sqrt(x * x + y * y)}; };
         b["atan"]  = [](std::vector<Value>& a) { return Value{std::atan(a.empty() ? 0 : a[0].AsFloat())}; };
         b["asin"]  = [](std::vector<Value>& a) { return Value{std::asin(a.empty() ? 0 : a[0].AsFloat())}; };
@@ -8536,20 +8703,27 @@ struct OkayScriptVM::Impl {
         };
         // ---- Bitwise / integer helpers (flags, masks, tile ids, packing) ------
         // Values are treated as 32-bit integers. Handy for bit flags and tilemaps.
+        // A number that is not a 32-bit integer saturates (1e30 and inf -> 2147483647, -1e30 ->
+        // -2147483648, NaN -> 0) instead of an undefined cast; shifts and single-bit masks are
+        // made in unsigned arithmetic, so the sign bit and negative values are well defined
+        // (issue #888 finding 33). In-range values give the same results as before.
         auto I = [](std::vector<Value>& a, std::size_t i) -> std::int32_t {
-            return i < a.size() ? (std::int32_t)a[i].AsFloat() : 0;
+            return i < a.size() ? (std::int32_t)SafeInt(a[i].AsFloat()) : 0;
+        };
+        auto Bit = [I](std::vector<Value>& a, std::size_t i) -> std::int32_t {   // 1 << (index & 31)
+            return (std::int32_t)(1u << ((std::uint32_t)I(a, i) & 31u));
         };
         b["bit_and"] = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) & I(a,1))}; };
         b["bit_or"]  = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) | I(a,1))}; };
         b["bit_xor"] = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) ^ I(a,1))}; };
         b["bit_not"] = [I](std::vector<Value>& a) { return Value{(float)(~I(a,0))}; };
-        b["shl"]     = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) << (I(a,1) & 31))}; };
-        b["shr"]     = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) >> (I(a,1) & 31))}; };
+        b["shl"]     = [I](std::vector<Value>& a) { return Value{(float)(std::int32_t)((std::uint32_t)I(a,0) << ((std::uint32_t)I(a,1) & 31u))}; };
+        b["shr"]     = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) >> ((std::uint32_t)I(a,1) & 31u))}; };   // keeps the sign
         // Set / clear / toggle / test a single bit (bit index 0..31).
-        b["bit_set"]    = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) |  (1 << (I(a,1) & 31)))}; };
-        b["bit_clear"]  = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) & ~(1 << (I(a,1) & 31)))}; };
-        b["bit_toggle"] = [I](std::vector<Value>& a) { return Value{(float)(I(a,0) ^  (1 << (I(a,1) & 31)))}; };
-        b["bit_test"]   = [I](std::vector<Value>& a) { return Value{(I(a,0) & (1 << (I(a,1) & 31))) != 0}; };
+        b["bit_set"]    = [I, Bit](std::vector<Value>& a) { return Value{(float)(I(a,0) |  Bit(a, 1))}; };
+        b["bit_clear"]  = [I, Bit](std::vector<Value>& a) { return Value{(float)(I(a,0) & ~Bit(a, 1))}; };
+        b["bit_toggle"] = [I, Bit](std::vector<Value>& a) { return Value{(float)(I(a,0) ^  Bit(a, 1))}; };
+        b["bit_test"]   = [I, Bit](std::vector<Value>& a) { return Value{(I(a,0) & Bit(a, 1)) != 0}; };
         // hex(n) -> "0x1f" ; parse_int("ff", 16) -> 255 (base defaults to 10).
         b["hex"] = [I](std::vector<Value>& a) {
             char buf[24]; std::snprintf(buf, sizeof(buf), "0x%x", (unsigned)I(a, 0));
@@ -8774,7 +8948,9 @@ struct OkayScriptVM::Impl {
             std::string s = a[0].AsString();
             const int width = repeatCount(a);
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
-            while ((int)s.size() < width) s.insert(s.begin(), fill);
+            // One insert of the whole run: a character at a time moved the string each time,
+            // so padding to the #719 cap took seconds (issue #888 finding 37).
+            if ((int)s.size() < width) s.insert(0, (std::size_t)width - s.size(), fill);
             return Value{s};
         };
         b["pad_right"] = [repeatCount](std::vector<Value>& a) {
@@ -8782,7 +8958,7 @@ struct OkayScriptVM::Impl {
             std::string s = a[0].AsString();
             const int width = repeatCount(a);
             char fill = (a.size() > 2 && !a[2].AsString().empty()) ? a[2].AsString()[0] : ' ';
-            while ((int)s.size() < width) s += fill;
+            if ((int)s.size() < width) s.append((std::size_t)width - s.size(), fill);
             return Value{s};
         };
         // format("hp={} of {}", 7, 9) -> "hp=7 of 9" (sequential), and also
@@ -8797,7 +8973,7 @@ struct OkayScriptVM::Impl {
                     if (close != std::string::npos) {
                         std::string inside = tmpl.substr(i + 1, close - i - 1);
                         if (inside.empty()) {                 // {} -> next arg in order
-                            if (seq < a.size()) out += a[seq++].AsString();
+                            if (seq < a.size()) out += ValueText(a[seq++]);
                         } else {
                             bool num = !inside.empty();
                             for (char ch : inside) if (!std::isdigit((unsigned char)ch)) num = false;
@@ -8807,7 +8983,7 @@ struct OkayScriptVM::Impl {
                             if (num) {
                                 long long idx = 0;
                                 const auto r = std::from_chars(inside.data(), inside.data() + inside.size(), idx);
-                                if (r.ec == std::errc() && idx >= 0 && (std::size_t)idx + 1 < a.size()) out += a[(std::size_t)idx + 1].AsString();
+                                if (r.ec == std::errc() && idx >= 0 && (std::size_t)idx + 1 < a.size()) out += ValueText(a[(std::size_t)idx + 1]);
                             }
                             else { out += '{'; out += inside; out += '}'; }   // leave literal
                         }
@@ -8823,7 +8999,7 @@ struct OkayScriptVM::Impl {
             if (a.empty()) return Value{0.0f};
             try { return Value{std::stof(a[0].AsString())}; } catch (...) { return Value{0.0f}; }
         };
-        b["to_str"] = [](std::vector<Value>& a) { return Value{a.empty() ? std::string{} : a[0].AsString()}; };
+        b["to_str"] = [](std::vector<Value>& a) { return Value{a.empty() ? std::string{} : ValueText(a[0])}; };
         b["split"] = [](std::vector<Value>& a) {
             Value out = Value::MakeArray();
             if (a.empty()) return out;
@@ -8845,7 +9021,7 @@ struct OkayScriptVM::Impl {
             std::string sep = a.size() > 1 ? a[1].AsString() : "";
             if (!arr) return Value{std::string{}};
             std::string s;
-            for (std::size_t i = 0; i < arr->size(); ++i) { if (i) s += sep; s += (*arr)[i].AsString(); }
+            for (std::size_t i = 0; i < arr->size(); ++i) { if (i) s += sep; s += ValueText((*arr)[i]); }
             return Value{s};
         };
         // Maps / dictionaries (string keys).
@@ -9157,7 +9333,7 @@ struct OkayScriptVM::Impl {
             if (a.size() <= i) return Physics3D::kAllLayers;
             if (a[i].IsString()) return Layers::MaskFromList(a[i].AsString());
             float f = a[i].AsFloat();
-            return f <= 0.0f ? Physics3D::kAllLayers : (std::uint32_t)f;
+            return !(f > 0.0f) ? Physics3D::kAllLayers : SafeUInt32(f);   // 0, negative and NaN: every layer; past 2^32: every bit
         };
         auto trigArg = [](const std::vector<Value>& a, std::size_t i, bool dflt) {
             return a.size() > i ? !a[i].AsBool() : dflt;   // arg is "ignore triggers"
@@ -9727,9 +9903,25 @@ struct OkayScriptVM::Impl {
         b["avg"]    = [](std::vector<Value>& a) { if (a.empty()) return Value{0.0f}; float s = 0; for (auto& v : a) s += v.AsFloat(); return Value{s / a.size()}; };
         b["min3"]   = [N](std::vector<Value>& a) { return Value{std::min(N(a, 0), std::min(N(a, 1), N(a, 2)))}; };
         b["max3"]   = [N](std::vector<Value>& a) { return Value{std::max(N(a, 0), std::max(N(a, 1), N(a, 2)))}; };
+        // str_repeat(s, n): s n times. Unlike repeat() (which shortens a long result), a result
+        // past the #719 budget (1,048,576 copies or 4 MiB of text) is a script error: an infinite
+        // count used to append forever and freeze the game (issue #888 finding 33).
         b["str_repeat"] = [](std::vector<Value>& a) {
-            std::string s = a.empty() ? "" : a[0].AsString(); int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
-            std::string out; for (int i = 0; i < n; ++i) out += s; return Value{out};
+            std::string s = a.empty() ? "" : a[0].AsString();
+            const float raw = a.size() > 1 ? a[1].AsFloat() : 0.0f;
+            if (!(raw >= 1.0f) || s.empty()) return Value{std::string{}};   // 0, negative, NaN, or nothing to repeat
+            const double copies = std::floor((double)raw);
+            if (copies > (double)(1 << 20) || copies * (double)s.size() > (double)kMaxTextBytes)
+            {
+                char count[32]; std::snprintf(count, sizeof count, "%g", (double)raw);
+                throw ScriptError(std::string("str_repeat: ") + count + " copies of a " + std::to_string(s.size()) +
+                                  "-character text is too long (the most is 1048576 copies and 4 MiB of text)");
+            }
+            const int n = (int)copies;
+            std::string out;
+            out.reserve((std::size_t)n * s.size());
+            for (int i = 0; i < n; ++i) out += s;
+            return Value{out};
         };
 
         // ---- Tweening (DOTween-style) ----------------------------------
@@ -10578,7 +10770,7 @@ struct OkayScriptVM::Impl {
             std::string sep = a.empty() ? "" : a[0].AsString(), out;
             if (a.size() > 1)
                 if (auto arr = a[1].AsArray())
-                    for (std::size_t i = 0; i < arr->size(); ++i) { if (i) out += sep; out += (*arr)[i].AsString(); }
+                    for (std::size_t i = 0; i < arr->size(); ++i) { if (i) out += sep; out += ValueText((*arr)[i]); }
             return Value{out};
         };
         alias("String.IsNullOrEmpty", "string.IsNullOrEmpty");
@@ -10586,7 +10778,7 @@ struct OkayScriptVM::Impl {
         auto parseNum = [](std::vector<Value>& a, bool asInt) {
             float f = 0.0f;
             if (!a.empty()) { try { f = std::stof(a[0].AsString()); } catch (...) { f = 0.0f; } }
-            return Value{asInt ? (float)(long long)f : f};
+            return Value{asInt ? (float)SafeInt64(f) : f};   // "nan" -> 0, "inf" / "1e30" saturate (finding 33)
         };
         b["int.Parse"]   = [parseNum](std::vector<Value>& a) { return parseNum(a, true); };
         b["float.Parse"] = [parseNum](std::vector<Value>& a) { return parseNum(a, false); };

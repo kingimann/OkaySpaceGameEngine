@@ -200,7 +200,10 @@ Audio.SaveSettings();   // keep them as the player's settings now
 In a visual script these are the **Audio** nodes in the node search (for example
 `Audio.SetGroupVolume(group, volume)`).
 
-OkayScript has the same in function form:
+OkayScript has the same in function form (volumes are clamped to 0..1 like
+`Audio.masterVolume`, and a value that is not a number, NaN or inf, is ignored, so a bad
+slider value can't distort or silence every sound; a NaN saved in the prefs is not loaded
+back, and a voice whose volume or position is NaN plays silent instead of muting the mix):
 
 ```
 set_volume(0.8)

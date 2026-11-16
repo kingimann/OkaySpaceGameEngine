@@ -529,7 +529,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `prefs_get(key, default)` | read a number |
 | `prefs_get_str(key, default)` | read a string |
 | `prefs_save(path)` / `prefs_load(path)` | write/read the prefs file |
-| `set_volume(x)` / `volume()` / `mute(bool)` | global audio level (options menus) |
+| `set_volume(x)` / `volume()` / `mute(bool)` | global audio level (options menus); `x` is clamped to 0..1 and a value that is not a number is ignored |
 
 The standalone player auto-loads `game.okayprefs` on launch and saves it on
 exit, so values set with `prefs_set` persist between play sessions.
@@ -617,6 +617,45 @@ sum(a) min_of(a) max_of(a) reverse(a) sort_num(a) choose(a) shuffle(a)`
 str_contains(s, sub) starts_with(s, prefix) ends_with(s, suffix)
 replace(s, find, repl) trim(s) repeat(s, n) to_num(s) to_str(x)
 split(s, sep) join(arr, sep)` — plus `+` concatenation.
+
+`len(text)` is the text's length in bytes, like `str_len` (`len("hello")` is 5), and
+`len(list)` / `len(map)` is the count. `len(x, y)` with two numbers is still the length of
+a 2D vector, and `len(n)` of one number is its size (`len(-3)` is 3).
+
+### Limits (so one line can't crash or freeze the game)
+These caps turn a mistake into a clear Console message or a short result instead of a crash
+or a frozen frame (issue #888). Ordinary values are not affected.
+
+- **A list or map that holds itself** (`push(a, a)`, or a `parent` link in a tree) prints as
+  `[...]` / `{...}` where it repeats: `var a = []; push(a, a); print(a)` prints `[[...]]`.
+  The same goes for `str`, `to_str`, `+`, `$"..."`, `format`, `join` and `==` with text.
+  The same list reached twice by different routes is not a repeat and prints both times.
+- **Text of a value** stops at 256 levels of nested lists and maps (`[...]` past that) and at
+  4 MiB, where it ends in `...`.
+- **`to_json`** refuses a list or map that holds itself (an error that says "contains
+  itself"; store a name or an index instead of the link), more than 256 levels of nesting
+  (the most `from_json` reads back), and text past 64 MiB. Catch it with `try { } catch (e) { }`.
+- **Nesting in the code itself**: more than 256 levels of blocks, `if`s, loops, ternaries
+  (`a ? b : c ? ...`), lambdas (`() => () => ...`), `a = b = ...` chains and brackets is a
+  parse error ("nested too deeply"), shown in the Problems panel, not a crash. A long
+  `else if` chain counts one level per `else if`.
+- **`repeat(s, n)`, `pad_left`, `pad_right`**: the count or width is capped at 1,048,576
+  (`repeat` also at 4 MiB of text); a longer result is cut short, not an error.
+- **`str_repeat(s, n)`**: more than 1,048,576 copies or 4 MiB of text is a script error that
+  says so (`str_repeat("x", 1e30)`); an `inf` count used to freeze the game.
+- **`spawn_wave(prefab, count)`**: at most 1000 objects per call. A bigger count (or `inf`,
+  NaN) spawns nothing and says so in the Console. A prefab that does not load stops the wave
+  at the first try.
+- **Numbers too big for a whole number** where a function needs one saturate instead of
+  turning into garbage. The bit functions and `hex` (32-bit), grid cells, leaderboard scores
+  and display sizes read `1e30` and `inf` as 2147483647, `-1e30` as -2147483648 and NaN as
+  0 (display sizes and refresh rates are then clamped to what the screen supports).
+  `int.Parse` / `Convert.ToInt32` give 0 for `"nan"` and the largest 64-bit whole number for
+  `"inf"` or `"1e30"`. A layer mask of NaN, 0 or less means every layer, and past 2^32 every
+  bit. Grid cells, display sizes, refresh rates and monitor numbers that are not a number
+  at all (NaN, inf) are refused and change nothing, and a NaN leaderboard score is not
+  uploaded. `shl`, `bit_set` and the other single-bit helpers work on bit 31
+  (`shl(1, 31)` is -2147483648); `shr` keeps the sign.
 
 ### Maps / dictionaries (string keys)
 `map() map_set(m, k, v) map_get(m, k[, default]) map_has(m, k) map_remove(m, k)

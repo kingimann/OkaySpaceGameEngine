@@ -1199,7 +1199,10 @@ EngineApi Build() {
         au.doc = "The mixer: overall volume and each group's (Music, SFX, UI, Voice), as a settings menu sets them.";
         au.staticProps.push_back(prop("masterVolume", tFloat,
             [](const Value&, CallContext&) { return Value{AudioMixer::masterVolume}; },
-            [](const Value&, const Value& v, CallContext&) { AudioMixer::masterVolume = Mathf::Clamp(F(v), 0.0f, 1.0f); },
+            [](const Value&, const Value& v, CallContext&) {   // NaN / inf: ignored (issue #888 finding 48)
+                const float x = (float)F(v);
+                if (std::isfinite(x)) AudioMixer::masterVolume = Mathf::Clamp(x, 0.0f, 1.0f);
+            },
             "Overall volume, 0 to 1."));
         au.staticProps.push_back(prop("muted", tBool,
             [](const Value&, CallContext&) { return Value{AudioMixer::muted}; },
@@ -1213,7 +1216,10 @@ EngineApi Build() {
         };
         au.staticMethods.push_back(method("SetGroupVolume", {tString, tFloat}, {"group", "volume"}, tVoid,
             [group](const Value&, std::vector<Value>& a, CallContext& c) {
-                AudioMixer::groupVolume[group(S(a[0]), c)] = Mathf::Clamp(F(a[1]), 0.0f, 1.0f); return Value{}; },
+                const int g = group(S(a[0]), c);
+                const float x = (float)F(a[1]);
+                if (std::isfinite(x)) AudioMixer::groupVolume[g] = Mathf::Clamp(x, 0.0f, 1.0f);   // NaN / inf: ignored
+                return Value{}; },
             "Set one group's volume, 0 to 1 (\"Music\", \"SFX\", \"UI\" or \"Voice\")."));
         au.staticMethods.push_back(method("GetGroupVolume", {tString}, {"group"}, tFloat,
             [group](const Value&, std::vector<Value>& a, CallContext& c) { return Value{AudioMixer::groupVolume[group(S(a[0]), c)]}; },

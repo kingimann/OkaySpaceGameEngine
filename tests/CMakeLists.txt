@@ -1999,6 +1999,15 @@ target_link_libraries(test_okayscript_dupes PRIVATE okay::engine)
 target_compile_definitions(test_okayscript_dupes PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME okayscript_dupes COMMAND test_okayscript_dupes)
 
+# OkayScript robustness (issue #888 findings 32, 33, 35, 36, 37, 48): self-containing arrays and maps
+# print and write JSON without crashing, deep nesting is a parse error, pad_left is linear, float -> int
+# casts saturate, spawn_wave / str_repeat with a huge count return at once, set_volume clamps, and
+# Workshop ids keep every digit. The crash and hang cases run in forked children (Linux).
+add_executable(test_okayscript_robust test_okayscript_robust.cpp)
+target_link_libraries(test_okayscript_robust PRIVATE okay::engine)
+target_compile_definitions(test_okayscript_robust PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayscript_robust COMMAND test_okayscript_robust)
+
 add_executable(test_anim_script_control test_anim_script_control.cpp)
 target_link_libraries(test_anim_script_control PRIVATE okay::engine)
 add_test(NAME anim_script_control COMMAND test_anim_script_control)

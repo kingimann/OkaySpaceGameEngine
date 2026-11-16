@@ -365,7 +365,10 @@ private:
     std::map<std::string, std::map<std::string, std::int32_t>> m_leaderboards;
     std::unordered_map<std::string, std::string> m_cloud;
     std::map<std::uint64_t, WorkshopItem> m_workshop;
-    std::uint64_t m_nextWorkshopId = 1000;
+    // Real Workshop ids are 64-bit numbers of ten digits or more; the simulation hands out
+    // ids that big too (past 2^41), so a script or tool that squeezes one through a 32-bit
+    // float fails here in development the way it would on Steam (issue #888 finding 32).
+    std::uint64_t m_nextWorkshopId = 2147483648123ull;
 };
 
 #if !defined(OKAY_WITH_STEAM)

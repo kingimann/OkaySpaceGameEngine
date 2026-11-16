@@ -36,12 +36,19 @@ std::string GroupKey(int i) {
 }
 } // namespace
 
+// A saved volume, 0..1; a saved value that is not a number ("nan", "inf") keeps `keep`
+// (issue #888 finding 48: a NaN master volume was saved and silenced every later launch).
+static float SavedVolume(const std::string& key, float keep) {
+    const float v = Prefs::GetFloat(key, keep);
+    return std::isfinite(v) ? Mathf::Clamp(v, 0.0f, 1.0f) : Mathf::Clamp(std::isfinite(keep) ? keep : 1.0f, 0.0f, 1.0f);
+}
+
 void AudioMixer::LoadSettings() {
-    masterVolume = Mathf::Clamp(Prefs::GetFloat("audio.master", masterVolume), 0.0f, 1.0f);
+    masterVolume = SavedVolume("audio.master", masterVolume);
     muted = Prefs::GetInt("audio.muted", muted ? 1 : 0) != 0;
     for (int i = 0; i < (int)AudioGroup::Count; ++i) {
         const std::string k = GroupKey(i);
-        groupVolume[i] = Mathf::Clamp(Prefs::GetFloat(k, groupVolume[i]), 0.0f, 1.0f);
+        groupVolume[i] = SavedVolume(k, groupVolume[i]);
         groupMuted[i] = Prefs::GetInt(k + ".muted", groupMuted[i] ? 1 : 0) != 0;
     }
 }
@@ -326,6 +333,11 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
                 src->m_occlusion = 0.0f;
             }
         }
+        // A volume or position that is not a number (NaN) would make every sample of the whole
+        // mix NaN, losing all the other sounds too: this voice plays silent instead (finding 48).
+        if (!std::isfinite(vol)) vol = 0.0f;
+        if (!std::isfinite(pan)) pan = 0.0f;
+        if (!std::isfinite(doppler)) doppler = 1.0f;   // the playback step must stay a number
         float gl = 1.0f, gr = 1.0f;
         PanGains(pan, gl, gr);
         const float pitch = (src->pitch > 0.01f ? src->pitch : 0.01f) * doppler;
@@ -436,7 +448,8 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
     const float gain = (muted || focusMuted) ? 0.0f : masterVolume;
     peak[0] = peak[1] = 0.0f;
     for (int i = 0; i < 2 * frames; ++i) {
-        const float v = out[i] * gain;
+        float v = out[i] * gain;
+        if (v != v) v = 0.0f;   // NaN never reaches the device (a NaN master volume, or a bad voice)
         peak[i & 1] = std::max(peak[i & 1], std::fabs(v));
         out[i] = Mathf::Clamp(v, -1.0f, 1.0f);
     }

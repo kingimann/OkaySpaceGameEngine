@@ -338,8 +338,16 @@ editor; items fire `on_drag_start/on_drag/on_drop` and targets fire
 | `steam_lobby_set_data("k","v")` / `steam_lobby_get_data(id,"k")` | Lobby metadata (map, mode, …) |
 | `steam_lobby_members(id)` | Member display names in a lobby, as an array |
 | `steam_language()` | Steam client language |
+| `steam_workshop_publish("title", "path"[, "description"])` → id | Publish a Workshop item; returns its id as text (`"0"` when it failed) |
+| `steam_workshop_subscribe(id)` / `steam_workshop_unsubscribe(id)` / `steam_workshop_path(id)` | Subscribe, unsubscribe, or the item's installed folder |
+| `steam_workshop_count()` | Number of subscribed items |
 
-> Lobby and friend ids are passed as **strings** (they exceed float precision).
+> Lobby, friend and Workshop ids are passed as **strings** (they exceed float precision:
+> a script number keeps whole numbers exact only up to 16,777,216). Pass back the text you
+> were given. A Workshop id given as a plain number is accepted only below 16,777,216; a
+> bigger, negative or fractional number, NaN or inf is refused with a Console warning
+> rather than acting on a different item. `steam_leaderboard` scores past ±2,147,483,647
+> saturate, and a NaN score is not uploaded.
 > Without the Steamworks SDK these run against the in-memory simulation backend,
 > which now **persists achievements, stats and cloud files to disk** (under the
 > OS temp dir, keyed by app id) so progression and cloud saves survive a restart
@@ -354,7 +362,7 @@ All of these print into the editor's **Console**.
 | `watch("name", value)` | Log `name = value` for quick inspection |
 | `assert(cond [, "msg"])` | Log an error when `cond` is false; returns the result |
 | `format("hp={} of {}", a, b)` | Fill each `{}` with the next argument |
-| `concat(...)` / `str_repeat("ab", 3)` | Join args / repeat a string |
+| `concat(...)` / `str_repeat("ab", 3)` | Join args / repeat a string (more than 1,048,576 copies or 4 MiB of text is an error) |
 
 ### State, math & data
 | Function | Description |

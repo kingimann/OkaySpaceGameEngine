@@ -120,7 +120,10 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Improve the blocky character's arms, especially in first person
 - Script language phases 2 to 5: classes, physics and events, visual-script shared layer, tooling and debugger, export, replace the old VM
 - Per-face materials (renderer submeshes)
-- Guided modeling, phase 2 and the known gaps of phase 1 ([guided_modeling_design.md](guided_modeling_design.md)): categories Vehicles, Characters, Environment and more of Architecture (walls, stairs, doors, windows, roofs, buildings) have no designs yet and say so; the fence has no Windows-window verification; the path is a list of numbers (no click-to-draw path in the 3D view); the fence does not add a collider; a part made of several separate shells that you move is reported as removed plus your own geometry; geometry welded to a part at an exact shared corner counts as an edit of it (it asks, it never overwrites); after the editor's global Ctrl+Z the recipe file can be newer than the mesh (parts then show as edited); material slots are stored but drawn only when per-face materials land (colour per kind of part is drawn now)
+- Guided characters (7zk) gaps: no rig, skin weights or animation; clothes are shells not cloth; insect and spider legs are crude; Environment and Props not built
+- Guided vehicles and Detail (7zj) gaps: no wheel arches, opening doors, interiors or vehicle physics setup; motorcycles are rough; Characters, Environment and Props not built; box-only designs have no Low reduction ([guided_detail.md](guided_detail.md))
+- Guided architecture (7zi) gaps: no railings on landings; wall corners are butt-joined, not mitred; click-to-draw path has no preview line; Vehicles, Characters, Environment and Props not built; per-face material slots (claude/modeling-more) not used yet beyond the stored numbers
+- Guided modeling, phase 2 and the known gaps of phase 1 ([guided_modeling_design.md](guided_modeling_design.md)): categories Vehicles, Characters, Environment and more of Architecture (walls, stairs, doors, windows, roofs, buildings) have no designs yet and say so; the fence has no Windows-window verification; the path is a list of numbers (no click-to-draw path in the 3D view); the fence does not add a collider; a moved part is recognised only when it was moved (and, for one shell, turned) as a whole; geometry welded to a part at an exact shared corner counts as an edit of it (it asks, it never overwrites); after the editor's global Ctrl+Z the recipe file can be newer than the mesh (parts then show as edited); material slots are stored but drawn only when per-face materials land (colour per kind of part is drawn now)
 - Script editor: classes, default templates, no random script on New Script
 - Prone for first and third person
 - Player customization: more options
@@ -150,7 +153,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 |---|---|---|---|
 | [3.5](feature_map/03-modeling-import.md#35-mesh-assets-and-primitives) | Mesh assets and primitives | Partial | M5b per-face materials: PolyFace has a material slot but Mesh has no per-triangle slot; old map says Sphere, Cylinder, Cone... |
 | [3.6](feature_map/03-modeling-import.md#36-model-import) | Model import | Partial | possible doc bug: docs/animation.md Tips says FBX animations import via Assimp, but FBX is read by the built-in ufbx path; packed... |
-| [3.11](feature_map/03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) | Guided creation | Partial | only the fence exists; path is typed numbers; no collider; editor page not opened in a real window |
+| [3.11](feature_map/03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) | Guided creation | Partial | fence and the architecture templates only; no landing railings; editor page not opened in a real window |
 
 ### 5. Animation & IK
 

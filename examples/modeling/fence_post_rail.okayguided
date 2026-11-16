@@ -1,5 +1,6 @@
 okayguided 1
 template fence 1
+param detail 1
 param gate 0
 param gatePos 0.5
 param gateWidth 1

@@ -1,0 +1,56 @@
+okayguided 1
+template car 1
+param axleShift 0
+param cabinScale 1
+param cabinShift 0
+param detail 1
+param groundClear 0.17999999999999999
+param height 1.45
+param length 4.4000000000000004
+param lightSize 0.20000000000000001
+param wheelRadius 0.33000000000000002
+param wheelWidth 0.22
+param wheelbase 2.7000000000000002
+param width 1.8
+slot axle bar
+slot bed open
+slot body van
+slot bumper plain
+slot cabin standard
+slot exhaust none
+slot glass clear
+slot grille plate
+slot headlight square
+slot mirror box
+slot roof none
+slot spoiler none
+slot taillight box
+slot wheel steel
+color axle 0.100000001 0.100000001 0.109999999 1
+color bed 0.5 0.519999981 0.550000012 1
+color body 0.920000017 0.920000017 0.899999976 1
+color bumper 0.779999971 0.800000012 0.819999993 1
+color cabin 0.920000017 0.920000017 0.899999976 1
+color exhaust 0.779999971 0.800000012 0.819999993 1
+color glass 0.550000012 0.75 0.819999993 1
+color grille 0.100000001 0.100000001 0.109999999 1
+color headlight 0.970000029 0.949999988 0.75 1
+color mirror 0.100000001 0.100000001 0.109999999 1
+color roof 0.5 0.519999981 0.550000012 1
+color spoiler 0.100000001 0.100000001 0.109999999 1
+color taillight 0.800000012 0.0500000007 0.0500000007 1
+color wheel 0.100000001 0.100000001 0.109999999 1
+material axle 12
+material bed 8
+material body 0
+material bumper 4
+material cabin 0
+material exhaust 11
+material glass 7
+material grille 6
+material headlight 2
+material mirror 5
+material roof 10
+material spoiler 9
+material taillight 3
+material wheel 1

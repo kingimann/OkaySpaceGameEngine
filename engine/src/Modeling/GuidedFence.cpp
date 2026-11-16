@@ -89,8 +89,9 @@ std::vector<Vec2> PicketProfile(const std::string& d, float w, float h) {
     if (d == "rounded") {
         const float ph = std::min(0.5f * w, 0.4f * hd) / hd;
         std::vector<Vec2> p = {{0, 0}, {1, 0}};
-        for (int k = 0; k <= 6; ++k) {
-            const float a = kPi * (float)k / 6.0f;
+        const int steps = shapes::Scale(6, 2);
+        for (int k = 0; k <= steps; ++k) {
+            const float a = kPi * (float)k / (float)steps;
             p.push_back({0.5f + 0.5f * std::cos(a), (1 - ph) + ph * std::sin(a)});
         }
         return p;
@@ -361,6 +362,7 @@ void Fence(const Recipe& r, std::vector<GeneratedPart>& out) {
 
 Template MakeFence() {
     Template t;
+    t.usesPath = true;
     t.id = "fence"; t.name = "Fence"; t.category = "Architecture"; t.version = 1;
     t.description = "A fence along a straight run or a drawn path: posts, rails, pickets or bars, an optional gate.";
     using K = ParamDef::Kind;
@@ -441,11 +443,18 @@ Template MakeFence() {
 
 } // namespace
 
+void RegisterArchitectureTemplates();
+void RegisterVehicleTemplates();
+void RegisterCharacterTemplates();
+
 void RegisterBuiltinTemplates() {
     static bool done = false;
     if (done) return;
     done = true;
     Registry::Instance().Register(MakeFence());
+    RegisterArchitectureTemplates();
+    RegisterVehicleTemplates();
+    RegisterCharacterTemplates();
 }
 
 } // namespace okay::modeling::guided

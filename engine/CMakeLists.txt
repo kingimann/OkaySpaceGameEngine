@@ -284,6 +284,7 @@ add_library(okay_engine
     src/Modeling/ScreenSelect.cpp
     src/Modeling/MeshLibrary.cpp
     src/Modeling/Curve.cpp
+    src/Modeling/Remesh.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
     src/Modeling/PolyOps.cpp

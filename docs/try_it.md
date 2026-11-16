@@ -681,6 +681,13 @@ how the sidebar looks and feels in the real editor window (font, dot colours, sc
 
 New (branch modeling-more-2): open the Modeling window. Import page > "Reference images": choose a PNG, pick Front; a picture plane appears in the Scene view. Generate page > "Bezier curve": add 4 points, press Pipe; a tube mesh appears. Edit Mesh: select the top edges of a cube, Ctrl+K "bevel weight" > Set Bevel Weight, add a Bevel modifier and tick "Use edge weights"; only the top edges round. You should see exactly that. Unverified: all of it in the real window and on a GPU.
 
+More new steps (same branch):
+- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: `docs/images/modeling_more/curves_bevel.png`). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
+- **Coloured edges**: in Edit Mesh, creased edges are pink and bevel-weighted edges are green. Select two edges, Ctrl+K, type "crease" or "bevel weight", run Set; the colours appear at once. Clear removes them.
+- **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
+- **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
+- **Direct3D per-slot pictures** (Windows, Direct3D 11 or 12 renderer): give two slots different pictures on the Material slots page; each slot should show its own picture. Written but never run on a GPU.
+
 **What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
 recolours every face in it at once. Slots are saved in the scene and in `.okaymesh` files. There is also a **Repair Mesh** button
 that cleans up a broken or imported mesh in one click. Slots are colours only for now: per-slot pictures (textures) and shaders are

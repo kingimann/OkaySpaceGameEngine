@@ -37,6 +37,7 @@ Mesh CurvePipe(const BezierCurve& c, float radius, int sides = 12, int perSpan =
 /// `scaleEnd` scales the profile linearly along the curve (1 = no taper). Open curves with a closed profile get caps.
 Mesh CurveSweep(const BezierCurve& c, const std::vector<Vec2>& profile, bool closedProfile, int perSpan = 8, float scaleEnd = 1.0f, bool caps = true);
 /// A flat strip `width` wide following the curve (it faces up where the curve runs along X).
-Mesh CurveRibbon(const BezierCurve& c, float width, int perSpan = 8);
+/// `bothSides` adds the same strip facing the other way, so it shows from above and below (a flat sheet has no inside).
+Mesh CurveRibbon(const BezierCurve& c, float width, int perSpan = 8, bool bothSides = false);
 
 } // namespace okay::modeling

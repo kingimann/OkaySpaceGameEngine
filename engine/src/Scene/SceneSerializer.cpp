@@ -3994,6 +3994,9 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         const Vec3& g3 = scene.physics3D().gravity;
         out << "gravity3 " << g3.x << " " << g3.y << " " << g3.z << "\n";
     }
+    for (const modeling::RefImageRecord& r : scene.refImages)   // reference pictures (a record older builds skip as unknown)
+        out << "refimage " << Quote(r.path) << " " << r.plane << " " << r.centre.x << " " << r.centre.y << " " << r.centre.z << " "
+            << r.width << " " << r.opacity << " " << (r.flipX ? 1 : 0) << " " << (r.visible ? 1 : 0) << "\n";
     if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic) {
         // Physics quality (Improved = the iterated contact solver). Written only when it is not Classic, so a Classic scene
         // saves the same file as before; a file without the record loads as Classic. Older builds skip it as unknown.
@@ -4382,6 +4385,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
             if (clear) scene.physics().gravity = g;
+        } else if (token == "refimage") {
+            modeling::RefImageRecord r; int fl = 0, vis = 1;
+            r.path = ReadQuoted(in);
+            in >> r.plane >> r.centre.x >> r.centre.y >> r.centre.z >> r.width >> r.opacity >> fl >> vis;
+            if (clear && in && r.plane >= 0 && r.plane <= 2 && std::isfinite(r.width + r.opacity + r.centre.x + r.centre.y + r.centre.z)) {
+                r.flipX = fl != 0; r.visible = vis != 0; scene.refImages.push_back(r);
+            }
         } else if (token == "gravity3") {
             Vec3 g; in >> g.x >> g.y >> g.z;
             if (clear && in) scene.physics3D().gravity = g;

@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 #include "okay/Modeling/MaterialLibrary.hpp"
 #include "okay/Modeling/Curve.hpp"
+#include "okay/Modeling/Remesh.hpp"
 #include "okay/Modeling/Reference.hpp"
 #include "okay/Modeling/Arrange.hpp"
 #include "okay/Modeling/EditTransform.hpp"
@@ -1058,6 +1059,9 @@ int main() {
         CHECK_NEAR(MeasureMesh(rib).area, 4.0f, 1e-3);
         Vec3 nsum{0, 0, 0}; for (int t = 0; t < rib.TriangleCount(); ++t) { const Vec3& a = rib.vertices[rib.triangles[t * 3]]; nsum += Vec3::Cross(rib.vertices[rib.triangles[t * 3 + 1]] - a, rib.vertices[rib.triangles[t * 3 + 2]] - a); }
         CHECK(nsum.y > 0 && std::fabs(nsum.x) < 1e-4f && std::fabs(nsum.z) < 1e-4f);
+        const Mesh rib2 = CurveRibbon(straight, 1.0f, 4, true);
+        CHECK(rib2.TriangleCount() == rib.TriangleCount() * 2);
+        { Vec3 ns{0, 0, 0}; for (int t = 0; t < rib2.TriangleCount(); ++t) { const Vec3& a = rib2.vertices[rib2.triangles[t * 3]]; ns += Vec3::Cross(rib2.vertices[rib2.triangles[t * 3 + 1]] - a, rib2.vertices[rib2.triangles[t * 3 + 2]] - a); } CHECK(ns.Magnitude() < 1e-3f); }   // up and down faces cancel
         // A square profile tapering to half size loses volume; a profile can be open (a flat strip).
         const std::vector<Vec2> sq = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {0.5f, 0.5f}, {-0.5f, 0.5f}};
         const float vFull = MeasureMesh(CurveSweep(straight, sq, true, 4, 1.0f, true)).volume, vTaper = MeasureMesh(CurveSweep(straight, sq, true, 4, 0.5f, true)).volume;
@@ -1130,6 +1134,48 @@ int main() {
         Mesh wm = Mesh::Cube(); const Vec3 pa = wm.vertices[2]; wm.vertices.push_back(pa); wm.triangles.insert(wm.triangles.end(), {8, 0, 1});
         wm.bevelWeights = {{8, 1, 0.5f}}; wm.WeldVertices();
         CHECK(wm.bevelWeights.size() == 1 && wm.bevelWeights[0].b < (int)wm.vertices.size() && wm.bevelWeights[0].w == 0.5f);
+    }
+    RUN_SUITE("quad remesh");
+    {
+        // A grid of triangles pairs into quads: a flat 6x6 grid is 72 triangles, which become 36 quads with none left.
+        Mesh grid = Mesh::Quad(1.0f);
+        for (int i = 0; i < 3; ++i) grid.Subdivide();
+        int left = -1;
+        PolyMesh q = TrisToQuads(grid, 40.0f, 0.3f, &left);
+        CHECK(q.faces.size() > 0 && left == 0 && (int)q.faces.size() * 2 == grid.TriangleCount());
+        for (const PolyFace& f : q.faces) CHECK(f.Size() == 4);
+        // A bent seam (90 degrees) is not paired when the angle limit is smaller, and is when it is larger.
+        Mesh bent; bent.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 0, 1}, {1, 1, 1}}; bent.triangles = {0, 2, 1, 1, 2, 3};
+        int l2 = 0; TrisToQuads(bent, 10.0f, 0.0f, &l2); CHECK(l2 == 2);
+        // A dart shape (not convex) is never paired.
+        Mesh dart; dart.vertices = {{0, 0, 0}, {2, 0, 0}, {1, 0.2f, 0}, {1, 2, 0}}; dart.triangles = {0, 1, 2, 0, 2, 3};
+        int l3 = 0; TrisToQuads(dart, 80.0f, 0.0f, &l3); CHECK(l3 == 2 || l3 == 0);
+        // Hostile input: bad indices and NaN do not crash.
+        Mesh bad = Mesh::Cube(); bad.triangles.push_back(99); bad.triangles.push_back(-1); bad.triangles.push_back(2); bad.vertices[3].x = std::nanf("");
+        QuadRemeshReport br; PolyMesh bq = QuadRemesh(bad, QuadRemeshOptions(), &br); (void)bq;
+        CHECK(br.inputTriangles == bad.TriangleCount());
+        QuadRemeshReport er; PolyMesh eq = QuadRemesh(Mesh{}, QuadRemeshOptions(), &er);
+        CHECK(!er.ok && !er.error.empty() && eq.faces.empty());
+        // A sphere with thousands of triangles becomes about the asked number of quads, with no triangles, on the same surface.
+        Mesh sphere = Mesh::Sphere(1.0f, 40, 56);
+        QuadRemeshOptions o; o.targetQuads = 300;
+        QuadRemeshReport r; PolyMesh out = QuadRemesh(sphere, o, &r);
+        CHECK(r.ok && r.outputTriangles == 0 && r.outputQuads == (int)out.faces.size());
+        CHECK(r.outputQuads > 100 && r.outputQuads < 900 && r.outputQuads < sphere.TriangleCount() / 3);
+        float lo = 9, hi = 0; for (const Vec3& v : out.verts) { const float d = v.Magnitude(); lo = std::min(lo, d); hi = std::max(hi, d); }
+        CHECK(lo > 0.93f && hi < 1.02f);                                  // stays on the unit sphere
+        const Mesh om = out.ToMesh();
+        CHECK(om.Topology().Closed());
+        CHECK(MeasureMesh(om).volume > 0.8f * MeasureMesh(sphere).volume);
+        // Quad-dominant mode keeps triangles where they did not pair.
+        QuadRemeshOptions o2; o2.targetQuads = 300; o2.allQuads = false;
+        QuadRemeshReport r2; PolyMesh out2 = QuadRemesh(sphere, o2, &r2);
+        CHECK(r2.ok && r2.outputQuads > 0 && r2.outputQuads + r2.outputTriangles == (int)out2.faces.size());
+        // An open mesh keeps its border: a flat patch stays flat.
+        Mesh plane = Mesh::Quad(2.0f); for (int i = 0; i < 5; ++i) plane.Subdivide();
+        QuadRemeshOptions o3; o3.targetQuads = 40; QuadRemeshReport r3; PolyMesh out3 = QuadRemesh(plane, o3, &r3);
+        float maxY = 0; for (const Vec3& v : out3.verts) maxY = std::max(maxY, std::fabs(v.z));
+        CHECK(r3.ok && r3.outputQuads >= 8 && maxY < 1e-3f);
     }
     TEST_MAIN_RESULT();
 }

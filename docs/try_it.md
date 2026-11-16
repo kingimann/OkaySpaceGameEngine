@@ -74,6 +74,7 @@ release job or the installer build for this change.
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
+| 7w | Own platform layer: monitors, clipboard formats, taskbar flash, cursor shapes, IME, file drop | Play-mode copy and paste and the player's monitor list (now through the seam); `OKAY_PLATFORM_BACKEND=own` for the player | Not in a release yet; flash, cursors, IME and drop have no screen that uses them; never run on real Windows |
 
 ---
 
@@ -804,6 +805,38 @@ is written, in order, the real release files are byte for byte unchanged, and ev
 `dev_workflow_lint` (the workflow read and its shell steps run offline). The launcher and editor files were compiled with `g++ -fsyntax-only` and
 the MinGW win32 compiler; they were not built or run. **Never run:** the workflow on GitHub, a write to the real Supabase storage, anything on Windows,
 and every screen above (no screenshot: the launcher was not built here). The wording in step 3 to 7 is what the code says; tell us what you actually see.
+
+## 7w. Own platform layer: monitors, clipboard, taskbar flash, cursor shapes, IME and file drop (not in a release yet)
+
+**What it is.** Part of replacing SDL2 with our own code (`okay::platform`, `docs/platform_layer.md`,
+`docs/own_platform_status.md`). This round (branch `claude/platform-gaps2`, landed through `claude2/platform-gaps2-land`) adds to our own
+Windows and Linux backends: the monitor list with work area, refresh rate and DPI, clipboard formats beyond plain text, files dropped on a
+window, the taskbar flash ("look at me"), the mouse cursor shapes (arrow, text caret, resize, hand and so on), and the events an input method
+(IME, for Chinese, Japanese or Korean typing) sends while you compose a word. It also moves two things in the apps onto the seam: the
+player's and the editor's Play-mode copy and paste (`shared/PlatformClipboard.hpp` replaces `SdlClipboard.hpp`) and the player's monitor list
+(`shared/SdlDisplays.cpp` now asks the seam). With the default backend (SDL2) these ask the same SDL calls as before, so nothing should look
+different.
+
+**How to try it (once it is in a release).**
+
+1. **Copy and paste in a game, default backend.** Open the editor, open a scene that has a UI input field (add one to any scene if needed),
+   press **Play**, click the field, type, select it, `Ctrl+C`, click elsewhere, `Ctrl+V`. Paste into Notepad too. **Expect:** it works exactly as before.
+   Do the same in `Tools\OkaySpacePlayer.exe` on an exported game.
+2. **Monitor list, default backend.** In an exported game open **Settings**, the display part. **Expect:** the same monitors and resolutions
+   as before (with two monitors, both are listed, the main one first).
+3. **Own backend (developer switch, unverified).** In a command prompt: `set OKAY_PLATFORM_BACKEND=own` then start
+   `Tools\OkaySpacePlayer.exe` on an exported game from that same prompt. The first log line says `platform=own`. Copy and paste as in step 1
+   now goes through our own Win32 clipboard code. **Expect:** the same as with SDL2. Tell us what you actually see.
+
+**What you cannot try on a release yet.** The taskbar flash, cursor shapes, IME composition and file drop exist only inside the platform layer:
+no screen in the launcher, editor or player calls them yet (the editor and launcher still open their windows through SDL2 and Dear ImGui's SDL
+backend). They are checked only by tests. What is missing to make them reachable: the own Dear ImGui platform backend (step 1 in
+`docs/own_platform_status.md` section 3), which would use the cursor shapes, IME and drop.
+
+**Status.** Checked on Linux under Xvfb (a virtual X display, no window manager) with the platform tests listed in
+`docs/own_platform_status.md` section 5. The Windows code was compiled with the MinGW win32 cross compiler (`-fsyntax-only`, no warnings) and,
+on the original branch, run under Wine; it has **never run on real Windows**. Not a release item until it is merged; the default backend
+stays SDL2.
 
 ## Switches that are off by default (own code)
 

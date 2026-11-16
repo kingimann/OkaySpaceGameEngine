@@ -55,7 +55,7 @@ shared/ about 90, engine/ about 700 (mostly `SdlPainter.cpp`, `UIPainterSDL.hpp`
 | 28 | **Taskbar flash**: `SDL_FlashWindow` (launcher) | **Done**: `WM_HINTS` urgency + `_NET_WM_STATE_DEMANDS_ATTENTION`, cleared on focus. Hint is set and read back; what a window manager does with it is unverified | **Done** (call runs under Wine): `FlashWindowEx` until foreground; the visible flash is unverified | Missing | `Window::RequestAttention`; `tests/test_platform_x11_server.cpp`, `test_platform_win32.cpp`; sdl2 uses `SDL_FlashWindow` |
 | 29 | **Win32 tray hook**: `SDL_GetWindowWMInfo` + `SDL_SetWindowsMessageHook` (launcher tray icon) | n/a | Partial (`NativeHandle()` gives the HWND; no message hook API) | n/a | the launcher would subclass the HWND itself |
 | 30 | **Touch**: `SDL_FINGER*`, `SDL_GetNumTouchDevices` (editor, player) | Missing (`FingerDown/...` events exist, own never fires them) | Missing (no `WM_POINTER`) | Missing | `Platform.hpp` comment |
-| 31 | **Threads, mutexes, atomics**: `SDL_CreateThread` ~70, `DetachThread` ~54, `WaitThread`, `SDL_Mutex` ~370, `SDL_Atomic*` ~30 (launcher almost only) | n/a | n/a | n/a | not a platform feature: replace with `std::thread` / `std::mutex` / `std::atomic` in the launcher (mechanical, large) |
+| 31 | **Threads, mutexes, atomics**: `SDL_CreateThread` ~70, `DetachThread` ~54, `WaitThread`, `SDL_Mutex` ~370, `SDL_Atomic*` ~30 (launcher almost only) | n/a | n/a | n/a | not a platform feature: replace with our own wrappers on `engine/src/Core/CoreThreads.hpp`, **not** `std::thread` / `std::mutex` (CLAUDE.md rule 21a: the Windows build has no `<thread>` / `<mutex>`) |
 | 32 | **2D renderer**: `SDL_Renderer`, `SDL_Texture`, `SDL_Surface`, `RenderGeometry` ... ~330 calls (editor, launcher, player, `okayui`, `SdlPainter.cpp`) | Partial (`okay::platform::Painter` software painter, player only, off) | Partial (`StretchDIBits`, same) | Missing | `tests/test_platform_painter_window.cpp` |
 | 33 | **Dear ImGui backends** `imgui_impl_sdl2` + `imgui_impl_sdlrenderer2` (editor, launcher) | **Missing** (no own ImGui platform/renderer backend) | Missing | Missing | OkayUI render interface exists (`docs/own_ui_toolkit.md` 7), wired nowhere |
 | 34 | **Hints and misc**: `SDL_SetHint` (render driver, audio driver, DPI), `SDL_Log`, `SDL_free`, `SDL_SaveBMP`, `SDL_GetError`, `SDL_RenderGetD3D11Device`, `SDL_VERSION*` | Partial (`Log`; no hints needed) | Partial | Missing | D3D11 device from the SDL renderer is Missing |
@@ -69,6 +69,8 @@ Round 2 (this page's current state) wired them into the own backends and wrote t
 * X11: Xdnd receive, RandR 1.5 monitors, `Xft.dpi` scale, core-font cursor shapes, urgency hint, message box, opt-in XIM preedit
   (`engine/src/Platform/X11Logic.hpp` holds the pure state machines).
 * Win32: OLE drop target, clipboard formats, `FlashWindowEx`, IME composition observation (`Win32Exchange.hpp`).
+* Landing on main (`claude2/platform-gaps2-land`): the waveOut/waveIn worker in `OwnWin32Audio.cpp` now uses `CreateThread` and a
+  `CRITICAL_SECTION` instead of `std::thread` / `std::mutex` (rule 21a). Syntax-checked with the MinGW win32 compiler; not run.
 
 What was run is listed in section 5. Everything on Windows ran under Wine 9.0 at most; everything on X11 ran on Xvfb with no window manager.
 
@@ -90,7 +92,7 @@ What was run is listed in section 5. Everything on Windows ran under Wine 9.0 at
 | Fullscreen / multi-monitor | no | no | monitor list done (X11 tested on Xvfb virtual monitors, Windows on one monitor); exclusive mode switch and per-monitor fullscreen on X11 missing |
 | Timers | no | no | done |
 | Message boxes | no | no | done on X11; warning/info icons missing |
-| Threads / mutexes / atomics | no | **yes** (about 450 calls) | not platform work: switch to `std::` equivalents |
+| Threads / mutexes / atomics | no | **yes** (about 450 calls) | not platform work: our own wrappers on `CoreThreads.hpp` (not `std::` threads; rule 21a) |
 | Win32 tray + flash window | no | **yes** | flash done (`RequestAttention`); message-hook API or the launcher subclasses the HWND for the tray |
 | `SDL_GetGlobalMouseState` | no | **yes** (one use) | not written: global cursor position on X11 (`XQueryPointer`) and Win32 (`GetCursorPos`) |
 | `SDL_LoadWAV` | no | **yes** | use the engine WAV reader |
@@ -101,7 +103,8 @@ What was run is listed in section 5. Everything on Windows ran under Wine 9.0 at
 
 1. Own Dear ImGui platform backend (the single biggest blocker for both apps): events, cursor shapes (done below it), clipboard
    (done), IME (written, unverified), drop (done), DPI (reported), mouse capture.
-2. Launcher: replace SDL threads/mutexes/atomics with `std::`, `SDL_LoadWAV` with our reader, move the tray to Win32 calls.
+2. Launcher: replace SDL threads/mutexes/atomics with our own wrappers on `engine/src/Core/CoreThreads.hpp` (not `std::thread`/`std::mutex`: the
+   Windows build cannot compile them, rule 21a), `SDL_LoadWAV` with our reader, move the tray to Win32 calls.
 3. Run the Windows backend on real Windows (windows, audio data, XInput with a pad, multi-monitor, 125-200% DPI, Explorer drag and drop,
    a real IME) and the X11 backend on a real desktop (a window manager, a file manager drop, a real input method, a second monitor).
 4. Still missing in the platform layer: `XQueryPointer` / `GetCursorPos` global mouse, exclusive video modes (RandR / `ChangeDisplaySettings`),

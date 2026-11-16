@@ -51,6 +51,7 @@ git clone --depth 1 --branch v5.4.3 https://github.com/assimp/assimp <scratch di
 OKAY_MODEL_CORPUS=<checkout>/test ctest -R "model_corpus|fbx_reader"
 ```
 
+- Speed and peak heap of the readers against Assimp on the same files, and a per-file count / box comparison: `tests/bench_model_readers.cpp`, results in `docs/own_readers_speed.md`.
 - `model_corpus` reads every manifest row with the reader named in it. A file recorded as read must still read with the same mesh, triangle, bone, skinned-mesh, clip and material counts; a file recorded as failing must still fail (a fix therefore shows up as a manifest change).
 - `fbx_reader` (`tests/test_fbx_reader.cpp`) additionally imports every real `.fbx` through ufbx and through our reader and compares them the way it does for our own fixtures: object, mesh, joint, vertex, triangle and clip counts, names, bounding box, surface area, skin weights, inverse binds, clip samples.
 - Without `OKAY_MODEL_CORPUS` both tests run only on our fixtures and `model_corpus` prints "skipped".

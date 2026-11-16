@@ -12,6 +12,17 @@ it and everything comes back:
     stay gone.
 - **Rigidbody velocities**, so a crate that was falling keeps falling.
 - **Script variables**, from Script components and Visual Script graphs.
+- **Game progress the scene file doesn't hold** (each written as a line in the
+  slot's state part and put back after the loaded scene starts):
+  - **Spawners:** how many copies they made, waves done, spawns left in the
+    current wave, the timer and whether they run. A finished arena or loot drop
+    stays finished; one part-way through carries on.
+  - **Health Stat:** current health, dead or alive, lives left, the respawn
+    point and the respawn timer.
+  - **Survival meters:** hunger, thirst, stamina, oxygen, warmth (Temperature
+    Stat), sleep energy and sanity, and every value of **Survival Stats**.
+  - **Collectibles set to respawn** that were picked up: they stay hidden and
+    come back when the rest of their respawn time has passed.
 - **The game's own Save keys**: `save("gold", 120)` values in the default save
   file. Each slot has its own copy, so slots don't share progress.
 - **Play time.**
@@ -129,6 +140,10 @@ whole file and check it (use them for one slot, not a long list of big saves).
   the slot was made. Keep data that must survive across slots in a separate
   file (`save("unlocked", true, "profile.okaysave")` / `Prefs`), which a slot
   load never touches.
+- Slots saved before the progress lines above existed (engine 2026-11-16 and older)
+  still load. Spawners, health, survival meters and collectibles in them start
+  from their authored values, as they did then. An older build reading a newer
+  slot skips those lines.
 - Saves made with the older `save_game` (`saves/<slot>.okaysave`, scene only)
   don't load with the new format. Save again to make a new one.
 

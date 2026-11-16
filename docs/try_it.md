@@ -1088,6 +1088,33 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Save games keep health, spawners and picked-up coins (bug fix, branch `claude2/savegame-runtime-state`, not merged or released yet)
+
+Before this fix, loading a save gave the player full health and full survival meters, made a finished spawner spawn
+its whole wave again, and left a picked-up respawning coin hidden for good (issue #888, findings 59, 60 and 61).
+
+1. Open the editor (`Tools\OkayEngine.exe`, or Open from the launcher) with a new 3D scene.
+2. Make an object named `Player`. Add **Survival Stats**.
+3. Make an object named `Enemy` (any cube). Make another object and add **Spawner**: Template Name `Enemy`,
+   Interval `0.1`, Start Delay `0`, Max Alive `0`, Total To Spawn `3`.
+4. Make a cube named `Coin` and add **Collectible** with Respawn on and Respawn Delay `5`.
+5. Add a **Script** (OkayScript) to `Player`:
+   ```
+   update(dt) {
+       if (key_down("h")) hurt("Player", 70)
+       if (key_down("k")) save_game("1")
+       if (key_down("l")) load_game("1")
+   }
+   ```
+6. Press **Play**. Three Enemy copies appear and stop. Press **H**: health drops to 30 (watch the Inspector, or a
+   `{health}` text). Drag the Player into the Coin (or let it fall onto it) so the coin disappears. Press **K** (save) at once.
+7. Press **L** (load). You should see: health still 30 (not 100), still three Enemy copies (not six), and the coin still
+   hidden, then back about 5 seconds after it was picked up.
+
+Saves made before this fix still load, with full meters and fresh spawners as before.
+
+**Status.** Tested headless (`test_savegame_runtime_state`, Linux). Not tried in the editor or on Windows.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

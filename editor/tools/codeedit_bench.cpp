@@ -561,8 +561,8 @@ int Diff(const std::string& a, const std::string& b, const std::string& out) {
     return 0;
 }
 
-// For a profiler: only idle frames of one editor ("idle own 100000 2000", "idle imgui 100000 2000"); "empty" draws the same window
-// with no editor in it, the frame cost both toolkits pay anyway.
+// For a profiler: only idle frames of one editor ("idle own 100000 2000", "idle imgui 100000 2000", "idle hosted 1000 2000": ours in
+// the ImGui window as the editor runs it); "empty" draws the same window with no editor in it, the frame cost both toolkits pay anyway.
 int Idle(const std::string& which, int lines, int frames, bool launcher) {
     const std::string text = MakeScript(lines);
     std::vector<double> v;
@@ -586,6 +586,12 @@ int Idle(const std::string& which, int lines, int frames, bool launcher) {
             ImDrawData* dd = ImGui::GetDrawData();
             if (dd && dd->Textures) for (ImTextureData* tx : *dd->Textures) if (tx->Status != ImTextureStatus_OK) ImGui_ImplSDLRenderer2_UpdateTexture(tx);
         }
+    } else if (which == "hosted") {   // ours inside the ImGui window, as the editor runs it
+        HostedRig rig(kW, kH);
+        scripteditor::ScriptEditorCodeEdit se;
+        ConfigureOwn(se);
+        se.SetText(text);
+        for (int i = 0; i < frames; ++i) v.push_back(rig.Frame(se));
     } else {
         OwnRig rig(kW, kH);
         if (launcher) OkayUI::UseLauncherLook(true);

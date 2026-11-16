@@ -1785,18 +1785,19 @@ void EndGeometryCapture(CapturedGeometry& out) {
     g_cap = CaptureMark{};
     if (g_ni < m.i0 || g_nv < m.v0) return;   // the frame was reset in between: nothing to take
     if (g_wrecOpen >= m.nwrec0) wrecEnd();      // a window still open inside the capture ends here
-    // the vertices and indices drawn since the mark (indices rebased onto the copied vertices)
-    out.vertices.resize((size_t)(g_nv - m.v0));
-    for (int k = m.v0; k < g_nv; ++k) {
-        const SDL_Vertex& v = g_verts[k];
-        DrawVertex& d = out.vertices[(size_t)(k - m.v0)];
-        d.x = v.position.x; d.y = v.position.y; d.r = v.color.r; d.g = v.color.g; d.b = v.color.b; d.a = v.color.a;
-        d.u = v.tex_coord.x; d.v = v.tex_coord.y;
-    }
-    out.indices.reserve((size_t)(g_ni - m.i0));
-    for (int k = m.i0; k < g_ni; ++k) {
-        const int ix = g_idx[k] - m.v0;
-        out.indices.push_back(ix >= 0 && ix < (int)out.vertices.size() ? ix : 0);
+    // the vertices and indices drawn since the mark (indices rebased onto the copied vertices); DrawVertex has SDL_Vertex's layout
+    // (static_asserts above), so the vertices are copied as they are. The vectors keep their capacity from frame to frame.
+    const DrawVertex* vs = reinterpret_cast<const DrawVertex*>(g_verts + m.v0);
+    out.vertices.assign(vs, vs + (g_nv - m.v0));
+    out.indices.resize((size_t)(g_ni - m.i0));
+    {
+        const int nvx = g_nv - m.v0;
+        int* dst = out.indices.data();
+        const int* src = g_idx + m.i0;
+        for (int k = 0, n = g_ni - m.i0; k < n; ++k) {
+            const int ix = src[k] - m.v0;
+            dst[k] = (unsigned)ix < (unsigned)nvx ? ix : 0;
+        }
     }
     // the commands: the state in force at the mark, then every span from the mark on (the last span before the mark is looked
     // at again: when it started exactly at the mark it now holds the first state drawn inside the capture)

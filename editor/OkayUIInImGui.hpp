@@ -42,25 +42,35 @@ inline void AppendGeometry(ImDrawList* dl, const OkayUI::CapturedGeometry& g, co
         if (c.clipOn) dl->PushClipRect(ImVec2((float)c.clipX, (float)c.clipY), ImVec2((float)(c.clipX + c.clipW), (float)(c.clipY + c.clipH)), true);
         dl->PushTexture(tex);
         auto put = [&](const OkayUI::DrawVertex& v) {
-            dl->PrimWriteVtx(ImVec2(v.x, v.y), flat ? white : ImVec2(v.u, v.v), IM_COL32(v.r, v.g, v.b, v.a));
+            ImDrawVert* w = dl->_VtxWritePtr++;
+            w->pos.x = v.x; w->pos.y = v.y;
+            if (flat) w->uv = white; else { w->uv.x = v.u; w->uv.y = v.v; }
+            w->col = IM_COL32(v.r, v.g, v.b, v.a);
         };
         // In chunks of up to 4096 triangles. OkayUI writes each shape's vertices together, so a chunk's vertices are usually one
         // short run: copied once and indexed. A scattered chunk is written out vertex by vertex instead.
+        const int* idx = g.indices.data();
+        const OkayUI::DrawVertex* vtx = g.vertices.data();
         for (int at = c.idxOffset, end = c.idxOffset + c.idxCount; at < end;) {
             const int n = std::min(end - at, 3 * 4096) / 3 * 3;
             if (n <= 0) break;
             int vmin = INT_MAX, vmax = -1;
-            for (int k = at; k < at + n; ++k) { const int ix = g.indices[(size_t)k]; vmin = std::min(vmin, ix); vmax = std::max(vmax, ix); }
+            for (int k = at; k < at + n; ++k) { const int ix = idx[k]; vmin = ix < vmin ? ix : vmin; vmax = ix > vmax ? ix : vmax; }
             if (vmin < 0 || vmax >= nv) { at += n; continue; }
             const int span = vmax - vmin + 1;
             if (span <= n + 64) {
                 dl->PrimReserve(n, span);
                 const unsigned base = dl->_VtxCurrentIdx;
-                for (int v = vmin; v <= vmax; ++v) put(g.vertices[(size_t)v]);
-                for (int k = at; k < at + n; ++k) dl->PrimWriteIdx((ImDrawIdx)(base + (unsigned)(g.indices[(size_t)k] - vmin)));
+                for (int v = vmin; v <= vmax; ++v) put(vtx[v]);
+                ImDrawIdx* wi = dl->_IdxWritePtr;
+                for (int k = at; k < at + n; ++k) *wi++ = (ImDrawIdx)(base + (unsigned)(idx[k] - vmin));
+                dl->_IdxWritePtr = wi;
+                dl->_VtxCurrentIdx += (unsigned)span;
             } else {
                 dl->PrimReserve(n, n);
-                for (int k = at; k < at + n; ++k) { dl->PrimWriteIdx((ImDrawIdx)dl->_VtxCurrentIdx); put(g.vertices[(size_t)g.indices[(size_t)k]]); }
+                ImDrawIdx* wi = dl->_IdxWritePtr;
+                for (int k = at; k < at + n; ++k) { *wi++ = (ImDrawIdx)dl->_VtxCurrentIdx++; put(vtx[idx[k]]); }
+                dl->_IdxWritePtr = wi;
             }
             at += n;
         }

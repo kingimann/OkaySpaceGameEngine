@@ -26,7 +26,8 @@ struct Size {
     float ascent = 0;      // pen-top to baseline (bake px)
     int   count = 0;
     Glyph glyphs[256];
-    const Glyph* Find(unsigned cp) const;   // binary search; nullptr if not baked
+    short ascii[128] = {};                   // glyphs[] index of each ASCII code point, -1 when not baked (filled with the glyphs)
+    const Glyph* Find(unsigned cp) const;   // ASCII: a table; others: binary search; nullptr if not baked
 };
 
 struct Atlas {

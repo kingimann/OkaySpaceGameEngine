@@ -10,7 +10,6 @@
 #include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
-#include "okay/Components/NaturalGait.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/GameInput.hpp"
@@ -52,9 +51,8 @@ public:
     /// state changes, not last frame's.
     int ExecutionOrder() const override { return -10; }
     bool IgnoresBuoyancy() const override { return true; }
-    // A real walk and a real run (docs/walk_vs_run.md): 2.0 and 5.5 m/s. OKAY_OLD_GAIT=1 brings back 4.5 and 8.0.
-    float walkSpeed = NaturalGait::WalkSpeed();
-    float runSpeed  = NaturalGait::RunSpeed();
+    float walkSpeed = 4.5f;
+    float runSpeed  = 8.0f;
     float jumpForce = 6.0f;
     // Momentum: ramp horizontal velocity toward the target (units/s^2) for weighty
     // starts/stops, with reduced authority in the air.
@@ -103,8 +101,8 @@ public:
     char  crouchKey = Input::KeyCtrl;   // 0 = disabled
     char  proneKey  = 'z';              // 0 = disabled
     bool  toggleStance = true;          // tap to toggle vs hold to hold the stance
-    float crouchSpeed = NaturalGait::CrouchSpeed();   // well under the walk
-    float proneSpeed  = NaturalGait::ProneSpeed();
+    float crouchSpeed = 2.2f;
+    float proneSpeed  = 1.1f;
     bool  allowProne = true;            // false: no prone at all (key and gamepad)
     bool  resizeBody = true;            // crouch / prone shrink the collider (crawl under things; no standing into a ceiling)
     float crouchHeight = 0.65f;         // crouched body height, fraction of standing

@@ -44,6 +44,7 @@
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
+#include "GuidedPanel.hpp"                    // Guided page of the Modeling window
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
@@ -27025,28 +27026,6 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
     return open;
 }
 
-// The hint under Walk Speed (shown when the walk is really a jog) and the "Use natural walk and run speeds" button
-// (docs/walk_vs_run.md). Older projects keep the speeds they saved; this is how a person opts in, with Ctrl+Z to undo.
-static void WalkSpeedHintLine(float walkSpeed) {
-    const std::string hint = okay::NaturalGait::WalkSpeedHint(walkSpeed);
-    if (hint.empty()) return;
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
-    ImGui::TextWrapped("%s", hint.c_str());
-    ImGui::PopStyleColor();
-}
-static bool NaturalSpeedsButton(const char* id) {
-    char label[96];
-    std::snprintf(label, sizeof(label), "Use natural walk and run speeds##%s", id);
-    const bool hit = ImGui::SmallButton(label);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okay::NaturalGait::ButtonTooltip());
-    if (okay::NaturalGait::Old()) {   // OKAY_OLD_GAIT is set: say so where the speeds are, so it cannot be missed
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
-        ImGui::TextWrapped("The OLD walk and run is on (OKAY_OLD_GAIT is set), so new players start at 4.5 and 8. Close the editor and start it without that variable for the natural walk and run.");
-        ImGui::PopStyleColor();
-    }
-    return hit;
-}
-
 // A public field discovered in a script: its name, declared type, default value,
 // and any attributes (Header/Tooltip/Range). Used to show
 // serialized fields in the Script inspector.
@@ -27651,14 +27630,17 @@ void DrawModeling(EditorState& ed) {
         {"Generate",  "Procedural shapes, pipes",         true},
         {"Edit Mesh", "Select, move, sculpt, paint",      true},
         {"Import",    "Bring in a model file",            true},
+        {"Guided",    "Fences and more, from designs",    false},   // appended (scenes and OKAY_UI_MODELPAGE use these numbers); drawn first
     };
+    static const int kPageOrder[] = {7, 0, 1, 2, 3, 4, 5, 6};
     static int s_mdlPage = 0;
     if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
     GameObject* selGo = ed.selected();
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
     ImGui::BeginChild("##mdlnav", ImVec2(196, 0), ImGuiChildFlags_Borders);
     ImGui::Dummy(ImVec2(0, 4));
-    for (int i = 0; i < (int)(sizeof(kPages) / sizeof(kPages[0])); ++i) {
+    for (int oi = 0; oi < (int)(sizeof(kPageOrder) / sizeof(kPageOrder[0])); ++oi) {
+        const int i = kPageOrder[oi];
         const MdlPage& pg = kPages[i];
         const bool usable = !pg.needsMesh || haveMesh;
         ImGui::PushID(i);
@@ -27682,7 +27664,57 @@ void DrawModeling(EditorState& ed) {
     ImGui::TextUnformatted(kPages[s_mdlPage].name);
     ImGui::TextDisabled("%s", kPages[s_mdlPage].desc);
     ImGui::Separator();
-    if (s_mdlPage == 0) {
+    if (s_mdlPage == 7) {
+        // Guided Creation: designs, parts and regeneration live in GuidedPanel.cpp; this lends it the edit-mode selection
+        // and the thumbnail renderer.
+        namespace gu = oked::guided_ui;
+        gu::Host host;
+        host.ed = &ed;
+        host.log = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+        host.leaveEditMode = [&](GameObject* g) { if (g_meshEdit && g_meshEditObj == g) SetMeshEditMode(ed, g, false); };
+        host.selectedFaces = [&](GameObject* g) {
+            std::vector<int> out;
+            MeshRenderer* m = g ? g->GetComponent<MeshRenderer>() : nullptr;
+            if (!m || !g_meshEdit || g_meshEditObj != g) return out;
+            EditPoly(m->mesh);   // makes sure mesh.polyFace is current
+            std::set<int> faces;
+            for (int t : g_meshSelFaces) if (t >= 0 && t < (int)m->mesh.polyFace.size()) faces.insert(m->mesh.polyFace[t]);
+            out.assign(faces.begin(), faces.end());
+            return out;
+        };
+        host.selectFaces = [&](GameObject* g, const std::vector<int>& faces) {
+            MeshRenderer* m = g ? g->GetComponent<MeshRenderer>() : nullptr;
+            if (!m) return;
+            if (!(g_meshEdit && g_meshEditObj == g)) SetMeshEditMode(ed, g, true);
+            EditPoly(m->mesh);
+            const std::set<int> want(faces.begin(), faces.end());
+            g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_meshSelFaces.clear();
+            g_meshSelMode = 1;
+            for (int t = 0; t < (int)m->mesh.polyFace.size(); ++t) if (want.count(m->mesh.polyFace[t])) g_meshSelFaces.push_back(t);
+        };
+        host.thumb = [](const std::string& key, const std::function<Mesh()>& build) -> void* {
+            static std::unordered_map<std::string, SDL_Texture*> cache;
+            auto it = cache.find(key);
+            if (it != cache.end()) return it->second;
+            static int s_frame = -1, s_made = 0;
+            if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
+            if (s_made >= 2 || !g_sdlRenderer) return nullptr;   // a couple of pictures per frame, the rest fill in
+            ++s_made;
+            SDL_Texture* tex = nullptr;
+            {
+                okay::Scene sc;
+                GameObject* g = sc.CreateGameObject("guided thumb");
+                MeshRenderer* m = g->AddComponent<MeshRenderer>();
+                m->mesh = build();
+                m->color = okay::Color{1, 1, 1, 1};   // faces carry their colours
+                sc.Update(0.0f);
+                tex = RenderObjectThumb(sc, g);
+            }
+            cache[key] = tex;
+            return tex;
+        };
+        gu::DrawGuidedPage(host);
+    } else if (s_mdlPage == 0) {
 
     // --- Create a new object (drops it into the scene, selects it) ---
     // Organized Blender-style into an "Add" library: Primitives / Nature / Props /
@@ -35707,8 +35739,8 @@ void DrawInspector(EditorState& ed) {
                     ed.PushUndo();
                     FirstPersonController& F = *fp;
                     switch (which) {
-                        case 0:   // Tactical: weighty mil-sim movement (a real walk, a quick run)
-                            F.walkSpeed = 2.0f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
+                        case 0:   // Tactical: weighty mil-sim movement
+                            F.walkSpeed = 3.2f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
                             F.walkAcceleration = 22.0f; F.acceleration = 30.0f; F.steerRate = 90.0f;
                             F.deceleration = 35.0f; F.airControl = 0.15f;
                             F.coyoteTime = 0.05f; F.jumpBufferTime = 0.08f;
@@ -35740,12 +35772,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##fp");
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##fp");
-            WalkSpeedHintLine(fp->walkSpeed);
-            if (!owned && NaturalSpeedsButton("fp")) {
-                ed.PushUndo("Natural walk and run speeds");
-                okay::NaturalGait::UseNaturalSpeeds(fp->walkSpeed, fp->runSpeed, fp->crouchSpeed, fp->proneSpeed, okay::NaturalGait::kRunSpeed);
-                ed.dirty = true;
-            }
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##fp");
             if (ImGui::DragFloat("Walk Accel##fp", &fp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
@@ -35934,8 +35960,8 @@ void DrawInspector(EditorState& ed) {
                     ed.PushUndo();
                     ThirdPersonController& T = *tp;
                     switch (which) {
-                        case 0:   // Grounded: weighty adventure movement (a real walk, a quick run)
-                            T.walkSpeed = 2.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
+                        case 0:   // Grounded: weighty adventure movement
+                            T.walkSpeed = 3.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
                             T.walkAcceleration = 22.0f; T.acceleration = 30.0f; T.steerRate = 90.0f; T.turnSpeed = 10.0f;
                             T.deceleration = 35.0f; T.airControl = 0.2f;
                             T.coyoteTime = 0.08f;
@@ -35967,12 +35993,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##tp");
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##tp");
-            WalkSpeedHintLine(tp->walkSpeed);
-            if (!owned && NaturalSpeedsButton("tp")) {
-                ed.PushUndo("Natural walk and run speeds");
-                okay::NaturalGait::UseNaturalSpeeds(tp->walkSpeed, tp->runSpeed, tp->crouchSpeed, tp->proneSpeed, okay::NaturalGait::kRunSpeed);
-                ed.dirty = true;
-            }
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##tp");
             if (ImGui::DragFloat("Turn Rate##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
@@ -36223,14 +36243,6 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Which views the player has.\nBoth: a key switches between them and the camera blends.\n"
                                   "One view only: no toggle, and the other view's settings are dropped.");
-            if (NaturalSpeedsButton("pc")) {
-                ed.PushUndo("Natural walk and run speeds");
-                if (auto* f = pc->first())
-                    okay::NaturalGait::UseNaturalSpeeds(f->walkSpeed, f->runSpeed, f->crouchSpeed, f->proneSpeed, okay::NaturalGait::kRunSpeed);
-                if (auto* t = pc->third())
-                    okay::NaturalGait::UseNaturalSpeeds(t->walkSpeed, t->runSpeed, t->crouchSpeed, t->proneSpeed, okay::NaturalGait::kRunSpeed);
-                ed.dirty = true;
-            }
             CharacterModelTools(ed, go, "pc");
             if (pc->viewMode() != PlayerController::ViewMode::Both)
                 ImGui::TextDisabled("%s only. Pick Both to let the player switch.",
@@ -36882,13 +36894,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##tps");
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##tps");
-            WalkSpeedHintLine(ts->walkSpeed);
-            if (NaturalSpeedsButton("tps")) {
-                ed.PushUndo("Natural walk and run speeds");
-                okay::NaturalGait::UseNaturalSpeeds(ts->walkSpeed, ts->runSpeed, ts->stanceControl.crouchSpeed, ts->stanceControl.proneSpeed,
-                                                    okay::NaturalGait::kShooterRunSpeed);
-                ed.dirty = true;
-            }
             if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##tps");
             if (ImGui::DragInt("Max Jumps##tps", &ts->maxJumps, 0.1f, 1, 5)) ed.dirty = true;

@@ -105,9 +105,7 @@ std::vector<Entry> BakeAll() {
     // Idle: 16 breaths, 2 weight shifts and 3 glances, so the loop closes.
     add(Hold("Idle", 1, 16.0f * kPi / 1.8f, 224), 1);
     for (float v : {0.3f, 1.0f, 2.0f, 3.0f, 4.5f}) for (int d = 0; d < 8; ++d) out.push_back(Gait("Walk", 2, v, d));
-    // Run from 3 m/s (a slow sprint, a remote player the owner calls a run at 3.2): without it the run tree played its 4 m/s
-    // clip slowed down, a run in slow motion.
-    for (float v : {3.0f, 4.0f, 5.5f, 7.0f, 8.5f}) for (int d = 0; d < 8; ++d) out.push_back(Gait("Run", 3, v, d));
+    for (float v : {4.0f, 5.5f, 7.0f, 8.5f})       for (int d = 0; d < 8; ++d) out.push_back(Gait("Run", 3, v, d));
     for (float v : {0.3f, 1.0f, 2.0f})             for (int d = 0; d < 8; ++d) out.push_back(Gait("CrouchWalk", 17, v, d));
     add(Hold("Crouch", 6, 2.0f * kPi / 2.2f, 24), 6);
     add(Hold("Prone", 7), 7);

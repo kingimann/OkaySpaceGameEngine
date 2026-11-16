@@ -8,7 +8,6 @@
 #include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
-#include "okay/Components/NaturalGait.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/ControllerFeel.hpp"
 #include "okay/Components/DeathLock.hpp"
@@ -43,9 +42,8 @@ public:
     /// state changes, not last frame's.
     int ExecutionOrder() const override { return -10; }
     // ---- Movement ----
-    // A real walk and a real run (docs/walk_vs_run.md): 2.0 and 5.0 m/s. OKAY_OLD_GAIT=1 brings back 4.5 and 7.5.
-    float walkSpeed = NaturalGait::WalkSpeed();
-    float runSpeed  = NaturalGait::ShooterRunSpeed();
+    float walkSpeed = 4.5f;
+    float runSpeed  = 7.5f;
     float jumpForce = 6.0f;
     char  sprintKey = Input::KeyShift;   // hold to run (matches the other controllers)
     bool  canJump = true;
@@ -111,13 +109,7 @@ public:
     /// Crouch (Ctrl) and prone (Z): a smaller, slower body that eases between
     /// stances, the camera following it down; SetStance from scripts. No jumping
     /// unless standing.
-    static StanceControl NaturalStance() {   // crouching and crawling stay well under the walk
-        StanceControl s;
-        s.crouchSpeed = NaturalGait::CrouchSpeed();
-        s.proneSpeed = NaturalGait::ProneSpeed();
-        return s;
-    }
-    StanceControl stanceControl = NaturalStance();
+    StanceControl stanceControl;
     void SetStance(int s) { stanceControl.Set(s); }
 
     void Start() override {

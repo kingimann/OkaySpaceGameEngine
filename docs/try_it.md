@@ -69,7 +69,7 @@ release job or the installer build for this change.
 | 7e | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
-| 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
+| 7zg | Guided modeling: make a fence from designs, customise it, swap parts, keep editing by hand | Modeling window > **Guided** page; `examples\modeling\guided_fences.okayscene` | New in this change; the engine rules are tested on Linux, the editor page compiles but was **never opened in a real window** (unverified) |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 
@@ -667,45 +667,53 @@ names and the favourites keys are checked by `tests/test_vs_categories.cpp` (com
 counts above come from that test's dump. The three screenshots show the panel working with the new topics. **Unverified:**
 how the sidebar looks and feels in the real editor window (font, dot colours, scrolling); nothing was run on Windows.
 
-## 7r. The walk looks like a walk, Shift looks like a run
+## 7zg. Guided modeling: a fence from designs, then your own edits
 
-Why: "the character walking is basically running". The player used to move at 4.5 m/s for plain W, which is a jog, and at 8 m/s for
-Shift, which is a sprint, so both looked like running (the legs stepped about 270 times a minute for W and 250 for Shift). Now W is a
-real walk (2 m/s, about 125 steps a minute, one foot always on the ground, arms hanging and swinging a little) and Shift is a real run
-(5.5 m/s, about 185 steps a minute, both feet leave the ground, elbows bent, chest leaning forward). The full numbers, the targets and
-the pictures are in [walk_vs_run.md](walk_vs_run.md).
+**What it is.** The existing Modeling window has a new **Guided** page. You pick a category, a thing (today only the
+**Fence**), a starting design, and get a normal editable mesh. You can change its settings, swap parts, and keep
+modeling by hand; rebuilding never overwrites your hand edits without asking. Written from general parametric
+modeling; no code, models or assets from other projects. Design: `docs/guided_modeling_design.md`.
 
-**A new project.**
-1. Open the launcher (`OkaySpace.exe`) > **Create** > **New Project**. On the first step pick **Third Person** (under **All templates** if the starter
-   cards do not show it), press **Next**, name the project, press **Next**, then **Create project**. (**First Person** works too: the body is not drawn from
-   the eyes, so press **V** in Play to switch to the third-person view and watch it.)
-2. In the editor press **Play** (the triangle at the top). Click the Game view once so it has the keyboard.
-3. Hold **W**. You should see the character walk: an easy stride, the arms hanging with a small swing, the body upright, never both feet
-   off the ground. The camera moves slowly: 2 m/s.
-4. Now hold **Shift + W**. You should see it run: a faster step, the elbows bent, the chest leaning forward, and both feet leaving the ground
-   for a moment each step; the camera moves much faster. Let go of Shift: it goes back to the walk with no flicker.
-5. Select the Player in the Hierarchy and look at **Player Controller** (Third Person settings): **Walk Speed 2**, **Run Speed 5.5**.
+**Status.** The generation, the rebuild rules, the files and undo are tested on Linux (`ctest -R guided_modeling`, about
+600 checks). The editor page (`editor/GuidedPanel.cpp`) compiles but nobody has opened it in a real window yet, and
+nothing here ran on Windows. Pictures in `docs/images/guided_modeling/` are headless software renders of the generated
+meshes (our own small rasteriser), not screenshots of the editor.
 
-**An older project** (made before this change). It keeps the speeds it saved, so it will look the same until you opt in:
-1. Open the project (the editor asks about upgrading it first: answer as you like; this change does not touch the speeds).
-2. Select the Player. In the Inspector, in the **Player Controller** panel (or the First-person / Third-person settings of a bare controller,
-   or the Third Person Shooter Controller), press **Use natural walk and run speeds**. Hover it for what it sets.
-   Walk Speed becomes 2 and Run Speed 5.5 (5 for the shooter); Crouch and Prone Speed become 1 and 0.5 only if they were still 2.2 and 1.1.
-3. Press **Ctrl+Z**: the old numbers come back. Press Play to compare.
-4. If you set Walk Speed above 3, an amber line under it says the legs have to jog (that is real: a walk does not fit that speed).
+**Try it (the example scene).**
 
-**Bring the old look back to compare** (same build, no reinstall). Close the editor, then in a Command Prompt:
-`set OKAY_OLD_GAIT=1` and `Tools\OkayEngine.exe` (in PowerShell: `$env:OKAY_OLD_GAIT = "1"` then `.\Tools\OkayEngine.exe`).
-Make a new Third Person project and Play: W is the hurried 4.5 m/s jog again. **How to tell the old one is on:** a new Player Controller
-shows Walk Speed 4.5 and Run Speed 8 (the natural one shows 2 and 5.5), and the Inspector shows an amber "The OLD walk and run is on"
-line under the button. Close the editor and start it again without the variable to get back to the natural one.
+1. Open `Tools\OkayEngine.exe`, **File > Open...**, paste the path to `examples\modeling\guided_fences.okayscene`
+   (next to `OkaySpace.exe`, or `%LOCALAPPDATA%\OkaySpace\examples\modeling\` for the installer). You should see eight
+   fences in a row: picket, post and rail, ranch, wrought iron, chain link, stockade, low decorative, picket with a gate.
+2. Click one fence in the Hierarchy. Open **View > Editors & Tools > Modeling** and press **Guided** (first in the list).
+   You should see "Customise: Fence ..." with sliders.
+3. Drag **Height** and let go. The fence rebuilds and the console says "Updated ...".
+4. Under **Parts and materials** change **Pickets and bars** to another design, or the **Posts** design. Change a colour.
+5. Open **Each part**, a kind (for example Pickets), press **Select** on one part: it jumps into Edit Mesh with that part's
+   faces selected. Move it (G), then go back to the Guided page. Its row now says "[edited by you]".
+6. Drag **Height** again. A window asks what to do with the part you edited: **Keep my edits**, **Discard my edits** or
+   **Convert to regular mesh**. Try Keep: that part stays as you left it, everything else follows the new height.
+   Pressing Cancel changes nothing.
+7. In Edit Mesh add something of your own (Add page: a Cube, or extrude a face). Change a setting on the Guided page: your
+   addition stays exactly where it was. This is the "your own faces are never touched" rule.
+8. **Detach** on a part row, or **Convert to regular mesh**, are explicit: the part (or the whole model) stops following the
+   design and stays as plain mesh. **Undo guided step** steps back.
 
-**Status.** Verified here (Linux, headless): `walk_vs_run` (the walk and the run on every measure, in a new project's Animator setup and with the
-Character on its own, plus no flicker, no foot skating and the button's rules), `walk_vs_run_old` (the same program with the old gait on, showing the old
-walk was not clearly different), and the existing locomotion, jitter, mixamo, proxy, NPC and controller tests. The pictures are software renders from
-Linux, not screenshots of Windows. **Unverified:** the feel in the real editor and in the Windows player, the Inspector button and hint drawing
-(compile-checked only), a real Mixamo model (the checks use the test rigs), and whether 2 m/s feels right for your game. The default speeds are one number in
-`NaturalGait.hpp` and two fields in the Inspector if you want them faster (above about 2.4 m/s the legs start to jog).
+**Try it (make a new one).** Modeling > Guided with nothing selected (or press "Make another one"): press a category
+(Vehicles, Characters, Environment, Props say "No designs here yet", on purpose), pick **Fence**, click a starting design
+card (pictures are drawn by our own renderer), give it a name and press **Create**. A mesh asset `Assets/<Name>.okaymesh` and
+`Assets/<Name>.okayguided` appear in the Project panel.
+
+**Your own parts and templates.** Select faces in Edit Mesh, then Guided > **My parts and templates**: type a name, pick
+which kind of part it fits, **Save selection as part**. It then appears in that kind's design list (and in "Each part"). **Save
+as template** keeps the whole setup; it shows as another card next to the built-in designs. Files are in
+`Assets/GuidedTemplates/` (`.okaypart`, `.okaytemplate`, plain text); copy them to another project to reuse them.
+
+**Not done or not verified (said plainly).** Only the fence exists; walls, stairs, doors, windows, roofs, vehicles,
+characters, environment and props come in a later phase. The path is a list of typed points (no drawing in the 3D view). No
+collider is added. Material numbers are stored but only colours are drawn today (per-face materials are a separate open
+item). The Guided page's look and feel in a real window is unverified.
+
+---
 
 ## 7u. Physics: crates that stand, a playground, materials, a slider and debris
 

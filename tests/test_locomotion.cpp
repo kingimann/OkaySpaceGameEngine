@@ -112,9 +112,6 @@ void ProneBody(void (*tpl)(Scene&)) {
     auto* c = p->GetComponent<C>();
     auto* box = p->GetComponent<BoxCollider3D>();
     auto* ch = p->GetComponent<Character>();
-    // The stance speeds these timings were written for. (The natural defaults are 1.0 and 0.5 m/s, well under the 2.0 walk;
-    // this test is about the body fitting under the bar and the headroom rule, not about those speeds.)
-    c->crouchSpeed = 2.2f; c->proneSpeed = 1.1f;
     const Vec3 start = p->transform->Position();
     Block(s, "Bar", {start.x, 1.25f, start.z - 3.0f}, {6.0f, 1.0f, 1.0f});   // 0.75 m gap underneath
     s.Start();
@@ -217,7 +214,7 @@ int main() {
         CHECK_EQ(ch->anim, 1);                     // resting: idle, not the fall pose
         Step(s, {'w'}, 20);
         CHECK(ch->anim == 2 || ch->anim == 3);
-        CHECK(ch->moveSpeed > 1.2f);               // walking at the controller's own walk speed (2.0 m/s; this said 2.0 when it was 4.5)
+        CHECK(ch->moveSpeed > 2.0f);
         Step(s, {'w'}, 120);                       // now pinned against the wall, still holding W
         CHECK_EQ(ch->anim, 1);                     // stands instead of running in place
         CHECK(ch->moveSpeed < 0.3f);

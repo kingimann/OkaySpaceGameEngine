@@ -82,18 +82,17 @@ Grok's sessions own the open animation work: PR #554 (animation integration, in 
   - 5.4.4 Default clip library - `Animation/HumanoidLibrary` - baked once per run: gaits in eight directions at several speeds, crouch, prone, crawl, drop, get-up, jump, fall, land, hang, gestures; seamless loops
   - 5.4.5 Enable built-in animation on a model - `Render/ModelImport` - EnableBuiltinAnimations (needs 8 or more of the 15 bones), CountHumanoidBones, AddAnimationsFromFile (bones matched by name, rotations plus height-scaled hips)
   - 5.4.6 Map Humanoid Bones window - `editor/main.cpp` - DrawBoneMap for rigs the auto-detect misses
-  - 5.4.7 Natural walk and run - `Animation/HumanoidMotion`, `Components/NaturalGait`, `Components/Character` - a walk of 80 to about 130 steps a minute (always a foot down, the ankle rolls over the planted foot) and a run of 160 to 190 with flight, so W and Shift look different; the legs follow the real ground speed (a jog from 2.4 to 3.4 m/s), not the controller's settings; the First Person, Third Person and Third Person Shooter controllers start at walk 2.0 and run 5.5 m/s (shooter 5.0); `OKAY_OLD_GAIT=1` brings back the old gait, blend and speeds in the same build (`docs/walk_vs_run.md`)
-- **Code:** `Animation/HumanoidBones`, `Components/HumanoidRetarget`, `Animation/HumanoidMotion`, `Animation/HumanoidLibrary`, `Components/Character`, `Components/NaturalGait`, `Render/ModelImport`, `editor/main.cpp`
-- **API:** `humanoid::MapHumanoidBones`, `HumanoidRetarget`, `HumanoidMotion::PoseFor`, `HumanoidMotion::OldGait`, `NaturalGait::UseNaturalSpeeds`, `HumanoidLibrary::Get`, `Character::driveExternal`, `Character::RunStyle`
-- **Editor:** Humanoid Retarget inspector (Weight, Body lean, Re-Detect Bones); Hierarchy right-click > Map Humanoid Bones... / Use Built-in Animations; Player Controller > Use natural walk and run speeds (also on a bare First or Third Person controller and the Third Person Shooter) and the hint under Walk Speed
-- **Docs:** `docs/animation.md` (Built-in locomotion, Built-in animations on imported rigs), `docs/walk_vs_run.md`
-- **Tests:** `humanoid_bones`, `humanoid_retarget`, `humanoid_template`, `locomotion`, `gait_continuity`, `character_feel`, `rig_sweep`, `char_blend`, `walk_vs_run`, `walk_vs_run_old`, `walk_vs_run_strips`
+- **Code:** `Animation/HumanoidBones`, `Components/HumanoidRetarget`, `Animation/HumanoidMotion`, `Animation/HumanoidLibrary`, `Components/Character`, `Render/ModelImport`, `editor/main.cpp`
+- **API:** `humanoid::MapHumanoidBones`, `HumanoidRetarget`, `HumanoidMotion::PoseFor`, `HumanoidLibrary::Get`, `Character::driveExternal`
+- **Editor:** Humanoid Retarget inspector (Weight, Body lean, Re-Detect Bones); Hierarchy right-click > Map Humanoid Bones... / Use Built-in Animations
+- **Docs:** `docs/animation.md` (Built-in locomotion, Built-in animations on imported rigs)
+- **Tests:** `humanoid_bones`, `humanoid_retarget`, `humanoid_template`, `locomotion`, `gait_continuity`, `character_feel`, `rig_sweep`, `char_blend`
 - **Status:** Works - humanoid_bones (347 lines), locomotion and rig_sweep (11 rigs) cover mapping, gait and many rig conventions
-- **Open:** old map "retargeting by avatar slot": hand mapping of a rig's bones landed (#522, git log); clips from a differently proportioned rig transfer rotations only; the natural walk and run is measured on Linux only (not run on Windows, no GPU renderer, no real Mixamo model), older projects keep their saved speeds until the Inspector button is pressed (an automatic upgrade would need an `okayscene` format bump), the walk's hips bob about 8 cm (a person's 3 to 5)
-- **Related:** 3.7, 5.3, 5.12, 4.9, 4.1
-- **Words:** humanoid, retarget, HumanoidRetarget, avatar, bone map, Mixamo, VRoid, Rigify, built-in animation, gait, procedural animation, T-pose, walk, run, jog, cadence, steps per minute, natural walk and run, OKAY_OLD_GAIT
-- **Seen as:** imported character is in a T-pose or has the wrong animation; arms stay out; one bone twists; feet skate; legs bend backwards; walk hips snap at every footfall; the character walking looks like running; walk and run look alike
-- **Ask me like:** "map a Blender rig's fingers too"; "make the built-in walk less bouncy"; "the character walking is basically running"
+- **Open:** old map "retargeting by avatar slot": hand mapping of a rig's bones landed (#522, git log); clips from a differently proportioned rig transfer rotations only; no other open item recorded
+- **Related:** 3.7, 5.3, 5.12, 4.9
+- **Words:** humanoid, retarget, HumanoidRetarget, avatar, bone map, Mixamo, VRoid, Rigify, built-in animation, gait, procedural animation, T-pose
+- **Seen as:** imported character is in a T-pose or has the wrong animation; arms stay out; one bone twists; feet skate; legs bend backwards; walk hips snap at every footfall
+- **Ask me like:** "map a Blender rig's fingers too"; "make the built-in walk less bouncy"
 
 ### 5.5 Root motion and skinning
 - **What:** Letting the animation's root bone move the character, and deforming a rigged mesh with its bones.

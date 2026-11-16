@@ -4,7 +4,7 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **123** rows that are Partial or Planned.
+The feature map currently has **124** rows that are Partial or Planned.
 
 ## Audits
 
@@ -18,7 +18,6 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 | What | State | What is missing |
 |---|---|---|
-| Natural walk and run (`docs/walk_vs_run.md`, `docs/try_it.md` row 7r) | Done in code and tests; Linux only | Not run on Windows or a GPU renderer, no real Mixamo model used (test rigs only), and whether 2 m/s walk and 5.5 m/s run feel right in a real game is the owner's call (one number in `NaturalGait.hpp`). Older projects keep their saved speeds until the Inspector's **Use natural walk and run speeds** is pressed: an automatic upgrade would need an `okayscene` format bump and an opt-in in the upgrade window (written down in the doc, not built). The 2.5D, top-down, click-to-move, NPC and `CharacterController3D` defaults were not changed (their W now shows the jog it really is). The walk's hips bob about 8 cm (a person's 3 to 5): that needs stance-knee flex and pelvic tilt. |
 | One inflate (`engine/include/okay/Core/Inflate.hpp`) for PNG, .blend, .x, ZGL, 3MF/AMF, FBX arrays and the own HTTP client | Done in code (the three older copies are deleted from the tree; ImageDecode and FbxReader keep thin wrappers, see `docs/try_it.md` row 15) | Checked on Linux only: `tests/test_inflate_differential.cpp` against a slow reference written from the RFCs (about 67,000 inputs and 15,500 gzip inputs per run, ASan and UBSan clean) and, before the old copies were removed, against those copies (257,014 inputs, no disagreement; commit `0ea3b26a`); `png_hint`; not run on Windows or macOS, not run on real PNG, `.blend`, `.x`, FBX or gzip-download files from outside our own tests; `model_readers` and `own_http_net` not run for this change. Two behaviour notes: PNG decoding stops as soon as all expected pixel bytes are decoded (a damaged tail after them is no longer examined), and the first output allocation is now limited to what the input could produce (1032 times its size), so a PNG header claiming a huge size with a few bytes of data no longer zero-fills that much first. The shared `FixedCodes` table is a function-local static built on first use: C++11-safe, but not proven under the MinGW win32 thread model (no `<mutex>` is used) |
 | Start-up update screen | Built, unverified in the real app | On for new installs and after "Reset to defaults" only (existing configs already hold a saved `update_on_launch`). Checked by unit tests (`startup_update`) and a syntax-only compile of the launcher on Linux. Not run: a real download or restart, Windows, a slow or offline network, the OkayUI backend (the panel is drawn with Dear ImGui after the OkayUI frame; the draw order there is unverified). `docs/updater.md` |
 | Test builds (the dev channel: `.github/workflows/dev-build.yml`, `scripts/publish-supabase-dev.sh`, Settings > Behavior > Get test builds, Go back to the stable version) | Built, off by default, never run end to end | The workflow has never run on GitHub, and can only be started once it is on `main`. The publisher has only written to a fake storage server (never the real Supabase bucket; its upload, list and delete calls are the release publisher's). Nothing ran on Windows: no launcher or editor screen was seen (no screenshot, the launcher was not built here), and the restart, the self-check and the rollback were never watched for a four-number version or for the way back (a downgrade, the only one the updater does). Checked on Linux: `dev_channel`, `dev_index`, `dev_publish_script`, `dev_workflow_lint`, `self_update`, and a syntax-only compile of the launcher and editor with g++ and the MinGW win32 compiler. Not done: saying how far a branch is behind `main` (a test build has only what the branch has), delivering files other than the three programs (a new example scene is not in a test build), signing needs the seed as a CI secret once launchers trust a key, the OkayUI preview What's New page and a way to start a test build without GitHub. `docs/release_channels.md` "Test builds", `docs/try_it.md` 7v |
@@ -116,6 +115,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Improve the blocky character's arms, especially in first person
 - Script language phases 2 to 5: classes, physics and events, visual-script shared layer, tooling and debugger, export, replace the old VM
 - Per-face materials (renderer submeshes)
+- Guided modeling, phase 2 and the known gaps of phase 1 ([guided_modeling_design.md](guided_modeling_design.md)): categories Vehicles, Characters, Environment and more of Architecture (walls, stairs, doors, windows, roofs, buildings) have no designs yet and say so; the fence has no Windows-window verification; the path is a list of numbers (no click-to-draw path in the 3D view); the fence does not add a collider; a part made of several separate shells that you move is reported as removed plus your own geometry; geometry welded to a part at an exact shared corner counts as an edit of it (it asks, it never overwrites); after the editor's global Ctrl+Z the recipe file can be newer than the mesh (parts then show as edited); material slots are stored but drawn only when per-face materials land (colour per kind of part is drawn now)
 - Script editor: classes, default templates, no random script on New Script
 - Prone for first and third person
 - Player customization: more options
@@ -145,6 +145,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 |---|---|---|---|
 | [3.5](feature_map/03-modeling-import.md#35-mesh-assets-and-primitives) | Mesh assets and primitives | Partial | M5b per-face materials: PolyFace has a material slot but Mesh has no per-triangle slot; old map says Sphere, Cylinder, Cone... |
 | [3.6](feature_map/03-modeling-import.md#36-model-import) | Model import | Partial | possible doc bug: docs/animation.md Tips says FBX animations import via Assimp, but FBX is read by the built-in ufbx path; packed... |
+| [3.11](feature_map/03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) | Guided creation | Partial | only the fence exists; path is typed numbers; no collider; editor page not opened in a real window |
 
 ### 5. Animation & IK
 

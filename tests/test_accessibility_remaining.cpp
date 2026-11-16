@@ -267,8 +267,8 @@ int main() {
         };
         const float held = distanceAfterRelease(false);
         const float latched = distanceAfterRelease(true);
-        CHECK(held < 3.0f);                                           // walk, about 2 m/s * 0.5 s
-        CHECK(latched > 2.0f);                                        // still running, about 5.5 m/s * 0.5 s (natural gait defaults)
+        CHECK(held < 3.0f);                                           // walk, about 4.5 m/s * 0.5 s
+        CHECK(latched > 3.4f);                                        // still running, about 8 m/s * 0.5 s
         CHECK(latched > held * 1.4f);
 
         Accessibility::Reset();

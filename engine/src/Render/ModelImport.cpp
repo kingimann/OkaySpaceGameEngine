@@ -3364,16 +3364,10 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
         std::array<float, 2> now = prev;
         auto fit = [&](float& walk, float& run, float dWalk, float dRun) {
             bool changed = false;
-            // Untouched = the controller's own default, or (never fitted before) one of the OLD defaults a scene
-            // saved before the natural walk and run still spells out (4.5 / 8.0 / 7.5).
-            const bool walkUntouched = walk == (prev[0] > 0.0f ? prev[0] : dWalk) ||
-                                       (prev[0] <= 0.0f && NaturalGait::IsOldDefaultWalk(walk));
-            const bool runUntouched = run == (prev[1] > 0.0f ? prev[1] : dRun) ||
-                                      (prev[1] <= 0.0f && NaturalGait::IsOldDefaultRun(run));
-            if (ma->SlotFilled(ModelAnimator::SlotWalk) && walkUntouched) {
+            if (ma->SlotFilled(ModelAnimator::SlotWalk) && walk == (prev[0] > 0.0f ? prev[0] : dWalk)) {
                 walk = now[0] = 1.45f * ma->SlotClipSpeed(ModelAnimator::SlotWalk); changed = true;
             }
-            if (ma->SlotFilled(ModelAnimator::SlotRun) && runUntouched) {
+            if (ma->SlotFilled(ModelAnimator::SlotRun) && run == (prev[1] > 0.0f ? prev[1] : dRun)) {
                 run = now[1] = 1.25f * ma->SlotClipSpeed(ModelAnimator::SlotRun); changed = true;
             }
             return changed;

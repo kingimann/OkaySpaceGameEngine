@@ -340,18 +340,6 @@ float Character::GaitPhase() const {
     return frac(m_gaitPhase);
 }
 
-// Metres per rig unit: the height scale times how much the object is scaled. The stride is laid out in rig
-// units (a bigger body takes proportionally longer strides), so a ground speed in m/s is judged in them.
-float Character::RigScale() const {
-    float sc = height > 1e-3f ? height : 1.0f;
-    if (gameObject && gameObject->transform) {
-        Vec3 ls = gameObject->transform->LossyScale();
-        float s = 0.5f * (std::fabs(ls.x) + std::fabs(ls.z));
-        if (s > 1e-3f) sc *= s;
-    }
-    return sc;
-}
-
 // The gait phase at clock time t: the live phase at animTime, extrapolated at the
 // current cadence for any other time (editor previews sample around it).
 float Character::GaitPhaseAt(float t, int state) const {
@@ -396,7 +384,15 @@ void Character::AdvanceAnimClock(float dt) {
     const bool gait = (anim == 2 || anim == 3 || anim == 17);
     // Rig units per second from the reported ground speed (m/s). A bigger body
     // takes proportionally longer strides.
-    auto toRig = [&](float metres) { return metres / RigScale(); };
+    auto toRig = [&](float metres) {
+        float sc = height > 1e-3f ? height : 1.0f;
+        if (gameObject && gameObject->transform) {
+            Vec3 ls = gameObject->transform->LossyScale();
+            float s = 0.5f * (std::fabs(ls.x) + std::fabs(ls.z));
+            if (s > 1e-3f) sc *= s;
+        }
+        return metres / sc;
+    };
     if (m_gaitFromDrive) {
         // DriveLocomotion already smoothed the metres/second. Don't smooth again.
         m_gaitFromDrive = false;
@@ -538,23 +534,13 @@ void Character::DriveLocomotion(const Locomotion& l) {
     m_swimming = l.swim;
     const float runAt = l.walkSpeed * (anim == 3 ? 1.05f : 1.15f);
     const bool run = hs > runAt || (l.sprint && hs > l.walkSpeed * 0.9f);
-    if (HumanoidMotion::OldGait()) {
-        // The look before the natural walk and run: it followed the controller's own speeds, starting at 65%
-        // of its walk speed, so a controller whose walk was 4.5 m/s showed about a third of a run for plain W.
+    {
         const float rs = l.runSpeed > 0.1f ? l.runSpeed : 8.0f;
         const float lo = std::max(0.4f, l.walkSpeed * 0.65f);
         const float hi = std::max(lo + 0.75f, rs);
         float style = hs <= lo ? 0.0f : std::min(1.0f, (hs - lo) / (hi - lo));
         if (run) style = 1.0f;
         m_runWant = style;
-        m_haveRunWant = true;
-    } else {
-        // How much the legs show a run follows how fast the body really moves, not the controller's settings:
-        // a person walks up to about 2.4 m/s and jogs from 3.4, with a smooth change between them (JogWeight,
-        // judged in rig units so a bigger or smaller body is judged by its own legs). A controller whose "walk"
-        // is 2 m/s shows a walk, one whose "walk" is 4.5 shows the jog it really is, and the run state (above)
-        // keeps its own hysteresis, so nothing flickers between the two.
-        m_runWant = HumanoidMotion::JogWeight(moveSpeed / RigScale());
         m_haveRunWant = true;
     }
     m_stanceTarget = l.prone ? 2 : (l.crouch ? 1 : 0);

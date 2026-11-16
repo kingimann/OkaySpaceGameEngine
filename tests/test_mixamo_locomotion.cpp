@@ -501,7 +501,6 @@ int main() {
             L.AddClip("Walking", 1.0f, 20.0f);
             FixCharacterAnimations(*L.rig.scene, L.rig.player);
             HumanoidLibrary::EnsureAnimator(L.rig.player);
-            if (auto* still = L.rig.player->GetComponent<ThirdPersonController>()) L.rig.player->RemoveComponent(still);   // nothing walks the body: the wave is on an idle one
             Transform* hand = L.rig.Bone(8);
             CHECK(hand);
             if (hand) {
@@ -518,10 +517,9 @@ int main() {
         }
     }
 
-    // ---- The controller's own default speeds: W must play the WALK clip and Shift the RUN
-    // clip. The stride match used to pick Run for plain W (a 1.4 m/s walk clip next to the
-    // old 4.5 m/s "walk"), so the character ran when walking. The defaults are now a real
-    // walk and run (2.0 / 5.5 m/s, NaturalGait.hpp) and are still fitted to the clips.
+    // ---- The controller's own default speeds (4.5 walk / 8 run m/s): W must play the
+    // WALK clip and Shift the RUN clip. The stride match used to pick Run for plain W
+    // (a 1.4 m/s walk clip next to a 4.5 m/s "walk"), so the character ran when walking.
     {
         righarness::Rig R = righarness::PlayableFromFile("mixamo_t_cm_clips.glb");
         CHECK(R.model != nullptr);
@@ -535,9 +533,7 @@ int main() {
         if (tp && ma) {
             std::printf("  fitted speeds: walk %.2f, run %.2f m/s (clips made for %.2f / %.2f)\n", tp->walkSpeed, tp->runSpeed,
                         ma->SlotClipSpeed(ModelAnimator::SlotWalk), ma->SlotClipSpeed(ModelAnimator::SlotRun));
-            // Fitted to what the clips can show (they were the old 4.5 / 8.0 or the natural 2.0 / 5.5 when the model went on).
-            CHECK_NEAR(tp->walkSpeed, 1.45f * ma->SlotClipSpeed(ModelAnimator::SlotWalk), 1e-3f);
-            CHECK_NEAR(tp->runSpeed, 1.25f * ma->SlotClipSpeed(ModelAnimator::SlotRun), 1e-3f);
+            CHECK(tp->walkSpeed < 4.5f && tp->runSpeed < 8.0f);
             // The fitted pace is one the stride match can show: inside its rate limits.
             CHECK(tp->walkSpeed / ma->SlotClipSpeed(ModelAnimator::SlotWalk) <= ModelAnimator::kStrideMaxRate);
             CHECK(tp->runSpeed / ma->SlotClipSpeed(ModelAnimator::SlotRun) <= ModelAnimator::kStrideMaxRate);
@@ -545,22 +541,11 @@ int main() {
             R.Step(kDt, {'W'}, 120);
             std::printf("  W: slot %s at stride rate %.2f\n", ModelAnimator::SlotName(ma->ActiveSlot()), ma->CurrentStrideRate());
             CHECK(ma->ActiveSlot() == ModelAnimator::SlotWalk);
-            CHECK(ma->CurrentStrideRate() <= 1.5f);          // the walk clip is never sped up past 1.5 times (its cap is 1.6)
             R.Step(kDt, {'W', 16}, 120);
             std::printf("  W + Shift: slot %s at stride rate %.2f\n", ModelAnimator::SlotName(ma->ActiveSlot()), ma->CurrentStrideRate());
             CHECK(ma->ActiveSlot() == ModelAnimator::SlotRun);
-            CHECK(ma->CurrentStrideRate() <= 1.5f);
             R.Step(kDt, {}, 120);
             CHECK(ma->ActiveSlot() == ModelAnimator::SlotIdle);
-            // An older project whose walk is still the old 4.5 m/s (it was customised after the fit): a 1.4 m/s walk clip is
-            // never stretched to three times its pace; the run clip takes over beyond what the walk can follow.
-            tp->walkSpeed = 4.5f; tp->runSpeed = 8.0f;
-            R.Step(kDt, {'W'}, 120);
-            std::printf("  old speeds, W: slot %s at stride rate %.2f\n", ModelAnimator::SlotName(ma->ActiveSlot()), ma->CurrentStrideRate());
-            CHECK(ma->CurrentStrideRate() <= ModelAnimator::kStrideMaxRate + 1e-3f);
-            CHECK(ma->ActiveSlot() == ModelAnimator::SlotRun);
-            R.Step(kDt, {}, 120);
-            tp->walkSpeed = NaturalGait::kWalkSpeed; tp->runSpeed = NaturalGait::kRunSpeed;
         }
         // Speeds the user already changed are theirs: attaching a model leaves them.
         Scene s("custom");
@@ -571,19 +556,7 @@ int main() {
             c->walkSpeed = 3.0f;
             AttachCharacterModel(s, p, righarness::RigPath("mixamo_t_cm_clips.glb"));
             CHECK(c->walkSpeed == 3.0f);      // customised: kept
-            CHECK(c->runSpeed != NaturalGait::kRunSpeed && c->runSpeed < NaturalGait::kRunSpeed);   // still the default: fitted
-        }
-        // A scene saved before the natural walk and run spells the old 4.5 / 8.0 out: those still count as untouched.
-        {
-            Scene so("old-scene");
-            GameObject* op = Templates::AddThirdPersonPlayer(so, {0, 0, 0});
-            auto* oc = op->GetComponent<ThirdPersonController>();
-            CHECK(oc != nullptr);
-            if (oc) {
-                oc->walkSpeed = NaturalGait::kOldWalkSpeed; oc->runSpeed = NaturalGait::kOldRunSpeed;
-                AttachCharacterModel(so, op, righarness::RigPath("mixamo_t_cm_clips.glb"));
-                CHECK(oc->walkSpeed < NaturalGait::kOldWalkSpeed && oc->runSpeed < NaturalGait::kOldRunSpeed);   // fitted
-            }
+            CHECK(c->runSpeed < 8.0f);        // still the default: fitted
         }
         // A shooter player is fitted too, against the shooter's own defaults.
         Scene s2("shooter");
@@ -592,12 +565,11 @@ int main() {
         auto* sh = sp->AddComponent<ThirdPersonShooterController>();
         const float shWalk = sh->walkSpeed, shRun = sh->runSpeed;
         AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
-        CHECK(sh->walkSpeed != shWalk || sh->runSpeed != shRun);   // fitted (the fit can land on a default exactly for one of them)
-        CHECK(sh->runSpeed <= shRun);
+        CHECK(sh->walkSpeed < shWalk && sh->runSpeed < shRun);
         // Another model: the fitted speeds are refitted, not mistaken for the author's.
         const float w1 = sh->walkSpeed;
         AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));
-        CHECK(sh->walkSpeed == w1 && sh->runSpeed <= shRun);
+        CHECK(sh->walkSpeed == w1 && sh->runSpeed < shRun);
         // Set back to the default after the fit: that is the author's value now.
         sh->walkSpeed = shWalk;
         AttachCharacterModel(s2, sp, righarness::RigPath("mixamo_t_cm_clips.glb"));

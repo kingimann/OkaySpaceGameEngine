@@ -407,7 +407,7 @@ int main() {
             return std::sqrt(d.x * d.x + d.z * d.z);
         };
         const float free = walked(false), loaded = walked(true);
-        CHECK(free > 2.0f);   // 1.5 s of walking at the natural 2 m/s (was 3 m at the old fast walk)
+        CHECK(free > 3.0f);
         CHECK(loaded < free * 0.7f && loaded > free * 0.45f);   // ~0.55x
         CHECK_NEAR(MoveSpeedScale(nullptr), 1.0f, 1e-6f);
     }

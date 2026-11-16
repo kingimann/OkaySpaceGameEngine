@@ -72,19 +72,6 @@ struct Rig {
     }
 };
 
-// The speeds the controller under test starts with (they used to be 4.5 and 8.0; the natural walk and run changed them,
-// so the checks below are relative to these, not to those numbers).
-static float WalkOf(const Rig& r) {
-    if (auto* t = r.player->GetComponent<ThirdPersonController>()) return t->walkSpeed;
-    if (auto* f = r.player->GetComponent<FirstPersonController>()) return f->walkSpeed;
-    return 4.5f;
-}
-static float RunOf(const Rig& r) {
-    if (auto* t = r.player->GetComponent<ThirdPersonController>()) return t->runSpeed;
-    if (auto* f = r.player->GetComponent<FirstPersonController>()) return f->runSpeed;
-    return 8.0f;
-}
-
 static int FramesTo(Rig& r, const std::vector<char>& keys, float want, int cap = 90) {
     Input::FeedKeys(keys);
     for (int i = 1; i <= cap; ++i) {
@@ -104,14 +91,13 @@ int main() {
     // Walk and run ramps, then a sprint stop with the soft tail.
     {
         Rig fp("fp", false);
-        const float walkV = WalkOf(fp), runV = RunOf(fp);
-        const int walkF = FramesTo(fp, {'w'}, walkV * 0.90f);
+        const int walkF = FramesTo(fp, {'w'}, 4.5f * 0.90f);
         std::printf("fp walk to 90%%: %d frames (%.3f s) speed %.2f\n", walkF, walkF * dt, Horiz(fp.rb));
         CHECK(walkF > 0 && walkF < 20);
 
         Input::FeedKeys({});
         for (int i = 0; i < 40; ++i) fp.scene.Update(dt);
-        const int runF = FramesTo(fp, {'w', shift}, runV * 0.90f);
+        const int runF = FramesTo(fp, {'w', shift}, 8.0f * 0.90f);
         std::printf("fp run to 90%%: %d frames (%.3f s) speed %.2f\n", runF, runF * dt, Horiz(fp.rb));
         CHECK(runF > 0 && runF < 20);
 
@@ -126,10 +112,10 @@ int main() {
         std::printf("fp stop:");
         for (float v : stop) std::printf(" %.2f", v);
         std::printf("\n");
-        CHECK(stop.front() > 0.75f * runV);
+        CHECK(stop.front() > 6.0f);
         CHECK(stop.back() < 0.05f);
         int at22 = -1, atRest = (int)stop.size() - 1;
-        for (int i = 0; i < (int)stop.size(); ++i) if (at22 < 0 && stop[i] <= 0.275f * runV) at22 = i;   // 2.2 of the old 8.0
+        for (int i = 0; i < (int)stop.size(); ++i) if (at22 < 0 && stop[i] <= 2.2f) at22 = i;
         std::printf("  frames to 2.2 m/s: %d, frames to rest: %d\n", at22, atRest);
         CHECK(at22 > 0);
         CHECK(atRest > at22 + at22);   // the tail is longer than the hard part
@@ -141,8 +127,7 @@ int main() {
         Rig r(name, third);
         Input::FeedKeys(from);
         for (int i = 0; i < 40; ++i) r.scene.Update(dt);
-        const float runV = RunOf(r);
-        CHECK(Horiz(r.rb) > 0.75f * runV);
+        CHECK(Horiz(r.rb) > 6.0f);
         if (jump) {
             std::vector<char> up = from;
             up.push_back(' ');
@@ -160,7 +145,7 @@ int main() {
         for (int i = 1; i <= 40; ++i) {
             r.scene.Update(dt);
             last = HeadingErr(r.rb, wishX, wishZ);
-            if (last < 15.0f && Horiz(r.rb) > 0.375f * runV) { frames = i; break; }   // 3.0 of the old 8.0
+            if (last < 15.0f && Horiz(r.rb) > 3.0f) { frames = i; break; }
         }
         std::printf("%s heading <15 deg: %d frames (err %.1f speed %.2f)\n",
                     name, frames, last, Horiz(r.rb));
@@ -427,7 +412,7 @@ int main() {
         std::printf("walk speed template %.2f  switched %.2f\n", spA, spB);
         std::printf("walk bob   template %.3f  switched %.3f\n", bobA, bobB);
         CHECK_NEAR(spA, spB, 0.08f);
-        CHECK(spA > 0.9f * af->walkSpeed);   // it walks at its own walk speed (this said 3.0 when the walk was 4.5)
+        CHECK(spA > 3.0f);
         CHECK(bobA > 0.008f);
         CHECK(bobB > 0.008f);
         CHECK_NEAR(bobA, bobB, 0.012f);
@@ -528,8 +513,8 @@ int main() {
         const float zoomSpB = Horiz(b->GetComponent<Rigidbody3D>());
         std::printf("rmb+sprint speed template %.2f switched %.2f  fov %.1f %.1f (zoom 40, sprint kept)\n",
                     zoomSpA, zoomSpB, aC->fieldOfView, bC->fieldOfView);
-        CHECK(zoomSpA > 0.8f * af->runSpeed);
-        CHECK(zoomSpB > 0.8f * af->runSpeed);
+        CHECK(zoomSpA > 6.5f);
+        CHECK(zoomSpB > 6.5f);
         CHECK(aC->fieldOfView < 45.0f);
         CHECK(bC->fieldOfView < 45.0f);
         const float z0A = af->yaw, z0B = bf->yaw;

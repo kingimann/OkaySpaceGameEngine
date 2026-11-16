@@ -47,6 +47,11 @@ a blueprint at play) and spawns copies near itself every `interval` seconds, kee
 at most `maxAlive` of its own spawns alive and stopping after `totalToSpawn`
 (0 = endless). Spawns land within `spawnRadius`. `SpawnOne()` and `AliveCount()` are
 exposed. Make a "den" that drips out wolves, a chest that refills loot, etc.
+Each spawner's random pattern comes from where it stands (the same place always gives
+the same pattern, two places give different ones). NPC wander and behaviour-tree wander
+work the same way. Before issue #888 finding 52 every spawner or NPC more than about 58
+units from the origin got the same pattern; the new seed also changes the patterns of
+existing scenes (a level plays the same every time, but not the same as in older builds).
 
 ## Items, loot tables and recipes
 

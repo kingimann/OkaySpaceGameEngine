@@ -147,7 +147,11 @@ Quests are defined in a `.okayquest` file (the **Quests** tab of the Dialogue
 window: New / Save, a list, an inspector, problems) or typed into the Quest
 Log's inspector. A quest has an id, a title and description, **prerequisites**
 (quests that must be completed first), **objectives**, **rewards** and a
-**repeatable** flag.
+**repeatable** flag. A quest id may contain spaces, commas and quotes: the file keeps
+them (an id with a comma, a quote, a backslash or spaces at either end is written
+in quotes inside `pre`, for example `pre="\"a,b\",gather"`). Older files load
+as before; only an id with spaces inside used to lose them (`Find the sword` read
+back as `Findthesword`), and now it does not (issue #888, finding 53).
 
 | Objective | Completes when |
 | --- | --- |

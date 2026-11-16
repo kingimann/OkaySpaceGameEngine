@@ -29,7 +29,7 @@ Core additions in `okay/Core/Localization.hpp`, `Prefs.hpp` and `Time.hpp`. Test
 
 `SetPluralRule(lang, fn)` still overrides any of them.
 
-`Localization::PluralText(key, count, extraArgs)` looks the text up in the string table as `key.<form>` (`coins.one`, `coins.few`...). Order: the form in the current language, `key.other` in the current language, then the same two in the default language, then `key` itself as an inline `{0, plural, ...}` pattern. `{count}` and `{0}` are the number; extra args are `{1}`, `{2}`. Pseudo-localization applies as for Get.
+`Localization::PluralText(key, count, extraArgs)` looks the text up in the string table as `key.<form>` (`coins.one`, `coins.few`...). Order: the current language, then its parents (`fr-CA` -> `fr`, as `Get` does), then the default language; in each it tries the form and then `key.other`, then `key` itself as an inline `{0, plural, ...}` pattern. The form is picked, and the number written, by the rule of the language the text came from: English fallback text shown to a French player says "0 coins" and "1.5 coins" (the English rule), not "0 coin". `Localize` / `loc` do the same for an inline `{0, plural, ...}` pattern that came from a fallback language (issue #888, finding 65). `{count}` and `{0}` are the number; extra args are `{1}`, `{2}`. Pseudo-localization applies as for Get.
 
 ## Fallback chain
 

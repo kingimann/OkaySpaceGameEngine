@@ -3780,3 +3780,8 @@ add_executable(walk_vs_run_strips walk_vs_run_strips.cpp)
 target_link_libraries(walk_vs_run_strips PRIVATE okay::engine)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
 add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
+
+# Issue #888 findings 52 / 53 / 65: position seeds far from the origin, quest prerequisites with spaces, plural fallback
+add_executable(test_seed_quest_plural test_seed_quest_plural.cpp)
+target_link_libraries(test_seed_quest_plural PRIVATE okay::engine)
+add_test(NAME seed_quest_plural COMMAND test_seed_quest_plural)

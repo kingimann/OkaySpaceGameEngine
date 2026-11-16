@@ -1136,6 +1136,38 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Spawner seeds, quest prerequisites with spaces, plural fallback (bug fixes, issue #888 findings 52, 53, 65)
+
+Branch `claude2/seed-quest-plural` (not merged or released yet).
+
+**Spawners far from the origin (52).**
+1. In the editor, make a cube named `Blueprint`. Make two empty objects at X = 100 and X = 200 (Z = 0). Give each
+   **Add Component > Gameplay > Spawner** with **Template** = `Blueprint`, **Interval** 0.5, **Max Alive** 0.
+2. Press **Play** and look from above. Before: the two spawners drop their copies in the same pattern around
+   themselves (every spawner past about 58 units did). Now: each spawner has its own pattern. Stop and Play again:
+   each spawner repeats its own pattern (it depends only on where it stands).
+3. NPC wander and behaviour-tree **Wander** use the same seed. Note: the new seed changes the spawn and wander
+   patterns of existing scenes too (still the same every run, but not the same as in older builds).
+
+**Quest prerequisites with spaces (53).**
+1. Open the Dialogue window, **Quests** tab, **New**. Add a quest with id `Find the sword`, and a second quest
+   `Slay dragon` whose prerequisite is `Find the sword`. **Save**.
+2. Close and reopen the file. Before: the prerequisite read back as `Findthesword`, the problems list said it is not
+   a quest, and `Slay dragon` could never start. Now: it reads back as `Find the sword` and no problem is shown.
+   Ids with commas or quotes also survive. Older files load as before.
+
+**Plural fallback (65).**
+1. In the Localization window, add languages `en` (default) and `fr`. Add key `shop` with English text
+   `{0, plural, one {# coin} other {# coins}}` and no French text.
+2. In a script: `set_language("fr")` then `print(loc("shop", 0))` and `print(loc("shop", 1.5))`.
+   Before: `0 coin` and `1.5 coin` (English text with the French rule). Now: `0 coins` and `1.5 coins`.
+3. The second half (a regional language such as `fr-CA` using the `fr` plural texts `key.one` / `key.other`)
+   is only in the C++ call `Localization::PluralText`; no script function or editor part uses it yet, so it cannot be
+   tried on a release today. It is checked by `test_seed_quest_plural`.
+
+**Checks run:** see the branch's report (`test_seed_quest_plural` and the quest, localization, spawner, NPC,
+behaviour-tree and scene-serializer suites on Linux). Not tried on Windows.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

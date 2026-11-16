@@ -15,7 +15,7 @@ All sizes are **judgement, not measurements**. "Small" = an afternoon of agent w
 |---|---|---|
 | player | 5 / 221 | almost only data types (`SDL_Rect`, `SDL_Color`, `Uint8`); the window, input, GL, audio and 2D drawing already go through `okay::platform` |
 | launcher | 743 / 1,199 in its own files | **613 are threads, mutexes and atomics (83%)**; 57 `SDL_Renderer` drawing; 14 Dear ImGui SDL backends; about 60 window, input and other platform calls |
-| editor | 229 / 556 | 126 `SDL_Renderer` drawing, 22 GL context, 25 window, 17 mouse, 17 Dear ImGui SDL backends, the rest small |
+| editor | 229 / 556 | 126 `SDL_Renderer` drawing, 22 GL context, 25 window, 17 mouse, 17 Dear ImGui SDL backends, the rest small (stage E1, below in "Editor": `main.cpp` 194 to 154 calls, its GL context and ImGui SDL2 platform calls behind `OKAY_EDITOR_PLATFORM`) |
 | engine library | 0 | outside the SDL backend files (`SdlBackend.cpp`, `SdlPainter.cpp`, `UIPainterSDL.hpp`) there is **no SDL word in code** |
 
 Three different things keep SDL2 in the two programs, and they need three different kinds of work:
@@ -239,6 +239,9 @@ the editor's scene view open.
 
 ### Step 5. Our own Dear ImGui platform backend (events, cursor, clipboard, text input, window)
 
+**Status (2026-11-16).** Written for the launcher in step 2b (`OKAY_LAUNCHER_RENDERER=own`) and, behind `OKAY_EDITOR_PLATFORM=own`, used by the
+editor too (stage E1, section "Editor" below); the one shared copy is `shared/ImGuiOwnPlatform.*`. Not done: multi-window panels (viewports), mouse capture
+while dragging. Both off by default, neither run on Windows.
 **What.** Replace `ImGui_ImplSDL2_*` (launcher 7, editor 8). It feeds `okay::platform::Event` into `ImGuiIO`: mouse, wheel, keys (a table from our `Key` to `ImGuiKey`), typed text,
 focus, window size and scale, the cursor shape (needs `SetCursor` from step 1), the clipboard, and drop. About 500 lines plus a test that feeds synthetic events and checks
 `ImGuiIO` and the hovered widget. Write it from `imgui.h`'s documented input API, not from `imgui_impl_sdl2.cpp`.
@@ -266,6 +269,119 @@ has no own backend, so SDL2 cannot be deleted from the repository until the web 
 
 Only after the replacement criteria in `docs/own_code_roadmap.md` hold: make `okay::platform` own the default per platform with the owner's written approval, announce it one release ahead, delete
 SDL2, the CMake `find_package(SDL2)`, the CI and release downloads, `dist/SDL2.dll` and the bundled copy one release later. The build and CI files that name SDL2 are listed in the inventory (section 6).
+
+## Editor
+
+The editor is the biggest SDL user left. It is built differently from the launcher, which matters for the plan:
+
+* **Its UI is drawn by `SDL_Renderer`** (Direct3D 11 on Windows, OpenGL on Linux), through Dear ImGui's `SDL_Renderer` backend. Every
+  picture a panel shows (the Scene and Game views, thumbnails, icons, previews) is an `SDL_Texture`, and on Windows the Direct3D 11
+  renderer draws the views straight into SDL's device (`SDL_RenderGetD3D11Device`).
+* **Its 3D views render with OpenGL on a separate, hidden 16 x 16 window** ("okay-gl") with its own GL 3.2 compatibility context and a
+  24-bit depth buffer. The views render off screen there and are read back into an `SDL_Texture`. The UI never draws with that context.
+* **ImGui's multi-window mode** (View > multi-window: panels dragged out become their own OS windows) uses ImGui's SDL2 platform
+  backend for the windows and the editor's own `SDL_Renderer` code for drawing them.
+
+So the main window must stay an SDL window for as long as `SDL_Renderer` draws it. That is stage E2 (below).
+
+### The inventory (2026-11-16)
+
+Counted with `scripts/sdl_inventory.py`'s scanner (comments and strings removed; **calls / words**, words also count types,
+constants and event names), grouped by kind. Before = the launcher branch this work starts from (`e2b67cce`); after = stage E1.
+`editor/` is the whole directory (including `VsGraphShot.cpp`, the `--vs-shot` screenshot tool, and, after E1, the seam's SDL side
+`EditorPlatformSdl.cpp`); `main.cpp` alone shows what moved out of it.
+
+| group | `editor/` before | `editor/` after E1 | `main.cpp` before | `main.cpp` after E1 |
+|---|---:|---:|---:|---:|
+| window (create, focus, show / raise, size, id, displays, DPI hint) | 27 / 49 | 20 / 41 | 25 / 43 | 13 / 18 |
+| GL context (attributes, create, make current, current context, proc address) | 23 / 34 | 18 / 28 | 23 / 34 | **0 / 0** |
+| events (poll, pump, push, event filter, window events) | 5 / 13 | 5 / 14 | 4 / 11 | 4 / 11 |
+| file drop | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 |
+| keyboard (keys, key state, text input) | 7 / 58 | 7 / 58 | 6 / 33 | 6 / 33 |
+| mouse (state, relative mode, touch) | 14 / 30 | 14 / 30 | 14 / 30 | 14 / 30 |
+| cursor (show / hide, warp) | 3 / 6 | 3 / 6 | 3 / 6 | 3 / 6 |
+| clipboard | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| timers | 3 / 3 | 3 / 3 | 3 / 3 | 3 / 3 |
+| audio | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| threads | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| gamepad (device events) | 0 / 2 | 0 / 2 | 0 / 2 | 0 / 2 |
+| Dear ImGui SDL2 platform backend (`ImGui_ImplSDL2_*`) | 8 / 10 | 8 / 10 | 4 / 5 | **0 / 0** |
+| Dear ImGui `SDL_Renderer` backend (`ImGui_ImplSDLRenderer2_*`) | 9 / 11 | 9 / 11 | 5 / 6 | 5 / 6 |
+| `SDL_Renderer` drawing (textures, surfaces, targets, read-back, driver hints) | 109 / 264 | 109 / 265 | 89 / 206 | 89 / 206 |
+| other (init / quit, errors, base path, libc helpers, message box, BMP, version, integer types) | 24 / 78 | 24 / 79 | 18 / 62 | 17 / 61 |
+| **all** | **232 / 561** | **220 / 550** | **194 / 444** | **154 / 379** |
+
+Notes. The editor's clipboard in play mode goes through `shared/SdlClipboard.hpp` and its monitor list through `shared/SdlDisplays.cpp`
+(counted under `shared/`, not here). Audio and controllers already go through `okay::platform`. The 28 calls of `EditorPlatformSdl.cpp`
+are the default (`sdl`) side of the seam, on purpose, and go when SDL goes; `VsGraphShot.cpp` (27 calls) is a developer tool with its
+own SDL window.
+
+### Stage E1: the window, ImGui's platform side and the views' GL context behind a seam (branch `claude2/sdl-editor-seam`, on top of 2d)
+
+**Status (2026-11-16): built and tested on Linux under Xvfb, without the editor; off by default; not merged; never run in a real editor
+session; Windows not run.** `OKAY_EDITOR_PLATFORM=own` switches it on; anything else (no variable, `sdl`) is the old path. The editor
+prints `editor: platform ...` once at start (stderr and the Console).
+
+* **The seam** (`editor/EditorPlatform.hpp`, no SDL types): the main window, Dear ImGui's platform side (init, events, new frame,
+  shut-down) and the views' hidden GL context (create, begin / end around each use, the GL function lookup, destroy).
+  * `sdl` (`editor/EditorPlatformSdl.cpp`): `SDL_CreateWindow`, `ImGui_ImplSDL2_*` and `SDL_GL_*`, what `main.cpp` did. One small
+    difference: creating the GL context now gives the UI's context back at once and the editor then makes the views' context current
+    to load the GL functions (two more `SDL_GL_MakeCurrent` calls at start-up).
+  * `own` (`editor/EditorPlatform.cpp`): ImGui is fed by **our own glue** (`shared/ImGuiOwnPlatform.*`, the launcher's, moved there so
+    both programs share one copy). `main.cpp` still reads SDL's queue (its shortcuts, file drops and play-mode input read the
+    `SDL_Event`), and each event is turned into an `okay::platform::Event` by the new `okay::platform::TranslateSdl2Event` before the
+    glue sees it. The main window is made by okay::platform's sdl2 backend (it has to be an SDL window while `SDL_Renderer` draws it).
+    **The views' GL window and context come from `okay::platform::Default()`**: SDL's by default, and **our own GLX (Linux) or WGL
+    (Windows) code with `OKAY_PLATFORM_BACKEND=own`**. When `SDL_Renderer` draws with OpenGL (Linux), the UI's context is handed back
+    through SDL after each use: SDL keeps its own note of which context is current and skips a switch it thinks is a no-op, so the
+    seam clears that note first (the test fails without it: the UI drew nothing).
+* **`main.cpp` changes** (small): window creation, ImGui's platform calls, the three GL context sites and the start-up GL block go
+  through the seam; the window id, focus, show and raise go through okay::platform's view of the window (`Window::Id`, `IsFocused`,
+  `SetInputFocus`, `Show`, `Raise`: the same SDL calls on `sdl`).
+* **What `own` does differently** (known, by design for now):
+  * no multi-window panels (our glue has no platform windows): the option is ignored with `own`, panels stay inside the editor;
+  * keys are physical keys (the key's place on the keyboard), not the layout's letter: ImGui's own shortcuts in text fields (Ctrl+A,
+    C, V, X, Z, Y) follow the key position on AZERTY or QWERTZ (the editor's own menu shortcuts read SDL and are unchanged);
+  * no mouse capture while dragging: a drag that leaves the window (a splitter, a slider) may stop at the edge;
+  * where the OS reports natural scrolling as "flipped", our wheel is turned back to "up = up" (ImGui's SDL2 backend leaves it);
+  * text input stays on all the time, as SDL starts it (the editor's play mode and OkayUI fields rely on that).
+* **Tests** (2026-11-16, Xvfb, Mesa llvmpipe). `editor_platform` and `editor_platform_own` (`tests/test_editor_platform.cpp`, which
+  links only the seam, the glue, ImGui, okay::platform and SDL, not the editor):
+  * both sides: the main window (hidden, resizable, its size and id through okay::platform); the views' context is GL 3.2 or newer
+    with the compatibility profile, a framebuffer object with a colour and a 24-bit depth buffer is complete, a clear reads back
+    green; after it `SDL_Renderer`'s own GL context is current again and the window still draws (a red clear read back); ImGui gets a
+    **real pointer move from the X server** (a warp) and queued button, wheel, key, modifier and text events; the clipboard both
+    ways (ImGui to the system and back); the cursor shape ImGui asks for reaches the window; a dropped file is left to `main.cpp`
+    (not eaten, not freed) and translated with its path;
+  * `_own` runs the same with `OKAY_PLATFORM_BACKEND=own`: the views' window and context are our own X11 / GLX code next to
+    SDL's OpenGL renderer;
+  * **our glue against ImGui's SDL2 backend**: two ImGui contexts on the same window get the same SDL events (all five mouse
+    buttons, whole and fractional wheel steps both ways, Ctrl / Shift / Alt / Super, letters, digits, F-keys, arrows, keypad,
+    Enter, Escape, typed text with accents, the euro sign and an emoji, focus lost and gained) for 27 frames: **every frame
+    identical** (mouse position, buttons, wheel, keys down, modifiers, typed characters, focus);
+  * 113 checks each; a deliberate break (the context hand-back without clearing SDL's note) makes `_own` fail.
+  * `editor/main.cpp` passes a syntax-only compile (it holds both sides; the switch is at run time). The new files, the moved glue and
+    `SdlBackend.cpp` pass a MinGW syntax check (with Linux SDL headers: there is no MinGW SDL here).
+  * The launcher after the glue moved: `launcher_imgui_renderer`, `launcher_imgui_renderer_gl`, `okayui_host`, every `platform*`
+    suite and `launcher_wav_window` pass; `scripts/launcher_renderer_check.sh` gives the same results as before the move (the Create
+    page differs only by the footer label, 4,154 pixels; the small window and the chat window are identical; typing, clicks and the
+    IME caret reach ImGui).
+* **Counts.** `editor/main.cpp` 194 to 154 SDL calls (444 to 379 words); the whole `editor/` directory 232 to 220 (the seam's `sdl` side
+  holds 28). In `main.cpp` the ImGui SDL2 platform backend and the GL context calls are gone (4 and 23 to 0).
+* **Not done / unverified.** No real editor session (the editor is too big to build on this machine's memory: only the syntax check).
+  Nothing on Windows: the WGL context next to SDL's Direct3D 11 renderer is unrun. No multi-window panels on `own`. The default stays
+  `sdl` until the owner approves (rule 17).
+
+### What comes next for the editor
+
+* **E2. Drawing without `SDL_Renderer`.** The editor's ImGui draws through our renderer (`launcher/ImGuiOwnBackend.cpp`) on a painter,
+  and the 10 places that make `SDL_Texture`s (views, thumbnails, icons, previews) make painter textures instead. Then the main window
+  can come from `okay::platform` (our GL painter on our window) and its events from `Backend::PollEvent`. The Direct3D 11 "draw the views
+  into SDL's device" path needs its own answer (our Direct3D 11 painter, or read-back on Windows too). Large.
+* **E3. The event loop and input through the seam.** `main.cpp`'s shortcuts, play-mode keyboard (`EditorPlayInput.hpp`), relative
+  mouse, warp, cursor show / hide, touch, drops and controller events read `okay::platform::Event` instead of `SDL_Event`. Medium.
+* **E4. Multi-window panels on `own`** (ImGui's platform windows through `okay::platform`), then the rest (`SDL_Init` / `SDL_Quit`,
+  the base path, the message box, `SdlDisplays.cpp`, `SdlClipboard.hpp`). Then `own` + `own` can be proved SDL-free like the launcher.
 
 ## What can run in parallel, and the critical path
 

@@ -98,12 +98,12 @@ SDL_Event Button(Uint32 win, bool down, Uint8 b, int x, int y) {
     e.button.clicks = 1; e.button.x = x; e.button.y = y;
     return e;
 }
-SDL_Event Wheel(Uint32 win, int x, int y) {
+SDL_Event Wheel(Uint32 win, float x, float y) {   // a touchpad sends fractions (preciseX / Y); the whole-notch fields round toward 0
     SDL_Event e; SDL_zero(e);
-    e.type = SDL_MOUSEWHEEL; e.wheel.windowID = win; e.wheel.x = x; e.wheel.y = y;
+    e.type = SDL_MOUSEWHEEL; e.wheel.windowID = win; e.wheel.x = (Sint32)x; e.wheel.y = (Sint32)y;
     e.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
 #if SDL_VERSION_ATLEAST(2, 0, 18)
-    e.wheel.preciseX = (float)x; e.wheel.preciseY = (float)y;
+    e.wheel.preciseX = x; e.wheel.preciseY = y;
 #endif
     return e;
 }
@@ -443,6 +443,8 @@ void TestGlueMatchesSdlBackend() {
         {Wheel(wid, 0, -3)},
         {Wheel(wid, 1, 0)},
         {Wheel(wid, -2, 1)},
+        {Wheel(wid, 0.0f, 0.25f)},              // touchpad: a quarter notch
+        {Wheel(wid, -0.5f, -1.75f)},
         {Key(wid, true, SDL_SCANCODE_LCTRL, SDLK_LCTRL, ctrl), Key(wid, true, SDL_SCANCODE_Z, SDLK_z, ctrl)},
         {Key(wid, false, SDL_SCANCODE_Z, SDLK_z, ctrl), Key(wid, false, SDL_SCANCODE_LCTRL, SDLK_LCTRL, 0)},
         {Key(wid, true, SDL_SCANCODE_LSHIFT, SDLK_LSHIFT, shift), Key(wid, true, SDL_SCANCODE_A, SDLK_a, shift), Text(wid, "A")},

@@ -207,7 +207,7 @@ public:
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             Event r;
-            if (Translate(e, r, true)) { out = std::move(r); return true; }
+            if (Translate(e, r, true, false)) { out = std::move(r); return true; }
         }
         return false;
     }
@@ -346,8 +346,9 @@ public:
     }
 
     /// One SDL_Event as ours. `freeDrop`: free SDL's dropped-file string (PollEvent owns the event); false when the app read the
-    /// event itself and frees it (TranslateSdl2Event).
-    static bool Translate(const SDL_Event& e, Event& r, bool freeDrop) {
+    /// event itself and frees it (TranslateSdl2Event). `preciseWheel`: the wheel's fractional amounts (SDL 2.0.18's preciseX / Y,
+    /// what touchpads send) instead of whole notches; PollEvent keeps the whole notches it always gave.
+    static bool Translate(const SDL_Event& e, Event& r, bool freeDrop, bool preciseWheel) {
         r.timestampMs = e.common.timestamp;
         switch (e.type) {
         case SDL_QUIT: r.type = EventType::Quit; return true;
@@ -378,6 +379,11 @@ public:
         case SDL_MOUSEWHEEL:
             r.type = EventType::MouseWheel; r.windowId = e.wheel.windowID;
             r.wheelX = (float)e.wheel.x; r.wheelY = (float)e.wheel.y;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+            if (preciseWheel) { r.wheelX = e.wheel.preciseX; r.wheelY = e.wheel.preciseY; }
+#else
+            (void)preciseWheel;
+#endif
             if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) { r.wheelX = -r.wheelX; r.wheelY = -r.wheelY; r.wheelFlipped = true; }
             return true;
         case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP:
@@ -405,7 +411,7 @@ std::unique_ptr<Backend> CreateSdl2Backend() { return std::unique_ptr<Backend>(n
 
 bool TranslateSdl2EventImpl(const void* sdlEvent, Event& out) {
     Event r;
-    if (!SdlBackend::Translate(*static_cast<const SDL_Event*>(sdlEvent), r, false)) return false;
+    if (!SdlBackend::Translate(*static_cast<const SDL_Event*>(sdlEvent), r, false, true)) return false;
     out = std::move(r);
     return true;
 }

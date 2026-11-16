@@ -215,8 +215,9 @@ public:
 std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
 
 /// One SDL_Event the app read itself with SDL_PollEvent (`sdlEvent` is a const SDL_Event*), as the sdl2 backend's PollEvent would have
-/// returned it: the same fields, the same event kinds (others give false). A dropped file's path is copied, and SDL's string is NOT
-/// freed (the app still owns the event and frees it). False when the event has no okay::platform form or the sdl2 backend is not
+/// returned it: the same fields, the same event kinds (others give false), with two differences: a dropped file's path is copied
+/// and SDL's string is NOT freed (the app still owns the event and frees it), and the wheel carries SDL's fractional amounts
+/// (preciseX / preciseY, touchpads) rather than whole notches, as ImGui's SDL2 backend reads them. False when the event has no okay::platform form or the sdl2 backend is not
 /// compiled in. Transitional, like WrapSdl2Window: the editor's ImGui glue reads SDL's queue this way while SDL_Renderer still draws
 /// its window (OKAY_EDITOR_PLATFORM=own, docs/sdl_removal_plan.md stage E1).
 bool TranslateSdl2Event(const void* sdlEvent, Event& out);

@@ -281,6 +281,49 @@ inline bool VsPaletteHidden(const VsDef& d) {
     return hidden;
 }
 
+/// The title part of the Add Node search (DrawNodePalette): the whole title > its start > the start of a word >
+/// anywhere > its letters in order. `needle` and `titleLower` are lower-case. 0 when the title does not match;
+/// `hits` marks the matched letters of the title.
+inline int VsPaletteTitleScore(const std::string& needle, const std::string& titleLower, std::vector<int>& hits) {
+    hits.clear();
+    const std::string& t = titleLower;
+    if (t == needle) { for (int i = 0; i < (int)t.size(); ++i) hits.push_back(i); return 1000; }
+    std::size_t p = t.find(needle);
+    if (p != std::string::npos) {
+        for (std::size_t i = 0; i < needle.size(); ++i) hits.push_back((int)(p + i));
+        if (p == 0) return 800;
+        if (t[p - 1] == ' ' || t[p - 1] == '(') return 650;
+        return 500 - (int)p;
+    }
+    int run = 0, sc = 0; std::size_t j = 0;
+    for (std::size_t i = 0; i < t.size() && j < needle.size(); ++i) {
+        if (t[i] == needle[j]) { hits.push_back((int)i); ++j; run++; sc += 3 + run * 2 + (i == 0 || t[i - 1] == ' ' ? 6 : 0); }
+        else run = 0;
+    }
+    if (j == needle.size()) return 100 + sc;
+    hits.clear();
+    return 0;
+}
+/// The rest of the Add Node search: the needle anywhere in the longer searchable text (raw name, old titles, help).
+inline int VsPaletteBlobScore(const std::string& needle, const std::string& blobLower) {
+    return blobLower.find(needle) != std::string::npos ? 40 : 0;
+}
+/// The search the Add Node menu runs for one registry row, without the window: 0 when the row is hidden (a duplicate
+/// or waiting to be tested) or does not match. The blob here is the row's type and VsNodeSearchText plus its docs,
+/// which is where the menu finds a node by its raw text-script name (raycast3).
+inline int VsPaletteSearchScore(const VsDef& d, const std::string& needleLower) {
+    if (VsPaletteHidden(d)) return 0;
+    if (needleLower.empty()) return 1;
+    std::vector<int> hits;
+    std::string title = d.title ? d.title : "";
+    for (char& c : title) c = (char)std::tolower((unsigned char)c);
+    if (const int sc = VsPaletteTitleScore(needleLower, title, hits)) return sc;
+    std::string blob = std::string(d.type) + " " + VsNodeSearchText(d.type);
+    if (const VsNodeDoc* doc = VsNodeDocFor(d.type)) blob += " " + VsSearchBlob(*doc);
+    for (char& c : blob) c = (char)std::tolower((unsigned char)c);
+    return VsPaletteBlobScore(needleLower, blob);
+}
+
 /// The listed nodes that can take (fromOutput) or give (!fromOutput) a wire at one pin of a node, easiest first.
 /// This is the same rule as the list shown when a wire is dropped in empty space (VsCompatible), so the node
 /// right-click "Connect to..." menu and the wire-drop palette always agree.
@@ -512,24 +555,8 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
     // order; type, category and description count a little. `hits` marks the
     // matched letters of the title.
     auto score = [&](const Entry& e, std::vector<int>& hits) -> int {
-        hits.clear();
-        if (needle.empty()) return 1;
-        const std::string& t = e.titleLower;
-        if (t == needle) { for (int i = 0; i < (int)t.size(); ++i) hits.push_back(i); return 1000; }
-        std::size_t p = t.find(needle);
-        if (p != std::string::npos) {
-            for (std::size_t i = 0; i < needle.size(); ++i) hits.push_back((int)(p + i));
-            if (p == 0) return 800;
-            if (t[p - 1] == ' ' || t[p - 1] == '(') return 650;
-            return 500 - (int)p;
-        }
-        int run = 0, sc = 0; std::size_t j = 0;
-        for (std::size_t i = 0; i < t.size() && j < needle.size(); ++i) {
-            if (t[i] == needle[j]) { hits.push_back((int)i); ++j; run++; sc += 3 + run * 2 + (i == 0 || t[i - 1] == ' ' ? 6 : 0); }
-            else run = 0;
-        }
-        if (j == needle.size()) return 100 + sc;
-        hits.clear();
+        if (needle.empty()) { hits.clear(); return 1; }
+        if (const int sc = VsPaletteTitleScore(needle, e.titleLower, hits)) return sc;
         if (!e.blobBuilt) {   // the long searchable text is built the first time a search reaches this entry
             std::string pins;
             if (e.def) {
@@ -545,7 +572,7 @@ inline void DrawNodePalette(VsEditState& st, const VsEditGraph& g,
                                 (e.doc ? " " + VsSearchBlob(*e.doc) : std::string()));
             e.blobBuilt = true;
         }
-        return e.blobLower.find(needle) != std::string::npos ? 40 : 0;
+        return VsPaletteBlobScore(needle, e.blobLower);
     };
 
     // ---- Sidebar ----

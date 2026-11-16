@@ -1601,6 +1601,10 @@ target_include_directories(test_vs_fn_pin_docs PRIVATE ${CMAKE_SOURCE_DIR}/edito
 target_link_libraries(test_vs_fn_pin_docs PRIVATE okay::engine)
 target_compile_definitions(test_vs_fn_pin_docs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_fn_pin_docs COMMAND test_vs_fn_pin_docs)
+add_executable(test_vs_hidden_3d test_vs_hidden_3d.cpp)   # 3D Fn.* nodes listed in Add Node, no "Fourth" titles (#888 finding 10)
+target_include_directories(test_vs_hidden_3d PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_hidden_3d PRIVATE okay::engine)
+add_test(NAME vs_hidden_3d COMMAND test_vs_hidden_3d)
 
 add_executable(test_ui_animation test_ui_animation.cpp)
 target_link_libraries(test_ui_animation PRIVATE okay::engine)

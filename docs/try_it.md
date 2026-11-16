@@ -472,6 +472,27 @@ and what comes out. Found by a tester (#888, finding 34, part C).
 generator's `--check`). `editor/main.cpp` was only syntax-checked, not built or run (no SDL here), so the menu and canvas
 are unverified until you look.
 
+## Visual Script: 3D script-function nodes in Add Node (branch `claude2/vs-hidden-3d-nodes`, not merged or released yet)
+
+**What it is.** The Add Node menu hid the 3D versions of the script-function nodes (`Fn.raycast3`, `Fn.box_cast3`,
+`Fn.set_pos3`, `Fn.spawn3` and others). Their titles dropped the "3", so `box_cast3` was called "Box Cast", the same as
+the 2D `box_cast`, and the menu shows only one node per title. Some 2D titles were wrong too: the "D" of "2D" was read
+as "fourth", so `Physics2D.Raycast` was "Physics Fourth Raycast". Now the 3D nodes say "... in Three Dimensions" and the
+2D ones "... in Two Dimensions", and every 3D node is listed. Found by a tester (#888, finding 10).
+
+**Steps.**
+1. Open the editor, select any object, add a **Visual Script** and open the graph.
+2. Right-click the canvas (or press the Add Node key) and search for `raycast3`. **Raycast in Three Dimensions** is in
+   the list. Before this change the search found nothing.
+3. Search `box cast`: both **Box Cast** (2D) and **Box Cast in Three Dimensions** are listed.
+4. Search `physics raycast`: the 2D one reads **Physics Raycast in Two Dimensions**, not "Physics Fourth Raycast".
+5. Search `max3`: **Largest of Three** (the largest of three numbers).
+6. Graphs saved before this change load the same: nodes are saved by their type (`Fn.raycast3`), not by title.
+
+**Status.** Tested headless: `test_vs_hidden_3d` (every 3D node listed and found by the same search the menu uses, no
+"First ... Thirteenth" word leaking into a title). The menu itself was not opened (no editor build here), so what you
+see on screen is unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

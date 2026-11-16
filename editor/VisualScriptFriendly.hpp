@@ -30,7 +30,9 @@ inline std::string VsLowerCopy(std::string s) {
 inline bool VsStarts(const std::string& s, const char* p) { return s.rfind(p, 0) == 0; }
 
 // One identifier token, lowercase, into ordinary words. Digits never survive.
-inline void VsExpandToken(const std::string& low, std::vector<std::string>& out) {
+// `pin` is true for a pin name: there a, b, c, d are the first to fourth input (lerp(a, b, t)). In a node title
+// they are not (#888 finding 10: the "d" of "Physics2D" made "Physics Fourth Raycast"), so a title drops them.
+inline void VsExpandToken(const std::string& low, std::vector<std::string>& out, bool pin = true) {
     const char* repl = nullptr;
     struct Rep { const char* from; const char* to; };
     static const Rep k[] = {
@@ -56,7 +58,7 @@ inline void VsExpandToken(const std::string& low, std::vector<std::string>& out)
         {"var", "value"}, {"vec", "vector"}, {"vec3", "vector"}, {"vel", "velocity"},
     };
     for (const Rep& r : k) if (low == r.from) { repl = r.to; break; }
-    if (!repl && low.size() == 1) {
+    if (!repl && low.size() == 1 && !(!pin && low[0] >= 'a' && low[0] <= 'd')) {
         switch (low[0]) {
             case 'a': repl = "first"; break; case 'b': repl = "second"; break;
             case 'c': repl = "third"; break; case 'd': repl = "fourth"; break;
@@ -88,12 +90,12 @@ inline void VsExpandToken(const std::string& low, std::vector<std::string>& out)
     out.push_back(low);
 }
 
-inline std::vector<std::string> VsWordsOf(const std::string& ident) {
-    std::vector<std::string> words;
+// Splits `ident` into words and appends them (nothing when it has no words).
+inline void VsSplitWords(const std::string& ident, std::vector<std::string>& words, bool pin = true) {
     std::string cur;
     auto flush = [&]() {
         if (cur.empty()) return;
-        VsExpandToken(VsLowerCopy(cur), words);
+        VsExpandToken(VsLowerCopy(cur), words, pin);
         cur.clear();
     };
     for (std::size_t i = 0; i < ident.size(); ++i) {
@@ -109,6 +111,11 @@ inline std::vector<std::string> VsWordsOf(const std::string& ident) {
         else flush();
     }
     flush();
+}
+
+inline std::vector<std::string> VsWordsOf(const std::string& ident, bool pin = true) {
+    std::vector<std::string> words;
+    VsSplitWords(ident, words, pin);
     if (words.empty()) words.push_back("value");
     return words;
 }
@@ -222,10 +229,78 @@ inline const char* VsFriendlyApiTitle(const okay::vs::VsApiEntry& e) {
     return VsIntern(VsFriendlyApiTitleString(e));
 }
 
+// The title words of a text-script builtin name, keeping what its digits mean (#888 finding 10). Before, digits
+// were dropped, so box_cast3 got the title of box_cast and the palette hid it as a duplicate.
+//   * A name part spelled with digits that mean words (min3 = smallest of three numbers, deg2rad), or a short part
+//     that would otherwise be dropped (nx), uses this table.
+//   * A 2 or 3 that ends a name part, alone or followed by a single d ("Physics2D", "create_object_3d", "box_cast3",
+//     "ray3_x"), says how many dimensions: `dims` is set to it, and the caller says "in Two/Three Dimensions".
+//   * Any other digit is dropped, as before.
+// Single letters are title words here, not pin words (VsExpandToken with pin = false).
+inline std::vector<std::string> VsBuiltinTitleWords(const std::string& builtin, int& dims) {
+    struct Num { const char* part; const char* words; };   // a whole name part and its words
+    static const Num kNum[] = {
+        {"atan2", "angle from axes"}, {"deg2rad", "degrees to radians"}, {"rad2deg", "radians to degrees"},
+        {"min3", "smallest of three"}, {"max3", "largest of three"}, {"clamp01", "keep between zero and one"},
+        {"log10", "logarithm base ten"},
+        // A ray's hit normal (ray3_nx): two letters would be dropped, so ray3_nx, ray3_ny and ray3_nz shared a title.
+        {"nx", "normal right"}, {"ny", "normal vertical"}, {"nz", "normal forward"},
+    };
+    dims = 0;
+    std::vector<std::string> words;
+    std::string part;
+    auto flushPart = [&]() {
+        if (part.empty()) return;
+        const std::string low = VsLowerCopy(part);
+        for (const Num& n : kNum) {
+            if (low != n.part) continue;
+            std::string w;
+            for (const char* c = n.words; ; ++c) {
+                if (*c == ' ' || *c == '\0') { if (!w.empty()) words.push_back(w); w.clear(); if (!*c) break; }
+                else w += *c;
+            }
+            part.clear();
+            return;
+        }
+        // Take the dimension marks out of the part, then split what is left as before.
+        std::string rest;
+        for (std::size_t i = 0; i < part.size();) {
+            const unsigned char c = (unsigned char)part[i];
+            if (!std::isdigit(c)) { rest += part[i++]; continue; }
+            std::size_t j = i;
+            while (j < part.size() && std::isdigit((unsigned char)part[j])) ++j;
+            const std::string run = part.substr(i, j - i);
+            const bool endsHere = j == part.size();
+            const bool endsWithD = j + 1 == part.size() && (part[j] == 'd' || part[j] == 'D');
+            if ((run == "2" || run == "3") && (endsHere || endsWithD)) {
+                dims = run[0] - '0';
+                i = endsWithD ? j + 1 : j;
+                if (!rest.empty()) rest += '_';
+                continue;
+            }
+            rest += '_';   // another number: dropped, but it still ends a word
+            i = j;
+        }
+        VsSplitWords(rest, words, false);   // a part that was only a dimension mark ("3d") adds nothing
+        part.clear();
+    };
+    for (char c : builtin) {
+        if (c == '_' || c == '.' || c == '-' || c == ' ') flushPart();
+        else part += c;
+    }
+    flushPart();
+    if (words.empty()) words.push_back("value");
+    return words;
+}
+
 inline std::string VsFriendlyBuiltinTitleString(const std::string& builtin) {
     // is_ / get_ / on_ stay questions, readings, and events. The node also has a
     // flow pin, and the title is still the kind of value it gives back.
-    return VsJoinWords(VsWordsOf(builtin));
+    int dims = 0;
+    std::string title = VsJoinWords(VsBuiltinTitleWords(builtin, dims));
+    if (dims == 2) title += " in Two Dimensions";
+    else if (dims == 3) title += " in Three Dimensions";
+    return title;
 }
 
 inline const char* VsFriendlyBuiltinTitle(const std::string& builtin) {
@@ -309,9 +384,25 @@ inline void VsFillFriendlyPins(const okay::vs::VsApiEntry& e,
     for (std::string& n : outNames) outs.push_back(VsIntern(std::move(n)));
 }
 
+// Fn.* rows the Add Node menu does not list because another row is the same function under another name (the VM
+// registers one as an alias of the other). The menu shows one row per title; searching the hidden name finds the
+// listed row, because VsNodeSearchText adds it there. Graphs that use the hidden type still load and run.
+struct VsBuiltinAliasRow { const char* hidden; const char* listed; const char* reason; };
+inline const VsBuiltinAliasRow kVsBuiltinAliasRows[] = {
+    {"Fn.vec3", "Fn.Vector3", "the same function: alias(\"vec3\", \"Vector3\") in OkayScriptVM.cpp"},
+    {"Fn.vec2", "Fn.Vector2", "the same function: alias(\"vec2\", \"Vector2\") in OkayScriptVM.cpp"},
+};
+
 // Old titles and raw identifiers. The palette searches this as well as the title.
 inline std::string VsNodeSearchText(const char* type) {
     std::string s = VsSearchKeywords(type);
+    for (const VsBuiltinAliasRow& a : kVsBuiltinAliasRows)
+        if (type && std::strcmp(type, a.listed) == 0) {
+            if (!s.empty()) s += ' ';
+            s += a.hidden + 3;
+            s += ' ';
+            s += a.hidden;
+        }
     if (type && std::strncmp(type, "Fn.", 3) == 0) {
         if (!s.empty()) s += ' ';
         s += type + 3;

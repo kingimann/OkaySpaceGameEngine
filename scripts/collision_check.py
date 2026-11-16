@@ -167,7 +167,8 @@ def build_report(root, claims_comments=None, prs=None, base="origin/main", behin
         mine = claims.get(n)
         for br, c in active.items():
             if br == n or not c.get("files"): continue
-            hit = sorted({f for f in i["files"] for g in c["files"] if L.glob_match(f, g)})
+            # files every branch edits (lanes.json owner "shared") never need an agreement
+            hit = sorted({f for f in i["files"] for g in c["files"] if L.glob_match(f, g) and L.owner_of(f, lanes) != "shared" and not L.generated_entry(f, lanes)})
             if hit:
                 cross = bool(i["lane"] and L.lane_of_branch(br) and i["lane"] != L.lane_of_branch(br))
                 if mine and mine.get("agreed"): cross = False

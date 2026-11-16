@@ -6,14 +6,14 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Directional Light"
-  guid "348deb41324f2e8928a4b7c93ef35652"
+  guid "c9f6dae225e2e276e3a0334cb2406991"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
 end
 gameobject 1 "Ground"
-  guid "bb07a869fd3dd53e165bd2adfa1bca34"
+  guid "891bc085eadb5af1efe21f28ad86f0d9"
   active 1
   parent -1
   transform 0 -0.5 -26.5 0 0 0 1 50 1 73
@@ -22,28 +22,28 @@ gameobject 1 "Ground"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 2 "PresetLabel"
-  guid "1f86bb86d101e8d2ee1612b31f58f6e7"
+  guid "cce5b7789d0d28f5f614deb67395764e"
   active 1
   parent -1
   transform -9 3.4 3 0 0 0 1 1 1 1
   text "PRESET: Classic   (1 Classic  2 Modern  3 Arcade  4 Realistic  5 Shooter)" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 3 "Help"
-  guid "7100f662d266c931ba1bf266f7383972"
+  guid "5529774454a8f304b956025a1d2baa87"
   active 1
   parent -1
   transform -9 2.9 3 0 0 0 1 1 1 1
   text "FEEL LAB: press 1-5 to change the feel, F3 shows the preset and your speed, V switches view" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 4 "Label A"
-  guid "dfe3df508dc1c016042673f17c1cf933"
+  guid "5bb77923db2ccb57fec21d4108f89f75"
   active 1
   parent -1
   transform -9 3 -4 0 0 0 1 1 1 1
   text "A RUN TRACK: markers every 5 m, hold W + Shift, let go at the red line and watch the stop" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 5 "Marker"
-  guid "1234878e572fe47d58af891f1b77a2b7"
+  guid "e6363bdbf909f9c8323bd1776c68dae9"
   active 1
   parent -1
   transform -4 0.02 -9 0 0 0 1 0.8 0.04 0.3
@@ -52,7 +52,7 @@ gameobject 5 "Marker"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 6 "Marker"
-  guid "b91336eeee97fe596572e6f14f902e2b"
+  guid "0cc02981a2a51ca49999a2fcf6b38797"
   active 1
   parent -1
   transform -4 0.02 -14 0 0 0 1 0.8 0.04 0.3
@@ -61,7 +61,7 @@ gameobject 6 "Marker"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 7 "Marker"
-  guid "59e8aaadcb65d1ac4aedabb29fd6c813"
+  guid "a9ff110b3d6ef03c521918be6af3ba61"
   active 1
   parent -1
   transform -4 0.02 -19 0 0 0 1 0.8 0.04 0.3
@@ -70,7 +70,7 @@ gameobject 7 "Marker"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 8 "Marker"
-  guid "6f0d56d0be0aabc9de9a88ecc929be38"
+  guid "6ed1495d1a8c74196dfc98c785a86963"
   active 1
   parent -1
   transform -4 0.02 -24 0 0 0 1 0.8 0.04 0.3
@@ -79,7 +79,7 @@ gameobject 8 "Marker"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 9 "Marker"
-  guid "9b8c95d2a2b7ce20df33dae2f7d19eba"
+  guid "ef18abd254dfe6a5a6abb86cfbb83765"
   active 1
   parent -1
   transform -4 0.02 -29 0 0 0 1 0.8 0.04 0.3
@@ -88,7 +88,7 @@ gameobject 9 "Marker"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 10 "Marker"
-  guid "b4bfe03c12fbcc0d07454fa9884f325a"
+  guid "117dbc0fc146e4e75aa66746f45be366"
   active 1
   parent -1
   transform -4 0.02 -34 0 0 0 1 0.8 0.04 0.3
@@ -97,7 +97,7 @@ gameobject 10 "Marker"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 11 "Marker"
-  guid "bbc5bd73321985aa99230c6b337f0974"
+  guid "d3a7e2a50470c9b7d18b30324127b5f7"
   active 1
   parent -1
   transform -4 0.02 -39 0 0 0 1 0.8 0.04 0.3
@@ -106,7 +106,7 @@ gameobject 11 "Marker"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 12 "Marker"
-  guid "29f8cf415de1516464ea17f52e39cbdf"
+  guid "3466c7ee5bc4e16fee78e85010308d7a"
   active 1
   parent -1
   transform -4 0.02 -44 0 0 0 1 0.8 0.04 0.3
@@ -115,7 +115,7 @@ gameobject 12 "Marker"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 13 "Stop line"
-  guid "1bfb949478d21dd2d21565b458aa738b"
+  guid "d39a4d58ceda8d4d6620495f821f7e3b"
   active 1
   parent -1
   transform -4 0.03 -44 0 0 0 1 3 0.05 0.3
@@ -124,14 +124,14 @@ gameobject 13 "Stop line"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 14 "Label B"
-  guid "5d0dee971808b2833693b34a6b3cc918"
+  guid "7651d44d48455ad27edc73aef6ed0bd5"
   active 1
   parent -1
   transform 2 3 -4 0 0 0 1 1 1 1
   text "B SLALOM: weave through the posts at a walk, then at a run" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 15 "Post"
-  guid "4087321f9845eba2c11facbac6b2a909"
+  guid "74d2f06580233d03347df306f249f3a0"
   active 1
   parent -1
   transform 3.2 0.8 -10 0 0 0 1 0.5 1.6 0.5
@@ -140,7 +140,7 @@ gameobject 15 "Post"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 16 "Post"
-  guid "91748cd3475029326f214928d767d6db"
+  guid "9eb855ad8c8f000f0ca61a2a883992c3"
   active 1
   parent -1
   transform 6.8 0.8 -14 0 0 0 1 0.5 1.6 0.5
@@ -149,7 +149,7 @@ gameobject 16 "Post"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 17 "Post"
-  guid "89c9e773e1ffd41b028eb50e4ebc0f96"
+  guid "30815081f4ea4f2cba98070f4f53376f"
   active 1
   parent -1
   transform 3.2 0.8 -18 0 0 0 1 0.5 1.6 0.5
@@ -158,7 +158,7 @@ gameobject 17 "Post"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 18 "Post"
-  guid "54c5dc6f711d6cee6453140b4a980fee"
+  guid "c3db15074b7b6d9ecb5735f87e5afa47"
   active 1
   parent -1
   transform 6.8 0.8 -22 0 0 0 1 0.5 1.6 0.5
@@ -167,7 +167,7 @@ gameobject 18 "Post"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 19 "Post"
-  guid "a9cc21de04c22ed8502fa40ebef5bab1"
+  guid "d9a0fb694afdc47ca628c210c2ac9b88"
   active 1
   parent -1
   transform 3.2 0.8 -26 0 0 0 1 0.5 1.6 0.5
@@ -176,7 +176,7 @@ gameobject 19 "Post"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 20 "Post"
-  guid "ac0b8b5b2c38b3c8a2d28e322a35ebea"
+  guid "86d87617a3d3b8345a6e55eb3731a9f9"
   active 1
   parent -1
   transform 6.8 0.8 -30 0 0 0 1 0.5 1.6 0.5
@@ -185,7 +185,7 @@ gameobject 20 "Post"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 21 "Post"
-  guid "dc6c6c6dd2c3ca3b6d43dbeb3acf5c85"
+  guid "a8438dfd692c58edcc1095e2cc962913"
   active 1
   parent -1
   transform 3.2 0.8 -34 0 0 0 1 0.5 1.6 0.5
@@ -194,7 +194,7 @@ gameobject 21 "Post"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 22 "Post"
-  guid "1f2ee2f8ad0bf743113e34849b9db017"
+  guid "cc3907e7a1a9d8b2c833dc78d9fda223"
   active 1
   parent -1
   transform 6.8 0.8 -38 0 0 0 1 0.5 1.6 0.5
@@ -203,14 +203,14 @@ gameobject 22 "Post"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 23 "Label C"
-  guid "c64fadd314827fa3ef712adcc16f8d14"
+  guid "8f5c424f23524cabd427e336ad4cf172"
   active 1
   parent -1
   transform -9 3 -62 0 0 0 1 1 1 1
   text "C GAPS 2 / 3 / 4 m: run and jump. Arcade (double jump) crosses 4 m, Realistic only 2" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 24 "Gap start"
-  guid "2ce10b2751fb6ddc942c5f6dfb822bd7"
+  guid "fcc225933eb809856858c546c137f784"
   active 1
   parent -1
   transform 0 -0.25 -66 0 0 0 1 6 0.5 6
@@ -219,7 +219,7 @@ gameobject 24 "Gap start"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 25 "Island"
-  guid "f01eef36ae7de50ed1e3e15af4b3bff8"
+  guid "37ae8dce3dda4e303750f6a02173e35c"
   active 1
   parent -1
   transform 0 -0.25 -72.5 0 0 0 1 6 0.5 3
@@ -228,7 +228,7 @@ gameobject 25 "Island"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 26 "Island"
-  guid "76d0cc7ef0ab22f27246ec82beac05a1"
+  guid "a1d2524065705b8e9685cb1fda7082cd"
   active 1
   parent -1
   transform 0 -0.25 -78.5 0 0 0 1 6 0.5 3
@@ -237,7 +237,7 @@ gameobject 26 "Island"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 27 "Island"
-  guid "4aa97bf59ee84d7ddb92c3ab3f82efff"
+  guid "68aa538640e2795cfbfa5315726bd38b"
   active 1
   parent -1
   transform 0 -0.25 -85.5 0 0 0 1 6 0.5 3
@@ -246,7 +246,7 @@ gameobject 27 "Island"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 28 "Pit floor"
-  guid "4e9161fec09148736af7cd3324648655"
+  guid "75d6ddec04aaaa5120adcc6770f5457d"
   active 1
   parent -1
   transform 0 -8.5 -100 0 0 0 1 50 1 90
@@ -255,7 +255,7 @@ gameobject 28 "Pit floor"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 29 "Far ground"
-  guid "9ebddb57ba6318a3c5da1b3deda27744"
+  guid "20f091d2b2a35d485f9f3a9bc762ca0a"
   active 1
   parent -1
   transform 0 -0.5 -140 0 0 0 1 50 1 50
@@ -264,14 +264,14 @@ gameobject 29 "Far ground"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 30 "Label D"
-  guid "7c9969f7906df5c5fc103cafa545ac5b"
+  guid "bb5146d773e486e64cc4d0b42cfacf17"
   active 1
   parent -1
   transform -9 3 -120 0 0 0 1 1 1 1
   text "D LANDINGS: step off the 2 m, 4 m and 8 m towers; the camera dips and F3 counts hard landings" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 31 "Tower"
-  guid "eb837bac96b4a27fbf0d512c67f32c22"
+  guid "97d5056947d7ac125434fe29cf5a0399"
   active 1
   parent -1
   transform -6 0.95 -126 0 0 0 1 3 2 3
@@ -280,7 +280,7 @@ gameobject 31 "Tower"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 32 "Stair"
-  guid "5a7906f261c91ece0a676d3ba75819a9"
+  guid "d5ab08b191094238dea8eb57118fa323"
   active 1
   parent -1
   transform -6 0.125 -121.2 0 0 0 1 3 0.35 0.6
@@ -289,7 +289,7 @@ gameobject 32 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 33 "Stair"
-  guid "959c704ebeeff1237d9f39babcb226ce"
+  guid "d20e85b8234a15453f7f2ecc0bc87eb9"
   active 1
   parent -1
   transform -6 0.29999998 -121.799995 0 0 0 1 3 0.7 0.6
@@ -298,7 +298,7 @@ gameobject 33 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 34 "Stair"
-  guid "1a16364dd41e0a6a6e94c0b70724da79"
+  guid "0ca883f021c822beb848edd2ec0ddca2"
   active 1
   parent -1
   transform -6 0.47499996 -122.399994 0 0 0 1 3 1.05 0.6
@@ -307,7 +307,7 @@ gameobject 34 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 35 "Stair"
-  guid "5f99fb41ac1d53ee63e99bc722628b07"
+  guid "c01b11eb773f8d87942202a88f5ea03b"
   active 1
   parent -1
   transform -6 0.65 -123 0 0 0 1 3 1.4 0.6
@@ -316,7 +316,7 @@ gameobject 35 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 36 "Stair"
-  guid "d73fd3175af5f037453582868a4ba809"
+  guid "c32965ca2728a68ad2e2e1ecd86a19e9"
   active 1
   parent -1
   transform -6 0.825 -123.6 0 0 0 1 3 1.75 0.6
@@ -325,7 +325,7 @@ gameobject 36 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 37 "Stair"
-  guid "490e70a33239dc115ee01b66643f7abc"
+  guid "4557bb5a32a7adbd83c9a5cec9e798c2"
   active 1
   parent -1
   transform -6 0.95 -124.2 0 0 0 1 3 2 0.6
@@ -334,7 +334,7 @@ gameobject 37 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 38 "Tower"
-  guid "827f6bd9974c7e601885d3ed6c4a8453"
+  guid "519dbfb8b6e89d57abff8ebb0f2948af"
   active 1
   parent -1
   transform 0 1.95 -126 0 0 0 1 3 4 3
@@ -343,7 +343,7 @@ gameobject 38 "Tower"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 39 "Stair"
-  guid "08e59220c561c742dda1a69ec51ab6d1"
+  guid "d65cb0768779d2761abd5343eb5a0245"
   active 1
   parent -1
   transform 0 0.125 -117.6 0 0 0 1 3 0.35 0.6
@@ -352,7 +352,7 @@ gameobject 39 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 40 "Stair"
-  guid "2a329828bf3c8ae355acce2b787d7c28"
+  guid "e734e431ad271313ecb13e2b55a98a42"
   active 1
   parent -1
   transform 0 0.29999998 -118.2 0 0 0 1 3 0.7 0.6
@@ -361,7 +361,7 @@ gameobject 40 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 41 "Stair"
-  guid "288a343ea5aa21117029f45bab4a9c41"
+  guid "514a812e7877e23f175f08ba21fdd61d"
   active 1
   parent -1
   transform 0 0.47499996 -118.799995 0 0 0 1 3 1.05 0.6
@@ -370,7 +370,7 @@ gameobject 41 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 42 "Stair"
-  guid "feebd9c128f96f7f0b00943e3e2b5f14"
+  guid "383b4c3c698e5ef942a4feece061be49"
   active 1
   parent -1
   transform 0 0.65 -119.399994 0 0 0 1 3 1.4 0.6
@@ -379,7 +379,7 @@ gameobject 42 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 43 "Stair"
-  guid "5a0d9d40be10bf2d0d9e3ee002240db8"
+  guid "61a81b50e69eed4e63eca9d7e4071539"
   active 1
   parent -1
   transform 0 0.825 -120 0 0 0 1 3 1.75 0.6
@@ -388,7 +388,7 @@ gameobject 43 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 44 "Stair"
-  guid "30d86fed8be6eac129848b21edf95d6e"
+  guid "82432ba6b44b050d04cd680a1ca6e00e"
   active 1
   parent -1
   transform 0 0.99999994 -120.6 0 0 0 1 3 2.1 0.6
@@ -397,7 +397,7 @@ gameobject 44 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 45 "Stair"
-  guid "18b6fa1c08441e0f8a7e58abd36a7522"
+  guid "67c18f946dee50af6bdc7a10deab5322"
   active 1
   parent -1
   transform 0 1.1750001 -121.2 0 0 0 1 3 2.45 0.6
@@ -406,7 +406,7 @@ gameobject 45 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 46 "Stair"
-  guid "694bed9af8966ea653e7635679aa0c52"
+  guid "590b53e0a7000d86a7e968d391609c6b"
   active 1
   parent -1
   transform 0 1.35 -121.799995 0 0 0 1 3 2.8 0.6
@@ -415,7 +415,7 @@ gameobject 46 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 47 "Stair"
-  guid "4831fe74e77bb64f41ff23a535115dbc"
+  guid "bd45c97511b1a556439b09756b9c077b"
   active 1
   parent -1
   transform 0 1.525 -122.399994 0 0 0 1 3 3.1499999 0.6
@@ -424,7 +424,7 @@ gameobject 47 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 48 "Stair"
-  guid "07bc9ea5ed94c0229903d987c889750f"
+  guid "fb98e21023771bb6c7944eb8e7614ad4"
   active 1
   parent -1
   transform 0 1.7 -123 0 0 0 1 3 3.5 0.6
@@ -433,7 +433,7 @@ gameobject 48 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 49 "Stair"
-  guid "a850353c85a25889711723e6d7a6de3b"
+  guid "91c68a99c28bdab5c69a46a30f905321"
   active 1
   parent -1
   transform 0 1.875 -123.6 0 0 0 1 3 3.85 0.6
@@ -442,7 +442,7 @@ gameobject 49 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 50 "Stair"
-  guid "869843ef92eedc7a887419012ef6fbbb"
+  guid "56f840958469a62af09a41b801eaaba2"
   active 1
   parent -1
   transform 0 1.95 -124.2 0 0 0 1 3 4 0.6
@@ -451,7 +451,7 @@ gameobject 50 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 51 "Tower"
-  guid "c72817ccb63041faca480afc8ad3ef0f"
+  guid "0b3c19f1ed45af71168138810704e554"
   active 1
   parent -1
   transform 6 3.95 -126 0 0 0 1 3 8 3
@@ -460,7 +460,7 @@ gameobject 51 "Tower"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 52 "Stair"
-  guid "1b5d45c1718ac3767e0c85126eea54f2"
+  guid "36114d166be8498e518375178fa2b206"
   active 1
   parent -1
   transform 6 0.125 -111 0 0 0 1 3 0.35 0.6
@@ -469,7 +469,7 @@ gameobject 52 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 53 "Stair"
-  guid "5693fe41409a0320f1652db822a24b03"
+  guid "46c3f6b1fa12e323d954f43da721d050"
   active 1
   parent -1
   transform 6 0.29999998 -111.6 0 0 0 1 3 0.7 0.6
@@ -478,7 +478,7 @@ gameobject 53 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 54 "Stair"
-  guid "0cee12a8b40fdc6a6516bc42f5222443"
+  guid "37789ba9e462575c91777ba5f5847d2a"
   active 1
   parent -1
   transform 6 0.47499996 -112.2 0 0 0 1 3 1.05 0.6
@@ -487,7 +487,7 @@ gameobject 54 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 55 "Stair"
-  guid "8f73534e3f88e7cc2b0e227da1825466"
+  guid "d3cb9d0f838d950ca2fe2c30803b2b29"
   active 1
   parent -1
   transform 6 0.65 -112.799995 0 0 0 1 3 1.4 0.6
@@ -496,7 +496,7 @@ gameobject 55 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 56 "Stair"
-  guid "acc800a4a9803e4ade0b0c253e4ebd6a"
+  guid "c8bde73fa9db870d947b304aeb2f4e9e"
   active 1
   parent -1
   transform 6 0.825 -113.399994 0 0 0 1 3 1.75 0.6
@@ -505,7 +505,7 @@ gameobject 56 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 57 "Stair"
-  guid "6dcc90a776e8da7ba06e7a1bbf37d9fb"
+  guid "f5a2637491ecfbcc03d905ab65e8a3ff"
   active 1
   parent -1
   transform 6 0.99999994 -114 0 0 0 1 3 2.1 0.6
@@ -514,7 +514,7 @@ gameobject 57 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 58 "Stair"
-  guid "4876d7889bfa546806f8d5ef03885b08"
+  guid "61a3745ca9832058a9599778c9422be6"
   active 1
   parent -1
   transform 6 1.1750001 -114.6 0 0 0 1 3 2.45 0.6
@@ -523,7 +523,7 @@ gameobject 58 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 59 "Stair"
-  guid "34ba62e4184374754df507b0d7709893"
+  guid "2063ce1520c42e3bfaf74c53b7e330a6"
   active 1
   parent -1
   transform 6 1.35 -115.2 0 0 0 1 3 2.8 0.6
@@ -532,7 +532,7 @@ gameobject 59 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 60 "Stair"
-  guid "14919adfdf09bbc2be369890b5cc876b"
+  guid "fb45f6f7b2e4bacc9e2058950254a071"
   active 1
   parent -1
   transform 6 1.525 -115.799995 0 0 0 1 3 3.1499999 0.6
@@ -541,7 +541,7 @@ gameobject 60 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 61 "Stair"
-  guid "14b585d59c1342fb50adb830fdbf6c4c"
+  guid "9b8bc9bfb9bee325330f550bd7a70ccd"
   active 1
   parent -1
   transform 6 1.7 -116.399994 0 0 0 1 3 3.5 0.6
@@ -550,7 +550,7 @@ gameobject 61 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 62 "Stair"
-  guid "8543821490a6c34c6619e251606c4ab2"
+  guid "25250bc55087f6657b634fdf09bdbc45"
   active 1
   parent -1
   transform 6 1.875 -117 0 0 0 1 3 3.85 0.6
@@ -559,7 +559,7 @@ gameobject 62 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 63 "Stair"
-  guid "e63877a91ccbf9454bfabeae689c385b"
+  guid "5f6abfd7c68766bdad87250939182c86"
   active 1
   parent -1
   transform 6 2.05 -117.6 0 0 0 1 3 4.2 0.6
@@ -568,7 +568,7 @@ gameobject 63 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 64 "Stair"
-  guid "11ce6d6a919f6158178de848e9afbed0"
+  guid "cbc070e3d1efad23e8a416aa450afaa0"
   active 1
   parent -1
   transform 6 2.225 -118.2 0 0 0 1 3 4.5499997 0.6
@@ -577,7 +577,7 @@ gameobject 64 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 65 "Stair"
-  guid "525e8bc89dfcf8236d686ca97111790f"
+  guid "60d356726ab38b51115bda96b84f4ad2"
   active 1
   parent -1
   transform 6 2.4 -118.799995 0 0 0 1 3 4.9 0.6
@@ -586,7 +586,7 @@ gameobject 65 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 66 "Stair"
-  guid "f66998a8d79b110d91d1bbe126072541"
+  guid "a59d582373ab3733869646603a6eb1de"
   active 1
   parent -1
   transform 6 2.575 -119.399994 0 0 0 1 3 5.25 0.6
@@ -595,7 +595,7 @@ gameobject 66 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 67 "Stair"
-  guid "897337cc587f42dd954a1c95b2aa69a2"
+  guid "0d2ae0eff37c587e57f77623333eb3ea"
   active 1
   parent -1
   transform 6 2.75 -120 0 0 0 1 3 5.6 0.6
@@ -604,7 +604,7 @@ gameobject 67 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 68 "Stair"
-  guid "acbeeb651365e0cf7c87dc205924e189"
+  guid "7ccd8bfe2cc6ea4275f961bf6a8ba8c6"
   active 1
   parent -1
   transform 6 2.925 -120.6 0 0 0 1 3 5.95 0.6
@@ -613,7 +613,7 @@ gameobject 68 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 69 "Stair"
-  guid "181628f47963d166f6d2caf4037d8da7"
+  guid "490980e371ab990e73bb491d3d0dc3a3"
   active 1
   parent -1
   transform 6 3.1 -121.2 0 0 0 1 3 6.2999997 0.6
@@ -622,7 +622,7 @@ gameobject 69 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 70 "Stair"
-  guid "65e72c6bf1a68fd0b82c810c0dbf0acf"
+  guid "032fc4885d9d69e91872c05b58d3e2af"
   active 1
   parent -1
   transform 6 3.275 -121.799995 0 0 0 1 3 6.65 0.6
@@ -631,7 +631,7 @@ gameobject 70 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 71 "Stair"
-  guid "aa7a4ed082b8ac2c790f10e761cc64a6"
+  guid "7a731a238073437f931e0cbb25b0d05a"
   active 1
   parent -1
   transform 6 3.45 -122.399994 0 0 0 1 3 7 0.6
@@ -640,7 +640,7 @@ gameobject 71 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 72 "Stair"
-  guid "6da2391d2836e82b64ac51bf2462cb98"
+  guid "03ab10433a45ad7ae0229a003c64a853"
   active 1
   parent -1
   transform 6 3.625 -123 0 0 0 1 3 7.35 0.6
@@ -649,7 +649,7 @@ gameobject 72 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 73 "Stair"
-  guid "4e16acd8228a3da9e540124dd98a794e"
+  guid "b741ee14dc575f54bd201aa82dd02f20"
   active 1
   parent -1
   transform 6 3.8 -123.6 0 0 0 1 3 7.7 0.6
@@ -658,7 +658,7 @@ gameobject 73 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 74 "Stair"
-  guid "6e2a6b597f98ccf73937bdb44696c635"
+  guid "29950077a0f56d88f728c2c026ec19a4"
   active 1
   parent -1
   transform 6 3.95 -124.2 0 0 0 1 3 8 0.6
@@ -667,14 +667,14 @@ gameobject 74 "Stair"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 75 "Label E"
-  guid "d27944c665e76fea957226e57c3d7c1a"
+  guid "948248585f2b26042478c0cab8b6fe69"
   active 1
   parent -1
   transform -9 3 -138 0 0 0 1 1 1 1
   text "E CORRIDOR: walk through in third person; the camera pulls in at the walls and eases back out" 1 0.9254902 0.627451 1 0.045 0 12 12 0 0 0 0 0 0.78431374 1 1 0 1 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
 gameobject 76 "Wall L"
-  guid "920f68ada3137fb026fee28e737759f6"
+  guid "095f56d7e064b0fffd26224c460d81c8"
   active 1
   parent -1
   transform -2.5 1.5 -150 0 0 0 1 0.4 3 16
@@ -683,7 +683,7 @@ gameobject 76 "Wall L"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 77 "Wall R"
-  guid "6fecb0e4bde39658e5d5d9634446a2c4"
+  guid "584d4c3bd9ec04368ac463aa92556d04"
   active 1
   parent -1
   transform 2.5 1.5 -150 0 0 0 1 0.4 3 16
@@ -692,7 +692,7 @@ gameobject 77 "Wall R"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 78 "Roof"
-  guid "9af830758ec313c767d967f16062f772"
+  guid "464c971935ff03df3eed3bacc48524a2"
   active 1
   parent -1
   transform 0 3.1 -150 0 0 0 1 5.4 0.3 16
@@ -701,7 +701,7 @@ gameobject 78 "Roof"
   boxcollider3d 1 1 1 0 0 0 0 0 0
 end
 gameobject 79 "Player"
-  guid "fba1c7e01e98f23770768ca49887bcf0"
+  guid "f27c2e577c06f5ff8e7e8755e8e4444e"
   active 1
   parent -1
   transform 0 0.05 6 0 0 0 1 1 1 1
@@ -725,8 +725,9 @@ gameobject 79 "Player"
   animsmx 2 0 "" 0 0 1 "hitDir" 4 "Hit_F" 0 "Hit_B" 1 "Hit_L" 2 "Hit_R" 3 1 1 1 0 0
   animsmany 1 "Hit" 5 "hit" 0 0.1 0 1 1 3 4 "hitHeavy" 0 4 "crouch" 0 4 "prone" 0
   animsmanyint 1 1
-  fphands 0 0 1 1 1 0 0 0 0 0 0 0 1 0 1 0 0 0 0 0 0 1 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 1 0 0 0 0 0 0 1 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0
-  fphands2 0 0.42 0.07 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 0 0.42 0.07 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0
+  fphands 1 0 1 1 1 0 0 0 0 0 0 0 1 0 1 -0.05 0 0 0 0 0 0.75 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 1 0.05 0 0 0 0 0 0.75 1 1 1 1 1 1 0 0.8627451 0.6901961 0.5882353 0 0.28 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0
+  fphands2 1 1.1 0.105 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 1 1.1 0.105 0.23529412 0.37254903 0.29411766 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0 1 0.28 0.05 0.23529412 0.37254903 0.29411766 1 1 1 0 0 0 0 0 0 0 0
+  fphands3 0 1 0 1 1
   character 1 0.862745 0.690196 0.588235 0.235294 0.372549 0.294118 0.156863 0.164706 0.215686 0.14902 0.137255 0.14902 0.313726 0.196078 0.117647 0.117647 0.101961 0.109804 0.588235 0.176471 0.176471 0.294118 0.235294 0.176471 0.176471 0.156863 0.137255 0.27451 0.27451 0.313726 0.137255 0.109804 0.0862745 1 0 0 2 0 1 0 0 0 0 0 0 0 0 0 0 1 1 "-" - 0 1 0 - - - 0.15 0 - - - 0 0 0 0.05 0.12 28 50 0.22 32 0.45 1 5 - 0
   rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
   boxcollider3d 0.6 1.8 0.6 0 0.9 0 0 0 0
@@ -740,7 +741,7 @@ gameobject 79 "Player"
   comporder "Character" "MeshRenderer" "AnimStateMachine" "AnimStateMachine" "Rigidbody3D" "BoxCollider3D" "PlayerController" "FirstPersonController" "ThirdPersonController" "PlayerView" "FirstPersonHands"
 end
 gameobject 80 "Main Camera"
-  guid "8a2c5f6715fb254b23d08c23969b2dd5"
+  guid "ce85c58b71394b68672027127c1b5aa0"
   active 1
   parent 79
   transform 0.45 3.045085 4.755283 -0.15643448 0 0 0.98768836 1 1 1

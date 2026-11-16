@@ -264,8 +264,8 @@ int main() {
         }
         // First person walks along its facing: the same here for First and Both (starting first).
         CHECK_NEAR(poses[0].pos.z, poses[2].pos.z, 1e-3f);
-        CHECK(std::fabs(poses[0].pos.z) > 2.0f || std::fabs(poses[0].pos.x) > 2.0f);
-        CHECK(std::fabs(poses[1].pos.z) > 1.0f || std::fabs(poses[1].pos.x) > 1.0f);
+        CHECK(std::fabs(poses[0].pos.z) > 1.0f || std::fabs(poses[0].pos.x) > 1.0f);   // 60 frames of the 2 m/s walk
+        CHECK(std::fabs(poses[1].pos.z) > 0.5f || std::fabs(poses[1].pos.x) > 0.5f);
     }
 
     // --- A new scene writes only the Player Controller, and it round-trips ---

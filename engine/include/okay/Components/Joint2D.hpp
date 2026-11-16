@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 #include "okay/Scene/Component.hpp"
 #include "okay/Math/Vec2.hpp"
+#include <cstdint>
 #include <string>
 
 namespace okay {
@@ -40,6 +41,15 @@ public:
     bool  useLimits = false;          ///< clamp the hinge angle to [minAngle, maxAngle]
     float minAngle = -45.0f;          ///< lower limit (deg, relative to the start angle)
     float maxAngle = 45.0f;           ///< upper limit (deg, relative to the start angle)
+
+    // ---- runtime: the partner found by name, remembered until the scene's objects change (not saved) ----
+    struct PartnerCache {               ///< (a copy of a joint starts with nothing remembered)
+        GameObject*   object = nullptr;
+        std::uint64_t version = 0;      ///< Scene::StructureVersion() when `object` was looked up (0 = never)
+        PartnerCache() = default;
+        PartnerCache(const PartnerCache&) {}
+        PartnerCache& operator=(const PartnerCache&) { object = nullptr; version = 0; return *this; }
+    } partner;
 
     // ---- runtime (set by Physics2D on the first solve) ----
     bool  initialized = false;

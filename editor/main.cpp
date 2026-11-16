@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
+#include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
 #include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
 #include "HierarchyContextModel.hpp"
@@ -25,6 +26,7 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
+#include "okay/Core/AssetManager.hpp"   // CachedCount() for the crash report
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
@@ -37,10 +39,23 @@
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
+#include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
+#include "okay/Modeling/MeshUndo.hpp"       // mesh-edit undo steps (mesh, selection, modifier list)
+#include "okay/Modeling/MeshLibrary.hpp"        // browse .okaymesh parts in the project
+#include "okay/Optimize/MeshSimplify.hpp"      // edge-collapse polygon reduction
+#include "okay/Modeling/Curve.hpp"           // Bezier curves to pipes, ribbons and swept profiles
+#include "okay/Modeling/Remesh.hpp"          // Quad Remesh
+#include "okay/Modeling/Reference.hpp"       // blueprint plane corners
+#include "okay/Modeling/Arrange.hpp"          // align / distribute objects
+#include "okay/Modeling/ScreenSelect.hpp"      // box / circle / lasso select
+#include "okay/Modeling/SelectOps.hpp"      // grow / shrink / select similar, apply scale, how-do-I recipes
+#include "okay/Modeling/Measure.hpp"         // measuring and snapping to vertices, edges and faces
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
+#include "GuidedPanel.hpp"                    // Guided page of the Modeling window
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
@@ -49,6 +64,10 @@
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
+#include "okay/Core/SystemCost.hpp"      // Game view Stats: ms per system
+#include "okay/Components/ControllerPresets.hpp"   // Controller Preset combo
+#include "okay/Core/FrameOverlay.hpp"
+#include "okay/Render/OcclusionOverlay.hpp"
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
 #include "okay/Animation/PlayerSetup.hpp"      // controller: wire missing animation and IK
 #include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
@@ -874,7 +893,9 @@ static void RunEditorPlayKeyTest(int& failures) {
     ped.Stop();
     Input::FeedKeys({});
 }
+#include "ExamplesRoot.hpp"
 #include "NodePlayground.hpp"      // File > Examples > Node Playground
+#include "TemplateTable.hpp"        // template title -> scene builder (New Project)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
 #include "ConsolePanel.hpp"        // ConsoleLog + the Console panel
 #include "ProblemsPanel.hpp"       // Problems panel: one list of what is wrong
@@ -905,11 +926,15 @@ static void RunEditorPlayKeyTest(int& failures) {
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
 #include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
+#include "TestBuild.hpp"   // a test build says so in its version label (docs/release_channels.md "Test builds")
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
 #include "ProjectBrowser.hpp"     // the Project panel's logic: folder model, safe file operations, references
 #include "ProjectPanelUI.hpp"     // the Project panel's name prompt, delete confirmation, import settings
+#include "ProjectNewAssets.hpp"   // the text of a new dialogue, quest file, behavior tree and cutscene (Project > Create)
+#include "ProjectDelete.hpp"      // okayproj::Normalized / IsSameOrInside: the launcher's "is this path inside that folder" test
+#include "LaunchFile.hpp"         // open a file with the system's program, in a text editor, or show it in the file manager (no shell)
 
 #ifndef OKAY_ENGINE_VERSION
 #  define OKAY_ENGINE_VERSION "dev"
@@ -960,176 +985,14 @@ ImU32 ToColor(const Color& c) {
 }
 
 // ---- Crash diagnostics -------------------------------------------------
-// A single "which step are we on" breadcrumb + (on Windows) an unhandled-exception
-// handler that reports it. The UI-editing crash reproduces only on some real Windows
-// GPUs (Direct3D) — never under Linux ASan/UBSan or Wine — so this captures the exact
-// step and faulting address on the user's machine. OKAY_BREADCRUMB is near-free (a copy
-// into a static buffer). In a release build ImGui's IM_ASSERT is a no-op, so a UI bug
-// surfaces as a real access violation, which the SEH filter below catches.
-char g_okayTrace[256] = "startup";
-inline void OkayTrace(const char* s) {
-    std::strncpy(g_okayTrace, s, sizeof(g_okayTrace) - 1);
-    g_okayTrace[sizeof(g_okayTrace) - 1] = '\0';
-}
+// OKAY_BREADCRUMB("step") records which step the editor is on: a ring of the last 64 distinct steps (shared/CrashContext.hpp), so a crash
+// report shows the trail, not only the last step. It is near-free (a bounded copy). The crash handlers (Windows exception filter,
+// std::terminate and abort hooks, Linux/macOS signal handlers) are shared/CrashHandler.hpp: they write okay_crash.txt and
+// okay_crashlog.txt beside the editor with the OS, CPU, RAM, GPU, scene, Console lines and a backtrace, and the launcher sends it
+// (docs/crash_reports.md). The UI-editing crash that only shows on some real Windows GPUs (Direct3D) is why the breadcrumbs exist.
+// In a release build ImGui's IM_ASSERT is a no-op, so a UI bug surfaces as a real access violation, which the filter catches.
+inline void OkayTrace(const char* s) { okaycrash::ctx::Breadcrumb(s); }
 #define OKAY_BREADCRUMB(s) OkayTrace(s)
-
-#if defined(_WIN32)
-// On an unhandled access violation, report the last breadcrumb + faulting module and
-// offset (both to a MessageBox the user can read back, and to okay_crash.txt beside
-// the editor with a full module+offset backtrace we can resolve with addr2line).
-static LONG WINAPI OkayCrashFilter(EXCEPTION_POINTERS* ep) {
-    unsigned long long addr = (ep && ep->ExceptionRecord) ? (unsigned long long)(uintptr_t)ep->ExceptionRecord->ExceptionAddress : 0;
-    unsigned long      code = (ep && ep->ExceptionRecord) ? ep->ExceptionRecord->ExceptionCode : 0;
-    auto modInfo = [](unsigned long long a, char* name, size_t cap, unsigned long long& base) {
-        base = 0; if (name && cap) name[0] = '\0';
-        HMODULE m = nullptr;
-        if (a && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                    (LPCSTR)(uintptr_t)a, &m) && m) {
-            GetModuleFileNameA(m, name, (DWORD)cap); base = (unsigned long long)(uintptr_t)m;
-        }
-    };
-    char modName[MAX_PATH] = "?"; unsigned long long modBase = 0;
-    modInfo(addr, modName, sizeof(modName), modBase);
-#ifndef OKAY_ENGINE_VERSION
-#  define OKAY_ENGINE_VERSION "?"
-#endif
-    // Timestamp so multiple reports are distinguishable.
-    SYSTEMTIME st; GetLocalTime(&st);
-    char when[32];
-    std::snprintf(when, sizeof(when), "%04d-%02d-%02d %02d:%02d:%02d",
-                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-    // Write the report NEXT TO THE EXE (not the cwd, which may be the launcher's), so
-    // it's always found in the same folder as OkayEngine.exe.
-    char crashPath[MAX_PATH]; char exePath[MAX_PATH] = "";
-    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-    std::snprintf(crashPath, sizeof(crashPath), "%s", exePath);
-    if (char* slash = std::strrchr(crashPath, '\\')) std::strcpy(slash + 1, "okay_crash.txt");
-    else std::strcpy(crashPath, "okay_crash.txt");
-    char msg[1400];
-    std::snprintf(msg, sizeof(msg),
-        "OkaySpace crashed.\n\nVersion: %s\nLast step: %s\nException: 0x%08lX\nAt: %s + 0x%llX\n\n"
-        "A report was saved to okay_crash.txt next to the editor.\n"
-        "Please send that file (or the \"Last step\" line above) to support.",
-        OKAY_ENGINE_VERSION, g_okayTrace, code, modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
-    if (FILE* f = std::fopen(crashPath, "w")) {
-        std::fprintf(f, "OkaySpace crash report\nVersion: %s\nWhen: %s\nExe: %s\nLast step: %s\n"
-                        "Exception: 0x%08lX\nFault module: %s + 0x%llX\n\nBacktrace:\n",
-                     OKAY_ENGINE_VERSION, when, exePath[0] ? exePath : "?", g_okayTrace, code,
-                     modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
-        // Symbolize on-device via dbghelp so the report is human-readable (function
-        // names + file:line where DWARF line info is present). Each line ALSO carries
-        // the raw module + offset as a fallback we can resolve with addr2line.
-        HANDLE proc = GetCurrentProcess();
-        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-        bool symOk = SymInitialize(proc, nullptr, TRUE);
-        void* frames[48];
-        USHORT n = CaptureStackBackTrace(0, 48, frames, nullptr);
-        // SYMBOL_INFO + room for the name.
-        char symBuf[sizeof(SYMBOL_INFO) + 512];
-        for (USHORT i = 0; i < n; ++i) {
-            unsigned long long a = (unsigned long long)(uintptr_t)frames[i];
-            char mn[MAX_PATH]; unsigned long long mb = 0;
-            modInfo(a, mn, sizeof(mn), mb);
-            const char* modShort = mn[0] ? mn : "?";
-            if (const char* s = std::strrchr(modShort, '\\')) modShort = s + 1;
-            char fnName[540] = ""; char fileLine[560] = "";
-            if (symOk) {
-                SYMBOL_INFO* si = (SYMBOL_INFO*)symBuf;
-                std::memset(si, 0, sizeof(SYMBOL_INFO));
-                si->SizeOfStruct = sizeof(SYMBOL_INFO); si->MaxNameLen = 500;
-                DWORD64 disp = 0;
-                if (SymFromAddr(proc, (DWORD64)a, &disp, si))
-                    std::snprintf(fnName, sizeof(fnName), "  %s +0x%llX", si->Name, (unsigned long long)disp);
-                IMAGEHLP_LINE64 line; std::memset(&line, 0, sizeof(line));
-                line.SizeOfStruct = sizeof(line); DWORD ld = 0;
-                if (SymGetLineFromAddr64(proc, (DWORD64)a, &ld, &line) && line.FileName)
-                    std::snprintf(fileLine, sizeof(fileLine), "  (%s:%lu)", line.FileName, line.LineNumber);
-            }
-            std::fprintf(f, "  #%02d %s + 0x%llX%s%s\n", i, modShort,
-                         mb ? (a - mb) : a, fnName, fileLine);
-        }
-        if (symOk) SymCleanup(proc);
-        std::fclose(f);
-    }
-    // Also APPEND this report to a rolling history (okay_crashlog.txt) next to the exe,
-    // so the editor's Crash Log tab can show every past report — not just the latest.
-    char logPath[MAX_PATH];
-    std::snprintf(logPath, sizeof(logPath), "%s", exePath);
-    if (char* slash = std::strrchr(logPath, '\\')) std::strcpy(slash + 1, "okay_crashlog.txt");
-    else std::strcpy(logPath, "okay_crashlog.txt");
-    if (FILE* src = std::fopen(crashPath, "r")) {
-        if (FILE* hist = std::fopen(logPath, "a")) {
-            std::fprintf(hist, "\n========== crash @ %s (v%s) ==========\n", when, OKAY_ENGINE_VERSION);
-            char buf[1024]; size_t r;
-            while ((r = std::fread(buf, 1, sizeof(buf), src)) > 0) std::fwrite(buf, 1, r, hist);
-            std::fprintf(hist, "\n");
-            std::fclose(hist);
-        }
-        std::fclose(src);
-    }
-    MessageBoxA(nullptr, msg, "OkaySpace crash", MB_OK | MB_ICONERROR);
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-#elif defined(__linux__) || defined(__APPLE__)
-// Linux / macOS: the same okay_crash.txt + okay_crashlog.txt reports beside the
-// editor (the launcher's Crash reports page reads them), from a fatal-signal
-// handler. Best effort: stdio in a signal handler isn't async-safe, but the
-// process is going down anyway; the default action runs afterwards.
-#include <execinfo.h>
-#include <signal.h>
-#include <unistd.h>
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
-static void OkayCrashSignal(int sig) {
-    signal(sig, SIG_DFL);   // a second fault inside the handler just ends the process
-#ifndef OKAY_ENGINE_VERSION
-#  define OKAY_ENGINE_VERSION "?"
-#endif
-    char exePath[4096] = "";
-#if defined(__APPLE__)
-    uint32_t sz = sizeof(exePath);
-    if (_NSGetExecutablePath(exePath, &sz) != 0) exePath[0] = '\0';
-#else
-    ssize_t n = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
-    exePath[n > 0 ? n : 0] = '\0';
-#endif
-    std::string dir = exePath;
-    std::size_t slash = dir.find_last_of('/');
-    dir = slash == std::string::npos ? std::string(".") : dir.substr(0, slash);
-    std::time_t now = std::time(nullptr);
-    char when[32]; std::strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-    const char* name = sig == SIGSEGV ? "SIGSEGV" : sig == SIGABRT ? "SIGABRT" : sig == SIGFPE ? "SIGFPE"
-                     : sig == SIGILL ? "SIGILL" : sig == SIGBUS ? "SIGBUS" : "signal";
-    void* frames[48];
-    const int nf = backtrace(frames, 48);
-    const std::string crashPath = dir + "/okay_crash.txt", logPath = dir + "/okay_crashlog.txt";
-    if (FILE* f = std::fopen(crashPath.c_str(), "w")) {
-        std::fprintf(f, "OkaySpace crash report\nVersion: %s\nWhen: %s\nExe: %s\nLast step: %s\n"
-                        "Exception: %s (signal %d)\nFault module: %s\n\nBacktrace:\n",
-                     OKAY_ENGINE_VERSION, when, exePath[0] ? exePath : "?", g_okayTrace, name, sig,
-                     exePath[0] ? exePath : "?");
-        std::fflush(f);
-        backtrace_symbols_fd(frames, nf, fileno(f));
-        std::fclose(f);
-    }
-    if (FILE* src = std::fopen(crashPath.c_str(), "r")) {
-        if (FILE* hist = std::fopen(logPath.c_str(), "a")) {
-            std::fprintf(hist, "\n========== crash @ %s (v%s) ==========\n", when, OKAY_ENGINE_VERSION);
-            char buf[1024]; std::size_t r;
-            while ((r = std::fread(buf, 1, sizeof(buf), src)) > 0) std::fwrite(buf, 1, r, hist);
-            std::fprintf(hist, "\n");
-            std::fclose(hist);
-        }
-        std::fclose(src);
-    }
-    std::fprintf(stderr, "OkaySpace crashed (%s). Last step: %s. Report: %s\n", name, g_okayTrace, crashPath.c_str());
-    raise(sig);
-}
-static void InstallCrashSignals() {
-    for (int s : {SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS}) signal(s, OkayCrashSignal);
-}
-#endif
 
 SDL_Renderer* g_sdlRenderer = nullptr;
 // GPU (OpenGL) 3D rendering. The scene is rasterized by the GPU
@@ -1312,6 +1175,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                     SDL_RenderFlush(g_sdlRenderer);   // SDL's queued draws go first
                     if (g_d3dRenderer->RenderToTexture(scene, vp, eye, rw, rh, 4, 0.0f, 0.0f, 0.0f, 0.0f, dst, ignore)) {
                         okay::SceneOcclusionDepth().valid = false;
+                        okay::FrameOverlay::RendererName() = "Direct3D 11 (GPU, direct to the view)";
                         Uint64 r1 = okay::platform::PerfCounter();
                         okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)okay::platform::PerfFrequency() * 1000.0);
                         return t;
@@ -1333,6 +1197,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
             px = g_d3dRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
                                                0.0f, 0.0f, 0.0f, 0.0f, ignore);
             g_d3dRenderer->SetReadbackStream(-1);
+            if (px) okay::FrameOverlay::RendererName() = "Direct3D 11 (GPU, read back)";
         }
 #endif
         if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
@@ -1343,6 +1208,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                 px = g_glRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
                                                   0.0f, 0.0f, 0.0f, 0.0f, ignore);
             SDL_GL_MakeCurrent(prevWin, prevCtx);
+            if (px) okay::FrameOverlay::RendererName() = "OpenGL (GPU)";
         }
         static int s_gpuFails = 0;
         if (!px) {
@@ -1371,6 +1237,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         }
         px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
                             scene, vp, eye, rw, rh, ss, ignore);
+        okay::FrameOverlay::RendererName() = g_gpuRender ? "SOFTWARE (CPU: no GPU renderer worked just now)" : "SOFTWARE (CPU: GPU view switched off)";
     }
     if (!px) return nullptr;   // every renderer failed — don't feed SDL a null buffer
     {   // Record the (synchronous) render time as the profiler's GPU proxy.
@@ -2327,6 +2194,7 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+
 #ifdef OKAY_HAVE_OKAYUI
 okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
 okayuihost::Region g_okayRegion;          // where the hosted panel was last frame: who owns the mouse there
@@ -2337,6 +2205,7 @@ int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
+int  g_symDefaultMask = 0;       // mesh edit: symmetry planes switched on whenever edit mode starts (1 = X, 2 = Y, 4 = Z); saved
 bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
 bool g_gameStatsGraph  = true;   // ... with the frame-rate graph under the performance lines (persisted)
 bool g_gameStatsScene  = true;   // ... and the scene's counts: objects, components, the biggest types (persisted)
@@ -2382,6 +2251,35 @@ static bool LayerMaskField(const char* label, std::uint32_t& mask, const char* t
     const bool changed = ImGui::InputTextWithHint(label, "all layers", lb, sizeof(lb));
     if (changed) mask = okay::Layers::MaskFromList(lb);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+    return changed;
+}
+// Per-collider physics material (2D or 3D): this collider's own friction and bounciness (or the Rigidbody's), and how each
+// mixes with what it touches. Returns true when something changed.
+template <class Col>
+static bool PhysicsMaterialFields(Col* c, const char* id) {
+    bool changed = false;
+    const std::string sid = id;
+    if (!ImGui::TreeNode(("Physics Material##pm" + sid).c_str())) return false;
+    const char* modes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
+    bool ownF = c->friction >= 0.0f;
+    if (ImGui::Checkbox(("Own Friction##pm" + sid).c_str(), &ownF)) { c->friction = ownF ? 0.5f : -1.0f; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: use the Rigidbody's friction, as before. On: this collider has its own (0 is ice, 1 is rubber).");
+    if (ownF) {
+        if (ImGui::DragFloat(("Friction##pm" + sid).c_str(), &c->friction, 0.01f, 0.0f, 10.0f)) changed = true;
+        int fm = (int)c->frictionCombine;
+        if (ImGui::Combo(("Friction Mix##pm" + sid).c_str(), &fm, modes, 5)) { c->frictionCombine = (okay::CombineMode)fm; changed = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this friction mixes with the one it touches. Default is the geometric mean.");
+    }
+    bool ownB = c->bounciness >= 0.0f;
+    if (ImGui::Checkbox(("Own Bounciness##pm" + sid).c_str(), &ownB)) { c->bounciness = ownB ? 0.3f : -1.0f; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: use the Rigidbody's bounciness. On: this collider has its own (0 dead, 1 never loses height).");
+    if (ownB) {
+        if (ImGui::DragFloat(("Bounciness##pm" + sid).c_str(), &c->bounciness, 0.01f, 0.0f, 1.0f)) changed = true;
+        int bm = (int)c->bounceCombine;
+        if (ImGui::Combo(("Bounce Mix##pm" + sid).c_str(), &bm, modes, 5)) { c->bounceCombine = (okay::CombineMode)bm; changed = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this bounciness mixes with the one it touches. Default is the larger of the two.");
+    }
+    ImGui::TreePop();
     return changed;
 }
 // Trigger filter fields for a trigger collider (2D or 3D): only react to objects
@@ -2587,6 +2485,7 @@ void LoadSettings() {
         else if (k == "accent") g_accent = (v < 0 ? 0 : (v >= kAccentCount ? 0 : v));
         else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
+        else if (k == "meshsymdefault") g_symDefaultMask = (v < 0 ? 0 : (v > 7 ? 7 : v));
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
         else if (k == "gamestatsgraph") g_gameStatsGraph = (v != 0);
         else if (k == "gamestatsscene") g_gameStatsScene = (v != 0);
@@ -2651,6 +2550,7 @@ void SaveSettings() {
       << "accent " << g_accent << "\n"
       << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
       << "gameres " << g_gameResPreset << "\n"
+      << "meshsymdefault " << g_symDefaultMask << "\n"
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
       << "gamestatsgraph " << (g_gameStatsGraph ? 1 : 0) << "\n"
       << "gamestatsscene " << (g_gameStatsScene ? 1 : 0) << "\n"
@@ -3293,6 +3193,8 @@ float g_rotApplied = 0.0f;  // snapped degrees already applied this drag
 float g_rotTotal = 0.0f;    // signed degrees turned this drag (HUD readout)
 float g_rotStartAng = 0.0f; // ring angle (rad) where this rotate-drag began
 float g_rotSnapDeg = 15.0f; // rotation snap increment when Snap is on
+int   g_snapTarget = 0;     // Move snaps to: 0 grid, 1 vertex, 2 edge, 3 face (okay::modeling::SnapTarget)
+float g_snapRadiusPct = 6.0f; // how close (percent of the camera distance) a vertex, edge or face has to be to snap
 // Pre-snap drag accumulators. Snapping rounds the OUTPUT every frame; without
 // keeping the true (unsnapped) value, sub-grid mouse motion gets repeatedly
 // rounded away and dragging feels sticky/glitchy (you have to overshoot to move,
@@ -3326,6 +3228,8 @@ float g_terrainHmLow  = 0.0f;         // heightmap import: black -> this world Y
 float g_terrainHmHigh = 25.0f;        // heightmap import: white -> this world Y
 float g_voxSurface = 0.5f;            // voxel generate: surface height fraction
 float g_voxAmp     = 6.0f;            // voxel generate: relief amplitude
+VoxelTerrain::LayerRules g_voxRules;      // voxel material layers: the sliders on the Voxel Terrain card
+int   g_voxSeed    = 2024;            // voxel generate: seed (the same seed gives the same ground)
 float g_voxCaves   = 0.0f;            // voxel generate: cave amount (0..1; 0 = solid)
 int   g_scatterProp = 0;       // 0 Tree,1 Pine,2 Rock,3 Bush
 int   g_scatterCount = 80;     // how many props to scatter per pass
@@ -3350,6 +3254,18 @@ bool  g_meshSculpt  = false;          // sculpt brush active (instead of select/
 int   g_sculptMode  = 0;              // 0 Grab, 1 Inflate, 2 Smooth
 float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
 bool  g_meshSymX    = false;          // X symmetry: mirror every edit across local X=0
+bool  g_meshSymY    = false;          // ... across local Y=0 (G / R / S)
+bool  g_meshSymZ    = false;          // ... across local Z=0 (G / R / S)
+bool  g_paintVertex = false;          // the paint brush paints smooth per-vertex colours instead of whole faces
+float g_paintHardness = 0.3f;         // vertex paint: 0 = soft falloff all the way, near 1 = solid centre
+bool  g_meshXray    = false;          // box / circle / lasso select picks through the mesh
+using RefImage = okay::modeling::RefImageRecord;   // saved in the scene (Scene::refImages)
+std::vector<Vec3> g_curvePts = {{-2, 0, 0}, {-1, 1, 0}, {1, -1, 0}, {2, 0, 0}};   // the Bezier curve being built (world space), drawn in the 3D view
+bool  g_curveClosed = false;
+float g_curveTension = 0.5f;
+bool  g_curveShow = true;
+int   g_selTool     = 0;              // 0 none, 1 box, 2 circle, 3 lasso (the active drag-select tool)
+float g_circleRadius = 40.0f;         // circle select radius in screen pixels (mouse wheel changes it)
 bool  g_meshSoftSel = false;          // proportional editing: moves fall off around selection
 float g_meshSoftRadius = 0.5f;        // falloff radius for soft selection
 bool  g_meshPaint   = false;          // face-paint brush active (instead of select/sculpt)
@@ -3384,11 +3300,25 @@ okay::modeling::Ray g_meModalRay0{};
 
 // A modeling tool button that is greyed out (with the reason on hover) until the
 // selection it works on is there, instead of a button that silently does nothing.
+// The last few modeling tools that were used (newest first), shown as a plain list in Edit Mesh.
+static std::vector<std::string> g_recentTools;
+static std::string g_nextUndoLabel;   // the name the next mesh undo step is filed under (the tool just pressed)
+static void NoteRecentTool(const char* label) {
+    std::string n = label;
+    const std::size_t hash = n.find("##");
+    if (hash != std::string::npos) n.resize(hash);
+    if (n.empty()) return;
+    g_nextUndoLabel = n;
+    g_recentTools.erase(std::remove(g_recentTools.begin(), g_recentTools.end(), n), g_recentTools.end());
+    g_recentTools.insert(g_recentTools.begin(), n);
+    if (g_recentTools.size() > 6) g_recentTools.resize(6);
+}
 static bool ToolButton(const char* label, bool ok, const char* why, bool small = false) {
     ImGui::BeginDisabled(!ok);
     const bool hit = small ? ImGui::SmallButton(label) : ImGui::Button(label);
     ImGui::EndDisabled();
     if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why);
+    if (hit && ok) NoteRecentTool(label);
     return hit && ok;
 }
 static const char* const kNeedFaces = "Select faces first: Face mode (key 3), then click faces in the 3D view.";
@@ -3456,45 +3386,31 @@ static void SaveMeshAssetButton(EditorState& ed, GameObject* go, MeshRenderer* m
 // Each edit-mode step stores a copy of just that mesh (and the selection), not
 // a text snapshot of the whole scene, so undo stays instant on big meshes.
 // Leaving edit mode turns the whole session into one scene undo step.
-struct MeshUndoStep {
-    Mesh mesh;
-    std::vector<int> verts, faces;
-    std::vector<std::pair<int, int>> edges;
-};
+using MeshUndoStep = okay::modeling::MeshUndoStep;   // engine/include/okay/Modeling/MeshUndo.hpp (tested headless)
 std::vector<MeshUndoStep> g_meshUndo, g_meshRedo;
 Mesh g_meshEditStart;            // the mesh as it was when edit mode began
 bool g_meshEditStartSet = false;
-static MeshUndoStep MeshUndoCapture(const Mesh& m) { return {m, g_meshSelVerts, g_meshSelFaces, g_meshSelEdges}; }
-static void MeshUndoRestore(Mesh& m, MeshUndoStep& s) {
-    m = std::move(s.mesh);
-    g_meshSelVerts = std::move(s.verts); g_meshSelFaces = std::move(s.faces); g_meshSelEdges = std::move(s.edges);
+// The live state a step reads and writes: the mesh, the selection and the object's modifier list.
+static okay::modeling::MeshUndoTarget MeshUndoTargetFor(Mesh& m) {
+    okay::modeling::MeshUndoTarget t;
+    t.mesh = &m; t.verts = &g_meshSelVerts; t.faces = &g_meshSelFaces; t.edges = &g_meshSelEdges;
+    if (g_meshEditObj) if (auto* mm = g_meshEditObj->GetComponent<okay::MeshModifiers>()) t.mods = &mm->modifiers;
+    return t;
 }
+static void MeshUndoRestore(Mesh& m, MeshUndoStep& s) { okay::modeling::RestoreMeshUndo(MeshUndoTargetFor(m), s); }
 static MeshRenderer* EditedRenderer() { return g_meshEdit && g_meshEditObj ? g_meshEditObj->GetComponent<MeshRenderer>() : nullptr; }
 // Call before changing a mesh: one undo step. In edit mode on this mesh it's a
 // mesh step; otherwise an ordinary scene undo step.
 static void EditUndoPoint(EditorState& ed, MeshRenderer* mr) {
     if (!mr || mr != EditedRenderer()) { ed.PushUndo(); return; }
-    g_meshUndo.push_back(MeshUndoCapture(mr->mesh));
-    g_meshRedo.clear();
-    // Keep it bounded: at most 100 steps and about 4 million stored vertices.
-    std::size_t total = 0;
-    for (const auto& s : g_meshUndo) total += s.mesh.vertices.size();
-    while (g_meshUndo.size() > 1 && (g_meshUndo.size() > 100 || total > 4000000)) {
-        total -= g_meshUndo.front().mesh.vertices.size();
-        g_meshUndo.erase(g_meshUndo.begin());
-    }
+    okay::modeling::PushMeshUndo(g_meshUndo, g_meshRedo, MeshUndoTargetFor(mr->mesh), g_nextUndoLabel);
+    g_nextUndoLabel.clear();
 }
 // Ctrl+Z / Ctrl+Y in edit mode. Returns false when there's no mesh step to take
 // (then the ordinary scene undo applies).
 static bool MeshUndo(bool redo) {
     MeshRenderer* mr = EditedRenderer();
-    auto& from = redo ? g_meshRedo : g_meshUndo;
-    auto& to = redo ? g_meshUndo : g_meshRedo;
-    if (!mr || from.empty()) return false;
-    to.push_back(MeshUndoCapture(mr->mesh));
-    MeshUndoRestore(mr->mesh, from.back());
-    from.pop_back();
-    return true;
+    return mr && okay::modeling::StepMeshUndo(g_meshUndo, g_meshRedo, MeshUndoTargetFor(mr->mesh), redo);
 }
 // Leaving edit mode: if the mesh changed, record the whole session as one scene
 // undo step (the scene snapshot taken with the mesh as it was on entry).
@@ -3525,9 +3441,17 @@ static EditPolyCache g_editPoly;
 // Only the topology: moving vertices doesn't change the polygons.
 static std::uint64_t PolyTopologyKey(const Mesh& m) {
     std::uint64_t h = 1469598103934665603ull;
+    // Eight bytes at a time: this runs several times a frame in edit mode, and the byte-by-byte
+    // version cost about 4 ms per call on a 240k-triangle mesh (about 0.8 ms now).
     auto mix = [&](const void* d, std::size_t n) {
         const unsigned char* p = static_cast<const unsigned char*>(d);
-        for (std::size_t i = 0; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; }
+        std::size_t i = 0;
+        for (; i + 8 <= n; i += 8) {
+            std::uint64_t k; std::memcpy(&k, p + i, 8);
+            k *= 0x9E3779B97F4A7C15ull; k ^= k >> 29;
+            h = (h ^ k) * 1099511628211ull;
+        }
+        for (; i < n; ++i) { h ^= p[i]; h *= 1099511628211ull; }
     };
     const std::size_t counts[3] = {m.vertices.size(), m.triangles.size(), m.polyFace.size()};
     mix(counts, sizeof(counts));
@@ -3573,6 +3497,8 @@ static bool ApplyPoly(EditorState& ed, MeshRenderer* mr, const std::function<boo
     // Keep the welded vertices (and exact per-corner UVs) the edit works on.
     Mesh out = pm.ToMesh(nullptr, mr != EditedRenderer());
     out.name = "";
+    out.hiddenPos = mr->mesh.hiddenPos; out.hiddenUV = mr->mesh.hiddenUV; out.hiddenSlot = mr->mesh.hiddenSlot;   // hidden faces ride along
+    out.hiddenPoly = mr->mesh.hiddenPoly; out.hiddenColor = mr->mesh.hiddenColor;
     if (smooth) { if (autoAngle > 0.0f) out.ComputeAutoSmoothNormals(autoAngle); else out.ComputeSmoothNormals(); }
     mr->mesh = std::move(out);
     auto rv = [&](int v) { return v >= 0 && v < (int)remap.size() ? remap[v] : -1; };
@@ -3615,6 +3541,436 @@ static void EndPolyTool(bool keep) {
     g_slideAfterCut = false;
 }
 
+// ---- Every modeling command in one list: the toolbar, the right-click menu, the Ctrl+K palette and
+// Shift+R (repeat last) all run these, so they can never drift apart from what the buttons do. ----
+struct ModelCmd {
+    std::string name, keys, group, hint;
+    bool ok = true;                  // can it run on the current selection?
+    std::string why;                 // what to do first, when it cannot
+    std::function<void()> run;
+};
+static std::string g_lastCmdName;    // the last command run (Shift+R runs it again)
+static bool g_cmdPaletteRequest = false;   // Ctrl+K, the Find button or the right-click menu asks for the palette
+static int  g_cmdPaletteSel = 0;
+static char g_cmdFilter[64] = "";
+static float g_quickBevelW = 0.1f;
+static float g_reduceRatio = 50.0f;    // Reduce Polygons: percent of the triangles to keep
+static int   g_quadTarget = 400;       // Quad Remesh: about how many faces to end with
+static bool  g_quadAllQuads = true;    // Quad Remesh: split leftovers so there are no triangles
+static float g_bevelWeight = 1.0f;     // bevel weight 0..1 for Set Bevel Weight
+static float g_creaseW = 2.0f;         // crease sharpness: levels of subdivision the edge stays sharp
+static float g_wrapOffset = 0.0f;      // shrinkwrap / snap to surface: how far to stay off the surface
+static bool s_insActive = false; static Mesh s_insStart; static std::vector<int> s_insFaces; static ImVec2 s_insC; static float s_insD0 = 100.0f;   // live inset state
+static bool s_selDrag = false; static ImVec2 s_selStart; static std::vector<ImVec2> s_lasso;                                    // box / lasso drag state
+static int   g_quickBevelSeg = 3;
+static float g_windowBorder = 0.3f;
+static std::vector<int> SelectedTriangles(const Mesh& m) {
+    if (g_meshSelMode == 1) return g_meshSelFaces;
+    std::set<int> vs;
+    if (g_meshSelMode == 0) vs.insert(g_meshSelVerts.begin(), g_meshSelVerts.end());
+    else for (const auto& e : g_meshSelEdges) { vs.insert(e.first); vs.insert(e.second); }
+    std::vector<int> out;
+    if (vs.empty()) return out;
+    for (int t = 0; t < m.TriangleCount(); ++t)
+        if (vs.count(m.triangles[t * 3]) && vs.count(m.triangles[t * 3 + 1]) && vs.count(m.triangles[t * 3 + 2])) out.push_back(t);
+    return out;
+}
+static bool g_isolating = false;                    // local view is on (the hidden faces are the ones outside it)
+static int  g_pendingMove = 0;                      // 1: start a Move (G) next frame; 2: ... locked to the selection's normal axis
+static Vec3 g_cursorOrigin{0, 0, 0}, g_cursorDir{0, 0, -1};   // the mouse ray in the 3D view, last seen while the pointer was over it
+static void SetActiveRecursive(GameObject* go, bool on);   // defined with the Hierarchy
+static std::vector<GameObject*> g_hiddenObjects;    // objects hidden with H in object mode (Alt+H brings them back)
+static void WorldRange(const GameObject* go, int axis, float& lo, float& hi, bool& ok) {
+    ok = false;
+    const MeshRenderer* r = go ? go->GetComponent<MeshRenderer>() : nullptr;
+    if (!r || r->DisplayMesh().vertices.empty()) return;
+    const Mat4 W = go->transform->LocalToWorldMatrix();
+    for (const Vec3& v : r->DisplayMesh().vertices) {
+        const Vec3 wp = W.MultiplyPoint(v);
+        const float c = (&wp.x)[axis];
+        if (!ok) { lo = hi = c; ok = true; } else { lo = std::min(lo, c); hi = std::max(hi, c); }
+    }
+}
+static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
+    namespace pmo = okay::modeling;
+    std::vector<ModelCmd> v;
+    if (!mr) return v;
+    const bool anyFaces = !g_meshSelFaces.empty(), anyVerts = !g_meshSelVerts.empty();
+    // A quick guess is enough to grey a button out (the tool itself checks again); working out the real edges every frame cost milliseconds on big meshes.
+    const bool anyEdges = g_meshSelMode == 2 ? !g_meshSelEdges.empty() : (g_meshSelMode == 1 ? anyFaces : g_meshSelVerts.size() >= 2);
+    auto add = [&](const char* name, const char* keys, const char* group, const char* hint, bool ok, const char* why, std::function<void()> run) {
+        ModelCmd c; c.name = name; c.keys = keys; c.group = group; c.hint = hint; c.ok = ok; c.why = ok ? "" : why; c.run = std::move(run);
+        v.push_back(std::move(c));
+    };
+    auto edit = [&](const std::function<void(Mesh&)>& f) { return [&ed, mr, f] { EditUndoPoint(ed, mr); f(mr->mesh); ed.dirty = true; }; };
+    auto clearSel = [] { g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); };
+    const char* needFaces = "Select faces first (Face mode, key 3).";
+    const char* needEdges = "Select edges first (Edge mode, key 2).";
+    // Selection
+    add("Select All", "", "Select", "Select every vertex, edge or face (whichever mode you are in).", true, "", [mr] {
+        g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+        if (g_meshSelMode == 0) for (int i = 0; i < (int)mr->mesh.vertices.size(); ++i) g_meshSelVerts.push_back(i);
+        else if (g_meshSelMode == 2) for (const auto& e : EditPolyEdges(mr->mesh)) g_meshSelEdges.push_back(e);
+        else for (int i = 0; i < mr->mesh.TriangleCount(); ++i) g_meshSelFaces.push_back(i);
+    });
+    add("Select None", "", "Select", "Clear the selection.", true, "", clearSel);
+    add("Grow Selection", "", "Select", "Add everything touching the selection (faces or vertices).", g_meshSelMode == 1 ? anyFaces : (g_meshSelMode == 0 && anyVerts), "Select some faces (key 3) or vertices (key 1) first.", [mr] {
+        if (g_meshSelMode == 1) g_meshSelFaces = pmo::GrowFaces(mr->mesh, g_meshSelFaces);
+        else g_meshSelVerts = mr->mesh.GrownVertexSelection(g_meshSelVerts);
+    });
+    add("Shrink Selection", "", "Select", "Take the outer rim off the selection (faces or vertices).", g_meshSelMode == 1 ? anyFaces : (g_meshSelMode == 0 && anyVerts), "Select some faces (key 3) or vertices (key 1) first.", [mr] {
+        if (g_meshSelMode == 1) g_meshSelFaces = pmo::ShrinkFaces(mr->mesh, g_meshSelFaces);
+        else g_meshSelVerts = mr->mesh.ShrunkVertexSelection(g_meshSelVerts);
+    });
+    add("Select Similar: Facing", "", "Select", "Select every face that points the same way as the selected faces.", anyFaces, needFaces, [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectSimilar(mr->mesh, g_meshSelFaces, pmo::SimilarKind::Normal, 5.0f); });
+    add("Select Similar: Same Plane", "", "Select", "Select the faces lying flat on the same plane (all the floor faces, all of one wall).", anyFaces, needFaces, [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectSimilar(mr->mesh, g_meshSelFaces, pmo::SimilarKind::Coplanar, 0.01f); });
+    add("Select Similar: Area", "", "Select", "Select the faces about as big as the selected ones (within 10 percent).", anyFaces, needFaces, [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectSimilar(mr->mesh, g_meshSelFaces, pmo::SimilarKind::Area, 0.1f); });
+    add("Select Similar: Material Slot", "", "Select", "Select every face in the same material slot as the selected faces.", anyFaces && mr->mesh.HasSlots(), "Select faces that have a material slot (Paint > Material Slots).", [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectSimilar(mr->mesh, g_meshSelFaces, pmo::SimilarKind::Slot, 0.0f); });
+    add("Select Up-Facing Faces", "", "Select", "Select every face that points up (floors, roofs, tabletops).", true, "", [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectByNormal(mr->mesh, Vec3{0, 1, 0}, 30.0f); });
+    add("Select Down-Facing Faces", "", "Select", "Select every face that points down.", true, "", [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectByNormal(mr->mesh, Vec3{0, -1, 0}, 30.0f); });
+    add("Select Small Faces", "", "Select", "Select the smallest faces (a tenth of the average area or less): usually leftover slivers.", true, "", [mr] {
+        const pmo::Measurement w = pmo::MeasureMesh(mr->mesh);
+        const float avg = mr->mesh.TriangleCount() ? w.area / (float)mr->mesh.TriangleCount() : 0.0f;
+        g_meshSelMode = 1; g_meshSelFaces = pmo::SelectByArea(mr->mesh, 0.0f, avg * 0.1f);
+    });
+    // Editing
+    add("Set Crease on Selected Edges", "", "Edit", "Keep the selected edges sharp when the Subdivision modifier rounds the mesh (sharpness set in Edit Mesh; shown pink).", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+        EditUndoPoint(ed, mr);
+        for (const auto& e : edges) mr->mesh.SetCrease(e.first, e.second, g_creaseW);
+        ed.dirty = true;
+    });
+    add("Clear Crease on Selected Edges", "", "Edit", "Remove the crease from the selected edges.", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+        EditUndoPoint(ed, mr);
+        for (const auto& e : edges) mr->mesh.SetCrease(e.first, e.second, 0.0f);
+        ed.dirty = true;
+    });
+    add("Quad Remesh", "", "Edit", "Rebuild the whole mesh as quads: fewer faces (the Quads target in Edit Mesh), the same shape. Slots, vertex colours and UVs are dropped; Undo brings them back.", mr->mesh.TriangleCount() > 0, "The mesh has no triangles.", [&ed, mr] {
+        okay::modeling::QuadRemeshOptions qo; qo.targetQuads = g_quadTarget; qo.allQuads = g_quadAllQuads;
+        okay::modeling::QuadRemeshReport rep; const int before = mr->mesh.TriangleCount();
+        const Mesh src = mr->mesh;
+        const bool ok = ApplyPoly(ed, mr, [&](okay::modeling::PolyMesh& pm) {
+            pm = okay::modeling::QuadRemesh(src, qo, &rep);
+            g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_meshSelFaces.clear();
+            return rep.ok;
+        });
+        ConsoleLog(ok ? "Quad Remesh: " + std::to_string(before) + " triangles -> " + std::to_string(rep.outputQuads) + " quads, " + std::to_string(rep.outputTriangles) + " triangles left" : "Quad Remesh: " + rep.error);
+    });
+    add("Set Bevel Weight on Selected Edges", "", "Edit", "Mark the selected edges for the Bevel modifier's 'Use edge weights' option (weight set in Edit Mesh: 1 = full width).", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+        EditUndoPoint(ed, mr);
+        for (const auto& e : edges) mr->mesh.SetBevelWeight(e.first, e.second, g_bevelWeight);
+        ed.dirty = true;
+    });
+    add("Clear Bevel Weight on Selected Edges", "", "Edit", "Remove the bevel weight from the selected edges.", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+        EditUndoPoint(ed, mr);
+        for (const auto& e : edges) mr->mesh.SetBevelWeight(e.first, e.second, 0.0f);
+        ed.dirty = true;
+    });
+    add("Reduce Polygons (Quality)", "", "Edit", "Cut the triangle count to the Reduce % in Edit Mesh by collapsing the least visible edges (keeps borders, UV seams and the shape; colours kept per face). Slots and vertex colours are dropped.", mr->mesh.TriangleCount() > 8, "The mesh is too small to reduce.", [&ed, mr] {
+        EditUndoPoint(ed, mr);
+        okay::optimize::SimplifyOptions o; o.targetRatio = std::clamp(g_reduceRatio * 0.01f, 0.02f, 1.0f); o.lockBoundary = false;
+        const int before = mr->mesh.TriangleCount();
+        okay::optimize::SimplifyResult res = okay::optimize::SimplifyMesh(mr->mesh, o);
+        res.mesh.name = "";
+        res.mesh.hiddenPos = mr->mesh.hiddenPos; res.mesh.hiddenUV = mr->mesh.hiddenUV; res.mesh.hiddenSlot = mr->mesh.hiddenSlot;
+        res.mesh.hiddenPoly = mr->mesh.hiddenPoly; res.mesh.hiddenColor = mr->mesh.hiddenColor;
+        mr->mesh = std::move(res.mesh);
+        g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+        ConsoleLog("Reduce Polygons: " + std::to_string(before) + " -> " + std::to_string(mr->mesh.TriangleCount()) + " triangles (error " + std::to_string(res.error) + ")" + (res.reachedTarget ? "" : ", stopped early by borders or seams"));
+        ed.dirty = true;
+    });
+    add("Extrude Faces", "", "Edit", "Push the selected faces out by the Extrude distance.", anyFaces, needFaces, edit([](Mesh& m) { m.ExtrudeFaces(g_meshSelFaces, g_extrudeDist); }));
+    add("Inset Faces", "", "Edit", "Shrink the selected faces into a border plus a smaller face.", anyFaces, needFaces, edit([](Mesh& m) { m.InsetFaces(g_meshSelFaces, g_insetAmt); }));
+    add("Subdivide Selection", "", "Edit", "Split the selected faces into smaller ones.", anyFaces, needFaces, edit([](Mesh& m) { m.SubdivideFaces(g_meshSelFaces); g_meshSelFaces.clear(); }));
+    add("Poke Faces", "", "Edit", "Fan each selected face from a centre point.", anyFaces, needFaces, edit([](Mesh& m) { m.PokeFaces(g_meshSelFaces, 0.15f); g_meshSelFaces.clear(); }));
+    add("Delete Faces", "", "Edit", "Remove the selected faces (leaves a hole).", anyFaces, needFaces, edit([](Mesh& m) { m.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); }));
+    add("Duplicate Faces", "", "Edit", "Copy the selected faces in place; the copies stay selected.", anyFaces, needFaces, edit([](Mesh& m) { g_meshSelFaces = m.DuplicateFaces(g_meshSelFaces); g_meshSelVerts.clear(); g_meshSelEdges.clear(); }));
+    add("Flip Normals", "", "Edit", "Turn every face the other way round.", true, "", edit([](Mesh& m) { m.FlipNormals(); }));
+    add("Recalculate Normals Outside", "", "Edit", "Make every face point outward (fixes dark or inside-out faces).", true, "", edit([](Mesh& m) { m.OrientFacesOutward(); }));
+    add("Merge by Distance", "", "Edit", "Join vertices that sit on top of each other.", true, "", edit([clearSel](Mesh& m) { m.WeldVertices(); g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); }));
+    add("Repair Mesh", "", "Edit", "Merge doubles, drop collapsed triangles, cap holes, point faces outward.", true, "", [&ed, mr] {
+        EditUndoPoint(ed, mr);
+        const Mesh::RepairReport r = mr->mesh.Repair();
+        g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+        ConsoleLog("Repair Mesh: merged " + std::to_string(r.mergedVerts) + " verts, capped " + std::to_string(r.holesFilled) + " holes, flipped " + std::to_string(r.flippedFaces) + " faces");
+        ed.dirty = true;
+    });
+    add("Fill Holes", "", "Edit", "Cap every open hole.", true, "", edit([](Mesh& m) { m.FillHoles(); }));
+    add("Dissolve Edges", "", "Edit", "Remove the selected edges, merging the faces beside them.", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+        ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { const int n = pmo::DissolveEdges(p, edges); g_meshSelEdges.clear(); return n > 0; });
+    });
+    add("Bevel Edges", "Ctrl+B", "Edit", "Chamfer the selected edges (Ctrl+B in the 3D view for the live version).", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh); std::string err;
+        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { return pmo::BevelEdges(p, edges, g_quickBevelW, &err, g_quickBevelSeg, 0.5f) > 0; })) { g_meshSelEdges.clear(); g_meshSelVerts.clear(); }
+        else ConsoleLog("Bevel: " + err, 1);
+    });
+    add("Round Edges (how do I)", "", "How do I", "Round the selected edges with a smooth curved bevel (3 steps).", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh); std::string err;
+        EditUndoPoint(ed, mr);
+        const int n = pmo::RoundEdges(mr->mesh, edges, g_quickBevelW, 3, &err);
+        if (n > 0) { g_meshSelEdges.clear(); g_meshSelVerts.clear(); g_meshSelFaces.clear(); ed.dirty = true; ConsoleLog("Rounded " + std::to_string(n) + " edge(s)"); }
+        else { if (!g_meshUndo.empty()) { MeshUndo(false); g_meshRedo.clear(); } ConsoleLog("Round Edges: " + err, 1); }
+    });
+    add("Make a Window Hole (how do I)", "", "How do I", "Cut an opening with a frame in the selected wall faces: inset, then delete the middle.", anyFaces, needFaces, [&ed, mr] {
+        std::string err;
+        EditUndoPoint(ed, mr);
+        if (pmo::MakeWindowHole(mr->mesh, g_meshSelFaces, g_windowBorder, &err)) { g_meshSelFaces.clear(); g_meshSelVerts.clear(); g_meshSelEdges.clear(); ed.dirty = true; ConsoleLog("Cut a window hole"); }
+        else ConsoleLog("Window hole: " + err, 1);
+    });
+    add("Add a Table (how do I)", "", "How do I", "Add a four-legged table (top and legs in two material slots) as a new object you can keep editing.", true, "", [&ed] {
+        ed.PushUndo();
+        GameObject* t = ed.scene().CreateGameObject("Table");
+        auto* tmr = t->AddComponent<MeshRenderer>();
+        tmr->mesh = pmo::MakeTable();
+        ed.Select(t);
+        ConsoleLog("Added a table: Modeling > Edit Mesh to change it, Material Slots to recolour it");
+        ed.dirty = true;
+    });
+    add("Apply Scale and Rotation", "", "Object", "Bake the object's scale and rotation into its mesh and reset them (so sizes read true).", mr->gameObject->transform->ChildCount() == 0, "Not available while the object has children (their placement would change).", [&ed, mr] {
+        Transform* tr = mr->gameObject->transform;
+        ed.PushUndo();
+        if (pmo::BakeTransform(mr->mesh, tr->localScale, tr->localRotation)) {
+            tr->localScale = Vec3{1, 1, 1}; tr->localRotation = Quat::Identity;
+            ConsoleLog("Applied scale and rotation"); ed.dirty = true;
+        } else ConsoleLog("Apply Scale: the scale has a zero or invalid axis", 1);
+    });
+    // Switches
+    // ---- Hide, reveal, isolate (faces) ----
+    {
+        const bool haveSel = !SelectedTriangles(mr->mesh).empty();
+        add("Hide Selected", "H", "Hide", "Hide the selected faces (they stay in the file; Reveal brings them back).", haveSel, "Select faces first (key 3).", [&ed, mr] {
+            const std::vector<int> t = SelectedTriangles(mr->mesh);
+            EditUndoPoint(ed, mr);
+            const int n = mr->mesh.HideTriangles(t);
+            g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+            ConsoleLog("Hid " + std::to_string(n) + " face(s) (Alt+H reveals)"); ed.dirty = true;
+        });
+        add("Reveal Hidden", "Alt+H", "Hide", "Bring every hidden face back and select it.", mr->mesh.HasHidden(), "Nothing is hidden.", [&ed, mr] {
+            EditUndoPoint(ed, mr);
+            const std::vector<int> back = mr->mesh.RevealHidden();
+            g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_meshSelFaces = back; g_meshSelMode = 1; g_isolating = false;
+            ConsoleLog("Revealed " + std::to_string(back.size()) + " face(s)"); ed.dirty = true;
+        });
+        add("Isolate Selection (Local View)", "/", "Hide", "Show only the selected faces; run it again to bring the rest back.", haveSel || g_isolating, "Select faces first (key 3).", [&ed, mr] {
+            EditUndoPoint(ed, mr);
+            if (g_isolating && mr->mesh.HasHidden()) {
+                const std::vector<int> back = mr->mesh.RevealHidden();
+                g_isolating = false; g_meshSelVerts.clear(); g_meshSelEdges.clear();
+                ConsoleLog("Local view off: " + std::to_string(back.size()) + " face(s) back");
+            } else {
+                const std::vector<int> keep = SelectedTriangles(mr->mesh);
+                const int n = mr->mesh.IsolateTriangles(keep);
+                g_isolating = n > 0; g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+                ConsoleLog("Local view: hid " + std::to_string(n) + " other face(s) (/ again to leave)");
+            }
+            ed.dirty = true;
+        });
+        add("Hide Unselected", "Shift+H", "Hide", "Hide every face that is not selected (stays hidden after / is pressed again).", haveSel, "Select faces first (key 3).", [&ed, mr] {
+            EditUndoPoint(ed, mr);
+            const int n = mr->mesh.IsolateTriangles(SelectedTriangles(mr->mesh));
+            g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); ed.dirty = true;
+            ConsoleLog("Hid " + std::to_string(n) + " unselected face(s)");
+        });
+    }
+    // ---- Drag-select tools ----
+    add("Box Select", "B", "Select", "Drag a rectangle to select what is inside it (Shift adds). Esc cancels.", true, "", [] { g_selTool = 1; });
+    add("Circle Select", "C", "Select", "Paint a circle over what you want selected; the mouse wheel changes its size; Esc or Enter ends.", true, "", [] { g_selTool = 2; });
+    add("Lasso Select", "L", "Select", "Draw a loop round what you want selected (Shift adds).", true, "", [] { g_selTool = 3; });
+    add("Toggle X-ray Select", "Alt+Z", "Switch", "Let Box, Circle and Lasso select through the mesh (also what is behind).", true, "", [] { g_meshXray = !g_meshXray; });
+    // ---- Duplicate, join, separate, pivot ----
+    add("Duplicate and Move", "Shift+D", "Edit", "Copy the selected faces and start moving the copies (Enter confirms, Esc leaves them in place).", anyFaces, needFaces, [&ed, mr] {
+        EditUndoPoint(ed, mr);
+        g_meshSelFaces = mr->mesh.DuplicateFaces(g_meshSelFaces);
+        g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_pendingMove = 1; ed.dirty = true;
+    });
+    add("Extrude and Move", "E", "Edit", "Extrude the selected faces and start dragging them out along their normal (type a number for an exact distance).", anyFaces, needFaces, [&ed, mr] {
+        EditUndoPoint(ed, mr);
+        mr->mesh.ExtrudeFaces(g_meshSelFaces, 0.0f);
+        g_pendingMove = 2; ed.dirty = true;
+    });
+    add("Separate Loose Parts", "", "Object", "Split every disconnected piece of this mesh into its own object (the biggest stays here).", mr->gameObject->transform->ChildCount() == 0, "Not available while the object has children.", [&ed, mr] {
+        const std::vector<std::vector<int>> parts = pmo::LooseParts(mr->mesh);
+        if (parts.size() < 2) { ConsoleLog("Separate Loose Parts: the mesh is one piece", 1); return; }
+        ed.PushUndo();
+        const Mesh src = mr->mesh;
+        GameObject* go = mr->gameObject;
+        const std::string baseName = go->name;
+        for (std::size_t i = 1; i < parts.size(); ++i) {
+            GameObject* clone = ed.scene().Duplicate(*go);
+            if (!clone) continue;
+            clone->transform->SetPosition(go->transform->Position());   // exactly in place, not nudged
+            clone->name = baseName + " part " + std::to_string(i + 1);
+            if (auto* cmr = clone->GetComponent<MeshRenderer>()) { Mesh tmp = src; cmr->mesh = tmp.SeparateFaces(parts[i]); cmr->mesh.name = ""; }
+        }
+        Mesh keep = src;
+        std::vector<int> drop;
+        for (std::size_t i = 1; i < parts.size(); ++i) drop.insert(drop.end(), parts[i].begin(), parts[i].end());
+        keep.DeleteFaces(drop);
+        mr->mesh = std::move(keep);
+        g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+        ConsoleLog("Separated " + std::to_string(parts.size()) + " pieces into objects"); ed.dirty = true;
+    });
+    add("Set Origin to Selection", "", "Object", "Move the object's pivot to the middle of the selection without moving the model.", (anyFaces || anyVerts || !g_meshSelEdges.empty()) && mr->gameObject->transform->ChildCount() == 0, "Select something first (and not on an object with children).", [&ed, mr] {
+        std::set<int> vs;
+        if (g_meshSelMode == 0) vs.insert(g_meshSelVerts.begin(), g_meshSelVerts.end());
+        else if (g_meshSelMode == 2) for (const auto& e : g_meshSelEdges) { vs.insert(e.first); vs.insert(e.second); }
+        else for (int t : g_meshSelFaces) if (t >= 0 && t < mr->mesh.TriangleCount()) for (int k = 0; k < 3; ++k) vs.insert(mr->mesh.triangles[t * 3 + k]);
+        Vec3 c{0, 0, 0}; int n = 0;
+        for (int v : vs) if (v >= 0 && v < (int)mr->mesh.vertices.size()) { c += mr->mesh.vertices[v]; ++n; }
+        if (!n) return;
+        c = c * (1.0f / (float)n);
+        Transform* tr = mr->gameObject->transform;
+        const Vec3 world = tr->LocalToWorldMatrix().MultiplyPoint(c);
+        ed.PushUndo();
+        for (Vec3& v : mr->mesh.vertices) v = v - c;
+        for (Vec3& v : mr->mesh.hiddenPos) v = v - c;
+        mr->mesh.name = "";
+        tr->SetPosition(world);
+        ConsoleLog("Origin moved to the selection"); ed.dirty = true;
+    });
+    {
+        const auto& multi = ed.MultiSelection();
+        int withMesh = 0;
+        for (GameObject* g : multi) if (g && g->GetComponent<MeshRenderer>()) ++withMesh;
+        const bool two = withMesh >= 2, three = withMesh >= 3;
+        auto aligner = [&ed](int axis, pmo::AlignTo to) {
+            return [&ed, axis, to] {
+                std::vector<GameObject*> objs; std::vector<pmo::Range1D> rs;
+                for (GameObject* g : ed.MultiSelection()) { float lo = 0, hi = 0; bool ok = false; WorldRange(g, axis, lo, hi, ok); if (ok) { objs.push_back(g); rs.push_back({lo, hi}); } }
+                const std::vector<float> sh = pmo::AlignShifts(rs, to);
+                ed.PushUndo();
+                for (std::size_t i = 0; i < objs.size(); ++i) { Vec3 p = objs[i]->transform->Position(); (&p.x)[axis] += sh[i]; objs[i]->transform->SetPosition(p); }
+                ed.dirty = true;
+            };
+        };
+        const char* ax[3] = {"X", "Y", "Z"};
+        for (int a = 0; a < 3; ++a) {
+            add((std::string("Align Objects ") + ax[a] + " (Centre)").c_str(), "", "Object", "Line the selected objects up on their common centre along this axis (select two or more objects first).", two, "Select two or more mesh objects (Ctrl+click in the Hierarchy).", aligner(a, pmo::AlignTo::Centre));
+            add((std::string("Align Objects ") + ax[a] + " (Min)").c_str(), "", "Object", "Line the selected objects up on their lowest edge along this axis.", two, "Select two or more mesh objects (Ctrl+click in the Hierarchy).", aligner(a, pmo::AlignTo::Min));
+        }
+        for (int a = 0; a < 3; ++a)
+            add((std::string("Distribute Objects ") + ax[a]).c_str(), "", "Object", "Space the selected objects evenly along this axis (the outer two stay put; needs three or more).", three, "Select three or more mesh objects.", [&ed, a] {
+                std::vector<GameObject*> objs; std::vector<pmo::Range1D> rs;
+                for (GameObject* g : ed.MultiSelection()) { float lo = 0, hi = 0; bool ok = false; WorldRange(g, a, lo, hi, ok); if (ok) { objs.push_back(g); rs.push_back({lo, hi}); } }
+                const std::vector<float> sh = pmo::DistributeShifts(rs);
+                ed.PushUndo();
+                for (std::size_t i = 0; i < objs.size(); ++i) { Vec3 p = objs[i]->transform->Position(); (&p.x)[a] += sh[i]; objs[i]->transform->SetPosition(p); }
+                ed.dirty = true;
+            });
+        add("Join Selected Objects", "", "Object", "Merge the selected mesh objects into the main selected one (colours, slots and UVs are kept).", two, "Select two or more mesh objects; the last one clicked is the one that stays.", [&ed] {
+            GameObject* keep = ed.selected();
+            auto* kmr = keep ? keep->GetComponent<MeshRenderer>() : nullptr;
+            if (!kmr) return;
+            ed.PushUndo();
+            const Mat4 inv = keep->transform->LocalToWorldMatrix().Inverse();
+            std::vector<GameObject*> gone;
+            for (GameObject* g : ed.MultiSelection()) {
+                auto* r = g != keep ? g->GetComponent<MeshRenderer>() : nullptr;
+                if (!r || r->DisplayMesh().vertices.empty()) continue;
+                Mesh m = r->DisplayMesh();
+                const Mat4 toKeep = inv * g->transform->LocalToWorldMatrix();
+                for (Vec3& v : m.vertices) v = toKeep.MultiplyPoint(v);
+                m.normals.clear(); m.cornerUVs.clear();
+                kmr->mesh.Combine(m);
+                gone.push_back(g);
+            }
+            kmr->mesh.name = "";
+            ed.Select(keep);
+            for (GameObject* g : gone) ed.scene().Destroy(g);
+            ConsoleLog("Joined " + std::to_string(gone.size() + 1) + " objects"); ed.dirty = true;
+        });
+    }
+    // ---- Shrinkwrap / snap to surface (the other selected mesh object is the target) ----
+    {
+        GameObject* target = nullptr;
+        for (GameObject* g : ed.MultiSelection()) if (g && g != mr->gameObject && g->GetComponent<MeshRenderer>() && !g->GetComponent<MeshRenderer>()->DisplayMesh().triangles.empty()) target = g;
+        const char* needTarget = "Ctrl+click a second mesh object (the surface to wrap onto) in the Hierarchy, keeping this one selected.";
+        auto wrap = [&ed, mr, target](pmo::WrapMode mode, bool selectionOnly) {
+            return [&ed, mr, target, mode, selectionOnly] {
+                const auto* tmr = target->GetComponent<MeshRenderer>();
+                Mesh tm = tmr->DisplayMesh();
+                const Mat4 toLocal = mr->gameObject->transform->LocalToWorldMatrix().Inverse() * target->transform->LocalToWorldMatrix();
+                for (Vec3& v : tm.vertices) v = toLocal.MultiplyPoint(v);
+                std::vector<int> vs;
+                if (selectionOnly) {
+                    if (g_meshSelMode == 0) vs = g_meshSelVerts;
+                    else if (g_meshSelMode == 2) for (const auto& e : g_meshSelEdges) { vs.push_back(e.first); vs.push_back(e.second); }
+                    else for (int t : g_meshSelFaces) if (t >= 0 && t < mr->mesh.TriangleCount()) for (int k = 0; k < 3; ++k) vs.push_back(mr->mesh.triangles[t * 3 + k]);
+                    if (vs.empty()) { ConsoleLog("Shrinkwrap: select some vertices first (or use Shrinkwrap Whole Mesh)", 1); return; }
+                }
+                const Vec3 down = mr->gameObject->transform->LocalToWorldMatrix().Inverse().MultiplyVector(Vec3{0, -1, 0});
+                EditUndoPoint(ed, mr);
+                const pmo::WrapReport r = pmo::Shrinkwrap(mr->mesh, vs, tm, mode, g_wrapOffset, 0.0f, down);
+                ConsoleLog("Shrinkwrap: moved " + std::to_string(r.moved) + " vertices onto '" + target->name + "'" + (r.missed ? ", " + std::to_string(r.missed) + " found nothing" : ""));
+                ed.dirty = true;
+            };
+        };
+        add("Snap Selection to Surface", "", "Object", "Move the selected vertices onto the nearest point of the other selected object's surface (offset in Edit Mesh).", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Nearest, true));
+        add("Shrinkwrap Whole Mesh to Other Object", "", "Object", "Wrap every vertex of this mesh onto the other selected object's surface (nearest point).", target != nullptr, needTarget, wrap(pmo::WrapMode::Nearest, false));
+        add("Project Selection Down onto Other Object", "", "Object", "Drop the selected vertices straight down (along world Y) onto the other selected object.", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Project, true));
+    }
+    // ---- Quick primitives dropped where the mouse points ----
+    {
+        auto prim = [&ed](const char* nm, const Mesh& m) {
+            return [&ed, nm, m] {
+                // The mouse ray hits the nearest mesh in the scene (or the ground at y = 0); the new object sits on that spot.
+                Vec3 point = g_cursorOrigin + g_cursorDir * 6.0f, normal{0, 1, 0};
+                float bestT = 1e30f; bool hit = false;
+                for (const auto& up : ed.scene().Objects()) {
+                    if (!up) continue;
+                    auto* r = up->GetComponent<MeshRenderer>();
+                    if (!r || !r->enabled || r->DisplayMesh().triangles.empty()) continue;
+                    const Mat4 W = up->transform->LocalToWorldMatrix(), Wi = W.Inverse();
+                    const pmo::RayHit h = pmo::RayMeshHit(r->DisplayMesh(), Wi.MultiplyPoint(g_cursorOrigin), Wi.MultiplyVector(g_cursorDir));
+                    if (!h.found) continue;
+                    const Vec3 wp = W.MultiplyPoint(h.point);
+                    const float t = (wp - g_cursorOrigin).Magnitude();
+                    if (t < bestT) {
+                        bestT = t; hit = true; point = wp;
+                        Vec3 wn = W.MultiplyVector(h.normal);          // (a rough normal is enough for placing)
+                        normal = wn.SqrMagnitude() > 1e-12f ? wn.Normalized() : Vec3{0, 1, 0};
+                    }
+                }
+                if (!hit && std::fabs(g_cursorDir.y) > 1e-4f) {
+                    const float t = -g_cursorOrigin.y / g_cursorDir.y;
+                    if (t > 0.0f && t < 500.0f) { point = g_cursorOrigin + g_cursorDir * t; normal = Vec3{0, 1, 0}; hit = true; }
+                }
+                ed.PushUndo();
+                GameObject* o = ed.scene().CreateGameObject(nm);
+                auto* mr2 = o->AddComponent<MeshRenderer>();
+                mr2->mesh = m;
+                o->transform->SetPosition(point + normal * 0.5f);
+                ed.Select(o);
+                ConsoleLog(std::string("Added ") + nm + (hit ? " on the surface under the cursor" : " in front of the camera")); ed.dirty = true;
+            };
+        };
+        add("Add Cube at Cursor", "", "Add", "Add a cube where the mouse points (on a surface, or on the ground).", true, "", prim("Cube", Mesh::Cube()));
+        add("Add Sphere at Cursor", "", "Add", "Add a sphere where the mouse points.", true, "", prim("Sphere", Mesh::Sphere(0.5f, 16, 24)));
+        add("Add Cylinder at Cursor", "", "Add", "Add a cylinder where the mouse points.", true, "", prim("Cylinder", Mesh::Cylinder(0.5f, 1.0f, 24)));
+        add("Add Cone at Cursor", "", "Add", "Add a cone where the mouse points.", true, "", prim("Cone", Mesh::Cone(0.5f, 1.0f, 24)));
+        add("Add Plane at Cursor", "", "Add", "Add a flat plane where the mouse points.", true, "", prim("Plane", Mesh::Plane(1.0f)));
+    }
+    add("Toggle Symmetry Y", "", "Switch", "Mirror every G / R / S move across the local Y = 0 plane.", true, "", [] { g_meshSymY = !g_meshSymY; });
+    add("Toggle Symmetry Z", "", "Switch", "Mirror every G / R / S move across the local Z = 0 plane.", true, "", [] { g_meshSymZ = !g_meshSymZ; });
+    add("Toggle Symmetry X", "", "Switch", "Mirror every G / R / S move across the local X = 0 plane.", true, "", [] { g_meshSymX = !g_meshSymX; });
+    add("Toggle Snap", "Ctrl", "Switch", "Snap moves, turns and scales (also while Ctrl is held).", true, "", [] { g_snap = !g_snap; });
+    add("Toggle Soft Select", "", "Switch", "Let nearby vertices follow a move with a falloff.", true, "", [] { g_meshSoftSel = !g_meshSoftSel; });
+    add("Undo", "Ctrl+Z", "Switch", "Undo the last mesh edit.", !g_meshUndo.empty(), "Nothing to undo.", [] { MeshUndo(false); });
+    add("Redo", "Ctrl+Y", "Switch", "Redo.", !g_meshRedo.empty(), "Nothing to redo.", [] { MeshUndo(true); });
+    return v;
+}
+// Run one command: names the undo step, remembers it for Shift+R and the recent list.
+static void RunModelCmd(const ModelCmd& c) {
+    if (!c.ok) { ConsoleLog(c.name + ": " + c.why, 1); return; }
+    g_nextUndoLabel = c.name;
+    c.run();
+    if (c.group != "Switch") { NoteRecentTool(c.name.c_str()); g_lastCmdName = c.name; }
+}
+
 // Enter or leave mesh edit mode on `go` (the panel's Edit Mesh checkbox and Tab).
 static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
     if (g_meModal.Active() && g_meModalObj) {   // never leave a transform half done
@@ -3624,6 +3980,7 @@ static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
         else g_meModal.Confirm();
         g_meModalObj = nullptr;
     }
+    if (on && !g_meshEdit) { g_meshSymX = (g_symDefaultMask & 1) != 0; g_meshSymY = (g_symDefaultMask & 2) != 0; g_meshSymZ = (g_symDefaultMask & 4) != 0; }   // "symmetry by default"
     if (g_ptool != PolyTool::None) {   // a bevel / slide / knife half done: put it back
         bool alive = false;
         for (const auto& up : ed.scene().Objects()) if (up.get() == g_meshEditObj) { alive = true; break; }
@@ -3826,18 +4183,10 @@ void RevealInFiles(const std::string& path) {
 }
 
 void OpenExternal(const std::string& path) {
-    // Prefer VS Code if present, otherwise the OS default handler.
-#if defined(_WIN32)
-    int rc = SysNoWindow(("code \"" + path + "\"").c_str());
-    if (rc != 0) rc = SysNoWindow(("start \"\" \"" + path + "\"").c_str());
-#elif defined(__APPLE__)
-    int rc = SysNoWindow(("code \"" + path + "\" 2>/dev/null").c_str());
-    if (rc != 0) rc = SysNoWindow(("open \"" + path + "\"").c_str());
-#else
-    int rc = SysNoWindow(("code \"" + path + "\" >/dev/null 2>&1").c_str());
-    if (rc != 0) rc = SysNoWindow(("xdg-open \"" + path + "\" >/dev/null 2>&1").c_str());
-#endif
-    (void)rc;
+    // A named text editor (VS Code when it is installed, else Notepad or the system's text editor), never the system's "open"
+    // for the file: a script type (.js, .bat, ...) would be run by it. See editor/LaunchFile.hpp.
+    const oked::launch::Result r = oked::launch::OpenInTextEditor(path);
+    if (!r.ok) ConsoleLog("Couldn't open " + path + " in an editor: " + r.error, 1);
 }
 std::string ExtFor(const std::string& lang) {
     return lang == "lua" ? "lua" : lang == "csharp" ? "cs" : "okay";
@@ -6314,11 +6663,12 @@ static void OpenVsPlayground(EditorState& ed, const char* demoId) {
     const std::string dir = okay::editor::vsed::VsPlaygroundDir();
     if (dir.empty()) {
         ConsoleLog("Node Playground scenes were not found (examples/visual_script/playground).", 2);
+        ShowErrorPopup("Example not found", "The Node Playground scenes were not found. They should be in the examples folder next to the editor (examples/visual_script/playground). Reinstall or update to get them.");
         return;
     }
     const std::string scene = dir + "/" + demo->scene;
     std::string err;
-    if (!ed.Load(scene, &err)) { ConsoleLog("Couldn't open " + scene + ": " + err, 2); return; }
+    if (!ed.Load(scene, &err)) { ConsoleLog("Couldn't open " + scene + ": " + err, 2); ShowErrorPopup("Couldn't open the example", scene + "\n" + err); return; }
     ConsoleLog(std::string("Node Playground: ") + demo->title + ". Press Play. " + demo->blurb);
     okay::GameObject* host = nullptr;
     std::string graphPath;
@@ -6528,12 +6878,30 @@ static void DrawExampleMenuItems(EditorState& ed) {
             if (ImGui::MenuItem(name.c_str())) {
                 std::string err;
                 if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
-                else ConsoleLog("Open failed: " + err, 2);
+                else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
             }
         }
         ImGui::EndMenu();
     }
     if (basics.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("No playground scenes were found next to the editor.");
+    // Guided modeling: the fences and the architecture models, all made by the Guided page's own designs.
+    {
+        namespace fs = std::filesystem;
+        const std::vector<std::string> guided = okay::editor::ExampleScenes("modeling");
+        if (ImGui::BeginMenu("Guided modeling (fences, buildings, stairs...)", !guided.empty())) {
+            ImGui::TextDisabled("Select a model, then Modeling > Guided to change it.");
+            for (const std::string& p : guided) {
+                const std::string name = fs::path(p).stem().string();
+                if (ImGui::MenuItem(name.c_str())) {
+                    std::string err;
+                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                    else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (guided.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The guided modeling examples (examples/modeling) were not found next to the editor.");
+    }
 }
 
 static void DrawAutosaveMenuItems() {
@@ -7185,9 +7553,9 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
             : "Update check failed: " + g_update.error);
     }
     else if (id == "help.bug") {
-        ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION).c_str());   // so the report can say which version
+        ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());   // so the report can say which version (and that it is a test build)
         extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/issues/new");
-        ConsoleLog(std::string("Opened the bug report page in your browser. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + ") is on the clipboard: paste it into the report.");
+        ConsoleLog(std::string("Opened the bug report page in your browser. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + ") is on the clipboard: paste it into the report.");
     }
     else if (id == "help.about") g_openAbout = true;
 }
@@ -7718,6 +8086,7 @@ void DrawCrashLog() {
     static bool loaded = false;
     static std::uint64_t revision = 0;   // raised whenever `text` changes (the OkayUI port re-reads it then)
     fs::path dir      = OkayExeDir();
+    if (const char* dev = std::getenv("OKAY_CRASH_DIR"); dev && *dev) { std::error_code de; if (fs::is_directory(dev, de)) dir = dev; }   // (dev/test: where the handler writes, see docs/crash_reports.md)
     fs::path histPath = dir / "okay_crashlog.txt";   // rolling history (all reports)
     fs::path lastPath = dir / "okay_crash.txt";       // most recent report
     auto readAll = [](const fs::path& p, std::string& out) -> bool {
@@ -8079,6 +8448,35 @@ static std::string g_pbRoot;
 static EditorState* g_projEd = nullptr;
 static std::vector<std::string> g_dragMulti;   // all dragged items when a multi-selection is dragged (the payload carries one)
 static void ProjectApplyMoves(const okaypb::Result& r);
+// ---- Project panel right-click menus. The item lists come from editor/ProjectContextModel.hpp (pure, tested in
+// project_context_model); DrawProject draws them (oked::projectpanel::DrawContextMenu) and runs the chosen id (docs/project_panel.md).
+static std::vector<std::string> g_projClip;   // the copy / cut clipboard (paths); DrawProject's s_assetClip is this
+static bool g_projClipCut = false;
+// A menu drawn before DrawProject's own state exists (a folder in the tree, a starred item) asks for its action here;
+// DrawProject runs it in the same frame with the code the grid's menu uses.
+struct ProjectMenuRequest { std::string action, path; };
+static ProjectMenuRequest g_projReq;
+// Expand / collapse asked from a tree folder's menu, applied to the tree nodes as they are drawn next:
+// 1 expand every folder inside it, 2 collapse every folder inside it, 3 collapse every folder except it and the ones it is in.
+static int g_treeActMode = 0;
+static std::string g_treeActPath;
+static std::map<std::string, ImGuiID> g_treeIds;   // each drawn tree folder's node id (to reset the ones inside a collapsed folder)
+static std::string g_createIn;                     // "Create" from a folder's menu: make it in that folder, not the one being shown
+// What a menu action applies to when it is not the grid's selection: the one folder of a tree menu, the one starred item of the
+// Favourites list. Set by the request handler, used by the action and the Duplicate / Reimport / Delete / Copy code that follows in
+// the same frame, then cleared. Those items are not selected, so the selection (and what the details strip shows) stays as it was.
+static std::vector<std::string> g_projTargets;
+// The folder the panel must show next frame: the one it was showing was renamed or moved (ProjectApplyMoves sets it).
+static std::string g_projGoto;
+static void ProjectCtxFill(okaypb::ctx::State& st, const std::string& full, bool isDir);   // what every Project menu needs to know (defined after the colour labels)
+// A menu's State is made when its popup opens and kept while it stays open (the popup runs every frame): making it asks the
+// database and the disk, which a big folder or a long selection turned into a freeze.
+static okaypb::ctx::State& ProjectCtxState(const std::string& key, const std::function<void(okaypb::ctx::State&)>& fill) {
+    static okaypb::ctx::State s_state;
+    static std::string s_key;
+    if (ImGui::IsWindowAppearing() || s_key != key) { s_state = okaypb::ctx::State(); fill(s_state); s_key = key; }
+    return s_state;
+}
 // A model's "Scale" import setting (Project panel > Import Settings): multiplies its size when it is added to a scene.
 static void ApplyModelImportScale(GameObject* root, const std::string& path) {
     const float s = okay::ModelImportScale(path);
@@ -8711,6 +9109,49 @@ static bool PathIsAncestor(const std::filesystem::path& anc, const std::filesyst
     for (; ai != a.end() && di != d.end(); ++ai, ++di) if (*ai != *di) return false;
     return ai == a.end() && di != d.end();
 }
+// "Expand All Subfolders" / "Collapse All Subfolders" / "Collapse Other Folders" (a folder's right-click menu): applied to
+// each tree node just before it is drawn. Expanding sets every folder inside the target open (the recursion then draws
+// them all in one frame); collapsing also resets the stored open state of the folders inside, which are not drawn.
+static std::string TreeKey(const std::filesystem::path& p) {
+    std::string k = p.lexically_normal().generic_string();
+    while (k.size() > 1 && k.back() == '/') k.pop_back();
+    return k;
+}
+static void TreeApplyAct(const std::filesystem::path& node) {
+    if (!g_treeActMode) return;
+    const std::filesystem::path target(g_treeActPath);
+    const bool isTarget = TreeKey(node) == TreeKey(target);
+    const bool inside = PathIsAncestor(target, node);
+    const bool above = PathIsAncestor(node, target);
+    if (g_treeActMode == 1 && (isTarget || inside)) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+    else if (g_treeActMode == 2 && isTarget) {
+        ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        for (const auto& kv : g_treeIds)
+            if (PathIsAncestor(target, std::filesystem::path(kv.first))) ImGui::GetStateStorage()->SetInt(kv.second, 0);
+    } else if (g_treeActMode == 3) {
+        if (above) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+        else if (!isTarget) ImGui::SetNextItemOpen(false, ImGuiCond_Always);
+    }
+}
+// Copy Text of the Project menus: names, Assets-relative paths or full paths of `paths`, one per line.
+static void ProjectCopyText(const std::string& what, const std::vector<std::string>& paths) {
+    if (paths.empty() || !g_pb) return;
+    ImGui::SetClipboardText(okaypb::ctx::CopyText(what, g_pb->ProjectDir(), paths).c_str());
+    const char* word = what == "name" ? "name" : what == "rel" ? "relative path" : "full path";
+    ConsoleLog("Copied " + std::to_string(paths.size()) + " " + word + (paths.size() == 1 ? "" : "s") + " to the clipboard");
+}
+// Show in Explorer / File Manager: a file is picked in its folder where the OS allows it. No command line is built (LaunchFile.hpp),
+// so no character in a name matters.
+static void ProjectReveal(const std::string& path, bool selectFile) {
+    const oked::launch::Result r = oked::launch::Reveal(path, selectFile);
+    if (!r.ok) ConsoleLog("Can't show it in the file manager: " + r.error, 1);
+}
+// A folder is inside the project's Assets folder, links resolved (a link in Assets that points out does not count). The file
+// operations of okaypb::Browser check this themselves; code that writes files another way asks here first.
+static bool ProjectFolderInsideAssets(const std::string& folder) {
+    if (!g_pb || folder.empty()) return false;
+    return okayproj::IsSameOrInside(okayproj::Normalized(std::filesystem::u8path(folder)), okayproj::Normalized(std::filesystem::u8path(g_pb->Root())));
+}
 
 // Keyboard use of the folder tree: the tree remembers the folders it drew (last frame) and whether each is open, so
 // Up / Down / Left / Right in DrawProject can walk it.
@@ -8753,6 +9194,8 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
         if (isCur) f |= ImGuiTreeNodeFlags_Selected;
         if (reveal && PathIsAncestor(s, cur)) ImGui::SetNextItemOpen(true);
         if (g_treeReq && isCur) { ImGui::SetNextItemOpen(g_treeReq == 1); g_treeReq = 0; }   // Right / Left on the keyboard
+        g_treeIds[s.string()] = ImGui::GetID(s.string().c_str());
+        TreeApplyAct(s);                                                                       // Expand / Collapse from a folder's menu
         bool open = ImGui::TreeNodeEx(s.string().c_str(), f, "     %s", s.filename().string().c_str());
         TreeNote(s.string(), open);
         {   // drawn folder glyph in the label's leading space + a dim item count on the right
@@ -8774,12 +9217,16 @@ static void DrawFolderTree(const std::filesystem::path& dir, char* dirBuf, std::
             if (search) search[0] = '\0';
             g_treeFocused = true;
         }
-        // Right-click a folder to pin it to Favorites (or reveal it on disk).
+        // Right-click a folder: the same folder menu as the grid (Create here, Rename, Delete, Move to..., Paste Into,
+        // Expand / Collapse, Favourites, Copy Text, Show in Explorer, Properties). DrawProject runs the chosen item.
         if (ImGui::BeginPopupContextItem()) {
-            bool fav = IsFavFolder(s.string());
-            if (ImGui::MenuItem(fav ? "Remove from Favourites" : "Add to Favourites"))
-                ToggleFavFolder(s.string());
-            if (ImGui::MenuItem("Show in Explorer")) extide::RevealInFiles(s.string());
+            const okaypb::ctx::State& st = ProjectCtxState("tree|" + s.string(), [&](okaypb::ctx::State& fresh) {
+                fresh.where = okaypb::ctx::Where::Tree;
+                ProjectCtxFill(fresh, s.string(), true);
+                fresh.hasSubfolders = hasKids;
+            });
+            const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::FolderTreeMenu(st));
+            if (!act.empty()) g_projReq = {act, s.string()};
             ImGui::EndPopup();
         }
         AssetDropTarget(s);   // drop assets onto a folder to move them in
@@ -9833,6 +10280,10 @@ static void ProjectApplyMoves(const okaypb::Result& r) {
         }
     }
     g_fav.Remap(r.moved);   // stars follow
+    {   // the folder on screen follows its own rename or move (or the one it is inside): DrawProject shows it from there next frame
+        const std::string shown = okaypb::RemapPath(r.moved, okaypb::Slash(g_assetImportDir));
+        if (!shown.empty()) g_projGoto = NativePath(shown);
+    }
     {   // the build list (Scenes In Build) follows a renamed or moved scene
         std::vector<oked::SceneBuildEntry> list = oked::SceneBuildSnapshot();
         std::vector<std::string> paths;
@@ -9851,6 +10302,57 @@ static void ProjectApplyMoves(const okaypb::Result& r) {
     const std::string root = g_pb->Root();
     if (ed.RewriteAssetPaths([&](const std::string& text) { return okaypb::RewriteReferences(text, oldScene, newScene, map, root); }))
         ConsoleLog("The open scene uses what was moved, so its asset paths were updated and its scene Undo history was cleared (the Project panel's own Undo still moves the file back).", 1);
+}
+
+// Two paths name one file (the Scenes In Build list keeps canonical paths; the panel's are native ones).
+static bool SameProjectFile(const std::string& a, const std::string& b) {
+    const std::filesystem::path na = okayproj::Normalized(std::filesystem::u8path(a)), nb = okayproj::Normalized(std::filesystem::u8path(b));
+    return okayproj::IsSameOrInside(na, nb) && okayproj::IsSameOrInside(nb, na);
+}
+// The scene a built game starts on is the first ticked entry of Scenes In Build.
+static bool IsStartSceneFile(const std::string& scenePath) {
+    return okaypb::ctx::IsStartScene(oked::SceneBuildSnapshot(), scenePath, SameProjectFile);
+}
+// Does double-click / Open do something for this type? Keep in step with `openAsset` in DrawProject (the Project menu greys
+// Open for the types that have no editor window and points to Open with Default App).
+static bool ProjectOpensInEditor(const std::string& extLower, bool isDir) {
+    if (isDir) return true;
+    for (const char* e : {".okayscene", ".okayprefab", ".okayweapon", ".okaydata", ".okaymat", ".okay", ".lua", ".cs", ".okayvs", ".okayseq",
+                          ".okaydialog", ".okayquest", ".okayitems", ".okayloot", ".okayrecipes", ".okaybt", ".okayclip"})
+        if (extLower == e) return true;
+    return IsModelExt(extLower);   // a model is imported into the scene
+}
+// What every Project right-click menu needs to know about the item it was opened on (the menu lists and their rules are
+// in ProjectContextModel.hpp). The caller sets `where` first and `count` / the view fields where they apply.
+static void ProjectCtxFill(okaypb::ctx::State& st, const std::string& full, bool isDir) {
+    st.kind = okaypb::MenuKind(full, isDir);
+    st.canOpen = ProjectOpensInEditor(Lower(std::filesystem::path(full).extension().string()), isDir);
+    st.favourite = g_fav.Has(full);
+    st.readOnly = !g_projEd || g_projEd->projectDir().empty();
+    st.hasClipboard = !g_projClip.empty();
+    st.clipboardCount = static_cast<int>(g_projClip.size());
+    st.canUndo = g_pb && g_pb->CanUndo();
+    st.undoLabel = g_pb ? g_pb->UndoLabel() : std::string();
+    st.hierarchySelection = g_projEd && g_projEd->selected() != nullptr;
+    st.indexed = g_pb && g_pb->Indexed();
+    {
+        std::error_code ge;
+        st.gone = !std::filesystem::exists(std::filesystem::path(full), ge);          // (a folder renamed or deleted behind the panel's back)
+    }
+    if (!isDir) st.runsCode = !okaypb::ctx::LaunchRefusal(full).empty();   // a program or script: never given to the system's open
+#if defined(_WIN32)
+    st.fileManager = "Explorer";
+#endif
+    st.atRoot = g_pb && std::filesystem::path(okaypb::Slash(full)).lexically_normal() == std::filesystem::path(g_pb->Root()).lexically_normal();
+    if (!st.atRoot) {   // the Assets folder has no colour label
+        for (int i = 0; i < kAssetLabelCount; ++i) st.labelNames.push_back(kAssetLabelNames[i]);
+        st.label = AssetLabelOf(g_assetLabelsProj, full);
+    }
+    if (!isDir && g_pb) {
+        st.tags = g_pb->LabelsOf(full);   // (just the tags: Info also walks the dependency graph)
+        if (st.kind == okaypb::ctx::Kind::Scene) st.isStartScene = IsStartSceneFile(full);
+    }
+    if (isDir && g_pb) st.hasSubfolders = !g_pb->SubFolders(okaypb::Slash(full)).empty();
 }
 
 // Search words "t:model", "t:folder"... -> a project filter id (-2 folder, -1 unknown).
@@ -9916,7 +10418,21 @@ void DrawProject(EditorState& ed) {
         lastProject = ed.projectDir();
         std::strncpy(dirBuf, root.string().c_str(), sizeof(dirBuf) - 1);
     }
+    if (!g_projGoto.empty()) {   // the folder on screen was renamed or moved (here or from the tree): follow it
+        std::strncpy(dirBuf, g_projGoto.c_str(), sizeof(dirBuf) - 1);
+        dirBuf[sizeof(dirBuf) - 1] = '\0';
+        g_projGoto.clear();
+    }
     fs::path dir(dirBuf);
+    if (!ed.projectDir().empty()) {   // a folder that is gone (deleted, or renamed from another program) is not shown: the nearest parent that is
+        std::error_code de;
+        if (!fs::is_directory(dir, de) && fs::is_directory(root, de)) {
+            const std::string nearestDir = okaypb::paths::NearestFolder(root.generic_string(), dir.generic_string());
+            std::strncpy(dirBuf, NativePath(nearestDir).c_str(), sizeof(dirBuf) - 1);
+            dirBuf[sizeof(dirBuf) - 1] = '\0';
+            dir = fs::path(dirBuf);
+        }
+    }
     const std::string labelProj = ed.projectDir().empty() ? root.string() : ed.projectDir();
     EnsureAssetLabels(labelProj);
     if (!g_pb || g_pbRoot != root.generic_string()) {   // one file-operations object per project
@@ -10119,14 +10635,16 @@ void DrawProject(EditorState& ed) {
                              ImGui::GetFontSize() * 0.30f, IM_COL32(255, 204, 64, 220));
                 }
                 if (fdir) AssetDropTarget(fs::path(fp));
-                bool removed = false;
-                if (ImGui::BeginPopupContextItem("favctx")) {
-                    if (ImGui::MenuItem("Remove from Favourites")) { ToggleFavFolder(fp); removed = true; }
-                    if (ImGui::MenuItem("Show in File Manager")) extide::RevealInFiles(fdir ? fp : fs::path(fp).parent_path().string());
+                if (ImGui::BeginPopupContextItem("favctx")) {   // Open / Show in Project, Remove, Copy Text, Show in Explorer, Properties
+                    const okaypb::ctx::State& st = ProjectCtxState("fav|" + fp, [&](okaypb::ctx::State& fresh) {
+                        fresh.where = okaypb::ctx::Where::Favourite;
+                        ProjectCtxFill(fresh, fp, fdir);
+                    });
+                    const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::FavouriteMenu(st));
+                    if (!act.empty()) g_projReq = {act, fp};   // run below, with the grid menu's code
                     ImGui::EndPopup();
                 }
                 ImGui::PopID();
-                if (removed) break;   // the list changed: redraw next frame
             }
             ImGui::Separator();
         }
@@ -10136,6 +10654,8 @@ void DrawProject(EditorState& ed) {
     if (fs::path(dirBuf) == root) rootF |= ImGuiTreeNodeFlags_Selected;
     TreeBeginFrame();
     if (g_treeReq && fs::path(dirBuf) == root) { ImGui::SetNextItemOpen(g_treeReq == 1); g_treeReq = 0; }
+    g_treeIds[root.string()] = ImGui::GetID("Assets##root");
+    TreeApplyAct(root);
     bool ro = ImGui::TreeNodeEx("Assets##root", rootF);
     TreeNote(root.string(), ro);
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
@@ -10143,8 +10663,20 @@ void DrawProject(EditorState& ed) {
         search[0] = '\0';
         g_treeFocused = true;
     }
+    if (ImGui::BeginPopupContextItem("rootctx")) {   // the Assets folder: the folder menu with the changes that can't apply to it greyed
+        const okaypb::ctx::State& st = ProjectCtxState("root|" + root.string(), [&](okaypb::ctx::State& fresh) {
+            fresh.where = okaypb::ctx::Where::Tree;
+            ProjectCtxFill(fresh, root.string(), true);
+            fresh.atRoot = true;
+            fresh.hasSubfolders = !pb.SubFolders(root.generic_string()).empty();
+        });
+        const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::FolderTreeMenu(st));
+        if (!act.empty()) g_projReq = {act, root.string()};
+        ImGui::EndPopup();
+    }
     AssetDropTarget(root);
     if (ro) { DrawFolderTree(root, dirBuf, sizeof(dirBuf), search, revealTree); ImGui::TreePop(); }
+    g_treeActMode = 0;   // the tree has been drawn with the request
     ImGui::EndChild();
 
     // Splitter: drag to resize the folder pane, double-click to reset.
@@ -10171,8 +10703,8 @@ void DrawProject(EditorState& ed) {
     static char renameBuf[256] = "";
     // Cut/Copy/Paste clipboard (a single asset path) and the deferred, confirmed
     // delete target — both file-scope so they survive across frames/folders.
-    static std::vector<std::string> s_assetClip;  // paths on the clipboard (empty = none)
-    static bool        s_assetClipCut = false;    // true = move on paste, false = copy
+    static std::vector<std::string>& s_assetClip = g_projClip;   // paths on the clipboard (empty = none; file-scope so the tree's menu sees it)
+    static bool&       s_assetClipCut = g_projClipCut;           // true = move on paste, false = copy
     static std::string deleteTarget;     // pending delete, awaiting confirm
     static bool undoReq = false;
     static bool duplicateSel = false, reimportSel = false;   // set by the menu / Ctrl+D, handled once below
@@ -10197,8 +10729,11 @@ void DrawProject(EditorState& ed) {
     };
     // Fill the clipboard from the current multi-selection (falling back to one path).
     auto clipFromSelection = [&](const std::string& fallback, bool cut) {
-        s_assetClip.assign(s_multi.begin(), s_multi.end());
-        if (s_assetClip.empty() && !fallback.empty()) s_assetClip.push_back(fallback);
+        if (!g_projTargets.empty()) s_assetClip = g_projTargets;   // a tree folder or a starred item: just that one
+        else {
+            s_assetClip.assign(s_multi.begin(), s_multi.end());
+            if (s_assetClip.empty() && !fallback.empty()) s_assetClip.push_back(fallback);
+        }
         s_assetClipCut = cut;
     };
     // Every "create" asks for the name first (a prompt), then makes the file under that name.
@@ -10208,13 +10743,20 @@ void DrawProject(EditorState& ed) {
                          std::function<void(const std::string& path)> after = {}) {
         oked::projectpanel::NameRequest rq;
         rq.title = title; rq.hint = hint; rq.suffix = ext;
-        std::string first = okaypb::UniqueName(dir.generic_string(), base, ext);
+        // A folder's own menu (grid or tree) creates in that folder; the toolbar and the empty-space menu in the one being shown.
+        const std::string createDir = g_createIn.empty() ? dir.generic_string() : okaypb::Slash(g_createIn);
+        std::string first = okaypb::UniqueName(createDir, base, ext);
         rq.initial = first.substr(0, first.size() - ext.size());
-        const std::string dirS = dir.generic_string(), w = what;
-        rq.accept = [dirS, w, make, after](const std::string& full) -> std::string {
+        const std::string dirS = createDir, w = what, shownDir = dir.generic_string();
+        rq.accept = [dirS, shownDir, w, make, after](const std::string& full) -> std::string {
             const okaypb::Result r = make(dirS, full);
             if (!r.ok) return r.error;
             selected = NativePath(r.paths[0]); s_multi.clear(); s_multi.insert(selected);
+            if (okaypb::Slash(dirS) != okaypb::Slash(shownDir)) {   // made in another folder: go there so it is in view
+                std::strncpy(dirBuf, NativePath(dirS).c_str(), sizeof(dirBuf) - 1);
+                dirBuf[sizeof(dirBuf) - 1] = '\0';
+                search[0] = '\0';
+            }
             ConsoleLog("Created " + w + " " + fs::path(selected).filename().string());
             if (after) after(r.paths[0]);
             return {};
@@ -10272,11 +10814,35 @@ void DrawProject(EditorState& ed) {
             return g_pb->MakeFile(d, n, okay::editor::vsed::VsEditGraph{}.toText());
         }, [](const std::string& p) { okay::editor::vsed::OpenFile(NativePath(p)); g_showVisualScript = true; });
     };
-    auto mkStdFolders = [&]{
-        int made = 0; std::error_code ce;
-        for (const char* f : {"Scenes", "Scripts", "Prefabs", "Materials", "Models", "Textures", "Audio"})
-            if (!fs::exists(dir / f, ce) && fs::create_directory(dir / f, ce)) ++made;
-        ConsoleLog("Created " + std::to_string(made) + " standard folder(s) in " + dir.filename().string());
+    auto mkStdFolders = [&]{   // all or nothing, inside Assets (links that point out are refused), one Ctrl+Z takes them away
+        const std::string base = g_createIn.empty() ? dir.generic_string() : okaypb::Slash(g_createIn);
+        const okaypb::Result r = g_pb->CreateFolders(base, {"Scenes", "Scripts", "Prefabs", "Materials", "Models", "Textures", "Audio"});
+        if (!r.ok) { ConsoleLog("Standard folders: " + r.error, 2); return; }
+        ConsoleLog("Created " + std::to_string(r.paths.size()) + " standard folder(s) in " + fs::path(fs::u8path(base)).filename().string() +
+                   (r.paths.empty() ? "" : " (Ctrl+Z in the Project panel takes them away)"));
+        if (!r.note.empty()) ConsoleLog(r.note);
+    };
+    // The story and AI files: each starts from the document its own window makes for "New" (editor/ProjectNewAssets.hpp)
+    // and opens in that window.
+    auto mkDialogue = [&]{
+        askCreate("New dialogue", "A conversation graph with one starting line. It opens in the Dialogue window.", "New Dialogue", ".okaydialog", "dialogue", [](const std::string& d, const std::string& n) {
+            return g_pb->MakeFile(d, n, okaypb::NewDialogueText(fs::path(fs::u8path(n)).stem().u8string()));
+        }, [](const std::string& p) { OpenStoryAsset(NativePath(p)); g_showDialogue = true; });
+    };
+    auto mkQuest = [&]{
+        askCreate("New quest file", "A quest list with one example quest. It opens in the Dialogue window (Quests tab).", "New Quests", ".okayquest", "quest file", [](const std::string& d, const std::string& n) {
+            return g_pb->MakeFile(d, n, okaypb::NewQuestText());
+        }, [](const std::string& p) { OpenStoryAsset(NativePath(p)); g_showDialogue = true; });
+    };
+    auto mkBehaviorTree = [&]{
+        askCreate("New behavior tree", "A Selector with a Wait under it. It opens in the Behavior Tree window.", "New Tree", ".okaybt", "behavior tree", [](const std::string& d, const std::string& n) {
+            return g_pb->MakeFile(d, n, okaypb::NewBehaviorTreeText(fs::path(fs::u8path(n)).stem().u8string()));
+        }, [](const std::string& p) { if (g_projEd) OpenBehaviorTreeFile(*g_projEd, NativePath(p)); });
+    };
+    auto mkSequence = [&]{
+        askCreate("New cutscene", "An empty cutscene sequence. It opens in the Timeline window.", "New Cutscene", ".okayseq", "cutscene", [](const std::string& d, const std::string& n) {
+            return g_pb->MakeFile(d, n, okaypb::NewSequenceText(fs::path(fs::u8path(n)).stem().u8string()));
+        }, [](const std::string& p) { OpenTimelineFile(NativePath(p)); });
     };
     auto mkItem = [&]{ ContentAddItem(ed); };
     auto mkData = [&]{
@@ -10284,27 +10850,20 @@ void DrawProject(EditorState& ed) {
             return g_pb->MakeFile(d, n, "# Scriptable Object: key = value fields\nname = Item\nvalue = 10\n");
         });
     };
-    // The Create menu, grouped by what you are making. Shared by the toolbar "+" and the right-click menu.
-    auto drawCreateItems = [&]{
-        if (ImGui::MenuItem("Folder")) mkFolder();
-        ImGui::Separator();
-        ImGui::TextDisabled("Code");
-        if (ImGui::MenuItem("Script"))        mkScript();
-        if (ImGui::MenuItem("Visual Script")) mkVisualScript();
-        ImGui::Separator();
-        ImGui::TextDisabled("Scenes and objects");
-        if (ImGui::MenuItem("Scene")) mkScene();
-        if (ImGui::MenuItem(ed.selected() ? "Prefab from Selection" : "Prefab")) mkPrefab();
-        ImGui::Separator();
-        ImGui::TextDisabled("Looks and data");
-        if (ImGui::MenuItem("Material"))   mkMaterial();
-        if (ImGui::MenuItem("Data Asset")) mkData();
-        if (ImGui::MenuItem("Item"))       mkItem();
-        if (ImGui::MenuItem("Loot Table")) ContentCreateLoot(ed);
-        if (ImGui::MenuItem("Recipe Book")) ContentCreateRecipe(ed);
-        ImGui::Separator();
-        if (ImGui::MenuItem("Standard Folders")) mkStdFolders();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio folders here.");
+    // Import: copy files from the computer into the folder being shown. The toolbar's Import button and the empty-space
+    // menu's "Import New Asset..." both come here.
+    auto importHere = [&]{
+        // May answer on a later frame (the built-in browser): the folder is copied, and `selected` is a file-static.
+        const fs::path importDir = dir;
+        okay::filedialog::Open("Import asset(s)", "", {}, /*multi=*/true, [importDir](const std::vector<std::string>& picks) {
+            int n = 0;
+            for (const std::string& path : picks) {
+                if (path.empty()) continue;
+                std::string out = ImportAssetFile(path, importDir);
+                if (!out.empty()) { selected = out; ++n; }
+            }
+            ConsoleLog("Imported " + std::to_string(n) + " file(s) into " + importDir.filename().string());
+        });
     };
     bool canEdit = fs::is_directory(dir, ec) && !ed.projectDir().empty();
     // View options (type filter, sort, view mode, tile size) are persisted with the
@@ -10448,128 +11007,224 @@ void DrawProject(EditorState& ed) {
         return selected == full || s_multi.count(full) != 0;
     };
 
-    // The per-item right-click menu, shared by the grid and list views. Returns
-    // true if "Open" was chosen (so the caller runs the same open action).
-    auto assetContext = [&](const std::string& full, const std::string& name,
-                            const std::string& ext, bool isDir) -> bool {
+    // What the menus need from this panel on top of ProjectCtxFill: the view, the sort and the smart filter.
+    auto viewState = [&](okaypb::ctx::State& st) {
+        st.smartView = s_smart >= 0;
+        st.view = s_view;
+        st.sort = s_sort;
+        st.tilePreset = s_cell == 64.0f ? 1 : s_cell == 96.0f ? 2 : s_cell == 128.0f ? 3 : 0;
+        st.shownCount = (int)entries.size();
+    };
+    // Run the id of a chosen menu item. The grid and list menu, the folder tree, the Favourites list, the empty-space menu and
+    // the toolbar "+" all end here, so one item does one thing everywhere. `full` is the item the menu was opened on (the
+    // folder being shown for the empty-space menu and the toolbar), `isDir` says it is a folder. The item lists and their
+    // rules are in ProjectContextModel.hpp. "open" is handled by the callers (it needs the open-asset code below).
+    auto runAction = [&](const std::string& act, const std::string& full, bool isDir) {
+        const std::string ext = Lower(fs::path(full).extension().string());
+        auto starts = [&](const char* pre) { return act.compare(0, std::strlen(pre), pre) == 0; };
+        // What the action applies to: the one item of a tree or Favourites menu, else the whole selection when `full` is part of it,
+        // else just `full`.
+        auto targets = [&]() -> std::vector<std::string> {
+            if (!g_projTargets.empty()) return g_projTargets;
+            if (s_multi.size() > 1 && s_multi.count(full)) return std::vector<std::string>(s_multi.begin(), s_multi.end());
+            return {full};
+        };
+        if (starts("create:")) {
+            g_createIn = isDir ? full : std::string();   // from a folder's menu: in that folder
+            const std::string what = act.substr(7);
+            if      (what == "folder")       mkFolder();
+            else if (what == "script")       mkScript();
+            else if (what == "visualscript") mkVisualScript();
+            else if (what == "scene")        mkScene();
+            else if (what == "prefab")       mkPrefab();
+            else if (what == "dialogue")     mkDialogue();
+            else if (what == "quest")        mkQuest();
+            else if (what == "behaviortree") mkBehaviorTree();
+            else if (what == "sequence")     mkSequence();
+            else if (what == "material")     mkMaterial();
+            else if (what == "data")         mkData();
+            else if (what == "item")         mkItem();
+            else if (what == "loot" || what == "recipe") {   // made by the Items window, in this folder (not in a folder outside Assets)
+                const std::string target = g_createIn.empty() ? dir.generic_string() : okaypb::Slash(g_createIn);
+                if (!ProjectFolderInsideAssets(target)) ConsoleLog("Can't make it there: that folder is outside the project's Assets folder.", 1);
+                else if (what == "loot") ContentCreateLoot(ed, target);
+                else ContentCreateRecipe(ed, target);
+            }
+            else if (what == "stdfolders")   mkStdFolders();
+            g_createIn.clear();                          // (the name prompt has already taken the folder)
+            return;
+        }
+        if (starts("sort:"))  { s_sort = std::clamp(act[5] - '0', 0, 3); SaveProjectViewPrefs(); return; }
+        if (starts("tiles:")) {
+            const int n = std::clamp(act[6] - '0', 1, 3);
+            s_cell = n == 1 ? 64.0f : n == 2 ? 96.0f : 128.0f; s_view = 0; SaveProjectViewPrefs();
+            return;
+        }
+        if (starts("label:")) {
+            const int li = std::atoi(act.c_str() + 6);
+            if (li >= 0 && li < kAssetLabelCount) for (const std::string& m : targets()) SetAssetLabel(labelProj, m, li);
+            return;
+        }
+        if (starts("tag:remove:")) { pb.RemoveLabel(NativePath(full), act.substr(11)); return; }
+        if (starts("copy:"))  { ProjectCopyText(act.substr(5), targets()); return; }
+        if (starts("tree:"))  { g_treeActMode = act == "tree:expand" ? 1 : act == "tree:collapse" ? 2 : 3; g_treeActPath = full; return; }
+        // -- open outside the editor --
+        if (act == "open:external" || act == "open:default") {
+            // (OpenWithDefaultApp refuses a program or script again, whatever the menu said; the editor is named, never asked from the file type)
+            const oked::launch::Result lr = act == "open:external" ? oked::launch::OpenInTextEditor(full) : oked::launch::OpenWithDefaultApp(full);
+            if (!lr.ok) ConsoleLog("Can't open " + fs::path(full).filename().string() + ": " + lr.error, 1);
+            return;
+        }
+        if (act == "reveal")       { ProjectReveal(full, !isDir); return; }
+        if (act == "open:project") { ProjectReveal(ed.projectDir(), false); return; }
+        // -- kind-specific --
+        if (act == "prefab:place") {
+            ed.PushUndo();
+            std::string err;
+            if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
+                ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + full);
+            } else ConsoleLog("Prefab load failed: " + err);
+            return;
+        }
+        if (act == "prefab:child") {
+            if (!ed.selected()) return;
+            ed.PushUndo();
+            std::string err;
+            if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
+                r->transform->SetParent(ed.selected()->transform, false);
+                ed.Select(r); ed.dirty = true;
+            } else ConsoleLog("Prefab load failed: " + err);
+            return;
+        }
+        if (act == "prefab:variant") {
+            // A new prefab that is based on this one and stores only its differences (none yet): open it, change it, Apply.
+            const std::string vp = oked::DefaultVariantPath(full);
+            const oked::PrefabOpResult vr = oked::PrefabNewVariantFile(ed, full, vp);
+            ConsoleLog(vr.message, vr.ok ? 0 : 2);
+            if (vr.ok) g_pingAsset = vp;
+            return;
+        }
+        if (act == "prefab:validate") {
+            // The check PrefabTools runs on a file and everything it reaches (nested prefabs, variant bases, cycles, depth).
+            const PrefabReport rep = PrefabTools::ValidateAsset(full);
+            if (rep.issues.empty()) ConsoleLog("Prefab " + fs::path(full).filename().string() + " is fine (" + std::to_string(rep.files.size()) + " file" + (rep.files.size() == 1 ? "" : "s") + " checked)");
+            for (const PrefabIssue& is : rep.issues) ConsoleLog(fs::path(is.file).filename().string() + ": " + is.message, is.severity == PrefabIssue::Severity::Error ? 2 : (is.severity == PrefabIssue::Severity::Warning ? 1 : 0));
+            return;
+        }
+        if (act == "scene:add") { MergeSceneIntoCurrent(ed, full); return; }
+        if (act == "scene:start") {   // first in Scenes In Build, ticked: the Scene Manager saves the list and a build starts here
+            std::vector<oked::SceneBuildEntry> list = oked::SceneBuildSnapshot();
+            std::error_code ce;
+            const std::string canon = fs::weakly_canonical(fs::u8path(full), ce).generic_string();   // the list keeps canonical paths
+            const std::string nm = fs::path(full).filename().string();
+            if (okaypb::ctx::MakeStartScene(list, ce ? okaypb::Slash(full) : canon, SameProjectFile)) {
+                oked::SceneBuildApply(ed, list);
+                ConsoleLog(nm + " is now the start scene: first in Scenes In Build (the Scene Manager shows the list).");
+            } else ConsoleLog(nm + " already starts the game.");
+            return;
+        }
+        if (act == "model:player") {
+            sPendingPlayable = true;
+            sPendingPlayablePath = full;
+            sPendingPlayableOnto = SelectedPlayableAvatar(ed);
+            return;
+        }
+        if (act == "script:edit") { OpenScriptFileInEditor(full); g_showScriptEditor = true; return; }
+        // -- edit --
+        if (act == "rename")    { renameTarget = full; return; }
+        if (act == "duplicate") { duplicateSel = true; return; }
+        if (act == "cut" || act == "copy") { clipFromSelection(full, act == "cut"); return; }
+        if (act == "paste")     { pasteInto(isDir ? fs::path(full) : dir); return; }   // into a folder when it was clicked, else beside the item
+        if (act == "delete")    { deleteTarget = full; return; }                          // confirmed below
+        if (act == "moveto") {
+            std::vector<std::string> items = targets();
+            const std::string from = fs::path(full).parent_path().generic_string();
+            const bool reselect = g_projTargets.empty();   // the grid's selection moves with its items; a tree folder leaves the selection alone
+            oked::projectpanel::AskFolder(pb, items, from, [items, reselect](const std::string& dest) {
+                const okaypb::Result r = g_pb->Move(items, dest);
+                if (!r.ok) { ConsoleLog("Move failed: " + r.error, 2); return; }
+                ProjectApplyMoves(r);
+                if (reselect) {
+                    s_multi.clear();
+                    for (const std::string& np : r.paths) s_multi.insert(NativePath(np));
+                    if (!r.paths.empty()) selected = NativePath(r.paths.back());
+                }
+                ConsoleLog("Moved " + std::to_string(r.paths.size()) + " item" + (r.paths.size() == 1 ? "" : "s") + " into " + fs::path(fs::u8path(dest)).filename().string() + " (Ctrl+Z in the Project panel moves " + (r.paths.size() == 1 ? "it" : "them") + " back)");
+                if (!r.note.empty()) ConsoleLog(r.note, 1);
+            });
+            return;
+        }
+        if (act == "undo") { undoReq = true; return; }
+        // -- find --
+        if (act == "refs") { findRefsFor = full; return; }
+        if (act == "deps") { showDepsFor = full; return; }
+        if (act == "refs:scene") {
+            std::string fn = fs::path(full).filename().string();
+            int hits = 0; GameObject* first = nullptr;
+            for (const auto& up : ed.scene().Objects()) {
+                if (ObjectUsesAsset(up.get(), fn)) { ++hits; if (!first) first = up.get(); }
+            }
+            if (first) ed.Select(first);
+            ConsoleLog(hits ? (std::to_string(hits) + " object(s) use " + fn) : ("No scene object uses " + fn));
+            return;
+        }
+        if (act == "reimport") { reimportSel = true; return; }
+        if (act == "properties") {
+            oked::projectpanel::PropertyExtras ex;
+            ex.favourite = g_fav.Has(full);
+            const int li = AssetLabelOf(labelProj, full);
+            if (li > 0 && li < kAssetLabelCount) ex.colourLabel = kAssetLabelNames[li];
+            ex.startScene = ext == ".okayscene" && IsStartSceneFile(full);
+            oked::projectpanel::ShowProperties(pb, full, ex);
+            return;
+        }
+        // -- organise --
+        if (act == "favourite") {   // the clicked item decides: starred ones are unstarred, the others starred, for the whole selection
+            const bool was = g_fav.Has(full);
+            for (const std::string& t : targets()) if (g_fav.Has(t) == was) ToggleFavFolder(t);
+            return;
+        }
+        if (act == "tag:add") { tagFor = full; return; }
+        // -- the empty space and the toolbar --
+        if (act == "import")  { importHere(); return; }
+        if (act == "refresh") {
+            pb.Sync();
+            ConsoleLog("Refreshed the Project panel: " + std::to_string(pb.AssetCount()) + " assets indexed");
+            return;
+        }
+        if (act == "selectall") {
+            s_multi.clear();
+            for (const std::string& p : shownPaths) s_multi.insert(p);
+            if (selected.empty() && !shownPaths.empty()) selected = shownPaths.front();
+            return;
+        }
+        if (act == "view:grid") { s_view = 0; SaveProjectViewPrefs(); return; }
+        if (act == "view:list") { s_view = 1; SaveProjectViewPrefs(); return; }
+        if (act == "up" && dir != root) {
+            std::strncpy(dirBuf, dir.parent_path().string().c_str(), sizeof(dirBuf) - 1);
+            dirBuf[sizeof(dirBuf) - 1] = '\0';
+            return;
+        }
+    };
+
+    // The per-item right-click menu, shared by the grid and list views. Returns true if "Open" was chosen (so the
+    // caller runs the same open action). The list of items and what is greyed comes from ProjectContextModel.hpp.
+    auto assetContext = [&](const std::string& full, const std::string& name, const std::string& ext, bool isDir) -> bool {
+        (void)name; (void)ext;
         bool wantOpen = false;
         if (ImGui::BeginPopupContextItem("itemctx")) {
             // Right-clicking an item outside the current multi-selection collapses to
             // just it; right-clicking one that's already selected keeps the group.
             if (!s_multi.count(full)) { s_multi.clear(); s_multi.insert(full); }
             selected = full;
-            const bool many = s_multi.size() > 1;
-            if (many) ImGui::TextDisabled("%d selected", (int)s_multi.size());
-            // -- Open --
-            if (ImGui::MenuItem(isDir ? "Open Folder" : (ext == ".okayprefab" ? "Open Prefab" : "Open"))) wantOpen = true;
-            if (!isDir && ext == ".okayprefab" && ImGui::IsItemHovered())
-                ImGui::SetTooltip("Edit this prefab on its own: the Scene view shows only the prefab, and Save updates every instance.");
-            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Place in Scene")) {
-                ed.PushUndo();
-                std::string err;
-                if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
-                    ed.Select(r); ed.dirty = true; ConsoleLog("Instantiated " + full);
-                } else ConsoleLog("Prefab load failed: " + err);
-            }
-            if (!isDir && IsModelExt(ext) && ImGui::MenuItem("Make Playable Character")) {
-                sPendingPlayable = true;
-                sPendingPlayablePath = full;
-                sPendingPlayableOnto = SelectedPlayableAvatar(ed);
-            }
-            if (!isDir && IsModelExt(ext) && ImGui::IsItemHovered())
-                ImGui::SetTooltip("Add a Third Person player wearing this model, with humanoid IK.\nIf one player is selected, the model is attached to it.\nOtherwise other active players are deactivated (not deleted).");
-            if (!isDir && ext == ".okayscene" && ImGui::MenuItem("Add to Open Scene")) MergeSceneIntoCurrent(ed, full);
-            if (!isDir && ext == ".okayscene" && ImGui::IsItemHovered())
-                ImGui::SetTooltip("Load its objects into the scene you have open (additive), instead of switching scenes.");
-            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Place as Child of Selected", nullptr, false, ed.selected() != nullptr)) {
-                ed.PushUndo();
-                std::string err;
-                if (GameObject* r = SceneSerializer::InstantiateFromFile(ed.scene(), full, &err)) {
-                    r->transform->SetParent(ed.selected()->transform, false);
-                    ed.Select(r); ed.dirty = true;
-                } else ConsoleLog("Prefab load failed: " + err);
-            }
-            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Create Variant")) {
-                // A new prefab that is based on this one and stores only its differences (none yet): open it, change it, Apply.
-                const std::string vp = oked::DefaultVariantPath(full);
-                const oked::PrefabOpResult vr = oked::PrefabNewVariantFile(ed, full, vp);
-                ConsoleLog(vr.message, vr.ok ? 0 : 2);
-                if (vr.ok) g_pingAsset = vp;
-            }
-            if (!isDir && ext == ".okayprefab" && ImGui::IsItemHovered())
-                ImGui::SetTooltip("Make a variant of this prefab next to it. Place it in a scene and change it; the variant keeps only the differences.");
-            if (!isDir && ext == ".okayprefab" && ImGui::MenuItem("Validate Prefab")) {
-                // The check PrefabTools runs on a file and everything it reaches (nested prefabs, variant bases, cycles, depth).
-                const PrefabReport rep = PrefabTools::ValidateAsset(full);
-                if (rep.issues.empty()) ConsoleLog("Prefab " + fs::path(full).filename().string() + " is fine (" + std::to_string(rep.files.size()) + " file" + (rep.files.size() == 1 ? "" : "s") + " checked)");
-                for (const PrefabIssue& is : rep.issues) ConsoleLog(fs::path(is.file).filename().string() + ": " + is.message, is.severity == PrefabIssue::Severity::Error ? 2 : (is.severity == PrefabIssue::Severity::Warning ? 1 : 0));
-            }
-            if (!isDir && ext == ".okayprefab" && ImGui::IsItemHovered())
-                ImGui::SetTooltip("Check this prefab and every prefab it holds or is based on: missing files, cycles, stale overrides. The result is in the Console.");
-            if (!isDir && (ext == ".okay" || ext == ".lua" || ext == ".cs") && ImGui::MenuItem("Edit Script")) { OpenScriptFileInEditor(full); g_showScriptEditor = true; }
-            ImGui::Separator();
-            // -- Edit --
-            if (ImGui::MenuItem("Rename", "F2", false, !many)) renameTarget = full;
-            if (ImGui::MenuItem("Duplicate", "Ctrl+D")) duplicateSel = true;
-            if (ImGui::MenuItem(many ? "Cut Selected" : "Cut", "Ctrl+X")) clipFromSelection(full, true);
-            if (ImGui::MenuItem(many ? "Copy Selected" : "Copy", "Ctrl+C")) clipFromSelection(full, false);
-            // Paste lands inside a folder when right-clicked on one, else beside the item.
-            if (!s_assetClip.empty() && ImGui::MenuItem(isDir ? "Paste Into" : "Paste", "Ctrl+V")) pasteInto(isDir ? fs::path(full) : dir);
-            if (ImGui::MenuItem("Delete", "Del")) deleteTarget = full;   // confirm below
-            ImGui::Separator();
-            // -- Find --
-            if (!isDir && ImGui::MenuItem("Find References")) findRefsFor = full;
-            if (!isDir && ImGui::IsItemHovered()) ImGui::SetTooltip("List the assets that use this one (from the asset database).");
-            if (!isDir && ImGui::MenuItem("Show Dependencies")) showDepsFor = full;
-            if (!isDir && ImGui::IsItemHovered()) ImGui::SetTooltip("List what this asset uses, directly or through other assets.");
-            if (!isDir && ImGui::MenuItem("Find References in Scene")) {
-                std::string fn = fs::path(full).filename().string();
-                int hits = 0; GameObject* first = nullptr;
-                for (const auto& up : ed.scene().Objects()) {
-                    if (ObjectUsesAsset(up.get(), fn)) { ++hits; if (!first) first = up.get(); }
-                }
-                if (first) ed.Select(first);
-                ConsoleLog(hits ? (std::to_string(hits) + " object(s) use " + fn) : ("No scene object uses " + fn));
-            }
-            if (!isDir && ImGui::MenuItem("Reimport")) reimportSel = true;
-            if (!isDir && ImGui::IsItemHovered()) ImGui::SetTooltip("Read the file again (use after you changed it in another program).");
-            ImGui::Separator();
-            // -- Organise --
-            if (ImGui::MenuItem(IsFavFolder(full) ? "Remove from Favourites" : "Add to Favourites")) ToggleFavFolder(full);
-            if (!isDir && ImGui::BeginMenu("Tags")) {
-                if (ImGui::MenuItem("Add Tag...")) tagFor = full;
-                const okaypb::Browser::AssetInfo ti = pb.Info(full);
-                for (const std::string& lb : ti.labels)
-                    if (ImGui::MenuItem(("Remove \"" + lb + "\"").c_str())) pb.RemoveLabel(NativePath(full), lb);
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Label")) {
-                int cur = AssetLabelOf(labelProj, full);
-                for (int li = 0; li < kAssetLabelCount; ++li) {
-                    if (li > 0) {   // colour swatch before the name
-                        ImVec2 cp = ImGui::GetCursorScreenPos();
-                        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(cp.x + 6.0f, cp.y + ImGui::GetTextLineHeight() * 0.5f), 4.5f, kAssetLabelCols[li]);
-                    }
-                    std::string ln = std::string("    ") + kAssetLabelNames[li];
-                    if (ImGui::MenuItem(ln.c_str(), nullptr, cur == li)) {
-                        if (s_multi.size() > 1) for (const auto& m : s_multi) SetAssetLabel(labelProj, m, li);
-                        else SetAssetLabel(labelProj, full, li);
-                    }
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Copy Text")) {
-                if (ImGui::MenuItem("Name")) ImGui::SetClipboardText(name.c_str());
-                if (ImGui::MenuItem("Path in Project")) {
-                    std::error_code re;
-                    fs::path rel = fs::relative(fs::path(full), root.parent_path(), re);
-                    ImGui::SetClipboardText((re ? full : rel.generic_string()).c_str());
-                }
-                if (ImGui::MenuItem("Full Path")) ImGui::SetClipboardText(full.c_str());
-                ImGui::EndMenu();
-            }
-            if (ImGui::MenuItem("Show in File Manager"))
-                extide::RevealInFiles(isDir ? full : fs::path(full).parent_path().string());
+            const okaypb::ctx::State& st = ProjectCtxState("item|" + full, [&](okaypb::ctx::State& fresh) {
+                fresh.where = okaypb::ctx::Where::Item;
+                ProjectCtxFill(fresh, full, isDir);
+                fresh.count = (int)s_multi.size();
+            });
+            const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::ItemMenu(st));
+            if (act == "open") wantOpen = true;
+            else if (!act.empty()) runAction(act, full, isDir);
             ImGui::EndPopup();
         }
         return wantOpen;
@@ -10808,39 +11463,17 @@ void DrawProject(EditorState& ed) {
             s_multi.clear(); s_multi.insert(rangeTo); selected = rangeTo;
         }
     }
-    // Right-click empty space: create assets here / reveal the folder. Inside the
-    // scroll child so it opens over the grid's empty area, not the details strip.
+    // Right-click empty space: create assets here, paste, import, refresh, view and sort, the folder's own commands. Inside the
+    // scroll child so it opens over the grid's empty area, not the details strip. The items are made by ProjectContextModel.hpp.
     if (ImGui::BeginPopupContextWindow("bgctx",
             ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-        if (canEdit) {
-            if (ImGui::BeginMenu("Create")) {
-                drawCreateItems();
-                ImGui::EndMenu();
-            }
-            if (!s_assetClip.empty() && ImGui::MenuItem("Paste", "Ctrl+V")) pasteInto(dir);
-            if (pb.CanUndo() && ImGui::MenuItem(("Undo " + pb.UndoLabel()).c_str(), "Ctrl+Z")) undoReq = true;
-            ImGui::Separator();
-        }
-        if (ImGui::BeginMenu("View")) {
-            if (ImGui::MenuItem("Grid", nullptr, s_view == 0)) { s_view = 0; SaveProjectViewPrefs(); }
-            if (ImGui::MenuItem("List", nullptr, s_view == 1)) { s_view = 1; SaveProjectViewPrefs(); }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Sort By")) {
-            const char* sorts[] = {"Name", "Type", "Size", "Date modified"};
-            for (int si = 0; si < 4; ++si)
-                if (ImGui::MenuItem(sorts[si], nullptr, s_sort == si)) { s_sort = si; SaveProjectViewPrefs(); }
-            ImGui::EndMenu();
-        }
-        ImGui::Separator();
-        if (dir != root && ImGui::MenuItem("Up One Folder")) {
-            std::strncpy(dirBuf, dir.parent_path().string().c_str(), sizeof(dirBuf) - 1);
-            dirBuf[sizeof(dirBuf) - 1] = '\0';
-        }
-        if (canEdit && ImGui::MenuItem(IsFavFolder(dir.string()) ? "Remove Folder from Favourites" : "Add Folder to Favourites"))
-            ToggleFavFolder(dir.string());
-        if (ImGui::MenuItem("Copy Folder Path")) ImGui::SetClipboardText(dir.string().c_str());
-        if (ImGui::MenuItem("Show in File Manager")) extide::RevealInFiles(dir.string());
+        const okaypb::ctx::State& st = ProjectCtxState("bg|" + dir.string(), [&](okaypb::ctx::State& fresh) {
+            fresh.where = okaypb::ctx::Where::Background;
+            ProjectCtxFill(fresh, dir.string(), true);
+            viewState(fresh);
+        });
+        const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::BackgroundMenu(st));
+        if (!act.empty()) runAction(act, dir.string(), true);
         ImGui::EndPopup();
     }
     ImGui::EndChild();   // gridscroll
@@ -11000,8 +11633,9 @@ void DrawProject(EditorState& ed) {
     // ---- Actions: each one goes through okaypb (safe, undo-able, references kept) ---------
     const bool panelFocus = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput &&
                             !oked::projectpanel::NamePromptOpen();
-    // The items an action applies to: the multi-selection, or the active item.
-    auto selectionList = [&]() {
+    // The items an action applies to: the one item of a tree or Favourites menu, else the multi-selection, or the active item.
+    auto selectionList = [&]() -> std::vector<std::string> {
+        if (!g_projTargets.empty()) return g_projTargets;
         std::vector<std::string> v(s_multi.begin(), s_multi.end());
         if (v.empty() && !selected.empty()) v.push_back(selected);
         return v;
@@ -11012,6 +11646,21 @@ void DrawProject(EditorState& ed) {
         for (const std::string& p : ps) s_multi.insert(NativePath(p));
         if (!ps.empty()) { selected = NativePath(ps.back()); s_scrollToSel = true; }
     };
+    // A menu item chosen in the folder tree or the Favourites list (drawn before this function's own state existed): the
+    // grid menu's code runs it, on that one item. The item is NOT selected: it may be in a folder that is not on screen, and a
+    // later Del must not reach something the person cannot see (g_projTargets carries it to the code below for this frame).
+    if (!g_projReq.action.empty()) {
+        const std::string act = g_projReq.action, path = g_projReq.path;
+        g_projReq = {};
+        std::error_code qe;
+        const bool pIsDir = fs::is_directory(path, qe);
+        g_projTargets.assign(1, path);
+        if (act == "open") openAsset(path, Lower(fs::path(path).extension().string()), pIsDir);   // a tree folder: show it
+        else if (act == "show") {   // the Favourites list: a folder opens, a file is shown in its folder
+            if (pIsDir) { std::strncpy(dirBuf, path.c_str(), sizeof(dirBuf) - 1); dirBuf[sizeof(dirBuf) - 1] = '\0'; search[0] = '\0'; s_smart = -1; g_treeFocused = true; }
+            else g_pingAsset = path;
+        } else runAction(act, path, pIsDir);
+    }
     // F2 or the menu: ask for a new name (the file type stays).
     if (renameTarget.empty() == false || (panelFocus && !selected.empty() && ImGui::IsKeyPressed(ImGuiKey_F2, false))) {
         const std::string target = renameTarget.empty() ? selected : renameTarget;
@@ -11035,8 +11684,8 @@ void DrawProject(EditorState& ed) {
                 std::string out = extide::RenameScriptClass(srcTxt, extide::ClassIdent(fs::path(np).stem().string()));
                 if (out != srcTxt && okayproj::WriteTextAtomic(np, out)) ConsoleLog("Renamed class to " + extide::ClassIdent(fs::path(np).stem().string()));
             }
-            if (selected == target) selected = np;
-            s_multi.clear(); s_multi.insert(selected);
+            if (selected == target) selected = np;                 // (a folder renamed from the tree may not be selected at all: then the selection stays)
+            if (s_multi.erase(target)) s_multi.insert(np);
             ConsoleLog("Renamed to " + fs::path(np).filename().string() +
                        (r.referencesRewritten ? " (" + std::to_string(r.referencesRewritten) + " reference" + (r.referencesRewritten == 1 ? "" : "s") + " in " +
                                                 std::to_string(r.filesRewritten) + " file" + (r.filesRewritten == 1 ? "" : "s") + " updated)" : std::string()));
@@ -11048,32 +11697,47 @@ void DrawProject(EditorState& ed) {
     // Delete: confirm (it lists what uses the asset), then move to the project's trash.
     if (!deleteTarget.empty()) {
         std::vector<std::string> victims;
-        if (s_multi.size() > 1 && s_multi.count(deleteTarget)) victims.assign(s_multi.begin(), s_multi.end());
+        if (!g_projTargets.empty()) victims = g_projTargets;   // a tree folder or a starred item: just that one
+        else if (s_multi.size() > 1 && s_multi.count(deleteTarget)) victims.assign(s_multi.begin(), s_multi.end());
         else victims.push_back(deleteTarget);
+        const bool fromSelection = g_projTargets.empty();
         deleteTarget.clear();
-        oked::projectpanel::AskDelete(pb, victims, [victims]() {
-            const okaypb::Result r = g_pb->Trash(victims);
+        // What really goes: {A, A/x} is just A. The confirmation lists it that way, and so does Trash.
+        const std::vector<std::string> outer = okaypb::paths::Outermost(victims);
+        oked::projectpanel::AskDelete(pb, outer, [victims, outer, fromSelection]() {
+            const okaypb::Result r = g_pb->Trash(outer);
             if (!r.ok) { ConsoleLog("Delete failed: " + r.error, 2); return; }
             for (const std::string& v : victims) s_assetClip.erase(std::remove(s_assetClip.begin(), s_assetClip.end(), v), s_assetClip.end());
-            selected.clear(); s_multi.clear();
+            if (fromSelection) { selected.clear(); s_multi.clear(); }
+            else {   // only what was deleted leaves the selection
+                auto deleted = [&](const std::string& p) {
+                    const std::string n = okaypb::paths::Normalize(p);
+                    for (const std::string& o : outer) if (okaypb::paths::SameOrInside(o, n)) return true;
+                    return false;
+                };
+                for (auto it = s_multi.begin(); it != s_multi.end();) it = deleted(*it) ? s_multi.erase(it) : std::next(it);
+                if (deleted(selected)) selected.clear();
+            }
             ConsoleLog("Deleted " + std::to_string(r.paths.size()) + " item" + (r.paths.size() == 1 ? "" : "s") + " (Ctrl+Z in the Project panel brings " + (r.paths.size() == 1 ? "it" : "them") + " back)");
         });
     }
     if (duplicateSel) {
         duplicateSel = false;
-        std::vector<std::string> made;
-        for (const std::string& p : selectionList()) {
-            const okaypb::Result r = pb.Duplicate(p);
-            if (r.ok) made.push_back(r.paths[0]); else ConsoleLog("Duplicate failed: " + r.error, 2);
+        const okaypb::Result r = pb.DuplicateMany(selectionList());   // all or nothing, one Ctrl+Z; {A, A/x} copies A once (the copy has its own x)
+        if (!r.ok) ConsoleLog("Duplicate failed: " + r.error, 2);
+        else if (!r.paths.empty()) {
+            if (g_projTargets.empty()) selectPaths(r.paths);   // (the copy of a tree folder is not in the folder on screen: no selection jump)
+            ConsoleLog("Duplicated " + std::to_string(r.paths.size()) + " item" + (r.paths.size() == 1 ? "" : "s") + " (Ctrl+Z in the Project panel takes " + (r.paths.size() == 1 ? "it" : "them") + " away)");
         }
-        if (!made.empty()) { selectPaths(made); ConsoleLog("Duplicated " + std::to_string(made.size()) + " item" + (made.size() == 1 ? "" : "s")); }
     }
     if (reimportSel) {
         reimportSel = false;
         int n = 0;
-        for (const std::string& p : selectionList()) {
+        for (const std::string& p : okaypb::paths::Outermost(selectionList())) {   // (a folder covers what is inside it)
             ProjectForgetThumb(p);                 // the picture is made again
-            if (pb.Reimport(p)) ++n;
+            std::error_code re;
+            if (fs::is_directory(p, re)) n += pb.ReimportFolder(p);   // a folder: every asset in it, below it too
+            else if (pb.Reimport(p)) ++n;
         }
         ConsoleLog("Reimported " + std::to_string(n) + " asset" + (n == 1 ? "" : "s"));
     }
@@ -11105,6 +11769,7 @@ void DrawProject(EditorState& ed) {
         oked::projectpanel::AskName(std::move(rq));
         tagFor.clear();
     }
+    g_projTargets.clear();   // (the menus of the tree and the Favourites list have been served for this frame)
     if (panelFocus) {
         ImGuiIO& kio = ImGui::GetIO();
         const bool ctrl = kio.KeyCtrl;
@@ -11170,6 +11835,7 @@ void DrawProject(EditorState& ed) {
             dirBuf[sizeof(dirBuf) - 1] = '\0';
         }
         if (kio.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F, false)) { s_focusSearch = true; g_treeFocused = false; }
+        if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) runAction("refresh", dir.string(), true);
     }
     if (undoReq) {   // Ctrl+Z or the menu: undo the last file operation (create, rename, move, copy, delete)
         undoReq = false;
@@ -11201,25 +11867,19 @@ void DrawProject(EditorState& ed) {
         ImGui::BeginDisabled(!canEdit || s_smart >= 0);
         bool openCreate = IconButton("##pcreate", TbIcon::Plus, "Create an asset in this folder");
         ImGui::SameLine();
-        if (ImGui::Button("Import")) {
-            // May answer on a later frame (the built-in browser): the folder is copied, and `selected` is a file-static.
-            const fs::path importDir = dir;
-            okay::filedialog::Open("Import asset(s)", "", {}, /*multi=*/true, [importDir](const std::vector<std::string>& picks) {
-                int n = 0;
-                for (const std::string& path : picks) {
-                    if (path.empty()) continue;
-                    std::string out = ImportAssetFile(path, importDir);
-                    if (!out.empty()) { selected = out; ++n; }
-                }
-                ConsoleLog("Imported " + std::to_string(n) + " file(s) into " + importDir.filename().string());
-            });
-        }
+        if (ImGui::Button("Import")) importHere();
         bool importHovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
         ImGui::EndDisabled();
         if (importHovered) ImGui::SetTooltip("Copy textures, fonts, audio, models... into this folder.\nTip: you can also drag files from your file explorer onto the window.");
         if (openCreate) ImGui::OpenPopup("createmenu");
         if (ImGui::BeginPopup("createmenu")) {
-            drawCreateItems();
+            const okaypb::ctx::State& st = ProjectCtxState("plus|" + dir.string(), [&](okaypb::ctx::State& fresh) {
+                fresh.where = okaypb::ctx::Where::Background;
+                ProjectCtxFill(fresh, dir.string(), true);
+                viewState(fresh);
+            });
+            const std::string act = oked::projectpanel::DrawContextMenu(okaypb::ctx::CreateItems(st));
+            if (!act.empty()) runAction(act, dir.string(), true);
             ImGui::EndPopup();
         }
         ImGui::SameLine();
@@ -17341,6 +18001,7 @@ void HandleShortcuts(EditorState& ed) {
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
         else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, false)) ConsoleLog("Undo (items, loot and recipes)"); }
         else if (WeaponEditorFocused() && WeaponEditorUndo(false)) ConsoleLog("Undo (weapons)");
+        else if (ed.isPlaying()) {}   // in Play, Ctrl+Z belongs to the game: the Voxel Digger takes back its last stroke
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else { const std::string un = ed.UndoName(); if (ed.Undo()) ConsoleLog("Undo " + un); }
     }
@@ -17402,6 +18063,21 @@ void HandleShortcuts(EditorState& ed) {
     if (!animKeys && !ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) FocusSelected(ed);
     // Shift+Space maximizes the Scene view (the other panels hide); again brings them back.
     if (!ctrl && ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Space, false)) g_maxToggle = true;
+    // H hides the selected objects (like switching them off in the Hierarchy); Alt+H brings back the ones hidden this way.
+    if (!animKeys && !ctrl && !g_meshEdit && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_H, false)) {
+        if (ImGui::GetIO().KeyAlt) {
+            int n = 0;
+            for (GameObject* g : g_hiddenObjects)
+                for (const auto& up : ed.scene().Objects()) if (up.get() == g) { if (!n) ed.PushUndo(); SetActiveRecursive(g, true); ++n; break; }
+            g_hiddenObjects.clear();
+            ConsoleLog(n ? "Revealed " + std::to_string(n) + " hidden object(s)" : "No objects were hidden with H"); ed.dirty = true;
+        } else if (ed.selected()) {
+            ed.PushUndo();
+            std::vector<GameObject*> targets = ed.MultiSelection().empty() ? std::vector<GameObject*>{ed.selected()} : ed.MultiSelection();
+            for (GameObject* g : targets) { SetActiveRecursive(g, false); g_hiddenObjects.push_back(g); }
+            ConsoleLog("Hid " + std::to_string(targets.size()) + " object(s) (Alt+H brings them back)"); ed.dirty = true;
+        }
+    }
     // Shift+I toggles Isolate mode on the selection.
     if (!ctrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_I, false)) {
         g_isolate = g_isolate ? nullptr : ed.selected();
@@ -18531,36 +19207,14 @@ void DrawFileDialogs(EditorState& ed) {
 // leaves nothing behind and keeps the open scene (EditorState::CreateProject). A bare --template just loads that
 // template into the open scene.
 
-// Template title -> the EditorState scene factory (the same titles the launcher lists).
-using TplFn = void (EditorState::*)();
+// Template title -> the EditorState scene factory. The table is editor/TemplateTable.hpp (tested by templates_work);
+// an unknown title still gives the 3D Scene, and now says so in the Console.
+using TplFn = oked::TemplateBuilder;
 static TplFn TemplateFn(const std::string& title) {
-    struct Tpl { const char* title; TplFn fn; };
-    static const Tpl tpls[] = {
-        {"2D Scene",             &EditorState::NewScene2D},
-        {"3D Scene",             &EditorState::NewScene3D},
-        {"Empty",                &EditorState::NewScene},
-        {"First Person",         &EditorState::NewFPS},
-        {"Third Person",         &EditorState::NewThirdPerson},
-        {"Humanoid",             &EditorState::NewHumanoid},
-        {"Third Person Shooter", &EditorState::NewThirdPersonShooter},
-        {"Point & Click",        &EditorState::NewPointAndClick},
-        {"Sandbox",              &EditorState::NewVoxelSandbox},
-        {"Vehicle (3D)",         &EditorState::NewVehicle3D},
-        {"Vehicle (get in and drive)", &EditorState::NewVehicleSeats3D},
-        {"Vehicle (2D)",         &EditorState::NewVehicle2D},
-        {"Platformer",           &EditorState::NewPlatformer},
-        {"Top-Down",             &EditorState::NewTopDown},
-        {"Top-Down Shooter",     &EditorState::NewTopDownShooter},
-        {"2.5D Platformer",      &EditorState::NewPlatformer25D},
-        {"Coin Collector",       &EditorState::NewCoinCollector},
-        {"Snake",                &EditorState::NewSnake},
-        {"Brick Breaker",        &EditorState::NewBrickBreaker},
-        {"Main Menu",            &EditorState::NewMainMenu},
-        {"Inventory",            &EditorState::NewInventory},
-        {"Multiplayer",          &EditorState::NewMultiplayer},
-    };
-    for (const Tpl& t : tpls) if (title == t.title) return t.fn;
-    return &EditorState::NewScene3D;   // default template
+    bool known = true;
+    const TplFn fn = oked::BuilderOrDefault(title, &known);
+    if (!known) ConsoleLog("Unknown template \"" + title + "\": made a 3D Scene instead.", 1);
+    return fn;
 }
 
 // ---- Errors the person has to read: one modal, plain words, the reason on the second line ----
@@ -19065,7 +19719,7 @@ void DrawAboutPopup() {
                         ImGui::GetColorU32(ImVec4(0.93f, 0.95f, 0.99f, 1.0f)), "OkaySpace");
             ImGui::Dummy(ImVec2(0, bsz + 4.0f));
         }
-        ImGui::TextDisabled("Game Engine  ·  v%s", OKAY_ENGINE_VERSION);
+        ImGui::TextDisabled("Game Engine  ·  v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());   // "(test build)" for a test build
         ImGui::EndGroup();
         ImGui::Spacing();
         ImGui::Separator();
@@ -19248,6 +19902,34 @@ void DrawProjectSettings(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
                                   "so motion stays smooth when the frame rate and the step rate differ.");
+            ImGui::Separator();
+            ImGui::TextDisabled("Physics quality of the open scene (saved with the scene)");
+            {
+                auto& p3 = ed.scene().physics3D();
+                int q = (int)p3.quality;
+                const char* qn[] = {"Classic (the original step: old scenes)", "Improved (stacks stand, bodies sleep, fast bodies stop)"};
+                ImGui::SetNextItemWidth(330);
+                if (ImGui::Combo("Quality##psq", &q, qn, 2)) {
+                    p3.quality = q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
+                    ed.scene().physics().quality = p3.quality;
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Classic plays old scenes exactly as they always played.\n"
+                                      "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
+                                      "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
+                                      "New scenes start Improved. The setting is part of the scene file.");
+                if (p3.quality == okay::PhysicsQuality::Improved) {
+                    int it = p3.solverIterations;
+                    ImGui::SetNextItemWidth(160);
+                    if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
+                        p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).");
+                    if (ImGui::Checkbox("Catch fast bodies automatically##psq", &p3.autoContinuous)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.");
+                }
+            }
             if (ImGui::Button("Apply to current scene##phys")) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
                 ed.scene().physics3D().gravity = {g_project.gravity3D[0], g_project.gravity3D[1], g_project.gravity3D[2]};
@@ -26859,6 +27541,28 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
     return open;
 }
 
+// The hint under Walk Speed (shown when the walk is really a jog) and the "Use natural walk and run speeds" button
+// (docs/walk_vs_run.md). Older projects keep the speeds they saved; this is how a person opts in, with Ctrl+Z to undo.
+static void WalkSpeedHintLine(float walkSpeed) {
+    const std::string hint = okay::NaturalGait::WalkSpeedHint(walkSpeed);
+    if (hint.empty()) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
+    ImGui::TextWrapped("%s", hint.c_str());
+    ImGui::PopStyleColor();
+}
+static bool NaturalSpeedsButton(const char* id) {
+    char label[96];
+    std::snprintf(label, sizeof(label), "Use natural walk and run speeds##%s", id);
+    const bool hit = ImGui::SmallButton(label);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okay::NaturalGait::ButtonTooltip());
+    if (okay::NaturalGait::Old()) {   // OKAY_OLD_GAIT is set: say so where the speeds are, so it cannot be missed
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
+        ImGui::TextWrapped("The OLD walk and run is on (OKAY_OLD_GAIT is set), so new players start at 4.5 and 8. Close the editor and start it without that variable for the natural walk and run.");
+        ImGui::PopStyleColor();
+    }
+    return hit;
+}
+
 // A public field discovered in a script: its name, declared type, default value,
 // and any attributes (Header/Tooltip/Range). Used to show
 // serialized fields in the Script inspector.
@@ -27463,14 +28167,17 @@ void DrawModeling(EditorState& ed) {
         {"Generate",  "Procedural shapes, pipes",         true},
         {"Edit Mesh", "Select, move, sculpt, paint",      true},
         {"Import",    "Bring in a model file",            true},
+        {"Guided",    "Fences and more, from designs",    false},   // appended (scenes and OKAY_UI_MODELPAGE use these numbers); drawn first
     };
+    static const int kPageOrder[] = {7, 0, 1, 2, 3, 4, 5, 6};
     static int s_mdlPage = 0;
     if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
     GameObject* selGo = ed.selected();
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
     ImGui::BeginChild("##mdlnav", ImVec2(196, 0), ImGuiChildFlags_Borders);
     ImGui::Dummy(ImVec2(0, 4));
-    for (int i = 0; i < (int)(sizeof(kPages) / sizeof(kPages[0])); ++i) {
+    for (int oi = 0; oi < (int)(sizeof(kPageOrder) / sizeof(kPageOrder[0])); ++oi) {
+        const int i = kPageOrder[oi];
         const MdlPage& pg = kPages[i];
         const bool usable = !pg.needsMesh || haveMesh;
         ImGui::PushID(i);
@@ -27494,7 +28201,57 @@ void DrawModeling(EditorState& ed) {
     ImGui::TextUnformatted(kPages[s_mdlPage].name);
     ImGui::TextDisabled("%s", kPages[s_mdlPage].desc);
     ImGui::Separator();
-    if (s_mdlPage == 0) {
+    if (s_mdlPage == 7) {
+        // Guided Creation: designs, parts and regeneration live in GuidedPanel.cpp; this lends it the edit-mode selection
+        // and the thumbnail renderer.
+        namespace gu = oked::guided_ui;
+        gu::Host host;
+        host.ed = &ed;
+        host.log = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+        host.leaveEditMode = [&](GameObject* g) { if (g_meshEdit && g_meshEditObj == g) SetMeshEditMode(ed, g, false); };
+        host.selectedFaces = [&](GameObject* g) {
+            std::vector<int> out;
+            MeshRenderer* m = g ? g->GetComponent<MeshRenderer>() : nullptr;
+            if (!m || !g_meshEdit || g_meshEditObj != g) return out;
+            EditPoly(m->mesh);   // makes sure mesh.polyFace is current
+            std::set<int> faces;
+            for (int t : g_meshSelFaces) if (t >= 0 && t < (int)m->mesh.polyFace.size()) faces.insert(m->mesh.polyFace[t]);
+            out.assign(faces.begin(), faces.end());
+            return out;
+        };
+        host.selectFaces = [&](GameObject* g, const std::vector<int>& faces) {
+            MeshRenderer* m = g ? g->GetComponent<MeshRenderer>() : nullptr;
+            if (!m) return;
+            if (!(g_meshEdit && g_meshEditObj == g)) SetMeshEditMode(ed, g, true);
+            EditPoly(m->mesh);
+            const std::set<int> want(faces.begin(), faces.end());
+            g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_meshSelFaces.clear();
+            g_meshSelMode = 1;
+            for (int t = 0; t < (int)m->mesh.polyFace.size(); ++t) if (want.count(m->mesh.polyFace[t])) g_meshSelFaces.push_back(t);
+        };
+        host.thumb = [](const std::string& key, const std::function<Mesh()>& build) -> void* {
+            static std::unordered_map<std::string, SDL_Texture*> cache;
+            auto it = cache.find(key);
+            if (it != cache.end()) return it->second;
+            static int s_frame = -1, s_made = 0;
+            if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
+            if (s_made >= 2 || !g_sdlRenderer) return nullptr;   // a couple of pictures per frame, the rest fill in
+            ++s_made;
+            SDL_Texture* tex = nullptr;
+            {
+                okay::Scene sc;
+                GameObject* g = sc.CreateGameObject("guided thumb");
+                MeshRenderer* m = g->AddComponent<MeshRenderer>();
+                m->mesh = build();
+                m->color = okay::Color{1, 1, 1, 1};   // faces carry their colours
+                sc.Update(0.0f);
+                tex = RenderObjectThumb(sc, g);
+            }
+            cache[key] = tex;
+            return tex;
+        };
+        gu::DrawGuidedPage(host);
+    } else if (s_mdlPage == 0) {
 
     // --- Create a new object (drops it into the scene, selects it) ---
     // Organized Blender-style into an "Add" library: Primitives / Nature / Props /
@@ -28048,6 +28805,65 @@ void DrawModeling(EditorState& ed) {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Treat the points as a flat 2D outline (x, y) and give it thickness along Z — logos, arrows, flat props. Convex outlines cap cleanly.");
 
+        SectionHeader("Bezier curve (pipe, ribbon, swept profile)");
+        {
+            namespace pmo = okay::modeling;
+            ImGui::Checkbox("Show curve in the 3D view##curveshow", &g_curveShow);
+            ImGui::SameLine(); ImGui::Checkbox("Closed loop##curveclosed", &g_curveClosed);
+            ImGui::SameLine(); ImGui::SetNextItemWidth(80); ImGui::DragFloat("##curvetens", &g_curveTension, 0.01f, 0.0f, 1.0f, "round %.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = straight segments between the points, 0.5 = a smooth curve through them.");
+            int cdel = -1;
+            for (int i = 0; i < (int)g_curvePts.size(); ++i) {
+                ImGui::PushID(i);
+                ImGui::SetNextItemWidth(210); ImGui::DragFloat3("##cpt", &g_curvePts[i].x, 0.02f, -1000.0f, 1000.0f, "%.2f");
+                ImGui::SameLine(); if (oked::TipSmallButton("Remove", "X##cptdel") && g_curvePts.size() > 2) cdel = i;
+                ImGui::PopID();
+            }
+            if (cdel >= 0) g_curvePts.erase(g_curvePts.begin() + cdel);
+            if (ImGui::SmallButton("+ Point##curveadd")) { const Vec3 l = g_curvePts.back(), pv = g_curvePts.size() > 1 ? g_curvePts[g_curvePts.size() - 2] : Vec3{0, 0, 0}; g_curvePts.push_back(l + (l - pv)); }
+            ImGui::SameLine(); if (ImGui::SmallButton("Arc##curvearc")) { g_curvePts.clear(); for (int a = 0; a <= 6; ++a) { const float t = 3.14159265f * (float)a / 6.0f; g_curvePts.push_back({2.0f * std::cos(t), 2.0f * std::sin(t), 0}); } g_curveClosed = false; }
+            ImGui::SameLine(); if (ImGui::SmallButton("S##curves")) { g_curvePts = {{-3, 0, 0}, {-1.5f, 1.5f, 0}, {1.5f, -1.5f, 0}, {3, 0, 0}}; g_curveClosed = false; }
+            ImGui::SameLine(); if (ImGui::SmallButton("Spiral##curvesp")) { g_curvePts.clear(); for (int a = 0; a <= 12; ++a) { const float t = 0.9f * (float)a; g_curvePts.push_back({1.5f * std::cos(t), 0.15f * (float)a, 1.5f * std::sin(t)}); } g_curveClosed = false; }
+            ImGui::SameLine(); if (ImGui::SmallButton("Loop##curveloop")) { g_curvePts = {{2, 0, 0}, {0, 0, 2}, {-2, 0, 0}, {0, 0, -2}}; g_curveClosed = true; }
+            if (g_meshEdit && g_meshEditObj == go) {
+                ImGui::SameLine();
+                if (ToolButton("From Selected Edges##curveedges", !g_meshSelEdges.empty(), "Select a chain of edges in Edit Mesh (key 2, Alt+click for a loop) first.", true)) {
+                    const auto chains = pmo::OrderChains(SelectedPolyEdges(mr->mesh));
+                    const pmo::EdgeChain* best = nullptr;
+                    for (const auto& ch : chains) if (!best || ch.verts.size() > best->verts.size()) best = &ch;
+                    if (best && best->verts.size() >= 2) {
+                        const Mat4 W = go->transform->LocalToWorldMatrix();
+                        g_curvePts.clear();
+                        for (int v : best->verts) if (v >= 0 && v < (int)mr->mesh.vertices.size()) g_curvePts.push_back(W.MultiplyPoint(mr->mesh.vertices[v]));
+                        g_curveClosed = best->closed;
+                        ConsoleLog("Curve taken from " + std::to_string(g_curvePts.size()) + " vertices");
+                    }
+                }
+            }
+            static float s_cRadius = 0.15f, s_cWidth = 0.6f, s_cTaper = 1.0f; static int s_cSides = 12, s_cSpan = 8; static bool s_cCaps = true;
+            ImGui::SetNextItemWidth(70); ImGui::DragFloat("##cradius", &s_cRadius, 0.005f, 0.005f, 20.0f, "r %.3f");
+            ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::DragInt("##csides", &s_cSides, 0.2f, 3, 64, "%d sides");
+            ImGui::SameLine(); ImGui::SetNextItemWidth(70); ImGui::DragInt("##cspan", &s_cSpan, 0.2f, 1, 64, "%d / span");
+            ImGui::SameLine(); ImGui::Checkbox("End caps##ccaps", &s_cCaps);
+            ImGui::SetNextItemWidth(70); ImGui::DragFloat("##cwidth", &s_cWidth, 0.01f, 0.01f, 50.0f, "w %.2f");
+            ImGui::SameLine(); ImGui::SetNextItemWidth(80); ImGui::DragFloat("##ctaper", &s_cTaper, 0.01f, 0.01f, 5.0f, "taper %.2f");
+            auto makeObject = [&](const char* nm, Mesh m) {
+                if (m.TriangleCount() == 0) { ConsoleLog(std::string(nm) + ": the curve needs two or more points and a size above zero", 1); return; }
+                ed.PushUndo();
+                GameObject* o = ed.scene().CreateGameObject(nm);
+                o->AddComponent<MeshRenderer>()->mesh = std::move(m);
+                ed.Select(o); ed.dirty = true;
+                ConsoleLog(std::string("Made ") + nm + " from the curve");
+            };
+            const pmo::BezierCurve bc = pmo::CurveThrough(g_curvePts, g_curveClosed, g_curveTension);
+            if (ImGui::Button("Make Pipe##curvepipe")) makeObject("Curve Pipe", pmo::CurvePipe(bc, s_cRadius, s_cSides, s_cSpan, s_cCaps));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A round pipe along the curve as a new object (an editable mesh).");
+            ImGui::SameLine(); if (ImGui::Button("Make Ribbon##curverib")) makeObject("Curve Ribbon", pmo::CurveRibbon(bc, s_cWidth, s_cSpan, true));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A flat strip along the curve (roads, paths, flags).");
+            ImGui::SameLine(); if (ImGui::Button("Sweep Profile##curvesweep") && s_profile.size() >= 2) makeObject("Curve Sweep", pmo::CurveSweep(bc, s_profile, true, s_cSpan, s_cTaper, s_cCaps));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sweeps the profile points above (radius across, height up) along the curve, tapering by the taper value.");
+            ImGui::TextDisabled("Curve length %.2f", pmo::CurveLength(bc));
+        }
         SectionHeader("Pipe (sweep along path)");
         static int   s_pipePreset = 1;
         static float s_pipeR = 0.2f;
@@ -28185,6 +29001,17 @@ void DrawModeling(EditorState& ed) {
 
             ImGui::Checkbox("Symmetry X##me", &g_meshSymX);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror every move and sculpt stroke across the local X = 0 plane (edit half, get both).");
+            ImGui::SameLine(); ImGui::Checkbox("Y##mesymy", &g_meshSymY);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror G / R / S moves across the local Y = 0 plane (sculpt and paint strokes still mirror across X only).");
+            ImGui::SameLine(); ImGui::Checkbox("Z##mesymz", &g_meshSymZ);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror G / R / S moves across the local Z = 0 plane.");
+            {
+                bool dx = (g_symDefaultMask & 1) != 0, dy = (g_symDefaultMask & 2) != 0, dz = (g_symDefaultMask & 4) != 0;
+                ImGui::TextDisabled("Start with symmetry on:"); ImGui::SameLine();
+                bool ch = ImGui::Checkbox("X##symdx", &dx); ImGui::SameLine(); ch |= ImGui::Checkbox("Y##symdy", &dy); ImGui::SameLine(); ch |= ImGui::Checkbox("Z##symdz", &dz);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit mode starts with these planes already switched on (remembered between sessions).");
+                if (ch) { g_symDefaultMask = (dx ? 1 : 0) | (dy ? 2 : 0) | (dz ? 4 : 0); SaveSettings(); }
+            }
             ImGui::SameLine();
             ImGui::Checkbox("Soft Select##me", &g_meshSoftSel);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Proportional editing: nearby unselected vertices follow the move with a smooth falloff.");
@@ -28250,6 +29077,18 @@ void DrawModeling(EditorState& ed) {
                 g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
                 ConsoleLog("Merged " + std::to_string(n) + " verts"); ed.dirty = true;
             }
+            ImGui::SameLine();
+            if (ImGui::Button("Repair Mesh##me")) {
+                EditUndoPoint(ed, mr);
+                const Mesh::RepairReport rep = mr->mesh.Repair();
+                g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+                ConsoleLog("Repair Mesh: merged " + std::to_string(rep.mergedVerts) + " verts, capped " + std::to_string(rep.holesFilled)
+                           + " holes, flipped " + std::to_string(rep.flippedFaces) + " faces; open edges "
+                           + std::to_string(rep.openEdgesBefore) + " -> " + std::to_string(rep.openEdgesAfter)
+                           + (rep.ClosedAfter() ? " (closed)" : " (still not closed)"));
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One click clean-up: merge doubled vertices, drop collapsed triangles, cap holes and\nmake every face point outward. Painted colours and material slots stay. The result is in the Console.");
             static float s_bevelAmt = 0.15f;
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##bevamt", &s_bevelAmt, 0.005f, 0.01f, 2.0f, "%.2f");
@@ -28327,6 +29166,98 @@ void DrawModeling(EditorState& ed) {
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy the selected faces in place as detached geometry — the copies stay selected, so just drag them away.");
+            {
+                ImGui::SeparatorText("Shortcuts and recent tools");
+                if (!g_recentTools.empty()) {
+                    std::string line = "Recent: ";
+                    for (std::size_t i = 0; i < g_recentTools.size(); ++i) line += (i ? ", " : "") + g_recentTools[i];
+                    ImGui::TextDisabled("%s", line.c_str());
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The last tools you used, newest first (a reminder; press the tool's own button to use it again).");
+                } else ImGui::TextDisabled("Recent: (none yet)");
+                if (ImGui::Button("Find a Tool... (Ctrl+K)##mecmd")) g_cmdPaletteRequest = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Search every modeling tool by name (bevel, extrude, similar, table...) and run it. Also in the 3D view: Ctrl+K, or right-click for the tools that fit the selection.");
+                ImGui::SameLine();
+                if (ImGui::Button("Repeat Last (Shift+R)##mecmd") && !g_lastCmdName.empty()) {
+                    const auto cmdsNow = BuildModelCmds(ed, mr);
+                    for (const ModelCmd& c : cmdsNow) if (c.name == g_lastCmdName) { RunModelCmd(c); break; }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_lastCmdName.empty() ? "Run a tool first; then this runs it again." : ("Run " + g_lastCmdName + " again.").c_str());
+                if (ImGui::TreeNode("Undo history##mhist")) {
+                    if (g_meshUndo.empty()) ImGui::TextDisabled("Nothing to undo yet.");
+                    int jump = -1;
+                    for (int hi = 0, n = (int)g_meshUndo.size(); hi < n && hi < 12; ++hi) {
+                        const MeshUndoStep& st = g_meshUndo[n - 1 - hi];
+                        if (ImGui::Selectable((std::to_string(hi + 1) + ".  " + (st.label.empty() ? std::string("Edit") : st.label) + "##hist" + std::to_string(hi)).c_str())) jump = hi;
+                    }
+                    if (ImGui::IsItemHovered() && !g_meshUndo.empty()) ImGui::SetTooltip("Click a step to go back to before it (Ctrl+Y goes forward again).");
+                    if (jump >= 0) for (int k = 0; k <= jump; ++k) MeshUndo(false);
+                    ImGui::TreePop();
+                }
+                if (ImGui::TreeNode("Keys in the 3D view##mkeys")) {
+                    const char* rows[][2] = {
+                        {"1 / 2 / 3", "Vertex / edge / face select mode"}, {"G, R, S", "Move, rotate, scale the selection"},
+                        {"X, Y, Z", "Lock to an axis while moving (Shift: the plane)"}, {"Ctrl", "Snap while moving, rotating, scaling"},
+                        {"type a number", "Exact value during G / R / S"}, {"Enter / Esc", "Confirm / cancel"},
+                        {"G, G", "Edge slide"}, {"Ctrl+R", "Loop cut"}, {"Ctrl+B", "Bevel"}, {"K", "Knife"},
+                        {"Ctrl+Z / Ctrl+Y", "Undo / redo mesh edits"}, {"Ctrl+K", "Find and run any modeling tool"},
+                        {"Shift+R", "Repeat the last tool"}, {"Right-click", "Tools for the current selection"},
+                    };
+                    for (const auto& r : rows) { ImGui::TextUnformatted(r[0]); ImGui::SameLine(130); ImGui::TextDisabled("%s", r[1]); }
+                    ImGui::TreePop();
+                }
+            }
+            {
+                // Snapping and measuring, shown here so they can be set and read without hunting for keys.
+                ImGui::SeparatorText("Snapping and measuring");
+                ImGui::Checkbox("Snap (Ctrl)##msnap", &g_snap);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("While moving (G), rotating (R) or scaling (S) the selection: on, or hold Ctrl.");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                ImGui::DragFloat("##msnapg", &g_snapSize, 0.01f, 0.01f, 10.0f, "grid %.2f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move snaps to multiples of this distance (when Snap to is Grid).");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                ImGui::DragFloat("##msnapr", &g_rotSnapDeg, 0.5f, 1.0f, 90.0f, "turn %.0f deg");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate snaps to multiples of this angle. Scale snaps to 0.1.");
+                ImGui::SetNextItemWidth(110); ImGui::DragFloat("Reduce to %##mereduce", &g_reduceRatio, 0.5f, 2.0f, 100.0f, "%.0f%%");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reduce Polygons (Ctrl+K, type reduce) keeps this percent of the triangles.");
+                ImGui::SetNextItemWidth(110); ImGui::DragFloat("Crease sharpness##mecrease", &g_creaseW, 0.05f, 0.1f, 10.0f, "%.1f");
+                ImGui::SetNextItemWidth(110); ImGui::DragInt("Quads target##mequad", &g_quadTarget, 2.0f, 8, 100000);
+                ImGui::SameLine(); ImGui::Checkbox("All quads##mequad2", &g_quadAllQuads);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used by Quad Remesh (Ctrl+K, type quad): about how many faces to end with, and whether leftover triangles are split into quads.");
+                ImGui::SetNextItemWidth(110); ImGui::SliderFloat("Bevel weight##mebw", &g_bevelWeight, 0.1f, 1.0f, "%.1f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used by Set Bevel Weight on Selected Edges (Ctrl+K, type bevel weight); the Bevel modifier needs Use edge weights ticked.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used by Set Crease on Selected Edges (Ctrl+K, type crease): how many levels of subdivision the edge stays sharp.");
+                ImGui::SetNextItemWidth(110); ImGui::DragFloat("Surface offset##msnapo", &g_wrapOffset, 0.005f, -5.0f, 5.0f, "%.3f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap to Surface and Shrinkwrap (Ctrl+K, type shrinkwrap) leave the vertices this far off the other object's surface.");
+                const char* targets[] = {"Grid (increments)", "Vertex", "Edge", "Face"};
+                ImGui::SetNextItemWidth(150); ImGui::Combo("Snap to##msnapt", &g_snapTarget, targets, 4);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What a Move (G) sticks to when Snap is on: grid steps, or the nearest vertex, edge or face of this mesh\n(the vertices you are moving are ignored).");
+                if (g_snapTarget > 0) {
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(80);
+                    ImGui::DragFloat("##msnapp", &g_snapRadiusPct, 0.1f, 0.5f, 30.0f, "reach %.1f%%");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the moved point has to come before it sticks (percent of the camera distance).");
+                }
+                {
+                    namespace pmo = okay::modeling;
+                    Vec3 sc{1, 1, 1};
+                    if (go && go->transform) {
+                        const Mat4 W = go->transform->LocalToWorldMatrix();
+                        sc = Vec3{W.MultiplyVector({1, 0, 0}).Magnitude(), W.MultiplyVector({0, 1, 0}).Magnitude(), W.MultiplyVector({0, 0, 1}).Magnitude()};
+                    }
+                    // Measured twice a second, not every frame (a 100k-triangle mesh takes a couple of milliseconds).
+                    static pmo::Measurement s_whole, s_sel; static double s_measT = -1.0; static const Mesh* s_measMesh = nullptr; static std::size_t s_measN = 0;
+                    if (s_measT < 0.0 || ImGui::GetTime() - s_measT > 0.5 || s_measMesh != &mr->mesh || s_measN != mr->mesh.triangles.size() + g_meshSelVerts.size() + g_meshSelFaces.size() + g_meshSelEdges.size()) {
+                        s_whole = pmo::MeasureMesh(mr->mesh, sc);
+                        s_sel = pmo::MeasureSelection(mr->mesh, g_meshSelVerts, g_meshSelFaces, g_meshSelEdges, sc);
+                        s_measT = ImGui::GetTime(); s_measMesh = &mr->mesh; s_measN = mr->mesh.triangles.size() + g_meshSelVerts.size() + g_meshSelFaces.size() + g_meshSelEdges.size();
+                    }
+                    const pmo::Measurement& whole = s_whole;
+                    ImGui::TextDisabled("Whole mesh: %.3f x %.3f x %.3f, area %.3f, volume %.3f", whole.size.x, whole.size.y, whole.size.z, whole.area, whole.volume);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width x height x depth in world units (the object's scale included), surface area and volume.");
+                    const pmo::Measurement& sel = s_sel;
+                    if (sel.verts + sel.edges + sel.faces > 0) ImGui::Text("Selection: %s", sel.Summary().c_str());
+                    else ImGui::TextDisabled("Selection: nothing (select two vertices to read the distance between them).");
+                }
+            }
             static float s_snapSel = 0.25f;
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##snapsel", &s_snapSel, 0.01f, 0.01f, 5.0f, "%.2f");
@@ -28450,6 +29381,84 @@ void DrawModeling(EditorState& ed) {
                     else ConsoleLog("Bridge: " + err, 1);
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.");
+
+                // ---- Spin and Extrude Along Path -----------------------------------------------------
+                {
+                    static int s_spinAxis = 1, s_spinSteps = 16;
+                    static float s_spinAngle = 360.0f, s_spinCentre[3] = {0, 0, 0};
+                    const char* axes[] = {"X axis", "Y axis", "Z axis"};
+                    ImGui::SetNextItemWidth(80); ImGui::Combo("##spinax", &s_spinAxis, axes, 3);
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(80);
+                    ImGui::DragFloat("##spinang", &s_spinAngle, 1.0f, -720.0f, 720.0f, "%.0f deg");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    ImGui::DragInt("##spinst", &s_spinSteps, 0.2f, 1, 256, "%d steps");
+                    ImGui::SameLine();
+                    if (ToolButton("Spin##me", haveEdges, kNeedSomeEdges)) {
+                        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                        const Vec3 ax{s_spinAxis == 0 ? 1.0f : 0.0f, s_spinAxis == 1 ? 1.0f : 0.0f, s_spinAxis == 2 ? 1.0f : 0.0f};
+                        std::string err; int n = 0;
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) {
+                                n = pmo::SpinEdges(p, edges, Vec3{s_spinCentre[0], s_spinCentre[1], s_spinCentre[2]}, ax, s_spinAngle, s_spinSteps, &err);
+                                return n > 0; }))
+                            ConsoleLog("Spin: made " + std::to_string(n) + " face(s)");
+                        else ConsoleLog("Spin: " + err, 1);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the selected edges around an axis through the object's centre (or the point below) and\nfill the sweep with faces: a lathe of any edges you drew. 360 deg closes into a ring.\nIf the faces point inward, press Flip Normals.");
+                    ImGui::SetNextItemWidth(200);
+                    ImGui::DragFloat3("Spin centre##spinc", s_spinCentre, 0.01f, -1000.0f, 1000.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A point the spin axis passes through (object space). Default: the object's origin.");
+
+                    static int s_pathKind = 1, s_pathSteps = 6;
+                    static float s_pathLen = 2.0f, s_pathBend = 90.0f;
+                    const char* kinds[] = {"Straight", "Arc", "S-Curve", "Spiral"};
+                    ImGui::SetNextItemWidth(90); ImGui::Combo("##pathk", &s_pathKind, kinds, 4);
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    ImGui::DragFloat("##pathl", &s_pathLen, 0.02f, 0.05f, 100.0f, "len %.2f");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    ImGui::DragFloat("##pathb", &s_pathBend, 1.0f, -720.0f, 720.0f, "bend %.0f");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    ImGui::DragInt("##paths", &s_pathSteps, 0.1f, 1, 64, "%d steps");
+                    ImGui::SameLine();
+                    if (ToolButton("Extrude Along Path##me", !g_meshSelFaces.empty(), kNeedFaces)) {
+                        Mesh& em = mr->mesh;
+                        EditPoly(em);                                          // keeps polyFace up to date
+                        std::set<int> ids;
+                        for (int t : g_meshSelFaces) if (t >= 0 && t < (int)em.polyFace.size()) ids.insert(em.polyFace[t]);
+                        // Start at the middle of the selection, head along its average normal.
+                        Vec3 c{0, 0, 0}, nsum{0, 0, 0}; int cn = 0;
+                        for (int t : g_meshSelFaces) if (t >= 0 && t < em.TriangleCount()) {
+                            for (int k = 0; k < 3; ++k) { c += em.vertices[em.triangles[t * 3 + k]]; ++cn; }
+                            nsum += em.FaceNormal(t);
+                        }
+                        if (cn) c = c * (1.0f / (float)cn);
+                        Vec3 n = nsum.SqrMagnitude() > 1e-12f ? nsum.Normalized() : Vec3{0, 1, 0};
+                        Vec3 u = Vec3::Cross(n, std::fabs(n.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}).Normalized();
+                        Vec3 w = Vec3::Cross(n, u);
+                        std::vector<Vec3> path;
+                        const int N = std::max(1, s_pathSteps);
+                        for (int k = 0; k <= N; ++k) {
+                            const float t = (float)k / (float)N;
+                            Vec3 pt = c + n * (s_pathLen * t);
+                            if (s_pathKind == 1 && std::fabs(s_pathBend) > 0.5f) {          // arc: a bend of `bend` degrees over the length
+                                const float ang = s_pathBend * 0.01745329f, R = s_pathLen / ang;
+                                pt = c + n * (R * std::sin(ang * t)) + u * (R * (1.0f - std::cos(ang * t)));
+                            } else if (s_pathKind == 2) {
+                                pt = c + n * (s_pathLen * t) + u * (0.35f * s_pathLen * std::sin(t * 6.2831853f));
+                            } else if (s_pathKind == 3) {
+                                const float ang = s_pathBend * 0.01745329f * t;
+                                pt = c + n * (s_pathLen * t) + u * (0.3f * s_pathLen * (std::cos(ang) - 1.0f)) + w * (0.3f * s_pathLen * std::sin(ang));
+                            }
+                            path.push_back(pt);
+                        }
+                        const std::vector<int> faceIds(ids.begin(), ids.end());
+                        std::string err; int n2 = 0;
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n2 = pmo::ExtrudeAlongPath(p, faceIds, path, &err); return n2 > 0; })) {
+                            g_meshSelFaces.clear();
+                            ConsoleLog("Extrude Along Path: made " + std::to_string(n2) + " face(s)");
+                        } else ConsoleLog("Extrude Along Path: " + err, 1);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Push the selected faces along a curve (Straight, Arc, S-Curve or Spiral) that starts at the\nmiddle of the selection and heads along its normal. The face turns with the path (no twist).\nBend: the arc's turn in degrees (also the spiral's).");
+                }
 
                 const char* kNeedRim = "Select the edges round a hole (Alt+Click its rim in Edge mode).";
                 if (ToolButton("Fill##me", haveEdges, kNeedRim)) {
@@ -28647,8 +29656,23 @@ void DrawModeling(EditorState& ed) {
                 ImGui::ColorEdit4("Color##paint", g_paintColor);
                 ImGui::DragFloat("Radius##paint", &g_paintRadius, 0.01f, 0.02f, 20.0f, "%.2f");
                 ImGui::DragFloat("Blend##paint", &g_paintBlend, 0.01f, 0.05f, 1.0f, "%.2f");
-                ImGui::TextDisabled("Drag over the mesh to color its faces.");
+                ImGui::Checkbox("Vertex colours (smooth)##paint", &g_paintVertex);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: the brush paints colours on the vertices, blended smoothly across each face (all four renderers).\nOff: it colours whole faces. Vertex and face colours multiply together.");
+                if (g_paintVertex) { ImGui::SetNextItemWidth(120); ImGui::DragFloat("Hardness##paint", &g_paintHardness, 0.01f, 0.0f, 0.95f, "%.2f"); }
+                ImGui::TextDisabled(g_paintVertex ? "Drag over the mesh to paint its vertices (radius, blend and hardness shape the brush)." : "Drag over the mesh to color its faces.");
             }
+            if (ToolButton("Fill Vertices##paint", !g_meshSelVerts.empty() || !g_meshSelFaces.empty(), "Select vertices (key 1) or faces (key 3) first.")) {
+                EditUndoPoint(ed, mr);
+                std::vector<int> vs = g_meshSelVerts;
+                for (int t : g_meshSelFaces) if (t >= 0 && t < mr->mesh.TriangleCount()) for (int k = 0; k < 3; ++k) vs.push_back(mr->mesh.triangles[t * 3 + k]);
+                mr->mesh.FillVertexColors(vs, {g_paintColor[0], g_paintColor[1], g_paintColor[2], g_paintColor[3]});
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Set the selected vertices (or the corners of the selected faces) to exactly the brush colour.");
+            ImGui::SameLine();
+            if (ToolButton("Smooth Colours##paint", mr->mesh.HasVertexColors(), "There are no vertex colours yet.")) { EditUndoPoint(ed, mr); mr->mesh.SmoothVertexColors(2); ed.dirty = true; }
+            ImGui::SameLine();
+            if (ToolButton("Clear Vertex Colours##paint", mr->mesh.HasVertexColors(), "There are no vertex colours yet.")) { EditUndoPoint(ed, mr); mr->mesh.vertexColors.clear(); ed.dirty = true; }
             if (ToolButton("Fill Sel##paint", !g_meshSelFaces.empty(), kNeedFaces)) {
                 EditUndoPoint(ed, mr);
                 mr->mesh.FillFacesColor(g_meshSelFaces,
@@ -28661,6 +29685,126 @@ void DrawModeling(EditorState& ed) {
                 EditUndoPoint(ed, mr); mr->mesh.triColors.clear(); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove all face colors (back to the plain material color).");
+
+            // Material slots: name faces by slot, then recolour a whole slot at once.
+            // Slots are saved with the scene and in .okaymesh files. Each slot is a colour
+            // (all four renderers draw per-face colours); per-slot textures are not built yet.
+            SectionHeader("Material Slots");
+            static int s_slot = 0;
+            const int slotN = std::max(1, mr->mesh.SlotCount());
+            if (s_slot >= slotN) s_slot = slotN - 1;
+            for (int i = 0; i < slotN; ++i) {
+                ImGui::PushID(i);
+                if (ImGui::RadioButton("##slotpick", s_slot == i)) s_slot = i;
+                ImGui::SameLine();
+                ImGui::Text("Slot %d (%d faces)", i, (int)mr->mesh.TrianglesInSlot(i).size());
+                ImGui::SameLine();
+                if ((int)mr->mesh.slotColors.size() <= i) mr->mesh.slotColors.resize(i + 1, Color{1, 1, 1, 1});
+                float col[4] = {mr->mesh.slotColors[i].r, mr->mesh.slotColors[i].g, mr->mesh.slotColors[i].b, mr->mesh.slotColors[i].a};
+                static bool s_slotColEdit = false;   // one undo step per colour drag
+                if (ImGui::ColorEdit4("##slotcol", col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
+                    if (!s_slotColEdit) {
+                        EditUndoPoint(ed, mr);   // snapshot before the colour is changed below
+                        s_slotColEdit = true;
+                    }
+                    mr->mesh.slotColors[i] = {col[0], col[1], col[2], col[3]};
+                    if (!mr->mesh.HasSlots()) mr->mesh.triSlot.assign((std::size_t)mr->mesh.TriangleCount(), 0);
+                    mr->mesh.ApplySlotColors();
+                    ed.dirty = true;
+                }
+                if (!ImGui::IsMouseDown(0)) s_slotColEdit = false;
+                // A picture for this slot (software renderer; the GPU renderers still show the colour).
+                if ((int)mr->slotTextures.size() <= i) mr->slotTextures.resize(i + 1);
+                {
+                    char tb[256];
+                    std::strncpy(tb, mr->slotTextures[i].c_str(), sizeof(tb) - 1); tb[sizeof(tb) - 1] = '\0';
+                    ImGui::SetNextItemWidth(170);
+                    if (ImGui::InputTextWithHint("##slottex", "picture path (optional)", tb, sizeof(tb))) {
+                        ed.PushUndo(); mr->slotTextures[i] = tb; ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("An image file (for example Assets/brick.png) drawn on this slot's faces instead of the plain colour.\nShown by the software renderer; OpenGL and Direct3D still show the slot colour for now.");
+                }
+                ImGui::PopID();
+            }
+            {
+                namespace pmo = okay::modeling;
+                ImGui::SetNextItemWidth(150);
+                if (ImGui::BeginCombo("##matlib", "Material library")) {
+                    const char* group = "";
+                    for (const auto& lm : pmo::MaterialLibrary()) {
+                        if (std::strcmp(group, lm.group) != 0) { group = lm.group; ImGui::SeparatorText(group); }
+                        ImGui::ColorButton((std::string("##lc") + lm.name).c_str(), ImVec4(lm.color.r, lm.color.g, lm.color.b, 1), ImGuiColorEditFlags_NoTooltip, ImVec2(14, 14));
+                        ImGui::SameLine();
+                        if (ImGui::Selectable(lm.name)) {
+                            EditUndoPoint(ed, mr);
+                            if ((int)mr->mesh.slotColors.size() <= s_slot) mr->mesh.slotColors.resize(s_slot + 1, Color{1, 1, 1, 1});
+                            if (!mr->mesh.HasSlots()) mr->mesh.triSlot.assign((std::size_t)mr->mesh.TriangleCount(), 0);
+                            mr->mesh.slotColors[s_slot] = lm.color;
+                            mr->mesh.ApplySlotColors();
+                            ed.dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Give the chosen slot a ready colour (wood, stone, metal, cloth, nature, paint, glass).");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(120);
+                if (ImGui::BeginCombo("##slotpal", "Palette")) {
+                    for (const auto& pal : pmo::SlotPalettes())
+                        if (ImGui::Selectable(pal.name)) {
+                            EditUndoPoint(ed, mr);
+                            const int n = (int)pal.slots.size();
+                            if ((int)mr->mesh.slotColors.size() < n) mr->mesh.slotColors.resize(n, Color{1, 1, 1, 1});
+                            if (!mr->mesh.HasSlots()) mr->mesh.triSlot.assign((std::size_t)mr->mesh.TriangleCount(), 0);
+                            for (int i = 0; i < n; ++i) mr->mesh.slotColors[i] = pal.slots[i].color;
+                            mr->mesh.ApplySlotColors();
+                            ed.dirty = true;
+                        }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Set several slots at once: House, Castle, Barn, Workshop, Forest, Desert, Winter, Primary.");
+            }
+            if (ImGui::SmallButton("+ Slot##slot") && slotN < 256) {
+                EditUndoPoint(ed, mr);
+                mr->mesh.slotColors.resize(slotN + 1, Color{1, 1, 1, 1});
+                s_slot = slotN; ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another material slot (a colour you can give faces to).");
+            ImGui::SameLine();
+            if (ToolButton("- Slot##slot", slotN > 1, "A mesh keeps at least one slot (use Clear Slots to remove them all).", true)) {
+                EditUndoPoint(ed, mr);
+                if (mr->mesh.RemoveSlot(s_slot)) {
+                    if (s_slot < (int)mr->slotTextures.size()) mr->slotTextures.erase(mr->slotTextures.begin() + s_slot);
+                    mr->mesh.ApplySlotColors(); s_slot = std::max(0, std::min(s_slot, slotN - 2)); ed.dirty = true;
+                }
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Remove the chosen slot: its faces go to slot 0, later slots move down.");
+            ImGui::SameLine();
+            if (ToolButton("Up##slot", s_slot > 0, "The chosen slot is already first.", true)) {
+                EditUndoPoint(ed, mr);
+                if (mr->mesh.MoveSlot(s_slot, s_slot - 1)) { if (s_slot < (int)mr->slotTextures.size()) std::swap(mr->slotTextures[s_slot], mr->slotTextures[s_slot - 1]); --s_slot; ed.dirty = true; }
+            }
+            ImGui::SameLine();
+            if (ToolButton("Down##slot", s_slot + 1 < slotN, "The chosen slot is already last.", true)) {
+                EditUndoPoint(ed, mr);
+                if (mr->mesh.MoveSlot(s_slot, s_slot + 1)) { if (s_slot + 1 < (int)mr->slotTextures.size()) std::swap(mr->slotTextures[s_slot], mr->slotTextures[s_slot + 1]); ++s_slot; ed.dirty = true; }
+            }
+            ImGui::SameLine();
+            if (ToolButton("Assign Sel##slot", !g_meshSelFaces.empty(), kNeedFaces, true)) {
+                EditUndoPoint(ed, mr);
+                mr->mesh.AssignSlot(g_meshSelFaces, s_slot);
+                mr->mesh.ApplySlotColors();
+                ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Give the selected faces to the chosen slot (they take its colour).");
+            ImGui::SameLine();
+            if (ToolButton("Select Slot##slot", mr->mesh.HasSlots(), "No faces are assigned to slots yet: select faces and press Assign Sel.", true)) {
+                g_meshSelFaces = mr->mesh.TrianglesInSlot(s_slot);
+            }
+            ImGui::SameLine();
+            if (ToolButton("Clear Slots##slot", mr->mesh.HasSlots() || !mr->mesh.slotColors.empty(), "There are no slots to clear.", true)) {
+                EditUndoPoint(ed, mr); mr->mesh.ClearSlots(); mr->mesh.triColors.clear(); s_slot = 0; ed.dirty = true;
+            }
+            ImGui::TextDisabled("Pick a slot, select faces (key 3), Assign Sel. Change the slot colour to recolour all its faces.");
         }
 
         }
@@ -28673,6 +29817,97 @@ void DrawModeling(EditorState& ed) {
         ImGui::SameLine();
         if (ImGui::Button("Load##modelobj") && mr->meshPath[0]) LoadMeshFileInto(ed, mr);
         SaveMeshAssetButton(ed, go, mr);
+
+        // Reference images: flat pictures in the world to trace a model from.
+        {
+            SectionHeader("Reference images (blueprints)");
+            static char s_refPath[260] = "";
+            ImGui::SetNextItemWidth(220); ImGui::InputTextWithHint("##refpath", "picture path, e.g. Assets/front.png", s_refPath, sizeof(s_refPath));
+            ImGui::SameLine();
+            if (ImGui::Button("Add##refimg") && s_refPath[0]) {
+                RefImage ri; ri.path = s_refPath;
+                ri.plane = (int)ed.scene().refImages.size() % 3;                         // front, then side, then top
+                ed.scene().refImages.push_back(ri); ed.dirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a picture as a blueprint plane. The first is the front view (XY), then side (ZY), then top (XZ). Drawn over the 3D view at its opacity.");
+            int refDel = -1;
+            for (int ri = 0; ri < (int)ed.scene().refImages.size(); ++ri) {
+                RefImage& r = ed.scene().refImages[ri];
+                ImGui::PushID(ri);
+                ImGui::Checkbox("##refvis", &r.visible); ImGui::SameLine();
+                ImGui::TextUnformatted(r.path.c_str());
+                if (GetThumb(r.path) == nullptr) { ImGui::SameLine(); ImGui::TextDisabled("(cannot load)"); }
+                const char* planes[] = {"Front (XY)", "Side (ZY)", "Top (XZ)"};
+                ImGui::SetNextItemWidth(100); ImGui::Combo("##refplane", &r.plane, planes, 3);
+                ImGui::SameLine(); ImGui::SetNextItemWidth(60); ImGui::DragFloat("##refw", &r.width, 0.05f, 0.1f, 500.0f, "w %.1f");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(60); ImGui::DragFloat("##refo", &r.opacity, 0.01f, 0.0f, 1.0f, "a %.2f");
+                ImGui::SameLine(); ImGui::Checkbox("flip##refflip", &r.flipX);
+                ImGui::SetNextItemWidth(220); ImGui::DragFloat3("##refc", &r.centre.x, 0.05f, -1000.0f, 1000.0f, "%.2f");
+                ImGui::SameLine(); if (ImGui::SmallButton("Remove##refdel")) refDel = ri;
+                ImGui::PopID();
+            }
+            if (refDel >= 0) { ed.scene().refImages.erase(ed.scene().refImages.begin() + refDel); ed.dirty = true; }
+            if (ed.scene().refImages.empty()) ImGui::TextDisabled("None yet. Use any PNG or JPG in your project (the picture, its width in world units, its opacity and centre are shown above).");
+        }
+        // Mesh library: the .okaymesh parts in the project's Assets folder, ready to drop into the scene.
+        {
+            SectionHeader("Mesh library (project Assets)");
+            static std::vector<okay::modeling::MeshAssetInfo> s_lib; static bool s_libLoaded = false; static char s_libFilter[64] = "";
+            namespace fsl = std::filesystem;
+            const fsl::path assetsDir = ed.projectDir().empty() ? fsl::path("Assets") : fsl::path(ed.projectDir()) / "Assets";
+            const bool libRefresh = ImGui::Button("Refresh##meshlib");
+            if (!s_libLoaded || libRefresh) { s_lib = okay::modeling::ListMeshAssets(assetsDir.string()); s_libLoaded = true; }
+            ImGui::SameLine(); ImGui::SetNextItemWidth(150); ImGui::InputTextWithHint("##libfilter", "filter by name", s_libFilter, sizeof(s_libFilter));
+            const auto shown = okay::modeling::FilterMeshAssets(s_lib, s_libFilter);
+            if (s_lib.empty()) ImGui::TextDisabled("No .okaymesh files under %s yet. Save a model with Save as Mesh Asset and it appears here.", assetsDir.string().c_str());
+            ImGui::BeginChild("##meshlibbox", ImVec2(0, std::min(180.0f, 24.0f * (float)std::max<std::size_t>(1, shown.size()) + 8.0f)), true);
+            int shownRows = 0;
+            for (const auto& a : shown) {
+                if (++shownRows > 200) { ImGui::TextDisabled("... %d more (use the filter)", (int)shown.size() - 200); break; }
+                ImGui::PushID(shownRows);
+                ImGui::BeginDisabled(!a.readable);
+                if (ImGui::SmallButton("Add")) {
+                    Mesh loaded; std::string lerr;
+                    if (okay::modeling::LoadMeshAsset(a.path, loaded, nullptr, &lerr)) {
+                        ed.PushUndo();
+                        GameObject* o = ed.scene().CreateGameObject(a.name);
+                        auto* nmr = o->AddComponent<MeshRenderer>();
+                        nmr->mesh = std::move(loaded);
+                        std::error_code rec; const fsl::path rel = ed.projectDir().empty() ? fsl::path(a.path) : fsl::relative(fsl::path(a.path), fsl::path(ed.projectDir()), rec);
+                        nmr->meshPath = (rec || rel.empty()) ? a.path : rel.generic_string();
+                        nmr->meshPathHash = okay::modeling::GeometryHash(nmr->mesh);
+                        ed.Select(o); ed.dirty = true;
+                        ConsoleLog("Added '" + a.name + "' from the library");
+                    } else ConsoleLog("Mesh library: " + lerr, 1);
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(a.readable ? "Put a copy in the scene, linked to this file." : "This file has no valid .okaymesh header.");
+                ImGui::SameLine();
+                ImGui::Text("%s%s%s", a.folder.empty() ? "" : (a.folder + "/").c_str(), a.name.c_str(), a.readable ? "" : "  (unreadable)");
+                if (a.readable) { ImGui::SameLine(); ImGui::TextDisabled("%d verts, %d faces", a.vertices, a.faces); }
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+        }
+        // Add a finished model to the scene as its own object, with the collision you want.
+        {
+            SectionHeader("Add to scene as object");
+            static int s_addCol = 2;
+            const char* cols[] = {"No collider", "Box (bounds)", "Exact mesh"};
+            ImGui::SetNextItemWidth(140); ImGui::Combo("Collider##addobj", &s_addCol, cols, 3);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("No collider: scenery you walk through. Box: a fitted box (fast, loose). Exact mesh: collides with the real triangles (floors, walls, ramps).");
+            ImGui::SameLine();
+            if (ImGui::Button("Add Copy to Scene##addobj")) {
+                if (GameObject* copy = ed.DuplicateSelected()) {
+                    for (auto* c : copy->GetComponents<Collider3D>()) copy->RemoveComponent(c);
+                    if (s_addCol == 1) { copy->AddComponent<BoxCollider3D>(); FitColliders(copy, false); }
+                    else if (s_addCol == 2) copy->AddComponent<MeshCollider3D>();
+                    ConsoleLog("Added " + copy->name + " to the scene (" + std::string(cols[s_addCol]) + ")");
+                    ed.dirty = true;
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Make an independent copy of this object (mesh, colours, material slots, modifiers) next to it, with the chosen collider.\nThe copy is selected; the original is untouched.");
+        }
 
         if (!go->GetComponent<Rigidbody3D>() || !go->GetComponent<BoxCollider3D>()) {
             ImGui::Spacing();
@@ -30098,8 +31333,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of the height the ground surface sits at.");
             ImGui::DragFloat("Relief##vox", &g_voxAmp, 0.2f, 0.0f, 40.0f);
             ImGui::SliderFloat("Caves##vox", &g_voxCaves, 0.0f, 1.0f);
+            ImGui::InputInt("Seed##vox", &g_voxSeed);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same seed makes the same ground (and the same material layers). Random picks a new one.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Random##voxseed")) g_voxSeed = (int)(ImGui::GetTime() * 1000.0) & 0x7fffffff;
             if (ImGui::Button("Generate##voxgen")) {
-                v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)(ImGui::GetTime() * 1000.0));
+                v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)g_voxSeed);
+                if (v->UseMaterials()) v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules);
                 v->Apply(); ed.dirty = true;
             }
             ImGui::SameLine();
@@ -30107,6 +31347,90 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Clear##voxgen")) { v->Resize(v->nx, v->ny, v->nz); v->Apply(); ed.dirty = true; }
             ImGui::TextDisabled("Add a Voxel Digger to carve it live in Play.");
+            SectionHeader("Materials");
+            ImGui::DragFloat("Topsoil (m)##voxlay", &g_voxRules.topsoil, 0.05f, 0.0f, 10.0f);
+            ImGui::DragFloat("Dirt Depth (m)##voxlay", &g_voxRules.dirtDepth, 0.1f, 0.0f, 40.0f);
+            ImGui::SliderFloat("Rock Slope##voxlay", &g_voxRules.stoneSlope, 0.1f, 1.0f);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepness above which the surface is bare stone.");
+            ImGui::SliderFloat("Ore Pockets##voxlay", &g_voxRules.oreAmount, 0.0f, 0.5f);
+            ImGui::SliderInt("Ore Veins##voxlay", &g_voxRules.oreVeins, 0, 80);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Long winding veins of ore through the stone. Press Layered ground / Regenerate layers to apply.");
+            if (!v->UseMaterials()) {
+                ImGui::TextDisabled("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.");
+                if (ImGui::Button("Layered ground##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns materials on and fills them by depth, slope and height: grass on top, dirt under it, sand on flat low ground, stone below, ore pockets.");
+                ImGui::SameLine();
+                if (ImGui::Button("All Dirt##voxmat")) { v->EnableMaterials(0); v->Apply(); ed.dirty = true; }
+            } else {
+                bool changed = false;
+                for (std::size_t mi = 0; mi < v->materials.size(); ++mi) {
+                    VoxelTerrain::VoxelMaterial& m = v->materials[mi];
+                    ImGui::PushID((int)mi);
+                    char nm[64]; std::strncpy(nm, m.name.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
+                    ImGui::SetNextItemWidth(90);
+                    if (ImGui::InputText("##mname", nm, sizeof(nm))) { m.name = nm; changed = true; }
+                    ImGui::SameLine();
+                    float mc[4] = {m.color.r, m.color.g, m.color.b, m.color.a};
+                    if (ImGui::ColorEdit4("##mcol", mc, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) { m.color = {mc[0], mc[1], mc[2], mc[3]}; changed = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragFloat("hard##mh", &m.hardness, 0.05f, 0.1f, 50.0f, "%.1f")) { changed = true; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hardness: how slowly it digs. A tool with less power than this cannot dig it at all.");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    if (ImGui::DragFloat("kg/m3##md", &m.density, 10.0f, 1.0f, 30000.0f, "%.0f")) ed.dirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("loose##ml", &m.loose)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Loose ground (sand, dirt, snow) slumps down to its angle of repose when you dig next to it.");
+                    char dr[64]; std::strncpy(dr, m.drop.c_str(), sizeof(dr) - 1); dr[sizeof(dr) - 1] = '\0';
+                    ImGui::SetNextItemWidth(90);
+                    if (ImGui::InputText("drop item##mdr", dr, sizeof(dr))) { m.drop = dr; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inventory item name handed out when this material is collected (Voxel Digger: Give Items). Empty = none.");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragFloat("per m3##mpm", &m.dropPerM3, 0.5f, 0.0f, 1000.0f, "%.1f")) ed.dirty = true;
+                    ImGui::PopID();
+                }
+                if (changed) { v->MaterialsChanged(); v->Apply(); ed.dirty = true; }
+                if (ImGui::SmallButton("Regenerate layers##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Materials off##voxmat")) { v->DisableMaterials(); v->Apply(); ed.dirty = true; }
+                ImGui::TextDisabled("Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
+            }
+            if (ImGui::Checkbox("Catch bodies that fall out of the world##vox", &v->catchFalling)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that leaves the side of the grid and falls below it is put back on the ground (off = it falls for ever).");
+            if (v->catchFalling && ImGui::DragFloat("Catch Depth##vox", &v->catchMargin, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Footprints and tracks##voxft", &v->footprints)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Player (tag below) leaves shallow dents in soft ground (dirt, grass, sand, snow) as it walks.");
+            if (v->footprints) {
+                char ft[64]; std::strncpy(ft, v->footprintTag.c_str(), sizeof(ft) - 1); ft[sizeof(ft) - 1] = '\0';
+                if (ImGui::InputText("Who (tag)##voxft", ft, sizeof(ft))) { v->footprintTag = ft; ed.dirty = true; }
+                if (ImGui::Checkbox("Also rigid bodies##voxft", &v->footprintBodies)) ed.dirty = true;
+                if (ImGui::DragFloat("Step (m)##voxft", &v->footprintStep, 0.05f, 0.1f, 5.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Print Size##voxft", &v->footprintRadius, 0.02f, 0.05f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Print Depth##voxft", &v->footprintDepth, 0.01f, 0.02f, 1.0f)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Water / lava flow in holes##voxfl", &v->fluidOn)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pour water or lava with the digger's Pour Key: it falls into dug holes and fills them from the bottom. Bounded per frame; not saved with the ground.");
+            if (v->fluidOn) {
+                if (ImGui::DragInt("Fluid Cells / step##voxfl", &v->fluidBudget, 1.0f, 1, 5000)) ed.dirty = true;
+                if (ImGui::DragInt("Fluid Max Cells##voxfl", &v->fluidMaxCells, 100.0f, 0, 200000)) ed.dirty = true;
+                if (ImGui::DragFloat("Flow Speed (steps/s)##voxfl", &v->fluidRate, 0.5f, 0.1f, 60.0f)) ed.dirty = true;
+                float fc[4] = {v->fluidColor.r, v->fluidColor.g, v->fluidColor.b, v->fluidColor.a};
+                if (ImGui::ColorEdit4("Fluid Color##voxfl", fc)) { v->fluidColor = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
+                if (ImGui::Checkbox("Glow (lava)##voxfl", &v->fluidGlow)) ed.dirty = true;
+                if (ImGui::SmallButton("Lava preset##voxfl")) { v->fluidColor = Color::FromBytes(255, 110, 30, 255); v->fluidGlow = true; v->fluidRate = 5.0f; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Water preset##voxfl")) { v->fluidColor = Color::FromBytes(50, 120, 220, 170); v->fluidGlow = false; v->fluidRate = 20.0f; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear fluid##voxfl")) v->ClearFluid();
+                ImGui::TextDisabled("Fluid now: %d cells (%.1f m3).", v->FluidCells(), v->FluidVolume());
+            }
+            {   // what the last surface build cost (also in View > Panels > Profiler: Voxel.Edit / Voxel.Mesh / Voxel.Upload)
+                const auto& st = v->lastStats;
+                if (v->UsesChunkObjects())
+                    ImGui::TextDisabled("Drawn as %d chunk objects. Last build: %d of %d chunks, %.2f ms.", v->ChunkObjectCount(), st.chunksRemeshed, st.chunksTotal, st.totalMs);
+                else
+                    ImGui::TextDisabled("Drawn as one mesh. Last build: %d of %d chunks, %.2f ms.", st.chunksRemeshed, st.chunksTotal, st.totalMs);
+                if (VoxelTerrain::OldRemeshActive()) ImGui::TextDisabled("OKAY_VOXEL_OLD_REMESH is set: the previous (slower) edit path is in use.");
+            }
             if (ImGui::SmallButton("Remove##vox")) toRemove = v;
         }
     }
@@ -30132,6 +31456,74 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Reach##vdg");
             if (ImGui::Checkbox("Show brush marker##vdg", &vd->showBrush)) ed.dirty = true;
             oked::FieldTip("Show brush marker##vdg");
+            SectionHeader("Real life");
+            {
+                const char* presets[] = {"Pick a preset...", "Realistic", "Arcade", "Creative"};
+                int pi = 0;
+                if (ImGui::Combo("Preset##vdg", &pi, presets, 4) && pi > 0) { vd->ApplyPreset((VoxelDigger::Preset)pi); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Realistic: dug ground becomes debris and a store, hard rock needs a strong tool, building uses what you collected, loose ground slumps and cut-off pieces fall.\nArcade: ground vanishes, building is free (the old behaviour).\nCreative: unlimited store.");
+                const char* cols[] = {"Vanish (old behaviour)", "Store (into the count)", "Debris (falls, lands back)", "Both (debris, pick up to store)"};
+                int ci = (int)vd->collect;
+                if (ImGui::Combo("Dug Ground##vdg", &ci, cols, 4)) { vd->collect = (VoxelDigger::Collect)ci; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What happens to the ground the brush takes away. Nothing is lost except in Vanish.");
+                if (ImGui::Checkbox("Building needs material##vdg", &vd->needsMaterial)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Creative (unlimited)##vdg", &vd->creative)) ed.dirty = true;
+                VoxelTerrain* tv = vd->FindVoxel();
+                if (tv && tv->UseMaterials()) {
+                    int am = std::max(0, std::min(vd->addMaterial, (int)tv->materials.size() - 1));
+                    if (ImGui::BeginCombo("Build Material##vdg", tv->materials[(std::size_t)am].name.c_str())) {
+                        for (std::size_t k = 0; k < tv->materials.size(); ++k)
+                            if (ImGui::Selectable(tv->materials[k].name.c_str(), (int)k == am)) { vd->addMaterial = (int)k; ed.dirty = true; }
+                        ImGui::EndCombo();
+                    }
+                }
+                if (ImGui::DragFloat("Tool Power##vdg", &vd->power, 0.1f, 0.0f, 1.0e9f, "%.1f", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Materials harder than this cannot be dug. 1e9 = everything.");
+                if (ImGui::DragFloat("Hardness Scale##vdg", &vd->hardnessScale, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplies every material's hardness: higher = slower digging.");
+                const char* shapes[] = {"Sphere", "Cube", "Cylinder", "Plane (flat disc)"};
+                int si = (int)vd->shape;
+                if (ImGui::Combo("Brush Shape##vdg", &si, shapes, 4)) { vd->shape = (VoxelTerrain::EditOptions::Shape)si; ed.dirty = true; }
+                if (ImGui::DragFloat("Depth Limit##vdg", &vd->depthLimit, 0.1f, -1.0f, 200.0f, "%.1f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Metres a stroke may go below where it started. -1 = no limit.");
+                if (ImGui::DragFloat("Bedrock Height##vdg", &vd->protectBelow, 0.1f, -1.0f, 500.0f, "%.1f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nothing below this height (in the terrain's own space) can be dug. -1 = off.");
+                if (ImGui::Checkbox("Snap to grid##vdg", &vd->snapToGrid)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Slump loose ground##vdg", &vd->slump)) ed.dirty = true;
+                { int pk = (int)(unsigned char)vd->pourKey; char pkb[2] = {pk ? (char)pk : '\0', '\0'};
+                  if (ImGui::InputText("Pour Key##vdg", pkb, sizeof(pkb))) { vd->pourKey = pkb[0]; ed.dirty = true; }
+                  if (ImGui::IsItemHovered()) ImGui::SetTooltip("A key (e.g. f) that pours fluid at the aim point. The terrain needs Water / lava flow on."); }
+                if (ImGui::SliderInt("Cave-in Span##vdg", &vd->caveInSpan, 0, 24)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = off. Otherwise roof that is more than this many voxels from a support comes down when you let go of the mouse: a tunnel wider than about twice this brings its ceiling down as debris.");
+                if (vd->slump && ImGui::SliderInt("Slump Passes##vdg", &vd->slumpPasses, 1, 32)) ed.dirty = true;
+                if (vd->slump && ImGui::IsItemHovered()) ImGui::SetTooltip("Passes per frame. 1 = a gentle local slide; more = an avalanche that runs farther down the slope (each pass moves at most 40 voxels).");
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Collapse##vdg", &vd->collapse)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pieces a dig cuts loose fall as debris and land back in the ground.");
+                if (ImGui::SliderInt("Debris Limit##vdg", &vd->debrisMax, 0, 300)) ed.dirty = true;
+                if (ImGui::DragFloat("Debris Life (s)##vdg", &vd->debrisLife, 0.5f, 1.0f, 120.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Give inventory items##vdg", &vd->giveItems)) ed.dirty = true;
+                if (ImGui::Checkbox("Tools from inventory##vdg", &vd->toolsFromInventory)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dig power comes from the items the scene's Inventory holds (see Tools). Without one you dig with bare hands: soft ground only.");
+                if (vd->toolsFromInventory) {
+                    char tl[160]; std::strncpy(tl, vd->tools.c_str(), sizeof(tl) - 1); tl[sizeof(tl) - 1] = '\0';
+                    if (ImGui::InputText("Tools##vdg", tl, sizeof(tl))) { vd->tools = tl; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("item:power list, e.g. shovel:2,pickaxe:5. A tool digs materials whose hardness is up to its power.");
+                    if (ImGui::DragFloat("Bare Hands Power##vdg", &vd->bareHandsPower, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
+                }
+                if (ImGui::Checkbox("Build from items##vdg", &vd->buildFromItems)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Building spends the Build Material's drop items from the Inventory (per m3 as set in the Materials table).");
+                char hud[96]; std::strncpy(hud, vd->hudTarget.c_str(), sizeof(hud) - 1); hud[sizeof(hud) - 1] = '\0';
+                if (ImGui::InputText("Count Text Object##vdg", hud, sizeof(hud))) { vd->hudTarget = hud; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of a Text object that shows what has been collected, e.g. \"Dirt 3.20 m3\".");
+                if (tv && tv->UseMaterials()) {
+                    for (std::size_t k = 0; k < vd->store.size() && k < tv->materials.size(); ++k)
+                        if (vd->store[k] > 0.005) ImGui::TextDisabled("Store: %s %.2f m3", tv->materials[k].name.c_str(), vd->store[k]);
+                }
+                ImGui::TextDisabled("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.");
+            }
             if (ImGui::SmallButton("Remove##vdg")) toRemove = vd;
         }
     }
@@ -31410,7 +32802,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Bake the whole stack into the mesh and clear it.");
-            int moveFrom = -1, moveTo = -1, removeAt = -1, applyAt = -1;
+            int moveFrom = -1, moveTo = -1, removeAt = -1, applyAt = -1, copyAt = -1;
             // One undo step per edit: remember the stack as it was when a widget in it
             // was grabbed, and record that once it actually changes (a drag changes it
             // over many frames; folding a section or opening a menu changes nothing).
@@ -31441,11 +32833,15 @@ void DrawInspector(EditorState& ed) {
                     ImGui::Separator();
                     if (ImGui::MenuItem("Apply")) applyAt = i;
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake just this modifier into the mesh and remove it");
+                    if (ImGui::MenuItem("Copy")) copyAt = i;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a copy of this modifier (same settings) right below it");
                     if (ImGui::MenuItem("Remove")) removeAt = i;
                     ImGui::EndPopup();
                 }
                 if (i < (int)mm->errors.size() && !mm->errors[i].empty())
                     ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s", mm->errors[i].c_str());
+                else if (m.enabled && i < (int)mm->costMs.size())
+                    ImGui::TextDisabled("%.2f ms", mm->costMs[i]);   // how long this modifier took the last time it ran
                 if (open) {
                     switch (m.type) {
                         case MT::Mirror:
@@ -31482,6 +32878,7 @@ void DrawInspector(EditorState& ed) {
                             oked::FieldTip("Width##bw");
                             if (ImGui::SliderInt("Segments##bs", &m.segments, 1, 8)) ed.dirty = true;
                             oked::FieldTip("Segments##bs");
+                            if (ImGui::Checkbox("Use edge weights##bbw", &m.useBevelWeights)) ed.dirty = true;
                             if (ImGui::SliderFloat("Angle limit##ba", &m.angle, 0.0f, 180.0f, "%.0f deg")) ed.dirty = true;
                             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only edges whose faces meet at least this sharply are beveled.");
                             break;
@@ -31513,6 +32910,36 @@ void DrawInspector(EditorState& ed) {
                             if (ImGui::DragInt("Seed##dseed", &m.seed, 0.2f)) ed.dirty = true;
                             oked::FieldTip("Seed##dseed");
                             break;
+                        case MT::CurveArray: {
+                            if (ImGui::DragInt("Count##cac", &m.count, 0.1f, 1, 1000)) ed.dirty = true;
+                            oked::FieldTip("Count##cac");
+                            if (ImGui::Checkbox("Follow the curve##caa", &m.align)) ed.dirty = true;
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn each copy so the mesh's +X axis points along the curve.\nOff = copies keep their own direction.");
+                            ImGui::TextDisabled("Curve points (x, y, z), start to end:");
+                            int rm = -1;
+                            for (int pi = 0; pi < (int)m.path.size(); ++pi) {
+                                ImGui::PushID(pi);
+                                ImGui::SetNextItemWidth(190);
+                                if (ImGui::DragFloat3("##cp", &m.path[pi].x, 0.02f, -1000.0f, 1000.0f, "%.2f")) ed.dirty = true;
+                                ImGui::SameLine();
+                                if (oked::TipSmallButton("Remove", "X##cpx") && m.path.size() > 2) rm = pi;
+                                ImGui::PopID();
+                            }
+                            if (rm >= 0) { m.path.erase(m.path.begin() + rm); ed.dirty = true; }
+                            if (ImGui::SmallButton("+ Point##cpa")) {
+                                const Vec3 last = m.path.empty() ? Vec3{0, 0, 0} : m.path.back();
+                                const Vec3 prev = m.path.size() > 1 ? m.path[m.path.size() - 2] : Vec3{0, 0, 0};
+                                m.path.push_back(last + (last - prev));
+                                ed.dirty = true;
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Arc##cpr")) { m.path.clear(); for (int a = 0; a <= 8; ++a) { const float t = 3.14159265f * (float)a / 8.0f; m.path.push_back({2.0f * std::cos(t), 0.0f, -2.0f * std::sin(t)}); } ed.dirty = true; }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Wave##cpw")) { m.path.clear(); for (int a = 0; a <= 10; ++a) m.path.push_back({0.4f * (float)a, 0.5f * std::sin((float)a * 0.9f), 0.0f}); ed.dirty = true; }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Helix##cph")) { m.path.clear(); for (int a = 0; a <= 16; ++a) { const float t = 0.7f * (float)a; m.path.push_back({1.5f * std::cos(t), 0.12f * (float)a, 1.5f * std::sin(t)}); } ed.dirty = true; }
+                            break;
+                        }
                         default: break;
                     }
                     if (ImGui::Checkbox("Show in edit mode##se", &m.showInEditMode)) ed.dirty = true;
@@ -31523,7 +32950,7 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::EndGroup();
             if (ImGui::IsItemActivated()) { s_modBefore = before; s_modPending = mm; s_modRecorded = false; }
-            const bool menuAct = moveFrom >= 0 || removeAt >= 0 || applyAt >= 0;
+            const bool menuAct = moveFrom >= 0 || removeAt >= 0 || applyAt >= 0 || copyAt >= 0;
             if (menuAct || (s_modPending == mm && !s_modRecorded && !okay::SameModifiers(s_modBefore, mm->modifiers))) {
                 std::vector<okay::MeshModifier> now = mm->modifiers;
                 mm->modifiers = (s_modPending == mm) ? s_modBefore : before;
@@ -31532,6 +32959,7 @@ void DrawInspector(EditorState& ed) {
                 s_modRecorded = true;   // the rest of this drag is the same step
             }
             if (s_modPending == mm && !ImGui::IsAnyItemActive()) s_modPending = nullptr;
+            if (copyAt >= 0) { mm->Duplicate(copyAt); ed.dirty = true; }
             if (moveFrom >= 0) { mm->Move(moveFrom, moveTo); ed.dirty = true; }
             if (removeAt >= 0) { mm->modifiers.erase(mm->modifiers.begin() + removeAt); ed.dirty = true; }
             if (applyAt >= 0) {
@@ -31540,7 +32968,7 @@ void DrawInspector(EditorState& ed) {
                 else ConsoleLog("Couldn't apply: " + err);
                 ed.dirty = true;
             }
-            if (mm->modifiers.empty()) ImGui::TextDisabled("Add a modifier: Mirror, Array, Subdivision Surface, Solidify,\nBevel, Boolean, Decimate, Displace.");
+            if (mm->modifiers.empty()) ImGui::TextDisabled("Add a modifier: Mirror, Array, Subdivision Surface, Solidify,\nBevel, Boolean, Decimate, Displace, Array Along Curve.");
         }
     }
     if (auto* li = dynamic_cast<Light*>(curComp)) {
@@ -31917,6 +33345,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::Checkbox("Continuous Collision", &rb->continuousCollision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+            ImGui::DragFloat("Rolling Resistance##rb", &rb->rollingResistance, 0.005f, 0.0f, 1.0f, "%.3f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
@@ -31930,6 +33360,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc", &bc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(bc, "bc")) ed.dirty = true;
             if (TriggerFilterFields(bc, "bc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##bc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -31948,6 +33379,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cc", &cc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cc", &cc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cc, "cc")) ed.dirty = true;
             if (TriggerFilterFields(cc, "cc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -31972,6 +33404,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap2", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap2", &cap->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cap, "cap2")) ed.dirty = true;
             if (TriggerFilterFields(cap, "cap2")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cap2")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -31990,6 +33423,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##ec2", &ec->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##ec2", &ec->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(ec, "ec2")) ed.dirty = true;
             if (TriggerFilterFields(ec, "ec2")) ed.dirty = true;
             if (ImGui::Checkbox("One-Way##ec2", &ec->oneWay)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only blocks bodies from the normal side — jump up through it, land on top.");
@@ -32025,6 +33459,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##pc2", &pc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##pc2", &pc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(pc, "pc2")) ed.dirty = true;
             if (TriggerFilterFields(pc, "pc2")) ed.dirty = true;
             ImGui::Separator();
             ImGui::Text("Vertices (%d)", (int)pc->points.size());
@@ -32070,6 +33505,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::Checkbox("Continuous Collision##rb3", &rb->continuousCollision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+            ImGui::DragFloat("Rolling Resistance##rb3", &rb->rollingResistance, 0.005f, 0.0f, 1.0f, "%.3f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
+            if (ImGui::Checkbox("Use Child Colliders##rb3", &rb->compoundChildren)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Improved physics quality: colliders on child objects (that have no Rigidbody of their own) are part of this body.\nUse it for a table made of a top and four legs, or an L-shaped crate. Mass and balance are worked out for the whole shape.");
             if (go->transform && go->transform->Parent())
                 ImGui::TextWrapped("This body follows its parent. Moving or turning the parent carries it, and gravity still pulls straight down. Unparent it and it keeps the speed the parent was giving it.");
             else
@@ -32079,8 +33518,8 @@ void DrawInspector(EditorState& ed) {
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
         if (CompHeader("Joint 3D", jt, &toRemove)) {
             ImGui::TextDisabled("Constrains this body to an anchor or another body.");
-            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)"};
-            ImGui::Combo("Mode##jt", &jt->mode, modes, 4);
+            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
+            ImGui::Combo("Mode##jt", &jt->mode, modes, 5);
             char cb[48]; std::strncpy(cb, jt->connectedBody.c_str(), sizeof(cb) - 1); cb[sizeof(cb) - 1] = '\0';
             if (ImGui::InputText("Connected Body##jt", cb, sizeof(cb))) { jt->connectedBody = cb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of another object with a Rigidbody3D. Leave blank to anchor to a fixed world point below.");
@@ -32089,7 +33528,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat3("Anchor##jt", a, 0.1f)) { jt->anchor = {a[0], a[1], a[2]}; ed.dirty = true; }
                 oked::FieldTip("Anchor##jt");
             }
-            if (jt->mode != (int)Joint3D::Mode::Pin && jt->mode != (int)Joint3D::Mode::Hinge) {
+            if (jt->mode != (int)Joint3D::Mode::Pin && jt->mode != (int)Joint3D::Mode::Hinge && jt->mode != (int)Joint3D::Mode::Slider) {
                 ImGui::Checkbox("Auto distance##jt", &jt->autoConfigure);
                 if (!jt->autoConfigure) ImGui::DragFloat("Distance##jt", &jt->distance, 0.05f, 0.0f, 1000.0f);
             }
@@ -32115,6 +33554,23 @@ void DrawInspector(EditorState& ed) {
                     oked::FieldTip("Min Angle##jt");
                     if (ImGui::DragFloat("Max Angle##jt", &jt->maxAngle, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
                     oked::FieldTip("Max Angle##jt");
+                }
+            }
+            if (jt->mode == (int)Joint3D::Mode::Slider) {
+                ImGui::TextDisabled("Slides along the axis only and cannot turn (a drawer, a lift, a piston).");
+                float ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
+                if (ImGui::DragFloat3("Axis##jtsl", ax, 0.05f)) { jt->axis = {ax[0], ax[1], ax[2]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The direction it slides in (world space, taken when Play starts).");
+                if (ImGui::Checkbox("Use Limits##jtsl", &jt->useLimits)) ed.dirty = true;
+                if (jt->useLimits) {
+                    if (ImGui::DragFloat("Min Travel (m)##jtsl", &jt->minAngle, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                    if (ImGui::DragFloat("Max Travel (m)##jtsl", &jt->maxAngle, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far it may slide from where it starts, in metres.");
+                }
+                if (ImGui::Checkbox("Use Motor##jtsl", &jt->useMotor)) ed.dirty = true;
+                if (jt->useMotor) {
+                    ImGui::DragFloat("Motor Speed (m/s)##jtsl", &jt->motorSpeed, 0.05f);
+                    ImGui::DragFloat("Max Motor Force##jtsl", &jt->maxMotorTorque, 1.0f, 0.0f, 100000.0f);
                 }
             }
             ImGui::Checkbox("Breakable##jt", &jt->breakable);
@@ -32904,6 +34360,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Trigger##mc3", &mcol->isTrigger)) ed.dirty = true;
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##mc3", &mcol->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(mcol, "mc3")) ed.dirty = true;
             if (TriggerFilterFields(mcol, "mc3")) ed.dirty = true;
             if (!mcol->HasTriangles()) {
                 // Only the no-mesh fallback box uses a size.
@@ -32928,6 +34385,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc3", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc3", &bc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(bc, "bc3")) ed.dirty = true;
             if (TriggerFilterFields(bc, "bc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##bc3")) {
                 FitBox(go, bc); ed.dirty = true;
@@ -32957,6 +34415,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##sc3", &sc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##sc3", &sc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(sc, "sc3")) ed.dirty = true;
             if (TriggerFilterFields(sc, "sc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##sc3")) {
                 FitSphere(go, sc); ed.dirty = true;
@@ -32979,6 +34438,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap3", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap3", &cap->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cap, "cap3")) ed.dirty = true;
             if (TriggerFilterFields(cap, "cap3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cap3")) {
                 FitCapsule(go, cap); ed.dirty = true;
@@ -35487,8 +36947,8 @@ void DrawInspector(EditorState& ed) {
                     ed.PushUndo();
                     FirstPersonController& F = *fp;
                     switch (which) {
-                        case 0:   // Tactical: weighty mil-sim movement
-                            F.walkSpeed = 3.2f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
+                        case 0:   // Tactical: weighty mil-sim movement (a real walk, a quick run)
+                            F.walkSpeed = 2.0f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
                             F.walkAcceleration = 22.0f; F.acceleration = 30.0f; F.steerRate = 90.0f;
                             F.deceleration = 35.0f; F.airControl = 0.15f;
                             F.coyoteTime = 0.05f; F.jumpBufferTime = 0.08f;
@@ -35520,6 +36980,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##fp");
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##fp");
+            WalkSpeedHintLine(fp->walkSpeed);
+            if (!owned && NaturalSpeedsButton("fp")) {
+                ed.PushUndo("Natural walk and run speeds");
+                okay::NaturalGait::UseNaturalSpeeds(fp->walkSpeed, fp->runSpeed, fp->crouchSpeed, fp->proneSpeed, okay::NaturalGait::kRunSpeed);
+                ed.dirty = true;
+            }
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##fp");
             if (ImGui::DragFloat("Walk Accel##fp", &fp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
@@ -35553,6 +37019,30 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Drive Animation##fp");
             if (ImGui::Checkbox("Foot IK##fp", &fp->footIK)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plant the Character's feet on the ground (foot IK) at Play.");
+            if (ImGui::DragFloat("Step Offset##fp", &fp->stepOffset, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
+            if (ImGui::DragFloat("Slope Limit##fp", &fp->slopeLimit, 0.5f, 0.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepest ground (degrees) the player can stand on and climb. Steeper ground slides the body back down. 0 = no limit.");
+            {   // Controller preset: one pick sets speeds, acceleration, air control, jump timing, bob and camera follow
+                const int cur = fp->controllerPreset;
+                if (ImGui::BeginCombo("Controller Preset##fp", ControllerPresets::Name(cur))) {
+                    for (int pi = 0; pi < ControllerPresets::Count; ++pi) {
+                        if (ImGui::Selectable(ControllerPresets::Name(pi), pi == cur)) { ControllerPresets::Apply(*fp, pi); ed.dirty = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ControllerPresets::About(pi));
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Classic / Modern / Arcade / Realistic / Shooter. Sets the whole feel block (speed, acceleration, stopping, air control, jump timing, head bob / camera follow). Edit any value after.");
+                if (ImGui::DragFloat("Stick Look Ramp##fp", &fp->stickLookRamp, 0.05f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad camera acceleration: seconds the right stick takes from 45% to full look speed at full throw. 0 = constant speed.");
+            }
+            if (ImGui::Checkbox("Variable Jump##fp", &fp->variableJump)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let go of Space early and the jump ends early.");
+            if (fp->variableJump && ImGui::DragFloat("Jump Cut##fp", &fp->jumpCut, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Climb Speed##fp", &fp->climbSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed up and down a ladder: a box trigger on an object tagged Climbable. 0 = no climbing.");
+            if (ImGui::DragFloat("Hard Landing Speed##fp", &fp->hardLandSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A landing this fast (m/s) calls onHardLand and sends the message player_hard_land. 0 = off.");
             if (ImGui::Checkbox("Lock + Hide Cursor##fp", &fp->lockCursor)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing (mouse-look). Off keeps a normal pointer for clicking UI.");
 
@@ -35708,8 +37198,8 @@ void DrawInspector(EditorState& ed) {
                     ed.PushUndo();
                     ThirdPersonController& T = *tp;
                     switch (which) {
-                        case 0:   // Grounded: weighty adventure movement
-                            T.walkSpeed = 3.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
+                        case 0:   // Grounded: weighty adventure movement (a real walk, a quick run)
+                            T.walkSpeed = 2.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
                             T.walkAcceleration = 22.0f; T.acceleration = 30.0f; T.steerRate = 90.0f; T.turnSpeed = 10.0f;
                             T.deceleration = 35.0f; T.airControl = 0.2f;
                             T.coyoteTime = 0.08f;
@@ -35741,6 +37231,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##tp");
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##tp");
+            WalkSpeedHintLine(tp->walkSpeed);
+            if (!owned && NaturalSpeedsButton("tp")) {
+                ed.PushUndo("Natural walk and run speeds");
+                okay::NaturalGait::UseNaturalSpeeds(tp->walkSpeed, tp->runSpeed, tp->crouchSpeed, tp->proneSpeed, okay::NaturalGait::kRunSpeed);
+                ed.dirty = true;
+            }
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##tp");
             if (ImGui::DragFloat("Turn Rate##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
@@ -35768,6 +37264,28 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Foot IK##tp");
             if (ImGui::DragFloat("Step Offset##tp", &tp->stepOffset, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
+            if (ImGui::DragFloat("Slope Limit##tp", &tp->slopeLimit, 0.5f, 0.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepest ground (degrees) the player can stand on and climb. Steeper ground slides the body back down. 0 = no limit.");
+            {   // Controller preset: one pick sets speeds, acceleration, air control, jump timing, bob and camera follow
+                const int cur = tp->controllerPreset;
+                if (ImGui::BeginCombo("Controller Preset##tp", ControllerPresets::Name(cur))) {
+                    for (int pi = 0; pi < ControllerPresets::Count; ++pi) {
+                        if (ImGui::Selectable(ControllerPresets::Name(pi), pi == cur)) { ControllerPresets::Apply(*tp, pi); ed.dirty = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ControllerPresets::About(pi));
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Classic / Modern / Arcade / Realistic / Shooter. Sets the whole feel block (speed, acceleration, stopping, air control, jump timing, head bob / camera follow). Edit any value after.");
+                if (ImGui::DragFloat("Stick Look Ramp##tp", &tp->stickLookRamp, 0.05f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad camera acceleration: seconds the right stick takes from 45% to full look speed at full throw. 0 = constant speed.");
+            }
+            if (ImGui::Checkbox("Variable Jump##tp", &tp->variableJump)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let go of Space early and the jump ends early.");
+            if (tp->variableJump && ImGui::DragFloat("Jump Cut##tp", &tp->jumpCut, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Climb Speed##tp", &tp->climbSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed up and down a ladder: a box trigger on an object tagged Climbable. 0 = no climbing.");
+            if (ImGui::DragFloat("Hard Landing Speed##tp", &tp->hardLandSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A landing this fast (m/s) calls onHardLand and sends the message player_hard_land. 0 = off.");
             {
                 const char* modes[] = {"None", "Locked", "Confined"};
                 int mode = tp->cursorMode;
@@ -35991,6 +37509,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Which views the player has.\nBoth: a key switches between them and the camera blends.\n"
                                   "One view only: no toggle, and the other view's settings are dropped.");
+            if (NaturalSpeedsButton("pc")) {
+                ed.PushUndo("Natural walk and run speeds");
+                if (auto* f = pc->first())
+                    okay::NaturalGait::UseNaturalSpeeds(f->walkSpeed, f->runSpeed, f->crouchSpeed, f->proneSpeed, okay::NaturalGait::kRunSpeed);
+                if (auto* t = pc->third())
+                    okay::NaturalGait::UseNaturalSpeeds(t->walkSpeed, t->runSpeed, t->crouchSpeed, t->proneSpeed, okay::NaturalGait::kRunSpeed);
+                ed.dirty = true;
+            }
             CharacterModelTools(ed, go, "pc");
             if (pc->viewMode() != PlayerController::ViewMode::Both)
                 ImGui::TextDisabled("%s only. Pick Both to let the player switch.",
@@ -36044,6 +37570,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Third Person Distance##pv", &pv->thirdPersonDistance, 0.05f, -1.0f, 40.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Orbit distance while this view is driving. -1 uses the controller's own distance.");
             if (ImGui::DragFloat("Shoulder Offset##pv", &pv->shoulderOffset, 0.01f, -3.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Preset Hotkeys (1-5)##pv", &pv->presetHotkeys)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("While playing, keys 1-5 apply Classic / Modern / Arcade / Realistic / Shooter feel to this player, to compare. Off by default.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Over-the-shoulder shift while this view is driving.");
             ImGui::TextDisabled("V eases between the eyes and the orbit.");
             if (!owned && ImGui::SmallButton("Remove##pv")) toRemove = pv;
@@ -36642,6 +38170,13 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##tps");
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##tps");
+            WalkSpeedHintLine(ts->walkSpeed);
+            if (NaturalSpeedsButton("tps")) {
+                ed.PushUndo("Natural walk and run speeds");
+                okay::NaturalGait::UseNaturalSpeeds(ts->walkSpeed, ts->runSpeed, ts->stanceControl.crouchSpeed, ts->stanceControl.proneSpeed,
+                                                    okay::NaturalGait::kShooterRunSpeed);
+                ed.dirty = true;
+            }
             if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##tps");
             if (ImGui::DragInt("Max Jumps##tps", &ts->maxJumps, 0.1f, 1, 5)) ed.dirty = true;
@@ -37564,13 +39099,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
             {
-                ImGui::BeginDisabled(!tr->screenSpace);
                 if (ImGui::Checkbox("Rich Text##txt", &tr->richText)) ed.dirty = true;
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip(tr->screenSpace ? "Colour and style tags inside the text:\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]\nThe tags take no room. Use [[ for a literal [."
-                                                      : "Rich text works on screen-space text only.\n3D text is drawn by the scene renderer, which does not read tags.");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Colour and style tags inside the text (screen and world text):\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]  [size=150]big[/size]\nThe tags take no room. Use [[ for a literal [.\n[size=N] is a percent (25 to 400); a line is as tall as the biggest size on it.");
             }
+            if (!tr->screenSpace) ImGui::TextDisabled("World text: drawn at this object's place in flat (2D) scenes.");
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             oked::FieldTip("Letter Spacing##txt");
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
@@ -38791,9 +40324,18 @@ void DrawInspector(EditorState& ed) {
             char fmt[256]; std::strncpy(fmt, tb->format.c_str(), sizeof(fmt) - 1); fmt[sizeof(fmt) - 1] = '\0';
             if (ImGui::InputText("Format##utbind", fmt, sizeof(fmt))) { tb->format = fmt; ed.dirty = true; }
             oked::FieldTip("Format##utbind");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The text shown, filled in every frame. {name} is a visual-script variable or a saved value;\n"
+                                  "{name|default} shows the default when it is empty; {{ and }} are literal braces.\n"
+                                  "{owner.name} {owner.level} {owner.health} {owner.maxHealth} {owner.healthPct} read the character\n"
+                                  "this text is a child of (the nearest parent with a Health Stat, Stats, Survival Stats, NPC\n"
+                                  "Controller or Character). A nameplate on a character shows that character.");
             ImGui::TextDisabled("Shows live values each frame on the sibling Text/Button.");
             ImGui::TextDisabled("Use {name} for a visual-script variable or a saved value,");
             ImGui::TextDisabled("e.g.  Health: {hp}   or   Score: {score}");
+            ImGui::TextDisabled("Under a character: {owner.name}  Lv {owner.level}  {owner.health}/{owner.maxHealth}");
+            if (const GameObject* ow = uiowner::Find(tb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
+            else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
             if (ImGui::SmallButton("Remove##utbind")) toRemove = tb;
         }
     }
@@ -38802,12 +40344,21 @@ void DrawInspector(EditorState& ed) {
             char vr[128]; std::strncpy(vr, bb->var.c_str(), sizeof(vr) - 1); vr[sizeof(vr) - 1] = '\0';
             if (ImGui::InputText("Variable##ubbind", vr, sizeof(vr))) { bb->var = vr; ed.dirty = true; }
             oked::FieldTip("Variable##ubbind");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The visual-script variable or saved value the bar follows (0 is Min, 1 is Max).\n"
+                                  "owner.healthFrac (or owner.health, owner.maxHealth, owner.healthPct, owner.level) reads the\n"
+                                  "character this bar is a child of: the nearest parent with a Health Stat, Stats, Survival Stats,\n"
+                                  "NPC Controller or Character. With no such parent it follows the variable without \"owner.\"\n"
+                                  "(healthFrac is the player's health).");
             if (ImGui::DragFloat("Min (empty)##ubbind", &bb->min, 0.5f)) ed.dirty = true;
             oked::FieldTip("Min (empty)##ubbind");
             if (ImGui::DragFloat("Max (full)##ubbind", &bb->max, 0.5f)) ed.dirty = true;
             oked::FieldTip("Max (full)##ubbind");
             ImGui::TextDisabled("Fills the sibling Progress Bar / Radial from the named");
             ImGui::TextDisabled("visual-script variable (or saved value) each frame.");
+            ImGui::TextDisabled("Under a character: owner.healthFrac is that character's health (0 to 1).");
+            if (const GameObject* ow = uiowner::Find(bb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
+            else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
             if (ImGui::SmallButton("Remove##ubbind")) toRemove = bb;
         }
     }
@@ -40228,7 +41779,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 3D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
@@ -42177,6 +43728,30 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImVec2 o = worldToScreen(up->transform->Position());
         float px = tr->EffectivePixelSize() * scale;
         okay::TtfFont* fnt = tr->Font();
+        if (tr->richText && okay::RichTextHasTags(tr->text)) {
+            // Rich text (colour, bold, italic, size tags): each run in its own style, placed one after the other,
+            // as the player draws it (ui2d::DrawWorldText). The 8x8 line advance; a line is as tall as the largest
+            // size on it, and every run sits on its line's bottom (okay::RichLineScales).
+            const okay::RichText rt = okay::ParseRichText(tr->text);
+            const float glyphH = (float)okay::Font8x8::Height;
+            const std::vector<float> lineScale = okay::RichLineScales(rt.plain, rt.styles);
+            std::vector<float> lineTop(lineScale.size() + 1, 0.0f);   // the top of each line below the text's top, in screen px
+            for (std::size_t k = 0; k < lineScale.size(); ++k) lineTop[k + 1] = lineTop[k] + okay::RichLineAdvance((glyphH + 1.0f) * px, 0.0f, lineScale[k]);
+            int curLine = -1; float cx = o.x;
+            for (const okay::RichRun& run : okay::RichTextRuns(rt)) {
+                if (run.line != curLine) { curLine = run.line; cx = o.x + ui2d::UITextW(run.before, px); }
+                const float s = run.style.size > 0.0f ? run.style.size : 1.0f, rpx = px * s;
+                const float ry = o.y + lineTop[(std::size_t)run.line] + (run.lineScale - s) * glyphH * px;
+                ImU32 rc = col;
+                if (run.style.hasColor) rc = IM_COL32(run.style.r, run.style.g, run.style.b, (int)(run.style.a * tr->color.a));
+                const bool it = tr->italic || run.style.italic;
+                if (tr->shadow) DrawBitmapText(dl, run.text, cx + tr->shadowOffset.x * px, ry + tr->shadowOffset.y * px, rpx, sh, 0, 0, it, false, 0, fnt);
+                DrawBitmapText(dl, run.text, cx, ry, rpx, rc, 0, 0, it, false, 0, fnt);
+                if (tr->bold || run.style.bold) DrawBitmapText(dl, run.text, cx + (fnt ? 1.0f : rpx), ry, rpx, rc, 0, 0, it, false, 0, fnt);
+                cx += ui2d::UITextW(run.text, rpx);
+            }
+            continue;
+        }
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
                            o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, 0, fnt);
@@ -43255,6 +44830,36 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                                            gameView ? 1 : 0, viewIgnore))
         dl->AddImage((ImTextureID)tex, view3dMin, view3dMax);
     for (GameObject* g : isoHidden) g->active = true;
+    // Reference images (blueprint planes): each one a flat picture in the world (front, side or top), drawn over the view
+    // at its opacity so a model can be traced. Corners are projected through the camera like everything else.
+    if (!gameView && !ed.scene().refImages.empty()) {
+        for (const RefImage& ri : ed.scene().refImages) {
+            if (!ri.visible || ri.path.empty() || !(ri.width > 0.0f)) continue;
+            SDL_Texture* rt = GetThumb(ri.path);
+            if (!rt) continue;
+            int iw = 0, ih = 0; SDL_QueryTexture(rt, nullptr, nullptr, &iw, &ih);
+            if (iw <= 0 || ih <= 0) continue;
+            const std::array<Vec3, 4> c4 = okay::modeling::RefPlaneCorners((okay::modeling::RefPlane)std::clamp(ri.plane, 0, 2), ri.centre, ri.width, (float)ih / (float)iw, ri.flipX);
+            ImVec2 sp[4]; bool ok = true;
+            for (int k = 0; k < 4; ++k) { Vec4 cc = vp * Vec4{c4[k], 1}; if (!toScreen(cc, sp[k])) ok = false; }
+            if (!ok) continue;                                           // a corner is behind the camera: skip this frame
+            dl->AddImageQuad((ImTextureID)rt, sp[0], sp[1], sp[2], sp[3], ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1),
+                             IM_COL32(255, 255, 255, (int)(std::clamp(ri.opacity, 0.0f, 1.0f) * 255.0f)));
+        }
+    }
+    // The Bezier curve being built (Modeling > Generate): its line and control points, so you see what the Make buttons will use.
+    if (!gameView && g_curveShow && g_curvePts.size() >= 2 && g_showGizmos) {
+        const okay::modeling::BezierCurve bc = okay::modeling::CurveThrough(g_curvePts, g_curveClosed, g_curveTension);
+        const std::vector<Vec3> line = okay::modeling::SampleCurve(bc, 12);
+        ImVec2 pa{0, 0}; bool havePa = false;
+        for (const Vec3& q : line) {
+            ImVec2 sp; const bool ok = toScreen(vp * Vec4{q, 1}, sp);
+            if (ok && havePa) dl->AddLine(pa, sp, IM_COL32(255, 170, 60, 230), 2.0f);
+            pa = sp; havePa = ok;
+        }
+        if (g_curveClosed && line.size() > 1) { ImVec2 s0, s1; if (toScreen(vp * Vec4{line.back(), 1}, s0) && toScreen(vp * Vec4{line.front(), 1}, s1)) dl->AddLine(s0, s1, IM_COL32(255, 170, 60, 230), 2.0f); }
+        for (const Vec3& q : g_curvePts) { ImVec2 sp; if (toScreen(vp * Vec4{q, 1}, sp)) dl->AddCircleFilled(sp, 4.0f, IM_COL32(255, 220, 120, 255)); }
+    }
     // The Animation window's onion skin, on top of the meshes like the skeleton
     // overlay below: the rig at the keys around the playhead.
     if (!gameView && g_showGizmos)
@@ -43530,6 +45135,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             return t->Forward();
         };
         auto C = [&](const Vec3& p) { return vp * Vec4{p.x, p.y, p.z, 1.0f}; };
+        for (const PlayerGizmo::Seg& sg : PlayerGizmo::Lines(sel))   // a selected player: feet ring, slope limit spokes, step height ring
+            clipLine(C(sg.a), C(sg.b), sg.kind == 1 ? IM_COL32(255, 190, 60, 230) : sg.kind == 2 ? IM_COL32(120, 220, 120, 230) : IM_COL32(90, 200, 255, 230), 1.5f);
         auto drawRay = [&](const ActionList::Item& it) {
             if (it.op.rfind("raycast", 0) != 0) return;
             std::size_t dirIdx = (it.op == "raycast_tag" || it.op == "raycast_name") ? 1 : 0;
@@ -43564,7 +45171,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Physics debug view (Scene AND Game view, so you can watch it while playing):
     // every 3D collider by its true shape (green solid, blue trigger, grey asleep),
-    // this frame's contacts (red dot + normal) and the rays scripts cast (green to
+    // joints (orange line, red when broken), this frame's contacts (red dot + normal) and the rays scripts cast (green to
     // the hit with a white normal, yellow on a miss). Off = nothing is drawn and the
     // physics records nothing.
     if (g_physDebug) {
@@ -43629,6 +45236,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             line(ct.point, ct.point + ct.normal * 0.5f, kc, 2.0f);
             ImVec2 sp; if (toScreen(C(ct.point), sp)) dl->AddCircleFilled(sp, 3.5f, kc);
         }
+        for (const PhysicsDebugJoint3D& jt : ed.scene().physics3D().DebugJoints()) {   // joints: orange line between what they hold, red when broken
+            const ImU32 jc = jt.broken ? IM_COL32(255, 60, 60, 255) : IM_COL32(255, 160, 40, 255);
+            line(jt.a, jt.b, jc, 2.0f);
+            ImVec2 sa, sb; if (toScreen(C(jt.a), sa)) dl->AddCircleFilled(sa, 3.0f, jc); if (toScreen(C(jt.b), sb)) dl->AddCircleFilled(sb, 3.0f, jc);
+        }
         for (const PhysicsDebugRay3D& r : ed.scene().physics3D().DebugRays()) {
             if (r.hit) {
                 line(r.from, r.point, IM_COL32(80, 230, 120, 255), 2.0f);
@@ -43648,13 +45260,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // picture (particles, lines, trails), fill a half-resolution depth buffer the
     // same way the player does so those ribbons hide behind solid meshes.
     if (!okay::SceneOcclusionDepth().valid) {
-        bool overlay = false;
-        for (const auto& up : ed.scene().Objects())
-            if (up && up->active && (up->GetComponent<ParticleSystem>() || up->GetComponent<LineRenderer>() ||
-                                     up->GetComponent<TrailRenderer>())) { overlay = true; break; }
+        const bool overlay = okay::SceneHasOverlayNeedingDepth(ed.scene());   // live particles, lines or trails only
         if (overlay && v3w > 2.0f && v3h > 2.0f) {
             static Raster occWork; static std::vector<std::uint32_t> occDown;
-            const int hw = std::max(1, (int)(v3w * dpi) / 2), hh = std::max(1, (int)(v3h * dpi) / 2);
+            const int hw = std::max(1, std::min((int)(v3w * dpi) / 2, 427)), hh = std::max(1, hw * (int)(v3h * dpi) / std::max(1, (int)(v3w * dpi)));   // half resolution, never above 427 wide
             FillOcclusionDepth(occWork, occDown, ed.scene(), vp, eye, hw, hh, viewIgnore);
         }
     }
@@ -43857,6 +45466,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         auto vWorld  = [&](int vi) { return M.MultiplyPoint(mesh.vertices[vi]); };
         auto vScreen = [&](int vi, ImVec2& out) { return toScreen(vp * Vec4{vWorld(vi), 1}, out); };
 
+        mesh.SyncVertexColors();   // tools that add vertices (extrude, inset) leave the paint list short: pad it
         // The vertices a transform should move: the selected verts, or (face mode)
         // the unique verts of the selected faces.
         std::set<int> affSet;
@@ -43872,10 +45482,20 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
         // The polygon wireframe: the edges of the quads and n-gons, not the triangles
         // they're drawn with.
+        std::set<std::pair<int, int>> creaseSet;
+        for (const EdgeCrease& c : mesh.creases) creaseSet.insert({std::min(c.a, c.b), std::max(c.a, c.b)});
+        std::set<std::pair<int, int>> bevelSet;
+        for (const auto& c : mesh.bevelWeights) bevelSet.insert({std::min(c.a, c.b), std::max(c.a, c.b)});
         for (const auto& e : EditPolyEdges(mesh)) {
             ImVec2 a, b;
-            if (vScreen(e.first, a) && vScreen(e.second, b))
-                dl->AddLine(a, b, IM_COL32(150, 172, 205, 150), 1.0f);
+            if (vScreen(e.first, a) && vScreen(e.second, b)) {
+                const std::pair<int, int> key{std::min(e.first, e.second), std::max(e.first, e.second)};
+                const bool cr = !creaseSet.empty() && creaseSet.count(key);
+                const bool bw = !bevelSet.empty() && bevelSet.count(key);
+                // creases are pink, bevel weights are green (an edge with both is pink with a green core)
+                dl->AddLine(a, b, cr ? IM_COL32(235, 90, 200, 235) : bw ? IM_COL32(70, 220, 120, 235) : IM_COL32(150, 172, 205, 150), (cr || bw) ? 2.5f : 1.0f);
+                if (cr && bw) dl->AddLine(a, b, IM_COL32(70, 220, 120, 235), 1.0f);
+            }
         }
         // UV seams, in red (Modeling > Edit Mesh > UVs & Seams).
         for (const auto& e : mesh.seams) {
@@ -43949,9 +45569,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 if (bv >= 0 && best < 80.0f * 80.0f) {
                     Color pc{g_paintColor[0], g_paintColor[1], g_paintColor[2], g_paintColor[3]};
                     Vec3 c = mesh.vertices[bv];
-                    mesh.PaintFaces(c, g_paintRadius, pc, g_paintBlend);
-                    if (g_meshSymX)
-                        mesh.PaintFaces(Vec3{-c.x, c.y, c.z}, g_paintRadius, pc, g_paintBlend);
+                    if (g_paintVertex) {                          // smooth colours on the vertices
+                        mesh.PaintVertices(c, g_paintRadius, pc, g_paintBlend, g_paintHardness);
+                        if (g_meshSymX) mesh.PaintVertices(Vec3{-c.x, c.y, c.z}, g_paintRadius, pc, g_paintBlend, g_paintHardness);
+                    } else {
+                        mesh.PaintFaces(c, g_paintRadius, pc, g_paintBlend);
+                        if (g_meshSymX)
+                            mesh.PaintFaces(Vec3{-c.x, c.y, c.z}, g_paintRadius, pc, g_paintBlend);
+                    }
                     ed.dirty = true;
                 }
                 g_uiHandled = true;     // consume so the object isn't orbited/moved
@@ -43974,7 +45599,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             auto beginModal = [&](mdl::EditXform kind) {
                 mdl::EditTransformOptions o;
                 o.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
-                o.mirrorX = g_meshSymX;
+                o.mirrorX = g_meshSymX; o.mirrorY = g_meshSymY; o.mirrorZ = g_meshSymZ;
                 g_meModal.Begin(mesh, kind, affected, M, o);
                 if (!g_meModal.Active()) return;
                 g_meModalObj = meo;
@@ -44257,9 +45882,267 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 g_uiHandled = true;
             }
 
+            // ---- Faster modeling: quick toolbar, right-click menu, command palette (Ctrl+K), repeat last (Shift+R), hint bar ----
+            {
+                MeshRenderer* cmr = meo->GetComponent<MeshRenderer>();
+                const std::vector<ModelCmd> cmds = BuildModelCmds(ed, cmr);
+                auto findCmd = [&](const std::string& n) -> const ModelCmd* { for (const ModelCmd& c : cmds) if (c.name == n) return &c; return nullptr; };
+                const bool idle = g_ptool == PolyTool::None && !g_meModal.Active() && !g_meEditGrab;
+                if (ImGui::IsPopupOpen("##meshcmdpal") || ImGui::IsPopupOpen("##meshctx")) g_uiHandled = true;   // a click in the menu must not select or orbit
+                if (hovered) { const mdl::Ray cr = mouseRay(io.MousePos); g_cursorOrigin = cr.origin; g_cursorDir = cr.direction; }   // where "at cursor" adds go
+                if (idle && hovered && !io.WantTextInput && g_selTool == 0) {
+                    // Single keys (no Ctrl): the commands that have one.
+                    auto key = [&](ImGuiKey k) { return ImGui::IsKeyPressed(k, false); };
+                    const char* want = nullptr;
+                    if (!io.KeyCtrl && !io.KeyAlt && !io.KeyShift) {
+                        if (key(ImGuiKey_H)) want = "Hide Selected";
+                        else if (key(ImGuiKey_Slash)) want = "Isolate Selection (Local View)";
+                        else if (key(ImGuiKey_B)) want = "Box Select";
+                        else if (key(ImGuiKey_C)) want = "Circle Select";
+                        else if (key(ImGuiKey_L)) want = "Lasso Select";
+                        else if (key(ImGuiKey_E)) want = "Extrude and Move";
+                    } else if (!io.KeyCtrl && !io.KeyAlt && io.KeyShift) {
+                        if (key(ImGuiKey_D)) want = "Duplicate and Move";
+                        else if (key(ImGuiKey_H)) want = "Hide Unselected";
+                    } else if (!io.KeyCtrl && io.KeyAlt && !io.KeyShift) {
+                        if (key(ImGuiKey_H)) want = "Reveal Hidden";
+                        else if (key(ImGuiKey_Z)) want = "Toggle X-ray Select";
+                    }
+                    if (want) { if (const ModelCmd* c = findCmd(want)) RunModelCmd(*c); g_uiHandled = true; }
+                    if (!io.KeyCtrl && !io.KeyAlt && !io.KeyShift && key(ImGuiKey_I)) {
+                        if (g_meshSelFaces.empty()) ConsoleLog("Inset (drag): select faces first (key 3)", 1);
+                        else {
+                            s_insActive = true; s_insStart = mesh; s_insFaces = g_meshSelFaces;
+                            Vec3 c{0, 0, 0};
+                            for (int t : s_insFaces) if (t >= 0 && t < mesh.TriangleCount()) for (int k = 0; k < 3; ++k) c += vWorld(mesh.triangles[t * 3 + k]);
+                            c = c * (1.0f / (3.0f * (float)s_insFaces.size()));
+                            ImVec2 sc; s_insC = toScreen(vp * Vec4{c, 1}, sc) ? sc : io.MousePos;
+                            s_insD0 = std::max(30.0f, std::hypot(io.MousePos.x - s_insC.x, io.MousePos.y - s_insC.y));
+                            g_uiHandled = true;
+                        }
+                    }
+                }
+                if (idle && hovered && !io.WantTextInput) {
+                    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_K, false)) g_cmdPaletteRequest = true;
+                    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+                        if (const ModelCmd* c = findCmd(g_lastCmdName)) RunModelCmd(*c);
+                        else ConsoleLog("Repeat Last: nothing to repeat yet (use a tool first)", 1);
+                        g_uiHandled = true;
+                    }
+                }
+                // ---- Live inset (I): move the mouse towards the middle of the faces to inset them, click or Enter to keep ----
+                if (s_insActive) {
+                    g_uiHandled = true;
+                    const float d = std::hypot(io.MousePos.x - s_insC.x, io.MousePos.y - s_insC.y);
+                    const float amt = std::clamp((s_insD0 - d) / s_insD0, 0.0f, 0.95f);
+                    mesh = s_insStart;
+                    mesh.InsetFaces(s_insFaces, amt);
+                    ed.dirty = true;
+                    char b2[96]; std::snprintf(b2, sizeof(b2), "Inset %.0f%%  -  move toward the middle for more, click or Enter to keep, Esc to cancel", amt * 100.0f);
+                    dl->AddText(ImVec2(canvasPos.x + 12.0f, canvasPos.y + canvasSize.y - 40.0f), IM_COL32(255, 200, 90, 255), b2);
+                    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))) { mesh = s_insStart; s_insActive = false; }
+                    else if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
+                        const Mesh result = mesh;
+                        mesh = s_insStart; g_nextUndoLabel = "Inset (drag)"; EditUndoPoint(ed, meo->GetComponent<MeshRenderer>());
+                        mesh = result; s_insActive = false;
+                    }
+                }
+                // ---- Box / circle / lasso select (B, C, L): drag in the 3D view; Shift adds; Alt+Z turns X-ray on or off ----
+                if (g_selTool != 0) {
+                    g_uiHandled = true;
+                    std::vector<mdl::ScreenPoint> proj(mesh.vertices.size());
+                    for (int i = 0; i < (int)mesh.vertices.size(); ++i) { ImVec2 sp; const bool ok = vScreen(i, sp); proj[i] = {sp.x, sp.y, ok}; }
+                    const Vec3 eyeL = Minv.MultiplyPoint(eye);
+                    auto apply = [&](const mdl::SelectShape& sh, bool add) {
+                        if (g_meshSelMode == 0) {
+                            std::vector<int> r = mdl::SelectVerticesIn(mesh, proj, sh, g_meshXray, eyeL);
+                            if (add) for (int v : g_meshSelVerts) r.push_back(v);
+                            std::sort(r.begin(), r.end()); r.erase(std::unique(r.begin(), r.end()), r.end());
+                            g_meshSelVerts = r;
+                        } else if (g_meshSelMode == 1) {
+                            EditPoly(mesh);                                // keeps polyFace current so a quad is picked whole
+                            std::vector<int> r = mdl::SelectFacesIn(mesh, proj, sh, g_meshXray, eyeL);
+                            if (add) for (int f : g_meshSelFaces) r.push_back(f);
+                            std::sort(r.begin(), r.end()); r.erase(std::unique(r.begin(), r.end()), r.end());
+                            g_meshSelFaces = r;
+                        } else {
+                            std::vector<std::pair<int, int>> r = mdl::SelectEdgesIn(mesh, EditPolyEdges(mesh), proj, sh, g_meshXray, eyeL);
+                            if (add) for (const auto& e : g_meshSelEdges) if (std::find(r.begin(), r.end(), e) == r.end()) r.push_back(e);
+                            g_meshSelEdges = r;
+                        }
+                    };
+                    const char* toolName = g_selTool == 1 ? "Box select" : g_selTool == 2 ? "Circle select" : "Lasso select";
+                    std::string tip = std::string(toolName) + (g_meshXray ? " (X-ray: through the mesh)" : " (front faces only; Alt+Z for X-ray)") +
+                                      (g_selTool == 2 ? "  -  paint with the mouse, wheel = size, Enter or Esc to finish" : "  -  drag, Shift adds, Esc cancels");
+                    dl->AddText(ImVec2(canvasPos.x + 12.0f, canvasPos.y + canvasSize.y - 40.0f), IM_COL32(255, 200, 90, 255), tip.c_str());
+                    const bool cancel = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right));
+                    if (cancel || (g_selTool == 2 && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) { g_selTool = 0; s_selDrag = false; s_lasso.clear(); }
+                    else if (g_selTool == 2) {
+                        if (hovered && io.MouseWheel != 0.0f) g_circleRadius = std::clamp(g_circleRadius * (io.MouseWheel > 0 ? 1.1f : 0.9f), 6.0f, 400.0f);
+                        dl->AddCircle(io.MousePos, g_circleRadius, IM_COL32(255, 220, 120, 230), 48, 1.5f);
+                        if (hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                            const bool first = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                            apply(mdl::SelectShape::Circle({io.MousePos.x, io.MousePos.y}, g_circleRadius), io.KeyShift || !first);
+                        }
+                    } else {
+                        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { s_selDrag = true; s_selStart = io.MousePos; s_lasso.clear(); }
+                        if (s_selDrag) {
+                            if (g_selTool == 3) { if (s_lasso.empty() || std::hypot(io.MousePos.x - s_lasso.back().x, io.MousePos.y - s_lasso.back().y) > 3.0f) s_lasso.push_back(io.MousePos); }
+                            if (g_selTool == 1) dl->AddRect(s_selStart, io.MousePos, IM_COL32(255, 220, 120, 240), 0.0f, 0, 1.5f);
+                            else for (std::size_t i = 0; i + 1 < s_lasso.size(); ++i) dl->AddLine(s_lasso[i], s_lasso[i + 1], IM_COL32(255, 220, 120, 240), 1.5f);
+                            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                                if (g_selTool == 1) apply(mdl::SelectShape::Box({s_selStart.x, s_selStart.y}, {io.MousePos.x, io.MousePos.y}), io.KeyShift);
+                                else { std::vector<Vec2> o; for (const ImVec2& q : s_lasso) o.push_back({q.x, q.y}); apply(mdl::SelectShape::Lasso(o), io.KeyShift); }
+                                s_selDrag = false; s_lasso.clear(); g_selTool = 0;
+                            }
+                        }
+                    }
+                }
+                // Shift+D / E asked for a move to start: begin it now that the new selection is in place.
+                if (g_pendingMove && idle && !affected.empty()) {
+                    beginModal(mdl::EditXform::Move);
+                    if (g_pendingMove == 2 && g_meModal.Active()) {       // E: slide along the selection's normal when that is (nearly) a world axis
+                        Vec3 n{0, 0, 0};
+                        for (int t : g_meshSelFaces) if (t >= 0 && t < mesh.TriangleCount()) n += M.MultiplyVector(mesh.FaceNormal(t));
+                        if (n.SqrMagnitude() > 1e-12f) {
+                            n = n.Normalized();
+                            for (int a = 0; a < 3; ++a) if (std::fabs((&n.x)[a]) > 0.95f) g_meModal.lock.axis = a;
+                        }
+                    }
+                    g_pendingMove = 0;
+                }
+                // The quick toolbar under the mode pills: the most-used tools for the current select mode.
+                {
+                    std::vector<std::string> names;
+                    if (g_meshSelMode == 1) names = {"Extrude Faces", "Inset Faces", "Subdivide Selection", "Delete Faces", "Grow Selection", "Select Similar: Facing"};
+                    else if (g_meshSelMode == 2) names = {"Bevel Edges", "Round Edges (how do I)", "Dissolve Edges"};
+                    else names = {"Grow Selection", "Shrink Selection", "Merge by Distance"};
+                    names.push_back("Repair Mesh");
+                    struct Q { std::string label, tip; bool ok, on; std::string cmd; int act; };
+                    std::vector<Q> qs;
+                    for (const std::string& n : names) if (const ModelCmd* c = findCmd(n)) {
+                        std::string lab = n; const std::size_t pr = lab.find(" (how do I)"); if (pr != std::string::npos) lab.resize(pr);
+                        qs.push_back({lab, c->hint + (c->ok ? "" : "  [" + c->why + "]"), c->ok, false, n, 0});
+                    }
+                    qs.push_back({"Box", "Box select (B): drag a rectangle.", true, g_selTool == 1, "Box Select", 0});
+                    qs.push_back({"Circle", "Circle select (C): paint with a circle, wheel changes the size.", true, g_selTool == 2, "Circle Select", 0});
+                    qs.push_back({"Lasso", "Lasso select (L): draw a loop round what you want.", true, g_selTool == 3, "Lasso Select", 0});
+                    qs.push_back({"X-ray", "Select through the mesh with Box / Circle / Lasso (Alt+Z).", true, g_meshXray, "Toggle X-ray Select", 0});
+                    for (const char* nm : {"Hide Selected", "Reveal Hidden", "Isolate Selection (Local View)"})
+                        if (const ModelCmd* c = findCmd(nm)) {
+                            std::string lab = nm; if (lab == "Hide Selected") lab = "Hide"; else if (lab == "Reveal Hidden") lab = "Reveal"; else lab = "Isolate";
+                            qs.push_back({lab, c->hint + (c->ok ? "  [" + c->keys + "]" : "  [" + c->why + "]"), c->ok, nm == std::string("Isolate Selection (Local View)") && g_isolating, nm, 0});
+                        }
+                    qs.push_back({"Sym X", "Mirror every G / R / S move across the local X = 0 plane.", true, g_meshSymX, "Toggle Symmetry X", 0});
+                    qs.push_back({"Y", "Symmetry across the local Y = 0 plane.", true, g_meshSymY, "Toggle Symmetry Y", 0});
+                    qs.push_back({"Z", "Symmetry across the local Z = 0 plane.", true, g_meshSymZ, "Toggle Symmetry Z", 0});
+                    qs.push_back({"Snap", "Snap moves, turns and scales (Ctrl also snaps while held). Set what it snaps to in Edit Mesh > Snapping and measuring.", true, g_snap, "Toggle Snap", 0});
+                    qs.push_back({"Repeat", "Run the last tool again (Shift+R): " + (g_lastCmdName.empty() ? std::string("none yet") : g_lastCmdName), !g_lastCmdName.empty(), false, "", 1});
+                    qs.push_back({"Find... (Ctrl+K)", "Search every modeling tool by name and run it.", true, false, "", 2});
+                    const float pad = 7.0f, gap = 4.0f, lh2 = ImGui::GetTextLineHeight(), hgt2 = lh2 + 6.0f;
+                    float x2 = canvasPos.x + 8.0f, y2 = canvasPos.y + 8.0f + lh2 + 14.0f;
+                    for (const Q& q : qs) {
+                        const float w = ImGui::CalcTextSize(q.label.c_str()).x + pad * 2.0f;
+                        if (x2 + w > canvasPos.x + canvasSize.x - 8.0f) { x2 = canvasPos.x + 8.0f; y2 += hgt2 + gap; }
+                        const ImVec2 a(x2, y2), b(x2 + w, y2 + hgt2);
+                        const bool over = io.MousePos.x >= a.x && io.MousePos.x < b.x && io.MousePos.y >= a.y && io.MousePos.y < b.y;
+                        dl->AddRectFilled(a, b, q.on ? ImGui::GetColorU32(AccentCol(0.92f)) : over && q.ok ? IM_COL32(70, 74, 86, 230) : IM_COL32(32, 35, 42, 205), 4.0f);
+                        dl->AddText(ImVec2(a.x + pad, a.y + 3.0f), q.ok ? IM_COL32(225, 228, 235, 255) : IM_COL32(120, 124, 134, 255), q.label.c_str());
+                        if (over && hovered && idle) {
+                            ImGui::SetTooltip("%s", q.tip.c_str());
+                            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                g_uiHandled = true;
+                                if (q.act == 2) g_cmdPaletteRequest = true;
+                                else if (q.act == 1) { if (const ModelCmd* c = findCmd(g_lastCmdName)) RunModelCmd(*c); }
+                                else if (const ModelCmd* c = findCmd(q.cmd)) RunModelCmd(*c);
+                            }
+                        }
+                        x2 += w + gap;
+                    }
+                }
+                // Right-click (a click, not a drag, which orbits the camera): the tools that fit the selection.
+                if (idle && hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).x * ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).x +
+                        ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).y * ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).y < 16.0f)
+                    ImGui::OpenPopup("##meshctx");
+                if (ImGui::BeginPopup("##meshctx")) {
+                    const char* modeName = g_meshSelMode == 0 ? "Vertices" : g_meshSelMode == 2 ? "Edges" : "Faces";
+                    ImGui::TextDisabled("%s: %d verts, %d edges, %d faces selected", modeName, (int)g_meshSelVerts.size(), (int)g_meshSelEdges.size(), (int)g_meshSelFaces.size());
+                    ImGui::Separator();
+                    bool anyShown = false;
+                    for (const ModelCmd& c : cmds) {
+                        if (c.group == "Switch" || !c.ok || (c.group == "Select" && c.name != "Select All" && c.name != "Select None" && c.name.find("Grow") == std::string::npos
+                                                              && c.name.find("Shrink") == std::string::npos && c.name.find("Similar") == std::string::npos)) continue;
+                        if (c.group == "Select" && (c.name == "Select All" || c.name == "Select None")) continue;
+                        anyShown = true;
+                        if (ImGui::MenuItem(c.name.c_str(), c.keys.empty() ? nullptr : c.keys.c_str())) RunModelCmd(c);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", c.hint.c_str());
+                    }
+                    if (!anyShown) ImGui::TextDisabled("Select something to see tools for it.");
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Find a tool...", "Ctrl+K")) g_cmdPaletteRequest = true;
+                    if (ImGui::MenuItem("Repeat last", "Shift+R", false, !g_lastCmdName.empty())) { if (const ModelCmd* c = findCmd(g_lastCmdName)) RunModelCmd(*c); }
+                    ImGui::EndPopup();
+                }
+                // The command palette: type part of a name ("bevel", "extrude"), Enter runs the first match.
+                if (g_cmdPaletteRequest) { g_cmdPaletteRequest = false; g_cmdFilter[0] = '\0'; g_cmdPaletteSel = 0; ImGui::OpenPopup("##meshcmdpal"); }
+                ImGui::SetNextWindowPos(ImVec2(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + 60.0f), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+                ImGui::SetNextWindowSize(ImVec2(std::min(460.0f, canvasSize.x - 20.0f), 0.0f));
+                if (ImGui::BeginPopup("##meshcmdpal")) {
+                    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputTextWithHint("##cmdfilter", "Type a tool: bevel, extrude, similar, table...", g_cmdFilter, sizeof(g_cmdFilter));
+                    auto lower = [](std::string t) { for (char& ch : t) ch = (char)std::tolower((unsigned char)ch); return t; };
+                    const std::string f = lower(g_cmdFilter);
+                    std::vector<const ModelCmd*> hits;
+                    for (const ModelCmd& c : cmds) {
+                        if (f.empty() || lower(c.name).find(f) != std::string::npos || lower(c.group).find(f) != std::string::npos || lower(c.hint).find(f) != std::string::npos)
+                            hits.push_back(&c);
+                    }
+                    // Names that start with the text come first, then enabled ones.
+                    std::stable_sort(hits.begin(), hits.end(), [&](const ModelCmd* a, const ModelCmd* b) {
+                        const bool pa = lower(a->name).find(f) == 0, pb = lower(b->name).find(f) == 0;
+                        if (pa != pb) return pa;
+                        return a->ok && !b->ok;
+                    });
+                    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) ++g_cmdPaletteSel;
+                    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) --g_cmdPaletteSel;
+                    g_cmdPaletteSel = hits.empty() ? 0 : std::clamp(g_cmdPaletteSel, 0, (int)hits.size() - 1);
+                    const ModelCmd* run = nullptr;
+                    ImGui::BeginChild("##cmdlist", ImVec2(0, std::min(320.0f, 22.0f * (float)std::max<std::size_t>(1, hits.size()) + 6.0f)), false);
+                    for (int hi = 0; hi < (int)hits.size(); ++hi) {
+                        const ModelCmd* c = hits[hi];
+                        ImGui::BeginDisabled(!c->ok);
+                        if (ImGui::Selectable((c->name + "##cmd" + std::to_string(hi)).c_str(), hi == g_cmdPaletteSel, ImGuiSelectableFlags_AllowOverlap)) run = c;
+                        ImGui::EndDisabled();
+                        if (!c->keys.empty()) { ImGui::SameLine(ImGui::GetWindowWidth() - 90.0f); ImGui::TextDisabled("%s", c->keys.c_str()); }
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s%s", c->hint.c_str(), c->ok ? "" : ("\n[" + c->why + "]").c_str());
+                        if (hi == g_cmdPaletteSel && ImGui::IsKeyPressed(ImGuiKey_Enter) && c->ok) run = c;
+                    }
+                    if (hits.empty()) ImGui::TextDisabled("No tool matches \"%s\".", g_cmdFilter);
+                    ImGui::EndChild();
+                    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+                    if (run) { ImGui::CloseCurrentPopup(); RunModelCmd(*run); }
+                    ImGui::EndPopup();
+                }
+                // Hint bar: what to do now, and the keys.
+                if (idle && !ImGui::IsPopupOpen("##meshcmdpal")) {
+                    const char* mode = g_meshSelMode == 1 ? "Face mode: click faces (Shift+click adds)" : g_meshSelMode == 2 ? "Edge mode: click edges (Alt+click a whole loop)" : "Vertex mode: click vertices (Shift+click adds)";
+                    std::string hint = mode;
+                    const bool any = !g_meshSelFaces.empty() || !g_meshSelVerts.empty() || !g_meshSelEdges.empty();
+                    hint += any ? ".  G move, R rotate, S scale.  Right-click for tools for this selection." : ".  Select something, then G / R / S, or Ctrl+K and type a tool name.";
+                    if (!g_lastCmdName.empty()) hint += "  Shift+R repeats " + g_lastCmdName + ".";
+                    const float lh3 = ImGui::GetTextLineHeight();
+                    const ImVec2 ts = ImGui::CalcTextSize(hint.c_str());
+                    const ImVec2 p0(canvasPos.x + 8.0f, canvasPos.y + canvasSize.y - lh3 - 14.0f);
+                    dl->AddRectFilled(p0, ImVec2(p0.x + std::min(ts.x, canvasSize.x - 16.0f) + 12.0f, p0.y + lh3 + 8.0f), IM_COL32(20, 22, 28, 170), 4.0f);
+                    dl->PushClipRect(p0, ImVec2(canvasPos.x + canvasSize.x - 8.0f, p0.y + lh3 + 8.0f), true);
+                    dl->AddText(ImVec2(p0.x + 6.0f, p0.y + 4.0f), IM_COL32(205, 210, 220, 235), hint.c_str());
+                    dl->PopClipRect();
+                }
+            }
             if (g_ptool == PolyTool::None && !g_meModal.Active() && !g_meEditGrab && hovered && keysFree && !affected.empty()) {
                 if (ImGui::IsKeyPressed(ImGuiKey_G, false)) beginModal(mdl::EditXform::Move);
-                else if (ImGui::IsKeyPressed(ImGuiKey_R, false)) beginModal(mdl::EditXform::Rotate);
+                else if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !io.KeyShift) beginModal(mdl::EditXform::Rotate);
                 else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) beginModal(mdl::EditXform::Scale);
             } else if (g_ptool == PolyTool::None && !g_meModal.Active() && hovered && keysFree && affected.empty() &&
                        (ImGui::IsKeyPressed(ImGuiKey_G, false) || ImGui::IsKeyPressed(ImGuiKey_R, false) || ImGui::IsKeyPressed(ImGuiKey_S, false))) {
@@ -44314,7 +46197,21 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             W = Mat4::Translate(off);
                         } else {
                             off = mdl::MoveFromRays(lock, pivot, viewDir, g_meModalRay0, rayNow);
-                            if (snap) { off.x = mdl::SnapTo(off.x, g_snapSize); off.y = mdl::SnapTo(off.y, g_snapSize); off.z = mdl::SnapTo(off.z, g_snapSize); }
+                            bool stuck = false;
+                            if (snap && g_snapTarget > 0) {
+                                // Stick the selection's centre to the nearest vertex / edge / face of this mesh.
+                                const float reach = std::max(0.001f, ed.camDist * g_snapRadiusPct * 0.01f);
+                                const Vec3 want = Minv.MultiplyPoint(mdl::MoveMatrix(off, lock).MultiplyPoint(pivot));
+                                const float scl = std::max(1e-4f, M.MultiplyVector({1, 0, 0}).Magnitude());
+                                const mdl::SnapHit hit = mdl::SnapToGeometry(mesh, want, (mdl::SnapTarget)g_snapTarget, reach / scl, affected);
+                                if (hit.found) {
+                                    off = M.MultiplyPoint(hit.point) - pivot;
+                                    stuck = true;
+                                    ImVec2 sp2;
+                                    if (toScreen(vp * Vec4{M.MultiplyPoint(hit.point), 1}, sp2)) dl->AddCircle(sp2, 8.0f, IM_COL32(255, 220, 60, 255), 0, 2.0f);
+                                }
+                            }
+                            if (snap && !stuck && g_snapTarget == 0) { off.x = mdl::SnapTo(off.x, g_snapSize); off.y = mdl::SnapTo(off.y, g_snapSize); off.z = mdl::SnapTo(off.z, g_snapSize); }
                             W = mdl::MoveMatrix(off, lock);
                         }
                         std::snprintf(buf, sizeof(buf), "D: %.3f  %.3f  %.3f", off.x, off.y, off.z);
@@ -44373,7 +46270,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     std::string line = std::string(mdl::EditXformName(g_meModal.Kind()));
                     if (!lock.Free()) line += "  along " + lock.Label();
                     line += "   " + (typed ? std::string("typed ") + g_meModal.typed.Text() : readout);
-                    if (snap) line += "   (snapping)";
+                    if (snap) line += g_snapTarget > 0 && g_meModal.Kind() == mdl::EditXform::Move ? std::string("   (snapping to ") + mdl::SnapTargetName((mdl::SnapTarget)g_snapTarget) + ")" : std::string("   (snapping)");
                     const char* help = "X / Y / Z lock an axis, Shift+X/Y/Z a plane  -  type a value  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel";
                     ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                     float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();
@@ -44489,7 +46386,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     }
                     if (!add) g_meshSelEdges.clear();
                     if (pe.first >= 0) {
-                        if (io.KeyAlt) {
+                        if (io.KeyAlt || ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {   // double-click does the same as Alt+click
                             // Alt+Click: the edge loop through this edge (across 4-way
                             // vertices); Ctrl+Alt+Click: the ring of edges across the
                             // quads beside it. Where the polygons give no loop (a
@@ -44968,7 +46865,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (!alive) g_wpPlace = nullptr;
         else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_wpPlace = nullptr;
     }
-    if (g_wpPlace && hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D &&
+    // Guided modeling: click-to-draw path for a fence or wall (Modeling > Guided > Draw in the Scene view).
+    const bool guidedPathDraw = oked::guided_ui::PathDrawing(ed.selected());
+    if (guidedPathDraw && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) oked::guided_ui::PathDrawStop();
+    if ((g_wpPlace || guidedPathDraw) && hovered && !g_uiHandled && !g_gizmoGrab && ed.view3D &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         float nx = (io.MousePos.x - canvasPos.x) / canvasSize.x * 2.0f - 1.0f;
         float ny = 1.0f - (io.MousePos.y - canvasPos.y) / canvasSize.y * 2.0f;
@@ -44981,9 +46881,12 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (rh.hit) at = rh.point;
         else if (Mathf::Abs(rd.y) > 1e-4f) at = p0 + rd * (-p0.y / rd.y);   // y=0 plane fallback
         else at = p0 + rd * 10.0f;
-        ed.PushUndo();
-        g_wpPlace->waypoints.push_back(at);
-        ed.dirty = true;
+        if (guidedPathDraw) oked::guided_ui::PathDrawClick(at);
+        else {
+            ed.PushUndo();
+            g_wpPlace->waypoints.push_back(at);
+            ed.dirty = true;
+        }
     } else if (hovered && !g_uiHandled && !g_gizmoGrab && !grabbedThisClick && !s_vSnapDragging && !vHeld && !g_axisGizmoHot &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         GameObject* hit = g_hoverBone;   // a bone under the cursor wins over the mesh around it
@@ -46700,6 +48603,8 @@ void DrawGameView(EditorState& ed) {
         if ((ov.stamp < 0.0 || nowT - ov.stamp > 0.25 || nowT < ov.stamp) && !g_gameFiber.Suspended()) {
             ov.stamp = nowT;
             ov.perf = ed.PerfLines();
+            if (playingNow && okay::Prof().enabled)   // which system eats the frame (physics, scripts, animation, ...)
+                for (const std::string& sl : okay::SystemCost::Lines(okay::Prof())) ov.perf.push_back(sl);
             if (!playingNow) {
                 char fl[64];
                 const float fr = ImGui::GetIO().Framerate > 1e-3f ? ImGui::GetIO().Framerate : 1.0f;
@@ -47728,27 +49633,49 @@ static int RunBuildGameCli(int argc, char** argv) {
     return rep.ok ? 0 : 1;
 }
 
+// What the crash report says about the open scene and the editor mode; refreshed a few times a second from the main loop (a handful
+// of stores, no allocation). `slow` also re-reads the things that need a file or a lookup.
+static void UpdateCrashContext(EditorState& ed, bool slow) {
+    static int s_assets = -1;   // CachedCount() takes the asset manager's lock and walks its cache: only the slow refresh asks
+    if (slow) s_assets = (int)okay::AssetManager::Instance().CachedCount();
+    okaycrash::ctx::SetMode(ed.isPlaying(), ed.InPrefabMode());
+    okaycrash::ctx::SetSceneStats((int)ed.scene().Objects().size(), s_assets);
+    if (!slow) return;
+    okaycrash::ctx::SetSceneName(ed.path().c_str());
+    okaycrash::ctx::SetUiBackend(UseOkayUIBackend() ? "okayui" : "imgui");
+    // "Recovery copy": did this session write a recovery autosave (the recovery folder), or does the scene have an older-style .autosave beside it?
+    std::error_code ec;
+    const bool recovered = DocRecovery().AutosaveCount() > 0 || (!ed.path().empty() && std::filesystem::exists(ed.path() + ".autosave", ec));
+    okaycrash::ctx::SetAutosave(recovered ? 1 : 0);
+}
+
 int RunVsGraphShot(int argc, char** argv);
 
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
-#if defined(_WIN32)
-    SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
-#elif defined(__linux__) || defined(__APPLE__)
-    InstallCrashSignals();                          // same reports on Linux / macOS
-#endif
+    okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
+    {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
+        std::string line = okay::ownstack::Describe();
+        if (const std::size_t at = line.find("stack: "); at != std::string::npos) line = line.substr(at + 7);
+        if (okaycrash::ctx::g_state.ownCode[0]) line += " | " + std::string(okaycrash::ctx::g_state.ownCode);
+        okaycrash::ctx::SetOwnCode(line.c_str());
+    }
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
         if (std::string(argv[i]) == "--build-game") return RunBuildGameCli(argc, argv);
         if (std::string(argv[i]) == "--vs-shot") return RunVsGraphShot(argc, argv);
     }
-    // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end.
+    // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/crash_reports.md).
+    //   OKAY_TEST_CRASH=<step>       crash right now, before the window opens (the report has the OS, CPU and RAM but no scene or GPU yet)
+    //   OKAY_TEST_CRASH_LATE=<step>  crash on the 120th frame of the running editor (the report has the GPU, the scene, the Console and the steps)
     if (const char* c = std::getenv("OKAY_TEST_CRASH"); c && *c) {
         OKAY_BREADCRUMB(c);
-        volatile int* bad = nullptr;
+        int* bad = nullptr;
+        asm volatile("" : "+r"(bad));   // the compiler must not see the null, or it drops the store and nothing crashes
         *bad = 1;
     }
 
@@ -48114,13 +50041,30 @@ int main(int argc, char** argv) {
                     g_glRenderer = new okay::GLRenderer();
                     g_glReady = true;
                     ConsoleLog("GPU renderer available (View > GPU Renderer).");
+                    {   // the GPU, the vendor and the OpenGL version go into every crash report (the UI crash shows on some drivers only)
+                        using GetStringFn = const unsigned char* (SDLCALL*)(unsigned int);   // GL_VENDOR 0x1F00, GL_RENDERER 0x1F01, GL_VERSION 0x1F02
+                        std::string gpu;
+                        if (auto gs = (GetStringFn)SDL_GL_GetProcAddress("glGetString")) {
+                            auto str = [&](unsigned int what) { const unsigned char* t = gs(what); return t ? std::string((const char*)t) : std::string("?"); };
+                            gpu = str(0x1F01) + " | " + str(0x1F00) + " | OpenGL " + str(0x1F02);
+                        }
+                        SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
+                        if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(gpu.empty() ? "" : " | ") + "SDL renderer " + ri.name;
+                        okaycrash::ctx::SetGpu(gpu.c_str());
+                    }
                 }
             }
         }
         // Restore whatever context SDL_Renderer had current (its own on the GL backend,
         // or none on the D3D backend) so the editor UI keeps drawing normally.
         SDL_GL_MakeCurrent(prevWin, prevCtx);
-        if (!g_glReady) ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
+        if (!g_glReady) {
+            ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
+            SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
+            std::string gpu = "OpenGL renderer unavailable";
+            if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(" | SDL renderer ") + ri.name;
+            okaycrash::ctx::SetGpu(gpu.c_str());
+        }
     }
 
 #if defined(_WIN32)
@@ -48247,8 +50191,22 @@ int main(int argc, char** argv) {
     if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
     while (running) {
         Uint64 g_frameT0 = okay::platform::PerfCounter();
+        okaycrash::ctx::NextFrame();
+        {   // the crash report's picture of the editor: cheap every 8th frame, the file lookups every 300th
+            static unsigned s_crashCtxTick = 0;
+            if ((s_crashCtxTick & 7) == 0) UpdateCrashContext(ed, (s_crashCtxTick % 300) == 0);
+            ++s_crashCtxTick;
+            static const char* const kLate = std::getenv("OKAY_TEST_CRASH_LATE");   // dev/test: see OKAY_TEST_CRASH above
+            if (kLate && *kLate && s_crashCtxTick == 120) {
+                ConsoleLog(std::string("OKAY_TEST_CRASH_LATE: crashing on purpose at step ") + kLate, 2);
+                OKAY_BREADCRUMB(kLate);
+                int* bad = nullptr;
+                asm volatile("" : "+r"(bad));
+                *bad = 1;
+            }
+        }
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
-        okay::Prof().enabled = g_showProfiler || kPerfDump;   // gate timers; set before BeginFrame/Tick this frame
+        okay::Prof().enabled = g_showProfiler || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&
@@ -48883,7 +50841,7 @@ int main(int argc, char** argv) {
         if (!ed.projectDir().empty()) title += std::filesystem::path(ed.projectDir()).filename().string() + "  /  ";
         title += ed.path().empty() ? ed.scene().Name() : std::filesystem::path(ed.path()).stem().string();
         if (ed.InPrefabMode()) { for (const auto& c : ed.PrefabCrumbs()) if (!c.path.empty()) title += "  >  " + c.label; }
-        title += std::string(ed.dirty && !ed.isPlaying() ? " *" : "") + "   [v" OKAY_ENGINE_VERSION "]";
+        title += std::string(ed.dirty && !ed.isPlaying() ? " *" : "") + "   [v" OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + "]";
         if (title != lastTitle) { SDL_SetWindowTitle(window, title.c_str()); lastTitle = title; }
 
         // While the game is actually running, turn OFF ImGui keyboard navigation:

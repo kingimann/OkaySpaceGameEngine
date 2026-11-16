@@ -47,6 +47,19 @@ Create them from any **Create ▸ UI ▸ 3D UI (in-world)** menu.
   that fixed size (1.0 = the widget's authored design pixels). Great for markers,
   nameplates and waypoint icons that should stay readable at any range.
 
+What is scaled with the projection: positions, text sizes, **panels** (size, corner radius, border, shadow, outline) and
+**progress bars** (size, corner radius, segments), so a plate drawn at any distance keeps the proportions it was built with.
+Text inside a world widget honours its own **Align** (left, centre, right) and **Vertical centre / bottom** inside its box, the
+same as the same text on screen. (Before this, panels and bars were drawn at their design size while their places and the
+text were scaled, so at any scale but 1:1 a child could stick out of its parent, and every text sat at the top-left of its box.)
+Not checked and not changed: the other widget kinds (images, sliders, toggles, steppers, ratings, tabs, dropdowns, inputs, the
+touch controls) draw their own sizes in world space as before.
+
+Nameplates: **GameObject > UI > Prebuilt Screens > Nameplate (in the world)** makes one with **Constant size** on (it keeps its
+220 x 62 design pixels at any distance, so the text stays readable far away) hanging above the object's point, centred on
+it. Make it a child of a character, move it to the character's head, and it shows that character's name, level and health
+(`owner.` keys, see [ui_runtime.md](ui_runtime.md)). The sample scene `examples/ui_text` has two.
+
 Notes / limits:
 - Best results with **Billboard** on (or the panel roughly facing the camera);
   widgets are drawn as axis-aligned rects, so a steeply tilted panel in perspective

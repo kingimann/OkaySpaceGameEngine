@@ -1,11 +1,11 @@
 okayscene 3
 name "Spatial audio"
-gravity 0 -9.81 0
+gravity 0 -9.81
 gravity3 0 -9.81 0
 gameobject 0 "Main Camera"
   active 1
   parent -1
-  transform 0 1.7 -6 0 0 0 1 1 1 1
+  transform 0 1.7 -6 0.00021565 0.99945229 0.00664872 -0.03241722 1 1 1
     camera 1 5 52 0.11 0.13 0.17 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"

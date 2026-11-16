@@ -667,7 +667,9 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
 
 // Rich text: draw `disp` (already free of tags) in runs, each in the colour and weight its characters
 // carry in `styles` (one per visible character, in order). Each run is placed by measuring the text before
-// it on its line, so any font lines up; the lines advance like DrawUIText's.
+// it on its line, so any font lines up. The lines advance like DrawUIText's, except that a line is as tall as the
+// largest [size] on it (RichLineScales): the line below starts under the big run instead of the big run climbing over
+// the line above, and a smaller run sits on its line's bottom. (oy is the top of the first line.)
 void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,
                   float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,
                   bool bold, float boldOff, TtfFont* ttf) {
@@ -678,24 +680,40 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
     const float adv = (sized && sized->Valid())
                           ? sized->LineHeight(sized->BakeHeight()) * (logicalH / sized->BakeHeight()) + lineSp * px
                           : (Font8x8::Height + 1 + lineSp) * px;
-    std::size_t glyph = 0, lineStart = 0;
+    (void)boldOff;   // bold is drawn by DrawUIText itself; kept so every caller states the weight offset it draws with
+    const std::vector<float> lineScale = okay::RichLineScales(disp, styles);
+    std::size_t glyph = 0, lineStart = 0, lineNo = 0;
     float y = oy;
     while (lineStart <= disp.size()) {
+        const float S = lineNo < lineScale.size() ? lineScale[lineNo] : 1.0f;   // the largest size on this line
+        ++lineNo;
         std::size_t lineEnd = disp.find('\n', lineStart);
         if (lineEnd == std::string::npos) lineEnd = disp.size();
         const std::string line = disp.substr(lineStart, lineEnd - lineStart);
         std::size_t runStart = 0;
         okay::RichStyle runStyle;
         bool haveRun = false;
+        // Runs are placed one after the other: each starts where the one before ended at its own size ([size=N]).
+        // With every size 1 this is the same as measuring the text before the run.
+        float cx = ox;
+        std::size_t cxAt = 0;
         auto flush = [&](std::size_t end) {
             if (!haveRun || end <= runStart) return;
+            if (runStart > cxAt) {   // leading spaces before the first run, at the text's own size
+                const std::string gap = line.substr(cxAt, runStart - cxAt);
+                cx += UITextW(gap, px) + letterSp * px * (float)okay::utf8::Length(gap);
+            }
             const std::string run = line.substr(runStart, end - runStart);
-            const std::string before = line.substr(0, runStart);
-            const float x = ox + UITextW(before, px) + letterSp * px * (float)okay::utf8::Length(before);
+            const float s = runStyle.size > 0.0f ? runStyle.size : 1.0f;
+            const float rpx = px * s;
             RGBA col = base;
             if (runStyle.hasColor) col = RGBA{runStyle.r, runStyle.g, runStyle.b, (std::uint8_t)(runStyle.a * base.a / 255)};
             const bool it = italic || runStyle.italic;
-            DrawUIText(r, run, x, y, px, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
+            // Every run sits on the bottom of its line: the line is as tall as its largest run (S), a smaller run starts lower.
+            const float ry = y + (S - s) * (float)Font8x8::Height * px;
+            DrawUIText(r, run, cx, ry, rpx, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
+            cx += UITextW(run, rpx) + letterSp * rpx * (float)okay::utf8::Length(run);
+            cxAt = end;
         };
         for (std::size_t i = 0; i < line.size();) {
             const std::size_t at = i;
@@ -707,10 +725,52 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
             else if (!(st == runStyle)) { flush(at); runStart = at; runStyle = st; }
         }
         flush(line.size());
-        y += adv;
+        y += okay::RichLineAdvance(adv, lineSp * px, S);
         if (lineEnd >= disp.size()) break;
         lineStart = lineEnd + 1;
     }
+}
+
+void DrawWorldText(Painter& p, const TextRenderer& tr, float x, float y, float px, float opacity) {
+    auto rgba = [&](const Color& c) {
+        return RGBA{(std::uint8_t)(c.r * 255), (std::uint8_t)(c.g * 255), (std::uint8_t)(c.b * 255), (std::uint8_t)(c.a * 255 * opacity)};
+    };
+    TtfFont* fnt = tr.Font();
+    const bool rich = tr.richText && RichTextHasTags(tr.text);
+    const okay::RichText rt = rich ? okay::ParseRichText(tr.text) : okay::RichText();
+    const std::string& shown = rich ? rt.plain : tr.text;
+    const float fo = fnt ? 1.0f : px;   // TTF: about one screen pixel, not a whole font pixel
+    const RGBA none{0, 0, 0, 0};
+    if (tr.shadow) {
+        if (rich) DrawRichRuns(p, shown, rt.styles, x + tr.shadowOffset.x * px, y + tr.shadowOffset.y * px, px, rgba(tr.shadowColor), 0, 0, tr.italic, tr.bold, fo, fnt);
+        else DrawUIText(p, shown, x + tr.shadowOffset.x * px, y + tr.shadowOffset.y * px, px, rgba(tr.shadowColor), 0, 0, false, false, none, fnt);
+    }
+    if (tr.outline) {
+        const float dx[4] = {-fo, fo, 0, 0}, dy[4] = {0, 0, -fo, fo};
+        for (int k = 0; k < 4; ++k) {
+            if (rich) {
+                // The outline keeps the outline colour: strip the colours, keep sizes and weights.
+                std::vector<okay::RichStyle> st = rt.styles;
+                for (auto& s : st) s.hasColor = false;
+                DrawRichRuns(p, shown, st, x + dx[k], y + dy[k], px, rgba(tr.outlineColor), 0, 0, tr.italic, tr.bold, fo, fnt);
+            } else DrawUIText(p, shown, x + dx[k], y + dy[k], px, rgba(tr.outlineColor), 0, 0, false, false, none, fnt);
+        }
+    }
+    if (rich) DrawRichRuns(p, shown, rt.styles, x, y, px, rgba(tr.color), 0, 0, tr.italic, tr.bold, fo, fnt);
+    else {
+        // Rich text off: exactly the look world text always had (no italic; bold is a second copy one step right).
+        DrawUIText(p, shown, x, y, px, rgba(tr.color), 0, 0, false, false, none, fnt);
+        if (tr.bold) DrawUIText(p, shown, x + fo, y, px, rgba(tr.color), 0, 0, false, false, none, fnt);
+    }
+}
+
+// In-world UI (a WorldSpaceUI object, or a widget under a world-space Canvas): the origin the layout helpers return is already
+// projected through the camera, but sizes and style metrics (corner radius, border, shadow) are still design pixels. This is
+// the screen pixels per design pixel at the widget, so a panel or bar can be drawn at the size its origin and its children
+// were placed with. 1 for every widget on screen (nothing changes there); 0 when the widget is behind the camera.
+static float WorldWidgetScale(GameObject* g, Canvas* cv, int w, int h) {
+    const bool world = (cv && cv->worldSpace) || WorldUIRoot(g) != nullptr;
+    return world ? UIScaleFor(g, (float)w, (float)h) : 1.0f;
 }
 
 namespace {
@@ -1266,8 +1326,12 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         auto* pn = up->GetComponent<UIPanel>();
         if (!pn || !up->active || UIHidden(up.get())) continue;
         float op = _slot.opacity;   // canvas master fade
+        // In the world the origin is projected and the size, radius, border, shadow and outline are scaled to match
+        // (screen pixels per design pixel; 1 on screen, so nothing changes there).
+        const float wk = WorldWidgetScale(up.get(), _slot.canvas, w, h);
+        if (wk <= 0.0f) continue;   // behind the camera
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
-        Vec2 psz = UIResolveSize(up.get(), (float)w, (float)h);   // honors stretch anchors
+        Vec2 psz = UIResolveSize(up.get(), (float)w, (float)h) * wk;   // honors stretch anchors
         enterScroll(up.get(), o);
         Rect r{(int)o.x, (int)o.y, (int)psz.x, (int)psz.y};
         // A backdrop far larger than the screen (e.g. a pause-menu dim) covers the
@@ -1275,33 +1339,34 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         if (psz.x > w * 1.5f && psz.y > h * 1.5f) r = Rect{0, 0, w, h};
         bool gh; int gdiag; GradientParams(pn->gradientDir, gh, gdiag);
         int cm = pn->cornerMask;                        // per-corner rounding
+        const float radius = pn->cornerRadius * wk;
         if (pn->shadow) {                               // drop shadow behind (same shape)
-            Rect sh{r.x + (int)pn->shadowOffset.x, r.y + (int)pn->shadowOffset.y, r.w, r.h};
-            FillUIShadow(p, sh, pn->shape, pn->cornerRadius,
-                         pn->shadowColor, pn->shadowSoftness, op, cm);
+            Rect sh{r.x + (int)(pn->shadowOffset.x * wk), r.y + (int)(pn->shadowOffset.y * wk), r.w, r.h};
+            FillUIShadow(p, sh, pn->shape, radius,
+                         pn->shadowColor, pn->shadowSoftness * wk, op, cm);
         }
         if (pn->outlineWidth > 0.0f) {                  // outer keyline/glow ring
-            int ow = (int)pn->outlineWidth;
+            int ow = (int)(pn->outlineWidth * wk);
             Rect outer{r.x - ow, r.y - ow, r.w + 2 * ow, r.h + 2 * ow};
-            FillUIShape(p, outer, pn->shape, pn->cornerRadius + ow,
+            FillUIShape(p, outer, pn->shape, radius + ow,
                         pn->outlineColor, pn->outlineColor, false, false, op, 0, cm);
         }
         if (pn->borderWidth > 0.0f) {                   // fill, then the border ring over it
-            FillUIShape(p, r, pn->shape, pn->cornerRadius,
+            FillUIShape(p, r, pn->shape, radius,
                         pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag, cm);
             if (pn->topHighlight) {                     // inner glass sheen (top-down fade)
                 Color hb = pn->highlightColor; hb.a = 0.0f;
-                FillUIShape(p, r, pn->shape, pn->cornerRadius,
+                FillUIShape(p, r, pn->shape, radius,
                             pn->highlightColor, hb, true, false, op, 0, cm);
             }
-            FillUIRing(p, r, pn->shape, pn->cornerRadius, pn->borderColor,
-                       std::max(1, (int)(pn->borderWidth + 0.5f)), op, cm);
+            FillUIRing(p, r, pn->shape, radius, pn->borderColor,
+                       std::max(1, (int)(pn->borderWidth * wk + 0.5f)), op, cm);
         } else {
-            FillUIShape(p, r, pn->shape, pn->cornerRadius,
+            FillUIShape(p, r, pn->shape, radius,
                         pn->color, pn->colorBottom, pn->useGradient, gh, op, gdiag, cm);
             if (pn->topHighlight) {                     // inner glass sheen (top-down fade)
                 Color hb = pn->highlightColor; hb.a = 0.0f;
-                FillUIShape(p, r, pn->shape, pn->cornerRadius,
+                FillUIShape(p, r, pn->shape, radius,
                             pn->highlightColor, hb, true, false, op, 0, cm);
             }
         }
@@ -1382,10 +1447,16 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         auto* pb = up->GetComponent<UIProgressBar>();
         if (!pb || !up->active || UIHidden(up.get())) continue;
         float op = _slot.opacity;
+        // In the world (a WorldSpaceUI object or a world-space Canvas) the origin is already projected, so the size and the
+        // style metrics are scaled here: screen pixels per design pixel. 1 on screen, so nothing changes there.
+        const float wk = WorldWidgetScale(up.get(), _slot.canvas, w, h);
+        if (wk <= 0.0f) continue;   // behind the camera
         Vec2 o = UIResolveOrigin(up.get(), (float)w, (float)h);
         enterScroll(up.get(), o);
-        Rect bg{(int)o.x, (int)o.y, (int)pb->size.x, (int)pb->size.y};
-        FillUIShape(p, bg, pb->shape, pb->cornerRadius,
+        const Vec2 pbs{pb->size.x * wk, pb->size.y * wk};
+        const float pbRadius = pb->cornerRadius * wk;
+        Rect bg{(int)o.x, (int)o.y, (int)pbs.x, (int)pbs.y};
+        FillUIShape(p, bg, pb->shape, pbRadius,
                     pb->background, pb->background, false, false, op);
         bool horiz = pb->fillDir == UIProgressBar::FillDir::LeftRight ||
                      pb->fillDir == UIProgressBar::FillDir::RightLeft;
@@ -1394,14 +1465,14 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         auto paintFill = [&](float frac, const Color& c0, const Color& c1, bool grad) {
             if (pb->segments < 2) {
                 float pfox, pfoy, pfw, pfh;
-                pb->FillRectAt(frac, pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+                pb->FillRectAt(frac, pbs.x, pbs.y, pfox, pfoy, pfw, pfh);
                 Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
-                FillUIShape(p, fl, pb->shape, pb->cornerRadius, c0, c1, grad, horiz, op);
+                FillUIShape(p, fl, pb->shape, pbRadius, c0, c1, grad, horiz, op);
                 return;
             }
             int n = pb->segments; if (n > 40) n = 40;
-            float gap = pb->segmentGap < 0.0f ? 0.0f : pb->segmentGap;
-            float span = horiz ? pb->size.x : pb->size.y;
+            float gap = (pb->segmentGap < 0.0f ? 0.0f : pb->segmentGap) * wk;
+            float span = horiz ? pbs.x : pbs.y;
             float cell = (span - gap * (float)(n - 1)) / (float)n;
             if (cell < 1.0f) cell = 1.0f;
             const bool fromEnd = pb->fillDir == UIProgressBar::FillDir::RightLeft ||
@@ -1416,23 +1487,23 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                 if (horiz) {
                     float fw = cell * sf;
                     float x = pb->fillDir == UIProgressBar::FillDir::RightLeft ? (along + cell - fw) : along;
-                    fl = {(int)(o.x + x), (int)o.y, (int)fw, (int)pb->size.y};
+                    fl = {(int)(o.x + x), (int)o.y, (int)fw, (int)pbs.y};
                 } else if (pb->fillDir == UIProgressBar::FillDir::BottomTop) {
                     float fh = cell * sf;
-                    float base = pb->size.y - along - cell;
-                    fl = {(int)o.x, (int)(o.y + base + cell - fh), (int)pb->size.x, (int)fh};
+                    float base = pbs.y - along - cell;
+                    fl = {(int)o.x, (int)(o.y + base + cell - fh), (int)pbs.x, (int)fh};
                 } else {
                     float fh = cell * sf;
-                    fl = {(int)o.x, (int)(o.y + along), (int)pb->size.x, (int)fh};
+                    fl = {(int)o.x, (int)(o.y + along), (int)pbs.x, (int)fh};
                 }
                 if (fl.w > 0 && fl.h > 0)
-                    FillUIShape(p, fl, pb->shape, pb->cornerRadius, c0, c1, grad, horiz, op);
+                    FillUIShape(p, fl, pb->shape, pbRadius, c0, c1, grad, horiz, op);
             }
         };
         if (pb->segments < 2 && pb->trailDelay <= 0.0f && !pb->colorByValue) {
-            float pfox, pfoy, pfw, pfh; pb->FillRect(pb->size.x, pb->size.y, pfox, pfoy, pfw, pfh);
+            float pfox, pfoy, pfw, pfh; pb->FillRect(pbs.x, pbs.y, pfox, pfoy, pfw, pfh);
             Rect fl{(int)(o.x + pfox), (int)(o.y + pfoy), (int)pfw, (int)pfh};
-            FillUIShape(p, fl, pb->shape, pb->cornerRadius,
+            FillUIShape(p, fl, pb->shape, pbRadius,
                         pb->fill, pb->fillEnd, pb->gradientFill, horiz, op);
         } else {
             if (pb->trailDelay > 0.0f && pb->TrailFraction() > pb->Fraction() + 0.001f)
@@ -1449,12 +1520,12 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
                 std::string shown = pb->FormatText();
                 std::snprintf(pct, sizeof(pct), "%s", shown.c_str());
             }
-            float px = 2.0f;
+            float px = 2.0f * wk;
             float tw = UITextW(pct, px);
             RGBA tc{(std::uint8_t)(pb->textColor.r * 255), (std::uint8_t)(pb->textColor.g * 255),
                          (std::uint8_t)(pb->textColor.b * 255), (std::uint8_t)(pb->textColor.a * 255 * op)};
-            DrawUIText(p, pct, o.x + (pb->size.x - tw) * 0.5f,
-                     o.y + (pb->size.y - Font8x8::Height * px) * 0.5f, px, tc);
+            DrawUIText(p, pct, o.x + (pbs.x - tw) * 0.5f,
+                     o.y + (pbs.y - Font8x8::Height * px) * 0.5f, px, tc);
         }
     }
         else if (_it.kind == K_Radial) {   // radial / ring progress
@@ -2128,6 +2199,18 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         Vec2 o = tWorld ? UIResolveOrigin(up.get(), (float)w, (float)h)
                         : UITextDrawOrigin(up.get(), tr, (float)w, (float)h);   // parent-relative + align
         if (!tWorld) o = o - UIScrollTotal(up.get());
+        if (tWorld) {
+            // The text's own alignment inside its projected box, as the same text has on screen: left / centre / right
+            // and top / middle / bottom. (In the world it used to sit at the box's top-left whatever these said, so a
+            // centred badge label hugged the left edge of its pill and a middle-aligned name sat on the top of its box.)
+            Vec2 bo, bsz;
+            if (GetUIScreenRect(up.get(), (float)w, (float)h, bo, bsz)) {
+                const float tw = (float)tr->PixelWidth() * ps, th = (float)tr->PixelHeight() * ps;
+                if (tr->align == 1)      o.x += (bsz.x - tw) * 0.5f;
+                else if (tr->align == 2) o.x += bsz.x - tw;
+                o.y += tr->alignBottom ? (bsz.y - th) : (tr->vcenter ? (bsz.y - th) * 0.5f : 0.0f);
+            }
+        }
         thread_local std::string dispScratch;
         const std::string& disp = tr->DisplayText(dispScratch);
         bool it = tr->italic;

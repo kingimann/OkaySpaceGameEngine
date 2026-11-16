@@ -16,7 +16,7 @@ const char* const kKindNames[kKinds] = {
     "fire_rate", "accuracy", "headshot", "aim_snap", "through_wall", "damage_exceeds", "hit_out_of_reach",
     "economy_delta", "duplicate_item", "cooldown_bypass",
     "message_burst", "replay", "malformed", "desync_force", "time_manipulation",
-    "violation",
+    "violation", "input_regularity",
 };
 const char* const kActionNames[] = {"none", "log", "flag", "rate_limit", "shadow_restrict", "kick", "ban_request"};
 
@@ -67,6 +67,8 @@ const FloatKey kFloats[] = {
     {"noclipMaxGap", &DetectSettings::noclipMaxGap}, {"ghostSpeedFraction", &DetectSettings::ghostSpeedFraction},
     {"ghostWindow", &DetectSettings::ghostWindow}, {"staleInputSeconds", &DetectSettings::staleInputSeconds},
     {"maxJumpsPerSecond", &DetectSettings::maxJumpsPerSecond},
+    {"regularityMaxCv", &DetectSettings::regularityMaxCv}, {"regularityMinGap", &DetectSettings::regularityMinGap},
+    {"regularityMaxGap", &DetectSettings::regularityMaxGap},
     {"fireRateTolerance", &DetectSettings::fireRateTolerance}, {"fireBankSeconds", &DetectSettings::fireBankSeconds},
     {"maxAccuracy", &DetectSettings::maxAccuracy}, {"maxHeadshotRatio", &DetectSettings::maxHeadshotRatio},
     {"accuracyMinRange", &DetectSettings::accuracyMinRange}, {"aimSnapDegrees", &DetectSettings::aimSnapDegrees},
@@ -94,7 +96,7 @@ const IntKey kInts[] = {
     {"headshotMinHits", &DetectSettings::headshotMinHits}, {"aimSnapConfirm", &DetectSettings::aimSnapConfirm},
     {"confirmations", &DetectSettings::confirmations}, {"evidenceCap", &DetectSettings::evidenceCap},
     {"snapshotCap", &DetectSettings::snapshotCap}, {"evidenceSnapshots", &DetectSettings::evidenceSnapshots},
-    {"maxLagGracesPerMinute", &DetectSettings::maxLagGracesPerMinute},
+    {"maxLagGracesPerMinute", &DetectSettings::maxLagGracesPerMinute}, {"regularityPresses", &DetectSettings::regularityPresses}, {"regularityButtons", &DetectSettings::regularityButtons},
 };
 } // namespace
 
@@ -120,7 +122,7 @@ DetectSettings::DetectSettings() {
     w(DetectKind::EconomyDelta, 25); w(DetectKind::DuplicateItem, 30); w(DetectKind::CooldownBypass, 8);
     w(DetectKind::MessageBurst, 4);  w(DetectKind::Replay, 6);       w(DetectKind::Malformed, 3);
     w(DetectKind::DesyncForce, 8);   w(DetectKind::TimeManipulation, 20);
-    w(DetectKind::Violation, 6);
+    w(DetectKind::Violation, 6); w(DetectKind::InputRegularity, 10);
 }
 
 const WeaponDef* DetectSettings::FindWeapon(const std::string& n) const {
@@ -404,6 +406,36 @@ void CheatDetector::OnJump(std::uint32_t peer, double t) {
     if (n > settings.maxJumpsPerSecond && t >= p.lagGraceUntil)
         Raise(peer, p, DetectKind::JumpRate, t, n, settings.maxJumpsPerSecond, Ratio(n, settings.maxJumpsPerSecond),
               "jumps in one second", true);
+}
+
+void CheatDetector::OnPress(std::uint32_t peer, int button, double pressTime, double t) {
+    if (!settings.enabled || settings.regularityPresses < 4 || button < 0 || button > 30 || !((settings.regularityButtons >> button) & 1) || !std::isfinite(pressTime)) return;
+    Player& p = P(peer, t);
+    Touch(p, peer, t);
+    auto& pr = p.presses[button];
+    if (pressTime <= pr.last) return;                 // the same or an older press says nothing
+    const double gap = pressTime - pr.last;
+    pr.last = pressTime;
+    // A pause or a held button breaks the pattern: start counting again.
+    if (gap < settings.regularityMinGap || gap > settings.regularityMaxGap) { pr.times.clear(); pr.times.push_back(pressTime); return; }
+    pr.times.push_back(pressTime);
+    const std::size_t want = (std::size_t)settings.regularityPresses + 1;
+    while (pr.times.size() > want) pr.times.pop_front();
+    if (pr.times.size() < want || InGrace(p, t)) return;
+    double sum = 0.0, sq = 0.0;
+    const std::size_t n = pr.times.size() - 1;
+    for (std::size_t i = 1; i < pr.times.size(); ++i) { const double g = pr.times[i] - pr.times[i - 1]; sum += g; sq += g * g; }
+    const double mean = sum / (double)n;
+    if (mean < settings.regularityMinGap || mean > settings.regularityMaxGap) return;
+    const double var = std::max(0.0, sq / (double)n - mean * mean);
+    const float cv = (float)(std::sqrt(var) / mean);
+    if (cv < settings.regularityMaxCv) {
+        // lower spread = stronger evidence (a spread of 0 counts as severity 2)
+        const float sev = 1.0f + (settings.regularityMaxCv - cv) / std::max(settings.regularityMaxCv, 1e-6f);
+        Raise(peer, p, DetectKind::InputRegularity, t, cv, settings.regularityMaxCv, sev,
+              "button " + std::to_string(button) + " pressed " + std::to_string(n) + " times, gap " + std::to_string((int)(mean * 1000.0)) + " ms, spread " + std::to_string((int)(cv * 1000.0) / 10.0).substr(0, 4) + "%", false);   // the run of presses is the confirmation
+        pr.times.clear(); pr.times.push_back(pressTime);   // a new run has to build up again
+    }
 }
 
 void CheatDetector::OnMove(std::uint32_t peer, const std::string& subject, const Vec3& pos, double t) {

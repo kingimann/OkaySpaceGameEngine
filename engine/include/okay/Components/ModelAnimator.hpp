@@ -10,6 +10,7 @@
 // no per-bone components, no clip copies on a switch, no name lookups per frame. The
 // library serializes, so a saved model keeps all its animations.
 // ---------------------------------------------------------------------------
+#include "okay/Core/Profiler.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -275,6 +276,7 @@ public:
     }
 
     void Update(float dt) override {
+        OKAY_PROFILE("Anim.Model");
         // Locomotion speed (world XZ units/sec) + vertical speed, measured from
         // how the object moved. A blend tree poses the bones itself (externalDrive);
         // the speed is still read first so empty slots and stride matching keep
@@ -532,6 +534,7 @@ public:
     /// new clip's pose. Runs in LateUpdate so it blends what the node Animators
     /// just wrote this frame (Update order between objects doesn't matter).
     void LateUpdate(float dt) override {
+        OKAY_PROFILE("Anim.Model");
         UndoYaw();
         CrossfadeStep(dt);
         YawLowerBody(dt);

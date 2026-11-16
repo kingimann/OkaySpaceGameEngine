@@ -171,6 +171,7 @@
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/Joint3D.hpp"
+#include "okay/Components/DebrisEmitter.hpp"
 #include "okay/Components/Joint2D.hpp"
 #include "okay/Components/AimIK.hpp"
 #include "okay/Components/LookAtIK.hpp"
@@ -224,6 +225,8 @@ namespace okay {
 // The folder of the scene file being loaded (LoadFromFile), so mesh files it
 // points at can be found next to it in an exported game.
 static thread_local std::string g_loadingSceneDir;
+// The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
+static thread_local std::string g_lastSceneDir;
 
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
@@ -569,6 +572,20 @@ void WriteTriggerFilters(std::ostream& out, const char* rec, const std::vector<T
     }
 }
 
+// The physics material of a collider (friction, bounciness, how each is combined): one line per collider whose
+// material is not the default, with its index. Colliders with the default material write nothing, so older scenes
+// and older builds see the same files as before.
+template <class T>
+void WritePhysicsMaterials(std::ostream& out, const char* rec, const std::vector<T*>& cols) {
+    for (int i = 0; i < (int)cols.size(); ++i) {
+        const T* c = cols[(std::size_t)i];
+        if (c->friction < 0.0f && c->bounciness < 0.0f && c->frictionCombine == CombineMode::Default &&
+            c->bounceCombine == CombineMode::Default) continue;
+        out << "  " << rec << " " << c->friction << " " << c->bounciness << " " << (int)c->frictionCombine
+            << " " << (int)c->bounceCombine << " " << i << "\n";
+    }
+}
+
 // The crouch / prone options of a movement controller (StanceControl) and the
 // stance it was saved in: one `<rec> key=value ...` line.
 void WriteStanceControl(std::ostream& out, const char* rec, const StanceControl& sc) {
@@ -901,7 +918,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             editedFromFile = modeling::GeometryHash(mr->mesh) != mr->meshPathHash;
         }
         // A Spline Mesh builds its renderer's mesh again on load: none of it is saved.
-        const bool generated = go->GetComponent<SplineMesh>() != nullptr;
+        // (A Voxel Terrain does too: its per-face colours were 0.4 MB of every saved Sandbox scene, rebuilt on load anyway.)
+        const bool generated = go->GetComponent<SplineMesh>() != nullptr || go->GetComponent<VoxelTerrain>() != nullptr;
         if (mr->mesh.name.empty() && (mr->meshPath.empty() || editedFromFile) && !mr->mesh.vertices.empty()
             && !go->GetComponent<SkinnedMesh>() && !generated) {
             // A mesh in edit mode is welded with its exact UVs per corner: write it
@@ -954,6 +972,57 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             for (const Color& c : mr->mesh.triColors)
                 out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
+        }
+        // Material slots (per-face material: which slot each triangle uses, and each
+        // slot's colour). Separate records so older scenes still load; they follow the
+        // geometry so the triangle count lines up.
+        if (mr->mesh.HasSlots() && !generated) {
+            out << "  meshslots " << mr->mesh.triSlot.size();
+            for (int sl : mr->mesh.triSlot) out << " " << sl;
+            out << "\n  slotcolors " << mr->mesh.slotColors.size();
+            for (const Color& c : mr->mesh.slotColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+            out << "\n";
+        }
+        // Bevel weights (vertex pairs + weight), optional record.
+        if (!mr->mesh.bevelWeights.empty() && !generated) {
+            out << "  meshbevelw " << mr->mesh.bevelWeights.size();
+            for (const EdgeCrease& c : mr->mesh.bevelWeights) out << " " << c.a << " " << c.b << " " << c.w;
+            out << "\n";
+        }
+        // Subdivision creases (vertex pairs + sharpness), optional record.
+        if (!mr->mesh.creases.empty() && !generated) {
+            out << "  meshcreases " << mr->mesh.creases.size();
+            for (const EdgeCrease& c : mr->mesh.creases) out << " " << c.a << " " << c.b << " " << c.w;
+            out << "\n";
+        }
+        // Per-vertex colours (smooth painting): optional record, follows the geometry so the count lines up.
+        if (mr->mesh.HasVertexColors() && !generated) {
+            out << "  meshvcolors " << mr->mesh.vertexColors.size();
+            for (const Color& c : mr->mesh.vertexColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
+            out << "\n";
+        }
+        // Hidden faces (Hide / Isolate in edit mode): kept with the mesh so a saved scene still has them to reveal.
+        if (mr->mesh.HasHidden() && mr->mesh.HiddenConsistent() && !generated) {
+            const int hn = mr->mesh.HiddenTriangleCount();
+            const bool huv = !mr->mesh.hiddenUV.empty(), hco = !mr->mesh.hiddenColor.empty();
+            out << "  meshhidden " << hn << " " << (huv ? 1 : 0) << " " << (hco ? 1 : 0);
+            for (int t = 0; t < hn; ++t) {
+                for (int k = 0; k < 3; ++k) { const Vec3& p = mr->mesh.hiddenPos[t * 3 + k]; out << " " << p.x << " " << p.y << " " << p.z; }
+                out << " " << mr->mesh.hiddenSlot[t] << " " << mr->mesh.hiddenPoly[t];
+                if (huv) for (int k = 0; k < 3; ++k) out << " " << mr->mesh.hiddenUV[t * 3 + k].x << " " << mr->mesh.hiddenUV[t * 3 + k].y;
+                if (hco) { const Color& c = mr->mesh.hiddenColor[t]; out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; }
+            }
+            out << "\n";
+        }
+        // A picture per material slot (optional record; empty entries mean "no picture for this slot").
+        {
+            bool any = false;
+            for (const std::string& st : mr->slotTextures) if (!st.empty()) any = true;
+            if (any) {
+                out << "  slottex " << mr->slotTextures.size();
+                for (const std::string& st : mr->slotTextures) out << " " << Quote(st);
+                out << "\n";
+            }
         }
         // Material (emissive rgb, specular, shininess, unlit) — separate record
         // so older scenes without it still load.
@@ -1024,7 +1093,13 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              ("lv", m.levels).b("smooth", m.smoothShading)("th", m.thickness)
              ("w", m.width)("seg", m.segments)("ang", m.angle)
              .str("tgt", m.target)("op", m.boolOp)("vox", m.voxel)("cell", m.cellSize)
-             ("str", m.strength)("freq", m.frequency)("seed", m.seed);
+             ("str", m.strength)("freq", m.frequency)("seed", m.seed).b("bw", m.useBevelWeights);
+            if (m.type == MeshModifier::Type::CurveArray) {      // the curve: "x,y,z;x,y,z;..."
+                std::ostringstream pt;
+                for (std::size_t i = 0; i < m.path.size(); ++i)
+                    pt << (i ? ";" : "") << m.path[i].x << "," << m.path[i].y << "," << m.path[i].z;
+                k.b("align", m.align).str("path", pt.str());
+            }
             out << "\n";
         }
     }
@@ -1403,6 +1478,19 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->snowColor.r << " " << v->snowColor.g << " " << v->snowColor.b
             << " " << v->textureTiling << " " << Quote(v->texture)
             << " " << v->EncodeDensity() << "\n";
+        if (v->catchFalling) out << "  voxelcatch " << v->catchMargin << "\n";
+        if (v->footprints) out << "  voxelfoot " << Quote(v->footprintTag) << " " << (v->footprintBodies ? 1 : 0) << " " << v->footprintStep << " " << v->footprintRadius << " " << v->footprintDepth << " " << v->footprintPower << "\n";
+        if (v->fluidOn) out << "  voxelfluid " << v->fluidBudget << " " << v->fluidMaxCells << " " << v->fluidRate << " " << (v->fluidGlow ? 1 : 0) << " "
+                            << v->fluidColor.r << " " << v->fluidColor.g << " " << v->fluidColor.b << " " << v->fluidColor.a << "\n";
+        // Materials (optional records after the terrain, so a build that does not know them keeps them as unknown records)
+        if (v->UseMaterials()) {
+            out << "  voxelmats " << v->materials.size() << " " << v->EncodeMaterials() << "\n";
+            for (const auto& m : v->materials)
+                out << "  voxelmat " << Quote(m.name) << " " << m.color.r << " " << m.color.g << " " << m.color.b << " " << m.color.a
+                    << " " << m.hardness << " " << m.density << " " << (m.loose ? 1 : 0) << " " << Quote(m.drop) << " " << m.dropPerM3
+                    << " " << Quote(m.texture) << " " << Quote(m.digSound)
+                    << " " << m.particle.r << " " << m.particle.g << " " << m.particle.b << "\n";
+        }
     }
     for (auto* vd : go->GetComponents<VoxelDigger>()) {
         out << "  voxeldigger " << (int)vd->mode << " " << vd->button
@@ -1410,7 +1498,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vd->range << " " << (vd->showBrush ? 1 : 0)
             << " " << vd->brushColor.r << " " << vd->brushColor.g
             << " " << vd->brushColor.b << " " << vd->brushColor.a
-            << " " << vd->addButton << "\n";
+            << " " << vd->addButton
+            << " " << (int)vd->collect << " " << (vd->needsMaterial ? 1 : 0) << " " << (vd->creative ? 1 : 0) << " " << vd->addMaterial
+            << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
+            << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
+            << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << " " << (vd->toolsFromInventory ? 1 : 0) << " " << (vd->buildFromItems ? 1 : 0)
+            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -1487,6 +1580,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  fphands2";
         extra(hh->right); extra(hh->left); oarm(hh->othersRight); oarm(hh->othersLeft);
         out << "\n";
+        // Presets, click swing and shirt colours came later. A scene without this line is the Old look.
+        out << "  fphands3 " << (int)hh->preset << " " << (hh->swingOnClick ? 1 : 0) << " " << hh->attackButton
+            << " " << (hh->right.matchShirt ? 1 : 0) << " " << (hh->left.matchShirt ? 1 : 0) << "\n";
     }
     for (auto* ps : go->GetComponents<NetworkPlayerSpawner>()) {
         out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
@@ -1635,7 +1731,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
             << " " << (rb->allowSleep ? 1 : 0)
-            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
+            << " " << (rb->continuousCollision ? 1 : 0)
+            << " " << rb->rollingResistance << "\n";   // trailing (back-compatible)
     }
     for (auto* bc : go->GetComponents<BoxCollider2D>()) {   // every instance: two colliders make a compound shape
         out << "  boxcollider2d " << bc->size.x << " " << bc->size.y << " "
@@ -1670,6 +1767,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     // Trigger tag / layer filter. One record when every collider shares it (older scenes
     // read that as applying to all). Differing filters are one indexed record each.
     WriteTriggerFilters(out, "trigfilter2d", go->GetComponents<Collider2D>());
+    WritePhysicsMaterials(out, "physmat2d", go->GetComponents<Collider2D>());
     for (auto* rb : go->GetComponents<Rigidbody3D>()) {
         out << "  rigidbody3d " << (int)rb->bodyType << " " << rb->gravityScale << " "
             << rb->mass << " " << rb->drag << " " << rb->bounciness << " "
@@ -1679,7 +1777,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << rb->friction                                    // trailing (back-compatible)
             << " " << rb->angularDrag << " " << (rb->freezeRotation ? 1 : 0)
             << " " << (rb->allowSleep ? 1 : 0)
-            << " " << (rb->continuousCollision ? 1 : 0) << "\n";   // trailing (back-compatible)
+            << " " << (rb->continuousCollision ? 1 : 0)
+            << " " << rb->rollingResistance << " " << (rb->compoundChildren ? 1 : 0) << "\n";   // trailing (back-compatible)
     }
     for (auto* j : go->GetComponents<Joint3D>()) {   // every instance: a chain link holds two joints
         out << "  joint3d " << j->mode << " " << Quote(j->connectedBody)
@@ -1965,6 +2064,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
     }
     // See the 2D filter: one shared record, or one indexed record per collider when they differ.
     WriteTriggerFilters(out, "trigfilter3d", go->GetComponents<Collider3D>());
+    WritePhysicsMaterials(out, "physmat3d", go->GetComponents<Collider3D>());
     // Each script is one self-contained line (lang, source, then optional path
     // and field overrides) so a GameObject can carry several scripts.
     for (auto* sc : go->GetComponents<ScriptComponent>()) {
@@ -2488,7 +2588,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
              ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
              ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
-             ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+             ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset).b("presetKeys", pv->presetHotkeys);
         }
         out << "\n";
     }
@@ -2534,7 +2634,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
          ("walkA", fp->walkAcceleration)("steer", fp->steerRate)
          .b("dive", fp->diveOnProneWhileSprinting)("diveHop", fp->diveHop)("diveSlide", fp->diveSlideTime)
-         ("capSens", fp->capturedSensitivity)("capPx", fp->capturedPixelCap);
+         ("capSens", fp->capturedSensitivity)("capPx", fp->capturedPixelCap)
+         ("slope", fp->slopeLimit)("step", fp->stepOffset)("fallY", fp->fallResetY)   // settings that were never saved
+         ("swim", fp->swimSpeed)("swimUp", fp->swimUpSpeed)("swimDown", fp->swimDownSpeed)
+         .b("varJump", fp->variableJump)("jumpCut", fp->jumpCut)("climb", fp->climbSpeed)("hardLand", fp->hardLandSpeed)("preset", fp->controllerPreset)("stickRamp", fp->stickLookRamp);
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -2574,7 +2677,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
          ("walkA", tp->walkAcceleration)("steer", tp->steerRate)
          .b("dive", tp->diveOnProneWhileSprinting)("diveHop", tp->diveHop)("diveSlide", tp->diveSlideTime)
-         ("capSens", tp->capturedSensitivity)("capPx", tp->capturedPixelCap);
+         ("capSens", tp->capturedSensitivity)("capPx", tp->capturedPixelCap)
+         ("slope", tp->slopeLimit)("step", tp->stepOffset)("fallY", tp->fallResetY)   // settings that were never saved
+         ("swim", tp->swimSpeed)("swimUp", tp->swimUpSpeed)("swimDown", tp->swimDownSpeed)
+         .b("varJump", tp->variableJump)("jumpCut", tp->jumpCut)("climb", tp->climbSpeed)("hardLand", tp->hardLandSpeed)("preset", tp->controllerPreset)("stickRamp", tp->stickLookRamp);
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -2603,7 +2709,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
          ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
          ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
-         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset).b("presetKeys", pv->presetHotkeys);
         out << "\n";
     }
     // grok/ui-theme. Own record so older scenes skip it. apply=1 bakes on play.
@@ -3897,6 +4003,16 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         const Vec3& g3 = scene.physics3D().gravity;
         out << "gravity3 " << g3.x << " " << g3.y << " " << g3.z << "\n";
     }
+    for (const modeling::RefImageRecord& r : scene.refImages)   // reference pictures (a record older builds skip as unknown)
+        out << "refimage " << Quote(r.path) << " " << r.plane << " " << r.centre.x << " " << r.centre.y << " " << r.centre.z << " "
+            << r.width << " " << r.opacity << " " << (r.flipX ? 1 : 0) << " " << (r.visible ? 1 : 0) << "\n";
+    if (scene.physics3D().quality != PhysicsQuality::Classic || scene.physics().quality != PhysicsQuality::Classic) {
+        // Physics quality (Improved = the iterated contact solver). Written only when it is not Classic, so a Classic scene
+        // saves the same file as before; a file without the record loads as Classic. Older builds skip it as unknown.
+        out << "physicsquality " << (int)scene.physics3D().quality << " " << scene.physics3D().solverIterations
+            << " " << (scene.physics3D().autoContinuous ? 1 : 0) << " " << (int)scene.physics().quality
+            << " " << scene.physics().solverIterations << "\n";
+    }
     {
         const auto& rs = scene.renderSettings;
         out << "rendersettings " << (rs.skybox ? 1 : 0) << " "
@@ -4134,6 +4250,7 @@ static void ReadPlayerViewKeys(KvIn& k, PlayerView* pv, const char* viewKey) {
     k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
     k.f("dist", pv->thirdPersonDistance);
     k.f("shoulder", pv->shoulderOffset);
+    k.b("presetKeys", pv->presetHotkeys);
 }
 
 // Files from before version 3 came from starters whose First Person and Third
@@ -4278,9 +4395,27 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
         } else if (token == "gravity") {
             Vec2 g; in >> g.x >> g.y;
             if (clear) scene.physics().gravity = g;
+        } else if (token == "refimage") {
+            modeling::RefImageRecord r; int fl = 0, vis = 1;
+            r.path = ReadQuoted(in);
+            in >> r.plane >> r.centre.x >> r.centre.y >> r.centre.z >> r.width >> r.opacity >> fl >> vis;
+            if (clear && in && r.plane >= 0 && r.plane <= 2 && std::isfinite(r.width + r.opacity + r.centre.x + r.centre.y + r.centre.z)) {
+                r.flipX = fl != 0; r.visible = vis != 0; scene.refImages.push_back(r);
+            }
         } else if (token == "gravity3") {
             Vec3 g; in >> g.x >> g.y >> g.z;
             if (clear && in) scene.physics3D().gravity = g;
+        } else if (token == "physicsquality") {
+            int q3 = 0, it3 = 10, ac = 1, q2 = 0, it2 = 10;
+            in >> q3 >> it3 >> ac;
+            in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> q2 >> it2; else q2 = q3, it2 = it3;
+            if (clear) {
+                scene.physics3D().quality = q3 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                scene.physics3D().solverIterations = it3 < 4 ? 4 : (it3 > 30 ? 30 : it3);
+                scene.physics3D().autoContinuous = (ac != 0);
+                scene.physics().quality = q2 == 1 ? PhysicsQuality::Improved : PhysicsQuality::Classic;
+                scene.physics().solverIterations = it2 < 4 ? 4 : (it2 > 30 ? 30 : it2);
+            }
         } else if (token == "rendersettings") {
             int sky = 1; Color top, hor, bot; float amb = 0.0f;
             in >> sky >> top.r >> top.g >> top.b
@@ -4609,6 +4744,70 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     mr->mesh.triColors.reserve(cc > 0 ? cc : 0);
                     for (int i = 0; i < cc && in; ++i) {
                         Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.triColors.push_back(c);
+                    }
+                } else if (field == "meshslots") {
+                    // Per-triangle material slot; ignored later if the count doesn't match.
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int sc = 0; in >> sc;
+                    if (!in || !countOk(sc, 1)) return bad("meshslots: bad count");
+                    mr->mesh.triSlot.clear();
+                    mr->mesh.triSlot.reserve(sc > 0 ? sc : 0);
+                    for (int i = 0; i < sc && in; ++i) {
+                        int sl = 0; in >> sl;
+                        mr->mesh.triSlot.push_back(sl < 0 ? 0 : (sl > 255 ? 255 : sl));
+                    }
+                } else if (field == "meshbevelw") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int bn = 0; in >> bn;
+                    if (!in || bn < 0 || !countOk(bn, 6)) return bad("meshbevelw: bad count");
+                    mr->mesh.bevelWeights.clear();
+                    for (int i = 0; i < bn && in; ++i) { EdgeCrease c; in >> c.a >> c.b >> c.w; if (c.a >= 0 && c.b >= 0 && std::isfinite(c.w) && c.w > 0.0f) { c.w = std::min(c.w, 1.0f); mr->mesh.bevelWeights.push_back(c); } }
+                } else if (field == "meshcreases") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int cn = 0; in >> cn;
+                    if (!in || cn < 0 || !countOk(cn, 6)) return bad("meshcreases: bad count");
+                    mr->mesh.creases.clear();
+                    for (int i = 0; i < cn && in; ++i) { EdgeCrease c; in >> c.a >> c.b >> c.w; if (c.a >= 0 && c.b >= 0 && std::isfinite(c.w) && c.w > 0.0f) mr->mesh.creases.push_back(c); }
+                } else if (field == "meshvcolors") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int vc = 0; in >> vc;
+                    if (!in || vc < 0 || !countOk(vc, 4)) return bad("meshvcolors: bad count");
+                    mr->mesh.vertexColors.clear();
+                    mr->mesh.vertexColors.reserve((std::size_t)vc);
+                    for (int i = 0; i < vc && in; ++i) { Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.vertexColors.push_back(c); }
+                } else if (field == "meshhidden") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int hn = 0, huv = 0, hco = 0; in >> hn >> huv >> hco;
+                    if (!in || hn < 0 || hn > 2000000 || !countOk(hn, 20)) return bad("meshhidden: bad count");
+                    Mesh& hm = mr->mesh;
+                    hm.hiddenPos.clear(); hm.hiddenUV.clear(); hm.hiddenSlot.clear(); hm.hiddenPoly.clear(); hm.hiddenColor.clear();
+                    for (int t = 0; t < hn && in; ++t) {
+                        for (int k = 0; k < 3; ++k) { Vec3 p; in >> p.x >> p.y >> p.z; hm.hiddenPos.push_back(p); }
+                        int sl = -1, pl = -1; in >> sl >> pl; hm.hiddenSlot.push_back(sl); hm.hiddenPoly.push_back(pl);
+                        if (huv) for (int k = 0; k < 3; ++k) { Vec2 u; in >> u.x >> u.y; hm.hiddenUV.push_back(u); }
+                        if (hco) { Color c; in >> c.r >> c.g >> c.b >> c.a; hm.hiddenColor.push_back(c); }
+                    }
+                    if (!in || !hm.HiddenConsistent()) { hm.hiddenPos.clear(); hm.hiddenUV.clear(); hm.hiddenSlot.clear(); hm.hiddenPoly.clear(); hm.hiddenColor.clear(); return bad("meshhidden: damaged"); }
+                } else if (field == "slottex") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int tc = 0; in >> tc;
+                    if (!in || tc < 0 || tc > 256) return bad("slottex: bad count");
+                    mr->slotTextures.clear();
+                    for (int i = 0; i < tc && in; ++i) { in >> std::ws; mr->slotTextures.push_back(in.peek() == '"' ? ReadQuoted(in) : std::string()); }
+                } else if (field == "slotcolors") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int kc = 0; in >> kc;
+                    if (!in || !countOk(kc, 4) || kc > 256) return bad("slotcolors: bad count");
+                    mr->mesh.slotColors.clear();
+                    for (int i = 0; i < kc && in; ++i) {
+                        Color c; in >> c.r >> c.g >> c.b >> c.a; mr->mesh.slotColors.push_back(c);
                     }
                 } else if (field == "skinmesh") {
                     // Rebuild a SkinnedMesh from its bind geometry + weights + joint
@@ -5158,7 +5357,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.i("lv", m.levels); k.b("smooth", m.smoothShading); k.f("th", m.thickness);
                     k.f("w", m.width); k.i("seg", m.segments); k.f("ang", m.angle);
                     k.str("tgt", m.target); k.i("op", m.boolOp); k.f("vox", m.voxel); k.f("cell", m.cellSize);
-                    k.f("str", m.strength); k.f("freq", m.frequency); k.i("seed", m.seed);
+                    k.f("str", m.strength); k.f("freq", m.frequency); k.i("seed", m.seed); k.b("bw", m.useBevelWeights);
+                    if (m.type == MeshModifier::Type::CurveArray) {
+                        k.b("align", m.align);
+                        std::string pts; k.str("path", pts);
+                        std::stringstream ps(pts); std::string one;
+                        while (std::getline(ps, one, ';') && m.path.size() < 1000) {
+                            Vec3 v; char c1 = 0, c2 = 0;
+                            std::istringstream vs(one);
+                            if (vs >> v.x >> c1 >> v.y >> c2 >> v.z && c1 == ',' && c2 == ',') m.path.push_back(v);
+                        }
+                    }
                     mm->modifiers.push_back(m);
                 } else if (field == "meshenabled") {
                     int en = 1; in >> en;
@@ -5209,6 +5418,21 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->rollingResistance;   // trailing
+                } else if (field == "physmat2d" || field == "physmat3d") {
+                    float fr = -1.0f, bn = -1.0f; int fm = 0, bm = 0, index = -1;
+                    in >> fr >> bn >> fm >> bm;
+                    in >> std::ws; if (std::isdigit(static_cast<unsigned char>(in.peek()))) in >> index;
+                    auto clampMode = [](int m) { return (CombineMode)(m < 0 || m > 4 ? 0 : m); };
+                    if (field == "physmat2d") {
+                        auto all = go->GetComponents<Collider2D>();
+                        for (int i = 0; i < (int)all.size(); ++i)
+                            if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
+                    } else {
+                        auto all = go->GetComponents<Collider3D>();
+                        for (int i = 0; i < (int)all.size(); ++i)
+                            if (index < 0 || i == index) { all[(std::size_t)i]->friction = fr; all[(std::size_t)i]->bounciness = bn; all[(std::size_t)i]->frictionCombine = clampMode(fm); all[(std::size_t)i]->bounceCombine = clampMode(bm); }
+                    }
                 } else if (field == "trigfilter2d" || field == "trigfilter3d") {
                     std::string tag = ReadQuoted(in);
                     std::uint32_t layers = 0xFFFFFFFFu;
@@ -5279,6 +5503,8 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     in >> std::ws; if (std::isdigit(in.peek())) { int fr = 1; in >> fr; rb->freezeRotation = (fr != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int as = 1; in >> as; rb->allowSleep = (as != 0); }
                     in >> std::ws; if (std::isdigit(in.peek())) { int cc = 0; in >> cc; rb->continuousCollision = (cc != 0); }
+                    in >> std::ws; if (std::isdigit(in.peek()) || in.peek() == '-') in >> rb->rollingResistance;   // trailing
+                    in >> std::ws; if (std::isdigit(in.peek())) { int cch = 0; in >> cch; rb->compoundChildren = (cch != 0); }
                 } else if (field == "joint3d") {
                     auto* j = go->AddComponent<Joint3D>();
                     int bk = 0, ac = 1;
@@ -6757,6 +6983,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         k.f("walkA", c->walkAcceleration); k.f("steer", c->steerRate);
                         k.b("dive", c->diveOnProneWhileSprinting); k.f("diveHop", c->diveHop); k.f("diveSlide", c->diveSlideTime);
                         k.f("capSens", c->capturedSensitivity); k.f("capPx", c->capturedPixelCap);
+                        k.f("slope", c->slopeLimit); k.f("step", c->stepOffset); k.f("fallY", c->fallResetY);
+                        k.f("swim", c->swimSpeed); k.f("swimUp", c->swimUpSpeed); k.f("swimDown", c->swimDownSpeed);
+                        k.b("varJump", c->variableJump); k.f("jumpCut", c->jumpCut); k.f("climb", c->climbSpeed); k.f("hardLand", c->hardLandSpeed); k.i("preset", c->controllerPreset); k.f("stickRamp", c->stickLookRamp);
                         // Saved crouched / prone: start that way (the collider was saved standing).
                         int st = 0; k.i("stance", st);
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;
@@ -7451,6 +7680,63 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     vd->button = btn; vd->key = (char)k; vd->showBrush = (sb != 0);
                     in >> std::ws;
                     if (std::isdigit(in.peek()) || in.peek() == '-') in >> vd->addButton;
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {   // real-life options (optional: older scenes end above)
+                        int col = 0, nm = 0, cr = 0, shp = 0, sn = 0, sl = 0, co = 0, gi = 0;
+                        in >> col >> nm >> cr >> vd->addMaterial >> vd->power >> vd->hardnessScale >> shp >> vd->depthLimit >> vd->protectBelow
+                           >> sn >> vd->debrisMax >> vd->debrisLife >> sl >> co >> gi;
+                        vd->hudTarget = ReadQuoted(in);
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) {
+                            int tf = 0, bf = 0;
+                            in >> vd->slumpPasses; vd->slumpPasses = std::max(1, std::min(64, vd->slumpPasses));
+                            in >> std::ws;
+                            if (std::isdigit(in.peek())) { in >> tf >> bf >> vd->bareHandsPower; vd->tools = ReadQuoted(in); vd->toolsFromInventory = tf != 0; vd->buildFromItems = bf != 0;
+                                in >> std::ws; if (std::isdigit(in.peek())) { in >> vd->caveInSpan; vd->caveInSpan = std::max(0, std::min(64, vd->caveInSpan));
+                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells)); } } }
+                        }
+                        vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
+                        vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;
+                        vd->shape = (VoxelTerrain::EditOptions::Shape)std::max(0, std::min(3, shp));
+                        vd->slump = sl != 0; vd->collapse = co != 0; vd->giveItems = gi != 0;
+                    }
+                } else if (field == "voxelcatch") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) { v->catchFalling = true; in >> v->catchMargin; }
+                } else if (field == "voxelfoot") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        int fb = 0; v->footprints = true; v->footprintTag = ReadQuoted(in);
+                        in >> fb >> v->footprintStep >> v->footprintRadius >> v->footprintDepth >> v->footprintPower;
+                        v->footprintBodies = fb != 0;
+                        v->footprintStep = std::max(0.1f, v->footprintStep); v->footprintRadius = std::max(0.05f, std::min(5.0f, v->footprintRadius));
+                    }
+                } else if (field == "voxelfluid") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        int gl = 0; v->fluidOn = true;
+                        in >> v->fluidBudget >> v->fluidMaxCells >> v->fluidRate >> gl >> v->fluidColor.r >> v->fluidColor.g >> v->fluidColor.b >> v->fluidColor.a;
+                        v->fluidGlow = gl != 0;
+                        v->fluidBudget = std::max(1, std::min(100000, v->fluidBudget)); v->fluidMaxCells = std::max(0, std::min(2000000, v->fluidMaxCells));
+                        v->fluidRate = std::max(0.1f, std::min(120.0f, v->fluidRate));
+                    }
+                } else if (field == "voxelmats") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        std::size_t n = 0; std::string blob; in >> n >> blob;
+                        v->DecodeMaterials(blob); v->matCountExpected_ = n;
+                    }
+                } else if (field == "voxelmat") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        if (v->materials.size() >= 255) { /* ignore the rest */ }
+                        else {
+                            VoxelTerrain::VoxelMaterial m; int lo = 0;
+                            m.name = ReadQuoted(in);
+                            in >> m.color.r >> m.color.g >> m.color.b >> m.color.a >> m.hardness >> m.density >> lo;
+                            m.loose = lo != 0; m.drop = ReadQuoted(in); in >> m.dropPerM3;
+                            m.texture = ReadQuoted(in); m.digSound = ReadQuoted(in);
+                            in >> m.particle.r >> m.particle.g >> m.particle.b;
+                            if (v->materials.empty() || !v->loadedMaterialTable_) { v->materials.clear(); v->loadedMaterialTable_ = true; }
+                            v->materials.push_back(m);
+                            if (v->materials.size() == v->matCountExpected_) v->Apply();   // the table is complete: colour the surface by material
+                        }
+                    }
                 } else if (field == "pausemenu") {
                     auto* pm = go->AddComponent<PauseMenu>();
                     int tk = 27, sr = 1, sq = 1;
@@ -7511,6 +7797,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (v.size() >= 7) fh->showWhileRunning = (v[6] != 0.0f);
                 } else if (field == "fphands") {
                     auto* hh = go->AddComponent<FirstPersonHands>();
+                    hh->ApplyPreset(FirstPersonHands::Preset::OldLook);   // a scene saved before presets keeps its look
                     auto side = [&](FirstPersonHands::HandSide& s, std::istringstream& rs) {
                         int en = 1, col = 0, sl = 0;
                         rs >> en >> s.position.x >> s.position.y >> s.position.z
@@ -7538,6 +7825,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     rs >> hh->othersItemOffset.x >> hh->othersItemOffset.y >> hh->othersItemOffset.z
                        >> hh->othersItemRotation.x >> hh->othersItemRotation.y >> hh->othersItemRotation.z
                        >> hh->othersArmLift >> hh->othersArmForward;
+                } else if (field == "fphands3") {
+                    auto* hh = LastOf(go->GetComponents<FirstPersonHands>());
+                    if (!hh) hh = go->AddComponent<FirstPersonHands>();
+                    int pr = 5, sw = 0, ab = 0, mr = 0, ml = 0;
+                    in >> pr >> sw >> ab >> mr >> ml;
+                    if (pr < 0 || pr > 5) pr = 5;
+                    hh->preset = (FirstPersonHands::Preset)pr;
+                    hh->swingOnClick = sw != 0;
+                    hh->attackButton = ab < 0 ? 0 : ab > 7 ? 7 : ab;
+                    hh->right.matchShirt = mr != 0;
+                    hh->left.matchShirt = ml != 0;
                 } else if (field == "fphands2") {
                     auto* hh = LastOf(go->GetComponents<FirstPersonHands>());
                     if (!hh) hh = go->AddComponent<FirstPersonHands>();
@@ -9093,6 +9391,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
 
 bool SceneSerializer::Deserialize(Scene& scene, const std::string& text, std::string* error,
                                   std::vector<std::string>* warnings) {
+    if (g_loadingSceneDir.empty() && !g_lastSceneDir.empty()) {
+        g_loadingSceneDir = g_lastSceneDir;
+        struct Reset { ~Reset() { g_loadingSceneDir.clear(); } } reset;
+        return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
+    }
     return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
 }
 
@@ -9320,7 +9623,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         for (auto* sr : go->GetComponents<SpriteRenderer>()) add(sr->texture);
         for (auto* au : go->GetComponents<AudioSource>())  add(au->clipPath);   // every source: a music bed and an effect can share an object
         for (auto* mp : go->GetComponents<MusicPlayer>())    for (const auto& t : mp->tracks) add(t);
-        for (auto* mr : go->GetComponents<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
+        for (auto* mr : go->GetComponents<MeshRenderer>())   { add(mr->meshPath); add(mr->texture); for (const std::string& st : mr->slotTextures) add(st); add(mr->normalMap); add(mr->specularMap); add(mr->aoMap); add(mr->metallicRoughnessMap); add(mr->emissiveMap); }
         for (auto* terrain : go->GetComponents<Terrain>())         { add(terrain->texture); add(terrain->normalMap); for (const auto& l : terrain->layers) add(l.texture); }
         for (auto* fo : go->GetComponents<Foliage>())       { add(fo->meshPath); add(fo->prefabPath); }
         for (auto* de : go->GetComponents<Decal>())         add(de->texture);
@@ -9382,6 +9685,7 @@ bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::s
     const std::string prevDir = g_loadingSceneDir;
     g_loadingSceneDir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
     const bool ok = Deserialize(scene, text, error, warnings);
+    if (ok && !g_loadingSceneDir.empty()) g_lastSceneDir = g_loadingSceneDir;
     g_loadingSceneDir = prevDir;
     return ok;
 }
@@ -9493,6 +9797,27 @@ void RegisterBuiltinComponentSerializers() {
                 lg->RebuildFromRatios(mr->DisplayMesh());
     };
     ComponentSerializerRegistry::Register(std::move(lod));
+
+    ComponentSerializerRegistry::Entry debris;
+    debris.name = "debrisemitter";
+    debris.write = [](const GameObject& go, std::ostream& out) {
+        for (auto* de : go.GetComponents<DebrisEmitter>()) {
+            out << "  debrisemitter";
+            KvOut k{out};
+            k("count", de->count)("interval", de->interval)("delay", de->startDelay)("smin", de->sizeMin)("smax", de->sizeMax)
+             ("speed", de->speed)("spread", de->spread).col("c", de->color)("max", de->maxActive)("life", de->lifetime)
+             ("settled", de->settledLife).b("mutual", de->collideWithEachOther);
+            out << "\n";
+        }
+    };
+    debris.read = [](GameObject& go, std::istream& in) {
+        auto* de = go.AddComponent<DebrisEmitter>();
+        KvIn k(in);
+        k.i("count", de->count); k.f("interval", de->interval); k.f("delay", de->startDelay); k.f("smin", de->sizeMin);
+        k.f("smax", de->sizeMax); k.f("speed", de->speed); k.f("spread", de->spread); k.col("c", de->color);
+        k.i("max", de->maxActive); k.f("life", de->lifetime); k.f("settled", de->settledLife); k.b("mutual", de->collideWithEachOther);
+    };
+    ComponentSerializerRegistry::Register(std::move(debris));
 
     ComponentSerializerRegistry::Entry vol;
     vol.name = "volume";

@@ -3140,6 +3140,11 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
     bool ok = false;
     GameObject* root = ImportModelScene(scene, path, &ok);
     if (!ok || !root || !root->transform) return nullptr;
+    return AttachCharacterModelRoot(scene, player, root, outLog);
+}
+
+GameObject* AttachCharacterModelRoot(Scene& scene, GameObject* player, GameObject* root, std::string* outLog) {
+    if (!player || !player->transform || !root || !root->transform) return nullptr;
     // A swap: the previous model goes, or it stays inside the new one (frozen, or
     // still animating on its own) and keeps the old wiring busy.
     if (GameObject* old = FindCharacterModelRoot(scene, player); old && old != player)
@@ -3364,10 +3369,16 @@ GameObject* AttachCharacterModel(Scene& scene, GameObject* player,
         std::array<float, 2> now = prev;
         auto fit = [&](float& walk, float& run, float dWalk, float dRun) {
             bool changed = false;
-            if (ma->SlotFilled(ModelAnimator::SlotWalk) && walk == (prev[0] > 0.0f ? prev[0] : dWalk)) {
+            // Untouched = the controller's own default, or (never fitted before) one of the OLD defaults a scene
+            // saved before the natural walk and run still spells out (4.5 / 8.0 / 7.5).
+            const bool walkUntouched = walk == (prev[0] > 0.0f ? prev[0] : dWalk) ||
+                                       (prev[0] <= 0.0f && NaturalGait::IsOldDefaultWalk(walk));
+            const bool runUntouched = run == (prev[1] > 0.0f ? prev[1] : dRun) ||
+                                      (prev[1] <= 0.0f && NaturalGait::IsOldDefaultRun(run));
+            if (ma->SlotFilled(ModelAnimator::SlotWalk) && walkUntouched) {
                 walk = now[0] = 1.45f * ma->SlotClipSpeed(ModelAnimator::SlotWalk); changed = true;
             }
-            if (ma->SlotFilled(ModelAnimator::SlotRun) && run == (prev[1] > 0.0f ? prev[1] : dRun)) {
+            if (ma->SlotFilled(ModelAnimator::SlotRun) && runUntouched) {
                 run = now[1] = 1.25f * ma->SlotClipSpeed(ModelAnimator::SlotRun); changed = true;
             }
             return changed;

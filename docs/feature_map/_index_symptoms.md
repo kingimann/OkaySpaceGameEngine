@@ -5,10 +5,12 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 
 | You see or say | Sub-area |
 |---|---|
+| (test build)" after a version | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | 1 FPS with a large model | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
 | 1 item / 2 items" reads wrong | [1.8](01-core-scene.md#18-localization) Localization |
 | 2D enemies cut through walls or cannot find a route on a tilemap | [9.3](09-ai-navigation.md#93-grid-pathfinding-older) Grid pathfinding (older) |
 | 3D looks different in the editor and the player | [2.1](02-rendering-world.md#21-renderers) Renderers |
+| a "Test build of ..." message in the launcher | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | a .dae/.3ds file will not import without Assimp | [3.6](03-modeling-import.md#36-model-import) Model import |
 | a 2D level is made of flat coloured squares | [43.1](43-proposals.md#431-tilemaps-and-tilesets) Tilemaps and tilesets |
 | a ball does not bounce | [6.1](06-physics.md#61-2d-bodies-and-colliders) 2D bodies and colliders |
@@ -94,6 +96,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a far-away player still pops in | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
 | a feature exists in OkayUI but not in the scene UI (or the reverse) | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a feature missing on the web build (networking relay, encryption) | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
+| a fence changed height but one post did not | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a field does not show in the Inspector | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a file you did not expect is (or is not) in the build | [18.6](18-build-export-release.md#186-desktop-game-export-build-game-and-the-export-check) Desktop game export (Build Game) and the export check |
 | a flashlight does not light the ground | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
@@ -157,6 +160,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a message with braces vanishes | [17.4](17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji |
 | a minimap camera draws over the main view or replaces it | [2.10](02-rendering-world.md#210-cameras-and-the-camera-stack) Cameras and the camera stack |
 | a model faces backwards | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
+| a model made here still edits like any mesh | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a moderation action is refused | [17.9](17-launcher-platform.md#179-admin) Admin |
 | a modified pack fails its checksum | [39.10](39-security-anticheat.md#3910-data-packs-and-obfuscation) Data packs and obfuscation |
 | a modifier shows red text and is skipped | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
@@ -298,6 +302,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a value edited in Play cannot be kept | [1.19](01-core-scene.md#119-property-reflection) Property reflection |
 | a variable differs between players | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
 | a variable is empty after loading another scene | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
+| a version with four numbers | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | a very deep hierarchy crashed or hung | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | a voice call won't connect | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
 | a Wait node never resumes | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
@@ -343,6 +348,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an enemy cannot climb a ladder | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
 | an enemy never notices the player or notices from behind | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
 | an enemy sees through walls | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
+| an example has no camera | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
+| an example opens and shows only text | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
 | an exe is missing SDL2.dll | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | an exe's Properties show the wrong version | [41.9](41-build-tools-infra.md#419-versioning-and-release-prep) Versioning and release prep |
 | an explosion preset is too slow | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
@@ -524,6 +531,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | feet don't touch the ground or sink | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | feet skate | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | feet slide on slopes | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
+| File > Examples says scenes were not found | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
 | Fill Holes leaves a gap | [3.9](03-modeling-import.md#39-generate-and-whole-mesh-operations) Generate and whole-mesh operations |
 | find by tag" returns the wrong object after a tag change | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | Find match never finds anyone | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
@@ -641,6 +649,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | leaderboard empty | [16.9](16-networking.md#169-match-results-stats-and-leaderboards) Match results, stats and leaderboards |
 | legs bend backwards | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | letters show as boxes | [2.9](02-rendering-world.md#29-fonts-and-images) Fonts and images |
+| lines marked CAUGHT or MISSED in a log | [39.13](39-security-anticheat.md#3913-cheat-simulator-and-hardening-audit) Cheat simulator and hardening audit |
 | Load screen is empty | [35.1](20-35-planned.md#351-save-slots) Save slots |
 | loading a scene crashes or loses things | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
 | loading screen on every area change | [27.4](20-35-planned.md#274-streaming) Streaming |
@@ -813,6 +822,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | reports have nowhere to go | [48.4](43-proposals.md#484-collection-backend-and-dashboards) Collection backend and dashboards |
 | reports never appear for admins | [39.6](39-security-anticheat.md#396-reports-bans-appeals-and-the-hardware-hash) Reports, bans, appeals and the hardware hash |
 | requests for console releases | [56.4](43-proposals.md#564-console-platforms) Console platforms |
+| Result: 8 of 8 cheats caught | [39.13](39-security-anticheat.md#3913-cheat-simulator-and-hardening-audit) Cheat simulator and hardening audit |
 | rigging did nothing | [3.7](03-modeling-import.md#37-rigging-and-playable-setup) Rigging and playable setup |
 | rooms feel too big or small | [44.3](43-proposals.md#443-measuring-and-level-metrics) Measuring and level metrics |
 | rotation flips near straight up or down | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
@@ -949,6 +959,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the character never levels | [11.9](11-gameplay-systems.md#119-rpg-stats-and-xp) RPG stats and XP |
 | the character slides inside its capsule or walks without the capsule | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |
 | the character snaps instead of blending | [5.1](05-animation-ik.md#51-animator-and-state-machines) Animator and state machines |
+| the character walking looks like running | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | the chest dips when reaching just past the hand | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the chest shows items to players who are not near | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
 | the client's ECS world differs from the server's | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
@@ -1016,6 +1027,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the graph loses its layout | [5.1](05-animation-ik.md#51-animator-and-state-machines) Animator and state machines |
 | the ground has holes or cracks | [2.6](02-rendering-world.md#26-terrain-and-water) Terrain and water |
 | the guard patrols but never notices the player | [9.4](09-ai-navigation.md#94-behavior-trees) Behavior trees |
+| the Guided page asks what to do with parts you edited | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | the head or body jitters while walking | [5.13](05-animation-ik.md#513-player-animation-setup) Player animation setup |
 | the head or neck shows in the lens | [4.7](04-characters-cameras.md#47-first-person-camera-and-hands) First-person camera and hands |
 | the head shows inside the first-person lens | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
@@ -1052,6 +1064,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the okayui test targets are missing from a build | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | the Open button does nothing | [37.3](37-platform-windowing.md#373-file-dialogs) File dialogs |
 | the own backend cannot open a display | [17.17](17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) Platform layer (`okay::platform`) and the own backend |
+| the owner wants to try unmerged work without waiting for a release | [18.9](18-build-export-release.md#189-test-builds-the-dev-channel) Test builds (the dev channel) |
 | the pad does nothing in the editor Play view | [8.2](08-input.md#82-gamepad-sdl) Gamepad (SDL) |
 | the panel does not show in the Scene view | [12.6](12-ingame-ui.md#126-world-space-ui) World-space UI |
 | the panel is slow on a big project | [15.4](15-editor.md#154-project-panel-and-asset-manager) Project panel and asset manager |
@@ -1095,6 +1108,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the server exits right away with a misconfigured error | [16.5](16-networking.md#165-dedicated-server-export-relay) Dedicated server, export, relay |
 | the server export misses a file | [15.7](15-editor.md#157-build-settings) Build Settings |
 | the server folder has no Docker files | [18.7](18-build-export-release.md#187-dedicated-server-export-and-linux-server-build) Dedicated server export and Linux server build |
+| The server has no crash_reports table yet | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
 | the server isn't in the browser | [16.5](16-networking.md#165-dedicated-server-export-relay) Dedicated server, export, relay |
 | the server list is empty | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |
 | the server list window cannot be dragged | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
@@ -1198,6 +1212,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | vignette drawn twice | [2.5](02-rendering-world.md#25-post-processing) Post-processing |
 | Wait skips | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
+| waiting to be sent" never changes | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
+| walk and run look alike | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | walk hips snap at every footfall | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | walk-only file has no idle | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |
 | walking animation feels off, feet slide or the wrong speed | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |

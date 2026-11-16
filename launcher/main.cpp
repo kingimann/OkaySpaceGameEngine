@@ -17,6 +17,7 @@
 #include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/updater.md)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
+#include "CrashUpload.hpp"    // scrub + send crash reports, and the prefilled GitHub issue address (docs/crash_reports.md)
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
 #include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
@@ -109,6 +110,7 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "AppRestart.hpp"   // detached self-update: wait until this process exits, then relaunch once
 #include "UpdaterCore.hpp"   // updater rules: checksum required, stage then swap, reasons (tests/test_launcher_versions.cpp)
 #include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/launcher_versions.md)
+#include "TestBuild.hpp"   // test builds: four-number versions, the "Get test builds" setting, the way back (docs/release_channels.md "Test builds")
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
@@ -211,6 +213,7 @@ std::string  g_upFromVer;        // installed version at run start   (g_upMutex)
 std::string  g_upToVer;          // target/published version         (g_upMutex)
 std::string  g_upStepName;       // human label for the current step (g_upMutex)
 std::string  g_upChangelog;      // release notes for g_upToVer       (g_upMutex)
+std::string  g_upTag;            // one line under the version arrow: "Test build of walk-vs-run (abc1234)" or "Going back ..." ("" = none)  (g_upMutex)
 bool         g_upModalOpen = false;   // UI: show the update dialog (main thread only)
 
 void SetState(UpState s) { SDL_AtomicSet(&g_upState, (int)s); }
@@ -248,6 +251,15 @@ void SetUpChangelog(const std::string& c) {
 std::string GetUpChangelog() {
     std::string c; if (g_upMutex) SDL_LockMutex(g_upMutex);
     c = g_upChangelog; if (g_upMutex) SDL_UnlockMutex(g_upMutex); return c;
+}
+void SetUpTag(const std::string& t) {
+    if (g_upMutex) SDL_LockMutex(g_upMutex);
+    g_upTag = t;
+    if (g_upMutex) SDL_UnlockMutex(g_upMutex);
+}
+std::string GetUpTag() {
+    std::string t; if (g_upMutex) SDL_LockMutex(g_upMutex);
+    t = g_upTag; if (g_upMutex) SDL_UnlockMutex(g_upMutex); return t;
 }
 
 void SetUpMsg(const std::string& m) {
@@ -945,7 +957,7 @@ static std::string SupabaseReleasesBase() {
 static bool LooksLikeVersion(const std::string& v) {
     if (v.empty() || v.size() > 24 || v.find('.') == std::string::npos) return false;
     for (char c : v) if (!(c == '.' || (c >= '0' && c <= '9'))) return false;
-    return true;
+    return okay::testbuild::IsReleaseShaped(v);   // VERSION.txt names a release (up to three numbers): a test build (four) is never "the newest release"
 }
 // First line of a small text file at `url` ("" if unreachable or not a version).
 static std::string FetchVersionAt(const std::string& url, const char* tmpName) {
@@ -994,10 +1006,52 @@ static okayversions::Sources VersionSources() {
 // What the in-place updater installs, by channel. Latest: the newest version, as always. LTS: the LTS head from the bucket's LTS.txt, and only
 // when moving this launcher to it is an upgrade (okayversions::DecideChannel): a launcher that is newer than the LTS line is never changed here;
 // the Versions page installs the LTS editor next to it. `message` explains an empty result; `failed` says it is a problem, not "nothing to do".
-struct UpdateTarget { std::string version, message; bool failed = false; };
-static UpdateTarget ResolveTarget(const okayversions::Settings& st, std::string& base, bool& fromSupabase) {
+struct UpdateTarget {
+    std::string version, message;
+    bool failed = false;
+    bool test = false;               // the target is a test build (from the dev area of the bucket)
+    bool goBack = false;             // the target is the newest normal release, installed over a newer test build on purpose
+    okayversions::Index devIndex;    // when `test`: the checksum list of the test builds (the normal list does not have them)
+    std::string title;               // when `test`: "Test build of walk-vs-run (abc1234)"
+};
+// Test builds (docs/release_channels.md "Test builds"): reached only when the person switched "Get test builds" on or asked to go back. With both off
+// ResolveTarget never calls this, so nothing under dev/ is fetched and the answer is exactly what it always was. The newer of "the newest normal
+// release" and "the newest test build" wins (okay::testbuild::ChooseTarget); a test build is downloaded from <bucket>/dev/v<version>/ and its checksums
+// come from the signed dev/versions.json, with the same rules as any update.
+static void ApplyTestBuilds(const okayversions::Settings& st, bool goBack, UpdateTarget& t, std::string& base, bool& fromSupabase) {
+    const std::string stableHead = t.version;             // the newest normal release, as the normal path found it
+    const std::string sb = SupabaseReleasesBase();
+    std::string testHead;
+    if (st.testBuilds && !goBack && !sb.empty()) {
+        okayversions::Sources src;
+        src.bucketBase = sb;
+        t.devIndex = okayversions::LoadDevIndex(src, FetchTextFile);
+        if (t.devIndex.ok) testHead = t.devIndex.latest;
+    }
+    const okay::testbuild::Choice c = okay::testbuild::ChooseTarget(LocalVersion(), stableHead, testHead, st.testBuilds,
+                                                                    st.channel == okayversions::Channel::Lts, goBack);
+    t.test = false;
+    t.goBack = false;
+    t.version = c.version;
+    switch (c.kind) {
+        case okay::testbuild::Choice::TestBuild:
+            t.test = true;
+            base = sb + okay::testbuild::kArea + "/v" + c.version + "/";
+            fromSupabase = true;
+            if (const okayversions::Entry* e = t.devIndex.Find(c.version)) t.title = okay::testbuild::Title(e->branch, e->sha);
+            break;
+        case okay::testbuild::Choice::GoBack: t.goBack = true; break;   // (base and fromSupabase are the normal release's, as ResolveLatest left them)
+        case okay::testbuild::Choice::Stable: break;
+        case okay::testbuild::Choice::None: t.message = c.note; t.failed = c.failed; break;
+    }
+}
+static UpdateTarget ResolveTarget(const okayversions::Settings& st, std::string& base, bool& fromSupabase, bool goBack = false) {
     UpdateTarget t;
-    if (st.channel != okayversions::Channel::Lts) { t.version = ResolveLatest(base, fromSupabase); return t; }
+    if (goBack || st.channel != okayversions::Channel::Lts) {
+        t.version = ResolveLatest(base, fromSupabase);
+        if (st.testBuilds || goBack) ApplyTestBuilds(st, goBack, t, base, fromSupabase);
+        return t;
+    }
     const std::string sb = SupabaseReleasesBase();
     std::string text;
     const std::string lts = (sb.empty() || !FetchTextFile(sb + "LTS.txt", text)) ? std::string() : okayversions::ParseVersionTxt(text);
@@ -1012,12 +1066,12 @@ static UpdateTarget ResolveTarget(const okayversions::Settings& st, std::string&
 }
 
 // "What's new" lines published beside a Supabase release (NOTES.txt).
-static void FetchSupabaseNews(const std::string& ver) {
+static void FetchSupabaseNews(const std::string& ver, const std::string& notesPath = "NOTES.txt") {
     const std::string sb = SupabaseReleasesBase();
     if (sb.empty()) return;
     std::error_code ec;
     const fs::path nf = fs::temp_directory_path(ec) / "okayspace_notes_sb.txt";
-    if (!Download(sb + "NOTES.txt", nf.string())) return;
+    if (!Download(sb + notesPath, nf.string())) return;
     std::ifstream f(nf);
     std::string ln, lines; int kept = 0;
     while (kept < 6 && std::getline(f, ln)) {
@@ -1031,6 +1085,8 @@ static void FetchSupabaseNews(const std::string& ver) {
 }
 
 okayversions::Settings g_upSettings;   // the channel, keep-previous and default editor as they were when this update check started (main thread writes, worker reads)
+bool g_upGoBack = false;          // the person asked to leave a test build for the newest normal release; stays set until it worked or the dialog is closed (main thread)
+bool g_upGoBackNow = false;       // g_upGoBack as it was when this update check started (main thread writes, worker reads)
 bool g_upAutomatic = false;       // this check was started by the launcher itself (at launch), not by a click
 bool g_upRepairMissing = false;   // "Get the editor": same-version re-download of MISSING exes only
 // Worker: check the published version and, if newer, install it. Runs on a
@@ -1039,13 +1095,18 @@ int RunUpdateCheck(void*) {
     SDL_AtomicSet(&g_upStartMs, (int)okay::platform::TicksMs32());
     std::string local = LocalVersion();
     SetUpVers(local, "");
+    SetUpTag("");   // (the last check's test build tag must not show while this one is still looking)
     SetUpStep("Contacting the update server", 0, 1);
     SetState(Up_Checking);
     SetUpMsg("Checking for updates...");
     FetchReleaseNews();   // refresh the What's-new card while we're online anyway
     g_upFailReason.clear();
     std::string base; bool fromSupabase = false;
-    const UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase);   // by channel (Latest unless the person chose LTS)
+    const UpdateTarget target = ResolveTarget(g_upSettings, base, fromSupabase, g_upGoBackNow);   // by channel (Latest unless the person chose LTS); test builds only when asked
+    if (g_upSettings.testBuilds && target.devIndex.signatureRefused)   // (said once per check, not by the poll: the normal update goes on)
+        okay::restart::AppendLog(fs::path(g_exeDir) / "okay_update.log", "test builds: " + target.devIndex.error);
+    SetUpTag(target.test ? (target.title.empty() ? std::string("Test build") : target.title)
+                         : target.goBack ? std::string("Going back to the newest normal release (a test build is replaced)") : std::string());
     const std::string latest = target.version;
     if (latest.empty()) {
         if (!target.message.empty()) {   // the LTS channel with nothing to do in place (or no LTS information): said in its own words
@@ -1059,7 +1120,7 @@ int RunUpdateCheck(void*) {
         SetState(Up_Failed);
         return 0;
     }
-    if (fromSupabase) FetchSupabaseNews(latest);
+    if (fromSupabase) FetchSupabaseNews(latest, target.test ? std::string(okay::testbuild::kArea) + "/" + okay::testbuild::kNotesName : std::string("NOTES.txt"));
     g_upLatest = latest;
     // Mirror the release notes into the update dialog's changelog ("What's new in
     // v<latest>"), only when they are that version's: the GitHub release can be
@@ -1072,7 +1133,9 @@ int RunUpdateCheck(void*) {
       SetUpChangelog(nv == latest || nv == "v" + latest ? nl : std::string()); }
 
     fs::path dir(g_exeDir);
-    bool newer = !latest.empty() && CompareVersions(local, latest) < 0;   // installed < published
+    // "newer" = this check CHANGES the installed version: a newer release or test build (installed < published), or the one deliberate way back from a
+    // test build to the newest normal release (target.goBack). Every gate below (keep the current editor, replace the launcher, prune) follows it.
+    bool newer = !latest.empty() && (CompareVersions(local, latest) < 0 || target.goBack);
     SetUpVers(local, latest);
 
     // Only ever download a STRICTLY newer published version. Never "self-heal" by
@@ -1108,7 +1171,7 @@ int RunUpdateCheck(void*) {
     const int kSteps = 3;
     // versions.json lists the size and SHA-256 of every file and the update REQUIRES them: no index, no entry for this version or a
     // file without a checksum is a refusal with a reason (never "skip the check"). See launcher/UpdaterCore.hpp.
-    const okayversions::Index vindex = okayversions::LoadIndex(VersionSources(), FetchTextFile);
+    const okayversions::Index vindex = target.test ? target.devIndex : okayversions::LoadIndex(VersionSources(), FetchTextFile);
     const okayversions::Entry* ventry = vindex.ok ? vindex.Find(latest) : nullptr;
     auto checkFor = [&](const char* name) -> const okayversions::FileInfo* {
         if (!ventry) return nullptr;
@@ -1205,6 +1268,14 @@ int RunUpdateCheck(void*) {
 
     if (ok) {
         std::ofstream(dir / "VERSION.txt") << latest << "\n";
+        if (target.test) {   // which test build is installed, for About (a hint for the person, nothing depends on it)
+            okay::testbuild::Marker m;
+            m.version = latest;
+            if (ventry) { m.branch = ventry->branch; m.sha = ventry->sha; m.note = ventry->note; }
+            okay::testbuild::WriteMarker(dir, m);
+        } else if (newer) {
+            okay::testbuild::RemoveMarker(dir);   // a normal release replaced it
+        }
         g_upRelaunchNeeded = launcherOk;
         if (launcherOk) RecordSelfUpdate(local, latest, true, "");
         // The kept copies beyond "Keep previous versions: N" go (never the LTS line's newest installed patch, never the default editor).
@@ -1218,7 +1289,7 @@ int RunUpdateCheck(void*) {
         SetUpStep(launcherOk ? "Update complete — restart to finish"
                              : "Update complete", kSteps, kSteps);
         SetUpMsg((launcherOk
-            ? "Updated to v" + latest + " — restart the launcher to finish."
+            ? "Updated to v" + latest + okay::testbuild::Suffix(latest) + " — restart the launcher to finish."
             : (newer ? "Updated engine & player to v" + latest + "."
                      : "Downloaded the missing runtime (v" + local + ").")) + (keepNote.empty() ? std::string() : " " + keepNote));
         SetState(Up_Updated);
@@ -1244,7 +1315,19 @@ void StartUpdateCheck(bool showDialog = true) {
     if (showDialog) g_upModalOpen = true;   // UI opens the rich update dialog
     if (g_upThread) { SDL_WaitThread(g_upThread, nullptr); g_upThread = nullptr; }
     g_upSettings = okayversions::GlobalSettings();   // (a snapshot: the worker never reads what the Settings page can change)
+    g_upGoBackNow = g_upGoBack;
     g_upThread = SDL_CreateThread(RunUpdateCheck, "okay-update", nullptr);
+}
+
+// "Go back to the stable version" (Settings > Behavior, while a test build is installed): the same updater installs the newest normal release over the
+// test build, with the same checksum, stage, swap, self-check and rollback rules. Never while the editor is open (it replaces the editor too).
+void StartGoBackToStable() {
+    const UpState s = GetState();
+    if (s == Up_Checking || s == Up_Downloading) { Toast("An update check is running. Try again when it has finished.", 1); return; }
+    if (EditorRunning()) { Toast("Close the editor first: going back replaces its files.", 2); return; }
+    g_upGoBack = true;
+    StartUpdateCheck(true);
+    for (const UpState stale : {Up_Idle, Up_UpToDate, Up_Failed, Up_Updated}) SDL_AtomicCAS(&g_upState, (int)stale, (int)Up_Checking);   // (so no frame sees the last check's answer and drops the request)
 }
 
 // ---- Start-up update screen (Steam-like) -------------------------------------
@@ -1343,17 +1426,20 @@ static void StartupUpdateFrame() {
 // after start, every 5 minutes, and when the window regains focus); a newer
 // version raises a toast + notification and the sidebar offers "Install now".
 std::string g_upAvailable;                 // newer published version ("" = none known)
+std::string g_upAvailableTitle;            // "Test build of walk-vs-run (abc1234)" when g_upAvailable is a test build ("" = a normal release)
 static bool g_launcherRefocused = false;   // window came back into focus: look for updates
 static SDL_mutex* g_upPollMutex = nullptr;
 static std::string g_upPollResult;         // (guarded)
+static std::string g_upPollTitle;          // (guarded) the test build's title, when the poll found one
 static bool g_upPollDone = false;          // (guarded)
 static volatile bool g_upPollBusy = false;
 static okayversions::Settings g_pollSettings;   // (copied when the poll starts)
 static int UpdatePollWorker(void*) {
     std::string base; bool fromSupabase = false;
-    const std::string latest = ResolveTarget(g_pollSettings, base, fromSupabase).version;   // by channel; "" = nothing to offer in place
+    const UpdateTarget target = ResolveTarget(g_pollSettings, base, fromSupabase);   // by channel; "" = nothing to offer in place
+    const std::string& latest = target.version;
     SDL_LockMutex(g_upPollMutex);
-    g_upPollResult = latest; g_upPollDone = true;
+    g_upPollResult = latest; g_upPollTitle = target.test ? target.title : std::string(); g_upPollDone = true;
     SDL_UnlockMutex(g_upPollMutex);
     g_upPollBusy = false;
     return 0;
@@ -2229,6 +2315,11 @@ void RemoveNotif(const std::string& key) {
 // The editor's crash handler writes okay_crashlog.txt beside the editor; the launcher
 // shows them in Settings > Crash reports and raises one notification per new crash.
 std::vector<okaycrash::Report> g_crashes;   // newest first
+bool g_crashUpload = true;   // send crash reports automatically (Settings > Crash reports; ON unless the person turns it off; OKAY_CRASH_UPLOAD=0 overrides it)
+bool g_crashNoticeSeen = false;   // the one-time notice (what is sent, that it becomes a public GitHub issue, how to turn it off) has been shown and answered; saved as crash_notice=1
+static bool g_crashNoticeReq = false;   // the pump asks the main loop to show that notice; nothing is sent before it has been answered
+static const char* const kCrashRepo = "kingimann/OkaySpaceGameEngine";   // where "Report on GitHub" opens a new issue
+static bool CrashUploadOn() { return okaycrash::upload::Enabled(g_crashUpload, std::getenv("OKAY_CRASH_UPLOAD")); }
 static fs::path CrashDir() {
     std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
     if (const char* dev = std::getenv("OKAY_CRASH_DIR")) return fs::path(dev);   // (dev/test: another folder)
@@ -3357,7 +3448,7 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
         d->AddLine(P(20, 6), P(20, 13), col, th); d->AddLine(P(20, 27), P(20, 34), col, th);
         d->AddLine(P(6, 20), P(13, 20), col, th); d->AddLine(P(27, 20), P(34, 20), col, th);
         d->AddCircleFilled(P(20, 20), 1.6f * k, col, 8);
-    } else if (t == "Third Person" || t == "Humanoid") {
+    } else if (t == "Third Person") {
         person(20, 21, 1.15f);
         if (t == "Third Person") { d->PathArcTo(P(20, 33), 13 * k, 3.6f, 5.8f, 16); d->PathStroke(col, 0, th * 0.8f); }
     } else if (t == "Third Person Shooter") {
@@ -3385,26 +3476,9 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
         d->AddRect(P(8, 8), P(32, 32), col, 3 * k, 0, th);
         d->AddLine(P(20, 8), P(20, 17), col, th); d->AddLine(P(8, 22), P(16, 22), col, th);
         d->AddCircleFilled(P(25, 26), 3 * k, col, 12);
-    } else if (t == "Coin Collector") {
-        d->AddCircle(P(17, 22), 8 * k, col, 20, th); d->AddCircle(P(17, 22), 4.5f * k, col, 16, th * 0.8f);
-        d->AddCircle(P(27, 13), 5 * k, col, 16, th);
-    } else if (t == "Snake") {
-        const ImVec2 sn[] = {P(7, 30), P(7, 22), P(18, 22), P(18, 14), P(30, 14), P(30, 8)};
-        d->AddPolyline(sn, 6, col, 0, th * 1.8f);
-        d->AddCircleFilled(P(30, 30), 2.6f * k, col, 10);
-    } else if (t == "Brick Breaker") {
-        d->AddRect(P(8, 8), P(16, 12), col, 1.0f * k, 0, th * 0.8f);
-        d->AddRect(P(18, 8), P(26, 12), col, 1.0f * k, 0, th * 0.8f);
-        d->AddRect(P(12, 14), P(20, 18), col, 1.0f * k, 0, th * 0.8f);
-        d->AddCircleFilled(P(20, 26), 2.2f * k, col, 10);
-        d->AddLine(P(12, 33), P(28, 33), col, th * 1.4f);
     } else if (t == "Main Menu") {
         d->AddRect(P(9, 7), P(31, 33), col, 3 * k, 0, th);
         for (int i = 0; i < 3; ++i) d->AddRect(P(13, 12 + i * 7), P(27, 16.5f + i * 7), col, 2 * k, 0, th * 0.8f);
-    } else if (t == "Inventory") {
-        for (int y = 0; y < 3; ++y) for (int x = 0; x < 3; ++x)
-            d->AddRect(P(8 + x * 8.5f, 8 + y * 8.5f), P(14.5f + x * 8.5f, 14.5f + y * 8.5f), col, 1.5f * k, 0, th * 0.8f);
-        d->AddRectFilled(P(17, 17), P(22.5f, 22.5f), col, 1.5f * k);
     } else if (t == "Multiplayer") {
         person(13, 22, 0.95f); person(27, 22, 0.95f);
         d->AddLine(P(17, 9), P(23, 9), col, th); d->AddLine(P(21, 7), P(23, 9), col, th);
@@ -3424,8 +3498,7 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
 
 // A wide illustrated preview for a template card: a small scene, not a letter tile.
 static void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2 b) {
-    const bool flat = title.find("2D") != std::string::npos || title == "Platformer" || title == "Snake"
-        || title == "Brick Breaker" || title == "Main Menu" || title == "Inventory";
+    const bool flat = title.find("2D") != std::string::npos || title == "Platformer" || title == "Main Menu";
     const bool empty = title == "Empty";
     ImU32 sky = empty ? IM_COL32(38, 40, 48, 255) : flat ? IM_COL32(36, 48, 86, 255) : IM_COL32(92, 148, 206, 255);
     ImU32 ground = empty ? IM_COL32(28, 30, 36, 255) : flat ? IM_COL32(22, 28, 48, 255) : IM_COL32(168, 132, 96, 255);
@@ -4631,6 +4704,8 @@ void LoadPrefs() {
         else if (k == "official_auto_update") g_officialAutoUpdate = (v != "0");
         else if (k == "anticheat") g_antiCheatMode = (int)okayac::ParseMode(v);
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
+        else if (k == "crash_upload") g_crashUpload = (v != "0");
+        else if (k == "crash_notice") g_crashNoticeSeen = (v == "1");
         else if (k == "link_previews") g_linkPreviews = (v != "0");
         else if (k == "voice_speed") g_voiceSpeed = std::clamp(std::atoi(v.c_str()), 0, 2);
         else if (k == "tenor_key") g_tenorKey = v;
@@ -4749,6 +4824,8 @@ void SavePrefs() {
     f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
     if (g_antiCheatMode) f << "anticheat=" << okayac::ModeName(okayac::Mode(g_antiCheatMode)) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
+    f << "crash_upload=" << (g_crashUpload ? 1 : 0) << "\n";
+    f << "crash_notice=" << (g_crashNoticeSeen ? 1 : 0) << "\n";
     f << "voice_speed=" << g_voiceSpeed << "\n";
     f << "link_previews=" << (g_linkPreviews ? 1 : 0) << "\n";
     if (!g_tenorKey.empty()) f << "tenor_key=" << g_tenorKey << "\n";
@@ -5837,6 +5914,106 @@ static void PumpPrivacy(okay::account::AccountService& account) {
     g_privDirty = false; retryAt = 0; g_privBusy = true;
     if (SDL_Thread* t = SDL_CreateThread(PrivacyWorker, "okay-privacy", job)) SDL_DetachThread(t);
     else { g_privBusy = false; g_privDirty = true; delete job; }
+}
+// ---- Sending crash reports (docs/crash_reports.md, shared/CrashUpload.hpp) ----
+// A new report in okay_crashlog.txt is scrubbed and sent as one row of the Supabase table crash_reports by a worker thread. The rules (the
+// Settings switch and OKAY_CRASH_UPLOAD=0, at most 5 a day, never twice, retry after a pause, 64 KB, the notice before the first send, the anon key may only insert) are
+// shared/CrashUpload.hpp's and are tested there; this part only runs them. The sent / refused ids are kept in okay_crash_sent.txt next to
+// the reports. State is touched on the UI thread only; the worker hands its answer over under g_crashUpMutex.
+static std::string g_crashUpNote;                        // the last result, one plain sentence, shown on the Crash reports page
+static volatile bool g_crashUpBusy = false;
+static SDL_mutex* g_crashUpMutex = nullptr;
+struct CrashUpJob { std::vector<okaycrash::Report> reports; std::string ledgerPath; okaycrash::ScrubContext ctx; std::string nowLocal; };
+struct CrashUpResult { bool ready = false; std::string note; int sent = 0; };
+static CrashUpResult g_crashUpRes;
+static bool g_crashUpResetSince = false;                 // the switch was just turned on: only crashes from now on are sent (the pump records the moment)
+static std::string LocalNowText() {                      // "2026-11-15 12:00:00", local time: the format the editor writes in a report's When line
+    const std::time_t t = std::time(nullptr);
+    char b[32] = "";
+    if (const std::tm* lt = std::localtime(&t)) std::strftime(b, sizeof(b), "%Y-%m-%d %H:%M:%S", lt);
+    return b;
+}
+static int CrashUploadWorker(void* p) {
+    std::unique_ptr<CrashUpJob> j(static_cast<CrashUpJob*>(p));
+    CrashUpResult res;
+    try {
+        okaycrash::upload::Ledger ledger;
+        okaycrash::upload::LoadLedger(j->ledgerPath, ledger);
+        if (!okaycrash::upload::SaveLedger(j->ledgerPath, ledger)) {   // cannot remember what was sent = would send twice: send nothing
+            res.note = "Crash reports were not sent: the launcher cannot write okay_crash_sent.txt next to the editor.";
+        } else {
+            okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+            auto send = [&](const okaycrash::upload::Request& q) {
+                okaycrash::upload::Reply r;
+                const auto resp = a.ApiAnon(q.path, q.method, q.body, q.header);   // the public key only: the table accepts inserts from it and nothing else
+                r.reached = resp.reached; r.status = resp.status; r.body = resp.body;
+                return r;
+            };
+            okaycrash::upload::Options o;
+            o.now = (long)std::time(nullptr);
+            o.nowLocal = j->nowLocal;
+            const okaycrash::upload::Result out = okaycrash::upload::Run(j->reports, ledger, send, j->ctx, o);
+            if (out.changedLedger && !okaycrash::upload::SaveLedger(j->ledgerPath, ledger))
+                res.note = "Sent, but could not save okay_crash_sent.txt (the same report may be sent again).";
+            else res.note = out.note;
+            res.sent = out.sent + out.duplicates;
+        }
+    } catch (...) { res.note = "Could not send crash reports."; }
+    SDL_LockMutex(g_crashUpMutex); g_crashUpRes = std::move(res); g_crashUpRes.ready = true; SDL_UnlockMutex(g_crashUpMutex);
+    g_crashUpBusy = false;
+    return 0;
+}
+static void PumpCrashUpload() {
+    if (!g_crashUpMutex) g_crashUpMutex = SDL_CreateMutex();
+    SDL_LockMutex(g_crashUpMutex);
+    if (g_crashUpRes.ready) {
+        g_crashUpNote = g_crashUpRes.note;
+        if (g_crashUpRes.sent > 0) Toast("Crash report sent. Thank you.", 1);
+        g_crashUpRes = CrashUpResult();
+    }
+    SDL_UnlockMutex(g_crashUpMutex);
+    static Uint32 next = 0;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (g_crashUpBusy || (now < next && !g_crashUpResetSince)) return;
+    next = now + 20000;   // a look every 20 seconds is plenty
+    const fs::path dir = CrashDir();
+    if (dir.empty()) return;
+    std::error_code ec;
+    {   // The ledger follows the switch: the first run on this computer (no ledger yet) and the switch just turned on both start "from now"; while sending is off
+        // (the Settings switch or OKAY_CRASH_UPLOAD=0) the ledger is marked paused, and the first look after it comes back on moves "since" to now. Reports from
+        // before that moment are never sent.
+        const std::string ledgerFile = (dir / okaycrash::upload::kLedgerName).string();
+        okaycrash::upload::Ledger l;
+        okaycrash::upload::LoadLedger(ledgerFile, l);   // (what was already sent is kept)
+        const std::string nowText = LocalNowText();
+        bool changed = false;
+        if (g_crashUpResetSince || !fs::exists(ledgerFile, ec)) { l.SetSince(nowText); l.SetPaused(false); changed = true; }
+        if (okaycrash::upload::FollowSwitch(l, CrashUploadOn(), nowText)) changed = true;
+        if (changed) okaycrash::upload::SaveLedger(ledgerFile, l);
+        g_crashUpResetSince = false;
+    }
+    if (!CrashUploadOn() || g_pollCfgDir.empty() || g_crashes.empty()) return;
+    const fs::path hist = fs::exists(dir / "okay_crashlog.txt", ec) ? dir / "okay_crashlog.txt" : dir / "okay_crash.txt";
+    const auto age = fs::file_time_type::clock::now() - fs::last_write_time(hist, ec);
+    if (ec || age < std::chrono::seconds(15)) return;   // let the editor finish writing (and, on Windows, naming the frames) first
+    okaycrash::upload::Ledger ledger;
+    okaycrash::upload::LoadLedger((dir / okaycrash::upload::kLedgerName).string(), ledger);
+    okaycrash::upload::Options o;
+    o.now = (long)std::time(nullptr);
+    if (ledger.Paused() || ledger.RetryAfter() > o.now) return;
+    switch (okaycrash::upload::NextStep(CrashUploadOn(), g_crashNoticeSeen, okaycrash::upload::Pending(g_crashes, ledger, o).size())) {
+        case okaycrash::upload::Step::Idle: return;
+        case okaycrash::upload::Step::ShowNotice: g_crashNoticeReq = true; return;   // the main loop shows the notice; the first report goes after it has been answered
+        case okaycrash::upload::Step::Send: break;
+    }
+    auto* job = new CrashUpJob;
+    job->reports = g_crashes;
+    job->ledgerPath = (dir / okaycrash::upload::kLedgerName).string();
+    job->ctx = okaycrash::LocalContext();
+    job->nowLocal = LocalNowText();
+    g_crashUpBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(CrashUploadWorker, "okay-crashup", job)) SDL_DetachThread(t);
+    else { g_crashUpBusy = false; delete job; }
 }
 static SDL_mutex*  g_chatMutex = nullptr;
 static SDL_Thread* g_chatThread = nullptr;
@@ -18072,13 +18249,9 @@ int main(int argc, char** argv) {
     const Template templates[] = {
         {"Platformer",     "Side-scrolling jump-and-run starter.",  "Platformer"},
         {"Top-Down",       "Top-down movement and rooms.",          "Top-Down"},
-        {"Coin Collector", "A complete pickup-the-coins game.",     "Coin Collector"},
         {"Main Menu (UI)", "A title screen with buttons.",          "Main Menu"},
-        {"Snake",          "The classic, fully playable.",          "Snake"},
-        {"Brick Breaker",  "Paddle, ball, and a wall of bricks.",   "Brick Breaker"},
         {"First Person",   "FPS character: mouse-look, WASD, jump.", "First Person"},
         {"Third Person",   "Orbit-camera character controller.",    "Third Person"},
-        {"Inventory",      "Drag & drop item grid.",                "Inventory"},
         {"Multiplayer",    "Host / join networked starter.",        "Multiplayer"},
     };
 
@@ -18109,6 +18282,9 @@ int main(int argc, char** argv) {
     // would otherwise knock the launcher offline — only an http(s) URL counts.
     if (serverUrl.rfind("http", 0) != 0) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
     if (apiKey.empty())                  apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
+    if (serverUrl.empty())
+        std::fprintf(stderr, "[account] No account server is set in this build, so online features (sign-in, friends, marketplace, updates) are off. "
+                             "Put the server address in account_server.txt next to the launcher or set OKAY_ACCOUNT_SERVER (and OKAY_ACCOUNT_API_KEY).\n");
     // Where the emailed reset link should land (docs/password-reset.md). Empty = none set up.
     std::string resetUrl = fromEnvOrFile("OKAY_PASSWORD_RESET_URL", "password_reset_url.txt");
 #ifdef OKAY_DEFAULT_PASSWORD_RESET_URL
@@ -18425,24 +18601,32 @@ int main(int argc, char** argv) {
                 lastPoll = okay::platform::TicksMs32();
                 if (us != Up_Checking && us != Up_Downloading && us != Up_Updated) StartUpdatePoll();
             }
-            std::string latest; bool done = false;
+            std::string latest, latestTitle; bool done = false;
             if (g_upPollMutex) {
                 SDL_LockMutex(g_upPollMutex);
-                if (g_upPollDone) { done = true; latest = g_upPollResult; g_upPollDone = false; }
+                if (g_upPollDone) { done = true; latest = g_upPollResult; latestTitle = g_upPollTitle; g_upPollDone = false; }
                 SDL_UnlockMutex(g_upPollMutex);
             }
             if (done && !latest.empty() && CompareVersions(LocalVersion(), latest) < 0 && latest != g_upAvailable) {
                 g_upAvailable = latest;
-                Toast("Update available: OkaySpace v" + latest, 1);
-                UpsertNotif("update:" + latest, "Update available",
-                            "OkaySpace v" + latest + " is ready. Install it from the sidebar.", 3, -1);
+                g_upAvailableTitle = okay::testbuild::IsTestVersion(latest) ? (latestTitle.empty() ? std::string("Test build") : latestTitle) : std::string();
+                if (g_upAvailableTitle.empty()) {
+                    Toast("Update available: OkaySpace v" + latest, 1);
+                    UpsertNotif("update:" + latest, "Update available",
+                                "OkaySpace v" + latest + " is ready. Install it from the sidebar.", 3, -1);
+                } else {   // a test build (the person switched "Get test builds" on): say what it is, in the words of the notes
+                    Toast(g_upAvailableTitle + " is ready (v" + latest + ")", 1);
+                    UpsertNotif("update:" + latest, "Test build available",
+                                g_upAvailableTitle + " (v" + latest + ") is ready. It can be broken. Install it from the sidebar.", 3, -1);
+                }
 #if SDL_VERSION_ATLEAST(2, 0, 16)
                 if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_INPUT_FOCUS)) != SDL_WINDOW_INPUT_FOCUS)
                     SDL_FlashWindow(window, SDL_FLASH_UNTIL_FOCUSED);   // taskbar attention while minimized/unfocused
 #endif
             }
             if (us == Up_Updated || us == Up_UpToDate) {   // a real check/install supersedes the hint
-                if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) g_upAvailable.clear();
+                if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) { g_upAvailable.clear(); g_upAvailableTitle.clear(); }
+                g_upGoBack = false;   // the way back is done (or there was nothing to go back from)
             }
         }
 
@@ -18513,6 +18697,30 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndPopup();
             }
+        }
+
+        // ---- Crash reports: the one-time notice (shared/CrashUpload.hpp NoticeText) ----
+        // Sending is on by default, so before the FIRST report leaves this computer the person is told, once, what is sent, that it becomes a public
+        // GitHub issue and how to turn it off. Nothing is sent until this has been answered (the pump waits for g_crashNoticeSeen).
+        // (It opens when no other popup is open, so it never fights another dialog for the screen; until then nothing is sent.)
+        if (g_crashNoticeReq && !g_crashNoticeSeen && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) ImGui::OpenPopup("Crash reports##notice");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Crash reports##notice", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::TextUnformatted(okaycrash::upload::NoticeTitle());
+            ImGui::Dummy(ImVec2(0, 4));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 540.0f);
+            ImGui::TextWrapped("%s", okaycrash::upload::NoticeText().c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(0, 8));
+            if (ImGui::Button("OK, keep sending", ImVec2(180, 32))) {
+                g_crashNoticeSeen = true; g_crashNoticeReq = false; SavePrefs(); ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Turn it off", ImVec2(140, 32))) {
+                g_crashUpload = false; g_crashNoticeSeen = true; g_crashNoticeReq = false; g_crashUpNote.clear(); SavePrefs(); ImGui::CloseCurrentPopup();
+                Toast("Crash reports will not be sent. They stay on this computer.", 1);
+            }
+            ImGui::EndPopup();
         }
 
         // ---- "Close the editor first" (exit / update while the editor is open) ----
@@ -18614,6 +18822,7 @@ int main(int argc, char** argv) {
                     else
                         ImGui::TextDisabled("Installed: v%s", fromV.c_str());
                 }
+                if (const std::string tag = GetUpTag(); !tag.empty()) ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.35f, 1.0f), "%s", tag.c_str());   // test build / the way back
                 ImGui::EndGroup();
                 ImGui::Dummy(ImVec2(0, 6));
                 ImGui::Separator();
@@ -18712,6 +18921,7 @@ int main(int argc, char** argv) {
                     if (ImGui::Button("Retry", ImVec2(130, 34))) StartUpdateCheck();
                     ImGui::SameLine();
                     if (ImGui::Button("Close", ImVec2(110, 34))) {
+                        g_upGoBack = false;   // a failed way back is not tried again by the next ordinary check
                         g_upModalOpen = false; ImGui::CloseCurrentPopup();
                     }
                 } else if (busy) {
@@ -19082,6 +19292,7 @@ int main(int argc, char** argv) {
         PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
         PumpBlocks(account);
         PumpPrivacy(account);
+        PumpCrashUpload();
         PumpAcMyBans(account.IsLoggedIn() && account.IsOnline());
         PumpTicketPreflight();
         PumpTokenRefresh(account);
@@ -19217,7 +19428,8 @@ int main(int argc, char** argv) {
                 float tx = br.x + 10.0f;
                 dl->AddText(ImVec2(tx, lp.y - 1.0f), navTextHi, "OkaySpace");
                 // Version doubles as a "check for updates" link.
-                const char* ver = "v" OKAY_ENGINE_VERSION;
+                static const std::string kNavVer = std::string("v" OKAY_ENGINE_VERSION) + (okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION) ? " test" : "");
+                const char* ver = kNavVer.c_str();
                 float fs = ImGui::GetFontSize() * 0.82f;
                 ImVec2 vsz = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, 0.0f, ver);
                 ImVec2 vp(tx, lp.y + S - vsz.y);
@@ -19295,12 +19507,12 @@ int main(int argc, char** argv) {
             const char* head = (st == Up_Downloading) ? "Updating\xE2\x80\xA6"
                              : (st == Up_Checking)    ? "Checking for updates\xE2\x80\xA6"
                              : (st == Up_Updated)     ? "Update installed"
-                             : upAvail                ? "Update available"
+                             : upAvail                ? (g_upAvailableTitle.empty() ? "Update available" : "Test build available")
                                                       : "Update failed";
             ImU32 tone = upAvail ? IM_COL32(110, 205, 140, 255)
                        : (st == Up_Failed) ? IM_COL32(240, 120, 120, 255)
                        : (st == Up_Updated) ? IM_COL32(110, 205, 140, 255) : navAccent;
-            std::string upMsg = upAvail ? "v" + g_upAvailable + " is ready" : GetUpMsg();
+            std::string upMsg = upAvail ? (g_upAvailableTitle.empty() ? "v" + g_upAvailable + " is ready" : g_upAvailableTitle + " is ready") : GetUpMsg();
             if (upNote && g_navCollapsed) {
                 ImVec2 mn = ImGui::GetCursorScreenPos();
                 float w = ImGui::GetContentRegionAvail().x;
@@ -20352,9 +20564,10 @@ int main(int argc, char** argv) {
                 const ImVec2 top = ImGui::GetCursorPos();
                 const float bw = 160.0f;
                 ImGui::SetWindowFontScale(1.12f);
-                ImGui::Text("You're on v%s", OKAY_ENGINE_VERSION);
+                ImGui::Text("You're on v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
                 ImGui::SetWindowFontScale(1.0f);
-                if (avail) ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "v%s is ready to install.", g_upAvailable.c_str());
+                if (avail) ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "%s is ready to install.",
+                                              (g_upAvailableTitle.empty() ? "v" + g_upAvailable : g_upAvailableTitle + " (v" + g_upAvailable + ")").c_str());
                 else if (busy) ImGui::TextDisabled("%s", GetUpMsg().empty() ? "Checking for updates\xE2\x80\xA6" : GetUpMsg().c_str());
                 else if (us == Up_Updated) ImGui::TextColored(ImVec4(0.45f, 0.82f, 0.56f, 1.0f), "Update installed.");
                 else if (us == Up_Failed) ImGui::TextColored(ImVec4(0.94f, 0.50f, 0.50f, 1.0f), "%s", GetUpMsg().c_str());
@@ -22821,6 +23034,31 @@ int main(int argc, char** argv) {
                         okayversionsui::DrawChannelCombo(VersionsHost(), std::min(w, 260.0f));
                     });
                     rowDivider();
+                    // Test builds (docs/release_channels.md "Test builds"): off by default. While it is off the launcher never looks at the test builds' folder.
+                    settingRow("Get test builds", "Also get builds made for testing, before they are released. They can be broken. Switch this off to stop getting them; "
+                                                  "the Latest channel only (the long-term-support channel never gets test builds).", 40.0f, 22.0f, [&](float) {
+                        okayversions::Settings& vs = okayversions::GlobalSettings();
+                        if (ToggleSwitch("##testbuilds", &vs.testBuilds)) {
+                            SavePrefs();
+                            g_upAvailable.clear(); g_upAvailableTitle.clear(); g_launcherRefocused = true;   // look again now, on the new setting
+                            const bool onTest = okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION);
+                            Toast(vs.testBuilds ? "Test builds are on. They can be broken. Switch this off here to stop getting them."
+                                  : onTest ? "Test builds are off. You are still on a test build: press Go back to the stable version below when you want the normal release."
+                                           : "Test builds are off. Nothing new will be offered.", vs.testBuilds ? 2 : 1);
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Test builds are made from a branch before it is released.\nThey can be broken. Switch this off to stop getting them.");
+                    });
+                    rowDivider();
+                    if (okay::testbuild::IsTestVersion(OKAY_ENGINE_VERSION)) {   // this program IS a test build: say which one, and offer the way back
+                        static const std::string runningTitle = okay::testbuild::RunningTitle(OKAY_ENGINE_VERSION, okay::testbuild::ReadMarker(fs::path(g_exeDir)));   // (fixed for this run)
+                        const bool testsOn = okayversions::GlobalSettings().testBuilds;
+                        settingRow(runningTitle.c_str(), testsOn ? "You are running a test build. Switch Get test builds off above, then you can go back to the newest normal release here."
+                                                                  : "You are running a test build and will not be offered more. Go back to the newest normal release whenever you like.",
+                                   testsOn ? 40.0f : 230.0f, testsOn ? 22.0f : 30.0f, [&](float) {
+                            if (!testsOn && ImGui::Button("Go back to the stable version", ImVec2(230, 30))) StartGoBackToStable();
+                        });
+                        rowDivider();
+                    }
                     settingRow("Other versions of the editor", "Keep older editors next to this one and open each project with the version it was made with.", 150.0f, 30.0f, [&](float) {
                         if (ImGui::Button("Manage versions", ImVec2(150, 30))) { tab = 15; g_lastTab = 15; }
                     });
@@ -22918,6 +23156,35 @@ int main(int argc, char** argv) {
                     RefreshCrashes(ImGui::IsWindowAppearing());
                     static int crashOpen = -1;          // expanded report (index), -1 = none
                     const fs::path crashDir = CrashDir();
+                    static int crashView = 0;           // what an expanded report shows: 0 = the report, 1 = what would be sent (scrubbed)
+                    static okaycrash::upload::Ledger crashLedger; static Uint32 crashLedgerAt = 0;
+                    if (ImGui::IsWindowAppearing() || okay::platform::TicksMs32() - crashLedgerAt > 2000) {   // what was already sent (a small file beside the reports)
+                        if (!crashDir.empty()) okaycrash::upload::LoadLedger((crashDir / okaycrash::upload::kLedgerName).string(), crashLedger);
+                        crashLedgerAt = okay::platform::TicksMs32();
+                    }
+                    cardBegin("##sc_crashsend", "SENDING CRASH REPORTS");
+                    settingRow("Send crash reports automatically", okaycrash::upload::DisclosureLine(), 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##crashup", &g_crashUpload)) {
+                            SavePrefs();
+                            g_crashUpNote.clear();
+                            if (g_crashUpload) g_crashUpResetSince = true;   // turned on: only crashes from now on are sent, not the ones from while it was off
+                        }
+                    });
+                    {
+                        const std::string status = okaycrash::upload::StatusLine(g_crashUpload, std::getenv("OKAY_CRASH_UPLOAD"));
+                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::PushStyleColor(ImGuiCol_Text, cDim);
+                        ImGui::TextWrapped("%s", status.c_str());
+                        if (!g_crashUpNote.empty()) ImGui::TextWrapped("%s", g_crashUpNote.c_str());
+                        ImGui::PopStyleColor();
+                    }
+                    rowDivider();
+                    settingRow("Preview what would be sent", "The exact text of the newest report after names, folders, emails and addresses are removed. Looking sends nothing.", 130.0f, 30.0f, [&](float) {
+                        ImGui::BeginDisabled(g_crashes.empty());
+                        if (ImGui::Button("Preview", ImVec2(130, 30))) { crashOpen = 0; crashView = 1; }
+                        ImGui::EndDisabled();
+                    });
+                    cardEnd();
                     cardBegin("##sc_crash", "EDITOR CRASHES");
                     {
                         char sum[96];
@@ -22966,6 +23233,14 @@ int main(int argc, char** argv) {
                         std::string meta = r.when.empty() ? std::string("Unknown time") : r.when;
                         if (!r.version.empty()) meta += "  \xC2\xB7  v" + r.version;
                         if (i == 0) meta += "  \xC2\xB7  latest";
+                        {   // was it sent?
+                            const std::string id = okaycrash::upload::ReportId(r);
+                            const bool older = !crashLedger.Since().empty() && (!okaycrash::upload::LooksLikeWhen(r.when) || r.when < crashLedger.Since());
+                            meta += "  \xC2\xB7  ";
+                            meta += crashLedger.Sent(id) ? "sent" : crashLedger.Refused(id) ? "not sent (the server refused it)"
+                                  : older ? "not sent (from before sending was switched on)"
+                                  : CrashUploadOn() ? "waiting to be sent" : "not sent (sending is off)";
+                        }
                         dl->AddText(ImVec2(tx, p.y + 22), cDim, meta.c_str());
                         ImGui::Dummy(ImVec2(w, 44));
                         if (!r.lastStep.empty()) {
@@ -22983,21 +23258,48 @@ int main(int argc, char** argv) {
                         }
                         ImGui::Dummy(ImVec2(0, 4));
                         const bool open = crashOpen == i;
-                        if (ImGui::Button(open ? "Hide details" : "Details", ImVec2(110, 28))) crashOpen = open ? -1 : i;
+                        const bool showDetails = open && crashView == 0, showPreview = open && crashView == 1;
+                        if (ImGui::Button(showDetails ? "Hide details" : "Details", ImVec2(110, 28))) { crashOpen = showDetails ? -1 : i; crashView = 0; }
                         ImGui::SameLine();
                         if (ImGui::Button("Copy report", ImVec2(110, 28))) {
                             ImGui::SetClipboardText(r.text.c_str());
                             Toast("Crash report copied", 1);
                         }
+                        ImGui::SameLine();
+                        if (ImGui::Button(showPreview ? "Hide preview" : "What would be sent", ImVec2(150, 28))) { crashOpen = showPreview ? -1 : i; crashView = 1; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The report as it would be sent: names, folders, emails and addresses removed.");
                         if (r.frames > 0) {
                             ImGui::SameLine();
                             ImGui::AlignTextToFramePadding();
                             ImGui::TextDisabled("%d stack frame%s", r.frames, r.frames == 1 ? "" : "s");
                         }
+                        // The fallback with no server: a new GitHub issue with the (scrubbed) report filled in, for the person to read and submit.
+                        if (ImGui::Button("Report on GitHub", ImVec2(150, 28))) {
+                            const okaycrash::ScrubContext sc = okaycrash::LocalContext();
+                            ImGui::SetClipboardText(okaycrash::Scrub(r.text, sc).c_str());   // the whole scrubbed report: a web address cannot carry it all
+                            bool cut = false;
+                            OpenExternal(okaycrash::upload::IssueUrl(kCrashRepo, r, sc, 3900, &cut));   // (OpenExternal refuses an address over 4096 bytes)
+                            Toast(cut ? "GitHub opened. The full report is on your clipboard: paste it into the issue."
+                                      : "GitHub opened with the report filled in. The full text is on your clipboard too.", 1);
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Opens a new GitHub issue with the report filled in (personal details removed). You read it and press Submit yourself.");
                         if (open) {
                             ImGui::Dummy(ImVec2(0, 4));
                             static std::string shown;   // InputTextMultiline needs a mutable buffer
-                            shown = r.text;
+                            if (crashView == 1) {   // what would be sent: rebuilt only when another report (or the switch) is chosen
+                                static std::string pvKey, pvText;
+                                const std::string key = r.id + (CrashUploadOn() ? "1" : "0") + g_pollUrl;
+                                if (pvKey != key) {
+                                    const okaycrash::upload::Payload pl = okaycrash::upload::BuildPayload(r, okaycrash::LocalContext());
+                                    std::string host = g_pollUrl;
+                                    if (const std::size_t sch = host.find("://"); sch != std::string::npos) host = host.substr(sch + 3);
+                                    host = host.substr(0, host.find('/'));
+                                    pvText = pl.ok ? okaycrash::upload::PreviewText(pl, host) : "This report cannot be sent (" + pl.error + "). It stays on this computer.";
+                                    if (!CrashUploadOn()) pvText = "Sending is OFF, so this is NOT being sent. It is what would be sent if you turned it on.\n\n" + pvText;
+                                    pvKey = key;
+                                }
+                                shown = pvText;
+                            } else shown = r.text;
                             ImGui::PushStyleColor(ImGuiCol_FrameBg, okaytheme::kSunken);
                             ImGui::InputTextMultiline("##crashtext", shown.data(), shown.size() + 1, ImVec2(-1, 240),
                                                       ImGuiInputTextFlags_ReadOnly);
@@ -23083,8 +23385,11 @@ int main(int argc, char** argv) {
                         ImGui::SetWindowFontScale(1.2f);
                         dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, p.y + 2), cText, "OkaySpace Engine");
                         ImGui::SetWindowFontScale(1.0f);
-                        dl->AddText(ImVec2(tx, p.y + 26), ImGui::GetColorU32(accLt), "Version " OKAY_ENGINE_VERSION);
-                        dl->AddText(ImVec2(tx, p.y + 44), cDim, FitText("A small C++ game engine.", tr - tx).c_str());
+                        dl->AddText(ImVec2(tx, p.y + 26), ImGui::GetColorU32(accLt), (std::string("Version " OKAY_ENGINE_VERSION) + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());
+                        {   // a test build says which one it is instead of the tagline
+                            static const std::string aboutTest = okay::testbuild::RunningTitle(OKAY_ENGINE_VERSION, okay::testbuild::ReadMarker(fs::path(g_exeDir)));   // (fixed for this run)
+                            dl->AddText(ImVec2(tx, p.y + 44), aboutTest.empty() ? cDim : IM_COL32(240, 190, 90, 255), FitText(aboutTest.empty() ? std::string("A small C++ game engine.") : aboutTest, tr - tx).c_str());
+                        }
                         // Check for updates (+ live status underneath).
                         const UpState us = GetState();
                         const bool busy = (us == Up_Checking || us == Up_Downloading);
@@ -23123,7 +23428,7 @@ int main(int argc, char** argv) {
                     rowDivider();
                     settingRow("Version info", "Copy the version for bug reports.", 96.0f, 30.0f, [&](float) {
                         if (ImGui::Button("Copy", ImVec2(96, 30))) {
-                            ImGui::SetClipboardText("OkaySpace v" OKAY_ENGINE_VERSION);
+                            ImGui::SetClipboardText((std::string("OkaySpace v" OKAY_ENGINE_VERSION) + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());
                             Toast("Version copied", 1);
                         }
                     });
@@ -23148,7 +23453,7 @@ int main(int argc, char** argv) {
                 if (doReset) {
                     g_accentIndex = 0; g_themeIndex = 0; g_uiScale = 1.0f;
                     g_updateOnLaunch = true; g_officialAutoUpdate = true; g_playSort = 0; g_antiCheatMode = 0;
-                    { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); }   // update settings (the versions themselves stay)
+                    { okayversions::Settings& vs = okayversions::GlobalSettings(); vs.channel = okayversions::Channel::Latest; vs.keepPrevious = okayversions::kDefaultKeepPrevious; vs.defaultEditor.clear(); vs.testBuilds = false; }   // update settings (the versions themselves stay)
                     ImGui::GetIO().FontGlobalScale = g_uiScale;
                     ApplyAccent(g_accentIndex);   // re-applies theme + accent
                     SavePrefs();
@@ -26739,7 +27044,7 @@ int main(int argc, char** argv) {
             float fy = ImGui::GetWindowHeight() - 38.0f;
             if (fy > ImGui::GetCursorPosY()) ImGui::SetCursorPosY(fy);
             ImGui::Separator();
-            ImGui::TextDisabled("OkaySpace v%s", OKAY_ENGINE_VERSION);
+            ImGui::TextDisabled("OkaySpace v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("  -  ");
             ImGui::SameLine();

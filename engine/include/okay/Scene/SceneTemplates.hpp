@@ -63,6 +63,7 @@
 #include "okay/Components/ProceduralObjectHolding.hpp"
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Components/ItemPickup.hpp"
+#include "okay/Components/RangedWeapon.hpp"
 #include "okay/Components/HoldPrompt.hpp"
 
 namespace okay {
@@ -343,6 +344,9 @@ inline void WireCharacterIK(GameObject* player, Character* pc) {
     fik->hipLimit = IKJointLimit::Hip(); fik->kneeLimit = IKJointLimit::Knee();
     auto* rm = player->AddComponent<RootMotion>();
     rm->rootNode = T(0);
+    // The scene file keeps the hips by NAME (the rig itself is rebuilt on load), so a pointer alone is lost on the first
+    // save and reopen: Foot IK finds its bones again by path, root motion only by this name.
+    if (Transform* hips = T(0)) if (hips->gameObject) rm->rootNodeName = hips->gameObject->name;
     rm->mode = (int)RootMotion::Mode::Disabled;
 }
 
@@ -548,6 +552,10 @@ inline void Humanoid(Scene& scene) {
         s->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
     }
 
+    // The camera goes in BEFORE the player. The player's part rig (generated objects the scene file leaves out) then comes last
+    // in the scene, so the file's object numbers have no gap after it: a scene with the rig and the same scene reloaded
+    // (rig not rebuilt yet) save the same text, and Play then Stop does not make the project read as changed.
+    EnsureMainCamera(scene);
     AddHumanoidPlayer(scene, {0, 1.0f, 0});   // rig + capsule + camera + foot IK, wired
 }
 
@@ -583,7 +591,7 @@ inline void ThirdPersonShooter(Scene& scene) {
         c->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Static;
     }
 
-    // A row of red "targets" downrange to aim at.
+    // A row of red "targets" downrange to aim at. They take damage, disappear when shot to pieces and come back.
     for (int i = 0; i < 5; ++i) {
         GameObject* t = scene.CreateGameObject("Target");
         t->transform->localPosition = {(float)(i - 2) * 2.5f, 1.0f, -12.0f};
@@ -592,6 +600,9 @@ inline void ThirdPersonShooter(Scene& scene) {
         mr->color = Color::FromBytes(200, 70, 60);
         mr->emissive = Color::FromBytes(60, 10, 10);
         t->AddComponent<SphereCollider3D>();
+        auto* hp = t->AddComponent<HealthStat>();
+        hp->maxHealth = hp->health = 50.0f;
+        hp->respawn = true; hp->respawnDelay = 3.0f;
     }
 
     GameObject* player = scene.CreateGameObject("Player");
@@ -605,6 +616,18 @@ inline void ThirdPersonShooter(Scene& scene) {
         col->offset = {0.0f, 0.9f, 0.0f};
     }
     player->AddComponent<ThirdPersonShooterController>();
+
+    // The gun. The shooter controller only aims and announces a shot (on_fire for a script); a Ranged Weapon is what
+    // fires. It fires along its own +Z while the player faces -Z, so it is turned round, and it sits 0.6 m ahead of
+    // the player so the shot does not start inside the player's own collider. Hold the left mouse button to fire.
+    GameObject* gun = scene.CreateGameObject("Gun");
+    gun->transform->SetParent(player->transform, false);
+    gun->transform->localPosition = {0.0f, 0.0f, -0.6f};
+    gun->transform->localRotation = Quat::Euler({0.0f, 180.0f, 0.0f});
+    auto* rw = gun->AddComponent<RangedWeapon>();
+    rw->damage = 20.0f; rw->fireRate = 6.0f; rw->range = 80.0f;
+    rw->magazine = 12; rw->reserve = -1; rw->reloadTime = 1.2f;   // 12 rounds, R reloads, spare rounds never run out
+    rw->muzzleHeight = 1.4f;                                     // chest height
 
     GameObject* camObj = scene.CreateGameObject("Main Camera");
     auto* cam = camObj->AddComponent<Camera>();
@@ -735,6 +758,12 @@ inline void TopDown(Scene& scene) {
     GameObject* player = scene.CreateGameObject("Player");
     auto* psr = player->AddComponent<SpriteRenderer>();
     psr->color = Color::FromBytes(230, 120, 90);
+    // A body that collides: the controller drives this Rigidbody2D's velocity (without one it just moves the Transform
+    // and walks through everything). No gravity: the view is from above.
+    auto* prb = player->AddComponent<Rigidbody2D>();
+    prb->bodyType = Rigidbody2D::BodyType::Dynamic;
+    prb->gravityScale = 0.0f;
+    player->AddComponent<BoxCollider2D>();
     // Native, full-featured top-down movement (momentum + sprint + dash + facing) —
     // no script needed. Shift to sprint, Space to dash.
     auto* tdc = player->AddComponent<TopDownController2D>();
@@ -748,6 +777,8 @@ inline void TopDown(Scene& scene) {
         auto* wsr = wall->AddComponent<SpriteRenderer>();
         wsr->color = Color::FromBytes(110, 110, 130);
         wsr->size = {1, 4};
+        wall->AddComponent<BoxCollider2D>()->size = {1, 4};   // solid: the player stops at it
+        wall->AddComponent<Rigidbody2D>()->bodyType = Rigidbody2D::BodyType::Static;
     }
 }
 
@@ -1209,10 +1240,12 @@ inline void CoinCollector(Scene& scene) {
     }
 }
 
-/// A main-menu scene: a background panel, a title, and a Start button that loads
-/// the game scene on click. Shows how UI + scripting + scene-loading fit
-/// together. (The Start button loads "game.okayscene" — build your game to that
-/// name, or change the path.)
+/// A main-menu scene: a background panel, a title, a Start button, a volume slider,
+/// a fullscreen toggle, a quality dropdown and a Quit button. Start hides the menu
+/// and shows the "Game" object (a stand-in with a Back button), so the menu works the
+/// moment the project is made: the button never points at a scene that is not there.
+/// To load a real level instead, change the Start button's script to
+/// load_scene("<path of your scene file>").
 inline void MainMenu(Scene& scene) {
     scene.Clear();
     scene.SetName("Main Menu");
@@ -1268,13 +1301,13 @@ inline void MainMenu(Scene& scene) {
     b->cornerRadius = 10.0f;
     b->fontScale = 3.0f;
     start->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "# Start: hide the menu and show the game part of this scene (the Game object).\n"
+        "# To load a level from a file instead: load_scene(\"<path of your scene file>\");\n"
         "function on_click() {\n"
-        "  print(\"Start: loading game.okayscene\");\n"
-        "  load_scene(\"game.okayscene\");\n"
-        "  print(\"If the menu is still here, this project has no game.okayscene. Save your game under that name, or point the Start button at your scene.\");\n"
         "  set_active_of(\"Panel\", 0);\n"
+        "  set_active_of(\"Game\", 1);\n"
         "}\n");
-    start->AddComponent<UITooltip>()->text = "Load game.okayscene";
+    start->AddComponent<UITooltip>()->text = "Hide the menu and show the Game object";
     start->transform->SetParent(panel->transform, false);
 
     GameObject* vol = scene.CreateGameObject("Volume");
@@ -1310,6 +1343,35 @@ inline void MainMenu(Scene& scene) {
     quit->AddComponent<ScriptComponent>("okayscript")->LoadSource(
         "function on_click() { print(\"Quit\"); quit(); }\n");
     quit->transform->SetParent(panel->transform, false);
+
+    // The game part: what Start shows. It begins hidden. Put your game here, or point Start at a scene file.
+    GameObject* game = scene.CreateGameObject("Game");
+    game->transform->SetParent(canvas->transform, false);
+    game->active = false;
+    GameObject* gameLabel = scene.CreateGameObject("GameLabel");
+    auto* gl = gameLabel->AddComponent<TextRenderer>();
+    gl->text = "Your game starts here";
+    gl->screenSpace = true;
+    gl->anchor = UIAnchor::Center;
+    gl->screenPos = {0, -50};
+    gl->size = {440, 56};
+    gl->align = 1;
+    gl->pixelSize = 4.0f;
+    gl->outline = true;
+    gameLabel->transform->SetParent(game->transform, false);
+    GameObject* back = scene.CreateGameObject("BackButton");
+    auto* bb = back->AddComponent<UIButton>();
+    bb->label = "Back to menu";
+    bb->anchor = UIAnchor::Center;
+    bb->position = {0, 40};
+    bb->size = {260, 48};
+    bb->cornerRadius = 10.0f;
+    back->AddComponent<ScriptComponent>("okayscript")->LoadSource(
+        "function on_click() {\n"
+        "  set_active_of(\"Game\", 0);\n"
+        "  set_active_of(\"Panel\", 1);\n"
+        "}\n");
+    back->transform->SetParent(game->transform, false);
 }
 
 /// A ready-made survival inventory on the real components: a 2D top-down Player
@@ -1654,7 +1716,11 @@ inline void TerrainSandbox(Scene& scene) {
 /// animated water, a first-person player with full voxel collision (you stand on
 /// the ground and in caves, not fall through), and a pause menu. Left mouse digs,
 /// right mouse fills, Space jumps, Esc pauses.
-inline void VoxelSandbox(Scene& scene) {
+/// `grid` sizes the voxel field (cells along X, Y and Z); the default 72 x 44 x 72 is the owner's Sandbox. A bigger grid
+/// is the same scene on a bigger hill (examples/voxel/voxel_big_world.okayscene is 128 x 56 x 128: the digging frame
+/// rate matters much more there).
+inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
+                         float hillHeight = 9.0f, unsigned seed = 2024u) {
     scene.Clear();
     scene.SetName("Sandbox");
 
@@ -1673,9 +1739,13 @@ inline void VoxelSandbox(Scene& scene) {
     // The single terrain: a voxel field with rolling hills and a cave network.
     GameObject* ground = scene.CreateGameObject("Terrain");
     auto* vox = ground->AddComponent<VoxelTerrain>();
-    vox->Resize(72, 44, 72);
+    vox->Resize(gridX, gridY, gridZ);
     vox->voxelSize = 1.5f;
-    vox->Generate(0.55f, 9.0f, 0.0f, 2024u);   // solid hills — NO pre-cut caves; dig your own
+    vox->Generate(0.55f, hillHeight, 0.0f, seed);   // solid hills — NO pre-cut caves; dig your own
+    // A scene file stores each density as one byte. Round the field to that now, so the terrain in memory is exactly what
+    // a save and reopen gives back (otherwise the first Play and Stop, or the first reopen, changes the terrain's text
+    // and the editor asks to save a scene nobody changed).
+    vox->DecodeDensity(vox->EncodeDensity());
     vox->Apply();
     auto* dig = ground->AddComponent<VoxelDigger>();
     dig->radius = 3.0f; dig->strength = 10.0f;   // left = dig, right = add (defaults)
@@ -1778,6 +1848,9 @@ inline void VoxelSandbox(Scene& scene) {
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();
 }
+/// The Sandbox at its default size. A separate overload (not default arguments) so `&Templates::VoxelSandbox` still converts to `void (*)(Scene&)`,
+/// which the template table and several tests rely on.
+inline void VoxelSandbox(Scene& scene) { VoxelSandbox(scene, 72, 44, 72); }
 
 } // namespace Templates
 

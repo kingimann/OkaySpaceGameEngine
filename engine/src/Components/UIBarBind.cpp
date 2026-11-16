@@ -2,6 +2,7 @@
 #include "okay/Components/UIProgressBar.hpp"
 #include "okay/Components/UIRadialProgress.hpp"
 #include "okay/Components/ActionList.hpp"
+#include "okay/Components/UIOwnerData.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/VisualScript/VsVariables.hpp"
 #include "okay/Core/Prefs.hpp"
@@ -16,7 +17,18 @@ void UIBarBind::Apply() {
     // Actions variable, then a saved Prefs value.
     float value = 0.0f;
     bool found = false;
-    if (auto* vs = gameObject->GetComponent<VisualScriptComponent>()) {
+    // "owner.healthFrac" and friends: the character this bar belongs to; with no owner, the global variable of that name.
+    std::string var = this->var;
+    if (uiowner::IsOwnerKey(var)) {
+        if (uiowner::Find(gameObject)) {
+            // An owner that lacks this data leaves the bar as it is (never the player's value on another character).
+            std::string text; bool isNum = false;
+            if (!uiowner::Lookup(gameObject, var, text, value, isNum) || !isNum) return;
+            found = true;
+        }
+        var = var.substr(6);
+    }
+    if (auto* vs = found ? nullptr : gameObject->GetComponent<VisualScriptComponent>()) {
         auto it = vs->Variables().find(var);
         if (it != vs->Variables().end() && it->second.IsNumber()) { value = it->second.AsFloat(); found = true; }
     }

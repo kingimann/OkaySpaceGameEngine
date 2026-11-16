@@ -12,6 +12,7 @@
 #include "okay/Physics/ColliderFit.hpp"
 #include "okay/Scene/ClearSpawn.hpp"
 #include "okay/Core/FrameOverlay.hpp"
+#include "okay/Components/PlayerDebug.hpp"
 #include "okay/Core/TimerDebug.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include <map>
@@ -542,6 +543,9 @@ void EditorState::NewScene() {
     okay::filedialog::CancelBuiltin();   // a queued dialog may hold a pointer into the cleared scene (#732)
     m_scene.Clear();
     m_scene.SetName("Untitled");
+    // New scenes use the Improved physics (stacks stand, bodies sleep together, fast bodies stop at walls); a scene loaded
+    // from a file keeps what the file says, and an old file without the setting stays Classic.
+    m_scene.physics().quality = m_scene.physics3D().quality = okay::PhysicsQuality::Improved;
     // Every scene starts with a Main Camera so a fresh/empty scene can
     // render and Play right away. Templates Clear() the scene and add their own, so
     // this never doubles up.
@@ -1233,7 +1237,10 @@ bool EditorState::RunFrames(int frames, float frameSeconds) {
 }
 
 std::vector<std::string> EditorState::PerfLines() const {
-    return m_playing ? FrameOverlay::Lines(m_loop) : std::vector<std::string>();
+    if (!m_playing) return std::vector<std::string>();
+    std::vector<std::string> lines = FrameOverlay::Lines(m_loop);
+    for (const std::string& l : PlayerDebug::Lines(m_scene)) lines.push_back(l);   // the local player's ground, slope and speed
+    return lines;
 }
 
 std::vector<std::string> EditorState::SceneLines(int maxComponentTypes) const {

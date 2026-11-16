@@ -296,24 +296,24 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **What:** After a crash or a killed editor, offer the last autosave, and keep a record of what crashed.
 - **Parts:**
   - 22.3.1 Recover Autosave prompt - `editor/main.cpp` - opening a scene that has a newer `.autosave` shows "Recover Autosave"
-  - 22.3.2 Crash handlers and breadcrumbs - `editor/main.cpp` - Windows exception filter and a Linux/macOS signal handler write `okay_crash.txt` and append `okay_crashlog.txt`; `OKAY_TRACE` records the last step
+  - 22.3.2 Crash handlers and breadcrumbs - `shared/CrashHandler.hpp`, `shared/CrashContext.hpp`, `editor/main.cpp`, `editor/ConsolePanel.cpp` - Windows exception filter (x64 unwind from the fault, dbghelp names in a second pass), `std::terminate` and abort hooks, Linux/macOS signal handlers on their own stack; write `okay_crash.txt` and append `okay_crashlog.txt` with OS, CPU, RAM, GPU, scene name, the last 64 steps, the last 200 Console lines and a backtrace; `OKAY_BREADCRUMB` records the trail; `OKAY_TEST_CRASH` / `OKAY_TEST_CRASH_LATE` crash on purpose
   - 22.3.3 Crash Log tab and launcher page - `editor/main.cpp`, `shared/CrashReports.hpp`, `launcher/main.cpp` - View > Crash Log; Settings > Crash reports in the launcher with a notification per new crash
   - 22.3.4 Unclean-shutdown detection (#572) - `Core/Recovery`, `editor/main.cpp` - a killed editor leaves its lock; the next start offers Restore, Compare or Discard and keeps the copy until one of those is chosen
-- **Code:** `editor/main.cpp`, `shared/CrashReports.hpp`, `launcher/main.cpp`, `Core/Recovery`
-- **API:** `OKAY_TRACE`, `okaycrash::ParseLog`, `okaycrash::Load`; `RecoveryManager::FindRecoverable`, `Restore`, `Discard`
+- **Code:** `editor/main.cpp`, `shared/CrashHandler.hpp`, `shared/CrashContext.hpp`, `shared/CrashReports.hpp`, `launcher/main.cpp`, `Core/Recovery`
+- **API:** `OKAY_BREADCRUMB`, `okaycrash::handler::Install`, `okaycrash::ctx::Breadcrumb`, `okaycrash::ParseLog`, `okaycrash::Load`; `RecoveryManager::FindRecoverable`, `Restore`, `Discard`
 - **Editor:** "Recover Autosave" dialog, View > Crash Log
-- **Docs:** `docs/editor.md`, `docs/launcher-multiplayer.md`
-- **Tests:** `crash_reports`; `recovery`
-- **Status:** Partial - the editor offers recovered graphs, scripts and the scene after a kill (`DrawDocRecoveryPopup`); the player still has no crash handler of its own.
-- **Exists today:** All of Parts 22.3.1-22.3.3 are used by the editor; 22.3.4 exists only as engine code. The recover popup compares the autosave with the scene; the reports are plain text with version, last step, exception and backtrace.
+- **Docs:** `docs/crash_reports.md`, `docs/editor.md`, `docs/launcher-multiplayer.md`
+- **Tests:** `crash_reports`; `crash_context`; `crash_handler`; `recovery`
+- **Status:** Partial - the editor offers recovered graphs, scripts and the scene after a kill (`DrawDocRecoveryPopup`) and writes detailed crash reports that the launcher can send (17.16); the player still has no crash handler of its own.
+- **Exists today:** All of Parts 22.3.1-22.3.3 are used by the editor; 22.3.4 exists only as engine code. The recover popup compares the autosave with the scene; the reports are plain text with version, build, last step, exception, system and graphics details, the trail of steps, the Console and a backtrace.
 - **Work packages:**
   1. M - Recovery dialog lists every recoverable session (`FindRecoverable`) with time and size, restore or discard. Depends on: 22.2 package 1.
   2. S - Mark the editor session in the recovery folder so a crash is detected on next start (not just on opening the same scene). Depends on: 22.2 package 1.
   3. M - Crash handler in the player that writes a report next to the game and offers "open report folder". Depends on: 48 proposal (crash reporting).
   4. S - Recover prompt also covers script and graph buffers. Depends on: 22.2 package 4.
-- **Open:** the report format is only parsed by the launcher; no upload; the player has no handler.
+- **Open:** the player has no handler; the Windows handler has never run on a real Windows machine (compiled with MinGW only); a stripped release gives offsets and mangled names, not file and line (docs/crash_reports.md). Sending is in 17.16 and 48.1.
 - **Related:** 22.2, 22.4, 15.9, 17.1, 48.1
-- **Words:** crash recovery, Recover Autosave, crash log, okay_crash.txt, okay_crashlog.txt, OKAY_TRACE, unclean shutdown, crash reports
+- **Words:** crash recovery, Recover Autosave, crash log, okay_crash.txt, okay_crashlog.txt, OKAY_BREADCRUMB, OKAY_TEST_CRASH, OKAY_TEST_CRASH_LATE, OKAY_CRASH_DIR, unclean shutdown, crash reports
 - **Seen as:** editor closed by itself and I want my scene back; "OkaySpace crashed" box; launcher says the editor crashed
 - **Ask me like:** "list every recoverable autosave after a crash"; "add a crash handler to the player"
 
@@ -559,7 +559,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/editor.md`, `docs/making_a_game.md`
 - **Tests:** `templates`, `humanoid_template`, `ui_templates`
 - **Status:** Works - creating a project from a template is used daily (read in `launcher/main.cpp`).
-- **Exists today:** 22 template cards (3D Scene, 2D Scene, Empty, First Person, Third Person, Third Person Shooter, Platformer, Top-Down, Top-Down Shooter, 2.5D Platformer, Point and Click, three Vehicles (3D, get in and drive, 2D), Sandbox, Multiplayer, Coin Collector, Snake, Brick Breaker, Main Menu, Inventory, Humanoid). No user-made templates.
+- **Exists today:** 17 template cards (3D Scene, 2D Scene, Empty, First Person, Third Person, Third Person Shooter, Platformer, Top-Down, Top-Down Shooter, 2.5D Platformer, Point and Click, three Vehicles (3D, get in and drive, 2D), Sandbox, Multiplayer, Main Menu); Coin Collector, Snake, Brick Breaker, Inventory and Humanoid were removed from the list on 2026-11-16 (their builders stay). No user-made templates.
 - **Work packages:**
   1. M - "Save project as template" copies a project minus caches into a template folder the Create page lists. Depends on: 25.2.
   2. S - Template metadata file (name, description, engine version, thumbnail). Depends on: package 1.

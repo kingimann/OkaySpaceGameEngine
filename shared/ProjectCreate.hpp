@@ -131,17 +131,12 @@ inline const std::vector<TemplateInfo>& Templates() {
         {"Top-Down Shooter",     "Twin-stick 3D shooter: mouse aim, dash, ammo.", 2},
         {"2.5D Platformer",      "Side view with depth layers and grabbing.", 2},
         {"Point & Click",        "Click-to-move adventure starter.", 2},
-        {"Vehicle (3D)",         "A drivable car with suspension.", 2},
+        {"Vehicle (3D)",         "A drivable arcade car. Suspension is one switch away.", 2},
         {"Vehicle (get in and drive)", "Walk to a car, press E, drive, get out.", 2},
-        {"Vehicle (2D)",         "A side-on car for hill-climb games.", 2},
-        {"Sandbox",              "Place and break blocks in a voxel world.", 2},
+        {"Vehicle (2D)",         "A top-down car with grip and drifting.", 2},
+        {"Sandbox",              "Dig and fill smooth terrain in a voxel world.", 2},
         {"Multiplayer",          "Host / join networked starter.", 3},
-        {"Coin Collector",       "A complete pickup-the-coins game.", 3},
-        {"Snake",                "The classic, fully playable.", 3},
-        {"Brick Breaker",        "Paddle, ball, and a wall of bricks.", 3},
         {"Main Menu",            "A title screen with buttons.", 3},
-        {"Inventory",            "Drag-and-drop item grid.", 3},
-        {"Humanoid",             "A rigged character to animate.", 3},
     };
     return t;
 }
@@ -419,17 +414,12 @@ inline void TemplateFeatureLines(const char* title, const char*& a, const char*&
         {"Top-Down Shooter", "Mouse aim", "Dash", "Ammo"},
         {"2.5D Platformer", "Side view", "Depth layers", "Grab"},
         {"Point & Click", "Click to move", "Adventure starter", "A character"},
-        {"Vehicle (3D)", "A drivable car", "Suspension", "3D road space"},
+        {"Vehicle (3D)", "A drivable car", "Optional suspension", "3D road space"},
         {"Vehicle (get in and drive)", "Walk up, press E", "Driver and passenger seats", "A player on foot"},
-        {"Vehicle (2D)", "Side-on car", "Hill-climb style", "2D track"},
-        {"Sandbox", "Place blocks", "Break blocks", "A voxel world"},
+        {"Vehicle (2D)", "Top-down car", "Grip and drifting", "Cones to weave around"},
+        {"Sandbox", "Dig with left mouse", "Fill with right mouse", "A voxel world"},
         {"Multiplayer", "Host a game", "Join a game", "A networked starter"},
-        {"Coin Collector", "Playable game", "Pickup coins", "A small level"},
-        {"Snake", "Playable game", "The classic rules", "A board"},
-        {"Brick Breaker", "Paddle", "Ball", "A wall of bricks"},
         {"Main Menu", "Title screen", "Buttons", "A place to start"},
-        {"Inventory", "Item grid", "Drag and drop", "A sample bag"},
-        {"Humanoid", "A rigged character", "Ready to animate", "A place to stand"},
     };
     a = b = c = "";
     for (const Row& r : rows) if (title && std::strcmp(title, r.title) == 0) { a = r.a; b = r.b; c = r.c; return; }

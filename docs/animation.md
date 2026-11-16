@@ -315,6 +315,18 @@ body really moves over the ground**:
   land on the forefoot and kick the heel up behind before the knee drives
   through. Arms swing against the legs, wider and with more elbow bend the
   faster you go; the chest leans into speed and the head stays level.
+- **A walk is a walk and a run is a run.** The legs follow how fast the body
+  really moves, the way a person's do: a walk of about 80 steps a minute at a
+  stroll up to about 130 at 2 m/s (a foot always on the ground, the ankle
+  rolling over the planted foot), a jog blending in between 2.4 and 3.4 m/s,
+  and a run of 160 steps a minute at 2.5 m/s rising to about 190 at 6, with
+  both feet leaving the ground. What the legs show does not depend on the
+  controller's settings: a controller whose "walk" is 4.5 m/s shows the jog
+  it really is. The First Person, Third Person and Third Person Shooter
+  controllers start at walk 2.0 and run 5.5 m/s (shooter 5.0). The Inspector's
+  **Use natural walk and run speeds** button moves an older project to them.
+  The measured before and after, the targets and the way back
+  (`OKAY_OLD_GAIT=1`) are in [walk_vs_run.md](walk_vs_run.md).
 - **Strafing and backpedalling.** The hips and legs turn toward the travel
   direction (up to 75°, the chest keeps facing forward) and side-step the
   rest; travelling backwards steps backwards.
@@ -781,11 +793,13 @@ idle. Every locomotion slot is filled on its own:
   per slot (walk 1.4, run 4.0, crouch walk 0.9, crawl 0.5). The Walk and
   Run Thresholds still work: they cap where idle turns into walk and walk
   into run.
-- **Move speeds follow the clips.** The controllers' default 4.5 m/s walk
-  is a jog, which a 1.4 m/s walk clip can't show. When a model with its own
-  Walk (and Run) clip is attached, a Walk Speed or Run Speed still at the
-  default is set to what the clip can show (about 2.0 and 5.0 m/s), so W
-  plays the walk and Shift the run. This covers the Third Person, Third
+- **Move speeds follow the clips.** The controllers used to start at a 4.5 m/s
+  "walk", a jog, which a 1.4 m/s walk clip can't show; they now start at 2.0
+  and 5.5 m/s (walk and run). When a model with its own Walk (and Run) clip
+  is attached, a Walk Speed or Run Speed still at the default (or at one of
+  the old defaults 4.5, 8.0 and 7.5 that a scene saved earlier spells out) is
+  set to what the clip can show (about 2.0 and 5.0 m/s), so W plays the walk
+  and Shift the run. This covers the Third Person, Third
   Person Shooter, First Person, Click To Move, Top Down, Top Down Shooter
   and Platformer 2.5D controllers (each against its own defaults). A speed
   you changed yourself is kept, and the fitted values are remembered while
@@ -850,7 +864,7 @@ select it and Add Component > Mesh Collider 3D).
 
 ## Tips
 
-- **Meshy / Mixamo FBX**: animations import via Assimp. For the richest
+- **Meshy / Mixamo FBX**: animations import through the built-in FBX reader (ufbx; our own reader when `OKAY_OWN_FBX=1`). For the richest
   results (full skins + all takes) prefer the **GLB** export when available.
 - **Materials import too**: albedo, normal, specular/gloss and AO maps
   (external files or FBX-embedded), plus diffuse/emissive colors and

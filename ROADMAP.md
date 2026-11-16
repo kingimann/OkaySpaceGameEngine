@@ -10,6 +10,11 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.880.0 | File > Examples now opens the example scenes in the Windows release (#939); a normal-looking first-person arm with presets and an example scene (#938); guided modeling fixes: no more settings lag, environment and props designs, finer detail, motorcycle rework, character styles, hairstyles, clothes and an animation-ready skeleton (#935, #945); modeler: operators keep UVs, colours and slots, mirror/snapping/undo fixes, slot remove and reorder (#948); sandbox fps fix after digging (#941); five old templates removed from the create-project lists (#940); the Supabase address and key moved out of CMake into `config/public-account.json` and dist programs no longer committed (#947) |
+| 2.879.0 | Guided modeling inside the existing modeler: Fences, Architecture, Vehicles and Characters with swappable parts, your own templates, a Low-to-Ultra Detail slider, randomise with a seed and a model check (#929, #934); modeler upgrades: material slots, Repair Mesh, vertex colours, creases and bevel weights, a quick toolbar and Ctrl+K palette, hide and drag-select, spin and path and curve tools, measuring and snapping, reference images (#932) |
+| 2.878.0 | Walk and run speeds and gait that read as walking and running (#928); voxel terrain without the dig frame-rate drop, plus real-life digging options (#927); Improved physics quality, slider joint, debug view, debris pool (#930); test builds channel (#926); every template and example tested (#919); nameplates and rich world text (#923) |
+| 2.876.0 | Editor menu bar cleaned up (one Examples submenu, Edit clipboard commands, GameObject categories, Help items, reasons on greyed items) and richer Hierarchy right-click menus (#917) |
+| 2.877.0 | Visual Script Add Node menu sorted into 14 foldable sections and 70 topics (#918); one shared inflate decoder instead of three (#913); Project panel right-click menus (#921); detailed crash reports (#920) |
 | 2.875.0 | Launcher: a template card now opens the New Project wizard instead of making a project on click (#908); "Remove from list" and "Delete project" fixed and tested (#909); start-up update check on by default (#864); own readers TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, PMX, LWS, all off by default, none of them in the OKAY_OWN_STACK list, no sample files yet (SIB has no reader, NDO only a header check) (#889); WAV seam for launcher sound clips, off by default (#905); examples shipped in the download and a plain how-to-try-it guide (#887); collaboration tooling and verification checklists (#906, #891, #890); Console Collapse button (#910); OBJ face-index overflow fix and OkayUI float-cast fixes (#907); vehicles: sit pose, camera takeover, wheels that roll and steer, stale-driver fixes (#911); one SHA-256 (#912); UI Notify freeze fixed (#916) |
 | 2.874.0 | Vehicle Seat component and a test car scene (#876); first person head bob follows Reduce Motion (#877); a lone controller re-saves stably (#874, was in 2.873.0); UI Dropdown drag scrolling (#880); shared audio clips and skipped unchanged nav bake at Play start (#882); navmesh from Mesh Collider triangles with limits (#879); OBJ texture path hardening (#881); own readers Q3D and RAW off by default (#878) |
 | 2.873.0 | Turn interpolation fix: a character turned by game code keeps its physics position and the game rotation under fixed-step physics (#861). Own readers MDC, HMP, CSM (#873) and Terragen, and the own WAV decoder, ship off by default. Live work board on GitHub (#872) |
@@ -122,16 +127,18 @@ _Last updated: 2026-11-13 17:55 UTC_
 2. [x] Host-key pinning can't be skipped by a plaintext Welcome, Reject or Kicked (#352).
 3. [x] Hit claims need a known weapon and are rate-limited (#353).
 4. [x] The hit origin isn't taken from positions the client can bank (#355).
-5. [ ] Bans enforced when a join ticket is issued; no service_role key for game servers (Release).
-6. [ ] Tickets bound to one server, one client key and one connection.
+5. [x] Bans enforced when a join ticket is issued; no service_role key for game servers (Release). Code on main; the Edge function and SQL are not deployed yet (waits on Iman).
+6. [x] Tickets bound to one server, one client key and one connection. Code on main; the Edge function and SQL are not deployed yet (waits on Iman).
 7. [x] Relay hellos need a cookie; caps per destination (Release) (#357). The live relay needs redeploying to get it; launcher voice calls still send old hellos, legacy hellos are now off by default (#733); `--legacy-hello=on` re-allows them.
-8. [ ] Budgets and strikes survive a reconnect; rejoin cooldown after a kick.
-9. [ ] Join checks: encryption first, rate-limited password and sign-in checks.
-10. [ ] SyncVar, message and spawn limits.
+8. [x] Budgets and strikes survive a reconnect; rejoin cooldown after a kick.
+9. [x] Join checks: encryption first, rate-limited password and sign-in checks.
+10. [x] SyncVar, message and spawn limits.
 11. [x] Unowned world objects belong to the server (#372).
-12. [ ] Lag-compensation inputs the client can't stretch.
-13. [ ] Safer defaults and a config that fails closed.
-14. [ ] Small fixes (self-unban, trusted server reports, pings, press intervals, CI key check).
+12. [x] Lag-compensation inputs the client can't stretch.
+13. [x] Safer defaults and a config that fails closed.
+14. [x] Small fixes (self-unban, trusted server reports, pings, press intervals, CI key check).
+
+Follow-up on `claude/anticheat-1` (status table: `docs/anticheat_hardening_status.md`): a ban list file, a local audit log, a packet ceiling for every message type, a bot / macro (input regularity) detector, a cheat simulator (`--server --cheat-sim`) and a typed hostile-field fuzz test.
 
 ## Waiting on Iman
 
@@ -145,4 +152,4 @@ _Last updated: 2026-11-13 17:55 UTC_
 ## Later
 
 - Split the largest source files (editor, launcher, OkayScript VM).
-- Own-stack rollout (`docs/own_stack_rollout.md`): the `OKAY_OWN_STACK` dogfood switch and startup stack line are in (proposed for 2.871.0); next proposed steps are own readers FBX, COLLADA, 3DS and BVH to default on (2.872.0, owner approval), own HTTP opt-in for Linux builds (2.874.0), the player on the own platform backend (2.877.0). Every flip needs the owner's written approval; crypto waits for the outside review.
+- Own-stack rollout (`docs/own_stack_rollout.md`): the `OKAY_OWN_STACK` dogfood switch and startup stack line shipped in 2.871.0. The release numbers that were proposed here (own readers FBX, COLLADA, 3DS and BVH to default on in 2.872.0, own HTTP opt-in in 2.874.0, the player on the own platform backend in 2.877.0) did not happen: those releases shipped other work. The current proposal, one group of flips per release with a checklist for each and what blocks deleting each library, is `docs/own_flip_proposal.md` (2026-11-15). Every flip needs the owner's written approval; crypto stays on libsodium (CLAUDE.md rule 18).

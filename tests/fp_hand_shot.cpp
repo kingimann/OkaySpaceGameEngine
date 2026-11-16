@@ -71,7 +71,57 @@ void Render(Raster& r, Scene& sc, const Mat4& vp, const Vec3& eye, const GameObj
 struct Case { const char* name; };
 }
 
+// examples/fp_hand/fp_hand_test.okayscene: the First Person starter's player, a small mirror
+// (a second camera that looks back at you), things to pick up, and text saying what to look for.
+// Written with the scene writer: fp_hand_shot --scene <out.okayscene>
+int WriteExampleScene(const char* path) {
+    Scene sc("FP Hand Test");
+    BuildWorld(sc);
+    GameObject* player = Templates::AddFirstPersonPlayer(sc, {0, 0.05f, 0});
+    Templates::AddTemplateHoldables(sc, player);
+    auto prop = [&](const char* name, Vec3 pos, Vec3 scale, Color col, bool two) {
+        GameObject* g = sc.CreateGameObject(name);
+        g->transform->localPosition = pos;
+        g->transform->localScale = scale;
+        auto* mr = g->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(1.0f);
+        mr->color = col;
+        g->AddComponent<BoxCollider3D>();
+        g->AddComponent<Rigidbody3D>()->bodyType = Rigidbody3D::BodyType::Dynamic;
+        auto* ho = g->AddComponent<HoldableObject>();
+        if (two) { ho->ApplyPreset(HoldableObject::Preset::CarryFront); ho->weight = 3.0f; }
+        else { ho->ApplyPreset(HoldableObject::Preset::OneHandRight); ho->weight = 0.3f; }
+        auto* pk = g->AddComponent<ItemPickup>();
+        pk->item = name; pk->holdInHands = true; pk->interactKey = 'e';
+        pk->pickupOnTouch = false; pk->autoRadius = 0.0f; pk->interactRange = 3.0f;
+    };
+    prop("Tiny Cube", {-0.5f, 0.1f, -2.4f}, {0.12f, 0.12f, 0.12f}, Color::FromBytes(220, 80, 80), false);
+    prop("Medium Block", {1.6f, 0.2f, -2.2f}, {0.4f, 0.4f, 0.4f}, Color::FromBytes(90, 150, 220), false);
+    prop("Big Box", {-1.8f, 0.35f, -3.4f}, {0.7f, 0.7f, 0.7f}, Color::FromBytes(150, 200, 110), true);
+    // The mirror: a second camera that rides on the player, a few metres in front, looking back.
+    GameObject* mir = sc.CreateGameObject("Mirror Camera");
+    mir->transform->SetParent(player->transform, false);
+    mir->transform->localPosition = {0.0f, 1.3f, -3.2f};
+    mir->transform->localRotation = Quat::Euler(0.0f, 180.0f, 0.0f);
+    auto* mc = mir->AddComponent<Camera>();
+    mc->main = false;
+    mc->depth = 5.0f;
+    mc->fieldOfView = 40.0f;
+    mc->rectX = 0.68f; mc->rectY = 0.04f; mc->rectW = 0.30f; mc->rectH = 0.34f;
+    mc->clearFlags = Camera::ClearFlags::Skybox;
+    GameObject* help = sc.CreateGameObject("What to look for");
+    auto* t = help->AddComponent<TextRenderer>();
+    t->text = "FIRST PERSON ARM TEST. Your arm is at the lower right with a forearm in your shirt colour. Left click swings it. "
+              "Press E near a block to hold it. The small picture (top right) is how OTHER players see you: a whole body, no floating hand. "
+              "Select the Player > First Person Hands > Preset to compare looks.";
+    t->screenSpace = true; t->anchor = UIAnchor::StretchHorizontal;
+    t->screenPos = {12, 48}; t->size = {330, 120}; t->vcenter = false; t->wrap = true;
+    t->pixelSize = 2.0f; t->outline = true;
+    return SceneSerializer::SaveToFile(sc, path) ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
+    if (argc >= 3 && std::string(argv[1]) == "--scene") return WriteExampleScene(argv[2]);
     if (argc < 2) { std::fprintf(stderr, "usage: fp_hand_shot <outdir> [old|normal]\n"); return 2; }
     const std::string outdir = argv[1];
     const std::string mode = argc > 2 ? argv[2] : "normal";

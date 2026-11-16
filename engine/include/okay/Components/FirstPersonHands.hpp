@@ -65,7 +65,7 @@ public:
         bool  enabled = true;
         Vec3  position{0, 0, 0};          ///< camera-space nudge, metres
         Vec3  rotation{0, 0, 0};          ///< extra euler, degrees
-        float uniformScale = 1.0f;
+        float uniformScale = 0.75f;       ///< Old look: 1.0
         Vec3  scale{1, 1, 1};
         Vec3  size{1, 1, 1};              ///< width, height, depth of the brick, on top of scale
         bool  useColour = false;          ///< false = the character's skin
@@ -75,7 +75,7 @@ public:
         Color sleeveColour = Color::FromBytes(60, 95, 75);
         bool  forearm = true;             ///< the arm under the hand. The Old look preset turns it off.
         float forearmLength = 1.1f;       ///< long enough to leave the bottom of the screen
-        float forearmThickness = 0.085f;
+        float forearmThickness = 0.105f;
         bool  matchShirt = true;          ///< sleeve and forearm take the character's shirt colour (off = the colours below)
         Color forearmColour = Color::FromBytes(60, 95, 75);
         Vec3  wristOffset{0, 0, 0};       ///< extra camera-space nudge at the wrist
@@ -145,7 +145,7 @@ public:
                 break;
             case Preset::Minimal:
                 right.forearm = false; left.forearm = false;
-                right.uniformScale = 0.8f; left.uniformScale = 0.8f;
+                right.uniformScale = 0.6f; left.uniformScale = 0.6f;
                 left.enabled = false;
                 break;
             case Preset::OldLook:
@@ -155,6 +155,7 @@ public:
                 right.forearmLength = left.forearmLength = 0.42f;
                 right.forearmThickness = left.forearmThickness = 0.07f;
                 right.matchShirt = left.matchShirt = false;
+                right.uniformScale = left.uniformScale = 1.0f;
                 break;
             default: break;
         }

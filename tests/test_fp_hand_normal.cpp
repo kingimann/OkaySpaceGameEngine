@@ -2,6 +2,8 @@
 #include <Okay.hpp>
 #include "okay/Render/SoftwareRenderer.hpp"
 #include <cmath>
+#include <cstdio>
+#include <vector>
 #include <string>
 
 using namespace okay;
@@ -23,19 +25,14 @@ struct Rig {
 
 void Build(Rig& r, bool oldLook) {
     r.scene.physicsEnabled = false;
-    r.player = r.scene.CreateGameObject("Player");
-    r.ch = r.player->AddComponent<Character>();
-    r.ch->Apply();
-    auto* fpc = r.player->AddComponent<FirstPersonController>();
-    fpc->driveAnimation = false;
-    r.hands = r.player->AddComponent<FirstPersonHands>();
+    r.player = Templates::AddFirstPersonPlayer(r.scene, {0, 0, 0});   // the First Person starter's player
+    r.ch = r.player->GetComponent<Character>();
+    r.hands = r.player->GetComponent<FirstPersonHands>();
     if (oldLook) r.hands->UseOldLook();
-    r.hold = r.player->AddComponent<ProceduralObjectHolding>();
-    GameObject* eye = r.scene.CreateGameObject("Eye");
-    eye->transform->SetParent(r.player->transform, false);
-    eye->transform->localPosition = {0, 1.6f, -0.2f};
-    r.cam = eye->AddComponent<Camera>();
-    r.cam->main = true;
+    r.hold = r.player->GetComponent<ProceduralObjectHolding>();
+    if (!r.hold) r.hold = r.player->AddComponent<ProceduralObjectHolding>();
+    for (const auto& o : r.scene.Objects())
+        if (auto* c = o->GetComponent<Camera>()) if (o->IsSelfOrDescendantOf(r.player)) r.cam = c;
     GameObject* sun = r.scene.CreateGameObject("Sun");
     sun->transform->localRotation = Quat::Euler(50.0f, -30.0f, 0.0f);
     sun->AddComponent<Light>();
@@ -44,20 +41,30 @@ void Build(Rig& r, bool oldLook) {
     for (int i = 0; i < 25; ++i) r.scene.Update(1.0f / 60.0f);
 }
 
-// Every pixel of the owner's picture that is not the clear colour, as a bounding box.
+// What the first-person copies add to the owner's picture: render with them and without them and
+// take the bounding box of the pixels that differ.
 struct Box { int x0 = 1 << 30, y0 = 1 << 30, x1 = -1, y1 = -1; int count = 0; };
+void SetFpOnly(Scene& sc, bool on, std::vector<GameObject*>& list) {
+    if (on) { for (GameObject* g : list) g->active = true; list.clear(); return; }
+    for (const auto& o : sc.Objects()) if (o->firstPersonOnly && o->active) { list.push_back(o.get()); o->active = false; }
+}
 Box OwnerPixels(Rig& r, int W, int H, Raster& out) {
     ApplySceneLight(r.scene);
-    out.Resize(W, H);
-    out.Clear(0xFF00FF00u);   // pure green: nothing else in the scene is this
     const float aspect = (float)W / H;
     r.cam->viewportAspect = aspect;
     const Mat4 vp = r.cam->ProjectionMatrix(aspect) * r.cam->ViewMatrix();
+    Raster base;
+    std::vector<GameObject*> hidden;
+    SetFpOnly(r.scene, false, hidden);
+    base.Resize(W, H); base.Clear(0xFF00FF00u);
+    RenderMeshes(base, r.scene, vp, r.cam->RenderPosition(), r.cam->ignoreObject);
+    SetFpOnly(r.scene, true, hidden);
+    out.Resize(W, H); out.Clear(0xFF00FF00u);
     RenderMeshes(out, r.scene, vp, r.cam->RenderPosition(), r.cam->ignoreObject);
     Box b;
     for (int y = 0; y < H; ++y)
         for (int x = 0; x < W; ++x)
-            if (out.Get(x, y) != 0xFF00FF00u) {
+            if (out.Get(x, y) != base.Get(x, y)) {
                 b.x0 = std::min(b.x0, x); b.x1 = std::max(b.x1, x);
                 b.y0 = std::min(b.y0, y); b.y1 = std::max(b.y1, y);
                 ++b.count;
@@ -92,6 +99,7 @@ int main() {
         CHECK(!p.showWhenEmpty && !p.swingOnClick && !p.right.forearm && !p.right.matchShirt);
         CHECK_NEAR(p.right.forearmLength, 0.42f, 1e-5f);   // the old numbers
         CHECK_NEAR(p.right.forearmThickness, 0.07f, 1e-5f);
+        CHECK_NEAR(p.right.uniformScale, 1.0f, 1e-5f);
         CHECK(p.preset == FirstPersonHands::Preset::OldLook);
         p.ApplyPreset(FirstPersonHands::Preset::Normal);
         CHECK(p.showWhenEmpty && p.right.forearm && p.right.matchShirt && p.swingOnClick);
@@ -160,6 +168,7 @@ int main() {
         Raster r;
         const int W = 320, H = 240;
         Box b = OwnerPixels(n, W, H, r);
+        std::printf("  [box] x %d..%d y %d..%d count %d\n", b.x0, b.x1, b.y0, b.y1, b.count);
         CHECK(b.count > 400);
         CHECK(b.x0 > W / 3);                  // the lower right, not the middle of the view
         CHECK(b.y1 >= H - 2);                 // the arm leaves the bottom edge: it is connected, not floating
@@ -198,6 +207,7 @@ int main() {
         CHECK(o.ch->fpArmUp == 0.0f);
         Raster r2;
         Box ob = OwnerPixels(o, W, H, r2);
+        std::printf("  [old box] x %d..%d y %d..%d count %d\n", ob.x0, ob.x1, ob.y0, ob.y1, ob.count);
         CHECK(ob.count == 0);
     }
 

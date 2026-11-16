@@ -81,6 +81,48 @@ edge files; the switch picks SDL by default and with `OKAY_OWN_WAV=0`, ours with
 surfaces, the ImGui backends, the event pump, display bounds, `SDL_FlashWindow` and `SDL_Quit`. Try it: `docs/try_it.md`, "Launcher:
 voice clips and window calls on our own code".
 
+### Step 2b. Launcher stage B: drawing without `SDL_Renderer`, behind a switch (branch `claude2/sdl-launcher-painter`, on top of 2a)
+
+**Status (2026-11-16): built and tested on Linux under Xvfb; off by default; not merged; Windows not run.**
+`OKAY_LAUNCHER_RENDERER=own` makes the launcher draw with our own code; anything else (no variable, `sdl`) is exactly the old path.
+The launcher logs which one draws once (`launcher: renderer ...`) and, with `own`, its footer says "(own renderer: opengl)".
+
+* **The seam** (`launcher/LauncherGfx.hpp`): the main window, the painter, image textures from RGBA pixels, begin / clear / present, and
+  Dear ImGui's two backends (events in, draw data out).
+  * `sdl` (`launcher/LauncherGfxSdl.cpp`): `SDL_CreateWindow`, `SDL_Renderer`, `ImGui_ImplSDL2_*` and `ImGui_ImplSDLRenderer2_*`, call for call
+    what `main.cpp` did. The painter is `WrapSdl2Renderer` over that renderer, so clear, present and textures are the same SDL calls.
+  * `own` (`launcher/LauncherGfx.cpp`): the window is made by `okay::platform::Default()` (sdl2, or our X11 / Win32 backend with
+    `OKAY_PLATFORM_BACKEND=own`), with an OpenGL context; it draws with **our OpenGL painter** (`engine/src/Platform/GlPainter.cpp`, OpenGL 1.1
+    vertex arrays, entry points from the backend, no GL link) or, when the window has no GL, the software painter (`okayui/soft`).
+    ImGui is drawn by **our own renderer** (`launcher/ImGuiOwnBackend.cpp`: `ImDrawData` to `Painter::Geometry` with each command's clip
+    and texture; ImGui 1.92's texture requests served as painter textures) and fed by **our own platform glue** (mouse, buttons, wheel,
+    keys through a table from our `Key` to `ImGuiKey`, text input on only while a text field wants it, focus, window size and
+    framebuffer scale, clipboard, cursor shapes through the new `Backend::SetSystemCursor`). Written from `imgui.h` and our interfaces; not
+    from ImGui's example backends or SDL.
+* **Image textures.** Covers, avatars, chat images, GIF frames, the emoji sheet and the splash logo are uploaded through the painter
+  (`UploadRgba`): no `SDL_Surface` or `SDL_CreateTextureFromSurface` is left in the launcher.
+* **What `own` does not do yet.** The chat cannot open in its own window (it stays inside the launcher; the pop-out window is SDL code);
+  the OkayUI preview backend is turned off (its input still reads SDL events); the Windows tray hook and the taskbar flash work only
+  while the window is an SDL one (the default platform backend).
+* **Counts** (`scripts/sdl_inventory.py`, the launcher's own directory): 90 to 64 SDL calls (379 to 320 words). Of what is left,
+  18 calls are the `sdl` side in `LauncherGfxSdl.cpp`.
+* **Tests.** `launcher_imgui_renderer`: our ImGui renderer against a reference rasteriser written in the test (flat and gradient shapes
+  with alpha, nested and fractional clip rectangles, a user texture with tint, text from ImGui's atlas, framebuffer scale 2 with a moved
+  DisplayPos): on the software painter no pixel is more than 1 level off. `launcher_imgui_renderer_gl` (Xvfb, Mesa llvmpipe): the same on
+  our GL painter on an sdl2 and an own window, at most 2 levels off. `scripts/launcher_renderer_check.sh`: the launcher under Xvfb with
+  both renderers (screenshots, the pixel difference, a click into the search box and typing "abc", a click on Play, and the frame time).
+  Results (2026-11-16, Xvfb, Mesa llvmpipe, a shared machine with other builds running):
+  * **Pictures.** The Create page with `sdl` and with `own` at 1160 x 752 differs only in the footer's "(own renderer: opengl)" label
+    (4,154 of 872,320 pixels, all inside that 312 x 18 box); at 760 x 500 (footer out of view) the two are **identical** (0 pixels).
+  * **Input.** The click and "abc" reached ImGui (input log), the search box shows "abc", a click on Play opens the Play page.
+  * **Frame time** (building, drawing and presenting a frame on the Create page, median of 300 frames, vsync off, two runs):
+    `sdl` 27.98 and 20.02 ms, `own` 19.96 and 17.24 ms (p95: `sdl` 41.4 / 35.8, `own` 40.6 / 32.2). `own` was faster in both runs here,
+    but both numbers are mostly Mesa's CPU rasteriser and the machine was busy, so this says nothing yet about a real GPU on Windows:
+    "faster and up to par" is **met on this Linux machine only, unverified where it matters**.
+* **Not done / unverified.** Nothing ran on Windows (`main.cpp`, the seam, the GL painter and the Win32 cursor code passed a MinGW
+  syntax check only). No real GPU. No IME candidate window position (`Platform_SetImeDataFn` is not set). No real desktop with a
+  window manager. The default stays `sdl` until the owner approves (rule 17).
+
 ### Step 3. Move the call sites the seam already covers (the "HAVE" rows)
 
 **What.** About 290 call sites in the launcher and editor are plain SDL calls for something `okay::platform` has a function for: window size, position, show,

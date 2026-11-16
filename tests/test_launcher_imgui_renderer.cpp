@@ -353,6 +353,9 @@ int RunGl() {
         if (!p) { std::printf("  %s backend: no GL painter (%s)\n", b->Name(), err.c_str()); continue; }
         CHECK(p->Kind() == plat::PainterKind::OpenGL && std::strcmp(p->Name(), "opengl") == 0);
         for (int i = 0; i < 10; ++i) { plat::Event e; while (b->PollEvent(e)) {} b->DelayMs(10); }
+        // Every cursor shape ImGui asks for exists on this backend (SDL system cursors / the X core cursor font), and the arrow comes back.
+        for (int c = (int)plat::SystemCursor::Arrow; c <= (int)plat::SystemCursor::Wait; ++c) CHECK(b->SetSystemCursor((plat::SystemCursor)c));
+        CHECK(b->SetSystemCursor(plat::SystemCursor::Arrow));
         int ow = 0, oh = 0;
         p->OutputSize(&ow, &oh);
         CHECK(ow == kW && oh == kH);

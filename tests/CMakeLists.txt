@@ -867,6 +867,13 @@ target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
+# Issue #888 findings 85, 76, 77: Save in the Stop prompt writes the edit-time scene (SaveBeforePrompt.hpp + EditorState), a
+# dragged Timeline key passes other keys without deleting them (TimelineKeyMove.hpp), LOD distance mode keeps typed distances.
+add_executable(test_stop_save_timeline_lod test_stop_save_timeline_lod.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_stop_save_timeline_lod PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_stop_save_timeline_lod PRIVATE okay::engine)
+add_test(NAME stop_save_timeline_lod COMMAND test_stop_save_timeline_lod)
+
 # Prefab mode (EditorState): open a prefab on its own, edit, save, go back; nested levels, per-level undo, instance refresh, Play refused.
 add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_mode PRIVATE ${PROJECT_SOURCE_DIR}/editor)

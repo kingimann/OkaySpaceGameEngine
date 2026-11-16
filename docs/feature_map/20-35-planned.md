@@ -559,7 +559,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/editor.md`, `docs/making_a_game.md`
 - **Tests:** `templates`, `humanoid_template`, `ui_templates`
 - **Status:** Works - creating a project from a template is used daily (read in `launcher/main.cpp`).
-- **Exists today:** 22 template cards (3D Scene, 2D Scene, Empty, First Person, Third Person, Third Person Shooter, Platformer, Top-Down, Top-Down Shooter, 2.5D Platformer, Point and Click, three Vehicles (3D, get in and drive, 2D), Sandbox, Multiplayer, Coin Collector, Snake, Brick Breaker, Main Menu, Inventory, Humanoid). No user-made templates.
+- **Exists today:** 17 template cards (3D Scene, 2D Scene, Empty, First Person, Third Person, Third Person Shooter, Platformer, Top-Down, Top-Down Shooter, 2.5D Platformer, Point and Click, three Vehicles (3D, get in and drive, 2D), Sandbox, Multiplayer, Main Menu); Coin Collector, Snake, Brick Breaker, Inventory and Humanoid were removed from the list on 2026-11-16 (their builders stay). No user-made templates.
 - **Work packages:**
   1. M - "Save project as template" copies a project minus caches into a template folder the Create page lists. Depends on: 25.2.
   2. S - Template metadata file (name, description, engine version, thumbnail). Depends on: package 1.

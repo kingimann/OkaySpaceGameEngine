@@ -3449,7 +3449,7 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
         d->AddLine(P(20, 6), P(20, 13), col, th); d->AddLine(P(20, 27), P(20, 34), col, th);
         d->AddLine(P(6, 20), P(13, 20), col, th); d->AddLine(P(27, 20), P(34, 20), col, th);
         d->AddCircleFilled(P(20, 20), 1.6f * k, col, 8);
-    } else if (t == "Third Person" || t == "Humanoid") {
+    } else if (t == "Third Person") {
         person(20, 21, 1.15f);
         if (t == "Third Person") { d->PathArcTo(P(20, 33), 13 * k, 3.6f, 5.8f, 16); d->PathStroke(col, 0, th * 0.8f); }
     } else if (t == "Third Person Shooter") {
@@ -3477,26 +3477,9 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
         d->AddRect(P(8, 8), P(32, 32), col, 3 * k, 0, th);
         d->AddLine(P(20, 8), P(20, 17), col, th); d->AddLine(P(8, 22), P(16, 22), col, th);
         d->AddCircleFilled(P(25, 26), 3 * k, col, 12);
-    } else if (t == "Coin Collector") {
-        d->AddCircle(P(17, 22), 8 * k, col, 20, th); d->AddCircle(P(17, 22), 4.5f * k, col, 16, th * 0.8f);
-        d->AddCircle(P(27, 13), 5 * k, col, 16, th);
-    } else if (t == "Snake") {
-        const ImVec2 sn[] = {P(7, 30), P(7, 22), P(18, 22), P(18, 14), P(30, 14), P(30, 8)};
-        d->AddPolyline(sn, 6, col, 0, th * 1.8f);
-        d->AddCircleFilled(P(30, 30), 2.6f * k, col, 10);
-    } else if (t == "Brick Breaker") {
-        d->AddRect(P(8, 8), P(16, 12), col, 1.0f * k, 0, th * 0.8f);
-        d->AddRect(P(18, 8), P(26, 12), col, 1.0f * k, 0, th * 0.8f);
-        d->AddRect(P(12, 14), P(20, 18), col, 1.0f * k, 0, th * 0.8f);
-        d->AddCircleFilled(P(20, 26), 2.2f * k, col, 10);
-        d->AddLine(P(12, 33), P(28, 33), col, th * 1.4f);
     } else if (t == "Main Menu") {
         d->AddRect(P(9, 7), P(31, 33), col, 3 * k, 0, th);
         for (int i = 0; i < 3; ++i) d->AddRect(P(13, 12 + i * 7), P(27, 16.5f + i * 7), col, 2 * k, 0, th * 0.8f);
-    } else if (t == "Inventory") {
-        for (int y = 0; y < 3; ++y) for (int x = 0; x < 3; ++x)
-            d->AddRect(P(8 + x * 8.5f, 8 + y * 8.5f), P(14.5f + x * 8.5f, 14.5f + y * 8.5f), col, 1.5f * k, 0, th * 0.8f);
-        d->AddRectFilled(P(17, 17), P(22.5f, 22.5f), col, 1.5f * k);
     } else if (t == "Multiplayer") {
         person(13, 22, 0.95f); person(27, 22, 0.95f);
         d->AddLine(P(17, 9), P(23, 9), col, th); d->AddLine(P(21, 7), P(23, 9), col, th);
@@ -3516,8 +3499,7 @@ void TemplateGlyph(ImDrawList* d, const std::string& t, ImVec2 p, float size, Im
 
 // A wide illustrated preview for a template card: a small scene, not a letter tile.
 static void DrawTemplateStage(ImDrawList* d, const std::string& title, ImVec2 a, ImVec2 b) {
-    const bool flat = title.find("2D") != std::string::npos || title == "Platformer" || title == "Snake"
-        || title == "Brick Breaker" || title == "Main Menu" || title == "Inventory";
+    const bool flat = title.find("2D") != std::string::npos || title == "Platformer" || title == "Main Menu";
     const bool empty = title == "Empty";
     ImU32 sky = empty ? IM_COL32(38, 40, 48, 255) : flat ? IM_COL32(36, 48, 86, 255) : IM_COL32(92, 148, 206, 255);
     ImU32 ground = empty ? IM_COL32(28, 30, 36, 255) : flat ? IM_COL32(22, 28, 48, 255) : IM_COL32(168, 132, 96, 255);
@@ -18273,13 +18255,9 @@ int main(int argc, char** argv) {
     const Template templates[] = {
         {"Platformer",     "Side-scrolling jump-and-run starter.",  "Platformer"},
         {"Top-Down",       "Top-down movement and rooms.",          "Top-Down"},
-        {"Coin Collector", "A complete pickup-the-coins game.",     "Coin Collector"},
         {"Main Menu (UI)", "A title screen with buttons.",          "Main Menu"},
-        {"Snake",          "The classic, fully playable.",          "Snake"},
-        {"Brick Breaker",  "Paddle, ball, and a wall of bricks.",   "Brick Breaker"},
         {"First Person",   "FPS character: mouse-look, WASD, jump.", "First Person"},
         {"Third Person",   "Orbit-camera character controller.",    "Third Person"},
-        {"Inventory",      "Drag & drop item grid.",                "Inventory"},
         {"Multiplayer",    "Host / join networked starter.",        "Multiplayer"},
     };
 
@@ -18310,6 +18288,9 @@ int main(int argc, char** argv) {
     // would otherwise knock the launcher offline — only an http(s) URL counts.
     if (serverUrl.rfind("http", 0) != 0) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
     if (apiKey.empty())                  apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
+    if (serverUrl.empty())
+        std::fprintf(stderr, "[account] No account server is set in this build, so online features (sign-in, friends, marketplace, updates) are off. "
+                             "Put the server address in account_server.txt next to the launcher or set OKAY_ACCOUNT_SERVER (and OKAY_ACCOUNT_API_KEY).\n");
     // Where the emailed reset link should land (docs/password-reset.md). Empty = none set up.
     std::string resetUrl = fromEnvOrFile("OKAY_PASSWORD_RESET_URL", "password_reset_url.txt");
 #ifdef OKAY_DEFAULT_PASSWORD_RESET_URL

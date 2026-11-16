@@ -48,6 +48,12 @@ jobs:
       OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
       # The updater's trusted signing keys (public; docs/updater.md "Signed releases"). Empty = unsigned feeds still accepted.
       OKAY_UPDATE_TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
+      # The account/update server baked into the programs comes from config/public-account.json (docs/accounts.md); these
+      # optional repository variables override it (empty = use the file).
+      # OKAY_REQUIRE_ACCOUNT=1 makes build-windows-dist.sh stop if neither the file nor the variables give both values, so a release never ships offline.
+      OKAY_DEFAULT_ACCOUNT_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+      OKAY_DEFAULT_ACCOUNT_KEY: ${{ vars.OKAY_DEFAULT_ACCOUNT_KEY }}
+      OKAY_REQUIRE_ACCOUNT: "1"
     steps:
       - uses: actions/checkout@v6
 
@@ -258,6 +264,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           # publish-supabase.sh signs versions.json with this (scripts/sign_index.py) when it is set, and verifies the published pair.
           OKAY_UPDATE_SIGNING_SEED: ${{ secrets.OKAY_UPDATE_SIGNING_SEED }}
+          SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
           CHANNEL: ${{ inputs.channel || 'latest' }}
         if: env.SUPABASE_PUBLISH == 'true'
         run: scripts/publish-supabase.sh
@@ -327,17 +334,21 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VER: ${{ needs.windows-exe.outputs.ver }}
       HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+      SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
       CHANNEL: ${{ inputs.channel || 'latest' }}
     steps:
+      - uses: actions/checkout@v6   # for config/public-account.json (the project address)
       - name: Check the checksums are published, then mark the release latest
         run: |
+          . scripts/public-account.sh
+          SUPABASE_URL="${SUPABASE_URL:-$(okay_public_account url)}"
           if [ "$HAVE_KEY" != "true" ]; then
             msg="v$VER was built and attached to its GitHub release, but its checksums were NOT published (no SUPABASE_SERVICE_KEY secret), so launchers would refuse it. It is not marked latest. Run scripts/publish-supabase.sh with a key (or scripts/release-local.sh), then: gh release edit v$VER --latest"
             echo "::error title=Release not visible to launchers::$msg"
             echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          B=https://tgthoueacrlanpojxoen.supabase.co/storage/v1/object/public/releases
+          B="${SUPABASE_URL%/}/storage/v1/object/public/releases"
           # The checksum list must really contain this version with a checksum for each program, not just exist.
           for i in 1 2 3 4 5 6; do
             if curl -fsS "$B/versions.json" | python3 -c "

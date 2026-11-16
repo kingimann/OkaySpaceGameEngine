@@ -1193,6 +1193,12 @@ add_executable(bench_voxel_edit bench_voxel_edit.cpp)
 target_link_libraries(bench_voxel_edit PRIVATE okay::engine)
 add_executable(bench_voxel_real bench_voxel_real.cpp)
 target_link_libraries(bench_voxel_real PRIVATE okay::engine)
+add_executable(test_voxel_overlay_depth test_voxel_overlay_depth.cpp)
+target_link_libraries(test_voxel_overlay_depth PRIVATE okay::engine)
+add_test(NAME voxel_overlay_depth COMMAND test_voxel_overlay_depth)
+
+add_executable(bench_voxel_frame bench_voxel_frame.cpp)
+target_link_libraries(bench_voxel_frame PRIVATE okay::engine)
 
 add_executable(test_api_expand test_api_expand.cpp)
 target_link_libraries(test_api_expand PRIVATE okay::engine)

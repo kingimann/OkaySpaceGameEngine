@@ -1017,3 +1017,16 @@ through the layers), `2_dig_debris_falling.png` (a dig with falling debris), `3_
 kept: a stroke of 63 m3 put back came to 63.1 m3 (restored to 0.0 percent), debris that landed returned the volume to within 0.05
 percent. **Unverified:** Windows, a real GPU, the editor's Inspector click path, the feel of the controls, and the sound and particle
 hooks per material (the table has the fields, the digger still plays the one dig sound).
+
+### 7t, more options (second pass)
+
+1. In `voxel_realistic.okayscene`, select **Terrain**. In the **Voxel Terrain** card tick **Catch bodies that fall out of the world**.
+   Play, and push a prop off the side of the world: it is put back on the ground instead of falling for ever. (Off: it falls.)
+2. In the **Voxel Digger** card, with **Slump loose ground** on, raise **Slump Passes** to 8 and dig into a sand slope (pale yellow):
+   the sand runs farther down than with 1.
+3. In the **Voxel Terrain** card, type a **Seed** and press **Generate**: the same seed gives the same hill every time.
+4. Move or turn the **Terrain** object (Inspector: Position, Rotation) before pressing Play: digging, the brush circle and the
+   falling debris all still match the ground.
+5. Dust colour follows the dug material (stone dust is grey, dirt dust brown). A per-material dig sound needs a Voxel Digger object
+   with an Audio Source and a WAV file named in the material's table entry; this is unverified.
+Tests: `ctest -R voxel_more`.

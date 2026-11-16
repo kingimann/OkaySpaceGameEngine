@@ -69,9 +69,11 @@ public:
     int   debrisMax = 48;          ///< pieces alive at once; more are put straight into the store
     float debrisLife = 20.0f;      ///< seconds a piece lies about
     bool  slump = false;           ///< loose ground slides to its angle of repose after a dig
+    int   slumpPasses = 1;         ///< slump passes per frame (each moves at most 40 voxels): more = an avalanche that runs farther
     bool  collapse = false;        ///< pieces cut loose by a dig fall as debris instead of vanishing
     bool  giveItems = false;       ///< also hand `drop` items to the scene's Inventory when volume is stored
     std::string hudTarget;         ///< name of a Text object that lists the store
+    int  lastDigMaterial = -1;     ///< the material most of the last dig stroke took (-1 = none yet); also picks the dust colour and sound
     std::vector<double> store;     ///< cubic metres per material id
     double Stored(int id) const { return id >= 0 && id < (int)store.size() ? store[(std::size_t)id] : 0.0; }
     double StoredByName(const std::string& n) const { VoxelTerrain* v = FindVoxel(); return v ? Stored(v->MaterialIndex(n)) : 0.0; }
@@ -136,12 +138,12 @@ public:
         Vec3 ro = ct->Position();
         Vec3 rd = ct->Forward() * -1.0f;   // aim is -Forward (see BlockBuilder)
         { float m = std::sqrt(rd.x * rd.x + rd.y * rd.y + rd.z * rd.z); if (m > 1e-6f) rd = rd * (1.0f / m); }
-        Vec3 vp = vox->gameObject->transform->Position();
+        Transform* vt = vox->gameObject->transform;
         float step = vox->voxelSize * 0.4f; if (step < 0.05f) step = 0.05f;
         Vec3 prevLocal{0, 0, 0}; bool havePrev = false;
         for (float d = 0.0f; d <= range; d += step) {
             Vec3 p = ro + rd * d;
-            Vec3 local{p.x - vp.x, p.y - vp.y, p.z - vp.z};
+            const Vec3 local = vt->InverseTransformPoint(p);   // the terrain may be moved, turned or scaled
             if (vox->SampleDensity(local) > vox->iso) {     // hit solid
                 outLocal = (mode == Mode::Add && havePrev) ? prevLocal : local;
                 return true;
@@ -190,11 +192,10 @@ public:
             }
             else                        changed = vox->SmoothAt(local, radius, std::min(1.0f, amt));
             if (changed) {
-                if (slump) vox->Slump(40);   // a bounded pass near the edit
+                if (slump) for (int pass = 0; pass < slumpPasses; ++pass) if (vox->Slump(40) == 0) break;   // bounded passes near the edit
                 vox->Apply();   // re-skin only when something actually moved
                 if (vox->gameObject && vox->gameObject->transform) {
-                    Vec3 vp = vox->gameObject->transform->Position();
-                    KickDebris({vp.x + local.x, vp.y + local.y, vp.z + local.z});
+                    KickDebris(vox->gameObject->transform->TransformPoint(local), lastDigMaterial);
                 }
             }
             DigSound(true);
@@ -258,6 +259,7 @@ private:
         if (dig) {
             const auto r = vox.Edit(local, radius, amt, o);
             if (!r.changed) return false;
+            { double best = 0; for (std::size_t id = 0; id < r.removedBy.size(); ++id) if (r.removedBy[id] > best) { best = r.removedBy[id]; lastDigMaterial = (int)id; } }
             for (std::size_t id = 0; id < r.removedBy.size(); ++id) {
                 const double vol = r.removedBy[id];
                 if (vol <= 0.0) continue;
@@ -279,12 +281,12 @@ private:
         Scene* sc = GetScene();
         const bool debris = (collect == Collect::Debris || collect == Collect::Both) && sc && vox.gameObject && vox.gameObject->transform;
         if (!debris) { Deposit(id, vol); return; }
-        const Vec3 vp = vox.gameObject->transform->Position();
+        Transform* tt = vox.gameObject->transform;
         const int pieces = std::max(1, std::min(3, (int)std::ceil(vol / 0.08)));
         for (int i = 0; i < pieces; ++i) {
             const double pv = vol / pieces;
             if (VoxelDebris::Live() >= debrisMax) { Deposit(id, pv); continue; }   // no more bodies: keep it safe in the store
-            SpawnDebris(vox, id, pv, {vp.x + local.x + 0.3f * (float)i, vp.y + local.y + 0.6f, vp.z + local.z}, nullptr, collect == Collect::Both);
+            SpawnDebris(vox, id, pv, tt->TransformPoint({local.x + 0.3f * (float)i, local.y + 0.6f, local.z}), nullptr, collect == Collect::Both);
         }
     }
 
@@ -293,10 +295,14 @@ private:
         GameObject* g = sc->CreateGameObject("Voxel Debris");
         g->transient = true;
         g->transform->localPosition = world;
-        const float side = (float)std::cbrt(std::max(vol, 1e-6));
+        const Vec3 ts = vox.gameObject->transform->LossyScale();
+        const float us = std::cbrt(std::fabs(ts.x * ts.y * ts.z));          // the terrain's scale (uniform part)
+        g->transform->localRotation = vox.gameObject->transform->Rotation();
+        const float side = (float)std::cbrt(std::max(vol, 1e-6)) * us;
         auto* mr = g->AddComponent<MeshRenderer>();
         mr->mesh = mesh ? *mesh : Mesh::Cube();
         if (!mesh) g->transform->localScale = {side, side, side};
+        else g->transform->localScale = {us, us, us};
         mr->color = (vox.UseMaterials() && id < (int)vox.materials.size()) ? vox.materials[(std::size_t)id].color : vox.color;
         auto* bc = g->AddComponent<BoxCollider3D>();
         if (mesh) { Vec3 lo, hi; mesh->Bounds(lo, hi); bc->size = {std::max(0.1f, hi.x - lo.x), std::max(0.1f, hi.y - lo.y), std::max(0.1f, hi.z - lo.z)}; }
@@ -317,12 +323,12 @@ private:
         const auto pieces = vox.ExtractFloaters(6);
         if (pieces.empty()) return;
         Scene* sc = GetScene();
-        const Vec3 vp = vox.gameObject->transform->Position();
+        Transform* tt = vox.gameObject->transform;
         for (const auto& p : pieces) {
             if (!sc || p.cells.size() < 8 || VoxelDebris::Live() >= debrisMax) { Deposit(p.material, p.volume); continue; }   // crumbs and overflow go to the store
             const Mesh mesh = vox.PieceMesh(p);
             const Vec3 c{(p.lo.x + p.hi.x) * 0.5f, (p.lo.y + p.hi.y) * 0.5f, (p.lo.z + p.hi.z) * 0.5f};
-            SpawnDebris(vox, p.material, p.volume, {vp.x + c.x, vp.y + c.y, vp.z + c.z}, &mesh, false);
+            SpawnDebris(vox, p.material, p.volume, tt->TransformPoint(c), &mesh, false);
         }
         vox.Apply();
     }
@@ -338,9 +344,8 @@ private:
         if (!s || !vox.gameObject || !vox.gameObject->transform) return;
         GameObject* b = EnsureBrush(*s);
         if (!b || !b->transform) return;
-        Vec3 vp = vox.gameObject->transform->Position();
         b->active = true;
-        b->transform->localPosition = {vp.x + local.x, vp.y + local.y, vp.z + local.z};
+        b->transform->localPosition = vox.gameObject->transform->TransformPoint(local);
         float dscale = radius * 2.0f;   // sphere mesh has radius 0.5
         b->transform->localScale = {dscale, dscale, dscale};
         if (auto* mr = b->GetComponent<MeshRenderer>()) mr->color = brushColor;
@@ -362,7 +367,7 @@ private:
         return b;
     }
 
-    void KickDebris(const Vec3& world) {
+    void KickDebris(const Vec3& world, int mat = -1) {
         Scene* s = GetScene();
         if (!s) return;
         if (!debris_) {
@@ -390,6 +395,7 @@ private:
         debris_->transform->localPosition = world;
         if (auto* ps = debris_->GetComponent<ParticleSystem>()) {
             ps->shapeRadius = std::max(0.2f, radius * 0.3f);
+            if (mat >= 0) if (VoxelTerrain* vt = FindVoxel()) if (vt->UseMaterials() && mat < (int)vt->materials.size()) ps->startColor = vt->materials[(std::size_t)mat].particle;   // dust of the dug material
             ps->Emit(4);
         }
     }
@@ -399,6 +405,12 @@ private:
     void DigSound(bool acting) {
         AudioSource* au = gameObject ? gameObject->GetComponent<AudioSource>() : nullptr;
         if (!au) { soundHeld_ = false; return; }
+        if (acting && lastDigMaterial >= 0) {      // the dug material's own clip, when the table names one
+            if (VoxelTerrain* vt = FindVoxel()) if (vt->UseMaterials() && lastDigMaterial < (int)vt->materials.size()) {
+                const std::string& want = vt->materials[(std::size_t)lastDigMaterial].digSound;
+                if (!want.empty() && au->clipPath != want) { if (soundHeld_ && soundStarted_) au->Stop(); au->clipPath = want; au->clip = AudioClip(); soundHeld_ = false; }
+            }
+        }
         if (acting) {
             if (!soundHeld_) {
                 soundStarted_ = !au->IsPlaying();

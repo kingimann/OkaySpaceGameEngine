@@ -87,6 +87,20 @@ in code.
 **Presets** (`ApplyPreset`): Realistic = Both, building needs material, slump, collapse, tool power 4 (ore, 5, needs a better
 tool); Arcade = everything vanishes, building is free (the old behaviour); Creative = unlimited store.
 
+**More options (second pass).**
+* **Moved, turned, scaled terrain**: aim, brush marker, dust, debris spawn and landing all work in the terrain's own space. The brush
+  radius and debris volume are in terrain units.
+* **Dug material feedback**: the dust colour is the dug material's `particle` colour, and when the digger's object has an Audio Source
+  the material's `digSound` file becomes its clip path while that material is dug (`lastDigMaterial` says which). The windowed
+  runtime loads `clipPath` files when Play starts, so a sound file only plays if that file was already loaded for the source;
+  this part is unverified.
+* **World-edge catch** (`catchFalling`, `catchMargin`, `onFall`): a body that fell more than `catchMargin` voxels below the grid is put back
+  on the ground at the nearest point inside it with its speed cleared, or handed to `onFall` (a respawn hook). Checked every
+  sixth frame over the scene's rigid bodies (0.017 ms per pass for 300 bodies, `bench_voxel_real`). Inside the grid's own width a body below
+  the grid is pushed up by the ground, so the catch matters past the sides. Off by default; the Voxel Terrain card has the switch.
+* **Avalanche** (`slumpPasses`): several bounded slump passes per frame, so loose ground runs farther down a slope.
+* **Seed**: the Voxel Terrain card has a Seed field; the same seed gives the same ground and layers.
+
 Costs (CPU only, Linux, `-O2` build, per `Scene::Update` while holding the mouse; `bench_voxel_real`): the old digger 0.4 to 0.6 ms
 median, the Realistic preset 1.0 to 1.3 ms, debris-heavy (150 live bodies, big brush) 4 to 8 ms, mostly physics. The frame that
 carries a collapse costs more (p95 5 ms). Limits: one body per piece uses a box collider (a piece lands on its bounding box), and

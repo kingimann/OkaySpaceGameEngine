@@ -1113,8 +1113,9 @@ about 33 seconds at 60 frames per second, and the red error badge went back to n
    Errors shows it, and Collapse shows the prints as one row with a growing count. The Console still holds at most 2000
    lines in total (the oldest prints are the ones that go).
 
-**Status.** Logic tested headless on Linux (`test_find_replace_console`, plus `test_debug_console` and
-`test_okayui_codeedit`). The editor's `main.cpp` changes passed a syntax-only compile; the editor was not built or run,
+**Status.** Logic tested headless on Linux: `test_find_replace_console` 55 checks (26 of 53 failed before the fix),
+`test_debug_console` 136, `test_diagnostics` 81, `test_okayui_codeedit` 414, `test_okayui_codeedit_fuzz` 36,
+`test_okayui_script_adapter` 60, all passing. The editor's `main.cpp` changes passed a syntax-only compile; the editor was not built or run,
 so the Match case box and the steps above are unverified until you look. Nothing tried on Windows.
 
 ## Team tooling (not part of the Windows release)

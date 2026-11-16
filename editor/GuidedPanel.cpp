@@ -3,6 +3,9 @@
 #include "imgui.h"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Modeling/Guided.hpp"
+#include "okay/Modeling/GuidedRig.hpp"
+#include "okay/Components/Character.hpp"
+#include "okay/Render/ModelImport.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Modeling/PolyMesh.hpp"
@@ -158,7 +161,7 @@ bool CreateModel(Host& h, const gd::Recipe& recipe, const std::string& name) {
     ed.PushUndo();
     GameObject* go = ed.scene().CreateGameObject(name);
     MeshRenderer* mr = go->AddComponent<MeshRenderer>();
-    SetMesh(mr, pm, gd::DetailOf(recipe), recipe.templateId == "human");
+    SetMesh(mr, pm, gd::DetailOf(recipe), recipe.templateId == "human" && (int)recipe.Param("style", 0) != 1);
     if (S().collide) { go->AddComponent<okay::MeshCollider3D>(); }
     mr->meshPath = path.string();
     if (!SaveFiles(h, mr, recipe)) { ed.scene().DestroyImmediate(go); return false; }
@@ -188,7 +191,7 @@ bool Apply(Host& h, GameObject* go, MeshRenderer* mr, const gd::Recipe& next, co
     gd::GuidedState before; before.mesh = cur; before.recipe = s.stored;
     s.history[s.path].Push(before);
     h.ed->PushUndo();
-    SetMesh(mr, r.mesh, gd::DetailOf(r.recipe), r.recipe.templateId == "human");
+    SetMesh(mr, r.mesh, gd::DetailOf(r.recipe), r.recipe.templateId == "human" && (int)r.recipe.Param("style", 0) != 1);
     if (!SaveFiles(h, mr, r.recipe)) return false;
     s.stored = r.recipe; s.pending = r.recipe; s.analysisKey = 0;
     h.ed->dirty = true;
@@ -511,7 +514,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         if (ImGui::Button("Undo guided step")) {
             gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
             if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Undo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human"); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
+            if (hist.Undo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human" && (int)cur.recipe.Param("style", 0) != 1); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -519,7 +522,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         if (ImGui::Button("Redo guided step")) {
             gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
             if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Redo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human"); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
+            if (hist.Redo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human" && (int)cur.recipe.Param("style", 0) != 1); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -703,6 +706,42 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         else ImGui::TextColored(ImVec4(0.93f, 0.78f, 0.45f, 1), "Check: %d parts in %d separate group(s), %d problem(s).", s_rep.parts, s_rep.components, (int)s_rep.problems.size());
         for (size_t i = 0; i < s_rep.problems.size() && i < 4; ++i) ImGui::BulletText("%s", s_rep.problems[i].c_str());
         ImGui::TextDisabled("The check is of the generated design, not of your hand edits.");
+        {   // what building costs: the model is one mesh (one draw call per material in the renderer), built once per setting
+            const gd::GenStats& gs = gd::Stats();
+            ImGui::TextDisabled("Build: %ld built, %ld answered from the cache, %ld repeated parts reused, last build %.1f ms. The model is drawn as 1 mesh (%d parts inside it).", gs.misses, gs.hits, gs.instanced, gs.lastBuildMs, s_rep.parts);
+        }
+    }
+    // Animation: a human gets a skeleton and skin weights, and the engine's own idle, walk and run play on it.
+    if (t.id == "human" && ImGui::CollapsingHeader("Animation (skeleton)##grp")) {
+        ImGui::TextWrapped("Makes a copy of this human with a skeleton (15 bones) and skin weights, as objects in the scene. The engine's built-in humanoid animations (idle, walk, run, jump, gestures) play on it through the same Humanoid Retarget that imported characters use.");
+        if (ImGui::Button("Make animated copy")) {
+            std::string why;
+            h.ed->PushUndo();
+            GameObject* rig = gd::BuildRiggedHuman(h.ed->scene(), s.stored, go->name + " (animated)", &why);
+            if (!rig) Log(h, "Couldn't make the skeleton: " + why, 2);
+            else {
+                rig->transform->localPosition = go->transform->localPosition + okay::Vec3{1.2f, 0, 0};
+                h.ed->Select(rig);
+                h.ed->dirty = true;
+                Log(h, "Made " + rig->name + ": a skinned human with 15 bones. Select a player and press 'Use as the player's character' to see it walk, or add a Humanoid Retarget to a Character.");
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("The copy is not kept in step with this model: change the settings first, then make the copy.");
+        ImGui::SameLine();
+        if (ImGui::Button("Use as the player's character")) {
+            GameObject* player = nullptr;
+            for (const auto& up : h.ed->scene().Objects()) if (up && up.get() != go && up->GetComponent<okay::Character>() && !up->GetComponent<okay::MeshRenderer>()) { player = up.get(); break; }
+            if (!player) Log(h, "No player found in the scene. Add one first (GameObject > 3D > Third Person Player).", 1);
+            else {
+                std::string why, log;
+                h.ed->PushUndo();
+                GameObject* rig = gd::BuildRiggedHuman(h.ed->scene(), s.stored, go->name + " (animated)", &why);
+                if (!rig) Log(h, "Couldn't make the skeleton: " + why, 2);
+                else if (!okay::AttachCharacterModelRoot(h.ed->scene(), player, rig, &log)) { h.ed->scene().Destroy(rig); Log(h, "Couldn't attach the model to " + player->name + ".", 2); }
+                else { h.ed->Select(player); h.ed->dirty = true; Log(h, "The player " + player->name + " is now this human. " + log); }
+            }
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Builds the skeleton and puts the model on the first player object in the scene (it replaces that player's body). Press Play to see it idle and walk.");
     }
     // Parts you removed can be added back.
     {

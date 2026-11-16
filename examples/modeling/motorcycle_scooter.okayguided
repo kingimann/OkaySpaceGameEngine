@@ -1,43 +1,57 @@
 okayguided 1
-template motorcycle 1
+template motorcycle 2
 param detail 1
-param frontWheelRadius 0.20000000000000001
+param forkLength 0.5
+param frontWheelRadius 0.17000000000000001
 param lightSize 0.20000000000000001
-param rearWheelRadius 0.20000000000000001
-param seatHeight 0.69999999999999996
-param tankLength 0.29999999999999999
+param rake 26
+param rearWheelRadius 0.17000000000000001
+param seatHeight 0.73999999999999999
+param tankLength 0.25
 param wheelWidth 0.10000000000000001
 param wheelbase 1.2
-slot engine single
+slot engine unit
 slot exhaust none
+slot fairing legshield
 slot fender short
 slot fork telescopic
-slot frame tube
+slot frame step
 slot handlebar straight
 slot headlight square
+slot luggage none
 slot seat flat
+slot shock dual
+slot swingarm none
 slot taillight box
-slot tank round
+slot tank none
 slot wheel steel
 color engine 0.5 0.519999981 0.550000012 1
 color exhaust 0.779999971 0.800000012 0.819999993 1
+color fairing 0.920000017 0.920000017 0.899999976 1
 color fender 0.75 0.119999997 0.119999997 1
 color fork 0.779999971 0.800000012 0.819999993 1
 color frame 0.5 0.519999981 0.550000012 1
 color handlebar 0.779999971 0.800000012 0.819999993 1
 color headlight 0.970000029 0.949999988 0.75 1
+color luggage 0.5 0.519999981 0.550000012 1
 color seat 0.100000001 0.100000001 0.109999999 1
+color shock 0.779999971 0.800000012 0.819999993 1
+color swingarm 0.5 0.519999981 0.550000012 1
 color taillight 0.800000012 0.0500000007 0.0500000007 1
 color tank 0.920000017 0.920000017 0.899999976 1
 color wheel 0.100000001 0.100000001 0.109999999 1
 material engine 3
 material exhaust 9
+material fairing 13
 material fender 10
 material fork 2
 material frame 0
 material handlebar 6
 material headlight 7
+material luggage 14
 material seat 5
+material shock 12
+material swingarm 11
 material taillight 8
 material tank 4
 material wheel 1

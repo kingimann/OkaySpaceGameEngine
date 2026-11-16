@@ -981,7 +981,7 @@ every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle coun
 overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
 level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
 (`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
-small rasteriser (the detail pictures show triangle edges), not editor screenshots. The motorcycles are the roughest models.
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. Motorcycle pictures: `docs/images/guided_modeling/motorcycles_side_views.png` and `motorcycles_three_quarter.png` (Medium detail). The motorcycles are still blocky at Medium: tubes, boxes and simple profiles, not shaped like real tanks and engines.
 
 **Try it.**
 
@@ -998,6 +998,10 @@ small rasteriser (the detail pictures show triangle edges), not editor screensho
 4b. Open **Variation and check**: it shows whether the model is one connected object with no bad faces. Under **Each part**, **Remove** takes a part off;
    it appears under **Removed parts** with **Add back**.
 5. Modeling > Guided > Vehicles > Car/Truck/Bus/Motorcycle/Trailer: pick a design card, **Create**.
+6. **Motorcycles**: create a Sport, then change **Rake** (Frame group: 18 to 40 degrees, the fork leans back more and the bike gets longer in the front),
+   **Fork length**, **Wheelbase** and the wheel radii. Under **Parts and materials** change **Frame** (tube, twin spar, step-through), **Fork** (telescopic,
+   upside-down, springer), **Swingarm**, **Rear shock**, **Engine** (single, V-twin, inline four, scooter unit), **Handlebar** (flat, pull-back, ape hanger, clip-ons,
+   touring), **Fairing**, **Luggage**, **Exhaust**. A scooter engine unit swings with the wheel, so it has no swingarm. **Randomise within style** keeps that rule.
 
 **Not done / unverified.** Doors that open, interiors, chassis details, rigged wheels or vehicle physics are not built (the
 Vehicle components are separate: put them on a guided vehicle yourself). A box-only design has the same triangle count at Low and Medium.
@@ -1035,7 +1039,7 @@ clicked in a real window (unverified).
 setting at its limits, fuzz, swapping hands, hair, hats, proportions, creature body plans, your edits and your own additions surviving). The page
 was never opened in a real window; nothing ran on Windows. Pictures (`docs/images/guided_modeling/characters_*.png` sheets and
 `character_<type>_<design>.png`, 26 files, plus `detail_human.png`) are headless renders by our own small rasteriser, not editor screenshots.
-The characters are blocky and rough (no skin weights, no skeleton, no animation; they are static meshes), spiders and insects have crude legs.
+Humans from Medium up are organic (lofted body, separate face parts); robots and creatures are blocky; spiders and insects have crude legs. Style, hair and clothes pictures: `characters_styles.png` (realistic, stylised low poly, cartoon, blocky at Medium and High) and `characters_hairstyles.png` (13 hairstyles from behind and the side). A human can be given a skeleton and skin weights (see step 8). What is checked: `ctest -R guided_animation`.
 
 **Try it.**
 
@@ -1049,9 +1053,16 @@ The characters are blocky and rough (no skin weights, no skeleton, no animation;
 6. **Detail**: Low, Medium, High, Ultra (triangle counts shown). Collision: Exact (mesh) / None.
 7. To make your own: Modeling > Guided with nothing selected, Characters, pick a design card, Create. Select faces and **Save selection as part**
    to keep a hat or hand of your own as a design.
+8. **Styles and looks** (a human): **Style** under Proportions (realistic, stylised low poly, cartoon, blocky: blocky stays boxes at every Detail
+   level, stylised shows its facets, cartoon has a big head and short limbs). New **Hair** (buzz, bob, ponytail, afro, curly, side part, braid),
+   **Head** (heart, long, wide), **Top** (tank, long sleeve, hoodie), **Bottoms** (jeans, cargo, leggings, long skirt) and a **Scarf**.
+9. **Animation**: with a human selected open **Animation (skeleton)**. **Make animated copy** adds a skinned human with 15 bones next to it.
+   To see it move: add a player to the scene (GameObject menu, Third Person Player), select the human and press **Use as the player's
+   character**, then Play and walk with W. The engine's own idle and walk play on the bones (the same path an imported humanoid takes).
 
-**Not done / unverified.** No rig, no skinning, no animation or facial expressions; clothes are shells around the body, not cloth; hands have
-no individual finger joints; the page's Detail control and smooth shading were never seen in a window.
+**What the animation test proves.** `guided_animation` builds the skeleton for every human design at Medium and High (all 15 bones map, every vertex has weights, no bone is dead), puts one on the engine's third-person player, and checks that idle then W moves the body more than a metre, swings the thighs more than 8 degrees apart, deforms the skin and keeps it finite and person-sized. It does not judge how nice the bending looks: weights are by distance to the bones, so shoulders, hips and the crotch bend roughly, and clothes and hair follow the nearest bone.
+
+**Not done / unverified.** No facial expressions or finger joints; clothes are shells around the body, not cloth; the rig button and the page's Detail control were never clicked in a window; the rigged copy is a snapshot (it is not kept in step with later changes); only humans have a skeleton (robots and creatures do not).
 
 ---
 

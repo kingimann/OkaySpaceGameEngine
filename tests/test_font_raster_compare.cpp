@@ -342,6 +342,7 @@ void MergedFallback() {
         if (!onlyMono && m && !r) onlyMono = cp;
     }
     CHECK(onlyRoboto != 0);
+    float advRoboto[2] = {0, 0};
     for (int own = 0; own < 2; ++own) {
         AtlasFont a;
         MakeAtlas(a, own == 1, f.mono, 16.0f, &f.roboto);
@@ -351,8 +352,31 @@ void MergedFallback() {
         CHECK(gm && gm->SourceIdx == 0);   // from JetBrains Mono
         CHECK(gr && gr->SourceIdx == 1);   // fell back to Roboto
         CHECK(gr && gr->Visible);
+        if (gr) advRoboto[own] = gr->AdvanceX;
         if (onlyMono) { const ImFontGlyph* g = b->FindGlyphNoFallback((ImWchar)onlyMono); CHECK(g && g->SourceIdx == 0); }
         CHECK(b->FindGlyphNoFallback((ImWchar)0x10FFF0) == nullptr || sizeof(ImWchar) == 2);
+    }
+    CHECK_NEAR(advRoboto[0], advRoboto[1], 0.01);   // the fallback glyph is as wide on both
+    // A merged source added at another size (as the editor merges a CJK font at 16 px into the 18 px UI font):
+    // Roboto 18 with JetBrains Mono 16 merged behind it; a glyph only JetBrains Mono has must get the same advance.
+    if (onlyMono) {
+        float adv[2] = {0, 0}, y1[2] = {0, 0};
+        for (int own = 0; own < 2; ++own) {
+            AtlasFont a;
+            a.atlas = IM_NEW(ImFontAtlas)();
+            a.atlas->RendererHasTextures = true;
+            if (own) a.atlas->SetFontLoader(imguifont::Loader());
+            ImFontConfig fc; fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true; fc.FontDataOwnedByAtlas = false;
+            a.font = a.atlas->AddFontFromMemoryTTF((void*)f.roboto.data(), (int)f.roboto.size(), 18.0f, &fc);
+            ImFontConfig mc = fc; mc.MergeMode = true;
+            a.atlas->AddFontFromMemoryTTF((void*)f.mono.data(), (int)f.mono.size(), 16.0f, &mc);
+            const ImFontGlyph* g = a.font->GetFontBaked(18.0f)->FindGlyphNoFallback((ImWchar)onlyMono);
+            CHECK(g && g->SourceIdx == 1);
+            if (g) { adv[own] = g->AdvanceX; y1[own] = g->Y1; }
+        }
+        CHECK_NEAR(adv[0], adv[1], 0.01);
+        CHECK_NEAR(y1[0], y1[1], 1.0);   // on the same baseline (Dear ImGui's oversampled glyphs reach 0.25 px further)
+        std::printf("[fallback] JetBrains Mono 16 merged into Roboto 18: U+%04X advance own %.2f, Dear ImGui %.2f\n", onlyMono, adv[1], adv[0]);
     }
     std::printf("[fallback] merged JetBrains Mono + Roboto: U+%04X comes from Roboto on both loaders\n", onlyRoboto);
 }

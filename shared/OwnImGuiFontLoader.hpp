@@ -49,9 +49,15 @@ struct Source {
 
 inline Source* Src(ImFontConfig* src) { return src ? static_cast<Source*>(src->FontLoaderData) : nullptr; }
 
-// The pixel size one source is drawn at inside a baked font of size baked->Size.
+// The pixel size one source is drawn at inside a baked font of size baked->Size: a merged
+// source keeps its size relative to the first one (a 16 px font merged into an 18 px font
+// is drawn at 16/18 of the baked size; measured against Dear ImGui's own loader).
 inline float SourceSize(const ImFontConfig* src, const ImFontBaked* baked) {
-    float size = baked->Size * (src->ExtraSizeScale > 0.0f ? src->ExtraSizeScale : 1.0f);
+    const ImFont* font = baked->OwnerFont;
+    const float ref = (font && font->Sources.Size > 0) ? font->Sources[0]->SizePixels : 0.0f;
+    float size = baked->Size;
+    if (ref > 0.0f && src->SizePixels > 0.0f) size *= src->SizePixels / ref;
+    size *= (src->ExtraSizeScale > 0.0f ? src->ExtraSizeScale : 1.0f);
     return size > 0.0f ? size : 1.0f;
 }
 inline float Density(const ImFontBaked* baked) {

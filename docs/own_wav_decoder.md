@@ -13,6 +13,7 @@ It is small, it has a public specification, it is fully testable on Linux, and i
 | `engine/include/okay/Audio/WavDecoder.hpp`, `engine/src/Audio/WavDecoder.cpp` | `okay::wav::DecodeWav` (bytes in, interleaved float out, plus warnings), `ToS16`, `Limits`, `OwnWavEnabled` |
 | `engine/src/Audio/AudioClip.cpp` | The seam: `AudioClip::LoadWAV` calls the own decoder when `OwnWavEnabled()` is true; otherwise the old code runs unchanged |
 | `tests/test_own_wav.cpp` | Test `own_wav` |
+| `tests/bench_wav_decoder.cpp` | Not a test: speed and peak memory against `SDL_LoadWAV` (below, "Speed and memory against SDL") |
 
 ## Turning it on
 
@@ -30,7 +31,61 @@ Input over 1 GiB, more than 32 channels, a rate over 768,000 Hz or 0, more than 
 
 ## The playback seam (launcher voice clips)
 
-The launcher's only WAV load (`VoiceClipFor`, voice clips) goes through `okay::wav::LoadWavForSdl` in `shared/WavPlayback.hpp`. With the option off (default) it calls `SDL_LoadWAV` exactly as before and copies the samples out. With `-DOKAY_OWN_WAV=ON` or `OKAY_OWN_WAV=1` it calls `okay::wav::LoadForPlayback` (`engine/include/okay/Audio/WavPlayback.hpp`, no SDL in the header): `DecodeWav`, then our own conversion to the device format the call site plays: 32-bit float stays native float, every other encoding (PCM 8/24/32, A-law, mu-law, ADPCM) becomes native 16-bit via `ToS16`; channels and rate are kept. No `SDL_ConvertAudio`. PCM16 mono and stereo come out byte for byte the same as `SDL_LoadWAV`; 8-bit and 32-bit PCM arrive as 16-bit instead of U8/S32 (the call site converted them to 16-bit anyway). Failures (truncated, zero length, bad header, over budget, missing file) return false with a message and no samples. Written from the `okay::wav` output and the call site's needs only. `tests/check_wav_seam_wiring.cmake` (`ctest -R wav_seam_wiring`) fails if `SDL_LoadWAV` is called anywhere in launcher/, shared/, editor/, player/, engine/ or tools/ except that header. Tests: `ctest -R wav_playback` (own path, hostile and zero-length input, and with SDL2 present the option-off versus option-on equivalence). The test WAVs are built in memory (no WAV fixtures are checked in).
+The launcher's only WAV load (`VoiceClipFor`, voice clips) goes through `okay::wav::LoadWavForSdl` in `shared/WavPlayback.hpp`. With the option off (default) it calls `SDL_LoadWAV` exactly as before and copies the samples out. With `-DOKAY_OWN_WAV=ON` or `OKAY_OWN_WAV=1` it calls `okay::wav::LoadForPlayback` (`engine/include/okay/Audio/WavPlayback.hpp`, no SDL in the header) and moves the result into the caller's buffer (no copy). `LoadForPlayback` decodes straight to the device format the call site plays, with the same values `DecodeWav` and `ToS16` give (the in-place layout is described under "Speed and memory against SDL"): 32-bit float stays native float, every other encoding (PCM 8/24/32, A-law, mu-law, ADPCM) becomes native 16-bit via `ToS16`; channels and rate are kept. No `SDL_ConvertAudio`. PCM16 mono and stereo come out byte for byte the same as `SDL_LoadWAV`; 8-bit and 32-bit PCM arrive as 16-bit instead of U8/S32 (the call site converted them to 16-bit anyway). Failures (truncated, zero length, bad header, over budget, missing file) return false with a message and no samples. Written from the `okay::wav` output and the call site's needs only. `tests/check_wav_seam_wiring.cmake` (`ctest -R wav_seam_wiring`) fails if `SDL_LoadWAV` is called anywhere in launcher/, shared/, editor/, player/, engine/ or tools/ except that header. Tests: `ctest -R wav_playback` (own path, hostile and zero-length input, and with SDL2 present the option-off versus option-on equivalence). The test WAVs are built in memory (no WAV fixtures are checked in).
+
+## Speed and memory against SDL
+
+Owner rule (2026-11-16): "We only switch when it's faster and up to par": our decoder may only become the default when it is at least as fast as `SDL_LoadWAV`, uses no more memory on the same files, and is at least as good.
+
+**How it was measured.** `tests/bench_wav_decoder.cpp` (built in the test build when SDL2 is found, not run by ctest; how to run it is in `docs/try_it.md`). Per file: the median wall time of at least 9 runs, and the peak heap above the start of the call, counted by a malloc / free / realloc hook in the program (glibc), the same way for SDL's C allocations and our C++ ones. Two comparisons:
+
+- **Final** (what the launcher really does, `VoiceClipFor`): `LoadWavForSdl` with our decoder on (`LoadForPlayback`) against it with our decoder off (`SDL_LoadWAV`, copy, `SDL_FreeWAV`), each followed by the launcher's own `VoiceClipToPlayable` (SDL hands back 8-bit as U8 and 24/32-bit as S32, which that function turns into 16-bit; ours already is). Both end with native 16-bit samples, or float for float32 files. This is the comparison the rule is about.
+- **Raw**: reading the file and `DecodeWav` (float out, the form `AudioClip::LoadWAV` wants) against `SDL_LoadWAV` alone (SDL's own output: for PCM and float that is the file's samples untouched, so SDL does almost no work and uses half or a third of the memory of a float result). Not like for like: shown because it was asked for.
+
+Files: the repository's 13 WAV files (`tests/data/audio/wav_ffmpeg`, encoded by ffmpeg, and two in `examples/`) and 13 generated ones (the bench writes them; 44.1 kHz stereo unless named: PCM and float carry a tone plus noise, the A-law, mu-law and ADPCM payloads are pseudo-random bytes behind valid headers). Release build, GCC 13.3, one core of an Intel Xeon at 2.1 GHz, Linux, 2026-11-16. Ratio = ours / SDL; below 1 is better for us. Times under 0.1 ms are a few microseconds and noisy.
+
+| File | MiB | Final: ms ours / SDL | Final: MiB ours / SDL | Final met? | Raw: ms ours / SDL | Raw: MiB ours / SDL | Raw met? |
+|---|---|---|---|---|---|---|---|
+| `alaw_stereo.wav` | 0.005 | 0.006 / 0.013 (0.48) | 0.011 / 0.021 (0.54) | met | 0.007 / 0.020 (0.36) | 0.035 / 0.015 (2.32) | not met (more memory) |
+| `f32_mono.wav` | 0.011 | 0.004 / 0.005 (0.84) | 0.011 / 0.021 (0.54) | met | 0.007 / 0.005 (1.52) | 0.029 / 0.015 (1.97) | not met (slower, more memory) |
+| `ima_mono.wav` | 0.002 | 0.013 / 0.021 (0.63) | 0.010 / 0.016 (0.65) | met | 0.012 / 0.019 (0.62) | 0.026 / 0.014 (1.82) | not met (more memory) |
+| `ima_stereo.wav` | 0.003 | 0.018 / 0.028 (0.64) | 0.015 / 0.023 (0.65) | met | 0.019 / 0.028 (0.68) | 0.035 / 0.019 (1.81) | not met (more memory) |
+| `ms_mono.wav` | 0.002 | 0.020 / 0.029 (0.67) | 0.010 / 0.016 (0.66) | met | 0.025 / 0.029 (0.89) | 0.026 / 0.014 (1.82) | not met (more memory) |
+| `ms_mono_b256.wav` | 0.002 | 0.016 / 0.024 (0.67) | 0.008 / 0.012 (0.65) | met | 0.019 / 0.022 (0.86) | 0.021 / 0.012 (1.82) | not met (more memory) |
+| `ms_stereo.wav` | 0.003 | 0.019 / 0.025 (0.75) | 0.015 / 0.023 (0.65) | met | 0.021 / 0.024 (0.89) | 0.034 / 0.019 (1.81) | not met (more memory) |
+| `ms_stereo_b2048.wav` | 0.004 | 0.022 / 0.032 (0.68) | 0.020 / 0.031 (0.64) | met | 0.028 / 0.031 (0.91) | 0.043 / 0.024 (1.81) | not met (more memory) |
+| `mulaw_mono.wav` | 0.003 | 0.005 / 0.010 (0.52) | 0.006 / 0.011 (0.59) | met | 0.003 / 0.009 (0.37) | 0.021 / 0.010 (2.22) | not met (more memory) |
+| `s24_stereo.wav` | 0.016 | 0.011 / 0.038 (0.30) | 0.017 / 0.042 (0.40) | met | 0.011 / 0.009 (1.24) | 0.045 / 0.025 (1.77) | not met (slower, more memory) |
+| `u8_mono.wav` | 0.003 | 0.005 / 0.010 (0.53) | 0.006 / 0.008 (0.79) | met | 0.003 / 0.004 (0.75) | 0.021 / 0.007 (3.04) | not met (more memory) |
+| `mulaw_tone.wav` | 0.042 | 0.032 / 0.076 (0.42) | 0.085 / 0.168 (0.51) | met | 0.021 / 0.079 (0.27) | 0.219 / 0.089 (2.47) | not met (more memory) |
+| `tone.wav` | 0.168 | 0.012 / 0.015 (0.81) | 0.169 / 0.336 (0.50) | met | 0.025 / 0.009 (2.91) | 0.513 / 0.173 (2.97) | not met (slower, more memory) |
+| `gen_pcm16_stereo_1s.wav` | 0.168 | 0.010 / 0.013 (0.80) | 0.169 / 0.336 (0.50) | met | 0.025 / 0.009 (2.72) | 0.513 / 0.173 (2.97) | not met (slower, more memory) |
+| `gen_pcm16_stereo_60s.wav` | 10.094 | 1.191 / 1.603 (0.74) | 10.095 / 20.187 (0.50) | met | 3.332 / 0.807 (4.13) | 30.289 / 10.098 (3.00) | not met (slower, more memory) |
+| `gen_pcm16_stereo_10min.wav` | 100.937 | 67.2 / 115.1 (0.58) | 100.938 / 201.875 (0.50) | met | 217.3 / 48.1 (4.52) | 302.821 / 100.942 (3.00) | not met (slower, more memory) |
+| `gen_pcm8_stereo_60s.wav` | 5.047 | 4.147 / 9.013 (0.46) | 10.095 / 15.141 (0.67) | met | 2.265 / 0.382 (5.94) | 25.243 / 5.051 (5.00) | not met (slower, more memory) |
+| `gen_pcm24_stereo_60s.wav` | 15.141 | 40.1 / 47.1 (0.85) | 15.141 / 40.375 (0.38) | met | 9.126 / 5.247 (1.74) | 35.336 / 20.192 (1.75) | not met (slower, more memory) |
+| `gen_pcm32_stereo_60s.wav` | 20.187 | 12.8 / 45.6 (0.28) | 20.188 / 40.375 (0.50) | met | 21.6 / 1.629 (13.26) | 40.383 / 20.192 (2.00) | not met (slower, more memory) |
+| `gen_f32_stereo_60s.wav` | 20.187 | 3.862 / 15.4 (0.25) | 20.188 / 40.375 (0.50) | met | 20.4 / 1.443 (14.16) | 40.383 / 20.192 (2.00) | not met (slower, more memory) |
+| `gen_f64_stereo_60s.wav` | 40.375 | 28.3 / fail (-) | 40.376 / - (-) | met (SDL cannot read it) | 23.1 / fail (-) | 60.571 / - (-) | met (SDL cannot read it) |
+| `gen_alaw_stereo_60s.wav` | 5.047 | 4.022 / 22.1 (0.18) | 10.095 / 20.187 (0.50) | met | 2.790 / 20.6 (0.14) | 25.243 / 10.098 (2.50) | not met (more memory) |
+| `gen_mulaw_stereo_60s.wav` | 5.047 | 3.997 / 9.462 (0.42) | 10.095 / 20.187 (0.50) | met | 3.069 / 8.876 (0.35) | 25.243 / 10.098 (2.50) | not met (more memory) |
+| `gen_msadpcm_stereo_60s.wav` | 2.539 | 14.3 / 19.5 (0.73) | 12.636 / 20.193 (0.63) | met | 16.6 / 16.7 (1.00) | 22.741 / 12.640 (1.80) | not met (more memory) |
+| `gen_ima_stereo_60s.wav` | 2.533 | 16.6 / 20.6 (0.81) | 12.632 / 20.196 (0.63) | met | 16.4 / 19.9 (0.82) | 22.738 / 12.636 (1.80) | not met (more memory) |
+| `gen_ext_pcm16_6ch_48k_60s.wav` | 32.959 | 14.7 / 25.9 (0.57) | 32.962 / 65.922 (0.50) | met | 62.1 / 13.2 (4.70) | 98.891 / 32.965 (3.00) | not met (slower, more memory) |
+
+**Result.** Final (the launcher's load): **met on all 26 files**, faster (ratio 0.18 to 0.85) and smaller (0.38 to 0.79 of SDL's peak); the float64 file only we read (SDL refuses it). Raw: **not met** on 25 of 26 files for memory (a float result is 2 to 5 times the size of SDL's untouched or 16-bit samples) and on the PCM and float files for time (SDL does not convert them at all); raw is faster than SDL for A-law, mu-law, MS and IMA ADPCM. "Up to par": our decoder reads everything SDL reads here plus float64, and the 16-bit result of PCM16 is byte for byte SDL's (`wav_playback`). Not equal to SDL's path: 8-bit and 24/32-bit, where the launcher's conversion after SDL scales by 32,767 and cuts toward zero, and ours scales by 32,768 and rounds to the nearest; ours is the exact one (`ToS16`).
+
+**Before this work** the same bench showed our final load slower than SDL on 22 of 26 files (PCM16 60 s: 58.6 ms against 1.5 ms) and bigger on all 26 (2.1 to 4 times SDL's peak): it decoded to a float buffer, made a 16-bit copy, then a byte copy, then the launcher's seam copied it once more.
+
+**What changed (output identical).**
+- One chunk walk and format check (a "plan"), then a loop per format that writes straight into the target: float for `DecodeWav`, native 16-bit or float bytes for playback. No float buffer and no extra copies on the playback path.
+- `LoadForPlayback` reads the first 512 bytes (up to 64 KiB if needed) to find the data chunk, then reads the samples into their own buffer and decodes inside it: PCM 16/24/32 and float in place front to back (an output sample is never wider than its input sample, and each is read before it is written); 8-bit PCM, A-law and mu-law from the buffer's second half into its first (output sample k ends before input sample k + 1 starts). ADPCM decodes into a new buffer. Unbuffered C stdio, so no stream buffer is allocated. `LoadWavForSdl` moves the bytes instead of copying them.
+- PCM16 to 16-bit is one block move; float32 to float is a move plus a scan that zeroes NaN and infinity. G.711 decodes through two 256-entry tables made at start-up from the same functions; IMA through an 89 x 8 table of differences made from the same shifts and adds.
+- 24-bit to 16-bit rounds with integer arithmetic, and float to 16-bit (also `ToS16`) adds and takes away 1.5 x 2^23 instead of calling `std::nearbyint`. Both were checked against the old `std::nearbyint` code on **every** input: all 16,777,216 24-bit values and all 4,278,190,082 non-NaN float values, 0 differences (GCC 13 `-O2`, x86-64). They need strict IEEE float (no `-ffast-math`, SSE not x87), which our builds use.
+
+**How "output identical" was checked.** `bench_wav_decoder --digest` hashes, per file, `DecodeWav`'s whole result (samples bit for bit, warnings, error, header fields), `DecodeForPlayback`'s and `LoadForPlayback`'s bytes; for each of the 13 small files it also hashes every truncation and 2,000 random byte mutations (both decoders, results and error messages). The 40 hash lines are the same before and after, also in a build with AddressSanitizer and UndefinedBehaviorSanitizer (no report). `wav_playback` gained a check that `LoadForPlayback` (two buffers, in place) equals `DecodeForPlayback` (one buffer) and `ToS16(DecodeWav)` on files over 64 KiB with every chunk layout, width and widening format, odd sizes and refusals (245 checks); two deliberate breakages of the in-place layout each make it fail (one with a wrong value, one with a heap error). `own_wav` (22,163 checks; the `audioop` differential skipped, no `audioop` on this Python), `wav_ffmpeg_diff`, `audio_formats`, `wav` and `wav_seam_wiring` pass unchanged.
+
+**Not verified.** Windows: nothing was built or run there (the bench needs glibc for memory; time alone would work). Only one machine. Real voice clips from the launcher's chat were not in the corpus (they are 16-bit PCM, which the generated 16-bit files cover). `AudioClip::LoadWAV` (the engine's float path) was not compared with the engine's older reader.
 
 ## Specifications used (rule 19a)
 

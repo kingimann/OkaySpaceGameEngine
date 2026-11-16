@@ -14,6 +14,13 @@
 //    means the server sent the whole file again and the temporary file starts over. Progress and cancel callbacks.
 //    A wrong checksum, a cancel or any failure removes the temporary file; the destination is never touched unless
 //    the whole file arrived and matched.
+//  - The temporary file is "<dest>.<key>.<pid>-<random>.part" (key = the first 16 hex digits of the expected SHA-256,
+//    or "nosha"), so two downloads to one destination at the same time never share a file. Each download holds an
+//    exclusive flock(2) on its temporary file while it runs (the kernel drops it when the process ends, even after a
+//    crash). A later run of the same download (same destination, same expected SHA-256) with resumeExisting adopts an
+//    unlocked one, which can only be left over from a run that ended; unlocked leftovers it does not adopt are removed.
+//    A new file is created under a name that does not end in ".part", locked, and only then renamed, so no other run
+//    can take it in between; the finished file is renamed over the destination BEFORE its lock is released.
 //
 // Written for this engine from RFC 9110 (sections 9.2.2 idempotent methods, 10.2.3 Retry-After, 5.6.7 HTTP-date,
 // 13.1.5 If-Range, 14 range requests, 15.3.7 206) and the POSIX rename/fsync manual pages. The backoff is the usual
@@ -27,12 +34,16 @@
 #include "okay/Crypto/Sha256.hpp"
 
 #if !defined(_WIN32)
+#include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <random>
 #include <string>
 #include <vector>
+#include <dirent.h>
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -269,7 +280,10 @@ struct DownloadSpec {
     std::string expectedSha256;         ///< 64 hex digits (any case), or "" = not checked (the hash is still returned)
     uint64_t expectedSize = 0;          ///< 0 = not checked
     uint64_t maxBytes = 8ull << 30;     ///< size cap for the whole file (announced or sent); replaces NetOptions::limits.maxBodyBytes
-    std::string tempPath;               ///< "" = dest + ".part"
+    /// "" = a name of our own next to dest, unique to this run ("<dest>.<key>.<pid>-<random>.part", see the top of this
+    /// file). A path given here is used as it is (locked while in use: a second download to the same path fails with
+    /// WriteFailed instead of writing into it).
+    std::string tempPath;
     bool resume = true;                 ///< after a dropped connection, ask for the rest (Range) instead of starting over
     /// Start from a temporary file an earlier run left behind (its bytes are hashed again). Only used when the server
     /// can be held to the same file: with expectedSha256 set (a different file then fails the checksum) or validators.
@@ -296,6 +310,8 @@ struct DownloadResult {
     int restarts = 0;                   ///< tries where the file had to start over (200 to a Range, a changed file)
     bool requestSent = false;
     RetryReport retry;
+    std::string tempPath;               ///< the temporary file this run used
+    uint64_t reusedBytes = 0;           ///< bytes taken over from a temporary file an earlier run left (resumeExisting)
 };
 
 namespace dl_detail {
@@ -330,6 +346,50 @@ inline std::string ParentDir(const std::string& path) {
     if (s == std::string::npos) return ".";
     return s == 0 ? "/" : path.substr(0, s);
 }
+inline std::string BaseName(const std::string& path) {
+    const size_t s = path.find_last_of('/');
+    return s == std::string::npos ? path : path.substr(s + 1);
+}
+/// Eight random hex digits (std::random_device mixed with the clock and the process id; it only has to differ between
+/// runs that start at the same moment, it is not a secret).
+inline std::string RandomHex8() {
+    uint64_t x = uint64_t(std::chrono::steady_clock::now().time_since_epoch().count()) ^ (uint64_t(::getpid()) << 32);
+    try { std::random_device rd; x ^= (uint64_t(rd()) << 16) ^ rd(); } catch (...) {}
+    std::mt19937_64 m(x);
+    static const char* const k = "0123456789abcdef";
+    std::string s(8, '0');
+    uint64_t v = m();
+    for (char& c : s) { c = k[v & 15]; v >>= 4; }
+    return s;
+}
+/// Lock the regular file at `path` for this download: open it, take an exclusive flock without waiting, then check that
+/// the name still points at the locked file (it may have been renamed or removed by the run that held it). -1 = no.
+inline int TryLockFile(const std::string& path) {
+    const int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    struct stat a{}, b{};
+    if (::flock(fd, LOCK_EX | LOCK_NB) != 0 || ::fstat(fd, &a) != 0 || !S_ISREG(a.st_mode) || ::lstat(path.c_str(), &b) != 0 ||
+        a.st_ino != b.st_ino || a.st_dev != b.st_dev) {
+        ::close(fd);
+        return -1;
+    }
+    return fd;
+}
+/// The temporary files of earlier or running downloads to `dest` with this key ("<dest>.<key>.*.part"), full paths.
+inline std::vector<std::string> ListParts(const std::string& dest, const std::string& key) {
+    std::vector<std::string> out;
+    const std::string dir = ParentDir(dest), prefix = BaseName(dest) + "." + key + ".", suffix = ".part";
+    DIR* d = ::opendir(dir.c_str());
+    if (!d) return out;
+    while (const struct dirent* e = ::readdir(d)) {
+        const std::string n = e->d_name;
+        if (n.size() > prefix.size() + suffix.size() && n.compare(0, prefix.size(), prefix) == 0 &&
+            n.compare(n.size() - suffix.size(), suffix.size(), suffix) == 0)
+            out.push_back(dir + "/" + n);
+    }
+    ::closedir(d);
+    return out;
+}
 } // namespace dl_detail
 
 /// GET `url` into `dest` (see the top of this file). `net` carries the timeouts, limits, proxy, CA and keep-alive
@@ -347,7 +407,7 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
             out.status = DownloadStatus::BadInput; out.message = "Range and If-Range are set by the download itself"; return out;
         }
     }
-    const std::string temp = spec.tempPath.empty() ? dest + ".part" : spec.tempPath;
+    std::string temp = spec.tempPath;
     const uint64_t cap = spec.maxBytes ? spec.maxBytes : (8ull << 30);
     const bool hashing = spec.computeSha256 || !wantHex.empty();
 
@@ -357,8 +417,8 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
     int fd = -1;
     std::string validator;          // strong ETag or Last-Modified of the answer the bytes came from
     uint64_t knownTotal = 0;        // complete size, once an answer said so
-    auto closeFd = [&]() { if (fd >= 0) { ::close(fd); fd = -1; } };
-    auto removeTemp = [&]() { closeFd(); ::unlink(temp.c_str()); };
+    auto closeFd = [&]() { if (fd >= 0) { ::close(fd); fd = -1; } };     // closing also drops the lock
+    auto removeTemp = [&]() { ::unlink(temp.c_str()); closeFd(); };       // remove while still locked
     auto startOver = [&]() -> bool {
         if (::ftruncate(fd, 0) != 0 || ::lseek(fd, 0, SEEK_SET) != 0) return false;
         hasher = okay::crypto::Sha256(); written = 0; validator.clear(); knownTotal = 0;
@@ -370,11 +430,42 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
         return out;
     };
 
-    fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0644);
-    if (fd < 0) return fail(DownloadStatus::WriteFailed, "cannot create the temporary file " + temp, false);
+    const bool mayReuse = spec.resumeExisting && spec.resume && !wantHex.empty();
+    bool adopted = false;
+    if (temp.empty()) {
+        // Our own name. Take over (or clear away) unlocked leftovers of the same download, then, if none was taken
+        // over, create a new file: under "<name>.new" first, locked, then renamed to "<name>" (see the top of the file).
+        const std::string key = wantHex.empty() ? std::string("nosha") : wantHex.substr(0, 16);
+        for (const std::string& cand : dl_detail::ListParts(dest, key)) {
+            const int cfd = dl_detail::TryLockFile(cand);
+            if (cfd < 0) continue;                      // in use by a running download (or gone): leave it alone
+            if (mayReuse && !adopted) { fd = cfd; temp = cand; adopted = true; continue; }
+            ::unlink(cand.c_str());
+            ::close(cfd);
+        }
+        for (int tries = 0; !adopted && fd < 0 && tries < 16; ++tries) {
+            const std::string name = dest + "." + key + "." + std::to_string(long(::getpid())) + "-" + dl_detail::RandomHex8() + ".part";
+            const std::string fresh = name + ".new";
+            const int nfd = ::open(fresh.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0644);
+            if (nfd < 0) { if (errno == EEXIST) continue; break; }
+            if (::flock(nfd, LOCK_EX | LOCK_NB) != 0 || ::rename(fresh.c_str(), name.c_str()) != 0) { ::unlink(fresh.c_str()); ::close(nfd); break; }
+            fd = nfd; temp = name;
+        }
+        if (fd < 0) { out.status = DownloadStatus::WriteFailed; out.message = "cannot create a temporary file next to " + dest; return out; }
+    } else {
+        fd = ::open(temp.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0644);
+        if (fd < 0) return fail(DownloadStatus::WriteFailed, "cannot create the temporary file " + temp, false);
+        if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {   // another download is writing it: never write into its file
+            closeFd();
+            out.status = DownloadStatus::WriteFailed; out.message = "the temporary file " + temp + " is in use by another download";
+            return out;
+        }
+        adopted = mayReuse;
+    }
+    out.tempPath = temp;
     {
         struct stat st{};
-        const bool reuse = spec.resumeExisting && spec.resume && !wantHex.empty() && ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+        const bool reuse = adopted && ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
         if (reuse) {   // hash what an earlier run left, then append to it
             const int rfd = ::open(temp.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
             std::vector<char> buf(1 << 16);
@@ -390,6 +481,7 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
             if (!okRead || ::lseek(fd, off_t(written), SEEK_SET) != off_t(written)) {
                 if (!startOver()) return fail(DownloadStatus::WriteFailed, "cannot reset the temporary file", false);
             }
+            out.reusedBytes = written;
         } else if (!startOver()) {
             return fail(DownloadStatus::WriteFailed, "cannot reset the temporary file", false);
         }
@@ -492,10 +584,17 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
             if (spec.expectedSize && written != spec.expectedSize) return fail(DownloadStatus::SizeMismatch, "the file is not the expected size", false);
             if (!wantHex.empty() && out.sha256Hex != wantHex) return fail(DownloadStatus::ChecksumMismatch, "SHA-256 does not match", false);
             if (spec.syncBeforeRename && ::fsync(fd) != 0) return fail(DownloadStatus::WriteFailed, "cannot sync the temporary file", false);
+            // Rename while the lock is still held, so no other run can take the finished file over in between.
+            if (::rename(temp.c_str(), dest.c_str()) != 0) return fail(DownloadStatus::WriteFailed, "cannot move the file into place", false);
             const int closed = ::close(fd);
             fd = -1;
-            if (closed != 0) return fail(DownloadStatus::WriteFailed, "cannot close the temporary file", false);
-            if (::rename(temp.c_str(), dest.c_str()) != 0) return fail(DownloadStatus::WriteFailed, "cannot move the file into place", false);
+            // A failed close after a successful fsync loses nothing; without the fsync the bytes may not have reached
+            // the disk, so the file is not trusted.
+            if (closed != 0 && !spec.syncBeforeRename) {
+                ::unlink(dest.c_str());
+                out.status = DownloadStatus::WriteFailed; out.message = "cannot close the downloaded file"; out.bytes = written;
+                return out;
+            }
             if (spec.syncBeforeRename) {   // the folder entry too, best effort
                 const int dfd = ::open(dl_detail::ParentDir(dest).c_str(), O_RDONLY | O_CLOEXEC);
                 if (dfd >= 0) { (void)::fsync(dfd); ::close(dfd); }

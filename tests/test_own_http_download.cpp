@@ -23,6 +23,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -49,6 +50,22 @@ static std::string GenSha(uint64_t size, int v = 1) {
 }
 static std::string Slurp(const std::string& p) { std::ifstream f(p, std::ios::binary); return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()); }
 static bool Exists(const std::string& p) { struct stat st; return ::stat(p.c_str(), &st) == 0; }
+/// The temporary files DownloadToFile has left next to `dest` ("<dest>.<key>.<pid>-<random>.part", any key).
+static std::vector<std::string> Parts(const std::string& dest) {
+    std::vector<std::string> out;
+    const size_t sl = dest.find_last_of('/');
+    const std::string dir = dest.substr(0, sl), prefix = dest.substr(sl + 1) + ".";
+    if (DIR* d = ::opendir(dir.c_str())) {
+        while (const struct dirent* e = ::readdir(d)) {
+            const std::string n = e->d_name;
+            if (n.size() > prefix.size() + 5 && n.compare(0, prefix.size(), prefix) == 0 && (n.compare(n.size() - 5, 5, ".part") == 0 || n.find(".part.new") != std::string::npos))
+                out.push_back(dir + "/" + n);
+        }
+        ::closedir(d);
+    }
+    return out;
+}
+static bool AnyPart(const std::string& dest) { return !Parts(dest).empty() || Exists(dest + ".part"); }
 
 // gzip of `s` with stored (uncompressed) deflate blocks, our own writer (RFC 1951 3.2.4, RFC 1952): enough to test the
 // Content-Encoding path end to end. CRC-32 from the reflected polynomial 0xEDB88320, bit by bit.
@@ -413,7 +430,7 @@ static void TestPure() {
     {   // bad input
         DownloadSpec sp; sp.expectedSha256 = "abc";
         DownloadResult r = DownloadToFile("http://127.0.0.1:1/x", TmpBase() + "/okay_never_written", sp, Opts());
-        CHECK(r.status == DownloadStatus::BadInput && !Exists(TmpBase() + "/okay_never_written.part"));
+        CHECK(r.status == DownloadStatus::BadInput && !AnyPart(TmpBase() + "/okay_never_written"));
         sp.expectedSha256.clear(); sp.headers = {"Range: bytes=5-"};
         r = DownloadToFile("http://127.0.0.1:1/x", TmpBase() + "/okay_never_written", sp, Opts());
         CHECK(r.status == DownloadStatus::BadInput);
@@ -424,7 +441,7 @@ static void TestPure() {
 static void TestServer(const std::string& dir) {
     Server s; s.handler = [&](int c, Req& r) { return Route(s, c, r); }; s.Start();
     const std::string base = "http://127.0.0.1:" + std::to_string(s.port);
-    const std::string dest = dir + "/out.bin", part = dest + ".part";
+    const std::string dest = dir + "/out.bin";
     const NetOptions o = Opts();
     const std::string sha100k = GenSha(100000), sha300k = GenSha(300000);
 
@@ -435,7 +452,7 @@ static void TestServer(const std::string& dir) {
         sp.progress = [&](uint64_t d, uint64_t t) { if (d < last) monotone = false; last = d; total = t; ++calls; return true; };
         DownloadResult r = DownloadToFile(base + "/file?size=100000", dest, sp, o);
         CHECK(r.status == DownloadStatus::Ok && r.sha256Hex == sha100k && r.bytes == 100000 && r.httpStatus == 200);
-        CHECK(Slurp(dest) == GenStr(0, 100000) && !Exists(part));
+        CHECK(Slurp(dest) == GenStr(0, 100000) && !AnyPart(dest));
         CHECK(calls > 0 && monotone && last == 100000 && total == 100000 && r.retry.attempts == 1);
     }
     {   // redirects 301 -> 302 (absolute) -> 307 (relative, with a body) -> 308 -> the file
@@ -448,7 +465,7 @@ static void TestServer(const std::string& dir) {
         NetOptions lo = o; lo.limits.maxRedirects = 4;
         r = DownloadToFile(base + "/rloop", dir + "/loop.bin", lp, lo);
         CHECK(r.status == DownloadStatus::NetworkError && r.err == Err::TooManyRedirects && s.Hits("/rloop") == 5 && r.retry.attempts == 1);
-        CHECK(!Exists(dir + "/loop.bin") && !Exists(dir + "/loop.bin.part"));
+        CHECK(!Exists(dir + "/loop.bin") && !AnyPart(dir + "/loop.bin"));
     }
     {   // chunked body with odd chunk sizes
         DownloadSpec sp; sp.expectedSha256 = sha300k;
@@ -461,7 +478,7 @@ static void TestServer(const std::string& dir) {
         CHECK(r.status == DownloadStatus::Ok && r.sha256Hex == sha300k && r.resumes == 1 && r.restarts == 0 && r.retry.attempts == 2);
         const std::string h = s.LastHead();
         CHECK(h.find("Range: bytes=70000-") != std::string::npos && h.find("If-Range: \"v1\"") != std::string::npos);
-        CHECK(Slurp(dest) == GenStr(0, 300000) && !Exists(part));
+        CHECK(Slurp(dest) == GenStr(0, 300000) && !AnyPart(dest));
         // dropped three times, each try continuing where the last one stopped
         sp.retry = Fast(4); s.Reset("/drop");
         r = DownloadToFile(base + "/drop?size=300000&cut=50000&times=3", dir + "/d3.bin", sp, o);
@@ -469,15 +486,95 @@ static void TestServer(const std::string& dir) {
         // without retries the drop is a failure, and the temporary file is gone
         DownloadSpec one; one.expectedSha256 = sha300k;
         r = DownloadToFile(base + "/drop?size=300000&cut=50000&times=99", dir + "/d1.bin", one, o);
-        CHECK(r.status == DownloadStatus::NetworkError && !Exists(dir + "/d1.bin") && !Exists(dir + "/d1.bin.part"));
+        CHECK(r.status == DownloadStatus::NetworkError && !Exists(dir + "/d1.bin") && !AnyPart(dir + "/d1.bin"));
         // ...unless the caller asked to keep it, and a later run picks it up (resumeExisting, checksum given)
         one.keepPartialOnFailure = true;
         r = DownloadToFile(base + "/drop?size=300000&cut=50000&times=99", dir + "/d2.bin", one, o);
-        CHECK(r.status == DownloadStatus::NetworkError && Exists(dir + "/d2.bin.part") && !Exists(dir + "/d2.bin"));
+        CHECK(r.status == DownloadStatus::NetworkError && AnyPart(dir + "/d2.bin") && !Exists(dir + "/d2.bin"));
         DownloadSpec again; again.expectedSha256 = sha300k; again.resumeExisting = true;
         r = DownloadToFile(base + "/file?size=300000", dir + "/d2.bin", again, o);
-        CHECK(r.status == DownloadStatus::Ok && r.resumes == 1 && r.sha256Hex == sha300k && !Exists(dir + "/d2.bin.part"));
+        CHECK(r.status == DownloadStatus::Ok && r.resumes == 1 && r.sha256Hex == sha300k && !AnyPart(dir + "/d2.bin"));
         CHECK(s.LastHead().find("Range: bytes=50000-") != std::string::npos);
+    }
+    {   // two downloads to ONE destination at the same time: each has its own temporary file (pid plus a random
+        // suffix), both finish, the destination holds the file, nothing is left behind
+        const std::string sha2m = GenSha(2000000);
+        const std::string cd = dir + "/conc.bin";
+        DownloadResult ra, rb;
+        std::atomic<int> maxSeen{0};
+        auto run = [&](DownloadResult& r) {
+            DownloadSpec sp; sp.expectedSha256 = sha2m;
+            sp.progress = [&](uint64_t, uint64_t) { const int n = int(Parts(cd).size()); if (n > maxSeen) maxSeen = n; return true; };
+            r = DownloadToFile(base + "/file?size=2000000&rate=4", cd, sp, o);   // paced: about half a second each
+        };
+        std::thread ta([&] { run(ra); }), tb([&] { run(rb); });
+        ta.join(); tb.join();
+        CHECK(ra.status == DownloadStatus::Ok && rb.status == DownloadStatus::Ok && ra.sha256Hex == sha2m && rb.sha256Hex == sha2m);
+        CHECK(!ra.tempPath.empty() && !rb.tempPath.empty() && ra.tempPath != rb.tempPath);
+        CHECK(ra.tempPath.size() > 5 && ra.tempPath.compare(ra.tempPath.size() - 5, 5, ".part") == 0);
+        CHECK(ra.tempPath.find("." + std::to_string(long(::getpid())) + "-") != std::string::npos);   // the pid is in the name
+        CHECK(maxSeen == 2);                                                                          // both files existed at once
+        CHECK(Slurp(cd) == GenStr(0, 2000000) && !AnyPart(cd));
+        std::printf("two downloads to one destination: %s and %s\n", ra.tempPath.substr(dir.size() + 1).c_str(), rb.tempPath.substr(dir.size() + 1).c_str());
+    }
+    {   // a leftover from a failed run is taken over by exactly ONE of two later runs started together; the other
+        // starts fresh. Both finish with the right file.
+        DownloadSpec one; one.expectedSha256 = sha300k; one.keepPartialOnFailure = true;
+        const std::string rd = dir + "/race.bin";
+        DownloadResult r = DownloadToFile(base + "/drop?size=300000&cut=50000&times=99", rd, one, o);
+        CHECK(r.status == DownloadStatus::NetworkError && Parts(rd).size() == 1);
+        DownloadResult ra, rb;
+        auto run = [&](DownloadResult& res) {
+            DownloadSpec sp; sp.expectedSha256 = sha300k; sp.resumeExisting = true;
+            res = DownloadToFile(base + "/file?size=300000&rate=1", rd, sp, o);
+        };
+        std::thread ta([&] { run(ra); }), tb([&] { run(rb); });
+        ta.join(); tb.join();
+        CHECK(ra.status == DownloadStatus::Ok && rb.status == DownloadStatus::Ok && ra.sha256Hex == sha300k && rb.sha256Hex == sha300k);
+        CHECK((ra.reusedBytes == 50000) != (rb.reusedBytes == 50000));      // exactly one took the leftover over
+        CHECK(ra.reusedBytes + rb.reusedBytes == 50000 && ra.resumes + rb.resumes == 1);
+        CHECK(Slurp(rd) == GenStr(0, 300000) && !AnyPart(rd));
+    }
+    {   // a temporary file in use by a running download is never taken over, even with resumeExisting
+        const std::string ud = dir + "/inuse.bin";
+        DownloadResult ra, rb;
+        std::atomic<bool> started{false};
+        std::thread ta([&] {
+            DownloadSpec sp; sp.expectedSha256 = sha300k; sp.keepPartialOnFailure = true;
+            sp.progress = [&](uint64_t d, uint64_t) { if (d > 0) started = true; return true; };
+            ra = DownloadToFile(base + "/file?size=300000&rate=0.5", ud, sp, o);   // about 0.6 s
+        });
+        while (!started) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        DownloadSpec sp; sp.expectedSha256 = sha300k; sp.resumeExisting = true;
+        rb = DownloadToFile(base + "/file?size=300000", ud, sp, o);
+        ta.join();
+        CHECK(rb.status == DownloadStatus::Ok && rb.reusedBytes == 0 && rb.tempPath != ra.tempPath);
+        CHECK(ra.status == DownloadStatus::Ok && Slurp(ud) == GenStr(0, 300000) && !AnyPart(ud));
+    }
+    {   // a caller-chosen temporary path is locked: a second download to it fails instead of writing into it
+        const std::string td = dir + "/fixed.bin", tp = dir + "/fixed.tmp";
+        DownloadResult ra;
+        std::atomic<bool> started{false};
+        std::thread ta([&] {
+            DownloadSpec sp; sp.tempPath = tp;
+            sp.progress = [&](uint64_t d, uint64_t) { if (d > 0) started = true; return true; };
+            ra = DownloadToFile(base + "/file?size=300000&rate=0.5", td, sp, o);
+        });
+        while (!started) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        DownloadSpec sp; sp.tempPath = tp;
+        DownloadResult rb = DownloadToFile(base + "/file?size=300000", td + "2", sp, o);
+        ta.join();
+        CHECK(rb.status == DownloadStatus::WriteFailed && rb.message.find("in use") != std::string::npos);
+        CHECK(ra.status == DownloadStatus::Ok && Slurp(td) == GenStr(0, 300000) && !Exists(tp));
+    }
+    {   // without resumeExisting an unlocked leftover of the same download is cleared away, not left to pile up
+        DownloadSpec one; one.expectedSha256 = sha300k; one.keepPartialOnFailure = true;
+        const std::string ld = dir + "/left.bin";
+        DownloadResult r = DownloadToFile(base + "/drop?size=300000&cut=50000&times=99", ld, one, o);
+        CHECK(r.status == DownloadStatus::NetworkError && Parts(ld).size() == 1);
+        DownloadSpec sp; sp.expectedSha256 = sha300k;
+        r = DownloadToFile(base + "/file?size=300000", ld, sp, o);
+        CHECK(r.status == DownloadStatus::Ok && r.reusedBytes == 0 && !AnyPart(ld));
     }
     {   // a chunked answer cut short, resumed as a 206
         DownloadSpec sp; sp.expectedSha256 = sha300k; sp.retry = Fast(2);
@@ -499,7 +596,7 @@ static void TestServer(const std::string& dir) {
         // ...and a total limit shorter than the trickle ends it (a timeout is retried, so give it one try only)
         NetOptions to = o; to.totalMs = 30;
         r = DownloadToFile(base + "/slow?size=120000", dir + "/slow.bin", DownloadSpec(), to);
-        CHECK(r.status == DownloadStatus::NetworkError && r.err == Err::Timeout && !Exists(dir + "/slow.bin.part"));
+        CHECK(r.status == DownloadStatus::NetworkError && r.err == Err::Timeout && !AnyPart(dir + "/slow.bin"));
     }
     {   // a server that ignores Range: the 200 starts the file over, the result is still right
         DownloadSpec sp; sp.expectedSha256 = sha300k; sp.retry = Fast(3);
@@ -514,7 +611,7 @@ static void TestServer(const std::string& dir) {
     {   // a 206 that starts at the wrong byte is refused (never stitched in); not retried
         DownloadSpec sp; sp.retry = Fast(3);
         DownloadResult r = DownloadToFile(base + "/badrange?size=300000&cut=40000", dir + "/br.bin", sp, o);
-        CHECK(r.status == DownloadStatus::NetworkError && r.err == Err::BadResponse && !Exists(dir + "/br.bin") && !Exists(dir + "/br.bin.part"));
+        CHECK(r.status == DownloadStatus::NetworkError && r.err == Err::BadResponse && !Exists(dir + "/br.bin") && !AnyPart(dir + "/br.bin"));
     }
     {   // 5xx then success; Retry-After in seconds is used as the wait
         DownloadSpec sp; sp.expectedSha256 = sha100k; sp.retry = Fast(4);
@@ -534,14 +631,14 @@ static void TestServer(const std::string& dir) {
         // a Retry-After longer than the policy allows: give up at once, with the answer
         DownloadSpec lw; lw.retry = Fast(5);
         r = DownloadToFile(base + "/longwait", dir + "/lw.bin", lw, o);
-        CHECK(r.status == DownloadStatus::HttpError && r.httpStatus == 503 && r.retry.attempts == 1 && r.retry.gaveUpOnRetryAfter && !Exists(dir + "/lw.bin.part"));
+        CHECK(r.status == DownloadStatus::HttpError && r.httpStatus == 503 && r.retry.attempts == 1 && r.retry.gaveUpOnRetryAfter && !AnyPart(dir + "/lw.bin"));
         // a server that never recovers: all tries used, the last status reported
         DownloadSpec al; al.retry = Fast(3);
         r = DownloadToFile(base + "/always503", dir + "/al.bin", al, o);
         CHECK(r.status == DownloadStatus::HttpError && r.httpStatus == 503 && r.retry.attempts == 3 && s.Hits("/always503") == 3);
         // 404 is final
         r = DownloadToFile(base + "/404", dir + "/nf.bin", al, o);
-        CHECK(r.status == DownloadStatus::HttpError && r.httpStatus == 404 && r.retry.attempts == 1 && !Exists(dir + "/nf.bin.part"));
+        CHECK(r.status == DownloadStatus::HttpError && r.httpStatus == 404 && r.retry.attempts == 1 && !AnyPart(dir + "/nf.bin"));
         // a refused connection is retried (and fails in the end)
         int deadPort = 0; { int fd = Listen(deadPort); ::close(fd); }
         r = DownloadToFile("http://127.0.0.1:" + std::to_string(deadPort) + "/x", dir + "/dead.bin", al, o);
@@ -552,17 +649,17 @@ static void TestServer(const std::string& dir) {
         DownloadSpec sp; sp.expectedSha256 = std::string(64, '0'); sp.retry = Fast(3);
         DownloadResult r = DownloadToFile(base + "/file?size=100000", dir + "/keep.bin", sp, o);
         CHECK(r.status == DownloadStatus::ChecksumMismatch && r.sha256Hex == sha100k && r.retry.attempts == 1);
-        CHECK(!Exists(dir + "/keep.bin.part") && Slurp(dir + "/keep.bin") == "old");
+        CHECK(!AnyPart(dir + "/keep.bin") && Slurp(dir + "/keep.bin") == "old");
         // expected size: too small fails as soon as it is announced, nothing kept
         DownloadSpec sz; sz.expectedSize = 99999;
         r = DownloadToFile(base + "/file?size=100000", dir + "/sz.bin", sz, o);
-        CHECK(r.status == DownloadStatus::SizeMismatch && !Exists(dir + "/sz.bin.part") && !Exists(dir + "/sz.bin"));
+        CHECK(r.status == DownloadStatus::SizeMismatch && !AnyPart(dir + "/sz.bin") && !Exists(dir + "/sz.bin"));
         // size cap
         DownloadSpec cap; cap.maxBytes = 50000;
         r = DownloadToFile(base + "/file?size=100000", dir + "/cap.bin", cap, o);
-        CHECK(r.status == DownloadStatus::TooLarge && !Exists(dir + "/cap.bin.part"));
+        CHECK(r.status == DownloadStatus::TooLarge && !AnyPart(dir + "/cap.bin"));
         r = DownloadToFile(base + "/chunked?size=100000", dir + "/cap.bin", cap, o);
-        CHECK(r.status == DownloadStatus::TooLarge && !Exists(dir + "/cap.bin.part"));
+        CHECK(r.status == DownloadStatus::TooLarge && !AnyPart(dir + "/cap.bin"));
         // cannot create the temporary file
         r = DownloadToFile(base + "/file", dir + "/no/such/dir/x.bin", DownloadSpec(), o);
         CHECK(r.status == DownloadStatus::WriteFailed);
@@ -571,14 +668,14 @@ static void TestServer(const std::string& dir) {
         DownloadSpec sp;
         sp.progress = [](uint64_t d, uint64_t) { return d < 20000; };
         DownloadResult r = DownloadToFile(base + "/slow?size=120000", dir + "/c1.bin", sp, o);
-        CHECK(r.status == DownloadStatus::Cancelled && !Exists(dir + "/c1.bin.part") && !Exists(dir + "/c1.bin"));
+        CHECK(r.status == DownloadStatus::Cancelled && !AnyPart(dir + "/c1.bin") && !Exists(dir + "/c1.bin"));
         std::atomic<bool> flag{false};
         DownloadSpec cs; cs.cancel = [&] { return flag.load(); };
         std::thread t([&] { std::this_thread::sleep_for(std::chrono::milliseconds(300)); flag = true; });
         auto t0 = std::chrono::steady_clock::now();
         r = DownloadToFile(base + "/stall?size=300000&cut=1000&times=99", dir + "/c2.bin", cs, o);
         t.join();
-        CHECK(r.status == DownloadStatus::Cancelled && Secs(t0) < 2.0 && !Exists(dir + "/c2.bin.part"));
+        CHECK(r.status == DownloadStatus::Cancelled && Secs(t0) < 2.0 && !AnyPart(dir + "/c2.bin"));
         flag = false;
         DownloadSpec cw; cw.cancel = [&] { return flag.load(); }; cw.retry.maxAttempts = 5; cw.retry.baseDelayMs = 60000;
         std::thread t2([&] { std::this_thread::sleep_for(std::chrono::milliseconds(300)); flag = true; });
@@ -709,13 +806,13 @@ static void TestTlsProxy(const std::string& script, const std::string& dir) {
     // a wrong checksum over TLS: refused, nothing left
     sp.expectedSha256 = std::string(64, 'f');
     r = DownloadToFile(url, dir + "/tls2.bin", sp, o);
-    CHECK(r.status == DownloadStatus::ChecksumMismatch && !Exists(dir + "/tls2.bin") && !Exists(dir + "/tls2.bin.part"));
+    CHECK(r.status == DownloadStatus::ChecksumMismatch && !Exists(dir + "/tls2.bin") && !AnyPart(dir + "/tls2.bin"));
     // a certificate for another name behind the proxy is still refused (no retry turns that into a success)
     SServer bad;
     if (bad.Start(docs, certs + "/wronghost.crt", certs + "/wronghost.key")) {
         DownloadSpec b; b.retry = Fast(3);
         r = DownloadToFile("https://localhost:" + std::to_string(bad.port) + "/dl.http", dir + "/tls3.bin", b, o);
-        CHECK(r.status == DownloadStatus::NetworkError && r.err == Err::Tls && r.retry.attempts == 1 && !Exists(dir + "/tls3.bin.part"));
+        CHECK(r.status == DownloadStatus::NetworkError && r.err == Err::Tls && r.retry.attempts == 1 && !AnyPart(dir + "/tls3.bin"));
     }
     px.srv.Stop();
 }

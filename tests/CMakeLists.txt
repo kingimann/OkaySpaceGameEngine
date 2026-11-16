@@ -3225,6 +3225,11 @@ add_executable(test_fbx_hostile test_fbx_hostile.cpp
 target_include_directories(test_fbx_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_fbx_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
+# The output-preserving fast paths of our FBX reader against the plain code they replaced, bit for bit, on random
+# inputs (white-box: compiles FbxScene.cpp and FbxReader.cpp itself, no engine library). docs/own_fbx_reader.md.
+add_executable(test_fbx_exact test_fbx_exact.cpp test_fbx_exact_numbers.cpp)
+target_include_directories(test_fbx_exact PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Render)
+add_test(NAME fbx_exact COMMAND test_fbx_exact)
 # Not a test: speed and peak heap of our FBX reader against ufbx (docs/own_fbx_reader.md, "Speed and memory").
 # Built, never run by ctest. Synthetic large inputs: python3 scripts/gen_fbx_bench.py <dir>.
 add_executable(bench_fbx_reader bench_fbx_reader.cpp)

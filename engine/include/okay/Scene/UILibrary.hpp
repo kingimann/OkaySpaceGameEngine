@@ -5,6 +5,7 @@
 // container) next to plain on-screen instructions. Written for this engine from its own UI helpers
 // (UITemplates, UIGallery's card helpers); no other project's code or assets were used.
 #include "okay/Scene/UIGallery.hpp"
+#include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
 #include <string>
 
@@ -36,6 +37,7 @@ inline GameObject* Note(Scene& s, GameObject* parent, const char* name, const st
 
 /// Slice 1: essentials and layout. Returns the page root.
 inline GameObject* BuildSlice1(Scene& scene) {
+    EnsureSceneCamera(scene, true);   // a scene without a main camera renders nothing when Play starts (tests/test_examples_work)
     GameObject* canvas = EnsureCanvas(scene);
     if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
     GameObject* root = Group(scene, canvas, "UI Library 1");

@@ -5,262 +5,269 @@ gravity3 0 -9.81 0
 rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
-gameobject 0 "Canvas"
-  guid "fc4df042b2c5fb1877ae935ae20819c5"
+gameobject 0 "Main Camera"
+  guid "1c9a193ed9608d989aefa4d3280436c7"
+  active 1
+  parent -1
+  transform 0 0 10 0 0 0 1 1 1 1
+  camera 0 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Canvas"
+  guid "acb203eccac2eb1845e706bd1f1315cf"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   canvas 1 1280 720 0.5 1 0 1 1 0 1280 720 100 1 1
 end
-gameobject 1 "EventSystem"
-  guid "324e9d54937ff543ed1c9c006883409b"
+gameobject 2 "EventSystem"
+  guid "04ec69a53659e53c22149abc6d402e8b"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   eventsystem
 end
-gameobject 2 "UI Library 1"
-  guid "76dfdedb71929efc76ab97cd0ecee1de"
+gameobject 3 "UI Library 1"
+  guid "79ae786009a50f2ca540e9407b85a7d5"
   active 1
-  parent 0
+  parent 1
   transform 0 0 0 0 0 0 1 1 1 1
 end
-gameobject 3 "Backdrop"
-  guid "30b1f04fc8ed61906f7ff6d892f817e1"
+gameobject 4 "Backdrop"
+  guid "90c0c085448e3cfe2909b890cf663828"
   active 1
-  parent 2
+  parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 0 0 0 0 0.07058824 0.078431375 0.101960786 0.98039216 11 0 0 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 0 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
 end
-gameobject 4 "Title"
-  guid "c5fa0950fd1d7d40d6fd2f2e5778f816"
+gameobject 5 "Title"
+  guid "d5bb0828c1dbd524408e08b093516c0f"
   active 1
-  parent 2
+  parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   text "UI Library 1" 0.9098039 0.92156863 0.9411765 1 3.75 1 32 12 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 1 600 40 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 5 "Subtitle"
-  guid "e2140d204e7b6ae8746b28761a915a6c"
+gameobject 6 "Subtitle"
+  guid "326901d191a59210bb9716e2949194ef"
   active 1
-  parent 2
+  parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   text "Essentials and layout. Drag the handles. Click a box and type (try a wrong email). Make the window taller or wider: the blue frame keeps its shape." 0.5882353 0.6156863 0.6745098 1 1.625 1 34 50 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 1200 40 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 6 "Range"
-  guid "333d6a4c55ee7abc6918426406b2ee3e"
+gameobject 7 "Range"
+  guid "f57490e3331640f530c8e6f67f1decbb"
   active 1
-  parent 2
+  parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 32 104 392 330 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
   uix pblock=1
 end
-gameobject 7 "Caption"
-  guid "0e58662ece85830056322736c7b82dc6"
+gameobject 8 "Caption"
+  guid "5e00f5f41ee24b9b1fde9f5fb06c33f3"
   active 1
-  parent 6
+  parent 7
   transform 0 0 0 0 0 0 1 1 1 1
   text "Range slider" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 8 "PriceLabel"
-  guid "f04bf2b9ac5b9d328f2cd218aaff62ec"
+gameobject 9 "PriceLabel"
+  guid "8238cd89de9ae3648d4013afd2ed0d33"
   active 1
-  parent 6
+  parent 7
   transform 0 0 0 0 0 0 1 1 1 1
   text "Price range" 0.5882353 0.6156863 0.6745098 1 1.625 1 20 44 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 200 20 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 9 "Price"
-  guid "27f02c128f3e38ebecf20301885eb69d"
+gameobject 10 "Price"
+  guid "6990f64bf456bde881f895516c0740c6"
   active 1
-  parent 6
+  parent 7
   transform 0 0 0 0 0 0 1 1 1 1
   uirange 20 96 352 30 0 0 500 120 380 10 0 0 1 1 1 4 1 0.16078432 0.18039216 0.23137255 1 0.25882354 0.5882353 0.98039216 1 0.9607843 0.96862745 0.9882353 1 1 1 1 1 "${lo} to ${hi}"
 end
-gameobject 10 "LevelLabel"
-  guid "5c96e4186c0e2da3be152d77c2ad39c2"
+gameobject 11 "LevelLabel"
+  guid "e49366ef005e4d5823afa557396573e8"
   active 1
-  parent 6
+  parent 7
   transform 0 0 0 0 0 0 1 1 1 1
   text "Level range (3 apart)" 0.5882353 0.6156863 0.6745098 1 1.625 1 20 156 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 20 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 11 "Level"
-  guid "2d3fc90fdbe3b97b143d4cbb9253b062"
+gameobject 12 "Level"
+  guid "6b8fb043322f9bf097cceb3062fa0d69"
   active 1
-  parent 6
+  parent 7
   transform 0 0 0 0 0 0 1 1 1 1
   uirange 20 208 352 30 0 1 60 10 25 0 1 3 1 1 1 4 1 0.16078432 0.18039216 0.23137255 1 0.28235295 0.76862746 0.5019608 1 0.9607843 0.96862745 0.9882353 1 1 1 1 1 "Levels {lo} to {hi}"
 end
-gameobject 12 "RangeHint"
-  guid "60087fb7665f160bb926cc6d327f628a"
+gameobject 13 "RangeHint"
+  guid "53e28c541cfc2b66840888ffa9533a97"
   active 1
-  parent 6
+  parent 7
   transform 0 0 0 0 0 0 1 1 1 1
   text "Drag a handle. They never cross. Left and right move one, Enter swaps." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 262 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 60 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 13 "Form"
-  guid "e458ca02c52b77717f0f55d3d45d3816"
+gameobject 14 "Form"
+  guid "b71924a53b0ea5d23eed40d1d91d1608"
   active 1
-  parent 2
+  parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 448 104 392 500 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
   uix pblock=1
 end
-gameobject 14 "Caption"
-  guid "1d0ac435f8605ccf34afe689eb569ef4"
+gameobject 15 "Caption"
+  guid "e155f3543c1cf013ccceb61c60f33ecd"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   text "Input validation" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 15 "EmailLabel"
-  guid "ef95e7f90f6b0c32f37d3358ced8df1a"
+gameobject 16 "EmailLabel"
+  guid "66fd3f2eaf7f6e62a0c8436b1fb4fd5d"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   text "Email" 0.5882353 0.6156863 0.6745098 1 1.625 1 20 44 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 200 20 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 16 "Email"
-  guid "b335302b992b16b1b6f5b96a6153e82d"
+gameobject 17 "Email"
+  guid "c80a1176712b66019e8175b7efb8403f"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   uiinput 20 66 352 38 0 64 "" "name@site.com" 0.18039216 0.2 0.2509804 1 0 1 6 1 0.25882354 0.5882353 0.98039216 1 0
   uivalidate 1 1 0 0 0 0 100 1 1 1 0.9098039 0.32941177 0.32941177 1 0.34509805 0.78431374 0.50980395 1 "" ""
 end
-gameobject 17 "AgeLabel"
-  guid "6ab98d98cafd8bd236fc564da0903a77"
+gameobject 18 "AgeLabel"
+  guid "bbfd3d46eb0afffdd3422df2c3056be6"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   text "Age (13 to 120)" 0.5882353 0.6156863 0.6745098 1 1.625 1 20 138 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 200 20 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 18 "Age"
-  guid "fc02061559982d5f38c8bb8869b78f6e"
+gameobject 19 "Age"
+  guid "504d1c2fd283af1cd830ec29e43aaa9b"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   uiinput 20 160 352 38 0 64 "" "a whole number" 0.18039216 0.2 0.2509804 1 0 1 6 1 0.25882354 0.5882353 0.98039216 1 0
   uivalidate 2 1 0 0 1 13 120 1 1 1 0.9098039 0.32941177 0.32941177 1 0.34509805 0.78431374 0.50980395 1 "" ""
 end
-gameobject 19 "PassLabel"
-  guid "24566863d2dcd3cdf7e9657fbc7108f0"
+gameobject 20 "PassLabel"
+  guid "87dbba0127689056de01f79ffef0d287"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   text "Password (6 or more)" 0.5882353 0.6156863 0.6745098 1 1.625 1 20 232 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 20 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 20 "Password"
-  guid "5f585243d03d429d643ae07a991a09bb"
+gameobject 21 "Password"
+  guid "a64e890e45c44788621366046320475b"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   uiinput 20 254 352 38 0 64 "" "choose a password" 0.18039216 0.2 0.2509804 1 3 1 6 1 0.25882354 0.5882353 0.98039216 1 0
   uivalidate 0 1 6 0 0 0 100 1 1 0 0.9098039 0.32941177 0.32941177 1 0.34509805 0.78431374 0.50980395 1 "" ""
 end
-gameobject 21 "RepeatLabel"
-  guid "eb506e722c44cf46a4fdccd8839dceb6"
+gameobject 22 "RepeatLabel"
+  guid "d084cdc28d1ea3d32a3c8a65fb52b1cb"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   text "Repeat the password" 0.5882353 0.6156863 0.6745098 1 1.625 1 20 326 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 20 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 22 "Repeat"
-  guid "e2b0858a861127501c25fccd2b573c6f"
+gameobject 23 "Repeat"
+  guid "f25d4ddc9711ff6372dccd85263b5b94"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   uiinput 20 348 352 38 0 64 "" "type it again" 0.18039216 0.2 0.2509804 1 3 1 6 1 0.25882354 0.5882353 0.98039216 1 0
   uivalidate 0 1 0 0 0 0 100 1 1 1 0.9098039 0.32941177 0.32941177 1 0.34509805 0.78431374 0.50980395 1 "Password" "That is not the same password"
 end
-gameobject 23 "FormHint"
-  guid "160c5a659c0aaba9d9235cc447653933"
+gameobject 24 "FormHint"
+  guid "31235cdd167d08554e8c408503d1ce7e"
   active 1
-  parent 13
+  parent 14
   transform 0 0 0 0 0 0 1 1 1 1
   text "A red ring and a short sentence appear once you type a wrong value. A green ring means the box is fine." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 404 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 60 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 24 "Aspect"
-  guid "579e1138197bc570e77555f6c08180bf"
+gameobject 25 "Aspect"
+  guid "86c85919f0ac1f0f0d348b2688bcf68b"
   active 1
-  parent 2
+  parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 864 104 384 32 0.11764706 0.12941177 0.16078432 0.9882353 10 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
   uix pblock=1
 end
-gameobject 25 "Caption"
-  guid "cb7a2e1086e54804cf79562e926fc8b1"
+gameobject 26 "Caption"
+  guid "cc73c7922b1b3c746fa4a852f79d1733"
   active 1
-  parent 24
+  parent 25
   transform 0 0 0 0 0 0 1 1 1 1
   text "Aspect ratio box (16:9)" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 344 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 26 "Holder"
-  guid "58afb41cf14d87ff375b15af4beadcca"
+gameobject 27 "Holder"
+  guid "bb2853aa744fa263127639215e3dd99f"
   active 1
-  parent 24
+  parent 25
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 0 44 0 90 0 0 0 0 11 0 0 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 0 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
 end
-gameobject 27 "Area"
-  guid "cd9f4c064b7f2db15f019daf6bcae2d1"
-  active 1
-  parent 26
-  transform 0 0 0 0 0 0 1 1 1 1
-  uiaspect 1.7777778 0 0.5 0 20
-end
-gameobject 28 "Frame"
-  guid "191e4bad420aeebb292c2a74ea0ba58f"
+gameobject 28 "Area"
+  guid "f17b01acb8c46620896b6a11f9a6d1d7"
   active 1
   parent 27
   transform 0 0 0 0 0 0 1 1 1 1
-  uipanel 0 0 0 0 0.21176471 0.36078432 0.5882353 1 11 10 3 0.9019608 0.9254902 0.98039216 1 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 1 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+  uiaspect 1.7777778 0 0.5 0 20
 end
-gameobject 29 "Dot"
-  guid "4aefbfcc1f9ba4deaa2099fd369594e6"
+gameobject 29 "Frame"
+  guid "26709b3a03e5508992b97b13b1adc1be"
   active 1
   parent 28
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel 0 0 0 0 0.21176471 0.36078432 0.5882353 1 11 10 3 0.9019608 0.9254902 0.98039216 1 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 1 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+end
+gameobject 30 "Dot"
+  guid "a2f07b47e29b6e21c20be09d80b5a332"
+  active 1
+  parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 0 0 56 56 0.98039216 0.78431374 0.3137255 1 4 10 0 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 2 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
 end
-gameobject 30 "Label"
-  guid "efa13c00a337fb7ddd00b71a5db55258"
+gameobject 31 "Label"
+  guid "a14e29cb8c4b60481d0b68170cfac221"
   active 1
-  parent 28
+  parent 29
   transform 0 0 0 0 0 0 1 1 1 1
   text "16 : 9" 1 1 1 1 2.25 1 0 -14 7 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 1 200 24 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 31 "Hint"
-  guid "01773cd3548fe07b33e55d3b99b837a1"
+gameobject 32 "Hint"
+  guid "d1e1aac2359b84502290f373f4418124"
   active 1
-  parent 24
+  parent 25
   transform 0 0 0 0 0 0 1 1 1 1
   text "The frame stays 16:9 on a phone, a tablet and an ultrawide screen." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 -70 6 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 344 50 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 32 "More"
-  guid "10d52eb2b5a63e48402436cc41bb395f"
+gameobject 33 "More"
+  guid "2409c4308a5270a9221e6b412d2cab9c"
   active 1
-  parent 2
+  parent 3
   transform 0 0 0 0 0 0 1 1 1 1
   uipanel 32 448 392 170 0.11764706 0.12941177 0.16078432 0.9882353 0 14 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 1 0 0 0 0.3529412 0 6 1 0 16 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
   uix pblock=1
 end
-gameobject 33 "Caption"
-  guid "462ed0fdcbc35bc65d93ae80b354cd0d"
+gameobject 34 "Caption"
+  guid "17bdcd9d9954a55aaf7d63e535f791db"
   active 1
-  parent 32
+  parent 33
   transform 0 0 0 0 0 0 1 1 1 1
   text "Also in the library" 0.25882354 0.5882353 0.98039216 1 1.5 1 20 14 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 18 1 0 0 0 0 0.54901963 1 0 1 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 34 "More1"
-  guid "b7428538e0fbbdf01296bfe7c84d1938"
+gameobject 35 "More1"
+  guid "c2acf443cf513972073a6a46e2adc3c1"
   active 1
-  parent 32
+  parent 33
   transform 0 0 0 0 0 0 1 1 1 1
   text "More parts: File > Examples > UI Gallery." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 44 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 40 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end
-gameobject 35 "More2"
-  guid "b093db1ce1738618a29aa4be3ba7baf1"
+gameobject 36 "More2"
+  guid "7989faec09ad49b1f96845c59be3312d"
   active 1
-  parent 32
+  parent 33
   transform 0 0 0 0 0 0 1 1 1 1
   text "Add any part: GameObject > UI > Controls, or Layout & Overlays." 0.5882353 0.6156863 0.6745098 1 1.625 1 20 96 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 352 60 0 0 0 0 0 0.54901963 0 0 0 1 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
 end

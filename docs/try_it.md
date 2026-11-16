@@ -1249,14 +1249,17 @@ set OKAY_UI_DEMO_USER=demo
 OkaySpace.exe
 ```
 
-- **Downloads** (sidebar): four sample downloads (completed, downloading, queued, failed). Expect cards with a progress bar, the
-  status in colour, and Open folder, Install to Community, Cancel or Remove; Remove takes a finished row away.
+- **Downloads** (sidebar): four sample downloads (completed, downloading, queued, failed). Expect bordered rows with a yellow
+  progress bar, the status in colour, and Open folder, Install to Community, Cancel or Remove; Remove takes a finished row away.
 - **Achievements** (sidebar): eight sample achievements with medals. Click "This month", type in the search, change the sort,
   right-click a tile for Add to showcase, Remove from showcase or Copy id.
 - **Notifications** (the bell at the bottom of the sidebar): a sample feed. Click the chips, hover a row for its dismiss button,
   click a row to open its page.
 
-Run the same without `set OKAY_UI_BACKEND=okayui` to compare with the Dear ImGui versions. Add `set OKAY_UI_TIMING=1` to see, after
+Run the same without `set OKAY_UI_BACKEND=okayui` to compare with the Dear ImGui versions: the two should look the same
+(same positions, sizes, icons and tooltip place; only edge shading and single text pixels differ). The Dear ImGui Downloads rows
+now show their buttons in full (they used to be cut off at the bottom). Clicking a chip or button right after moving onto it
+works on the first click. Add `set OKAY_UI_TIMING=1` to see, after
 300 frames on one of these screens, a toast (and a stdout line) with the median CPU time per frame of that screen on the backend
 that drew it. Run in a real window only on Linux under Xvfb so far; not run on Windows.
 

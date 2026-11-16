@@ -906,15 +906,15 @@ Same data and actions as the Dear ImGui versions:
 
 ### 8.4 Differences from the Dear ImGui versions (blunt)
 
-- **Downloads.** Rows are cards that grow to fit (the Dear ImGui rows are 80 pixels and cut their buttons off at the bottom); the
-  progress bar is OkayUI's.
-- **Notifications.** The icons are simple drawn shapes (bell, person, speech bubble, circular arrow), not the launcher's nav icons.
-  The title is drawn twice for weight like the Dear ImGui one.
-- **Achievements.** The medal is a flat hexagon (no top-to-bottom gradient); the search field has no magnifier icon; the "Latest"
-  line sits under the count rather than next to it; the right-click menu is OkayUI's popup.
-- **All three.** One frame of latency for who owns the mouse (section 5.2): a click that arrives in the same frame as the move
-  onto a hosted screen from outside it goes to Dear ImGui (seen with `xdotool` moving and clicking at once; a person moving the
-  mouse first is not affected). No hover cursor change outside OkayUI's own cursor state.
+Section 8.6 closed most of what this list used to hold (layout, sizes, icons, medal gradient, magnifier, tooltip, the frame of
+mouse latency). What is left:
+
+- **All three.** Edges: OkayUI draws shapes without Dear ImGui's anti-aliased fringe, so rounded corners, circles and the
+  hexagon outlines differ by a pixel of shading. Text is the same font at the same whole-pixel sizes, but it is rasterised by our
+  own TrueType code, so single glyph pixels differ in shade. No hover cursor change outside OkayUI's own cursor state.
+- **Achievements.** The sort list that opens under the combo and the right-click menu are OkayUI's popups (their own look);
+  the search field shows no hover tint.
+- **Notifications.** The scrollbar thumb is OkayUI's (same place and width, slightly different length).
 - **Not done:** the other launcher pages (Settings, Friends, Servers and the rest); Windows was not built or run.
 
 ### 8.5 Speed
@@ -936,3 +936,82 @@ Headless (`okayui_launcher_pages`, no window, OkayUI only, 300 frames): Download
 per frame. The Dear ImGui pages live inside the launcher's `main()`, so there is no headless Dear ImGui figure to set against them.
 The runs vary by about 20% on this machine; the gains are larger than the spread in the medians but were not measured on Windows or
 on a real GPU.
+
+### 8.6 Matching the Dear ImGui pages pixel for pixel
+
+The owner's rule is "we only switch when it's faster and up to par". Section 8 made the three screens faster; this step makes
+them look like their Dear ImGui versions. Written from the launcher's own Dear ImGui code (its style values in `DarkTheme` and
+`shared/OkayTheme.hpp`, the page code, `DrawNavIcon`, `DrawAchMedal`) and from screenshots of what Dear ImGui draws; no Dear ImGui
+code was copied.
+
+**What changed in the pages** (`okayui/screens/OkayUILauncherPages.cpp`): every position is the one the Dear ImGui page gets: a
+17 px font (16 px times 17/16; scaled text rounded to whole pixels as the launcher's is), frames padded 10 x 7, items 9 x 8 apart,
+positions cut to whole pixels after each item. Each page draws the launcher's page header (1.34x title, accent bar, subtitle,
+faint divider line). Downloads: bordered 98 px rows, the launcher's yellow progress bar with its text just right of the fill,
+small buttons. Notifications: the launcher's own line icons (friends, chat, refresh, bell) drawn again with OkayUI, its 16 x 14
+padding and 6 px scrollbar. Achievements: the header card padded 18 x 16 with 12 px corners, the medal shaded from 62% to 30% of
+its colour top to bottom, the pill search field with its magnifier, the pill sort combo with an arrow button, the tooltip 25 px
+right of and 10 px below the mouse, padded 14 x 12.
+
+**What was added to OkayUI** (tested in `okayui_launcher_pages`, "the gaps closed" block, and `okayui_host`):
+
+- `PushStyleVar(StyleVar_FramePadding)`: a frame row is the text height plus twice y; text fields and combos inset their text x.
+- `StyleVar_ChildPadding` (new) and `StyleVar_ScrollbarSize`: a child with no padding whose scrollbar takes room only while the
+  content overflows, with the thumb inset in the bar.
+- `Theme::comboArrowBox`: the combo box drawn as a frame-coloured box with a button-coloured arrow square.
+- Theme tooltip fields: offset from the mouse, padding, line gap, corner radius, fill. The defaults draw exactly as before.
+- `DrawList::AddConvexPolyFilledMultiColor`: one colour per point (the medal gradient).
+- `Theme::ascentRoundsUp` and `Theme::snapAdvances`: text placed and stepped the way Dear ImGui places it (the baseline one pixel
+  lower when the ascent's fraction is under a half; whole-pixel advances). Off by default.
+- The font atlas bakes 14, 17, 18, 21, 23 and 25 px as well (12 sizes), so the pages' text is crisp at the launcher's sizes. The
+  What's New and Tips goldens changed because their 1.12x text now uses the 18 px bake (looked at: the same text, a little crisper).
+- `SetInputBlocked` / `IsInputBlocked` and `okayuihost::Region::OwnsThisFrame`: the launcher's `OkayUIOffer` unblocks OkayUI's mouse
+  as soon as a hosted screen under the mouse is offered, so a click in the same frame as the move onto the screen reaches it (the
+  "one frame of latency" of section 5.2 is gone for hosted screens).
+- Fix: `End()` no longer lets a window that began inside a `PushTextScale` keep that scale into the next frame (it grew every frame).
+
+**Launcher changes** (`launcher/main.cpp`): the OkayUI Downloads and Achievements areas end 46 px above the bottom, where the Dear
+ImGui lists end. The **Dear ImGui Downloads rows** are now as tall as their three lines (98 px at the default size; they were 80 px,
+which cut the buttons off and gave each row a scrollbar): a bug fix in the default page. The OkayUI Downloads page reads and
+changes the list through `DlSnapshot` and `DlApply`, written next to the download manager. They use the same SDL mutex
+(`SDL_LockMutex(g_dlMutex)`) and SDL thread join (`SDL_WaitThread`) as the rest of the download manager on main, which still runs
+its workers on SDL threads (MinGW has no `std::thread`): `DlSnapshot` (one lock), `DlApply` (one lock, one join per removed
+download) and the demo seed `SeedDemoDownloads` (one lock).
+
+**Pixel difference** (real launcher, Linux, Release, Xvfb 1440x900, software OpenGL, `OKAY_UI_DEMO_USER=demo`, the same demo data
+on both backends; the page area x 374 to 1290, y 76 to 785, and for Notifications the panel x 383 to 861, y 175 to 813; "mean" is
+the mean absolute difference per colour channel, 0 to 255; "clearly different" is the share of pixels where some channel differs by
+more than 32):
+
+| Screen | Before: mean | Before: clearly different | After: mean | After: clearly different |
+|---|---:|---:|---:|---:|
+| Downloads | 12.29 | 5.43% | 0.10 | 0.02% |
+| Notifications (over Friends) | 10.06 | 10.59% | 0.89 | 0.85% |
+| Achievements (mouse on a tile, tooltip showing) | 12.48 | 10.59% | 0.56 | 0.70% |
+| Achievements (mouse away) | 12.09 | 10.50% | 0.55 | 0.74% |
+
+"Before" is the branch as section 8 left it against the Dear ImGui page of that time; "after" is against the Dear ImGui page of
+this step. For Downloads the Dear ImGui page itself changed (the row fix); the old OkayUI page against the new Dear ImGui page is
+mean 12.52, 5.53%. Screenshots: `scratchpad/shots/opp/a6-<screen>-{imgui,okayui}.png` and `diff-a6-<screen>.png` (red: clearly
+different) in the session that made this step (not committed).
+
+**Checked in the real launcher with `xdotool`** (OkayUI backend): Remove on a download removed it; a move and a click sent in one
+`xdotool` command (from outside the page) removed a second download, picked the Unread chip and opened Friends from a notification
+row (the latency fix); the This month chip, typing "owl" in the search and picking A to Z in the sort combo all did what they do
+on the Dear ImGui page.
+
+
+**Speed after matching** (`OKAY_UI_TIMING=1`, same machine and setup as 8.5, each screen run 4 times per backend, alternating;
+each figure is the median of the 19 or 20 medians of 300 frames; a shared, busy machine, so about 20% run-to-run spread):
+
+| Screen | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Faster? |
+|---|---:|---:|---:|---:|---|
+| Downloads | 40 us | 37 us | 125 us | 124 us | a tie (within the spread) |
+| Notifications | 78 us | 82 us | 265 us | 262 us | a tie (build 5% slower, build + render 1% less) |
+| Achievements | 88 us | 64 us | 239 us | 219 us | met (8% less) |
+
+Matching the look cost most of the lead section 8.5 measured for Downloads and Notifications: more text at more sizes, the
+launcher's line icons (stroked paths) and the faux-bold titles. The speed fixes in this step (rounded-rectangle corner points
+from a table, an inline `floor` in the text path, re-wrapping a notification only when it changes, cheaper row outlines) won
+back part of it. The owner's rule needs "faster": Achievements is; Downloads and Notifications are now level, not faster.
+Headless (`okayui_launcher_pages`) figures are printed by the test and vary too much on this machine to quote.

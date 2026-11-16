@@ -422,6 +422,11 @@ add_executable(test_debug_console test_debug_console.cpp)
 target_link_libraries(test_debug_console PRIVATE okay::engine)
 add_test(NAME debug_console COMMAND test_debug_console)
 
+# Issue #888 findings 70 and 73: one Find/Replace matcher, and errors survive an Info flood in the Console
+add_executable(test_find_replace_console test_find_replace_console.cpp)
+target_link_libraries(test_find_replace_console PRIVATE okay::engine)
+add_test(NAME find_replace_console COMMAND test_find_replace_console)
+
 add_executable(test_diagnostics test_diagnostics.cpp)
 target_link_libraries(test_diagnostics PRIVATE okay::engine)
 add_test(NAME diagnostics COMMAND test_diagnostics)

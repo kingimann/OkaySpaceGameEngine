@@ -575,6 +575,9 @@ sees it. It may be broken: that is what a test is. Rules and files: [release_cha
 8. If the launcher does not start at all after a test build: run `OkaySpace-Setup.exe` from the normal release page over the top; it is a normal
    installer and replaces everything.
 
+**Limits.** A test build replaces only the launcher, the editor and the player, like any in-app update. If a branch adds an example scene or another
+file that ships in the zip or installer (the `examples\` folder), that file is **not** in the test build: ask for it separately or wait for a release.
+
 **How to tell it is on or off.** With the switch off the launcher never asks the update server for the test folder, so nothing about test builds
 can appear. With it on, the launcher reads `dev/versions.json` on the update server; the file `dev/DEV.txt` there names the newest test build.
 

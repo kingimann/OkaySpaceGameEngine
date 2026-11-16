@@ -181,6 +181,12 @@ the bucket; older ones are deleted, stay in the list as "not in the bucket", and
 | Windows code signing | when configured | never |
 | Kept in the bucket | the newest 3 and the LTS line | the newest 3 |
 
+**Two limits to know.** (1) A test build replaces only the three programs (launcher, editor, player), like any in-app update: example scenes, templates
+files or assets that a branch adds to the zip or the installer are **not** in it, so an example that is meant to be tried from `examples\` is not there
+until a real release. (2) Signing: with the repository secret `OKAY_UPDATE_SIGNING_SEED` set, the test list is signed like a release; without it the
+list is published unsigned (a warning), which a launcher built with `OKAY_UPDATE_TRUSTED_KEYS` refuses. Nothing is signed today, so that is fine
+now, but once launchers trust a key the seed has to be available to this workflow too, or test builds cannot be installed.
+
 ### In the launcher
 
 **Settings > Behavior > Startup & updates > Get test builds** (off by default; saved as `test_builds=1` in `launcher.cfg`, and not written at all

@@ -11,7 +11,13 @@ namespace okayopenui {
 
 namespace {
 
-const ImVec4 kAmber(0.95f, 0.80f, 0.35f, 1.0f), kGreen(0.45f, 0.82f, 0.56f, 1.0f);
+// The launcher has a light theme too: the status colours are darker there, and the heading uses the theme's own text colour (never pure white).
+bool LightSurface() {
+    const ImVec4& bg = ImGui::GetStyle().Colors[ImGuiCol_PopupBg];
+    return (bg.x + bg.y + bg.z) / 3.0f > 0.6f;
+}
+ImVec4 Amber() { return LightSurface() ? ImVec4(0.68f, 0.42f, 0.00f, 1.0f) : ImVec4(0.95f, 0.80f, 0.35f, 1.0f); }
+ImVec4 Green() { return LightSurface() ? ImVec4(0.10f, 0.50f, 0.22f, 1.0f) : ImVec4(0.45f, 0.82f, 0.56f, 1.0f); }
 
 // A long path keeps its end (the part that differs), as the editor's window does.
 std::string FitEnd(const std::string& s, float maxW) {
@@ -65,9 +71,9 @@ std::optional<okayopen::Answer> Draw(const okayopen::Prompt& p, const Look& look
     std::optional<okayopen::Answer> answer;
     const float textW = ImGui::GetContentRegionAvail().x;
     ImGui::TextDisabled("%s", p.eyebrow.c_str());
-    ImGui::PushStyleColor(ImGuiCol_Text, p.warn ? kAmber : ImVec4(1, 1, 1, 1));
+    if (p.warn) ImGui::PushStyleColor(ImGuiCol_Text, Amber());
     ImGui::TextWrapped("%s", p.heading.c_str());
-    ImGui::PopStyleColor();
+    if (p.warn) ImGui::PopStyleColor();
     ImGui::Dummy(ImVec2(0, 2));
     ImGui::TextDisabled("%s", FitEnd(p.root, textW).c_str());
     ImGui::Dummy(ImVec2(0, 4));
@@ -75,7 +81,7 @@ std::optional<okayopen::Answer> Draw(const okayopen::Prompt& p, const Look& look
         if (i) ImGui::Dummy(ImVec2(0, 2));
         ImGui::TextWrapped("%s", p.paragraphs[i].c_str());
     }
-    if (!p.status.empty()) ImGui::TextColored(p.statusGood ? kGreen : kAmber, "%s", p.status.c_str());
+    if (!p.status.empty()) ImGui::TextColored(p.statusGood ? Green() : Amber(), "%s", p.status.c_str());
     ImGui::Dummy(ImVec2(0, 8));
     // The buttons, each as wide as its text, on one line while they fit and on the next when they do not.
     const ImGuiStyle& st = ImGui::GetStyle();

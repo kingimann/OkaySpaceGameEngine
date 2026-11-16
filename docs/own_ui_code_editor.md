@@ -2,7 +2,7 @@
 
 Own code. Part of the "replace every third-party library" work (`docs/own_code_roadmap.md`, rows ImGuiColorTextEdit and Dear ImGui; toolkit background in `docs/own_ui_toolkit.md`, section 4.29).
 
-**Status: built and tested headless; the script editor uses it when `OKAY_CODE_EDITOR=own` is set (step 28 below) or the developer-only OkayUI backend is on (step 27); never run in a real window.** The default stays the vendored ImGuiColorTextEdit. OkayUI is off by default and the editor still draws its script editor with the vendored `editor/vendor/TextEditor.*` on Dear ImGui unless that developer switch is on. (This line used to say "Nothing was wired in"; step 27 below wired it through `ScriptEditorWidget`.) What blocks deleting the vendored widget: `docs/own_flip_proposal.md` section 4.
+**Status: built and tested headless; the script editor uses it when `OKAY_CODE_EDITOR=own` is set (step 28 below) or the developer-only OkayUI backend is on (step 27); since step 29 it looks like the ImGui editor (same code font, row height, letter spacing, inline error text, current-line box, breakpoint fill) and is drawn inside ImGui's window so popups sit on top; never run in a real window.** The default stays the vendored ImGuiColorTextEdit. OkayUI is off by default and the editor still draws its script editor with the vendored `editor/vendor/TextEditor.*` on Dear ImGui unless that developer switch is on. (This line used to say "Nothing was wired in"; step 27 below wired it through `ScriptEditorWidget`.) What blocks deleting the vendored widget: `docs/own_flip_proposal.md` section 4.
 
 ## Where it is
 
@@ -13,6 +13,9 @@ Own code. Part of the "replace every third-party library" work (`docs/own_code_r
 | `okayui/tests/test_okayui_codeedit.cpp` | behaviour, widget (synthetic mouse and keys), highlighting, golden image, 100k-line performance |
 | `okayui/tests/test_okayui_codeedit_fuzz.cpp` | model fuzz and widget fuzz |
 | `okayui/tests/golden/codeedit_highlight.png` | the golden image |
+| `editor/OkayUIInImGui.hpp` | step 29: OkayUI geometry put into an ImGui window's draw list (the script editor hosts the code with it) |
+| `okayui/tests/test_okayui_codeedit_imgui.cpp` | step 29: ImGui popups drawn over the hosted code (built with the editor) |
+| `editor/tools/codeedit_bench.cpp` | ours against ImGuiColorTextEdit: speed, memory, screenshots, pixel difference |
 
 Hooks added to the existing OkayUI files (three tiny functions, nothing else in `OkayUI.cpp` changed): `OkayUI::GetFrameInput()` (this frame's raw `Input`), `OkayUI::GetKeyboardFocusId()` and `OkayUI::SetKeyboardFocusId(id)` (takes the keyboard and marks the click as taken so the click does not drop focus again). A widget in another file needs them to read typed text and key edges and to own the keyboard.
 
@@ -97,7 +100,7 @@ The test asserts generous limits (a frame under 20 ms, a jump under 2 s, ...) an
 
 ## Limits and decisions, said bluntly
 
-- **A monospaced font is assumed.** The cell width is the width of `0`. The 8x8 classic font is monospaced; the launcher look's Roboto is not, and with it the caret and selection would drift. OkayUI has no way yet to choose a code font (family 23 in `own_ui_toolkit.md`); JetBrains Mono is in `shared/` but not hooked up.
+- **A monospaced font is assumed.** The cell width is the width of `0`. The 8x8 classic font is monospaced. In the launcher look the code is drawn with the code font, JetBrains Mono (`OkayUI::PushCodeFont`, step 29), each character advancing a whole number of pixels; with the code font turned off (`SetUseCodeFont(false)`) a proportional font is drawn one character per cell (step 28).
 - **One character is one cell.** Wide (CJK, emoji) characters are drawn one cell wide and may overlap their neighbour; combining marks take a cell. The 8x8 font has only ASCII glyphs, so other characters show as the font's fallback.
 - **The clipboard holds 4095 bytes** (`kClipboardMax`). Copy of a bigger selection is cut; Cut of a bigger selection does nothing (it never deletes text it could not copy). This is the OkayUI clipboard's limit, not the editor's.
 - **Columns are byte offsets** (on character boundaries). The library counted columns; a port has to convert (`ByteToColumn`, `ColumnToByte`).
@@ -135,8 +138,8 @@ Tested: `test_okayui_script_adapter` (display-column conversion with tabs and tw
 
 Not done, said plainly:
 - The OkayUI path of the script editor was NOT run in a real window. Only the adapter and the host input are tested headless.
-- The ImGui side of the editor still draws first and OkayUI draws last, on top: an ImGui autocomplete or tooltip popup that overlaps the code rectangle is hidden behind the OkayUI editor, and ImGui shortcuts (Ctrl+S, Ctrl+Z at the script level) are not blocked while the OkayUI editor has the keyboard. Both need a real window to settle.
-- The code font (`g_codeFont`) is the ImGui editor's; the OkayUI editor uses OkayUI's font. (Step 28 passes the palette, the language words and the zoom on.) `SetShowWhitespaces`, `SetLeftMargin` and the language regexes only apply to the ImGui editor.
+- ~~The ImGui side of the editor still draws first and OkayUI draws last, on top: an ImGui autocomplete or tooltip popup that overlaps the code rectangle is hidden behind the OkayUI editor~~ (fixed in step 29: the code is drawn into the ImGui window's draw list). ImGui shortcuts (Ctrl+S, Ctrl+Z at the script level) are not blocked while the OkayUI editor has the keyboard; that needs a real window to settle.
+- ~~The code font (`g_codeFont`) is the ImGui editor's; the OkayUI editor uses OkayUI's font~~ (fixed in step 29: the same JetBrains Mono). (Step 28 passes the palette, the language words and the zoom on; step 29 also `SetLeftMargin`.) `SetShowWhitespaces` and the language regexes only apply to the ImGui editor.
 - Error markers cover the whole line's text (the script editor gives a line, not a column range).
 
 
@@ -174,8 +177,8 @@ its hover tooltips). Everything in the table further up was HAVE already; these 
 | The launcher look's proportional font (Roboto): caret and selection drifted off the text | GAP | HAVE | each character drawn on its own, centred in a cell as wide as the font's wide letters (`MonospaceFont()` false); the 8x8 font still draws in runs |
 | Opt-in switch for people, not just developers | GAP (only the developer-only backend) | HAVE | `OKAY_CODE_EDITOR=own` |
 | Show whitespace, left margin, the language's regexes | n/a | n/a | the script editor turns whitespace off; the margin is the gutter; ours has its own tokenizer |
-| ImGui popups (autocomplete, hover help) drawn over the code | GAP | GAP | OkayUI draws after ImGui, so an ImGui popup over the code area is hidden under it. Needs the code drawn into ImGui's draw list or the popups moved to OkayUI; and a real window to check |
-| The ImGui editor's code font (`g_codeFont`) | GAP | GAP | ours uses OkayUI's font (needs a code-font choice in OkayUI) |
+| ImGui popups (autocomplete, hover help) drawn over the code | GAP | GAP (HAVE since step 29) | OkayUI draws after ImGui, so an ImGui popup over the code area is hidden under it. Step 29 draws the code into ImGui's draw list |
+| The ImGui editor's code font (`g_codeFont`) | GAP | GAP (HAVE since step 29) | step 29: JetBrains Mono through `OkayUI::PushCodeFont` |
 
 Tests added: `test_okayui_codeedit` (proportional font: every glyph quad of `iiiiWWWW` and `mlmlmlml` lies in its cell; the 8x8 font is still
 monospaced; the overwrite block caret's pixels; `TypeText` in read-only; `WordAtScreen` on words, blanks, outside, NaN; the hover tooltip shows
@@ -228,3 +231,102 @@ character) never had the problem.
 Screenshots of the same script with colouring, an error marker on line 10 and a breakpoint on line 14, from `codeedit_bench shots <dir>`:
 `codeedit-imgui.png` (ImGuiColorTextEdit on Dear ImGui through SDL's software renderer), `codeedit-own.png` (ours, launcher look, as in the
 editor) and `codeedit-own-classic.png` (ours, 8x8 font). They are not committed (they are not golden images); run the tool to make them.
+
+
+## Step 29: up to par with the ImGui editor's look (`claude2/okayui-codeedit-par`)
+
+The owner's rule: "we only switch when it's faster and up to par". Step 28 made ours faster; a side-by-side screenshot showed it was
+not up to par. This step closes what the screenshots showed. The switch stays off (`OKAY_CODE_EDITOR` unset = the ImGui editor).
+
+### What the screenshot comparison showed, and what was done
+
+The same script, the same error on line 10 (`unknown name 'labl' (did you mean 'label'?)`), a breakpoint on line 14 and the caret on
+line 7, from `codeedit_bench shots <dir> <suffix>`. `codeedit_bench` now loads the ImGui editor's real code font (JetBrains Mono baked at
+48 px, shown at 16 px, `SetLeftMargin(22)`, exactly as `editor/main.cpp` does); before, its ImGui picture used Dear ImGui's default
+13 px bitmap font, which is not what the editor shows.
+
+| Gap seen in the screenshots | Before | After | How (own code; files) |
+|---|---|---|---|
+| 1. The error message at the end of the line | only a squiggle under the line (the message only as a tooltip) | the message after the line, four character widths on, in the error colour (230, 140, 128), cut to 72 characters, clipped to the view; a `warning: ` marker in amber (214, 176, 96) with an amber wash; the tooltip says `Error at line N: ...` | `CodeMarker::warning`, `CodeMarker::underline`, palette `errorText`, `warningText`, `warningLine`; the adapter reads the `warning: ` prefix and turns the underline off (the script editor draws its own squiggle under the token, for both widgets) |
+| 2. Letter spacing and line height | Roboto drawn one character per wide cell (10 px at 16 px text): the code looked spread out; rows 25 px | JetBrains Mono, the ImGui editor's font, 7 px a character and 24.8 px a row at 16 px, the same numbers ImGuiColorTextEdit reports (`codeedit_bench shots` prints both); text starts 50 px right of the content origin in both | the code font is baked into OkayUI's atlas next to Roboto (same sizes, the UI font packed first so its glyphs keep their places); `OkayUI::PushCodeFont` / `PopCodeFont` / `CodeFontActive`; each character advances a whole number of pixels (7.27 px rounded to 7, as ImGui's `PixelSnapH`); rows are font size x spacing, not rounded; the text sits at the top of its row; the gutter is laid out as the ImGui one (left margin, then " N ", numbers ending two characters left of the text); `SetLeftMargin`, `SetPadding` (the child window's padding) |
+| 3. Current line and breakpoint | a faint fill of the text area only, only with the keyboard; a blue dot in the gutter | a fill and a 1 px box across the whole row (gutter included) whenever there is no selection, a dimmer fill without the keyboard; a breakpoint fills the whole row with the palette's colour; an error or warning washes the whole row | palette `currentLineInactive`; the adapter maps `CurrentLineFillInactive` and passes the breakpoint colour as it is (no longer forced opaque) and the background as the gutter colour |
+| 4. Popups hidden under the code | OkayUI drew its frame after ImGui, so the autocomplete list and hover help were under the code | the code's geometry is put into the ImGui window's draw list where the code is laid out; ImGui popups opened later (autocomplete, hover help, any window over it) are drawn after it | `OkayUI::BeginGeometryCapture` / `EndGeometryCapture` (take what a region draws out of the frame), `OkayUI::TextureForRenderer`, `editor/OkayUIInImGui.hpp` (`AppendGeometry`, `DrawOkayUIHere`, `SdlRendererTextures`, `StyleLikeImGuiChild`); `ScriptEditorWidget::Render` uses them and draws the child border |
+| 5a. Child window look | no padding, 10 px scroll bars in our own colours, horizontal bar only when needed, no border | the child window's padding, ImGui's scroll bar thickness, colours and rounding, the horizontal bar always shown, the border | `SetPadding`, `SetScrollbarSize`, `SetAlwaysShowHorizontalScrollbar`, `okayimgui::StyleLikeImGuiChild` |
+| 5b. Gutter colour | a separate darker gutter | the background (the ImGui editor has no gutter colour) | the adapter sets `gutter` to the background |
+
+Left as they are, on purpose: ours boxes the bracket next to the caret (a feature the old one lacks); ours shows the caret at once (the old
+one waits 400 ms). Left, not on purpose: glyph edges are a little different (our own TrueType rasteriser, no 2x oversampling: ImGui's
+glyph ink is about one pixel wider to the left and top); the current-line box ends 2 px further right; ImGui's 1 px box lines are
+anti-aliased over two rows at a 24.8 px pitch, ours are one sharp row; OkayUI tooltips of our own widget are still drawn by OkayUI on top
+of everything (they follow the pointer, so they do not cover a popup the user is looking at, but they could).
+
+### Pixel difference against the ImGui editor's screenshot
+
+`codeedit_bench diff a.png b.png [out.png]`: the mean absolute difference per RGB channel and the share of pixels where a channel differs by
+more than 32. Same 760 x 400 frame, same script, error and breakpoint.
+
+| Pair | Mean difference (of 255) | Pixels off by more than 32 |
+|---|---|---|
+| step 28: `codeedit-own.png` against `codeedit-imgui.png` (ImGui with its default bitmap font) | 11.04 | 16.5 % |
+| step 28 widget against the ImGui editor with its real code font (same harness as below) | 10.81 | 17.2 % |
+| **step 29: `codeedit-own-v2.png` against `codeedit-imgui-v2.png`** | **3.24** | **4.6 %** |
+
+What is left is almost all glyph edges (different rasterisers), the bracket boxes and the caret on line 7, and the box and scroll bar
+edges. The screenshots are not committed (they are not golden images); `codeedit_bench shots <dir> -v2` writes them.
+
+### Speed after (`codeedit_bench bench 1000 10000 100000`, Release, this shared machine)
+
+A new row measures ours the way the editor runs it: inside the ImGui window (ImGui `NewFrame` to `Render` with the OkayUI frame around
+it, the capture and the copy into ImGui's draw list included), which is the like-for-like comparison with the ImGui row. Second of two
+runs (the first agrees within the noise; single numbers move by about 0.01 to 0.05 ms between runs).
+
+| Lines | Editor | SetText ms | first frame ms | idle frame ms (mean / p95) | typing frame ms (mean / p95) | scrolling frame ms (mean / p95) | memory MB |
+|---|---|---|---|---|---|---|---|
+| 1000 | ImGuiColorTextEdit (with the code font) | 0.53 | 0.79 | 0.058 / 0.125 | 0.385 / 0.425 | 0.043 / 0.054 | 0.5 |
+| 1000 | OkayUI::CodeEdit, 8x8 font, OkayUI frame only | 0.15 | 0.34 | 0.052 / 0.066 | 0.034 / 0.055 | 0.053 / 0.067 | 0.1 |
+| 1000 | OkayUI::CodeEdit, launcher look, OkayUI frame only | 0.11 | 0.06 | 0.029 / 0.034 | 0.026 / 0.034 | 0.028 / 0.035 | 0.1 |
+| 1000 | **OkayUI::CodeEdit hosted in the ImGui window (as in the editor)** | 0.11 | 0.12 | 0.036 / 0.041 | 0.034 / 0.045 | 0.039 / 0.049 | 0.1 |
+| 10000 | ImGuiColorTextEdit (with the code font) | 5.20 | 3.60 | 0.109 / 0.127 | 3.420 / 3.904 | 0.120 / 0.142 | 4.9 |
+| 10000 | OkayUI::CodeEdit, 8x8 font, OkayUI frame only | 0.85 | 0.13 | 0.051 / 0.064 | 0.046 / 0.064 | 0.053 / 0.072 | 0.8 |
+| 10000 | OkayUI::CodeEdit, launcher look, OkayUI frame only | 0.94 | 0.08 | 0.029 / 0.035 | 0.032 / 0.043 | 0.026 / 0.031 | 0.8 |
+| 10000 | **OkayUI::CodeEdit hosted in the ImGui window (as in the editor)** | 0.97 | 0.09 | 0.042 / 0.052 | 0.041 / 0.052 | 0.039 / 0.046 | 0.9 |
+| 100000 | ImGuiColorTextEdit (with the code font) | 55.37 | 34.25 | 0.124 / 0.151 | 35.633 / 46.202 | 0.165 / 0.213 | 47.9 |
+| 100000 | OkayUI::CodeEdit, 8x8 font, OkayUI frame only | 10.52 | 0.45 | 0.072 / 0.111 | 0.119 / 0.171 | 0.048 / 0.061 | 7.2 |
+| 100000 | OkayUI::CodeEdit, launcher look, OkayUI frame only | 8.77 | 0.23 | 0.029 / 0.033 | 0.111 / 0.168 | 0.029 / 0.037 | 7.2 |
+| 100000 | **OkayUI::CodeEdit hosted in the ImGui window (as in the editor)** | 9.10 | 0.28 | 0.041 / 0.047 | 0.120 / 0.182 | 0.040 / 0.051 | 7.3 |
+
+**Met:** the hosted row (what the editor runs) is faster than or equal to ImGuiColorTextEdit on every measure at every size, in both runs.
+The closest is scrolling at 1,000 lines (0.039 / 0.049 against 0.043 / 0.054; the other run 0.043 / 0.062 against 0.048 / 0.079). Under
+callgrind an idle frame at 1,000 lines costs about 0.56 million instructions hosted against 1.12 million for ImGuiColorTextEdit
+(`codeedit_bench idle hosted 1000 300`, `idle imgui 1000 300`). The first hosted version spent 0.68 million; the vertex copy out of the
+frame, the ImGui vertex writes and a binary search per glyph were made cheaper (`EndGeometryCapture` copies the vertices as they are,
+`AppendGeometry` writes through ImGui's write pointers, `fontatlas::Size::Find` has an ASCII table). Not met, and not what the editor runs:
+the classic 8x8 look (only with `OKAY_CLASSIC_UI`) is slower than the ImGui editor at scrolling 1,000 lines (0.053 against 0.043 ms).
+
+### Tests added or changed
+
+- `test_okayui_codeedit` (475 checks): the code font (fixed width while pushed, 7 px and 24.8 px at 16 px, every glyph of `iiiiWWWW`,
+  `mlmlmlml` and `0123456789` in its own column, the gutter's width with and without a margin and padding, back to the UI font and to
+  rounded rows without it); the row look (the current-line box through the gutter, dimmer without the keyboard, none with a selection; a
+  warning's amber message and no underline); the error message after the line in the error colour and nothing between the code and it;
+  the breakpoint and error washes over the gutter; geometry capture in both looks (what is taken equals what the frame loses, every index
+  in range, the atlas texture carried, the frame before and after kept, the capture drawn back gives the same pixels, clicks still reach
+  the editor, an End without a Begin takes nothing). Golden `codeedit_highlight.png` regenerated (the new row look and gutter).
+- `test_okayui_codeedit_imgui` (new, built with the editor; `ctest -R okayui` runs it): ours hosted in an ImGui window with an ImGui
+  popup opened over the code after it: the popup's draw list comes after the one holding the code, the pixel under the popup is the
+  popup's colour, the code is drawn around it, the atlas went through the SDL_Renderer texture lookup, OkayUI's own frame no longer
+  holds the code, clicks still focus the editor; and the old way (OkayUI's frame drawn after ImGui) covers the popup. `AppendGeometry`
+  alone: an unknown texture is skipped, flat geometry samples ImGui's white pixel, the clip rectangle is pushed, 80,000 vertices stay
+  inside 16-bit indices.
+- `test_okayui_script_adapter`: the warning prefix, no underline, the breakpoint colour as given, the inactive current-line colour,
+  the gutter colour, `SetLeftMargin`.
+- `test_okayui_compose`: goldens `compose_field.png` and `compose_code.png` regenerated (they hold a classic-look CodeEdit).
+  `InputTextMultiline` (built on CodeEdit) keeps the UI font, a 4 px padding and no current-line wash: its golden is unchanged.
+
+### Not done, said plainly
+
+- **Never run in a real window, never on Windows.** Every picture above is from the headless harness (ImGui through SDL's software
+  renderer; ours through the same renderer once hosted).
+- ImGui shortcuts are still not blocked while our editor has the keyboard (step 27).
+- Our own hover tooltip is drawn by OkayUI on top of everything (not moved into ImGui's layer).
+- The pixel difference that is left (3.24 of 255) is mostly glyph edges from a different rasteriser; not chased further.

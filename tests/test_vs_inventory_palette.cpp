@@ -1,9 +1,10 @@
 // Where the inventory nodes are in the Add Node menu. The text-script functions each have a node (Fn.<name>); the
-// inventory ones (inv_add, inv_to_grid, inv_cooldown, inv_wear ...) belong under Objects > Items with the other item
-// nodes, are listed (not hidden as a copy of another row), and say what they do in their title. The typed-script
-// Inventory / Equipment / Crafting / GridInventory / Items API (ApiInventory.cpp) makes Engine API nodes too: this prints
-// which of those the menu lists and which it hides as the same job as a hand-written node, so the owner knows where to
-// look (docs/try_it.md names the Fn nodes).
+// inventory ones (inv_add, inv_to_grid, inv_cooldown, inv_wear ...) belong in the topic Inventory & Items, subcategory
+// Inventory Slots, with the other item nodes (rules: editor/VisualScriptPlaceRules.hpp), are listed (not hidden as a copy of
+// another row), and say what they do in their title. The typed-script Inventory / Equipment / Crafting / GridInventory /
+// Items API (ApiInventory.cpp) makes Engine API nodes too: they sit in the same topic, and this prints which of them the
+// menu lists and which it hides as the same job as a hand-written node, so the owner knows where to look (docs/try_it.md
+// names the Fn nodes).
 #include "test_framework.hpp"
 #include "VisualScriptEditor.hpp"
 #include "okay/VisualScript/VsApi.hpp"
@@ -30,15 +31,16 @@ int main() {
         CHECK(def != nullptr);
         if (!def) { std::printf("  no node %s\n", type.c_str()); continue; }
         const VsPlace p = VsPlaceForNode(def->type);
-        const bool inItems = p.category && std::strcmp(p.category, "Objects") == 0 && std::strcmp(p.subcategory, "Items") == 0;
+        const bool inItems = p.category && std::strcmp(p.category, "Inventory & Items") == 0 &&
+                             std::strcmp(p.subcategory, "Inventory Slots") == 0;
         const bool hidden = VsPaletteHidden(*def);
         CHECK(inItems);
         CHECK(!hidden);
-        if (!inItems) std::printf("  %s is in %s / %s, not Objects / Items\n", type.c_str(), p.category ? p.category : "?", p.subcategory);
+        if (!inItems) std::printf("  %s is in %s / %s, not Inventory & Items / Inventory Slots\n", type.c_str(), p.category ? p.category : "?", p.subcategory);
         if (hidden) std::printf("  %s is hidden in the menu\n", type.c_str());
         if (inItems && !hidden) {
             ++listed;
-            std::printf("  Add Node > Objects > Items > \"%s\"  (%s)\n", def->title, type.c_str());
+            std::printf("  Add Node > Inventory & Items > Inventory Slots > \"%s\"  (%s)\n", def->title, type.c_str());
         }
     }
     CHECK(listed == (int)(sizeof(fns) / sizeof(fns[0])));
@@ -54,6 +56,8 @@ int main() {
         const VsDef* def = nullptr;
         for (const VsDef& d : Registry()) if (e.type == d.type) { def = &d; break; }
         CHECK(def != nullptr);
+        const VsPlace where = VsPlaceForApi(e.apiType.c_str(), e.member.c_str());
+        CHECK(where.category && std::strcmp(where.category, "Inventory & Items") == 0);   // every one is in the items topic
         if (def && VsPaletteHidden(*def)) { ++apiHidden; hiddenNames += " " + e.apiType + "." + e.member; }
     }
     CHECK(api >= 20);

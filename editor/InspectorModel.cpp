@@ -449,16 +449,25 @@ int IndexInComponents(const GameObject& go, const Component& c) {
     return -1;
 }
 
+// A new component of `info`'s kind on `go` holding the clip's registered values and the given on / off state (added last; the siblings a
+// RequireComponent rule adds come with it). Null when the registry cannot make one. No rule is asked here.
+Component* AddCopy(GameObject& go, const ComponentTypeInfo& info, const ComponentClip& clip, bool enabled) {
+    if (!info.add) return nullptr;
+    Component* fresh = info.add(go);
+    if (!fresh) return nullptr;
+    PasteComponentValues(clip, *fresh);
+    fresh->enabled = enabled;
+    return fresh;
+}
+
 // A new component of `source`'s kind on `go`, holding the registered values of `source` and its on / off state, right below it.
 // No rule is asked here (CanAddAnother / CanPasteAsNew do that); CheckCopyIsExact uses it on scratch objects to see what a copy keeps.
 Component* CloneByValues(GameObject& go, Component& source) {
     auto info = PropertyRegistry::FindFor(source);
     if (!info || !info->add) return nullptr;
     const ComponentClip clip = CopyComponentValues(source);   // taken first: adding can add required siblings
-    Component* fresh = info->add(go);
+    Component* fresh = AddCopy(go, *info, clip, source.enabled);
     if (!fresh || fresh == &source) return nullptr;
-    PasteComponentValues(clip, *fresh);
-    fresh->enabled = source.enabled;
     // Right below the source (adding appended it, perhaps after the siblings a RequireComponent rule added).
     const int want = IndexInComponents(go, source) + 1, have = IndexInComponents(go, *fresh);
     if (want > 0 && have > want) go.MoveComponent(fresh, want - have);
@@ -524,8 +533,8 @@ CopyCheck CheckCopyIsExact(const GameObject& go, const Component& c) {
     constexpr std::size_t kMaxText = std::size_t(1) << 20;   // a menu must open at once: a bigger object is not checked
     if (text.size() > kMaxText) { r.exact = false; r.note = "its saved text is too big to compare here"; return r; }
     const int idx = ComponentIndexOf(go, c);
-    // Scratch copies of the object, loaded from that text (so they hold what the file keeps, nothing more): in one a copy is added,
-    // from the other the component is removed. The records that appear are what a copy saves; the ones that go are what the original saves.
+    const ComponentClip clip = CopyComponentValues(c);   // the values Duplicate and Paste As New would use
+    // Scratch copies of the object, loaded from that text (so they hold what the file keeps, nothing more).
     struct Loaded { GameObject* object = nullptr; Component* comp = nullptr; };
     const auto load = [&](Scene& scene) {
         Loaded l;
@@ -537,37 +546,59 @@ CopyCheck CheckCopyIsExact(const GameObject& go, const Component& c) {
             if (up && PropertyRegistry::FindFor(*up) == info) { if (n++ == idx) { l.comp = up.get(); break; } }
         return l;
     };
-    Scene withCopy("copy check a"), withoutOriginal("copy check b");
-    const Loaded a = load(withCopy);
+    const auto settings = [](const GameObject& o) { return SettingLines(SceneSerializer::SerializeObject(o, false)); };
+    const auto countOf = [&](const GameObject& o) {
+        int n = 0;
+        for (const auto& up : o.Components()) if (up && PropertyRegistry::FindFor(*up) == info) ++n;
+        return n;
+    };
+    Scene sceneA("copy check a"), sceneB("copy check b");
+    const Loaded a = load(sceneA);
     if (!a.object) { r.exact = false; r.note = "its saved text does not load back"; return r; }
     if (!a.comp) { r.saved = false; return r; }   // the scene file does not keep this kind at all: nothing is saved, so nothing can be lost
-    const Loaded b = load(withoutOriginal);
+    const Loaded b = load(sceneB);
     if (!b.comp) { r.exact = false; r.note = "its saved text does not load back as the same object"; return r; }
 
-    const std::vector<std::string> before = SettingLines(SceneSerializer::SerializeObject(*a.object, false));
-    if (!CloneByValues(*a.object, *a.comp)) { r.exact = false; r.note = "the editor could not add another"; return r; }
-    const std::vector<std::string> added = LinesNotIn(SettingLines(SceneSerializer::SerializeObject(*a.object, false)), before);
-
+    // (1) Is a copy the same? On object B take the original out and put a copy in its place. What the original added to the object's
+    // saved text and what the copy adds must be the same records (both measured against the object without the component, so a
+    // record that exists once per object, like a UI object's layout, is on both sides).
+    const std::vector<std::string> withOriginal = settings(*b.object);
+    const bool wasOn = b.comp->enabled;
     b.object->RemoveComponent(b.comp);
-    const std::vector<std::string> own = LinesNotIn(before, SettingLines(SceneSerializer::SerializeObject(*b.object, false)));
-
-    if (own.empty() && added.empty()) { r.saved = false; return r; }   // the kind saves nothing
-    if (own.empty()) { r.exact = false; r.note = "the copy would save settings the original does not"; return r; }
-    if (added.empty()) {
+    const std::vector<std::string> without = settings(*b.object);
+    if (!AddCopy(*b.object, *info, clip, wasOn)) { r.exact = false; r.note = "the editor could not add another"; return r; }
+    const std::vector<std::string> own = LinesNotIn(withOriginal, without);              // what the original saves
+    const std::vector<std::string> mine = LinesNotIn(settings(*b.object), without);      // what the copy saves
+    if (own.empty() && mine.empty()) { r.saved = false; return r; }                      // the kind saves nothing: there is nothing to lose
+    std::vector<std::string> ownSorted = own, mineSorted = mine;
+    std::sort(ownSorted.begin(), ownSorted.end());
+    std::sort(mineSorted.begin(), mineSorted.end());
+    if (ownSorted != mineSorted) {
+        // Name the first saved record that the copy lacks (or has differently).
+        const std::vector<std::string> lacking = LinesNotIn(own, mine);
         r.exact = false;
-        r.note = "the scene file keeps only one " + TypeDisplayName(info->name) + " per object, so a second one would not be saved";
+        if (lacking.empty()) r.note = "the copy would save settings the original does not";
+        else r.note = "its saved \"" + FirstWord(lacking.front()) + "\" settings are not all part of its copyable values (the property list does not hold them)";
         return r;
     }
-    std::vector<std::string> addedSorted = added, ownSorted = own;
-    std::sort(addedSorted.begin(), addedSorted.end());
-    std::sort(ownSorted.begin(), ownSorted.end());
-    if (addedSorted == ownSorted) return r;
-    // Name the first saved record that the copy lacks (or has differently).
-    const std::vector<std::string> lacking = LinesNotIn(own, added);
-    const std::vector<std::string> extra = LinesNotIn(added, own);
-    const std::string word = FirstWord(!lacking.empty() ? lacking.front() : extra.front());
-    r.exact = false;
-    r.note = "its saved \"" + word + "\" settings are not all part of its copyable values (the property list does not hold them)";
+
+    // (2) Can the file hold a second one next to the original? On object A add a copy beside it: it has to be saved, and to load back.
+    const int before = countOf(*a.object);
+    const std::vector<std::string> alone = settings(*a.object);
+    if (!CloneByValues(*a.object, *a.comp)) { r.twoOnOne = false; r.twoNote = "the editor could not add another"; return r; }
+    const std::string both = SceneSerializer::SerializeObject(*a.object, false);
+    if (LinesNotIn(SettingLines(both), alone).empty()) {
+        r.twoOnOne = false;
+        r.twoNote = "the scene file keeps only one " + TypeDisplayName(info->name) + " per object, so a second one would not be saved";
+        return r;
+    }
+    Scene sceneC("copy check c");
+    std::vector<std::string> quiet;
+    GameObject* back = SceneSerializer::InstantiateFromText(sceneC, both, nullptr, &quiet);
+    if (!back || countOf(*back) < before + 1) {
+        r.twoOnOne = false;
+        r.twoNote = "a second " + TypeDisplayName(info->name) + " would be saved but would not load back as a second one";
+    }
     return r;
 }
 
@@ -575,6 +606,7 @@ bool CanDuplicate(const GameObject& go, const Component& source, std::string* wh
     if (!CanAddAnother(source, why)) return false;
     const CopyCheck check = CheckCopyIsExact(go, source);
     if (!check.exact) { if (why) *why = "A copy would not be the same as the original: " + check.note + "."; return false; }
+    if (!check.twoOnOne) { if (why) *why = "A copy would not be the same as the original: " + check.twoNote + "."; return false; }
     return true;
 }
 

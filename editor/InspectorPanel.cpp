@@ -1013,8 +1013,8 @@ void DrawComponentMenu(okay::Component* comp, bool removable, okay::Component** 
         static const Component* s_checkedComp = nullptr;
         static CopyCheck s_check;
         if (ImGui::IsWindowAppearing() || s_checkedComp != comp) { s_check = CheckCopyIsExact(*go, *comp); s_checkedComp = comp; }
-        st.copyExact = s_check.exact;
-        st.copyNote = s_check.note;
+        st.copyExact = s_check.exact && s_check.twoOnOne;   // Duplicate needs both: the same values, and a file that keeps a second one
+        st.copyNote = !s_check.exact ? s_check.note : s_check.twoNote;
     }
     st.prefabChanged = PrefabChangedFor(comp);
     if (s_clip.Valid()) {

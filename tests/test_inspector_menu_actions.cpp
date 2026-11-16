@@ -293,7 +293,7 @@ void TestCopyExactness() {
         auto* v = g->AddComponent<Volume>();
         v->size = {2, 3, 4}; v->eventName = "z";
         const CopyCheck c = CheckCopyIsExact(*g, *v);
-        CHECK(c.exact && c.saved && c.note.empty());
+        CHECK(c.exact && c.saved && c.note.empty() && c.twoOnOne && c.twoNote.empty());
         CHECK(CanDuplicate(*g, *v, &why) && DuplicateComponent(*g, *v) != nullptr);
     }
     // 2. The file keeps more than the registry holds: not exact; Duplicate is refused with the saved record named; Paste As New too.
@@ -323,15 +323,24 @@ void TestCopyExactness() {
         h->hidden = 0;
         CHECK(CheckCopyIsExact(*g, *h).exact);
     }
-    // 3. A writer that saves one record per object: a second component would never be saved, so Duplicate is refused.
+    // 3. A writer that saves one record per object: a copy on another object is the same, but a second one next to the original would never
+    //    be saved, so Duplicate is refused and Paste As New (onto an object that has none) still works.
     {
         Scene s("x");
         GameObject* g = Make(s, "g");
         auto* o = g->AddComponent<OneRecord>();
         o->value = 4;
         const CopyCheck c = CheckCopyIsExact(*g, *o);
-        CHECK(!c.exact && Contains(c.note, "only one") && Contains(c.note, "not be saved"));
-        CHECK(!CanDuplicate(*g, *o, &why) && DuplicateComponent(*g, *o) == nullptr);
+        CHECK(c.exact && c.saved && !c.twoOnOne && Contains(c.twoNote, "only one") && Contains(c.twoNote, "not be saved"));
+        why.clear();
+        CHECK(!CanDuplicate(*g, *o, &why) && Contains(why, "would not be the same") && Contains(why, "only one"));
+        CHECK(DuplicateComponent(*g, *o) == nullptr && CountType(g, "OneRecord") == 1);
+        ComponentClip clip = CopyComponentValues(*o);
+        clip.exact = c.exact; clip.inexactNote = c.note;           // what Copy Values stores
+        GameObject* other = Make(s, "other");
+        CHECK(CanPasteAsNew(*other, clip, &why));
+        Component* made = PasteComponentAsNew(*other, clip);
+        CHECK(made && static_cast<OneRecord*>(made)->value == 4 && Saved(*g).find("onerecord 4") != std::string::npos && Saved(*other).find("onerecord 4") != std::string::npos);
     }
     // 4. The real one: a particle system's gradient and size curve are saved but are not registered values.
     {
@@ -375,7 +384,7 @@ void TestEveryRegisteredKind() {
     RUN_SUITE("every registered kind: the verdict matches what the scene file saves");
     RegisterTestKinds();
     int kinds = 0, enabled = 0, onceOnly = 0, inexact = 0, unsavedKinds = 0;
-    std::vector<std::string> bad, inexactKinds, enabledKinds, notTwo, tooBigKinds;
+    std::vector<std::string> bad, inexactKinds, enabledKinds, notTwo, tooBigKinds, oneInFile;
     for (const auto& info : PropertyRegistry::All()) {
         if (!info || !info->add || info->objectLevel || info->properties.empty()) continue;
         if (info->name == "HalfRegistered" || info->name == "OneRecord") continue;   // made by this test, checked in TestCopyExactness
@@ -397,12 +406,13 @@ void TestEveryRegisteredKind() {
         if (tooBig) tooBigKinds.push_back(info->name);
         else if (verdict.exact != sameText) bad.push_back(info->name + " (verdict exact=" + std::to_string(verdict.exact) + " but saved text equal=" + std::to_string(sameText) + "): " + verdict.note);
         if (!verdict.exact) inexactKinds.push_back(info->name + ": " + verdict.note);
+        if (verdict.exact && !verdict.twoOnOne) oneInFile.push_back(info->name + ": " + verdict.twoNote);
         // (1) what the menu says.
         std::string why;
         const bool can = CanDuplicate(*g, *a, &why);
         if (!can) {
             if (Contains(why, "Only one per object")) { ++onceOnly; CHECK(IsOnePerObject(info->type) || ComponentRules::IsUnique(info->type)); }
-            else { ++inexact; CHECK(!verdict.exact && Contains(why, "would not be the same")); }
+            else { ++inexact; CHECK((!verdict.exact || !verdict.twoOnOne) && Contains(why, "would not be the same")); }
             CHECK(DuplicateComponent(*g, *a) == nullptr);
             continue;
         }
@@ -431,6 +441,7 @@ void TestEveryRegisteredKind() {
     for (const std::string& n : enabledKinds) std::cout << " " << n;
     std::cout << "\n";
     for (const std::string& n : inexactKinds) std::cout << "  not exact: " << n << "\n";
+    for (const std::string& n : oneInFile) std::cout << "  a copy is exact but the file keeps one per object: " << n << "\n";
     for (const std::string& n : notTwo) std::cout << "  not reloaded as two: " << n << "\n";
     for (const std::string& n : tooBigKinds) std::cout << "  saved text too big to compare (Duplicate is refused for it): " << n << "\n";
     CHECK(kinds > 80);

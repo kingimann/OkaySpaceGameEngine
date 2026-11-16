@@ -138,20 +138,27 @@ std::string NeededByName(const okay::GameObject& go, const okay::Component& c);
 /// editor/AddComponentRules.hpp, one table for both), plus any okay::ComponentRules::SetUnique rule. `why` gets the reason when not.
 bool CanAddAnother(const okay::Component& c, std::string* why = nullptr);
 
-/// What a copy of one component would lose, found by trying it: the object's saved text is loaded into a scratch scene, a copy is made
-/// the way Duplicate and Paste As New make one (a new component of the kind with the registered values and the on / off state), and
-/// what the scene file saves for the copy is compared with what it saves for the original, record by record. A kind whose saved text
-/// holds more than its registered values (a particle system's colour gradient and curves) comes out `exact` false, with the name of
-/// the saved record that is not copied in `note`. Nothing in the real scene is touched. Costs a few loads of one object's text:
-/// call it when a menu opens, not every frame.
+/// What a copy of one component would lose, found by trying it: the object's saved text is loaded into scratch scenes and
+///   (1) the original is taken out of one of them and a copy is put in its place (a new component of the kind with the registered
+///       values and the on / off state, made the way Duplicate and Paste As New make one): what the object saves must come back the same,
+///       record by record. A kind whose saved text holds more than its registered values (a particle system's colour gradient and
+///       curves) comes out `exact` false, with the name of the saved record that is not copied in `note`. A record that is one per
+///       object, not one per component (a UI object's layout), is there on both sides and does not count;
+///   (2) a copy is put next to the original on another scratch object: the file must save it too and load it back as a second one
+///       (`twoOnOne`). Some writers keep only one component of a kind per object. Only Duplicate needs this: Paste As New puts
+///       the copy on an object that has none.
+/// Nothing in the real scene is touched. Costs a few loads of one object's text: call it when a menu opens, not every frame.
 struct CopyCheck {
-    bool exact = true;    ///< the copy saves as the same records as the original
-    bool saved = true;    ///< false: the scene file keeps nothing of this kind (it is run-time only), so there was nothing to compare
-    std::string note;     ///< not exact: what the copy leaves out, in plain words
+    bool exact = true;      ///< a copy standing where the original stands saves as the same records (Duplicate and Paste As New)
+    bool saved = true;      ///< false: the scene file keeps nothing of this kind (it is run-time only), so there was nothing to compare
+    bool twoOnOne = true;   ///< a second one on the same object is saved and loads back as a second one (Duplicate)
+    std::string note;       ///< not exact: what the copy leaves out, in plain words
+    std::string twoNote;    ///< not twoOnOne: why, in plain words
 };
 CopyCheck CheckCopyIsExact(const okay::GameObject& go, const okay::Component& c);
 
-/// True when `source` may be duplicated: CanAddAnother says yes and the copy would be exact (CheckCopyIsExact). `why` gets the reason.
+/// True when `source` may be duplicated: CanAddAnother says yes and the copy would be exact and could be saved next to it
+/// (CheckCopyIsExact: `exact` and `twoOnOne`). `why` gets the reason.
 bool CanDuplicate(const okay::GameObject& go, const okay::Component& source, std::string* why = nullptr);
 /// Add a second component of `source`'s kind to `go` with the same values (the ones Copy Values copies) and the same on / off
 /// state, placed right after `source`. Null when it cannot be done (CanDuplicate says why).

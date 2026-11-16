@@ -123,6 +123,46 @@ The launcher logs which one draws once (`launcher: renderer ...`) and, with `own
   syntax check only). No real GPU. No IME candidate window position (`Platform_SetImeDataFn` is not set). No real desktop with a
   window manager. The default stays `sdl` until the owner approves (rule 17).
 
+### Step 2c. Launcher: the gaps `own` left (branch `claude2/sdl-launcher-own-gaps`, on top of 2b)
+
+**Status (2026-11-16): built and tested on Linux under Xvfb; still off by default (`OKAY_LAUNCHER_RENDERER=own`); not merged; Windows not run.**
+
+* **Chat in its own window.** The chat window is now a second drawing seam (`CreateOwnGfx` / `CreateSdlGfx`, whichever the launcher
+  uses) with its own ImGui context, so it works with `own`. Its window comes from the same `okay::platform` backend as the launcher's,
+  so its events arrive through the launcher's `PollEvent`; `main.cpp` hands the ones with its window id to it (`Gfx::FeedEvent`,
+  close, file drop). Textures are not shared: its images are uploaded again on its painter (render slot 1, as with SDL).
+  **A real bug found and fixed:** our OpenGL painter assumed its context stayed current. With two windows the second context stayed
+  current and the launcher drew into the chat window. Each GL painter now makes its own context current before a call when another
+  painter's is (`engine/src/Platform/GlPainter.cpp`); a test draws two painters in turn and fails without the fix.
+* **OkayUI preview.** Its input comes from `okay::platform` events (`shared/OkayUIHostPlatform.hpp`; the collector got plain
+  `AddText` / `AddKey` / `AddButtonDown` / `AddWheel`, which the SDL feed now also uses), the mouse from `Backend::MouseState`, and
+  with `own` its draw data goes through OkayUI's render interface onto the painter (`okayui/render`, the Painter backend). Our
+  physical keys stand in for SDL's layout key codes for the shortcuts (Ctrl+A / C / X / V): same on QWERTY, by position on AZERTY.
+* **Tray hook, taskbar flash, icon.** New in `okay::platform`: `Backend::SetNativeMessageHook` (sdl2: `SDL_SetWindowsMessageHook`;
+  own Win32: called from the window procedure, so sent and posted messages; elsewhere false), `Window::Flash` (Cancel / Briefly /
+  UntilFocused: `SDL_FlashWindow`, Win32 `FlashWindowEx`, X11 the ICCCM urgency hint, cleared after about a second for Briefly and
+  when the window gets the focus) and the window icon through `Window::SetIcon` (`okay::SetAppIconOn`). The tray code takes the HWND
+  of an own window from `NativeHandle()`.
+* **IME candidate position.** The glue sets `Platform_SetImeDataFn` and gives the caret to `Window::SetTextInputArea`: sdl2
+  `SDL_SetTextInputRect`; Win32 `ImmSetCompositionWindow` + `ImmSetCandidateWindow` (imm32.dll loaded at run time); X11 the XIM spot
+  location, with over-the-spot input (`XIMPreeditPosition`) chosen when the input method offers it (`OKAY_X11_IME_SPOT=0` keeps the
+  old root-window style). Xvfb has no input method server, so on X11 the call reports "not taken" there.
+* **What `main.cpp` still asks SDL with `own`.** `SDL_Init(SDL_INIT_VIDEO)` / `SDL_Quit` and the DPI hint (always made); the display
+  bounds in `KeepWindowOnScreen` (`SDL_GetNumVideoDisplays`, `SDL_GetDisplayUsableBounds`: work because SDL video is started; needs a
+  display API in `okay::platform`); the HWND of an sdl2 window (`SDL_GetWindowWMInfo`); SDL audio for voice. None of them breaks or is
+  skipped with `own`. The event loop of the `sdl` renderer is SDL's by design.
+* **Counts** (`scripts/sdl_inventory.py`): the launcher's own directory 64 to 41 SDL calls (320 to 278 words); everything it reaches
+  114 to 91; ImGui SDL backends 14 to 8 calls.
+* **Tests (2026-11-16, Xvfb, Mesa llvmpipe).** `launcher_imgui_renderer`, `launcher_imgui_renderer_gl` (two painters on two sdl2 and
+  two own windows match the reference; the IME caret), `platform_state_sdl2` / `_own` (the urgency hint read back from the X server),
+  `platform_window_*`, `platform_painter_window`, `platform`, `okayui_host`: all pass. `scripts/launcher_renderer_check.sh`: the chat
+  window with `sdl` and with `own` is **identical** (0 of 576,000 pixels differ), a click into it reaches its ImGui, the IME caret is
+  handed to the window, the OkayUI What's New page differs only by the footer label (4,154 pixels, as the Create page); the same with
+  `OKAY_PLATFORM_BACKEND=own` (our X11 window). Frame time (Create page, median of 300 frames, vsync off, busy machine): `sdl` 10.73
+  and 16.11 ms, `own` 8.23 and 16.61 ms in two runs: the same within the noise here; says nothing about a real GPU.
+* **Not done / unverified.** Nothing ran on Windows (the Win32 flash, IME, hook and window code passed a MinGW syntax check only). No
+  real desktop: no task bar to see the flash, no input method to see the candidate window. The default stays `sdl`.
+
 ### Step 3. Move the call sites the seam already covers (the "HAVE" rows)
 
 **What.** About 290 call sites in the launcher and editor are plain SDL calls for something `okay::platform` has a function for: window size, position, show,

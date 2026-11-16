@@ -59,7 +59,7 @@ release job or the installer build for this change.
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
-| 11b | Launcher drawn by our own renderer (off by default) | `OKAY_LAUNCHER_RENDERER=own`, then `OkaySpace.exe` (section "Launcher: drawing with our own renderer") | Footer says "own renderer"; Linux/Xvfb only, unverified on Windows |
+| 11b | Launcher drawn by our own renderer (off by default) | `OKAY_LAUNCHER_RENDERER=own`, then `OkaySpace.exe` (section "Launcher: drawing with our own renderer") | Footer says "own renderer"; the chat opens in its own window and the OkayUI preview works with it too; Linux/Xvfb only, unverified on Windows |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 7f | Crash reports: a detailed report, sent for you, turned into a GitHub issue | `OKAY_TEST_CRASH_LATE=Test.Step` crashes the editor on purpose; launcher Settings > Crash reports | Local half new; the server half needs the owner's one-time setup (see 7f) |
@@ -1170,8 +1170,15 @@ Steps:
 3. Click into the **Search** box next to "Recent projects" and type a few letters, including Backspace, arrows, Ctrl+A, Ctrl+C and
    Ctrl+V. The mouse pointer turns into a text cursor over the box.
 4. Click **Play**, **Friends**, **Settings** in the sidebar; scroll a long page with the mouse wheel; resize the window and make it small.
-5. Sign in and open a chat: avatars and images show. (With `own` the chat stays inside the launcher window; it cannot pop out into
-   its own window yet.)
+5. Sign in and open a chat: avatars and images show. With the setting **Open chat in its own window** on (Settings, the default), the chat opens
+   in its own window ("OkaySpace Chat"), drawn by our renderer too: type in it, scroll it, drag a file onto it, move and resize it,
+   close it with its X and open it again. Minimise the launcher: the chat window keeps going.
+5a. Settings > Appearance > UI backend: **OkayUI (preview)**, then open **What's New**: the page is drawn by OkayUI on our renderer.
+   Click "Check for updates" and scroll. (Before, `own` switched OkayUI off.)
+5b. With a language that uses an input method (Japanese, Chinese, Korean): click into a text box and start typing; the input
+   method's candidate list opens next to the text cursor, not in a corner of the screen.
+5c. Leave the launcher in the background while a call rings or an update is found: its taskbar button flashes (the chat window's
+   button for a call while the chat window is open).
 6. Move the launcher to a monitor with 125% or 150% scaling: the text stays sharp and clicks land where you click.
 7. Close the window with the X: the "Exit or Minimize" question appears; Minimize, then restore from the taskbar.
 8. Close the launcher, start it again **without** the variable: the footer no longer mentions the renderer.
@@ -1180,10 +1187,12 @@ If something looks different, is missing or does not react only with the variabl
 if you can, a screenshot of both. If `own` cannot start (no OpenGL), the launcher falls back to SDL by itself and draws as before.
 
 **Status.** Tested on Linux only, under Xvfb with Mesa's software OpenGL (no real GPU): `launcher_imgui_renderer` (our ImGui renderer
-against a reference rasteriser, software painter), `launcher_imgui_renderer_gl` (the same on our OpenGL painter, sdl2 and own windows),
-and `scripts/launcher_renderer_check.sh` (screenshots with both renderers, a click into the search box and typing, a click on Play,
-frame time). The launcher, the seam and the OpenGL painter passed a MinGW (Windows) syntax check only. **Not run on Windows: every step
-above is unverified until you run it.**
+against a reference rasteriser, software painter; the OkayUI host fed from our events gives the same input as from SDL's),
+`launcher_imgui_renderer_gl` (the same on our OpenGL painter, sdl2 and own windows; two painters on two windows drawn in turn; the IME
+caret), `platform_state` (the taskbar-flash hint read back from the X server), and `scripts/launcher_renderer_check.sh` (screenshots
+with both renderers, typing, a click on Play, the chat window and the OkayUI page with both renderers, frame time). The launcher, the
+seam, the OpenGL painter and the Win32 flash, IME and message-hook code passed a MinGW (Windows) syntax check only. **Not run on
+Windows: every step above is unverified until you run it** (on Linux the tray is not used and the flash is the urgency hint).
 
 ## Team tooling (not part of the Windows release)
 

@@ -175,14 +175,18 @@ Recipe Randomise(const Template& t, const Recipe& base, uint32_t seed, float str
 /// (the next joint, or past the hand, foot or head); the bones are in the engine's 15-bone humanoid order and use plain names
 /// (pelvis, spine_01, head, upperarm_l, lowerarm_l, hand_l, ..., thigh_l, calf_l, foot_l, ...) that the humanoid retarget maps.
 /// The model faces +Z; "_l" is on +X.
-struct RigJoint { std::string name; int parent = -1; Vec3 pos, tail; };
+struct RigJoint { std::string name; int parent = -1; Vec3 pos, tail; float radius = 0.05f; /* about how thick the body is around this bone, for skin weights */ int group = 0; /* 0 trunk, neck and head, 1 arm, 2 leg: an arm bone never moves skin inside the trunk's outline */ };
 /// The skeleton that fits this human's proportions. False for templates without one (only "human" has it).
 /// Bone names: Mixamo's ("mixamorig:LeftUpLeg", so clips and rigs that use those node names fit) or the engine's mannequin names.
 enum class RigNaming { Mixamo, Engine };
 bool HumanoidSkeleton(const Recipe& r, std::vector<RigJoint>& out, RigNaming naming = RigNaming::Mixamo);
 /// Skin weights by distance to the bones: every vertex is bound to its three nearest bones (4 slots, sum 1).
+/// `groups`, when given, has one bit mask per vertex of the groups of bones that may move it (1 trunk, neck and head; 2 arm and collar bone;
+/// 4 leg): a hand vertex is never moved by a leg bone and a thigh never by an arm, however close they are. 0 or no list = any bone.
 void SkinVertices(const std::vector<Vec3>& verts, const std::vector<RigJoint>& joints,
-                  std::vector<std::array<int, 4>>& idx, std::vector<std::array<float, 4>>& wt);
+                  std::vector<std::array<int, 4>>& idx, std::vector<std::array<float, 4>>& wt, const std::vector<unsigned char>* groups = nullptr);
+/// The bone groups that may move a part of this slot (arm and hand: arm; leg and foot: trunk and leg; shirt: trunk and arm; pants: trunk and leg; the rest: trunk).
+unsigned char RigGroupsOfSlot(const std::string& slot);
 
 // ---- Analysis and regeneration ----------------------------------------------------------------------------
 

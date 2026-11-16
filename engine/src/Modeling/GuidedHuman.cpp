@@ -896,40 +896,50 @@ bool HumanoidSkeleton(const Recipe& r, std::vector<RigJoint>& out, RigNaming nam
     const Dim d = MakeDim(r);
     const bool mx = naming == RigNaming::Mixamo;
     auto nm = [&](const char* mixamo, const char* engine) { return std::string(mx ? "mixamorig:" : "") + (mx ? mixamo : engine); };
-    auto add = [&](const std::string& name, int parent, Vec3 pos, Vec3 tail) { RigJoint j; j.name = name; j.parent = parent; j.pos = pos; j.tail = tail; out.push_back(j); return (int)out.size() - 1; };
+    auto add = [&](const std::string& name, int parent, Vec3 pos, Vec3 tail, float radius, int group = 0) { RigJoint j; j.name = name; j.parent = parent; j.pos = pos; j.tail = tail; j.radius = radius; j.group = group; out.push_back(j); return (int)out.size() - 1; };
+    const float g = d.gk;
     const Vec3 hips{0, d.hipY, 0};
     const Vec3 sp0{0, d.hipY + 0.22f * d.tl, 0}, sp1{0, d.hipY + 0.48f * d.tl, 0}, sp2{0, d.hipY + 0.74f * d.tl, 0}, neck{0, d.shoulderY, 0}, headJ{0, d.hb + 0.045f * d.hs / 0.233f, 0};
-    const int iHips = add(nm("Hips", "pelvis"), -1, hips, sp0);
-    const int iSp0 = add(nm("Spine", "spine_01"), iHips, sp0, sp1);
-    const int iSp1 = add(nm("Spine1", "spine_02"), iSp0, sp1, sp2);
-    const int iSp2 = add(nm("Spine2", "spine_03"), iSp1, sp2, neck);
-    const int iNeck = add(nm("Neck", "neck_01"), iSp2, neck, headJ);
-    add(nm("Head", "head"), iNeck, headJ, {0, d.hb + d.hs, 0});
+    const int iHips = add(nm("Hips", "pelvis"), -1, hips, sp0, d.W);
+    const int iSp0 = add(nm("Spine", "spine_01"), iHips, sp0, sp1, d.W * 0.8f);
+    const int iSp1 = add(nm("Spine1", "spine_02"), iSp0, sp1, sp2, d.W * 0.85f);
+    const int iSp2 = add(nm("Spine2", "spine_03"), iSp1, sp2, neck, d.W * 0.85f);
+    const int iNeck = add(nm("Neck", "neck_01"), iSp2, neck, headJ, 0.055f);
+    add(nm("Head", "head"), iNeck, headJ, {0, d.hb + d.hs, 0}, d.hs * 0.38f);
     for (int side = 1; side >= 0; --side) {   // the engine's left is +x (the figure faces +z)
         const float s = side ? 1.0f : -1.0f;
         const char* lr = side ? "Left" : "Right";
         const char* e = side ? "_l" : "_r";
         auto nn = [&](const char* mixamoBase, const char* engineBase) { return mx ? std::string("mixamorig:") + lr + mixamoBase : std::string(engineBase) + e; };
-        const int cl = add(nn("Shoulder", "clavicle"), iSp2, {s * 0.02f, d.shoulderY - 0.02f, 0}, d.S[side]);
-        const int ua = add(nn("Arm", "upperarm"), cl, d.S[side], d.E[side]);
-        const int la = add(nn("ForeArm", "lowerarm"), ua, d.E[side], d.Wr[side]);
-        add(nn("Hand", "hand"), la, d.Wr[side], d.Wr[side] + d.d2[side] * d.hl);
-        const int th = add(nn("UpLeg", "thigh"), iHips, d.Hp[side], d.K[side]);
-        const int ca = add(nn("Leg", "calf"), th, d.K[side], d.A[side]);
+        const int cl = add(nn("Shoulder", "clavicle"), iSp2, {s * 0.02f, d.shoulderY - 0.02f, 0}, d.S[side], 0.05f, 1);
+        const int ua = add(nn("Arm", "upperarm"), cl, d.S[side], d.E[side], 0.052f * g, 1);
+        const int la = add(nn("ForeArm", "lowerarm"), ua, d.E[side], d.Wr[side], 0.038f * g, 1);
+        add(nn("Hand", "hand"), la, d.Wr[side], d.Wr[side] + d.d2[side] * d.hl, 0.04f, 1);
+        const int th = add(nn("UpLeg", "thigh"), iHips, d.Hp[side], d.K[side], 0.09f * g, 2);
+        const int ca = add(nn("Leg", "calf"), th, d.K[side], d.A[side], 0.055f * g, 2);
         const float u = d.H * 0.148f / 0.26f;
         const Vec3 ball = d.A[side] + Vec3{0, -d.ankleY + 0.03f, 0.11f * u};
-        const int ft = add(nn("Foot", "foot"), ca, d.A[side], ball);
-        add(nn("ToeBase", "ball"), ft, ball, d.A[side] + Vec3{0, -d.ankleY + 0.02f, 0.20f * u});
+        const int ft = add(nn("Foot", "foot"), ca, d.A[side], ball, 0.05f, 2);
+        add(nn("ToeBase", "ball"), ft, ball, d.A[side] + Vec3{0, -d.ankleY + 0.02f, 0.20f * u}, 0.03f, 2);
     }
     return true;
 }
 
+unsigned char RigGroupsOfSlot(const std::string& slot) {
+    if (slot == "arm" || slot == "hand") return 2;
+    if (slot == "leg" || slot == "foot" || slot == "pants") return 1 | 4;
+    if (slot == "shirt") return 1 | 2;
+    return 1;
+}
+
 void SkinVertices(const std::vector<Vec3>& verts, const std::vector<RigJoint>& joints,
-                  std::vector<std::array<int, 4>>& idx, std::vector<std::array<float, 4>>& wt) {
+                  std::vector<std::array<int, 4>>& idx, std::vector<std::array<float, 4>>& wt, const std::vector<unsigned char>* groups) {
     idx.assign(verts.size(), {0, 0, 0, 0});
     wt.assign(verts.size(), {0, 0, 0, 0});
     const int n = (int)joints.size();
     std::vector<float> dist((size_t)n);
+    float neckY = 1e9f;
+    for (const RigJoint& j : joints) if (j.group == 0 && j.parent >= 0 && j.pos.y > 0.5f && joints[(size_t)j.parent].group == 0 && j.name.find("eck") != std::string::npos) neckY = j.pos.y;
     for (size_t v = 0; v < verts.size(); ++v) {
         const Vec3 p = verts[v];
         for (int j = 0; j < n; ++j) {
@@ -937,26 +947,35 @@ void SkinVertices(const std::vector<Vec3>& verts, const std::vector<RigJoint>& j
             const float l2 = Vec3::Dot(ab, ab);
             float t = l2 > 1e-9f ? Vec3::Dot(p - a, ab) / l2 : 0.0f;
             t = std::min(1.0f, std::max(0.0f, t));
-            dist[j] = (p - (a + ab * t)).Magnitude();
+            dist[j] = (p - (a + ab * t)).Magnitude() / (joints[j].radius + 0.015f);   // in units of the body's thickness around the bone
         }
-        int best[3] = {-1, -1, -1};
-        for (int k = 0; k < 3; ++k) {
+        const unsigned mask = groups && v < groups->size() && (*groups)[v] ? (unsigned)(*groups)[v] : 7u;
+        for (int j = 0; j < n; ++j) if (!(mask & (1u << joints[j].group))) dist[j] += 100.0f;   // a bone of a group this part may not follow
+        // An arm hanging at the side must not move the chest: inside the trunk's outline the arm bones count as far away, smoothly
+        // (no hard edge), so a vertex there takes its weights from the spine instead.
+        float armK = 1.0f;
+        if ((mask & 2u) && (mask & 1u) && p.y > joints[0].pos.y && p.y < neckY - 0.03f) armK = Sm((std::fabs(p.x) - joints[0].radius * 0.9f) / (joints[0].radius * 0.35f));
+        for (int j = 0; j < n; ++j) if (joints[j].group == 1) dist[j] += (1.0f - armK) * 3.0f;
+        int best[4] = {-1, -1, -1, -1};
+        for (int k = 0; k < 4; ++k) {
             float bd = 1e30f;
             for (int j = 0; j < n; ++j) {
-                if (j == best[0] || j == best[1]) continue;
+                if (j == best[0] || j == best[1] || j == best[2]) continue;
                 if (dist[j] < bd) { bd = dist[j]; best[k] = j; }
             }
         }
+        // Weights fall off with the distance to each bone's segment in units of the body's thickness there (squared, softened so a
+        // vertex on a joint takes both bones about equally); a bone far behind the nearest one is dropped. A smooth falloff keeps
+        // neighbouring vertices on nearly the same blend, so no triangle is pulled apart by two bones that disagree.
         float sum = 0;
-        for (int k = 0; k < 3; ++k) {
+        for (int k = 0; k < 4; ++k) {
             if (best[k] < 0) continue;
-            const float w = 1.0f / std::pow(dist[best[k]] + 0.02f, 3.0f);
-            // a bone far behind the nearest one adds nothing: drop it below a fifth of the best weight
+            const float w = 1.0f / std::pow(dist[best[k]] + 0.5f, 3.0f);
             idx[v][k] = best[k]; wt[v][k] = w; sum += w;
         }
         const float top = wt[v][0];
         sum = 0;
-        for (int k = 0; k < 3; ++k) { if (wt[v][k] < top * 0.2f) wt[v][k] = 0; sum += wt[v][k]; }
+        for (int k = 0; k < 4; ++k) { wt[v][k] = std::max(0.0f, wt[v][k] - top * 0.12f); sum += wt[v][k]; }   // a soft cut: a weak bone fades out, it does not switch off
         for (int k = 0; k < 4; ++k) wt[v][k] = sum > 0 ? wt[v][k] / sum : (k == 0 ? 1.0f : 0.0f);
     }
 }

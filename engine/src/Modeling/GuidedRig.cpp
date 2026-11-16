@@ -3,6 +3,9 @@
 #include "okay/Modeling/GuidedRig.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/SkinnedMesh.hpp"
+#include <cmath>
+#include <map>
+#include <tuple>
 
 namespace okay::modeling::guided {
 
@@ -35,7 +38,17 @@ GameObject* BuildRiggedHuman(Scene& scene, const Recipe& recipe, const std::stri
         sm->jointNames.push_back(joints[i].name);
         sm->inverseBind.push_back(bones[i]->transform->LocalToWorldMatrix().Inverse());
     }
-    SkinVertices(mesh.vertices, joints, sm->jointIdx, sm->jointWt);
+    // which part each vertex came from decides which bones may move it (a hand never follows a leg, even when it touches the thigh)
+    std::map<std::tuple<long long, long long, long long>, unsigned char> owner;
+    for (const GeneratedPart& p : Generate(recipe))
+        for (const Vec3& v : p.mesh.verts) owner[{std::llround(v.x * 1e4), std::llround(v.y * 1e4), std::llround(v.z * 1e4)}] = RigGroupsOfSlot(p.slot);
+    std::vector<unsigned char> groups(mesh.vertices.size(), 0);
+    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+        const Vec3& v = mesh.vertices[i];
+        auto it = owner.find({std::llround(v.x * 1e4), std::llround(v.y * 1e4), std::llround(v.z * 1e4)});
+        if (it != owner.end()) groups[i] = it->second;
+    }
+    SkinVertices(mesh.vertices, joints, sm->jointIdx, sm->jointWt, &groups);
     return root;
 }
 

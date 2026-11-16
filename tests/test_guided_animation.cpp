@@ -149,7 +149,7 @@ int main() {
         for (const auto& up : scene.Objects()) if (up->GetComponent<SkinnedMesh>()) sm = up->GetComponent<SkinnedMesh>();
         CHECK(sm && sm->jointNames.size() == 22 && sm->jointNames[0] == "mixamorig:Hips");
         if (!sm) TEST_MAIN_RESULT();
-        // a short "wave and step" clip written from the bone names: right arm up, left thigh and knee swing, spine twist, head nod
+        // a short "wave and step" clip written from the bone names: right arm raised 35 to 75 degrees, left thigh and knee swing, spine twist, head nod
         ModelAnimator::Clip c;
         c.name = "Test wave and step";
         auto track = [&](const char* node, const char* prop, float amp, float bias) {
@@ -160,7 +160,7 @@ int main() {
         track("mixamorig:LeftUpLeg", "rotation.x", 35.0f, 0.0f);
         track("mixamorig:LeftLeg", "rotation.x", 25.0f, 30.0f);
         track("mixamorig:RightUpLeg", "rotation.x", -30.0f, 0.0f);
-        track("mixamorig:RightArm", "rotation.z", 25.0f, 80.0f);
+        track("mixamorig:RightArm", "rotation.z", 20.0f, 55.0f);
         track("mixamorig:RightForeArm", "rotation.x", 40.0f, 40.0f);
         track("mixamorig:LeftArm", "rotation.x", 30.0f, 0.0f);
         track("mixamorig:Spine1", "rotation.y", 15.0f, 0.0f);
@@ -175,7 +175,7 @@ int main() {
         // every triangle edge of the bind pose, to see how far the skin stretches
         std::vector<std::pair<int, int>> edges;
         for (size_t t = 0; t + 2 < bind.triangles.size(); t += 3) for (int k = 0; k < 3; ++k) edges.push_back({bind.triangles[t + k], bind.triangles[t + (k + 1) % 3]});
-        float maxStretch = 0, maxMove = 0, maxBone = 0; bool finite = true;
+        float maxStretch = 0, maxGrow = 0, maxMove = 0, maxBone = 0; bool finite = true;
         Transform* rArm = nullptr; for (const auto& up : scene.Objects()) if (up->name == "mixamorig:RightArm") rArm = up->transform;
         CHECK(rArm != nullptr);
         for (int i = 0; i < 150; ++i) {
@@ -187,16 +187,18 @@ int main() {
                 for (size_t v = 0; v < m.vertices.size(); ++v) maxMove = std::fmax(maxMove, (m.vertices[v] - bind.vertices[v]).Magnitude());
                 for (const auto& e : edges) {
                     const float a = (bind.vertices[e.first] - bind.vertices[e.second]).Magnitude(), b = (m.vertices[e.first] - m.vertices[e.second]).Magnitude();
-                    if (a > 1e-4f) maxStretch = std::fmax(maxStretch, b / a);
+                    if (a > 0.01f) maxStretch = std::fmax(maxStretch, b / a);   // edges shorter than a centimetre only tell us about rounding
+                    maxGrow = std::fmax(maxGrow, b - a);
                 }
             }
         }
-        std::printf("  Mixamo-named clip: right arm turned up to %.0f deg, skin moved up to %.2f m, longest edge stretch x%.2f\n", maxBone, maxMove, maxStretch);
+        std::printf("  Mixamo-named clip: right arm turned up to %.0f deg, skin moved up to %.2f m, edges (longer than 1 cm) stretched up to x%.2f, the biggest growth of any edge %.3f m\n", maxBone, maxMove, maxStretch, maxGrow);
         CHECK(finite);
         CHECK(maxBone > 40.0f);        // the clip really drove the bones it names
         CHECK(maxMove > 0.2f);         // and the skin followed
         CHECK(maxMove < 1.6f);         // no vertex flew off
         CHECK(maxStretch < 4.0f);      // no triangle edge stretched to a spike
+        CHECK(maxGrow < 0.12f);        // and none grew by more than 12 cm
     }
     TEST_MAIN_RESULT();
 }

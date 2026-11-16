@@ -44,14 +44,37 @@ ALIASES = {
 }
 
 
-# (label, file, function) of the screens that have an OkayUI port.
+# (label, file, function) of the screens that have an OkayUI port. A launcher page is a branch inside main(), not a function: it is
+# given as (start, end) regular expressions over the raw source lines, and its Dear ImGui branch is the lines from the first match
+# of `start` up to (not including) the next match of `end`.
 PORTED = [
     ("Console", "editor/ConsolePanel.cpp", "DrawConsole"),
     ("Crash Log", "editor/main.cpp", "DrawCrashLog"),
     ("Audio Mixer", "editor/main.cpp", "DrawAudioMixer"),
-    ("What's New", "launcher/main.cpp", "(page)"),
-    ("Tips", "launcher/main.cpp", "(page)"),
+    ("What's New", "launcher/main.cpp", (r"\} else if \(tab == 12\) \{", r"\} else if \(tab == 13 ")),
+    ("Tips", "launcher/main.cpp", (r"\} else if \(tab == 13\) \{", r"\} else if \(tab == 1\) \{")),
+    ("Downloads", "launcher/main.cpp", (r"\} else if \(tab == 10\) \{", r"\} else if \(tab == 15\) \{")),
+    ("Achievements", "launcher/main.cpp", (r"\} else if \(tab == 5\) \{", r"\} else if \(tab == 6\) \{")),
+    ("Notifications panel", "launcher/main.cpp", (r"// ---- Notifications panel ----", r"ntWasOpen = g_notifPanelOpen;")),
 ]
+
+
+def page_calls(rel, start, end):
+    """ImGui:: calls (name -> count) in a launcher page branch, or None when the markers are not found."""
+    path = os.path.join(ROOT, rel)
+    raw = open(path, encoding="utf-8", errors="replace").read().split("\n")
+    text = strip_comments_and_strings("\n".join(raw)).split("\n")
+    a = next((i for i, l in enumerate(raw) if re.search(start, l)), None)
+    if a is None:
+        return None
+    b = next((i for i in range(a + 1, len(raw)) if re.search(end, raw[i])), None)
+    if b is None:
+        return None
+    out = defaultdict(int)
+    for line in text[a:b]:
+        for m in CALL_RE.finditer(line):
+            out[m.group(1)] += 1
+    return out
 
 
 def strip_comments_and_strings(text):
@@ -299,16 +322,22 @@ def render():
     w("|---|---|---:|---:|")
     ported_calls = 0
     for label, f, fn in PORTED:
-        u = units.get((f, fn))
-        if u:
-            tot = sum(u["calls"].values())
-            ok = sum(n for k, n in u["calls"].items() if call_ok(k, funcs))
-            ported_calls += tot
-            w("| %s | `%s` `%s` | %d | %s |" % (label, f, fn, tot, pct(ok, tot)))
+        if isinstance(fn, tuple):
+            pc = page_calls(f, fn[0], fn[1])
+            where = "`%s` (a page inside `main`)" % f
         else:
-            w("| %s | `%s` (a page inside `main`) | n/a | n/a |" % (label, f))
+            u = units.get((f, fn))
+            pc = u["calls"] if u else None
+            where = "`%s` `%s`" % (f, fn)
+        if pc is not None:
+            tot = sum(pc.values())
+            ok = sum(n for k, n in pc.items() if call_ok(k, funcs))
+            ported_calls += tot
+            w("| %s | %s | %d | %s |" % (label, where, tot, pct(ok, tot)))
+        else:
+            w("| %s | %s (not found) | n/a | n/a |" % (label, where))
     w("")
-    w("The ported functions above hold %d of the %d `ImGui::` call sites counted (%s); the launcher pages are not in that figure." % (
+    w("The Dear ImGui versions of the ported screens above hold %d of the %d `ImGui::` call sites counted (%s)." % (
         ported_calls, call_total, pct(ported_calls, call_total)))
     w("")
     w("## Coverage per screen (functions with 15 or more calls)")

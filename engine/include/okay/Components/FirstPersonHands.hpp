@@ -47,7 +47,7 @@ public:
             case Preset::Normal:
                 return "The arm is always in view (not only when you hold something): a hand and a forearm in your shirt colour that leaves the bottom of the screen. Left click swings it. A two-handed item uses both.";
             case Preset::BothArms:
-                return "Normal, but both arms are in view all the time, like a boxing stance.";
+                return "Normal, but whatever you hold is held in both hands, even a small one-handed item. With empty hands one arm shows (a two-arm empty stance is not built yet).";
             case Preset::RightHandOnly:
                 return "Normal, but only the right arm ever shows, even for a two-handed item.";
             case Preset::Minimal:
@@ -96,6 +96,10 @@ public:
         float elbowBend = 0.0f;           ///< degrees the elbow hint folds out (0 = the built-in hint)
         float reach = 0.0f;               ///< metres the grip is pushed forward
     };
+
+    /// The Normal look sits the hands a little further in from the screen edge (the right hand one
+    /// way, the left the other). Old look puts both back to zero.
+    FirstPersonHands() { right.position.x = -0.05f; left.position.x = 0.05f; }
 
     // ---- Player view (first person) ----
     Preset preset = Preset::Normal;       ///< the last preset applied (a label only)
@@ -156,6 +160,7 @@ public:
                 right.forearmThickness = left.forearmThickness = 0.07f;
                 right.matchShirt = left.matchShirt = false;
                 right.uniformScale = left.uniformScale = 1.0f;
+                right.position = left.position = Vec3{0, 0, 0};
                 break;
             default: break;
         }

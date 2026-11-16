@@ -1621,7 +1621,8 @@ void Character::ApplyFirstPersonHandDrive(bool showLeftArm, bool showWhileRunnin
     const bool show = (holding || (h && h->showWhenEmpty)) && (!run || allowRun);
     fpArmBase = primary;
     fpArmUp = show ? 1.0f : 0.0f;
-    m_fpSecond = two;
+    // The two-hand pose is built around the held item, so with empty hands one arm shows.
+    m_fpSecond = two && holding;
 }
 
 void Character::PoseOwnerArm(const std::vector<Vec3>&) {

@@ -421,8 +421,8 @@ int main() {
         // Empty hands draw nothing. The shirt stays, so a look down is a solid shoulder.
         CHECK(!aCh->Part(HumanoidMotion::B_LUPARM)->firstPersonViewmodel);
         CHECK(!bCh->Part(HumanoidMotion::B_LUPARM)->firstPersonViewmodel);
-        CHECK(aCh->fpArmUp <= 0.05f);
-        CHECK(bCh->fpArmUp <= 0.05f);
+        CHECK(aCh->fpArmUp > 0.5f);   // the Normal look keeps the arm in view while walking
+        CHECK(bCh->fpArmUp > 0.5f);
         CHECK(aCh->Part(HumanoidMotion::B_TORSO)->firstPersonViewmodel);
         CHECK(bCh->Part(HumanoidMotion::B_TORSO)->firstPersonViewmodel);
 

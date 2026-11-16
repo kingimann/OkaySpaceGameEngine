@@ -125,7 +125,8 @@ int main(int argc, char** argv) {
     if (argc < 2) { std::fprintf(stderr, "usage: fp_hand_shot <outdir> [old|normal]\n"); return 2; }
     const std::string outdir = argv[1];
     const std::string mode = argc > 2 ? argv[2] : "normal";
-    const char* cases[] = {"idle", "walk", "run", "swing", "hold", "holdwalk", "lookup", "lookdown", "crouch"};
+    std::vector<const char*> cases = {"idle", "walk", "run", "swing", "hold", "holdwalk", "lookup", "lookdown", "crouch"};
+    if (mode == "both" || mode == "right" || mode == "minimal") cases = {"idle", "hold"};
     for (const char* cs : cases) {
         Scene sc("FpShot");
         BuildWorld(sc);
@@ -138,6 +139,11 @@ int main(int argc, char** argv) {
             if (auto* h = player->GetComponent<FirstPersonHands>()) h->UseOldLook();
         } else if (mode == "normal") {
             if (auto* h = player->GetComponent<FirstPersonHands>()) h->UseNormalArms();
+        } else if (mode == "both" || mode == "right" || mode == "minimal") {
+            if (auto* h = player->GetComponent<FirstPersonHands>())
+                h->ApplyPreset(mode == "both" ? FirstPersonHands::Preset::BothArms
+                             : mode == "right" ? FirstPersonHands::Preset::RightHandOnly
+                                               : FirstPersonHands::Preset::Minimal);
         }
 #endif
         auto* fpc = player->GetComponent<FirstPersonController>();

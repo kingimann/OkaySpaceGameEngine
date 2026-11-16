@@ -993,7 +993,7 @@ int main() {
         settle(sc, 150);                               // arrive at the eyes despite the long blend
         CHECK(!pv->Blending());
         CHECK(cam->ignoreObject == player);
-        CHECK(ch->fpArmUp == 0.0f);                // nothing in the view until a hold
+        CHECK(ch->fpArmUp == 1.0f);                // the Normal look: the arm is in view with empty hands
         auto* hands = player->GetComponent<FirstPersonHands>();
         CHECK(hands);
         if (hands) hands->showWhenEmpty = true;
@@ -1262,7 +1262,7 @@ int main() {
         GameObject* player = sc.CreateGameObject("Player");
         auto* ch = player->AddComponent<Character>();
         ch->Apply();
-        player->AddComponent<FirstPersonHands>();   // showWhenEmpty stays false
+        player->AddComponent<FirstPersonHands>()->UseOldLook();   // Old look: showWhenEmpty is false
         auto* tp = player->AddComponent<ThirdPersonController>();
         tp->yaw = 0.0f; tp->pitch = 0.0f; tp->distance = 4.5f; tp->cameraHeight = 1.5f;
         tp->pivotDampingXZ = tp->pivotDampingY = 0.0f;

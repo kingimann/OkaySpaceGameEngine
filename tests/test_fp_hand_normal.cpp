@@ -100,6 +100,7 @@ int main() {
         CHECK_NEAR(p.right.forearmLength, 0.42f, 1e-5f);   // the old numbers
         CHECK_NEAR(p.right.forearmThickness, 0.07f, 1e-5f);
         CHECK_NEAR(p.right.uniformScale, 1.0f, 1e-5f);
+        CHECK_NEAR(p.right.position.x, 0.0f, 1e-6f);
         CHECK(p.preset == FirstPersonHands::Preset::OldLook);
         p.ApplyPreset(FirstPersonHands::Preset::Normal);
         CHECK(p.showWhenEmpty && p.right.forearm && p.right.matchShirt && p.swingOnClick);
@@ -170,6 +171,7 @@ int main() {
         Box b = OwnerPixels(n, W, H, r);
         std::printf("  [box] x %d..%d y %d..%d count %d\n", b.x0, b.x1, b.y0, b.y1, b.count);
         CHECK(b.count > 400);
+        CHECK(b.x1 < W - 12);                 // the whole arm is inside the view, not cut by the right edge
         CHECK(b.x0 > W / 3);                  // the lower right, not the middle of the view
         CHECK(b.y1 >= H - 2);                 // the arm leaves the bottom edge: it is connected, not floating
         CHECK(b.y0 > H / 3);                  // never fills the screen

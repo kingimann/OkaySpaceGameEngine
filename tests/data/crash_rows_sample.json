@@ -1,0 +1,47 @@
+[
+ {
+  "id": "11111111-1111-4111-8111-111111111111",
+  "created_at": "2026-11-15T10:05:00+00:00",
+  "report_id": "aaaaaaaaaaaaaaa1",
+  "signature": "0123456789abcdef",
+  "version": "2.874.0",
+  "build": "pe-6553A1B2-5F2000",
+  "os": "Windows 10.0.19045 (x64)",
+  "exception": "0xC0000005",
+  "last_step": "UI.Inspector",
+  "top_frame": "OkayEngine.exe!_ZN4okay9Inspector10DrawFieldsEv",
+  "report": "OkaySpace crash report\nVersion: 2.874.0\nBuild: pe-6553A1B2-5F2000, built Nov 15 2026 10:00:00\nWhen: 2026-11-15 10:00:00\nExe: %USERPROFILE%\\AppData\\Local\\OkaySpace\\Tools\\OkayEngine.exe\nLast step: UI.Inspector\nException: 0xC0000005\nFault module: OkayEngine.exe + 0x1A2B3C\nFault detail: write to address 0x0\nThread: main\nOS: Windows 10.0.19045 (x64)\nCPU: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz (12 logical)\nRAM: 16316 MB total, 7011 MB free\nProcess memory: 812 MB in use, 1100 MB peak\nGPU: NVIDIA GeForce GTX 1650/PCIe/SSE2 | NVIDIA Corporation | OpenGL 4.6.0 | SDL renderer direct3d11\nUI backend: imgui\nOwn code: platform=sdl2 http=winhttp readers=ufbx+assimp crypto=libsodium ui=imgui\nMode: edit\nScene: level1.okayscene\nObjects: 128\nAssets loaded: 42\nUptime: 1234 s, 73000 frames\nRecovery copy: present\n\nBacktrace:\n  #00 OkayEngine.exe + 0x1A2B3C  _ZN4okay9Inspector10DrawFieldsEv +0x40\n  #01 OkayEngine.exe + 0x22F00  _ZN4oked12DrawInspectorERNS_11EditorStateE +0x9\n  #02 OkayEngine.exe + 0x1000  main +0x11\n  #03 kernel32.dll + 0x17374\n\n--- Breadcrumbs (oldest first: frame, step) ---\nframe 72990: UI.Hierarchy\nframe 72998: UI.Inspector\nframe 73000: Render3D:gl x40\n--- Console (last 4 lines, oldest first: seconds before the crash, level) ---\n[-120s] I Welcome to OkaySpace v2.874.0\n[-60s] I GPU renderer available (View > GPU Renderer).\n[-5s] W Texture tex12.png is larger than 4096 px\n[-1s] E Script error in player.okayscript line 12\n--- End of report ---\n",
+  "processed_at": null,
+  "issue_number": null
+ },
+ {
+  "id": "22222222-2222-4222-8222-222222222222",
+  "created_at": "2026-11-15T11:30:00+00:00",
+  "report_id": "aaaaaaaaaaaaaaa2",
+  "signature": "0123456789abcdef",
+  "version": "2.875.0",
+  "build": "pe-6553A9C0-5F3000",
+  "os": "Windows 11 (22631)",
+  "exception": "0xC0000005",
+  "last_step": "UI.Inspector",
+  "top_frame": "OkayEngine.exe!_ZN4okay9Inspector10DrawFieldsEv",
+  "report": "OkaySpace crash report\nVersion: 2.875.0\nBuild: pe-6553A1B2-5F2000, built Nov 15 2026 10:00:00\nWhen: 2026-11-15 10:00:00\nExe: %USERPROFILE%\\AppData\\Local\\OkaySpace\\Tools\\OkayEngine.exe\nLast step: UI.Inspector\nException: 0xC0000005\nFault module: OkayEngine.exe + 0x1A2B3C\nFault detail: write to address 0x0\nThread: main\nOS: Windows 10.0.19045 (x64)\nCPU: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz (12 logical)\nRAM: 16316 MB total, 7011 MB free\nProcess memory: 812 MB in use, 1100 MB peak\nGPU: NVIDIA GeForce GTX 1650/PCIe/SSE2 | NVIDIA Corporation | OpenGL 4.6.0 | SDL renderer direct3d11\nUI backend: imgui\nOwn code: platform=sdl2 http=winhttp readers=ufbx+assimp crypto=libsodium ui=imgui\nMode: edit\nScene: level1.okayscene\nObjects: 128\nAssets loaded: 42\nUptime: 1234 s, 73000 frames\nRecovery copy: present\n\nBacktrace:\n  #00 OkayEngine.exe + 0x1A2B3C  _ZN4okay9Inspector10DrawFieldsEv +0x40\n  #01 OkayEngine.exe + 0x22F00  _ZN4oked12DrawInspectorERNS_11EditorStateE +0x9\n  #02 OkayEngine.exe + 0x1000  main +0x11\n  #03 kernel32.dll + 0x17374\n\n--- Breadcrumbs (oldest first: frame, step) ---\nframe 72990: UI.Hierarchy\nframe 72998: UI.Inspector\nframe 73000: Render3D:gl x40\n--- Console (last 4 lines, oldest first: seconds before the crash, level) ---\n[-120s] I Welcome to OkaySpace v2.874.0\n[-60s] I GPU renderer available (View > GPU Renderer).\n[-5s] W Texture tex12.png is larger than 4096 px\n[-1s] E Script error in player.okayscript line 12\n--- End of report ---\n",
+  "processed_at": null,
+  "issue_number": null
+ },
+ {
+  "id": "33333333-3333-4333-8333-333333333333",
+  "created_at": "2026-11-15T12:00:00+00:00",
+  "report_id": "aaaaaaaaaaaaaaa3",
+  "signature": "fedcba9876543210",
+  "version": "2.874.0",
+  "build": "pe-6553A1B2-5F2000",
+  "os": "Windows 10.0.19045 (x64)",
+  "exception": "0xC0000005",
+  "last_step": "Play.Tick",
+  "top_frame": "OkayEngine.exe!_ZN4okay5Scene6UpdateEf",
+  "report": "OkaySpace crash report\nVersion: 2.874.0\nBuild: pe-6553A1B2-5F2000, built Nov 15 2026 10:00:00\nWhen: 2026-11-15 10:00:00\nExe: C:\\Users\\someuser\\AppData\\Local\\OkaySpace\\Tools\\OkayEngine.exe\nLast step: Play.Tick\nException: 0xC0000005\nFault module: OkayEngine.exe + 0x1A2B3C\nFault detail: write to address 0x0\nThread: main\nOS: Windows 10.0.19045 (x64)\nCPU: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz (12 logical)\nRAM: 16316 MB total, 7011 MB free\nProcess memory: 812 MB in use, 1100 MB peak\nGPU: NVIDIA GeForce GTX 1650/PCIe/SSE2 | NVIDIA Corporation | OpenGL 4.6.0 | SDL renderer direct3d11\nUI backend: imgui\nOwn code: platform=sdl2 http=winhttp readers=ufbx+assimp crypto=libsodium ui=imgui\nMode: edit\nScene: level1.okayscene\nObjects: 128\nAssets loaded: 42\nUptime: 1234 s, 73000 frames\nRecovery copy: present\n\nBacktrace:\n  #00 OkayEngine.exe + 0x7777A0  _ZN4okay5Scene6UpdateEf +0x40\n  #01 OkayEngine.exe + 0x1000  main +0x11\n\n--- Breadcrumbs (oldest first: frame, step) ---\nframe 72990: UI.Hierarchy\nframe 72998: UI.Inspector\nframe 73000: Render3D:gl x40\n--- Console (last 6 lines, oldest first: seconds before the crash, level) ---\n[-120s] I Welcome to OkaySpace v2.874.0\n[-60s] I GPU renderer available (View > GPU Renderer).\n[-5s] W Texture tex12.png is larger than 4096 px\n[-1s] E Script error in player.okayscript line 12\n[-1s] I Loaded C:\\Users\\someuser\\Games\\space\\tex.png for someuser@example.com from 203.0.113.9\n[-1s] E token=ghp_abcdefghijklmnopqrstuvwxyz @everyone see #123\n--- End of report ---\n",
+  "processed_at": null,
+  "issue_number": null
+ }
+]

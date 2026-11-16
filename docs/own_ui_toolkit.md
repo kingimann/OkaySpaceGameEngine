@@ -834,3 +834,144 @@ What this says: the interface itself is cheap (validating 400,000 indices costs 
 - **Texture size.** The front end refuses above 16384; the OpenGL backend does not query `GL_MAX_TEXTURE_SIZE` (a larger texture than the driver takes is a GL error and a blank texture), Direct3D 11 refuses above 8192. There is no packer for host images (one texture each).
 - **Missing:** Metal, Vulkan, WebGL / OpenGL ES 2, Direct3D 12 backends; a window or swap chain (the host owns those: this is where `okay::platform` and the editor and launcher port come in); multi-viewport rendering; premultiplied-alpha targets; a GPU timer.
 - **Not wired anywhere.** No editor, launcher or player code calls any of this, and Dear ImGui is not removed. What remains for dropping it: an own platform backend for input and windows (the SDL2 row of the roadmap), porting editor and launcher panels to OkayUI, then deleting the `okay_imgui` library.
+
+## 9. Three editor panels: Problems, Stats, History
+
+Same pattern as sections 5 and 6: the Dear ImGui window stays (dock tab, title, close box) and hands its free area to an OkayUI
+screen; Dear ImGui is still the default and the OkayUI version is used only with the developer switch (`OKAY_UI_BACKEND=okayui`,
+or View > Rendering & Performance > UI backend with `OKAY_DEV=1`). A panel falls back to its Dear ImGui version for any frame an
+ImGui popup covers it. Written from what the editor's own panels show and do, from Dear ImGui's documented behaviour where the
+OkayUI gaps needed it, and from our own measurements; no code from any other project. (Section 8 is the launcher's ports, on the
+`claude2/okayui-port-next` branch.)
+
+### 9.1 Why these three
+
+From `docs/imgui_port_report.md`: all three are fully or almost fully covered by OkayUI names (Problems 95.9% before the split, its
+one missing call `GetStyle`; Stats and History 100%), and they are panels people keep open: Problems is the list of what is wrong in
+the scene (the status bar and the build gate point at it), Stats is the frame-rate and census panel, History is the undo list. Each
+also needed a different OkayUI piece (a filtered, grouped list with buttons in rows; a plot and a table; selectable rows with a drawn
+rail), so between them they test more of the toolkit than three similar panels would.
+
+### 9.2 The shared model and the two versions
+
+| Piece | File | What it is |
+|---|---|---|
+| Model | `shared/EditorPanelModels.hpp` | std only: `ProblemsModel`, `StatsModel`, `HistoryModel`, the state each keeps, the intent each returns (what the person asked for), and the rules both versions must agree on: the filter and grouping (`GroupProblems`), group headers, tooltips, number format (`FormatStatNumber`), FPS summary and colour, history rows (`HistoryRows`) |
+| Dear ImGui bodies | `editor/EditorPanelViews.cpp` | what `DrawProblems`, `DrawStats` and `DrawHistory` drew, now drawn from the model; only Dear ImGui and the model header, so the comparison test compiles it as is |
+| OkayUI ports | `okayui/screens/OkayUIEditorPanels.cpp` | `okayuiscreens::DrawProblems`, `DrawStats`, `DrawHistory`: same model, same intent, plus the rectangles they drew (for the tests) |
+| Editor glue | `editor/ProblemsPanel.cpp`, `editor/main.cpp` (`DrawStats`, `DrawHistory`), `editor/OkayPanels.cpp` | builds the model from the editor's state, calls one version, carries out the intent (open the object or script, apply the fix with undo, undo or redo n steps, copy to the clipboard) |
+
+The right-click menus are new in both versions: a Problems row has Go to source, Fix (when it has one) and Copy message; the Stats
+census has Copy stats; a History row has Jump to this state and Copy name. The Problems demo (`OKAY_UI_DIAG=1`) now opens and fixes
+its row through the same intent instead of queuing mouse clicks at screen positions.
+
+### 9.3 Gaps closed in OkayUI (all tested in `okayui_editor_panels`)
+
+- **Text rows** (`StyleVar_TextRowHeight`, OkayUI's own): a plain text line can take one text line's height instead of a frame's,
+  as in Dear ImGui; a short text line after a taller item on its line is centred on it. This was the largest visible difference
+  (every OkayUI text line was a button tall).
+- **`ButtonTextAlign`** (x), **`CellPadding`** (x across; y above and below, then the row ends without the item spacing),
+  **`FramePadding`** (y, for check and radio boxes only), all accepted-and-ignored before.
+- **`BeginChild(id, size, ChildFlags)`** with `ChildFlags_Borders`, `ChildFlags_AlwaysUseWindowPadding` and
+  `ChildFlags_AutoResizeY`: Dear ImGui's default of no padding without a frame, room for the scrollbar only when the content
+  overflowed, and a child as tall as its content. (The usage report counts the ImGui names now: 172 type uses.)
+- **`##` hidden** on button and plot labels (a pill labelled `4##pe` showed `4##pe`).
+- **Bug fixed:** a host's `PushTextScale` around `Begin` / `End` grew the text a step every frame (`End` restored the window's
+  base scale but did not forget it, and the next `BeginFrame` restored that scaled value as the new base). The editor's hosted
+  panels push the UI scale this way, so any UI scale other than 1 would have grown them.
+- **Also taken from `claude2/okayui-port-next`, unchanged** so the two branches merge cleanly: `Button(label, size)`, the
+  right-click menu that opens only where a left click would land, several hosted rectangles in `okayuihost::Region` (three hosted
+  panels can be open at once), the ASCII glyph table, and the cached circle and corner points.
+
+### 9.4 Tests
+
+- `okayui_editor_panels` (`okayui/tests/test_okayui_editor_panels.cpp`, 102 checks, headless): the model rules (sorting, grouping,
+  duplicates, filter, tooltip and copy text, number format, FPS summary, history rows with missing names); the gaps of 9.3; Problems
+  (rows, Fix buttons, the three pills, typing, Backspace and select-all in the search, the right-click menu's three entries and that
+  a menu click does not also open the row under it, a click outside closes it, 600 rows scrolled with the wheel, hostile text and a
+  filter without a terminator); Stats (the plot and the 60 FPS line, the four switches through their pointers, a null switch is not
+  drawn, Copy stats from the right-click menu, a short panel scrolls to the footer, no history); History (Undo, Redo, a click on a
+  row jumps that many steps, the current row does nothing, the right-click menu, disabled buttons, the empty state, 200 states
+  scrolled). Seven golden images in `okayui/tests/golden/editorpanels_*.png`.
+- `okayui_editor_panels_imgui` (`tests/test_okayui_editor_panels_imgui.cpp`): both versions headless on a 560 x 420 canvas in the
+  editor's panel colour, Dear ImGui with the editor's font (Roboto Medium 18) and the Slate theme and spacing of `ApplyTheme`.
+  Both pictures go through the same rasteriser (OkayUI's software render backend; Dear ImGui's vertices and its font texture are
+  handed to it unchanged). It checks that the same click asks for the same thing (row 2 of Problems opens model row 2 in both, the
+  sixth History row undoes three steps in both) and that the two layouts put those rows within a few pixels of each other, prints
+  the speed and pixel tables below, and writes the pictures with `OKAYUI_SHOT_DIR=<dir>`.
+- All the other OkayUI suites (golden images unchanged), `okayui_host` (the several-rectangles Region) and `ui_backend` pass.
+  `editor/main.cpp` passes the compiler's syntax-only check with and without `OKAY_HAVE_OKAYUI`; `OkayPanels.cpp`,
+  `ProblemsPanel.cpp` and `EditorPanelViews.cpp` were compiled.
+
+### 9.5 Speed
+
+Per frame, the panel only ("build": Dear ImGui `NewFrame` to `Render`, OkayUI `BeginFrame` to `EndFrameData`), with the sample data
+of `okayui/tests/EditorPanelFixtures.hpp`, Linux, GCC, Release. Instructions are counted with callgrind
+(`OKAY_UI_PROFILE=<panel>:<imgui|okayui>`, 200 frames after a warm-up; they do not depend on how busy the machine is). Wall time is
+the median of 300 frames, three runs on a shared and busy machine (4 cores, load about 7), the range of the three medians shown.
+
+| Panel | Dear ImGui instructions | OkayUI instructions | Dear ImGui build | OkayUI build | Faster? |
+|---|---:|---:|---:|---:|---|
+| Problems | 163,000 | 119,000 (27% fewer) | 51 to 65 us | 31 to 35 us | met |
+| Stats | 195,000 | 152,000 (22% fewer) | 43 to 47 us | 18 to 21 us | met |
+| History | 118,000 | 80,000 (32% fewer) | 40 to 47 us | 14 to 16 us | met |
+
+Before the profiling fixes OkayUI was slower on two of the three by instructions (Problems 203,000, Stats 221,000, History 110,000):
+callgrind showed glyph lookups (a binary search per character), the fallback-font check decoding every string, and a sine and
+cosine per rounded corner and circle. The ASCII table, the ASCII fast path and the cached corner and circle points (9.3) fixed
+that; every existing golden image is unchanged.
+
+"Build + render" (the panel plus rasterising the frame on the CPU) is also printed by the test: Dear ImGui 15 to 20 ms, OkayUI 3 to
+9 ms. That figure is about the software rasteriser, not about the toolkits: Dear ImGui draws every filled shape through its font
+texture's white pixel, so every pixel of its window background is a texture lookup on the CPU, where OkayUI draws plain colour. On a
+GPU that difference does not exist, and no GPU was used.
+
+### 9.6 Pixels
+
+Both versions at 560 x 420, same rectangle, same rasteriser. "Average difference" is the mean absolute difference per colour
+channel (0 to 255); "clearly different" is the share of pixels where some channel differs by more than 48.
+
+| Panel | Before the fixes: average, clearly different | After: average, clearly different |
+|---|---:|---:|
+| Problems | 12.0, 11.1% | 9.2, 8.2% |
+| Stats | 10.1, 7.3% | 5.7, 4.4% |
+| History | 7.7, 8.3% | 6.4, 5.5% |
+
+What was fixed to get there: text lines one line tall (9.3), Dear ImGui's 12 and 8 pixel spacing, the editor's 18-pixel text
+(`kEditorTextScale`, pushed by the host on top of the UI scale), one-pixel dividers in place of OkayUI's taller separator, Fix
+buttons one text line tall, the severity pills filled with the accent when on and their counts at the right, no padding in the
+scrolling lists, the plot on a rounded field with the frame padding, no lines between the census columns and the editor's cell
+padding, frame-tall check boxes, the History rows 26 pixels apart. The test fails above 12% clearly different.
+
+What still differs (blunt):
+- **Text** is OkayUI's own rasteriser (Roboto baked at 20 px, drawn at 18) against Dear ImGui's (Roboto at 18 with 2x
+  oversampling): glyph edges differ everywhere there is text, which is most of the remaining difference.
+- **Problems.** The search field has no magnifier icon or clear button (the editor's Dear ImGui field has both; the comparison test
+  uses a plain field on both sides), its hint starts 4 pixels further left; the right-click menu is OkayUI's popup (taller rows,
+  slightly see-through).
+- **Stats.** The big number is drawn by scaling (22/18), not by a second font.
+- **History.** The selected row has OkayUI's accent tint with a bar on the left (over the rail's dot), not Dear ImGui's flat header
+  colour.
+- **All three.** One frame of latency for who owns the mouse (5.2); no hover cursor change; the right-click menu's look.
+
+Pictures: `scratchpad/shots/oep/<panel>-imgui.png` and `-okayui.png` in the session that made this step (not committed: they are
+the test's output, re-made with `OKAYUI_SHOT_DIR`).
+
+### 9.7 Not verified
+
+- **No real editor window.** The editor was not built (its `main.cpp` is too large for this machine's memory); it was checked with
+  the syntax-only pass, and the panels were tested headless. The host code (`OkayPanels.cpp`) has never run.
+- **Windows** was not built or run. No GPU was used.
+- The comparison's Dear ImGui side uses a plain search field and the editor's theme values copied into the test (they would need
+  the same change if `ApplyTheme` changes).
+
+### 9.8 Coverage (usage report, before and after this step)
+
+| What | Before | After |
+|---|---:|---:|
+| `ImGui::` calls available by name | 27,038 of 27,356 (98.8%) | 27,052 of 27,370 (98.8%) |
+| Types, flags and enums available | 9,712 of 12,082 (80.4%) | 9,883 of 12,075 (81.8%) |
+| Call sites in ported functions | 182 (0.7%) | 313 (1.1%) |
+
+(The "before" column is the report regenerated on `main` at the start of this step, not the committed one, which was older.) The
+type coverage rose because of the `ChildFlags_*` names of 9.3.

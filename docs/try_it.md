@@ -1382,9 +1382,22 @@ through SDL2 anyway, so only the seam parts (timers, audio, gamepads, voice) wou
 ### 12. OkayUI
 
 `OKAY_UI_BACKEND=okayui` (or `OKAY_OWN_STACK=1`) starts the launcher and editor on OkayUI where it is compiled in. Only
-the screens that have an OkayUI port change (in the editor, the Console panel today); everything else stays Dear ImGui.
-The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains OkayUI is unverified: if not,
-the line stays `ui=imgui`. Nothing was run in a real window.
+the screens that have an OkayUI port change (in the editor: Console, Crash Log, Audio Mixer, Problems, Stats and History);
+everything else stays Dear ImGui. The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains
+OkayUI is unverified: if not, the line stays `ui=imgui`. Nothing was run in a real window.
+
+**Problems, Stats and History with OkayUI** (`docs/own_ui_toolkit.md` section 9). Steps, in the editor:
+1. Set `OKAY_UI_BACKEND=okayui` (Windows: `set OKAY_UI_BACKEND=okayui` in a command prompt, then start `OkayEngine.exe` from it),
+   or set `OKAY_DEV=1` and pick View > Rendering & Performance > UI backend > OkayUI (preview).
+2. Open a scene with a mistake in it (for example a Sprite Renderer pointing at a missing picture), then View > Panels > Problems. Expected:
+   the same groups and rows as before, the three coloured pills at the top right filter them, typing in the search box filters as
+   you type, Fix repairs a row, a click on a row selects its object, a right-click on a row offers Go to source, Fix and Copy message.
+3. View > Panels > Stats. Expected: the frame rate in colour with its plot and the green 60 FPS line, the scene counts two to a row, the four
+   culling and batching check boxes work, a right-click on the counts offers Copy stats.
+4. Move or rename something, then View > Panels > History. Expected: Undo and Redo, the list of states with the current one highlighted, a
+   click on a row jumps there, a right-click offers Jump to this state and Copy name.
+5. Switch the UI backend back to Dear ImGui: the same panels come back in Dear ImGui with the same data.
+Unverified: the editor was not built or run with this change (the panels were tested headless only), and not on Windows.
 
 ### 13. Own cryptography
 

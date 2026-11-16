@@ -292,6 +292,7 @@ struct ChildSave {
     float top;            // unscrolled content top (ry + pad)
     float* scroll;        // persisted scroll offset
     float* maxSlot;       // persisted max scroll from last frame (clamps this frame)
+    float* autoH = nullptr;   // ChildFlags_AutoResizeY: where EndChild leaves the content height for the next frame
     float pad;
     bool  hovered;        // mouse over the region this frame
     float setScroll;      // SetScrollY's request, applied once the content has been measured (< 0: none)
@@ -2325,7 +2326,7 @@ void SetWindowFocus(const char* title) {
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin && ws.z != 0) ws.z = ++g_zCounter;   // and raise it
 }
 
-static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar);
+static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH = nullptr);
 bool BeginChild(const char* id, float w, float h, bool border) { return beginChildImpl(id, w, h, border, 6.0f, true); }
 
 bool BeginChild(const char* id, Vec2 size, int flags) {
@@ -2338,10 +2339,15 @@ bool BeginChild(const char* id, Vec2 size, int flags) {
     w = w > 0.0f ? w : avail.x + w; h = h > 0.0f ? h : avail.y + h;
     if (w < 1.0f) w = std::max(avail.x, 1.0f);
     if (h < 1.0f) h = std::max(avail.y, rowH());
-    return beginChildImpl(id, std::min(w, 1.0e6f), std::min(h, 1.0e6f), border, pad, false);
+    float* autoH = nullptr;
+    if (flags & ChildFlags_AutoResizeY) {   // as tall as its content was on the last frame (one row on the first); it never scrolls
+        autoH = floatState(hashLabel(id) ^ 0x41755a, rowH());
+        h = std::max(*autoH + 2.0f * pad, 1.0f);
+    }
+    return beginChildImpl(id, std::min(w, 1.0e6f), std::min(h, 1.0e6f), border, pad, false, autoH);
 }
 
-static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar) {
+static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH) {
     // Depth guard first: past the child-stack capacity the parent layout cannot
     // be saved, so the child cannot begin at all -- otherwise EndChild would pop
     // a slot that was never pushed and corrupt the parent's scroll/clip state.
@@ -2369,7 +2375,7 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
     if (g_childTop < 8) {
         ChildSave& c = g_childStack[g_childTop++];
         c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
-        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered; c.setScroll = -1.0f;
+        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered; c.setScroll = -1.0f; c.autoH = autoH;
     }
     g_lay.ox = rx + pad;
     // The old form always leaves room for the scrollbar; the flags form only when the content overflowed last frame (Dear ImGui's way).
@@ -2401,8 +2407,9 @@ void EndChild() {
     // Content height = how far the cursor advanced from the (scrolled) top, in
     // unscrolled space. cy currently sits at top - scroll + contentHeight.
     const float contentH = g_lay.cy - (c.top - *c.scroll);
+    if (c.autoH) *c.autoH = std::max(0.0f, std::min(contentH - g_lay.spacingY, 1.0e6f));   // the last item's spacing is not content
     const float viewH = c.rh - 2.0f * c.pad;
-    float maxScroll = contentH - viewH; if (maxScroll < 0.0f) maxScroll = 0.0f;
+    float maxScroll = contentH - viewH; if (maxScroll < 0.0f || c.autoH) maxScroll = 0.0f;   // an auto-height child never scrolls
     if (c.setScroll >= 0.0f) *c.scroll = c.setScroll;   // SetScrollY, now that the content is measured
     *c.maxSlot = maxScroll;                     // remember for next frame's clamp
     if (*c.scroll < 0.0f) *c.scroll = 0.0f;

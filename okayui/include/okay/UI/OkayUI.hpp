@@ -297,8 +297,9 @@ void ResizableNextWindow(float minW = 100.0f, float minH = 60.0f);
 bool BeginChild(const char* id, float w = 0.0f, float h = 0.0f, bool border = true);
 /// Dear ImGui's form: `size` 0 in an axis fills what is left, a negative value leaves that many pixels free. Flags: ChildFlags_Borders
 /// draws the frame and pads the content; ChildFlags_AlwaysUseWindowPadding pads it without a frame; with neither the content starts
-/// at the child's edge (Dear ImGui's default). Room for the scrollbar is taken only when the content overflowed on the last frame.
-enum ChildFlags : int { ChildFlags_None = 0, ChildFlags_Borders = 1, ChildFlags_AlwaysUseWindowPadding = 2 };
+/// at the child's edge (Dear ImGui's default); ChildFlags_AutoResizeY makes the child as tall as its content was on the last frame (one
+/// row on the first), so it never scrolls. Room for the scrollbar is taken only when the content overflowed on the last frame.
+enum ChildFlags : int { ChildFlags_None = 0, ChildFlags_Borders = 1, ChildFlags_AlwaysUseWindowPadding = 2, ChildFlags_AutoResizeY = 4 };
 bool BeginChild(const char* id, Vec2 size, int flags = ChildFlags_None);
 void EndChild();
 /// The scroll offset (pixels from the top) of the innermost open BeginChild region, and the largest offset its content

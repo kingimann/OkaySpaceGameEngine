@@ -147,6 +147,24 @@ int main() {
         CHECK(std::abs((cellB.y - cellA.y) - (cellA.h + 12.0f)) < 0.6f);             // the row: 6 + content + 6, no item spacing
         CHECK(plain.x == child0.x && plain.y == child0.y);                           // Dear ImGui's default: no padding
         CHECK(framed.x > child1.x + 4.0f && framed.y > child1.y + 4.0f);
+        // AutoResizeY: as tall as last frame's content (three rows here), no scrollbar room taken, the next item right below it
+        UI::Rect autoBox, below;
+        float maxScroll = -1.0f;
+        sim.Frames(3, [&] {
+            UI::BareNextWindow();
+            UI::Begin("auto", 0, 0, 400, 300);
+            const UI::Vec2 p = UI::GetCursorScreenPos();
+            UI::BeginChild("grow", UI::Vec2{200.0f, 0.0f}, UI::ChildFlags_AutoResizeY);
+            UI::Text("one"); UI::Text("two"); UI::Text("three");
+            const UI::Rect last = UI::GetItemRect();
+            maxScroll = UI::GetScrollMaxY();
+            UI::EndChild();
+            autoBox = UI::Rect{p.x, p.y, 200.0f, last.y + last.h - p.y};
+            UI::Text("after"); below = UI::GetItemRect();
+            UI::End();
+        });
+        CHECK(maxScroll == 0.0f);
+        CHECK(std::abs(below.y - (autoBox.y + autoBox.h + 8.0f)) < 1.0f);           // the child ends where its last row ends
         // the label of a wide button sits left, centred or right
         float xs[3];
         const float al[3] = {0.0f, 0.5f, 1.0f};

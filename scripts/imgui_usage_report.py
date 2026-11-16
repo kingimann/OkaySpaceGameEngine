@@ -49,6 +49,9 @@ PORTED = [
     ("Console", "editor/ConsolePanel.cpp", "DrawConsole"),
     ("Crash Log", "editor/main.cpp", "DrawCrashLog"),
     ("Audio Mixer", "editor/main.cpp", "DrawAudioMixer"),
+    ("Problems", "editor/EditorPanelViews.cpp", "DrawProblemsBodyImGui"),
+    ("Stats", "editor/EditorPanelViews.cpp", "DrawStatsBodyImGui"),
+    ("History", "editor/EditorPanelViews.cpp", "DrawHistoryBodyImGui"),
     ("What's New", "launcher/main.cpp", "(page)"),
     ("Tips", "launcher/main.cpp", "(page)"),
 ]

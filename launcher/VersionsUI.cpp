@@ -15,6 +15,9 @@
 
 #include "VersionsNet.hpp"
 #include "TestBuild.hpp"   // V(): a test build says so
+#ifdef OKAY_HAVE_OKAYUI
+#include "OkayUILauncherMorePages.hpp"   // the OkayUI page (the preview backend)
+#endif
 
 namespace okayversionsui {
 namespace {
@@ -777,5 +780,233 @@ void Shutdown() {
         st.indexJob.reset();
     }
 }
+
+#ifdef OKAY_HAVE_OKAYUI
+// ---- the OkayUI page: the same decisions as the Dear ImGui page above, handed over as data ----------------------------------------
+
+namespace {
+// The rows of the available list the page shows (the same choice as DrawAvailable).
+std::vector<const Entry*> AvailableRows(const Host& h) {
+    State& st = S();
+    std::vector<const Entry*> rows;
+    const std::string cur = okayver::NormalizeVersion(h.currentVersion);
+    for (const Entry& e : st.index.versions) {
+        if (e.version == cur) continue;
+        bool have = false;
+        for (const Installed& in : st.installed) if (in.version == e.version) have = true;
+        if (!have) rows.push_back(&e);
+    }
+    return rows;
+}
+}  // namespace
+
+void BuildOkayUIModel(const Host& h, okayuiscreens::VersionsModel& m) {
+    State& st = S();
+    Settings& set = GlobalSettings();
+    if (!st.haveIndex && !st.indexJob) StartIndex(h);
+    if (st.installedDirty || okay::platform::TicksMs32() - st.installedAt > 10000) RefreshInstalled(h);
+    m = okayuiscreens::VersionsModel();
+    m.subtitle = "Keep other versions of the editor next to this one, so every project can open with the version it was made with.";
+    // the request banner
+    if (!st.requested.empty()) {
+        const std::string line = okayver::LineLabel(st.requested);
+        std::string installedMatch;
+        for (const Installed& i : st.installed) if (okayver::SameLine(i.version, st.requested)) { installedMatch = i.version; break; }
+        m.banner = true;
+        m.bannerGreen = !installedMatch.empty();
+        if (!installedMatch.empty()) m.bannerText = line + " is already installed (" + V(installedMatch) + "). Projects of that version can be opened with it from their Open with menu.";
+        else if (!st.haveIndex || st.indexJob) m.bannerText = "Looking for " + line + " in the version list\xE2\x80\xA6";
+        else if (!st.highlight.empty()) m.bannerText = "The editor needs " + line + " to open that project with its own version. Install " + V(st.highlight) + " below.";
+        else if (!st.index.ok) m.bannerText = line + " isn't installed, and the version list can't be read right now, so it can't be installed from here.";
+        else m.bannerText = line + " isn't installed and isn't in the version list, so it can't be installed from here.";
+    }
+    // this version
+    const std::string cur = okayver::NormalizeVersion(h.currentVersion);
+    m.runningTitle = cur.empty() ? "You're running a development build" : "You're running " + V(cur);
+    if (st.haveIndex && st.index.ok && !cur.empty()) { m.runningLatest = cur == st.index.latest; m.runningLts = okayver::SameLine(cur, st.index.lts); }
+    const std::string launcher = okayver::NormalizeVersion(h.launcherVersion);
+    m.runningSub = (launcher.empty() || cur.empty() || launcher == cur) ? "The launcher, the editor and the player are all this version."
+                 : "The editor and player are " + V(cur) + "; this launcher window is still " + V(launcher) + " until you restart it.";
+    m.checking = st.indexJob != nullptr;
+    if (st.indexJob && !st.haveIndex) { m.status = "Looking up the version list\xE2\x80\xA6"; m.statusKind = 1; }
+    else if (st.haveIndex && !st.index.ok) { m.status = st.index.error; m.statusKind = 2; }
+    else if (st.haveIndex && !st.index.note.empty()) { m.status = st.index.note; m.statusKind = 3; }
+    // the channel
+    m.channel = set.channel == Channel::Lts ? 1 : 0;
+    if (set.channel == Channel::Latest) {
+        m.channelText = "Latest gets every new release as soon as it is out: new features and fixes. Long-term support (LTS) is a version that only gets "
+                        "fixes, for projects that should keep working exactly as they do now.";
+    } else {
+        const std::string head = st.haveIndex && st.index.ok ? st.index.lts : std::string();
+        m.channelText = head.empty() ? std::string("The long-term-support version only gets fixes.") : LtsSentence(head);
+        m.channelDim = "The launcher itself is never downgraded. When it is newer than the long-term-support line, the long-term-support editor is "
+                       "installed next to it (in Versions) and you can use it as your default editor: it opens projects that have no version yet, "
+                       "or whenever you pick it from a project's Open with menu.";
+    }
+    if (set.channel == Channel::Lts && st.haveIndex) {
+        const ChannelDecision d = DecideChannel(Channel::Lts, h.currentVersion, st.index.latest, st.index.lts, st.installedVersions);
+        switch (d.kind) {
+            case ChannelDecision::InstallSideBySide:
+            case ChannelDecision::UpdateSideBySide: {
+                const bool first = d.kind == ChannelDecision::InstallSideBySide;
+                m.ltsKind = 0;
+                m.ltsSentence = first ? "Install " + V(d.version) + " next to this version." : V(d.version) + " is out. Update the copy next to this version.";
+                m.ltsButton = (first ? "Install " : "Update to ") + V(d.version);
+                m.ltsButtonDisabled = st.job != nullptr;
+                break;
+            }
+            case ChannelDecision::UpdateInPlace:
+                m.ltsKind = 1; m.ltsSentence = V(d.version) + " is out for the long-term-support line. " + d.note; m.ltsButton = "Update the launcher"; break;
+            case ChannelDecision::NoInfo: m.ltsKind = 2; m.ltsSentence = d.note; break;
+            case ChannelDecision::None: m.ltsKind = 3; m.ltsSentence = d.note; break;
+        }
+        const std::string have = okayver::ResolveKeepTarget(st.index.lts, st.installedVersions);
+        if (!have.empty() && d.kind != ChannelDecision::UpdateInPlace) {
+            if (set.defaultEditor == have) { m.ltsDefault = 0; m.ltsDefaultText = V(have) + " is your default editor."; m.ltsDefaultButton = "Use this version's editor again"; }
+            else { m.ltsDefault = 1; m.ltsDefaultButton = "Use " + okayver::LineLabel(have) + " as my default editor"; }
+        }
+    }
+    if (!st.installed.empty() || !set.defaultEditor.empty()) {
+        m.defaultRow = true;
+        m.defaultOptions.push_back("This version" + (cur.empty() ? std::string() : " (" + V(cur) + ")"));
+        m.defaultSelected = 0;
+        for (const Installed& i : st.installed) {
+            std::string label = V(i.version);
+            if (st.haveIndex && okayver::SameLine(i.version, st.index.lts)) label += "   long-term support";
+            if (set.defaultEditor == i.version) m.defaultSelected = (int)m.defaultOptions.size();
+            m.defaultOptions.push_back(label);
+        }
+        if (!set.defaultEditor.empty() && m.defaultSelected == 0) {   // a default that is no longer installed still shows as the choice
+            m.defaultOptions.push_back(V(set.defaultEditor));
+            m.defaultSelected = (int)m.defaultOptions.size() - 1;
+        }
+    }
+    // installed
+    m.installedEmpty = "Nothing else is installed yet. When the launcher updates, it keeps the version it replaces here, so projects made with it can "
+                       "still be opened. You can also install older versions from the list below.";
+    for (const Installed& in : st.installed) {
+        okayuiscreens::VersionRow r;
+        r.version = in.version; r.title = V(in.version);
+        r.lts = st.haveIndex && st.index.ok && okayver::SameLine(in.version, st.index.lts);
+        r.latest = st.haveIndex && st.index.ok && in.version == st.index.latest;
+        r.isDefault = set.defaultEditor == in.version;
+        r.highlight = in.version == st.highlight;
+        r.sub = in.source == "kept" ? "Kept when the launcher updated" : in.source == "installed" ? "Installed by you" : "Put here by hand";
+        if (!in.date.empty()) r.sub += "  \xC2\xB7  " + in.date;
+        if (r.lts) r.sub += "  \xC2\xB7  only gets fixes";
+        r.size = HumanSize(in.bytes);
+        m.installed.push_back(r);
+    }
+    m.keep = std::clamp(set.keepPrevious, 0, kMaxKeepPrevious);
+    m.usage = "The Versions folder uses " + HumanSize(st.usage) + ".";
+    {
+        std::vector<std::string> keepList;
+        if (!set.defaultEditor.empty()) keepList.push_back(set.defaultEditor);
+        const std::string ltsHead = st.haveIndex && st.index.ok ? st.index.lts : set.ltsLine;
+        const std::vector<std::string> prune = PlanPrune(st.installed, m.keep, ltsHead, keepList);
+        if (!prune.empty()) m.prune = std::to_string(prune.size()) + " kept " + (prune.size() == 1 ? "copy is" : "copies are") + " over the limit will be removed the next time the launcher updates.";
+    }
+    // available
+    if (!st.haveIndex) m.availableState = 0;
+    else if (!st.index.ok) { m.availableState = 1; m.availableError = st.index.error; m.retryDisabled = st.indexJob != nullptr; }
+    else {
+        m.availableState = 2;
+        const std::vector<const Entry*> rows = AvailableRows(h);
+        const std::size_t limit = st.showAllAvailable ? rows.size() : std::min<std::size_t>(rows.size(), 8);
+        for (std::size_t i = 0; i < limit; ++i) {
+            const Entry& e = *rows[i];
+            okayuiscreens::VersionRow r;
+            r.version = e.version; r.title = V(e.version);
+            const bool mine = st.job && st.job->version == e.version;
+            const auto note = st.notes.find(e.version);
+            if (note != st.notes.end() && !mine) { r.note = note->second.first; r.noteBad = note->second.second == 2; }
+            r.highlight = e.version == st.highlight;
+            r.lts = e.version == st.index.lts; r.latest = e.version == st.index.latest;
+            std::string sub = e.date.empty() ? std::string() : e.date;
+            const std::uint64_t listed = ListedSize(e);
+            if (listed) sub += (sub.empty() ? "" : "  \xC2\xB7  ") + std::string("about ") + HumanSize(listed);
+            const bool checkable = !e.files.empty() && e.files.count("OkayEngine.exe") && !e.files.at("OkayEngine.exe").sha256.empty();
+            sub += std::string(sub.empty() ? "" : "  \xC2\xB7  ") + (e.inBucket ? "from the OkaySpace download server" : "from GitHub");
+            if (!checkable) sub += "  \xC2\xB7  no checksum: can't be installed here";
+            if (r.lts) sub += "  \xC2\xB7  only gets fixes";
+            if (mine) {
+                std::string file;
+                SDL_LockMutex(st.job->mu);
+                file = st.job->file;
+                SDL_UnlockMutex(st.job->mu);
+                sub = st.job->cancel ? std::string("Cancelling\xE2\x80\xA6") : "Downloading " + file + " (" + std::to_string(st.job->fileIndex.load()) + " of " + std::to_string(st.job->fileCount.load()) + ")";
+                const std::uint64_t done = st.job->doneBytes.load(), total = st.job->totalBytes.load();
+                char overlay[64];
+                if (total > 0) std::snprintf(overlay, sizeof(overlay), "%s / %s", HumanSize(std::min(done, total)).c_str(), HumanSize(total).c_str());
+                else std::snprintf(overlay, sizeof(overlay), "%s", HumanSize(done).c_str());
+                r.downloading = true; r.overlay = overlay;
+                r.progress = total > 0 ? std::min(1.0f, (float)((double)done / (double)total)) : 0.0f;
+                r.cancelDisabled = st.job->cancel.load();
+            }
+            r.sub = sub;
+            r.installDisabled = st.job != nullptr;
+            m.available.push_back(r);
+        }
+        if (rows.size() > limit || st.showAllAvailable)
+            m.moreButton = st.showAllAvailable ? "Show fewer" : "Show " + std::to_string(rows.size() - limit) + " older versions";
+    }
+}
+
+void ApplyOkayUIResult(const Host& h, const okayuiscreens::VersionsResult& r) {
+    State& st = S();
+    Settings& set = GlobalSettings();
+    if (r.dismissBanner) { st.requested.clear(); st.highlight.clear(); }
+    if (r.checkAgain && !st.indexJob) StartIndex(h);
+    if (r.openFolder) {
+        std::error_code ec;
+        fs::create_directories(okayver::VersionsDir(h.launcherDir), ec);
+        if (h.openFolder) h.openFolder(okayver::VersionsDir(h.launcherDir).string());
+    }
+    if (r.channel >= 0) {
+        set.channel = r.channel == 1 ? Channel::Lts : Channel::Latest;
+        if (h.savePrefs) h.savePrefs();
+        if (h.channelChanged) h.channelChanged();
+    }
+    if ((r.ltsAction || r.ltsDefaultAction) && set.channel == Channel::Lts && st.haveIndex) {
+        const ChannelDecision d = DecideChannel(Channel::Lts, h.currentVersion, st.index.latest, st.index.lts, st.installedVersions);
+        if (r.ltsAction) {
+            if ((d.kind == ChannelDecision::InstallSideBySide || d.kind == ChannelDecision::UpdateSideBySide) && !st.job) BeginInstall(h, d.version);
+            else if (d.kind == ChannelDecision::UpdateInPlace && h.startUpdate) h.startUpdate();
+        }
+        const std::string have = okayver::ResolveKeepTarget(st.index.lts, st.installedVersions);
+        if (r.ltsDefaultAction && !have.empty()) {
+            if (set.defaultEditor == have) { set.defaultEditor.clear(); if (h.savePrefs) h.savePrefs(); }
+            else { set.defaultEditor = have; if (h.savePrefs) h.savePrefs(); Toast(h, V(have) + " is now your default editor.", 1); }
+        }
+    }
+    if (r.defaultChoice >= 0) {
+        if (r.defaultChoice == 0) set.defaultEditor.clear();
+        else if (r.defaultChoice - 1 < (int)st.installed.size()) set.defaultEditor = st.installed[(std::size_t)r.defaultChoice - 1].version;
+        if (h.savePrefs) h.savePrefs();
+    }
+    if (r.makeDefault >= 0 && r.makeDefault < (int)st.installed.size()) {
+        const std::string v = st.installed[(std::size_t)r.makeDefault].version;
+        set.defaultEditor = v; if (h.savePrefs) h.savePrefs(); Toast(h, V(v) + " is now your default editor.", 1);
+    }
+    if (r.remove >= 0 && r.remove < (int)st.installed.size()) st.removeAsk = st.installed[(std::size_t)r.remove].version;
+    if (r.keep >= 0) { set.keepPrevious = std::clamp(r.keep, 0, kMaxKeepPrevious); if (h.savePrefs) h.savePrefs(); }
+    if (r.pruneNow) {
+        const std::string ltsHead = st.haveIndex && st.index.ok ? st.index.lts : set.ltsLine;
+        const PruneResult pr = Prune(h.launcherDir, std::clamp(set.keepPrevious, 0, kMaxKeepPrevious), ltsHead, MakeGuards(h));
+        st.installedDirty = true;
+        Toast(h, pr.failed.empty() ? "Removed " + std::to_string(pr.removed.size()) + " older " + (pr.removed.size() == 1 ? "version" : "versions") + "."
+                                   : "Some versions could not be removed.", pr.failed.empty() ? 1 : 2);
+    }
+    if (r.retry && !st.indexJob) StartIndex(h);
+    if (r.cancelDownload && st.job) st.job->cancel = true;
+    if (r.install >= 0 && st.haveIndex && st.index.ok && !st.job) {
+        const std::vector<const Entry*> rows = AvailableRows(h);
+        if (r.install < (int)rows.size()) BeginInstall(h, rows[(std::size_t)r.install]->version);
+    }
+    if (r.toggleShowAll) st.showAllAvailable = !st.showAllAvailable;
+}
+
+void DrawDialogs(const Host& h) { DrawModals(h); }
+#endif
 
 }  // namespace okayversionsui

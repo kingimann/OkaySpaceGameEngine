@@ -136,4 +136,69 @@ struct CommunityResult {
 
 CommunityResult DrawCommunity(const CommunityModel& model, CommunityState& state, float x, float y, float w, float h);
 
+// ---- Versions (the launcher's page of that name) ---------------------------------------------------------------------------
+// The launcher's Versions module (launcher/VersionsUI.cpp) decides everything the page says (it holds the rules and the jobs) and
+// hands it over ready to show; this page only lays it out and reports clicks.
+
+struct VersionRow {
+    std::string version, title, sub, size;   // title: "v2.880.0"; size: installed rows only
+    bool latest = false, lts = false, isDefault = false, highlight = false;
+    // installed rows
+    bool makeDefaultDisabled = false;
+    // available rows
+    bool downloading = false, cancelDisabled = false, installDisabled = false;
+    float progress = 0.0f;
+    std::string overlay;                 // the progress bar's text
+    std::string note;                    // the last message about this version (a failed install), or empty
+    bool noteBad = false;
+};
+
+struct VersionsModel {
+    std::string subtitle;                // under the page title
+    bool banner = false, bannerGreen = false;
+    std::string bannerText;
+    std::string runningTitle, runningSub;
+    bool runningLatest = false, runningLts = false, checking = false;
+    std::string status;                  // under "You're running": the version list's state
+    int statusKind = 0;                  // 0 none, 1 dim, 2 red, 3 amber (wrapped)
+    int channel = 0;                     // 0 Latest, 1 Long-term support
+    std::string channelText, channelDim; // the channel's explanation (channelDim: the second, dim paragraph for LTS)
+    // LTS: what the channel asks for now
+    int ltsKind = -1;                    // -1 none, 0 a sentence and an accent button, 1 a sentence and "Update the launcher", 2 an amber note, 3 a dim note
+    std::string ltsSentence, ltsButton;
+    bool ltsButtonDisabled = false;
+    int ltsDefault = -1;                 // -1 none, 0 "<v> is your default editor." and its undo button, 1 the accent "Use ... as my default editor"
+    std::string ltsDefaultText, ltsDefaultButton;
+    bool defaultRow = false;             // "Default editor" with its combo
+    std::vector<std::string> defaultOptions;   // [0] this version, then the installed ones
+    int defaultSelected = 0;
+    std::vector<VersionRow> installed;
+    std::string installedEmpty;          // the text when nothing is installed
+    int keep = 1;                        // "Keep previous versions:" 0..9
+    std::string usage;                   // "The Versions folder uses 0 B."
+    std::string prune;                   // "2 kept copies are over the limit ...", or empty
+    int availableState = 0;              // 0 looking it up, 1 could not be read, 2 the list
+    std::string availableError;
+    bool retryDisabled = false;
+    std::vector<VersionRow> available;
+    std::string moreButton;              // "Show 4 older versions" / "Show fewer", or empty
+};
+
+struct VersionsResult {
+    OkayUI::Rect dismissButton, checkButton, folderButton, channelCombo, ltsButton, ltsDefaultButton, defaultCombo, keepCombo,
+        pruneButton, retryButton, moreButton;
+    std::vector<OkayUI::Rect> installedRows, makeDefaultButtons, removeButtons;   // parallel to model.installed
+    std::vector<OkayUI::Rect> availableRows, installButtons, cancelButtons;       // parallel to model.available
+    float contentHeight = 0.0f;          // the whole page, from y (the host makes its scroll range this tall)
+    // What the person did this frame:
+    bool dismissBanner = false, checkAgain = false, openFolder = false, ltsAction = false, ltsDefaultAction = false, pruneNow = false,
+         retry = false, cancelDownload = false, toggleShowAll = false;
+    int channel = -1, defaultChoice = -1, keep = -1;      // a new value, -1 = unchanged
+    int makeDefault = -1, remove = -1, install = -1;      // a row index, -1 = none
+};
+
+/// The page laid out from (x, y), `w` wide, as tall as it needs (contentHeight); only what falls inside the visible band
+/// viewY0..viewY1 is drawn and takes clicks. The host scrolls it (y moves up) the way it scrolls its own page.
+VersionsResult DrawVersions(const VersionsModel& model, float x, float y, float w, float viewY0, float viewY1);
+
 } // namespace okayuiscreens

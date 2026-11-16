@@ -51,4 +51,17 @@ void InvalidateInstalled();
 /// Cancels a running download and joins the threads. Call before the launcher closes.
 void Shutdown();
 
+#ifdef OKAY_HAVE_OKAYUI
+}  // namespace okayversionsui
+namespace okayuiscreens { struct VersionsModel; struct VersionsResult; }
+namespace okayversionsui {
+/// The OkayUI page (okayuiscreens::DrawVersions, the OKAY_UI_BACKEND=okayui preview): everything DrawPage would show, worked out by
+/// the same rules (and the same once-a-page refreshes), ready to lay out.
+void BuildOkayUIModel(const Host& host, okayuiscreens::VersionsModel& out);
+/// Runs what the person did on the OkayUI page, exactly as the Dear ImGui page does it.
+void ApplyOkayUIResult(const Host& host, const okayuiscreens::VersionsResult& r);
+/// The Dear ImGui "Remove this version?" dialog, which the OkayUI page opens too (call every frame the page shows).
+void DrawDialogs(const Host& host);
+#endif
+
 }  // namespace okayversionsui

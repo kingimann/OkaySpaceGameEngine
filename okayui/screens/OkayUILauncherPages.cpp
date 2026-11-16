@@ -82,7 +82,10 @@ bool FlatButton(const char* id, const char* label, float x, float y, float w, fl
     const UI::Color32 tc = primary ? Rgb(255, 255, 255, (int)(255 * a)) : Col(UI::Style().text, a);
     const bool cut = ts.x > w - 2.0f;   // a label wider than its button is cut at the button's edge
     if (cut) dl.PushClipRect(V(x, y), V(x + w, y + h));
-    dl.AddText(V(Tr(x + std::max(kFrameX, (w - ts.x) * 0.5f)), Tr(y + (h - ts.y) * 0.5f)), tc, label);
+    // Centred; a padded button shorter than its text and padding keeps the text at the top padding (a small button, as tall
+    // as its text, has none).
+    const float ty = h > ts.y + 0.5f ? std::max(kFrameY, (h - ts.y) * 0.5f) : (h - ts.y) * 0.5f;
+    dl.AddText(V(Tr(x + std::max(kFrameX, (w - ts.x) * 0.5f)), Tr(y + ty)), tc, label);
     if (cut) dl.PopClipRect();
     if (hov) UI::SetMouseCursor(UI::MouseCursor_Hand);
     return clicked;

@@ -93,6 +93,36 @@ static S::CommunityModel Community() {
     return m;
 }
 
+static S::VersionsModel Versions() {
+    S::VersionsModel m;
+    m.subtitle = "Keep other versions of the editor next to this one, so every project can open with the version it was made with.";
+    m.banner = true; m.bannerText = "The editor needs v2.850 to open that project with its own version. Install v2.850.3 below.";
+    m.runningTitle = "You're running v2.879.0"; m.runningLatest = true; m.runningSub = "The launcher, the editor and the player are all this version.";
+    m.status = "The version list could not be downloaded. Only the newest versions are shown."; m.statusKind = 3;
+    m.channel = 1; m.channelText = "v2.850.x is the long-term-support version: it only gets fixes.";
+    m.channelDim = "The launcher itself is never downgraded.";
+    m.ltsKind = 0; m.ltsSentence = "Install v2.850.3 next to this version."; m.ltsButton = "Install v2.850.3";
+    m.ltsDefault = 1; m.ltsDefaultButton = "Use v2.850 as my default editor";
+    m.defaultRow = true; m.defaultOptions = {"This version (v2.879.0)", "v2.870.1", "v2.850.1   long-term support"}; m.defaultSelected = 1;
+    auto inst = [&](const char* v, bool def, bool lts) {
+        S::VersionRow r; r.version = v; r.title = std::string("v") + v; r.isDefault = def; r.lts = lts;
+        r.sub = "Kept when the launcher updated  \xC2\xB7  2026-11-01"; r.size = "412.0 MB"; m.installed.push_back(r);
+    };
+    inst("2.870.1", true, false); inst("2.850.1", false, true);
+    m.keep = 1; m.usage = "The Versions folder uses 824.0 MB.";
+    m.prune = "1 kept copy is over the limit will be removed the next time the launcher updates.";
+    m.availableState = 2;
+    auto av = [&](const char* v, bool latest, bool lts) {
+        S::VersionRow r; r.version = v; r.title = std::string("v") + v; r.latest = latest; r.lts = lts;
+        r.sub = "2026-11-15  \xC2\xB7  about 180.0 MB  \xC2\xB7  from the OkaySpace download server"; m.available.push_back(r);
+    };
+    av("2.880.0", true, false); av("2.850.3", false, true); av("2.849.0", false, false);
+    m.available[1].highlight = true;
+    m.available[2].note = "The download of OkayEngine.exe did not match its checksum."; m.available[2].noteBad = true;
+    m.moreButton = "Show 4 older versions";
+    return m;
+}
+
 int main() {
     RUN_SUITE("okayui launcher more pages");
 
@@ -512,6 +542,90 @@ int main() {
         rig.Frames(3);
         CHECK(UI::DroppedGeometry() == 0 && lib[3] == '\0');
     }
+
+    // ================= Versions =================
+    {   // every card, row and button; the clicks report the right row
+        S::VersionsModel m = Versions();
+        S::VersionsResult r;
+        float top = 20.0f;
+        auto rig = MakeRig(1000, 1500, [&] { r = S::DrawVersions(m, 20, top, 960, 0, 1500); });
+        rig.Frames(3);
+        CHECK(r.contentHeight > 900.0f && r.contentHeight < 1500.0f);
+        CHECK(r.installedRows.size() == 2 && r.availableRows.size() == 3);
+        CHECK(r.availableRows[2].h > r.availableRows[0].h + 20.0f);   // a row with a note is taller
+        CHECK(Has(r.dismissButton) && Has(r.ltsButton) && Has(r.ltsDefaultButton) && Has(r.defaultCombo) && Has(r.pruneButton) && Has(r.moreButton));
+        CHECK(UI::DroppedGeometry() == 0);
+        Check("versions_full", rig.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
+        auto clickRes = [&](const UI::Rect& b, const std::function<bool()>& took) {
+            bool got = false;
+            rig.sim.Move(CX(b), CY(b)); rig.Frame(); got |= took(); rig.sim.Down(); rig.Frame(); got |= took(); rig.sim.Up(); rig.Frame(); got |= took();
+            return got;
+        };
+        CHECK(clickRes(r.dismissButton, [&] { return r.dismissBanner; }));
+        CHECK(clickRes(r.checkButton, [&] { return r.checkAgain; }));
+        CHECK(clickRes(r.folderButton, [&] { return r.openFolder; }));
+        CHECK(clickRes(r.ltsButton, [&] { return r.ltsAction; }));
+        CHECK(clickRes(r.ltsDefaultButton, [&] { return r.ltsDefaultAction; }));
+        CHECK(clickRes(r.pruneButton, [&] { return r.pruneNow; }));
+        CHECK(clickRes(r.moreButton, [&] { return r.toggleShowAll; }));
+        CHECK(!clickRes(r.makeDefaultButtons[0], [&] { return r.makeDefault >= 0; }));   // already the default: disabled
+        CHECK(clickRes(r.makeDefaultButtons[1], [&] { return r.makeDefault == 1; }));
+        CHECK(clickRes(r.removeButtons[0], [&] { return r.remove == 0; }));
+        CHECK(clickRes(r.installButtons[1], [&] { return r.install == 1; }));
+        // the keep combo: open it and pick an entry under the box
+        rig.Click(r.keepCombo); rig.Frames(1);
+        {
+            const UI::Rect k = r.keepCombo;
+            int got = -1;
+            rig.sim.Move(k.x + 20.0f, k.y + k.h * 3.0f); rig.Frame();
+            rig.sim.Down(); rig.Frame(); if (r.keep >= 0) got = r.keep;
+            rig.sim.Up(); rig.Frame(); if (r.keep >= 0) got = r.keep;
+            rig.Frame(); if (r.keep >= 0) got = r.keep;
+            std::fprintf(stderr, "  keep picked %d\n", got);
+            CHECK(got >= 2 && got <= 4);   // the third entry or so under the box (1 was the value)
+        }
+        // a download in progress: the bar and Cancel; Install is disabled on the other rows
+        m.available[0].downloading = true; m.available[0].progress = 0.4f; m.available[0].overlay = "72.0 MB / 180.0 MB";
+        for (S::VersionRow& v : m.available) v.installDisabled = true;
+        rig.Frames(2);
+        CHECK(Has(r.cancelButtons[0]) && !Has(r.installButtons[0]));
+        CHECK(clickRes(r.cancelButtons[0], [&] { return r.cancelDownload; }));
+        CHECK(!clickRes(r.installButtons[2], [&] { return r.install >= 0; }));
+        Check("versions_downloading", rig.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
+        // scrolled by the host: only the visible band takes clicks
+        top = -400.0f;
+        rig.Frames(2);
+        const UI::Rect hidden = r.checkButton;   // now above the band (y < 0)
+        CHECK(hidden.y + hidden.h < 0.0f);
+        CHECK(!clickRes(UI::Rect{hidden.x, 0.0f, hidden.w, 2.0f}, [&] { return r.checkAgain; }));
+    }
+    {   // the other states: looking it up, an error with Try again, an empty list, nothing installed, the Latest channel
+        S::VersionsModel m;
+        m.runningTitle = "You're running a development build"; m.channelText = "Latest gets every new release.";
+        m.installedEmpty = "Nothing else is installed yet."; m.usage = "The Versions folder uses 0 B.";
+        S::VersionsResult r;
+        auto rig = MakeRig(800, 900, [&] { r = S::DrawVersions(m, 10, 10, 780, 0, 900); });
+        rig.Frames(3);
+        CHECK(!Has(r.retryButton) && !Has(r.defaultCombo) && r.installedRows.empty());
+        m.availableState = 1; m.availableError = "The version list can't be read right now."; rig.Frames(2);
+        CHECK(Has(r.retryButton));
+        rig.Click(r.retryButton);
+        m.retryDisabled = true; rig.Frames(2);
+        bool retried = false;
+        rig.sim.Move(CX(r.retryButton), CY(r.retryButton)); rig.Frame(); rig.sim.Down(); rig.Frame(); rig.sim.Up(); rig.Frame(); retried = r.retry;
+        CHECK(!retried);
+        m.availableState = 2; rig.Frames(2);
+        CHECK(r.availableRows.empty() && UI::DroppedGeometry() == 0);
+        Check("versions_empty", rig.sim.Draw(kHostBg[0], kHostBg[1], kHostBg[2]));
+    }
+    {   // hostile text and junk values
+        S::VersionsModel m = Versions();
+        m.bannerText = std::string(5000, 'b'); m.installed[0].sub = std::string(3000, 's'); m.available[0].progress = std::nanf("");
+        m.available[0].downloading = true; m.keep = 99; m.defaultSelected = 77; m.statusKind = 9;
+        auto rig = MakeRig(600, 600, [&] { S::DrawVersions(m, 0, 0, 600, 0, 0); S::DrawVersions(m, 0, -300, 600, 0, 600); });
+        rig.Frames(3);
+        CHECK(UI::DroppedGeometry() == 0);
+    }
     // ================= Speed: per-frame CPU time of each page (headless; information, not a check) =================
     {
         auto bench = [](const char* name, float W, float H, const std::function<void()>& ui) {
@@ -534,6 +648,8 @@ int main() {
         const S::CommunityModel cm = Community(); char lib[128] = "", tpl[128] = "";
         S::CommunityState cs; cs.libFilter = lib; cs.libCap = 128; cs.tplFilter = tpl; cs.tplCap = 128;
         bench("Community", 1280, 720, [&] { S::DrawCommunity(cm, cs, 248, 60, 1016, 600); });
+        const S::VersionsModel vm = Versions();
+        bench("Versions", 1280, 720, [&] { S::DrawVersions(vm, 248, 60, 1016, 60, 660); });
     }
     TEST_MAIN_RESULT();
 }

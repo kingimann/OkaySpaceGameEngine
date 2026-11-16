@@ -990,9 +990,11 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         const fontatlas::Size& z = g_ttf->Pick(px);
         const float k = px / z.px;
         const bool exact = k > 0.97f && k < 1.03f;
-        float pen = exact ? std::floor(x + 0.5f) : x;
+        // ascentRoundsUp (Dear ImGui's placement): the position is cut down to whole pixels, not rounded, and the ascent rounded up.
+        const bool cut = g_theme.ascentRoundsUp;
+        float pen = !exact ? x : cut ? std::floor(x) : std::floor(x + 0.5f);
         const float base = !exact ? y + z.ascent * k
-                         : g_theme.ascentRoundsUp ? std::floor(y + 0.5f) + std::ceil(z.ascent * k - 0.001f) : std::floor(y + z.ascent * k + 0.5f);
+                         : cut ? std::floor(y) + std::ceil(z.ascent * k - 0.001f) : std::floor(y + z.ascent * k + 0.5f);
         SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
         int*        I = g_toOverlay ? g_ovIdx   : g_idx;
         int&        nv = g_toOverlay ? g_onv : g_nv;

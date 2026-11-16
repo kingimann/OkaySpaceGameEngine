@@ -377,7 +377,8 @@ void LauncherProgressBar(const UI::DrawList& dl, float x, float y, float w, floa
     if (overlay && *overlay) {
         const UI::Vec2 ts = UI::CalcTextSize(overlay);
         const float tx = std::max(x, std::min(x + fillW + kSpX, x + w - ts.x - kInnerX));
-        dl.AddText(V(tx, y + (h - ts.y) * 0.5f), Col(UI::Style().text), overlay);
+        // Dear ImGui's progress bar rounds this text's centred y to the nearest pixel (text elsewhere is cut down to whole pixels).
+        dl.AddText(V(tx, std::floor(y + (h - ts.y) * 0.5f + 0.5f)), Col(UI::Style().text), overlay);
     }
 }
 } // namespace

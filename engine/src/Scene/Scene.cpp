@@ -241,6 +241,12 @@ void Scene::QueuePending(Component* component) {
     m_pending.push_back(component);
 }
 
+void Scene::NotifyComponentRemoving(Component* component) {
+    BusyScope busy(*this);   // an exit handler's DestroyImmediate / Clear waits: the object is mid-removal
+    if (auto* c3 = dynamic_cast<Collider3D*>(component)) m_physics3d.EndTriggerOverlaps(*this, nullptr, c3);
+    else if (auto* c2 = dynamic_cast<Collider2D*>(component)) m_physics.EndTriggerOverlaps(*this, nullptr, c2);
+}
+
 void Scene::NotifyComponentRemoved(Component* component) {
     // Null the slot instead of erasing, so removing a component from inside an
     // m_active iteration (a component's Update/Render) can't invalidate the loop
@@ -1018,6 +1024,10 @@ void Scene::FlushDestroyedNow() {
         for (Component* c : survivors) c->OnObjectsDestroyed(dying);
     }
     m_tweens.OnObjectsDestroyed(dying);   // nothing keeps animating a freed object
+    // Trigger overlaps with a dying object end now, while both sides are whole: each side gets its
+    // OnTriggerExit (a radiation zone destroyed with the player inside stops; #888 finding 56).
+    m_physics.EndTriggerOverlaps(*this, &dying, nullptr);
+    m_physics3d.EndTriggerOverlaps(*this, &dying, nullptr);
 
     // Which of the batch are still in this scene (an object queued twice across rounds is not).
     std::unordered_set<const GameObject*> inScene;

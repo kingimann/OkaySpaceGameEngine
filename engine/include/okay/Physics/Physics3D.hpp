@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -178,6 +179,14 @@ public:
     /// `ignore` skips a GameObject (the mover itself); triggers never block.
     Vec3 ResolveSphere(Scene& scene, Vec3 center, float radius,
                        GameObject* ignore = nullptr, int iterations = 4);
+
+    /// End the trigger overlaps of what is going away, with an OnTriggerExit3D to each side (both are
+    /// still whole when this runs): every collider on an object in `dying` (Scene::FlushDestroyed calls
+    /// this before OnDestroy), or the one collider `removed` (GameObject::RemoveComponent calls this
+    /// before the collider's OnDestroy). The pairs are forgotten first, so the next step sends no second
+    /// exit. Solid contacts are left to the next step, as before. (#888 finding 56)
+    void EndTriggerOverlaps(Scene& scene, const std::unordered_set<const GameObject*>* dying,
+                            const Collider3D* removed);
 
     void Clear();   // forget every remembered contact (the scene is being cleared; Physics3DImproved.inl)
 

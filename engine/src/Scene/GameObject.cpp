@@ -246,6 +246,7 @@ bool GameObject::RemoveComponent(Component* component) {
     if (find() == m_components.end()) return false;
     if (component->m_removing) return false;   // already on its way out: its own OnDisable / OnDestroy asked again
     component->m_removing = true;
+    if (m_scene) m_scene->NotifyComponentRemoving(component);   // a collider ends its trigger overlaps (exits) while whole
     std::vector<Component*> parts;
     component->CollectOwnedParts(parts);
     for (Component* part : parts) RemoveComponent(part);

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <set>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -151,6 +152,14 @@ public:
                              const Vec2& direction, float maxDistance = 1e9f,
                              GameObject* ignore = nullptr, std::uint32_t layerMask = kAllLayers,
                              bool queryTriggers = false);
+
+    /// End the trigger overlaps of what is going away, with an OnTriggerExit2D to each side (both are
+    /// still whole when this runs): every collider on an object in `dying` (Scene::FlushDestroyed calls
+    /// this before OnDestroy), or the one collider `removed` (GameObject::RemoveComponent calls this
+    /// before the collider's OnDestroy). The pairs are forgotten first, so the next step sends no second
+    /// exit. Solid contacts are left to the next step, as before. (#888 finding 56)
+    void EndTriggerOverlaps(Scene& scene, const std::unordered_set<const GameObject*>* dying,
+                            const Collider2D* removed);
 
     void Clear() { m_contacts.clear(); }
 

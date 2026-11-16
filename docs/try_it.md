@@ -1086,6 +1086,27 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## A zone that is destroyed with you inside lets go (bug fix, branch `claude2/trigger-exit-on-destroy`, not merged yet)
+
+Before: destroying a trigger zone while something stood inside it never sent `OnTriggerExit`, in 2D or 3D, and nor did
+destroying the thing inside. A radiation, cold or water zone that went away (deleted, a `Lifetime` ran out, a level chunk
+unloaded) kept its effect on the player for good. Now both sides get one `OnTriggerExit` when either is destroyed or its
+collider component is removed (#888 finding 56).
+
+1. Open the editor and make a new 3D scene.
+2. Create a cube named **Zone**: scale it to 4, 4, 4. On its Box Collider tick **Trigger**. Add Component > Gameplay >
+   **Survival Zone (trigger)** and set the effect to **Radiation**. Add Component > Gameplay > **Lifetime** and set
+   **Seconds** to 5.
+3. Create a second cube named **Player** at the same place (inside the zone). Give it a Rigidbody set to **Kinematic**
+   (so it does not fall out) and Add Component > Gameplay > **Stat: Radiation**.
+4. Press **Play** and select **Player**. In the Inspector, **Stat: Radiation** climbs (in radiation).
+5. After 5 seconds the Lifetime destroys the zone. Expect: the radiation stops climbing and falls back towards 0.
+   Before the fix it kept climbing for ever. (You can also select **Zone** in the Hierarchy and delete it during Play,
+   if your editor build allows deleting while playing.)
+
+**Status.** Tested headless on Linux (`test_trigger_exit_destroy`, 2D and 3D, both physics qualities). Nothing was tried in
+the editor or on Windows; the steps above are unverified there.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

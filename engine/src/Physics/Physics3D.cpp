@@ -840,6 +840,9 @@ void Physics3D::Step(Scene& scene, float dt) {
     for (const Pair& p : ended) {
         Collider3D* a = p.first;
         Collider3D* b = p.second;
+        // Forgotten before its exit goes out: a handler that removes one of these colliders ends that
+        // collider's remembered pairs at once (EndTriggerOverlaps), and must not find this one again.
+        m_contacts.erase(p);
         {   // what held a sleeping body up has moved away, been switched off or been removed: wake it (both qualities)
             const bool la = aliveSet.count(a) && !gone.Gone(a), lb = aliveSet.count(b) && !gone.Gone(b);
             // (Classic: a pair that is still resting, touching without overlap, is not a lost support: its sleeper stays asleep.)
@@ -2130,6 +2133,52 @@ Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore,
         if (!moved) break;
     }
     return c;
+}
+
+// Destroying a trigger zone with something inside (or the thing inside it) used to drop the pair
+// without an exit: the step's exit pass only reads colliders that are still in the scene. This
+// runs while both sides are still whole, so each side gets its OnTriggerExit3D now. (#888 finding 56)
+void Physics3D::EndTriggerOverlaps(Scene& scene, const std::unordered_set<const GameObject*>* dying,
+                                   const Collider3D* removed) {
+    if (m_contacts.empty() || (!removed && (!dying || dying->empty()))) return;
+    if (removed) {   // the common case, a collider removed that touches nothing: no scene walk
+        bool touches = false;
+        for (const Pair& p : m_contacts)
+            if (p.first == removed || p.second == removed) { touches = true; break; }
+        if (!touches) return;
+    }
+    // A remembered pair can still name a collider freed since the last step (a solid pair: the next
+    // step drops it). Only colliders still in the scene are read, and the list gives the exit order:
+    // the order the scene lists the colliders, as the step uses.
+    const auto colliders = scene.FindObjectsOfType<Collider3D>();
+    std::unordered_map<const Collider3D*, std::size_t> rank;
+    rank.reserve(colliders.size() * 2 + 1);
+    for (std::size_t i = 0; i < colliders.size(); ++i) rank[colliders[i]] = i;
+    auto leaving = [&](const Collider3D* c) { return c == removed || (dying && dying->count(c->gameObject) != 0); };
+    std::vector<Pair> ended;
+    for (const Pair& p : m_contacts) {
+        if (!rank.count(p.first) || !rank.count(p.second)) continue;
+        if (!p.first->isTrigger && !p.second->isTrigger) continue;
+        if (leaving(p.first) || leaving(p.second)) ended.push_back(p);
+    }
+    if (ended.empty()) return;
+    for (const Pair& p : ended) m_contacts.erase(p);   // first: a handler that removes more cannot end these twice
+    std::stable_sort(ended.begin(), ended.end(), [&](const Pair& x, const Pair& y) {
+        const std::size_t xa = rank[x.first], ya = rank[y.first];
+        if (xa != ya) return xa < ya;
+        return rank[x.second] < rank[y.second];
+    });
+    Scene::RemovalWatch gone(scene);   // an exit handler may remove a collider still to be told
+    for (const Pair& p : ended) {
+        Collider3D* a = p.first;
+        Collider3D* b = p.second;
+        if (gone.Gone(a) || gone.Gone(b)) continue;
+        const Vec3 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
+        const Vec3 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
+        DispatchTrigger(a, &Component::OnTriggerExit3D, b, mid, n, gone);
+        if (!gone.Gone(a) && !gone.Gone(b))
+            DispatchTrigger(b, &Component::OnTriggerExit3D, a, mid, -n, gone);
+    }
 }
 
 } // namespace okay

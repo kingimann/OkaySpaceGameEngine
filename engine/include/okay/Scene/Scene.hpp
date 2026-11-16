@@ -576,6 +576,9 @@ private:
     friend class GameObject;
     void QueuePending(Component* component);
     void NotifyComponentRemoved(Component* component);
+    /// RemoveComponent is about to take `component` off (before its OnDisable / OnDestroy): a collider
+    /// ends its trigger overlaps here, with OnTriggerExit to both sides (#888 finding 56).
+    void NotifyComponentRemoving(Component* component);
     void FlushPending();
     /// Pick the object under the cursor (main camera, 2D bounds) and dispatch the
     /// OnMouseEnter/Exit/Over/Down/Up/Click messages, tracking state across frames.

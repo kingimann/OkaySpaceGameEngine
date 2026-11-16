@@ -132,6 +132,11 @@ add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
 add_test(NAME physics3d COMMAND test_physics3d)
 
+# Destroying either side of a trigger overlap (or removing its collider) sends OnTriggerExit (#888 finding 56)
+add_executable(test_trigger_exit_destroy test_trigger_exit_destroy.cpp)
+target_link_libraries(test_trigger_exit_destroy PRIVATE okay::engine)
+add_test(NAME trigger_exit_destroy COMMAND test_trigger_exit_destroy)
+
 # MeshCollider3D: real triangle-mesh collision (BVH): rays, overlaps, casts, bodies, edits, perf
 add_executable(test_meshcollider3d test_meshcollider3d.cpp)
 target_link_libraries(test_meshcollider3d PRIVATE okay::engine)

@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace okay {
@@ -667,9 +668,13 @@ void Physics2D::Step(Scene& scene, float dt) {
         }
     }
 
-    // 5) Fire exit messages for contacts that ended.
-    for (const Pair& p : m_contacts) {
-        if (current.count(p)) continue;
+    // 5) Fire exit messages for contacts that ended. The list is taken first and each pair is forgotten
+    // before its exit goes out: a handler that removes a collider ends that collider's remembered pairs
+    // at once (EndTriggerOverlaps), which edits m_contacts, and must not find this pair again.
+    std::vector<Pair> ended;
+    for (const Pair& p : m_contacts) if (!current.count(p)) ended.push_back(p);
+    for (const Pair& p : ended) {
+        if (!m_contacts.erase(p)) continue;   // ended already by a handler (EndTriggerOverlaps)
         Collider2D* a = p.first;
         Collider2D* b = p.second;
         // The colliders may have been destroyed; guard via the live list.
@@ -1286,6 +1291,51 @@ void Physics2D::RecordQueryRay(const Vec2& origin, const Vec2& direction, float 
     r.to = origin + dir * Mathf::Min(maxDistance, 1000.0f);   // "infinite" rays drawn 1 km long
     r.hit = hit.hit; r.point = hit.point; r.normal = hit.normal; r.radius = radius;
     m_debugRays.push_back(r);
+}
+
+// Destroying a trigger zone with something inside (or the thing inside it) used to drop the pair
+// without an exit: the step's exit pass only reads colliders that are still in the scene. This
+// runs while both sides are still whole, so each side gets its OnTriggerExit2D now. (#888 finding 56)
+void Physics2D::EndTriggerOverlaps(Scene& scene, const std::unordered_set<const GameObject*>* dying,
+                                   const Collider2D* removed) {
+    if (m_contacts.empty() || (!removed && (!dying || dying->empty()))) return;
+    if (removed) {   // the common case, a collider removed that touches nothing: no scene walk
+        bool touches = false;
+        for (const Pair& p : m_contacts)
+            if (p.first == removed || p.second == removed) { touches = true; break; }
+        if (!touches) return;
+    }
+    // A remembered pair can still name a collider freed since the last step (a solid pair: the next
+    // step drops it). Only colliders still in the scene are read, and the list gives the exit order.
+    const auto colliders = scene.FindObjectsOfType<Collider2D>();
+    std::unordered_map<const Collider2D*, std::size_t> rank;
+    rank.reserve(colliders.size() * 2 + 1);
+    for (std::size_t i = 0; i < colliders.size(); ++i) rank[colliders[i]] = i;
+    auto leaving = [&](const Collider2D* c) { return c == removed || (dying && dying->count(c->gameObject) != 0); };
+    std::vector<Pair> ended;
+    for (const Pair& p : m_contacts) {
+        if (!rank.count(p.first) || !rank.count(p.second)) continue;
+        if (!p.first->isTrigger && !p.second->isTrigger) continue;
+        if (leaving(p.first) || leaving(p.second)) ended.push_back(p);
+    }
+    if (ended.empty()) return;
+    for (const Pair& p : ended) m_contacts.erase(p);   // first: a handler that removes more cannot end these twice
+    std::stable_sort(ended.begin(), ended.end(), [&](const Pair& x, const Pair& y) {
+        const std::size_t xa = rank[x.first], ya = rank[y.first];
+        if (xa != ya) return xa < ya;
+        return rank[x.second] < rank[y.second];
+    });
+    Scene::RemovalWatch gone(scene);   // an exit handler may remove a collider still to be told
+    for (const Pair& p : ended) {
+        Collider2D* a = p.first;
+        Collider2D* b = p.second;
+        if (gone.Gone(a) || gone.Gone(b)) continue;
+        const Vec2 mid = (a->WorldCenter() + b->WorldCenter()) * 0.5f;
+        const Vec2 n = (b->WorldCenter() - a->WorldCenter()).Normalized();
+        DispatchTrigger(a, &Component::OnTriggerExit2D, b, mid, n, gone);
+        if (!gone.Gone(a) && !gone.Gone(b))
+            DispatchTrigger(b, &Component::OnTriggerExit2D, a, mid, n * -1.0f, gone);
+    }
 }
 
 } // namespace okay

@@ -49,6 +49,11 @@ exactly as before whichever quality is chosen.
 - Joints remember the partner they found by name until the scene's objects change; 300 joints no longer search the scene every step.
 - `OnCollisionExit` / `OnTriggerExit` arrive in the order the scene lists the colliders, the same in every run (they used to arrive in
   memory-address order).
+- Destroying either side of a trigger overlap (the zone, or the object inside it), or removing its collider component, sends
+  `OnTriggerExit` to both sides, once, in the same scene order. It goes out at the end of the frame the object is destroyed (before
+  its `OnDestroy`), while both objects are still whole. It used to be lost, so a destroyed radiation or water zone kept its effect on
+  the player for ever (#888 finding 56). Switching the collider or object off still ends the overlap at the next step, as before.
+  Solid contacts are unchanged: a destroyed object still sends no `OnCollisionExit`.
 
 ## Physics materials
 

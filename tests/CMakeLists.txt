@@ -3225,6 +3225,15 @@ add_executable(test_fbx_hostile test_fbx_hostile.cpp
 target_include_directories(test_fbx_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_fbx_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
+# The animation keys our FBX reader makes at the file's own key times, against the curves (a 240 Hz bake), the old 30 Hz
+# clip and the file's key times; fixtures, plus the real files when OKAY_MODEL_CORPUS is set. Standalone, for sanitizers.
+# docs/own_fbx_reader.md, "Animation keys".
+add_executable(test_fbx_file_keys test_fbx_file_keys.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/FbxScene.cpp)
+target_include_directories(test_fbx_file_keys PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
+target_compile_definitions(test_fbx_file_keys PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fbx_file_keys COMMAND test_fbx_file_keys)
 # The output-preserving fast paths of our FBX reader against the plain code they replaced, bit for bit, on random
 # inputs (white-box: compiles FbxScene.cpp and FbxReader.cpp itself, no engine library). docs/own_fbx_reader.md.
 add_executable(test_fbx_exact test_fbx_exact.cpp test_fbx_exact_numbers.cpp)

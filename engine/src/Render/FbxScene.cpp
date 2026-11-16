@@ -12,6 +12,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <limits>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
@@ -501,6 +503,69 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
         if (++guard > n + 4) break;
     }
     if (cnt == 3) emit(idx[0], idx[1], idx[2]);
+}
+
+// ---------------------------------------------------------------------------
+// animation keys at the file's own key times (BuildOptions::fileKeys)
+// ---------------------------------------------------------------------------
+// Written for this engine from first principles (cubic interpolation, quaternion algebra); docs/own_fbx_reader.md,
+// "Animation keys".
+
+/// The smallest and largest value on [0, 1] of the cubic through (0, y0), (1/3, y1), (2/3, y2), (1, y3). Newton's
+/// forward differences in s = 3u: p(s) = y0 + d1 s + d2 s(s-1)/2 + d3 s(s-1)(s-2)/6; the extremes inside are where
+/// p'(s) = (d3/2) s^2 + (d2 - d3) s + (d1 - d2/2 + d3/3) is zero. Between two neighbouring key times every curve of a
+/// node is one cubic piece (or a line or a constant), so this is exact for the curves' own values.
+void CubicMinMax(double y0, double y1, double y2, double y3, double& lo, double& hi) {
+    if (y0 == y1 && y1 == y2 && y2 == y3) { lo = hi = y0; return; }   // a held value (most channels)
+    const double d1 = y1 - y0, d2 = y2 - 2 * y1 + y0, d3 = y3 - 3 * y2 + 3 * y1 - y0;
+    lo = std::min(std::min(y0, y3), std::min(y1, y2)); hi = std::max(std::max(y0, y3), std::max(y1, y2));
+    const double A = d3 * 0.5, B = d2 - d3, C = d1 - d2 * 0.5 + d3 / 3.0;
+    double r[2]; int nr = 0;
+    if (A != 0) {
+        const double disc = B * B - 4 * A * C;
+        if (disc >= 0) { const double sq = std::sqrt(disc); r[nr++] = (-B - sq) / (2 * A); r[nr++] = (-B + sq) / (2 * A); }
+    } else if (B != 0) r[nr++] = -C / B;
+    for (int i = 0; i < nr; ++i) {
+        const double sv = r[i];
+        if (!(sv > 0 && sv < 3)) continue;
+        const double v = y0 + d1 * sv + d2 * sv * (sv - 1) * 0.5 + d3 * sv * (sv - 1) * (sv - 2) / 6.0;
+        lo = std::min(lo, v); hi = std::max(hi, v);
+    }
+}
+/// The largest |e(u)| on [0, 1] of the cubic that is 0 at both ends and e1, e2 at 1/3 and 2/3: the distance between a
+/// cubic piece and the straight line through its two ends.
+inline double CubicDeviation(double e1, double e2) { if (e1 == 0 && e2 == 0) return 0; double lo, hi; CubicMinMax(0, e1, e2, 0, lo, hi); return std::max(-lo, hi); }
+
+/// Quaternion (x y z w) product a * b (rotation b first, then a).
+inline void QuatMul(const double a[4], const double b[4], double o[4]) {
+    const double x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+    const double y = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+    const double z = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+    const double w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+    o[0] = x; o[1] = y; o[2] = z; o[3] = w;
+}
+/// The rotation Euler(d, order) as a unit quaternion: the three axis rotations in the same order (first letter first).
+inline void EulerQuat(const double d[3], int order, double q[4]) {
+    static const int seq[6][3] = {{0,1,2},{0,2,1},{1,2,0},{1,0,2},{2,0,1},{2,1,0}};
+    if (order < 0 || order > 5) order = 0;
+    q[0] = q[1] = q[2] = 0; q[3] = 1;
+    for (int k = 0; k < 3; ++k) {
+        const int ax = seq[order][k];
+        const double h = d[ax] * kPi / 360.0;
+        double a[4] = {0, 0, 0, std::cos(h)}; a[ax] = std::sin(h);
+        QuatMul(a, q, q);
+    }
+}
+/// Degrees between `truth` and what the engine plays at u between keys qa and qb: the components blended linearly
+/// (qb's sign first matched to qa's, as the importer does) and normalised.
+inline double NlerpErrorDeg(const double qa[4], const double qb[4], double u, const double truth[4]) {
+    const double sg = (qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3]) < 0 ? -1.0 : 1.0;
+    double l[4], n2 = 0, t2 = 0, d = 0;
+    for (int k = 0; k < 4; ++k) { l[k] = qa[k] + (sg * qb[k] - qa[k]) * u; n2 += l[k] * l[k]; t2 += truth[k] * truth[k]; }
+    for (int k = 0; k < 4; ++k) d += l[k] * truth[k];
+    if (!(n2 > 0 && t2 > 0)) return 0;
+    const double c = std::min(1.0, std::fabs(d) / std::sqrt(n2 * t2));
+    return 2.0 * std::acos(c) * 180.0 / kPi;
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,6 +1334,270 @@ struct Builder {
     // ---- animation ----------------------------------------------------------
     struct Layr { Id id; std::string_view name; double weight = 100; int blendMode = 0; };
     std::vector<Curve> curveStore;
+    /// A curve node driving one node's T, R or S in one layer; `hint` and `hintP` remember the key segments of the
+    /// last evaluation (two, so the probes between keys do not move the one the keys use).
+    struct NodeCN { int layer; int which; const CurveNode* cn; std::size_t hint[3]; std::size_t hintP[3]; };   // which: 0 T, 1 R, 2 S
+
+    // ---- keys at the file's own key times ---------------------------------------------------------------------
+    std::size_t fileKeyEvals = 0;   // evaluations so far (each counted once per curve node it reads), whole file
+
+    /// One channel (0 T, 1 R, 2 S) at absolute file time `at`, the layers combined as the fixed-rate bake does.
+    static void EvalChannel(std::vector<NodeCN>& list, const std::vector<Layr>& layers, int which, const double base[3], double at, bool probe, double out[3]) {
+        for (int k = 0; k < 3; ++k) out[k] = base[k];
+        bool first = true;
+        for (NodeCN& n : list) {
+            if (n.which != which) continue;
+            double lv[3];
+            for (int k = 0; k < 3; ++k) lv[k] = n.cn->curve[k] ? n.cn->curve[k]->Eval(at, probe ? n.hintP[k] : n.hint[k]) : n.cn->def[k];
+            const Layr& ly = layers[(std::size_t)n.layer];
+            const double w = std::max(0.0, ly.weight) * 0.01;
+            if (first) { for (int k = 0; k < 3; ++k) out[k] = lv[k]; first = false; }
+            else if (ly.blendMode == 0) for (int k = 0; k < 3; ++k) out[k] += lv[k] * w;
+            else for (int k = 0; k < 3; ++k) out[k] += (lv[k] - out[k]) * std::min(1.0, w);
+        }
+    }
+    /// A node's pose at one time: the curves' raw values (rt, rr, rs: file units and Euler degrees) and the local
+    /// translation, rotation and scale they give (what the clip stores).
+    struct KeyPose {
+        double rt[3], rr[3], rs[3]; double t[3], q[4], s[3];
+        double qr[4]; bool hasQr = false;   // EulerQuat(rr), made when first needed
+        const double* RawQuat(int order) { if (!hasQr) { EulerQuat(rr, order, qr); hasQr = true; } return qr; }
+    };
+    struct NodeBake {
+        std::vector<NodeCN>* list; const std::vector<Layr>* layers;
+        XProps x; FixedRot fixed; bool isRoot;
+        double t0, tolT, tolS, tolR;
+        std::size_t cost;   // curve nodes read per evaluation
+        NodeAnim* out;
+    };
+    void RawPose(NodeBake& nb, double at, bool probe, KeyPose& p) {
+        EvalChannel(*nb.list, *nb.layers, 0, nb.x.t, at, probe, p.rt);
+        EvalChannel(*nb.list, *nb.layers, 1, nb.x.r, at, probe, p.rr);
+        EvalChannel(*nb.list, *nb.layers, 2, nb.x.s, at, probe, p.rs);
+        fileKeyEvals += nb.cost;
+    }
+    /// The same matrix chain and decomposition as the fixed-rate bake, so equal curve values give equal keys.
+    void LocalPose(NodeBake& nb, KeyPose& p) {
+        XProps x = nb.x;
+        std::memcpy(x.t, p.rt, sizeof(x.t)); std::memcpy(x.r, p.rr, sizeof(x.r)); std::memcpy(x.s, p.rs, sizeof(x.s));
+        const Mat R = Euler(x.r, x.order);
+        const bool simple = nb.fixed.simple && Small3(x.t) && Small3(x.r) && Small3(x.s);
+        const Mat local = conv.Local(simple ? LocalSimple(x, nb.fixed, R) : LocalMatrix(x, nb.fixed, R), nb.isRoot);
+        Decompose(local, p.t, p.q, p.s);
+    }
+    void Emit(NodeBake& nb, double at, const KeyPose& p) {
+        const double rel = at - nb.t0;
+        Key3 kt; kt.time = rel; for (int k = 0; k < 3; ++k) kt.v[k] = p.t[k];
+        Key4 kq; kq.time = rel; for (int k = 0; k < 4; ++k) kq.v[k] = p.q[k];
+        Key3 ks; ks.time = rel; for (int k = 0; k < 3; ++k) ks.v[k] = p.s[k];
+        nb.out->translation.push_back(kt); nb.out->rotation.push_back(kq); nb.out->scale.push_back(ks);
+    }
+    /// How far linear playback from a to b is from the tolerances, judged from the poses at 1/3 and 2/3: `euler` is the
+    /// largest move of an Euler angle over maxEulerStep, `err` the largest error over what is allowed. The segment is
+    /// good when both are at most 1 (NaN counts as good: a broken curve is not chased down to minGap).
+    void SegmentNeed(NodeBake& nb, KeyPose& a, KeyPose& p1, KeyPose& p2, KeyPose& b, bool& haveLocal, double& euler, double& err) {
+        const KeyTolerance& tol = opt.keyTolerance;
+        euler = 0; err = 0;
+        // Euler angles: no angle moves more than maxEulerStep inside the segment (exact: each is one cubic piece here).
+        // This also keeps every step under half a turn, so the quaternion blend cannot take the other way round.
+        bool rotMoves = false;
+        for (int k = 0; k < 3; ++k) {
+            double lo, hi; CubicMinMax(a.rr[k], p1.rr[k], p2.rr[k], b.rr[k], lo, hi);
+            euler = std::max(euler, (hi - lo) / tol.maxEulerStep);
+            rotMoves |= hi != lo;
+        }
+        // Without offsets and pivots the local translation is the curves' translation times the unit scale (turned by
+        // the axis matrix at a root) and the local scale is the curves' scale up to fixed signs, so the error of a
+        // straight line is the exact deviation of a cubic. The scale needs the same sign at both ends and no zero in
+        // between. Otherwise (and for the rotation) the poses at 1/3 and 2/3 are compared with half the tolerance.
+        bool raw = nb.fixed.simple;
+        for (int k = 0; k < 3 && raw; ++k) {
+            double lo, hi; CubicMinMax(a.rs[k], p1.rs[k], p2.rs[k], b.rs[k], lo, hi);
+            raw = lo > 1e-9 || hi < -1e-9;
+        }
+        if (raw) {
+            double e2 = 0, es = 0;
+            for (int k = 0; k < 3; ++k) {
+                const double dt = CubicDeviation(p1.rt[k] - (a.rt[k] + (b.rt[k] - a.rt[k]) / 3.0), p2.rt[k] - (a.rt[k] + (b.rt[k] - a.rt[k]) * 2.0 / 3.0));
+                e2 += dt * dt;
+                es = std::max(es, CubicDeviation(p1.rs[k] - (a.rs[k] + (b.rs[k] - a.rs[k]) / 3.0), p2.rs[k] - (a.rs[k] + (b.rs[k] - a.rs[k]) * 2.0 / 3.0)));
+            }
+            err = std::max(std::sqrt(e2) * std::fabs(conv.s) / nb.tolT, es / nb.tolS);
+            if (!rotMoves) return;
+            const double* qa = a.RawQuat(nb.x.order); const double* qb = b.RawQuat(nb.x.order);
+            const double* q1 = p1.RawQuat(nb.x.order); const double* q2 = p2.RawQuat(nb.x.order);
+            // the fixed pre/post rotations and the axis matrix turn every quaternion the same way: angles do not change
+            err = std::max(err, std::max(NlerpErrorDeg(qa, qb, 1.0 / 3.0, q1), NlerpErrorDeg(qa, qb, 2.0 / 3.0, q2)) / (0.5 * nb.tolR));
+            return;
+        }
+        LocalPose(nb, p1); LocalPose(nb, p2); haveLocal = true;
+        for (int i = 0; i < 2; ++i) {
+            const KeyPose& p = i ? p2 : p1;
+            const double u = i ? 2.0 / 3.0 : 1.0 / 3.0;
+            double e2 = 0, es = 0;
+            for (int k = 0; k < 3; ++k) {
+                const double d = p.t[k] - (a.t[k] + (b.t[k] - a.t[k]) * u); e2 += d * d;
+                es = std::max(es, std::fabs(p.s[k] - (a.s[k] + (b.s[k] - a.s[k]) * u)));
+            }
+            err = std::max(err, std::max(std::sqrt(e2) / (0.5 * nb.tolT), es / (0.5 * nb.tolS)));
+            err = std::max(err, NlerpErrorDeg(a.q, b.q, u, p.q) / (0.5 * nb.tolR));
+        }
+    }
+    /// Keys strictly between a (at ta) and b (at tb), emitted in time order. None if the segment is within the
+    /// tolerances. Else it is cut into n equal parts, n from how far it is off (an Euler move shrinks in proportion to
+    /// the distance between keys, an error at least with its square), never into parts of minGap or less, and each
+    /// part is checked the same way. Three parts reuse the poses at 1/3 and 2/3.
+    bool Subdivide(NodeBake& nb, double ta, KeyPose& a, double tb, KeyPose& b, int depth) {
+        const double len = tb - ta, g = opt.keyTolerance.minGap * (1.0 + 1e-6);   // (the margin: keys a frame apart at
+        if (!(len / 2.0 > g) || depth > 40) return true;                          //  30 or 60 Hz are never split by rounding)
+        if (fileKeyEvals > 4 * opt.limits.maxTotalBakedSamples) return Fail("animation bake budget exceeded");
+        const double t1 = ta + len / 3.0, t2 = ta + len * (2.0 / 3.0);
+        KeyPose p1, p2;
+        RawPose(nb, t1, true, p1); RawPose(nb, t2, true, p2);
+        bool haveLocal = false;
+        double euler, err;
+        SegmentNeed(nb, a, p1, p2, b, haveLocal, euler, err);
+        if (!(euler > 1.0 || err > 1.0)) return true;
+        // (while an angle still turns too far, the error at 1/3 and 2/3 says little: the turn alone decides then)
+        double want = std::max(2.0, euler > 1.0 ? std::ceil(euler * 1.05) : std::ceil(std::sqrt(err) * 1.1));
+        want = std::min(want, std::min(64.0, std::floor(len / g)));   // parts longer than minGap (at least 2 here)
+        const int n = (int)std::max(2.0, want);
+        if (n == 3) {
+            if (!haveLocal) { LocalPose(nb, p1); LocalPose(nb, p2); }
+            if (!Subdivide(nb, ta, a, t1, p1, depth + 1)) return false;
+            Emit(nb, t1, p1);
+            if (!Subdivide(nb, t1, p1, t2, p2, depth + 1)) return false;
+            Emit(nb, t2, p2);
+            return Subdivide(nb, t2, p2, tb, b, depth + 1);
+        }
+        KeyPose prev = a; double tp = ta;
+        for (int i = 1; i < n; ++i) {
+            const double ti = ta + len * ((double)i / (double)n);
+            KeyPose pi; RawPose(nb, ti, true, pi); LocalPose(nb, pi);
+            if (!Subdivide(nb, tp, prev, ti, pi, depth + 1)) return false;
+            Emit(nb, ti, pi);
+            prev = pi; tp = ti;
+        }
+        return Subdivide(nb, tp, prev, tb, b, depth + 1);
+    }
+    /// The key times of `cs` in (t0, t1], merged without repeats, each marked when a curve jumps there (a step key
+    /// before it, or two keys at the same time with different values); t0 first and t1 last.
+    static void KeyTimes(const std::vector<const Curve*>& cs, double t0, double t1, std::vector<double>& times, std::vector<char>& jump) {
+        times.assign(1, t0); jump.assign(1, 0);
+        if (!(t1 > t0)) return;
+        std::vector<std::size_t> pos(cs.size());
+        for (std::size_t i = 0; i < cs.size(); ++i) pos[i] = (std::size_t)(std::upper_bound(cs[i]->t.begin(), cs[i]->t.end(), t0) - cs[i]->t.begin());
+        for (;;) {
+            double m = std::numeric_limits<double>::infinity();
+            for (std::size_t i = 0; i < cs.size(); ++i) if (pos[i] < cs[i]->t.size() && cs[i]->t[pos[i]] < m) m = cs[i]->t[pos[i]];
+            if (!(m <= t1)) break;
+            char j = 0;
+            for (std::size_t i = 0; i < cs.size(); ++i) {
+                const Curve& c = *cs[i];
+                while (pos[i] < c.t.size() && c.t[pos[i]] == m) {
+                    const std::size_t k = pos[i]++;
+                    if (k >= 1 && c.v[k - 1] != c.v[k] && (c.t[k - 1] == c.t[k] || (c.FlagsOf(k - 1) & 0x2))) j = 1;
+                }
+            }
+            times.push_back(m); jump.push_back(j);
+        }
+        if (times.back() != t1) { times.push_back(t1); jump.push_back(0); }
+    }
+    /// The time just before a jump at `at` that still rounds to its own float clip time: 1e-5 s, or 2^-20 of the
+    /// clip time when that is more (8 float steps).
+    static double BeforeJump(double at, double t0) { return at - std::max(1e-5, std::fabs(at - t0) * 9.5367431640625e-7); }
+
+    bool BakeNodeFileKeys(std::vector<NodeCN>& list, const std::vector<Layr>& layers, int node, double t0, double t1, NodeAnim& na) {
+        std::vector<const Curve*> cs;
+        for (const NodeCN& n : list) for (int k = 0; k < 3; ++k) {
+            const Curve* c = n.cn->curve[k];
+            if (c && std::find(cs.begin(), cs.end(), c) == cs.end()) cs.push_back(c);
+        }
+        std::vector<double> times; std::vector<char> jump;
+        KeyTimes(cs, t0, t1, times, jump);
+        NodeBake nb;
+        nb.list = &list; nb.layers = &layers; nb.x = xp[(std::size_t)node]; nb.fixed = FixedRotations(nb.x);
+        nb.isRoot = sc.nodes[(std::size_t)node].parent < 0; nb.t0 = t0; nb.cost = std::max<std::size_t>(1, list.size()); nb.out = &na;
+        if ((double)times.size() * (double)nb.cost > (double)(4 * opt.limits.maxTotalBakedSamples - std::min(fileKeyEvals, 4 * opt.limits.maxTotalBakedSamples)))
+            return Fail("animation bake budget exceeded");
+        std::vector<KeyPose> poses(times.size());
+        double maxT = 0, maxS = 1;
+        for (std::size_t i = 0; i < times.size(); ++i) {
+            RawPose(nb, times[i], false, poses[i]); LocalPose(nb, poses[i]);
+            const KeyPose& p = poses[i];
+            const double n = std::sqrt(p.t[0] * p.t[0] + p.t[1] * p.t[1] + p.t[2] * p.t[2]);
+            if (n > maxT) maxT = n;   // (NaN never wins)
+            for (int k = 0; k < 3; ++k) if (std::fabs(p.s[k]) > maxS) maxS = std::fabs(p.s[k]);
+        }
+        const KeyTolerance& tol = opt.keyTolerance;
+        nb.tolT = tol.positionAbs + tol.positionRel * maxT; nb.tolS = tol.scaleRel * maxS; nb.tolR = tol.rotationDeg;
+        std::size_t want = times.size();   // the keys at the file's times and the pairs at jumps; added keys grow it
+        for (char j : jump) want += (std::size_t)j;
+        na.translation.reserve(want); na.rotation.reserve(want); na.scale.reserve(want);
+        Emit(nb, times[0], poses[0]);
+        double ta = times[0]; KeyPose a = poses[0];
+        for (std::size_t i = 1; i < times.size(); ++i) {
+            if (jump[i]) {   // a key just before the jump with the value before it; nothing is added across the jump
+                const double pre = BeforeJump(times[i], t0);
+                if (pre > ta) {
+                    KeyPose p; RawPose(nb, pre, true, p); LocalPose(nb, p);
+                    if (!Subdivide(nb, ta, a, pre, p, 0)) return false;
+                    Emit(nb, pre, p);
+                }
+            } else if (!Subdivide(nb, ta, a, times[i], poses[i], 0)) return false;
+            Emit(nb, times[i], poses[i]);
+            ta = times[i]; a = poses[i];
+        }
+        return true;
+    }
+    /// A blend shape weight curve the same way (its own value is the cubic, so the check is exact).
+    bool BakeBlendFileKeys(const CurveNode& cn, double t0, double t1, BlendAnim& ba) {
+        const Curve* c = cn.curve[0];
+        std::vector<const Curve*> cs; if (c) cs.push_back(c);
+        std::vector<double> times; std::vector<char> jump;
+        KeyTimes(cs, t0, t1, times, jump);
+        std::size_t hint = (std::size_t)-1, hintP = (std::size_t)-1;
+        auto val = [&](double at, std::size_t& h) { ++fileKeyEvals; return c ? c->Eval(at, h) : cn.def[0]; };
+        auto emit = [&](double at, double v) { Key3 k; k.time = at - t0; k.v[0] = v; k.v[1] = k.v[2] = 0; ba.percent.push_back(k); };
+        const KeyTolerance& tol = opt.keyTolerance;
+        bool failed = false;
+        std::function<void(double, double, double, double, int)> sub = [&](double ta, double va, double tb, double vb, int depth) {
+            const double len = tb - ta, g = tol.minGap * (1.0 + 1e-6);
+            if (failed || !(len / 2.0 > g) || depth > 40) return;
+            if (fileKeyEvals > 4 * opt.limits.maxTotalBakedSamples) { failed = true; return; }
+            const double t1_ = ta + len / 3.0, t2_ = ta + len * (2.0 / 3.0);
+            const double v1 = val(t1_, hintP), v2 = val(t2_, hintP);
+            const double err = CubicDeviation(v1 - (va + (vb - va) / 3.0), v2 - (va + (vb - va) * 2.0 / 3.0)) / tol.percent;
+            if (!(err > 1.0)) return;
+            const int n = (int)std::max(2.0, std::min(std::ceil(std::sqrt(err) * 1.1), std::min(64.0, std::floor(len / g))));
+            if (n == 3) {
+                sub(ta, va, t1_, v1, depth + 1); emit(t1_, v1);
+                sub(t1_, v1, t2_, v2, depth + 1); emit(t2_, v2);
+                sub(t2_, v2, tb, vb, depth + 1);
+                return;
+            }
+            double tp = ta, vp = va;
+            for (int i = 1; i < n; ++i) {
+                const double ti = ta + len * ((double)i / (double)n), vi = val(ti, hintP);
+                sub(tp, vp, ti, vi, depth + 1); emit(ti, vi);
+                tp = ti; vp = vi;
+            }
+            sub(tp, vp, tb, vb, depth + 1);
+        };
+        double ta = times[0], va = val(ta, hint);
+        emit(ta, va);
+        for (std::size_t i = 1; i < times.size() && !failed; ++i) {
+            const double vb = val(times[i], hint);
+            if (jump[i]) {
+                const double pre = BeforeJump(times[i], t0);
+                if (pre > ta) { const double vp = val(pre, hintP); sub(ta, va, pre, vp, 0); emit(pre, vp); }
+            } else sub(ta, va, times[i], vb, 0);
+            emit(times[i], vb);
+            ta = times[i]; va = vb;
+        }
+        if (failed) return Fail("animation bake budget exceeded");
+        return true;
+    }
 
     bool Animation() {
         // Budgets first: every count below is checked before anything proportional to it is allocated.
@@ -1384,7 +1713,6 @@ struct Builder {
                 Layr ly; ly.id = c->child; ly.name = l->name; ly.weight = l->props.Get("Weight", 100.0); ly.blendMode = SafeInt(l->props.Get("BlendMode", 0.0));
                 layers.push_back(ly);
             }
-            struct NodeCN { int layer; int which; const CurveNode* cn; std::size_t hint[3]; };   // which: 0 T, 1 R, 2 S
             std::map<int, std::vector<NodeCN>> perNode;                       // node index -> curve nodes (ordered)
             struct BlendCN { int layer; Id target; const CurveNode* cn; };
             std::vector<BlendCN> blendCns;
@@ -1399,7 +1727,7 @@ struct Builder {
                     if (nm) {
                         int which = cn.prop == "Lcl Translation" ? 0 : cn.prop == "Lcl Rotation" ? 1 : cn.prop == "Lcl Scaling" ? 2 : -1;
                         if (which < 0) continue;
-                        perNode[*nm].push_back({(int)li, which, &cn, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}}); span(cn);
+                        perNode[*nm].push_back({(int)li, which, &cn, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}}); span(cn);
                     } else if (cn.prop == "DeformPercent" && chanOfObj.count(cn.target)) { blendCns.push_back({(int)li, cn.target, &cn}); span(cn); }
                 }
             if (perNode.empty() && blendCns.empty()) continue;
@@ -1422,6 +1750,21 @@ struct Builder {
                 totalBaked += ts * entries;
             }
             clip.duration = dur;
+            clip.start = t0;
+            if (opt.fileKeys) {
+                for (auto& kv : perNode) {
+                    NodeAnim na; na.node = kv.first;
+                    if (!BakeNodeFileKeys(kv.second, layers, kv.first, t0, t1, na)) return false;
+                    clip.nodes.push_back(std::move(na));
+                }
+                for (const BlendCN& b : blendCns) {
+                    BlendAnim ba; ba.mesh = chanOfObj[b.target].first; ba.channel = chanOfObj[b.target].second;
+                    if (!BakeBlendFileKeys(*b.cn, t0, t1, ba)) return false;
+                    clip.blends.push_back(std::move(ba));
+                }
+                sc.clips.push_back(std::move(clip));
+                continue;
+            }
             std::vector<double> times;
             for (std::size_t k = 0; k <= samples; ++k) times.push_back(dur > 0 ? dur * (double)k / (double)samples : 0.0);
             if (dur <= 0) times.assign(1, 0.0);
@@ -1553,6 +1896,10 @@ bool OwnReaderEnabled() {
     return v;
 }
 void SetOwnReaderEnabled(bool on) { g_own = on ? 1 : 0; }
+bool FileKeysDefault() {
+    static const bool v = [] { const char* e = std::getenv("OKAY_FBX_BAKE30"); return !(e && e[0] == '1'); }();
+    return v;
+}
 
 } // namespace fbx
 } // namespace okay

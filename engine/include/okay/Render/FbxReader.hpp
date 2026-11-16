@@ -269,6 +269,7 @@ struct BlendAnim {
 struct Clip {
     std::string name;
     double duration = 0;
+    double start = 0;              ///< the file time (seconds) that clip time 0 is (the take's LocalStart, else its first key)
     std::vector<NodeAnim> nodes;
     std::vector<BlendAnim> blends;
 };
@@ -290,9 +291,36 @@ struct Scene {
     std::string creator;
 };
 
+/// How close the clip's linear playback must stay to the file's curves when animation keys are made from the file's
+/// own key times (BuildOptions::fileKeys; docs/own_fbx_reader.md, "Animation keys"). Between two keys the engine plays
+/// translation and scale linearly and rotation as a normalised linear blend of quaternions; keys are added until that
+/// playback is within these of the curves.
+struct KeyTolerance {
+    double positionRel = 1e-4;     ///< translation: this times the node's largest translation at its keys ...
+    double positionAbs = 1e-5;     ///< ... plus this, in output units (metres with convertToYUpMeters)
+    double rotationDeg = 0.05;     ///< rotation: angle between the played and the true orientation
+    double scaleRel = 1e-4;        ///< scale: this times max(1, the node's largest |scale| at its keys)
+    double percent = 0.01;         ///< blend shape DeformPercent (0..100), so 1e-4 of the weight
+    /// Seconds: a key is added only more than this from its neighbours. File keys up to twice this apart (every frame
+    /// at 30 Hz or faster) get nothing in between: playback there is linear between the file's own keys, as the
+    /// fixed-rate bake was on the same grid, and the tolerances above are not enforced there. Keys 2 to 3 times this
+    /// apart (25 or 24 Hz) get at most one key in the middle.
+    double minGap = 1.0 / 60.0;
+    double maxEulerStep = 45.0;    ///< degrees one Euler angle may move between two keys (at least 8 keys a turn)
+};
+
+/// Whether BuildOptions::fileKeys is on by default: yes, unless the environment variable OKAY_FBX_BAKE30 is "1"
+/// (read once), which brings back the bake at a fixed rate for comparison.
+bool FileKeysDefault();
+
 struct BuildOptions {
     bool convertToYUpMeters = true;    ///< right-handed Y-up, 1 unit = 1 m (what ModelImport asks ufbx for)
-    double bakeRate = 30.0;
+    /// Animation keys. true: a key at every key time of the node's curves (and the take's start and end), plus keys
+    /// in between where linear playback would leave `keyTolerance`; a step gets a key just before and at its jump.
+    /// false: every animated node sampled `bakeRate` times a second over the take (the only way before 2026-11-16).
+    bool fileKeys = FileKeysDefault();
+    double bakeRate = 30.0;            ///< samples per second when fileKeys is false
+    KeyTolerance keyTolerance;
     Limits limits;
 };
 

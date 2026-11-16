@@ -1038,9 +1038,9 @@ right of and 10 px below the mouse, padded 14 x 12.
 **Launcher changes** (`launcher/main.cpp`): the OkayUI Downloads and Achievements areas end 46 px above the bottom, where the Dear
 ImGui lists end. The **Dear ImGui Downloads rows** are now as tall as their three lines (98 px at the default size; they were 80 px,
 which cut the buttons off and gave each row a scrollbar): a bug fix in the default page. The OkayUI Downloads page reads and
-changes the list through `DlSnapshot` and `DlApply`, written next to the download manager. They use the same SDL mutex
+changes the list through `DlSnapshotInto` (section 8.7: it was `DlSnapshot`) and `DlApply`, written next to the download manager. They use the same SDL mutex
 (`SDL_LockMutex(g_dlMutex)`) and SDL thread join (`SDL_WaitThread`) as the rest of the download manager on main, which still runs
-its workers on SDL threads (MinGW has no `std::thread`): `DlSnapshot` (one lock), `DlApply` (one lock, one join per removed
+its workers on SDL threads (MinGW has no `std::thread`): `DlSnapshotInto` (one lock), `DlApply` (one lock, one join per removed
 download) and the demo seed `SeedDemoDownloads` (one lock).
 
 **Pixel difference** (real launcher, Linux, Release, Xvfb 1440x900, software OpenGL, `OKAY_UI_DEMO_USER=demo`, the same demo data

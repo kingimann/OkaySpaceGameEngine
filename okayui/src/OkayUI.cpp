@@ -2151,8 +2151,18 @@ void EndFrame(SDL_Renderer* r) {
     SDL_BlendMode prev = SDL_BLENDMODE_NONE;
     SDL_GetRenderDrawBlendMode(r, &prev);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    // Each call is given only the vertices its indices use (SDL's work grows with the vertex count it is handed as well as
+    // with the indices), with the indices made relative to the first of them in a scratch buffer.
+    static int scratch[kMaxIdx];
+    auto submit = [&](SDL_Texture* tex, const int* idx, int count) {
+        if (count <= 0) return;
+        int lo = idx[0], hi = idx[0];
+        for (int i = 1; i < count; ++i) { const int v = idx[i]; lo = v < lo ? v : lo; hi = v > hi ? v : hi; }
+        for (int i = 0; i < count; ++i) scratch[i] = idx[i] - lo;
+        SDL_RenderGeometry(r, tex, g_verts + lo, hi - lo + 1, scratch, count);
+    };
     if (g_nspans == 0) {
-        SDL_RenderGeometry(r, defTex, g_verts, g_nv, g_idx, g_ni);   // fast path: no clipping
+        submit(defTex, g_idx, g_ni);   // fast path: no clipping
     } else {
         // Draw each contiguous index range under its clip rect. Ranges run from one
         // span's startIdx to the next span's (last extends to g_ni).
@@ -2161,7 +2171,7 @@ void EndFrame(SDL_Renderer* r) {
         // Geometry before the first span (window frames drawn pre-clip) is unclipped.
         if (g_spans[0].startIdx > 0) {
             SDL_RenderSetClipRect(r, nullptr);
-            SDL_RenderGeometry(r, defTex, g_verts, g_nv, &g_idx[0], g_spans[0].startIdx);
+            submit(defTex, &g_idx[0], g_spans[0].startIdx);
         }
         for (int s = 0; s < g_nspans; ++s) {
             int from = g_spans[s].startIdx;
@@ -2169,7 +2179,7 @@ void EndFrame(SDL_Renderer* r) {
             if (to <= from) continue;
             if (g_spans[s].on) SDL_RenderSetClipRect(r, &g_spans[s].rect);
             else               SDL_RenderSetClipRect(r, nullptr);
-            SDL_RenderGeometry(r, resolveTex(r, g_spans[s].tex), g_verts, g_nv, &g_idx[from], to - from);
+            submit(resolveTex(r, g_spans[s].tex), &g_idx[from], to - from);
         }
         // Restore the renderer's prior clip state.
         SDL_RenderSetClipRect(r, hadClip ? &savedClip : nullptr);

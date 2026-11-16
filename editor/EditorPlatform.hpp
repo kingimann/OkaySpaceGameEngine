@@ -97,7 +97,12 @@ public:
 };
 
 /// The sdl implementation (EditorPlatformSdl.cpp): SDL directly, as main.cpp did.
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 std::unique_ptr<EditorPlatform> CreateSdlEditorPlatform();
+#else
+/// -DOKAY_WITH_SDL=OFF: EditorPlatformSdl.cpp is not built; there is no sdl platform side.
+inline std::unique_ptr<EditorPlatform> CreateSdlEditorPlatform() { return nullptr; }
+#endif
 /// The own implementation (EditorPlatform.cpp). Null (and `err`) when okay::platform has no sdl2 backend compiled in.
 std::unique_ptr<EditorPlatform> CreateOwnEditorPlatform(std::string* err = nullptr);
 /// OKAY_EDITOR_PLATFORM picks; `own` that cannot start falls back to `sdl` (and says so in `note`). `note` gets one line for the
@@ -106,10 +111,16 @@ std::unique_ptr<EditorPlatform> CreateEditorPlatformFromEnv(std::string* note = 
 
 // ---- helpers the own side needs from SDL while SDL_Renderer draws (EditorPlatformSdl.cpp) -------------
 /// The GL context and window SDL has current on this thread (SDL_GL_GetCurrentContext / Window); both null when none.
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 void SdlCurrentGL(void*& sdlWindow, void*& sdlContext);
 /// Make `sdlContext` on `sdlWindow` current through SDL again (both null: none). `changedBehindSdl`: another GL library (our own
 /// X11 / Win32 backend) changed the current context without SDL knowing; SDL skips a MakeCurrent that matches what it believes is
 /// current, so this first clears SDL's record.
 void SdlRestoreGL(void* sdlWindow, void* sdlContext, bool changedBehindSdl);
+#else
+// -DOKAY_WITH_SDL=OFF: SDL has no context to remember or give back.
+inline void SdlCurrentGL(void*& sdlWindow, void*& sdlContext) { sdlWindow = nullptr; sdlContext = nullptr; }
+inline void SdlRestoreGL(void*, void*, bool) {}
+#endif
 
 } // namespace okay::editorplat

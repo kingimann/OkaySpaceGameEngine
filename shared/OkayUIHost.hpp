@@ -17,10 +17,14 @@
 
 // SDL.h on Windows renames every `main` to SDL_main (which breaks members such as Camera::main in the engine headers):
 // the apps run their own entry point, so keep that rename off wherever this header is the first to include SDL.
+// A build with -DOKAY_WITH_SDL=OFF has no SDL: the SDL feed (Feed, KeyIdOf) is left out and hosts use the plain Add* calls
+// (shared/OkayUIHostPlatform.hpp).
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 #ifndef SDL_MAIN_HANDLED
 #  define SDL_MAIN_HANDLED
 #endif
 #include <SDL.h>
+#endif
 
 #include <cstring>
 
@@ -29,6 +33,7 @@ namespace okayuihost {
 /// Collects what OkayUI needs from SDL events between two frames.
 class InputCollector {
 public:
+#ifdef OKAY_PLATFORM_HAVE_SDL2
     /// Feed every SDL event (the host may also pass it to ImGui; the collector never consumes events).
     void Feed(const SDL_Event& e) {
         switch (e.type) {
@@ -51,6 +56,7 @@ public:
         default: break;
         }
     }
+#endif // OKAY_PLATFORM_HAVE_SDL2
 
     // ---- The same input without SDL (an okay::platform host feeds these: OkayUIHostPlatform.hpp) ----
     /// Typed text (UTF-8). A full buffer drops the rest.
@@ -120,6 +126,7 @@ public:
         return in;
     }
 
+#ifdef OKAY_PLATFORM_HAVE_SDL2
     /// The OkayUI key a SDL keycode stands for (KeyId_None for the keys OkayUI does not name).
     static int KeyIdOf(SDL_Keycode k) {
         using namespace OkayUI;
@@ -139,6 +146,7 @@ public:
         default: return KeyId_None;
         }
     }
+#endif // OKAY_PLATFORM_HAVE_SDL2
 
 private:
     bool  m_up = false, m_down = false, m_copy = false, m_cut = false, m_paste = false, m_ctrl = false;

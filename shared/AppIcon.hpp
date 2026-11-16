@@ -1,5 +1,10 @@
 #pragma once
+#ifdef OKAY_PLATFORM_HAVE_SDL2   // SetAppIcon(SDL_Window*) only; a build with -DOKAY_WITH_SDL=OFF has SetAppIconOn alone
+#ifndef SDL_MAIN_HANDLED
+#define SDL_MAIN_HANDLED
+#endif
 #include <SDL.h>
+#endif
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -89,6 +94,7 @@ inline std::vector<std::uint32_t> AppIconPixels(int& n) {
     return px;
 }
 
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 inline void SetAppIcon(SDL_Window* window) {
     int N = 0;
     std::vector<std::uint32_t> px = AppIconPixels(N);
@@ -99,6 +105,7 @@ inline void SetAppIcon(SDL_Window* window) {
         SDL_FreeSurface(surf);
     }
 }
+#endif // OKAY_PLATFORM_HAVE_SDL2
 
 // The same logo on any okay::platform::Window (Window::SetIcon takes R, G, B, A bytes): no SDL. A template so this header
 // does not need the platform header. False when the window cannot take an icon.

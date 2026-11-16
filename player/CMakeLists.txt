@@ -22,24 +22,29 @@ if(EMSCRIPTEN)
     return()
 endif()
 
-find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND)
-    message(WARNING "okay-player needs SDL2 dev libraries; skipping.")
-    return()
+# -DOKAY_WITH_SDL=OFF: no SDL2 at all; the player runs on our own platform backend (shared/SdlDisplays.cpp is left out).
+set(OKAY_PLAYER_SDL_LIB "")
+set(_okay_player_srcs main.cpp)
+if(OKAY_WITH_SDL)
+    find_package(SDL2 QUIET)
+    if(NOT SDL2_FOUND)
+        message(WARNING "okay-player needs SDL2 dev libraries; skipping.")
+        return()
+    endif()
+    # SDL2 link target. With -DOKAY_EDITOR_STATIC_SDL=ON, link SDL2 statically so
+    # the player ships as a single self-contained .exe (no SDL2.dll alongside).
+    if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
+        set(OKAY_PLAYER_SDL_LIB SDL2::SDL2-static)
+    elseif(TARGET SDL2::SDL2)
+        set(OKAY_PLAYER_SDL_LIB SDL2::SDL2)
+    else()
+        set(OKAY_PLAYER_SDL_LIB ${SDL2_LIBRARIES})
+    endif()
+    # Note: we use SDL_MAIN_HANDLED and our own main(), so SDL2main is not linked.
+    list(APPEND _okay_player_srcs ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)
 endif()
 
-# SDL2 link target. With -DOKAY_EDITOR_STATIC_SDL=ON, link SDL2 statically so
-# the player ships as a single self-contained .exe (no SDL2.dll alongside).
-if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
-    set(OKAY_PLAYER_SDL_LIB SDL2::SDL2-static)
-elseif(TARGET SDL2::SDL2)
-    set(OKAY_PLAYER_SDL_LIB SDL2::SDL2)
-else()
-    set(OKAY_PLAYER_SDL_LIB ${SDL2_LIBRARIES})
-endif()
-# Note: we use SDL_MAIN_HANDLED and our own main(), so SDL2main is not linked.
-
-add_executable(okay-player main.cpp ${CMAKE_SOURCE_DIR}/shared/SdlDisplays.cpp)
+add_executable(okay-player ${_okay_player_srcs})
 target_link_libraries(okay-player PRIVATE okay::engine ${OKAY_PLAYER_SDL_LIB})
 okay_win_version(okay-player "OkaySpace Player" "OkaySpacePlayer.exe")
 target_include_directories(okay-player PRIVATE ${SDL2_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/shared)

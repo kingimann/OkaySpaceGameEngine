@@ -47,10 +47,12 @@
 #include <unordered_set>
 #include <vector>
 
+#ifdef OKAY_PLATFORM_HAVE_SDL2   // not in a build with -DOKAY_WITH_SDL=OFF (the editor then runs on okay::platform only)
 #ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
 #endif
 #include <SDL.h>
+#endif
 #include "imgui.h"
 #include "imgui_internal.h"
 

@@ -2,9 +2,11 @@
 // The keys Play feeds into the game. The editor and the editor Play test both
 // use this, so a test that fills a keyboard state exercises the same mapping
 // the window uses (SDL scancodes -> the letters scripts read).
+// SDL's scancodes only: a build with -DOKAY_WITH_SDL=OFF has none of this (its Play reads okay::platform's keys).
 #include "okay/Input/Input.hpp"
-#include <SDL.h>
 #include <vector>
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+#include <SDL.h>
 
 namespace okay::editor {
 
@@ -38,3 +40,4 @@ inline void CollectEditorPlayKeys(std::vector<char>& down, const Uint8* ks, int 
 }
 
 } // namespace okay::editor
+#endif // OKAY_PLATFORM_HAVE_SDL2

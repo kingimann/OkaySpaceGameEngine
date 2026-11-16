@@ -27,6 +27,10 @@ namespace okay::editorplat {
 namespace plat = okay::platform;
 
 PlatformKind ParsePlatform(const char* value) {
+#ifndef OKAY_PLATFORM_HAVE_SDL2
+    (void)value;
+    return PlatformKind::Own;   // -DOKAY_WITH_SDL=OFF: our own platform side is the only one
+#endif
     return value && std::strcmp(value, "own") == 0 ? PlatformKind::Own : PlatformKind::Sdl;
 }
 
@@ -207,6 +211,10 @@ std::unique_ptr<EditorPlatform> CreateEditorPlatformFromEnv(std::string* note) {
     std::string why;
     if (want == PlatformKind::Own) p = CreateOwnEditorPlatform(&why);
     if (!p) p = CreateSdlEditorPlatform();
+    if (!p) {   // -DOKAY_WITH_SDL=OFF and our own side could not start: nothing to fall back on
+        if (note) *note = "editor: no platform side (" + why + "; this build has no SDL)";
+        return p;
+    }
     if (note) {
         *note = "editor: platform " + p->Describe();
         if (want == PlatformKind::Own && p->Kind() != PlatformKind::Own) *note += " (OKAY_EDITOR_PLATFORM=own could not start: " + why + ")";

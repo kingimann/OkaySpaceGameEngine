@@ -136,15 +136,4 @@ std::unique_ptr<Painter> CreateSdl2SurfacePainter(int w, int h) {
 
 } // namespace okay::platform
 
-#else // no SDL2: the sdl2 painter does not exist
-
-namespace okay::platform {
-std::unique_ptr<Painter> CreateSdl2Painter(Window&, const PainterDesc&, std::string* err) {
-    if (err) *err = "this build has no SDL2";
-    return nullptr;
-}
-std::unique_ptr<Painter> WrapSdl2Renderer(void*) { return nullptr; }
-std::unique_ptr<Painter> CreateSdl2SurfacePainter(int, int) { return nullptr; }
-} // namespace okay::platform
-
-#endif
+#endif // OKAY_PLATFORM_HAVE_SDL2 (without it the three factories are stubs in Painter.cpp)

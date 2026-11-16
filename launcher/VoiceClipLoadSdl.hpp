@@ -5,8 +5,11 @@
 //   OKAY_OWN_WAV=1 (or the OKAY_OWN_WAV CMake option): our own decoder, launcher/VoiceClipLoad.hpp.
 // The switch is okay::wav::OwnWavEnabled(), the same one AudioClip::LoadWAV and shared/WavPlayback.hpp read.
 // Include <SDL.h> first. Tested by tests/test_launcher_wav_window.cpp (both paths).
+// A build with -DOKAY_WITH_SDL=OFF has no SDL path: LoadVoiceClip is our own decoder only.
 #include "VoiceClipLoad.hpp"
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 #include "WavPlayback.hpp"   // shared/: okay::wav::LoadWavForSdl, the only place that calls SDL_LoadWAV
+#endif
 
 #include <algorithm>
 #include <cstdint>
@@ -17,6 +20,7 @@
 namespace okay {
 namespace launcher {
 
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 /// The SDL path: SDL_LoadWAV (via okay::wav::LoadWavForSdl) and the launcher's conversion to native 16-bit for any
 /// layout the device cannot take (8-bit, 24/32-bit integer, big-endian). Float32 and native 16-bit are kept as they are.
 /// Note that LoadWavForSdl itself follows OKAY_OWN_WAV; call this through LoadVoiceClip unless a test wants it directly.
@@ -65,6 +69,12 @@ inline bool LoadVoiceClipSdl(const std::string& path, wav::PlaybackClip& out, st
 inline bool LoadVoiceClip(const std::string& path, wav::PlaybackClip& out, std::string* error = nullptr) {
     return wav::OwnWavEnabled() ? LoadVoiceClipFile(path, out, error) : LoadVoiceClipSdl(path, out, error);
 }
+#else
+/// No SDL in this build: our own decoder (launcher/VoiceClipLoad.hpp), whatever OKAY_OWN_WAV says.
+inline bool LoadVoiceClip(const std::string& path, wav::PlaybackClip& out, std::string* error = nullptr) {
+    return LoadVoiceClipFile(path, out, error);
+}
+#endif
 
 } // namespace launcher
 } // namespace okay

@@ -22,7 +22,12 @@ namespace okay::launchergfx {
 namespace plat = okay::platform;
 
 RendererKind ParseRenderer(const char* v) {
+#ifndef OKAY_PLATFORM_HAVE_SDL2
+    (void)v;
+    return RendererKind::Own;   // -DOKAY_WITH_SDL=OFF: our own renderer is the only one
+#else
     return v && std::strcmp(v, "own") == 0 ? RendererKind::Own : RendererKind::Sdl;
+#endif
 }
 
 const char* RendererName(RendererKind k) { return k == RendererKind::Own ? "own" : "sdl"; }

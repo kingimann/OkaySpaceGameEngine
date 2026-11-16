@@ -581,7 +581,10 @@ okay_add_platform_library()
 target_link_libraries(okay_engine PUBLIC okay_platform)
 # okay::platform::Painter (the 2D drawing surface of a window): the shared part and the sdl2 implementation.
 # The software implementation lives in okayui/soft (okay_ui_soft). Own code, not ready, off by default.
-target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/SdlPainter.cpp src/Platform/GlPainter.cpp)   # GlPainter: own OpenGL painter (no GL link: entry points come from the backend)
+target_sources(okay_engine PRIVATE src/Platform/Painter.cpp src/Platform/GlPainter.cpp)   # GlPainter: own OpenGL painter (no GL link: entry points come from the backend)
+if(OKAY_WITH_SDL OR EMSCRIPTEN)
+    target_sources(okay_engine PRIVATE src/Platform/SdlPainter.cpp)   # the sdl2 painter (SDL_Renderer); left out with OKAY_WITH_SDL=OFF
+endif()
 if(OKAY_PLATFORM_SDL_INCLUDES)
     target_include_directories(okay_engine PRIVATE ${OKAY_PLATFORM_SDL_INCLUDES})
 endif()

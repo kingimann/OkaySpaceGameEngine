@@ -3,18 +3,22 @@
 # -DOKAY_BUILD_LAUNCHER=ON.
 include(FetchContent)
 
-find_package(SDL2 QUIET)
-if(NOT SDL2_FOUND)
-    message(WARNING "okayspace-launcher needs SDL2 dev libraries; skipping.")
-    return()
-endif()
-
-if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
-    set(OKAY_LAUNCHER_SDL SDL2::SDL2-static)
-elseif(TARGET SDL2::SDL2)
-    set(OKAY_LAUNCHER_SDL SDL2::SDL2)
-else()
-    set(OKAY_LAUNCHER_SDL ${SDL2_LIBRARIES})
+# -DOKAY_WITH_SDL=OFF: no SDL2 at all. The launcher then draws with its own renderer on our own platform backend
+# (OKAY_LAUNCHER_RENDERER=own is the only one), Dear ImGui's SDL backends and LauncherGfxSdl.cpp are left out.
+set(OKAY_LAUNCHER_SDL "")
+if(OKAY_WITH_SDL)
+    find_package(SDL2 QUIET)
+    if(NOT SDL2_FOUND)
+        message(WARNING "okayspace-launcher needs SDL2 dev libraries; skipping.")
+        return()
+    endif()
+    if(OKAY_EDITOR_STATIC_SDL AND TARGET SDL2::SDL2-static)
+        set(OKAY_LAUNCHER_SDL SDL2::SDL2-static)
+    elseif(TARGET SDL2::SDL2)
+        set(OKAY_LAUNCHER_SDL SDL2::SDL2)
+    else()
+        set(OKAY_LAUNCHER_SDL ${SDL2_LIBRARIES})
+    endif()
 endif()
 
 # Reuse the same pinned Dear ImGui (docking) commit as the editor. FetchContent
@@ -29,13 +33,16 @@ FetchContent_MakeAvailable(imgui)
 # A launcher-local ImGui lib (distinct target name from the editor's okay_imgui
 # so both can build in one configure).
 if(NOT TARGET launcher_imgui)
-    add_library(launcher_imgui STATIC
+    set(_okay_launcher_imgui_srcs
         ${imgui_SOURCE_DIR}/imgui.cpp
         ${imgui_SOURCE_DIR}/imgui_draw.cpp
         ${imgui_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+    if(OKAY_WITH_SDL)   # Dear ImGui's own SDL2 backends: only the sdl renderer uses them
+        list(APPEND _okay_launcher_imgui_srcs ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
+                                              ${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer2.cpp)
+    endif()
+    add_library(launcher_imgui STATIC ${_okay_launcher_imgui_srcs})
     target_include_directories(launcher_imgui SYSTEM PUBLIC
         ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
     target_link_libraries(launcher_imgui PUBLIC ${OKAY_LAUNCHER_SDL})
@@ -51,13 +58,15 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     VersionsUI.cpp        # the page itself
     LauncherThreads.cpp   # threads, mutexes and atomics over our own CoreThreads (no SDL; tested by core_threads)
     LauncherGfx.cpp       # the drawing seam: OKAY_LAUNCHER_RENDERER=own (window via okay::platform, our GL painter, our ImGui backends)
-    LauncherGfxSdl.cpp    # the drawing seam's sdl side: SDL_Renderer + ImGui's SDL2 backends (the default)
     ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnRenderer.cpp                   # our own ImGui renderer on an okay::platform::Painter (shared with the editor; tested by launcher_imgui_renderer)
     ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp                   # our own ImGui platform glue over okay::platform (shared with the editor)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                         # file picker (chat attachments): system dialogs or the built-in browser
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Net/ServerQuery.cpp                # server browser queries (+ LAN scan)
     ${CMAKE_SOURCE_DIR}/engine/src/Net/UdpSocket.cpp)
+if(OKAY_WITH_SDL)
+    list(APPEND OKAY_LAUNCHER_SOURCES LauncherGfxSdl.cpp)   # the drawing seam's sdl side: SDL_Renderer + ImGui's SDL2 backends (the default)
+endif()
 if(WIN32)
     enable_language(RC)
     list(APPEND OKAY_LAUNCHER_SOURCES okayspace.rc)

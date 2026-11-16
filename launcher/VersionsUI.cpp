@@ -2,7 +2,6 @@
 // page and runs its two background jobs on SDL threads (the launcher does not use std::thread / std::mutex: see main.cpp).
 #include "VersionsUI.hpp"
 
-#include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "LauncherThreads.hpp"   // threads and mutexes: our own, in place of SDL's
 
@@ -82,13 +81,13 @@ struct State {
     std::unique_ptr<IndexJob> indexJob;
     Index index;
     bool haveIndex = false;
-    Uint32 indexAt = 0;
+    std::uint32_t indexAt = 0;
     std::string requested;                              // --versions <version> (normalized)
     std::string highlight;                              // the row to point at
     bool pageRequested = false, scrollToHighlight = false;
     std::vector<Installed> installed;
     std::vector<std::string> installedVersions;
-    Uint32 installedAt = 0;
+    std::uint32_t installedAt = 0;
     bool installedDirty = true;
     std::uint64_t usage = 0;
     std::unique_ptr<InstallJob> job;

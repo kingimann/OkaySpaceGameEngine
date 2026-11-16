@@ -14,7 +14,6 @@
 // from the server's invite code, so the relay only ever sees ciphertext.
 // No echo cancellation: headphones are recommended.
 #pragma once
-#include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
 #include "LauncherThreads.hpp"          // threads, mutexes and atomics: our own, in place of SDL's
 #include "okay/Crypto/Sha256.hpp"     // SHA-256 for the room key (the engine's one copy)
@@ -242,7 +241,7 @@ public:
     int StateNow() const { return m_state; }
     std::string Error() const { Guard g(m_mx); return m_error; }   // a copy: the net thread rewrites it
     const std::string& Room() const { return m_room; }
-    Uint32 ConnectedSince() const { return m_since; }
+    std::uint32_t ConnectedSince() const { return m_since; }
     void SetMuted(bool m) { m_muted = m; }
     void SetDeafened(bool d) { m_deaf = d; }
     bool Muted() const { return m_muted; }
@@ -259,7 +258,7 @@ public:
         std::vector<PeerView> out;
         if (!m_mx) return out;
         okay::lt::LockMutex(m_mx);
-        const Uint32 now = okay::platform::TicksMs32();
+        const std::uint32_t now = okay::platform::TicksMs32();
         for (auto& [slot, p] : m_peers) {
             if (now - p.lastHeard > 5000) continue;
             PeerView v; v.slot = slot; v.uid = p.uid; v.name = p.name.empty() ? "Connecting\xE2\x80\xA6" : p.name;
@@ -279,7 +278,7 @@ private:
     void Fail(const std::string& e) { Guard g(m_mx); m_error = e; m_state = Failed; }   // the text is visible before the state flips
     struct Peer {
         std::string uid, name; bool muted = false, deaf = false;
-        Uint32 lastHeard = 0, lastVoice = 0;
+        std::uint32_t lastHeard = 0, lastVoice = 0;
         AdpcmState dec; std::uint32_t lastSeq = 0;
         std::deque<std::array<std::int16_t, kFrame>> jitter; bool primed = false; int readPos = 0;
         std::uint32_t sid = 0;
@@ -290,7 +289,7 @@ private:
     static void Put32(std::vector<std::uint8_t>& v, std::uint32_t x) { for (int i = 0; i < 4; ++i) v.push_back((std::uint8_t)(x >> (i * 8))); }
     static std::uint32_t Get32(const std::uint8_t* p) { return (std::uint32_t)p[0] | (std::uint32_t)p[1] << 8 | (std::uint32_t)p[2] << 16 | (std::uint32_t)p[3] << 24; }
 
-    static void CaptureCb(void* ud, Uint8* stream, int len) {
+    static void CaptureCb(void* ud, std::uint8_t* stream, int len) {
         Session* s = (Session*)ud;
         const std::int16_t* smp = (const std::int16_t*)stream;
         const int n = len / 2;
@@ -308,7 +307,7 @@ private:
         }
         okay::lt::UnlockMutex(s->m_mx);
     }
-    static void PlayCb(void* ud, Uint8* stream, int len) {
+    static void PlayCb(void* ud, std::uint8_t* stream, int len) {
         Session* s = (Session*)ud;
         std::int16_t* out = (std::int16_t*)stream;
         const int n = len / 2;
@@ -357,7 +356,7 @@ private:
         // I'm the hub: send to every member I've heard from.
         std::vector<std::uint32_t> dests;
         okay::lt::LockMutex(m_mx);
-        const Uint32 now = okay::platform::TicksMs32();
+        const std::uint32_t now = okay::platform::TicksMs32();
         for (auto& [slot, p] : m_peers) if (now - p.lastHeard < 5000) dests.push_back(slot);
         okay::lt::UnlockMutex(m_mx);
         for (std::uint32_t d : dests) SendTo(d, kind, m_mySlot, body);
@@ -398,7 +397,7 @@ private:
         if (amHub && src != m_mySlot) {   // relay it to everyone else in the room
             std::vector<std::uint32_t> dests;
             okay::lt::LockMutex(m_mx);
-            const Uint32 now = okay::platform::TicksMs32();
+            const std::uint32_t now = okay::platform::TicksMs32();
             m_peers[src].lastHeard = now;
             for (auto& [slot, p] : m_peers) if (slot != src && now - p.lastHeard < 5000) dests.push_back(slot);
             okay::lt::UnlockMutex(m_mx);
@@ -440,10 +439,10 @@ private:
     static int NetThread(void* ud) {
         Session* s = (Session*)ud;
         std::vector<std::uint8_t> buf(2048);
-        Uint32 nextHello = 0, nextInfo = 0, lastWelcome = 0, voiceUntil = 0;
+        std::uint32_t nextHello = 0, nextInfo = 0, lastWelcome = 0, voiceUntil = 0;
         AdpcmState enc;
         while (s->m_run) {
-            const Uint32 now = okay::platform::TicksMs32();
+            const std::uint32_t now = okay::platform::TicksMs32();
             if (now >= nextHello) { s->SendHello(); nextHello = now + 1000; }
             int n;
             while ((n = s->m_udp.Recv(buf.data(), buf.size())) > 0) {
@@ -518,8 +517,8 @@ private:
     std::uint32_t m_sid = 0, m_seq = 0;
     std::atomic<std::uint32_t> m_mySlot{0}, m_hubSlot{0};
     std::atomic<int> m_state{Idle};   // (m_error changes with it, under m_mx)
-    std::atomic<Uint32> m_since{0};
-    Uint32 m_startTicks = okay::platform::TicksMs32();
+    std::atomic<std::uint32_t> m_since{0};
+    std::uint32_t m_startTicks = okay::platform::TicksMs32();
     std::atomic<bool> m_muted{false}, m_deaf{false}, m_selfSpeaking{false};
     std::atomic<float> m_selfLevel{0.0f}, m_gateDb{-46.0f};
     int m_badKey = 0;
@@ -564,7 +563,7 @@ public:
     float Db() const { return m_db; }
     void SetGain(float g) { m_gain = g; }
 private:
-    static void Cb(void* ud, Uint8* stream, int len) {
+    static void Cb(void* ud, std::uint8_t* stream, int len) {
         MicTest* t = (MicTest*)ud;
         std::int16_t* smp = (std::int16_t*)stream;
         const int n = len / 2;

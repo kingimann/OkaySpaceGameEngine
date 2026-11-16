@@ -68,3 +68,16 @@ ui2d::Tex Painter::UploadAtlas(const okay::Image& page, int pageIndex, ui2d::Tex
 }
 
 } // namespace okay::platform
+
+#ifndef OKAY_PLATFORM_HAVE_SDL2
+// No SDL2 in this build (SDL2 not installed, or -DOKAY_WITH_SDL=OFF, which also leaves SdlPainter.cpp out): the sdl2 painter
+// does not exist, and its three factories say so.
+namespace okay::platform {
+std::unique_ptr<Painter> CreateSdl2Painter(Window&, const PainterDesc&, std::string* err) {
+    if (err) *err = "this build has no SDL2";
+    return nullptr;
+}
+std::unique_ptr<Painter> WrapSdl2Renderer(void*) { return nullptr; }
+std::unique_ptr<Painter> CreateSdl2SurfacePainter(int, int) { return nullptr; }
+} // namespace okay::platform
+#endif

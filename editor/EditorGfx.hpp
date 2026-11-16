@@ -113,7 +113,15 @@ public:
 /// The sdl implementation (EditorGfxSdl.cpp): SDL_Renderer on `sdlWindow` (an SDL_Window*), made exactly as main.cpp made it:
 /// on Windows the "direct3d11" driver unless OKAY_RENDER_DRIVER names another, then any accelerated driver, then any; vsync as
 /// asked. Null (and `err`) when SDL cannot make a renderer.
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 std::unique_ptr<EditorGfx> CreateSdlEditorGfx(void* sdlWindow, bool vsync, std::string* err = nullptr);
+#else
+/// -DOKAY_WITH_SDL=OFF: EditorGfxSdl.cpp is not built; there is no sdl renderer.
+inline std::unique_ptr<EditorGfx> CreateSdlEditorGfx(void*, bool, std::string* err = nullptr) {
+    if (err) *err = "this build has no SDL (OKAY_WITH_SDL=OFF)";
+    return nullptr;
+}
+#endif
 /// The own implementation (EditorGfx.cpp): our GL painter on `w` (made by `b`, with WindowDesc::opengl). Null (and `err`) when
 /// the window cannot carry a GL context.
 std::unique_ptr<EditorGfx> CreateOwnEditorGfx(okay::platform::Window& w, okay::platform::Backend& b, bool vsync,

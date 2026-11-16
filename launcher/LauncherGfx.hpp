@@ -25,6 +25,7 @@ namespace okay::launchergfx {
 enum class RendererKind { Sdl, Own };
 
 /// What OKAY_LAUNCHER_RENDERER asks for: "own" = Own; unset, empty, "sdl" or anything else = Sdl.
+/// A build with -DOKAY_WITH_SDL=OFF has no sdl renderer: always Own.
 RendererKind ParseRenderer(const char* value);
 const char* RendererName(RendererKind k);   // "sdl" / "own"
 
@@ -85,7 +86,15 @@ public:
 /// The sdl implementation (LauncherGfxSdl.cpp). Null (and `err`) when SDL cannot make the window or the renderer.
 /// Call it again for a second window (the chat's): each Gfx has its own window, renderer and ImGui backends (hook them up
 /// with that window's ImGui context current).
+#ifdef OKAY_PLATFORM_HAVE_SDL2
 std::unique_ptr<Gfx> CreateSdlGfx(const WindowSpec& spec, std::string* err = nullptr);
+#else
+/// -DOKAY_WITH_SDL=OFF: LauncherGfxSdl.cpp is not built; there is no sdl implementation to make.
+inline std::unique_ptr<Gfx> CreateSdlGfx(const WindowSpec&, std::string* err = nullptr) {
+    if (err) *err = "this build has no SDL (OKAY_WITH_SDL=OFF)";
+    return nullptr;
+}
+#endif
 /// The own implementation. Null (and `err`) when okay::platform has no backend, no window or no painter for it.
 /// A second call makes a second window with its own GL context and painter (textures are not shared between them: each
 /// painter uploads its own), from the same okay::platform backend, so its events come through the first one's PollEvent.

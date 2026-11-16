@@ -21,7 +21,12 @@ namespace okay::editorgfx {
 namespace plat = okay::platform;
 
 RendererKind ParseRenderer(const char* value) {
+#ifndef OKAY_PLATFORM_HAVE_SDL2
+    (void)value;
+    return RendererKind::Own;   // -DOKAY_WITH_SDL=OFF: our own renderer is the only one
+#else
     return value && std::strcmp(value, "own") == 0 ? RendererKind::Own : RendererKind::Sdl;
+#endif
 }
 
 const char* RendererName(RendererKind k) { return k == RendererKind::Own ? "own" : "sdl"; }

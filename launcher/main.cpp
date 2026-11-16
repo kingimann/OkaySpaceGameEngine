@@ -527,6 +527,33 @@ static void SeedDemoDownloads() {
     SDL_UnlockMutex(g_dlMutex);
 }
 
+// For a downloads page that draws without holding the lock (the OkayUI Downloads page): each download's numbers copied under
+// g_dlMutex, and the page's requests run under it. The same SDL mutex and thread handles as the rest of the download manager
+// (the launcher's worker threads are SDL threads: MinGW has no std::thread).
+struct DlView { int id; std::string title, dest; long long received, total; int status; };
+static std::vector<DlView> DlSnapshot() {
+    std::vector<DlView> out;
+    if (!g_dlMutex) return out;
+    SDL_LockMutex(g_dlMutex);
+    for (const auto& d : g_dls) out.push_back({d->id, d->title, d->dest, d->received, d->total, d->status});
+    SDL_UnlockMutex(g_dlMutex);
+    return out;
+}
+// Cancel download `cancelId`, remove finished download `removeId`, and with `clearFinished` remove every finished one (-1: none).
+// A removed download's worker thread is joined first, as the Dear ImGui page does.
+static void DlApply(int cancelId, int removeId, bool clearFinished) {
+    if (!g_dlMutex || (cancelId < 0 && removeId < 0 && !clearFinished)) return;
+    SDL_LockMutex(g_dlMutex);
+    for (auto it = g_dls.begin(); it != g_dls.end(); ) {
+        DlItem& d = **it;
+        if (d.id == cancelId) d.cancelReq = true;
+        const bool drop = (d.id == removeId && d.status >= 2) || (clearFinished && d.status >= 2);
+        if (drop) { if (d.th) SDL_WaitThread(d.th, nullptr); it = g_dls.erase(it); }
+        else ++it;
+    }
+    SDL_UnlockMutex(g_dlMutex);
+}
+
 long long FileSizeSafe(const std::string& p) {
     std::error_code ec; auto s = fs::file_size(p, ec); return ec ? 0 : (long long)s;
 }
@@ -4715,6 +4742,14 @@ static void OkayUIFrameBegin() {
     const bool keys = OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;   // an ImGui field being pressed or typed in keeps the keys
     OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0,
                                          (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys));
+}
+// A hosted screen's rectangle for this frame (ImGui's hover answer of this frame). OkayUIFrameBegin decided who owns the mouse
+// from last frame's rectangles; when the mouse is over this one now, OkayUI gets the mouse for the rest of the frame, so a click
+// in the same frame as the move onto the screen is not lost to ImGui.
+static void OkayUIOffer(float x, float y, float w, float h, bool hovered) {
+    g_okayRegion.Offer(x, y, w, h, hovered);
+    const OkayUI::Input& in = OkayUI::GetFrameInput();
+    if (OkayUI::IsInputBlocked() && g_okayRegion.OwnsThisFrame(in.mouseX, in.mouseY)) OkayUI::SetInputBlocked(false);
 }
 // ImGui must not treat typing in a hosted OkayUI field as shortcuts or text for something else.
 static void OkayUIClaimKeyboard() {
@@ -19148,7 +19183,7 @@ int main(int argc, char** argv) {
                 ImGui::SetCursorScreenPos(wpos);
                 ImGui::InvisibleButton("##okayui_notifs", wsz);
                 ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-                g_okayRegion.Offer(wpos.x, wpos.y, wsz.x, wsz.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+                OkayUIOffer(wpos.x, wpos.y, wsz.x, wsz.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
                 const okayuiscreens::NotificationsResult nr = okayuiscreens::DrawNotifications(nm, ns, wpos.x, wpos.y, wsz.x, wsz.y);
                 ntFilter = ns.filter;
                 if (nr.markAllRead) { for (auto& n : g_notifs) n.read = true; g_notifFresh.clear(); }
@@ -20700,7 +20735,7 @@ int main(int argc, char** argv) {
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer (version, Docs, GitHub) stays below, pinned by ImGui
             ImGui::InvisibleButton("##okayui_whatsnew", ra);
             ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);   // the wheel scrolls the OkayUI page, not the ImGui window under it
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            OkayUIOffer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
             const okayuiscreens::WhatsNewResult wr = okayuiscreens::DrawWhatsNew(wn, rp.x, rp.y, ra.x, ra.y);
             if (wr.installNow) StartUpdateCheck(true);
             if (wr.restartNow) { if (EditorRunning()) g_afterEditor = 3; else { if (BeginUpdatedRestart()) running = false; } }
@@ -20812,7 +20847,7 @@ int main(int argc, char** argv) {
             ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
             ImGui::InvisibleButton("##okayui_tips", ra);
             ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            OkayUIOffer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
             okayuiscreens::DrawTips(tm, ts, rp.x, rp.y, ra.x, ra.y);
 #endif
         } else if (tab == 13) {                           // ---- Tips ----
@@ -23657,10 +23692,10 @@ int main(int argc, char** argv) {
             }
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();
-            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 46.0f, 8.0f);   // ends where the Dear ImGui page's list ends; the footer stays below
             ImGui::InvisibleButton("##okayui_achievements", ra);
             ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            OkayUIOffer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
             const okayuiscreens::AchievementsResult ar = okayuiscreens::DrawAchievements(am, as, rp.x, rp.y, ra.x, ra.y);
             if (ar.viewProfile)
                 OpenPublicProfile(account.IsLoggedIn() ? account.UserId() : std::string(),
@@ -27118,15 +27153,13 @@ int main(int argc, char** argv) {
             SeedDemoDownloads();
             const fs::path ddir = fs::path(g_exeDir) / "downloads";
             okayuiscreens::DownloadsModel dm;
-            SDL_LockMutex(g_dlMutex);   // one copy of the list and its numbers, under the downloads' lock
-            for (const auto& d : g_dls) dm.items.push_back({d->id, d->title, d->dest, d->received, d->total, d->status});
-            SDL_UnlockMutex(g_dlMutex);
+            for (const DlView& d : DlSnapshot()) dm.items.push_back({d.id, d.title, d.dest, d.received, d.total, d.status});
             const ImVec2 rp = ImGui::GetCursorScreenPos();
             ImVec2 ra = ImGui::GetContentRegionAvail();
-            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 46.0f, 8.0f);   // ends where the Dear ImGui page's list ends; the footer stays below
             ImGui::InvisibleButton("##okayui_downloads", ra);
             ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
-            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            OkayUIOffer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
             const okayuiscreens::DownloadsResult dr = okayuiscreens::DrawDownloads(dm, rp.x, rp.y, ra.x, ra.y);
             if (dr.openFolder) { std::error_code ec; fs::create_directories(ddir, ec); OpenExternal(ddir.string()); }
             if (dr.openItemFolderId >= 0) OpenExternal(ddir.string());
@@ -27138,17 +27171,7 @@ int main(int argc, char** argv) {
                     else Toast("Couldn't extract the archive", 2);
                 }
             }
-            if (dr.cancelId >= 0 || dr.removeId >= 0 || dr.clearFinished) {
-                SDL_LockMutex(g_dlMutex);
-                for (auto it = g_dls.begin(); it != g_dls.end(); ) {
-                    DlItem& d = **it;
-                    if (d.id == dr.cancelId) d.cancelReq = true;
-                    const bool drop = (d.id == dr.removeId && d.status >= 2) || (dr.clearFinished && d.status >= 2);
-                    if (drop) { if (d.th) SDL_WaitThread(d.th, nullptr); it = g_dls.erase(it); }
-                    else ++it;
-                }
-                SDL_UnlockMutex(g_dlMutex);
-            }
+            DlApply(dr.cancelId, dr.removeId, dr.clearFinished);
 #endif
         } else if (tab == 10) {                           // ---- Downloads ----
             uitiming::Scope uiT("Downloads", "Dear ImGui");
@@ -27223,7 +27246,12 @@ int main(int argc, char** argv) {
                 rec = d->received; tot = d->total; stt = d->status; title = d->title; dest = d->dest;
                 SDL_UnlockMutex(g_dlMutex);
                 ImGui::PushID(d->id);
-                ImGui::BeginChild("##dlrow", ImVec2(0, 80), true);
+                // Tall enough for its three lines (title; bar and status; buttons) and the box's padding (it was 80 px, which cut
+                // the buttons off and gave every row a scrollbar).
+                const ImGuiStyle& dst = ImGui::GetStyle();
+                const float dth = ImGui::GetTextLineHeight();
+                const float dlRowH = dst.WindowPadding.y * 2.0f + dth + dst.ItemSpacing.y + std::max(16.0f, dst.FramePadding.y + dth) + dst.ItemSpacing.y + dth;
+                ImGui::BeginChild("##dlrow", ImVec2(0, dlRowH), true);
                 HoverRing();
                 ImGui::TextUnformatted(title.c_str());
                 const char* stTxt = stt==0?"Queued":stt==1?"Downloading":stt==2?"Completed":stt==3?"Failed":"Canceled";

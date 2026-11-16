@@ -8,6 +8,7 @@
 #include <cmath>
 
 namespace okay::modeling::guided {
+void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, const std::function<void(const Recipe&, std::vector<GeneratedPart>&)>& boxy);   // GuidedHuman.cpp
 namespace {
 
 constexpr float kPi = 3.14159265f;
@@ -94,6 +95,17 @@ void GenerateBiped(const Recipe& r, std::vector<GeneratedPart>& parts) {
     o.Add("torso/0", "torso", ft, [&](const std::string& d) {
         if (d == "tapered") return shapes::ExtrudeAxes({0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {{-tw * 0.34f, hipY}, {tw * 0.34f, hipY}, {tw / 2, shoulderY}, {-tw / 2, shoulderY}}, td);
         if (d == "barrel") { Frame f = ft; f.sx = tw; f.sz = td; return shapes::Prism(f, 12); }
+        if (shapes::Detail() >= 2 && d != "power" && r.templateId == "robot") {   // panel bolts on the chest (High and up)
+            PolyMesh m = d == "tapered" ? shapes::ExtrudeAxes({0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {{-tw * 0.34f, hipY}, {tw * 0.34f, hipY}, {tw / 2, shoulderY}, {-tw / 2, shoulderY}}, td)
+                : d == "barrel" ? [&] { Frame g = ft; g.sx = tw; g.sz = td; return shapes::Prism(g, 12); }() : BoxAA({-tw / 2, hipY, -td / 2}, {tw / 2, shoulderY, td / 2});
+            const int nb = shapes::Detail() >= 3 ? 8 : 4;
+            for (int k = 0; k < nb; ++k) {
+                const float bx = (k % 2 ? 1.0f : -1.0f) * tw * 0.3f, by = hipY + torsoLen * (0.2f + 0.6f * (float)(k / 2) / std::max(1.0f, (float)(nb / 2 - 1)));
+                Frame bf; bf.origin = {bx, by, td / 2 - 0.005f}; bf.t = {1, 0, 0}; bf.u = {0, 0, 1}; bf.n = {0, -1, 0}; bf.sx = 0.03f; bf.sy = 0.02f; bf.sz = 0.03f;
+                shapes::Append(m, shapes::Prism(bf, 8));
+            }
+            return m;
+        }
         if (d == "power") { PolyMesh m = BoxAA({-tw / 2, hipY, -td / 2}, {tw / 2, shoulderY, td / 2}); shapes::Append(m, BoxAA({-tw * 0.16f, hipY + torsoLen * 0.45f, td / 2 - 0.01f}, {tw * 0.16f, hipY + torsoLen * 0.75f, td / 2 + 0.04f})); return m; }
         return BoxAA({-tw / 2, hipY, -td / 2}, {tw / 2, shoulderY, td / 2});
     });
@@ -449,6 +461,15 @@ void GenerateCreature(const Recipe& r, std::vector<GeneratedPart>& parts) {
     }
 }
 
+
+// The human: blocky below Medium (the deliberate low-poly end), organic from Medium up. Same part ids and designs at every level.
+void GenerateHuman(const Recipe& r, std::vector<GeneratedPart>& parts) {
+    if (shapes::DetailF() >= 0.999f) { GenerateHumanOrganic(r, parts, GenerateBiped); return; }
+    Recipe b = r;   // Low: the separate face parts are drawn as the old combined face
+    if (b.DesignFor("face", "face/0") == "none" && b.DesignFor("eyes", "eyes/0") != "none" && !b.DesignFor("eyes", "eyes/0").empty()) b.slotDesign["face"] = b.DesignFor("eyes", "eyes/0") == "big" ? "big" : "simple";
+    GenerateBiped(b, parts);
+}
+
 // ---- Template definitions ---------------------------------------------------------------------------------------
 struct B {
     Template t;
@@ -496,8 +517,14 @@ Template MakeHuman() {
     b.t.id = "human"; b.t.name = "Human"; b.t.category = "Characters"; b.t.version = 1;
     b.t.description = "A person: head, face, hair, torso, arms, hands, legs, feet, clothes and accessories, each a part you can change, with body proportion sliders.";
     BipedParams(b, 1.75, 0.46, 0.24, 0.23, 0.47, 0.045, 0.40, 0.06);
+    { ParamDef p; p.id = "bodyType"; p.label = "Body type"; p.kind = ParamDef::Kind::Choice; p.def = 0; p.min = 0; p.max = 2; p.group = "Proportions"; p.tip = "Neutral, male or female build (shoulders, waist, hips, chest)."; p.choices = {"Neutral", "Male", "Female"}; b.t.params.push_back(p); }
     b.S("head", "Head", {{"round", "Round"}, {"oval", "Oval"}, {"box", "Square"}, {"pointed", "Pointed"}}, kSkin, 0);
     b.S("face", "Face", {{"simple", "Eyes and nose"}, {"big", "Big eyes"}, {"none", "None"}}, kBlack, 1);
+    b.S("eyes", "Eyes", {{"none", "None"}, {"round", "Round"}, {"big", "Big"}, {"narrow", "Narrow"}}, kBlack, 11);
+    b.S("brows", "Eyebrows", {{"none", "None"}, {"soft", "Soft"}, {"thick", "Thick"}, {"angular", "Angular"}}, kBrown, 12);
+    b.S("nose", "Nose", {{"none", "None"}, {"straight", "Straight"}, {"button", "Button"}, {"long", "Long"}, {"flat", "Flat"}}, kSkin, 13);
+    b.S("mouth", "Mouth", {{"none", "None"}, {"smile", "Smile"}, {"neutral", "Neutral"}, {"small", "Small"}}, Color{0.7f, 0.3f, 0.3f, 1}, 14);
+    b.S("ears", "Ears", {{"none", "None"}, {"normal", "Normal"}, {"small", "Small"}, {"big", "Big"}}, kSkin, 15);
     b.S("hair", "Hair", {{"none", "Bald"}, {"short", "Short"}, {"long", "Long"}, {"mohawk", "Mohawk"}, {"bun", "Bun"}, {"spiky", "Spiky"}}, kBrown, 2);
     b.S("neck", "Neck", {{"round", "Round"}, {"thin", "Thin"}}, kSkin, 0);
     b.S("torso", "Torso", {{"box", "Box"}, {"tapered", "Tapered"}, {"barrel", "Barrel"}}, kSkin, 0);
@@ -533,7 +560,19 @@ Template MakeHuman() {
          {{"shirt", kTeal}, {"pants", kGrey}, {"hat", kOrange}, {"hair", kBlack}});
     b.St("dress", "Person in a dress", "A skirt, a bun and round glasses.", {{"shoulderWidth", 0.4}, {"torsoDepth", 0.2}, {"limbThickness", 0.038}}, {{"head", "round"}, {"hair", "bun"}, {"torso", "tapered"}, {"hand", "block"}, {"foot", "round"}, {"shirt", "tshirt"}, {"pants", "skirt"}, {"glasses", "round"}, {"belt", "belt"}},
          {{"shirt", kRed}, {"pants", kRed}, {"hair", kBrown}});
-    b.t.generate = GenerateBiped;
+    // Every start gets the separate face parts; the older combined face stays for recipes saved before them.
+    for (StartDesign& st : b.t.starts) {
+        const bool big = st.slotDesign.count("face") && st.slotDesign["face"] == "big";
+        st.slotDesign["face"] = "none";
+        st.slotDesign["eyes"] = big ? "big" : "round";
+        st.slotDesign["brows"] = st.id == "athletic" || st.id == "hero" ? "thick" : "soft";
+        st.slotDesign["nose"] = st.id == "child" ? "button" : "straight";
+        st.slotDesign["mouth"] = "smile";
+        st.slotDesign["ears"] = "normal";
+        st.colors["eyes"] = kBlack; st.colors["mouth"] = Color{0.7f, 0.3f, 0.3f, 1}; st.colors["brows"] = st.colors.count("hair") ? st.colors["hair"] : kBrown;
+        st.params["bodyType"] = st.id == "athletic" || st.id == "hero" || st.id == "heavy" ? 1 : st.id == "dress" || st.id == "casual" ? 2 : 0;
+    }
+    b.t.generate = GenerateHuman;
     return b.t;
 }
 

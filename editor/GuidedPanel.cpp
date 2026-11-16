@@ -136,10 +136,10 @@ bool SaveFiles(Host& h, MeshRenderer* mr, const gd::Recipe& r) {
     return true;
 }
 
-void SetMesh(MeshRenderer* mr, const PolyMesh& pm, int detail) {
+void SetMesh(MeshRenderer* mr, const PolyMesh& pm, float detail, bool smoothFromMedium) {
     mr->mesh = pm.ToMesh();
     mr->mesh.name = "";
-    if (detail >= 2) mr->mesh.ComputeAutoSmoothNormals(40.0f);   // High and Ultra are drawn smooth-shaded
+    if (detail >= (smoothFromMedium ? 0.9f : 1.5f)) mr->mesh.ComputeAutoSmoothNormals(40.0f);   // organic characters are smooth from Medium; other models from High
     mr->color = okay::Color{1, 1, 1, 1};   // faces carry their own colours
 }
 

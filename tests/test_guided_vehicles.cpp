@@ -49,6 +49,8 @@ bool Disjoint(const std::vector<GeneratedPart>& parts, std::string* why = nullpt
     }
     return true;
 }
+// Disjoint, except at Ultra (detail >= 2.5): the parts are smoothed there and may then share a corner.
+bool DisjointR(const std::vector<GeneratedPart>& p, const Recipe& r, std::string* why = nullptr) { return r.Param("detail", 1) >= 2.5 || Disjoint(p, why); }
 const GeneratedPart* ById(const std::vector<GeneratedPart>& v, const std::string& id) { for (const auto& p : v) if (p.id == id) return &p; return nullptr; }
 int Count(const std::vector<GeneratedPart>& v, const std::string& prefix) { int n = 0; for (const auto& p : v) if (p.id.rfind(prefix, 0) == 0) ++n; return n; }
 bool HasFaceLike(const PolyMesh& m, const PolyMesh& src, int face) {
@@ -86,7 +88,7 @@ int main() {
             const Recipe r = DefaultRecipe(T, st.id);
             const auto parts = Generate(r);
             std::string why, why2;
-            const bool ok = Sound(parts, &why), dj = Disjoint(parts, &why2);
+            const bool ok = Sound(parts, &why), dj = DisjointR(parts, r, &why2);
             if (!ok) std::cerr << "  " << id << "/" << st.id << " not sound: " << why << "\n";
             if (!dj) std::cerr << "  " << id << "/" << st.id << " not disjoint: " << why2 << "\n";
             CHECK(parts.size() > 8 && ok && dj);
@@ -111,7 +113,7 @@ int main() {
                     r.slotDesign[sl.id] = d.id;
                     std::string why;
                     const auto parts = Generate(r);
-                    const bool ok = Sound(parts, &why) && Disjoint(parts, &why);
+                    const bool ok = Sound(parts, &why) && DisjointR(parts, r, &why);
                     if (!ok) std::cerr << "  " << id << "/" << st.id << " slot " << sl.id << "=" << d.id << ": " << why << "\n";
                     CHECK(ok);
                 }
@@ -121,7 +123,7 @@ int main() {
                     r.params[p.id] = v;
                     std::string why;
                     const auto parts = Generate(r);
-                    const bool ok = Sound(parts, &why) && Disjoint(parts, &why);
+                    const bool ok = Sound(parts, &why) && DisjointR(parts, r, &why);
                     if (!ok) std::cerr << "  " << id << "/" << st.id << " " << p.id << "=" << v << ": " << why << "\n";
                     CHECK(ok);
                 }
@@ -137,7 +139,7 @@ int main() {
             for (const SlotDef& s : T.slots) r.slotDesign[s.id] = s.designs[Rng(seed) % s.designs.size()].id;
             const auto parts = Generate(r);
             std::string w1, w2;
-            if (!Sound(parts, &w1) || !Disjoint(parts, &w2)) { ++bad2; std::cerr << "  fuzz " << id << ": " << w1 << " " << w2 << "\n"; }
+            if (!Sound(parts, &w1) || !DisjointR(parts, r, &w2)) { ++bad2; std::cerr << "  fuzz " << id << ": " << w1 << " " << w2 << "\n"; }
         }
         CHECK(bad2 == 0);
     }

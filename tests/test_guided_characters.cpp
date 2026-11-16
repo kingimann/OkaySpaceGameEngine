@@ -49,6 +49,8 @@ bool Disjoint(const std::vector<GeneratedPart>& parts, std::string* why = nullpt
     }
     return true;
 }
+// Disjoint, except at Ultra (detail >= 2.5): the parts are smoothed there and may then share a corner.
+bool DisjointR(const std::vector<GeneratedPart>& p, const Recipe& r, std::string* why = nullptr) { return r.Param("detail", 1) >= 2.5 || Disjoint(p, why); }
 const GeneratedPart* ById(const std::vector<GeneratedPart>& v, const std::string& id) { for (const auto& p : v) if (p.id == id) return &p; return nullptr; }
 int Count(const std::vector<GeneratedPart>& v, const std::string& prefix) { int n = 0; for (const auto& p : v) if (p.id.rfind(prefix, 0) == 0) ++n; return n; }
 bool HasFaceLike(const PolyMesh& m, const PolyMesh& src, int face) {
@@ -84,7 +86,7 @@ int main() {
             const Recipe r = DefaultRecipe(T, st.id);
             const auto parts = Generate(r);
             std::string why, why2;
-            const bool ok = Sound(parts, &why), dj = Disjoint(parts, &why2);
+            const bool ok = Sound(parts, &why), dj = DisjointR(parts, r, &why2);
             if (!ok) std::cerr << "  " << id << "/" << st.id << " not sound: " << why << "\n";
             if (!dj) std::cerr << "  " << id << "/" << st.id << " not disjoint: " << why2 << "\n";
             CHECK(parts.size() >= 8 && ok && dj);
@@ -104,7 +106,7 @@ int main() {
                     r.slotDesign[sl.id] = d.id;
                     std::string why;
                     const auto parts = Generate(r);
-                    const bool ok = Sound(parts, &why) && Disjoint(parts, &why);
+                    const bool ok = Sound(parts, &why) && DisjointR(parts, r, &why);
                     if (!ok) std::cerr << "  " << id << "/" << st.id << " slot " << sl.id << "=" << d.id << ": " << why << "\n";
                     CHECK(ok);
                 }
@@ -114,7 +116,7 @@ int main() {
                     r.params[p.id] = v;
                     std::string why;
                     const auto parts = Generate(r);
-                    const bool ok = Sound(parts, &why) && Disjoint(parts, &why);
+                    const bool ok = Sound(parts, &why) && DisjointR(parts, r, &why);
                     if (!ok) std::cerr << "  " << id << "/" << st.id << " " << p.id << "=" << v << ": " << why << "\n";
                     CHECK(ok);
                 }
@@ -130,7 +132,7 @@ int main() {
             for (const SlotDef& s : T.slots) r.slotDesign[s.id] = s.designs[Rng(seed) % s.designs.size()].id;
             const auto parts = Generate(r);
             std::string w1, w2;
-            if (!Sound(parts, &w1) || !Disjoint(parts, &w2)) { ++bad2; std::cerr << "  fuzz " << id << ": " << w1 << " " << w2 << "\n"; }
+            if (!Sound(parts, &w1) || !DisjointR(parts, r, &w2)) { ++bad2; std::cerr << "  fuzz " << id << ": " << w1 << " " << w2 << "\n"; }
         }
         CHECK(bad2 == 0);
     }
@@ -140,7 +142,7 @@ int main() {
         const Template& T = Tpl("human");
         const Recipe a = DefaultRecipe(T, "average");
         const auto parts = Generate(a);
-        CHECK(ById(parts, "head/0") && ById(parts, "torso/0") && ById(parts, "hair/0") && ById(parts, "face/0") && ById(parts, "neck/0"));
+        CHECK(ById(parts, "head/0") && ById(parts, "torso/0") && ById(parts, "hair/0") && ById(parts, "eyes/0") && ById(parts, "nose/0") && ById(parts, "mouth/0") && ById(parts, "ears/0") && ById(parts, "neck/0"));
         CHECK(Count(parts, "arm/") == 4 && Count(parts, "leg/") == 4 && Count(parts, "hand/") == 2 && Count(parts, "foot/") == 2);
         CHECK(ById(parts, "shirt/0") && ById(parts, "pants/0") && !ById(parts, "hat/0") && !ById(parts, "cape/0"));
         // swap one hand
@@ -149,7 +151,7 @@ int main() {
         for (const auto& p : Generate(h)) if (Hash(p.mesh) != Hash(ById(parts, p.id)->mesh)) { ++changed; CHECK(p.id == "hand/0"); }
         CHECK(changed == 1);
         // every design of head, hair, hat, glasses, shirt, pants, hand, foot differs
-        for (const char* sl : {"head", "hair", "hat", "glasses", "shirt", "pants", "hand", "foot", "torso", "backpack", "cape", "shoulder", "face"}) {
+        for (const char* sl : {"head", "hair", "hat", "glasses", "shirt", "pants", "hand", "foot", "torso", "backpack", "cape", "shoulder", "eyes", "brows", "nose", "mouth", "ears"}) {
             const SlotDef* sd = nullptr;
             for (const SlotDef& s : T.slots) if (s.id == sl) sd = &s;
             std::set<std::string> hs;

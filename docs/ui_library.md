@@ -165,8 +165,8 @@ No third-party code, fonts, images or SDKs were added.
 
 ### Slice 2 tests
 
-`ui_library2` (every part's maths, pointer, keys, rules, round trips, Tab order, hot reload on a real temp file), `ui_library2_example`
-(loads and plays the shipped scene: presses its buttons, moves its slider, types in its box), `ui_library2_shots` (headless pictures
+`ui_library2` (295 checks: every part's maths, pointer, keys, rules, round trips, Tab order, hot reload on a real temp file), `ui_library2_example`
+(74 checks: loads and plays the shipped scene: clicks its buttons, moves its slider, types in its box), `ui_library2_shots` (19 checks: headless pictures
 and the link click on a recorded rectangle), plus the existing `ui_layer_table`, `save_coverage` and `property_registry`, which now
 list the new parts. Nothing in this slice was run on Windows or in a real window, and the editor was not built (the editor files were
 syntax-checked with `g++ -fsyntax-only`).
@@ -179,3 +179,7 @@ blips. The item card is placeable but not wired to the inventory's hover (the in
 does not write a Stat component or a networked SyncVar. Link clicks need the game to be drawing the text (they use the drawn
 rectangles) and were not tried in a real window or on a scaled canvas. Hot reload watches one file per component and no folders.
 Icons draw in the pixel font's cell size; with a TTF font the cell is the same size but the line's measured width ignores it.
+
+Found while testing the examples: `test_examples_work` fails any example scene without a main camera (Play would show nothing). The
+slice 1 example had none, so both builders now add one (`EnsureSceneCamera`) and `ui_library_1.okayscene` was written again. The same
+branch fix belongs on the slice 1 branch (`claude/ui-lib-1`).

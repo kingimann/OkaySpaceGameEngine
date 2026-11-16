@@ -815,11 +815,11 @@ Function DirLeave
   Call CheckFolder
   ${If} $FolderError != ""
     ${Log} "The folder page: $FolderError"
-    MessageBox MB_OK|MB_ICONEXCLAMATION "$FolderError$\r$\n$\r$\nChoose another folder. Nothing was changed."
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$FolderError$\r$\n$\r$\nChoose another folder. Nothing was changed." /SD IDOK
     Abort
   ${EndIf}
   ${If} $WarnText != ""
-    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$WarnText$\r$\n$\r$\nInstall here anyway?" IDYES ok
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$WarnText$\r$\n$\r$\nInstall here anyway?" /SD IDYES IDYES ok
     ${Log} "The person chose another folder after the warnings."
     Abort
     ok:
@@ -1849,7 +1849,7 @@ FunctionEnd
 Function un.OptionsLeave
   ${NSD_GetState} $UnCheck $R0
   ${If} $R0 == ${BST_CHECKED}
-    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "This will also delete your projects, settings, downloads, the official game and your sign-in from the OkaySpace folder.$\r$\n$\r$\nIt cannot be undone. Delete them?" IDYES yes
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "This will also delete your projects, settings, downloads, the official game and your sign-in from the OkaySpace folder.$\r$\n$\r$\nIt cannot be undone. Delete them?" /SD IDNO IDYES yes
     Abort
     yes:
     StrCpy $UnRemoveData "1"

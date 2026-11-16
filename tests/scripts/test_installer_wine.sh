@@ -381,6 +381,18 @@ sc_nofolder() {
   LOGTEXT="$(slog)"
   log_has "FAILED" "the log says it failed"
   log_has "Exit code 11" "the log has the exit code"
+  # A folder the person has no permission to write (needs a user that is not root: root writes anywhere).
+  if [ "$(id -u)" != 0 ]; then
+    reset
+    mkdir -p "$T/work/locked"; chmod 555 "$T/work/locked"
+    setup "$T/Setup-9.9.9.exe" /S "/D=$(wp "$T/work/locked/OkaySpace")"
+    expect_rc 11 "Setup refuses a folder it has no permission to write"
+    nothing_installed "$T/work/locked/OkaySpace" "no permission"
+    LOGTEXT="$(slog)"; printf '%s\n' "$LOGTEXT" | grep -q -E 'Setup cannot (make|write)'; check $? "the log says Setup cannot make or write the folder" "$(printf '%s\n' "$LOGTEXT" | tail -2 | tr '\n' ' ')"
+    chmod 755 "$T/work/locked"
+  else
+    echo "  skip a folder without permission (running as root, which can write anywhere)"
+  fi
   # A read-only disk (needs root to mount one; skipped without).
   mkdir -p "$T/ro"
   if mount -t tmpfs -o size=4m tmpfs "$T/ro" 2>/dev/null; then

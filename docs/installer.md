@@ -112,7 +112,9 @@ that is not a full path, a full disk (a small tmpfs, unmounted afterwards) befor
 off and on against a tree made by hand from the audit's file map (the "after use" tree), uninstall while programs run, odd folder names, an update over an
 install made by the older Setup, a tampered file list, a killed Setup, `/D=`, links, an `Uninstall.exe` in the wrong folder, a Setup run from an
 unzipped copy, and a folder of your own choice. It skips (77) without `makensis`; without wine, MinGW or
-`iconv` only the build and file-list checks run (the CI job `ticket-and-script-tests` runs those) and the result is still "skipped".
+`iconv` only the build and file-list checks run (the CI job `ticket-and-script-tests` runs those) and the result is still "skipped". The full disk and
+read-only disk checks mount a tmpfs, which needs root (skipped otherwise, with a line saying so); a folder without permission can only be tested when
+the test is not run as root (it is then, and root skips it).
 `OKAY_INSTALLER_NSI=<old copy>` runs it against another script; `OKAY_INSTALLER_VERBOSE=1` prints each run's exit code and log; `OKAY_INSTALLER_ONLY="fresh update"`
 runs some scenarios; `OKAY_INSTALLER_PREFIX=<dir>` reuses a wine prefix (about 700 MB; put `TMPDIR` on `/dev/shm` to keep it off the disk).
 

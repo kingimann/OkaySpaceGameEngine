@@ -471,7 +471,9 @@ inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c
 // launcher look it's the TrueType width at the 8-unit cell height (proportional).
 inline float fMeasure(const char* s) {
     if (g_ttf && s) {
-        if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f);
+        // Only text with a non-ASCII byte can need the fallback font (FallbackFont reads the text again only then).
+        for (const char* p = s; *p; ++p)
+            if ((unsigned char)*p >= 0x80) { if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f); break; }
         if (g_theme.snapAdvances && g_theme.textScale > 0.0f) {   // measured as drawText draws it: the picked size, whole-pixel steps
             const float px = fH() * g_theme.textScale;
             const fontatlas::Size& zp = g_ttf->Pick(px);
@@ -903,16 +905,38 @@ void fillCircleAA(float cx, float cy, float radius, const unsigned char c[4], in
     const SDL_Color sc = toColor(c);
     aaFill(p, nrm, segments, &sc, false);
 }
-// A filled rounded rectangle, anti-aliased: 24 rim points (6 per corner) from the corner table, which also gives their normals.
+// Rounded corners for the anti-aliased path: a quarter circle cut into as few steps as keep the curve within 0.3 px of the true
+// arc (the gap between a chord and its arc is r * (1 - cos(step / 2))), 1 to 8 steps. The unit points of each count are worked
+// out once; a corner of radius 6 takes 3 steps, 12 takes 4, 20 takes 5.
+struct AaCorners {
+    float rmax[9];          // the largest radius that `q` steps draw within the tolerance
+    float c[9][4][9], s[9][4][9];
+    AaCorners() {
+        const float PI = 3.14159265f;
+        const float a0[4] = { PI, 1.5f * PI, 0.0f, 0.5f * PI };
+        for (int q = 1; q <= 8; ++q) {
+            rmax[q] = 0.3f / (1.0f - std::cos(PI / (4.0f * q)));
+            for (int k = 0; k < 4; ++k)
+                for (int i = 0; i <= q; ++i) {
+                    const float a = a0[k] + (0.5f * PI) * (float)i / (float)q;
+                    c[q][k][i] = std::cos(a); s[q][k][i] = std::sin(a);
+                }
+        }
+    }
+    int Steps(float r) const { int q = 1; while (q < 8 && r > rmax[q]) ++q; return q; }
+};
+const AaCorners& aaCorners() { static const AaCorners T; return T; }
+// A filled rounded rectangle, anti-aliased: 4 * (steps + 1) rim points from the corner table, which also gives their normals.
 void rrectAA(float x, float y, float w, float h, float rad, const unsigned char c[4]) {
-    static const CornerTable& T = cornerTable();
+    const AaCorners& T = aaCorners();
+    const int q = T.Steps(rad);
     const float cx[4] = { x + rad, x + w - rad, x + w - rad, x + rad }, cy[4] = { y + rad, y + rad, y + h - rad, y + h - rad };
-    Vec2 p[24], nrm[24];
+    Vec2 p[36], nrm[36];
     int n = 0;
-    for (int q = 0; q < 4; ++q)
-        for (int i = 0; i <= 5; ++i, ++n) { nrm[n] = Vec2{ T.c[q][i], T.s[q][i] }; p[n] = Vec2{ cx[q] + rad * nrm[n].x, cy[q] + rad * nrm[n].y }; }
+    for (int k = 0; k < 4; ++k)
+        for (int i = 0; i <= q; ++i, ++n) { nrm[n] = Vec2{ T.c[q][k][i], T.s[q][k][i] }; p[n] = Vec2{ cx[k] + rad * nrm[n].x, cy[k] + rad * nrm[n].y }; }
     const SDL_Color sc = toColor(c);
-    aaFill(p, nrm, 24, &sc, false);
+    aaFill(p, nrm, n, &sc, false);
 }
 
 // A filled rounded rectangle (falls back to a plain quad when rad <= 0). Decomposed
@@ -983,9 +1007,13 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str || (g_cullRow && !g_toOverlay)) return;
-    if (g_ttf && (!g_toOverlay || g_novSpans < 30))
-        if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { drawTextWith(f, x, y, str, s, c); return; }
-    if (g_ttf) {   // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
+    if (g_ttf) {
+        // Text the atlas lacks characters of is drawn with an engine font (FallbackFont). That is only asked at the first
+        // non-ASCII character, so plain ASCII text is read once; geometry already written for this text is taken back.
+        const bool mayFallBack = !g_toOverlay || g_novSpans < 30;
+        bool askedFallback = false;
+        const int nv0 = g_toOverlay ? g_onv : g_nv, ni0 = g_toOverlay ? g_oni : g_ni;
+        // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
         const float px = fH() * s;
         const fontatlas::Size& z = g_ttf->Pick(px);
         const float k = px / z.px;
@@ -1001,6 +1029,11 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         int&        ni = g_toOverlay ? g_oni : g_ni;
         const SDL_Color sc = toColor(c);
         for (const char* p = str; *p;) {
+            if (!askedFallback && (unsigned char)*p >= 0x80) {
+                askedFallback = true;
+                if (mayFallBack)
+                    if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { nv = nv0; ni = ni0; drawTextWith(f, x, y, str, s, c); return; }
+            }
             const unsigned cp = fontatlas::NextCp(&p);
             const fontatlas::Glyph* g = z.FindFast(cp); if (!g) g = z.FindFast('?');
             if (!g) continue;
@@ -5261,6 +5294,22 @@ void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, float th) 
         quad(mn.x, mn.y + th, th, h - 2.0f * th, c);
         quad(mx.x - th, mn.y + th, th, h - 2.0f * th, c);
         return;
+    }
+    if (aaOn()) {   // the stroke's centre line inset by half its thickness, its points and normals from the corner table
+        const float x0 = mn.x + th * 0.5f, y0 = mn.y + th * 0.5f, x1 = mx.x - th * 0.5f, y1 = mx.y - th * 0.5f;
+        float r = rounding - th * 0.5f;
+        r = std::min(r, std::min((x1 - x0) * 0.5f, (y1 - y0) * 0.5f));
+        if (r > 0.0f) {
+            const AaCorners& T = aaCorners();
+            const int q = T.Steps(r);
+            const float cx[4] = { x0 + r, x1 - r, x1 - r, x0 + r }, cy[4] = { y0 + r, y0 + r, y1 - r, y1 - r };
+            Vec2 p[36], nrm[36];
+            int n = 0;
+            for (int k = 0; k < 4; ++k)
+                for (int i = 0; i <= q; ++i, ++n) { nrm[n] = Vec2{ T.c[q][k][i], T.s[q][k][i] }; p[n] = Vec2{ cx[k] + r * nrm[n].x, cy[k] + r * nrm[n].y }; }
+            aaStroke(p, nrm, n, true, th, c);
+            return;
+        }
     }
     Vec2 pts[32];
     const int n = roundedRectPath(pts, mn.x + th * 0.5f, mn.y + th * 0.5f, mx.x - th * 0.5f, mx.y - th * 0.5f,

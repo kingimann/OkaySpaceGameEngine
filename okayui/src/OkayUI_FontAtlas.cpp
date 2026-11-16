@@ -40,7 +40,9 @@ void Build() {
         if (gi) { cps[n] = all[k]; glyphIds[n] = gi; ++n; }
     }
 
-    const float sizes[] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f};
+    // 17 px is the launcher's Dear ImGui font size, and 14, 18, 21, 23 and 25 px its scaled text (rounded to whole pixels):
+    // its OkayUI pages draw their text at those sizes, crisp (docs/own_ui_toolkit.md section 8).
+    const float sizes[] = {13.0f, 14.0f, 16.0f, 17.0f, 18.0f, 20.0f, 21.0f, 23.0f, 25.0f, 26.0f, 34.0f, 46.0f};
     const int nsizes = (int)(sizeof(sizes) / sizeof(sizes[0]));
     const int W = 1024, H = 1024, packH = H - 4;   // bottom rows: solid white patch
     std::vector<unsigned char> alpha((std::size_t)W * H, 0);
@@ -48,7 +50,7 @@ void Build() {
     // Every (size, glyph) bitmap goes into one atlas, tallest first so the shelves stay tight.
     struct Item { int s, k, h; };
     std::vector<Item> items;
-    float scales[6];
+    float scales[sizeof(sizes) / sizeof(sizes[0])];
     for (int s = 0; s < nsizes; ++s) {
         scales[s] = face.ScaleForPixelHeight(sizes[s]);
         for (int k = 0; k < n; ++k) {

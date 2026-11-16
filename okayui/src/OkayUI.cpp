@@ -295,6 +295,8 @@ struct ChildSave {
     float pad;
     bool  hovered;        // mouse over the region this frame
     float setScroll;      // SetScrollY's request, applied once the content has been measured (< 0: none)
+    float sbw;            // its scrollbar's width
+    bool  imguiBar;       // ChildPadding was pushed: the scrollbar takes room only while needed, its thumb is inset
 };
 ChildSave g_childStack[8];
 int       g_childTop = 0;
@@ -470,6 +472,19 @@ inline bool fPix(char c, int x, int y) { return g_font->pixel && g_font->pixel(c
 inline float fMeasure(const char* s) {
     if (g_ttf && s) {
         if (okay::TtfFont* f = fontatlas::FallbackFont(s)) return f->Measure(s, 8.0f);
+        if (g_theme.snapAdvances && g_theme.textScale > 0.0f) {   // measured as drawText draws it: the picked size, whole-pixel steps
+            const float px = fH() * g_theme.textScale;
+            const fontatlas::Size& zp = g_ttf->Pick(px);
+            const float k = px / zp.px;
+            const bool exact = k > 0.97f && k < 1.03f;
+            float w = 0.0f;
+            for (const char* p = s; *p;) {
+                const unsigned cp = fontatlas::NextCodepoint(&p);
+                const fontatlas::Glyph* g = zp.Find(cp); if (!g) g = zp.Find('?');
+                if (g) w += exact ? SDL_floorf(g->advance * k + 0.5f) : g->advance * k;
+            }
+            return w / g_theme.textScale;
+        }
         const fontatlas::Size& z = g_ttf->Pick(16.0f);
         float w = 0.0f;
         for (const char* p = s; *p;) {
@@ -484,8 +499,12 @@ inline float fMeasure(const char* s) {
 // Average character width in cell units (spacing glyph-like icons).
 inline float fCharW() { return g_ttf ? fMeasure("n") : (float)fW(); }
 
-inline float rowH() { return fH() * g_theme.textScale + (g_look ? 15.0f : 12.0f); }
+// Pushed style values that are not Theme fields (PushStyleVar; negative = not pushed, the widget's own default).
+float g_framePadX = -1.0f, g_framePadY = -1.0f;   // FramePadding
+float g_childPad = -1.0f;                         // ChildPadding
+float g_scrollbarW = -1.0f;                       // ScrollbarSize
 inline float textH() { return fH() * g_theme.textScale; }
+inline float rowH() { return g_framePadY >= 0.0f ? textH() + 2.0f * g_framePadY : fH() * g_theme.textScale + (g_look ? 15.0f : 12.0f); }
 inline float labelW(const char* s) { return s && *s ? fMeasure(s) * g_theme.textScale : 0.0f; }
 // ImGui's convention for labels: what follows "##" is only part of the widget id and is not shown.
 struct VisLabel {
@@ -808,7 +827,8 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         const float k = px / z.px;
         const bool exact = k > 0.97f && k < 1.03f;
         float pen = exact ? SDL_floorf(x + 0.5f) : x;
-        const float base = exact ? SDL_floorf(y + z.ascent * k + 0.5f) : y + z.ascent * k;
+        const float base = !exact ? y + z.ascent * k
+                         : g_theme.ascentRoundsUp ? SDL_floorf(y + 0.5f) + SDL_ceilf(z.ascent * k - 0.001f) : SDL_floorf(y + z.ascent * k + 0.5f);
         SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
         int*        I = g_toOverlay ? g_ovIdx   : g_idx;
         int&        nv = g_toOverlay ? g_onv : g_nv;
@@ -829,7 +849,7 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
                 v.position.x = x0; v.position.y = y1; v.tex_coord.x = g->u0; v.tex_coord.y = g->v1; V[nv++] = v;
                 I[ni++] = b0; I[ni++] = b0 + 1; I[ni++] = b0 + 2; I[ni++] = b0; I[ni++] = b0 + 2; I[ni++] = b0 + 3;
             }
-            pen += g->advance * k;
+            pen += (exact && g_theme.snapAdvances) ? SDL_floorf(g->advance * k + 0.5f) : g->advance * k;
         }
         return;
     }
@@ -1016,6 +1036,9 @@ inline float clamp01(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; 
 constexpr int kMaxHexSlots = 16;
 
 } // namespace
+
+void SetInputBlocked(bool blocked) { g_in.blocked = blocked; }
+bool IsInputBlocked() { return g_in.blocked; }
 
 void BeginFrame(const Input& in) {
     g_in       = in;
@@ -1462,7 +1485,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
     ts->first = snapToChar(buf, len, ts->first);
 
     const float s = g_theme.textScale, th = fH() * s, b = g_theme.borderPx;
-    const float pad = g_look ? 9.0f : 6.0f;
+    const float pad = g_framePadX >= 0.0f ? g_framePadX : (g_look ? 9.0f : 6.0f);
     const float tx = x + pad;
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
@@ -2197,6 +2220,8 @@ static void scrollbarThumb(float sbx, float top, float trackH, float thumbY, flo
 
 void End() {
     if (g_curWin.valid && g_winBaseScale > 0.0f) g_theme.textScale = g_winBaseScale;   // SetWindowFontScale ends with its window
+    g_winBaseScale = 0.0f;   // ended: the next BeginFrame must not put this window's scale back (a window begun inside a
+                             // PushTextScale would otherwise keep that scale, growing every frame)
     g_curWin.valid = false;
     g_posOverride = false;
     if (g_lay.winClip) { PopClipRect(); g_lay.winClip = false; }
@@ -2322,7 +2347,9 @@ bool BeginChild(const char* id, float w, float h, bool border) {
     // cursor and scroll slots untouched on the skip path.
     if (!g_lay.active || g_childTop >= 8) return false;
     const int cid = hashLabel(id);
-    const float pad = 6.0f;
+    const bool imguiBar = g_childPad >= 0.0f;
+    const float pad = imguiBar ? g_childPad : 6.0f;
+    const float sbw = g_scrollbarW > 0.0f ? g_scrollbarW : kScrollbarW;
     const float rw = w > 0.0f ? w : availW();
     const float rh = h > 0.0f ? h : rowH() * 4.0f;
     float rx, ry; place(rw, rh, rx, ry);
@@ -2344,9 +2371,10 @@ bool BeginChild(const char* id, float w, float h, bool border) {
         ChildSave& c = g_childStack[g_childTop++];
         c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
         c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered; c.setScroll = -1.0f;
+        c.sbw = sbw; c.imguiBar = imguiBar;
     }
     g_lay.ox = rx + pad;
-    g_lay.contentW = rw - 2.0f * pad - kScrollbarW;
+    g_lay.contentW = rw - 2.0f * pad - ((!imguiBar || *maxSlot > 0.0f) ? sbw : 0.0f);
     g_lay.bottom = ry + rh - pad;
     g_lay.oy = ry + pad - *scroll;
     g_lay.cx = g_lay.ox;
@@ -2385,15 +2413,15 @@ void EndChild() {
 
     // Scrollbar (only when content overflows).
     if (maxScroll > 0.0f) {
-        const float sbx = c.rx + c.rw - kScrollbarW;
-        if (!g_look || colorIsSet(Col_ScrollbarBg)) quad(sbx, c.ry, kScrollbarW, c.rh, pick(Col_ScrollbarBg, g_theme.track));
+        const float sbx = c.rx + c.rw - c.sbw;
+        if (!g_look || colorIsSet(Col_ScrollbarBg)) quad(sbx, c.ry, c.sbw, c.rh, pick(Col_ScrollbarBg, g_theme.track));
         float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
         float thumbH = frac * c.rh; if (thumbH < 16.0f) thumbH = 16.0f;
         float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
         float thumbY = c.ry + t * (c.rh - thumbH);
         // Drag the thumb.
         const int sbId = (int)((unsigned)c.lay.seed ^ 0x5cb0u ^ (unsigned)clampPx(sbx * 7.0f, 0)) & 0x7fffffff;
-        const bool overThumb = hit(sbx, thumbY, kScrollbarW, thumbH);
+        const bool overThumb = hit(sbx, thumbY, c.sbw, thumbH);
         if (overThumb) g_hot = sbId;
         if (g_active == sbId) {
             if (!g_in.mouseDown) g_active = 0;
@@ -2401,7 +2429,15 @@ void EndChild() {
         } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
         if (*c.scroll < 0.0f) *c.scroll = 0.0f;
         if (*c.scroll > maxScroll) *c.scroll = maxScroll;
-        scrollbarThumb(sbx, c.ry, c.rh, thumbY, thumbH, g_active == sbId, overThumb, false);
+        if (c.imguiBar) {   // Dear ImGui's look: a faint thumb inset in the bar on every side (up to 3 px), brighter when hovered
+            const float in = std::min(3.0f, std::max(0.0f, std::floor((c.sbw - 2.0f) * 0.5f)));
+            unsigned char tmp[4];
+            const unsigned char white[4] = {255, 255, 255, 255};
+            const unsigned char* tc = g_active == sbId ? pick(Col_ScrollbarGrabActive, g_theme.accent)
+                                    : overThumb ? pick(Col_ScrollbarGrabHovered, withAlpha(white, 0.24f, tmp)) : pick(Col_ScrollbarGrab, withAlpha(white, 0.12f, tmp));
+            const float tw = c.sbw - 2.0f * in;
+            if (tw > 0.0f && thumbH > 2.0f * in) rrect(sbx + in, thumbY + in, tw, thumbH - 2.0f * in, tw * 0.5f, tc);
+        } else scrollbarThumb(sbx, c.ry, c.rh, thumbY, thumbH, g_active == sbId, overThumb, false);
     }
 
     g_lay = c.lay;   // restore the parent layout (cursor already past the region)
@@ -2701,6 +2737,8 @@ void EndTabBar() {
 // ---- Style variables (PushStyleVar / PopStyleVar) -----------------------------------------------------
 namespace {
 struct StyleSave { int var; float a, b; };
+// A pushed length: finite and 0..256 px, anything else (NaN, negative, huge) means "not set".
+float styleLen(float v) { return (v >= 0.0f && v <= 256.0f) ? v : -1.0f; }
 StyleSave g_styleStack[32];
 int g_styleTop = 0;
 }
@@ -2714,6 +2752,9 @@ void PushStyleVar(StyleVar var, Vec2 value) {
         case StyleVar_ChildRounding: s.a = g_theme.rounding; g_theme.rounding = value.x; break;
         case StyleVar_WindowRounding: s.a = g_theme.windowRounding; g_theme.windowRounding = value.x; break;
         case StyleVar_BorderSize:    s.a = g_theme.borderPx; g_theme.borderPx = value.x; break;
+        case StyleVar_FramePadding:  s.a = g_framePadX; s.b = g_framePadY; g_framePadX = styleLen(value.x); g_framePadY = styleLen(value.y); break;
+        case StyleVar_ChildPadding:  s.a = g_childPad; g_childPad = styleLen(value.x); break;
+        case StyleVar_ScrollbarSize: s.a = g_scrollbarW; g_scrollbarW = styleLen(value.x) > 0.0f ? styleLen(value.x) : -1.0f; break;
         default: break;                              // accepted, nothing to change (see the header)
     }
     g_styleStack[g_styleTop++] = s;
@@ -2729,6 +2770,9 @@ void PopStyleVar(int count) {
             case StyleVar_ChildRounding: g_theme.rounding = s.a; break;
             case StyleVar_WindowRounding: g_theme.windowRounding = s.a; break;
             case StyleVar_BorderSize:    g_theme.borderPx = s.a; break;
+            case StyleVar_FramePadding:  g_framePadX = s.a; g_framePadY = s.b; break;
+            case StyleVar_ChildPadding:  g_childPad = s.a; break;
+            case StyleVar_ScrollbarSize: g_scrollbarW = s.a; break;
             default: break;
         }
     }
@@ -3077,25 +3121,32 @@ void drawTooltipBox(const char* text) {
             } else if (n < 255) line[n++] = *c;
         }
     }
-    const float pad = g_look ? 8.0f : 6.0f;
-    const float bw = tw + pad * 2.0f, bh = th * (float)lines + lineGap * (float)(lines - 1) + pad * 2.0f;
-    float bx = g_in.mouseX + 14.0f, by = g_in.mouseY + 14.0f;
+    const float padAuto = g_look ? 8.0f : 6.0f;
+    const float padX = g_theme.tooltipPadX >= 0.0f && g_theme.tooltipPadX <= 64.0f ? g_theme.tooltipPadX : padAuto;
+    const float padY = g_theme.tooltipPadY >= 0.0f && g_theme.tooltipPadY <= 64.0f ? g_theme.tooltipPadY : padAuto;
+    const float gap = g_theme.tooltipLineGap >= 0.0f && g_theme.tooltipLineGap <= 64.0f ? g_theme.tooltipLineGap : lineGap;
+    const float offX = g_theme.tooltipOffsetX >= -256.0f && g_theme.tooltipOffsetX <= 256.0f ? g_theme.tooltipOffsetX : 14.0f;
+    const float offY = g_theme.tooltipOffsetY >= -256.0f && g_theme.tooltipOffsetY <= 256.0f ? g_theme.tooltipOffsetY : 14.0f;
+    const float bw = tw + padX * 2.0f, bh = th * (float)lines + gap * (float)(lines - 1) + padY * 2.0f;
+    float bx = g_in.mouseX + offX, by = g_in.mouseY + offY;
     if (g_in.displayW > 0.0f && bx + bw > g_in.displayW - 2.0f) bx = std::max(2.0f, g_in.mouseX - 10.0f - bw);   // flip to the left of the cursor
     if (g_in.displayH > 0.0f && by + bh > g_in.displayH - 2.0f) by = std::max(2.0f, g_in.mouseY - 10.0f - bh);   // and above it
     g_toOverlay = true;
     if (g_look) {
-        const unsigned char tip[4] = {38, 42, 51, 250};
-        rrect(bx, by, bw, bh, 7.0f, g_theme.border);
-        rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, 6.0f, tip);
+        const unsigned char tipAuto[4] = {38, 42, 51, 250};
+        const unsigned char* tip = g_theme.tooltipBg[3] > 0 ? g_theme.tooltipBg : tipAuto;
+        const float rd = g_theme.tooltipRounding >= 0.0f && g_theme.tooltipRounding <= 64.0f ? g_theme.tooltipRounding : 7.0f;
+        rrect(bx, by, bw, bh, rd, g_theme.border);
+        rrect(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, rd > 1.0f ? rd - 1.0f : 0.0f, tip);
     } else {
         quad(bx, by, bw, bh, g_theme.border);
         quad(bx + 1.0f, by + 1.0f, bw - 2.0f, bh - 2.0f, g_theme.panel);
     }
-    char line[256]; int n = 0; float ly = by + pad;
+    char line[256]; int n = 0; float ly = by + padY;
     for (const char* c = text;; ++c) {
         if (*c == '\n' || *c == 0) {
-            line[n] = 0; drawText(bx + pad, ly, line, s, g_theme.text);
-            ly += th + lineGap; n = 0;
+            line[n] = 0; drawText(bx + padX, ly, line, s, g_theme.text);
+            ly += th + gap; n = 0;
             if (*c == 0) break;
         } else if (n < 255) line[n++] = *c;
     }
@@ -3151,6 +3202,26 @@ bool IsMouseDragging(int button, float threshold) {
     return dx * dx + dy * dy > t * t;
 }
 
+namespace {
+// Theme::comboArrowBox: the box in the frame colour (rounded by the frame rounding), a button-coloured square of the box's
+// height at its right end (rounded on the right only) holding a solid triangle that points down, the preview text inset by
+// the frame padding. Our own drawing of how the launcher's Dear ImGui combo looks.
+void comboFace(float x, float y, float w, float h, bool hover, const char* preview) {
+    const float rd = std::min(rnd(), h * 0.5f);
+    rrect(x, y, w, h, rd, pick(hover ? Col_FrameBgHovered : Col_FrameBg, g_theme.field));
+    if (w > h + 2.0f) {
+        const float ax = x + w - h;
+        rrect(ax, y, h, h, rd, hover ? g_theme.bgHover : g_theme.bg);
+        quad(ax, y, rd, h, hover ? g_theme.bgHover : g_theme.bg);   // square off its left side
+        const float cx = ax + h * 0.5f, cy = y + h * 0.5f, r = textH() * 0.4f;
+        tri(cx - 0.866f * r, cy - 0.75f * r, cx + 0.866f * r, cy - 0.75f * r, cx, cy + 0.75f * r, g_theme.text);
+    }
+    PushClipRect(x, y, std::max(0.0f, w - h), h);
+    drawText(x + (g_framePadX >= 0.0f ? g_framePadX : 6.0f), y + (h - textH()) * 0.5f, preview, g_theme.textScale, g_theme.text);
+    PopClipRect();
+}
+} // namespace
+
 bool Combo(const char* label, const char* const* items, int count, int* current) {
     if (!g_lay.active || !items || !current || count <= 0) return false;
     const int id = hashLabel(label);
@@ -3167,12 +3238,15 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
     if (g_active == id) { if (g_released) { if (insideBox) *open = !*open; g_active = 0; } }
     else if (insideBox && g_pressed) g_active = id;
 
-    quad(x, y, boxW, h, g_theme.border);
-    if (boxW > 2*b && h > 2*b) quad(x + b, y + b, boxW - 2*b, h - 2*b, insideBox ? g_theme.bgHover : g_theme.bg);
     const char* cur = (*current >= 0 && *current < count) ? items[*current] : "";
-    drawText(x + 6.0f, y + (h - textH()) * 0.5f, cur, s, g_theme.text);
-    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
-    else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
+    if (g_theme.comboArrowBox) comboFace(x, y, boxW, h, insideBox, cur);
+    else {
+        quad(x, y, boxW, h, g_theme.border);
+        if (boxW > 2*b && h > 2*b) quad(x + b, y + b, boxW - 2*b, h - 2*b, insideBox ? g_theme.bgHover : g_theme.bg);
+        drawText(x + (g_framePadX >= 0.0f ? g_framePadX : 6.0f), y + (h - textH()) * 0.5f, cur, s, g_theme.text);
+        if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
+        else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
+    }
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
 
     bool changed = false;
@@ -3940,12 +4014,15 @@ bool BeginCombo(const char* label, const char* preview) {
             g_comboCloseId = 0; g_active = 0;
         }
     } else if (insideBox && g_pressed) { g_active = id; g_comboCloseId = (ps && ps->open) ? id : 0; }
-    quad(x, y, boxW, h, g_theme.border);
-    if (boxW > 2 * b && h > 2 * b) quad(x + b, y + b, boxW - 2 * b, h - 2 * b, insideBox ? g_theme.bgHover : g_theme.bg);
-    drawText(x + 6.0f, y + (h - textH()) * 0.5f, preview ? preview : "", s, g_theme.text);
     const bool open = ps && ps->open;
-    if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
-    else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, open ? "-" : "+", s, g_theme.text);
+    if (g_theme.comboArrowBox) comboFace(x, y, boxW, h, insideBox, preview ? preview : "");
+    else {
+        quad(x, y, boxW, h, g_theme.border);
+        if (boxW > 2 * b && h > 2 * b) quad(x + b, y + b, boxW - 2 * b, h - 2 * b, insideBox ? g_theme.bgHover : g_theme.bg);
+        drawText(x + (g_framePadX >= 0.0f ? g_framePadX : 6.0f), y + (h - textH()) * 0.5f, preview ? preview : "", s, g_theme.text);
+        if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
+        else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, open ? "-" : "+", s, g_theme.text);
+    }
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
     if (!ps) return false;
     const bool shown = beginPopupBody(ps->id);
@@ -5066,6 +5143,26 @@ void DrawList::AddPolyline(const Vec2* pts, int count, Color32 col, bool closed,
     for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
     ListScope s(overlay); unsigned char c[4]; unpack(col, c);
     strokePath(pts, count, closed, th, c);
+}
+
+void DrawList::AddConvexPolyFilledMultiColor(const Vec2* pts, const Color32* cols, int count) const {
+    if (!pts || !cols || count < 3 || count > kMaxPath) return;
+    for (int i = 0; i < count; ++i) if (!finite2(pts[i])) return;
+    ListScope s(overlay);
+    SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
+    int*        I = g_toOverlay ? g_ovIdx   : g_idx;
+    int&        nv = g_toOverlay ? g_onv : g_nv;
+    int&        ni = g_toOverlay ? g_oni : g_ni;
+    if (g_cullRow && !g_toOverlay) return;
+    if (nv + count > kMaxVerts || ni + (count - 2) * 3 > kMaxIdx) { noteDrop(); return; }
+    // A fan over shared vertices, each with its own colour: the rasteriser blends the colours across every triangle.
+    const int base = nv;
+    SDL_Vertex v; v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    for (int i = 0; i < count; ++i) {
+        unsigned char c[4]; unpack(cols[i], c);
+        v.position.x = pts[i].x; v.position.y = pts[i].y; v.color = toColor(c); V[nv++] = v;
+    }
+    for (int i = 1; i + 1 < count; ++i) { I[ni++] = base; I[ni++] = base + i; I[ni++] = base + i + 1; }
 }
 
 void DrawList::AddConvexPolyFilled(const Vec2* pts, int count, Color32 col) const {

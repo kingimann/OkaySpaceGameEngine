@@ -144,7 +144,8 @@ private:
 };
 
 /// The rectangles hosted screens occupy inside ImGui windows, remembered from one frame to the next (the OkayUI frame starts
-/// before the panels are submitted, so the mouse decision uses last frame's rectangles: one frame of latency). Several screens
+/// before the panels are submitted, so the decision at the frame's start uses last frame's rectangles; OwnsThisFrame lets the
+/// host correct it as each screen is offered, so there is no frame of latency). Several screens
 /// can be hosted in one frame (a page and the notifications panel floating over it): each Offer adds one rectangle, up to
 /// kMax; the set offered in a frame replaces the set of the frame before.
 class Region {
@@ -166,6 +167,14 @@ public:
     bool Owns(float x, float y) const {
         for (const Rect& r : m_r)
             if (r.valid && r.hovered && x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h) return true;
+        return false;
+    }
+    /// The same, using only the rectangles offered so far THIS frame (with ImGui's answer of this frame). A host calls it right
+    /// after Offer and, when it is true, unblocks OkayUI's mouse for the rest of the frame (OkayUI::SetInputBlocked(false)):
+    /// then a click that arrives in the same frame as the move onto the screen goes to the screen, not to ImGui.
+    bool OwnsThisFrame(float x, float y) const {
+        for (const Rect& r : m_r)
+            if (r.valid && r.age == 0 && r.hovered && x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h) return true;
         return false;
     }
     bool Valid() const { return Count() > 0; }

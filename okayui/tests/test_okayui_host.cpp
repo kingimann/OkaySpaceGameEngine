@@ -184,6 +184,17 @@ int main() {
         for (int i = 0; i < Region::kMax + 3; ++i) r.Offer((float)i * 10, 0, 5, 5, true);   // more than it holds: the rest are ignored
         CHECK(r.Count() == Region::kMax && r.Owns(1, 1) && !r.Owns((Region::kMax + 1) * 10.0f + 1, 1));
     }
+    {   // OwnsThisFrame: only what was offered this frame counts, so the host can correct the frame-start decision at once
+        Region r;
+        r.NextFrame();
+        CHECK(!r.Owns(50, 50) && !r.OwnsThisFrame(50, 50));   // the mouse just moved onto a panel nobody offered last frame
+        r.Offer(0, 0, 100, 100, true);
+        CHECK(r.OwnsThisFrame(50, 50) && !r.OwnsThisFrame(150, 50));
+        r.NextFrame();
+        CHECK(r.Owns(50, 50) && !r.OwnsThisFrame(50, 50));    // last frame's rectangle is not this frame's
+        r.Offer(0, 0, 100, 100, false);                         // offered again, covered this frame (an ImGui popup opened)
+        CHECK(!r.OwnsThisFrame(50, 50));
+    }
     {   // end to end through OkayUI: typed text from SDL events edits a focused field; a blocked frame does not click
         okayuitest::Reset();
         okayuitest::Sim sim(300, 100);

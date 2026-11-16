@@ -137,8 +137,10 @@ public:
         oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
         okayimgui::StyleLikeImGuiChild(okay_.Edit(), ImGui::GetStyle());   // sits in the rectangle as the ImGui editor's child does
         OkayUI::PushTextScale(oked::g_uiScale * zoom_);         // 16 px code at 100 %, the ImGui editor's kCodeFontDispPx x zoom
-        okayimgui::DrawOkayUIHere(id, p, a, [&] { okay_.Edit().Draw("##codeedit", a.x, a.y); },
+        OkayUI::MouseCursor cursor = OkayUI::MouseCursor_Arrow;   // the I-beam over the text, as the ImGui editor shows it
+        okayimgui::DrawOkayUIHere(id, p, a, [&] { cursor = okayimgui::CursorOf([&] { okay_.Edit().Draw("##codeedit", a.x, a.y); }); },
                                   okayimgui::SdlRendererTextures(oked::g_sdlRenderer), geo_);
+        okayimgui::SetImGuiCursor(cursor);
         OkayUI::PopTextScale();
         if (border) {                                           // the child window's border the ImGui editor has
             const ImGuiStyle& st = ImGui::GetStyle();

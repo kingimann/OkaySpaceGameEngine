@@ -147,6 +147,33 @@ inline void ClaimKeyboardForCode(ImGuiID owner) {
     io.InputQueueCharacters.resize(0);
 }
 
+/// Run `draw` (OkayUI widgets drawn this frame) and give back the mouse cursor shape they asked for, leaving OkayUI's own cursor
+/// as it was before (other OkayUI content of the frame keeps its choice).
+inline OkayUI::MouseCursor CursorOf(const std::function<void()>& draw) {
+    const OkayUI::MouseCursor before = OkayUI::GetMouseCursor();
+    OkayUI::SetMouseCursor(OkayUI::MouseCursor_Arrow);
+    draw();
+    const OkayUI::MouseCursor mine = OkayUI::GetMouseCursor();
+    if (mine == OkayUI::MouseCursor_Arrow) OkayUI::SetMouseCursor(before);
+    return mine;
+}
+
+/// Show an OkayUI cursor shape through Dear ImGui (whose backend sets the system cursor; the editor does not read OkayUI's).
+/// The arrow changes nothing (ImGui's own choice stays).
+inline void SetImGuiCursor(OkayUI::MouseCursor c) {
+    switch (c) {
+    case OkayUI::MouseCursor_TextInput:  ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput); break;
+    case OkayUI::MouseCursor_ResizeAll:  ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll); break;
+    case OkayUI::MouseCursor_ResizeNS:   ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS); break;
+    case OkayUI::MouseCursor_ResizeEW:   ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW); break;
+    case OkayUI::MouseCursor_ResizeNESW: ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNESW); break;
+    case OkayUI::MouseCursor_ResizeNWSE: ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE); break;
+    case OkayUI::MouseCursor_Hand:       ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); break;
+    case OkayUI::MouseCursor_NotAllowed: ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed); break;
+    default: break;
+    }
+}
+
 /// Draw our code editor's hover help (CodeEdit::Hover, with CodeEdit::SetHostDrawsTooltip on) as a Dear ImGui tooltip, in ImGui's
 /// tooltip layer: above the windows and popups that are open, the way ImGuiColorTextEdit shows it (an error or warning title in
 /// red or amber, a separator, the message; a built-in's help as plain text). Uses the current ImGui font (the script editor's

@@ -35,6 +35,7 @@ struct Rig {
     OkayUI::CapturedGeometry geo;
     scripteditor::ScriptEditorCodeEdit se;
     bool popup = true, hosted = true, hostTip = false;
+    OkayUI::MouseCursor cursor = OkayUI::MouseCursor_Arrow;
     ImVec2 codeMin, codeMax, popMin, popMax;
     Rig() {
         surf = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ABGR8888);
@@ -70,7 +71,9 @@ struct Rig {
             codeMin = p; codeMax = ImVec2(p.x + a.x, p.y + a.y);
             okayimgui::StyleLikeImGuiChild(se.Edit(), ImGui::GetStyle());
             if (hosted) {
-                okayimgui::DrawOkayUIHere("##code", p, a, [&] { se.Edit().Draw("##codeedit", a.x, a.y); }, okayimgui::SdlRendererTextures(ren), geo);
+                okayimgui::DrawOkayUIHere("##code", p, a, [&] { cursor = okayimgui::CursorOf([&] { se.Edit().Draw("##codeedit", a.x, a.y); }); },
+                                          okayimgui::SdlRendererTextures(ren), geo);
+                okayimgui::SetImGuiCursor(cursor);
             } else {   // the old way: drawn by OkayUI's own frame, after ImGui
                 OkayUI::BareNextWindow();
                 if (OkayUI::Begin("##code", p.x, p.y, a.x, a.y)) se.Edit().Draw("##codeedit", a.x, a.y);
@@ -240,6 +243,27 @@ void TooltipLayerTests() {
     CHECK(OkayUI::GetDrawData().indexCount > 60);
 }
 
+void CursorTests() {
+    // the I-beam over the code's text reaches ImGui (whose backend sets the system cursor), as the ImGui editor shows it; the
+    // arrow over the gutter; OkayUI's own cursor of the frame is left as it was
+    Rig r;
+    r.popup = false;
+    for (int i = 0; i < 2; ++i) r.Frame();
+    const OkayUI::Vec2 t = r.se.Edit().PosToScreen(OkayUI::CodePos{1, 6});
+    r.sim.Move(t.x + 2.0f, t.y + 4.0f);
+    r.Frame();
+    CHECK(r.cursor == OkayUI::MouseCursor_TextInput && ImGui::GetMouseCursor() == ImGuiMouseCursor_TextInput);
+    r.sim.Move(r.codeMin.x + 12.0f, t.y + 4.0f);                    // the gutter
+    r.Frame();
+    CHECK(r.cursor == OkayUI::MouseCursor_Arrow && ImGui::GetMouseCursor() == ImGuiMouseCursor_Arrow);
+    OkayUI::Input in; in.mouseX = 1; in.mouseY = 1;
+    OkayUI::BeginFrame(in);
+    OkayUI::SetMouseCursor(OkayUI::MouseCursor_Hand);
+    const OkayUI::MouseCursor got = okayimgui::CursorOf([] {});
+    CHECK(got == OkayUI::MouseCursor_Arrow && OkayUI::GetMouseCursor() == OkayUI::MouseCursor_Hand);
+    OkayUI::EndFrameData();
+}
+
 void KeyboardClaimTests() {
     // okayimgui::ClaimKeyboardForCode: while our editor has the keyboard, ImGui's keyboard navigation must not move the nav cursor
     // off the code (arrows) or press a button (Space, Enter); the script editor's own shortcuts (Ctrl+S) still see their keys;
@@ -299,6 +323,7 @@ int main() {
     DrawOrderTests();
     AppendTests();
     TooltipLayerTests();
+    CursorTests();
     KeyboardClaimTests();
     std::cout << okaytest::g_checks << " checks, " << okaytest::g_failures << " failures\n";
     SDL_Quit();

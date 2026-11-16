@@ -2,7 +2,9 @@
 #include "perf_nav_fallback_scenes.hpp"
 #include "okay/AI/NavProbeIndex.hpp"
 #include "okay/AI/Navigation.hpp"
+#include "okay/Scene/SceneSerializer.hpp"
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -193,6 +195,38 @@ int main() {
             Navigation::SetReplanBudget(4);
             std::printf("  OLD (index off, no budget) 20 agents, 1,000 rocks: frame avg %.2f ms, worst %.2f ms\n", old20.avg, old20.worst);
         }
+    }
+
+    // ---- 4. The shipped example (examples/navigation/nav_crowd.okayscene): 40 followers chase a wandering
+    // "Player" across 600 rocks with no NavMesh. They move, and no frame after the first stalls.
+    {
+        Scene s("crowd");
+        navperf::BuildCrowdExample(s);
+        if (const char* out = std::getenv("OKAY_NAV_WRITE_EXAMPLE"); out && out[0]) {
+            std::string err;
+            CHECK(SceneSerializer::SaveToFile(s, out, &err));
+            std::printf("  wrote the example scene to %s %s\n", out, err.c_str());
+        }
+        std::vector<GameObject*> followers;
+        for (const auto& up : s.Objects()) if (up->name.rfind("Follower", 0) == 0) followers.push_back(up.get());
+        CHECK(followers.size() == 40);
+        std::vector<Vec3> start;
+        for (GameObject* g : followers) start.push_back(g->transform->Position());
+        double worstLater = 0, total = 0;
+        for (int f = 0; f < 240; ++f) {
+            auto t0 = Clock::now(); s.Update(1.0f / 60.0f); auto t1 = Clock::now();
+            total += Ms(t0, t1);
+            if (f > 0) worstLater = std::max(worstLater, Ms(t0, t1));
+        }
+        int moved = 0;
+        for (std::size_t i = 0; i < followers.size(); ++i) {
+            const Vec3 p = followers[i]->transform->Position();
+            if (std::fabs(p.x - start[i].x) + std::fabs(p.z - start[i].z) > 1.0f) ++moved;
+        }
+        std::printf("  crowd example: %d of 40 followers moved in 4 s; frame avg %.2f ms, worst after the first %.2f ms\n",
+                    moved, total / 240.0, worstLater);
+        CHECK(moved >= 30);
+        CHECK(worstLater < 500.0);
     }
 
     TEST_MAIN_RESULT();

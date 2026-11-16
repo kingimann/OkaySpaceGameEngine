@@ -20174,11 +20174,18 @@ void DrawHierarchy(EditorState& ed) {
         std::unordered_set<const GameObject*> pathHits;
         if (!filter.PathText().empty())
             for (GameObject* g : ed.scene().FindAllByPath(filter.PathText())) pathHits.insert(g);
-        int hits = 0;
-        for (const auto& up : ed.scene().Objects()) {
-            GameObject* go = up.get();
-            if (!filter.Matches(*go, &pathHits)) continue;
-            ++hits;
+        std::vector<GameObject*> hitList;
+        for (const auto& up : ed.scene().Objects())
+            if (filter.Matches(*up, &pathHits)) hitList.push_back(up.get());
+        const int hits = (int)hitList.size();
+        // Only the results in view are drawn (each is one text line, placed at its own y), as in the tree below.
+        const float rowH = ImGui::GetTextLineHeightWithSpacing();
+        const float listX = ImGui::GetCursorPosX(), listY = ImGui::GetCursorPosY();
+        const oked::hierrows::ClipRange clip =
+            oked::hierrows::VisibleRange(hits, rowH, ImGui::GetScrollY() - listY, ImGui::GetWindowHeight());
+        for (int hi = clip.first; hi < clip.last; ++hi) {
+            GameObject* go = hitList[(std::size_t)hi];
+            ImGui::SetCursorPos(ImVec2(listX, listY + hi * rowH));
             bool sel = ed.IsSelected(go);
             ImGui::PushID(go);
             const float searchRoom = ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("     ").x -
@@ -20218,6 +20225,7 @@ void DrawHierarchy(EditorState& ed) {
             DrawObjectDiagMarker(go, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
             ImGui::PopID();
         }
+        ImGui::SetCursorPos(ImVec2(listX, listY + hits * rowH));   // below the last result, drawn or not
         if (hits == 0) ImGui::TextDisabled("No objects match '%s'.", g_hierFilter);
         else           ImGui::TextDisabled("%d match(es)", hits);
         ImGui::EndChild();

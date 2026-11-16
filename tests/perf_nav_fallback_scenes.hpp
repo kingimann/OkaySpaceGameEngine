@@ -114,4 +114,56 @@ inline void BuildRockField(Scene& s, int rocks, bool pen) {
         }
 }
 
+// The example scene shipped as examples/navigation/nav_crowd.okayscene (docs/try_it.md): no NavMesh, a 120 m
+// floor, 600 rocks in 12 groups of 50 (so the Hierarchy has a long list too), a "Player" that wanders the
+// field and 40 NPCs that follow it with pathfinding on. Written by test_perf_nav_fallback when
+// OKAY_NAV_WRITE_EXAMPLE names the output file; the shipped file came from that.
+inline void BuildCrowdExample(Scene& s) {
+    s.SetName("Navigation crowd (no NavMesh)");
+    auto meshed = [&](GameObject* g, Mesh m, Color c) {
+        auto* mr = g->AddComponent<MeshRenderer>(); mr->mesh = std::move(m); mr->color = c;
+    };
+    GameObject* floor = Box(s, "Ground", {0, -0.5f, 0}, {120, 1, 120});
+    meshed(floor, Mesh::Cube(), Color{0.36f, 0.42f, 0.34f, 1.0f});
+    Lcg r(2026u);
+    for (int gi = 0; gi < 12; ++gi) {
+        GameObject* group = s.CreateGameObject(("Rocks " + std::to_string(gi + 1)).c_str());
+        for (int k = 0; k < 50; ++k) {
+            float x = 0, z = 0;
+            do { x = r.Range(-55.0f, 55.0f); z = r.Range(-55.0f, 55.0f); } while (x * x + z * z < 36.0f);
+            const float h = r.Range(0.6f, 1.6f), w = r.Range(0.7f, 1.6f);
+            GameObject* rock = Box(s, "Rock", {x, h * 0.5f, z}, {w, h, w}, Quat::Euler(0, r.Range(0.0f, 90.0f), 0));
+            meshed(rock, Mesh::Cube(), Color{0.52f, 0.5f, 0.47f, 1.0f});
+            rock->transform->SetParent(group->transform, true);
+        }
+    }
+    GameObject* player = s.CreateGameObject("Player");
+    player->transform->localPosition = {0, 0.5f, 0};
+    meshed(player, Mesh::Sphere(0.5f), Color{0.95f, 0.75f, 0.2f, 1.0f});
+    auto* wander = player->AddComponent<NPCController>();
+    wander->behavior = (int)NPCController::Behavior::Wander;
+    wander->wanderRadius = 45.0f; wander->moveSpeed = 3.0f; wander->targetName = "";
+    GameObject* crowd = s.CreateGameObject("Crowd");
+    for (int i = 0; i < 40; ++i) {
+        GameObject* g = s.CreateGameObject(("Follower " + std::to_string(i + 1)).c_str());
+        g->transform->localPosition = {(float)(i % 8) * 1.6f - 5.6f, 0.5f, (float)(i / 8) * 1.6f + 10.0f};
+        meshed(g, Mesh::Capsule(0.35f, 1.0f), Color{0.3f, 0.55f, 0.95f, 1.0f});
+        auto* npc = g->AddComponent<NPCController>();
+        npc->behavior = (int)NPCController::Behavior::Follow;
+        npc->targetName = "Player";
+        npc->usePathfinding = true;
+        npc->sightRange = 500.0f; npc->fieldOfView = 360.0f;
+        npc->attackRange = 2.0f; npc->moveSpeed = 3.5f; npc->runSpeed = 4.5f;
+        g->transform->SetParent(crowd->transform, true);
+    }
+    GameObject* light = s.CreateGameObject("Directional Light");
+    light->transform->localPosition = {0, 10, 0};
+    light->transform->localRotation = Quat::Euler(50, -30, 0);
+    light->AddComponent<Light>();
+    GameObject* cam = s.CreateGameObject("Main Camera");
+    cam->transform->localPosition = {0, 45, -55};
+    cam->transform->localRotation = Quat::Euler(40, 0, 0);
+    cam->AddComponent<Camera>()->main = true;
+}
+
 } // namespace navperf

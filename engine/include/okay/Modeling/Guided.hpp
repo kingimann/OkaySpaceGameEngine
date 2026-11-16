@@ -177,7 +177,9 @@ Recipe Randomise(const Template& t, const Recipe& base, uint32_t seed, float str
 /// The model faces +Z; "_l" is on +X.
 struct RigJoint { std::string name; int parent = -1; Vec3 pos, tail; };
 /// The skeleton that fits this human's proportions. False for templates without one (only "human" has it).
-bool HumanoidSkeleton(const Recipe& r, std::vector<RigJoint>& out);
+/// Bone names: Mixamo's ("mixamorig:LeftUpLeg", so clips and rigs that use those node names fit) or the engine's mannequin names.
+enum class RigNaming { Mixamo, Engine };
+bool HumanoidSkeleton(const Recipe& r, std::vector<RigJoint>& out, RigNaming naming = RigNaming::Mixamo);
 /// Skin weights by distance to the bones: every vertex is bound to its three nearest bones (4 slots, sum 1).
 void SkinVertices(const std::vector<Vec3>& verts, const std::vector<RigJoint>& joints,
                   std::vector<std::array<int, 4>>& idx, std::vector<std::array<float, 4>>& wt);

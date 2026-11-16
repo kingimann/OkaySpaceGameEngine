@@ -146,7 +146,7 @@ int main() {
         CHECK(Count(parts, "arm/") == 4 && Count(parts, "leg/") == 4 && Count(parts, "hand/") == 2 && Count(parts, "foot/") == 2);
         CHECK(ById(parts, "shirt/0") && ById(parts, "pants/0") && !ById(parts, "hat/0") && !ById(parts, "cape/0"));
         // swap one hand
-        Recipe h = a; h.partDesign["hand/0"] = "fingers";
+        Recipe h = a; h.partDesign["hand/0"] = "fist";
         int changed = 0;
         for (const auto& p : Generate(h)) if (Hash(p.mesh) != Hash(ById(parts, p.id)->mesh)) { ++changed; CHECK(p.id == "hand/0"); }
         CHECK(changed == 1);

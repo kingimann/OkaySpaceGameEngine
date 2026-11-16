@@ -295,6 +295,7 @@ add_library(okay_engine
     src/Modeling/GuidedCharacters.cpp
     src/Modeling/GuidedEnvironment.cpp
     src/Modeling/GuidedProps.cpp
+    src/Modeling/GuidedMore.cpp
     src/Modeling/GuidedHuman.cpp
     src/Modeling/GuidedRig.cpp
     src/Components/LODGroup.cpp

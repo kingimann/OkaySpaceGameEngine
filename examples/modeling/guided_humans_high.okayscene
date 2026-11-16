@@ -1,0 +1,46 @@
+okayscene 3
+name "Guided humans, High detail"gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Ground"
+  active 1
+  parent -1
+  transform 3.000000 -0.5 0.000000 0 0 0 1 40.000000 1 40.000000
+  mesh "Cube" 0.32941177 0.5019608 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "Human woman (High)"
+  active 1
+  parent -1
+  transform 0.300215 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_high_woman.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Human man (High)"
+  active 1
+  parent -1
+  transform 1.56728 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_high_man.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Human elder (High)"
+  active 1
+  parent -1
+  transform 2.84505 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "human_high_elder.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Main Camera"
+  active 1
+  parent -1
+  transform 3 1.6 6.5 -0.13 0 0 0.9915 1 1 1
+  camera 1 5 50 0.55 0.72 0.88 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.4 3 14 1.5
+end

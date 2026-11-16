@@ -448,6 +448,7 @@ void RegisterVehicleTemplates();
 void RegisterCharacterTemplates();
 void RegisterEnvironmentTemplates();
 void RegisterPropTemplates();
+void RegisterMoreTemplates();
 
 void RegisterBuiltinTemplates() {
     static bool done = false;
@@ -459,6 +460,7 @@ void RegisterBuiltinTemplates() {
     RegisterCharacterTemplates();
     RegisterEnvironmentTemplates();
     RegisterPropTemplates();
+    RegisterMoreTemplates();
 }
 
 } // namespace okay::modeling::guided

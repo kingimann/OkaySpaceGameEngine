@@ -505,7 +505,7 @@ Recipe StyledRecipe(const Recipe& r) {
 void GenerateHuman(const Recipe& r0, std::vector<GeneratedPart>& parts) {
     const Recipe r = StyledRecipe(r0);
     const int style = (int)r0.Param("style", 0);
-    if (shapes::DetailF() >= 0.999f && style != 3) { GenerateHumanOrganic(r, parts, GenerateBiped); return; }
+    if (style != 3) { GenerateHumanOrganic(r, parts, GenerateBiped); return; }
     Recipe b = r;   // Low: the separate face parts are drawn as the old combined face
     if (b.DesignFor("face", "face/0") == "none" && b.DesignFor("eyes", "eyes/0") != "none" && !b.DesignFor("eyes", "eyes/0").empty()) b.slotDesign["face"] = b.DesignFor("eyes", "eyes/0") == "big" ? "big" : "simple";
     GenerateBiped(b, parts);
@@ -557,15 +557,18 @@ Template MakeHuman() {
     B b;
     b.t.id = "human"; b.t.name = "Human"; b.t.category = "Characters"; b.t.version = 1;
     b.t.description = "A person: head, face, hair, torso, arms, hands, legs, feet, clothes and accessories, each a part you can change, with body proportion sliders.";
-    BipedParams(b, 1.75, 0.46, 0.24, 0.23, 0.47, 0.045, 0.40, 0.06);
+    BipedParams(b, 1.75, 0.40, 0.24, 0.23, 0.50, 0.045, 0.44, 0.08);
+    b.P("build", "Build", 0.5, 0.0, 1.0, "Proportions", "Slim (0) to heavy (1): limb and body girth, belly.");
+    b.P("muscle", "Muscle", 0.3, 0.0, 1.0, "Proportions", "Soft (0) to muscular (1): chest, shoulders, arms, legs, abs.");
     { ParamDef p; p.id = "style"; p.label = "Style"; p.kind = ParamDef::Kind::Choice; p.def = 0; p.min = 0; p.max = 3; p.group = "Proportions"; p.tip = "Realistic, stylised low poly (visible facets), cartoon (big head, short limbs) or blocky (always boxes, at every Detail level)."; p.choices = {"Realistic", "Stylised low poly", "Cartoon", "Blocky"}; b.t.params.push_back(p); }
     { ParamDef p; p.id = "bodyType"; p.label = "Body type"; p.kind = ParamDef::Kind::Choice; p.def = 0; p.min = 0; p.max = 2; p.group = "Proportions"; p.tip = "Neutral, male or female build (shoulders, waist, hips, chest)."; p.choices = {"Neutral", "Male", "Female"}; b.t.params.push_back(p); }
     b.S("head", "Head", {{"round", "Round"}, {"oval", "Oval"}, {"box", "Square"}, {"pointed", "Pointed"}, {"heart", "Heart"}, {"long", "Long"}, {"wide", "Wide"}}, kSkin, 0);
     b.S("face", "Face", {{"simple", "Eyes and nose"}, {"big", "Big eyes"}, {"none", "None"}}, kBlack, 1);
     b.S("eyes", "Eyes", {{"none", "None"}, {"round", "Round"}, {"big", "Big"}, {"narrow", "Narrow"}}, kBlack, 11);
+    b.S("eyewhite", "Eye whites", {{"round", "White"}, {"none", "None"}}, kWhite, 11);
     b.S("brows", "Eyebrows", {{"none", "None"}, {"soft", "Soft"}, {"thick", "Thick"}, {"angular", "Angular"}}, kBrown, 12);
     b.S("nose", "Nose", {{"none", "None"}, {"straight", "Straight"}, {"button", "Button"}, {"long", "Long"}, {"flat", "Flat"}}, kSkin, 13);
-    b.S("mouth", "Mouth", {{"none", "None"}, {"smile", "Smile"}, {"neutral", "Neutral"}, {"small", "Small"}}, Color{0.7f, 0.3f, 0.3f, 1}, 14);
+    b.S("mouth", "Mouth", {{"none", "None"}, {"smile", "Smile"}, {"neutral", "Neutral"}, {"small", "Small"}}, Color{0.74f, 0.45f, 0.42f, 1}, 14);
     b.S("ears", "Ears", {{"none", "None"}, {"normal", "Normal"}, {"small", "Small"}, {"big", "Big"}}, kSkin, 15);
     b.S("hair", "Hair", {{"none", "Bald"}, {"short", "Short"}, {"long", "Long"}, {"mohawk", "Mohawk"}, {"bun", "Bun"}, {"spiky", "Spiky"}, {"buzz", "Buzz cut"}, {"bob", "Bob"}, {"ponytail", "Ponytail"}, {"afro", "Afro"}, {"curly", "Curly"}, {"sidepart", "Side part"}, {"braid", "Braid"}}, kBrown, 2);
     b.S("neck", "Neck", {{"round", "Round"}, {"thin", "Thin"}}, kSkin, 0);
@@ -585,38 +588,49 @@ Template MakeHuman() {
     b.S("scarf", "Scarf", {{"none", "None"}, {"scarf", "Scarf"}, {"long", "Long scarf"}}, kRed, 16);
     b.S("cape", "Cape", {{"none", "None"}, {"short", "Short cape"}, {"long", "Long cape"}}, kRed, 9);
     b.S("shoulder", "Shoulder pads", {{"none", "None"}, {"round", "Round"}, {"plate", "Plate"}, {"spike", "Spike"}}, kSteel, 10);
-    const std::map<std::string, Color> clothes = {{"shirt", kBlue}, {"pants", kGrey}, {"hair", kBrown}};
-    b.St("average", "Average adult", "A medium build in a T-shirt and trousers.", {}, {{"head", "round"}, {"hair", "short"}, {"torso", "box"}, {"hand", "block"}, {"foot", "sneaker"}, {"shirt", "tshirt"}, {"pants", "trousers"}}, clothes);
-    b.St("athletic", "Athletic", "Broad shoulders, thick limbs.", {{"shoulderWidth", 0.56}, {"limbThickness", 0.06}, {"torsoDepth", 0.27}, {"height", 1.85}},
-         {{"head", "box"}, {"hair", "spiky"}, {"torso", "tapered"}, {"arm", "thick"}, {"leg", "thick"}, {"hand", "fist"}, {"foot", "sneaker"}, {"shirt", "tshirt"}, {"pants", "shorts"}}, {{"shirt", kRed}, {"pants", kBlack}, {"hair", kBlack}});
-    b.St("heavy", "Heavy build", "A wide barrel chest and a round face.", {{"shoulderWidth", 0.55}, {"torsoDepth", 0.36}, {"limbThickness", 0.062}, {"height", 1.7}},
-         {{"head", "round"}, {"hair", "none"}, {"torso", "barrel"}, {"hand", "block"}, {"foot", "boot"}, {"shirt", "vest"}, {"pants", "trousers"}, {"belt", "belt"}}, {{"shirt", kGreen}, {"pants", kBrown}});
-    b.St("child", "Child", "Small, with a big head and short legs.", {{"height", 1.1}, {"headSize", 0.22}, {"legLength", 0.42}, {"shoulderWidth", 0.3}, {"torsoDepth", 0.18}, {"limbThickness", 0.032}, {"armLength", 0.38}},
-         {{"head", "round"}, {"face", "big"}, {"hair", "bun"}, {"torso", "barrel"}, {"hand", "mitten"}, {"foot", "round"}, {"shirt", "tshirt"}, {"pants", "shorts"}}, {{"shirt", kYellow}, {"pants", kBlue}, {"hair", kBlond}});
-    b.St("tall_slim", "Tall and slim", "A long, thin figure with a pointed face.", {{"height", 1.95}, {"shoulderWidth", 0.4}, {"torsoDepth", 0.19}, {"limbThickness", 0.034}, {"legLength", 0.5}, {"neckLength", 0.1}},
-         {{"head", "oval"}, {"hair", "long"}, {"torso", "tapered"}, {"arm", "piston"}, {"leg", "piston"}, {"hand", "fingers"}, {"foot", "boot"}, {"shirt", "jacket"}, {"pants", "trousers"}}, {{"shirt", kBlack}, {"pants", kBlack}, {"hair", kBrown}});
-    b.St("adventurer", "Adventurer", "A hat, a backpack, a belt and boots.", {}, {{"head", "round"}, {"hair", "short"}, {"hand", "block"}, {"foot", "boot"}, {"shirt", "jacket"}, {"pants", "trousers"}, {"hat", "cap"}, {"backpack", "large"}, {"belt", "belt"}, {"glasses", "round"}},
-         {{"shirt", kLeather}, {"pants", kBrown}, {"hat", kGreen}, {"backpack", kOrange}, {"hair", kBrown}});
-    b.St("hero", "Caped hero", "A visor, a long cape and shoulder plates.", {{"shoulderWidth", 0.52}, {"limbThickness", 0.052}, {"height", 1.85}},
+    const std::map<std::string, Color> clothes = {{"shirt", kBlue}, {"pants", kGrey}, {"hair", kBrown}, {"foot", kWhite}};
+    b.St("average", "Average adult", "A medium build in a T-shirt and trousers.", {}, {{"head", "round"}, {"hair", "short"}, {"torso", "box"}, {"hand", "fingers"}, {"foot", "sneaker"}, {"shirt", "tshirt"}, {"pants", "trousers"}}, clothes);
+    b.St("slim", "Slim", "A light build with a long neck, in a long-sleeved top and jeans.", {{"build", 0.15}, {"muscle", 0.05}, {"shoulderWidth", 0.37}, {"limbThickness", 0.04}, {"height", 1.78}},
+         {{"head", "oval"}, {"hair", "sidepart"}, {"torso", "tapered"}, {"hand", "fingers"}, {"foot", "sneaker"}, {"shirt", "longsleeve"}, {"pants", "jeans"}}, {{"shirt", kTeal}, {"pants", kBlue}, {"hair", kBlack}, {"foot", kWhite}});
+    b.St("athletic", "Athletic", "Broad shoulders, defined muscle.", {{"shoulderWidth", 0.44}, {"limbThickness", 0.05}, {"torsoDepth", 0.26}, {"height", 1.85}, {"build", 0.5}, {"muscle", 0.85}},
+         {{"head", "box"}, {"hair", "buzz"}, {"torso", "tapered"}, {"arm", "thick"}, {"leg", "thick"}, {"hand", "fingers"}, {"foot", "sneaker"}, {"shirt", "tank"}, {"pants", "shorts"}}, {{"shirt", kRed}, {"pants", kBlack}, {"hair", kBlack}, {"foot", kBlack}});
+    b.St("heavy", "Heavy build", "A wide chest and belly, soft arms and a round face.", {{"shoulderWidth", 0.43}, {"torsoDepth", 0.3}, {"limbThickness", 0.05}, {"height", 1.72}, {"build", 0.95}, {"muscle", 0.2}},
+         {{"head", "round"}, {"hair", "none"}, {"torso", "barrel"}, {"hand", "fingers"}, {"foot", "boot"}, {"shirt", "vest"}, {"pants", "trousers"}, {"belt", "belt"}}, {{"shirt", kGreen}, {"pants", kBrown}, {"foot", kBrown}});
+    b.St("child", "Child", "Small, with a big head and short legs.", {{"height", 1.1}, {"headSize", 0.22}, {"legLength", 0.44}, {"shoulderWidth", 0.25}, {"torsoDepth", 0.17}, {"limbThickness", 0.032}, {"armLength", 0.41}, {"neckLength", 0.05}, {"build", 0.5}, {"muscle", 0.0}},
+         {{"head", "round"}, {"face", "big"}, {"hair", "bun"}, {"torso", "barrel"}, {"hand", "mitten"}, {"foot", "round"}, {"shirt", "tshirt"}, {"pants", "shorts"}}, {{"shirt", kYellow}, {"pants", kBlue}, {"hair", kBlond}, {"foot", kRed}});
+    b.St("elder", "Elder", "A thin, soft older person with white hair, a cardigan and trousers.", {{"height", 1.66}, {"shoulderWidth", 0.36}, {"torsoDepth", 0.23}, {"limbThickness", 0.036}, {"build", 0.35}, {"muscle", 0.0}, {"legLength", 0.48}, {"elbowBend", 25}},
+         {{"head", "oval"}, {"hair", "short"}, {"torso", "box"}, {"hand", "fingers"}, {"foot", "round"}, {"shirt", "jacket"}, {"pants", "trousers"}, {"glasses", "round"}}, {{"shirt", kGreen}, {"pants", kGrey}, {"hair", kWhite}, {"foot", kBrown}});
+    b.St("tall_slim", "Tall and slim", "A long, thin figure with a pointed face.", {{"height", 1.95}, {"shoulderWidth", 0.36}, {"torsoDepth", 0.19}, {"limbThickness", 0.036}, {"legLength", 0.52}, {"neckLength", 0.1}, {"build", 0.2}, {"muscle", 0.1}},
+         {{"head", "oval"}, {"hair", "long"}, {"torso", "tapered"}, {"arm", "piston"}, {"leg", "piston"}, {"hand", "fingers"}, {"foot", "boot"}, {"shirt", "jacket"}, {"pants", "trousers"}}, {{"shirt", kBlack}, {"pants", kBlack}, {"hair", kBrown}, {"foot", kBlack}});
+    b.St("woman", "Woman", "A neutral female build in a top and a skirt, with a ponytail.", {{"bodyType", 2}, {"height", 1.66}, {"shoulderWidth", 0.37}, {"torsoDepth", 0.22}, {"limbThickness", 0.04}, {"build", 0.4}, {"muscle", 0.15}, {"legLength", 0.51}},
+         {{"head", "heart"}, {"hair", "ponytail"}, {"torso", "tapered"}, {"hand", "fingers"}, {"foot", "round"}, {"shirt", "tshirt"}, {"pants", "skirt"}, {"mouth", "smile"}}, {{"shirt", kRed}, {"pants", kGrey}, {"hair", kBrown}, {"foot", kBlack}});
+    b.St("man", "Man", "A male build in a shirt and jeans.", {{"bodyType", 1}, {"height", 1.8}, {"shoulderWidth", 0.42}, {"torsoDepth", 0.25}, {"limbThickness", 0.048}, {"build", 0.5}, {"muscle", 0.5}},
+         {{"head", "box"}, {"hair", "short"}, {"torso", "tapered"}, {"hand", "fingers"}, {"foot", "boot"}, {"shirt", "longsleeve"}, {"pants", "jeans"}}, {{"shirt", kGreen}, {"pants", kBlue}, {"hair", kBrown}, {"foot", kBrown}});
+    b.St("adventurer", "Adventurer", "A hat, a backpack, a belt and boots.", {}, {{"head", "round"}, {"hair", "short"}, {"hand", "fingers"}, {"foot", "boot"}, {"shirt", "jacket"}, {"pants", "trousers"}, {"hat", "cap"}, {"backpack", "large"}, {"belt", "belt"}, {"glasses", "round"}},
+         {{"shirt", kLeather}, {"pants", kBrown}, {"hat", kGreen}, {"backpack", kOrange}, {"hair", kBrown}, {"foot", kBrown}});
+    b.St("hero", "Caped hero", "A visor, a long cape and shoulder plates.", {{"shoulderWidth", 0.43}, {"limbThickness", 0.05}, {"height", 1.85}, {"muscle", 0.8}},
          {{"head", "box"}, {"hair", "none"}, {"torso", "tapered"}, {"arm", "thick"}, {"hand", "fist"}, {"foot", "boot"}, {"shirt", "vest"}, {"pants", "trousers"}, {"glasses", "visor"}, {"cape", "long"}, {"belt", "belt"}, {"shoulder", "plate"}},
-         {{"shirt", kBlue}, {"pants", kBlue}, {"cape", kRed}, {"glasses", kBlack}, {"shoulder", kYellow}});
-    b.St("casual", "Casual", "A beanie, glasses and a hoodie look.", {}, {{"head", "oval"}, {"hair", "long"}, {"hand", "block"}, {"foot", "sneaker"}, {"shirt", "jacket"}, {"pants", "trousers"}, {"hat", "beanie"}, {"glasses", "square"}},
-         {{"shirt", kTeal}, {"pants", kGrey}, {"hat", kOrange}, {"hair", kBlack}});
-    b.St("dress", "Person in a dress", "A skirt, a bun and round glasses.", {{"shoulderWidth", 0.4}, {"torsoDepth", 0.2}, {"limbThickness", 0.038}}, {{"head", "round"}, {"hair", "bun"}, {"torso", "tapered"}, {"hand", "block"}, {"foot", "round"}, {"shirt", "tshirt"}, {"pants", "skirt"}, {"glasses", "round"}, {"belt", "belt"}},
-         {{"shirt", kRed}, {"pants", kRed}, {"hair", kBrown}});
+         {{"shirt", kBlue}, {"pants", kBlue}, {"cape", kRed}, {"glasses", kBlack}, {"shoulder", kYellow}, {"foot", kRed}});
+    b.St("casual", "Casual", "A beanie, glasses and a hoodie look.", {}, {{"head", "oval"}, {"hair", "long"}, {"hand", "fingers"}, {"foot", "sneaker"}, {"shirt", "hoodie"}, {"pants", "jeans"}, {"hat", "beanie"}, {"glasses", "square"}},
+         {{"shirt", kTeal}, {"pants", kGrey}, {"hat", kOrange}, {"hair", kBlack}, {"foot", kWhite}});
+    b.St("dress", "Person in a dress", "A skirt, a bun and round glasses.", {{"bodyType", 2}, {"shoulderWidth", 0.37}, {"torsoDepth", 0.21}, {"limbThickness", 0.038}, {"build", 0.4}}, {{"head", "round"}, {"hair", "bun"}, {"torso", "tapered"}, {"hand", "fingers"}, {"foot", "round"}, {"shirt", "tshirt"}, {"pants", "longskirt"}, {"glasses", "round"}, {"belt", "belt"}},
+         {{"shirt", kRed}, {"pants", kRed}, {"hair", kBrown}, {"foot", kBlack}});
     // Every start gets the separate face parts; the older combined face stays for recipes saved before them.
     for (StartDesign& st : b.t.starts) {
         const bool big = st.slotDesign.count("face") && st.slotDesign["face"] == "big";
         st.slotDesign["face"] = "none";
         st.slotDesign["eyes"] = big ? "big" : "round";
+        st.slotDesign["eyewhite"] = "round";
         st.slotDesign["brows"] = st.id == "athletic" || st.id == "hero" ? "thick" : "soft";
         st.slotDesign["nose"] = st.id == "child" ? "button" : "straight";
         st.slotDesign["mouth"] = "smile";
         st.slotDesign["ears"] = "normal";
-        st.colors["eyes"] = kBlack; st.colors["mouth"] = Color{0.7f, 0.3f, 0.3f, 1}; st.colors["brows"] = st.colors.count("hair") ? st.colors["hair"] : kBrown;
-        st.params["bodyType"] = st.id == "athletic" || st.id == "hero" || st.id == "heavy" ? 1 : st.id == "dress" || st.id == "casual" ? 2 : 0;
+        st.colors["eyes"] = st.id == "elder" ? Color{0.3f, 0.45f, 0.6f, 1} : Color{0.25f, 0.17f, 0.1f, 1}; st.colors["eyewhite"] = kWhite; st.colors["mouth"] = Color{0.74f, 0.45f, 0.42f, 1}; st.colors["brows"] = st.colors.count("hair") ? st.colors["hair"] : kBrown;
+        if (!st.params.count("bodyType")) st.params["bodyType"] = st.id == "athletic" || st.id == "hero" || st.id == "heavy" ? 1 : st.id == "casual" ? 2 : 0;
     }
     b.t.generate = GenerateHuman;
+    // The organic body is built with real rings at every Detail level, so it is never subdivided again (Catmull-Clark would shrink the open joints).
+    b.t.noSubdivisionSlots = {"head", "face", "eyes", "brows", "nose", "mouth", "ears", "hair", "neck", "torso", "pelvis", "arm", "hand", "leg", "foot", "shirt", "pants", "belt", "fitting", "scarf"};
     return b.t;
 }
 

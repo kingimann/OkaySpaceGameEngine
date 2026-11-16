@@ -1,0 +1,24 @@
+okayguided 1
+template aircraft 1
+param bodyRadius 0.80000000000000004
+param detail 1
+param length 14
+param wingSpan 9
+slot canopy long
+slot engine none
+slot fuselage slim
+slot gear wheels
+slot tail twin
+slot wings delta
+color canopy 0.449999988 0.620000005 0.779999971 1
+color engine 0.200000003 0.209999993 0.239999995 1
+color fuselage 0.300000012 0.400000006 0.25 1
+color gear 0.200000003 0.209999993 0.239999995 1
+color tail 0.300000012 0.400000006 0.25 1
+color wings 0.300000012 0.400000006 0.25 1
+material canopy 1
+material engine 4
+material fuselage 0
+material gear 5
+material tail 3
+material wings 2

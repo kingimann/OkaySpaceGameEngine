@@ -1,0 +1,25 @@
+okayguided 1
+template boat 1
+param beam 0.80000000000000004
+param detail 1
+param hullHeight 0.34999999999999998
+param length 4.5
+param mastHeight 4.5
+slot cabin none
+slot engine none
+slot hull canoe
+slot mast none
+slot sail none
+slot seat thwarts
+color cabin 0.920000017 0.920000017 0.899999976 1
+color engine 0.349999994 0.360000014 0.400000006 1
+color hull 0.699999988 0.150000006 0.150000006 1
+color mast 0.550000012 0.379999995 0.219999999 1
+color sail 0.899999976 0.879999995 0.800000012 1
+color seat 0.550000012 0.379999995 0.219999999 1
+material cabin 1
+material engine 4
+material hull 0
+material mast 2
+material sail 3
+material seat 5

@@ -81,6 +81,8 @@ release job or the installer build for this change.
 | 7zl | Guided environment: trees (9 species), rocks and cliffs, roads (path-drawn), bridges, hedges, plants, street lamps | Modeling > **Guided** > Environment; File > Examples > Guided modeling > `guided_environment`; `examples\modeling\guided_environment.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zm | Guided props: furniture, containers, tools, decorations (27 designs) | Modeling > **Guided** > Props; File > Examples > Guided modeling > `guided_props`; `examples\modeling\guided_props.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
+| 7zo | Guided humans, rebuilt: human proportions, a smooth body at every Detail level, fingers, a face, 13 hair styles, hats, glasses, Build and Muscle sliders, 13 start designs (slim, athletic, heavy, child, elder, woman, man ...) and a rig with Mixamo bone names | Modeling > **Guided** > Characters > Human; File > Examples > Guided modeling > `guided_characters` and `guided_humans_high`; `examples\modeling\guided_humans_high.okayscene` | New in this change; engine tested on Linux, pictures are headless renders, panel never opened in a real window (unverified) |
+| 7zp | Six more Guided templates: aircraft, boat, weapon, tower, lamp, tent (43 start designs) | Modeling > **Guided** > Vehicles (aircraft, boat), Props (weapon, lamp), Architecture (tower), Environment (tent); File > Examples > Guided modeling > `guided_more`; `examples\modeling\guided_more.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
@@ -754,6 +756,41 @@ headless software render of it.
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
 the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
 editor window (the editor code was only syntax-checked, the snapping ring and the buttons in steps 1 to 9 are unseen), run the Windows build, or looked at the OpenGL, Direct3D 11 or Direct3D 12 renderers (they draw per-face colours, as before).
+## 7zo. Guided humans (rebuilt) and 7zp. six more Guided templates
+
+**What it is.** The Guided human is now a smooth person at every Detail level (Low about 3 thousand triangles, Medium 8
+thousand, High 21 thousand, Ultra 44 thousand). It has human proportions (about 7.5 heads tall), a torso with chest, waist
+and hips, shoulders with a deltoid, arms and legs with muscle and fat taper and real elbows and knees, a neck, a skull with
+jaw, brow and cheeks, eyes with whites and lids, a nose, lips, ears, hands with four fingers and a thumb, feet with toes, 13
+hair styles, hats, glasses, and clothes that are fitted shells. New sliders: **Build** (slim to heavy) and **Muscle**. New
+start designs: Slim, Elder, Woman, Man. Written from general modeling knowledge; no model, code or data from any other
+project (the bone names in the rig follow Mixamo's naming convention, nothing from Mixamo is used).
+The same page now has six more kinds: **Aircraft**, **Boat** (Vehicles), **Weapon**, **Lamp** (Props), **Tower**
+(Architecture) and **Tent** (Environment).
+
+**Try it (humans).**
+1. Open `Tools\OkayEngine.exe`, **File > Open...**, `examples\modeling\guided_characters.okayscene`. You should see
+   13 humans in the front row (Medium detail), then the robots and creatures.
+2. **File > Open...** `examples\modeling\guided_humans_high.okayscene`: three humans (woman, man, elder) at High detail.
+3. Click one, **View > Editors & Tools > Modeling > Guided**. Under **Proportions** drag **Build** to 1 (the belly and arms
+   fill out) and **Muscle** to 1 (chest, shoulders and arms grow), **Height** to 2.0, **Body type** to Female.
+4. Change **Detail** to Low, Medium, High, Ultra: the same person gets coarser or finer; the triangle count is shown.
+5. Under **Parts and materials** change **Hair**, **Hat**, **Glasses**, **Top** and **Bottoms** designs; set **Hands** to Mitten,
+   Fist or Fingers.
+6. Open **Animation (skeleton)** and press **Make animated copy**: you get a skinned copy with 22 bones named like a Mixamo rig
+   (`mixamorig:Hips`, `mixamorig:LeftUpLeg` ...). Add a Model Animator clip whose nodes use those names, or use the engine's
+   built-in idle and walk (see 7z for the third-person player): it moves.
+
+**Try it (six more kinds).** `examples\modeling\guided_more.okayscene` shows every design (weapons, lamps, tents, towers,
+boats, aircraft in rows). In Modeling > Guided pick Vehicles > Aircraft or Boat, Props > Weapon or Lamp, Architecture >
+Tower, Environment > Tent, click a design card, press **Create**.
+
+**Not done or not verified (said plainly).** Nothing was opened in a real editor window or run on Windows. Pictures
+(`docs/images/guided_modeling/human_*`, `more_*`) are headless software renders. Hair and clothes are solid shells (no
+strands, no cloth), eyes have no iris texture, the elder has no stoop or wrinkles, there is no facial rig. The default rig is
+checked against the engine's humanoid mapping and a Mixamo-named test clip; it is not compared with a real Mixamo file.
+Compare with Mixamo: [guided_vs_mixamo.md](guided_vs_mixamo.md).
+
 ## 7zg. Guided modeling: a fence from designs, then your own edits
 
 **What it is.** The existing Modeling window has a new **Guided** page. You pick a category, a thing (today only the

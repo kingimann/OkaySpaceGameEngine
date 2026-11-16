@@ -1,0 +1,20 @@
+okayguided 1
+template tower 1
+param detail 1
+param height 30
+param radius 1.2
+slot base plinth
+slot door none
+slot shaft square_tapered
+slot top dish
+slot windows none
+color base 0.620000005 0.620000005 0.600000024 1
+color door 0.25 0.200000003 0.159999996 1
+color shaft 0.550000012 0.579999983 0.620000005 1
+color top 0.920000017 0.920000017 0.899999976 1
+color windows 0.25 0.200000003 0.159999996 1
+material base 0
+material door 2
+material shaft 1
+material top 4
+material windows 3

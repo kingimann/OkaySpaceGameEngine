@@ -252,13 +252,15 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.11.4 User parts and templates - `Modeling/Guided` - MakeUserPart / FitUserPart (`.okaypart`), UserTemplate (`.okaytemplate`), folder loaders
   - 3.11.6 Architecture templates - `Modeling/GuidedArchitecture` - Wall (path, openings), Stairs (straight, L, U, spiral), Door, Window, Roof, Building composed of swappable parts
   - 3.11.7 Vehicle templates and Detail level - `Modeling/GuidedVehicles`, `Modeling/Guided` - Car, Truck, Bus, Motorcycle, Trailer with swappable wheels, lights, bumpers, mirrors, spoilers, exhausts; the shared Detail setting (Low to Ultra) and TriangleCount
-  - 3.11.8 Character templates - `Modeling/GuidedCharacters` - Human (9), Robot (6), Creature (11 on five body plans) with swappable head, hair, clothes, hands, feet, accessories and proportion sliders
+  - 3.11.8 Character templates - `Modeling/GuidedCharacters` - Human (13), Robot (6), Creature (11 on five body plans) with swappable head, hair, clothes, hands, feet, accessories and proportion sliders (height, shoulders, build, muscle, body type)
+  - 3.11.9 Organic human - `Modeling/GuidedHuman`, `Modeling/GuidedRig` - smooth lofted body at every Detail level (about 3k / 8k / 21k / 44k triangles), face, fingers, hair, hats, glasses, fitted clothes; 22-bone rig with Mixamo-style or engine bone names and skin weights (`BuildRiggedHuman`)
+  - 3.11.10 More templates - `Modeling/GuidedMore` - Aircraft, Boat, Weapon, Tower, Lamp and Tent with start designs, Detail levels and validation
   - 3.11.5 Guided page - `editor/GuidedPanel`, `editor/main.cpp` - categories, design browser with thumbnails, settings, parts list, decision window, undo and redo of guided steps
 - **Code:** `Modeling/Guided`, `Modeling/GuidedFence`, `editor/GuidedPanel`, `editor/main.cpp` (DrawModeling page 7)
 - **API:** `guided::Recipe`, `Template`, `Registry`, `Generate`, `Create`, `Analyze`, `Regenerate`, `DetachPart`, `ConvertToRegular`, `MakeUserPart`, `GuidedHistory`
 - **Editor:** Modeling window > Guided
-- **Docs:** `docs/guided_modeling_design.md`, `docs/modeling.md`, `docs/try_it.md` (7zg)
-- **Tests:** `guided_modeling`, `guided_architecture`, `guided_vehicles`, `guided_characters`, `guided_detail`
+- **Docs:** `docs/guided_modeling_design.md`, `docs/modeling.md`, `docs/try_it.md` (7zg, 7zo, 7zp), `docs/guided_vs_mixamo.md`
+- **Tests:** `guided_modeling`, `guided_architecture`, `guided_vehicles`, `guided_characters`, `guided_detail`, `guided_human`, `guided_animation`
 - **Status:** Partial - the engine side (generation, rules, files) is tested headlessly; the editor page compiles but has not been opened in a real window or on Windows
 - **Open:** Architecture, vehicles, characters and the fence exist (with a shared Detail level); environment and props do not; no landing railings; wall corners are not mitred; material slots are stored but only colours are drawn (M5b)
 - **Related:** 3.1, 3.5, 3.9

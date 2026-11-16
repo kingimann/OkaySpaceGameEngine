@@ -1,0 +1,17 @@
+okayguided 1
+template lamp 1
+param detail 1
+param height 1.3999999999999999
+param shadeWidth 0.90000000000000002
+slot base none
+slot bulb none
+slot shade candles
+slot stem chain
+color base 0.75 0.600000024 0.25 1
+color bulb 0.949999988 0.899999976 0.600000024 1
+color shade 0.949999988 0.920000017 0.800000012 1
+color stem 0.75 0.600000024 0.25 1
+material base 0
+material bulb 3
+material shade 2
+material stem 1

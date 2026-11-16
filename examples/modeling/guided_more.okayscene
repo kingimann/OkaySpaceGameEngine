@@ -1,0 +1,326 @@
+okayscene 3
+name "Guided more models"gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Ground"
+  active 1
+  parent -1
+  transform 0.000000 -0.5 0.000000 0 0 0 1 400.000000 1 400.000000
+  mesh "Cube" 0.32941177 0.5019608 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "Weapon Longsword"
+  active 1
+  parent -1
+  transform 0.25 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_longsword.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Weapon Curved sabre"
+  active 1
+  parent -1
+  transform 1.33666 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_saber.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Weapon Dagger"
+  active 1
+  parent -1
+  transform 2.45 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_dagger.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Weapon Spear"
+  active 1
+  parent -1
+  transform 3.55 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_spear.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "Weapon Bow"
+  active 1
+  parent -1
+  transform 4.7703 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_bow.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Weapon Mace"
+  active 1
+  parent -1
+  transform 5.75 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_mace.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Weapon Pistol"
+  active 1
+  parent -1
+  transform 6.85 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_pistol.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Weapon Rifle"
+  active 1
+  parent -1
+  transform 7.95 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_rifle.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Weapon Kite shield"
+  active 1
+  parent -1
+  transform 9.22 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_kite_shield.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Weapon Round shield"
+  active 1
+  parent -1
+  transform 10.66 0 -1.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "weapon_round_shield.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Lamp Table lamp"
+  active 1
+  parent -1
+  transform 0.25 0 -4.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "lamp_table_lamp.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Lamp Floor lamp"
+  active 1
+  parent -1
+  transform 1.35 0 -4.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "lamp_floor_lamp.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Lamp Desk lamp"
+  active 1
+  parent -1
+  transform 2.4085 0 -4.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "lamp_desk_lamp.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Lamp Globe lamp"
+  active 1
+  parent -1
+  transform 3.53878 0 -4.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "lamp_globe_lamp.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Lamp Lantern"
+  active 1
+  parent -1
+  transform 4.65 0 -4.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "lamp_hand_lantern.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Lamp Chandelier"
+  active 1
+  parent -1
+  transform 5.89885 0 -4.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "lamp_chandelier.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Tent A-frame tent"
+  active 1
+  parent -1
+  transform 1.1 0 -10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tent_a_frame.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Tent Dome tent"
+  active 1
+  parent -1
+  transform 4.17873 0 -10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tent_dome_tent.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Tent Tipi"
+  active 1
+  parent -1
+  transform 8.22683 0 -10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tent_tipi.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Tent Yurt"
+  active 1
+  parent -1
+  transform 14.5344 0 -10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tent_yurt.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Tent Market stall"
+  active 1
+  parent -1
+  transform 20.8258 0 -10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tent_market_stall.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Tent Camp with a fire"
+  active 1
+  parent -1
+  transform 24.0336 0 -10 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tent_camp.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Tower Castle tower"
+  active 1
+  parent -1
+  transform 3.2256 0 -22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tower_castle_tower.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 25 "Tower Round tower"
+  active 1
+  parent -1
+  transform 11.144 0 -22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tower_round_keep.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 26 "Tower Lighthouse"
+  active 1
+  parent -1
+  transform 19.014 0 -22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tower_lighthouse.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 27 "Tower Bell tower"
+  active 1
+  parent -1
+  transform 27.025 0 -22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tower_bell_tower.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 28 "Tower Water tower"
+  active 1
+  parent -1
+  transform 35.317 0 -22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tower_water_tower.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 29 "Tower Watch tower"
+  active 1
+  parent -1
+  transform 44.059 0 -22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tower_watch_tower.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 30 "Tower Radio tower"
+  active 1
+  parent -1
+  transform 51.331 0 -22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tower_radio_mast.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 31 "Tower Octagon tower"
+  active 1
+  parent -1
+  transform 57.539 0 -22 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tower_octagon_tower.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 32 "Boat Rowboat"
+  active 1
+  parent -1
+  transform 0.66367 0 -40 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "boat_rowboat.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 33 "Boat Canoe"
+  active 1
+  parent -1
+  transform 2.21534 0 -40 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "boat_canoe.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 34 "Boat Speedboat"
+  active 1
+  parent -1
+  transform 4.02265 0 -40 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "boat_speedboat.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 35 "Boat Sailboat"
+  active 1
+  parent -1
+  transform 6.69231 0 -40 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "boat_sailboat.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 36 "Boat Tall ship"
+  active 1
+  parent -1
+  transform 11.6381 0 -40 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "boat_tall_ship.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 37 "Boat Steamer"
+  active 1
+  parent -1
+  transform 19.8725 0 -40 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "boat_steamer.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 38 "Boat Raft"
+  active 1
+  parent -1
+  transform 26.0244 0 -40 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "boat_raft.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 39 "Aircraft Light plane"
+  active 1
+  parent -1
+  transform 5.5 0 -72 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "aircraft_light_plane.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 40 "Aircraft Biplane"
+  active 1
+  parent -1
+  transform 18.25 0 -72 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "aircraft_biplane.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 41 "Aircraft Jet fighter"
+  active 1
+  parent -1
+  transform 29.5 0 -72 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "aircraft_jet_fighter.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 42 "Aircraft Airliner"
+  active 1
+  parent -1
+  transform 54.25 0 -72 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "aircraft_airliner.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 43 "Aircraft Cargo plane"
+  active 1
+  parent -1
+  transform 98.25 0 -72 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "aircraft_cargo_plane.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 44 "Aircraft Glider"
+  active 1
+  parent -1
+  transform 132.75 0 -72 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "aircraft_glider.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 45 "Main Camera"
+  active 1
+  parent -1
+  transform 73.125 51.1875 110.438 -0.13 0 0 0.9915 1 1 1
+  camera 1 5 50 0.55 0.72 0.88 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.4 3 14 1.5
+end

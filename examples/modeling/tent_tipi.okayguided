@@ -1,0 +1,21 @@
+okayguided 1
+template tent 1
+param depth 4
+param detail 1
+param height 4.2000000000000002
+param width 4
+slot body tipi
+slot door flap
+slot fire unlit
+slot floor none
+slot poles wood
+color body 0.800000012 0.720000029 0.5 1
+color door 0.200000003 0.170000002 0.140000001 1
+color fire 0.5 0.5 0.5 1
+color floor 0.200000003 0.170000002 0.140000001 1
+color poles 0.5 0.349999994 0.200000003 1
+material body 1
+material door 3
+material fire 4
+material floor 0
+material poles 2

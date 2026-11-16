@@ -68,6 +68,9 @@ bool WritePng(const std::string& path, const Img& im) {
 }
 
 static bool g_edges = false;   // draw triangle edges (the detail pictures)
+static bool g_smooth = false;  // smooth shading: corner normals averaged over the faces within g_smoothAngle (like the editor's auto-smooth)
+static float g_elev = 0.35f;   // camera elevation (radians) used by Scene()
+static float g_zoom = 2.1f;    // camera distance in model radii used by Scene()
 struct Cam { Vec3 eye, target; float fov = 0.9f; };
 
 void Raster(Img& im, const PolyMesh& m, const Cam& cam, int x0, int y0, int w, int h) {
@@ -82,6 +85,17 @@ void Raster(Img& im, const PolyMesh& m, const Cam& cam, int x0, int y0, int w, i
         sy = y0 + h * 0.5f - f * Vec3::Dot(q, up) / d;
     };
     const Vec3 light = Vec3{0.4f, 0.8f, 0.5f}.Normalized();
+    std::vector<Vec3> fnorm(m.faces.size());
+    std::vector<std::vector<int>> vfaces;
+    if (g_smooth) {
+        vfaces.assign(m.verts.size(), {});
+        for (int fi = 0; fi < (int)m.faces.size(); ++fi) { fnorm[fi] = m.FaceNormal(fi).Normalized(); for (int v : m.faces[fi].verts) vfaces[v].push_back(fi); }
+    }
+    auto cornerNormal = [&](int fi, int v) {
+        Vec3 n = fnorm[fi];
+        for (int g : vfaces[v]) if (g != fi && Vec3::Dot(fnorm[g], fnorm[fi]) > 0.70f) n = n + fnorm[g];
+        return n.Normalized();
+    };
     for (int fi = 0; fi < (int)m.faces.size(); ++fi) {
         const PolyFace& face = m.faces[fi];
         Vec3 n = m.FaceNormal(fi);
@@ -91,6 +105,8 @@ void Raster(Img& im, const PolyMesh& m, const Cam& cam, int x0, int y0, int w, i
         const std::vector<int> tri = m.TriangulateFace(fi);
         for (size_t k = 0; k + 2 < tri.size(); k += 3) {
             float sx[3], sy[3], d[3];
+            float shade[3] = {lit, lit, lit};
+            if (g_smooth) for (int i = 0; i < 3; ++i) shade[i] = 0.35f + 0.65f * std::max(0.0f, Vec3::Dot(cornerNormal(fi, face.verts[tri[k + i]]), light));
             for (int i = 0; i < 3; ++i) proj(m.verts[face.verts[tri[k + i]]], sx[i], sy[i], d[i]);
             if (d[0] < 0.1f || d[1] < 0.1f || d[2] < 0.1f) continue;
             const int minx = std::max(x0, (int)std::floor(std::min({sx[0], sx[1], sx[2]})));
@@ -110,6 +126,7 @@ void Raster(Img& im, const PolyMesh& m, const Cam& cam, int x0, int y0, int w, i
                     const size_t idx = (size_t)y * im.w + x;
                     if (z >= im.z[idx]) continue;
                     im.z[idx] = z;
+                    const float lit = g_smooth ? (l0 * shade[0] + l1 * shade[1] + l2 * shade[2]) : shade[0];
                     const float edge = g_edges && std::min({l0, l1, l2}) < 0.07f ? 0.45f : 1.0f;
                     im.px[idx * 3] = (uint8_t)std::min(255.0f, c.r * lit * 255 * edge);
                     im.px[idx * 3 + 1] = (uint8_t)std::min(255.0f, c.g * lit * 255 * edge);
@@ -132,10 +149,10 @@ void Scene(Img& im, const PolyMesh& m, int x0, int y0, int w, int h, float yaw =
     Vec3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
     for (const Vec3& v : m.verts) { lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)}; hi = {std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)}; }
     const Vec3 c = (lo + hi) * 0.5f;
-    const float r = std::max(0.5f, (hi - lo).Magnitude() * 0.5f);
+    const float r = std::max(g_zoom < 2.0f ? 0.03f : 0.5f, (hi - lo).Magnitude() * 0.5f);
     Cam cam;
     cam.target = c;
-    cam.eye = c + Vec3{std::sin(yaw) * std::cos(0.35f), std::sin(0.35f), std::cos(yaw) * std::cos(0.35f)} * (r * 2.1f);
+    cam.eye = c + Vec3{std::sin(yaw) * std::cos(g_elev), std::sin(g_elev), std::cos(yaw) * std::cos(g_elev)} * (r * g_zoom);
     Raster(im, m, cam, x0, y0, w, h);
 }
 
@@ -160,6 +177,94 @@ int main(int argc, char** argv) {
     RegisterBuiltinTemplates();
     const Template& T = *Registry::Instance().Find("fence");
 
+    if (argc > 3 && std::string(argv[3]) == "more") {   // quick run: the newer templates, a sheet each (and a validity line)
+        g_smooth = true;
+        for (const char* id : {"aircraft", "boat", "weapon", "tower", "lamp", "tent"}) {
+            const Template& A = *Registry::Instance().Find(id);
+            const int cols = 4, tw = 360, th = 300;
+            const int rows = ((int)A.starts.size() + cols - 1) / cols;
+            Img sheet(cols * tw, rows * th);
+            sheet.Clear(40, 42, 48);
+            for (int i = 0; i < (int)A.starts.size(); ++i) {
+                Recipe r = DefaultRecipe(A, A.starts[i].id);
+                r.params["detail"] = 2;
+                const PolyMesh m = Create(r);
+                Scene(sheet, m, (i % cols) * tw + 2, (i / cols) * th + 2, tw - 4, th - 4, std::string(id) == "weapon" ? 0.5f : 0.75f);
+            }
+            Save(dir, std::string("more_") + id + ".png", sheet);
+        }
+        return 0;
+    }
+    if (argc > 3 && std::string(argv[3]) == "humans") {   // quick run: front, side and 3/4 of one or more designs at Low, Medium, High, Ultra
+        const Template& H = *Registry::Instance().Find("human");
+        std::vector<std::string> ids;
+        for (int i = 4; i < argc; ++i) ids.push_back(argv[i]);
+        if (ids.empty()) ids = {"average"};
+        g_smooth = true; g_elev = 0.08f;
+        if (ids[0] == "all") {   // a sheet of every start design at one Detail level (default High): front 3/4 view
+            const int lv = ids.size() > 1 ? std::atoi(ids[1].c_str()) : 2;
+            const int cols = 6, tw = 250, th = 470;
+            const int rows = ((int)H.starts.size() + cols - 1) / cols;
+            Img sheet(cols * tw, rows * th);
+            sheet.Clear(40, 42, 48);
+            for (int i = 0; i < (int)H.starts.size(); ++i) {
+                Recipe r = DefaultRecipe(H, H.starts[i].id);
+                r.params["detail"] = lv;
+                Scene(sheet, Create(r), (i % cols) * tw + 2, (i / cols) * th + 2, tw - 4, th - 4, 0.45f);
+            }
+            Save(dir, "human_all_detail" + std::to_string(lv) + (argc > 2 ? std::string(argv[2]) : std::string()) + ".png", sheet);
+            return 0;
+        }
+        const std::string tag = argc > 2 ? std::string(argv[2]) : "";
+        for (const std::string& id : ids) {
+            Img im(4 * 330, 3 * 560);
+            im.Clear(40, 42, 48);
+            for (int lv = 0; lv < 4; ++lv) {
+                Recipe r = DefaultRecipe(H, id);
+                r.params["detail"] = lv;
+                const PolyMesh m = Create(r);
+                std::printf("human %s detail %d: %d triangles\n", id.c_str(), lv, TriangleCount(m));
+                g_smooth = lv >= 1;
+                for (int v = 0; v < 3; ++v) Scene(im, m, lv * 330 + 2, v * 560 + 2, 326, 556, v == 0 ? 0.0f : v == 1 ? 1.5708f : 0.6f);
+            }
+            Save(dir, "human_views_" + id + tag + ".png", im);
+            // close-ups at High: the head from three sides, a hand, a foot and the shoulder, each framed on its own parts
+            Recipe r = DefaultRecipe(H, id);
+            r.params["detail"] = 2;
+            const std::vector<GeneratedPart> gp = Generate(r);
+            auto pick = [&](std::initializer_list<const char*> slots, const char* prefix = nullptr) {
+                PolyMesh m;
+                for (const GeneratedPart& p : gp) {
+                    bool ok = false;
+                    for (const char* sl : slots) if (p.slot == sl) ok = true;
+                    if (prefix && p.id.rfind(prefix, 0) == 0) ok = true;
+                    if (ok) shapes::Append(m, p.mesh);
+                }
+                return m;
+            };
+            Img cl(5 * 360, 2 * 420);
+            cl.Clear(40, 42, 48);
+            g_smooth = true; g_elev = 0.05f; g_zoom = 1.7f;
+            const PolyMesh head = pick({"head", "eyes", "eyewhite", "brows", "nose", "mouth", "ears", "hair", "neck", "face"});
+            Scene(cl, head, 2, 2, 356, 416, 0.0f);
+            Scene(cl, head, 362, 2, 356, 416, 1.5708f);
+            Scene(cl, head, 722, 2, 356, 416, 0.7f);
+            g_zoom = 1.4f;
+            { PolyMesh hnd; for (const GeneratedPart& p : gp) if (p.id == "hand/1") shapes::Append(hnd, p.mesh); Scene(cl, hnd, 1082, 2, 356, 416, 1.5f); }
+            { PolyMesh ft; for (const GeneratedPart& p : gp) if (p.id == "foot/1") shapes::Append(ft, p.mesh); Scene(cl, ft, 1442, 2, 356, 416, 1.0f); }
+            g_zoom = 2.1f;
+            g_elev = 0.35f; g_zoom = 2.1f;
+            const PolyMesh shoulder = pick({"torso", "arm", "neck", "hand"});
+            Scene(cl, shoulder, 2, 422, 356, 416, 0.0f);
+            Scene(cl, shoulder, 362, 422, 356, 416, 0.8f);
+            Scene(cl, pick({"leg", "foot", "pelvis"}), 722, 422, 356, 416, 0.7f);
+            Scene(cl, pick({"torso", "pelvis"}), 1082, 422, 356, 416, 0.0f);
+            Scene(cl, pick({"torso", "pelvis"}), 1442, 422, 356, 416, 2.6f);
+            g_elev = 0.08f;
+            Save(dir, "human_close_" + id + tag + ".png", cl);
+        }
+        return 0;
+    }
     if (argc > 3 && (std::string(argv[3]) == "cars" || std::string(argv[3]) == "bikes")) {   // quick run: only the silhouette and 3/4 sheets
         const bool bikes = std::string(argv[3]) == "bikes";
         const std::string stem = bikes ? "motorcycles" : "cars";
@@ -541,6 +646,63 @@ int main(int argc, char** argv) {
         chr += CameraRecord(cid++, 22.0, 7.0, 36.0);
         std::ofstream(ex + "/guided_characters.okayscene", std::ios::binary) << chr;
         std::printf("wrote %d character models\n", ctotal);
+        // The newer templates (aircraft, boat, weapon, tower, lamp, tent) and the three humans at High detail: a row each,
+        // models spaced by their own size so a 36 m airliner and a 0.3 m pistol both sit in view of the scene camera.
+        {
+            auto makeScene = [&](const std::string& name, double gx, double gz, double gsize) {
+                std::string sc = scene.substr(0, scene.find("gameobject 1 ")) +
+                    "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform " + std::to_string(gx) + " -0.5 " + std::to_string(gz) + " 0 0 0 1 " + std::to_string(gsize) + " 1 " + std::to_string(gsize) + "\n"
+                    "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                sc.replace(sc.find("name \"Guided fences\""), 21, "name \"" + name + "\"");
+                return sc;
+            };
+            auto place = [&](std::string& sc, int& oid, const std::string& base, const std::string& title, const Recipe& r, double& cursor, double z) {
+                const PolyMesh m = Create(r);
+                m.Save(ex + "/" + base + ".okaymesh");
+                SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                Vec3 lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
+                for (const Vec3& v : m.verts) { lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)}; hi = {std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)}; }
+                const double w = std::max(0.5, (double)(hi.x - lo.x)), gap = std::max(0.6, w * 0.25);
+                char tr[200];
+                std::snprintf(tr, sizeof tr, "  transform %g 0 %g 0 0 0 1 1 1 1\n", cursor + w * 0.5 - (double)(lo.x + hi.x) * 0.5 + (double)lo.x * 0.0, z);
+                sc += "gameobject " + std::to_string(oid++) + " \"" + title + "\"\n  active 1\n  parent -1\n" + tr + "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                cursor += w + gap;
+            };
+            // one row per template, the rows laid out in z (away from the camera)
+            {
+                std::string sc2 = makeScene("Guided more models", 0, 0, 400);
+                int oid = 2;
+                double z = 0;
+                const double rowDepth[6] = {1.5, 1.5, 4.0, 8.0, 10.0, 22.0};
+                int ri = 0, total2 = 0;
+                double widest = 0;
+                for (const char* tid : {"weapon", "lamp", "tent", "tower", "boat", "aircraft"}) {
+                    const Template& A = *Registry::Instance().Find(tid);
+                    double cursor = 0;
+                    z -= rowDepth[ri++];
+                    for (const StartDesign& st : A.starts) { place(sc2, oid, std::string(tid) + "_" + st.id, A.name + " " + st.name, DefaultRecipe(A, st.id), cursor, z); ++total2; }
+                    widest = std::max(widest, cursor);
+                    z -= rowDepth[ri - 1];
+                }
+                sc2 += CameraRecord(oid++, widest * 0.5, std::max(8.0, widest * 0.35), 30.0 + widest * 0.55);
+                std::ofstream(ex + "/guided_more.okayscene", std::ios::binary) << sc2;
+                std::printf("wrote %d models of the newer templates\n", total2);
+            }
+            // three humans at High detail
+            {
+                std::string sc3 = makeScene("Guided humans, High detail", 3.0, 0, 40);
+                int oid = 2;
+                double cursor = 0;
+                for (const char* id : {"woman", "man", "elder"}) {
+                    Recipe r = DefaultRecipe(*Registry::Instance().Find("human"), id);
+                    r.params["detail"] = 2;
+                    place(sc3, oid, std::string("human_high_") + id, std::string("Human ") + id + " (High)", r, cursor, 0.0);
+                }
+                sc3 += CameraRecord(oid++, 3.0, 1.6, 6.5);
+                std::ofstream(ex + "/guided_humans_high.okayscene", std::ios::binary) << sc3;
+                std::printf("wrote 3 humans at High detail\n");
+            }
+        }
         std::printf("wrote %d architecture models\n", total);
     }
     return 0;

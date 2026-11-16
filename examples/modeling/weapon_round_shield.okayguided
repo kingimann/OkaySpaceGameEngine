@@ -1,0 +1,18 @@
+okayguided 1
+template weapon 1
+param detail 1
+param kind 7
+param length 0.80000000000000004
+param width 0.29999999999999999
+slot grip smooth
+slot guard none
+slot main round
+slot pommel none
+color grip 0.349999994 0.219999999 0.140000001 1
+color guard 0.800000012 0.649999976 0.200000003 1
+color main 0.550000012 0.379999995 0.219999999 1
+color pommel 0.800000012 0.649999976 0.200000003 1
+material grip 1
+material guard 2
+material main 0
+material pommel 3

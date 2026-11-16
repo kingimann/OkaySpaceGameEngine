@@ -64,9 +64,9 @@ struct Out {
 };
 /// One ring of a lofted tube: its centre and two radii (along the ring's A and B axes).
 struct Station { Vec3 c; float ra, rb; };
-/// A closed tube through `st` (at least two rings): each ring is an ellipse of `sides` points; `refA` (for example forward) fixes the
+/// A closed tube through `st` (at least two rings): each ring is an ellipse (or a superellipse, see `expo`) of `sides` points; `refA` (for example forward) fixes the
 /// A axis of every ring. The ends are rounded (a pole point just beyond the ring) or flat.
-inline PolyMesh Loft(const std::vector<Station>& st, Vec3 refA, int sides, bool roundStart, bool roundEnd) {
+inline PolyMesh Loft(const std::vector<Station>& st, Vec3 refA, int sides, bool roundStart, bool roundEnd, float expo = 2.0f) {
     PolyMesh m;
     const int n = (int)st.size();
     if (n < 2 || sides < 3) return m;
@@ -82,7 +82,12 @@ inline PolyMesh Loft(const std::vector<Station>& st, Vec3 refA, int sides, bool 
     for (int i = 0; i < n; ++i)
         for (int k = 0; k < sides; ++k) {
             const float a = 2 * kPi * (float)k / (float)sides;
-            m.verts.push_back(st[i].c + A[i] * (st[i].ra * std::cos(a)) + Bv[i] * (st[i].rb * std::sin(a)));
+            float ca = std::cos(a), sa = std::sin(a);
+            if (expo != 2.0f) {   // a superellipse ring: exponent 2 is an ellipse, above 2 a rounded rectangle
+                ca = std::copysign(std::pow(std::fabs(ca), 2.0f / expo), ca);
+                sa = std::copysign(std::pow(std::fabs(sa), 2.0f / expo), sa);
+            }
+            m.verts.push_back(st[i].c + A[i] * (st[i].ra * ca) + Bv[i] * (st[i].rb * sa));
         }
     auto V = [&](int i, int k) { return i * sides + (k % sides); };
     for (int i = 0; i + 1 < n; ++i)

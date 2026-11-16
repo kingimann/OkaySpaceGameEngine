@@ -1,0 +1,20 @@
+okayguided 1
+template tower 1
+param detail 1
+param height 16
+param radius 2.2000000000000002
+slot base plinth
+slot door arched
+slot shaft round
+slot top cone
+slot windows many
+color base 0.620000005 0.620000005 0.600000024 1
+color door 0.25 0.200000003 0.159999996 1
+color shaft 0.620000005 0.620000005 0.600000024 1
+color top 0.600000024 0.25 0.200000003 1
+color windows 0.25 0.200000003 0.159999996 1
+material base 0
+material door 2
+material shaft 1
+material top 4
+material windows 3

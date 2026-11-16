@@ -1,0 +1,21 @@
+okayguided 1
+template tent 1
+param depth 2.7999999999999998
+param detail 1
+param height 1.3999999999999999
+param width 2.7999999999999998
+slot body dome
+slot door flap
+slot fire none
+slot floor groundsheet
+slot poles wood
+color body 0.75 0.200000003 0.200000003 1
+color door 0.200000003 0.170000002 0.140000001 1
+color fire 0.5 0.5 0.5 1
+color floor 0.200000003 0.170000002 0.140000001 1
+color poles 0.5 0.349999994 0.200000003 1
+material body 1
+material door 3
+material fire 4
+material floor 0
+material poles 2

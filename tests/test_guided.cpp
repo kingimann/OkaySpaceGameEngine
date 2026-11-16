@@ -125,13 +125,13 @@ int main() {
     {
         CHECK(Registry::Categories().size() == 5);
         CHECK(Registry::Instance().InCategory("Architecture").size() >= 1);
-        CHECK(Registry::Instance().InCategory("Vehicles").size() == 5);
-        CHECK(Registry::Instance().InCategory("Environment").size() == 7 && Registry::Instance().InCategory("Props").size() == 4);
+        CHECK(Registry::Instance().InCategory("Vehicles").size() == 7);
+        CHECK(Registry::Instance().InCategory("Environment").size() == 8 && Registry::Instance().InCategory("Props").size() == 6);
         CHECK(Registry::Instance().InCategory("Characters").size() == 3);
         CHECK(T.starts.size() >= 5);
         CHECK(T.slots.size() >= 5);
         RegisterBuiltinTemplates();
-        CHECK(Registry::Instance().All().size() == 26);   // fence + 6 architecture + 5 vehicle + 3 character + 7 environment + 4 prop templates; registering twice does not duplicate
+        CHECK(Registry::Instance().All().size() == 32);   // fence + 6 architecture + the tower + 7 vehicle (with aircraft and boat) + 3 character + 8 environment (with the tent) + 6 prop (with weapon and lamp) templates; registering twice does not duplicate
     }
 
     // ---- guided_styles: every start design makes sound, distinct, disjoint parts -------------------------

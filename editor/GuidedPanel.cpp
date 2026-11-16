@@ -713,7 +713,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
     }
     // Animation: a human gets a skeleton and skin weights, and the engine's own idle, walk and run play on it.
     if (t.id == "human" && ImGui::CollapsingHeader("Animation (skeleton)##grp")) {
-        ImGui::TextWrapped("Makes a copy of this human with a skeleton (15 bones) and skin weights, as objects in the scene. The engine's built-in humanoid animations (idle, walk, run, jump, gestures) play on it through the same Humanoid Retarget that imported characters use.");
+        ImGui::TextWrapped("Makes a copy of this human with a skeleton (22 bones named like a Mixamo rig) and skin weights, as objects in the scene. The engine's built-in humanoid animations (idle, walk, run, jump, gestures) play on it through the same Humanoid Retarget that imported characters use.");
         if (ImGui::Button("Make animated copy")) {
             std::string why;
             h.ed->PushUndo();

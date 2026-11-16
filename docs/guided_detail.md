@@ -219,3 +219,13 @@ Cars at High and Ultra now carry purposeful small parts instead of subdivided ar
 | decoration | statue | 136 | 340 | 1100 | 6592 |
 | decoration | garden_lantern | 42 | 42 | 90 | 2432 |
 | decoration | fountain | 184 | 396 | 820 | 7392 |
+
+## The human at every Detail level (rebuilt)
+
+The human no longer switches to a different, blocky generator at Low (only the style "Blocky" does). Every level is the same
+person built from rings and curves; Detail changes how many rings and sides each tube has and how many small parts there are
+(lids, rims, finger joints, buttons). It is not subdivided at Ultra any more (the old Catmull-Clark pass shrank open joints and
+cost 120 thousand triangles). Average adult, triangles (`tests/test_guided_human.cpp`): Low about 3 thousand, Medium 8.6 thousand,
+High 21.5 thousand, Ultra 44 thousand. Pictures: `docs/images/guided_modeling/human_views_average.png` (front, side and 3/4 at the four
+levels), `human_close_average.png` (head, hand, foot, shoulder at High), `human_all_detail0/1/2.png` (every start design),
+`human_views_average_before.png` (the old human, for comparison). All are headless software renders.

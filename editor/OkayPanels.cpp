@@ -70,11 +70,25 @@ bool DrawAudioMixerOkayUI(bool* open) {
     });
 }
 
+bool DrawStatsOkayUI(bool* open, const StatsHostData& data) {
+    okayuiscreens::StatsModel m;
+    m.framerate = data.framerate;
+    m.history = data.history; m.historyCount = data.historyCount; m.historyOffset = data.historyOffset;
+    for (const auto& r : data.rows) m.rows.push_back({r.first, r.second});
+    m.frustumCulling = data.frustumCulling; m.occlusionCulling = data.occlusionCulling;
+    m.staticBatching = data.staticBatching; m.dynamicBatching = data.dynamicBatching;
+    m.skinning = data.skinning;
+    return HostWindow("Stats", open, "##okayui_stats", [&](ImVec2 p, ImVec2 a) {
+        okayuiscreens::DrawStats(m, p.x, p.y, a.x, a.y);
+    });
+}
+
 } // namespace oked
 
 #else
 namespace oked {
 bool DrawCrashLogOkayUI(bool*, const std::string&, const std::string&, std::uint64_t, const CrashLogActions&) { return false; }
 bool DrawAudioMixerOkayUI(bool*) { return false; }
+bool DrawStatsOkayUI(bool*, const StatsHostData&) { return false; }
 }
 #endif

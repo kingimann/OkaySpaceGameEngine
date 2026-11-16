@@ -1132,6 +1132,86 @@ void PerfTests() {
     CHECK(tUndo < 3000 * slack);
 }
 
+void LineCommandTests() {
+    RUN_SUITE("codeedit: toggle comment, move lines, duplicate lines");
+    using UI::CodePos;
+    {   // toggle comment: comment, then uncomment, on one line and on a block with a blank line and different indents
+        UI::CodeEdit ce; ce.SetText("a\n    b\n\n  c\nd");
+        ce.SetSelection(CodePos{0, 0}, CodePos{3, 3});
+        CHECK(ce.ToggleLineComment("//"));
+        CHECK(ce.GetText() == "// a\n//     b\n\n//   c\nd");           // at the smallest indent (column 0 here)
+        CHECK(ce.ToggleLineComment("//"));
+        CHECK(ce.GetText() == "a\n    b\n\n  c\nd");                       // back to the start, exactly
+        CHECK(ce.Undo() && ce.GetText() == "// a\n//     b\n\n//   c\nd");   // one undo step each
+        CHECK(ce.Undo() && ce.GetText() == "a\n    b\n\n  c\nd");
+        CHECK(!ce.CanUndo());
+        UI::CodeEdit c2; c2.SetText("    x = 1;\n    y = 2;");
+        c2.SetCaret(CodePos{0, 8});
+        CHECK(c2.ToggleLineComment("//"));
+        CHECK(c2.GetText() == "    // x = 1;\n    y = 2;");
+        CHECK(c2.Caret().line == 0 && c2.Caret().col == 11);                  // the caret stays on the same text
+        CHECK(c2.ToggleLineComment("//") && c2.GetText() == "    x = 1;\n    y = 2;" && c2.Caret().col == 8);
+        // mixed: one commented, one not: the lines all get commented
+        UI::CodeEdit c3; c3.SetText("// a\nb"); c3.SelectAll();
+        CHECK(c3.ToggleLineComment("//") && c3.GetText() == "// // a\n// b");
+        // a selection ending at the start of a line leaves that line alone
+        UI::CodeEdit c4; c4.SetText("a\nb\nc"); c4.SetSelection(CodePos{0, 0}, CodePos{2, 0});
+        CHECK(c4.ToggleLineComment("#") && c4.GetText() == "# a\n# b\nc");
+        // nothing to do: blank lines only, read only, empty prefix
+        UI::CodeEdit c5; c5.SetText("\n  \n"); c5.SelectAll();
+        CHECK(!c5.ToggleLineComment("//"));
+        UI::CodeEdit c6; c6.SetText("a"); c6.SetReadOnly(true);
+        CHECK(!c6.ToggleLineComment("//") && !c6.MoveLines(true) && !c6.DuplicateLines());
+        UI::CodeEdit c7; c7.SetText("a"); CHECK(!c7.ToggleLineComment(""));
+    }
+    {   // move lines
+        UI::CodeEdit ce; ce.SetText("one\ntwo\nthree\nfour");
+        ce.SetCaret(CodePos{1, 2});
+        CHECK(ce.MoveLines(false));
+        CHECK(ce.GetText() == "two\none\nthree\nfour" && ce.Caret().line == 0 && ce.Caret().col == 2);
+        CHECK(!ce.MoveLines(false));                                          // already first
+        CHECK(ce.MoveLines(true) && ce.MoveLines(true));
+        CHECK(ce.GetText() == "one\nthree\ntwo\nfour" && ce.Caret().line == 2);
+        ce.SetSelection(CodePos{1, 1}, CodePos{2, 2});                        // a two-line block moves together
+        CHECK(ce.MoveLines(true));
+        CHECK(ce.GetText() == "one\nfour\nthree\ntwo");
+        CHECK(ce.Anchor().line == 2 && ce.Caret().line == 3);
+        CHECK(!ce.MoveLines(true));                                           // the block touches the last line
+        CHECK(ce.Undo() && ce.GetText() == "one\nthree\ntwo\nfour");
+        CHECK(ce.Redo() && ce.GetText() == "one\nfour\nthree\ntwo");
+        UI::CodeEdit one; one.SetText("only"); CHECK(!one.MoveLines(true) && !one.MoveLines(false));
+    }
+    {   // duplicate lines
+        UI::CodeEdit ce; ce.SetText("a\nb\nc");
+        ce.SetCaret(CodePos{1, 1});
+        CHECK(ce.DuplicateLines());
+        CHECK(ce.GetText() == "a\nb\nb\nc" && ce.Caret().line == 2 && ce.Caret().col == 1);
+        ce.SetSelection(CodePos{0, 0}, CodePos{1, 1});
+        CHECK(ce.DuplicateLines());
+        CHECK(ce.GetText() == "a\nb\na\nb\nb\nc");
+        CHECK(ce.Anchor().line == 2 && ce.Caret().line == 3);                 // the selection is on the copy
+        CHECK(ce.Undo() && ce.GetText() == "a\nb\nb\nc");
+        UI::CodeEdit last; last.SetText("x\ny"); last.SetCaret(CodePos{1, 0});
+        CHECK(last.DuplicateLines() && last.GetText() == "x\ny\ny");
+    }
+    {   // keys: Alt+Up / Alt+Down move lines, Ctrl+/ toggles, Ctrl+Shift+D duplicates (through Draw)
+        Reset();
+        Sim sim(400, 300);
+        UI::CodeEdit ce; ce.SetText("a\nb\nc");
+        auto ui = [&] { UI::BareNextWindow(); if (UI::Begin("w", 0, 0, 400, 300)) ce.Draw("ce", 380, 280); UI::End(); };
+        sim.Frames(2, ui);
+        ce.Focus(); ce.SetCaret(CodePos{1, 0});
+        sim.Frame(ui);
+        sim.Hold(UI::KeyId_Alt, true); sim.Press(Key_Up); sim.Frame(ui); sim.Hold(UI::KeyId_Alt, false);
+        CHECK(ce.GetText() == "b\na\nc");
+        sim.Hold(UI::KeyId_Ctrl, true); sim.Hold(UI::KeyId_Slash, true); sim.Frame(ui); sim.Hold(UI::KeyId_Slash, false); sim.Hold(UI::KeyId_Ctrl, false);
+        CHECK(ce.GetText() == "// b\na\nc");
+        sim.Frame(ui);
+        sim.Hold(UI::KeyId_Ctrl, true); sim.Hold(UI::KeyId_Shift, true); sim.shift = true; sim.Hold(UI::KeyId_D, true); sim.Frame(ui);
+        CHECK(ce.GetText().size() > std::string("// b\na\nc").size());
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1151,6 +1231,7 @@ int main() {
     MarkerTests();
     WidgetTests();
     ExtraTests();
+    LineCommandTests();
     DrawTests();
     PerfTests();
     TEST_MAIN_RESULT();

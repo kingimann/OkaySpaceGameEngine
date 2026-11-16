@@ -1,4 +1,6 @@
 #include "OkayUIPanels.hpp"
+#include "okay/UI/OkayUIImCompat.hpp"
+#include "okay/UI/OkayUICompat.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -318,6 +320,118 @@ AudioMixerResult DrawAudioMixer(AudioMixerModel& m, float x, float y, float w, f
         res.resetButton = UI::GetItemRect();
         UI::SameLine();
         UI::TextDisabled("Editor only; players set their own in the pause menu.");
+        UI::EndChild();
+    }
+    UI::End();
+    return res;
+}
+
+// ---- Stats -------------------------------------------------------------------------------------------------------------------
+// Written from what the editor's Stats window shows (its fields and colours), using OkayUI's own plot, table and check boxes.
+
+int FpsBand(float f) { return !std::isfinite(f) ? 2 : (f >= 55.0f ? 0 : (f >= 30.0f ? 1 : 2)); }
+
+void HistoryStats(const float* h, int n, float* mn, float* mx, float* avg) {
+    float lo = 1e9f, hi = 0.0f, sum = 0.0f; int cnt = 0;
+    for (int i = 0; h && i < n; ++i) if (std::isfinite(h[i]) && h[i] > 0.0f) { lo = std::min(lo, h[i]); hi = std::max(hi, h[i]); sum += h[i]; ++cnt; }
+    if (mn) *mn = cnt ? lo : 0.0f;
+    if (mx) *mx = hi;
+    if (avg) *avg = cnt ? sum / (float)cnt : 0.0f;
+}
+
+float PlotScale(float maxValue) {
+    if (!std::isfinite(maxValue) || maxValue < 0.0f) maxValue = 0.0f;
+    return maxValue * 1.2f < 75.0f ? 75.0f : maxValue * 1.2f;
+}
+
+std::string FormatCount(int v) {
+    char b[32];
+    if (v >= 1000000) std::snprintf(b, sizeof b, "%.1fM", v / 1e6);
+    else if (v >= 10000) std::snprintf(b, sizeof b, "%.1fk", v / 1e3);
+    else std::snprintf(b, sizeof b, "%d", v);
+    return b;
+}
+
+StatsResult DrawStats(const StatsModel& m, float x, float y, float w, float h) {
+    StatsResult res;
+    UI::BareNextWindow();
+    if (UI::Begin("Stats##okayui", x, y, w, h)) {
+        UI::BeginChild("##stats", 0.0f, UI::GetContentRegionAvail().y, false);
+        res.fpsBand = FpsBand(m.framerate);
+        float fmin = 0, fmax = 0, favg = 0;
+        HistoryStats(m.history, m.historyCount, &fmin, &fmax, &favg);
+        res.plotMax = PlotScale(fmax);
+        {   // the big readout, the frame time, and the average and minimum on the right
+            static const unsigned char good[3] = {115, 217, 140}, mid[3] = {242, 199, 89}, poor[3] = {245, 115, 107};
+            const unsigned char* c = res.fpsBand == 0 ? good : (res.fpsBand == 1 ? mid : poor);
+            const UI::Vec2 p0 = UI::GetCursorScreenPos();
+            UI::PushTextScale(2.0f);
+            char fps[24]; std::snprintf(fps, sizeof fps, "%.0f", std::isfinite(m.framerate) ? m.framerate : 0.0f);
+            UI::TextColored(c[0], c[1], c[2], fps);
+            UI::PopTextScale();
+            const UI::Vec2 p1 = UI::GetItemRectMax();
+            res.fpsReadout = UI::Rect{p0.x, p0.y, p1.x - p0.x, p1.y - p0.y};
+            UI::SameLine();
+            char ms[48]; std::snprintf(ms, sizeof ms, "FPS   %.2f ms", m.framerate > 0.0f && std::isfinite(m.framerate) ? 1000.0f / m.framerate : 0.0f);
+            UI::TextDisabled(ms);
+            char mm[48]; std::snprintf(mm, sizeof mm, "avg %.0f  min %.0f", favg, fmin);
+            UI::SameLine();
+            const float right = UI::GetContentRegionMax().x - UI::CalcTextWidth(mm);
+            if (UI::GetCursorPosX() < right) UI::SetCursorPosX(right);
+            UI::TextDisabled(mm);
+        }
+        {   // the plot of the history, auto-scaled, with a guide at 60 fps
+            UI::PlotOptions po; po.valuesOffset = m.historyCount > 0 ? ((m.historyOffset % m.historyCount) + m.historyCount) % m.historyCount : 0;
+            po.scaleMin = 0.0f; po.scaleMax = res.plotMax; po.size = UI::Vec2{-1.0f, 48.0f};
+            if (m.history && m.historyCount > 0) UI::PlotLines("##fps", m.history, m.historyCount, po);
+            else UI::Dummy(UI::GetContentRegionAvail().x, 48.0f);
+            res.plot = UI::GetItemRect();
+            if (res.plotMax > 60.0f) {
+                const float gy = res.plot.y + res.plot.h - (60.0f / res.plotMax) * res.plot.h;
+                UI::GetWindowDrawList().AddLine(UI::Vec2{res.plot.x, gy}, UI::Vec2{res.plot.x + res.plot.w, gy}, UI::RGBA(110, 220, 130, 110), 1.0f);
+            }
+        }
+        UI::Spacing(4.0f);
+        UI::PushStyleVar(UI::StyleVar_ItemSpacing, UI::Vec2{8.0f, 0.0f});   // the grid is a dense list: rows touch, as in the Dear ImGui window
+        if (UI::BeginTable("##statgrid", 4, UI::Table_None)) {
+            UI::TableSetupColumn("n1", UI::Col_WidthStretch, 1.0f); UI::TableSetupColumn("v1", UI::Col_WidthStretch, 0.8f);
+            UI::TableSetupColumn("n2", UI::Col_WidthStretch, 1.0f); UI::TableSetupColumn("v2", UI::Col_WidthStretch, 0.8f);
+            for (std::size_t i = 0; i < m.rows.size(); ++i) {
+                if (i % 2 == 0) UI::TableNextRow();
+                UI::TableNextColumn();
+                UI::TextDisabled(m.rows[i].name.c_str());
+                UI::TableNextColumn();
+                const std::string num = FormatCount(m.rows[i].value);
+                if (m.rows[i].value == 0) UI::TextDisabled(num.c_str()); else UI::Text(num.c_str());
+                ++res.cellsDrawn;
+            }
+            UI::EndTable();
+        }
+        UI::PopStyleVar();
+        UI::Spacing(4.0f);
+        auto toggle = [&](const char* label, bool* v, UI::Rect& out, const char* tip) {
+            if (!v) return false;
+            if (UI::Checkbox(label, v)) res.changed = true;
+            out = UI::GetItemRect();
+            if (tip && UI::IsItemHovered(UI::HoveredFlags_ForTooltip) && UI::BeginTooltip()) {
+                std::string line;   // Text draws one line, so the help is shown a line at a time
+                for (const char* c = tip;; ++c) {
+                    if (*c == '\n' || *c == 0) { UI::Text(line.c_str()); line.clear(); if (*c == 0) break; }
+                    else line += *c;
+                }
+                UI::EndTooltip();
+            }
+            return true;
+        };
+        if (toggle("Frustum culling", m.frustumCulling, res.frustum, nullptr)) UI::SameLine();
+        toggle("Occlusion", m.occlusionCulling, res.occlusion, "Skip meshes hidden behind an Occluder. Off, or with no Occluder\nin the scene, nothing extra is hidden.");
+        if (toggle("Static batching", m.staticBatching, res.staticBatch, nullptr)) UI::SameLine();
+        toggle("Dynamic batching", m.dynamicBatching, res.dynamicBatch, "Skip meshes the camera (or the sun's shadow map) can't see.\nTurn off only to check whether culling hides something it shouldn't.");
+        UI::SameLine();
+        char sk[48]; std::snprintf(sk, sizeof sk, "| skinning: %s", m.skinning.c_str());
+        UI::TextDisabled(sk);
+        UI::Spacing(4.0f);
+        UI::TextDisabled("Sky, lighting, post FX and debug view moved to the Lighting tab.");
         UI::EndChild();
     }
     UI::End();

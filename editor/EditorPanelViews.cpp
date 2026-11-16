@@ -1,6 +1,7 @@
-// The Dear ImGui bodies of the Problems, Stats and History panels (see EditorPanelViews.hpp). The drawing is what the editor's
-// DrawProblems, DrawStats and DrawHistory drew before they were split from the editor's state; the right-click menus are new
-// and the OkayUI ports have the same ones.
+// The Dear ImGui bodies of the Problems, Stats, History, Tags and Layers, Physics and Profiler panels (see EditorPanelViews.hpp).
+// The drawing is what the editor's DrawProblems, DrawStats, DrawHistory, DrawTagsAndLayersSettings, the Physics section of
+// DrawProjectSettings and DrawProfiler drew before they were split from the editor's state; the right-click menus of the first
+// three are new and the OkayUI ports have the same ones.
 #include "EditorPanelViews.hpp"
 
 #include "imgui.h"
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace oked {
 
@@ -227,6 +229,221 @@ HistoryIntent DrawHistoryBodyImGui(const HistoryModel& m, const PanelViewHooks&)
         }
     }
     ImGui::EndChild();
+    return out;
+}
+
+// ---- Tags and Layers (Project Settings) -------------------------------------------------------------------------------------
+
+TagsLayersIntent DrawTagsLayersBodyImGui(const TagsLayersModel& m, TagsLayersState& st, const PanelViewHooks&) {
+    TagsLayersIntent out;
+    const ImVec4 bad(0.95f, 0.45f, 0.40f, 1.0f), warn(0.95f, 0.75f, 0.30f, 1.0f);
+    bool strict = m.strict;
+    if (ImGui::Checkbox("Strict tags##ps", &strict)) out.strict = strict ? 1 : 0;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kStrictTagsTip);
+    // Tags the open scene uses that the list lacks (an old scene, a typo): say so, and offer to list them.
+    if (!m.unlisted.empty()) {
+        ImGui::TextColored(m.strict ? bad : warn, "%s", UnlistedTagsText(m.unlisted).c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Add them##unlisted")) out.addUnlisted = true;
+    }
+    ImGui::Spacing();
+    ImGui::TextDisabled("Tags");
+    ImGui::TextWrapped("%s", BuiltinTagsText(m.builtin).c_str());   // built-in tags: always there, cannot be renamed or removed
+    if (m.custom.empty()) ImGui::TextDisabled("No custom tags yet.");
+    const float rowH = ImGui::GetFrameHeightWithSpacing() + 2.0f;
+    if (!m.custom.empty())
+        ImGui::BeginChild("##pstags", ImVec2(0, std::min(rowH * 4.5f, 12.0f + rowH * (float)m.custom.size())), ImGuiChildFlags_Borders);
+    ImGuiListClipper clip;
+    clip.Begin((int)m.custom.size(), rowH);
+    while (clip.Step()) {
+        for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i) {
+            const TagRow& t = m.custom[(std::size_t)i];
+            ImGui::PushID(i);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(t.name.c_str());
+            ImGui::SameLine(150.0f);
+            ImGui::TextDisabled("%s", TagUseText(t.used).c_str());
+            ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 150.0f);
+            if (ImGui::SmallButton("Rename")) {
+                ImGui::OpenPopup("##pstagren");
+                st.renaming = i; CopyToBuf(st.renameBuf, sizeof(st.renameBuf), t.name); st.renameError.clear(); st.closeRename = false;
+            }
+            if (ImGui::BeginPopup("##pstagren")) {   // rename it (the list, and the tag on every object of this scene that carries it)
+                if (st.closeRename) { ImGui::CloseCurrentPopup(); st.closeRename = false; }
+                ImGui::SetNextItemWidth(170);
+                const bool enter = ImGui::InputText("##tagrename", st.renameBuf, sizeof(st.renameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                const bool click = ImGui::Button("Rename");
+                if (enter || click) {
+                    if (t.name == st.renameBuf) ImGui::CloseCurrentPopup();
+                    else { out.renameTag = i; out.renameTo = st.renameBuf; }
+                }
+                if (!st.renameError.empty()) ImGui::TextColored(bad, "%s", st.renameError.c_str());
+                ImGui::Separator();
+                ImGui::EndPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove")) out.removeTag = i;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kRemoveTagTip);
+            ImGui::PopID();
+        }
+    }
+    if (!m.custom.empty()) ImGui::EndChild();
+    ImGui::SetNextItemWidth(190);
+    const bool enter = ImGui::InputTextWithHint("##psnewtag", "new tag name", st.newTag, sizeof(st.newTag), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if (ImGui::Button("Add tag##ps") || enter) out.addTag = true;
+    if (!st.tagError.empty()) ImGui::TextColored(bad, "%s", st.tagError.c_str());
+
+    ImGui::Spacing();
+    ImGui::TextDisabled("Layers (0 to 31)");
+    ImGui::BeginChild("##pslayers", ImVec2(0, 300), ImGuiChildFlags_Borders);
+    for (int i = 0; i < (int)m.layers.size(); ++i) {
+        const LayerRow& row = m.layers[(std::size_t)i];
+        ImGui::PushID(i);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%2d", i);
+        ImGui::SameLine(34.0f);
+        char buf[kLayerBufSize];
+        CopyToBuf(buf, sizeof(buf), row.name);
+        ImGui::SetNextItemWidth(200);
+        const bool enterHit = ImGui::InputTextWithHint("##lname", LayerHint(i, row).c_str(), buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue);
+        if (enterHit || ImGui::IsItemDeactivatedAfterEdit()) { out.renameLayer = i; out.layerName = buf; }
+        if (LayerCanReset(row)) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset")) out.resetLayer = i;
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    if (!st.layerError.empty()) ImGui::TextColored(bad, "%s", LayerErrorText(st).c_str());
+    if (ImGui::SmallButton("Reset all layer names##ps")) out.resetAllLayers = true;
+    return out;
+}
+
+// ---- Physics (Project Settings) ---------------------------------------------------------------------------------------------
+
+PhysicsSettingsIntent DrawPhysicsSettingsBodyImGui(PhysicsSettingsModel& m, const PanelViewHooks&) {
+    PhysicsSettingsIntent out;
+    if (m.gravity2D && ImGui::DragFloat2("Gravity 2D##ps", m.gravity2D, 0.05f)) out.gravityChanged = true;
+    if (m.gravity3D && ImGui::DragFloat3("Gravity 3D##ps", m.gravity3D, 0.05f)) out.gravityChanged = true;
+    if (m.stepsPerSecond) {
+        ImGui::SetNextItemWidth(160);
+        if (ImGui::DragFloat("Steps per second##ps", m.stepsPerSecond, 1.0f, 1.0f, 240.0f, "%.0f")) out.rateChanged = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kStepRateTip);
+    }
+    if (m.smooth) {
+        if (ImGui::Checkbox("Smooth the motion##ps", m.smooth)) out.smoothChanged = true;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kSmoothTip);
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", kPhysicsQualityHeading);
+    int q = m.quality == 1 ? 1 : 0;
+    ImGui::SetNextItemWidth(330);
+    if (ImGui::Combo("Quality##psq", &q, kPhysicsQualityNames, 2)) out.quality = q;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kQualityTip);
+    if (q == 1) {
+        int it = m.solverIterations;
+        ImGui::SetNextItemWidth(160);
+        if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) out.solverIterations = it;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kIterationsTip);
+        bool cont = m.autoContinuous;
+        if (ImGui::Checkbox("Catch fast bodies automatically##psq", &cont)) out.autoContinuous = cont ? 1 : 0;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kContinuousTip);
+    }
+    if (ImGui::Button("Apply to current scene##phys")) out.apply = true;
+    return out;
+}
+
+// ---- Profiler ---------------------------------------------------------------------------------------------------------------
+
+ProfilerIntent DrawProfilerBodyImGui(ProfilerModel& m, const PanelViewHooks&) {
+    ProfilerIntent out;
+    const int n = ProfilerFrameCount(m);
+    const float top = ProfilerGraphTop(m);
+    // ---- Controls row ----
+    if (m.paused) {
+        if (ImGui::Checkbox("Pause##prof", m.paused)) out.pauseChanged = true;
+        ImGui::SameLine();
+    }
+    ProfilerFixSelection(m);
+    if (m.paused && *m.paused && m.selected) {
+        ImGui::SetNextItemWidth(220);
+        if (n > 1 && ImGui::SliderInt("Frame##prof", m.selected, 0, n - 1, "frame %d")) out.selectChanged = true;
+    } else ImGui::TextDisabled("(pause to scrub frames)");
+    ImGui::SameLine(); ImGui::TextDisabled("16.7ms=60FPS  33.3ms=30FPS");
+
+    // ---- Timeline graphs (oldest -> newest) ----
+    const std::string ov = ProfilerOverlay(m);
+    ImGui::PlotLines("##frame", m.total.empty() ? nullptr : m.total.data(), n, 0, ov.c_str(), 0.0f, top, ImVec2(-1, 80));
+    {   // budget guide lines over the frame graph (green 60 FPS, amber 30 FPS) and, while paused, the scrubbed frame
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImDrawList* pdl = ImGui::GetWindowDrawList();
+        auto guide = [&](float ms, ImU32 col, const char* lbl) {
+            if (top <= ms) return;
+            const float y = mx.y - (ms / top) * (mx.y - mn.y);
+            pdl->AddLine(ImVec2(mn.x, y), ImVec2(mx.x, y), col, 1.0f);
+            pdl->AddText(ImVec2(mn.x + 4.0f, y - ImGui::GetTextLineHeight() - 1.0f), col, lbl);
+        };
+        guide(16.7f, IM_COL32(110, 220, 130, 170), "16.7 (60)");
+        guide(33.3f, IM_COL32(240, 190, 80, 170), "33.3 (30)");
+        if (m.paused && *m.paused && m.selected && n > 1 && *m.selected >= 0) {
+            const float fx = mn.x + ((float)*m.selected / (float)(n - 1)) * (mx.x - mn.x);
+            pdl->AddLine(ImVec2(fx, mn.y), ImVec2(fx, mx.y), IM_COL32(255, 210, 0, 220), 1.5f);
+        }
+    }
+    ImGui::PlotLines("##gpu", m.gpu.empty() ? nullptr : m.gpu.data(), n, 0, "GPU ms", 0.0f, top, ImVec2(-1, 44));
+
+    // ---- Readouts ----
+    ImGui::Text("Frame %.2f ms (%.0f FPS)", m.frameMs, m.frameMs > 0.001 ? 1000.0 / m.frameMs : 0.0);
+    ImGui::SameLine(); ImGui::TextColored(ImVec4(0.55f, 0.8f, 1, 1), "CPU %.2f", m.cpuMs);
+    ImGui::SameLine(); ImGui::TextColored(ImVec4(1, 0.78f, 0.45f, 1), "GPU %.2f", m.gpuMs);
+    ImGui::SameLine(); ImGui::Text("| avg %.2f  peak %.2f", m.avg, m.peak);
+    ImGui::Text("Meshes %d    Triangles %d    Particles %d", m.meshes, m.triangles, m.particles);
+
+    // ---- CPU category bars (this frame) ----
+    auto bar = [&](const char* label, double ms, ImVec4 col) {
+        float frac = 0.0f;
+        const std::string t = ProfilerBarText(label, ms, m.cpuMs, &frac);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
+        ImGui::ProgressBar(frac, ImVec2(-1, 0), t.c_str());
+        ImGui::PopStyleColor();
+    };
+    bar("Scripts", m.scriptsMs, ImVec4(0.45f, 0.75f, 1.0f, 1));
+    bar("Physics", m.physicsMs, ImVec4(0.55f, 0.9f, 0.55f, 1));
+    bar("Render", m.renderMs, ImVec4(1.0f, 0.75f, 0.4f, 1));
+    bar("Other", ProfilerOtherMs(m), ImVec4(0.7f, 0.7f, 0.75f, 1));
+
+    // Plain-language diagnosis: what to look at.
+    ImGui::TextColored(ImVec4(0.85f, 0.9f, 1.0f, 1.0f), "Diagnosis:");
+    ImGui::SameLine(); ImGui::TextWrapped("%s", ProfilerDiagnosis(m).c_str());
+    ImGui::Separator();
+
+    // ---- CSV copy of the displayed frame ----
+    if (ImGui::SmallButton("Copy CSV##prof")) out.copyCsv = true;
+    ImGui::SameLine(); ImGui::TextDisabled("section breakdown  (?)");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kProfilerHelp);
+
+    // ---- Per-section table: self/total/calls/%, indented by call depth, with stats ----
+    if (ImGui::BeginTable("profrows", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp |
+                                             ImGuiTableFlags_ScrollY, ImVec2(0, 220))) {
+        ImGui::TableSetupColumn(kProfilerColumns[0], ImGuiTableColumnFlags_WidthStretch, 2.2f);
+        for (int c = 1; c < 7; ++c) ImGui::TableSetupColumn(kProfilerColumns[c]);
+        ImGui::TableHeadersRow();
+        for (int r : ProfilerRows(m)) {
+            const ProfilerSection& b = m.sections[(std::size_t)r];
+            char cells[6][24]; ProfilerCells(m, b, cells);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            if (b.depth > 0) ImGui::Indent(b.depth * 12.0f);
+            if (ProfilerHot(m, b)) ImGui::TextColored(ImVec4(1, 0.5f, 0.45f, 1), "%s", b.name.c_str());   // hot sections in red
+            else ImGui::TextUnformatted(b.name.c_str());
+            if (b.depth > 0) ImGui::Unindent(b.depth * 12.0f);
+            for (int c = 0; c < 6; ++c) { ImGui::TableNextColumn(); ImGui::TextUnformatted(cells[c]); }
+        }
+        ImGui::EndTable();
+    }
+    if (m.sections.empty()) ImGui::TextDisabled("%s", ProfilerEmptyText(m));
     return out;
 }
 

@@ -1,7 +1,8 @@
-// The editor's Problems, Stats and History panels, Dear ImGui version against OkayUI port, headless and side by side.
+// The editor's Problems, Stats, History, Tags and Layers, Physics and Profiler panels, Dear ImGui version against OkayUI port,
+// headless and side by side.
 //
 // Both draw the same model (shared/EditorPanelModels.hpp, sample data in okayui/tests/EditorPanelFixtures.hpp) into the same
-// rectangle: a 560 x 420 canvas in the editor's panel colour, the panel's content inside the editor window's padding (16, 12).
+// rectangle: a 560 x 420 canvas (560 x 780 for the two tall ones, Tags and Layers and the Profiler) in the editor's panel colour, the panel's content inside the editor window's padding (16, 12).
 // Dear ImGui runs with the editor's look (Roboto Medium 18 px, the Slate theme and spacing from editor/main.cpp ApplyTheme), the
 // body is editor/EditorPanelViews.cpp, the one the editor itself calls. OkayUI runs with the launcher look the editor uses.
 // Both pictures go through the same rasteriser (OkayUI's software render backend; Dear ImGui's vertices are handed to it as they
@@ -26,6 +27,7 @@
 #include "okay/Core/ImageWrite.hpp"
 
 #include "imgui.h"
+#include "imgui_internal.h"   // ClearActiveID, as the editor's search field uses it
 #include "OkayTheme.hpp"
 #include "RobotoFont.h"
 
@@ -36,6 +38,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -44,9 +47,46 @@ namespace R = OkayUI::render;
 namespace P = okaypanels;
 using okayuitest::Bitmap;
 
-static const int kW = 560, kH = 420;
+static const int kW = 560;
+static int kH = 420;   // the canvas height of the panel being compared (set before its rigs are made)
 static const float kPadX = 16.0f, kPadY = 12.0f;
 static const std::uint8_t kBg[3] = {30, 33, 41};   // okaytheme::kBase, the editor's panel colour
+
+// ---- the editor's search field ----------------------------------------------------------------------------------------------
+// editor/EditorWidgets.cpp SearchField and its magnifier icon (DrawTbIcon Search), repeated here because that file needs the whole
+// editor to compile. Keep the two in step.
+static bool EditorSearchField(const char* id, char* buf, std::size_t bufSize, const char* hint, float width) {
+    ImGuiStyle& st = ImGui::GetStyle();
+    const float h = ImGui::GetFrameHeight();
+    float w = width > 0.0f ? width : ImGui::GetContentRegionAvail().x + width;
+    if (w < h * 3.0f) w = h * 3.0f;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(h * 0.95f, st.FramePadding.y));
+    ImGui::SetNextItemWidth(w);
+    bool changed = ImGui::InputTextWithHint(id, hint, buf, bufSize);
+    ImGui::PopStyleVar();
+    const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    {
+        const ImVec2 c(mn.x + h * 0.5f, (mn.y + mx.y) * 0.5f);
+        const float s = h * 0.42f, t = 1.6f, r = s * 0.27f;
+        const ImVec2 o(c.x - s * 0.08f, c.y - s * 0.08f);
+        const ImU32 col = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        dl->AddCircle(o, r, col, 14, t);
+        dl->AddLine(ImVec2(o.x + r * 0.7f, o.y + r * 0.7f), ImVec2(c.x + s * 0.4f, c.y + s * 0.4f), col, t + 0.6f);
+    }
+    if (buf[0]) {
+        const ImVec2 xc(mx.x - h * 0.5f, (mn.y + mx.y) * 0.5f);
+        const ImVec2 mp = ImGui::GetIO().MousePos;
+        const bool hot = std::fabs(mp.x - xc.x) < h * 0.45f && std::fabs(mp.y - xc.y) < h * 0.45f &&
+                         ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        const float r = h * 0.17f;
+        const ImU32 xcCol = ImGui::GetColorU32(hot ? ImGuiCol_Text : ImGuiCol_TextDisabled);
+        dl->AddLine(ImVec2(xc.x - r, xc.y - r), ImVec2(xc.x + r, xc.y + r), xcCol, 1.6f);
+        dl->AddLine(ImVec2(xc.x - r, xc.y + r), ImVec2(xc.x + r, xc.y - r), xcCol, 1.6f);
+        if (hot && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { buf[0] = '\0'; changed = true; ImGui::ClearActiveID(); }
+    }
+    return changed;
+}
 
 // ---- Dear ImGui, headless --------------------------------------------------------------------------------------------------
 struct ImGuiRig {
@@ -170,6 +210,7 @@ struct Raster {
     ImGuiToOkay conv;
     R::FrameInfo fi;
     Raster() { fi.fbWidth = kW; fi.fbHeight = kH; fi.dpi = 1.0f; }
+    Raster(const Raster&) = delete;
     void Clear() { bmp.Clear(kBg[0], kBg[1], kBg[2]); }
     R::Stats DrawImGui() { Clear(); conv.Textures(renderer); return renderer.Render(conv.Convert(), fi); }
     R::Stats DrawOkay() { Clear(); return renderer.Render(UI::GetDrawData(), fi); }
@@ -259,14 +300,21 @@ void ProfiledFrames(const std::function<void()>& frame) { for (int i = 0; i < 20
 static int Profile(const char* spec) {
     const std::string s = spec;
     const bool im = s.find(":imgui") != std::string::npos;
+    if (s.rfind("tags", 0) == 0 || s.rfind("profiler", 0) == 0) kH = 780;
     ImGuiRig imr; OkayRig ok;
     const float bx = kPadX, by = kPadY, bw = kW - 2 * kPadX, bh = kH - 2 * kPadY;
-    const oked::PanelViewHooks hooks{nullptr, nullptr};
+    oked::PanelViewHooks hooks{nullptr, nullptr};
+    hooks.searchField = EditorSearchField;
     P::ProblemsModel pm = panelfix::Problems(); P::ProblemsState pst;
     panelfix::StatsData sd; P::HistoryModel hm = panelfix::History();
+    const P::TagsLayersModel tm = panelfix::TagsLayers(); P::TagsLayersState tst;
+    panelfix::PhysicsData phd; panelfix::ProfilerData prd;
     std::function<void()> imBody, okBody;
     if (s.rfind("problems", 0) == 0) { imBody = [&] { oked::DrawProblemsBodyImGui(pm, pst, hooks); }; okBody = [&] { okayuiscreens::DrawProblems(pm, pst, bx, by, bw, bh); }; }
     else if (s.rfind("stats", 0) == 0) { imBody = [&] { oked::DrawStatsBodyImGui(sd.model, hooks); }; okBody = [&] { okayuiscreens::DrawStats(sd.model, bx, by, bw, bh); }; }
+    else if (s.rfind("tags", 0) == 0) { imBody = [&] { oked::DrawTagsLayersBodyImGui(tm, tst, hooks); }; okBody = [&] { okayuiscreens::DrawTagsLayers(tm, tst, bx, by, bw, bh); }; }
+    else if (s.rfind("physics", 0) == 0) { imBody = [&] { oked::DrawPhysicsSettingsBodyImGui(phd.model, hooks); }; okBody = [&] { okayuiscreens::DrawPhysicsSettings(phd.model, bx, by, bw, bh); }; }
+    else if (s.rfind("profiler", 0) == 0) { imBody = [&] { oked::DrawProfilerBodyImGui(prd.model, hooks); }; okBody = [&] { okayuiscreens::DrawProfiler(prd.model, bx, by, bw, bh); }; }
     else { imBody = [&] { oked::DrawHistoryBodyImGui(hm, hooks); }; okBody = [&] { okayuiscreens::DrawHistory(hm, bx, by, bw, bh); }; }
     for (int i = 0; i < 10; ++i) { if (im) imr.Frame(imBody); else ok.Frame(okBody); }   // warm up: atlases, tables, layouts
     if (im) ProfiledFrames([&] { imr.Frame(imBody); }); else ProfiledFrames([&] { ok.Frame(okBody); });
@@ -276,8 +324,10 @@ static int Profile(const char* spec) {
 int main() {
     if (const char* prof = std::getenv("OKAY_UI_PROFILE")) return Profile(prof);
     RUN_SUITE("okayui editor panels against dear imgui");
-    const oked::PanelViewHooks hooks{nullptr, nullptr};
-    const float bx = kPadX, by = kPadY, bw = kW - 2 * kPadX, bh = kH - 2 * kPadY;
+    oked::PanelViewHooks hooks{nullptr, nullptr};
+    hooks.searchField = EditorSearchField;   // the editor's own field on the Dear ImGui side (the OkayUI side has SearchField)
+    const float bx = kPadX, by = kPadY, bw = kW - 2 * kPadX;
+    float bh = kH - 2 * kPadY;
 
     // ================= Problems =================
     {
@@ -309,6 +359,16 @@ int main() {
         CHECK(std::abs(imRowY - (target.y + target.h * 0.5f)) < 16.0f);   // and the two layouts put that row within a few pixels
         const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
         Report("problems", imPic, okPic, t);
+        // the right-click menu on the same row in both (the menu's look: its colour, padding, row height and width)
+        const float mx = target.x + 30.0f, my = target.y + target.h * 0.5f;
+        im.RightClick(mx, my, imBody);
+        ok.sim.Move(mx, my); ok.Frame(okBody); ok.sim.rdown = true; ok.Frame(okBody); ok.sim.rdown = false; ok.Frame(okBody);
+        im.mx = ok.sim.mx = mx + 400.0f; im.my = ok.sim.my = my + 300.0f;   // the pointer away, so no row is hovered
+        for (int i = 0; i < 2; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        CHECK(okRes.menuOpen.w > 0.0f);
+        ras.DrawImGui(); const Bitmap imMenu = ras.bmp;
+        ras.DrawOkay();  const Bitmap okMenu = ras.bmp;
+        Report("problems-menu", imMenu, okMenu, Timing{});
     }
 
     // ================= Stats =================
@@ -349,21 +409,104 @@ int main() {
             if (imSeen.undo == 3) imRowY = y;
         }
         CHECK(okSeen.undo == 3 && imRowY > 0.0f);
+        if (std::abs(imRowY - (r6.y + r6.h * 0.5f)) >= 16.0f) std::printf("history row: imgui %.1f okayui %.1f (%.1f %.1f)\n", imRowY, r6.y + r6.h * 0.5f, r6.y, r6.h);
         CHECK(std::abs(imRowY - (r6.y + r6.h * 0.5f)) < 16.0f);
         const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
         Report("history", imPic, okPic, t);
     }
 
+    // ================= Tags and Layers (a taller canvas: the section is tall) =================
+    kH = 780; bh = kH - 2 * kPadY;
+    {
+        const P::TagsLayersModel m = panelfix::TagsLayers();
+        P::TagsLayersState imSt, okSt;
+        ImGuiRig im; OkayRig ok; Raster ras;
+        okayuiscreens::TagsLayersResult okRes;
+        P::TagsLayersIntent imSeen, okSeen;
+        auto imBody = [&] { const P::TagsLayersIntent in = oked::DrawTagsLayersBodyImGui(m, imSt, hooks); if (in.removeTag >= 0) imSeen.removeTag = in.removeTag; if (in.addTag) imSeen.addTag = true; };
+        auto okBody = [&] { okRes = okayuiscreens::DrawTagsLayers(m, okSt, bx, by, bw, bh); if (okRes.intent.removeTag >= 0) okSeen.removeTag = okRes.intent.removeTag; if (okRes.intent.addTag) okSeen.addTag = true; };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        CHECK(okRes.removeButtons.size() == 4 && okRes.layerFields.size() == 32);
+        // the same clicks on both, at the OkayUI control's centre: Remove on the second tag, then Add tag
+        const UI::Rect rm = okRes.removeButtons[1], add = okRes.addTagButton;
+        ok.sim.Move(rm.x + rm.w * 0.5f, rm.y + rm.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(rm.x + rm.w * 0.5f, rm.y + rm.h * 0.5f, imBody);
+        CHECK(okSeen.removeTag == 1 && imSeen.removeTag == 1);
+        ok.sim.Move(add.x + add.w * 0.5f, add.y + add.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(add.x + add.w * 0.5f, add.y + add.h * 0.5f, imBody);
+        CHECK(okSeen.addTag && imSeen.addTag);
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
+        Report("tagslayers", imPic, okPic, t);
+    }
+
+    // ================= Physics =================
+    kH = 420; bh = kH - 2 * kPadY;
+    {
+        panelfix::PhysicsData imD, okD;
+        ImGuiRig im; OkayRig ok; Raster ras;
+        okayuiscreens::PhysicsSettingsResult okRes;
+        bool imApply = false, okApply = false;
+        auto imBody = [&] { if (oked::DrawPhysicsSettingsBodyImGui(imD.model, hooks).apply) imApply = true; };
+        auto okBody = [&] { okRes = okayuiscreens::DrawPhysicsSettings(okD.model, bx, by, bw, bh); if (okRes.intent.apply) okApply = true; };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        CHECK(okRes.iterations.w > 0 && okRes.continuous.w > 0);
+        const UI::Rect a = okRes.apply;
+        ok.sim.Move(a.x + a.w * 0.5f, a.y + a.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(a.x + a.w * 0.5f, a.y + a.h * 0.5f, imBody);
+        CHECK(okApply && imApply);
+        // a drag on the step rate moves both the same way (one per pixel)
+        const UI::Rect r = okRes.stepRate;
+        const float sx = r.x + 40.0f, sy = r.y + r.h * 0.5f;
+        ok.sim.Move(sx, sy); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Move(sx + 10.0f, sy); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.mx = sx; im.my = sy; im.Frame(imBody); im.down = true; im.Frame(imBody); im.mx = sx + 10.0f; im.Frame(imBody); im.down = false; im.Frame(imBody);
+        CHECK(okD.hz > 55.0f && imD.hz > 55.0f);
+        imD.hz = okD.hz = 50.0f;
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
+        Report("physics", imPic, okPic, t);
+    }
+
+    // ================= Profiler (a taller canvas) =================
+    kH = 780; bh = kH - 2 * kPadY;
+    {
+        panelfix::ProfilerData imD, okD;
+        ImGuiRig im; OkayRig ok; Raster ras;
+        okayuiscreens::ProfilerResult okRes;
+        auto imBody = [&] { oked::DrawProfilerBodyImGui(imD.model, hooks); };
+        auto okBody = [&] { okRes = okayuiscreens::DrawProfiler(okD.model, bx, by, bw, bh); };
+        for (int i = 0; i < 4; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        ras.DrawImGui(); const Bitmap imPic = ras.bmp;
+        ras.DrawOkay();  const Bitmap okPic = ras.bmp;
+        CHECK(okRes.rows.size() == okD.model.sections.size() && okRes.guide60 > 0.0f && okRes.guide30 == 0.0f);   // the scale (27.6 ms) is under 33.3
+        // the same click on Pause pauses both, and both then scrub from the newest frame
+        const UI::Rect pb = okRes.pauseBox;
+        ok.sim.Move(pb.x + 12.0f, pb.y + pb.h * 0.5f); ok.Frame(okBody); ok.sim.Down(); ok.Frame(okBody); ok.sim.Up(); ok.Frame(okBody);
+        im.Click(pb.x + 12.0f, pb.y + pb.h * 0.5f, imBody);
+        CHECK(okD.paused && imD.paused && okD.selected == 239 && imD.selected == 239);
+        okD.paused = imD.paused = false;
+        im.mx = im.my = ok.sim.mx = ok.sim.my = -100.0f;
+        for (int i = 0; i < 2; ++i) { im.Frame(imBody); ok.Frame(okBody); }
+        const Timing t = Time(im, ok, ras, imBody, okBody, Frames());
+        Report("profiler", imPic, okPic, t);
+    }
+
     // ================= the tables =================
     std::printf("\n| Panel | Dear ImGui build | OkayUI build | Dear ImGui build + render | OkayUI build + render | Faster? |\n|---|---:|---:|---:|---:|---|\n");
-    for (const Row& r : g_rows)
+    for (const Row& r : g_rows) {
+        if (r.t.imBuild <= 0.0) continue;   // a picture only (the menu)
         std::printf("| %s | %.1f us | %.1f us | %.1f us | %.1f us | %s |\n", r.panel, r.t.imBuild, r.t.okBuild, r.t.imAll, r.t.okAll,
                     r.t.okBuild <= r.t.imBuild && r.t.okAll <= r.t.imAll ? "met" : "not met");
+    }
     std::printf("\n| Panel | Average difference (0-255) | Clearly different pixels |\n|---|---:|---:|\n");
     for (const Row& r : g_rows) std::printf("| %s | %.2f | %.2f%% |\n", r.panel, r.d.avg, r.d.clearly);
     std::printf("\n");
     for (const Row& r : g_rows) {
-        if (Strict()) CHECK(r.t.okBuild <= r.t.imBuild * 1.10);   // 10% for timer noise
+        if (Strict() && r.t.imBuild > 0.0) CHECK(r.t.okBuild <= r.t.imBuild * 1.10);   // 10% for timer noise
         CHECK(r.d.clearly < 12.0);                                 // the ceiling the ports must stay under
     }
     TEST_MAIN_RESULT();

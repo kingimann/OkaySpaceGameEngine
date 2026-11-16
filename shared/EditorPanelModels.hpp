@@ -1,15 +1,19 @@
 #pragma once
-// The data three editor panels show, taken out of the editor so that both of their versions can run without the editor:
+// The data six editor panels show, taken out of the editor so that both of their versions can run without the editor:
 // the Dear ImGui version (editor/EditorPanelViews.cpp) and the OkayUI port (okayui/screens/OkayUIEditorPanels.cpp).
 //
-//   Problems   everything wrong in the open scene, grouped by object, asset or script (editor/ProblemsPanel.cpp builds it)
-//   Stats      frame rate, its history and the scene census, plus the culling and batching switches (editor/main.cpp)
-//   History    the undo and redo stacks as a list of states (editor/main.cpp)
+//   Problems        everything wrong in the open scene, grouped by object, asset or script (editor/ProblemsPanel.cpp builds it)
+//   Stats           frame rate, its history and the scene census, plus the culling and batching switches (editor/main.cpp)
+//   History         the undo and redo stacks as a list of states (editor/main.cpp)
+//   Tags and Layers Project Settings: the tag list, Strict tags and the 32 layer names (editor/main.cpp)
+//   Physics         Project Settings: gravity, the step rate, smoothing and the open scene's physics quality (editor/main.cpp)
+//   Profiler        the frame timeline, CPU categories, the diagnosis and the per-section table (editor/main.cpp)
 //
 // Standard C++ only: no ImGui, no OkayUI, no engine types. The editor fills a model from its own state each frame, a panel
 // version draws it and answers with an intent (what the person asked for), and the editor carries the intent out. The rules
 // both versions must agree on (the filter, the grouping, the number format, the row order) live here, once.
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
@@ -254,5 +258,240 @@ inline std::string HistoryStatusText(const HistoryModel& m) {
 }
 
 inline const char* kHistoryEmpty = "No edits yet \xE2\x80\x94 changes will appear here.";
+
+// ============================================================================================================================
+// Tags and Layers (Project Settings)
+// ============================================================================================================================
+
+constexpr int kLayerCount = 32;
+constexpr std::size_t kTagBufSize = 64 * 4 + 1;       // okay::Tags::kMaxLength characters of up to four bytes, and the terminator
+constexpr std::size_t kLayerBufSize = 32 * 4 + 1;     // okay::Layers::kMaxNameLength likewise
+
+struct TagRow { std::string name; int used = 0; };   // a custom tag and how many objects of the open scene carry it
+struct LayerRow {
+    std::string name;                   // the layer's name ("" = unnamed)
+    std::string defaultName;            // its built-in name ("" for most)
+};
+
+struct TagsLayersModel {
+    bool strict = false;                // Tags::Strict
+    std::vector<std::string> builtin;   // always there, cannot be renamed or removed
+    std::vector<TagRow> custom;
+    std::vector<std::string> unlisted;  // tags the open scene uses that the list lacks
+    std::vector<LayerRow> layers;       // kLayerCount of them
+};
+
+/// What the panel keeps between frames. The host writes the error lines after it carried out an intent.
+struct TagsLayersState {
+    char newTag[kTagBufSize] = "";      // the "new tag name" field
+    char renameBuf[kTagBufSize] = "";   // the open rename popup's field
+    int renaming = -1;                  // the custom tag whose rename popup is open
+    bool closeRename = false;           // the host renamed it: the popup closes on the next frame
+    std::string tagError, renameError, layerError;
+    int layerErrorAt = -1;
+    char layerBuf[kLayerCount][kLayerBufSize] = {};   // the layer fields' text while they are edited (the OkayUI version)
+};
+
+/// What the person asked for this frame (-1 = nothing). The host validates, saves the project and sets the errors in the state.
+struct TagsLayersIntent {
+    int strict = -1;                    // 0 or 1: set Strict tags
+    bool addUnlisted = false;           // "Add them": put every unlisted tag on the list
+    bool addTag = false;                // "Add tag" or Enter: add state.newTag (clear it and the error on success)
+    int removeTag = -1;                 // a custom tag's Remove
+    int renameTag = -1;                 // a custom tag's rename popup: rename it to renameTo
+    std::string renameTo;
+    int renameLayer = -1;               // a layer field committed (Enter, or the field left after an edit): rename it to layerName
+    std::string layerName;
+    int resetLayer = -1;                // a layer's Reset: back to its default name
+    bool resetAllLayers = false;
+};
+
+inline const char* kStrictTagsTip =
+    "On: only tags on this list can be given to an object (the Inspector, scripts and SetTag refuse the rest),\nso a typo such as \"Enmey\" is caught. Off: any text is a valid tag.";
+inline const char* kRemoveTagTip = "Take it off the list. Objects that carry it keep it.";
+
+/// "2 tags in this scene are not on the list: Enemy, Boss" (the first four names, then "...").
+inline std::string UnlistedTagsText(const std::vector<std::string>& unlisted) {
+    std::string names;
+    for (std::size_t i = 0; i < unlisted.size() && i < 4; ++i) names += (i ? ", " : "") + unlisted[i];
+    if (unlisted.size() > 4) names += ", ...";
+    const bool one = unlisted.size() == 1;
+    return std::to_string(unlisted.size()) + " tag" + (one ? "" : "s") + " in this scene " + (one ? "is" : "are") + " not on the list: " + names;
+}
+inline std::string BuiltinTagsText(const std::vector<std::string>& builtin) {
+    std::string b;
+    for (const std::string& t : builtin) b += (b.empty() ? "" : "  ") + t;
+    return "Built in: " + b;
+}
+inline std::string TagUseText(int used) { return std::to_string(used) + " object" + (used == 1 ? "" : "s"); }
+/// The hint a layer field shows while empty: its built-in name, or "Layer N".
+inline std::string LayerHint(int i, const LayerRow& r) { return r.defaultName.empty() ? "Layer " + std::to_string(i) : r.defaultName; }
+/// A layer has a Reset button when it is named and the name is not its built-in one.
+inline bool LayerCanReset(const LayerRow& r) { return !r.name.empty() && r.name != r.defaultName; }
+inline std::string LayerErrorText(const TagsLayersState& st) { return "Layer " + std::to_string(st.layerErrorAt) + ": " + st.layerError; }
+/// Copy `src` into a fixed buffer, cut at a whole UTF-8 character.
+inline void CopyToBuf(char* dst, std::size_t n, const std::string& src) {
+    if (n == 0) return;
+    std::size_t k = std::min(src.size(), n - 1);
+    while (k > 0 && k < src.size() && ((unsigned char)src[k] & 0xC0) == 0x80) --k;
+    std::copy(src.begin(), src.begin() + (std::ptrdiff_t)k, dst);
+    dst[k] = '\0';
+}
+
+// ============================================================================================================================
+// Physics (Project Settings)
+// ============================================================================================================================
+
+struct PhysicsSettingsModel {
+    float* gravity2D = nullptr;         // float[2], edited in place
+    float* gravity3D = nullptr;         // float[3], edited in place
+    float* stepsPerSecond = nullptr;    // edited in place (the host clamps it, ClampStepsPerSecond)
+    bool* smooth = nullptr;             // edited in place
+    int quality = 1;                    // the open scene's: 0 Classic, 1 Improved
+    int solverIterations = 10;          // shown when Improved
+    bool autoContinuous = true;         // shown when Improved
+};
+
+struct PhysicsSettingsIntent {
+    bool gravityChanged = false;        // a gravity cell changed (written through its pointer)
+    bool rateChanged = false;           // steps per second changed (written; the host clamps, applies and saves)
+    bool smoothChanged = false;         // the smoothing box (written; the host applies and saves)
+    int quality = -1;                   // 0 or 1: set the scene's physics quality
+    int solverIterations = -1;          // 4..30: set the solver iterations
+    int autoContinuous = -1;            // 0 or 1
+    bool apply = false;                 // "Apply to current scene"
+};
+
+inline const char* const kPhysicsQualityNames[2] = {"Classic (the original step: old scenes)", "Improved (stacks stand, bodies sleep, fast bodies stop)"};
+inline const char* kStepRateTip = "How many times a second physics runs. 50 is the usual rate.\nA drop lands in the same place at a low frame rate and a high one.\nSaved with the project.";
+inline const char* kSmoothTip = "Draw each body part way between its last two physics steps,\nso motion stays smooth when the frame rate and the step rate differ.";
+inline const char* kQualityTip = "Classic plays old scenes exactly as they always played.\nImproved solves contacts several times a step and remembers them, so crates stack and stay put,\nresting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\nNew scenes start Improved. The setting is part of the scene file.";
+inline const char* kIterationsTip = "How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).";
+inline const char* kContinuousTip = "A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.";
+inline const char* kPhysicsQualityHeading = "Physics quality of the open scene (saved with the scene)";
+
+/// The step rate the editor accepts: 1 to 500 a second (anything else, NaN included, is pulled into that range; NaN is 50).
+inline float ClampStepsPerSecond(float hz) { return !(hz == hz) ? 50.0f : hz < 1.0f ? 1.0f : hz > 500.0f ? 500.0f : hz; }
+
+/// Dear ImGui's default item width: 65% of the window (a panel's body plus the editor's 16-pixel padding on each side).
+inline float DefaultItemWidth(float bodyWidth) { return std::floor((bodyWidth + 32.0f) * 0.65f); }
+
+// ============================================================================================================================
+// Profiler
+// ============================================================================================================================
+
+struct ProfilerSection {
+    std::string name;
+    double self = 0.0, inclusive = 0.0;  // ms
+    int calls = 0, depth = 0;
+    double min = 0.0, avg = 0.0, max = 0.0;   // self ms over the recorded window
+};
+
+struct ProfilerModel {
+    bool* paused = nullptr;              // edited in place (null: not shown)
+    int* selected = nullptr;             // the scrubbed frame, edited in place (-1 = the latest)
+    std::vector<float> total, gpu;       // ms per frame, oldest first (the same length)
+    double lastFrameMs = 0.0, avg = 0.0, peak = 0.0;
+    // the frame shown (the latest, or the scrubbed one while paused)
+    double frameMs = 0.0, cpuMs = 0.0, gpuMs = 0.0;
+    int meshes = 0, triangles = 0, particles = 0;
+    double scriptsMs = 0.0, physicsMs = 0.0, renderMs = 0.0;   // the CPU categories' self time
+    std::vector<ProfilerSection> sections;                       // the shown frame's sections, in the profiler's order
+    bool playing = false;
+};
+
+struct ProfilerIntent {
+    bool pauseChanged = false;           // written through `paused`
+    bool selectChanged = false;          // written through `selected`
+    bool copyCsv = false;                // "Copy CSV": ProfilerCsv goes to the clipboard
+};
+
+inline const char* kProfilerHelp =
+    "Self ms  = time spent in this section, NOT counting nested sections.\n"
+    "Total ms = time including everything it called (indented = nested).\n"
+    "%        = share of this frame's CPU.\n"
+    "Calls    = how many times it ran this frame.\n"
+    "Avg/Max  = over the recorded window.\n"
+    "Red rows are 'hot' (>30% of CPU) \xE2\x80\x94 start optimising there.";
+inline const char* const kProfilerColumns[7] = {"Section", "Self ms", "Total ms", "%", "Calls", "Avg", "Max"};
+
+/// The top of the timeline graphs: 15% above the peak, or 33.4 ms (30 FPS) before there is one.
+inline float ProfilerGraphTop(const ProfilerModel& m) { return (float)(m.peak > 0.0 ? m.peak * 1.15 : 33.4); }
+inline int ProfilerFrameCount(const ProfilerModel& m) { return (int)std::min(m.total.size(), m.gpu.size()); }
+/// While running the scrub position is the latest frame (-1); once paused it starts at the newest frame and stays in range.
+inline void ProfilerFixSelection(ProfilerModel& m) {
+    if (!m.selected) return;
+    const int n = ProfilerFrameCount(m);
+    if (!m.paused || !*m.paused) { *m.selected = -1; return; }
+    if (*m.selected < 0 || *m.selected >= n) *m.selected = n - 1;
+}
+inline double ProfilerOtherMs(const ProfilerModel& m) {
+    const double o = m.cpuMs - m.scriptsMs - m.physicsMs - m.renderMs;
+    return o > 0.0 ? o : 0.0;
+}
+inline std::string ProfilerOverlay(const ProfilerModel& m) {
+    char b[96]; std::snprintf(b, sizeof(b), "%.2f ms   %.0f FPS", m.lastFrameMs, m.lastFrameMs > 0.001 ? 1000.0 / m.lastFrameMs : 0.0);
+    return b;
+}
+/// "Scripts 1.20 ms (35%)" and the bar's fill (the share of this frame's CPU).
+inline std::string ProfilerBarText(const char* label, double ms, double cpu, float* frac) {
+    const float f = cpu > 0.0001 ? (float)(ms / cpu) : 0.0f;
+    if (frac) *frac = f;
+    char t[64]; std::snprintf(t, sizeof(t), "%s %.2f ms (%.0f%%)", label, ms, f * 100.0f);
+    return t;
+}
+/// The plain-language diagnosis under the bars.
+inline std::string ProfilerDiagnosis(const ProfilerModel& m) {
+    const double sc = m.scriptsMs, ph = m.physicsMs, rd = m.renderMs, ot = ProfilerOtherMs(m);
+    const char* cat = "Scripts"; double cm = sc;
+    if (ph > cm) { cm = ph; cat = "Physics"; }
+    if (rd > cm) { cm = rd; cat = "Render"; }
+    if (ot > cm) { cm = ot; cat = "Other (engine/UI)"; }
+    std::string top; double hs = 0.0;
+    for (const ProfilerSection& s : m.sections) if (s.self > hs) { hs = s.self; top = s.name; }
+    std::string d;
+    if (m.frameMs < 0.001) d = "Waiting for frames...";
+    else if (m.gpuMs > m.cpuMs * 1.3) d = "GPU-bound: rendering dominates. Lower resolution/AA, fewer triangles, or simpler shaders.";
+    else if (m.cpuMs > m.gpuMs * 1.3) d = "CPU-bound: " + std::string(cat) + " is heaviest" + (top.empty() ? "" : " (top: " + top + ").");
+    else d = "Balanced CPU/GPU.";
+    if (m.frameMs > 0.001) {
+        const double fps = 1000.0 / m.frameMs;
+        if (fps >= 58) d += "  Running smoothly (60+ FPS).";
+        else if (fps >= 28) d += "  ~30 FPS.";
+        else d += "  Below 30 FPS \xE2\x80\x94 optimise the heaviest section above.";
+    }
+    return d;
+}
+/// The table's rows: the sections by self time, heaviest first (ties keep the profiler's order).
+inline std::vector<int> ProfilerRows(const ProfilerModel& m) {
+    std::vector<int> r(m.sections.size());
+    for (std::size_t i = 0; i < r.size(); ++i) r[i] = (int)i;
+    std::stable_sort(r.begin(), r.end(), [&](int a, int b) { return m.sections[(std::size_t)a].self > m.sections[(std::size_t)b].self; });
+    return r;
+}
+/// A hot section (red): more than 30% of a frame that took more than half a millisecond of CPU.
+inline bool ProfilerHot(const ProfilerModel& m, const ProfilerSection& s) { return s.self > m.cpuMs * 0.30 && m.cpuMs > 0.5; }
+/// The seven cells of a row: name, self, total, %, calls, avg, max.
+inline void ProfilerCells(const ProfilerModel& m, const ProfilerSection& s, char cells[6][24]) {
+    const float frac = m.cpuMs > 0.0001 ? (float)(s.self / m.cpuMs) : 0.0f;
+    std::snprintf(cells[0], 24, "%.3f", s.self);
+    std::snprintf(cells[1], 24, "%.3f", s.inclusive);
+    std::snprintf(cells[2], 24, "%.0f%%", frac * 100.0f);
+    std::snprintf(cells[3], 24, "%d", s.calls);
+    std::snprintf(cells[4], 24, "%.3f", s.avg);
+    std::snprintf(cells[5], 24, "%.3f", s.max);
+}
+inline std::string ProfilerCsv(const ProfilerModel& m) {
+    std::string csv = "Section,Self ms,Total ms,Calls,Avg ms,Min ms,Max ms\n";
+    for (const ProfilerSection& s : m.sections) {
+        char line[256];
+        std::snprintf(line, sizeof(line), "%s,%.4f,%.4f,%d,%.4f,%.4f,%.4f\n", s.name.c_str(), s.self, s.inclusive, s.calls, s.avg, s.min, s.max);
+        csv += line;
+    }
+    return csv;
+}
+inline const char* ProfilerEmptyText(const ProfilerModel& m) {
+    return m.playing ? "Collecting samples..." : "Press Play to time Scripts/Physics; the editor render is always timed.";
+}
 
 } // namespace okaypanels

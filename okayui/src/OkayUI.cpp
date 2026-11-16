@@ -130,7 +130,13 @@ PopupSlot* popupSlot(int id, bool create) {
 int      g_openPopupThisFrame = 0;   // popup id requested to open this frame
 int   g_hot = 0, g_active = 0;   // hovered id / pressed-and-holding id (0 = none)
 int   g_focus = 0;               // keyboard-focused widget id (TextField); 0 = none
-int   g_nextOpen = -1;             // SetNextItemOpen: -1 none, 0 closed, 1 open (consumed by the next tree node / header)
+// IsItemDeactivatedAfterEdit (text fields): the field that held the keyboard last and whether its text changed since it got it; a field
+// that lost the keyboard to another field before it was drawn again (it reports on its next draw); the field that reported this frame.
+int   g_editOwner = 0;     bool g_editOwnerEdited = false;
+int   g_lostField = 0;     bool g_lostFieldEdited = false;
+int   g_deactAfterEdit = 0;
+float g_fieldPadL = -1.0f, g_fieldPadR = -1.0f;   // a text field's inner padding at the left / right while SearchField draws one (< 0: the usual)
+int   g_nextOpen = -1;            // SetNextItemOpen: -1 none, 0 closed, 1 open (consumed by the next tree node / header)
 int   g_toggledId = 0;             // the tree node or header whose open state the user flipped this frame
 float g_dispW = 0.0f, g_dispH = 0.0f;   // Input::displayW / displayH of this frame
 float g_wrapPos = -1.0f;            // PushTextWrapPos: < 0 = off, 0 = wrap at the right edge, > 0 = wrap at that width
@@ -283,6 +289,8 @@ inline void groupAdd(float x, float y, float w, float h) {
     g.any = true;
 }
 bool  g_posOverride = false;      // SetCursorScreenPos: the next placed item uses (g_posX, g_posY)
+bool  g_posSameLine = false;      // ... and it is on the line of the item before it (SameLine, then SetCursorPosX)
+bool  g_centerNext = false;       // CenterNextOnLine: the next item, on the line of a taller one, is centred on it
 float g_posX = 0.0f, g_posY = 0.0f;
 
 // Saved parent layout + child metadata while inside a BeginChild/EndChild pair.
@@ -293,7 +301,8 @@ struct ChildSave {
     float* scroll;        // persisted scroll offset
     float* maxSlot;       // persisted max scroll from last frame (clamps this frame)
     float* autoH = nullptr;   // ChildFlags_AutoResizeY: where EndChild leaves the content height for the next frame
-    float pad;
+    float pad;            // above and below the content
+    float padX;           // left and right
     bool  hovered;        // mouse over the region this frame
     float setScroll;      // SetScrollY's request, applied once the content has been measured (< 0: none)
 };
@@ -365,7 +374,7 @@ TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
 
 // Popup body layout context (uses LayoutState, so defined after it).
-struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; };
+struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float padX, padY; bool exact; };
 PopupCtx g_popupStack[4];
 int      g_popupTop = 0;
 extern int g_textScaleTop;   // defined with the text-scale stack below (reset here in BeginFrame)
@@ -491,7 +500,13 @@ inline float fMeasure(const char* s) {
 // Average character width in cell units (spacing glyph-like icons).
 inline float fCharW() { return g_ttf ? fMeasure("n") : (float)fW(); }
 
-inline float rowH() { return fH() * g_theme.textScale + (g_look ? 15.0f : 12.0f); }
+// StyleVar_FramePadding (y): -1 = OkayUI's frames (a text line + 15, or + 12 without the launcher look); 0 or more: a text line plus
+// twice that (Dear ImGui's frame height). Checkbox and RadioButton boxes follow it too (boxSize).
+float g_framePadY = -1.0f;
+// A pushed StyleVar_WindowPadding (y; < 0 = none pushed): a framed or padded child (the flags form of BeginChild) then pads its content by
+// the window padding (x, y) instead of 6 pixels each way.
+float g_childPadY = -1.0f;
+inline float rowH() { return fH() * g_theme.textScale + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : (g_look ? 15.0f : 12.0f)); }
 inline float textH() { return fH() * g_theme.textScale; }
 inline float labelW(const char* s) { return s && *s ? fMeasure(s) * g_theme.textScale : 0.0f; }
 // ImGui's convention for labels: what follows "##" is only part of the widget id and is not shown.
@@ -534,9 +549,11 @@ inline float availW() {
 // to the next line (SameLine() keeps it on the current line instead).
 void place(float w, float h, float& x, float& y) {
     bool sameLine = false;
+    const float lineH = g_lay.prevH;   // the item before, for CenterNextOnLine
     if (g_posOverride) {   // SetCursorScreenPos: this item goes exactly there
         g_posOverride = false;
         x = g_posX; y = g_posY; g_lay.pendingSameLine = false; g_lay.sameLineSpacing = -1.0f;
+        sameLine = g_posSameLine; g_posSameLine = false;
     } else if (g_lay.pendingSameLine) {
         float sp = g_lay.sameLineSpacing >= 0.0f ? g_lay.sameLineSpacing : g_lay.spacingX;
         x = g_lay.prevX + g_lay.prevW + sp;
@@ -548,6 +565,8 @@ void place(float w, float h, float& x, float& y) {
         x = leftEdge();
         y = g_lay.cy;
     }
+    if (g_centerNext && sameLine && lineH > h) y += (lineH - h) * 0.5f;   // CenterNextOnLine
+    g_centerNext = false;
     g_lay.prevX = x; g_lay.prevY = y; g_lay.prevW = w; g_lay.prevH = h;
     if (x + w > g_lay.maxRight) g_lay.maxRight = x + w;
     groupAdd(x, y, w, h);
@@ -1033,6 +1052,7 @@ void BeginFrame(const Input& in) {
     g_rPrevDown = in.rightDown;
     g_activeAtFrameStart = g_active;
     g_lastId = 0;
+    g_deactAfterEdit = 0;
     g_disTop = g_disCount = 0; g_rawDraw = false;   // an unbalanced BeginDisabled never leaks into the next frame
     g_openPopupThisFrame = 0;
     g_popupTop = 0;
@@ -1355,12 +1375,18 @@ bool Tab(int id, float x, float y, float w, float h, const char* label, int* cur
 // ---- Text field -----------------------------------------------------------------
 namespace {
 // Caret, selection anchor and horizontal scroll of a text field, kept per widget id.
-struct TextSlot { int id = 0; int caret = 0, anchor = 0, first = 0; bool used = false; };
-TextSlot g_texts[32];
+struct TextSlot { int id = 0; int caret = 0, anchor = 0, first = 0; bool used = false; unsigned long long lastUse = 0; };
+TextSlot g_texts[64];
+// The caret state of up to 64 text fields. When the table is full the field drawn longest ago gives its slot up (never the one with
+// the keyboard), so a form with many fields (the 32 layer names) keeps a working caret in the field being typed into.
 TextSlot* textSlot(int id) {
-    for (TextSlot& t : g_texts) if (t.used && t.id == id) return &t;
-    for (TextSlot& t : g_texts) if (!t.used) { t = TextSlot(); t.used = true; t.id = id; return &t; }
-    static TextSlot sink; sink = TextSlot(); return &sink;   // table full: stateless fallback
+    for (TextSlot& t : g_texts) if (t.used && t.id == id) { t.lastUse = g_frameCount; return &t; }
+    TextSlot* pick = nullptr;
+    for (TextSlot& t : g_texts) if (!t.used) { pick = &t; break; }
+    if (!pick) for (TextSlot& t : g_texts) if (t.id != g_focus && (!pick || t.lastUse < pick->lastUse)) pick = &t;
+    if (!pick) { static TextSlot sink; sink = TextSlot(); return &sink; }
+    *pick = TextSlot(); pick->used = true; pick->id = id; pick->lastUse = g_frameCount;
+    return pick;
 }
 // Length of the valid, printable UTF-8 character at p, or 0 for a control character
 // or an invalid / overlong / surrogate / out-of-range sequence.
@@ -1472,7 +1498,8 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
 
     const float s = g_theme.textScale, th = fH() * s, b = g_theme.borderPx;
     const float pad = g_look ? 9.0f : 6.0f;
-    const float tx = x + pad;
+    const float padL = g_fieldPadL >= 0.0f ? g_fieldPadL : pad, padR = g_fieldPadR >= 0.0f ? g_fieldPadR : pad;   // SearchField makes room for its icons
+    const float tx = x + padL;
     const bool inside = hit(x, y, w, h);
     g_lastId = id; if (inside) g_hot = id;
     const bool wasFocused = (g_focus == id);
@@ -1574,7 +1601,7 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
 
     // Scroll horizontally so the caret stays visible: drop leading characters until the text
     // between the first shown character and the caret fits (whole UTF-8 characters only).
-    const float innerW = w - 2.0f * pad;
+    const float innerW = w - padL - padR;
     ts->caret = snapToChar(buf, len, ts->caret); ts->anchor = snapToChar(buf, len, ts->anchor);
     ts->first = snapToChar(buf, len, ts->first);   // an edit below `first` can leave it inside a new character
     if (ts->first > ts->caret) ts->first = ts->caret;
@@ -1623,6 +1650,22 @@ bool TextField(int id, float x, float y, float w, float h, char* buf, int cap, u
         SetImeRect(ir);
     }
     PopClipRect();
+    // IsItemDeactivatedAfterEdit: a field reports losing the keyboard (a click elsewhere, Escape, another field taking it) on its next
+    // draw, when its text changed while it had the keyboard.
+    if (focused) {
+        if (g_editOwner != id) {
+            if (g_editOwner != 0) { g_lostField = g_editOwner; g_lostFieldEdited = g_editOwnerEdited; }
+            g_editOwner = id; g_editOwnerEdited = false;
+        }
+        if (changed) g_editOwnerEdited = true;
+        if (enter && (flags & InputText_EnterReturnsTrue)) g_editOwnerEdited = false;   // Enter committed it: only later edits count
+    } else if (g_editOwner == id) {
+        if (g_editOwnerEdited) g_deactAfterEdit = id;
+        g_editOwner = 0; g_editOwnerEdited = false;
+    } else if (g_lostField == id) {
+        if (g_lostFieldEdited) g_deactAfterEdit = id;
+        g_lostField = 0; g_lostFieldEdited = false;
+    }
     return (flags & InputText_EnterReturnsTrue) ? (enter && focused) : changed;
 }
 
@@ -2326,13 +2369,15 @@ void SetWindowFocus(const char* title) {
     for (WinSlot& ws : g_wins) if (ws.used && ws.id == g_focusWin && ws.z != 0) ws.z = ++g_zCounter;   // and raise it
 }
 
-static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH = nullptr);
+static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH = nullptr, float padX = -1.0f, bool outline = false);
 bool BeginChild(const char* id, float w, float h, bool border) { return beginChildImpl(id, w, h, border, 6.0f, true); }
 
 bool BeginChild(const char* id, Vec2 size, int flags) {
     if (!g_lay.active) return false;
     const bool border = (flags & ChildFlags_Borders) != 0;
-    const float pad = border || (flags & ChildFlags_AlwaysUseWindowPadding) ? 6.0f : 0.0f;
+    const bool padded = border || (flags & ChildFlags_AlwaysUseWindowPadding);
+    const float pad = padded ? (g_childPadY >= 0.0f ? g_childPadY : 6.0f) : 0.0f;                 // above and below
+    const float padX = padded ? (g_childPadY >= 0.0f ? g_theme.windowPadding : 6.0f) : 0.0f;      // left and right
     const Vec2 avail = GetContentRegionAvail();
     // Dear ImGui's sizes: 0 fills what is left, a negative value leaves that much; a size that cannot be used falls back to filling.
     float w = std::isfinite(size.x) ? size.x : 0.0f, h = std::isfinite(size.y) ? size.y : 0.0f;
@@ -2344,10 +2389,13 @@ bool BeginChild(const char* id, Vec2 size, int flags) {
         autoH = floatState(hashLabel(id) ^ 0x41755a, rowH());
         h = std::max(*autoH + 2.0f * pad, 1.0f);
     }
-    return beginChildImpl(id, std::min(w, 1.0e6f), std::min(h, 1.0e6f), border, pad, false, autoH);
+    return beginChildImpl(id, std::min(w, 1.0e6f), std::min(h, 1.0e6f), false, pad, false, autoH, padX, border);
 }
 
-static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH) {
+// `border`: the old form's filled frame. `outline`: Dear ImGui's bordered child (ChildFlags_Borders): a one-pixel rounded outline in
+// Col_Border, filled only when Col_ChildBg is set. `pad` is the padding above and below, `padX` left and right (< 0: the same as pad).
+static bool beginChildImpl(const char* id, float w, float h, bool border, float pad, bool reserveBar, float* autoH, float padX, bool outline) {
+    if (padX < 0.0f) padX = pad;
     // Depth guard first: past the child-stack capacity the parent layout cannot
     // be saved, so the child cannot begin at all -- otherwise EndChild would pop
     // a slot that was never pushed and corrupt the parent's scroll/clip state.
@@ -2369,17 +2417,22 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
 
     // Frame + clip to the region.
     if (border) { quad(rx, ry, rw, rh, pick(Col_ChildBg, g_theme.panel)); }
+    if (outline) {
+        const float rd = rnd(), b = 1.0f;
+        rrect(rx, ry, rw, rh, rd, pick(Col_Border, g_theme.border));
+        rrect(rx + b, ry + b, rw - 2.0f * b, rh - 2.0f * b, rd > b ? rd - b : 0.0f, colorIsSet(Col_ChildBg) ? g_theme.colors[Col_ChildBg] : pick(Col_WindowBg, g_theme.panel));
+    }
     PushClipRect(rx, ry, rw, rh);
 
     // Save the parent layout, then set up the child's inner layout (scrolled).
     if (g_childTop < 8) {
         ChildSave& c = g_childStack[g_childTop++];
         c.lay = g_lay; c.rx = rx; c.ry = ry; c.rw = rw; c.rh = rh;
-        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.hovered = hovered; c.setScroll = -1.0f; c.autoH = autoH;
+        c.top = ry + pad; c.scroll = scroll; c.maxSlot = maxSlot; c.pad = pad; c.padX = padX; c.hovered = hovered; c.setScroll = -1.0f; c.autoH = autoH;
     }
-    g_lay.ox = rx + pad;
+    g_lay.ox = rx + padX;
     // The old form always leaves room for the scrollbar; the flags form only when the content overflowed last frame (Dear ImGui's way).
-    g_lay.contentW = rw - 2.0f * pad - (reserveBar || *maxSlot > 0.0f ? kScrollbarW : 0.0f);
+    g_lay.contentW = rw - 2.0f * padX - (reserveBar || *maxSlot > 0.0f ? kScrollbarW : 0.0f);
     g_lay.bottom = ry + rh - pad;
     g_lay.oy = ry + pad - *scroll;
     g_lay.cx = g_lay.ox;
@@ -2490,8 +2543,11 @@ float g_textRowH = 0.0f;   // StyleVar_TextRowHeight: 0 = a text line takes a fr
 // StyleVar_CellPadding: the gap inside a cell, across (default 4) and above and below (default -1: none, and the row ends after the
 // last item's spacing, as it always did; 0 or more: that much above the first item and below the last one, without its spacing).
 float g_cellPadX = 4.0f, g_cellPadY = -1.0f;
-// StyleVar_FramePadding (y only, and only for the boxes of Checkbox and RadioButton): -1 = the default box (a text line + 6).
-float g_framePadY = -1.0f;
+// The boxes of Checkbox and RadioButton: a text line + 6, or with StyleVar_FramePadding (y) a text line plus twice it (g_framePadY).
+// OkayUI's own style values for Dear ImGui-looking menus and fields (PushStyleVar; < 0 = the usual OkayUI value):
+// StyleVar_PopupPadding (x, y) inside a popup (default 6, 6), StyleVar_PopupWidth (default 160), StyleVar_ItemInnerSpacing (x only: the gap
+// between the cells of a formatted drag row and before its label).
+float g_popupPadX = -1.0f, g_popupPadY = -1.0f, g_popupW = -1.0f, g_innerX = -1.0f;
 inline float boxSize() { return textH() + (g_framePadY >= 0.0f ? 2.0f * g_framePadY : 6.0f); }
 void textLine(const char* s, const unsigned char* col) {
     const float h = g_textRowH > 0.0f ? g_textRowH : rowH();
@@ -2502,10 +2558,20 @@ void textLine(const char* s, const unsigned char* col) {
     if (s && *s) drawText(x, y + (h - textH()) * 0.5f, s, g_theme.textScale, col);
 }
 
-// Word-wrapped text: lines are filled word by word up to maxW, '\n' always breaks.
-void wrapLines(const char* text, float maxW, const unsigned char* col) {
+// Word-wrapped text: lines are filled word by word up to maxW, '\n' always breaks. With Dear ImGui's text rows (TextRowHeight > 0)
+// the lines of one paragraph are one text line apart (no item spacing between them), and the lines after the first fill the width
+// from the left edge (`maxRest`) even when the first one began after another item on its line.
+void wrapLines(const char* text, float maxW, const unsigned char* col, float maxRest = -1.0f) {
     char line[512]; int n = 0;
     const char* p = text;
+    const bool imguiRows = g_textRowH > 0.0f;
+    bool first = true;
+    auto emit = [&](const char* l) {
+        if (!first && imguiRows) { g_lay.cy = g_lay.prevY + g_lay.prevH; g_lay.pendingSameLine = false; }
+        textLine(l, col);
+        if (first && imguiRows && maxRest > 0.0f) maxW = maxRest;
+        first = false;
+    };
     while (*p) {
         const char* wordEnd = p;
         while (*wordEnd && *wordEnd != ' ' && *wordEnd != '\n') ++wordEnd;
@@ -2515,22 +2581,23 @@ void wrapLines(const char* text, float maxW, const unsigned char* col) {
         if (n > 0 && tn < 500) trial[tn++] = ' ';
         for (int i = 0; i < wl && tn < 500; ++i) trial[tn++] = p[i];
         trial[tn] = 0;
-        if (n > 0 && labelW(trial) > maxW) { line[n] = 0; textLine(line, col); n = 0; continue; }
+        if (n > 0 && labelW(trial) > maxW) { line[n] = 0; emit(line); n = 0; continue; }
         for (int i = 0; i < tn && i < 500; ++i) line[i] = trial[i];
         n = tn < 500 ? tn : 500;
         p = wordEnd;
-        if (*p == '\n') { line[n] = 0; textLine(line, col); n = 0; ++p; }
+        if (*p == '\n') { line[n] = 0; emit(line); n = 0; ++p; }
         else if (*p == ' ') ++p;
     }
-    if (n > 0) { line[n] = 0; textLine(line, col); }
+    if (n > 0) { line[n] = 0; emit(line); }
 }
 
 // Text honouring PushTextWrapPos.
 void textBlock(const char* s, const unsigned char* col) {
     if (g_wrapPos >= 0.0f && s && *s) {
-        float maxW = availW();
+        float maxW = availW(), rest = fullW();
         if (g_wrapPos > 0.0f && g_wrapPos < maxW) maxW = g_wrapPos;
-        wrapLines(s, maxW, col);
+        if (g_wrapPos > 0.0f && g_wrapPos < rest) rest = g_wrapPos;
+        wrapLines(s, maxW, col, rest);
     } else textLine(s, col);
 }
 } // namespace
@@ -2753,7 +2820,8 @@ void PushStyleVar(StyleVar var, Vec2 value) {
     StyleSave s{(int)var, 0.0f, 0.0f};
     switch (var) {
         case StyleVar_ItemSpacing:   s.a = g_lay.spacingX; s.b = g_lay.spacingY; g_lay.spacingX = value.x; g_lay.spacingY = value.y; break;
-        case StyleVar_WindowPadding: s.a = g_theme.windowPadding; g_theme.windowPadding = value.x; break;
+        case StyleVar_WindowPadding: s.a = g_theme.windowPadding; s.b = g_childPadY; g_theme.windowPadding = value.x;
+                                     g_childPadY = std::isfinite(value.y) && value.y >= 0.0f ? std::min(value.y, 256.0f) : 6.0f; break;
         case StyleVar_FrameRounding:
         case StyleVar_ChildRounding: s.a = g_theme.rounding; g_theme.rounding = value.x; break;
         case StyleVar_WindowRounding: s.a = g_theme.windowRounding; g_theme.windowRounding = value.x; break;
@@ -2764,6 +2832,11 @@ void PushStyleVar(StyleVar var, Vec2 value) {
         case StyleVar_FramePadding:  s.a = g_framePadY; g_framePadY = std::isfinite(value.y) ? std::min(std::max(value.y, 0.0f), 64.0f) : -1.0f; break;
         case StyleVar_ButtonTextAlign: s.a = g_btnAlignX; g_btnAlignX = std::isfinite(value.x) ? std::min(1.0f, std::max(0.0f, value.x)) : 0.5f; break;
         case StyleVar_TextRowHeight: s.a = g_textRowH; g_textRowH = (std::isfinite(value.x) && value.x > 0.0f) ? std::min(value.x, 4096.0f) : 0.0f; break;
+        case StyleVar_PopupPadding:  s.a = g_popupPadX; s.b = g_popupPadY;
+                                     g_popupPadX = std::isfinite(value.x) && value.x >= 0.0f ? std::min(value.x, 256.0f) : -1.0f;
+                                     g_popupPadY = std::isfinite(value.y) && value.y >= 0.0f ? std::min(value.y, 256.0f) : -1.0f; break;
+        case StyleVar_PopupWidth:    s.a = g_popupW; g_popupW = std::isfinite(value.x) && value.x > 0.0f ? std::min(value.x, 4096.0f) : -1.0f; break;
+        case StyleVar_ItemInnerSpacing: s.a = g_innerX; g_innerX = std::isfinite(value.x) && value.x >= 0.0f ? std::min(value.x, 256.0f) : -1.0f; break;
         default: break;                              // accepted, nothing to change (see the header)
     }
     g_styleStack[g_styleTop++] = s;
@@ -2774,7 +2847,7 @@ void PopStyleVar(int count) {
         const StyleSave s = g_styleStack[--g_styleTop];
         switch ((StyleVar)s.var) {
             case StyleVar_ItemSpacing:   g_lay.spacingX = s.a; g_lay.spacingY = s.b; break;
-            case StyleVar_WindowPadding: g_theme.windowPadding = s.a; break;
+            case StyleVar_WindowPadding: g_theme.windowPadding = s.a; g_childPadY = s.b; break;
             case StyleVar_FrameRounding:
             case StyleVar_ChildRounding: g_theme.rounding = s.a; break;
             case StyleVar_WindowRounding: g_theme.windowRounding = s.a; break;
@@ -2783,6 +2856,9 @@ void PopStyleVar(int count) {
             case StyleVar_ButtonTextAlign: g_btnAlignX = s.a; break;
             case StyleVar_FramePadding:  g_framePadY = s.a; break;
             case StyleVar_CellPadding:   g_cellPadX = s.a; g_cellPadY = s.b; break;
+            case StyleVar_PopupPadding:  g_popupPadX = s.a; g_popupPadY = s.b; break;
+            case StyleVar_PopupWidth:    g_popupW = s.a; break;
+            case StyleVar_ItemInnerSpacing: g_innerX = s.a; break;
             default: break;
         }
     }
@@ -2790,27 +2866,30 @@ void PopStyleVar(int count) {
 
 bool Checkbox(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
+    const VisLabel vis(label);   // "##" and what follows only name the widget
     const float sz = boxSize(), h = std::max(rowH(), sz);
-    const float w = sz + 8.0f + labelW(label);
+    const float w = sz + 8.0f + labelW(vis.b);
     float x, y; place(w, h, x, y);
-    return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value);
+    return Checkbox(hashLabel(label), x, y + (h - sz) * 0.5f, sz, vis.b, value);
 }
 
 bool RadioButton(const char* label, int* value, int option) {
     if (!g_lay.active || !value) return false;
+    const VisLabel vis(label);
     const float sz = boxSize(), h = std::max(rowH(), sz);
-    const float w = sz + 8.0f + labelW(label);
+    const float w = sz + 8.0f + labelW(vis.b);
     float x, y; place(w, h, x, y);
-    return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, label, value, option);
+    return RadioButton(hashLabel(label), x, y + (h - sz) * 0.5f, sz, vis.b, value, option);
 }
 
 bool ToggleSwitch(const char* label, bool* value) {
     if (!g_lay.active || !value) return false;
     const float h = rowH();
     const float sh = textH() + 4.0f, sw = sh * 1.9f;   // switch pill size (track ~1.9:1)
-    const float w = sw + 8.0f + labelW(label);
+    const VisLabel vis(label);
+    const float w = sw + 8.0f + labelW(vis.b);
     float x, y; place(w, h, x, y);
-    return ToggleSwitch(hashLabel(label), x, y + (h - sh) * 0.5f, sw, sh, label, value);
+    return ToggleSwitch(hashLabel(label), x, y + (h - sh) * 0.5f, sw, sh, vis.b, value);
 }
 
 namespace {
@@ -2843,8 +2922,9 @@ int numberEdit(int id, float x, float y, float w, float h, bool inside, double c
 
 bool SliderFloat(const char* label, float* value, float minV, float maxV) {
     if (!g_lay.active || !value) return false;
+    const VisLabel vis(label);
     const float h = rowH();
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 24.0f) ctrlW = 24.0f;
@@ -2852,13 +2932,13 @@ bool SliderFloat(const char* label, float* value, float minV, float maxV) {
         double typed = 0.0;
         const int e = numberEdit(hashLabel(label), x, y, ctrlW, h, hit(x, y, ctrlW, h), (double)*value, false, (double)minV, (double)maxV, &typed);
         if (e != 0) {
-            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
             if (e == 2 && (float)typed != *value) { *value = (float)typed; return true; }
             return false;
         }
     }
     const bool ch = Slider(hashLabel(label), x, y, ctrlW, h, value, minV, maxV);
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, g_theme.textScale, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
     return ch;
 }
 
@@ -3224,7 +3304,9 @@ bool Combo(const char* label, const char* const* items, int count, int* current)
     quad(x, y, boxW, h, g_theme.border);
     if (boxW > 2*b && h > 2*b) quad(x + b, y + b, boxW - 2*b, h - 2*b, insideBox ? g_theme.bgHover : g_theme.bg);
     const char* cur = (*current >= 0 && *current < count) ? items[*current] : "";
+    PushClipRect(x, y, std::max(1.0f, boxW - 24.0f), h);   // a long item stops before the arrow (it ran over the arrow and the label)
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, cur, s, g_theme.text);
+    PopClipRect();
     if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
     else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, *open ? "-" : "+", s, g_theme.text);
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
@@ -3278,8 +3360,9 @@ bool dragBox(int id, float x, float y, float w, float h, bool inside, float& out
 bool DragFloat(const char* label, float* v, float speed, float minV, float maxV) {
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
+    const VisLabel vis(label);
     const float h = rowH(), s = g_theme.textScale;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
@@ -3288,7 +3371,7 @@ bool DragFloat(const char* label, float* v, float speed, float minV, float maxV)
         double typed = 0.0;
         const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, false, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
         if (e != 0) {
-            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
             if (e == 2 && (float)typed != *v) { *v = (float)typed; return true; }
             return false;
         }
@@ -3302,15 +3385,16 @@ bool DragFloat(const char* label, float* v, float speed, float minV, float maxV)
     }
     char buf[32]; std::snprintf(buf, sizeof(buf), "%.3f", *v);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
     return changed;
 }
 
 bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
     if (!g_lay.active || !v) return false;
     const int id = hashLabel(label);
+    const VisLabel vis(label);
     const float h = rowH(), s = g_theme.textScale;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
@@ -3319,7 +3403,7 @@ bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
         double typed = 0.0;
         const int e = numberEdit(id, x, y, ctrlW, h, inside, (double)*v, true, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
         if (e != 0) {
-            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+            if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
             if (e == 2 && (int)typed != *v) { *v = (int)typed; return true; }
             return false;
         }
@@ -3338,7 +3422,7 @@ bool DragInt(const char* label, int* v, float speed, int minV, int maxV) {
     }
     char buf[32]; std::snprintf(buf, sizeof(buf), "%d", *v);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
     return changed;
 }
 
@@ -3349,8 +3433,9 @@ namespace {
 bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float minV, float maxV, bool range) {
     if (!g_lay.active || (!fv && !iv) || n < 1 || n > 4) return false;
     const int base = hashLabel(label);
+    const VisLabel vis(label);
     const float h = rowH(), s = g_theme.textScale;
-    const float lw = labelW(label) > 0.0f ? labelW(label) + 8.0f : 0.0f;
+    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + 8.0f : 0.0f;
     const float w = availW();
     float x, y; place(w, h, x, y);
     const float gap = 4.0f;
@@ -3402,7 +3487,7 @@ bool dragCells(const char* label, float* fv, int* iv, int n, float speed, float 
         else std::snprintf(buf, sizeof(buf), "%d", iv[i]);
         drawText(cx + 6.0f, y + (h - textH()) * 0.5f, buf, s, g_theme.text);
     }
-    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, label, s, g_theme.text);
+    if (lw > 0.0f) drawText(x + ctrlW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
     return changed;
 }
 } // namespace
@@ -3429,6 +3514,7 @@ bool InputTextWithHint(const char* label, const char* hint, char* buf, int cap, 
 }
 
 void SetKeyboardFocusHere() { if (g_lay.active) g_focusNextField = true; }
+void CenterNextOnLine() { g_centerNext = true; }
 
 namespace {
 // `n` (2..4) slider cells in one row that share a label (see dragCells).
@@ -3853,7 +3939,15 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
     else if (inside && g_pressed) { g_active = id; if (dblOnly && g_dblClick) clicked = true; }
     const unsigned char* tcol = disabled ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text;
     const float ty = y + (h - textH()) * 0.5f;
-    if (g_look) {   // launcher rows: soft accent tint + bar when selected, faint white on hover
+    if (flags & Selectable_Header) {   // Dear ImGui's rows: flat, square, the header colours; the label half the item spacing in
+        unsigned char tmp[4];
+        const unsigned char* bg = nullptr;
+        if (inside && g_active == id) bg = pick(Col_HeaderActive, g_theme.accent);
+        else if (inside)              bg = pick(Col_HeaderHovered, g_theme.bgHover);
+        else if (selected)            bg = pick(Col_Header, withAlpha(g_theme.accent, 0.28f, tmp));
+        if (bg) quad(x, y, w, h, bg);
+        drawText(textX + g_lay.spacingX * 0.5f, ty, label, s, tcol);
+    } else if (g_look) {   // launcher rows: soft accent tint + bar when selected, faint white on hover
         unsigned char tmp[4];
         const unsigned char white[4] = {255, 255, 255, 255};
         if (selected) { rrect(x, y, w, h, 6.0f, withAlpha(g_theme.accent, 0.28f, tmp)); rrect(x, y + 5.0f, 3.0f, h - 10.0f, 1.5f, g_theme.accent); }
@@ -3892,20 +3986,24 @@ static bool beginPopupBody(int id) {
     if (g_popupTop >= 4) return false;
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) return false;
-    const float w = p->w > 0.0f ? p->w : 160.0f, pad = 6.0f;
+    // StyleVar_PopupWidth / StyleVar_PopupPadding (when pushed) give the size; with a pushed padding the height is the content's
+    // exactly (no item spacing after the last item), as in Dear ImGui.
+    const float w = p->w > 0.0f ? p->w : (g_popupW > 0.0f ? g_popupW : 160.0f);
+    const float padX = g_popupPadX >= 0.0f ? g_popupPadX : 6.0f, padY = g_popupPadY >= 0.0f ? g_popupPadY : 6.0f;
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     float px = p->x, py = p->y;
     // Frame (overlay so it sits above everything). Height is last frame's content.
-    registerOverlay(px, py, w, *hSlot + pad * 2.0f, true);
+    registerOverlay(px, py, w, *hSlot + padY * 2.0f, true);
     g_toOverlay = true;
-    panelColored(px, py, w, *hSlot + pad * 2.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
+    panelColored(px, py, w, *hSlot + padY * 2.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
     // Save parent layout; set up the popup's inner layout.
     PopupCtx& c = g_popupStack[g_popupTop++];
     c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot;
+    c.padX = padX; c.padY = padY; c.exact = g_popupPadY >= 0.0f;
     g_lay.active = true;
-    g_lay.ox = px + pad; g_lay.oy = py + pad;
+    g_lay.ox = px + padX; g_lay.oy = py + padY;
     g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
-    g_lay.contentW = w - 2.0f * pad;
+    g_lay.contentW = w - 2.0f * padX;
     g_lay.indent = 0.0f; g_lay.seed = id;
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
@@ -3915,12 +4013,13 @@ static bool beginPopupBody(int id) {
 void EndPopup() {
     if (g_popupTop <= 0) return;
     PopupCtx& c = g_popupStack[--g_popupTop];
-    *c.hSlot = g_lay.cy - (c.y + 6.0f);   // measured content height for next frame
+    *c.hSlot = g_lay.cy - (c.y + c.padY) - (c.exact ? g_lay.spacingY : 0.0f);   // measured content height for next frame
+    if (*c.hSlot < 0.0f) *c.hSlot = 0.0f;
     g_toOverlay = false;
     // Dismiss on a left-click outside the popup box (but not the click that opened it).
     PopupSlot* p = popupSlot(c.id, false);
     if (p && p->open && !p->modal && g_pressed && g_openPopupThisFrame != c.id) {
-        const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + 12.0f);
+        const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + c.padY * 2.0f);
         if (!inside) p->open = false;
     }
     g_lay = c.lay;   // restore parent layout
@@ -3996,7 +4095,9 @@ bool BeginCombo(const char* label, const char* preview) {
     } else if (insideBox && g_pressed) { g_active = id; g_comboCloseId = (ps && ps->open) ? id : 0; }
     quad(x, y, boxW, h, g_theme.border);
     if (boxW > 2 * b && h > 2 * b) quad(x + b, y + b, boxW - 2 * b, h - 2 * b, insideBox ? g_theme.bgHover : g_theme.bg);
+    PushClipRect(x, y, std::max(1.0f, boxW - 24.0f), h);
     drawText(x + 6.0f, y + (h - textH()) * 0.5f, preview ? preview : "", s, g_theme.text);
+    PopClipRect();
     const bool open = ps && ps->open;
     if (g_look) chevron(x + boxW - 14.0f, y + h * 0.5f, 8.0f, true, pick(Col_TextDisabled, g_theme.textDim));
     else drawText(x + boxW - fCharW() * s - 6.0f, y + (h - textH()) * 0.5f, open ? "-" : "+", s, g_theme.text);
@@ -4552,6 +4653,14 @@ void TableSetBgColor(TableBgTarget target, Color32 color, int column) {
     if (tblScrolls() && g_tbl.index >= 0) tblCellClip(g_tbl.index);
 }
 
+// Table_BordersOuter: a one-pixel frame in Col_TableBorderStrong around the table (or its scrolling box).
+static void tblOuterBorder(float x, float y, float w, float h) {
+    if (!(w > 1.0f) || !(h > 1.0f)) return;
+    const unsigned char* c = pick(Col_TableBorderStrong, g_theme.border);
+    quad(x, y, w, 1.0f, c); quad(x, y + h - 1.0f, w, 1.0f, c);
+    quad(x, y + 1.0f, 1.0f, h - 2.0f, c); quad(x + w - 1.0f, y + 1.0f, 1.0f, h - 2.0f, c);
+}
+
 void EndTable() {
     if (!g_lay.active || !g_tbl.active) return;
     g_tbl.rowCulled = false; g_cullRow = false;
@@ -4626,6 +4735,7 @@ void EndTable() {
             quad(tx + 1.0f, sby + 1.0f, thumbW - 2.0f, kBarThick - 2.0f, act ? pick(Col_ScrollbarGrabActive, g_theme.text) : (over ? pick(Col_ScrollbarGrabHovered, g_theme.text) : pick(Col_ScrollbarGrab, g_theme.accent)));
         }
         *g_tbl.pSX = sx; *g_tbl.pSY = sy;
+        if (g_tbl.flags & Table_BordersOuter) tblOuterBorder(g_tbl.ox, g_tbl.oy, g_tbl.ow, g_tbl.oh);
         if (g_sortSpecsFor == g_tbl.id && g_sortSpecsOut && g_tbl.store) g_tbl.store->dirty = g_sortSpecsOut->specsDirty;
         g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;
         g_lay = g_tbl.saved;                 // the box was placed as one item: the cursor is already below it
@@ -4653,6 +4763,7 @@ void EndTable() {
         } else if (over && g_pressed) { g_active = hid; g_focusClaimed = true; }
     }
 
+    if (g_tbl.flags & Table_BordersOuter) tblOuterBorder(g_tbl.x0, top, g_tbl.fullW, bottom - top);
     if (g_sortSpecsFor == g_tbl.id && g_sortSpecsOut && g_tbl.store) g_tbl.store->dirty = g_sortSpecsOut->specsDirty;
     g_sortSpecsFor = 0; g_sortSpecsOut = nullptr;
     g_lay.ox = g_tbl.x0;
@@ -5196,9 +5307,11 @@ Vec2 GetCursorScreenPos() {
 }
 void SetCursorScreenPos(Vec2 p) {
     if (!g_lay.active || !finite2(p)) return;
+    // SameLine then SetCursorPosX (Dear ImGui's SameLine(offset)): still the same line, so the next line still starts below its tallest item.
+    const bool onLine = g_lay.pendingSameLine && p.y == g_lay.prevY;
     g_lay.pendingSameLine = false;
-    g_lay.cx = p.x; g_lay.cy = p.y;
-    g_posOverride = true; g_posX = p.x; g_posY = p.y;
+    g_lay.cx = p.x; if (!onLine) g_lay.cy = p.y;
+    g_posOverride = true; g_posX = p.x; g_posY = p.y; g_posSameLine = onLine;
 }
 Vec2 GetCursorPos() {
     const Vec2 s = GetCursorScreenPos();
@@ -5243,6 +5356,7 @@ bool IsItemVisible() {                                                          
 bool IsItemActive()      { return g_lastId != 0 && g_active == g_lastId; }
 bool IsItemActivated()   { return IsItemActive() && g_activeAtFrameStart != g_lastId; }
 bool IsItemDeactivated() { return g_lastId != 0 && g_activeAtFrameStart == g_lastId && g_active != g_lastId; }
+bool IsItemDeactivatedAfterEdit() { return g_lastId != 0 && g_deactAfterEdit == g_lastId; }   // text fields: see TextField
 bool IsItemClicked(int button) {
     if (!IsItemHovered()) return false;
     return button == 1 ? g_rPressed : g_pressed;
@@ -5274,11 +5388,13 @@ void ResetState() {
     g_font = &kFontDefault;
     g_in = Input();
     g_prevDown = g_pressed = g_released = g_rPrevDown = g_rPressed = g_rReleased = false;
-    g_posOverride = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
+    g_posOverride = false; g_posSameLine = false; g_centerNext = false; g_lastId = g_activeAtFrameStart = 0; g_disTop = g_disCount = 0; g_rawDraw = false; g_pathN = 0;
     g_prevMouseX = g_prevMouseY = g_mouseDX = g_mouseDY = 0.0f;
     g_frameCount = 0; g_clock = 0.0; g_lastPressTime = -1.0; g_dblClick = false;
     for (int k = 0; k < KeyId_COUNT; ++k) { g_keyNow[k] = g_keyPrev[k] = false; g_keySince[k] = g_keyNextRepeat[k] = 0.0; }
     g_hot = g_active = g_focus = 0; g_focusClaimed = false; g_frame = 0; g_dragAccum = 0.0f;
+    g_editOwner = g_lostField = g_deactAfterEdit = 0; g_editOwnerEdited = g_lostFieldEdited = false; g_fieldPadL = g_fieldPadR = -1.0f;
+    g_popupPadX = g_popupPadY = g_popupW = g_innerX = g_childPadY = -1.0f;
     g_wrapPos = -1.0f; g_hintText = nullptr; g_focusNextField = false; g_focusSelectAll = false; g_editId = 0; g_grpTop = 0; g_nextOpen = -1; g_toggledId = 0;
     g_openPopupThisFrame = 0;
     for (PopupSlot& p : g_popups) p = PopupSlot();
@@ -5299,6 +5415,178 @@ void ResetState() {
     g_wCurN = g_wPrevN = 0; g_zCounter = 0; g_nwrec = 0; g_wrecOpen = -1; g_hitWinOn = false; g_we = WinEnd(); g_wheelUsed = false; g_wflagsNext = 0;
     g_ime = ImeRect();
     g_nv = g_ni = g_onv = g_oni = g_novSpans = g_nspans = 0; g_toOverlay = false; g_dropped = 0;
+}
+
+// ---- Formatted value fields, framed sliders and the search field (docs/own_ui_toolkit.md section 10) ---------------------------
+// Written from what Dear ImGui's documentation and the editor's panels show: a drag field is a frame with its value in the middle,
+// formatted with a printf format; a slider with a format is a frame with a grab block and the value in the middle; the editor's
+// search field has a magnifier at the left and a clear button at the right. Our own code; no code from any other project.
+namespace {
+// A printf float format we can trust: exactly one conversion, of a floating type, and nothing that writes (%n). Anything else is "%.3f".
+const char* safeFloatFormat(const char* f, bool isInt) {
+    const char* dflt = isInt ? "%d" : "%.3f";
+    if (!f || !*f) return dflt;
+    int conv = 0;
+    for (const char* q = f; *q; ++q) {
+        if (*q != '%') continue;
+        if (q[1] == '%') { ++q; continue; }
+        ++q;
+        while (*q && std::strchr("-+ #0123456789.", *q)) ++q;
+        if (!*q) return dflt;
+        const bool ok = isInt ? (*q == 'd' || *q == 'i') : (*q == 'f' || *q == 'g' || *q == 'e' || *q == 'F' || *q == 'G' || *q == 'E');
+        if (!ok) return dflt;
+        ++conv;
+    }
+    return conv == 1 ? f : dflt;
+}
+void formatValue(char* out, std::size_t n, const char* fmt, double v, bool isInt) {
+    const char* f = safeFloatFormat(fmt, isInt);
+    if (isInt) std::snprintf(out, n, f, (int)v); else std::snprintf(out, n, f, v);
+}
+// Dear ImGui's field: a rounded frame in the frame colours (no border), lighter when hovered, lighter still while held.
+void frameField(float x, float y, float w, float h, bool hovered, bool held) {
+    rrect(x, y, w, h, rnd(), held ? pick(Col_FrameBgActive, g_theme.bgDown) : hovered ? pick(Col_FrameBgHovered, g_theme.bgHover) : pick(Col_FrameBg, g_theme.field));
+}
+void centredText(float x, float y, float w, float h, const char* t, const unsigned char* col) {
+    const float tw = labelW(t);
+    PushClipRect(x, y, w, h);
+    drawText(x + std::max(2.0f, (w - tw) * 0.5f), y + (h - textH()) * 0.5f, t, g_theme.textScale, col);
+    PopClipRect();
+}
+// `n` (1..4) formatted drag cells in a row sharing a label: each scrubs like DragFloat and can be Ctrl+clicked to type a number.
+bool fmtDragCells(const char* label, float* v, int n, float speed, float minV, float maxV, const char* format) {
+    if (!g_lay.active || !v || n < 1 || n > 4) return false;
+    const VisLabel vis(label);
+    const int base = hashLabel(label);
+    const float h = rowH(), gap = g_innerX >= 0.0f ? g_innerX : 4.0f, lgap = g_innerX >= 0.0f ? g_innerX : 8.0f;
+    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + lgap : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    float ctrlW = w - lw; if (ctrlW < 24.0f * (float)n) ctrlW = 24.0f * (float)n;
+    const float cw = (ctrlW - gap * (float)(n - 1)) / (float)n;
+    bool changed = false;
+    for (int i = 0; i < n; ++i) {
+        const float cx = x + (float)i * (cw + gap);
+        const int id = n == 1 ? base : base + (i + 1) * 7919;
+        const bool inside = hit(cx, y, cw, h);
+        double typed = 0.0;
+        const int e = numberEdit(id, cx, y, cw, h, inside, (double)v[i], false, minV < maxV ? (double)minV : 0.0, minV < maxV ? (double)maxV : 0.0, &typed);
+        if (e == 2) { const float nv = (float)typed; if (std::isfinite(nv) && nv != v[i]) { v[i] = nv; changed = true; } }
+        if (e != 0) continue;
+        g_lastId = id; if (inside) g_hot = id;
+        if (g_active == id) {
+            if (!g_in.mouseDown) g_active = 0;
+            else if (g_mouseDX != 0.0f && std::isfinite(g_mouseDX) && std::isfinite(speed)) {
+                float nv = v[i] + g_mouseDX * speed;
+                if (minV < maxV) nv = nv < minV ? minV : (nv > maxV ? maxV : nv);
+                if (std::isfinite(nv) && nv != v[i]) { v[i] = nv; changed = true; }
+            }
+        } else if (inside && g_pressed && g_disCount == 0) { g_active = id; g_focusClaimed = true; }
+        frameField(cx, y, cw, h, inside, g_active == id);
+        char buf[64]; formatValue(buf, sizeof buf, format, (double)v[i], false);
+        centredText(cx, y, cw, h, buf, g_theme.text);
+    }
+    if (lw > 0.0f) drawText(x + ctrlW + lgap, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
+    g_lay.prevX = x; g_lay.prevW = w;   // GetItemRect: the whole row
+    return changed;
+}
+// A framed slider: the frame, a grab block (at least 16 pixels, or one step of an integer range), the formatted value in the middle.
+bool fmtSlider(const char* label, double* v, bool isInt, double minV, double maxV, const char* format) {
+    if (!g_lay.active || !v || !(maxV > minV)) return false;
+    const VisLabel vis(label);
+    const int id = hashLabel(label);
+    const float h = rowH(), lgap = g_innerX >= 0.0f ? g_innerX : 8.0f;
+    const float lw = labelW(vis.b) > 0.0f ? labelW(vis.b) + lgap : 0.0f;
+    const float w = availW();
+    float x, y; place(w, h, x, y);
+    float ctrlW = w - lw; if (ctrlW < 32.0f) ctrlW = 32.0f;
+    const bool inside = hit(x, y, ctrlW, h);
+    bool changed = false;
+    double typed = 0.0;
+    const int e = numberEdit(id, x, y, ctrlW, h, inside, *v, isInt, minV, maxV, &typed);
+    if (e == 2 && typed != *v) { *v = typed; changed = true; }
+    if (e == 0) {
+        const float pad = 2.0f, track = ctrlW - 2.0f * pad;
+        const double range = maxV - minV;
+        float grab = 16.0f;
+        if (isInt && range < 1e6) grab = std::max(grab, track / (float)(range + 1.0));
+        grab = std::min(grab, track);
+        g_lastId = id; if (inside) g_hot = id;
+        auto fromMouse = [&] {
+            const float t = track > grab ? clamp01((g_in.mouseX - x - pad - grab * 0.5f) / (track - grab)) : 0.0f;
+            double nv = minV + (double)t * range;
+            if (isInt) nv = std::floor(nv + 0.5);
+            if (nv != *v) { *v = nv; changed = true; }
+        };
+        if (g_active == id) { if (!g_in.mouseDown) g_active = 0; else fromMouse(); }
+        else if (inside && g_pressed && g_disCount == 0) { g_active = id; g_focusClaimed = true; fromMouse(); }
+        frameField(x, y, ctrlW, h, inside, g_active == id);
+        const float t = (float)std::min(1.0, std::max(0.0, (*v - minV) / range));
+        const float gx = x + pad + t * (track - grab);
+        rrect(gx, y + pad, grab, h - 2.0f * pad, std::max(0.0f, rnd() - pad), g_active == id ? pick(Col_SliderGrabActive, g_theme.text) : pick(Col_SliderGrab, g_theme.accent));
+        char buf[64]; formatValue(buf, sizeof buf, format, *v, isInt);
+        centredText(x, y, ctrlW, h, buf, g_theme.text);
+    }
+    if (lw > 0.0f) drawText(x + ctrlW + lgap, y + (h - textH()) * 0.5f, vis.b, g_theme.textScale, g_theme.text);
+    return changed;
+}
+} // namespace
+
+bool DragFloat(const char* label, float* v, float speed, float minV, float maxV, const char* format) { return fmtDragCells(label, v, 1, speed, minV, maxV, format); }
+bool DragFloat2(const char* label, float v[2], float speed, float minV, float maxV, const char* format) { return fmtDragCells(label, v, 2, speed, minV, maxV, format); }
+bool DragFloat3(const char* label, float v[3], float speed, float minV, float maxV, const char* format) { return fmtDragCells(label, v, 3, speed, minV, maxV, format); }
+bool SliderInt(const char* label, int* v, int minV, int maxV, const char* format) {
+    if (!v) return false;
+    double d = (double)*v;
+    if (!fmtSlider(label, &d, true, (double)minV, (double)maxV, format)) return false;
+    const int nv = (int)std::min((double)maxV, std::max((double)minV, d));
+    if (nv == *v) return false;
+    *v = nv; return true;
+}
+bool SliderFloat(const char* label, float* v, float minV, float maxV, const char* format) {
+    if (!v) return false;
+    double d = (double)*v;
+    if (!fmtSlider(label, &d, false, (double)minV, (double)maxV, format)) return false;
+    const float nv = (float)std::min((double)maxV, std::max((double)minV, d));
+    if (nv == *v) return false;
+    *v = nv; return true;
+}
+
+bool SearchField(const char* id, const char* hint, char* buf, int cap, float width) {
+    if (!g_lay.active || !buf || cap < 1) return false;
+    const float h = rowH();
+    float w = width > 0.0f && std::isfinite(width) ? width : availW() + (std::isfinite(width) ? width : 0.0f);
+    if (w < h * 3.0f) w = h * 3.0f;
+    float x, y; place(w, h, x, y);
+    buf[cap - 1] = '\0';
+    const bool hadText = buf[0] != '\0';
+    g_hintText = hint;
+    g_fieldPadL = h * 0.95f;                              // the text starts after the magnifier
+    g_fieldPadR = hadText ? h * 0.95f : -1.0f;            // and stops before the clear button
+    const int fid = hashLabel(id);
+    bool changed = TextField(fid, x, y, w, h, buf, cap, 0);
+    g_hintText = nullptr; g_fieldPadL = g_fieldPadR = -1.0f;
+    const unsigned char* dim = pick(Col_TextDisabled, g_theme.textDim);
+    {   // the magnifier: a ring up and to the left of the icon's centre, a handle to the lower right
+        const float sz = h * 0.42f, cx = x + h * 0.5f, cy = y + h * 0.5f, r = sz * 0.27f;
+        const float ox = cx - sz * 0.08f, oy = cy - sz * 0.08f;
+        GetWindowDrawList().AddCircle(Vec2{ox, oy}, r + 0.8f, RGBA(dim[0], dim[1], dim[2], dim[3]), 14, 1.6f);
+        line(ox + r * 0.7f, oy + r * 0.7f, cx + sz * 0.4f, cy + sz * 0.4f, 2.2f, dim);
+    }
+    if (buf[0]) {   // the clear button over the right end: a cross, brighter under the pointer; a click empties the field
+        const float xc = x + w - h * 0.5f, yc = y + h * 0.5f, r = h * 0.17f;
+        const bool hot = hit(xc - h * 0.45f, yc - h * 0.45f, h * 0.9f, h * 0.9f);
+        const unsigned char* c = hot ? g_theme.text : dim;
+        line(xc - r, yc - r, xc + r, yc + r, 1.6f, c);
+        line(xc - r, yc + r, xc + r, yc - r, 1.6f, c);
+        if (hot && g_pressed) {
+            buf[0] = '\0'; changed = true;
+            if (g_focus == fid) g_focus = 0;
+            g_focusClaimed = true;   // the press was on the clear button, not empty space
+        }
+    }
+    g_lastId = fid;
+    return changed;
 }
 
 } // namespace OkayUI

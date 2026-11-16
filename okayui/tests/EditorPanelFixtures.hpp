@@ -1,5 +1,5 @@
 #pragma once
-// Sample data for the Problems, Stats and History panels, shared by the OkayUI tests (test_okayui_editor_panels.cpp) and the
+// Sample data for the Problems, Stats, History, Tags and Layers, Physics and Profiler panels, shared by the OkayUI tests (test_okayui_editor_panels.cpp) and the
 // side-by-side comparison with the Dear ImGui versions (tests/test_okayui_editor_panels_imgui.cpp). Made up for the tests; it
 // looks like what the editor shows for a small scene with a few mistakes in it.
 #include "EditorPanelModels.hpp"
@@ -65,5 +65,58 @@ inline HistoryModel History() {
     m.undoDepth = 5; m.redoDepth = 2;
     return m;
 }
+
+inline TagsLayersModel TagsLayers() {
+    TagsLayersModel m;
+    m.strict = false;
+    m.builtin = {"Untagged", "Player", "Enemy", "MainCamera", "Respawn", "Finish", "EditorOnly"};
+    m.custom = {{"Pickup", 4}, {"Hazard", 2}, {"Checkpoint", 1}, {"NPC", 0}};
+    m.unlisted = {"Boss", "Enmey"};
+    m.layers.resize(kLayerCount);
+    const char* defaults[kLayerCount] = {"Default", "TransparentFX", "Ignore Raycast", "", "Water", "UI"};
+    for (int i = 0; i < kLayerCount; ++i) { m.layers[(std::size_t)i].defaultName = defaults[i] ? defaults[i] : ""; m.layers[(std::size_t)i].name = m.layers[(std::size_t)i].defaultName; }
+    m.layers[8].name = "Ground"; m.layers[9].name = "Pickups"; m.layers[4].name = "Lakes";   // two new names and a renamed built-in one
+    return m;
+}
+
+struct PhysicsData {
+    float g2[2] = {0.0f, -9.81f};
+    float g3[3] = {0.0f, -9.81f, 0.0f};
+    float hz = 50.0f;
+    bool smooth = true;
+    PhysicsSettingsModel model;
+    PhysicsData() {
+        model.gravity2D = g2; model.gravity3D = g3; model.stepsPerSecond = &hz; model.smooth = &smooth;
+        model.quality = 1; model.solverIterations = 10; model.autoContinuous = true;
+    }
+    PhysicsData(const PhysicsData&) = delete;
+};
+
+struct ProfilerData {
+    bool paused = false;
+    int selected = -1;
+    ProfilerModel model;
+    ProfilerData() {
+        model.paused = &paused; model.selected = &selected;
+        for (int i = 0; i < 240; ++i) {   // a steady frame with a few spikes, deterministic
+            const int k = i % 37;
+            model.total.push_back(k == 11 ? 24.0f : k == 29 ? 19.5f : 9.0f + (float)(i % 7) * 0.4f);
+            model.gpu.push_back(5.5f + (float)(i % 5) * 0.3f);
+        }
+        model.lastFrameMs = 10.2; model.avg = 10.4; model.peak = 24.0;
+        model.frameMs = 10.2; model.cpuMs = 7.9; model.gpuMs = 5.8;
+        model.meshes = 41; model.triangles = 182340; model.particles = 1250;
+        model.scriptsMs = 2.6; model.physicsMs = 1.4; model.renderMs = 2.9;
+        auto sec = [](const char* n, double self, double incl, int calls, int depth, double avg, double mx) {
+            ProfilerSection s; s.name = n; s.self = self; s.inclusive = incl; s.calls = calls; s.depth = depth; s.min = self * 0.8; s.avg = avg; s.max = mx; return s;
+        };
+        model.sections = {sec("Frame", 0.40, 7.90, 1, 0, 0.42, 0.9), sec("Scripts.Update", 2.10, 2.60, 1, 1, 2.0, 3.1),
+                          sec("Scripts.Coroutines", 0.50, 0.50, 3, 2, 0.4, 0.8), sec("Physics.Step", 1.40, 1.40, 2, 1, 1.3, 2.2),
+                          sec("Render.Scene", 2.30, 2.90, 1, 1, 2.2, 4.0), sec("Render.Shadows", 0.60, 0.60, 1, 2, 0.6, 1.1),
+                          sec("UI.Editor", 0.60, 0.60, 1, 1, 0.7, 1.4)};
+        model.playing = true;
+    }
+    ProfilerData(const ProfilerData&) = delete;
+};
 
 } // namespace panelfix

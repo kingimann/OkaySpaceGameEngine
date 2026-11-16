@@ -189,7 +189,12 @@ inline const char* kManualAdvice =
 inline Startup EvaluateStartup(const State& st, const std::string& running) {
     Startup r;
     if (st.phase == Phase::None) return r;
-    const bool reached = okayver::CompareVersions(running, st.to) >= 0;
+    // An update normally goes UP, so "reached" means the running version is the target or newer. The one deliberate downgrade (going back from a test
+    // build to the release it was made on, docs/release_channels.md "Test builds") has a target OLDER than where it started: there only the exact target,
+    // or something newer than where it started, counts, or the test build coming up again would be called "confirmed".
+    const bool downgrade = !st.from.empty() && okayver::CompareVersions(st.to, st.from) < 0;
+    const bool reached = downgrade ? (okayver::CompareVersions(running, st.to) == 0 || okayver::CompareVersions(running, st.from) > 0)
+                                   : okayver::CompareVersions(running, st.to) >= 0;
     if (reached) {   // the new version (or an even newer one) is what runs now: whatever happened on the way, it is done
         r.kind = StartupKind::Confirmed;
         r.clearState = true;

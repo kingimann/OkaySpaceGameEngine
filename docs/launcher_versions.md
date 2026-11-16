@@ -68,7 +68,12 @@ Settings > Behavior > Startup & updates (and the Versions page) has the channel.
 * **Long-term support**: follows `LTS.txt`. The launcher only offers the LTS line's patches; if there is no LTS information (offline, or no
   line has been promoted yet) it does **not** fall back to the latest version (that would move you off the line you chose); it says so.
 
-The launcher itself is **never downgraded in place**. When it is newer than the LTS line, choosing LTS installs the LTS editor next to it
+* **Get test builds** (a switch beside the channel, off by default): also offers builds made for testing, from the `dev/` folder of the bucket
+  ([release_channels.md](release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players)). Latest channel only. A test build
+  shows "(test build)" after its version on this page. The one in-place downgrade the launcher does is **Go back to the stable version**, offered in
+  Settings while a test build runs.
+
+The launcher itself is **never downgraded in place** (the one exception is that way back from a test build). When it is newer than the LTS line, choosing LTS installs the LTS editor next to it
 in `Versions/` and offers **Use v2.850.x as my default editor**. The default editor is used when opening a project that has no version
 recorded, and any installed editor can be picked for one project from its **Open with** menu. `okayversions::DecideChannel` holds this
 decision (a test walks every combination and checks an in-place update never goes to an older version than the one that runs).
@@ -113,8 +118,9 @@ same helper process the self-updater uses.
 ## launcher.cfg
 
 `update_channel=latest|lts`, `keep_previous=1` (0 to 9), `default_editor=2.850.1`, `lts_line=2.850` (the LTS line last seen, so
-pruning can protect it while offline). Settings > Behavior > Reset preferences puts the channel back to
-Latest, Keep previous versions to 1 and the default editor to "this version" (installed versions are left alone).
+pruning can protect it while offline), `test_builds=1` (only written when **Get test builds** is on; absent means off, and the launcher then never reads
+the `dev/` folder). Settings > Behavior > Reset preferences puts the channel back to
+Latest, Keep previous versions to 1, the default editor to "this version" and Get test builds to off (installed versions are left alone).
 
 ## Failure cases
 

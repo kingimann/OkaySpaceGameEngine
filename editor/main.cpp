@@ -39,6 +39,7 @@
 #include "SplineTools.hpp"             // splines: Scene-view editing, inspectors, line / trail drawing
 #include "VolumeTools.hpp"             // volumes: Scene-view shapes, handles, draw tool, inspector, menus
 #include "okay/Components/HoldPrompt.hpp"
+#include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
@@ -908,6 +909,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
 #include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
+#include "TestBuild.hpp"   // a test build says so in its version label (docs/release_channels.md "Test builds")
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
@@ -7022,9 +7024,9 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
             : "Update check failed: " + g_update.error);
     }
     else if (id == "help.bug") {
-        ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION).c_str());   // so the report can say which version
+        ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());   // so the report can say which version (and that it is a test build)
         extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/issues/new");
-        ConsoleLog(std::string("Opened the bug report page in your browser. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + ") is on the clipboard: paste it into the report.");
+        ConsoleLog(std::string("Opened the bug report page in your browser. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + ") is on the clipboard: paste it into the report.");
     }
     else if (id == "help.about") g_openAbout = true;
 }
@@ -19172,7 +19174,7 @@ void DrawAboutPopup() {
                         ImGui::GetColorU32(ImVec4(0.93f, 0.95f, 0.99f, 1.0f)), "OkaySpace");
             ImGui::Dummy(ImVec2(0, bsz + 4.0f));
         }
-        ImGui::TextDisabled("Game Engine  ·  v%s", OKAY_ENGINE_VERSION);
+        ImGui::TextDisabled("Game Engine  ·  v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());   // "(test build)" for a test build
         ImGui::EndGroup();
         ImGui::Spacing();
         ImGui::Separator();
@@ -37671,13 +37673,11 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Characters per second to auto-reveal at runtime (0 = off). For dialogue.");
             if (tr->screenSpace) { ImGui::SameLine(); if (ImGui::Checkbox("Wrap##txt", &tr->wrap)) ed.dirty = true; }
             {
-                ImGui::BeginDisabled(!tr->screenSpace);
                 if (ImGui::Checkbox("Rich Text##txt", &tr->richText)) ed.dirty = true;
-                ImGui::EndDisabled();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip(tr->screenSpace ? "Colour and style tags inside the text:\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]\nThe tags take no room. Use [[ for a literal [."
-                                                      : "Rich text works on screen-space text only.\n3D text is drawn by the scene renderer, which does not read tags.");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Colour and style tags inside the text (screen and world text):\n[color=#ffcc33]gold[/color]  [color=red]red[/color]  [b]bold[/b]  [i]italic[/i]  [size=150]big[/size]\nThe tags take no room. Use [[ for a literal [.\n[size=N] is a percent (25 to 400); a line is as tall as the biggest size on it.");
             }
+            if (!tr->screenSpace) ImGui::TextDisabled("World text: drawn at this object's place in flat (2D) scenes.");
             if (ImGui::DragFloat("Letter Spacing##txt", &tr->letterSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
             oked::FieldTip("Letter Spacing##txt");
             if (ImGui::DragFloat("Line Spacing##txt", &tr->lineSpacing, 0.1f, -4.0f, 32.0f)) ed.dirty = true;
@@ -38898,9 +38898,18 @@ void DrawInspector(EditorState& ed) {
             char fmt[256]; std::strncpy(fmt, tb->format.c_str(), sizeof(fmt) - 1); fmt[sizeof(fmt) - 1] = '\0';
             if (ImGui::InputText("Format##utbind", fmt, sizeof(fmt))) { tb->format = fmt; ed.dirty = true; }
             oked::FieldTip("Format##utbind");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The text shown, filled in every frame. {name} is a visual-script variable or a saved value;\n"
+                                  "{name|default} shows the default when it is empty; {{ and }} are literal braces.\n"
+                                  "{owner.name} {owner.level} {owner.health} {owner.maxHealth} {owner.healthPct} read the character\n"
+                                  "this text is a child of (the nearest parent with a Health Stat, Stats, Survival Stats, NPC\n"
+                                  "Controller or Character). A nameplate on a character shows that character.");
             ImGui::TextDisabled("Shows live values each frame on the sibling Text/Button.");
             ImGui::TextDisabled("Use {name} for a visual-script variable or a saved value,");
             ImGui::TextDisabled("e.g.  Health: {hp}   or   Score: {score}");
+            ImGui::TextDisabled("Under a character: {owner.name}  Lv {owner.level}  {owner.health}/{owner.maxHealth}");
+            if (const GameObject* ow = uiowner::Find(tb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
+            else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
             if (ImGui::SmallButton("Remove##utbind")) toRemove = tb;
         }
     }
@@ -38909,12 +38918,21 @@ void DrawInspector(EditorState& ed) {
             char vr[128]; std::strncpy(vr, bb->var.c_str(), sizeof(vr) - 1); vr[sizeof(vr) - 1] = '\0';
             if (ImGui::InputText("Variable##ubbind", vr, sizeof(vr))) { bb->var = vr; ed.dirty = true; }
             oked::FieldTip("Variable##ubbind");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The visual-script variable or saved value the bar follows (0 is Min, 1 is Max).\n"
+                                  "owner.healthFrac (or owner.health, owner.maxHealth, owner.healthPct, owner.level) reads the\n"
+                                  "character this bar is a child of: the nearest parent with a Health Stat, Stats, Survival Stats,\n"
+                                  "NPC Controller or Character. With no such parent it follows the variable without \"owner.\"\n"
+                                  "(healthFrac is the player's health).");
             if (ImGui::DragFloat("Min (empty)##ubbind", &bb->min, 0.5f)) ed.dirty = true;
             oked::FieldTip("Min (empty)##ubbind");
             if (ImGui::DragFloat("Max (full)##ubbind", &bb->max, 0.5f)) ed.dirty = true;
             oked::FieldTip("Max (full)##ubbind");
             ImGui::TextDisabled("Fills the sibling Progress Bar / Radial from the named");
             ImGui::TextDisabled("visual-script variable (or saved value) each frame.");
+            ImGui::TextDisabled("Under a character: owner.healthFrac is that character's health (0 to 1).");
+            if (const GameObject* ow = uiowner::Find(bb->gameObject)) ImGui::TextDisabled("Owner: %s", ow->name.c_str());
+            else ImGui::TextDisabled("Owner: none (an owner key then reads the variable of the same name, the player's)");
             if (ImGui::SmallButton("Remove##ubbind")) toRemove = bb;
         }
     }
@@ -42284,6 +42302,30 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         ImVec2 o = worldToScreen(up->transform->Position());
         float px = tr->EffectivePixelSize() * scale;
         okay::TtfFont* fnt = tr->Font();
+        if (tr->richText && okay::RichTextHasTags(tr->text)) {
+            // Rich text (colour, bold, italic, size tags): each run in its own style, placed one after the other,
+            // as the player draws it (ui2d::DrawWorldText). The 8x8 line advance; a line is as tall as the largest
+            // size on it, and every run sits on its line's bottom (okay::RichLineScales).
+            const okay::RichText rt = okay::ParseRichText(tr->text);
+            const float glyphH = (float)okay::Font8x8::Height;
+            const std::vector<float> lineScale = okay::RichLineScales(rt.plain, rt.styles);
+            std::vector<float> lineTop(lineScale.size() + 1, 0.0f);   // the top of each line below the text's top, in screen px
+            for (std::size_t k = 0; k < lineScale.size(); ++k) lineTop[k + 1] = lineTop[k] + okay::RichLineAdvance((glyphH + 1.0f) * px, 0.0f, lineScale[k]);
+            int curLine = -1; float cx = o.x;
+            for (const okay::RichRun& run : okay::RichTextRuns(rt)) {
+                if (run.line != curLine) { curLine = run.line; cx = o.x + ui2d::UITextW(run.before, px); }
+                const float s = run.style.size > 0.0f ? run.style.size : 1.0f, rpx = px * s;
+                const float ry = o.y + lineTop[(std::size_t)run.line] + (run.lineScale - s) * glyphH * px;
+                ImU32 rc = col;
+                if (run.style.hasColor) rc = IM_COL32(run.style.r, run.style.g, run.style.b, (int)(run.style.a * tr->color.a));
+                const bool it = tr->italic || run.style.italic;
+                if (tr->shadow) DrawBitmapText(dl, run.text, cx + tr->shadowOffset.x * px, ry + tr->shadowOffset.y * px, rpx, sh, 0, 0, it, false, 0, fnt);
+                DrawBitmapText(dl, run.text, cx, ry, rpx, rc, 0, 0, it, false, 0, fnt);
+                if (tr->bold || run.style.bold) DrawBitmapText(dl, run.text, cx + (fnt ? 1.0f : rpx), ry, rpx, rc, 0, 0, it, false, 0, fnt);
+                cx += ui2d::UITextW(run.text, rpx);
+            }
+            continue;
+        }
         if (tr->shadow)
             DrawBitmapText(dl, tr->text, o.x + tr->shadowOffset.x * px,
                            o.y + tr->shadowOffset.y * px, px, sh, 0, 0, false, false, 0, fnt);
@@ -49042,7 +49084,7 @@ int main(int argc, char** argv) {
         if (!ed.projectDir().empty()) title += std::filesystem::path(ed.projectDir()).filename().string() + "  /  ";
         title += ed.path().empty() ? ed.scene().Name() : std::filesystem::path(ed.path()).stem().string();
         if (ed.InPrefabMode()) { for (const auto& c : ed.PrefabCrumbs()) if (!c.path.empty()) title += "  >  " + c.label; }
-        title += std::string(ed.dirty && !ed.isPlaying() ? " *" : "") + "   [v" OKAY_ENGINE_VERSION "]";
+        title += std::string(ed.dirty && !ed.isPlaying() ? " *" : "") + "   [v" OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + "]";
         if (title != lastTitle) { SDL_SetWindowTitle(window, title.c_str()); lastTitle = title; }
 
         // While the game is actually running, turn OFF ImGui keyboard navigation:

@@ -54,6 +54,22 @@ public:
         else c.AddOrReplaceKey(time, value, 1e-4f);
         if (c.Duration() > m_length) m_length = c.Duration();
     }
+    /// The same as calling AddKey(track, times[i], values[i]) for i = 0 .. n-1 in order, with the track looked up
+    /// once (importers add thousands of baked keys per track). n == 0 does nothing.
+    void AddKeys(const std::string& track, const float* times, const float* values, std::size_t n) {
+        if (n == 0) return;
+        auto it = m_tracks.find(track);
+        if (it == m_tracks.end()) { it = m_tracks.emplace(track, AnimationCurve{}).first; it->second.smooth = smoothKeys; m_chan.valid = false; }
+        AnimationCurve& c = it->second;
+        if (loop && !m_spanned) c.wrap = AnimationCurve::Wrap::Loop;
+        c.Reserve(c.Count() + n);
+        for (std::size_t i = 0; i < n; ++i) {
+            const float time = times[i], value = values[i];
+            if (c.Empty() || time > c.Keys().back().time + 1e-4f) c.AddKey(time, value);
+            else c.AddOrReplaceKey(time, value, 1e-4f);
+            if (c.Duration() > m_length) m_length = c.Duration();
+        }
+    }
     void RemoveTrack(const std::string& track) { m_tracks.erase(track); m_chan.valid = false; Recompute(); }
     /// Remove the key nearest `time` (within eps) from every track whose name
     /// starts with `prefix` ("" = all tracks). Tracks left empty are dropped.

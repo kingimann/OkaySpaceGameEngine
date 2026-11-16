@@ -43,6 +43,7 @@ public:
         m_keys.insert(it, {time, value});
     }
     void Clear() { m_keys.clear(); }
+    void Reserve(std::size_t n) { m_keys.reserve(n); }
     bool Empty() const { return m_keys.empty(); }
     const std::vector<Keyframe>& Keys() const { return m_keys; }
     std::size_t Count() const { return m_keys.size(); }

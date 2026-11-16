@@ -1905,24 +1905,29 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
                 clip.nodes.push_back({goOf[(std::size_t)bn.node]->name, AnimationClip{}});
                 AnimationClip& ac = clip.nodes.back().clip;
                 ac.smoothKeys = false;
-                for (const fbx::Key3& k : bn.translation) {
-                    const float t = (float)k.time;
-                    ac.AddKey("position.x", t, (float)k.v[0]); ac.AddKey("position.y", t, (float)k.v[1]); ac.AddKey("position.z", t, (float)k.v[2]);
+                // One array per channel, then each track gets all its keys at once; tracks are created in the same
+                // order as one AddKey per channel and sample did (the track table ends up the same).
+                std::vector<float> kt, c0, c1, c2, c3;
+                auto put3 = [&](const std::vector<fbx::Key3>& keys, const char* x, const char* y, const char* z) {
+                    kt.clear(); c0.clear(); c1.clear(); c2.clear();
+                    for (const fbx::Key3& k : keys) { kt.push_back((float)k.time); c0.push_back((float)k.v[0]); c1.push_back((float)k.v[1]); c2.push_back((float)k.v[2]); }
+                    ac.AddKeys(x, kt.data(), c0.data(), kt.size()); ac.AddKeys(y, kt.data(), c1.data(), kt.size()); ac.AddKeys(z, kt.data(), c2.data(), kt.size());
+                };
+                put3(bn.translation, "position.x", "position.y", "position.z");
+                {
+                    double prev[4] = {0, 0, 0, 1}; bool hasPrev = false;
+                    kt.clear(); c0.clear(); c1.clear(); c2.clear(); c3.clear();
+                    for (const fbx::Key4& k : bn.rotation) {
+                        double q[4] = {k.v[0], k.v[1], k.v[2], k.v[3]};
+                        if (hasPrev && q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3] < 0.0) for (double& c : q) c = -c;
+                        for (int a = 0; a < 4; ++a) prev[a] = q[a];
+                        hasPrev = true;
+                        kt.push_back((float)k.time); c0.push_back((float)q[0]); c1.push_back((float)q[1]); c2.push_back((float)q[2]); c3.push_back((float)q[3]);
+                    }
+                    ac.AddKeys("rotation.qx", kt.data(), c0.data(), kt.size()); ac.AddKeys("rotation.qy", kt.data(), c1.data(), kt.size());
+                    ac.AddKeys("rotation.qz", kt.data(), c2.data(), kt.size()); ac.AddKeys("rotation.qw", kt.data(), c3.data(), kt.size());
                 }
-                double prev[4] = {0, 0, 0, 1}; bool hasPrev = false;
-                for (const fbx::Key4& k : bn.rotation) {
-                    double q[4] = {k.v[0], k.v[1], k.v[2], k.v[3]};
-                    if (hasPrev && q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3] < 0.0) for (double& c : q) c = -c;
-                    for (int a = 0; a < 4; ++a) prev[a] = q[a];
-                    hasPrev = true;
-                    const float t = (float)k.time;
-                    ac.AddKey("rotation.qx", t, (float)q[0]); ac.AddKey("rotation.qy", t, (float)q[1]);
-                    ac.AddKey("rotation.qz", t, (float)q[2]); ac.AddKey("rotation.qw", t, (float)q[3]);
-                }
-                for (const fbx::Key3& k : bn.scale) {
-                    const float t = (float)k.time;
-                    ac.AddKey("scale.x", t, (float)k.v[0]); ac.AddKey("scale.y", t, (float)k.v[1]); ac.AddKey("scale.z", t, (float)k.v[2]);
-                }
+                put3(bn.scale, "scale.x", "scale.y", "scale.z");
                 if (ac.Tracks().empty()) clip.nodes.pop_back();
             }
             for (const fbx::BlendAnim& ba : fc.blends) {
@@ -1932,7 +1937,9 @@ static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path,
                 for (auto& ncx : clip.nodes) if (ncx.node == it->second.first) { ncp = &ncx; break; }
                 if (!ncp) { clip.nodes.push_back({it->second.first, AnimationClip{}}); ncp = &clip.nodes.back(); ncp->clip.smoothKeys = false; }
                 const std::string track = "weights." + std::to_string(it->second.second);
-                for (const fbx::Key3& k : ba.percent) ncp->clip.AddKey(track, (float)k.time, (float)k.v[0] * 0.01f);
+                std::vector<float> bt, bv;
+                for (const fbx::Key3& k : ba.percent) { bt.push_back((float)k.time); bv.push_back((float)k.v[0] * 0.01f); }
+                ncp->clip.AddKeys(track, bt.data(), bv.data(), bt.size());
             }
             if (!clip.nodes.empty()) ma->clips.push_back(std::move(clip));
         }

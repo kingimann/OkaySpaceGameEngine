@@ -77,6 +77,16 @@ int WriteField(const std::vector<okay::GameObject*>& objs, const std::string& ty
 /// replaced; the other parts of each object keep their own value.
 int WriteFieldAxes(const std::vector<okay::GameObject*>& objs, const std::string& typeName, int index,
                    const okay::PropertyDesc& desc, const okay::PropertyValue& value, unsigned axisMask);
+/// Which of x, y, z differ between `before` and `after` (bit 0 = x, bit 1 = y, bit 2 = z).
+unsigned ChangedAxes(const okay::Vec3& before, const okay::Vec3& after);
+/// `base` with the axes in `mask` taken from `edit`.
+okay::Vec3 MergeAxes(const okay::Vec3& base, const okay::Vec3& edit, unsigned mask);
+/// The Transform rows of the Inspector with several objects selected: set only the axes in `mask` of `value`
+/// on every selected object other than `primary`, keeping each object's other axes. Scale skips cameras
+/// (their scale is locked). Returns how many objects changed.
+enum class TransformField { Position, Scale };
+int ApplyTransformAxes(const std::vector<okay::GameObject*>& selection, const okay::GameObject* primary,
+                       TransformField field, const okay::Vec3& value, unsigned mask);
 /// "Light" or "Light#1" style path of the index-th component of a type.
 std::string ComponentPath(const std::string& typeName, int index);
 /// Which of several same-type components `c` is (0 for the first).
@@ -84,7 +94,8 @@ int ComponentIndexOf(const okay::GameObject& go, const okay::Component& c);
 
 /// Editing a component with its own hand-written Inspector while several objects are selected: take the values
 /// before the drawer runs, and after it ran hand every value it changed to the same component (same type, same
-/// position among components of that type) of the other selected objects.
+/// position among components of that type) of the other selected objects. For a Vec2/3/4, Quat or Color only
+/// the parts that changed are handed on; each object keeps its own other parts.
 struct ComponentEdit {
     bool active = false;
     okay::PropertySnapshot before;

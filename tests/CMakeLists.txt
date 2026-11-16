@@ -902,6 +902,12 @@ target_include_directories(test_project_upgrade PRIVATE ${PROJECT_SOURCE_DIR}/ed
 target_link_libraries(test_project_upgrade PRIVATE okay::engine)
 add_test(NAME project_upgrade COMMAND test_project_upgrade)
 
+# Issue #888 findings 69, 71, 72: renaming .okay / .okaytheme files rewrites their references, multi-select edits change only the edited part of a vector or colour on each object, and the snap increments refuse 0, negatives, NaN and infinity.
+add_executable(test_editor_refs_multiedit_snap test_editor_refs_multiedit_snap.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp ${PROJECT_SOURCE_DIR}/editor/InspectorModel.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_editor_refs_multiedit_snap PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_refs_multiedit_snap PRIVATE okay::engine)
+add_test(NAME editor_refs_multiedit_snap COMMAND test_editor_refs_multiedit_snap)
+
 # The Project panel's logic (editor/ProjectBrowser.*, ImGui-free): folder model, safe create / rename / move / copy / delete with undo, references rewritten, clipboard, failure injection at every file step.
 add_executable(test_project_panel test_project_panel.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
 target_include_directories(test_project_panel PRIVATE ${PROJECT_SOURCE_DIR}/editor)

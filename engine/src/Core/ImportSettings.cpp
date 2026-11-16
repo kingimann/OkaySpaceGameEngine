@@ -34,9 +34,11 @@ const ExtRow kExtensions[] = {
     {"okayvs", AssetType::VisualScript},
     {"okayseq", AssetType::Sequence},
     {"cs", AssetType::Script}, {"lua", AssetType::Script},
+    {"okay", AssetType::Script},            // OkayScript: scenes name it, so rename / move must find it (#888 finding 69)
     {"okaydata", AssetType::Data}, {"okayitems", AssetType::Data}, {"okayloot", AssetType::Data},
     {"okayweapon", AssetType::Data},
     {"okayrecipes", AssetType::Data}, {"okayloc", AssetType::Data}, {"okaynav", AssetType::Data},
+    {"okaytheme", AssetType::Data},         // UI theme files, loaded by ui_load_theme("...okaytheme")
     {"json", AssetType::Data}, {"txt", AssetType::Data}, {"bin", AssetType::Data},
     {"ttf", AssetType::Font}, {"otf", AssetType::Font},
 };

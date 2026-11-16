@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "SnapIncrement.hpp"   // snap steps: refuse NaN/inf, clamp 0 / negative / huge (issue #888 finding 72)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
@@ -2430,6 +2431,7 @@ void AddRecent(const std::string& path) {
 
 // Persisted editor preferences (a tiny key/value file beside the working dir).
 void SaveSettings();   // defined below; LoadSettings calls it for the one-time migration
+extern float g_rotSnapDeg;   // the Rotate snap step, defined with the other snap settings below
 void LoadSettings() {
     std::ifstream f("okay_settings.txt");
     g_firstRun = !f.good();   // no settings file yet → brand-new install (auto-scale UI to the display)
@@ -2480,6 +2482,8 @@ void LoadSettings() {
         else if (k == "gamedeviceland") g_gameDeviceLandscape = (v != 0);
         else if (k == "gamesafearea") g_gameSafeArea = (v != 0);
         else if (k == "uismartsnap") g_uiSmartSnap = (v != 0);
+        else if (k == "snapmovex1000") g_snapSize = oked::LoadSnapIncrement(v / 1000.0f, oked::kMoveSnapLimits);
+        else if (k == "snaprotx10") g_rotSnapDeg = oked::LoadSnapIncrement(v / 10.0f, oked::kRotateSnapLimits);
         else if (k == "uisubdiv") g_uiShowSubdiv = (v != 0);
         else if (k == "uisubdivx") g_uiSubdivX = (v < 1 ? 1 : (v > 32 ? 32 : v));
         else if (k == "uisubdivy") g_uiSubdivY = (v < 1 ? 1 : (v > 32 ? 32 : v));
@@ -2540,6 +2544,8 @@ void SaveSettings() {
       << "gamedeviceland " << (g_gameDeviceLandscape ? 1 : 0) << "\n"
       << "gamesafearea " << (g_gameSafeArea ? 1 : 0) << "\n"
       << "uismartsnap " << (g_uiSmartSnap ? 1 : 0) << "\n"
+      << "snapmovex1000 " << (long)std::lround(oked::SnapStep(g_snapSize, oked::kMoveSnapLimits) * 1000.0f) << "\n"
+      << "snaprotx10 " << (long)std::lround(oked::SnapStep(g_rotSnapDeg, oked::kRotateSnapLimits) * 10.0f) << "\n"
       << "uisubdiv " << (g_uiShowSubdiv ? 1 : 0) << "\n"
       << "uisubdivx " << g_uiSubdivX << "\n"
       << "uisubdivy " << g_uiSubdivY << "\n"
@@ -7031,7 +7037,7 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     else if (id == "go.arraydup") g_showArrayDup = true;
     else if (id == "go.snap" && ed.selected()) {
         ed.PushUndo();
-        float g = g_snapSize > 1e-4f ? g_snapSize : 1.0f;
+        const float g = oked::SnapStep(g_snapSize, oked::kMoveSnapLimits);
         Vec3& p = ed.selected()->transform->localPosition;
         p = {std::round(p.x / g) * g, std::round(p.y / g) * g, std::round(p.z / g) * g};
         ed.dirty = true; ConsoleLog("Snapped to grid");
@@ -29373,8 +29379,8 @@ void DrawInspector(EditorState& ed) {
     }
     if (tfOpen) {
         Transform* t = go->transform;
-        // With several objects selected, edits apply the same value to ALL of them
-        //.
+        // With several objects selected, an edit sets only the axis that was changed on each of them: editing
+        // Position Y lines them up on Y and every object keeps its own X and Z (issue #888 finding 71).
         const bool multi = ed.MultiSelection().size() > 1;
         auto others = [&](auto&& apply) {
             if (!multi) return;
@@ -29385,8 +29391,9 @@ void DrawInspector(EditorState& ed) {
         bool act = false;
         float pos[3] = {t->localPosition.x, t->localPosition.y, t->localPosition.z};
         if (DragVec3Axis("Position", pos, 0.05f, "%.3f", &act)) {
+            const unsigned mask = oked::ChangedAxes(t->localPosition, {pos[0], pos[1], pos[2]});
             t->localPosition = {pos[0], pos[1], pos[2]}; ed.dirty = true;
-            others([&](GameObject* g) { g->transform->localPosition = t->localPosition; });
+            if (multi) oked::ApplyTransformAxes(ed.MultiSelection(), go, oked::TransformField::Position, t->localPosition, mask);
         }
         if (act) ed.PushUndo();
         oked::SetTipComponent(t); oked::FieldTip("Position");
@@ -29408,9 +29415,19 @@ void DrawInspector(EditorState& ed) {
         }
         float rot[3] = {e.x, e.y, e.z};
         if (DragVec3Axis("Rotation", rot, 1.0f, "%.2f", &act)) {
+            const unsigned mask = oked::ChangedAxes(e, {rot[0], rot[1], rot[2]});
             e = {rot[0], rot[1], rot[2]};
             t->localRotation = Quat::Euler(e); ed.dirty = true;
-            others([&](GameObject* g) { g->transform->localRotation = t->localRotation; g_euler[g] = e; });
+            others([&](GameObject* g) {
+                // Each object's own angles (reseeded from its rotation when they went stale), with only the
+                // edited angle replaced.
+                Vec3& ge = g_euler[g];
+                const Quat cur = g->transform->localRotation, mine = Quat::Euler(ge);
+                const float dot = cur.x*mine.x + cur.y*mine.y + cur.z*mine.z + cur.w*mine.w;
+                if (std::fabs(dot) < 0.999999f) ge = cur.ToEuler();
+                ge = oked::MergeAxes(ge, e, mask);
+                g->transform->localRotation = Quat::Euler(ge);
+            });
         }
         if (act) ed.PushUndo();
         oked::SetTipComponent(t); oked::FieldTip("Rotation");
@@ -29437,8 +29454,18 @@ void DrawInspector(EditorState& ed) {
                     break;
                 }
             }
+            const Vec3 sclBefore = t->localScale;
             t->localScale = {scl[0], scl[1], scl[2]}; ed.dirty = true;
-            others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = t->localScale; });
+            if (multi && s_uniformScale) {
+                // Linked axes: every selected object is scaled by the same ratio, keeping its own proportions.
+                int ax = 0;
+                while (ax < 2 && scl[ax] == sclOld[ax]) ++ax;
+                const float ratio = sclOld[ax] != 0.0f ? scl[ax] / sclOld[ax] : 1.0f;
+                others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = g->transform->localScale * ratio; });
+            } else if (multi) {
+                oked::ApplyTransformAxes(ed.MultiSelection(), go, oked::TransformField::Scale, t->localScale,
+                                         oked::ChangedAxes(sclBefore, t->localScale));
+            }
         }
         if (act) ed.PushUndo();
         oked::SetTipComponent(t); oked::FieldTip("Scale");
@@ -29451,11 +29478,21 @@ void DrawInspector(EditorState& ed) {
         }
         if (isCam) { ImGui::EndDisabled(); ImGui::TextDisabled("(camera scale is locked)"); }
         // Quick resets.
-        if (ImGui::SmallButton("Reset Pos")) { ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true; }
+        // The resets act on every selected object, like the fields above.
+        if (ImGui::SmallButton("Reset Pos")) {
+            ed.PushUndo(); t->localPosition = {0, 0, 0}; ed.dirty = true;
+            others([&](GameObject* g) { g->transform->localPosition = {0, 0, 0}; });
+        }
         SameLineOrWrap(ButtonW("Reset Rot"));
-        if (ImGui::SmallButton("Reset Rot")) { ed.PushUndo(); g_euler[go] = {0, 0, 0}; t->localRotation = Quat::Euler({0, 0, 0}); ed.dirty = true; }
+        if (ImGui::SmallButton("Reset Rot")) {
+            ed.PushUndo(); g_euler[go] = {0, 0, 0}; t->localRotation = Quat::Euler({0, 0, 0}); ed.dirty = true;
+            others([&](GameObject* g) { g_euler[g] = {0, 0, 0}; g->transform->localRotation = Quat::Euler({0, 0, 0}); });
+        }
         if (!isCam) SameLineOrWrap(ButtonW("Reset Scale"));
-        if (!isCam && ImGui::SmallButton("Reset Scale")) { ed.PushUndo(); t->localScale = {1, 1, 1}; ed.dirty = true; }
+        if (!isCam && ImGui::SmallButton("Reset Scale")) {
+            ed.PushUndo(); t->localScale = {1, 1, 1}; ed.dirty = true;
+            others([&](GameObject* g) { if (!g->GetComponent<Camera>()) g->transform->localScale = {1, 1, 1}; });
+        }
         if (!isCam) {
             SameLineOrWrap(ImGui::GetFrameHeight() + ImGui::CalcTextSize("Uniform").x + 8.0f);
             ImGui::Checkbox("Uniform##scl", &s_uniformScale);
@@ -42846,9 +42883,10 @@ void DrawScene2D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             if (!g_dragRawValid) { g_dragRawPos = lp; g_dragRawValid = true; }
             g_dragRawPos.x += io.MouseDelta.x / scale;
             g_dragRawPos.y -= io.MouseDelta.y / scale;
-            if ((g_snap || io.KeyCtrl) && g_snapSize > 0.0f) {
-                lp.x = Mathf::Round(g_dragRawPos.x / g_snapSize) * g_snapSize;
-                lp.y = Mathf::Round(g_dragRawPos.y / g_snapSize) * g_snapSize;
+            if (g_snap || io.KeyCtrl) {
+                const float ss = oked::SnapStep(g_snapSize, oked::kMoveSnapLimits);
+                lp.x = Mathf::Round(g_dragRawPos.x / ss) * ss;
+                lp.y = Mathf::Round(g_dragRawPos.y / ss) * ss;
             } else {
                 lp.x = g_dragRawPos.x;
                 lp.y = g_dragRawPos.y;
@@ -44766,7 +44804,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             W = Mat4::Translate(off);
                         } else {
                             off = mdl::MoveFromRays(lock, pivot, viewDir, g_meModalRay0, rayNow);
-                            if (snap) { off.x = mdl::SnapTo(off.x, g_snapSize); off.y = mdl::SnapTo(off.y, g_snapSize); off.z = mdl::SnapTo(off.z, g_snapSize); }
+                            if (snap) { const float ss = oked::SnapStep(g_snapSize, oked::kMoveSnapLimits); off.x = mdl::SnapTo(off.x, ss); off.y = mdl::SnapTo(off.y, ss); off.z = mdl::SnapTo(off.z, ss); }
                             W = mdl::MoveMatrix(off, lock);
                         }
                         std::snprintf(buf, sizeof(buf), "D: %.3f  %.3f  %.3f", off.x, off.y, off.z);
@@ -44776,7 +44814,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     case mdl::EditXform::Rotate: {
                         if (psOk) g_meModal.accumulatedDegrees += mdl::ScreenAngleDelta(ps.x, ps.y, g_meModalPrevMouse.x, g_meModalPrevMouse.y, io.MousePos.x, io.MousePos.y);
                         float deg = typed ? g_meModal.typed.Value(0.0f) : g_meModal.accumulatedDegrees;
-                        if (snap && !typed) deg = mdl::SnapTo(deg, g_rotSnapDeg);
+                        if (snap && !typed) deg = mdl::SnapTo(deg, oked::SnapStep(g_rotSnapDeg, oked::kRotateSnapLimits));
                         // Turn about the locked axis (or the view axis when free), signed
                         // so the mesh follows the mouse round the pivot on screen.
                         Vec3 toCam = (eye - pivot).Normalized();
@@ -45291,10 +45329,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     if (tl > 1e-3f) {
                         tg.x /= tl; tg.y /= tl;
                         float deg = (io.MouseDelta.x * tg.x + io.MouseDelta.y * tg.y) * 0.5f;
-                        if ((g_snap || io.KeyCtrl) && g_rotSnapDeg > 0.0f) {
+                        if (g_snap || io.KeyCtrl) {
                             // Detents: apply only whole snapped steps as we cross them.
                             g_rotAccum += deg;
-                            float snapped = Mathf::Round(g_rotAccum / g_rotSnapDeg) * g_rotSnapDeg;
+                            const float rs = oked::SnapStep(g_rotSnapDeg, oked::kRotateSnapLimits);
+                            float snapped = Mathf::Round(g_rotAccum / rs) * rs;
                             float step = snapped - g_rotApplied;
                             if (step != 0.0f) { t->Rotate(rax * step); g_rotApplied = snapped; g_rotTotal = snapped; }
                         } else {
@@ -45324,10 +45363,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         // Accumulate the true position; snap only the output so the
                         // handle tracks the cursor and snaps cleanly at grid lines.
                         g_dragRawPos += localStep;
-                        if ((g_snap || io.KeyCtrl) && g_snapSize > 0.0f) {
-                            t->localPosition.x = Mathf::Round(g_dragRawPos.x / g_snapSize) * g_snapSize;
-                            t->localPosition.y = Mathf::Round(g_dragRawPos.y / g_snapSize) * g_snapSize;
-                            t->localPosition.z = Mathf::Round(g_dragRawPos.z / g_snapSize) * g_snapSize;
+                        if (g_snap || io.KeyCtrl) {
+                            const float ss = oked::SnapStep(g_snapSize, oked::kMoveSnapLimits);
+                            t->localPosition.x = Mathf::Round(g_dragRawPos.x / ss) * ss;
+                            t->localPosition.y = Mathf::Round(g_dragRawPos.y / ss) * ss;
+                            t->localPosition.z = Mathf::Round(g_dragRawPos.z / ss) * ss;
                         } else {
                             t->localPosition = g_dragRawPos;
                         }
@@ -45336,10 +45376,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         g_dragRawScale.y += (i == 1) ? amt : 0.0f;
                         g_dragRawScale.z += (i == 2) ? amt : 0.0f;
                         Vec3 sc = g_dragRawScale;
-                        if ((g_snap || io.KeyCtrl) && g_snapSize > 0.0f) {      // snap scale to the increment
-                            sc.x = Mathf::Round(sc.x / g_snapSize) * g_snapSize;
-                            sc.y = Mathf::Round(sc.y / g_snapSize) * g_snapSize;
-                            sc.z = Mathf::Round(sc.z / g_snapSize) * g_snapSize;
+                        if (g_snap || io.KeyCtrl) {      // snap scale to the increment
+                            const float ss = oked::SnapStep(g_snapSize, oked::kMoveSnapLimits);
+                            sc.x = Mathf::Round(sc.x / ss) * ss;
+                            sc.y = Mathf::Round(sc.y / ss) * ss;
+                            sc.z = Mathf::Round(sc.z / ss) * ss;
                         }
                         sc.x = Mathf::Max(0.01f, sc.x); sc.y = Mathf::Max(0.01f, sc.y); sc.z = Mathf::Max(0.01f, sc.z);
                         t->localScale = sc;
@@ -45726,10 +45767,25 @@ void DrawViewport(EditorState& ed, bool uiPanel = false) {
     if (ImGui::BeginPopup("##snapsettingspop")) {
         ImGui::TextDisabled("SNAP INCREMENTS");
         ImGui::Separator();
-        ImGui::SetNextItemWidth(130);
-        ImGui::DragFloat("Move / Scale", &g_snapSize, 0.05f, 0.05f, 100.0f, "%.2f");
-        ImGui::SetNextItemWidth(130);
-        ImGui::DragFloat("Rotate (deg)", &g_rotSnapDeg, 1.0f, 1.0f, 180.0f, "%.0f");
+        {
+            // Typed values (Ctrl+click) are not limited by the drag range: clean them here, say what was done,
+            // and save the steps so they come back next time (issue #888 finding 72).
+            static const char* s_snapNote = "";
+            const float oldMove = g_snapSize, oldRot = g_rotSnapDeg;
+            ImGui::SetNextItemWidth(130);
+            if (ImGui::DragFloat("Move / Scale", &g_snapSize, 0.05f, 0.05f, 100.0f, "%.3g")) {
+                const oked::SnapClean c = oked::CleanSnapIncrement(g_snapSize, oldMove, oked::kMoveSnapLimits);
+                g_snapSize = c.value; s_snapNote = c.note;
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) SaveSettings();
+            ImGui::SetNextItemWidth(130);
+            if (ImGui::DragFloat("Rotate (deg)", &g_rotSnapDeg, 1.0f, 1.0f, 180.0f, "%.3g")) {
+                const oked::SnapClean c = oked::CleanSnapIncrement(g_rotSnapDeg, oldRot, oked::kRotateSnapLimits);
+                g_rotSnapDeg = c.value; s_snapNote = c.note;
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) SaveSettings();
+            if (s_snapNote[0]) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s", s_snapNote);
+        }
         ImGui::Dummy(ImVec2(0, 4));
         ImGui::TextDisabled("UI (2D screen)");
         ImGui::Separator();

@@ -567,6 +567,24 @@ thumbnail cache (`okay::ThumbnailCache`); it has no folder scan of its own. Deta
 - **Rename, move, delete.** The GUID stays with the asset, references are rewritten, Ctrl+Z in the panel undoes them and puts the open
   scene's paths back, and a deleted asset's references show as broken until it is restored.
 
+- **OkayScript and theme files are tracked (issue #888 finding 69).** `.okay` is a Script and `.okaytheme` is Data in the asset
+  database's extension table (`engine/src/Core/ImportSettings.cpp`), so a scene's script record and a script's
+  `ui_load_theme("...okaytheme")` call count as references: rename and move rewrite them, Find References lists them and
+  `is:unused` no longer lists files that are in use.
+
+### Multi-select edits and snap steps (issue #888 findings 71 and 72)
+
+- **Only the changed part.** With several objects selected, editing one axis of Position, Rotation or Scale sets that axis
+  on every selected object and leaves their other axes alone (`oked::ChangedAxes`, `oked::ApplyTransformAxes`,
+  `oked::MergeAxes` in `editor/InspectorModel.*`). Rotation keeps each object's own angles. Uniform scale multiplies each
+  object by the same ratio. The Reset buttons reset every selected object. Hand-written component cards
+  (`PropagateComponentEdit`) send only the changed channels of a Vec2/3/4, Quat or Color, like the generated cards already did.
+- **Snap steps.** `editor/SnapIncrement.hpp` cleans the Move / Scale step (0.001 to 1000) and the Rotate step (0.1 to 180
+  degrees): NaN and infinity are refused (the old value stays), 0, negatives and tiny values go up to the minimum, huge values
+  down to the maximum, with a hint under the fields. Every snapping path (Move, Scale, Rotate gizmos, 2D move, mesh edit,
+  splines, Edit > Snap Position to Grid) uses the same cleaned step. The steps are now saved (`snapmovex1000`, `snaprotx10`);
+  a saved 0, negative or broken value loads as the default.
+
 ## Notes
 
 This editor renders the scene with ImGui's 2D draw lists, which is perfect for

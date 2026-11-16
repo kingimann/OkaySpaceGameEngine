@@ -1088,6 +1088,44 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Editor fixes: script and theme renames, multi-select edits, snap steps (branch `claude2/editor-refs-multiedit-snap`, not merged or released yet)
+
+Issue #888, findings 69, 71 and 72.
+
+**Renaming a `.okay` script or a `.okaytheme` file keeps what uses it working (finding 69).**
+1. Open a project with a scene that has an OkayScript component whose file is in the Project panel (for example
+   `Assets/scripts/player.okay`). Save the scene.
+2. In the Project panel, right-click the script > **Rename** (or F2) and type a new name.
+3. Expected: the scene now names the new file (open the `.okayscene` file in a text editor, or press Reload on the
+   script component: it still finds its file). Right-click the script > **Find References**: the scene is listed.
+   Search `is:unused`: the script is no longer listed there.
+4. Same for a theme: save one from the UI theme tools (it lands in `Assets/UI/<name>.okaytheme`), call
+   `ui_load_theme("Assets/UI/<name>.okaytheme")` in a script, then rename the theme. The script's text now has the
+   new name. Ctrl+Z in the Project panel puts the old name back in both files.
+
+**Multi-select edits change only the part you changed (finding 71).**
+1. Make five cubes at different places. Select all five (Ctrl+click in the Hierarchy).
+2. In the Inspector, drag or type only **Position Y**. Expected: all five get the same Y and each keeps its own X and Z
+   (before the fix they all jumped onto the first cube). Ctrl+Z puts them back in one step.
+3. The same for Rotation and Scale. With **Uniform** on, every selected object is scaled by the same ratio and keeps
+   its own proportions. **Reset Pos / Reset Rot / Reset Scale** now reset every selected object, not only the first.
+4. Hand-written component cards behave the same: select three lights with different colours and change only the
+   alpha (or one channel) of the first one's colour. Each light keeps its own colour; only that channel changes.
+
+**Snap steps refuse bad values (finding 72).**
+1. Click the small arrow next to **Snap** in the Scene toolbar to open the snap settings.
+2. Ctrl+click **Move / Scale** and type `0`, then Enter. Expected: it becomes 0.001 (the smallest step) and an orange
+   line says "A snap step must be above 0: set to the smallest step." Snapping stays on.
+3. Type `-1`: the same. Type `1e39` (infinity): refused, the old step stays and the hint says so. Type `5000`: lowered
+   to 1000. **Rotate (deg)** works the same with limits 0.1 to 180.
+4. Close and reopen the editor: the two steps come back (saved as `snapmovex1000` and `snaprotx10` in
+   `okay_settings.txt`). Edit that file to `snapmovex1000 0` or `-5`: on the next start the step is the default (1).
+5. Drag the Move gizmo with Snap on: the object never turns into NaN or disappears.
+
+**Status.** Logic tested headless in `tests/test_editor_refs_multiedit_snap.cpp` (run on Linux). `editor/main.cpp`
+and `editor/SplineTools.cpp` were only syntax-checked, not built or run: the Inspector, the popup hint and the saved
+setting are unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

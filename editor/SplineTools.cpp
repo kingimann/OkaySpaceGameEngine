@@ -5,6 +5,7 @@
 #include "SplineTools.hpp"
 #include "ConsolePanel.hpp"     // ConsoleLog
 #include "EditorWidgets.hpp"    // AccentCol
+#include "SnapIncrement.hpp"
 #include "MainShared.hpp"       // g_snap, g_snapSize, g_gizmoLocal, GetThumb
 #include "okay/Components/LineRenderer.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -248,9 +249,9 @@ bool RayPlane(const Vec3& o, const Vec3& d, const Vec3& p, const Vec3& n, Vec3& 
     return true;
 }
 Vec3 Snapped(const Vec3& p, bool on) {
-    if (!on || g_snapSize <= 0.0f) return p;
-    return {std::round(p.x / g_snapSize) * g_snapSize, std::round(p.y / g_snapSize) * g_snapSize,
-            std::round(p.z / g_snapSize) * g_snapSize};
+    if (!on) return p;
+    const float s = oked::SnapStep(g_snapSize, oked::kMoveSnapLimits);   // never 0, negative, NaN or infinite
+    return {std::round(p.x / s) * s, std::round(p.y / s) * s, std::round(p.z / s) * s};
 }
 
 // Polyline of a spline's curve in world space, with each sample's parameter.

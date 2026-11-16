@@ -369,10 +369,44 @@ private:
         else if (m_state == State::Flee)   Broadcast("npc_flee");
     }
 
+    /// The object called targetName: the same answer as Scene::Find(targetName), which is what this did
+    /// every frame (a walk over the whole scene per NPC per frame). The answer is remembered and reused
+    /// while no object was created or destroyed and no component added or removed in the scene
+    /// (StructureVersion / ComponentVersion / object count, as SceneNpcs), the remembered object still has
+    /// the same instance id (a destroyed one is never reused) and is still called targetName, and
+    /// targetName itself did not change. A miss is not remembered: with no such object, it searches every
+    /// frame as before, so an object renamed TO the name is found at once. One case the cache cannot see
+    /// (no counter moves on a rename): while a target is remembered, ANOTHER object earlier in the scene
+    /// renamed to the same name; the remembered one is kept until the next create, destroy or component
+    /// change. Call Scene::MarkStructureChanged() after such a rename to re-resolve at once.
     GameObject* Target() const {
         Scene* s = gameObject ? gameObject->scene() : nullptr;
-        return s ? s->Find(targetName) : nullptr;
+        if (!s) return nullptr;
+        TargetCache& c = m_target;
+        if (c.object && c.scene == s->Uid() && c.structure == s->StructureVersion() &&
+            c.components == s->ComponentVersion() && c.objects == s->Objects().size() &&
+            c.object->InstanceId() == c.id && c.object->name == targetName && c.name == targetName)
+            return c.object;
+        GameObject* g = s->Find(targetName);
+        // Remember only a plain-name hit (a "Parent/Child" path answer is not named targetName).
+        c.object = g && g->name == targetName ? g : nullptr;
+        c.id = c.object ? c.object->InstanceId() : 0;
+        c.scene = s->Uid();
+        c.structure = s->StructureVersion();
+        c.components = s->ComponentVersion();
+        c.objects = s->Objects().size();
+        c.name = targetName;
+        return g;
     }
+    /// Target()'s remembered answer. Pointer use is safe: Scene frees an object only after bumping
+    /// StructureVersion, which is checked before the pointer is touched.
+    struct TargetCache {
+        GameObject* object = nullptr;
+        std::uint64_t id = 0, scene = 0, structure = 0, components = 0;
+        std::size_t objects = 0;
+        std::string name;
+    };
+    mutable TargetCache m_target;
     Vec3 TP(GameObject* t) const { return t && t->transform ? t->transform->Position() : Vec3{0, 0, 0}; }
 
     void FaceToward(const Vec3& dir, float dt) {

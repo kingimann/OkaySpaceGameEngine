@@ -586,9 +586,9 @@ public:
         if (target == 0.0f && std::fabs(m_hipYaw) < 0.5f) m_hipYaw = 0.0f;
         const float yaw = m_hipYaw;
         if (yaw == 0.0f) return;
-        // Looked up only when there is a turn to write (legsFollowTravel is off by default): a rig with
-        // no "Hips"/"Spine" names fell through to a whole-scene search for each of them on every spawn
-        // or destroy, in every animator, even with the feature off (Grok finding 106).
+        // Looked up only when there is a turn to write (legsFollowTravel is off by default), and only
+        // inside this model: a rig with no "Hips"/"Spine" names used to fall through to a whole-scene
+        // search (Grok finding 106), which also found and turned ANOTHER character's hips.
         Transform* hips = HipsT();
         Transform* spine = SpineT();
         if (!hips) return;
@@ -631,18 +631,22 @@ public:
         if (hips && same(hips->localRotation, m_hipsPost)) hips->localRotation = m_hipsPre;
         if (spine && same(spine->localRotation, m_spinePost)) spine->localRotation = m_spinePre;
     }
+    /// The hip and spine bones Legs Follow Travel turns. Searched only inside this model (OwnNodeT):
+    /// these are built-in names every humanoid shares, so a rig without them must not pick up another
+    /// character's "Hips" through the whole-scene fallback that clip tracks have (it turned that
+    /// character's hips and spine).
     Transform* HipsT() const {
-        Transform* t = NodeT("Hips");
-        if (!t) t = NodeT("mixamorig:Hips");
-        if (!t) t = NodeT("hip");
+        Transform* t = OwnNodeT("Hips");
+        if (!t) t = OwnNodeT("mixamorig:Hips");
+        if (!t) t = OwnNodeT("hip");
         return t;
     }
     Transform* SpineT() const {
-        Transform* t = NodeT("Spine");
-        if (!t) t = NodeT("mixamorig:Spine");
-        if (!t) t = NodeT("spine");
-        if (!t) t = NodeT("Chest");
-        if (!t) t = NodeT("mixamorig:Chest");
+        Transform* t = OwnNodeT("Spine");
+        if (!t) t = OwnNodeT("mixamorig:Spine");
+        if (!t) t = OwnNodeT("spine");
+        if (!t) t = OwnNodeT("Chest");
+        if (!t) t = OwnNodeT("mixamorig:Chest");
         return t;
     }
     /// Travel direction relative to facing, degrees, -180..180. False with no Character.
@@ -1486,7 +1490,10 @@ public:
 
     /// The object named `name` inside THIS model (two characters share bone
     /// names like "mixamorig:Hips" — a scene-wide lookup would let one animate
-    /// the other). Falls back to the whole scene for rigs outside the subtree.
+    /// the other). Falls back to the whole scene for a name the model does not
+    /// have: a clip track may drive an object outside the model on purpose (a
+    /// prop, a camera). Built-in names (Legs Follow Travel's hips and spine, a
+    /// mirrored bone's partner) use OwnNodeT, which never leaves the model.
     GameObject* FindNode(const std::string& name) const {
         Transform* t = NodeT(name);
         return t ? t->gameObject : nullptr;
@@ -1505,6 +1512,14 @@ public:
         Transform* t = g ? g->transform : nullptr;
         m_extMap.emplace(name, t);
         return t;
+    }
+    /// The Transform called `name` inside this model only (null when the model has no such node):
+    /// no whole-scene fallback, so it can never answer with another character's bone.
+    Transform* OwnNodeT(const std::string& name) const {
+        if (!gameObject || !gameObject->transform) return nullptr;
+        RefreshNodeMap();
+        auto it = m_nodeMap.find(name);
+        return it != m_nodeMap.end() ? it->second : nullptr;
     }
     /// Rebuild this model's bone-name map (and drop the bindings) when objects came or went. Only the
     /// model's own subtree is walked. Bind used to call NodeT("") for this, and the empty name, never
@@ -1571,7 +1586,9 @@ public:
             if (!t || done.count(t)) continue;
             const std::string other = MirrorNodeName(nt.first);
             if (other.empty()) continue;
-            Transform* o = NodeT(other);
+            // A bone of this model swaps only with a bone of this model; a track that drives an object
+            // outside the model (found scene-wide) may find its partner there too.
+            Transform* o = OwnNodeT(nt.first) == t ? OwnNodeT(other) : NodeT(other);
             if (!o || o == t) continue;
             done.insert(t); done.insert(o);
             std::swap(t->localRotation, o->localRotation);

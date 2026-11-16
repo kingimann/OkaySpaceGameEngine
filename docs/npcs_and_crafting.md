@@ -32,6 +32,15 @@ object in the scene once per NPC per frame. The cost now grows with the number o
 of the level: 150 NPCs among 4,000 level objects went from about 8x the cost of separation off to
 about 1.1x. Try it: `examples/crowd/npc_crowd.okayscene` ([try_it.md](try_it.md)).
 
+**Finding the target** (`targetName`) works the same as before: the first object in the scene with that
+name. The answer is remembered and checked again only when an object or component is added or removed,
+the target is destroyed or renamed, or `targetName` changes; with no such object it searches every frame,
+so an object that appears or is renamed to the name is found at once. 600 NPCs whose target comes after
+10,000 level objects went from about 9x the cost of a target at the start of the scene to about the same.
+One case it does not notice by itself: while it has a target, a different object earlier in the scene
+renamed to the same name. It switches at the next spawn, destroy or component change; call
+`Scene::MarkStructureChanged()` after such a rename to switch at once.
+
 ## Player attacks (Melee Attacker)
 
 *Add Component ▸ Gameplay ▸ Melee Attacker.* On attack input (`attackKey`, default F,

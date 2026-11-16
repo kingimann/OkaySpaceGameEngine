@@ -1242,8 +1242,13 @@ layer names save with the scene.
   every animator on every such frame (an empty-name "refresh" lookup, and the "Hips"/"Spine" names
   of **Legs Follow Travel** even with that option off): 300 characters with a bullet spawned and
   destroyed every frame cost about 14x a quiet frame, now about 1.2x. Still searched once per spawn
-  or destroy: a clip track for a node outside the model or missing from it, and, with Legs Follow
-  Travel on and turning, hips/spine names the rig does not have.
+  or destroy: a clip track for a node outside the model or missing from it.
+- **Which objects a Model Animator moves.** A clip track first looks for its node inside the model.
+  Only a name the model does not have is looked up in the whole scene, so a track can drive an object
+  outside the model on purpose (a prop, a camera). The built-in names never leave the model: Legs
+  Follow Travel's hips and spine ("Hips", "mixamorig:Hips", "hip", "Spine", "Chest", ...) and the
+  partner bone a mirrored clip swaps with. Before, a rig with no "Hips" bone and Legs Follow Travel
+  on found ANOTHER character's "Hips" in the scene and turned that character's hips and spine.
 
 - Skinning sums the weighted bone matrices once per vertex (3x4 affine) and runs
   after IK, once per frame.

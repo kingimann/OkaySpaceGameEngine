@@ -1285,6 +1285,14 @@ with 150 NPCs and 4,000 level objects went from x7.6-9.0 to x1.04-1.07, and 300 
 one destroy per frame went from x11.5-14.1 to x1.14-1.30 (60 ms to 5.6 ms per frame). It also checks that NPC positions and animated bone rotations are the same
 as the old code gave.
 
+**NPC targets and Legs Follow Travel (follow-up).** NPCs now remember their target (`targetName`) instead of searching
+the whole scene for it every frame, and a Model Animator with **Legs Follow Travel** on only turns hips and spine bones
+inside its own model (before, a rig with no "Hips" bone turned another character's hips). On a release: open
+`examples/crowd/npc_crowd.okayscene` as above; the NPCs behave as before. There is no shipped scene with two rigged
+characters where one lacks a "Hips" bone, so the hips fix can only be tried through the test today:
+`ctest -R perf_npc_anim_scans` prints "other character's hips turned 0.000 deg" (59.9 deg before the fix) and the
+target timing (target last in a 10,000-object level vs first: x8.9-9.3 before, about x1 after).
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

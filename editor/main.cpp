@@ -42,6 +42,7 @@
 #include "okay/Components/UIOwnerData.hpp"   // Inspector: which character a UI Text Bind / UI Bar Bind belongs to
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
+#include "okay/Modeling/Measure.hpp"         // measuring and snapping to vertices, edges and faces
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
@@ -3140,6 +3141,8 @@ float g_rotApplied = 0.0f;  // snapped degrees already applied this drag
 float g_rotTotal = 0.0f;    // signed degrees turned this drag (HUD readout)
 float g_rotStartAng = 0.0f; // ring angle (rad) where this rotate-drag began
 float g_rotSnapDeg = 15.0f; // rotation snap increment when Snap is on
+int   g_snapTarget = 0;     // Move snaps to: 0 grid, 1 vertex, 2 edge, 3 face (okay::modeling::SnapTarget)
+float g_snapRadiusPct = 6.0f; // how close (percent of the camera distance) a vertex, edge or face has to be to snap
 // Pre-snap drag accumulators. Snapping rounds the OUTPUT every frame; without
 // keeping the true (unsnapped) value, sub-grid mouse motion gets repeatedly
 // rounded away and dragging feels sticky/glitchy (you have to overshoot to move,
@@ -28456,6 +28459,40 @@ void DrawModeling(EditorState& ed) {
                 ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy the selected faces in place as detached geometry — the copies stay selected, so just drag them away.");
+            {
+                // Snapping and measuring, shown here so they can be set and read without hunting for keys.
+                ImGui::SeparatorText("Snapping and measuring");
+                ImGui::Checkbox("Snap (Ctrl)##msnap", &g_snap);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("While moving (G), rotating (R) or scaling (S) the selection: on, or hold Ctrl.");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                ImGui::DragFloat("##msnapg", &g_snapSize, 0.01f, 0.01f, 10.0f, "grid %.2f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move snaps to multiples of this distance (when Snap to is Grid).");
+                ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                ImGui::DragFloat("##msnapr", &g_rotSnapDeg, 0.5f, 1.0f, 90.0f, "turn %.0f deg");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate snaps to multiples of this angle. Scale snaps to 0.1.");
+                const char* targets[] = {"Grid (increments)", "Vertex", "Edge", "Face"};
+                ImGui::SetNextItemWidth(150); ImGui::Combo("Snap to##msnapt", &g_snapTarget, targets, 4);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What a Move (G) sticks to when Snap is on: grid steps, or the nearest vertex, edge or face of this mesh\n(the vertices you are moving are ignored).");
+                if (g_snapTarget > 0) {
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(80);
+                    ImGui::DragFloat("##msnapp", &g_snapRadiusPct, 0.1f, 0.5f, 30.0f, "reach %.1f%%");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How close the moved point has to come before it sticks (percent of the camera distance).");
+                }
+                {
+                    namespace pmo = okay::modeling;
+                    Vec3 sc{1, 1, 1};
+                    if (go && go->transform) {
+                        const Mat4 W = go->transform->LocalToWorldMatrix();
+                        sc = Vec3{W.MultiplyVector({1, 0, 0}).Magnitude(), W.MultiplyVector({0, 1, 0}).Magnitude(), W.MultiplyVector({0, 0, 1}).Magnitude()};
+                    }
+                    const pmo::Measurement whole = pmo::MeasureMesh(mr->mesh, sc);
+                    ImGui::TextDisabled("Whole mesh: %.3f x %.3f x %.3f, area %.3f, volume %.3f", whole.size.x, whole.size.y, whole.size.z, whole.area, whole.volume);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width x height x depth in world units (the object's scale included), surface area and volume.");
+                    const pmo::Measurement sel = pmo::MeasureSelection(mr->mesh, g_meshSelVerts, g_meshSelFaces, g_meshSelEdges, sc);
+                    if (sel.verts + sel.edges + sel.faces > 0) ImGui::Text("Selection: %s", sel.Summary().c_str());
+                    else ImGui::TextDisabled("Selection: nothing (select two vertices to read the distance between them).");
+                }
+            }
             static float s_snapSel = 0.25f;
             ImGui::SetNextItemWidth(110);
             ImGui::DragFloat("##snapsel", &s_snapSel, 0.01f, 0.01f, 5.0f, "%.2f");
@@ -28579,6 +28616,84 @@ void DrawModeling(EditorState& ed) {
                     else ConsoleLog("Bridge: " + err, 1);
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Join two open edge loops (the same number of edges each) with a band of faces.");
+
+                // ---- Spin and Extrude Along Path -----------------------------------------------------
+                {
+                    static int s_spinAxis = 1, s_spinSteps = 16;
+                    static float s_spinAngle = 360.0f, s_spinCentre[3] = {0, 0, 0};
+                    const char* axes[] = {"X axis", "Y axis", "Z axis"};
+                    ImGui::SetNextItemWidth(80); ImGui::Combo("##spinax", &s_spinAxis, axes, 3);
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(80);
+                    ImGui::DragFloat("##spinang", &s_spinAngle, 1.0f, -720.0f, 720.0f, "%.0f deg");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    ImGui::DragInt("##spinst", &s_spinSteps, 0.2f, 1, 256, "%d steps");
+                    ImGui::SameLine();
+                    if (ToolButton("Spin##me", haveEdges, kNeedSomeEdges)) {
+                        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+                        const Vec3 ax{s_spinAxis == 0 ? 1.0f : 0.0f, s_spinAxis == 1 ? 1.0f : 0.0f, s_spinAxis == 2 ? 1.0f : 0.0f};
+                        std::string err; int n = 0;
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) {
+                                n = pmo::SpinEdges(p, edges, Vec3{s_spinCentre[0], s_spinCentre[1], s_spinCentre[2]}, ax, s_spinAngle, s_spinSteps, &err);
+                                return n > 0; }))
+                            ConsoleLog("Spin: made " + std::to_string(n) + " face(s)");
+                        else ConsoleLog("Spin: " + err, 1);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn the selected edges around an axis through the object's centre (or the point below) and\nfill the sweep with faces: a lathe of any edges you drew. 360 deg closes into a ring.\nIf the faces point inward, press Flip Normals.");
+                    ImGui::SetNextItemWidth(200);
+                    ImGui::DragFloat3("Spin centre##spinc", s_spinCentre, 0.01f, -1000.0f, 1000.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A point the spin axis passes through (object space). Default: the object's origin.");
+
+                    static int s_pathKind = 1, s_pathSteps = 6;
+                    static float s_pathLen = 2.0f, s_pathBend = 90.0f;
+                    const char* kinds[] = {"Straight", "Arc", "S-Curve", "Spiral"};
+                    ImGui::SetNextItemWidth(90); ImGui::Combo("##pathk", &s_pathKind, kinds, 4);
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    ImGui::DragFloat("##pathl", &s_pathLen, 0.02f, 0.05f, 100.0f, "len %.2f");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    ImGui::DragFloat("##pathb", &s_pathBend, 1.0f, -720.0f, 720.0f, "bend %.0f");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    ImGui::DragInt("##paths", &s_pathSteps, 0.1f, 1, 64, "%d steps");
+                    ImGui::SameLine();
+                    if (ToolButton("Extrude Along Path##me", !g_meshSelFaces.empty(), kNeedFaces)) {
+                        Mesh& em = mr->mesh;
+                        EditPoly(em);                                          // keeps polyFace up to date
+                        std::set<int> ids;
+                        for (int t : g_meshSelFaces) if (t >= 0 && t < (int)em.polyFace.size()) ids.insert(em.polyFace[t]);
+                        // Start at the middle of the selection, head along its average normal.
+                        Vec3 c{0, 0, 0}, nsum{0, 0, 0}; int cn = 0;
+                        for (int t : g_meshSelFaces) if (t >= 0 && t < em.TriangleCount()) {
+                            for (int k = 0; k < 3; ++k) { c += em.vertices[em.triangles[t * 3 + k]]; ++cn; }
+                            nsum += em.FaceNormal(t);
+                        }
+                        if (cn) c = c * (1.0f / (float)cn);
+                        Vec3 n = nsum.SqrMagnitude() > 1e-12f ? nsum.Normalized() : Vec3{0, 1, 0};
+                        Vec3 u = Vec3::Cross(n, std::fabs(n.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0}).Normalized();
+                        Vec3 w = Vec3::Cross(n, u);
+                        std::vector<Vec3> path;
+                        const int N = std::max(1, s_pathSteps);
+                        for (int k = 0; k <= N; ++k) {
+                            const float t = (float)k / (float)N;
+                            Vec3 pt = c + n * (s_pathLen * t);
+                            if (s_pathKind == 1 && std::fabs(s_pathBend) > 0.5f) {          // arc: a bend of `bend` degrees over the length
+                                const float ang = s_pathBend * 0.01745329f, R = s_pathLen / ang;
+                                pt = c + n * (R * std::sin(ang * t)) + u * (R * (1.0f - std::cos(ang * t)));
+                            } else if (s_pathKind == 2) {
+                                pt = c + n * (s_pathLen * t) + u * (0.35f * s_pathLen * std::sin(t * 6.2831853f));
+                            } else if (s_pathKind == 3) {
+                                const float ang = s_pathBend * 0.01745329f * t;
+                                pt = c + n * (s_pathLen * t) + u * (0.3f * s_pathLen * (std::cos(ang) - 1.0f)) + w * (0.3f * s_pathLen * std::sin(ang));
+                            }
+                            path.push_back(pt);
+                        }
+                        const std::vector<int> faceIds(ids.begin(), ids.end());
+                        std::string err; int n2 = 0;
+                        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { n2 = pmo::ExtrudeAlongPath(p, faceIds, path, &err); return n2 > 0; })) {
+                            g_meshSelFaces.clear();
+                            ConsoleLog("Extrude Along Path: made " + std::to_string(n2) + " face(s)");
+                        } else ConsoleLog("Extrude Along Path: " + err, 1);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Push the selected faces along a curve (Straight, Arc, S-Curve or Spiral) that starts at the\nmiddle of the selection and heads along its normal. The face turns with the path (no twist).\nBend: the arc's turn in degrees (also the spiral's).");
+                }
 
                 const char* kNeedRim = "Select the edges round a hole (Alt+Click its rim in Edge mode).";
                 if (ToolButton("Fill##me", haveEdges, kNeedRim)) {
@@ -31592,7 +31707,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Bake the whole stack into the mesh and clear it.");
-            int moveFrom = -1, moveTo = -1, removeAt = -1, applyAt = -1;
+            int moveFrom = -1, moveTo = -1, removeAt = -1, applyAt = -1, copyAt = -1;
             // One undo step per edit: remember the stack as it was when a widget in it
             // was grabbed, and record that once it actually changes (a drag changes it
             // over many frames; folding a section or opening a menu changes nothing).
@@ -31623,11 +31738,15 @@ void DrawInspector(EditorState& ed) {
                     ImGui::Separator();
                     if (ImGui::MenuItem("Apply")) applyAt = i;
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Bake just this modifier into the mesh and remove it");
+                    if (ImGui::MenuItem("Copy")) copyAt = i;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a copy of this modifier (same settings) right below it");
                     if (ImGui::MenuItem("Remove")) removeAt = i;
                     ImGui::EndPopup();
                 }
                 if (i < (int)mm->errors.size() && !mm->errors[i].empty())
                     ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s", mm->errors[i].c_str());
+                else if (m.enabled && i < (int)mm->costMs.size())
+                    ImGui::TextDisabled("%.2f ms", mm->costMs[i]);   // how long this modifier took the last time it ran
                 if (open) {
                     switch (m.type) {
                         case MT::Mirror:
@@ -31695,6 +31814,36 @@ void DrawInspector(EditorState& ed) {
                             if (ImGui::DragInt("Seed##dseed", &m.seed, 0.2f)) ed.dirty = true;
                             oked::FieldTip("Seed##dseed");
                             break;
+                        case MT::CurveArray: {
+                            if (ImGui::DragInt("Count##cac", &m.count, 0.1f, 1, 1000)) ed.dirty = true;
+                            oked::FieldTip("Count##cac");
+                            if (ImGui::Checkbox("Follow the curve##caa", &m.align)) ed.dirty = true;
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turn each copy so the mesh's +X axis points along the curve.\nOff = copies keep their own direction.");
+                            ImGui::TextDisabled("Curve points (x, y, z), start to end:");
+                            int rm = -1;
+                            for (int pi = 0; pi < (int)m.path.size(); ++pi) {
+                                ImGui::PushID(pi);
+                                ImGui::SetNextItemWidth(190);
+                                if (ImGui::DragFloat3("##cp", &m.path[pi].x, 0.02f, -1000.0f, 1000.0f, "%.2f")) ed.dirty = true;
+                                ImGui::SameLine();
+                                if (oked::TipSmallButton("Remove", "X##cpx") && m.path.size() > 2) rm = pi;
+                                ImGui::PopID();
+                            }
+                            if (rm >= 0) { m.path.erase(m.path.begin() + rm); ed.dirty = true; }
+                            if (ImGui::SmallButton("+ Point##cpa")) {
+                                const Vec3 last = m.path.empty() ? Vec3{0, 0, 0} : m.path.back();
+                                const Vec3 prev = m.path.size() > 1 ? m.path[m.path.size() - 2] : Vec3{0, 0, 0};
+                                m.path.push_back(last + (last - prev));
+                                ed.dirty = true;
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Arc##cpr")) { m.path.clear(); for (int a = 0; a <= 8; ++a) { const float t = 3.14159265f * (float)a / 8.0f; m.path.push_back({2.0f * std::cos(t), 0.0f, -2.0f * std::sin(t)}); } ed.dirty = true; }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Wave##cpw")) { m.path.clear(); for (int a = 0; a <= 10; ++a) m.path.push_back({0.4f * (float)a, 0.5f * std::sin((float)a * 0.9f), 0.0f}); ed.dirty = true; }
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Helix##cph")) { m.path.clear(); for (int a = 0; a <= 16; ++a) { const float t = 0.7f * (float)a; m.path.push_back({1.5f * std::cos(t), 0.12f * (float)a, 1.5f * std::sin(t)}); } ed.dirty = true; }
+                            break;
+                        }
                         default: break;
                     }
                     if (ImGui::Checkbox("Show in edit mode##se", &m.showInEditMode)) ed.dirty = true;
@@ -31705,7 +31854,7 @@ void DrawInspector(EditorState& ed) {
             }
             ImGui::EndGroup();
             if (ImGui::IsItemActivated()) { s_modBefore = before; s_modPending = mm; s_modRecorded = false; }
-            const bool menuAct = moveFrom >= 0 || removeAt >= 0 || applyAt >= 0;
+            const bool menuAct = moveFrom >= 0 || removeAt >= 0 || applyAt >= 0 || copyAt >= 0;
             if (menuAct || (s_modPending == mm && !s_modRecorded && !okay::SameModifiers(s_modBefore, mm->modifiers))) {
                 std::vector<okay::MeshModifier> now = mm->modifiers;
                 mm->modifiers = (s_modPending == mm) ? s_modBefore : before;
@@ -31714,6 +31863,7 @@ void DrawInspector(EditorState& ed) {
                 s_modRecorded = true;   // the rest of this drag is the same step
             }
             if (s_modPending == mm && !ImGui::IsAnyItemActive()) s_modPending = nullptr;
+            if (copyAt >= 0) { mm->Duplicate(copyAt); ed.dirty = true; }
             if (moveFrom >= 0) { mm->Move(moveFrom, moveTo); ed.dirty = true; }
             if (removeAt >= 0) { mm->modifiers.erase(mm->modifiers.begin() + removeAt); ed.dirty = true; }
             if (applyAt >= 0) {
@@ -31722,7 +31872,7 @@ void DrawInspector(EditorState& ed) {
                 else ConsoleLog("Couldn't apply: " + err);
                 ed.dirty = true;
             }
-            if (mm->modifiers.empty()) ImGui::TextDisabled("Add a modifier: Mirror, Array, Subdivision Surface, Solidify,\nBevel, Boolean, Decimate, Displace.");
+            if (mm->modifiers.empty()) ImGui::TextDisabled("Add a modifier: Mirror, Array, Subdivision Surface, Solidify,\nBevel, Boolean, Decimate, Displace, Array Along Curve.");
         }
     }
     if (auto* li = dynamic_cast<Light*>(curComp)) {
@@ -44536,7 +44686,21 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                             W = Mat4::Translate(off);
                         } else {
                             off = mdl::MoveFromRays(lock, pivot, viewDir, g_meModalRay0, rayNow);
-                            if (snap) { off.x = mdl::SnapTo(off.x, g_snapSize); off.y = mdl::SnapTo(off.y, g_snapSize); off.z = mdl::SnapTo(off.z, g_snapSize); }
+                            bool stuck = false;
+                            if (snap && g_snapTarget > 0) {
+                                // Stick the selection's centre to the nearest vertex / edge / face of this mesh.
+                                const float reach = std::max(0.001f, ed.camDist * g_snapRadiusPct * 0.01f);
+                                const Vec3 want = Minv.MultiplyPoint(mdl::MoveMatrix(off, lock).MultiplyPoint(pivot));
+                                const float scl = std::max(1e-4f, M.MultiplyVector({1, 0, 0}).Magnitude());
+                                const mdl::SnapHit hit = mdl::SnapToGeometry(mesh, want, (mdl::SnapTarget)g_snapTarget, reach / scl, affected);
+                                if (hit.found) {
+                                    off = M.MultiplyPoint(hit.point) - pivot;
+                                    stuck = true;
+                                    ImVec2 sp2;
+                                    if (toScreen(vp * Vec4{M.MultiplyPoint(hit.point), 1}, sp2)) dl->AddCircle(sp2, 8.0f, IM_COL32(255, 220, 60, 255), 0, 2.0f);
+                                }
+                            }
+                            if (snap && !stuck && g_snapTarget == 0) { off.x = mdl::SnapTo(off.x, g_snapSize); off.y = mdl::SnapTo(off.y, g_snapSize); off.z = mdl::SnapTo(off.z, g_snapSize); }
                             W = mdl::MoveMatrix(off, lock);
                         }
                         std::snprintf(buf, sizeof(buf), "D: %.3f  %.3f  %.3f", off.x, off.y, off.z);
@@ -44595,7 +44759,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     std::string line = std::string(mdl::EditXformName(g_meModal.Kind()));
                     if (!lock.Free()) line += "  along " + lock.Label();
                     line += "   " + (typed ? std::string("typed ") + g_meModal.typed.Text() : readout);
-                    if (snap) line += "   (snapping)";
+                    if (snap) line += g_snapTarget > 0 && g_meModal.Kind() == mdl::EditXform::Move ? std::string("   (snapping to ") + mdl::SnapTargetName((mdl::SnapTarget)g_snapTarget) + ")" : std::string("   (snapping)");
                     const char* help = "X / Y / Z lock an axis, Shift+X/Y/Z a plane  -  type a value  -  Ctrl snaps  -  Enter or click to confirm, Esc or right-click to cancel";
                     ImVec2 ts = ImGui::CalcTextSize(line.c_str()), hs = ImGui::CalcTextSize(help);
                     float w = std::max(ts.x, hs.x) + 20.0f, lh = ImGui::GetTextLineHeight();

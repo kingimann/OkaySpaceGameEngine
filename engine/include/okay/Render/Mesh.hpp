@@ -2534,7 +2534,7 @@ public:
     /// passed `faces` indices stay valid (those slots are re-pointed, not removed),
     /// so the caller's selection still refers to the extruded cap.
     void ExtrudeFaces(const std::vector<int>& faces, float dist) {
-        if (faces.empty()) return;
+        if (faces.empty() || !std::isfinite(dist)) return;
         // Averaged (area-weighted) normal of the selected faces.
         Vec3 N{0, 0, 0};
         for (int f : faces) {
@@ -2597,7 +2597,7 @@ public:
     /// re-point the selected faces to the inner ring, and bridge the boundary so a
     /// smaller inner cap sits inside the original outline.
     void InsetFaces(const std::vector<int>& faces, float amount) {
-        if (faces.empty()) return;
+        if (faces.empty() || !std::isfinite(amount)) return;
         float t = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
         // Boundary edges (used by exactly one selected triangle).
         std::map<std::pair<int, int>, int> edgeCount;
@@ -2717,7 +2717,7 @@ public:
     /// ExtrudeFaces (one connected cap along the averaged normal), each face gets
     /// its own detached cap + side walls. Vertices are duplicated per face.
     void ExtrudeFacesIndividual(const std::vector<int>& faces, float dist) {
-        if (faces.empty() || std::fabs(dist) < 1e-8f) return;
+        if (faces.empty() || !std::isfinite(dist) || std::fabs(dist) < 1e-8f) return;
         std::set<int> sel(faces.begin(), faces.end());
         const bool hadColors = HasFaceColors();
         std::vector<int> out; out.reserve(triangles.size() * 3);
@@ -2746,7 +2746,7 @@ public:
     /// ring), per face rather than as one shared region — Blender's "Inset
     /// Individual". Pairs with ExtrudeFacesIndividual for panel/greeble looks.
     void InsetFacesIndividual(const std::vector<int>& faces, float amount) {
-        if (faces.empty()) return;
+        if (faces.empty() || !std::isfinite(amount)) return;
         float t = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
         std::set<int> sel(faces.begin(), faces.end());
         const bool hadColors = HasFaceColors();

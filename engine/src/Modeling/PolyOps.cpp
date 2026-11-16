@@ -653,7 +653,7 @@ EdgeList KnifeCut(PolyMesh& pm, const std::vector<KnifePoint>& points, std::stri
 // ---------------------------------------------------------------------------
 int BevelEdges(PolyMesh& pm, const EdgeList& edgesIn, float width, std::string* error, int segments, float profile) {
     auto fail = [&](const std::string& why) { if (error) *error = why; return 0; };
-    if (width <= 0) return fail("Bevel width must be more than 0.");
+    if (!(width > 0) || !std::isfinite(width)) return fail("Bevel width must be a number more than 0.");
     segments = std::clamp(segments, 1, 64);
     profile = std::clamp(profile, 0.0f, 1.0f);
     PolyTopology T(pm);
@@ -1181,6 +1181,133 @@ PolyMesh CatmullClark(const PolyMesh& pm, int levels) {
     PolyMesh cur = pm;
     for (int i = 0; i < levels; ++i) cur = CatmullClarkOnce(cur);
     return cur;
+}
+
+// ---------------------------------------------------------------------------
+int SpinEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& center, const Vec3& axis, float angleDegrees,
+              int steps, std::string* error, bool merge) {
+    auto fail = [&](const char* why) { if (error) *error = why; return 0; };
+    if (edges.empty()) return fail("Select some edges to spin first.");
+    if (!(axis.SqrMagnitude() > 1e-12f) || !std::isfinite(axis.x + axis.y + axis.z)) return fail("The spin axis has no direction.");
+    if (!std::isfinite(angleDegrees) || std::fabs(angleDegrees) < 1e-3f) return fail("The angle is zero.");
+    steps = std::clamp(steps, 1, 512);
+    const int nv = (int)pm.verts.size();
+    std::vector<int> used;                            // the vertices the edges touch, in order
+    std::map<int, int> slot;
+    for (const auto& e : edges) {
+        if (e.first < 0 || e.second < 0 || e.first >= nv || e.second >= nv || e.first == e.second) continue;
+        for (int v : {e.first, e.second}) if (!slot.count(v)) { slot[v] = (int)used.size(); used.push_back(v); }
+    }
+    if (used.empty()) return fail("None of the selected edges exist.");
+    const bool full = std::fabs(angleDegrees) >= 359.999f;
+    const int rings = full ? steps : steps + 1;       // ring 0 is the original vertices
+    const Vec3 ax = axis.Normalized();
+    const float stepRad = (full ? (angleDegrees < 0 ? -6.28318530718f : 6.28318530718f) : angleDegrees * 0.01745329252f) / (float)steps;
+    // ring[r][k]: vertex index of used[k] at step r. A vertex on the axis does not move: it is kept as one vertex.
+    std::vector<std::vector<int>> ring((std::size_t)rings, std::vector<int>(used.size(), -1));
+    for (std::size_t k = 0; k < used.size(); ++k) ring[0][k] = used[k];
+    for (int r = 1; r < rings; ++r) {
+        const Quat q = Quat::AngleAxis(stepRad * (float)r * 57.29577951f, ax);
+        for (std::size_t k = 0; k < used.size(); ++k) {
+            const Vec3 rel = pm.verts[used[k]] - center;
+            const Vec3 along = ax * Vec3::Dot(rel, ax);
+            const bool onAxis = (rel - along).SqrMagnitude() < 1e-10f;
+            if (merge && onAxis) { ring[r][k] = used[k]; continue; }
+            ring[r][k] = (int)pm.verts.size();
+            pm.verts.push_back(center + along + q * (rel - along));
+        }
+    }
+    int made = 0;
+    for (const auto& e : edges) {
+        auto ia = slot.find(e.first), ib = slot.find(e.second);
+        if (ia == slot.end() || ib == slot.end()) continue;
+        for (int r = 0; r < steps; ++r) {
+            const int r2 = (r + 1) % rings;
+            const int a0 = ring[r][ia->second], b0 = ring[r][ib->second];
+            const int a1 = ring[r2][ia->second], b1 = ring[r2][ib->second];
+            PolyFace f;
+            for (int v : {a0, a1, b1, b0}) if (f.verts.empty() || f.verts.back() != v) f.verts.push_back(v);
+            if (f.verts.size() > 1 && f.verts.front() == f.verts.back()) f.verts.pop_back();
+            if (f.verts.size() < 3) continue;           // collapsed onto the axis
+            pm.faces.push_back(f);
+            ++made;
+        }
+    }
+    if (made == 0) return fail("The spin made no faces (the edges lie on the axis).");
+    return made;
+}
+
+// ---------------------------------------------------------------------------
+int ExtrudeAlongPath(PolyMesh& pm, const std::vector<int>& faces, const std::vector<Vec3>& path, std::string* error) {
+    auto fail = [&](const char* why) { if (error) *error = why; return 0; };
+    if (path.size() < 2) return fail("The path needs at least two points.");
+    std::vector<int> sel;
+    for (int f : faces) if (f >= 0 && f < (int)pm.faces.size() && std::find(sel.begin(), sel.end(), f) == sel.end()) sel.push_back(f);
+    if (sel.empty()) return fail("Select some faces to extrude first.");
+    // Directed edges of the selection that have no partner inside it are the walls.
+    std::set<std::pair<int, int>> directed;
+    std::vector<int> used;
+    std::map<int, int> slot;
+    Vec3 centre{0, 0, 0};
+    for (int f : sel) {
+        const PolyFace& F = pm.faces[f];
+        for (int k = 0; k < F.Size(); ++k) {
+            const int a = F.verts[k], b = F.verts[(k + 1) % F.Size()];
+            directed.insert({a, b});
+            if (!slot.count(a)) { slot[a] = (int)used.size(); used.push_back(a); centre += pm.verts[a]; }
+        }
+    }
+    centre = centre * (1.0f / (float)used.size());
+    // Step transforms: the path's first segment is the starting direction; each later segment
+    // turns the face by the smallest rotation from the previous direction (parallel transport).
+    std::vector<Vec3> dir;
+    for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+        Vec3 d = path[i + 1] - path[i];
+        dir.push_back(d.SqrMagnitude() < 1e-12f ? (dir.empty() ? Vec3{0, 1, 0} : dir.back()) : d.Normalized());
+    }
+    Vec3 nsum{0, 0, 0};
+    for (int f : sel) nsum += pm.FaceNormal(f);
+    const bool againstNormal = Vec3::Dot(nsum, dir[0]) < 0.0f;   // pushing into the face: walls must turn round
+    const int K = (int)path.size() - 1;                 // number of new rings
+    std::vector<std::vector<int>> ring((std::size_t)K + 1, std::vector<int>(used.size(), -1));
+    for (std::size_t k = 0; k < used.size(); ++k) ring[0][k] = used[k];
+    Quat acc = Quat::Identity;
+    Vec3 prev = dir[0];
+    for (int r = 1; r <= K; ++r) {
+        // The ring at path point r turns by the average of the segments around it (a mitre).
+        Vec3 d = dir[r - 1];
+        if (r < K) { Vec3 m = dir[r - 1] + dir[r]; if (m.SqrMagnitude() > 1e-9f) d = m.Normalized(); }
+        acc = Quat::FromToRotation(dir[0], d);
+        (void)prev;
+        for (std::size_t k = 0; k < used.size(); ++k) {
+            const Vec3 rel = pm.verts[used[k]] - centre;
+            ring[r][k] = (int)pm.verts.size();
+            pm.verts.push_back(centre + (path[r] - path[0]) + acc * rel);
+        }
+    }
+    int made = 0;
+    for (int f : sel) {
+        const PolyFace F = pm.faces[f];
+        for (int k = 0; k < F.Size(); ++k) {
+            const int a = F.verts[k], b = F.verts[(k + 1) % F.Size()];
+            if (directed.count({b, a})) continue;       // shared with another selected face: no wall
+            for (int r = 0; r < K; ++r) {
+                PolyFace w;
+                w.verts = {ring[r][slot[a]], ring[r][slot[b]], ring[r + 1][slot[b]], ring[r + 1][slot[a]]};
+                if (againstNormal) std::reverse(w.verts.begin(), w.verts.end());
+                w.material = F.material; w.hasColor = F.hasColor; w.color = F.color;
+                pm.faces.push_back(w);
+                ++made;
+            }
+        }
+    }
+    // The selected faces become the end caps.
+    for (int f : sel) {
+        PolyFace& F = pm.faces[f];
+        for (int& v : F.verts) v = ring[K][slot[v]];
+        F.uvs.clear();                                  // stretched caps keep no stale UVs
+    }
+    return made + (int)sel.size();
 }
 
 } // namespace okay::modeling

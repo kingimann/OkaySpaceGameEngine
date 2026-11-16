@@ -1035,6 +1035,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              ("w", m.width)("seg", m.segments)("ang", m.angle)
              .str("tgt", m.target)("op", m.boolOp)("vox", m.voxel)("cell", m.cellSize)
              ("str", m.strength)("freq", m.frequency)("seed", m.seed);
+            if (m.type == MeshModifier::Type::CurveArray) {      // the curve: "x,y,z;x,y,z;..."
+                std::ostringstream pt;
+                for (std::size_t i = 0; i < m.path.size(); ++i)
+                    pt << (i ? ";" : "") << m.path[i].x << "," << m.path[i].y << "," << m.path[i].z;
+                k.b("align", m.align).str("path", pt.str());
+            }
             out << "\n";
         }
     }
@@ -5190,6 +5196,16 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("w", m.width); k.i("seg", m.segments); k.f("ang", m.angle);
                     k.str("tgt", m.target); k.i("op", m.boolOp); k.f("vox", m.voxel); k.f("cell", m.cellSize);
                     k.f("str", m.strength); k.f("freq", m.frequency); k.i("seed", m.seed);
+                    if (m.type == MeshModifier::Type::CurveArray) {
+                        k.b("align", m.align);
+                        std::string pts; k.str("path", pts);
+                        std::stringstream ps(pts); std::string one;
+                        while (std::getline(ps, one, ';') && m.path.size() < 1000) {
+                            Vec3 v; char c1 = 0, c2 = 0;
+                            std::istringstream vs(one);
+                            if (vs >> v.x >> c1 >> v.y >> c2 >> v.z && c1 == ',' && c2 == ',') m.path.push_back(v);
+                        }
+                    }
                     mm->modifiers.push_back(m);
                 } else if (field == "meshenabled") {
                     int en = 1; in >> en;

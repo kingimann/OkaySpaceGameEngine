@@ -3,6 +3,7 @@
 // to rewrite them; OKAY_MODELING_PICTURE_DIR=<dir> also writes the picture (a software render, not a GPU one).
 #include "test_framework.hpp"
 #include <Okay.hpp>
+#include "okay/Components/MeshModifiers.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Modeling/PolyOps.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
@@ -55,6 +56,42 @@ void BuildScene(Scene& s) {
     sun->AddComponent<Light>();
     Put(s, "Slot House", MakeHouse().ToMesh(), {-1.3f, 0, 0});
     Put(s, "Slot Ball", MakeBall().ToMesh(), {1.6f, 0.6f, 0});
+}
+// Spin, Extrude Along Path and Array Along Curve on three objects.
+PolyMesh MakeVase() {
+    PolyMesh pm;
+    const float prof[][2] = {{0.05f, 0.0f}, {0.45f, 0.05f}, {0.55f, 0.35f}, {0.35f, 0.7f}, {0.22f, 0.95f}, {0.3f, 1.15f}};
+    EdgeList chain;
+    for (int i = 0; i < 6; ++i) { pm.verts.push_back({prof[i][0], prof[i][1], 0}); if (i) chain.push_back({i - 1, i}); }
+    SpinEdges(pm, chain, {0, 0, 0}, {0, 1, 0}, 360.0f, 24);
+    for (PolyFace& f : pm.faces) f.material = 0;
+    pm.slotColors = {Color{0.35f, 0.55f, 0.85f, 1}};
+    return pm;
+}
+PolyMesh MakeHorn() {
+    PolyMesh pm = PolyMesh::FromMesh(Mesh::Cube(0.5f));
+    int top = 0;
+    for (int f = 0; f < (int)pm.faces.size(); ++f) if (pm.FaceNormal(f).y > 0.9f) top = f;
+    const float y = pm.verts[pm.faces[top].verts[0]].y;
+    std::vector<Vec3> path;
+    for (int k = 0; k <= 10; ++k) { const float a = 1.4f * (float)k / 10.0f; path.push_back({0.9f * (1 - std::cos(a)), y + 0.9f * std::sin(a), 0}); }
+    ExtrudeAlongPath(pm, {top}, path);
+    return pm;
+}
+void BuildToolsScene(Scene& s) {
+    GameObject* cam = s.CreateGameObject("Main Camera");
+    cam->transform->localPosition = {0, 1.8f, 7.0f};
+    cam->AddComponent<Camera>()->projection = Camera::Projection::Perspective;
+    GameObject* sun = s.CreateGameObject("Sun");
+    sun->transform->localRotation = Quat::Euler(40, -30, 0);
+    sun->AddComponent<Light>();
+    Put(s, "Spun Vase", MakeVase().ToMesh(), {-3.0f, 0, 0});
+    Put(s, "Bent Horn", MakeHorn().ToMesh(), {-1.0f, 0, 0});
+    Put(s, "Curve Array", Mesh::Cube(0.35f), {0.8f, 0.4f, 0});
+    GameObject* arr = s.Find("Curve Array");
+    auto* mm = arr->AddComponent<MeshModifiers>();
+    mm->modifiers.push_back(MeshModifier::Make(MeshModifier::Type::CurveArray));
+    mm->modifiers.back().count = 9;
 }
 int Count(const Raster& r, const Color& c, int tol) {
     int n = 0;
@@ -136,6 +173,54 @@ int main() {
         Scene r("x");
         CHECK(SceneSerializer::LoadFromFile(r, p));
         CHECK(r.Find("House")->GetComponent<MeshRenderer>()->mesh.triSlot[0] == 3);
+    }
+    RUN_SUITE("spin, path and curve array: objects, save and load, Copy");
+    {
+        const PolyMesh vase = MakeVase();
+        CHECK(vase.Check().Valid() && vase.Check().nonManifoldEdges == 0 && vase.faces.size() == 5 * 24);
+        const PolyMesh horn = MakeHorn();
+        CHECK(horn.Check().Closed() && horn.Check().Valid());
+        Scene s("tools");
+        BuildToolsScene(s);
+        auto* mm = s.Find("Curve Array")->GetComponent<MeshModifiers>();
+        mm->modifiers[0].path.push_back({5, 1, 1});
+        mm->modifiers[0].align = false;
+        mm->Refresh(true);
+        CHECK(s.Find("Curve Array")->GetComponent<MeshRenderer>()->DisplayMesh().TriangleCount() == 9 * 12);
+        CHECK(mm->costMs.size() == 1 && mm->costMs[0] >= 0.0f);
+        // Copy puts an identical modifier right below, and the whole stack still evaluates.
+        CHECK(mm->Duplicate(0) == 1 && mm->modifiers.size() == 2 && mm->Duplicate(7) == -1 && mm->Duplicate(-1) == -1);
+        CHECK(SameModifiers({mm->modifiers[0]}, {mm->modifiers[1]}));
+        mm->Refresh(true);
+        CHECK(mm->costMs.size() == 2 && mm->errors.size() == 2);
+        mm->modifiers.pop_back();
+        const std::string p = (dir / "tools.okayscene").string();
+        CHECK(SceneSerializer::SaveToFile(s, p));
+        Scene r("x");
+        CHECK(SceneSerializer::LoadFromFile(r, p));
+        auto* lm = r.Find("Curve Array")->GetComponent<MeshModifiers>();
+        CHECK(lm && lm->modifiers.size() == 1 && lm->modifiers[0].type == MeshModifier::Type::CurveArray);
+        CHECK(lm->modifiers[0].count == 9 && !lm->modifiers[0].align && lm->modifiers[0].path.size() == 6);
+        CHECK_NEAR(lm->modifiers[0].path[5].x, 5.0f, 1e-5); CHECK_NEAR(lm->modifiers[0].path[5].z, 1.0f, 1e-5);
+        if (const char* out = std::getenv("OKAY_WRITE_MODELING_EXAMPLES")) {
+            Scene t("Spin, path and curve");
+            BuildToolsScene(t);
+            CHECK(SceneSerializer::SaveToFile(t, std::string(out) + "/spin_path_curve.okayscene"));
+            std::string err;
+            CHECK(vase.Save(std::string(out) + "/spun_vase.okaymesh", &err));
+        }
+        if (const char* pic = std::getenv("OKAY_MODELING_PICTURE_DIR")) {
+            Scene t("pic"); BuildToolsScene(t); t.Start();
+            for (const auto& go : t.Objects()) if (auto* m2 = go->GetComponent<MeshModifiers>()) m2->Refresh(true);
+            const Vec3 eye{0.5f, 2.2f, 7.5f}; const int W = 640, H = 360;
+            const Mat4 vp = Mat4::Perspective(40.0f, (float)W / H, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.3f, 0.8f, 0}, Vec3::Up);
+            ApplySceneLight(t);
+            Raster rr; rr.Resize(W, H); rr.Clear(0xFF3A2A22u);
+            RenderMeshes(rr, t, vp, eye);
+            Image img(W, H); std::memcpy(img.Data(), rr.color.data(), (std::size_t)W * H * 4);
+            fs::create_directories(pic);
+            CHECK(img.SavePNG(std::string(pic) + "/spin_path_curve.png"));
+        }
     }
     RUN_SUITE("slots: the software renderer draws each slot in its colour");
     {

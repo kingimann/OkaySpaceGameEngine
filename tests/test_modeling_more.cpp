@@ -1,6 +1,8 @@
 // Modeling "more": per-face material slots (the M5b gap) and the audit fixes.
 // Written from the spec in docs/modeling.md and docs/modeling_audit.md.
 #include "test_framework.hpp"
+#include "okay/Modeling/Measure.hpp"
+#include "okay/Modeling/Modifiers.hpp"
 #include "okay/Modeling/PolyOps.hpp"
 #include <chrono>
 #include <cmath>
@@ -217,6 +219,204 @@ int main() {
         CHECK(none.mergedVerts == 0 && none.holesFilled == 0 && none.flippedFaces == 0 && ok.TriangleCount() == 12);
         Mesh empty;
         CHECK(empty.Repair().mergedVerts == 0);
+    }
+    RUN_SUITE("audit: NaN never reaches the vertices");
+    {
+        auto finite = [](const Mesh& m) { for (const Vec3& v : m.vertices) if (!std::isfinite(v.x + v.y + v.z)) return false; return true; };
+        const float nan = std::nanf("");
+        Mesh a = Mesh::Cube(); a.ExtrudeFaces({0}, nan); CHECK(finite(a) && a.TriangleCount() == 12);
+        Mesh b = Mesh::Cube(); b.InsetFaces({0}, nan); CHECK(finite(b) && b.TriangleCount() == 12);
+        Mesh c = Mesh::Cube(); c.InsetFacesIndividual({0}, nan); CHECK(finite(c));
+        Mesh d = Mesh::Cube(); d.ExtrudeFacesIndividual({0}, nan); CHECK(finite(d));
+        PolyMesh pm = PolyMesh::FromMesh(Mesh::Cube());
+        EdgeList all; for (const auto& e : pm.Edges()) all.push_back({e.a, e.b});
+        std::string err;
+        CHECK(BevelEdges(pm, all, nan, &err) == 0 && !err.empty());
+        bool ok = true; for (const Vec3& v : pm.verts) if (!std::isfinite(v.x + v.y + v.z)) ok = false;
+        CHECK(ok);
+    }
+    RUN_SUITE("spin (lathe of selected edges)");
+    {
+        std::string err;
+        // A vertical line on the +X side, turned a full circle in 12 steps: a tube wall.
+        PolyMesh wall; wall.verts = {{0.5f, 0, 0}, {0.5f, 1, 0}};
+        CHECK(SpinEdges(wall, {{0, 1}}, {0, 0, 0}, {0, 1, 0}, 360.0f, 12, &err) == 12);
+        CHECK(wall.faces.size() == 12 && wall.verts.size() == 2 + 11 * 2);
+        const auto rep = wall.Check();
+        CHECK(rep.Valid() && rep.nonManifoldEdges == 0 && rep.boundaryEdges == 24);     // open at the top and the bottom
+        for (int f = 0; f < (int)wall.faces.size(); ++f) {                              // every quad faces away from the axis
+            Vec3 c{0, 0, 0}; for (int v : wall.faces[f].verts) c += wall.verts[v]; c = c * 0.25f; c.y = 0;
+            CHECK(Vec3::Dot(wall.FaceNormal(f), c) > 0);
+        }
+        // A radius lying on the floor spun about Y: a disc of triangles around the centre point.
+        PolyMesh disc; disc.verts = {{0, 0, 0}, {0.5f, 0, 0}};
+        CHECK(SpinEdges(disc, {{0, 1}}, {0, 0, 0}, {0, 1, 0}, 360.0f, 16, &err) == 16);
+        CHECK(disc.faces.size() == 16 && disc.CountFaces(3) == 16 && disc.Check().Valid());
+        CHECK(disc.verts.size() == 2 + 15);                                           // the centre is one vertex
+        // A quarter turn is open: 4 steps give 5 rings.
+        PolyMesh q; q.verts = {{0.5f, 0, 0}, {0.5f, 1, 0}};
+        CHECK(SpinEdges(q, {{0, 1}}, {0, 0, 0}, {0, 1, 0}, 90.0f, 4, &err) == 4 && q.verts.size() == 10);
+        float maxZ = 0; for (const Vec3& v : q.verts) maxZ = std::max(maxZ, std::fabs(v.z));
+        CHECK_NEAR(maxZ, 0.5f, 1e-4);
+        // Wrong input says why and changes nothing.
+        PolyMesh bad = wall; const size_t nf = bad.faces.size();
+        CHECK(SpinEdges(bad, {}, {0, 0, 0}, {0, 1, 0}, 90, 4, &err) == 0 && !err.empty());
+        CHECK(SpinEdges(bad, {{0, 1}}, {0, 0, 0}, {0, 0, 0}, 90, 4, &err) == 0);
+        CHECK(SpinEdges(bad, {{0, 1}}, {0, 0, 0}, {0, 1, 0}, 0, 4, &err) == 0);
+        CHECK(SpinEdges(bad, {{0, 1}}, {0, 0, 0}, {0, 1, 0}, std::nanf(""), 4, &err) == 0);
+        CHECK(SpinEdges(bad, {{0, 999}, {-1, 0}}, {0, 0, 0}, {0, 1, 0}, 90, 4, &err) == 0);
+        CHECK(SpinEdges(bad, {{0, 1}}, {0.5f, 0, 0}, {0, 1, 0}, 90, 4, &err) == 0 && bad.faces.size() == nf);   // the edge lies on the axis
+    }
+    RUN_SUITE("extrude along a path");
+    {
+        std::string err;
+        auto topFace = [](const PolyMesh& pm) { for (int f = 0; f < (int)pm.faces.size(); ++f) if (pm.FaceNormal(f).y > 0.9f) return f; return -1; };
+        PolyMesh cube = PolyMesh::FromMesh(Mesh::Cube());
+        cube.faces[topFace(cube)].material = 2;
+        const int top = topFace(cube);
+        CHECK(top >= 0);
+        // Straight up in two steps: 6 faces + 2 x 4 walls.
+        PolyMesh a = cube;
+        const float topY = a.verts[a.faces[top].verts[0]].y;
+        CHECK(ExtrudeAlongPath(a, {top}, {{0, topY, 0}, {0, topY + 1, 0}, {0, topY + 2, 0}}, &err) == 9);
+        CHECK(a.faces.size() == 14 && a.Check().Closed() && a.Check().Valid() && a.EulerCharacteristic() == 2);
+        float maxY = -9; for (const Vec3& v : a.verts) maxY = std::max(maxY, v.y);
+        CHECK_NEAR(maxY, topY + 2, 1e-4);
+        int slot2 = 0; for (const auto& f : a.faces) if (f.material == 2) ++slot2;
+        CHECK(slot2 == 1 + 8);                                   // the cap and the walls keep the slot
+        // A bent path (up, then sideways) stays a closed, valid solid and the end cap turns with it.
+        PolyMesh b = cube;
+        CHECK(ExtrudeAlongPath(b, {top}, {{0, topY, 0}, {0, topY + 1, 0}, {1, topY + 2, 0}, {2, topY + 2, 0}}, &err) > 0);
+        CHECK(b.Check().Closed() && b.Check().Valid());
+        float maxX = -9; for (const Vec3& v : b.verts) maxX = std::max(maxX, v.x);
+        CHECK(maxX > 1.9f);
+        // Against the face's own direction (into the cube): still closed and valid.
+        PolyMesh c = cube;
+        CHECK(ExtrudeAlongPath(c, {top}, {{0, topY, 0}, {0, topY - 0.3f, 0}}, &err) > 0 && c.Check().Closed());
+        // Two neighbouring faces share their edge, which makes no wall.
+        PolyMesh d = cube; int second = -1;
+        for (int f = 0; f < (int)d.faces.size(); ++f) if (f != top && d.FaceNormal(f).z > 0.9f) second = f;
+        CHECK(second >= 0);
+        const size_t before = d.faces.size();
+        CHECK(ExtrudeAlongPath(d, {top, second}, {{0, 0, 0}, {0, 1, 0}}, &err) == 6 + 2);   // 6 wall edges + 2 caps
+        CHECK(d.faces.size() == before + 6);
+        // Bad input.
+        PolyMesh e = cube;
+        CHECK(ExtrudeAlongPath(e, {top}, {{0, 0, 0}}, &err) == 0 && !err.empty());
+        CHECK(ExtrudeAlongPath(e, {}, {{0, 0, 0}, {0, 1, 0}}, &err) == 0);
+        CHECK(ExtrudeAlongPath(e, {-3, 99}, {{0, 0, 0}, {0, 1, 0}}, &err) == 0 && e.faces.size() == 6);
+    }
+    RUN_SUITE("array along a curve (modifier)");
+    {
+        std::vector<Vec3> pos, dir;
+        SamplePath({{0, 0, 0}, {2, 0, 0}, {4, 0, 0}}, 5, pos, dir);
+        CHECK(pos.size() == 5 && dir.size() == 5);
+        for (int i = 0; i < 5; ++i) { CHECK_NEAR(pos[i].x, (float)i, 1e-4); CHECK_NEAR(dir[i].x, 1.0f, 1e-4); }
+        SamplePath({{0, 0, 0}, {0, 0, 0}, {0, 3, 0}}, 2, pos, dir);                  // a zero-length first segment
+        CHECK_NEAR(pos[1].y, 3.0f, 1e-4); CHECK_NEAR(dir[0].y, 1.0f, 1e-4);
+        SamplePath({{1, 2, 3}}, 3, pos, dir);
+        CHECK(pos.size() == 3 && pos[2].x == 1 && dir[0].x == 1);
+        SamplePath({{0, 0, 0}, {1, 0, 0}}, 1, pos, dir);
+        CHECK(pos.size() == 1 && pos[0].x == 0);
+        MeshModifier m = MeshModifier::Make(MeshModifier::Type::CurveArray);
+        CHECK(m.path.size() >= 2 && m.count == 8);
+        m.path = {{0, 0, 0}, {0, 4, 0}};
+        m.count = 5; m.align = false;
+        Mesh in = Mesh::Cube(0.5f), out; std::string err;
+        CHECK(ApplyModifier(in, m, ModifierContext(), out, &err));
+        CHECK(out.TriangleCount() == 5 * in.TriangleCount());
+        Vec3 lo, hi; out.Bounds(lo, hi);
+        CHECK_NEAR(lo.y, -0.25f, 1e-4); CHECK_NEAR(hi.y, 4.25f, 1e-4); CHECK_NEAR(hi.x, 0.25f, 1e-4);   // not turned
+        m.align = true;                                                                // +X now follows +Y: copies stand up
+        Mesh long1 = Mesh::Cube(1.0f); long1.vertices[0].x -= 0.5f;                    // make it uneven so a turn shows
+        Mesh turned;
+        CHECK(ApplyModifier(long1, m, ModifierContext(), turned, &err));
+        CHECK(turned.TriangleCount() == 5 * long1.TriangleCount());
+        // Slots and per-face colours carry to every copy.
+        Mesh sl = Mesh::Cube(); sl.AssignSlot({0, 1}, 1); sl.slotColors[1] = Color{1, 0, 0, 1}; sl.ApplySlotColors();
+        Mesh slOut; CHECK(ApplyModifier(sl, m, ModifierContext(), slOut, &err));
+        CHECK(slOut.HasSlots() && slOut.TrianglesInSlot(1).size() == 5 * 2 && slOut.HasFaceColors());
+        // Too few curve points says so and leaves the mesh as it was.
+        m.path = {{0, 0, 0}};
+        Mesh unchanged;
+        CHECK(!ApplyModifier(in, m, ModifierContext(), unchanged, &err) && !err.empty() && unchanged.TriangleCount() == in.TriangleCount());
+        // Cost per modifier: one entry each, zero for one that is switched off.
+        std::vector<MeshModifier> stack = {MeshModifier::Make(MeshModifier::Type::Array), MeshModifier::Make(MeshModifier::Type::Displace)};
+        stack[1].enabled = false;
+        std::vector<float> cost; std::vector<std::string> errs;
+        EvaluateModifiers(Mesh::Cube(), stack, ModifierContext(), &errs, &cost);
+        CHECK(cost.size() == 2 && cost[0] >= 0.0f && cost[1] == 0.0f);
+        // A changed curve changes the stack's identity (so it is rebuilt).
+        std::vector<MeshModifier> a = {MeshModifier::Make(MeshModifier::Type::CurveArray)}, b = a;
+        CHECK(SameModifiers(a, b));
+        b[0].path[1].y += 0.5f;
+        CHECK(!SameModifiers(a, b));
+        CHECK(ModifierInputHash(Mesh::Cube(), a, ModifierContext()) != ModifierInputHash(Mesh::Cube(), b, ModifierContext()));
+        b = a; b[0].align = false;
+        CHECK(!SameModifiers(a, b));
+    }
+    RUN_SUITE("measure");
+    {
+        const Mesh cube = Mesh::Cube();
+        Measurement w = MeasureMesh(cube);
+        CHECK_NEAR(w.size.x, 1.0f, 1e-5); CHECK_NEAR(w.area, 6.0f, 1e-4); CHECK_NEAR(w.volume, 1.0f, 1e-4);
+        CHECK_NEAR(w.diagonal, std::sqrt(3.0f), 1e-4);
+        Measurement sc = MeasureMesh(cube, Vec3{2, 1, 3});                    // read in world units through the object's scale
+        CHECK_NEAR(sc.size.x, 2.0f, 1e-5); CHECK_NEAR(sc.size.z, 3.0f, 1e-5); CHECK_NEAR(sc.volume, 6.0f, 1e-3);
+        CHECK(MeasureMesh(Mesh{}).verts == 0 && MeasureMesh(Mesh{}).area == 0.0f);
+        // Two vertices: the distance and the difference.
+        const Vec3 d = cube.vertices[3] - cube.vertices[0];
+        Measurement two = MeasureSelection(cube, {0, 3}, {}, {});
+        CHECK(two.hasDistance && two.verts == 2);
+        CHECK_NEAR(two.distance, d.Magnitude(), 1e-5); CHECK_NEAR(two.delta.y, d.y, 1e-5);
+        CHECK(two.Summary().find("Distance") == 0);
+        CHECK(!MeasureSelection(cube, {0, 0}, {}, {}).hasDistance);            // the same vertex twice is one vertex
+        CHECK(!MeasureSelection(cube, {0, 1, 2}, {}, {}).hasDistance);
+        // Edges add up (a repeated edge counts once, in either order); faces add their area.
+        const float e01 = (cube.vertices[1] - cube.vertices[0]).Magnitude(), e12 = (cube.vertices[2] - cube.vertices[1]).Magnitude();
+        Measurement ed = MeasureSelection(cube, {}, {}, {{0, 1}, {1, 0}, {1, 2}});
+        CHECK(ed.edges == 2 && !ed.hasDistance); CHECK_NEAR(ed.edgeLength, e01 + e12, 1e-5);
+        Measurement fc = MeasureSelection(cube, {}, {0, 0, 1}, {});
+        CHECK(fc.faces == 2); CHECK_NEAR(fc.area, 1.0f, 1e-4);                 // two triangles of a unit square
+        // Nothing, or nonsense, selected measures nothing and never crashes.
+        Measurement none = MeasureSelection(cube, {}, {}, {});
+        CHECK(none.verts == 0 && none.edges == 0 && none.faces == 0 && none.size.x == 0.0f);
+        Measurement junk = MeasureSelection(cube, {-1, 999}, {-5, 999}, {{-1, 2}, {3, 3}, {0, 99}});
+        CHECK(junk.verts == 0 && junk.edges == 0 && junk.faces == 0 && junk.edgeLength == 0.0f);
+        CHECK(!w.Summary().empty() && !fc.Summary().empty() && !ed.Summary().empty() && !none.Summary().empty());
+    }
+    RUN_SUITE("snap to vertex, edge and face");
+    {
+        const Mesh cube = Mesh::Cube();                                        // corners at +-0.5
+        // Vertex: the nearest corner within the radius.
+        SnapHit v = SnapToGeometry(cube, Vec3{0.55f, 0.52f, 0.48f}, SnapTarget::Vertex, 0.2f);
+        CHECK(v.found); CHECK_NEAR(v.point.x, 0.5f, 1e-5); CHECK_NEAR(v.point.y, 0.5f, 1e-5); CHECK_NEAR(v.point.z, 0.5f, 1e-5);
+        CHECK(!SnapToGeometry(cube, Vec3{0.8f, 0.8f, 0.8f}, SnapTarget::Vertex, 0.1f).found);   // too far
+        // The corner being moved is left out, so it snaps to another one (or nothing).
+        SnapHit self = SnapToGeometry(cube, Vec3{0.5f, 0.5f, 0.5f}, SnapTarget::Vertex, 0.2f, {v.a});
+        CHECK(!self.found || self.a != v.a);
+        // Edge: a point just off the middle of the top front edge lands on the edge.
+        SnapHit e = SnapToGeometry(cube, Vec3{0.0f, 0.55f, 0.5f}, SnapTarget::Edge, 0.2f);
+        CHECK(e.found); CHECK_NEAR(e.point.x, 0.0f, 1e-4); CHECK_NEAR(e.point.y, 0.5f, 1e-4); CHECK_NEAR(e.point.z, 0.5f, 1e-4);
+        CHECK(e.a >= 0 && e.b > e.a);
+        // Face: straight above the middle of the top face lands on the face.
+        SnapHit f = SnapToGeometry(cube, Vec3{0.1f, 0.62f, -0.1f}, SnapTarget::Face, 0.2f);
+        CHECK(f.found); CHECK_NEAR(f.point.x, 0.1f, 1e-4); CHECK_NEAR(f.point.y, 0.5f, 1e-4); CHECK_NEAR(f.point.z, -0.1f, 1e-4);
+        CHECK_NEAR(f.distance, 0.12f, 1e-4);
+        // Skipping every corner leaves no edge or face to snap to.
+        std::vector<int> all; for (int i = 0; i < (int)cube.vertices.size(); ++i) all.push_back(i);
+        CHECK(!SnapToGeometry(cube, Vec3{0, 0.55f, 0.5f}, SnapTarget::Edge, 0.2f, all).found);
+        CHECK(!SnapToGeometry(cube, Vec3{0.1f, 0.6f, 0}, SnapTarget::Face, 0.2f, all).found);
+        // Grid is not geometry; a bad radius or position finds nothing.
+        CHECK(!SnapToGeometry(cube, Vec3{0.5f, 0.5f, 0.5f}, SnapTarget::Grid, 1.0f).found);
+        CHECK(!SnapToGeometry(cube, Vec3{0.5f, 0.5f, 0.5f}, SnapTarget::Vertex, 0.0f).found);
+        CHECK(!SnapToGeometry(cube, Vec3{std::nanf(""), 0, 0}, SnapTarget::Vertex, 1.0f).found);
+        CHECK(!SnapToGeometry(Mesh{}, Vec3{0, 0, 0}, SnapTarget::Face, 1.0f).found);
+        // Closest-point helpers on their own.
+        const Vec3 c = ClosestOnSegment(Vec3{2, 1, 0}, Vec3{0, 0, 0}, Vec3{1, 0, 0});
+        CHECK_NEAR(c.x, 1.0f, 1e-6); CHECK_NEAR(c.y, 0.0f, 1e-6);                  // past the end: the end
+        const Vec3 t = ClosestOnTriangle(Vec3{5, 5, 1}, Vec3{0, 0, 0}, Vec3{1, 0, 0}, Vec3{0, 1, 0});
+        CHECK_NEAR(t.x + t.y, 1.0f, 1e-5); CHECK_NEAR(t.z, 0.0f, 1e-6);            // outside: on the far edge
     }
     TEST_MAIN_RESULT();
 }

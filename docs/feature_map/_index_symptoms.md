@@ -345,6 +345,8 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an enemy cannot climb a ladder | [9.6](09-ai-navigation.md#96-nav-areas-and-off-mesh-links) Nav areas and off-mesh links |
 | an enemy never notices the player or notices from behind | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
 | an enemy sees through walls | [9.5](09-ai-navigation.md#95-npcs-and-perception) NPCs and perception |
+| an example has no camera | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
+| an example opens and shows only text | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
 | an exe is missing SDL2.dll | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | an exe's Properties show the wrong version | [41.9](41-build-tools-infra.md#419-versioning-and-release-prep) Versioning and release prep |
 | an explosion preset is too slow | [2.7](02-rendering-world.md#27-particles-and-lines) Particles and lines |
@@ -527,6 +529,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | feet don't touch the ground or sink | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
 | feet skate | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | feet slide on slopes | [5.6](05-animation-ik.md#56-foot-limb-and-chain-ik) Foot, limb and chain IK |
+| File > Examples says scenes were not found | [42.8](42-examples-samples.md#428-example-scenes-and-their-check) Example scenes and their check |
 | Fill Holes leaves a gap | [3.9](03-modeling-import.md#39-generate-and-whole-mesh-operations) Generate and whole-mesh operations |
 | find by tag" returns the wrong object after a tag change | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
 | Find match never finds anyone | [16.4](16-networking.md#164-matchmaking-queues-server-browser-join-links) Matchmaking, queues, server browser, join links |

@@ -9328,7 +9328,7 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         for (auto* sw : go->GetComponents<Spawner>())       add(sw->prefabPath);   // the prefab a spawner makes ships with the scene
         for (auto* im : go->GetComponents<UIImage>())         add(im->texture);
         for (auto* ri : go->GetComponents<UIRawImage>())      add(ri->texture);
-        for (auto* button : go->GetComponents<UIButton>())        add(button->icon);
+        for (auto* button : go->GetComponents<UIButton>())        { add(button->icon); add(button->fontPath); }
         for (auto* an : go->GetComponents<SpriteAnimator>()) {
             for (const auto& f : an->frames) add(f);
             for (const auto& c : an->clips) for (const auto& f : c.frames) add(f);
@@ -9354,6 +9354,35 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         for (auto* si : go->GetComponents<SplineInstancer>()) add(si->prefabPath);
         for (auto* lr : go->GetComponents<LineRenderer>()) add(lr->texture);
         for (auto* trail : go->GetComponents<TrailRenderer>()) add(trail->texture);
+        // The data files components open by path (#888 finding 41: a stripped build used to leave these out). What they
+        // name in turn (a dialogue's portraits and voice lines, a weapon's projectile prefab) follows in the build's walk.
+        for (auto* dr : go->GetComponents<DialogueRunner>()) add(dr->graphFile);
+        for (auto* ql : go->GetComponents<QuestLog>()) add(ql->questFile);
+        for (auto* ma : go->GetComponents<MeleeAttacker>()) add(ma->weaponFile);
+        for (auto* rw : go->GetComponents<RangedWeapon>()) { add(rw->weaponFile); add(rw->projectile); }
+        for (auto* ch : go->GetComponents<Character>()) add(ch->clipsFile);
+        for (auto* tr : go->GetComponents<TextRenderer>()) add(tr->fontPath);
+        for (auto* th : go->GetComponents<UITheme>()) add(th->fontPath);
+        for (auto* nps : go->GetComponents<NetworkPlayerSpawner>()) add(nps->prefabFile);
+        for (auto* nm : go->GetComponents<NetworkManager>()) for (const auto& p : nm->spawnablePrefabs) add(p);   // prefabs clients may spawn
+        for (auto* ac : go->GetComponents<AntiCheatConfig>()) { add(ac->file); for (const auto& p : ac->settings.spawnAllowlist) add(p); }
+        for (auto* ls : go->GetComponents<LoadingScreen>()) { add(ls->logoImage); add(ls->backgroundImage); }
+        for (auto* mm : go->GetComponents<Minimap>()) add(mm->mapTexture);
+        for (auto* blip : go->GetComponents<MinimapBlip>()) add(blip->icon);
+        for (auto* wa : go->GetComponents<Water>()) add(wa->texture);
+        for (auto* vt : go->GetComponents<VoxelTerrain>()) add(vt->texture);
+        for (auto* bb : go->GetComponents<BlockBuilder>()) add(bb->blockTexture);
+        for (auto* sb : go->GetComponents<StructureBuilder>()) add(sb->structureTexture);
+        for (auto* bmode : go->GetComponents<BuilderMode>()) { add(bmode->partTexture); add(bmode->prefabPath); }
+        for (auto* cr : go->GetComponents<Crafting>()) add(cr->recipeBook);
+        for (auto* cs : go->GetComponents<CraftingStation>()) add(cs->recipeBook);
+        for (auto* td : go->GetComponents<TopDownController2D>()) add(td->projectile);
+        for (auto* ts : go->GetComponents<TopDownShooterController>()) add(ts->projectile);
+        for (auto* tabs : go->GetComponents<UITabs>()) for (const auto& ic : tabs->icons) add(ic);
+        for (auto* sv : go->GetComponents<Saveable>()) {   // a dynamic object respawns from its prefab on load ("factory:Name" is made in code)
+            const std::string& p = (sv->prefab.empty() && sv->dynamic) ? go->prefabSource : sv->prefab;
+            if (p.rfind("factory:", 0) != 0) add(p);
+        }
     }
     // The item database (and its icons / drop prefabs) ships with any scene that has items.
     bool hasItems = false;
@@ -9364,6 +9393,12 @@ std::vector<std::string> SceneSerializer::CollectAssetPaths(const Scene& scene) 
         add(db.Path());
         for (const auto& d : db.Items()) if (!d.loose) { add(d.icon); add(d.worldPrefab); add(d.Custom("equipPrefab")); }
     }
+    // The project's weapon list (weapons picked by name) ships with any scene that fights: the game reads it from its
+    // data folder (weapons.okayweapon), as it reads the item database.
+    bool hasWeapons = false;
+    for (const auto& go : scene.Objects())
+        if (go->GetComponent<MeleeAttacker>() || go->GetComponent<RangedWeapon>() || go->GetComponent<TopDownShooterController>()) { hasWeapons = true; break; }
+    if (hasWeapons) add(WeaponBook::Get().Path());
     return out;
 }
 
@@ -10148,14 +10183,9 @@ SceneValidationReport SceneSerializer::Validate(const std::string& text, const s
     vopt.assetRoot = assetRoot;
     vopt.searchDirs.push_back("");
     std::unordered_set<std::string> reported;
-    for (const std::string& p : CollectAssetPaths(probe)) {
-        if (testing::SceneValidator::AssetExists(p, vopt)) continue;
-        reported.insert(p);
-        add(SceneIssue::Kind::MissingAsset, "", "file not found: " + p);
-    }
-    // CollectAssetPaths lists what a build must ship, so it follows the first component of each kind and leaves out
-    // fonts. The per-object list that SceneValidator keeps (every component, fonts, voxel terrain, ...) fills the gap
-    // and says which object points at the file.
+    // The per-object list that SceneValidator keeps says which object and field point at a missing file, so it goes
+    // first; CollectAssetPaths (what a build ships) then adds what that list does not have: a sequence's audio cues,
+    // nested behavior trees, the item database, dialogue, quest and weapon files, ...
     for (const auto& up : probe.Objects()) {
         if (up->IsDestroyed()) continue;
         for (const testing::AssetRef& ref : testing::SceneValidator::AssetReferences(*up)) {
@@ -10163,6 +10193,11 @@ SceneValidationReport SceneSerializer::Validate(const std::string& text, const s
             reported.insert(ref.path);
             add(SceneIssue::Kind::MissingAsset, up->name, "file not found: " + ref.path + " (" + ref.component + "." + ref.field + ")");
         }
+    }
+    for (const std::string& p : CollectAssetPaths(probe)) {
+        if (reported.count(p) || testing::SceneValidator::AssetExists(p, vopt)) continue;
+        reported.insert(p);
+        add(SceneIssue::Kind::MissingAsset, "", "file not found: " + p);
     }
     return report;
 }

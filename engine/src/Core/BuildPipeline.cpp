@@ -212,8 +212,9 @@ FileKind KindOf(const std::string& relPath) {
     static const std::set<std::string> mdl = {"obj", "fbx", "gltf", "glb", "dae", "okaymesh", "mtl", "okaymat"};
     static const std::set<std::string> fnt = {"ttf", "otf", "fnt", "ttc"};
     static const std::set<std::string> scr = {"okayvs", "okayscript", "lua", "cs", "okaybt"};
-    static const std::set<std::string> dat = {"okaydata", "okayitems", "okayweapon", "okayloc", "okayprefab", "okayanim", "okayclips", "okaydialogue",
-                                              "okayquests", "okayseq", "okaysequence", "json", "txt", "csv", "xml", "okaynav", "okayanimator"};
+    static const std::set<std::string> dat = {"okaydata", "okayitems", "okayweapon", "okayloc", "okayprefab", "okayanim", "okayclip", "okaydialog",
+                                              "okayquest", "okayloot", "okayrecipes", "okayac", "okayseq", "okaysequence", "json", "txt", "csv",
+                                              "xml", "okaynav", "okayanimator"};
     if (e == "exe") return FileKind::Executable;
     if (e == "dll" || e == "so" || e == "dylib" || p.find("libSDL2") != std::string::npos) return FileKind::Library;
     if (e == "okayscene") return FileKind::Scene;
@@ -306,9 +307,11 @@ enum class Scan { None, Scene, Material, Text };
 Scan ScanKindFor(const std::string& ext) {
     if (ext == "okayscene" || ext == "okayprefab") return Scan::Scene;
     if (ext == "okaymat") return Scan::Material;
-    static const std::set<std::string> text = {"okayanim", "okayclips", "okaydialogue", "okayquests", "okaybt", "okayseq", "okaysequence",
-                                               "okayitems", "okayweapon", "okaydata", "okaynav", "okayanimator", "okaymesh", "gltf", "mtl", "obj",
-                                               "json", "okayloc", "okayac"};   // okayac: anti-cheat rules (their "spawn <prefab>" lines name files)
+    // The real extensions (ImportSettings' table): .okayclip, .okaydialog, .okayquest. A dialogue names portraits and voice lines.
+    static const std::set<std::string> text = {"okayanim", "okayclip", "okaydialog", "okayquest", "okaybt", "okayseq", "okaysequence",
+                                               "okayitems", "okayweapon", "okayloot", "okayrecipes", "okaydata", "okaynav", "okayanimator",
+                                               "okaymesh", "gltf", "mtl", "obj", "json", "okayloc",
+                                               "okayac"};   // okayac: anti-cheat rules (their "spawn <prefab>" lines name files)
     return text.count(ext) ? Scan::Text : Scan::None;
 }
 } // namespace
@@ -361,6 +364,134 @@ std::vector<std::string> ScriptRefsInSceneText(const std::string& sceneText) {
     for (const FoundRef& f : ExtractSceneRefs(sceneText))
         if (ExtOf(f.path) == "okayvs" && std::find(out.begin(), out.end(), f.path) == out.end()) out.push_back(f.path);
     return out;
+}
+
+// ---- the scene-text safety net ---------------------------------------------------------------------
+
+namespace {
+// Where in a scene's text a reference sits: the record on its line ("dialoguerunner"), the field it is the value of
+// ("file" in file="..."), and the object whose block holds the line. Worked out once per scene, by line.
+struct SceneLines {
+    struct Line { std::size_t begin = 0; std::string head; int object = -1; };
+    std::vector<Line> lines;
+    std::vector<std::string> objects;
+
+    explicit SceneLines(const std::string& text) {
+        int current = -1;
+        std::size_t pos = 0;
+        while (pos <= text.size()) {
+            std::size_t nl = text.find('\n', pos);
+            if (nl == std::string::npos) nl = text.size();
+            std::size_t b = pos;
+            while (b < nl && (text[b] == ' ' || text[b] == '\t')) ++b;
+            std::size_t e = b;
+            while (e < nl && !std::isspace((unsigned char)text[e])) ++e;
+            Line l;
+            l.begin = pos;
+            l.head = text.substr(b, e - b);
+            if (l.head == "gameobject") {   // gameobject <index> "<name>"
+                std::string name;
+                const std::size_t q = text.find('"', e);
+                if (q != std::string::npos && q < nl)
+                    for (std::size_t i = q + 1; i < nl && text[i] != '"'; ++i) {
+                        if (text[i] == '\\' && i + 1 < nl) ++i;
+                        name += text[i];
+                    }
+                objects.push_back(name);
+                current = (int)objects.size() - 1;
+            }
+            l.object = current;
+            if (l.head == "end") current = -1;
+            lines.push_back(std::move(l));
+            if (nl >= text.size()) break;
+            pos = nl + 1;
+        }
+    }
+    const Line* At(std::size_t offset) const {
+        auto it = std::upper_bound(lines.begin(), lines.end(), offset, [](std::size_t o, const Line& l) { return o < l.begin; });
+        return it == lines.begin() ? nullptr : &*(it - 1);
+    }
+};
+
+// The name a value is given on its line: "file" for file="x.png" (or file=x.png), "" for a bare value.
+std::string FieldBefore(const std::string& text, const FoundRef& f) {
+    std::size_t i = f.begin;
+    if (f.quoted) { if (i == 0 || text[i - 1] != '"') return std::string(); --i; }
+    if (i == 0 || text[i - 1] != '=') return std::string();
+    const std::size_t end = --i;
+    while (i > 0 && !std::isspace((unsigned char)text[i - 1]) && text[i - 1] != '"' && text[i - 1] != ',' && text[i - 1] != '=') --i;
+    return text.substr(i, end - i);
+}
+
+// Lines whose paths are not files the game opens: the editor's link from an instance to its prefab and from an
+// object to the scene it came from, and visual-script paths (embedded in a scene saved from the editor, and
+// already a build root for a scene copied as a file).
+bool IsLinkRecord(const std::string& head) {
+    return head == "prefab" || head == "srcscene" || head == "visualscriptpath" || head == "visualscript";
+}
+} // namespace
+
+std::vector<TextScanFind> AddTextScanFinds(const std::vector<SceneText>& scenes, const std::vector<std::string>& accounted,
+                                           const WalkSettings& s, WalkResult& walk) {
+    std::vector<TextScanFind> finds;
+    std::set<std::string> have, missing;
+    for (const ShippedAsset& a : walk.assets) have.insert(CanonicalKey(a.src));
+    for (const std::string& a : accounted) if (!a.empty()) have.insert(CanonicalKey(a));
+    for (const MissingAsset& m : walk.missing) missing.insert(m.ref);
+    std::vector<AssetRef> roots;
+    for (const SceneText& sc : scenes) {
+        const std::vector<FoundRef> found = ExtractSceneRefs(sc.text);
+        if (found.empty()) continue;
+        const SceneLines lines(sc.text);
+        const std::string sceneDir = sc.file.empty() ? std::string() : Generic(fs::u8path(sc.file).parent_path());
+        for (const FoundRef& f : found) {
+            const std::string& ref = f.path;
+            if (ref.empty() || ref == "-" || ref[0] == '@') continue;                       // '@name' = made in memory
+            if (ref.find("://") != std::string::npos || ref.rfind("proc:", 0) == 0) continue;   // a URL or a built-in texture
+            const std::string ext = ExtOf(ref);
+            if (ext == "okayscene" || ext == "okayvs") continue;   // scenes ship through Scenes In Build; graphs, see IsLinkRecord
+            const SceneLines::Line* line = lines.At(f.begin);
+            if (line && IsLinkRecord(line->head)) continue;
+            const std::string src = ResolveAssetFile(ref, sceneDir, s);
+            if (src.empty()) {   // names no file: a missing asset, like a component's reference to nothing
+                if (missing.insert(ref).second) walk.missing.push_back({ref, sc.file});
+                continue;
+            }
+            if (!have.insert(CanonicalKey(src)).second) continue;   // it ships already (or it is a scene / an embedded graph)
+            TextScanFind tf;
+            tf.ref = ref;
+            tf.src = src;
+            tf.scene = sc.file;
+            if (line) {
+                tf.record = line->head;
+                if (line->object >= 0) tf.object = lines.objects[(std::size_t)line->object];
+            }
+            tf.field = FieldBefore(sc.text, f);
+            finds.push_back(tf);
+            roots.push_back({ref, sc.file});
+        }
+    }
+    if (roots.empty()) return finds;
+    // Ship them, and what they use in turn (a dialogue's portraits), exactly as the walk would have.
+    const WalkResult more = WalkAssets(roots, s);
+    std::set<std::string> shipped, absolute(walk.absolute.begin(), walk.absolute.end());
+    for (const ShippedAsset& a : walk.assets) shipped.insert(CanonicalKey(a.src));
+    for (const ShippedAsset& a : more.assets) if (shipped.insert(CanonicalKey(a.src)).second) walk.assets.push_back(a);
+    for (const MissingAsset& m : more.missing) if (missing.insert(m.ref).second) walk.missing.push_back(m);
+    for (const std::string& a : more.absolute) if (absolute.insert(a).second) walk.absolute.push_back(a);
+    return finds;
+}
+
+std::string TextScanWarning(const TextScanFind& f) {
+    std::string where;
+    auto part = [&](const std::string& p) { where += (where.empty() ? " (" : ", ") + p; };
+    if (!f.scene.empty()) part("scene " + fs::u8path(f.scene).filename().generic_string());
+    if (!f.object.empty()) part("object '" + f.object + "'");
+    if (!f.record.empty()) part("record '" + f.record + "'");
+    if (!f.field.empty()) part("field '" + f.field + "'");
+    if (!where.empty()) where += ")";
+    return "Shipped '" + f.ref + "', which only the scene-text scan found" + where +
+           ". No component lists this file: please tell us which component uses it.";
 }
 
 std::vector<ProjectAsset> ListProjectAssets(const std::string& projectDir) {

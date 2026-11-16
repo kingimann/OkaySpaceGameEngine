@@ -169,8 +169,8 @@ textures and URLs are built in and always found.
 
 `ValidatorOptions` has a `check*` switch per group (including `checkLinks` for the two codes above), severities for missing assets, no
 camera and duplicate names, and `allowDuplicateNames`. The asset fields it follows are
-the same ones `SceneSerializer::CollectAssetPaths` ships with a build (plus fonts and the
-prefab source); `SceneValidator::AssetReferences(go)` lists them per object. Objects a
+most of the ones `SceneSerializer::CollectAssetPaths` ships with a build (plus the prefab
+source); `SceneValidator::AssetReferences(go)` lists them per object. Objects a
 component generated at run time (`transient`) and destroyed objects are skipped.
 
 `ToText()` prints a summary line and one line per issue, errors first:

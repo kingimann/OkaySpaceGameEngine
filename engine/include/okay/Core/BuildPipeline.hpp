@@ -114,6 +114,34 @@ WalkResult WalkAssets(const std::vector<AssetRef>& roots, const WalkSettings& s)
 /// editor embeds those graphs, so they need not ship; a scene copied as a file still needs them.
 std::vector<std::string> ScriptRefsInSceneText(const std::string& sceneText);
 
+// ---- the scene-text safety net ---------------------------------------------------------------------
+
+/// One built scene as the safety net reads it: its saved text, and the file it was built from ("" when it has none).
+struct SceneText { std::string text, file; };
+
+/// A file only the scene-text scan found: the component walk (SceneSerializer::CollectAssetPaths) did not list it.
+struct TextScanFind {
+    std::string ref;     ///< as the scene text writes it
+    std::string src;     ///< the file it resolved to (it ships)
+    std::string scene;   ///< the scene file it was found in ("" = a scene without a file)
+    std::string object;  ///< the object whose block holds the line ("" = outside any object)
+    std::string record;  ///< the scene record on that line ("syncvar"), "" when unknown
+    std::string field;   ///< the name the value has on its line ("file" in file="x"), "" when it has none
+};
+
+/// The safety net behind the component walk (#888 finding 41). Call it after WalkAssets, with the same settings. Every
+/// asset-looking reference in the scenes' saved text (ExtractSceneRefs) is resolved like a walk root. One that resolves
+/// to a file the walk did not ship, and that is not one of `accounted` (the scene files, graphs embedded in them), is
+/// walked too: it and what it uses in turn are added to `walk`, and it is returned so the build report can warn that
+/// only the text scan found it. One that resolves to nothing is added to `walk.missing` once, like a component's
+/// reference to a missing file. Not read: the editor's link from an instance to its prefab and from an object to its
+/// source scene (`prefab`, `srcscene` lines), visual-script paths (embedded in a saved scene, or already a root), scene
+/// files (they ship through Scenes In Build), '@' pictures made in memory, URLs and "proc:" textures.
+std::vector<TextScanFind> AddTextScanFinds(const std::vector<SceneText>& scenes, const std::vector<std::string>& accounted,
+                                           const WalkSettings& s, WalkResult& walk);
+/// The build-report warning for one find: what shipped, where the scene text names it, and a request to report it.
+std::string TextScanWarning(const TextScanFind& f);
+
 struct ProjectAsset { std::string rel; std::string src; std::uintmax_t bytes = 0; bool editorOnly = false; bool scene = false; };
 /// Every file under <project>/Assets (not hidden folders, not .okaymeta sidecars), sorted by path.
 std::vector<ProjectAsset> ListProjectAssets(const std::string& projectDir);

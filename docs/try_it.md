@@ -500,6 +500,32 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Build Game ships the dialogue (and its portrait), quests, weapons, clips, fonts and network prefabs (bug fix, #888 finding 41)
+
+Before: a stripped build (the default) left out the files these components open: a Dialogue Runner's `.okaydialog`, a
+Quest Log's `.okayquest`, the `.okayweapon` of a Melee Attacker or Ranged Weapon, a Character's clips file, the font of a
+Text, Button or UI Theme, and a Network Player Spawner's prefab. The game worked in the editor and not in the built exe,
+and the report still said "Warnings: 0". Now they ship, the dialogue's portraits and voice lines ship with it, and any file
+a scene names that no component lists ships too, with a warning that names it.
+
+1. Windows editor: make a project from a template with a player you can walk (for example **Third Person**). Add a cube
+   and name it NPC. **Add Component > Dialogue Runner (talk with E)**.
+2. **View > Editors & Tools > Dialogue & Quests**: give the first line a speaker and some text, and pick any picture in
+   `Assets` as its **Portrait**. **Save As...** `Assets/talk.okaydialog`. In the NPC's Dialogue Runner, click **...** next
+   to **Graph** and pick that file. Save the scene, and add it to **Scenes In Build** if the list is not empty.
+3. **File > Build Settings...** (Ctrl+B), leave **Strip unused assets** on, click **Dry Run**. In the report, **Files**
+   lists `talk.okaydialog` and the portrait picture, and **Warnings** is 0.
+4. Click **Build & Run**. In the game, walk up to the NPC and press **E**: the line and the portrait show. (Before this
+   fix the log said `[dialogue] NPC: can't open .../talk.okaydialog` and nothing happened.)
+5. Optional, the safety net: a file only the scene text names (no component lists it) ships and adds one warning that
+   starts with `Shipped '...', which only the scene-text scan found`. If you ever see that warning, tell us the component.
+
+Headless: `OkayEngine --build-game Assets/<scene>.okayscene out --dry-run` prints the same report.
+
+**Status.** Engine logic tested headless on Linux (`test_build_collect_assets`, plus the related suites). The change in
+`editor/main.cpp` (it calls the safety net) was NOT compiled here, and no real Windows build was made: steps 3 and 4 are
+unverified until you try them.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

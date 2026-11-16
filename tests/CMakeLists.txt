@@ -873,6 +873,14 @@ add_executable(test_build_pipeline test_build_pipeline.cpp)
 target_link_libraries(test_build_pipeline PRIVATE okay::engine)
 add_test(NAME build_pipeline COMMAND test_build_pipeline)
 
+# Build Game ships every file a scene's components open (#888 finding 41): SceneSerializer::CollectAssetPaths covers
+# dialogue, quest, weapon, clips, font and network-prefab files; .okaydialog/.okayquest/.okayclip are data and are
+# read for what they use (a dialogue's portraits); the scene-text safety net ships what only the text names, with a warning.
+add_executable(test_build_collect_assets test_build_collect_assets.cpp)
+target_link_libraries(test_build_collect_assets PRIVATE okay::engine)
+target_compile_definitions(test_build_collect_assets PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME build_collect_assets COMMAND test_build_collect_assets)
+
 add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)

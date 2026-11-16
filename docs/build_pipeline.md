@@ -57,12 +57,61 @@ its log and draws them on screen.
 
 With **Strip unused assets** on (the default) a build ships:
 
-1. the assets each scene in the build uses (`SceneSerializer::CollectAssetPaths`: textures, audio, meshes, prefabs
-   a spawner makes, sequences, trees, item databases, ...);
-2. what those files use in turn - prefabs, materials, clips, dialogue, behavior trees, glTF/obj/mtl and other text
-   assets are read for the files they name (the same scanners the Asset Database uses), repeatedly, cycles allowed;
+1. the assets each scene in the build uses (`SceneSerializer::CollectAssetPaths`, the table below);
+2. what those files use in turn - prefabs, materials, animation clips (`.okayanim`, `.okayclip`), dialogue (`.okaydialog`:
+   portraits and voice lines), quests (`.okayquest`), weapons, loot and recipe files, behavior trees, glTF/obj/mtl and
+   other text assets are read for the files they name (the same scanners the Asset Database uses), repeatedly, cycles allowed;
 3. each file's `.okaymeta` import settings;
-4. the visual-script files of scenes that are copied as files (a scene written from the editor embeds its graphs).
+4. the visual-script files of scenes that are copied as files (a scene written from the editor embeds its graphs);
+5. the **safety net**: anything the scene's saved text names that steps 1 to 4 did not ship (below).
+
+What `CollectAssetPaths` lists, for every instance of each component:
+
+| Component | Fields |
+|---|---|
+| SpriteRenderer, Decal, ParticleSystem, UIImage, UIRawImage, LineRenderer, TrailRenderer, Water, VoxelTerrain | `texture` |
+| MeshRenderer | `meshPath`, `texture`, `normalMap`, `specularMap`, `aoMap`, `metallicRoughnessMap`, `emissiveMap` |
+| Terrain | `texture`, `normalMap`, each layer's texture |
+| AudioSource / MusicPlayer | `clipPath` / every track |
+| SpriteAnimator | every frame, in every clip |
+| Foliage | `meshPath`, `prefabPath` |
+| Spawner, SplineInstancer | `prefabPath` |
+| SplineMesh | `sourceMesh`, when it is a file (not a built-in shape) |
+| LogicTarget | `spawnPrefab` |
+| BuildMode | each palette item's prefab and icon |
+| SequencePlayer | `sequencePath`, and the sounds its audio cues play |
+| BehaviorTreeRunner | `treePath`, and every tree it runs |
+| NavMeshSurface, LootSource | `navPath`, `table` |
+| DialogueRunner, QuestLog | `graphFile` (`.okaydialog`), `questFile` (`.okayquest`) |
+| MeleeAttacker, RangedWeapon | `weaponFile` (`.okayweapon`); RangedWeapon also `projectile` (a prefab) |
+| Character | `clipsFile` (the clips file it loads on Start) |
+| TextRenderer, UIButton, UITheme | `fontPath`; UIButton also `icon` |
+| NetworkPlayerSpawner, NetworkManager | `prefabFile`, every prefab in `spawnablePrefabs` |
+| AntiCheatConfig | `file` (`.okayac`) and every prefab on the spawn allowlist |
+| LoadingScreen | `logoImage`, `backgroundImage` |
+| Minimap, MinimapBlip | `mapTexture`, `icon` |
+| BlockBuilder, StructureBuilder, BuilderMode | `blockTexture`, `structureTexture`, `partTexture` and `prefabPath` |
+| Crafting, CraftingStation | `recipeBook` (`.okayrecipes`) |
+| TopDownController2D, TopDownShooterController | `projectile` (a prefab) |
+| UITabs | every tab icon |
+| Saveable | `prefab` (not `factory:` names); a dynamic one with no prefab, its object's own prefab |
+| any item component (Inventory, ItemPickup, Equipment, ...) | the project's `items.okayitems`, and each item's icon and prefabs |
+| MeleeAttacker, RangedWeapon, TopDownShooterController | the project's `weapons.okayweapon` (weapons picked by name) |
+
+Left out on purpose: scene fields (`LoadingScreen.targetScene`, the Pause Menu's scenes, `BuilderMode.mapPath`, which is
+where it saves): scenes ship through **Scenes In Build**. The item UIs' `iconFolder` (a folder of `<item>.png` files, not one
+file) and the World Streamer's cell folder (a file-name pattern). `Buildable.prefab` (the BuildMode palette already ships it).
+UIDropdown's option icons (short glyphs, not files). Animator state and model clip names (names in a library, not files).
+
+**The safety net.** After the walk, the build reads each scene's saved text with the Asset Database's scene scanner
+(`ExtractSceneRefs`: quoted values that end in a known asset extension). A reference that resolves to a project file the
+walk did not ship is shipped too, with what it uses in turn, and the report gets one warning for it:
+`Shipped 'X', which only the scene-text scan found (scene ..., object '...', record '...', field '...'). No component lists this file: please tell us which component uses it.`
+That warning means a component's file field is missing from the table above: report it, so it can be added. A reference
+that resolves to nothing is a missing-asset warning, like a component's. Not read by the safety net: an instance's link to its
+prefab and an object's source scene (`prefab`, `srcscene` lines), visual-script paths, scene files, `@` pictures, URLs and
+`proc:` textures. The logic is `buildpipe::AddTextScanFinds` (`engine/src/Core/BuildPipeline.cpp`); the test is
+`tests/test_build_collect_assets.cpp`.
 
 A reference is found as written, then under the project folder, its `Assets/` folder, the referring file's folder and
 the scenes' folders. It is stored under the path the scene writes, so the running game finds it where the scene says.
@@ -150,4 +199,8 @@ player never read it), and the manifest written on every build (only anti-cheat 
 - **Scripting backend / stripping of code**: there is one runtime, no choice to make.
 - **Anti-cheat with the Folder layout**: anti-cheat verifies `Data/manifest.json`, so it forces the Compact layout.
 - **Web, Android and server targets** ignore Layout, Strip, Compress and the build number (they have their own output).
+  The Web and Android export copies what `CollectAssetPaths` lists, but not what those files use in turn, and it has no
+  text safety net.
+- The project's `items.okayitems` and `weapons.okayweapon` are listed by their full path, so the report warns that they
+  are "absolute paths", although the game finds them (it reads both by name from the data folder).
 - StreamingAssets has an engine API (`Paths::StreamingAssetsDir`, `Paths::StreamingPath`) but no script node yet.

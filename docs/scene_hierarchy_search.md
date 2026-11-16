@@ -123,9 +123,9 @@ validator where there is no scene. What they share:
   missing files (the text validator used to report `proc:checker` as "file not found"), and the working directory is tried
   as well as the asset root.
 - The text validator now also walks the per-object list `SceneValidator::AssetReferences` (every component, fonts, voxel
-  terrain), so a missing font is found and the message names the object (`"Label"`, `TextRenderer.fontPath`). The list
-  `CollectAssetPaths` keeps is for builds (what must ship: the first component of each kind, a sequence's audio cues, the item
-  database) and is still checked first.
+  terrain), so a missing font is found and the message names the object (`"Label"`, `TextRenderer.fontPath`). That list is
+  checked first; the list `CollectAssetPaths` keeps for builds (what must ship: a sequence's audio cues, the item database,
+  dialogue, quest and weapon files, ...) is checked after it, for the files the per-object list does not name.
 - `ValidateSceneLinks(text)` is the one text pass behind both for duplicate guids and broken parent links.
 - A damaged data pack is a `LoadError` in `SceneSerializer::ValidateFile` ("tampered or unreadable"), as it is in
   `SceneValidator::ValidateFile` (`scene.load`); it used to unpack to an empty text and report the misleading "missing 'okayscene' header".

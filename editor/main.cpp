@@ -4181,27 +4181,33 @@ std::string Build(EditorState& ed, const std::string& outDir,
     int sceneCount = 0;
     std::vector<bp::AssetRef> roots;
     std::vector<std::string> sceneSources;   // the scene files, and files embedded in them (accounted for, not shipped on their own)
+    std::vector<bp::SceneText> sceneTexts;   // each built scene's saved text: the text safety net reads it after the walk
     for (SceneEntry& se : built) {
         const std::string label = se.src.empty() ? std::string("the open scene") : "scene " + se.src.stem().string();
         if (se.isOpen) {
             if (!SceneSerializer::SaveToFile(ed.scene(), (data / se.fn).string())) return "Failed to write " + se.fn + ".";
             for (const std::string& a : SceneSerializer::CollectAssetPaths(ed.scene())) roots.push_back({a, se.src.string()});
             // Its visual-script graphs are embedded in the scene file just written: they need not ship.
-            for (const std::string& g : bp::ScriptRefsInSceneText(SceneSerializer::Serialize(ed.scene()))) {
+            const std::string openText = SceneSerializer::Serialize(ed.scene());
+            for (const std::string& g : bp::ScriptRefsInSceneText(openText)) {
                 bp::WalkSettings gs; gs.projectDir = ed.projectDir();
                 const std::string gsrc = bp::ResolveAssetFile(g, se.src.parent_path().string(), gs);
                 if (!gsrc.empty()) sceneSources.push_back(gsrc);
             }
+            sceneTexts.push_back({openText, se.src.string()});
         } else {
             fs::copy_file(se.src, data / se.fn, fs::copy_options::overwrite_existing, pe);
             if (pe) return "Couldn't copy the scene " + se.src.string() + " (" + pe.message() + ").";
+            std::string copiedText;
             { std::ifstream sf(se.src, std::ios::binary); std::ostringstream sb; sb << sf.rdbuf();   // a scene copied as a file still reads its graphs from their files
-              for (const std::string& g : bp::ScriptRefsInSceneText(okay::DataPack::Unpack(sb.str()))) roots.push_back({g, se.src.string()}); }
+              copiedText = okay::DataPack::Unpack(sb.str());
+              for (const std::string& g : bp::ScriptRefsInSceneText(copiedText)) roots.push_back({g, se.src.string()}); }
             se.loaded = std::make_unique<Scene>("build");
             std::string lerr;
-            if (SceneSerializer::LoadFromFile(*se.loaded, se.src.string(), &lerr))
+            if (SceneSerializer::LoadFromFile(*se.loaded, se.src.string(), &lerr)) {
                 for (const std::string& a : SceneSerializer::CollectAssetPaths(*se.loaded)) roots.push_back({a, se.src.string()});
-            else R.r.Warn("Couldn't read " + se.src.string() + " to list its assets (" + lerr + "): its assets are not shipped.");
+                sceneTexts.push_back({copiedText, se.src.string()});
+            } else R.r.Warn("Couldn't read " + se.src.string() + " to list its assets (" + lerr + "): its assets are not shipped.");
         }
         if (!se.src.empty()) sceneSources.push_back(se.src.string());
         why[relRoot(data / se.fn)] = label + (sceneCount == 0 ? " (starts the game)" : "");
@@ -4213,6 +4219,9 @@ std::string Build(EditorState& ed, const std::string& outDir,
     ws.projectDir = ed.projectDir();
     for (const SceneEntry& se : built) if (!se.src.empty()) ws.searchDirs.push_back(se.src.parent_path().string());
     bp::WalkResult walk = bp::WalkAssets(roots, ws);
+    // The safety net (#888 finding 41): a file a scene's text names that no component lists still ships (with what it
+    // uses in turn), and the report warns about each one. A name that matches no file joins the missing assets below.
+    for (const bp::TextScanFind& f : bp::AddTextScanFinds(sceneTexts, sceneSources, ws, walk)) R.r.Warn(bp::TextScanWarning(f));
     std::vector<std::string> shippedSources;
     std::uintmax_t unusedShipped = 0; int unusedShippedCount = 0;
     if (!opt.stripAssets && !ed.projectDir().empty()) {

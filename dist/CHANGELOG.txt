@@ -1,5 +1,21 @@
 OkaySpace Game Engine — Changelog
 
+v2.877.0
+  Editor
+  - Visual Script: the Add Node menu (right-click the canvas or press Space)
+    is sorted into 14 foldable sections with 70 topics (it had 19 topics, and
+    one of them held 515 nodes). Click a heading to fold it, click a topic to
+    see its subcategories. Every node sits in exactly one place and nothing
+    was removed. Saved graphs are not affected, and Favourites and Recents
+    keep working. The old topic names are still search words, so searching for
+    an old name finds the node in its new place.
+
+  Under the hood
+  - One inflate (zip-style decompression) decoder instead of three copies:
+    PNG pictures, compressed .blend and FBX files, and our own web client now
+    all use it. A PNG that claims a huge picture size no longer reserves that
+    memory up front.
+
 v2.876.0
   Editor
   - A cleaner menu bar: File, Edit, GameObject, View, Plugins and Help.

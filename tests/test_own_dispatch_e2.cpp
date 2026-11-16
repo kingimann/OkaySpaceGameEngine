@@ -3,7 +3,7 @@
 // "own" and equal what the format's own Read*File gives directly. Also: the environment variable OKAY_OWN_<FMT> and SetImportBackend
 // switch a format on and off, ImportableExtensions follows, a reader that is off by default says which switch turns it on, other
 // extensions of a format reach the same reader, and a file that hostile counts or a wrong signature make unreadable is refused
-// through the seam (not crashed). Slot 32 (SIB) has no reader: ".sib" must not be routed anywhere.
+// through the seam (not crashed). Slot 32 (SIB) got its reader in batch E6 (own_dispatch_e6).
 #include "test_framework.hpp"
 #include "model_fixture_util.hpp"
 #include "batche2_fixtures.hpp"
@@ -137,8 +137,8 @@ int main() {
             bool none = false; for (const ImportedPart& p : nm.parts) if (p.material == -1) none = true;
             CHECK(none && fx::TriCount(nm) == 3);
         }
-        // SIB has no own reader (slot 32 is reserved, empty)
-        CHECK(!HasOwnReader(".sib"));
+        // SIB (slot 32) now has a reader of its own (batch E6, tests/test_sib_reader.cpp and own_dispatch_e6): .sib is routed to it
+        CHECK(HasOwnReader(".sib"));
     }
     SetImportBackend("*", ImportBackend::Default);
     std::error_code ec; fs::remove_all(dir, ec);

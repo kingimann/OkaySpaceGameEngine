@@ -98,7 +98,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ogex", ".mdl", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ogex", ".mdl", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".bsp", ".pk3", ".sib"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -610,6 +610,18 @@ constexpr bool kOwnMdlDefault = true;
 constexpr bool kOwnMdlDefault = false;
 #endif
 
+#ifdef OKAY_OWN_SIB_DEFAULT
+constexpr bool kOwnSibDefault = true;
+#else
+constexpr bool kOwnSibDefault = false;
+#endif
+
+#ifdef OKAY_OWN_Q3BSP_DEFAULT
+constexpr bool kOwnQ3bspDefault = true;
+#else
+constexpr bool kOwnQ3bspDefault = false;
+#endif
+
 #ifdef OKAY_OWN_GLTF1_DEFAULT
 constexpr bool kOwnGltf1Default = true;
 #else
@@ -654,9 +666,9 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_MDC",     "MDC",     kOwnMdcDefault},       // 28
     {"OKAY_OWN_HMP",     "HMP",     kOwnHmpDefault},       // 29
     {"OKAY_OWN_CSM",     "CSM",     kOwnCsmDefault},       // 30
-    // Slot 32 is kept for SIB (no reader yet): an empty row, never reached (OwnSlot returns none of it), so that Q3D and RAW sit at the agreed numbers.
+    // Slot 32 is SIB (batch E6); it was kept empty so that Q3D and RAW sit at the agreed numbers.
     {"OKAY_OWN_Q3D",     "Q3D",     kOwnQ3dDefault},       // 31
-    {"", "", false},                                       // 32 (SIB, not written yet)
+    {"OKAY_OWN_SIB",     "SIB",     kOwnSibDefault},       // 32
     {"OKAY_OWN_RAW",     "RAW",     kOwnRawDefault},       // 33
     {"OKAY_OWN_IQM",     "IQM",     kOwnIqmDefault},       // 34
     {"OKAY_OWN_COB",     "COB",     kOwnCobDefault},       // 35
@@ -666,8 +678,9 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_PMX",     "PMX",     kOwnPmxDefault},       // 39
     {"OKAY_OWN_LWS",     "LWS",     kOwnLwsDefault},       // 40 (.lws and .mot)
     {"OKAY_OWN_GLTF1",   "glTF 1.0", kOwnGltf1Default},    // 41: glTF 1.0 (pseudo-extension ".gltf1"; .gltf / .glb files of version 1)
+    {"OKAY_OWN_Q3BSP",   "Q3BSP",   kOwnQ3bspDefault},     // 42 (.bsp and .pk3)
 };
-constexpr int kOwnSlots = 42;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are OpenGEX and MDL (batch E4), 39 and 40 are PMX and LWS/MOT (batch E5), 41 is glTF 1.0 (the pseudo-extension ".gltf1"); raise this (and add rows above) when a reader needs a slot beyond 41
+constexpr int kOwnSlots = 43;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are OpenGEX and MDL (batch E4), 39 and 40 are PMX and LWS/MOT (batch E5), 41 is glTF 1.0 (the pseudo-extension ".gltf1"); raise this (and add rows above) when a reader needs a slot beyond 41
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -704,6 +717,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".hmp") return 29;
     if (e == ".csm") return 30;
     if (e == ".q3o" || e == ".q3s") return 31;
+    if (e == ".sib") return 32;
     if (e == ".raw") return 33;
     if (e == ".iqm") return 34;
     if (e == ".cob") return 35;
@@ -712,6 +726,7 @@ int OwnSlot(const std::string& ext) {
     if (e == ".mdl") return 38;
     if (e == ".pmx") return 39;
     if (e == ".lws" || e == ".mot") return 40;
+    if (e == ".bsp" || e == ".pk3") return 42;
     if (e == ".gltf1") return 41;   // not a file extension: the switch for glTF 1.0 files (.gltf / .glb share 2.0's extensions)
     return -1;
 }
@@ -901,6 +916,8 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 38 ? ReadMdlFile(path, out, &e1)
                   : s == 39 ? ReadPmxFile(path, out, &e1)
                   : s == 40 ? ReadLwsFile(path, out, &e1, &irrLoader)
+                  : s == 32 ? ReadSibFile(path, out, &e1)
+                  : s == 42 ? ReadQ3bspFile(path, out, &e1)
                   : s == 41 ? ReadGltf1File(path, out, &e1)   // a file named *.gltf1: read it as glTF 1.0
                   : (e1 = "no reader is wired to this slot", false); }, e1);   // slots 27 (Terragen) to 31 (Q3D), 33 (RAW), 34 to 36 (IQM, COB, NDO), 37 (OpenGEX), 38 (MDL), 39 (PMX) and 40 (LWS) are wired above; slot 32 is the empty one kept for SIB
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model

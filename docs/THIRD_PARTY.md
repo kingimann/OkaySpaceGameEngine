@@ -66,6 +66,12 @@ licence, then adds that licence text next to it (for example `assets/fonts/Robot
 installer and the release archives carry that file, as the OFL requires the notice to travel with the font;
 (3) the same check for whatever licence file Roboto gets. Until (1) is done the licence status of Roboto is unconfirmed.
 
+Sample model data (data, not code):
+
+| File | Where | Source and licence |
+|---|---|---|
+| `heffalump.sib`, `This Way Up.png`, `UV Mapping.png` | `examples/own_readers/` (shipped in the Windows release with the other samples; the readme text is kept next to them as `heffalump-readme.txt`) | By Richard Mitton, from the `test/models/SIB` directory of the Assimp v5.4.3 source tree (`https://github.com/assimp/assimp`, tag `v5.4.3`). The author's readme says: "Made by me (Richard Mitton). I waive all rights to this and release it into the public domain. Do with it as you wish." Used for the SIB reader sample and tests (`docs/own_sib_reader.md`). |
+
 ## Services we keep (optional integrations, not bundled)
 
 - **Steamworks SDK** (`OKAY_WITH_STEAM`): Valve's SDK is proprietary and is not in this repository. Without it, a no-op Steam service is used.

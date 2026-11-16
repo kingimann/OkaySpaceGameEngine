@@ -1146,6 +1146,30 @@ Tested on main (Linux): the line format and that each variable changes it, by th
     through the same import function with the own backend is tested (`own_e4_samples`), as is `-DOKAY_OWN_OPENGEX=ON` /
     `-DOKAY_OWN_MDL=ON` (`own_e4_default`). No real-world `.ogex` or `.mdl` file has been run through them.
 
+* **Batch E6 readers: glTF 1.0, Quake III maps (`.bsp` / `.pk3`), Silo (`.sib`)**, all off by default and **none in `OKAY_OWN_STACK=1` or the startup line**.
+  * **Switches** (Command Prompt, before starting the editor): `set OKAY_OWN_GLTF1=1` (glTF 1.0 files), `set OKAY_OWN_Q3BSP=1`
+    (`.bsp` and `.pk3`), `set OKAY_OWN_SIB=1` (`.sib`); `0` forces a reader off. At build time `-DOKAY_OWN_GLTF1=ON`, `-DOKAY_OWN_Q3BSP=ON`,
+    `-DOKAY_OWN_SIB=ON`. (OpenGEX and MDL are in the bullet above.)
+  * **Sample files** (in `examples\own_readers`): `box_v1.gltf` and `box_v1.glb` (an orange box, glTF 1.0, made by
+    `scripts/gen_gltf1_samples.py`), `tiny_arena.bsp` and `tiny_arena.pk3` (a Quake III style room, made by
+    `scripts/gen_q3bsp_samples.py`; the `.pk3` is the same map in a zip), `heffalump.sib` (a real Silo file by Richard Mitton, public
+    domain, with `This Way Up.png`, `UV Mapping.png` and `heffalump-readme.txt`; keep them in the same folder).
+  * **Steps.** (1) Start the editor with no variable and choose **File > Import Model...**, `examples\own_readers\box_v1.gltf`: the
+    Console shows an error that says glTF 1.0 "is not read by default" and names `OKAY_OWN_GLTF1=1`. (2) Close the editor, `set
+    OKAY_OWN_GLTF1=1`, start it again and import the same file: an orange box stands on the ground; `box_v1.glb` gives the same box.
+    (3) `set OKAY_OWN_Q3BSP=1` and import `tiny_arena.bsp` (and then `tiny_arena.pk3`): a room 512 units wide (it is large: move the camera back to see it all) with a ceiling, four walls, a round bump in the middle of the floor and a small platform in a corner (a child node
+    `model_1`). It has no pictures: the textures are only names, so everything is untextured. (4) `set OKAY_OWN_SIB=1` and import
+    `heffalump.sib`: a flat ground, the Heffalump figure, a block and two cylinders, with the two pictures on the block ("This Way Up",
+    "UV Mapping"). Four copies of the block (instances) are **not** placed: a note says so.
+  * **How you can tell it is ours.** Without the variable the import fails (glTF 1.0, with a message that names the switch) or goes to
+    Assimp (`.bsp`, `.pk3`, `.sib`; if the release has Assimp, you get a model but no `Q3BSP:` / `SIB:` lines). With the variable set the
+    Console shows warning lines that start `Q3BSP:` or `SIB:` (what the reader did not read) and, for glTF 1.0, the box appears.
+    The About popup and the startup line do **not** list these three readers.
+  * **Real files.** The Quake III reader was checked on one real map (`SGDTT3.pk3` from Assimp's test tree, not shipped) and the SIB
+    reader on `heffalump.sib`; the numbers are in `docs/own_q3bsp_reader.md`, `docs/own_sib_reader.md` and `docs/model_corpus.md`.
+    **Unverified:** Windows (everything here was run on Linux), textures (no picture is shipped for the map), patches on a real map, the
+    SIB instances, mirrors and colours (the reader follows one sample file; see its page).
+
 ### 9. Own WAV decoder
 
 * **Variable.** `OKAY_OWN_WAV=1` (and `0` to force the old one). It is **not** part of `OKAY_OWN_STACK=1` and **not** in

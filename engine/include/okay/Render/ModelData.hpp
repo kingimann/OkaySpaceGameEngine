@@ -382,6 +382,14 @@ bool ReadPmxFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadLwsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 bool ReadOgexFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadMdlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Silo models (`.sib`), from the one sample file: shapes (positions, n-gon faces, texture coordinates per corner, a material per
+/// face), materials (first colour as diffuse, texture file inside the model's folder); instances, lights, groups, mirrors are not read.
+bool ReadSibFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadSibBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr);
+/// Quake III Arena maps (`.bsp` version 46, or a `.pk3` zip holding maps/<name>.bsp): the render geometry of every model, one part per
+/// (model, texture); polygon and mesh faces by their mesh vertices, patches tessellated; lightmaps, entities, brushes are not read.
+bool ReadQ3bspFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+bool ReadQ3bspBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr);
 /// glTF 1.0 (`.gltf` with asset.version 1.x, or the binary KHR_binary_glTF form): the default scene's node tree (matrix or
 /// translation / rotation / scale per node, under one root node "glTF"), one part per triangle primitive (triangles, strips
 /// and fans; POSITION, NORMAL, TEXCOORD_0, indices), one material per glTF material (diffuse colour or texture, emission,

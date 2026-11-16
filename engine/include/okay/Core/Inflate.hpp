@@ -335,13 +335,14 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
                 }
                 if (sym < 256) {
                     o[size++] = uint8_t(sym);
-                    // Up to two more literals straight from the table while their bits are in the buffer (no refill
-                    // needed): each is what the loop's next turn would decode (size stays below outSafe + 3, under the
-                    // cap); the loop's own bounds are tested again at its top.
+                    // Up to two more literals straight from the table: each is what the loop's next turn would decode
+                    // (size stays below outSafe + 3, under the cap; the loop's own bounds are tested again at its top).
+                    // Their bits are in the buffer: it held at least 48 when the first was decoded, three codes take at most 45. An
+                    // entry is a literal exactly when it is 1 to 4095 (symbol below 256, length 1 to 15).
                     for (int extra = 0; extra < 2; ++extra) {
                         const uint16_t e2 = lit.quick[buf & litMask];
+                        if (uint16_t(e2 - 1) >= 4095) break;
                         const int l2 = e2 & 15;
-                        if (e2 == 0 || (e2 >> 4) >= 256 || l2 > cnt) break;
                         buf >>= l2; cnt -= l2;
                         o[size++] = uint8_t(e2 >> 4);
                     }

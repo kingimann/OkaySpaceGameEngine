@@ -1753,12 +1753,17 @@ bool Builder::Animation() {
         double prev = -1e300;
         bool otherSet = false;
         std::size_t maxSet = 0;   // the tables below cover the sets the kept keys use (never more than the keys)
+        // The usual types (KeyTime int64, KeyValueFloat float32) read directly: the same (double)value as Array's [].
+        const bool ktLong = kt->type == 'l', kvFloat = kv->type == 'f';
+        auto timeAt = [&](std::size_t i) -> double { if (ktLong) { std::int64_t x; std::memcpy(&x, kt->data + i * 8, 8); return (double)x; } return (*kt)[i]; };
+        auto valueAt = [&](std::size_t i) -> double { if (kvFloat) { float x; std::memcpy(&x, kv->data + i * 4, 4); return (double)x; } return (*kv)[i]; };
         for (std::size_t i = 0; i < n; ++i) {
             const std::size_t sg = nextSet();
-            const double t = (*kt)[i] / kKTimePerSec;
-            if (!std::isfinite(t) || !std::isfinite((*kv)[i]) || t < prev) continue;   // keep keys sorted and finite
+            const double t = timeAt(i) / kKTimePerSec;
+            const double val = valueAt(i);
+            if (!std::isfinite(t) || !std::isfinite(val) || t < prev) continue;   // keep keys sorted and finite
             prev = t;
-            c.t.push_back(t); c.v.push_back((*kv)[i]);
+            c.t.push_back(t); c.v.push_back(val);
             if (nsets > 1) { c.set.push_back((std::uint32_t)sg); otherSet |= sg != 0; maxSet = std::max(maxSet, sg); }
             if (da && (sg * 4 + 1) < da->size()) c.hasSlopes = true;   // without the array every slope is 0
         }

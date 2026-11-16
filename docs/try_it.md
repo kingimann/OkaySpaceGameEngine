@@ -938,6 +938,29 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Visual Script: graphs without positions open laid out, clicks hit the node you see (branch `claude2/vs-editor-pile-and-why`, not merged or released yet)
+
+Issue #888, findings 17 and 18. Before this, a graph file whose nodes have no `pos` lines opened with every node on one
+spot, and a click or Delete went to a hidden node under the pile.
+
+1. Open the editor, then open `examples/visual_script/playground/coverage.okayscene` (shipped in the release's
+   `examples` folder; **File > Examples > Visual Script Node Playground** opens scenes from that folder).
+2. Select the **Host** object and open its graph (`coverage.okayvs`) in the **Visual Script** window.
+3. You should see a wide grid of nodes, not one pile: the On Start chain (On Start, print, Get Property, Set Var,
+   Set Property) in a row at the top, and the rest below it, grouped by colour (palette category). The tab does
+   **not** show "Unsaved": opening the graph does not change the file. Only after you edit and save are the new
+   places written as `pos` lines.
+4. Drag two nodes so they overlap. Click the overlapped part: the node drawn on top is the one selected and moved.
+   Press Delete: that node goes away, not one hidden under it.
+5. Drag a wire from a flow (white triangle) output and hold it over a value input (a coloured circle), or over an
+   event's input. While you still hold the mouse, the wire turns red and a box next to the cursor says why it can't
+   connect ("This wire carries flow ..."). Over a pin that fits, the wire stays white and the pin gets a green ring.
+6. Click **Problems** in the graph toolbar: the 1,444 "nothing runs this node" warnings of this catalog graph are one
+   row ("1444 nodes are not on any event's chain ..."). Click it to list them all; click again to fold them.
+
+**Status.** Layout, hit order, wire snapping and the why text are tested headless (`test_vs_autolayout`). The editor
+window itself: see the PR for whether it was built and looked at.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

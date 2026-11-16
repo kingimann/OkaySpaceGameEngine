@@ -588,6 +588,18 @@ passed, then lets it through every frame.
 Every Visual Script on an object is saved with the scene. Before this, only
 the first graph on an object survived a save.
 
+### Graphs saved without positions
+
+A `.okayvs` file does not need `pos` lines. When the editor opens one, nodes without a `pos` get a place:
+each event's chain in its own row, left to right along the flow wires (a value node one column left of the step it
+feeds), and every node no event runs on a grid grouped by palette category. Nodes with a saved `pos` never move, and
+the new places go under them so nothing overlaps. Opening the file does not mark the graph unsaved; the places are
+written only when you edit and save. The same layout every time (`VsAutoPlace` in `editor/VisualScriptEditor.hpp`).
+
+Where nodes overlap, the one drawn on top takes the click, the Delete key and a dropped wire. While you drag a wire
+over a pin that will not take it, the wire turns red and the reason shows next to the cursor. When a graph has more
+than 20 "nothing runs this node" warnings, the Problems list shows them as one row you can open.
+
 ## Pin types and the graph checker
 
 Every data pin has a type, shown by its colour (hover a pin to see it):

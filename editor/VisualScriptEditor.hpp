@@ -1009,6 +1009,12 @@ inline std::string VsEntryName(const std::string& type, const std::string& arg) 
 inline bool IsSwitchNode(const std::string& t);
 inline std::vector<std::string> VsEditorSwitchCases(const std::string& arg);
 
+/// A node's rectangle (graph units for layout, screen pixels for hit tests).
+struct VsNodeBox { int id; float x0, y0, x1, y1; };
+struct VsEditGraph;
+/// Give the nodes that had no `pos` line a place (see VsAutoPlace below).
+inline int VsAutoPlace(VsEditGraph& g, const std::set<int>& placed);
+
 struct VsEditGraph {
     std::vector<VsEditNode> nodes;
     std::vector<VsExecLink> execLinks;
@@ -1286,6 +1292,7 @@ public:
         std::istringstream f(text);
         std::string line;
         int maxId = 0;
+        std::set<int> placed;   // nodes that had a `pos` line
         while (std::getline(f, line)) {
             // A '#' starts a comment line; inside quotes it's text (Format "#{0}").
             if (!line.empty() && line.find_first_not_of(" \t") != std::string::npos &&
@@ -1313,7 +1320,7 @@ public:
             } else if (kind == "pos") {
                 int id = 0; float x = 0, y = 0;
                 if (!(ls >> id) || !VsReadCoord(ls, x) || !VsReadCoord(ls, y)) continue;
-                if (auto* n = find(id)) { n->x = x; n->y = y; }
+                if (auto* n = find(id)) { n->x = x; n->y = y; placed.insert(id); }
             } else if (kind == "exec") {
                 VsExecLink l{};
                 if (ls >> l.from >> l.pin >> l.to) execLinks.push_back(l);
@@ -1378,6 +1385,10 @@ public:
             for (auto& l : execLinks) if (l.from == n.id && l.pin == 4) l.pin = ncases;
         }
         nextId = maxId + 1;
+        // Nodes written without a `pos` line would all sit at (0, 0) as one pile.
+        // Lay them out; this only changes memory, so the file stays as it is until
+        // the user edits and saves.
+        VsAutoPlace(*this, placed);
     }
 };
 
@@ -2561,6 +2572,8 @@ struct VsEditState {
     bool   showDetails = false;  // the selected node's description, on the right
     bool   snapGrid = true;      // snap a moved node to the canvas grid on release
     bool   wasNodeDrag = false;
+    std::vector<VsNodeBox> lastBoxes;   // last frame's node boxes on screen, in draw order (top last)
+    bool   showAllUnreached = false;    // the checker list: every "nothing runs this node" row, not one summary
     bool   showHint = true;      // the one-line canvas hint
     int    focusNode = -1;       // centre the view on this node next frame
     bool   addAtCenter = false;  // "+ Add" in the toolbar: palette, node placed mid-view
@@ -2800,6 +2813,223 @@ inline std::string VsStepLine(const VsEditNode& n) {
     if (s.empty()) for (const auto& a : it.args) { if (!s.empty()) s += ' '; s += a; }
     return s.empty() ? std::string("(click to set up)") : s;
 }
+
+// ---- Auto layout, hit order, drag hints (pure: no ImGui context needed) -------
+// Written for this editor from its own drawing rules (issue #888, findings 17/18).
+
+
+/// A generous estimate of how big a node is drawn, in graph units, without an
+/// ImGui context. It follows the canvas's own sizes (header, rows, value boxes,
+/// message band) at zoom 1, divided by the canvas's layout factor (1.4), and
+/// counts text at 10 px a character, which is wider than the editor font.
+inline void VsEstimateNodeSize(const VsEditGraph& g, const VsEditNode& n, float& w, float& h) {
+    const float kLayout = 1.4f, kChar = 10.0f;
+    const float HEADER_H = 64.0f, ROW_H = 40.0f, PAD = 16.0f, BOX_W = 136.0f;
+    const VsDef* d = VsDefFor(g, n);
+    if (!d) { w = std::ceil(300.0f / kLayout); h = std::ceil((HEADER_H + ROW_H * 2.0f + PAD + ROW_H * 2.4f) / kLayout); return; }
+    const int leftRows = (d->execIn ? 1 : 0) + (int)d->dataIn.size();
+    const int rightRows = (int)d->execOut.size() + (int)d->dataOut.size();
+    const int rows = std::max(leftRows, rightRows);
+    float sw = 292.0f;
+    sw = std::max(sw, (float)VsNodeTitle(n, *d).size() * kChar + PAD * 2.0f);
+    if (d->param >= 3 && d->param <= 5) sw = std::max(sw, 320.0f + PAD * 2.0f);
+    if (!d->dataIn.empty()) {
+        std::size_t inL = 0, outL = 0;
+        for (const char* l : d->dataIn) inL = std::max(inL, std::strlen(l ? l : ""));
+        for (const char* l : d->dataOut) outL = std::max(outL, std::strlen(l ? l : ""));
+        for (const char* l : d->execOut) outL = std::max(outL, std::strlen(l ? l : ""));
+        sw = std::max(sw, PAD + inL * kChar + 8.0f + BOX_W + PAD + outL * kChar + PAD);
+    }
+    // Body rows, the value field, a Switch's "+ case" row, and room for the
+    // tallest message band (a "Needs ..." line with its Add button).
+    float sh = HEADER_H + rows * ROW_H + (d->param ? ROW_H + 10.0f : 0.0f) + (IsSwitchNode(n.type) ? ROW_H : 0.0f) + PAD + ROW_H * 2.4f;
+    // Whole units, so a layout built from these saves (as whole numbers) unchanged.
+    w = std::ceil(sw / kLayout);
+    h = std::ceil(sh / kLayout);
+}
+
+/// Places every node whose id is not in `placed` (nodes loaded without a `pos`
+/// line). Nodes in `placed` never move. Returns how many nodes were placed.
+///
+/// The rule:
+///  - Everything new goes in a block under the saved nodes (left-aligned with
+///    them), so it can't land on them. With no saved nodes it starts at (0, 0).
+///  - First, one band per event (in file order): the event, then each flow step
+///    one column to the right of the step that runs it (following exec wires,
+///    breadth first). A value node feeding a step sits one column to its left.
+///  - Then the nodes nothing runs, grouped by palette category (category order,
+///    then file order), on a grid whose width grows with the group's size.
+///  - Columns are as wide as their widest node plus a gap, rows as tall as their
+///    tallest node plus a gap, so boxes never overlap. Same input, same layout.
+inline int VsAutoPlace(VsEditGraph& g, const std::set<int>& placed) {
+    std::vector<std::size_t> todo;
+    for (std::size_t i = 0; i < g.nodes.size(); ++i) if (!placed.count(g.nodes[i].id)) todo.push_back(i);
+    if (todo.empty()) return 0;
+    const float GAP_X = 60.0f, GAP_Y = 40.0f, BLOCK_GAP = 120.0f;
+    std::map<int, std::size_t> index;
+    for (std::size_t i = 0; i < g.nodes.size(); ++i) index.emplace(g.nodes[i].id, i);
+    std::vector<float> nw(g.nodes.size()), nh(g.nodes.size());
+    for (std::size_t i = 0; i < g.nodes.size(); ++i) VsEstimateNodeSize(g, g.nodes[i], nw[i], nh[i]);
+
+    // Origin: under the saved nodes.
+    float ox = 0.0f, oy = 0.0f;
+    bool anyPlaced = false;
+    for (std::size_t i = 0; i < g.nodes.size(); ++i) {
+        if (!placed.count(g.nodes[i].id)) continue;
+        if (!anyPlaced) { ox = g.nodes[i].x; oy = g.nodes[i].y + nh[i]; anyPlaced = true; }
+        ox = std::min(ox, g.nodes[i].x);
+        oy = std::max(oy, g.nodes[i].y + nh[i]);
+    }
+    ox = std::floor(ox); oy = std::ceil(oy);   // whole units: the file stores them as whole numbers
+    if (anyPlaced) oy += BLOCK_GAP;
+
+    std::vector<char> done(g.nodes.size(), 0);
+    for (std::size_t i = 0; i < g.nodes.size(); ++i) if (placed.count(g.nodes[i].id)) done[i] = 1;
+    int count = 0;
+    float y = oy;
+
+    // Wires by node, in file order.
+    std::map<int, std::vector<int>> execNext;      // from -> to (sorted by pin, then file order)
+    {
+        std::vector<VsExecLink> ex = g.execLinks;
+        std::stable_sort(ex.begin(), ex.end(), [](const VsExecLink& a, const VsExecLink& b) { return a.pin < b.pin; });
+        for (const auto& l : ex) execNext[l.from].push_back(l.to);
+    }
+    std::map<int, std::vector<int>> producers;     // consumer -> producers (by input pin)
+    {
+        std::vector<VsDataLink> da = g.dataLinks;
+        std::stable_sort(da.begin(), da.end(), [](const VsDataLink& a, const VsDataLink& b) { return a.inPin < b.inPin; });
+        for (const auto& l : da) producers[l.consumer].push_back(l.producer);
+    }
+
+    // ---- One band per event ----
+    for (std::size_t ri = 0; ri < g.nodes.size(); ++ri) {
+        const VsEditNode& root = g.nodes[ri];
+        const VsDef* rd = VsDefFor(g, root);
+        const bool isEvent = !VsEntryName(root.type, root.arg).empty() || (rd && !rd->execIn && !rd->execOut.empty());
+        if (!isEvent) continue;
+        // Column of each node in this band.
+        std::vector<std::pair<std::size_t, int>> band;   // node index, column (in placing order)
+        std::set<int> seen;
+        std::vector<std::pair<int, int>> queue;          // id, column
+        queue.push_back({root.id, 0}); seen.insert(root.id);
+        for (std::size_t q = 0; q < queue.size(); ++q) {
+            const int id = queue[q].first, col = queue[q].second;
+            auto it = index.find(id);
+            if (it == index.end()) continue;
+            if (!done[it->second]) { band.push_back({it->second, col}); done[it->second] = 1; }
+            auto nx = execNext.find(id);
+            if (nx == execNext.end()) continue;
+            for (int to : nx->second) if (seen.insert(to).second) queue.push_back({to, col + 1});
+        }
+        // Value nodes feeding the band: one column left of what they feed.
+        for (std::size_t b = 0; b < band.size(); ++b) {
+            const int id = g.nodes[band[b].first].id, col = band[b].second;
+            auto pr = producers.find(id);
+            if (pr == producers.end()) continue;
+            for (int p : pr->second) {
+                auto it = index.find(p);
+                if (it == index.end() || done[it->second]) continue;
+                done[it->second] = 1;
+                band.push_back({it->second, col - 1});
+            }
+        }
+        if (band.empty()) continue;
+        int cmin = 0, cmax = 0;
+        for (const auto& b : band) { cmin = std::min(cmin, b.second); cmax = std::max(cmax, b.second); }
+        std::vector<float> colW((std::size_t)(cmax - cmin + 1), 0.0f), colH((std::size_t)(cmax - cmin + 1), 0.0f);
+        for (const auto& b : band) colW[(std::size_t)(b.second - cmin)] = std::max(colW[(std::size_t)(b.second - cmin)], nw[b.first]);
+        std::vector<float> colX(colW.size(), ox);
+        for (std::size_t c = 1; c < colW.size(); ++c) colX[c] = colX[c - 1] + colW[c - 1] + GAP_X;
+        float bandH = 0.0f;
+        for (const auto& b : band) {
+            const std::size_t c = (std::size_t)(b.second - cmin);
+            VsEditNode& n = g.nodes[b.first];
+            n.x = colX[c]; n.y = y + colH[c];
+            colH[c] += nh[b.first] + GAP_Y;
+            bandH = std::max(bandH, colH[c]);
+            ++count;
+        }
+        y += bandH + GAP_Y;
+    }
+
+    // ---- The rest: a grid per palette category ----
+    std::map<int, std::vector<std::size_t>> byCat;
+    for (std::size_t i : todo) {
+        if (done[i]) continue;
+        const VsDef* d = VsDefFor(g, g.nodes[i]);
+        byCat[d ? d->cat : (int)CAT_COUNT].push_back(i);
+    }
+    for (const auto& kv : byCat) {
+        const std::vector<std::size_t>& list = kv.second;
+        // About twice as wide as tall on screen: columns ~ sqrt(2 n), 4..40.
+        int cols = (int)std::ceil(std::sqrt(2.0 * (double)list.size()));
+        cols = std::max(1, std::min({cols < 4 ? 4 : cols, 40, (int)list.size()}));
+        float cellW = 0.0f;
+        for (std::size_t i : list) cellW = std::max(cellW, nw[i]);
+        cellW += GAP_X;
+        for (std::size_t r = 0; r < list.size(); r += (std::size_t)cols) {
+            float rowH = 0.0f;
+            for (std::size_t k = r; k < list.size() && k < r + (std::size_t)cols; ++k) {
+                VsEditNode& n = g.nodes[list[k]];
+                n.x = ox + (float)(k - r) * cellW; n.y = y;
+                rowH = std::max(rowH, nh[list[k]]);
+                done[list[k]] = 1;
+                ++count;
+            }
+            y += rowH + GAP_Y;
+        }
+        y += BLOCK_GAP - GAP_Y;
+    }
+    return count;
+}
+
+/// The node under (mx, my) that is drawn on top: the LAST box in draw order that
+/// holds the point. -1 when none does.
+inline int VsTopNodeAt(const std::vector<VsNodeBox>& drawOrder, float mx, float my) {
+    for (std::size_t i = drawOrder.size(); i-- > 0;) {
+        const VsNodeBox& b = drawOrder[i];
+        if (mx >= b.x0 && mx <= b.x1 && my >= b.y0 && my <= b.y1) return b.id;
+    }
+    return -1;
+}
+
+/// While a wire is dragged: the reason a pin refuses it, when the mouse is over
+/// that pin (its rectangle on screen). Empty when the pin takes the wire, there
+/// is no reason, or the mouse is elsewhere. Uses the mouse position, not ImGui's
+/// item hover, which is off for every other item while the drag holds the mouse.
+inline std::string VsDragWhyAt(bool fit, const std::string& why, ImVec2 pmin, ImVec2 pmax, ImVec2 mouse) {
+    if (fit || why.empty()) return {};
+    if (mouse.x < pmin.x || mouse.x > pmax.x || mouse.y < pmin.y || mouse.y > pmax.y) return {};
+    return why;
+}
+
+/// A pin a dropped wire could snap to: its key, screen position, and the draw
+/// rank of its node (higher = drawn later, on top).
+struct VsSnapCand { long long key; ImVec2 pos; int rank; };
+/// The closest candidate within `radius` of `m`; on a tie, the one drawn on top.
+/// -1 when none is close enough.
+inline long long VsPickSnap(const std::vector<VsSnapCand>& c, ImVec2 m, float radius) {
+    long long best = -1; float bd = radius * radius; int brank = -1;
+    for (const auto& k : c) {
+        const float dx = k.pos.x - m.x, dy = k.pos.y - m.y, dd = dx * dx + dy * dy;
+        if (dd >= radius * radius) continue;
+        if (best < 0 || dd < bd - 1e-3f || (std::fabs(dd - bd) <= 1e-3f && k.rank > brank)) { bd = dd; best = k.key; brank = k.rank; }
+    }
+    return best;
+}
+
+/// The checker's "nothing runs this node" warning (a node no event's chain reaches).
+template <class Issue> inline bool VsIsUnreachedIssue(const Issue& is) {
+    return is.severity != 0 && is.message.rfind("nothing runs this node", 0) == 0;
+}
+template <class Issue> inline std::size_t VsCountUnreached(const std::vector<Issue>& issues) {
+    std::size_t c = 0;
+    for (const auto& is : issues) if (VsIsUnreachedIssue(is)) ++c;
+    return c;
+}
+/// More of those than this: the checker list shows one summary row for them.
+inline constexpr std::size_t kVsFoldUnreached = 20;
 
 // Forget selection / undo history (a different graph was loaded).
 inline void ResetEditState(VsEditState& st) {
@@ -4223,8 +4453,8 @@ inline void Draw(EditorState& ed, bool* open) {
     };
     auto text = [&](ImVec2 p, ImU32 c, const char* t) { dl->AddText(font, fs, p, c, t); };
 
-    // Layers: 0 = comment frames, 1 = wires, 2 = nodes.
-    dl->ChannelsSplit(3);
+    // Layers: 0 = comment frames, 1 = wires, 2 = nodes, 3 = the front node, badges, the live wire.
+    dl->ChannelsSplit(4);
 
     // ---- Comment frames -----------------------------------------------------------
     dl->ChannelsSetCurrent(0);
@@ -4351,7 +4581,28 @@ inline void Draw(EditorState& ed, bool* open) {
     bool startNodeDrag = false;
     // "Connect to..." from a node's right-click menu: add this node (def) wired to one pin, or open the full list for it.
     struct PendingConnect { bool on = false, openAll = false, exec = false, fromOutput = false; int node = -1, pin = -1; const VsDef* def = nullptr; ImVec2 at{0, 0}; } pconn;
-    for (auto& n : g.nodes) {
+    // Clicks go to what you see (#888 finding 17). ImGui gives the mouse to the
+    // FIRST item submitted under it, but the LAST node drawn is the one on top.
+    // So the top node under the mouse (from last frame's boxes; the node being
+    // dragged while a drag lasts) is submitted first and drawn on its own layer
+    // above the others.
+    int frontNode = -1;
+    if (st.wasNodeDrag && st.selected >= 0 && g.find(st.selected)) frontNode = st.selected;
+    else if (canvasWindowHovered) frontNode = VsTopNodeAt(st.lastBoxes, mouse.x, mouse.y);
+    std::vector<std::size_t> nodeOrder;
+    nodeOrder.reserve(g.nodes.size());
+    for (std::size_t i = 0; i < g.nodes.size(); ++i) if (g.nodes[i].id == frontNode) nodeOrder.push_back(i);
+    for (std::size_t i = 0; i < g.nodes.size(); ++i) if (g.nodes[i].id != frontNode) nodeOrder.push_back(i);
+    std::map<int, int> drawRank;   // node id -> draw position (higher = on top); wire drops prefer it on a tie
+    for (std::size_t i = 0; i < g.nodes.size(); ++i) drawRank[g.nodes[i].id] = g.nodes[i].id == frontNode ? (int)g.nodes.size() : (int)i;
+    std::vector<VsNodeBox> drawnBoxes;
+    drawnBoxes.reserve(g.nodes.size());
+    VsNodeBox frontBox{-1, 0, 0, 0, 0};
+    // During a wire drag: why the pin under the mouse refuses it (#888 finding 18).
+    std::string dragWhy;
+    for (std::size_t oi = 0; oi < nodeOrder.size(); ++oi) {
+        auto& n = g.nodes[nodeOrder[oi]];
+        dl->ChannelsSetCurrent(n.id == frontNode ? 3 : 2);
         const VsDef* d = VsDefFor(g, n);
         if (!d) continue;
         int leftRows  = (d->execIn ? 1 : 0) + (int)d->dataIn.size();
@@ -4392,6 +4643,11 @@ inline void Draw(EditorState& ed, bool* open) {
             d->dataIn.empty() ? 0.0f : PAD + inLabelW + 8.0f * z + BOX_W + PAD + outLabelW + PAD});
         ImVec2 p0 = W2S(n.x, n.y), p1 = ImVec2(p0.x + NODE_W, p0.y + h);
         nodeRect[n.id] = {p0, p1};
+        {   // its hit box, pins included (they stick out of the sides)
+            const float ph = std::max(26.0f, 32.0f * z) * 0.5f;
+            const VsNodeBox nb{n.id, p0.x - ph, p0.y, p1.x + ph, p1.y};
+            if (n.id == frontNode) frontBox = nb; else drawnBoxes.push_back(nb);
+        }
         const bool hovered = ImGui::IsMouseHoveringRect(p0, p1) && canvasWindowHovered;
         const bool isSel = st.sel.count(n.id) > 0 || st.selected == n.id;
 
@@ -4847,7 +5103,10 @@ inline void Draw(EditorState& ed, bool* open) {
                 }
                 if (fit) dl->AddCircle(pp, PIN_R + 5.0f * z, IM_COL32(140, 230, 160, 240), 18, 2.5f * z);
                 else dl->AddCircleFilled(pp, PIN_R + 2.0f * z, IM_COL32(10, 10, 14, 160), 16);
-                if (!fit && !why.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", why.c_str());
+                // Not IsItemHovered(): that is false for every other item while the drag holds the mouse.
+                const float hh = hit * 0.5f;
+                const std::string w = VsDragWhyAt(fit, why, ImVec2(pp.x - hh, pp.y - hh), ImVec2(pp.x + hh, pp.y + hh), io.MousePos);
+                if (!w.empty() && dragWhy.empty() && canvasWindowHovered) dragWhy = w;   // the front node comes first
             }
             if (kind == 1 && side == 0 && ImGui::BeginDragDropTarget()) {
                 const char* label = (idx >= 0 && idx < (int)d->dataIn.size()) ? d->dataIn[(std::size_t)idx] : "";
@@ -4912,6 +5171,9 @@ inline void Draw(EditorState& ed, bool* open) {
 
         ImGui::PopID();
     }
+    if (frontBox.id >= 0) drawnBoxes.push_back(frontBox);   // drawn last: on top
+    st.lastBoxes = std::move(drawnBoxes);
+    dl->ChannelsSetCurrent(2);
     // Move the dragged node and every other selected node with it.
     if (startNodeDrag) {
         float dx = io.MouseDelta.x / (z * kLayout), dy = io.MouseDelta.y / (z * kLayout);
@@ -5029,7 +5291,7 @@ inline void Draw(EditorState& ed, bool* open) {
         if (!hot) wc = (wc & 0x00FFFFFF) | (200u << 24);
         bezier(a->second, b->second, wc, (hot ? 3.4f : 2.6f) * std::max(0.7f, z));
     }
-    dl->ChannelsSetCurrent(2);
+    dl->ChannelsSetCurrent(3);
     for (const VsBadge& b : badges) {
         const float r = 7.0f * std::max(0.8f, z);
         dl->AddCircleFilled(b.c, r, b.col, 16);
@@ -5045,26 +5307,37 @@ inline void Draw(EditorState& ed, bool* open) {
         auto from = pinPos.find(pk(st.dragNode, st.dragExec ? 0 : 1, st.dragFromOutput ? 1 : 0, st.dragPin));
         if (from != pinPos.end()) {
             ImVec2 m = io.MousePos;
+            // Over a pin that won't take it: the wire turns red and says why, next to the cursor.
             bezier(st.dragFromOutput ? from->second : m, st.dragFromOutput ? m : from->second,
-                   IM_COL32(255, 255, 255, 170), 2.6f * std::max(0.7f, z));
+                   dragWhy.empty() ? IM_COL32(255, 255, 255, 170) : IM_COL32(240, 90, 80, 230), 2.6f * std::max(0.7f, z));
+        }
+        if (!dragWhy.empty()) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
+            ImGui::TextColored(ImVec4(1.0f, 0.62f, 0.55f, 1.0f), "Can't connect here");
+            ImGui::TextUnformatted(dragWhy.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
         }
         if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
             // Find a pin under the mouse of the opposite side + same kind.
             ImVec2 m = io.MousePos;
             float snap = std::max(26.0f, 30.0f * z);
-            int bestNode = -1, bestIdx = -1; float bestD = snap * snap;   // forgiving snap radius
+            int bestNode = -1, bestIdx = -1;   // forgiving snap radius
             int wantSide = st.dragFromOutput ? 0 : 1;   // connect to an input if we came from an output
             int wantKind = st.dragExec ? 0 : 1;
+            std::vector<VsSnapCand> cands;
             for (auto& kvp : pinPos) {
                 int node = (int)(kvp.first >> 20);
                 int kind = (int)((kvp.first >> 18) & 3);
                 int side = (int)((kvp.first >> 16) & 3);
-                int idx  = (int)(kvp.first & 0xFFFF);
                 if (kind != wantKind || side != wantSide || node == st.dragNode) continue;
-                float dx = kvp.second.x - m.x, dy = kvp.second.y - m.y;
-                float dd = dx * dx + dy * dy;
-                if (dd < bestD) { bestD = dd; bestNode = node; bestIdx = idx; }
+                auto rk = drawRank.find(node);
+                cands.push_back({kvp.first, kvp.second, rk == drawRank.end() ? -1 : rk->second});
             }
+            // Closest pin; on a tie (stacked nodes) the one drawn on top, not the lowest id.
+            const long long bestKey = VsPickSnap(cands, m, snap);
+            if (bestKey >= 0) { bestNode = (int)(bestKey >> 20); bestIdx = (int)(bestKey & 0xFFFF); }
             if (bestNode >= 0) {
                 if (st.dragExec) {
                     const int dest = st.dragFromOutput ? bestNode : st.dragNode;
@@ -5321,8 +5594,21 @@ inline void Draw(EditorState& ed, bool* open) {
         ImGui::BeginChild("##vsissuelist", ImVec2(w, std::min(260.0f, 34.0f + 26.0f * (float)st.issues.size())), ImGuiChildFlags_Borders);
         ImGui::TextDisabled("Problems the checker found");
         ImGui::Separator();
+        // A catalog graph can have hundreds of nodes no event runs: one row for
+        // them (click to list them all), so a real problem isn't buried.
+        const std::size_t unreached = VsCountUnreached(st.issues);
+        const bool foldUnreached = unreached > kVsFoldUnreached && !st.showAllUnreached;
+        if (unreached > kVsFoldUnreached) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.78f, 0.4f, 1));
+            const std::string row = st.showAllUnreached
+                ? "Hide the " + std::to_string(unreached) + " \"nothing runs this node\" warnings"
+                : "Warning: " + std::to_string(unreached) + " nodes are not on any event's chain, so nothing runs them (click to list them)";
+            if (ImGui::Selectable(row.c_str())) st.showAllUnreached = !st.showAllUnreached;
+            ImGui::PopStyleColor();
+        }
         for (std::size_t i = 0; i < st.issues.size(); ++i) {
             const auto& is = st.issues[i];
+            if (foldUnreached && VsIsUnreachedIssue(is)) continue;
             ImGui::PushID((int)i);
             ImGui::PushStyleColor(ImGuiCol_Text, is.severity == 0 ? ImVec4(1.0f, 0.5f, 0.45f, 1) : ImVec4(0.95f, 0.78f, 0.4f, 1));
             std::string row = std::string(is.severity == 0 ? "Error: " : "Warning: ") + is.message;

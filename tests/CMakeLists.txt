@@ -1368,6 +1368,12 @@ target_link_libraries(test_vs_editor_model PRIVATE okay::engine)
 target_compile_definitions(test_vs_editor_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_editor_model COMMAND test_vs_editor_model)
 
+add_executable(test_vs_autolayout test_vs_autolayout.cpp)
+target_include_directories(test_vs_autolayout PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_autolayout PRIVATE okay::engine)
+target_compile_definitions(test_vs_autolayout PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_autolayout COMMAND test_vs_autolayout)
+
 add_executable(test_vs_names test_vs_names.cpp)
 target_include_directories(test_vs_names PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
 target_link_libraries(test_vs_names PRIVATE okay::engine)

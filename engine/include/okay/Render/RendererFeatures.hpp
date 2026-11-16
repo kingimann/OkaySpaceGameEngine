@@ -12,9 +12,10 @@
 //              tonemap curve and rs.tonemap, post.grading, the vignette (with
 //              smoothness; PostVignetteHandled() is set true so the host skips
 //              its overlay), post.bloom and post.fxaa are read (PlanScenePost /
-//              ApplyScenePost); post.ssao drives ApplySSAO with the scene's radius, intensity and power; post.dof is drawn by ApplyDof (DofMath.hpp). Procedural sky colours come
+//              ApplyScenePost); post.ssao drives ApplySSAO with the scene's radius, intensity and power (lit meshes only: they are drawn
+//              per pixel while it is on); post.dof is drawn by ApplyDof (DofMath.hpp). Procedural sky colours come
 //              from EffectiveSkyColors; the disc, halo, clouds and stars are not
-//              drawn. ApplySSAO reads the process-wide switch only; ApplyBloom, ApplyFXAA
+//              drawn. ApplySSAO also reads the process-wide switch; ApplyBloom, ApplyFXAA
 //              and ApplyColorGrade also still read theirs. PerPixelLighting is
 //              read only here, and ShadowsUsePerPixel (default on) lights per
 //              pixel while a shadow map exists, so shadows show by default.

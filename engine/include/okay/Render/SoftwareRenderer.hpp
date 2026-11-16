@@ -1473,25 +1473,48 @@ inline float& SSAOPower()    { static float v = 1.0f; return v; }   // 1 = the o
 /// Occlusion): the shared formula postq::ApplyPowered, strength capped at 1 like the GPU's ssao::Apply.
 inline bool&  SSAOSceneFormula() { static bool v = false; return v; }
 
+/// The sample pattern of ApplySSAO: kSSAOSamples points in the hemisphere above a surface. Each is a direction (z along
+/// the normal, never lower than 0.15 so a slanted flat surface does not occlude itself) times a distance (0.2 to 1 of
+/// the radius, the later ones farther). The directions turn around the normal by the golden angle (137.5 degrees) and
+/// their heights follow the golden ratio sequence, so the first few already cover the hemisphere evenly.
+/// Worked out for this engine from that general idea (a hemisphere kernel); no other renderer's kernel was used.
+inline constexpr int kSSAOSamples = 12;
+struct SSAOKernelTable {
+    Vec3 s[kSSAOSamples];
+    SSAOKernelTable() {
+        for (int k = 0; k < kSSAOSamples; ++k) {
+            const float phi = (float)k * 2.39996323f;                              // golden angle
+            float u = (float)k * 0.61803399f + 0.5f; u -= std::floor(u);           // golden ratio sequence in [0, 1)
+            const float z = 0.15f + 0.85f * u;
+            const float rxy = std::sqrt(std::fmax(0.0f, 1.0f - z * z));
+            const float t = (float)(k + 1) / (float)kSSAOSamples;
+            const float dist = 0.2f + 0.8f * t * t;
+            s[k] = Vec3{std::cos(phi) * rxy, std::sin(phi) * rxy, z} * dist;
+        }
+    }
+};
+inline const SSAOKernelTable& SSAOKernel() { static const SSAOKernelTable t; return t; }
+
 /// Darken creases/contacts using the per-pixel world position + normal G-buffer:
 /// sample a hemisphere around each pixel and count how many samples are occluded
 /// by nearer geometry. Adds soft contact shadows / depth that flat lighting can't.
+///
+/// Why the pattern is turned per pixel: with the same 8 samples in the same directions for every pixel, a crease is
+/// seen at 8 fixed distances, so the darkness near it was a staircase of 8 steps (stripes on a wall, a hard-edged
+/// grey shelf on the floor beside it). Now each half-resolution texel turns the pattern by one of 16 angles taken
+/// from a 4x4 ordered tile (texel x and y modulo 4), and the blur below is a 4x4 box, exactly one tile, so the 16
+/// turns average out instead of leaving noise: the darkness fades smoothly with distance from the crease.
+/// (Measured in tests/test_software_ssao_quality.cpp; the numbers are in docs/render_status.md.)
 inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
     if (r.gvalid.empty()) return;
     const int W = r.width, H = r.height;
     const float radius = SSAORadius(), strength = SSAOStrength();
-    static const int K = 8;
-    static Vec3 kern[K];
-    static bool init = false;
-    if (!init) {
-        init = true; unsigned s = 1469598103u;
-        auto rnd = [&]() { s = s * 1664525u + 1013904223u; return (float)((s >> 8) & 0xFFFFFF) / 16777216.0f; };
-        for (int k = 0; k < K; ++k) {
-            float x = rnd() * 2 - 1, y = rnd() * 2 - 1, z = rnd() * 0.85f + 0.15f;
-            float l = std::sqrt(x * x + y * y + z * z); if (l < 1e-4f) l = 1;
-            float sc = 0.2f + 0.8f * ((float)(k + 1) / K) * ((float)(k + 1) / K);
-            kern[k] = Vec3{x / l, y / l, z / l} * sc;
-        }
+    const SSAOKernelTable& kern = SSAOKernel();
+    static const int kTile[16] = {0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5};   // 4x4 ordered (Bayer) tile
+    float tileCos[16], tileSin[16];
+    for (int t = 0; t < 16; ++t) {
+        const float a = ((float)kTile[t] + 0.5f) * (6.2831853f / 16.0f);
+        tileCos[t] = std::cos(a); tileSin[t] = std::sin(a);
     }
     // Compute AO at HALF resolution (1/4 the hemisphere evaluations), then
     // bilinear-upsample when modulating the full-res color. The G-buffer stays
@@ -1508,9 +1531,13 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
             Vec3 up = std::fabs(N.y) > 0.99f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
             Vec3 T = Vec3::Cross(up, N); { float l = T.Magnitude(); T = l > 1e-5f ? T * (1.0f / l) : Vec3{1, 0, 0}; }
             Vec3 B = Vec3::Cross(N, T);
+            const int tile = (hy & 3) * 4 + (hx & 3);
+            const float cr = tileCos[tile], sr = tileSin[tile];
             float occWeighted = 0.0f; int tot = 0;
-            for (int k = 0; k < K; ++k) {
-                Vec3 sp = P + (T * kern[k].x + B * kern[k].y + N * kern[k].z) * radius;
+            for (int k = 0; k < kSSAOSamples; ++k) {
+                const Vec3& kv = kern.s[k];
+                const float kx = kv.x * cr - kv.y * sr, ky = kv.x * sr + kv.y * cr;   // the pattern, turned about the normal
+                Vec3 sp = P + (T * kx + B * ky + N * kv.z) * radius;
                 Vec4 c = vp * Vec4{sp, 1.0f}; if (c.w <= 0) continue;
                 float iw = 1.0f / c.w;
                 int sx = (int)((c.x * iw * 0.5f + 0.5f) * W), sy = (int)((1.0f - (c.y * iw * 0.5f + 0.5f)) * H);
@@ -1533,20 +1560,30 @@ inline void ApplySSAO(Raster& r, const Mat4& vp, const Vec3& eye) {
             }
         }
     });
-    // Blur the half-res AO (3x3 box) to kill the hemisphere-sampling noise — SSAO
-    // is inherently grainy and needs this smoothing pass. Cheap at half resolution.
+    // Blur the half-res AO with a 4x4 box (from one texel left/up to two right/down) in two 4-tap passes. It is one
+    // full period of the rotation tile above, so the pattern's 16 turns cancel; near the picture's edge the box is
+    // cut and averages what is left. SSAO is inherently grainy and needs this smoothing pass; it is cheap at half
+    // resolution. The scratch picture is local (this function may run for two rasters at once).
     {
-        static std::vector<float> aob; aob = ao;
+        std::vector<float> mid(ao.size());
         ParallelRows(0, hh, [&](int ya, int yb) {
             for (int y = ya; y < yb; ++y)
             for (int x = 0; x < hw; ++x) {
                 float s = 0; int c = 0;
-                for (int dy = -1; dy <= 1; ++dy) {
+                for (int dx = -1; dx <= 2; ++dx) {
+                    int nx = x + dx; if (nx < 0 || nx >= hw) continue;
+                    s += ao[(std::size_t)y * hw + nx]; ++c;
+                }
+                mid[(std::size_t)y * hw + x] = c ? s / c : 1.0f;
+            }
+        });
+        ParallelRows(0, hh, [&](int ya, int yb) {
+            for (int y = ya; y < yb; ++y)
+            for (int x = 0; x < hw; ++x) {
+                float s = 0; int c = 0;
+                for (int dy = -1; dy <= 2; ++dy) {
                     int ny = y + dy; if (ny < 0 || ny >= hh) continue;
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        int nx = x + dx; if (nx < 0 || nx >= hw) continue;
-                        s += aob[(std::size_t)ny * hw + nx]; ++c;
-                    }
+                    s += mid[(std::size_t)ny * hw + x]; ++c;
                 }
                 ao[(std::size_t)y * hw + x] = c ? s / c : 1.0f;
             }
@@ -2048,7 +2085,10 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
     RenderShadowMap(scene, vp, eye);   // depth-from-light pre-pass for cast shadows
     RenderLocalShadowMaps(scene, vp, eye);   // spot / point / area light shadow maps
     // The process-wide switch, or the scene's own Post-processing Ambient Occlusion switch (post.ssao).
-    if (SSAOEnabled() || rs.post.ssao) {      // allocate the SSAO G-buffer for this frame
+    // Only meshes drawn per pixel fill the G-buffer. With Shadows on (the default) the meshes that receive shadows already are;
+    // so that the switch also works with Shadows and Per-pixel lighting off, every lit mesh is drawn per pixel while it is on.
+    const bool aoOn = SSAOEnabled() || rs.post.ssao;
+    if (aoOn) {      // allocate the SSAO G-buffer for this frame
         std::size_t n = (std::size_t)r.width * r.height;
         r.gpos.assign(n, Vec3{0, 0, 0}); r.gnrm.assign(n, Vec3{0, 0, 0});
         r.gvalid.assign(n, 0);
@@ -2402,6 +2442,7 @@ inline void RenderMeshes(Raster& r, const Scene& scene, const Mat4& vp, const Ve
                                    || mr->shader == MeshRenderer::Shader::Posterize
                                    || mr->shader == MeshRenderer::Shader::Velvet
                                    || mr->rimStrength > 0.0f || mr->triplanar
+                                   || aoOn
                                    || (ShadowsUsePerPixel() && mr->receiveShadows
                                        && (Shadows().enabled || LocalShadowsActive())))
                                   && !unlit && !useMatcap;

@@ -199,7 +199,42 @@ examples/ example scenes to try: in the editor use File > Open and pick
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the
 launcher and a copy sits in Tools/. Don't separate an .exe from its SDL2.dll.
+
+Fonts built into the programs and their licences: THIRD_PARTY_NOTICES.txt and
+the licenses/ folder.
 EOF
+
+# ---- Font notices (CLAUDE.md rule 19a: the licence travels with the asset) -----------------
+# OkaySpace.exe, Tools/OkayEngine.exe and Tools/OkaySpacePlayer.exe all carry the code font JetBrains Mono (the script
+# editor's font, and since 2026-11-16 baked into OkayUI's atlas, which every program linking OkayUI uses). The SIL Open Font
+# License asks that its text and the copyright line come with the font: licenses/ at the top of the distribution (so also in
+# the zip and the installer, which take this folder whole), plus a copy in Tools/ beside the editor and the player. A missing
+# licence file stops the build rather than shipping without it.
+for lic in assets/fonts/JetBrainsMono-OFL.txt assets/fonts/DejaVuSans-LICENSE.txt; do
+    [ -s "$lic" ] || { echo "error: $lic is missing: a font licence must ship with the release (docs/THIRD_PARTY.md)" >&2; exit 1; }
+done
+mkdir -p "$OUT_DIR/licenses" "$OUT_DIR/Tools/licenses"
+cp assets/fonts/JetBrainsMono-OFL.txt assets/fonts/DejaVuSans-LICENSE.txt "$OUT_DIR/licenses/"
+cp assets/fonts/JetBrainsMono-OFL.txt "$OUT_DIR/Tools/licenses/"
+cat > "$OUT_DIR/THIRD_PARTY_NOTICES.txt" <<'NOTICES'
+Fonts that ship with OkaySpace
+==============================
+
+JetBrains Mono (Regular)
+  Built into OkaySpace.exe, Tools/OkayEngine.exe and Tools/OkaySpacePlayer.exe
+  (the script editor's code font and the code font of the OkayUI toolkit).
+  Copyright 2020 The JetBrains Mono Project Authors
+  (https://github.com/JetBrains/JetBrainsMono)
+  Licensed under the SIL Open Font License, Version 1.1.
+  Full text: licenses/JetBrainsMono-OFL.txt (a copy is in Tools/licenses/).
+
+DejaVu Sans
+  Assets/Fonts/DejaVuSans.ttf, a starter font for your games.
+  Licence: licenses/DejaVuSans-LICENSE.txt (also next to the font).
+NOTICES
+cp "$OUT_DIR/THIRD_PARTY_NOTICES.txt" "$OUT_DIR/Tools/"
+[ -s "$OUT_DIR/licenses/JetBrainsMono-OFL.txt" ] && [ -s "$OUT_DIR/Tools/licenses/JetBrainsMono-OFL.txt" ] || {
+    echo "error: the JetBrains Mono licence did not make it into the distribution" >&2; exit 1; }
 
 echo
 echo "Built Windows distribution in $OUT_DIR/:"

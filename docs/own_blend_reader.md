@@ -13,7 +13,7 @@ Status: **side by side, off by default.** Assimp (when the build has it, `OKAY_U
 | `tests/test_blend_hostile.cpp` | Hostile input and mutation fuzz, built on its own under sanitizers (`blend_hostile`) |
 | `tests/test_model_corpus.cpp` | Real-file corpus rows for reader `blend` (`model_corpus`, needs `OKAY_MODEL_CORPUS`) |
 
-The reader file uses the standard library, `okay/Render/ModelData.hpp` (header-only types) and the in-tree inflate (`okay::Inflate`, `Core/ImageDecode.cpp`), so the hostile test builds it without the engine library.
+The reader file uses the standard library, `okay/Render/ModelData.hpp` (header-only types) and the in-tree inflate (`okay::Inflate`, a thin wrapper in `Core/ImageDecode.cpp` over the one decoder in `Core/Inflate.hpp`), so the hostile test builds it without the engine library.
 
 ## Turning it on
 

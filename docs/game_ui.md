@@ -30,7 +30,7 @@ game with `OKAY_CLASSIC_UI=1`.
 ## Adding UI in the editor
 
 The **UI** button on the Scene toolbar switches to the UI editing view. Its
-**+ Add** button (and **GameObject → Create → UI**) lists everything you can add:
+**+ Add** button (and **GameObject → UI**) lists everything you can add:
 
 | Menu | What's in it |
 | --- | --- |

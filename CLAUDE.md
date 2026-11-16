@@ -8,17 +8,19 @@ then this file gets updated. Keep this file short and true.
 
 1. **Keep working.** Do not stop to ask or to wait. When a decision is the owner's, pick the safe default, say what
    you picked, and carry on. Use several agents at once for independent work.
-2. **Always be working on something real, and keep the two Claudes apart.** (Owner rule, 2026-11-15: "have Claude 2
-   work on unfinished features, you only work on third party".)
-   - **Claude 2 (`claude2/*`, issue #422)** works on unfinished features (`docs/UNFINISHED.md` and its audits) and
-     bugs. It improves what we already have before it builds anything new: search the feature map and the code
-     first, extend and finish the existing feature (no second copy), and say in every claim what exists and what
-     the gap is. (Owner, 2026-11-15: "make sure Claude 2 is developing features we already have, but improving
-     them where we already have them".)
-   - **The coordinator session and its agents** work on building our own replacements for third-party libraries
-     (`docs/own_code_roadmap.md`) and on coordinating: checking on Claude 2 (reading its reports, answering it,
-     reviewing its branches), reviews, merges and releases. The coordinator finishes a feature or bug branch that is
-     already in progress but does not start new feature work.
+2. **Always be working on something real, and keep the two Claudes apart.** (Owner rule, 2026-11-15: "have him work on
+   bug fixes and third party and you work on unfinished features", and "no duplicate features". This replaces the
+   earlier split of the same day, which was the other way round.)
+   - **Claude 2 (`claude2/*`, issue #422)** works on bug fixes and on building our own replacements for third-party
+     libraries (`docs/own_code_roadmap.md`: SDL2, Dear ImGui, the text editor, Assimp, ufbx, curl, libsodium).
+   - **The coordinator session and its agents (`claude/*`)** work on unfinished features (`docs/UNFINISHED.md` and its
+     audits) and on coordinating: reviews, merges, releases, CI, and checking on Claude 2 (reading its reports,
+     answering it). The coordinator also finishes the feature branches Claude 2 left parked.
+   - **No duplicate features, in either lane.** Before building anything, search the feature map and the code
+     (`python3 scripts/find_existing.py <keywords>`), then extend and finish what already exists instead of writing a
+     second copy, and say in every claim what exists and what the gap is. (Owner, 2026-11-15: "make sure Claude 2 is
+     developing features we already have, but improving them where we already have them", now for both lanes.) A
+     duplicate found later is compared first, then merged or deleted.
    - Waiting for CI is not a reason to stop: start or continue one of those things while it runs, and never sit
      polling GitHub. If an agent or the main session has nothing running, start more agents on the next items.
 3. **Explain plainly.** Short, simple sentences. Say what you did, what it means and what is left. No jargon
@@ -68,7 +70,10 @@ then this file gets updated. Keep this file short and true.
 
 11. **Release small and often** ("merge whatever is green and release"). Bump `CMakeLists.txt`, add a
     `ROADMAP.md` row and a plain-language `dist/CHANGELOG.txt` entry, merge, dispatch `release.yml` (ref `main`,
-    channel `latest`).
+    channel `latest`). **Keep sending releases even if the previous one is not out yet** (owner, 2026-11-15: "keep
+    sending out releases even if the previous one isn't out yet, so I can keep testing"): every release has its own new
+    version, and the publish step is serialized by a lock and never moves "latest" backwards (branch
+    `claude/release-parallel`; until it is merged, check that no other release is publishing before you dispatch).
 12. **Never re-run the release workflow for a version that already exists.** It rebuilds the programs and changes
     their checksums.
 13. **Check the release really worked**: the Supabase publish step, the "make latest" step, and `versions.json`
@@ -132,7 +137,8 @@ then this file gets updated. Keep this file short and true.
 24. **Grok finds bugs; we fix them.** The owner uses Grok (a second AI) only to read code and report bugs. Grok does
     not fix anything. Its findings go as comments on issue #888 (format and triage rules are in that issue). Every
     finding is reproduced by a test that fails before anything is changed; no test, no fix; a guess is labelled
-    "unconfirmed". Bugs in our own replacement code go to the coordinator's agents; bugs in features go to Claude 2.
+    "unconfirmed". Every bug goes to Claude 2 (a bug fix may touch any file, with a failing test and a claim marked
+    `Kind: bug`); the coordinator's agents fix a bug only inside a feature branch they are finishing.
     Cryptography findings follow rule 18 as well.
 25. **Claude 2 reports its usage.** With each result Claude 2 posts `Usage: about N% left` on issue #422, and
     `HANDOFF SOON` at about 20% and `HANDOFF NOW` at about 5%, naming its branches and what is unfinished, so the

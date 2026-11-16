@@ -10,7 +10,6 @@ add_library(okay_crypto STATIC
     src/Crypto/Poly1305.cpp
     src/Crypto/Aead.cpp
     src/Crypto/Blake2b.cpp
-    src/Crypto/Sha256.cpp
     src/Crypto/Sha512.cpp
     src/Crypto/X25519.cpp
     src/Crypto/Ed25519.cpp
@@ -192,6 +191,7 @@ add_library(okay_engine
     src/Audio/Mp3Decoder.cpp
     src/Audio/FlacDecoder.cpp
     src/Audio/WavDecoder.cpp
+    src/Audio/WavPlayback.cpp
     src/AI/Pathfinding.cpp
     src/AI/GridPath2D.cpp
     src/AI/NavMesh.cpp

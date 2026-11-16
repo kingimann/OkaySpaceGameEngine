@@ -3331,6 +3331,11 @@ add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
 # The import seam routes the batch-D formats (slots 22 to 26) to their own readers; needs the whole engine (ImportModelData).
 add_executable(test_own_dispatch_d test_own_dispatch_d.cpp)
 target_link_libraries(test_own_dispatch_d PRIVATE okay::engine)
+foreach(_f AC3D OGRE XGL IRR NFF)   # -DOKAY_OWN_<FMT>=ON (or -DOKAY_OWN_STACK=ON): the test then expects the own reader to be the default
+    if(OKAY_OWN_${_f})
+        target_compile_definitions(test_own_dispatch_d PRIVATE OKAY_EXPECT_OWN_${_f})
+    endif()
+endforeach()
 add_test(NAME own_dispatch_d COMMAND test_own_dispatch_d WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Batch E3 own readers (IQM / COB / NDO seam): one test per reader on SYNTHETIC fixtures built in memory (tests/e3_fixtures.hpp), each with its own

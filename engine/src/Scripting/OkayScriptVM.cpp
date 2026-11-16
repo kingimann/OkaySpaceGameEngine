@@ -3603,19 +3603,6 @@ struct OkayScriptVM::Impl {
             if (!ok) Log::Error("[assert] failed", a.size() > 1 ? (": " + a[1].AsString()) : std::string{});
             return Value{ok ? 1.0f : 0.0f};
         };
-        // format("hp={} of {}", hp, max) -> fills each {} with the next argument.
-        b["format"] = [](std::vector<Value>& a) {
-            if (a.empty()) return Value{std::string{}};
-            std::string fmt = a[0].AsString(), out;
-            std::size_t arg = 1;
-            for (std::size_t i = 0; i < fmt.size(); ++i) {
-                if (i + 1 < fmt.size() && fmt[i] == '{' && fmt[i + 1] == '}') {
-                    out += (arg < a.size()) ? a[arg++].AsString() : "";
-                    ++i;
-                } else out += fmt[i];
-            }
-            return Value{out};
-        };
         b["concat"] = [joinArgs](std::vector<Value>& a) { return Value{joinArgs(a, "")}; };
 
         // ---- Immediate-mode UI (forwarded to the host's ScriptUIBridge) ----
@@ -4078,15 +4065,6 @@ struct OkayScriptVM::Impl {
             Vec3 d = g->transform->Position() - me->transform->Position();
             float dist = d.Magnitude(), step = (a.size() > 1 ? a[1].AsFloat() : 2.0f) * rt.host->deltaTime;
             if (dist > 1e-5f) me->transform->SetPosition(me->transform->Position() + d * ((step >= dist ? dist : step) / dist));
-            return Value{};
-        };
-        b["face"] = [this, findNamed](std::vector<Value>& a) {   // turn toward a named object (3D yaw, else 2D Z)
-            GameObject* me = rt.host ? rt.host->gameObject : nullptr;
-            GameObject* g = findNamed(a.empty() ? std::string() : a[0].AsString());
-            if (!me || !g || g == me || !me->transform || !g->transform) return Value{};
-            Vec3 d = g->transform->Position() - me->transform->Position();
-            if (std::fabs(d.z) > 1e-4f) me->transform->localRotation = Quat::LookRotation(Vec3{-d.x, 0.0f, -d.z}.Normalized());
-            else me->transform->localRotation = Quat::Euler(0, 0, std::atan2(d.y, d.x) * 57.2957795f);
             return Value{};
         };
         b["is_active"] = [sceneOf](std::vector<Value>& a) {
@@ -8240,9 +8218,10 @@ struct OkayScriptVM::Impl {
             if (!file.empty()) Save::Clear(file);
             return Value{};
         };
+        // save_exists([file]): does the save FILE exist? (A save_game slot is has_save(slot).)
         b["save_exists"] = [saveFile](std::vector<Value>& a) -> Value {
             const std::string file = saveFile(a, 0);
-            return Value{!file.empty() && Save::FileExists(file)};
+            return Value{(!file.empty() && Save::FileExists(file)) ? 1.0f : 0.0f};
         };
         b["save_delete_file"] = [saveFile](std::vector<Value>& a) -> Value {
             const std::string file = saveFile(a, 0);
@@ -8275,7 +8254,7 @@ struct OkayScriptVM::Impl {
         b["atan"]  = [](std::vector<Value>& a) { return Value{std::atan(a.empty() ? 0 : a[0].AsFloat())}; };
         b["asin"]  = [](std::vector<Value>& a) { return Value{std::asin(a.empty() ? 0 : a[0].AsFloat())}; };
         b["acos"]  = [](std::vector<Value>& a) { return Value{std::acos(a.empty() ? 0 : a[0].AsFloat())}; };
-        b["log"]   = [](std::vector<Value>& a) { return Value{std::log(a.empty() ? 1 : a[0].AsFloat())}; };
+        b["Mathf.Log"] = [](std::vector<Value>& a) { return Value{std::log(a.empty() ? 1 : a[0].AsFloat())}; };   // log(...) prints
         b["exp"]   = [](std::vector<Value>& a) { return Value{std::exp(a.empty() ? 0 : a[0].AsFloat())}; };
         // Wrap a value into [lo, hi) — angles, looping indices, scrolling.
         b["wrap"]  = [](std::vector<Value>& a) {
@@ -8300,17 +8279,6 @@ struct OkayScriptVM::Impl {
             t = Mathf::Clamp01(t);
             t = t * t * (3.0f - 2.0f * t);
             return Value{Mathf::Lerp(x, y, t)};
-        };
-        // Clamp to [0,1] (Mathf.Clamp01).
-        b["clamp01"] = [](std::vector<Value>& a) {
-            return Value{Mathf::Clamp01(a.empty() ? 0.0f : a[0].AsFloat())};
-        };
-        // Where v lies between a and b, as 0..1 (Mathf.InverseLerp).
-        b["inverse_lerp"] = [](std::vector<Value>& a) {
-            float lo = a.size() > 0 ? a[0].AsFloat() : 0, hi = a.size() > 1 ? a[1].AsFloat() : 1,
-                  v  = a.size() > 2 ? a[2].AsFloat() : 0;
-            if (hi - lo == 0.0f) return Value{0.0f};
-            return Value{Mathf::Clamp01((v - lo) / (hi - lo))};
         };
         // ---- Easing curves: map a normalized time t (0..1) to an eased 0..1 ----
         // For tweening/animation. Pass the raw progress; multiply the result into a
@@ -8356,20 +8324,6 @@ struct OkayScriptVM::Impl {
             if (a.size() > 1 && a[1].IsString() && EaseCurve::Parse(a[1].AsString(), c)) return Value{c.Evaluate(t)};
             return Value{t};
         };
-        // Loop t into [0,length) (Mathf.Repeat).
-        b["math_repeat"] = [](std::vector<Value>& a) {
-            float t = a.size() > 0 ? a[0].AsFloat() : 0, len = a.size() > 1 ? a[1].AsFloat() : 1;
-            if (len <= 0.0f) return Value{0.0f};
-            float r = std::fmod(t, len); if (r < 0) r += len;
-            return Value{r};
-        };
-        // Shortest signed difference between two angles, in degrees (Mathf.DeltaAngle).
-        b["delta_angle"] = [](std::vector<Value>& a) {
-            float from = a.size() > 0 ? a[0].AsFloat() : 0, to = a.size() > 1 ? a[1].AsFloat() : 0;
-            float d = std::fmod(to - from, 360.0f);
-            if (d < -180.0f) d += 360.0f; else if (d > 180.0f) d -= 360.0f;
-            return Value{d};
-        };
         // Interpolate angles taking the shortest path (Mathf.LerpAngle).
         b["lerp_angle"] = [](std::vector<Value>& a) {
             float from = a.size() > 0 ? a[0].AsFloat() : 0, to = a.size() > 1 ? a[1].AsFloat() : 0,
@@ -8377,11 +8331,6 @@ struct OkayScriptVM::Impl {
             float d = std::fmod(to - from, 360.0f);
             if (d < -180.0f) d += 360.0f; else if (d > 180.0f) d -= 360.0f;
             return Value{from + d * t};
-        };
-        // Nearly equal (Mathf.Approximately).
-        b["approximately"] = [](std::vector<Value>& a) {
-            float x = a.size() > 0 ? a[0].AsFloat() : 0, y = a.size() > 1 ? a[1].AsFloat() : 0;
-            return Value{std::fabs(x - y) < 1e-4f};
         };
         // Blend two colors/vectors by t (Color.Lerp / Vector3.Lerp on whole values).
         b["lerp_color"] = [](std::vector<Value>& a) {
@@ -9778,11 +9727,6 @@ struct OkayScriptVM::Impl {
         b["avg"]    = [](std::vector<Value>& a) { if (a.empty()) return Value{0.0f}; float s = 0; for (auto& v : a) s += v.AsFloat(); return Value{s / a.size()}; };
         b["min3"]   = [N](std::vector<Value>& a) { return Value{std::min(N(a, 0), std::min(N(a, 1), N(a, 2)))}; };
         b["max3"]   = [N](std::vector<Value>& a) { return Value{std::max(N(a, 0), std::max(N(a, 1), N(a, 2)))}; };
-        b["lerp_angle"] = [N](std::vector<Value>& a) {
-            float fr = N(a, 0), to = N(a, 1), t = N(a, 2);
-            float d = std::fmod(to - fr + 540.0f, 360.0f) - 180.0f;   // shortest path
-            return Value{fr + d * t};
-        };
         b["str_repeat"] = [](std::vector<Value>& a) {
             std::string s = a.empty() ? "" : a[0].AsString(); int n = a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0;
             std::string out; for (int i = 0; i < n; ++i) out += s; return Value{out};
@@ -10160,8 +10104,8 @@ struct OkayScriptVM::Impl {
         b["seq_insert_callback"] = seqOp([fnFromArg](TweenSequence& s, std::vector<Value>& a) {
             if (auto f = fnFromArg(a, 2)) s.InsertCallback(a.size() > 1 ? a[1].AsFloat() : 0.0f, f);
         });
-        // Whole-game saves are save_game / load_game / has_save above (SaveGame).
-        b["save_exists"] = b["has_save"];
+        // Whole-game saves are save_game / load_game / has_save above (SaveGame); save_exists
+        // stays the save FILE check (issue #888 finding 25).
 
         // ---- Friendly aliases: intuitive names for common builtins so games
         //      read naturally. Each points at an already-registered function. ----
@@ -10320,20 +10264,12 @@ struct OkayScriptVM::Impl {
             float nx0 = n00 + (n10 - n00) * sx, nx1 = n01 + (n11 - n01) * sx;
             return Value{nx0 + (nx1 - nx0) * sy};
         };
-        alias("vec3", "Vector3");
-        alias("vec2", "Vector2");
         alias("Vector3.Lerp", "vec_lerp");
         alias("Vector3.Dot", "vec_dot");
         alias("Vector3.Normalize", "vec_normalize");
         alias("Vector3.MoveTowards", "vec_move_towards");
         alias("Mathf.PerlinNoise", "noise");
-        alias("Mathf.Clamp01", "clamp01");
-        alias("Mathf.InverseLerp", "inverse_lerp");
-        alias("Mathf.Repeat", "math_repeat");
-        alias("Mathf.DeltaAngle", "delta_angle");
-        alias("Mathf.LerpAngle", "lerp_angle");
-        alias("Mathf.Approximately", "approximately");
-        alias("Mathf.Log", "log");   alias("Mathf.Exp", "exp");
+        alias("Mathf.Exp", "exp");
         alias("Mathf.Asin", "asin"); alias("Mathf.Acos", "acos"); alias("Mathf.Atan", "atan");
         alias("Color.Lerp", "lerp_color");
         alias("Vector3.LerpUnclamped", "vec_lerp");
@@ -10386,23 +10322,12 @@ struct OkayScriptVM::Impl {
                 rt.host->gameObject->active = a.empty() ? true : a[0].AsBool();
             return Value{};
         };
-        b["GetComponent"] = [this](std::vector<Value>& a) -> Value {
-            // Lightweight: true if this object has the named component (so scripts
-            // can guard with `if (GetComponent("Rigidbody2D")) ...`).
-            if (!rt.host || !rt.host->gameObject || a.empty()) return Value{false};
-            const std::string& c = a[0].AsString();
-            GameObject* g = rt.host->gameObject;
-            bool has = (c == "SpriteRenderer" && g->GetComponent<SpriteRenderer>())
-                    || (c == "Rigidbody2D"   && g->GetComponent<Rigidbody2D>())
-                    || (c == "TextRenderer"  && g->GetComponent<TextRenderer>());
-            return Value{has};
-        };
         // A few more math helpers scripts reach for (clamp01 / lerp_angle
         // already exist; these are new and avoid clobbering string repeat()).
         b["math_repeat"] = [](std::vector<Value>& a) -> Value {   // Mathf.Repeat: wrap into [0, len)
             if (a.size() < 2) return Value{0.0f};
             float t = a[0].AsFloat(), len = a[1].AsFloat();
-            if (len == 0.0f) return Value{0.0f};
+            if (len <= 0.0f) return Value{0.0f};   // a zero or negative length has no range to wrap into
             float m = std::fmod(t, len); if (m < 0.0f) m += len;
             return Value{m};
         };
@@ -10439,8 +10364,6 @@ struct OkayScriptVM::Impl {
         alias("Input.GetMouseButtonDown", "mouse_down");
         alias("Input.GetMouseButtonUp", "mouse_up");
         alias("Debug.Log", "print");
-        alias("Debug.LogWarning", "print");
-        alias("Debug.LogError", "print");
         alias("Mathf.Sin", "sin");   alias("Mathf.Cos", "cos");   alias("Mathf.Tan", "tan");
         alias("Mathf.Sqrt", "sqrt"); alias("Mathf.Abs", "abs");   alias("Mathf.Sign", "sign");
         alias("Mathf.Floor", "floor"); alias("Mathf.Ceil", "ceil"); alias("Mathf.Round", "round");
@@ -10450,17 +10373,12 @@ struct OkayScriptVM::Impl {
         alias("Mathf.MoveTowards", "move_toward");
         alias("Random.Range", "rand");
         alias("Vector3.Distance", "vec_distance"); alias("Vector2.Distance", "vec_distance");
-        alias("transform.Translate", "move"); alias("transform.Rotate", "rotate");
-        alias("transform.LookAt", "look_at3");
-        alias("Instantiate", "spawn"); alias("Object.Instantiate", "spawn");
-        alias("Destroy", "destroy"); alias("Object.Destroy", "destroy");
         alias("Physics2D.Raycast", "raycast"); alias("Physics.Raycast", "raycast3");
         alias("Physics2D.BoxCast", "box_cast"); alias("Physics2D.CapsuleCast", "capsule_cast");
         alias("Physics2D.OverlapBox", "overlap_box"); alias("Physics2D.OverlapCapsule", "overlap_capsule");
         alias("Rigidbody2D.AddExplosionForce", "add_explosion_force");
         alias("SceneManager.LoadScene", "load_scene_name");
         alias("Application.Quit", "quit");
-        alias("GameObject.Find", "exists");
 
         // ---- Plain-English aliases: say what you mean. Every name below points
         //      at an existing builtin, so beginners can guess the right word. ----
@@ -10488,7 +10406,6 @@ struct OkayScriptVM::Impl {
         alias("position_y", "pos_y");
         alias("position_z", "pos_z");
         alias("turn", "rotate");
-        alias("face", "look_at");
         alias("chase", "follow");
         alias("run_from", "flee");
         alias("wasd_move", "on_key_move");
@@ -10683,7 +10600,6 @@ struct OkayScriptVM::Impl {
         alias("Vector3.Cross", "vec_cross");
         alias("Vector3.ClampMagnitude", "vec_clamp_len");
         alias("Vector3.Reflect", "vec_reflect");
-        alias("Mathf.Clamp01", "clamp01");
 
         // ---- Coroutines: StartCoroutine(Routine()) + yield return new WaitForSeconds(t) ----
         b["WaitForSeconds"] = [](std::vector<Value>& a) {

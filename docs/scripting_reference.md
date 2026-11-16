@@ -246,7 +246,7 @@ has the full list, plus the **Tween Animation** component for tweens without cod
 | `get_refresh_rate()` / `set_refresh_rate(hertz)` / `get_display_resolutions()` / `get_refresh_rates(width, height)` | The rate, the sizes on offer, and the rates for a size |
 | `begin_display_confirm()` / `keep_display_settings()` / `revert_display_settings()` / `get_display_confirm_seconds()` | Start the 10-second "keep these settings?" question, answer it, or read the seconds left |
 | `game_slot_text(slot)` / `game_slot_age(slot)` / `game_slot_label(slot)` | When a slot was saved (`"2026-11-08 14:03"` UTC, `""` if none), seconds since then (-1 if none), and its label |
-| `save_exists([slot])` / `delete_save([slot])` | Manage save slots |
+| `has_save([slot])` / `delete_save([slot])` | Ask whether a `save_game` slot exists (1 or 0) / delete it. `save_exists([file])` is different: it asks whether a file written by `save(...)` exists |
 | `play_sequence("name")` / `stop_sequence()` | Play / stop a cutscene sequence (see docs/cutscenes.md) |
 | `sequence_playing()` / `sequence_time()` | 1 while a sequence plays / seconds into it; events reach `on_sequence_event(name)` |
 | `loc("key" [, args...])` | The key's text in the player's language; `{0}`, `{1}`... from the arguments, `{name}` from a map (see docs/localization.md) |
@@ -364,12 +364,12 @@ All of these print into the editor's **Console**.
 | `remap(v, inLo, inHi, outLo, outHi)` | Rescale a value between two ranges |
 | `frac(x)` / `mod(a, b)` / `snap(v, step)` | Fraction / positive modulo / round to a step |
 | `is_nan(x)` / `is_finite(x)` / `avg(...)` / `min3` / `max3` | Numeric helpers |
-| `lerp_angle(a, b, t)` | Interpolate degrees the short way round |
+| `lerp_angle(a, b, t)` | Interpolate degrees the short way round, for any two angles (`lerp_angle(0, -600, 0.5)` is 60) |
 | `prefs_set/prefs_get/prefs_save/prefs_load` | Persist data across runs |
 | `rand(lo, hi)` / `randi(lo, hi)` / `chance(p)` | Randomness |
 | `dist(x1,y1,x2,y2)` / `dist3(...)` / `angle_to(...)` | Geometry |
 | `sin cos tan asin acos atan atan2` | Trigonometry |
-| `sqrt pow exp log abs sign floor ceil round` | Math |
+| `sqrt pow exp abs sign floor ceil round` / `Mathf.Log(x)` | Math (`Mathf.Log` is the natural log; plain `log(...)` prints, like `print`) |
 | `min max clamp clamp01 lerp smoothstep wrap ping_pong` | Ranges & easing |
 | `array push pop count contains index_of sort_num shuffle` | Lists |
 

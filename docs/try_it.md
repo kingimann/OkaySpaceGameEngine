@@ -500,6 +500,58 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## OkayScript: save_exists checks the file, lerp_angle turns the short way (bug fix, branch `claude2/grok-okayscript-dupes`, not merged or released yet)
+
+Issue #888, findings 25 and 26. Some script functions were defined twice, and the second copy silently replaced the
+first. So `save_exists("slot1.okaysave")` asked about a `save_game` slot instead of the file, and said "no" right after
+`save(...)` wrote that file: the documented "first time playing" check was true on every run. And `lerp_angle` went
+the long way round (or half a turn off) once the difference was below -540 degrees. Each name is now defined once, and
+a test fails if a name is ever defined twice again.
+
+1. Open the editor (`Tools\OkayEngine.exe`, or Open from the launcher) and make a New Project (any template).
+2. Select any object in the Hierarchy (the camera is fine), then **Add Component > Scripts > New Script...**, and
+   replace the new script's text with:
+
+   ```csharp
+   void Start()
+   {
+       if (!save_exists("slot1.okaysave")) { print("first time playing"); }
+       else { print("welcome back, coins =", load("coins", 0, "slot1.okaysave")); }
+       save("coins", 5, "slot1.okaysave");
+       print("save_exists:", save_exists("slot1.okaysave"));
+       print("missing file:", save_exists("missing.okaysave"));
+       print("lerp_angle(0, -600, 0.5) =", lerp_angle(0, -600, 0.5));
+       print("lerp_angle(0, -720, 0.5) =", lerp_angle(0, -720, 0.5));
+       print("math_repeat(-5, -3) =", math_repeat(-5, -3));
+   }
+   ```
+
+3. Save the script, press **Play** and look at **View > Console**. You should see `first time playing`,
+   `save_exists: 1`, `missing file: 0`, `lerp_angle(0, -600, 0.5) = 60`, `lerp_angle(0, -720, 0.5) = 0` and
+   `math_repeat(-5, -3) = 0`. (-600 degrees points the same way as 120, so half the short turn from 0 is 60.)
+4. Stop and press **Play** again: the first line is now `welcome back, coins = 5`, because the file is there.
+   Before the fix: `first time playing` every time, `save_exists: 0`, -120, -180 and -5.
+
+To ask about a whole-game `save_game` slot, use `has_save(slot)`; `save_exists(file)` is only for files written by
+`save(...)`.
+
+What changed for scripts, exactly:
+
+* `save_exists(...)` asks about a save FILE (relative to the game's save folder; with no argument, `save.okaysave`)
+  instead of a `save_game` slot. A script that used `save_exists("save1")` to ask about a slot must now use
+  `has_save("save1")`. It still returns 1 or 0.
+* `lerp_angle(a, b, t)` and `Mathf.LerpAngle`: when `b - a` is below -540 degrees the result now turns the short way
+  (before: up to a turn and a half the wrong way). When `b - a` is exactly 180, 540, 900... degrees, the half-turn now
+  goes up (+180) instead of down. Every other input gives the same result as before.
+* `math_repeat(t, len)` and `Mathf.Repeat`: a negative `len` now gives 0 (before: a number outside the range, for example
+  `math_repeat(-5, -3)` was -5).
+* Unchanged: `format`, `inverse_lerp`, `approximately`, `delta_angle`, `clamp01`, `GetComponent`, `face`, `vec3`,
+  `vec2`, `log` (it prints; `Mathf.Log` is the natural log) and the C# names such as `Debug.LogWarning`, `Destroy` and
+  `Instantiate`. Their dead copies were deleted; scripts keep getting the copy they already got.
+
+**Status.** Headless test `okayscript_dupes` (run on Linux; it also runs the script above twice, as two Play
+presses). The editor steps are unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

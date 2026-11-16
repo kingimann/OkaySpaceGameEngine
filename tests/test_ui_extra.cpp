@@ -135,7 +135,7 @@ int main() {
             "var saved = 0; var existed = 0;\n"
             "function start() {\n"
             "  saved = save_game(\"utest\");\n"
-            "  existed = save_exists(\"utest\");\n"
+            "  existed = has_save(\"utest\");\n"   // a slot: has_save (save_exists is the file check, #888)
             "}\n");
         s.Start();
         CHECK_NEAR(sc->VM()->GetGlobal("saved").AsFloat(), 1.0f, 1e-4f);

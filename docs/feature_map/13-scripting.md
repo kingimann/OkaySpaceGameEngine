@@ -144,8 +144,8 @@ Two OkayScript languages exist side by side: id `okayscript` (old VM, the defaul
 - **API:** `BuiltinNames()` lists every function; reference tables in `docs/scripting_reference.md`
 - **Editor:** Help > Scripting Reference; Script Editor autocomplete; Insert > API Command
 - **Docs:** `docs/scripting_reference.md`, `docs/scripting.md`
-- **Tests:** `script_spawn`, `script_physics`, `script_events`, `script_util`, `script_lib`, `script_camera`, `script_fx`, `script_objects`, `script_tilemap`, `script_net`, `script_anim`, `script_batch1`, `script_nav`, `script_paths`, `steam_script`, `account_script`, `anim_script_control`, `inventory_script`
-- **Status:** Works - large and tested by area; each test file maps to one slice of the table
+- **Tests:** `script_spawn`, `script_physics`, `script_events`, `script_util`, `script_lib`, `script_camera`, `script_fx`, `script_objects`, `script_tilemap`, `script_net`, `script_anim`, `script_batch1`, `script_nav`, `script_paths`, `steam_script`, `account_script`, `anim_script_control`, `inventory_script`, `okayscript_dupes` (each builtin name is registered once; save_exists, lerp_angle and the other former double definitions)
+- **Status:** Works - large and tested by area; each test file maps to one slice of the table. Since #888 (findings 25, 26) a name registered twice fails `okayscript_dupes`, because the later copy silently replaced the first
 - **Open:** the same calls are re-implemented for the typed language in `EngineApi.cpp`: the two tables can drift (possible duplicated system, see 13.2)
 - **Related:** 13.1, 13.6, 7, 9, 16, 17.10, 11.1
 - **Words:** builtin, built-in function, scripting reference, walk, spin, follow, tween_move, prefs_get, save_game, raycast, net_send, steam_unlock, nav_path, music_play, ui_set_text

@@ -1992,6 +1992,13 @@ add_executable(test_okayscript_next test_okayscript_next.cpp)
 target_link_libraries(test_okayscript_next PRIVATE okay::engine)
 add_test(NAME okayscript_next COMMAND test_okayscript_next)
 
+# Builtins registered twice in OkayScriptVM.cpp (issue #888 findings 25, 26): the chosen
+# behaviour of each, and a scan of the registration code that fails on a repeated name.
+add_executable(test_okayscript_dupes test_okayscript_dupes.cpp)
+target_link_libraries(test_okayscript_dupes PRIVATE okay::engine)
+target_compile_definitions(test_okayscript_dupes PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME okayscript_dupes COMMAND test_okayscript_dupes)
+
 add_executable(test_anim_script_control test_anim_script_control.cpp)
 target_link_libraries(test_anim_script_control PRIVATE okay::engine)
 add_test(NAME anim_script_control COMMAND test_anim_script_control)

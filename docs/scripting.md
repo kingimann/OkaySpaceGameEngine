@@ -215,7 +215,10 @@ What's supported:
 - **More Mathf**: `Mathf.Clamp01(x)`, `Mathf.InverseLerp(a, b, v)`,
   `Mathf.Repeat(t, len)`, `Mathf.DeltaAngle(a, b)`, `Mathf.LerpAngle(a, b, t)`,
   `Mathf.Approximately(a, b)` (and `clamp01` / `inverse_lerp` / `delta_angle` /
-  `lerp_angle` / `approximately`).
+  `lerp_angle` / `approximately`). `lerp_angle` always turns the short way, even
+  for angles past a full turn; `math_repeat` gives 0 for a zero or negative
+  length; `inverse_lerp`, `delta_angle`, `math_repeat` and `approximately` need
+  all their arguments (with one missing they give 0, or false).
 - **`Color.Lerp(a, b, t)`** (`lerp_color`) blends two colors; pair it with
   `set_color` for fades and flashes.
 - **`.Length` / `.Count`**: read the length of a string (`name.Length`) or an
@@ -559,6 +562,9 @@ string who = load("name", "Player");
 Vector3 at = load("spawn", new Vector3(0, 0, 0), "slot1.okaysave");
 if (!save_exists("slot1.okaysave")) { /* first time playing */ }
 ```
+
+`save_exists(file)` asks about a file written by `save(...)`. To ask about a
+whole-game `save_game` slot, use `has_save(slot)` (see docs/save_games.md).
 
 **File names stay inside the game.** Every script call that names a file
 (`save`/`load` and the rest of this family, `prefs_save`/`prefs_load`,

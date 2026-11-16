@@ -11,6 +11,7 @@
 // Own code, written from the two draw-list formats (OkayUI's DrawData in okay/UI/OkayUI.hpp, ImGui's ImDrawList in imgui.h);
 // nothing taken from either library's sources. Tested in okayui/tests/test_okayui_codeedit_imgui.cpp.
 #include "imgui.h"
+#include "imgui_internal.h"   // ImGui::SetKeyOwner (the per-key owner ImGui's own text field uses; main.cpp uses it too)
 #include "okay/UI/OkayUI.hpp"
 #include "okay/UI/OkayUICodeEdit.hpp"
 
@@ -81,7 +82,8 @@ inline void AppendGeometry(ImDrawList* dl, const OkayUI::CapturedGeometry& g, co
 
 /// Run `draw` inside a bare OkayUI window at (pos, size) and put what it draws into the current ImGui window's draw list, at
 /// this point of the ImGui frame. Needs an open OkayUI frame and an open ImGui window. OkayUI tooltips (the overlay) are not
-/// moved: they stay on top. `geo` is scratch space kept between frames.
+/// moved: they stay on top; a CodeEdit's own hover help is moved into ImGui's tooltip layer with SetHostDrawsTooltip and
+/// ShowCodeHover. `geo` is scratch space kept between frames.
 inline void DrawOkayUIHere(const char* id, ImVec2 pos, ImVec2 size, const std::function<void()>& draw,
                            const std::function<ImTextureID(const void*)>& textureFor, OkayUI::CapturedGeometry& geo) {
     OkayUI::BeginGeometryCapture();
@@ -111,6 +113,61 @@ inline void StyleLikeImGuiChild(OkayUI::CodeEdit& ed, const ImGuiStyle& st) {
     p.scrollThumb = ImGui::GetColorU32(ImGuiCol_ScrollbarGrab);
     p.scrollThumbHot = ImGui::GetColorU32(ImGuiCol_ScrollbarGrabHovered);
     ed.SetPalette(p);
+}
+
+/// The keys our code editor acts on that Dear ImGui's keyboard navigation also reads: the arrows (move the nav cursor to
+/// another button), Space and Enter (press the button the nav cursor is on), Tab (focus the next widget), Escape (leave the
+/// window), Page Up / Down and Home / End (scroll the window).
+inline const ImGuiKey* CodeEditorKeys(int& count) {
+    static const ImGuiKey k[] = {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_UpArrow, ImGuiKey_DownArrow,
+                                 ImGuiKey_PageUp, ImGuiKey_PageDown, ImGuiKey_Home, ImGuiKey_End,
+                                 ImGuiKey_Space, ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Tab, ImGuiKey_Escape,
+                                 ImGuiKey_Backspace, ImGuiKey_Delete, ImGuiKey_Insert};
+    count = (int)(sizeof k / sizeof k[0]);
+    return k;
+}
+
+/// Our code editor has the keyboard (call after it drew, every frame it does): claim it from Dear ImGui the way an ImGui text
+/// field does.
+///  - The editing keys (CodeEditorKeys) get `owner` (the ImGui item that holds the code) as their key owner, so ImGui's keyboard
+///    navigation, which only reads keys nobody owns, leaves them alone from the next frame on. Code that asks
+///    ImGui::IsKeyPressed(key) without an owner (the script editor's own shortcuts, the autocomplete keys) still sees them.
+///  - io.WantCaptureKeyboard and io.WantTextInput are set for the rest of this frame and for the host's event loop before the
+///    next one: the editor's global shortcuts, the game during Play and the scene view's keys stay out (the same flags
+///    ImGuiColorTextEdit sets while its window is focused).
+///  - The characters typed this frame are taken out of ImGui's queue (ours has used them), so nothing drawn later types them.
+inline void ClaimKeyboardForCode(ImGuiID owner) {
+    if (owner == 0) return;
+    int n = 0;
+    const ImGuiKey* keys = CodeEditorKeys(n);
+    for (int i = 0; i < n; ++i) ImGui::SetKeyOwner(keys[i], owner);
+    ImGuiIO& io = ImGui::GetIO();
+    io.WantCaptureKeyboard = true;
+    io.WantTextInput = true;
+    io.InputQueueCharacters.resize(0);
+}
+
+/// Draw our code editor's hover help (CodeEdit::Hover, with CodeEdit::SetHostDrawsTooltip on) as a Dear ImGui tooltip, in ImGui's
+/// tooltip layer: above the windows and popups that are open, the way ImGuiColorTextEdit shows it (an error or warning title in
+/// red or amber, a separator, the message; a built-in's help as plain text). Uses the current ImGui font (the script editor's
+/// code font while it is pushed). Returns true when a tooltip was shown.
+inline bool ShowCodeHover(const OkayUI::CodeHover& h) {
+    if (h.kind == OkayUI::CodeHover::None || h.text.empty()) return false;
+    ImGui::BeginTooltip();
+    if (h.kind == OkayUI::CodeHover::Info) {
+        ImGui::TextUnformatted(h.text.c_str());
+    } else {
+        const bool warn = h.kind == OkayUI::CodeHover::Warning;
+        ImGui::PushStyleColor(ImGuiCol_Text, warn ? ImVec4(1.0f, 0.75f, 0.25f, 1.0f) : ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+        ImGui::Text(warn ? "Warning at line %d:" : "Error at line %d:", h.line + 1);
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.92f, 0.92f, 0.92f, 1.0f));
+        ImGui::TextUnformatted(h.text.c_str());
+        ImGui::PopStyleColor();
+    }
+    ImGui::EndTooltip();
+    return true;
 }
 
 } // namespace okayimgui

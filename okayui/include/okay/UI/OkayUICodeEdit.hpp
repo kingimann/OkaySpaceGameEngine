@@ -90,6 +90,15 @@ struct CodeMarker {
     bool underline = true;   // false: no wavy underline (a host that draws its own under the token)
 };
 
+/// What the pointer is over this frame (for the last Draw), for a host that draws the tooltip itself (SetHostDrawsTooltip).
+struct CodeHover {
+    enum Kind : unsigned char { None, Error, Warning, Info };
+    Kind kind = None;
+    int line = -1;          // 0-based line of the marker (Error, Warning) or of the word (Info)
+    std::string text;       // the marker's message (without "Error at line N: "), or the word's help
+    std::string tooltip;    // what OkayUI's own tooltip would show
+};
+
 /// Where the caret goes.
 enum CodeMove : int {
     CodeMove_Left, CodeMove_Right, CodeMove_Up, CodeMove_Down, CodeMove_WordLeft, CodeMove_WordRight,
@@ -187,6 +196,17 @@ public:
     int TabSize() const { return tabSize_; }
     void SetInsertSpaces(bool b) { insertSpaces_ = b; }     // Tab inserts spaces (default) or a tab character
     void SetAutoIndent(bool b) { autoIndent_ = b; }
+    /// Enter after '(' '[' '{' adds one level of indent, and between a bracket pair opens a blank line (default true). false: Enter
+    /// only copies the line's indent, as ImGuiColorTextEdit does (the script editor adds its own `{|}` handling on top).
+    void SetBracketIndent(bool b) { bracketIndent_ = b; }
+    /// Pixels one mouse wheel step scrolls, down and sideways (Shift+wheel). 0 (the default): three rows / three characters.
+    void SetWheelStep(float y, float x) { wheelY_ = (y > 0.0f && y < 1.0e5f) ? y : 0.0f; wheelX_ = (x > 0.0f && x < 1.0e5f) ? x : 0.0f; }
+    /// The next Draw ignores the typed text it is given (the host used that character for something else: stepping over a
+    /// closing bracket, a shortcut such as Alt+1). Keys are still handled.
+    void DropTypedText() { dropText_ = true; }
+    /// true: Draw does not show OkayUI's tooltip; the host reads Hover() and draws it (in its own tooltip layer).
+    void SetHostDrawsTooltip(bool b) { hostTip_ = b; }
+    const CodeHover& Hover() const { return hover_; }
     void SetShowLineNumbers(bool b) { showLineNumbers_ = b; }
     void SetShowBreakpointGutter(bool b) { showBreakpoints_ = b; }
     void SetLineSpacing(float s) { lineSpacing_ = s < 1.0f ? 1.0f : (s > 3.0f ? 3.0f : s); }
@@ -332,6 +352,10 @@ private:
     float leftMargin_ = -1.0f, padX_ = 0.0f, padY_ = 0.0f, scrollbar_ = 10.0f;
     bool alwaysH_ = false, useCodeFont_ = true, inlineMessages_ = true, codeFont_ = false;
     std::string tip_;   // the tooltip of this frame (shown after the code font is popped)
+    CodeHover hover_;
+    bool bracketIndent_ = true, dropText_ = false, hostTip_ = false;
+    float wheelY_ = 0.0f, wheelX_ = 0.0f;
+    CodePos clickA_, clickB_;   // the word or line a double or triple click selected: a drag extends by words or lines from it
     CodePalette pal_;
 
     // view

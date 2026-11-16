@@ -516,7 +516,7 @@ bool CodeEdit::NewLine() {
         const char before = bi >= 0 ? L[(size_t)bi] : 0;
         int ai = a.col; while (ai < (int)L.size() && (L[(size_t)ai] == ' ' || L[(size_t)ai] == '\t')) ++ai;
         const char after = ai < (int)L.size() ? L[(size_t)ai] : 0;
-        const bool opener = isOpener(before);
+        const bool opener = bracketIndent_ && isOpener(before);
         ins += indent;
         if (opener) ins += insertSpaces_ ? std::string((size_t)tabSize_, ' ') : std::string("\t");
         at = endOf(a, ins);
@@ -1014,7 +1014,7 @@ static bool inRect(const Rect& r, float x, float y) { return x >= r.x && x < r.x
 void CodeEdit::handleKeys(bool& changed) {
     const Input& in = GetFrameInput();
     const IO& io = GetIO();
-    const bool ctrl = io.keyCtrl, shift = io.keyShift;
+    const bool ctrl = io.keyCtrl, shift = io.keyShift, alt = io.keyAlt;
     bool any = false;
     const unsigned v0 = version_;
     if (in.commit && in.commit[0]) {   // what the input method finished: inserted like typed text, over the selection
@@ -1022,7 +1022,9 @@ void CodeEdit::handleKeys(bool& changed) {
         t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
         if (!t.empty()) { InsertText(t.c_str()); any = true; }
     }
-    if (in.text && in.text[0] && !ctrl) {
+    // typed text: not with Ctrl alone, but with Ctrl+Alt (AltGr on Windows types { [ @ \\ on many keyboards); not when the host
+    // took this frame's character (DropTypedText)
+    if (in.text && in.text[0] && (!ctrl || alt) && !dropText_) {
         std::string t = sanitize(in.text);
         t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
         if (!t.empty()) { TypeText(t.c_str()); any = true; }
@@ -1037,7 +1039,7 @@ void CodeEdit::handleKeys(bool& changed) {
     if (in.cut) { Cut(); any = true; }
     if (in.paste) { Paste(); any = true; }
     if (in.enter) { NewLine(); any = true; }
-    if (in.backspace) { Backspace(ctrl); any = true; }
+    if (in.backspace) { if (alt && !ctrl && !shift) Undo(); else Backspace(ctrl); any = true; }   // Alt+Backspace: undo
     if (in.del) { if (shift && !ctrl) Cut(); else DeleteForward(ctrl); any = true; }   // Shift+Delete: cut
     if (IsKeyPressed(KeyId_Insert)) {   // Insert: overwrite mode; Ctrl+Insert: copy; Shift+Insert: paste
         if (ctrl && !shift) Copy(); else if (shift && !ctrl) Paste(); else if (!ctrl && !shift) overwrite_ = !overwrite_;
@@ -1093,12 +1095,24 @@ void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
             if (clicks_ == 1) moveCaret(p, GetIO().keyShift);
             else if (clicks_ == 2) SelectWordAt(p);
             else SelectLine(p.line);
+            clickA_ = SelectionStart(); clickB_ = SelectionEnd();
             dragging_ = true;
         }
     }
     if (!held) { dragging_ = dragVBar_ = dragHBar_ = false; }
     else if (dragging_ && clicks_ == 1) {
         moveCaret(ScreenToPos(mx, my), true);
+    } else if (dragging_ && clicks_ == 2) {   // after a double click a drag selects whole words
+        const CodePos p = ScreenToPos(mx, my);
+        CodePos a = p, b = p;
+        if (!wordAt(p, a, b)) a = b = p;
+        if (p < clickA_) { anchor_ = clickB_; caret_ = a; } else { anchor_ = clickA_; caret_ = b < clickB_ ? clickB_ : b; }
+        desiredCol_ = -1; reveal_ = true;
+    } else if (dragging_ && clicks_ >= 3) {   // after a triple click, whole lines
+        const int l = ScreenToPos(mx, my).line;
+        const CodePos lineEnd = l + 1 < (int)lines_.size() ? CodePos{l + 1, 0} : CodePos{l, (int)lines_[(size_t)l].size()};
+        if (l < clickA_.line) { anchor_ = clickB_; caret_ = CodePos{l, 0}; } else { anchor_ = clickA_; caret_ = l > clickA_.line ? lineEnd : clickB_; }
+        desiredCol_ = -1; reveal_ = true;
     } else if (dragVBar_) {
         const float maxY = std::max(0.0f, contentH_ - view_.h), span = std::max(1.0f, vTrack_.h - vThumb_.h);
         scrollY_ = (my - dragOff_ - vTrack_.y) / span * maxY; clampScroll();
@@ -1106,8 +1120,10 @@ void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
         const float maxX = std::max(0.0f, contentW_ - view_.w), span = std::max(1.0f, hTrack_.w - hThumb_.w);
         scrollX_ = (mx - dragOff_ - hTrack_.x) / span * maxX; clampScroll();
     }
-    if (hovered && in.wheel != 0.0f && std::isfinite(in.wheel)) {
-        if (GetIO().keyShift) scrollX_ -= in.wheel * 3.0f * charW_; else scrollY_ -= in.wheel * 3.0f * lineH_;
+    // the wheel scrolls (Shift: sideways); not with Ctrl held, which is the host's zoom (as in an ImGui window)
+    if (hovered && in.wheel != 0.0f && std::isfinite(in.wheel) && !GetIO().keyCtrl) {
+        if (GetIO().keyShift) scrollX_ -= in.wheel * (wheelX_ > 0.0f ? wheelX_ : 3.0f * charW_);
+        else scrollY_ -= in.wheel * (wheelY_ > 0.0f ? wheelY_ : 3.0f * lineH_);
         clampScroll();
         reveal_ = false;
     }
@@ -1119,15 +1135,19 @@ bool CodeEdit::Draw(const char* id, float w, float h) {
     const Vec2 avail = GetContentRegionAvail();
     if (w <= 0.0f) w = avail.x;
     if (h <= 0.0f) h = avail.y;
-    if (!(w >= 1.0f) || !(h >= 1.0f) || w > 1e6f || h > 1e6f) return false;
+    if (!(w >= 1.0f) || !(h >= 1.0f) || w > 1e6f || h > 1e6f) { dropText_ = false; return false; }
     tip_.clear();
+    hover_ = CodeHover();
     // the code font (launcher look): popped at the end of Draw; every measure and draw below uses it
     PushCodeFont();
     codeFont_ = useCodeFont_ && CodeFontActive();
     if (!codeFont_) PopCodeFont();
     const bool r = drawFramed(id, w, h, v0);
     if (codeFont_) PopCodeFont();
-    if (!tip_.empty()) { SetTooltip("%s", tip_.c_str()); tip_.clear(); }
+    dropText_ = false;
+    hover_.tooltip = tip_;
+    if (!tip_.empty() && !hostTip_) SetTooltip("%s", tip_.c_str());
+    tip_.clear();
     return r;
 }
 
@@ -1370,6 +1390,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         if (hovered && !in.blocked && in.mouseY >= y && in.mouseY < y + lineH_ && in.mouseX >= item.x && in.mouseX < vend.x)
             for (const CodeMarker& m : markers_) if (m.line == l && !m.message.empty()) {
                 tip_ = (m.warning ? "Warning at line " : "Error at line ") + std::to_string(l + 1) + ": " + m.message;
+                hover_.kind = m.warning ? CodeHover::Warning : CodeHover::Error; hover_.line = l; hover_.text = m.message;
                 markerTip = true;
                 break;
             }
@@ -1377,7 +1398,10 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
     // help for the word under the pointer (built-in signatures): not while dragging, and not over an error marker's message
     if (!markerTip && !wordInfo_.empty() && hovered && !in.blocked && !in.mouseDown && !dragging_) {
         const std::string w = WordAtScreen(in.mouseX, in.mouseY);
-        if (!w.empty()) if (const std::string* info = WordInfo(w)) tip_ = *info;
+        if (!w.empty()) if (const std::string* info = WordInfo(w)) {
+            tip_ = *info;
+            hover_.kind = CodeHover::Info; hover_.line = ScreenToPos(in.mouseX, in.mouseY).line; hover_.text = *info;
+        }
     }
     // the caret (while composing: the caret inside the preedit) and where the host should put the candidate window
     imeCaret_ = imeComp_ = Rect{};

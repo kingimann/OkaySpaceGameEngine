@@ -9,6 +9,10 @@ ScriptEditorCodeEdit::ScriptEditorCodeEdit() {
     ed_.SetLanguage(lang_);
     ed_.SetTabSize(4);
     ed_.SetLineSpacing(1.55f);          // what the script editor sets on the ImGui editor
+    // Enter copies the line's indent only, as ImGuiColorTextEdit does: the script editor adds a level and pushes the `}` down
+    // itself when Enter is pressed between `{` and `}` (editor/main.cpp, "braceEnter"); with ours also doing it the body
+    // would be opened twice.
+    ed_.SetBracketIndent(false);
     seenVersion_ = ed_.Version();
 }
 

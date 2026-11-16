@@ -14,6 +14,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <unordered_map>
@@ -105,6 +106,10 @@ public:
     /// window; the OkayUI one reports its own focus (call after Render).
     bool OkayHasKeyboard() const { return okayFocused_; }
     bool UsingOkayUI() { return Okay(); }
+    /// The script editor used this frame's typed character for something else (stepping over a closing bracket, Alt+1): the
+    /// ImGui editor never sees it because the character was taken out of ImGui's queue; ours gets its text from SDL, so it is
+    /// told to drop it. Call before Render.
+    void DropTypedText() { if (Okay()) okay_.Edit().DropTypedText(); }
 
     /// Draw it. `size` as ImGui: <= 0 means "what is left, plus this".
     /// Ours is drawn INTO this ImGui window's draw list (okayimgui::DrawOkayUIHere), at ImGui's layer, so the autocomplete
@@ -118,7 +123,17 @@ public:
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::InvisibleButton(id, a);                          // the rectangle: an ImGui item, so ImGui does not scroll under it
+        const ImGuiID item = ImGui::GetItemID();
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+        // The keyboard is the code's only while this ImGui window is focused, as the ImGui editor's is only while its child window
+        // is: a popup, another window (Ctrl+Tab, a click) or the find box takes it, and it comes back with the window's focus.
+        const bool hostFocused = ImGui::IsWindowFocused();
+        if (!hostFocused) okay_.SetHandleKeyboardInputs(false);
+        okay_.Edit().SetHostDrawsTooltip(true);                 // the hover help goes into ImGui's tooltip layer (below)
+        {   // the wheel scrolls as an ImGui child window does: 5 font heights down, 2 sideways, at most 2/3 of the view
+            const float fs = ImGui::GetFontSize();
+            okay_.Edit().SetWheelStep(std::floor(std::min(5.0f * fs, a.y * 0.67f)), std::floor(std::min(2.0f * fs, a.x * 0.67f)));
+        }
         oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
         okayimgui::StyleLikeImGuiChild(okay_.Edit(), ImGui::GetStyle());   // sits in the rectangle as the ImGui editor's child does
         OkayUI::PushTextScale(oked::g_uiScale * zoom_);         // 16 px code at 100 %, the ImGui editor's kCodeFontDispPx x zoom
@@ -130,7 +145,10 @@ public:
             ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + a.x, p.y + a.y), ImGui::GetColorU32(ImGuiCol_Border), st.ChildRounding, 0,
                                                 st.ChildBorderSize > 0.0f ? st.ChildBorderSize : 1.0f);
         }
-        okayFocused_ = okay_.Edit().Focused();
+        okayFocused_ = okay_.Edit().Focused() && hostFocused;
+        if (!hostFocused) okay_.SetHandleKeyboardInputs(true);  // (the script editor sets it again before the next Render)
+        if (okayFocused_) okayimgui::ClaimKeyboardForCode(item);
+        okayimgui::ShowCodeHover(okay_.Edit().Hover());
 #endif
     }
 

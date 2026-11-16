@@ -6,6 +6,10 @@
 // Headless: Dear ImGui with its SDL_Renderer backend on SDL's software renderer (a surface, no window), OkayUI in the launcher
 // look driven by okayuitest::Sim. Checked: the draw lists' order, the pixels under the popup, that OkayUI's own frame no longer
 // holds the code, the texture lookup, and that clicks still reach the editor.
+// Step 30: the hover help as an ImGui tooltip (ShowCodeHover: an ImGui window drawn after the code and after an open popup,
+// nothing in OkayUI's frame), and the keyboard claimed from ImGui while ours has it (ClaimKeyboardForCode: the arrows do not
+// move ImGui's nav cursor, Space and Enter do not press a button, Ctrl+S still reaches the script editor, WantTextInput is set,
+// typed characters leave ImGui's queue), with the unclaimed case for contrast.
 #include "test_framework.hpp"
 #include "OkayUITestKit.hpp"
 #include "OkayUIInImGui.hpp"
@@ -30,7 +34,7 @@ struct Rig {
     okayuitest::Sim sim{(float)W, (float)H};
     OkayUI::CapturedGeometry geo;
     scripteditor::ScriptEditorCodeEdit se;
-    bool popup = true, hosted = true;
+    bool popup = true, hosted = true, hostTip = false;
     ImVec2 codeMin, codeMax, popMin, popMax;
     Rig() {
         surf = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ABGR8888);
@@ -72,6 +76,7 @@ struct Rig {
                 if (OkayUI::Begin("##code", p.x, p.y, a.x, a.y)) se.Edit().Draw("##codeedit", a.x, a.y);
                 OkayUI::End();
             }
+            if (hostTip) okayimgui::ShowCodeHover(se.Edit().Hover());   // as ScriptEditorWidget::Render does, right after the code
             if (popup) {   // the autocomplete list: an ImGui popup over the code, opened after the code was laid out
                 ImGui::OpenPopup("autocomplete");
                 ImGui::SetNextWindowPos(ImVec2(120, 90));
@@ -195,6 +200,97 @@ void AppendTests() {
     ImGui::EndFrame();
 }
 
+
+// Which draw list (in ImGui's draw order) belongs to the ImGui window whose name starts with `prefix`, or -1.
+int ListOfWindow(const char* prefix) {
+    const ImDrawData* dd = ImGui::GetDrawData();
+    for (ImGuiWindow* w : GImGui->Windows)
+        if (w->Active && std::strncmp(w->Name, prefix, std::strlen(prefix)) == 0)
+            for (int i = 0; i < dd->CmdListsCount; ++i) if (dd->CmdLists[i] == w->DrawList) return i;
+    return -1;
+}
+
+void TooltipLayerTests() {
+    // Our hover help drawn as an ImGui tooltip (CodeEdit::SetHostDrawsTooltip + okayimgui::ShowCodeHover): it is an ImGui window in
+    // ImGui's own order, drawn after the code and after the popup that was open, and OkayUI's frame draws no tooltip of its own.
+    Rig r;
+    r.se.Edit().SetHostDrawsTooltip(true);
+    r.hostTip = true;
+    r.popup = false;
+    for (int i = 0; i < 2; ++i) r.Frame();
+    const OkayUI::Vec2 at2 = r.se.Edit().PosToScreen(OkayUI::CodePos{2, 0});   // the error marker's line (1-based 3)
+    r.sim.Move(at2.x + 3.0f, at2.y + r.se.Edit().LineHeight() * 0.5f);
+    r.Frame(); r.Frame();
+    CHECK(r.se.Edit().Hover().kind == OkayUI::CodeHover::Error && r.se.Edit().Hover().line == 2);
+    const int tip = ListOfWindow("##Tooltip"), code = r.ListWithCode();
+    CHECK(tip >= 0 && code >= 0 && tip > code);                  // an ImGui tooltip, drawn after the code
+    CHECK(OkayUI::GetDrawData().indexCount < 60);                // and nothing of it in OkayUI's frame
+    // with the autocomplete popup open over the code, the tooltip still comes after it (ImGui stacks its tooltips on top)
+    r.popup = true;
+    r.Frame(); r.Frame();
+    const int tip2 = ListOfWindow("##Tooltip"), pop = r.ListWithPopup();
+    CHECK(tip2 >= 0 && pop >= 0 && tip2 > pop);
+    if (!(tip2 > pop)) std::cerr << "  tooltip list " << tip2 << ", popup list " << pop << "\n";
+    // OkayUI's own tooltip, for contrast: drawn in OkayUI's frame, outside ImGui's order
+    r.se.Edit().SetHostDrawsTooltip(false);
+    r.hostTip = false; r.popup = false;
+    r.sim.Move(at2.x + 3.0f, at2.y + r.se.Edit().LineHeight() * 0.5f);
+    r.Frame(); r.Frame();
+    CHECK(ListOfWindow("##Tooltip") < 0);
+    CHECK(OkayUI::GetDrawData().indexCount > 60);
+}
+
+void KeyboardClaimTests() {
+    // okayimgui::ClaimKeyboardForCode: while our editor has the keyboard, ImGui's keyboard navigation must not move the nav cursor
+    // off the code (arrows) or press a button (Space, Enter); the script editor's own shortcuts (Ctrl+S) still see their keys;
+    // io.WantTextInput / WantCaptureKeyboard are set; the typed characters are taken out of ImGui's queue.
+    Rig r;
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    ImGuiID codeId = 0, otherId = 0;
+    int otherPressed = 0;
+    bool claim = true, sawCtrlS = false, wantText = false, queueLeft = false;
+    auto frame = [&] {
+        ImGui_ImplSDLRenderer2_NewFrame();
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(10, 10));
+        ImGui::SetNextWindowSize(ImVec2(300, 250));
+        ImGui::Begin("Keys", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings);
+        ImGui::InvisibleButton("##code", ImVec2(200, 100));
+        codeId = ImGui::GetItemID();
+        if (ImGui::Button("Other", ImVec2(120, 30))) ++otherPressed;
+        otherId = ImGui::GetItemID();
+        sawCtrlS = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false);   // as the script editor's Ctrl+S
+        if (claim) okayimgui::ClaimKeyboardForCode(codeId);
+        wantText = io.WantTextInput && io.WantCaptureKeyboard;
+        queueLeft = io.InputQueueCharacters.Size > 0;
+        ImGui::End();
+        ImGui::Render();
+    };
+    auto press = [&](ImGuiKey k) { io.AddKeyEvent(k, true); frame(); io.AddKeyEvent(k, false); frame(); };
+    io.AddMousePosEvent(60, 60); frame();
+    io.AddMouseButtonEvent(0, true); frame(); io.AddMouseButtonEvent(0, false); frame();
+    io.AddMousePosEvent(400, 300); frame();
+    CHECK(GImGui->NavId == codeId);                              // the click put ImGui's nav cursor on the code
+    CHECK(wantText);
+    for (int i = 0; i < 4; ++i) press(ImGuiKey_DownArrow);
+    CHECK(GImGui->NavId == codeId);                              // claimed: the arrows did not move it
+    press(ImGuiKey_Space); press(ImGuiKey_Enter); press(ImGuiKey_Tab); press(ImGuiKey_Escape);
+    CHECK(otherPressed == 0 && GImGui->NavId == codeId && GImGui->NavWindow && std::strcmp(GImGui->NavWindow->Name, "Keys") == 0);
+    io.AddKeyEvent(ImGuiMod_Ctrl, true); io.AddKeyEvent(ImGuiKey_S, true); frame();
+    CHECK(sawCtrlS);                                             // the script editor's Ctrl+S still sees S
+    io.AddKeyEvent(ImGuiKey_S, false); io.AddKeyEvent(ImGuiMod_Ctrl, false); frame();
+    io.AddInputCharacter('q'); frame();
+    CHECK(!queueLeft);                                           // our editor typed it; nothing later in the frame sees it
+    // Not claimed (the old state of our editor): the arrows walk the nav cursor to the button and Space presses it.
+    claim = false;
+    frame(); frame();
+    for (int i = 0; i < 4 && GImGui->NavId != otherId; ++i) press(ImGuiKey_DownArrow);
+    CHECK(GImGui->NavId == otherId);
+    press(ImGuiKey_Space);
+    CHECK(otherPressed == 1);
+    CHECK(!wantText);
+}
 } // namespace
 
 int main() {
@@ -202,6 +298,8 @@ int main() {
     std::cout << "[suite] code editor hosted in ImGui\n";
     DrawOrderTests();
     AppendTests();
+    TooltipLayerTests();
+    KeyboardClaimTests();
     std::cout << okaytest::g_checks << " checks, " << okaytest::g_failures << " failures\n";
     SDL_Quit();
     return okaytest::g_failures == 0 ? 0 : 1;

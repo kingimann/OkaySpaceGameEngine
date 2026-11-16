@@ -1454,6 +1454,125 @@ void ProportionalAndOverwriteTests() {
     }
 }
 
+
+// Step 30: what ImGuiColorTextEdit does that ours did not (docs/own_ui_code_editor.md, step 30).
+void ParityTests() {
+    {   // AltGr (Ctrl+Alt on Windows) types: { [ @ on many keyboards come with it. Ctrl alone does not type.
+        Rig r;
+        r.ce.SetText("");
+        r.Frames(2);
+        ClickPos(r, P(0, 0));
+        r.sim.ctrl = true; r.sim.Hold(UI::KeyId_Alt, true);
+        r.Type("{");
+        r.sim.Hold(UI::KeyId_Alt, false);
+        r.Type("x");
+        r.sim.ctrl = false;
+        CHECK(r.ce.GetText() == "{");
+    }
+    {   // Alt+Backspace undoes, as in the ImGui editor; Backspace alone still deletes
+        Rig r;
+        r.ce.SetText("ab");
+        r.Frames(2);
+        ClickPos(r, P(0, 2));
+        r.Type("c");
+        CHECK(r.ce.GetText() == "abc");
+        r.sim.Hold(UI::KeyId_Alt, true); r.Key(Key_Backspace); r.sim.Hold(UI::KeyId_Alt, false); r.Frame();
+        CHECK(r.ce.GetText() == "ab");
+        r.Key(Key_Backspace);
+        CHECK(r.ce.GetText() == "a");
+    }
+    {   // DropTypedText: the next Draw ignores the text (the host used it); the one after types again
+        Rig r;
+        r.ce.SetText("");
+        r.Frames(2);
+        ClickPos(r, P(0, 0));
+        r.ce.DropTypedText();
+        r.Type(")");
+        CHECK(r.ce.GetText().empty());
+        r.Type(")");
+        CHECK(r.ce.GetText() == ")");
+    }
+    {   // without bracket indent, Enter copies the indent only (the ImGui editor's rule); with it, one more level after '{'
+        CodeEdit e;
+        e.SetText("  if {}");
+        e.SetBracketIndent(false);
+        e.SetCaret(P(0, 6));
+        CHECK(e.NewLine());
+        CHECK(e.GetText() == "  if {\n  }");
+        CHECK(e.Caret() == P(1, 2));
+        e.SetText("  if {}");
+        e.SetBracketIndent(true);
+        e.SetCaret(P(0, 6));
+        CHECK(e.NewLine());
+        CHECK(e.GetText() == "  if {\n      \n  }");
+    }
+    {   // the wheel: the step the host gives (an ImGui child scrolls 5 font heights), none with Ctrl (the host's zoom)
+        Rig r;
+        std::string t; for (int i = 0; i < 300; ++i) t += "line " + std::to_string(i) + "\n";
+        r.ce.SetText(t);
+        r.Frames(2);
+        r.sim.Move(r.X(P(2, 1)), r.Y(P(2, 1))); r.Frame();
+        r.sim.wheel = -1.0f; r.Frame();
+        CHECK(std::fabs(r.ce.ScrollY() - 3.0f * r.ce.LineHeight()) < 0.01f);   // default: three rows
+        r.ce.SetWheelStep(80.0f, 32.0f);
+        r.sim.wheel = -1.0f; r.Frame();
+        CHECK(std::fabs(r.ce.ScrollY() - (3.0f * r.ce.LineHeight() + 80.0f)) < 0.01f);
+        const float y0 = r.ce.ScrollY();
+        r.sim.ctrl = true; r.sim.wheel = -1.0f; r.Frame(); r.sim.ctrl = false; r.Frame();
+        CHECK(r.ce.ScrollY() == y0);                                              // Ctrl+wheel: no scroll
+    }
+    {   // a drag after a double click extends by whole words, after a triple click by whole lines
+        Rig r;
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetText("alpha beta gamma\ndelta epsilon\nzeta");
+        r.Frames(2);
+        r.sim.Move(r.X(P(0, 7)) + 1, r.Y(P(0, 7))); r.Frame();
+        r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Down(); r.Frame();
+        CHECK(r.ce.SelectedText() == "beta");
+        r.sim.Move(r.X(P(0, 13)) + 1, r.Y(P(0, 13))); r.Frame();                  // into "gamma": the whole word joins
+        CHECK(r.ce.SelectedText() == "beta gamma");
+        r.sim.Move(r.X(P(0, 1)) + 1, r.Y(P(0, 1))); r.Frame();                    // back into "alpha": from its start to the end of "beta"
+        CHECK(r.ce.SelectedText() == "alpha beta" && r.ce.Caret() == P(0, 0));
+        r.sim.Up(); r.Frame();
+        for (int i = 0; i < 40; ++i) r.Frame();
+        r.sim.Move(r.X(P(1, 2)) + 1, r.Y(P(1, 2))); r.Frame();
+        r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Down(); r.Frame(); r.sim.Up(); r.Frame(); r.sim.Down(); r.Frame();
+        CHECK(r.ce.SelectedText() == "delta epsilon\n");
+        r.sim.Move(r.X(P(2, 1)) + 1, r.Y(P(2, 1))); r.Frame();                    // down a line: both lines
+        CHECK(r.ce.SelectedText() == "delta epsilon\nzeta");
+        r.sim.Move(r.X(P(0, 3)) + 1, r.Y(P(0, 3))); r.Frame();                    // up a line: from line 0 to the end of line 1
+        CHECK(r.ce.SelectedText() == "alpha beta gamma\ndelta epsilon\n");
+        r.sim.Up(); r.Frame();
+    }
+    {   // the host draws the tooltip: Hover() says what is under the pointer, and OkayUI draws none itself
+        Rig r;
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetWordInfo({{"foo", "foo() does a thing"}});
+        r.ce.SetText("foo bar\nfoo");
+        UI::CodeMarker m; m.line = 1; m.message = "oops"; m.warning = true;
+        r.ce.SetMarkers({m});
+        r.Frame();
+        r.sim.Move(r.X(P(0, 1)) + 1.0f, r.Y(P(0, 1))); r.Frame(); r.Frame();
+        CHECK(r.ce.Hover().kind == UI::CodeHover::Info && r.ce.Hover().text == "foo() does a thing" && r.ce.Hover().line == 0);
+        CHECK(r.ce.Hover().tooltip == "foo() does a thing");
+        const Bitmap own = r.sim.Draw();
+        r.ce.SetHostDrawsTooltip(true);
+        r.Frame(); r.Frame();
+        CHECK(r.ce.Hover().kind == UI::CodeHover::Info);                          // still reported
+        const Bitmap hosted = r.sim.Draw();
+        r.sim.Move(r.X(P(0, 3)) + 1.0f, r.Y(P(0, 3))); r.Frame(); r.Frame();      // over the space: nothing
+        CHECK(r.ce.Hover().kind == UI::CodeHover::None && r.ce.Hover().tooltip.empty());
+        const Bitmap none = r.sim.Draw();
+        int dOwn = 0, dHosted = 0;
+        for (int y = 0; y < (int)r.sim.H; ++y)
+            for (int x = 0; x < (int)r.sim.W; ++x) { dOwn += PixelAt(own, x, y) != PixelAt(none, x, y); dHosted += PixelAt(hosted, x, y) != PixelAt(none, x, y); }
+        CHECK(dOwn > 100);      // OkayUI's own tooltip
+        CHECK(dHosted < 20);    // none drawn by OkayUI when the host draws it
+        r.sim.Move(r.X(P(1, 1)) + 1.0f, r.Y(P(1, 1))); r.Frame(); r.Frame();      // the warning's line: the marker wins
+        CHECK(r.ce.Hover().kind == UI::CodeHover::Warning && r.ce.Hover().line == 1 && r.ce.Hover().text == "oops");
+        CHECK(r.ce.Hover().tooltip == "Warning at line 2: oops");
+    }
+}
 } // namespace
 
 int main() {
@@ -1478,6 +1597,7 @@ int main() {
     CodeFontTests();
     RowLookTests();
     CaptureTests();
+    ParityTests();
     PerfTests();
     TEST_MAIN_RESULT();
 }

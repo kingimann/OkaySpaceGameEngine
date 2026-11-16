@@ -5,6 +5,7 @@
 #include "okay/Math/Mat4.hpp"
 #include "okay/Components/AnimClip.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
+#include "okay/Components/NaturalGait.hpp"
 #include <cctype>
 #include <cmath>
 #include <unordered_map>
@@ -102,6 +103,8 @@ public:
     float GaitPhase() const;
     /// True while the body is in the run pose, including the short blend back to a walk.
     bool SprintingPose() const;
+    /// How much the built-in stride shows a run right now: 0 = a pure walk, 1 = a pure run (eased over ~0.2 s).
+    float RunStyle() const { return m_runW; }
     /// Hide or show the held item on the owner's camera only. Others still see it.
     void SetHeldHiddenFromOwner(bool hide);
 
@@ -114,8 +117,11 @@ public:
         bool  crouch = false, prone = false;
         float stance = -1.0f;      ///< the eased stance level, 0 stand .. 1 crouch .. 2 prone (< 0 = from crouch / prone)
         bool  sprint = false;      ///< the run input is held
-        float walkSpeed = 4.5f;    ///< the controller's walk speed (run/walk split)
-        float runSpeed = 8.0f;     ///< the controller's run speed (walk/run style blend)
+        /// The controller's walk speed: the body is in the run STATE above 1.15 times it (1.05 once running),
+        /// or while the run input is held and the body moves at more than 0.9 times it. How much the legs
+        /// show a run does not depend on it: that follows the real ground speed (HumanoidMotion::JogWeight).
+        float walkSpeed = NaturalGait::WalkSpeed();
+        float runSpeed = NaturalGait::RunSpeed();   ///< the controller's run speed (what a caller means by run; the legs follow the real speed)
         float dt = 0.0f;
         bool  swim = false;        ///< supported by water. No swim clip yet: idle or walk stands in.
         float yawRate = 0.0f;      ///< body yaw change, degrees per second (+ = turning right)
@@ -727,6 +733,7 @@ private:
     float m_runWant = 0.0f;        // the style DriveLocomotion asked for this step
     bool  m_haveRunWant = false;
     float GaitPhaseAt(float t, int state) const;       // the gait phase at clock time t
+    float RigScale() const;                            // metres per rig unit: the height scale times the object's scale
     float RunWeight(int state) const;                  // walk/run style weight for a state
     HumanoidMotion::Inputs MotionInputs(int state, float t) const;   // the built-in motion's inputs
     void  AdvanceAnimClock(float dt);                  // animTime + the gait phase at the real cadence

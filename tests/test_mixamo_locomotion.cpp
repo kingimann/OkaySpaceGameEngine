@@ -501,6 +501,7 @@ int main() {
             L.AddClip("Walking", 1.0f, 20.0f);
             FixCharacterAnimations(*L.rig.scene, L.rig.player);
             HumanoidLibrary::EnsureAnimator(L.rig.player);
+            if (auto* still = L.rig.player->GetComponent<ThirdPersonController>()) L.rig.player->RemoveComponent(still);   // nothing walks the body: the wave is on an idle one
             Transform* hand = L.rig.Bone(8);
             CHECK(hand);
             if (hand) {
@@ -512,7 +513,6 @@ int main() {
                     L.rig.scene->Update(kDt);
                     peak = std::fmax(peak, hand->Position().y);
                 }
-                std::printf("  wave: hand y0 %.3f peak %.3f\n", y0, peak);
                 CHECK(peak > y0 + 0.12f);
             }
         }

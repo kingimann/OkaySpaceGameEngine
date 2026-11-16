@@ -3,6 +3,7 @@
 What every node in the Visual Script palette does, which pins it has, and what it needs.
 Generated from the same table the editor shows in the node search and on node tooltips.
 Hand-written nodes: `editor/VisualScriptNodeDocs.inc`. Engine API nodes: the binding table in `VisualScript/VsApi`.
+Where each node sits in the Add Node menu: [visual_scripting_topics.md](visual_scripting_topics.md).
 
 ## Nodes
 

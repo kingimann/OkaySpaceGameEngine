@@ -750,6 +750,9 @@ jobs:
       - name: Crash report to GitHub issue script over HTTP (fake Supabase and GitHub servers on 127.0.0.1)
         run: python3 -I tests/scripts/test_crash_to_issue_http.py
 
+      - name: Account server and key are not stored in the repository (configure-time only)
+        run: python3 -I tests/scripts/test_account_config.py
+
       - name: Crash reports workflow keeps its safety properties (opt-in schedule, dry run by default, minimal permissions)
         run: python3 -I tests/scripts/test_crash_workflow.py
 

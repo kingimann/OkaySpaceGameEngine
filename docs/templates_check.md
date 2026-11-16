@@ -5,7 +5,7 @@ and every example scene we ship, the way a person would, and fail when one is br
 
 | Test (ctest name) | Source | What it covers |
 |---|---|---|
-| `templates_work` | `tests/test_templates_work.cpp` | the 22 templates the launcher's Templates page and the editor's New Project form list (`okayproj::Templates()`), and the two `EditorState` builders no menu reaches |
+| `templates_work` | `tests/test_templates_work.cpp` | the 17 templates the launcher's Templates page and the editor's New Project form list (`okayproj::Templates()`), and the seven `EditorState` builders no menu reaches (two older ones, plus the five removed on 2026-11-16) |
 | `examples_work` | `tests/test_examples_work.cpp` | every `examples/**/*.okayscene` (52 today), every File > Examples entry, and the Windows release's example list |
 
 Both are in the normal CI run (`ctest`), they take about six seconds together (measured on one core, `-O1`), and they need no window.
@@ -40,9 +40,8 @@ build/tests/test_examples_work
 
 The interaction checks, by family:
 
-* First Person, Third Person, Humanoid, Sandbox, Third Person Shooter: hold W for a second and the player moves; let go and
-  it slows down; Space jumps and gravity brings it back; moving the mouse turns the view. Humanoid also checks that foot IK
-  and root motion are wired to the rig. Third Person Shooter also holds the left mouse button and the targets lose health.
+* First Person, Third Person, Sandbox, Third Person Shooter: hold W for a second and the player moves; let go and
+  it slows down; Space jumps and gravity brings it back; moving the mouse turns the view.  Third Person Shooter also holds the left mouse button and the targets lose health.
 * Platformer, 2.5D Platformer: D moves, Space jumps and lands; 2.5D: W hops to the layer behind, S back.
 * Top-Down: D moves, and the walls stop the player. Top-Down Shooter: it moves, Space dashes, the left mouse button fires and
   the magazine drains.
@@ -50,12 +49,12 @@ The interaction checks, by family:
 * Vehicle (3D), Vehicle (2D): W drives the car and it slows down when released.
 * Vehicle (get in and drive): W does nothing with nobody inside; walk up, press E, the Player sits in the driver's seat, W
   drives and the driver rides along, E gets out.
-* Coin Collector: walking onto the coins scores each and removes it, and the HUD shows the score.
-* Snake: the snake moves by itself, W turns it, food is on the board. Brick Breaker: the ball moves, A and D move the paddle,
+* Coin Collector (no longer offered): walking onto the coins scores each and removes it, and the HUD shows the score.
+* Snake (no longer offered): the snake moves by itself, W turns it, food is on the board. Brick Breaker: the ball moves, A and D move the paddle,
   bricks get hit and the score rises.
 * Main Menu: the Start button is a real button; clicking it does something that exists (hides the menu and shows the Game
   part; it must not try to load a scene that is not there); Back returns; Quit calls `quit()`.
-* Inventory: the item grid is wired to the Player's bag, a stack drags to another slot and back, the chest and the workbench
+* Inventory (no longer offered): the item grid is wired to the Player's bag, a stack drags to another slot and back, the chest and the workbench
   are there.
 * Multiplayer: the host and join controls exist, the status line says "offline", and the scene runs with no network.
 * 3D Scene, 2D Scene, Empty: they run.
@@ -73,7 +72,7 @@ Besides the per-template table, the test checks the table itself (`editor/Templa
 * the version gate really asks about an older project and about one with no stamp, so "no question" for a new project means
   something.
 
-**Scenes nothing offers.** `EditorState` has two builders that no menu, launcher card or New Project form calls:
+**Scenes nothing offers.** `EditorState` has seven builders that no menu, launcher card or New Project form calls (the two older ones are listed first; Coin Collector, Snake, Brick Breaker, Inventory and Humanoid were taken off the New Project lists on 2026-11-16 and stay here so they keep being tested):
 `NewPlatformer3D` (a 3D platformer) and `NewTerrainSandbox` (the older heightmap sandbox that the voxel Sandbox replaced in the
 launcher). A person cannot start them, so under the owner's rule 4a they are not "done"; they are listed in `MakeNotOffered()`
 with that reason and run through the same seven columns as the templates (all pass today: the 3D platformer's player walks 4.8 m

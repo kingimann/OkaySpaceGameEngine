@@ -18,13 +18,12 @@ starting scene already created. Templates include:
 
 - **2D Scene** / **3D Scene** — a camera + a starter object.
 - **Platformer** / **Top-Down** — playable, component-wired starters.
-- **Coin Collector (full game)** — a complete game you can dissect: a WASD
-  player, a follow camera, spinning coins that score on pickup, and a HUD.
-- **Snake** and **Brick Breaker** — two more complete games written in
-  OkayScript (a tilemap snake, and a paddle that clears a wall of bricks).
+- **Main Menu** — a title screen with buttons.
 
-Pick **Coin Collector** to see everything working, or **2D Scene** to build from
-scratch. Press the green **▶ Play** in the toolbar to run it; **■ Stop** restores
+Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are no longer
+offered when you create a project (removed 2026-11-16). Projects already made
+from them still open and play. Pick **Platformer** to see a working game, or
+**2D Scene** to build from scratch. Press the green **▶ Play** in the toolbar to run it; **■ Stop** restores
 the exact pre-play state.
 
 ## 3. Build a scene from scratch

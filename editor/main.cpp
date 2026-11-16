@@ -62,6 +62,8 @@
 #include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
 #include "okay/Core/SystemCost.hpp"      // Game view Stats: ms per system
 #include "okay/Components/ControllerPresets.hpp"   // Controller Preset combo
+#include "okay/Core/FrameOverlay.hpp"
+#include "okay/Render/OcclusionOverlay.hpp"
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
 #include "okay/Animation/PlayerSetup.hpp"      // controller: wire missing animation and IK
 #include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
@@ -1169,6 +1171,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                     SDL_RenderFlush(g_sdlRenderer);   // SDL's queued draws go first
                     if (g_d3dRenderer->RenderToTexture(scene, vp, eye, rw, rh, 4, 0.0f, 0.0f, 0.0f, 0.0f, dst, ignore)) {
                         okay::SceneOcclusionDepth().valid = false;
+                        okay::FrameOverlay::RendererName() = "Direct3D 11 (GPU, direct to the view)";
                         Uint64 r1 = okay::platform::PerfCounter();
                         okay::Prof().Gpu((double)(r1 - g_renderT0) / (double)okay::platform::PerfFrequency() * 1000.0);
                         return t;
@@ -1190,6 +1193,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
             px = g_d3dRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
                                                0.0f, 0.0f, 0.0f, 0.0f, ignore);
             g_d3dRenderer->SetReadbackStream(-1);
+            if (px) okay::FrameOverlay::RendererName() = "Direct3D 11 (GPU, read back)";
         }
 #endif
         if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
@@ -1200,6 +1204,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                 px = g_glRenderer->RenderToPixels(scene, vp, eye, rw, rh, 4,
                                                   0.0f, 0.0f, 0.0f, 0.0f, ignore);
             SDL_GL_MakeCurrent(prevWin, prevCtx);
+            if (px) okay::FrameOverlay::RendererName() = "OpenGL (GPU)";
         }
         static int s_gpuFails = 0;
         if (!px) {
@@ -1228,6 +1233,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         }
         px = RenderMeshesSS(g_view3DRaster[slot], g_view3DDown[slot],
                             scene, vp, eye, rw, rh, ss, ignore);
+        okay::FrameOverlay::RendererName() = g_gpuRender ? "SOFTWARE (CPU: no GPU renderer worked just now)" : "SOFTWARE (CPU: GPU view switched off)";
     }
     if (!px) return nullptr;   // every renderer failed — don't feed SDL a null buffer
     {   // Record the (synchronous) render time as the profiler's GPU proxy.
@@ -45091,13 +45097,10 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     // picture (particles, lines, trails), fill a half-resolution depth buffer the
     // same way the player does so those ribbons hide behind solid meshes.
     if (!okay::SceneOcclusionDepth().valid) {
-        bool overlay = false;
-        for (const auto& up : ed.scene().Objects())
-            if (up && up->active && (up->GetComponent<ParticleSystem>() || up->GetComponent<LineRenderer>() ||
-                                     up->GetComponent<TrailRenderer>())) { overlay = true; break; }
+        const bool overlay = okay::SceneHasOverlayNeedingDepth(ed.scene());   // live particles, lines or trails only
         if (overlay && v3w > 2.0f && v3h > 2.0f) {
             static Raster occWork; static std::vector<std::uint32_t> occDown;
-            const int hw = std::max(1, (int)(v3w * dpi) / 2), hh = std::max(1, (int)(v3h * dpi) / 2);
+            const int hw = std::max(1, std::min((int)(v3w * dpi) / 2, 427)), hh = std::max(1, hw * (int)(v3h * dpi) / std::max(1, (int)(v3w * dpi)));   // half resolution, never above 427 wide
             FillOcclusionDepth(occWork, occDown, ed.scene(), vp, eye, hw, hh, viewIgnore);
         }
     }

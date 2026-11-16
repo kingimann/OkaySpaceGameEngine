@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Core/Profiler.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
@@ -51,6 +52,7 @@ public:
     void Awake() override { m_seen = true; m_clipOnReuse = m_clip; m_playOnReuse = playing; }
 
     void Update(float dt) override {
+        OKAY_PROFILE("Anim.Sprite");
         int count = FrameCount();
         float rate = Fps();
         if (!playing || count <= 0 || rate <= 0.0f) return;

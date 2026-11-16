@@ -103,4 +103,22 @@ inline void StickLookDelta(float stickX, float stickY, float dt, bool pitchUp, b
     dPitch = pitchUp ? up : -up;
 }
 
+/// Camera stick acceleration: the right stick starts at kStart of the full look speed and reaches full speed
+/// after `ramp` seconds of being held near full throw, so a small flick aims finely and a long push turns
+/// quickly. A relaxed stick (under half throw) drops the build-up fast. ramp <= 0 = off (gain is always 1).
+struct StickLookRamp {
+    static constexpr float kStart = 0.45f;
+    float held = 0.0f;
+    void Reset() { held = 0.0f; }
+    float Gain(float throwMag, float dt, float ramp) {
+        if (ramp <= 0.0f) return 1.0f;
+        if (dt < 0.0f) dt = 0.0f;
+        if (throwMag >= 0.85f) held += dt;
+        else if (throwMag < 0.5f) held -= 3.0f * dt;
+        if (held < 0.0f) held = 0.0f;
+        if (held > ramp) held = ramp;
+        return kStart + (1.0f - kStart) * (held / ramp);
+    }
+};
+
 } // namespace okay

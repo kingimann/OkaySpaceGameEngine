@@ -3523,6 +3523,19 @@ if(SDL2_FOUND)
 endif()
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
+# Not a test: speed and peak heap of our WAV decoder against SDL_LoadWAV (docs/own_wav_decoder.md, "Speed and memory
+# against SDL"). Built when SDL2 is found, never run by ctest. Writes its generated files to <temp>/okay_wav_bench.
+if(SDL2_FOUND)
+    add_executable(bench_wav_decoder bench_wav_decoder.cpp)
+    target_link_libraries(bench_wav_decoder PRIVATE okay::engine)
+    target_include_directories(bench_wav_decoder PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/shared)
+    target_compile_definitions(bench_wav_decoder PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(bench_wav_decoder PRIVATE SDL2::SDL2)
+    else()
+        target_link_libraries(bench_wav_decoder PRIVATE ${SDL2_LIBRARIES})
+    endif()
+endif()
 
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt

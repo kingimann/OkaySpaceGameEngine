@@ -54,6 +54,7 @@ release job or the installer build for this change.
 | 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
 | 7g | Install, uninstall and Versions: see today's behaviour (audit, nothing changed) | Setup, Settings > Apps, `%LOCALAPPDATA%\OkaySpace`, the launcher's Versions page | Audit only: no program change in this branch. Windows steps unverified |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
+| 7k | UI library slice 1: range slider, input validation, aspect-ratio box | File > Examples > UI library > ui_library_1 (then Play), or GameObject > UI > Controls / Layout & Overlays; `examples\ui_library\ui_library_1.okayscene` | New in this change; real window unverified, steps in docs/ui_library.md |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
@@ -388,6 +389,32 @@ player run in step 10 (the player's drawing code was only syntax-checked, never 
 the folder (the example-copy block of `scripts/build-windows-dist.sh` was run alone and does put `examples/ui_text/ui_text.okayscene`
 in the output; `bash -n` of the whole script is clean). The editor code for the new Inspector rows and
 menu entry was only syntax-checked, not run. The pictures are headless renders, not screenshots of a window.
+
+## 7k. UI library slice 1: range slider, input validation, aspect-ratio box
+
+**What it is.** A UI screen with three cards that show the parts added in slice 1 of the in-game UI component library
+([ui_library.md](ui_library.md), [ui_component_audit.md](ui_component_audit.md) says what already existed): a range slider
+with two handles, input boxes with rules (email, number range, password and repeat) and a 16:9 frame that keeps its shape.
+
+**Steps.**
+1. Open the editor. **File > Examples > UI library (every in-game UI part) > ui_library_1**. (Or **File > Open...** with
+   `<install folder>\examples\ui_library\ui_library_1.okayscene`.)
+2. Press **Play**. The Game view shows "Range slider", "Input validation" and "Aspect ratio box (16:9)" cards with hints.
+3. Drag the handles of "Price range". The numbers above the track read `$120 to $380` and change in steps of 10. The handles
+   never cross. Drag the "Level range" handles: whole numbers, at least 3 apart.
+4. Click the Email box, type `ada@`. A red ring and "Enter an email like name@site.com" appear under the box. Type
+   `lovelace.org`: the ring turns green. Type `7` in Age: "Between 13 and 120". Type a short password, then repeat it
+   differently: "That is not the same password".
+5. Make the Game view taller, wider or a phone shape: the blue frame stays 16:9.
+6. Stop Play. Select the `Price` object: the Inspector shows **UI Range Slider**. Select `Email`: **UI Input Field** and
+   **UI Input Validator**. Select `Area`: **UI Aspect Ratio**. To add them to another scene: **GameObject > UI > Controls >
+   Range Slider** / **Input Field with Validation**, **Layout & Overlays > Aspect Ratio Box**.
+
+**How you know it worked.** A red ring and a sentence appear only after typing a wrong value; the range handles stop at each
+other; the blue frame is 16:9 at every window shape.
+
+**Known rough.** Headless pictures only (software renderer, `ui_library_shots`); never run in a real window or on Windows.
+The aspect box does not follow a world-space Canvas yet.
 
 ## 7f. Crash reports: detailed report, sending, GitHub issues
 

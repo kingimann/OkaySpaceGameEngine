@@ -6474,6 +6474,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
     }
     if (ImGui::BeginMenu("Controls")) {
         if (ImGui::MenuItem("Slider"))       addUI("Slider",      [](GameObject* g){ g->AddComponent<UISlider>(); });
+        if (ImGui::MenuItem("Range Slider")) addUI("Range Slider", oked::BuildUIRangeSlider);
         if (ImGui::MenuItem("Virtual Joystick")) addUI("Virtual Joystick", [](GameObject* g){ g->AddComponent<VirtualJoystick>(); });
         if (ImGui::MenuItem("D-Pad"))        addUI("D-Pad",       [](GameObject* g){ g->AddComponent<TouchDPad>(); });
         if (ImGui::MenuItem("Touch Button")) addUI("Touch Button", [](GameObject* g){ g->AddComponent<TouchButton>(); });
@@ -6482,6 +6483,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Rating"))       addUI("Rating",      [](GameObject* g){ g->AddComponent<UIRating>(); });
         if (ImGui::MenuItem("Tabs"))         addUI("Tabs",        [](GameObject* g){ g->AddComponent<UITabs>(); });
         if (ImGui::MenuItem("Input Field"))  addUI("InputField",  [](GameObject* g){ g->AddComponent<UIInputField>(); });
+        if (ImGui::MenuItem("Input Field with Validation")) addUI("ValidatedInput", oked::BuildUIInputValidation);
         if (ImGui::MenuItem("Dropdown"))     addUI("Dropdown",    [](GameObject* g){ g->AddComponent<UIDropdown>(); });
         if (ImGui::MenuItem("Draggable"))    addUI("Draggable",   [](GameObject* g){ g->AddComponent<UIImage>(); g->AddComponent<UIDraggable>(); });
         if (ImGui::MenuItem("Drop Target"))  addUI("DropTarget",  [](GameObject* g){ g->AddComponent<UIPanel>(); g->AddComponent<UIDropTarget>(); });
@@ -6501,6 +6503,7 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Scroll View"))  addUI("ScrollView",  [](GameObject* g){ g->AddComponent<UIScrollView>(); });
         if (ImGui::MenuItem("Layout Group")) addUI("Layout",      [](GameObject* g){ g->AddComponent<UILayoutGroup>(); });
         if (ImGui::MenuItem("Flex Box"))     addUI("FlexBox",     oked::BuildUIFlexBox);
+        if (ImGui::MenuItem("Aspect Ratio Box")) addUI("AspectBox", oked::BuildUIAspectRatio);
         if (ImGui::MenuItem("Masked Panel")) addUI("Mask",        oked::BuildUIMaskedPanel);
         if (ImGui::MenuItem("List View"))    addUI("ListView",    oked::BuildUIListView);
         ImGui::Separator();
@@ -6875,6 +6878,24 @@ static void DrawExampleMenuItems(EditorState& ed) {
             ImGui::EndMenu();
         }
         if (guided.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The guided modeling examples (examples/modeling) were not found next to the editor.");
+    }
+    // UI library: one scene per slice of the component library (range slider, validation, aspect ratio ...).
+    {
+        namespace fs = std::filesystem;
+        const std::vector<std::string> uilib = okay::editor::ExampleScenes("ui_library");
+        if (ImGui::BeginMenu("UI library (every in-game UI part)", !uilib.empty())) {
+            ImGui::TextDisabled("Open one, then press Play. The text on screen says what to try.");
+            for (const std::string& p : uilib) {
+                const std::string name = fs::path(p).stem().string();
+                if (ImGui::MenuItem(name.c_str())) {
+                    std::string err;
+                    if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
+                    else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (uilib.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("The UI library examples (examples/ui_library) were not found next to the editor.");
     }
 }
 
@@ -41860,6 +41881,9 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIPagination>(), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISkeleton>(), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBottomSheet>(), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRangeSlider>(), "UI Range Slider (two handles)")) { go->AddComponent<UIRangeSlider>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAspectRatio>(), "UI Aspect Ratio (keeps a shape)")) { go->AddComponent<UIAspectRatio>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIInputValidator>() && go->GetComponent<UIInputField>(), "UI Input Validator (rules for an input field)")) { go->AddComponent<UIInputValidator>(); ed.dirty = true; }
             if (item(!go->GetComponent<UITextBind>(), "UI Text Bind (show a variable)")) { go->AddComponent<UITextBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBarBind>(), "UI Bar Bind (var -> progress bar)")) { go->AddComponent<UIBarBind>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIStyleVariant>(), "UI Style Variant (theme role)")) { go->AddComponent<UIStyleVariant>(); ed.dirty = true; }

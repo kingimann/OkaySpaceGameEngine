@@ -8,10 +8,13 @@
 //
 // Two layers:
 //   1. Parse()  - bytes -> a plain element tree (Document). No scene knowledge.
-//   2. Build()  - Document -> Scene: nodes with transforms, triangulated
-//                 meshes split per material, skins, blend shapes, materials,
-//                 textures and baked animation. Already converted to
-//                 right-handed Y-up, meters (like ModelImport asks ufbx for).
+//   2. Build()  - Document -> Scene: nodes with transforms, meshes as the
+//                 file's polygons (positions, polygon index lists and the
+//                 per-corner layers), skins, blend shapes, materials, textures
+//                 and animation clips. Already converted to right-handed Y-up,
+//                 meters (like ModelImport asks ufbx for).
+//   3. BuildParts() - the import step: a mesh's polygons -> triangles split per
+//                 material, with equal corners shared (Mesh::parts).
 //
 // Pure standard C++ (no engine headers, no <mutex>/<thread>), so it also
 // builds standalone for the hostile-input fuzz tests. What is NOT handled yet
@@ -20,6 +23,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <new>
 #include <string>
 #include <string_view>
@@ -198,6 +202,42 @@ struct Corner {
 
 static_assert(sizeof(Corner) == 52, "Corner is compared and hashed byte for byte: no padding");
 
+/// A numeric array the scene keeps after the Document is gone: `a` reads it, `keep` owns the bytes `a.data` points into
+/// (shared, so a copied Scene stays valid). LoadMemory / LoadFile hand over the Document's own decoded buffers (no
+/// copy); arrays that were views into the caller's bytes, and everything Build() gets from a const Document, are copied.
+struct KeptArray {
+    Array a;
+    bool present = false;                  ///< the file had this array (it may still be empty)
+    std::shared_ptr<const void> keep;
+    std::size_t size() const { return a.count; }
+    bool empty() const { return a.count == 0; }
+    double operator[](std::size_t k) const { return a[k]; }
+};
+
+/// How a layer's values belong to polygon corners (the file's MappingInformationType).
+enum class LayerMapping : std::uint8_t { None, ByPolygonVertex, ByControlPoint, ByPolygon, AllSame, ByEdge };
+
+/// One layer element of a mesh (normals, UVs, colours or material ids) as the file stores it.
+struct MeshLayer {
+    LayerMapping mapping = LayerMapping::None;
+    bool indexed = false;          ///< ReferenceInformationType IndexToDirect: `indices` picks the value per corner
+    int dim = 1;                   ///< numbers per value (3 normals, 2 UVs, 4 colours, 1 material id)
+    KeptArray values, indices;
+    bool Ok() const { return mapping != LayerMapping::None && values.present; }
+};
+
+/// A mesh's polygons as the file stores them: what the reader produces. BuildParts() turns them into Mesh::parts
+/// (triangulated, split per material, equal corners shared); the importer calls it.
+struct Polygons {
+    KeptArray positions;           ///< the file's Vertices, 3 per control point, in file units ...
+    double positionScale = 1.0;    ///< ... times this gives output units (the unit conversion; axes are in the node matrices)
+    KeptArray polygonVertexIndex;  ///< the file's PolygonVertexIndex: a control point per corner, a polygon's last as ~index
+    KeptArray edges;               ///< the file's Edges, kept only when a layer is mapped ByEdge
+    MeshLayer normals, uvs, colors, materials;
+    std::uint64_t corners = 0;     ///< triangle corners BuildParts makes (counted by the reader for Limits::maxCorners)
+    bool empty() const { return !positions.present || !polygonVertexIndex.present; }
+};
+
 /// The triangles of one material slot, indexed: corner i of the triangle list is vertices[indices[i]]. Corners that
 /// are equal byte for byte share one vertex, numbered in order of first use (so the importer's own de-duplication
 /// gives the same vertex order as it did on the unindexed list).
@@ -234,13 +274,18 @@ struct Mesh {
     std::string name;
     std::uint32_t controlPoints = 0;
     bool hasNormals = false, hasUV = false, hasColors = false;
-    std::vector<Part> parts;       ///< non-empty parts, ascending slot
+    Polygons polygons;             ///< the file's polygons (what the reader produces)
+    std::vector<Part> parts;       ///< non-empty parts, ascending slot: empty until BuildParts(mesh)
     std::vector<int> materials;    ///< slot -> index into Scene::materials (-1 unknown)
     std::vector<Cluster> clusters; ///< empty when not skinned
     /// per control point: influences, strongest first
     std::vector<std::vector<Influence>> skinWeights;
     std::vector<BlendChannel> channels;
-    std::uint32_t triangleCount() const { std::uint32_t t = 0; for (const Part& p : parts) t += (std::uint32_t)(p.indices.size() / 3); return t; }
+    /// Triangles in `parts` (0 until BuildParts), or the count BuildParts will make when the parts are not built yet.
+    std::uint32_t triangleCount() const {
+        if (parts.empty()) return (std::uint32_t)(polygons.corners / 3);
+        std::uint32_t t = 0; for (const Part& p : parts) t += (std::uint32_t)(p.indices.size() / 3); return t;
+    }
 };
 
 struct SceneNode {
@@ -325,6 +370,14 @@ struct BuildOptions {
 };
 
 bool Build(const Document& doc, Scene& out, std::string* err, const BuildOptions& opt = BuildOptions());
+/// The import step that turns a mesh's polygons into `parts`: polygons triangulated (ear clipping; missing normals made
+/// flat per polygon), split per material slot, equal corners (byte for byte) sharing one vertex in order of first use.
+/// Does nothing when the parts are already built. `releasePolygons` frees the polygon arrays afterwards. Returns false
+/// (parts left empty) only when the mesh goes past `lim.maxCorners`, which the reader already refuses.
+bool BuildParts(Mesh& m, std::string* err = nullptr, const Limits& lim = Limits(), bool releasePolygons = false);
+/// BuildParts for every mesh of the scene.
+bool BuildParts(Scene& s, std::string* err = nullptr, const Limits& lim = Limits(), bool releasePolygons = false);
+/// Parse + Build. The meshes come back as polygons (Mesh::polygons); call BuildParts for triangles.
 bool LoadMemory(const std::uint8_t* data, std::size_t size, Scene& out, std::string* err, const BuildOptions& opt = BuildOptions());
 bool LoadFile(const std::string& path, Scene& out, std::string* err, const BuildOptions& opt = BuildOptions());
 

@@ -36,8 +36,8 @@ static fbx::BuildOptions Tight() {   // tiny limits: a hostile file may not make
     return o;
 }
 static bool Load(const Bytes& b, const fbx::BuildOptions& o = Tight(), std::string* err = nullptr) {
-    fbx::Scene s;
-    return fbx::LoadMemory(b.data(), b.size(), s, err, o);
+    fbx::Scene s;   // the reader, then the import's triangulation of its polygons (BuildParts)
+    return fbx::LoadMemory(b.data(), b.size(), s, err, o) && fbx::BuildParts(s, err, o.limits);
 }
 
 static Bytes Header(std::uint32_t version = 7400) {
@@ -263,7 +263,7 @@ static void Hierarchies() {
         t += "\n  }\n }\n Model: 1, \"Model::A\", \"Mesh\" {\n }\n}\nConnections: {\n C: \"OO\",2,1\n C: \"OO\",1,0\n}\n";
         const auto t0 = std::chrono::steady_clock::now();
         fbx::BuildOptions o = fbx::BuildOptions();
-        CHECK(fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), s, &err, o));
+        CHECK(fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), s, &err, o) && fbx::BuildParts(s, &err));
         CHECK(!s.meshes.empty() && s.meshes[0].triangleCount() == (std::uint32_t)(n - 2));
         CHECK(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - t0).count() < 20);
     }
@@ -279,7 +279,7 @@ static void Hierarchies() {
     {
         const std::string t = "Objects: {\n Geometry: 2, \"Geometry::G\", \"Mesh\" {\n  Vertices: *9 { a: 0,0,0,1,0,0,0,1,0 }\n  PolygonVertexIndex: *6 { a: 0,1,-3,0,1,-9999 }\n }\n"
                               " Model: 1, \"Model::A\", \"Mesh\" {\n }\n}\nConnections: {\n C: \"OO\",2,1\n C: \"OO\",1,0\n}\n";
-        CHECK(fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), s, &err));
+        CHECK(fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), s, &err) && fbx::BuildParts(s, &err));
         CHECK(!s.meshes.empty() && s.meshes[0].triangleCount() == 1);
     }
 }
@@ -303,7 +303,7 @@ static std::string AnimText(int stacks, int layers, int keys, double spanSec, in
 }
 static bool LoadText(const std::string& t, const fbx::BuildOptions& o, std::string* err, fbx::Scene* out = nullptr) {
     fbx::Scene s;
-    const bool ok = fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), out ? *out : s, err, o);
+    const bool ok = fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), out ? *out : s, err, o) && fbx::BuildParts(out ? *out : s, err, o.limits);
     return ok;
 }
 

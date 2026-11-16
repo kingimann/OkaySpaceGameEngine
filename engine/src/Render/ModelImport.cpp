@@ -1790,7 +1790,8 @@ bool OwnIsIdentity(const fbx::Mat& m) {
 static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* outTexture) {
     Mesh merged;
     fbx::Scene sc; std::string err;
-    if (!fbx::LoadFile(path, sc, &err)) { if (ok) *ok = false; return merged; }
+    // The reader gives polygons; the import triangulates them (each mesh's polygon arrays freed once it has its parts).
+    if (!fbx::LoadFile(path, sc, &err) || !fbx::BuildParts(sc, &err, fbx::Limits(), true)) { if (ok) *ok = false; return merged; }
     for (const fbx::SceneNode& node : sc.nodes) {
         if (node.mesh < 0) continue;
         const fbx::Mesh& fm = sc.meshes[(std::size_t)node.mesh];
@@ -1816,7 +1817,8 @@ static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* o
 
 static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err) {
     fbx::Scene sc;
-    if (!fbx::LoadFile(path, sc, err)) { if (ok) *ok = false; return nullptr; }
+    // The reader gives polygons; the import triangulates them (each mesh's polygon arrays freed once it has its parts).
+    if (!fbx::LoadFile(path, sc, err) || !fbx::BuildParts(sc, err, fbx::Limits(), true)) { if (ok) *ok = false; return nullptr; }
     GameObject* root = scene.CreateGameObject(BaseName(path));
     std::vector<GameObject*> goOf(sc.nodes.size(), nullptr);
     std::unordered_map<std::string, int> nameUse;

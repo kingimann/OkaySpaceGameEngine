@@ -61,6 +61,8 @@ static double MeshArea(const fbx::Mesh& m) {
     for (const fbx::Part& p : m.parts) { const std::vector<fbx::Corner> cs = p.ExpandCorners(); for (std::size_t i = 0; i + 2 < cs.size(); i += 3) s += TriArea(&cs[i]); }
     return s;
 }
+/// The reader, then the import's triangulation of the meshes' polygons (fbx::BuildParts): what the checks on parts need.
+static bool LoadParts(const std::string& path, fbx::Scene& s, std::string* err) { return fbx::LoadFile(path, s, err) && fbx::BuildParts(s, err); }
 static const fbx::SceneNode* FindNode(const fbx::Scene& s, const char* n) {
     for (const auto& x : s.nodes) if (x.name == n) return &x;
     return nullptr;
@@ -100,8 +102,8 @@ static void DirectTests() {
     RUN_SUITE("fbx scene: cube (Z up, cm), binary vs ascii");
     fbx::Scene b, a;
     std::string err;
-    CHECK(fbx::LoadFile(Fx("cube_zup_cm_bin.fbx"), b, &err));
-    CHECK(fbx::LoadFile(Fx("cube_zup_cm_ascii.fbx"), a, &err));
+    CHECK(LoadParts(Fx("cube_zup_cm_bin.fbx"), b, &err));
+    CHECK(LoadParts(Fx("cube_zup_cm_ascii.fbx"), a, &err));
     CHECK(b.nodes.size() == 1 && a.nodes.size() == 1);
     if (b.nodes.size() == 1 && a.nodes.size() == 1) {
         const fbx::SceneNode& n = b.nodes[0];
@@ -153,7 +155,7 @@ static void DirectTests() {
 
     RUN_SUITE("fbx scene: n-gons, ear clipping, per-polygon materials");
     fbx::Scene g;
-    CHECK(fbx::LoadFile(Fx("ngon_bin.fbx"), g, &err));
+    CHECK(LoadParts(Fx("ngon_bin.fbx"), g, &err));
     if (!g.meshes.empty()) {
         const fbx::Mesh& m = g.meshes[0];
         // L hexagon (area 3) + pentagon + triangle (0.5)
@@ -176,7 +178,7 @@ static void DirectTests() {
 
     RUN_SUITE("fbx scene: generated normals, hierarchy, bad polygons");
     fbx::Scene pl;
-    CHECK(fbx::LoadFile(Fx("plain_bin.fbx"), pl, &err));
+    CHECK(LoadParts(Fx("plain_bin.fbx"), pl, &err));
     CHECK(pl.nodes.size() == 2 && pl.roots.size() == 1);
     if (pl.nodes.size() == 2) {
         CHECK(pl.nodes[0].name == "Parent" && pl.nodes[1].name == "Pyr" && pl.nodes[1].parent == 0);
@@ -281,7 +283,7 @@ static void DirectTests() {
     RUN_SUITE("fbx scene: bridge polygon, takes with their own time span, byte-array property");
     {
         fbx::Scene br;
-        CHECK(fbx::LoadFile(Fx("bridge_bin.fbx"), br, &err));
+        CHECK(LoadParts(Fx("bridge_bin.fbx"), br, &err));
         if (!br.meshes.empty()) CHECK(Near(MeshArea(br.meshes[0]), 12.0 * 0.0001, 1e-9));   // centimetres to metres: x 0.01 on both axes
     }
     {

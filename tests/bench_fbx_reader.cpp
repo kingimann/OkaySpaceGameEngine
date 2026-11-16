@@ -7,8 +7,9 @@
 // For every file it measures, each as the median wall time over N runs (default 5; small files run more often, until
 // about 50 ms have passed, so their median is not timer noise):
 //   own-tree    okay::fbx::Parse      the element tree only (binary or ASCII)
-//   own-load    okay::fbx::LoadMemory the tree plus the scene build (nodes, meshes, skins, baked clips): our reader's
-//                                     own structures, which is what ufbx_load_memory produces for ufbx
+//   own-load    okay::fbx::LoadMemory the tree plus the scene build (nodes, meshes as polygons, skins, clips): our
+//                                     reader's own structures, which is what ufbx_load_memory produces for ufbx (the
+//                                     triangles are made by the import, fbx::BuildParts, as ufbx's are by its import)
 //   ufbx-load   ufbx_load_memory      with the options the engine's ufbx path uses (ModelImport.cpp, LoadFbx)
 //   imp-own / imp-ufbx                the full import through the seam, ImportModelScene, with our reader switched on
 //                                     and off (file read, reader, GameObjects, MeshRenderer / SkinnedMesh / clips)
@@ -19,7 +20,9 @@
 //
 // Not part of ctest: it prints numbers, it does not check them. Correctness is checked by fbx_reader and
 // model_corpus (docs/model_corpus.md). `--digest` prints, per file, a hash of every field our reader produced (bit for
-// bit), to show that a speed change did not change the output; `--import-digest` does the same for the whole imported
+// bit, the meshes' polygon arrays included), to show that a speed change did not change the output; `--parts-digest`
+// hashes the scene after BuildParts without the polygon arrays (the triangulated parts: what `--digest` hashed before
+// the reader left the triangulation to the import, 2026-11-16); `--import-digest` does the same for the whole imported
 // scene (our reader on), hashed as SceneSerializer writes it. `--only own-tree|own-load|ufbx-load|import-own|
 // import-ufbx` runs just that, once per file, for a profiler (valgrind --tool=callgrind). Large synthetic files: python3 scripts/gen_fbx_bench.py <dir>.
 // Written for this project; the counting allocator and the statistics are our own.
@@ -189,7 +192,17 @@ struct Hasher {
     template <class T> void Vec(const std::vector<T>& v) { Pod(v.size()); if (!v.empty()) Bytes(v.data(), v.size() * sizeof(T)); }
     void M(const fbx::Mat& m) { Bytes(m.m, sizeof(m.m)); }
 };
-std::uint64_t Digest(const fbx::Scene& s) {
+void HashArray(Hasher& h, const fbx::KeptArray& a) {   // the array as the file stores it: type, count, bytes
+    h.Pod(a.present); h.Pod(a.a.type); h.Pod(a.a.count);
+    const std::size_t esz = (a.a.type == 'd' || a.a.type == 'l') ? 8 : ((a.a.type == 'b' || a.a.type == 'c') ? 1 : 4);
+    if (a.a.count && a.a.data) h.Bytes(a.a.data, (std::size_t)a.a.count * esz);
+}
+void HashLayer(Hasher& h, const fbx::MeshLayer& l) {
+    h.Pod(l.mapping); h.Pod(l.indexed); h.Pod(l.dim); HashArray(h, l.values); HashArray(h, l.indices);
+}
+// polygons: the reader's polygons are hashed (`--digest`); without, the scene is hashed as it was before the reader
+// left the triangulation to the import (`--parts-digest`, after BuildParts: the same hash as the old `--digest`)
+std::uint64_t Digest(const fbx::Scene& s, bool polygons) {
     Hasher h;
     h.Pod(s.nodes.size());
     for (const fbx::SceneNode& n : s.nodes) {
@@ -200,6 +213,11 @@ std::uint64_t Digest(const fbx::Scene& s) {
     h.Pod(s.meshes.size());
     for (const fbx::Mesh& m : s.meshes) {
         h.Str(m.name); h.Pod(m.controlPoints); h.Pod(m.hasNormals); h.Pod(m.hasUV); h.Pod(m.hasColors);
+        if (polygons) {
+            const fbx::Polygons& P = m.polygons;
+            HashArray(h, P.positions); h.Pod(P.positionScale); HashArray(h, P.polygonVertexIndex); HashArray(h, P.edges);
+            HashLayer(h, P.normals); HashLayer(h, P.uvs); HashLayer(h, P.colors); HashLayer(h, P.materials); h.Pod(P.corners);
+        }
         h.Pod(m.parts.size());
         for (const fbx::Part& p : m.parts) {
             // the triangle list corner by corner (as it was hashed when parts were unindexed), so the hash is the
@@ -247,7 +265,7 @@ std::uint64_t Digest(const fbx::Scene& s) {
 
 int main(int argc, char** argv) {
     int runs = 5;
-    bool quiet = false, digest = false, importDigest = false;
+    bool quiet = false, digest = false, partsDigest = false, importDigest = false;
     std::string only;   // --only own-tree|own-load|ufbx-load|import-own|import-ufbx: run that once per file (for a profiler)
     std::vector<std::string> files;
     for (int i = 1; i < argc; ++i) {
@@ -255,6 +273,7 @@ int main(int argc, char** argv) {
         if (a == "--runs" && i + 1 < argc) runs = std::max(1, std::atoi(argv[++i]));
         else if (a == "--quiet") quiet = true;
         else if (a == "--digest") digest = true;
+        else if (a == "--parts-digest") partsDigest = true;
         else if (a == "--import-digest") importDigest = true;
         else if (a == "--only" && i + 1 < argc) only = argv[++i];
         else if (a == "-h" || a == "--help") { std::printf("bench_fbx_reader [--runs N] [--quiet] <file.fbx|dir> ...\n"); return 0; }
@@ -269,10 +288,11 @@ int main(int argc, char** argv) {
     std::sort(files.begin(), files.end());
     files.erase(std::unique(files.begin(), files.end()), files.end());
     if (files.empty()) { std::fprintf(stderr, "no .fbx files given\n"); return 1; }
-    if (digest) {   // one line per file: name, then the hash of our reader's whole result (or the error)
+    if (digest || partsDigest) {   // one line per file: name, then the hash of our reader's whole result (or the error)
         for (const std::string& path : files) {
             fbx::Scene sc; std::string e;
-            if (fbx::LoadFile(path, sc, &e)) std::printf("%s %016llx\n", fs::path(path).filename().string().c_str(), (unsigned long long)Digest(sc));
+            if (fbx::LoadFile(path, sc, &e) && (!partsDigest || fbx::BuildParts(sc, &e)))
+                std::printf("%s %016llx\n", fs::path(path).filename().string().c_str(), (unsigned long long)Digest(sc, !partsDigest));
             else std::printf("%s error: %s\n", fs::path(path).filename().string().c_str(), e.c_str());
         }
         return 0;

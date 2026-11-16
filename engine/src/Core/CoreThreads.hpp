@@ -243,7 +243,7 @@ public:
     void Lock()   { m_mu.lock(); }
     void Unlock() { m_mu.unlock(); }
 private:
-    std::recursive_mutex m_mu;
+    std::recursive_mutex m_mu;   // lint-allow: win32-thread (the non-Windows branch of #if defined(_WIN32))
 };
 
 class CondVar {
@@ -286,7 +286,7 @@ public:
             nm.text[n] = 0;
         }
         try {
-            m_t = std::thread([fn, arg, nm] {
+            m_t = std::thread([fn, arg, nm] {   // lint-allow: win32-thread (the non-Windows branch)
                 if (nm.text[0]) SetCurrentThreadName(nm.text);
                 fn(arg);
             });

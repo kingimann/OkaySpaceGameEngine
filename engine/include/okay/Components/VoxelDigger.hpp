@@ -14,6 +14,8 @@
 #include <memory>
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Core/Profiler.hpp"
+#include "okay/Core/FrameOverlay.hpp"
+#include <chrono>
 #include "okay/Render/Mesh.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/GameInput.hpp"
@@ -182,6 +184,10 @@ public:
     }
 
     void Update(float dt) override {
+        const auto digT0 = std::chrono::steady_clock::now();
+        struct Rep { std::chrono::steady_clock::time_point t0; ~Rep() {
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            VoxelOverlayStats& o = FrameOverlay::Voxel(); o.digMs = o.digMs * 0.9 + ms * 0.1; } } rep{digT0};
         // Pause, an open bag/chest/menu, typing, or a click on UI: no aim marker and no digging.
         if (GameInputBlocked(GetScene())) { HideBrush(); DigSound(false); return; }
         VoxelTerrain* vox = FindVoxel();

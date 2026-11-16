@@ -275,6 +275,9 @@ struct DownloadSpec {
     /// can be held to the same file: with expectedSha256 set (a different file then fails the checksum) or validators.
     bool resumeExisting = false;
     bool keepPartialOnFailure = false;  ///< leave the temporary file after a network failure or cancel (never after a checksum or size mismatch)
+    /// Compute SHA-256 while streaming (returned in sha256Hex). Always on when expectedSha256 is set; turning it off
+    /// saves the hashing time (our SHA-256 runs at roughly 130 to 200 MB/s on one core) when nobody needs the hash.
+    bool computeSha256 = true;
     bool syncBeforeRename = true;       ///< fsync the file (and the folder after the rename) so a crash cannot leave a short file under the final name
     RetryPolicy retry;                  ///< maxAttempts counts every try; a resume is a try
     /// Bytes in the file so far (counting resumed bytes) and the complete size when known (0 when not). false = cancel.
@@ -346,6 +349,7 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
     }
     const std::string temp = spec.tempPath.empty() ? dest + ".part" : spec.tempPath;
     const uint64_t cap = spec.maxBytes ? spec.maxBytes : (8ull << 30);
+    const bool hashing = spec.computeSha256 || !wantHex.empty();
 
     // --- the temporary file and what we know about it
     okay::crypto::Sha256 hasher;
@@ -456,7 +460,7 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
             if (cap && written + n > cap) { stop = Stop::TooBig; return false; }
             if (spec.expectedSize && written + n > spec.expectedSize) { stop = Stop::SizeMismatch; return false; }
             if (!dl_detail::WriteAll(fd, p, n)) { stop = Stop::Write; return false; }
-            hasher.Update(reinterpret_cast<const uint8_t*>(p), n);
+            if (hashing) hasher.Update(reinterpret_cast<const uint8_t*>(p), n);
             written += n;
             if (spec.progress && !spec.progress(written, knownTotal)) { cancelled = true; return false; }
             return !cancelNow();
@@ -478,9 +482,11 @@ inline DownloadResult DownloadToFile(const std::string& url, const std::string& 
             if (attempt >= maxAttempts) return fail(DownloadStatus::NetworkError, "the file changed on the server while it was downloaded", false);
         } else if (r.ok && (r.response.status == 200 || r.response.status == 206)) {
             // --- complete: check, sync, rename
-            uint8_t digest[32];
-            hasher.Final(digest);
-            out.sha256Hex = dl_detail::Hex(digest, 32);
+            if (hashing) {
+                uint8_t digest[32];
+                hasher.Final(digest);
+                out.sha256Hex = dl_detail::Hex(digest, 32);
+            }
             out.bytes = written;
             if (knownTotal && written != knownTotal) return fail(DownloadStatus::SizeMismatch, "the answer ended before the announced size", false);
             if (spec.expectedSize && written != spec.expectedSize) return fail(DownloadStatus::SizeMismatch, "the file is not the expected size", false);

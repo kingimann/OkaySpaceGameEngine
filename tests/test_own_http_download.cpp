@@ -12,8 +12,9 @@
 //   test_own_http_download [gen_http_test_certs.sh]            the tests (OKAY_HTTP_BIG_MB sets the large file size)
 //   test_own_http_download --serve                             a server for scripts/own_http_bench.py: prints the port,
 //                                                              serves /file?size=N until stdin closes
-//   test_own_http_download --get URL OUT [nosync]              download URL to OUT with DownloadToFile, print the SHA-256
-//                                                              (nosync: skip the fsync before the rename, as curl does)
+//   test_own_http_download --get URL OUT [nosync,nohash]       download URL to OUT with DownloadToFile, print the SHA-256
+//                                                              (nosync: no fsync before the rename, as curl; nohash: no SHA-256)
+//   test_own_http_download --sha FILE                          SHA-256 of FILE with the engine's own hash
 //
 // Written for this engine; the server, proxy and checks are our own code.
 #include "okay/Platform/OwnHttpDownload.hpp"
@@ -722,18 +723,33 @@ static int Serve() {
     s.Stop();
     return 0;
 }
-static int Get(const std::string& url, const std::string& out, bool sync) {
+static int Get(const std::string& url, const std::string& out, const std::string& flags) {
     NetOptions o; o.env = [](const char*) -> const char* { return nullptr; };   // local server: no proxy
-    DownloadSpec sp; sp.syncBeforeRename = sync;
+    DownloadSpec sp; sp.syncBeforeRename = flags.find("nosync") == std::string::npos; sp.computeSha256 = flags.find("nohash") == std::string::npos;
     DownloadResult r = DownloadToFile(url, out, sp, o);
     std::printf("%s %s %llu\n", DownloadStatusName(r.status), r.sha256Hex.c_str(), (unsigned long long)r.bytes);
     return r.status == DownloadStatus::Ok ? 0 : 1;
 }
 
+/// SHA-256 of a file with the engine's own hash (what a caller does after a curl download to check it).
+static int Sha(const std::string& path) {
+    const int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) return 1;
+    okay::crypto::Sha256 h; std::vector<char> buf(1 << 16); ssize_t n;
+    while ((n = ::read(fd, buf.data(), buf.size())) > 0) h.Update(reinterpret_cast<const uint8_t*>(buf.data()), size_t(n));
+    ::close(fd);
+    uint8_t d[32]; h.Final(d);
+    static const char* k = "0123456789abcdef"; std::string s;
+    for (uint8_t b : d) { s += k[b >> 4]; s += k[b & 15]; }
+    std::printf("%s\n", s.c_str());
+    return 0;
+}
+
 int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);
     if (argc > 1 && std::string(argv[1]) == "--serve") return Serve();
-    if (argc > 3 && std::string(argv[1]) == "--get") return Get(argv[2], argv[3], !(argc > 4 && std::string(argv[4]) == "nosync"));
+    if (argc > 3 && std::string(argv[1]) == "--get") return Get(argv[2], argv[3], argc > 4 ? argv[4] : "");
+    if (argc > 2 && std::string(argv[1]) == "--sha") return Sha(argv[2]);
     const std::string script = argc > 1 ? argv[1] : "tests/scripts/gen_http_test_certs.sh";
     std::string tmpl = TmpBase() + "/okay_http_dl_XXXXXX";
     if (!::mkdtemp(&tmpl[0])) { std::perror("mkdtemp"); return 2; }

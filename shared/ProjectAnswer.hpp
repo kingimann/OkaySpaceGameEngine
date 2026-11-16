@@ -51,6 +51,10 @@ inline std::string PreAnswerArg(PreAnswer a) {
     return a == PreAnswer::None ? std::string() : std::string(ProjectAnswerFlag()) + "=" + PreAnswerName(a);
 }
 
+/// A process id that can be a real process: above zero and inside 31 bits. A bigger number (4294967295, or a huge one that strtoul
+/// clamps) is not a process, and on Linux it would wrap to -1 in kill(), which then "finds" every process alive.
+inline bool PlausiblePid(unsigned long pid) { return pid > 0 && pid < 0x80000000ul; }
+
 /// What the command line asked: the answer, the scene it is for, and the launcher that vouched for it.
 struct PreAnswerRequest {
     PreAnswer answer = PreAnswer::None;
@@ -77,7 +81,7 @@ inline PreAnswerRequest ParsePreAnswer(const std::vector<std::string>& args, con
         else if (a.rfind("--open=", 0) == 0) scene = a.c_str() + 7;
         else if (a.rfind(flagEq, 0) == 0) answer = ParsePreAnswerName(a.c_str() + flagEq.size());
     }
-    if (answer == PreAnswer::None || scene.empty() || !havePid || pid == 0) return r;
+    if (answer == PreAnswer::None || scene.empty() || !havePid || !PlausiblePid(pid)) return r;
     if (!launcherAlive || !launcherAlive(pid)) return r;
     r.answer = answer;
     r.scene = scene;
@@ -93,7 +97,7 @@ inline PreAnswerRequest PreAnswerFromHandoff(const std::string& answerName, cons
     PreAnswerRequest r;
     const PreAnswer answer = ParsePreAnswerName(answerName);
     const unsigned long pid = std::strtoul(pidText.c_str(), nullptr, 10);
-    if (answer == PreAnswer::None || scene.empty() || pid == 0) return r;
+    if (answer == PreAnswer::None || scene.empty() || !PlausiblePid(pid)) return r;
     if (!launcherAlive || !launcherAlive(pid)) return r;
     r.answer = answer;
     r.scene = scene;

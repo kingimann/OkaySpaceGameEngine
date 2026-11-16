@@ -320,7 +320,8 @@ answer goes with it.
 **How the editor knows not to ask again: `--project-answer=upgrade|open-anyway`.** It is honoured only when all of this holds (`okayver::ParsePreAnswer`,
 `shared/ProjectAnswer.hpp`; each point is a test in `project_answer`):
 
-- the editor was started by a live launcher: `--launcher <pid>` is on the command line and that process is running (the hand-shake the editor needs to start at all);
+- the editor was started by a live launcher: `--launcher <pid>` is on the command line and that process is running (the hand-shake the editor needs to start at all;
+  a number that cannot be a process id, such as 4294967295, is refused: on Linux it wraps to -1, which `kill` takes for "every process");
 - the flag is for the project of the `--open` scene, and for that project only (the gate keeps it per project folder);
 - the name is spelled exactly (`upgrade`, `open-anyway`), in the one-token form `--project-answer=<name>`.
 

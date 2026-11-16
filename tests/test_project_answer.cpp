@@ -69,6 +69,8 @@ int main() {
         CHECK(!ParsePreAnswer({"--launcher=4242", "--open", scene, ans}, NeverAlive).Valid());
         CHECK(!ParsePreAnswer({"--launcher", "4242", "--open", scene, ans}, nullptr).Valid());                    // nothing to check the process with: refuse
         CHECK(!ParsePreAnswer({"--launcher", "0", "--open", scene, ans}, AlwaysAlive).Valid());                   // pid 0 is no process
+        for (const char* huge : {"2147483648", "4294967295", "4294967296", "18446744073709551615", "99999999999999999999999", "-1"})
+            CHECK(!ParsePreAnswer({"--launcher", huge, "--open", scene, ans}, AlwaysAlive).Valid());                 // not a process id at all
         CHECK(!ParsePreAnswer({"--launcher", "abc", "--open", scene, ans}, AlwaysAlive).Valid());                 // not a number
         CHECK(!ParsePreAnswer({"--launcher", "", "--open", scene, ans}, AlwaysAlive).Valid());
         CHECK(!ParsePreAnswer({"--launcher=", "--open", scene, ans}, AlwaysAlive).Valid());
@@ -120,6 +122,9 @@ int main() {
         CHECK(!PreAnswerFromHandoff("upgrade", "0", scene, AlwaysAlive).Valid());
         CHECK(!PreAnswerFromHandoff("upgrade", "", scene, AlwaysAlive).Valid());
         CHECK(!PreAnswerFromHandoff("upgrade", "abc", scene, AlwaysAlive).Valid());
+        for (const char* huge : {"2147483648", "4294967295", "18446744073709551615", "99999999999999999999999", "-1"})
+            CHECK(!PreAnswerFromHandoff("open-anyway", huge, scene, AlwaysAlive).Valid());
+        CHECK(PreAnswerFromHandoff("upgrade", "2147483647", scene, AlwaysAlive).Valid());                         // the biggest id that can be one
         CHECK(!PreAnswerFromHandoff("upgrade", "4242", "", AlwaysAlive).Valid());                  // no project
         CHECK(!PreAnswerFromHandoff("", "4242", scene, AlwaysAlive).Valid());
         CHECK(!PreAnswerFromHandoff("Upgrade", "4242", scene, AlwaysAlive).Valid());
@@ -133,6 +138,8 @@ int main() {
         CHECK(ParsePreAnswer(Args(me, scene, "upgrade"), okay::restart::PidAlive).Valid());               // this test process is alive
         CHECK(PreAnswerFromHandoff("open-anyway", me, scene, okay::restart::PidAlive).Valid());
         CHECK(!ParsePreAnswer(Args("0", scene, "upgrade"), okay::restart::PidAlive).Valid());
+        CHECK(!ParsePreAnswer(Args("4294967295", scene, "upgrade"), okay::restart::PidAlive).Valid());              // (PidAlive would take this for "everything" on Linux)
+        CHECK(!PreAnswerFromHandoff("upgrade", "4294967295", scene, okay::restart::PidAlive).Valid());
 #if !defined(_WIN32)
         // a launcher that has exited: a child that ran and was collected
         const pid_t child = fork();

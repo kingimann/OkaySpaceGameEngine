@@ -1070,6 +1070,7 @@ Template MakeCar() {
         if (r.slotDesign["spoiler"] == "wing" && (body == "pickup" || body == "suv" || body == "van")) r.slotDesign["spoiler"] = "lip";
         if (r.slotDesign["roof"] == "sign" && body == "pickup") r.slotDesign["roof"] = "rack";
     };
+    b.t.noSubdivisionSlots = {"body", "cabin"};   // the outline is already spline-smoothed; subdividing would round away the wheel arches
     b.t.generate = GenerateCar;
     return b.t;
 }

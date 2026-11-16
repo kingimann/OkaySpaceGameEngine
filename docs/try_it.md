@@ -77,6 +77,8 @@ release job or the installer build for this change.
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7zj | Guided vehicles (car, truck, bus, motorcycle, trailer, 6+ designs each) and a Detail level (Low to Ultra) on every guided model | Modeling > **Guided** > Vehicles; File > Examples > Guided modeling > `guided_vehicles`; `examples\modeling\guided_vehicles.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7zk | Guided characters (human, robot, creature) with swappable head, hair, clothes, hands, feet, hats, glasses, backpacks, capes and proportion sliders | Modeling > **Guided** > Characters; File > Examples > Guided modeling > `guided_characters`; `examples\modeling\guided_characters.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zl | Guided environment: trees (9 species), rocks and cliffs, roads (path-drawn), bridges, hedges, plants, street lamps | Modeling > **Guided** > Environment; File > Examples > Guided modeling > `guided_environment`; `examples\modeling\guided_environment.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
+| 7zm | Guided props: furniture, containers, tools, decorations (27 designs) | Modeling > **Guided** > Props; File > Examples > Guided modeling > `guided_props`; `examples\modeling\guided_props.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
@@ -930,6 +932,43 @@ small rasteriser (the detail pictures show triangle edges), not editor screensho
 **Not done / unverified.** Doors that open, interiors, chassis details, rigged wheels or vehicle physics are not built (the
 Vehicle components are separate: put them on a guided vehicle yourself). A box-only design has the same triangle count at Low and Medium.
 The editor's Detail slider, Variation and check, and Remove/Add back controls compile but were never seen in a window (unverified).
+
+---
+
+## 7zl. Guided environment: trees, rocks, roads, bridges, hedges, plants, lamps
+
+**What it is.** Seven environment templates on the Modeling window's **Guided** page, same rules as 7zg to 7zk: every one is a set of named parts that can be given another design, with a **Seed** setting for the random-looking shapes (the same seed always gives the same tree), the **Detail** level (Low to Ultra), Randomise within style, the model check and the save-as-template round trip.
+
+**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: `docs/images/guided_modeling/environment_overview.png` (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_environment** (55 models in rows: trees, rocks, roads, bridges, hedges, plants, lamps; 16 m apart). Click one in the Hierarchy and open Modeling > Guided.
+2. **Trees**: change **Crown** (round, clusters, pine, spruce, palm fronds, willow, bare), **Trunk**, **Height**, **Crown size**, **Lean** and **Seed**.
+3. **Roads and hedges**: with a road selected press **Draw in the Scene view** and click on the ground; the road, a bridge's approach or a hedge follows the points. Change **Surface** (asphalt, concrete slabs, dirt, gravel, cobblestones, paving, railway) and markings.
+4. **Rocks, plants, lamps**: change **Seed** for another rock; plants: **Count** and **Spread**; lamps: **Pole**, **Arm**, **Lamp**.
+5. **Randomise within style** (Variation and check) with a seed, **Detail** slider, **Save as template** work as for every guided model.
+
+**Not done / unverified.** No wind, no leaf cards or billboards (trees are solid low-poly meshes), no terrain placement; the page was never clicked in a real window.
+
+---
+
+## 7zm. Guided props: furniture, containers, tools, decorations
+
+**What it is.** Four prop templates on the **Guided** page (category Props), same rules and the same Detail, Randomise, model check and template controls.
+
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: `docs/images/guided_modeling/props_overview.png` (headless render).
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_props** (27 props in rows, 3 m apart).
+2. **Furniture** (chair, table, round table, armchair, sofa, bed, bookshelf, desk, wardrobe): change **Kind**, **Width / Depth / Height**, **Legs** (square, round, turned, splayed, end panels), **Top**, **Back**, **Arms**, **Cushion**, **Storage**; **Shelves** for the bookshelf.
+3. **Containers**: change **Body** (crate, barrel, chest, bucket, jar, sack), **Lid**, **Bands**, **Handles**.
+4. **Tools**: change **Head** (hammer, axe, pickaxe, shovel, wrench, sword blade, hoe), **Handle**, **Hand guard**, **End**; **Length** and **Head size**.
+5. **Decorations**: change **Base**, **Shaft**, **Top** (sign, arrow, flag, orb, bust, lantern, bowl).
+6. **Each part** lets you swap or remove one leg, one cushion, one door; **Add back** returns it. Select a part, edit it in Edit Mesh, and rebuild: your edit is kept.
+
+**Not done / unverified.** Props are simple low-poly shapes (no fabric folds, no carved detail beyond Ultra smoothing); no interaction or physics setup; the page was never clicked in a real window.
 
 ---
 

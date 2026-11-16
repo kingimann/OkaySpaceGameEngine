@@ -2203,6 +2203,9 @@ add_test(NAME guided_roundtrip COMMAND test_guided_quality)
 add_executable(test_guided_characters test_guided_characters.cpp)
 target_link_libraries(test_guided_characters PRIVATE okay::engine)
 add_test(NAME guided_characters COMMAND test_guided_characters)
+add_executable(test_guided_environment test_guided_environment.cpp)
+target_link_libraries(test_guided_environment PRIVATE okay::engine)
+add_test(NAME guided_environment COMMAND test_guided_environment)
 
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)

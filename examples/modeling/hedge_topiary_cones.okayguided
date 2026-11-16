@@ -1,0 +1,12 @@
+okayguided 1
+template hedge 1
+param detail 1
+param height 1.2
+param length 6
+param thickness 0.80000000000000004
+slot hedge rounded
+slot topiary cone
+color hedge 0.180000007 0.419999987 0.200000003 1
+color topiary 0.180000007 0.419999987 0.200000003 1
+material hedge 0
+material topiary 1

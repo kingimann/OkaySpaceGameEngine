@@ -488,6 +488,7 @@ std::vector<GeneratedPart> Generate(const Recipe& in, std::string* error) {
             long faces = (long)p.mesh.faces.size();
             while (lv > 0 && faces * (long)(1 << (2 * lv)) > 2500) --lv;
             if (lv <= 0 || p.mesh.faces.empty()) continue;
+            if (std::find(t->noSubdivisionSlots.begin(), t->noSubdivisionSlots.end(), p.slot) != t->noSubdivisionSlots.end()) continue;
             Vec3 lo{1e30f, 1e30f, 1e30f};
             for (const Vec3& v : p.mesh.verts) lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)};
             std::string key = std::to_string(lv) + ":";

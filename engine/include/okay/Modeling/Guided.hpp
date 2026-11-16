@@ -115,6 +115,9 @@ struct Template {
     std::function<void(const Recipe&, std::vector<GeneratedPart>&)> generate;
     /// Optional compatibility rule applied after a random change (for example: no wing spoiler on a pickup).
     std::function<void(Recipe&)> constrain;
+    /// Slots whose parts are not subdivided again at Ultra (their outline is already smoothed by the template, and Catmull-Clark would
+    /// shrink and round away sharp features such as wheel arches).
+    std::vector<std::string> noSubdivisionSlots;
 };
 
 class Registry {

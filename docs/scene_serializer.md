@@ -39,6 +39,11 @@ page covers what an object round trip keeps.
 - **Runtime-only objects:** an object with `transient` set is never written, and neither is
   anything below it (a child saved without its parent would load as a loose root). The same holds for
   a clone made with `Instantiate` / `Duplicate`.
+- **Object numbers** (`gameobject <n>`, `parent <n>`): only the objects that are written are numbered,
+  0, 1, 2, ... in scene order, so a skipped object (runtime-only, a Character's generated rig) leaves no
+  gap and Play / Stop, which rebuilds the rig elsewhere in the list, does not renumber the rest. Older
+  files numbered skipped objects too and have gaps; they load the same (the reader matches `parent` by
+  number, not position).
 - **Numbers:** floats are written with the fewest digits that read back the same. The reader also
   takes `nan` and `inf`, so a file saved with one in it still opens. A `transform` record with a
   non-finite or all-zero part is reset to position 0, no rotation, scale 1 (a warning is reported).

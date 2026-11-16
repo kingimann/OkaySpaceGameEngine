@@ -339,7 +339,10 @@ static void TestMeaningPreserved() {
     CHECK(Reserialize(hand, &a) && Reserialize(Canon(hand), &b) && a == b);
     CHECK(Canon(hand) == x);
 
-    // Object numbers with gaps: a transient object is not written, so the writer leaves a gap.
+    // Object numbers with gaps. The writer used to number every object, written or not, so a transient
+    // object (never written) left a gap, and Play / Stop, which rebuilds a Character's rig at another place,
+    // shifted the numbers after it. It now numbers only what it writes (no gap; already canonical). Files
+    // written before still have gaps: Canonicalize closes them and they load as the same scene.
     {
         Scene s("gap");
         GameObject* p = s.CreateGameObject("P");
@@ -348,11 +351,16 @@ static void TestMeaningPreserved() {
         GameObject* q = s.CreateGameObject("Q");
         q->transform->SetParent(p->transform, false);
         const std::string t = SceneSerializer::Serialize(s);
-        CHECK(Contains(t, "gameobject 2 \"Q\"") && Contains(t, "parent 0"));
-        const std::string c = Canon(t);
+        CHECK(Contains(t, "gameobject 1 \"Q\"") && Contains(t, "parent 0"));
+        CHECK(Canon(t) == t);
+        // The same scene as the old writer wrote it, with the transient object's number missing.
+        std::string old = t;
+        old.replace(old.find("gameobject 1 \"Q\""), 16, "gameobject 2 \"Q\"");
+        const std::string c = Canon(old);
         CHECK(Contains(c, "gameobject 1 \"Q\""));
         std::string ra, rb;
-        CHECK(Reserialize(t, &ra) && Reserialize(c, &rb) && StripGuids(ra) == StripGuids(rb));
+        CHECK(Reserialize(old, &ra) && Reserialize(c, &rb) && StripGuids(ra) == StripGuids(rb));
+        CHECK(Contains(ra, "gameobject 1 \"Q\"") && Contains(ra, "parent 0"));
     }
 }
 

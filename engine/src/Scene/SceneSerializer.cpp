@@ -3991,7 +3991,10 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
     };
     std::unordered_map<const GameObject*, int> indexOf;
     indexOf.reserve(objs.size());
-    for (std::size_t i = 0; i < objs.size(); ++i) indexOf[objs[i].get()] = (int)i;
+    // Only written objects are numbered: a skipped one (transient, a generated rig) left a gap, and Play / Stop
+    // rebuilds the rig elsewhere in the list, so the numbers after it changed and the scene read as edited.
+    for (std::size_t i = 0; i < objs.size(); ++i)
+        if (!skipped(objs[i].get())) { const int n = (int)indexOf.size(); indexOf[objs[i].get()] = n; }
     // Sibling order. Loading attaches children in file order, so a parent whose
     // children were reordered later needs the real position written (`sibling`).
     std::unordered_map<const GameObject*, int> siblingPos;
@@ -4018,7 +4021,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         GameObject* go = objs[i].get();
         if (skipped(go)) continue;
         Transform* t = go->transform;
-        out << "gameobject " << i << " " << Quote(go->name) << "\n";
+        out << "gameobject " << indexOf[go] << " " << Quote(go->name) << "\n";
         out << "  guid " << Quote(go->Guid()) << "\n";
         out << "  active " << (go->active ? 1 : 0) << "\n";
         if (!go->tag.empty()) out << "  tag " << Quote(go->tag) << "\n";

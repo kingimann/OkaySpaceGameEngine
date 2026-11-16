@@ -401,6 +401,26 @@ code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3
 and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
 Anything on Windows. The NSIS installer and the zip.
 
+## Play then Stop no longer marks the scene as changed (branch `claude2/serialize-object-numbers`, not merged or released yet)
+
+Bug: after **Play** then **Stop**, the title bar showed the unsaved marker (` *` after the scene name) though nothing was
+changed, in scenes with a Character (the Humanoid template, for one). The saved text numbered objects that are never
+saved (the Character's generated rig, other runtime-only objects); Stop rebuilds the rig at another place in the list, so
+every object after it got a new number and the scene text no longer matched the saved one. Now only saved objects are
+numbered.
+
+1. Make a project from the **Humanoid** template (launcher Create page, or File > New Project... in the editor). The
+   title bar ends in the scene name and the version, with no ` *`.
+2. Press **Play**, wait a second or two, press **Stop**.
+3. Expect: still no ` *` in the title bar, and closing the editor does not ask to save. Before the fix the ` *` came back
+   after Stop.
+4. Old scene files still open: their object numbers may have gaps, which loading never minded. Saving writes them without
+   gaps.
+
+**Status.** Verified here (Linux, headless): `test_serialize_object_numbers` runs the editor's own Play / Stop on the
+Humanoid template (no window) and checks the scene text and the unsaved flag. Unverified: the editor window and the
+Windows build.
+
 ## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
 
 Owner request 2026-11-15: "for console allow user to collapse the same log."

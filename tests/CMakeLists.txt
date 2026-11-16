@@ -848,6 +848,13 @@ target_include_directories(test_editor_undo PRIVATE ${PROJECT_SOURCE_DIR}/editor
 target_link_libraries(test_editor_undo PRIVATE okay::engine)
 add_test(NAME editor_undo COMMAND test_editor_undo)
 
+# Object numbers in saved scene text: only written objects are numbered, so Play / Stop leaves the text (and the
+# saved / unsaved flag) as it was. Links the ImGui-free EditorState for the Play / Stop check.
+add_executable(test_serialize_object_numbers test_serialize_object_numbers.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_serialize_object_numbers PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_serialize_object_numbers PRIVATE okay::engine)
+add_test(NAME serialize_object_numbers COMMAND test_serialize_object_numbers)
+
 # Prefab mode (EditorState): open a prefab on its own, edit, save, go back; nested levels, per-level undo, instance refresh, Play refused.
 add_executable(test_prefab_mode test_prefab_mode.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_prefab_mode PRIVATE ${PROJECT_SOURCE_DIR}/editor)

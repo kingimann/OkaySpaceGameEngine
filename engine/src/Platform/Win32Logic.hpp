@@ -10,7 +10,7 @@
 
 namespace okay::platform::win32 {
 
-// ---- keys ---------------------------------------------------------------------------------------
+// ---- keys ---------------------------------------------------------------------------------------   lint-allow: secret (a ruler line, not a key)
 // `scan` is bits 16..23 of a WM_KEYDOWN lParam, `ext` is bit 24.
 inline Key KeyFromScan(int scan, bool ext) {
     static const uint16_t kTab[89] = {

@@ -28,7 +28,7 @@ namespace {
 
 constexpr int kBuffers = 4;
 
-// The Windows programs are built with MinGW's "win32" thread model, which has no std::thread or std::mutex
+// The Windows programs are built with MinGW's "win32" thread model, which has no standard thread or mutex classes
 // (CLAUDE.md rule 21a), so this file uses the Win32 calls directly: a CRITICAL_SECTION for the lock and
 // CreateThread for the worker. A critical section may be entered again by the thread that holds it.
 class CsLock {

@@ -107,7 +107,7 @@ IDX=(python3 -I scripts/dev_index.py)
 
 # ---- The words and the checksums (no network, no key) -----------------------------------------------------------------------------
 # dev_index.py checks the branch, the commit and the note (and writes the notes); a bad one stops here, before anything is read or written.
-"${IDX[@]}" notes --version "$VER" --base "$BASE" --branch "$DEV_BRANCH" --sha "$DEV_SHA" --note "$DEV_NOTE" --out "$T/NOTES-DEV.txt" ||
+"${IDX[@]}" notes --version "$VER" --base "$BASE" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" --out "$T/NOTES-DEV.txt" ||
     die "the branch, the commit or the note was refused (see above)"
 TITLE="$(head -n1 "$T/NOTES-DEV.txt")"
 DATE="$(date -u +%F)"
@@ -115,7 +115,7 @@ FILEARGS=()
 for n in "${NAMES[@]}"; do FILEARGS+=(--file "$n=${SRC[$n]}"); done
 # The updater refuses files without a checksum, so refuse to publish without them (this also runs for DRY_RUN).
 set +e
-"${IDX[@]}" merge --version "$VER" --branch "$DEV_BRANCH" --sha "$DEV_SHA" --note "$DEV_NOTE" --date "$DATE" "${FILEARGS[@]}" --out "$T/preflight.json"
+"${IDX[@]}" merge --version "$VER" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" --date "$DATE" "${FILEARGS[@]}" --out "$T/preflight.json"
 rc=$?
 set -e
 [ "$rc" = 0 ] || die "cannot compute a size and SHA-256 for every file, or a field was refused; the launcher would refuse this build"
@@ -218,7 +218,7 @@ for v in $(printf '%s' "$LISTING" | sed -n 's#^v\(.*\)$#\1#p'); do
 done
 STAY="$STAY $VER"
 set +e
-"${IDX[@]}" merge --existing "$OLDIDX" --version "$VER" --branch "$DEV_BRANCH" --sha "$DEV_SHA" --note "$DEV_NOTE" --date "$DATE" "${FILEARGS[@]}" \
+"${IDX[@]}" merge --existing "$OLDIDX" --version "$VER" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" --date "$DATE" "${FILEARGS[@]}" \
     --bucket-versions "$STAY" --keep "$KEEP" --out "$T/new.json"
 rc=$?
 set -e
@@ -304,5 +304,5 @@ done
 echo "Done: test build v$VER ($TITLE). Launchers with 'Get test builds' on will see it at $PUBLIC/$AREA/versions.json"
 # In a GitHub job, say it in plain words on the run page too (the text is made, and the note escaped, by dev_index.py).
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-    "${IDX[@]}" summary --version "$VER" --base "$BASE" --branch "$DEV_BRANCH" --sha "$DEV_SHA" --note "$DEV_NOTE" >> "$GITHUB_STEP_SUMMARY" || true
+    "${IDX[@]}" summary --version "$VER" --base "$BASE" --branch="$DEV_BRANCH" --sha="$DEV_SHA" --note="$DEV_NOTE" >> "$GITHUB_STEP_SUMMARY" || true
 fi

@@ -185,6 +185,7 @@ mkdist 2.876.0.30;  refuse_case "a bad branch" "refused" DEV_BRANCH='a b;rm -rf 
 refuse_case "an empty branch" "refused" DEV_BRANCH=
 refuse_case "a bad commit" "refused" DEV_SHA=xyz
 refuse_case "a branch that climbs out of its place" "refused" DEV_BRANCH='../../etc'
+refuse_case "a branch that looks like an option" "refused" DEV_BRANCH='--evil'
 refuse_case "a keep of 0" "DEV_KEEP" DEV_KEEP=0
 refuse_case "a keep of 11" "DEV_KEEP" DEV_KEEP=11
 refuse_case "a signature that is required but cannot be made" "REQUIRE_SIGNED" REQUIRE_SIGNED=1
@@ -207,6 +208,12 @@ env DIST_DIR="$T/dist" DEV_BRANCH=main DEV_SHA="$SHA" SUPABASE_SERVICE_KEY="$KEY
 grep -qF "refusing to run with 'set -x'" "$T/out.txt" || bad "bash -x: the refusal is not explained"
 grep -qF "$KEY" "$T/out.txt" && bad "bash -x: the key is in the trace"
 [ -z "$(writes)" ] || bad "bash -x: something was written"
+
+# ---- 6b. a note that looks like an option is only text (and is cleaned like any other) ---------------------------------------------------------------
+reset_store; mkdist 2.876.0.40
+code="$(publish DEV_NOTE='--rf -x try [this] now')"
+[ "$code" = 0 ] || bad "a note that starts with dashes: exit $code ($(out | tail -3 | tr '\n' '|'))"
+sed -n 2p "$REL/dev/NOTES-DEV.txt" | grep -qxF -- "--rf -x try [this] now" || bad "a note that starts with dashes is not kept as text: $(sed -n 2p "$REL/dev/NOTES-DEV.txt" 2>/dev/null)"
 
 # ---- 7. a signed publish: the signature verifies, the seed never shows ---------------------------------------------------------------------------------
 reset_store; mkdist 2.876.0.31; stable_seven="$(fp_stable)"

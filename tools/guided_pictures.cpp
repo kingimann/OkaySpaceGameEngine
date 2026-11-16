@@ -160,8 +160,10 @@ int main(int argc, char** argv) {
     RegisterBuiltinTemplates();
     const Template& T = *Registry::Instance().Find("fence");
 
-    if (argc > 3 && std::string(argv[3]) == "cars") {   // quick run: only the car silhouette and 3/4 sheets
-        const Template& C = *Registry::Instance().Find("car");
+    if (argc > 3 && (std::string(argv[3]) == "cars" || std::string(argv[3]) == "bikes")) {   // quick run: only the silhouette and 3/4 sheets
+        const bool bikes = std::string(argv[3]) == "bikes";
+        const std::string stem = bikes ? "motorcycles" : "cars";
+        const Template& C = *Registry::Instance().Find(bikes ? "motorcycle" : "car");
         const int cols = 3, tw = 440, th = 220;
         const int rows = ((int)C.starts.size() + cols - 1) / cols;
         Img side(cols * tw, rows * th), q3(cols * tw, rows * 280);
@@ -171,8 +173,55 @@ int main(int argc, char** argv) {
             Scene(side, m, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 0.0f);
             Scene(q3, m, (i % cols) * tw + 4, (i / cols) * 280 + 4, tw - 8, 272, 0.7f);
         }
-        Save(dir, "cars_side_views.png", side);
-        Save(dir, "cars_three_quarter.png", q3);
+        Save(dir, stem + "_side_views.png", side);
+        Save(dir, stem + "_three_quarter.png", q3);
+        return 0;
+    }
+    if (argc > 3 && std::string(argv[3]) == "envprops") {   // quick run: one sheet per category with every start design
+        for (const char* cat : {"Environment", "Props"}) {
+            std::vector<std::pair<const Template*, size_t>> items;
+            for (const Template* tp : Registry::Instance().InCategory(cat)) for (size_t i = 0; i < tp->starts.size(); ++i) items.push_back({tp, i});
+            const int cols = 8, tw = 200, th = 190, rows = ((int)items.size() + cols - 1) / cols;
+            Img sheet(cols * tw, rows * th);
+            sheet.Clear(40, 42, 48);
+            for (int k = 0; k < (int)items.size(); ++k)
+                Scene(sheet, Create(DefaultRecipe(*items[(size_t)k].first, items[(size_t)k].first->starts[items[(size_t)k].second].id)), (k % cols) * tw + 3, (k / cols) * th + 3, tw - 6, th - 6, 0.6f);
+            Save(dir, std::string(std::string(cat) == "Props" ? "props" : "environment") + "_overview.png", sheet);
+        }
+        return 0;
+    }
+    if (argc > 3 && std::string(argv[3]) == "chars") {   // quick run: the character styles and the hairstyles
+        const Template& C = *Registry::Instance().Find("human");
+        const char* names[4] = {"realistic", "stylised", "cartoon", "blocky"};
+        {
+            const int tw = 330, th = 480;
+            Img sheet(4 * tw, 2 * th);
+            sheet.Clear(40, 42, 48);
+            for (int st = 0; st < 4; ++st)
+                for (int row = 0; row < 2; ++row) {
+                    Recipe r = DefaultRecipe(C, "adventurer");
+                    r.params["style"] = st; r.params["detail"] = row == 0 ? 1.0 : 2.0;
+                    Scene(sheet, Create(r), st * tw + 4, row * th + 4, tw - 8, th - 8, 0.45f);
+                }
+            Save(dir, "characters_styles.png", sheet);
+        }
+        {
+            const SlotDef* hs = nullptr;
+            for (const SlotDef& sl : C.slots) if (sl.id == "hair") hs = &sl;
+            const int cols = 5, tw = 250, th = 250, n = (int)hs->designs.size(), rows = (n + cols - 1) / cols;
+            Img sheet(cols * tw, rows * th);
+            sheet.Clear(40, 42, 48);
+            for (int i = 0; i < n; ++i) {
+                Recipe r = DefaultRecipe(C, "average");
+                r.slotDesign["hair"] = hs->designs[(size_t)i].id; r.params["detail"] = 1.0;
+                PolyMesh head;
+                for (const GeneratedPart& gp : Generate(r))
+                    if (gp.id.rfind("head/", 0) == 0 || gp.id.rfind("hair/", 0) == 0 || gp.id.rfind("neck/", 0) == 0 || gp.id.rfind("eyes/", 0) == 0 || gp.id.rfind("nose/", 0) == 0 || gp.id.rfind("mouth/", 0) == 0 || gp.id.rfind("brows/", 0) == 0 || gp.id.rfind("ears/", 0) == 0 || gp.id.rfind("face/", 0) == 0) shapes::Append(head, gp.mesh);
+                Scene(sheet, head, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 2.3f);
+            }
+            Save(dir, "characters_hairstyles.png", sheet);
+        }
+        (void)names;
         return 0;
     }
     // 1. The design browser's thumbnails (what the Guided page shows), and one picture per style.
@@ -435,6 +484,37 @@ int main(int argc, char** argv) {
             cs += CameraRecord(cid++, 18.0, 5.0, 24.0);
             std::ofstream(ex + "/guided_car_styles.okayscene", std::ios::binary) << cs;
             std::printf("wrote the car styles example\n");
+        }
+
+        // Environment and prop examples: every start design of every template, a row per template, with a Main Camera in front.
+        for (const char* cat : {"Environment", "Props"}) {
+            const bool env = std::string(cat) == "Environment";
+            const double sp = env ? 16.0 : 3.0, rowSp = env ? 22.0 : 3.5;
+            std::string sc = scene.substr(0, scene.find("gameobject 1 ")) +
+                "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 40 -0.5 40 0 0 0 1 400 1 400\n"
+                "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+            sc.replace(sc.find("name \"Guided fences\""), 21, std::string("name \"Guided ") + (env ? "environment" : "props") + "\"");
+            int gid = 2, grow = 0, gtotal = 0, maxCols = 0;
+            for (const Template* tp : Registry::Instance().InCategory(cat)) {
+                const Template& A = *tp;
+                for (size_t i = 0; i < A.starts.size(); ++i) {
+                    const std::string base = A.id + "_" + A.starts[i].id;
+                    const Recipe r = DefaultRecipe(A, A.starts[i].id);
+                    Create(r).Save(ex + "/" + base + ".okaymesh");
+                    SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                    char tr[160];
+                    std::snprintf(tr, sizeof tr, "  transform %g 0 %g 0 0 0 1 1 1 1\n", (double)i * sp, (double)grow * rowSp);
+                    sc += "gameobject " + std::to_string(gid++) + " \"" + A.name + " " + A.starts[i].name + "\"\n  active 1\n  parent -1\n" + tr +
+                          "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                    ++gtotal;
+                    maxCols = std::max(maxCols, (int)i + 1);
+                }
+                ++grow;
+            }
+            const double width = std::max(1, maxCols - 1) * sp, depth = std::max(1, grow - 1) * rowSp;
+            sc += CameraRecord(gid++, width / 2, std::max(width, depth) * 0.45 + 2, depth + std::max(width, depth) * 1.1 + 6);
+            std::ofstream(ex + (env ? "/guided_environment.okayscene" : "/guided_props.okayscene"), std::ios::binary) << sc;
+            std::printf("wrote %d %s models\n", gtotal, cat);
         }
 
         // The character examples: every start design of human, robot and creature.

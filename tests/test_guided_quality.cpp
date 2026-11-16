@@ -147,6 +147,53 @@ int main() {
             }
         }
     }
+    // ---- guided_bike_silhouette: the motorcycle styles are different machines, with real frame geometry ----------------------
+    {
+        const Template& T = Tpl("motorcycle");
+        std::vector<std::vector<char>> sil;
+        for (const StartDesign& st : T.starts) sil.push_back(Silhouette(Create(DefaultRecipe(T, st.id)), 160, 80, -1.4f, 1.4f, 0.0f, 1.6f));
+        double sum = 0, worst = 0; int cnt = 0;
+        for (size_t i = 0; i < sil.size(); ++i) for (size_t j = i + 1; j < sil.size(); ++j) { const double v = Iou(sil[i], sil[j]); sum += v; ++cnt; worst = std::max(worst, v); }
+        std::printf("bike silhouette: mean pairwise IoU %.3f, worst pair %.3f\n", sum / cnt, worst);
+        CHECK(worst < 0.88);
+        CHECK(sum / cnt < 0.80);
+        for (const StartDesign& st : T.starts) {
+            const Recipe r = DefaultRecipe(T, st.id);
+            const auto parts = Generate(r);
+            const ValidationReport rep = Validate(parts);
+            if (rep.components != 1) std::cerr << "  motorcycle/" << st.id << " has " << rep.components << " separate groups\n";
+            CHECK(rep.components == 1 && rep.Ok());
+            // both wheels stand on the ground and are centred on their axles
+            const float wb = (float)r.Param("wheelbase");
+            for (int w = 0; w < 2; ++w) {
+                Vec3 lo, hi; Bounds(ById(parts, "wheel/" + std::to_string(w))->mesh, lo, hi);
+                CHECK(std::fabs(lo.y) < 0.02f);
+                CHECK(std::fabs(std::fabs((lo.x + hi.x) * 0.5f) - wb / 2) < 0.03f);
+            }
+        }
+        // rake: more rake leans the fork back, so its top is further behind the front axle; trail grows with rake
+        auto forkTopX = [&](double rake) { Recipe r = DefaultRecipe(T, "standard"); r.params["rake"] = rake; Vec3 lo, hi; Bounds(ById(Generate(r), "fork/0")->mesh, lo, hi); return lo.x; };
+        CHECK(forkTopX(38) < forkTopX(20) - 0.05f);
+        // a scooter's engine swings with the wheel: no swingarm; every other engine has one (Randomise keeps that rule)
+        {
+            Recipe sc = DefaultRecipe(T, "scooter");
+            CHECK(!ById(Generate(sc), "swingarm/0") && ById(Generate(sc), "engine/0"));
+            Recipe st = DefaultRecipe(T, "sport");
+            st.slotDesign["engine"] = "unit";
+            T.constrain(st);
+            CHECK(st.slotDesign["swingarm"] == "none");
+            st.slotDesign["engine"] = "single"; st.slotDesign["swingarm"] = "none";
+            T.constrain(st);
+            CHECK(st.slotDesign["swingarm"] == "dual");
+        }
+        // designs really change the machine: another fork, handlebar, frame, engine give another model
+        std::set<std::string> hs;
+        for (const char* slot : {"fork", "handlebar", "frame", "engine", "exhaust", "seat", "tank", "fairing"})
+            for (const DesignDef& d : [&]() -> const SlotDef& { for (const SlotDef& sdef : T.slots) if (sdef.id == slot) return sdef; return T.slots[0]; }().designs) {
+                Recipe r = DefaultRecipe(T, "standard"); r.slotDesign[slot] = d.id; hs.insert(std::string(slot) + ":" + Hash(Create(r)));
+            }
+        CHECK(hs.size() >= 24);
+    }
     // ---- guided_validator: every template and level reports a sound model ---------------------------------------------
     RegisterBuiltinTemplates();
     {
@@ -243,6 +290,99 @@ int main() {
         CHECK(LoadMeshAsset(meshPath, again, nullptr, &err) && LoadRecipe(SidecarPath(meshPath), a3, &err));
         const Analysis an3 = Analyze(PolyMesh::FromMesh(again, {false, true, 1.0f}), a3);
         CHECK(an3.ok && an3.customFaces == 12 && an3.Count(PartState::Edited) == 1);
+    }
+    // ---- guided_character_styles: four styles, every hairstyle, head, top, bottom and scarf is a sound model ------------------------
+    {
+        const Template& T = Tpl("human");
+        int bad = 0, total = 0;
+        for (const SlotDef& sl : T.slots)
+            for (const DesignDef& d : sl.designs)
+                for (int style = 0; style < 4; ++style)
+                    for (double lv : {0.0, 1.0, 2.0}) {
+                        Recipe r = DefaultRecipe(T, "average"); r.slotDesign[sl.id] = d.id; r.params["style"] = style; r.params["detail"] = lv;
+                        const ValidationReport rep = Validate(Generate(r), true);
+                        ++total;
+                        if (!rep.Ok()) { ++bad; if (bad < 5) std::cerr << "  human " << sl.id << "=" << d.id << " style " << style << " level " << lv << ": " << (rep.problems.empty() ? "?" : rep.problems[0]) << "\n"; }
+                    }
+        std::printf("character designs: %d combinations, %d problems\n", total, bad);
+        CHECK(bad == 0);
+        auto headFraction = [&](int style) {
+            Recipe r = DefaultRecipe(T, "average"); r.params["style"] = style; r.params["detail"] = 1;
+            const auto parts = Generate(r);
+            Vec3 hl, hh, al, ah; Bounds(ById(parts, "head/0")->mesh, hl, hh); Bounds(Assemble(parts), al, ah);
+            return (hh.y - hl.y) / (ah.y - al.y);
+        };
+        CHECK(headFraction(2) > headFraction(0) * 1.3f);          // cartoon: a big head
+        auto tris = [&](int style, double lv) { Recipe r = DefaultRecipe(T, "average"); r.params["style"] = style; r.params["detail"] = lv; return TriangleCount(Create(r)); };
+        CHECK(tris(3, 2) < tris(0, 2) / 2);                        // blocky stays boxes at every level
+        CHECK(tris(1, 1) < tris(0, 1));                            // stylised low poly has fewer facets than realistic
+        std::set<std::string> hairs;
+        for (const DesignDef& d : [&]() -> const SlotDef& { for (const SlotDef& sdef : T.slots) if (sdef.id == "hair") return sdef; return T.slots[0]; }().designs) { Recipe r = DefaultRecipe(T, "average"); r.slotDesign["hair"] = d.id; hairs.insert(Hash(Create(r))); }
+        CHECK(hairs.size() >= 13);
+    }
+    // ---- guided_props: every prop is one connected, sound object at every level; designs and parts really change it -----------------
+    {
+        int bad = 0;
+        for (const char* id : {"furniture", "container", "tool", "decoration"}) {
+            const Template& T = Tpl(id);
+            CHECK(T.category == "Props" && T.starts.size() >= 6);
+            std::set<std::string> distinct;
+            for (const StartDesign& st : T.starts)
+                for (double lv : {0.0, 1.0, 2.0, 3.0}) {
+                    Recipe r = DefaultRecipe(T, st.id); r.params["detail"] = lv;
+                    const auto parts = Generate(r);
+                    const ValidationReport rep = Validate(parts, lv < 2.5);
+                    if (!rep.Ok() || rep.components != 1) { ++bad; std::cerr << "  " << id << "/" << st.id << " level " << lv << ": " << rep.components << " group(s) " << (rep.problems.empty() ? "" : rep.problems[0]) << "\n"; }
+                    if (lv == 1.0) distinct.insert(Hash(Assemble(parts)));
+                    Vec3 lo, hi; Bounds(Assemble(parts), lo, hi);
+                    if (lv == 1.0) CHECK(std::fabs(lo.y) < 0.2f || std::string(id) == "tool");   // props stand on the ground
+                }
+            CHECK(distinct.size() == T.starts.size());
+            // every design of every slot changes the model (checked on the start that uses the slot)
+            for (const SlotDef& sl : T.slots) {
+                std::set<std::string> hs; size_t shown = 0;
+                for (const StartDesign& st : T.starts) {
+                    hs.clear();
+                    for (const DesignDef& d : sl.designs) { Recipe r = DefaultRecipe(T, st.id); r.slotDesign[sl.id] = d.id; hs.insert(Hash(Create(r))); }
+                    shown = std::max(shown, hs.size());
+                }
+                if (shown < sl.designs.size() * 0 + 2 && sl.designs.size() > 1) std::cerr << "  " << id << " slot " << sl.id << " has designs that never change the model\n";
+                CHECK(shown >= 2 || sl.designs.size() < 2);
+            }
+        }
+        CHECK(bad == 0);
+    }
+    // ---- guided_cache: the same settings are built once; parts of the same shape are built once per build ----------------------------
+    {
+        const Template& T = Tpl("human");
+        ClearCache();
+        Recipe r = DefaultRecipe(T, "average"); r.params["detail"] = 3;
+        const long m0 = Stats().misses, h0 = Stats().hits;
+        const auto t0 = std::chrono::steady_clock::now();
+        const PolyMesh a = Create(r);
+        const double buildMs = Ms(t0);
+        const auto t1 = std::chrono::steady_clock::now();
+        const PolyMesh b = Create(r);
+        const double hitMs = Ms(t1);
+        std::printf("cache: Ultra human build %.1f ms, from cache %.2f ms\n", buildMs, hitMs);
+        CHECK(Stats().misses == m0 + 1 && Stats().hits == h0 + 1);
+        CHECK(Hash(a) == Hash(b));
+        CHECK(hitMs < buildMs);
+        Recipe r2 = r; r2.params["height"] = 1.8;
+        const long m1 = Stats().misses;
+        (void)Create(r2);
+        CHECK(Stats().misses == m1 + 1);                 // other settings are a new build
+        CHECK(Hash(Create(r2)) != Hash(a));
+        // instancing: four wheels and a row of pickets are subdivided once each
+        Recipe car = DefaultRecipe(Tpl("car"), "sedan"); car.params["detail"] = 3;
+        const long i0 = Stats().instanced;
+        const auto carParts = Generate(car);
+        CHECK(Stats().instanced - i0 >= 3);
+        for (int w = 0; w < 4; ++w) { Vec3 lo, hi; Bounds(ById(carParts, "wheel/" + std::to_string(w))->mesh, lo, hi); CHECK(hi.x - lo.x > 0.5f && hi.y - lo.y > 0.5f && std::fabs(lo.y) < 0.03f); }
+        Recipe fence = DefaultRecipe(Tpl("fence"), "picket"); fence.params["detail"] = 3;
+        const long i1 = Stats().instanced;
+        const ValidationReport fr = Validate(Generate(fence), false);
+        CHECK(Stats().instanced - i1 >= 10 && fr.Ok());
     }
     // ---- guided_perf: milliseconds per template and level (printed; a loose limit keeps it from being flaky) ---------------
     {

@@ -1574,6 +1574,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
         out << "  fphands2";
         extra(hh->right); extra(hh->left); oarm(hh->othersRight); oarm(hh->othersLeft);
         out << "\n";
+        // Presets, click swing and shirt colours came later. A scene without this line is the Old look.
+        out << "  fphands3 " << (int)hh->preset << " " << (hh->swingOnClick ? 1 : 0) << " " << hh->attackButton
+            << " " << (hh->right.matchShirt ? 1 : 0) << " " << (hh->left.matchShirt ? 1 : 0) << "\n";
     }
     for (auto* ps : go->GetComponents<NetworkPlayerSpawner>()) {
         out << "  npspawner " << Quote(ps->playerTemplate) << " " << Quote(ps->prefabFile)
@@ -7771,6 +7774,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     if (v.size() >= 7) fh->showWhileRunning = (v[6] != 0.0f);
                 } else if (field == "fphands") {
                     auto* hh = go->AddComponent<FirstPersonHands>();
+                    hh->ApplyPreset(FirstPersonHands::Preset::OldLook);   // a scene saved before presets keeps its look
                     auto side = [&](FirstPersonHands::HandSide& s, std::istringstream& rs) {
                         int en = 1, col = 0, sl = 0;
                         rs >> en >> s.position.x >> s.position.y >> s.position.z
@@ -7798,6 +7802,17 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     rs >> hh->othersItemOffset.x >> hh->othersItemOffset.y >> hh->othersItemOffset.z
                        >> hh->othersItemRotation.x >> hh->othersItemRotation.y >> hh->othersItemRotation.z
                        >> hh->othersArmLift >> hh->othersArmForward;
+                } else if (field == "fphands3") {
+                    auto* hh = LastOf(go->GetComponents<FirstPersonHands>());
+                    if (!hh) hh = go->AddComponent<FirstPersonHands>();
+                    int pr = 5, sw = 0, ab = 0, mr = 0, ml = 0;
+                    in >> pr >> sw >> ab >> mr >> ml;
+                    if (pr < 0 || pr > 5) pr = 5;
+                    hh->preset = (FirstPersonHands::Preset)pr;
+                    hh->swingOnClick = sw != 0;
+                    hh->attackButton = ab < 0 ? 0 : ab > 7 ? 7 : ab;
+                    hh->right.matchShirt = mr != 0;
+                    hh->left.matchShirt = ml != 0;
                 } else if (field == "fphands2") {
                     auto* hh = LastOf(go->GetComponents<FirstPersonHands>());
                     if (!hh) hh = go->AddComponent<FirstPersonHands>();

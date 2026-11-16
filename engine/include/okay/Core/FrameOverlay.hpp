@@ -70,6 +70,8 @@ class FrameOverlay {
 public:
     /// The voxel terrain's numbers for the overlay.
     static VoxelOverlayStats& Voxel();
+    /// Which 3D renderer drew the last frame (set by the host: the player, the editor). Empty = not reported.
+    static std::string& RendererName();
     /// The seconds on the clock the overlay uses (steady).
     static double NowSeconds();
     /// The state of the loop, Time and Game right now.

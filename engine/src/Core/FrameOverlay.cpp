@@ -80,6 +80,7 @@ std::vector<std::string> FrameOverlay::Format(const FrameStatsSnapshot& st, cons
 }
 
 VoxelOverlayStats& FrameOverlay::Voxel() { static VoxelOverlayStats v; return v; }
+std::string& FrameOverlay::RendererName() { static std::string n; return n; }
 
 double FrameOverlay::NowSeconds() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -87,6 +88,7 @@ double FrameOverlay::NowSeconds() {
 
 std::vector<std::string> FrameOverlay::Lines(const GameLoop& loop) {
     std::vector<std::string> out = Format(loop.Stats().Snapshot(), StateOf(loop));
+    if (!RendererName().empty()) out.push_back("renderer: " + RendererName());
     // Where the time goes in a voxel scene: only while a voxel terrain is running (it reported within the last second).
     const VoxelOverlayStats& v = Voxel();
     if (NowSeconds() - v.seenAt < 1.0) {

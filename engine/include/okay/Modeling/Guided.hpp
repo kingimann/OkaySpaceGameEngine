@@ -14,6 +14,7 @@
 //
 // No <mutex> / <thread>: this header is reachable from the Windows editor.
 #include "okay/Modeling/PolyMesh.hpp"
+#include <array>
 #include <functional>
 #include <map>
 #include <set>
@@ -140,6 +141,12 @@ std::vector<GeneratedPart> Generate(const Recipe& r, std::string* error = nullpt
 /// Every part joined into one PolyMesh (what Create gives the object).
 PolyMesh Assemble(const std::vector<GeneratedPart>& parts);
 /// Generate + Assemble.
+/// What the last builds cost: Create() calls answered from the cache (hits) or built (misses), parts reused by instancing,
+/// and the milliseconds of the last real build. Counters only grow; the panel shows them.
+struct GenStats { long hits = 0, misses = 0, instanced = 0; double lastBuildMs = 0; };
+const GenStats& Stats();
+/// Forget every cached build (tests; after registering a changed template).
+void ClearCache();
 PolyMesh Create(const Recipe& r, std::string* error = nullptr);
 
 // ---- Validation and variation ----------------------------------------------------------------------------------
@@ -159,6 +166,18 @@ ValidationReport Validate(const std::vector<GeneratedPart>& parts, bool checkVol
 /// A repeatable variation of `base` (the start design's recipe): every setting moves within +-`strength` of its range (default 15 percent),
 /// some parts get another design, then the template's compatibility rule runs. Same seed, same result.
 Recipe Randomise(const Template& t, const Recipe& base, uint32_t seed, float strength = 0.15f);
+
+// ---- Skeleton for animation (humans only) ------------------------------------------------------------------------------
+/// One bone of the humanoid skeleton made for a human recipe, in the model's own space (bind pose). `tail` is where the bone ends
+/// (the next joint, or past the hand, foot or head); the bones are in the engine's 15-bone humanoid order and use plain names
+/// (pelvis, spine_01, head, upperarm_l, lowerarm_l, hand_l, ..., thigh_l, calf_l, foot_l, ...) that the humanoid retarget maps.
+/// The model faces +Z; "_l" is on +X.
+struct RigJoint { std::string name; int parent = -1; Vec3 pos, tail; };
+/// The skeleton that fits this human's proportions. False for templates without one (only "human" has it).
+bool HumanoidSkeleton(const Recipe& r, std::vector<RigJoint>& out);
+/// Skin weights by distance to the bones: every vertex is bound to its three nearest bones (4 slots, sum 1).
+void SkinVertices(const std::vector<Vec3>& verts, const std::vector<RigJoint>& joints,
+                  std::vector<std::array<int, 4>>& idx, std::vector<std::array<float, 4>>& wt);
 
 // ---- Analysis and regeneration ----------------------------------------------------------------------------
 

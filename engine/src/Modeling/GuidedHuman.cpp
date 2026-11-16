@@ -38,6 +38,7 @@ Dim MakeDim(const Recipe& r) {
     d.limbK = 1.0f;
     d.sides = shapes::Scale(16, 6);
     d.limbSides = shapes::Scale(12, 6);
+    if ((int)r.Param("style", 0) == 1) { d.sides = std::min(d.sides, 7); d.limbSides = std::min(d.limbSides, 5); }   // stylised low poly: visible facets
     return d;
 }
 
@@ -96,6 +97,9 @@ HeadShape ShapeOfHead(const Dim& d) {
     if (d.headD == "oval") { h.rx *= 0.9f; h.ry *= 1.0f; h.jaw = 0.32f; }
     else if (d.headD == "box") { h.rx *= 1.12f; h.jaw = 0.06f; }
     else if (d.headD == "pointed") { h.jaw = 0.42f; }
+    else if (d.headD == "heart") { h.rx *= 1.06f; h.jaw = 0.5f; }
+    else if (d.headD == "long") { h.rx *= 0.9f; h.ry *= 1.14f; h.jaw = 0.3f; }
+    else if (d.headD == "wide") { h.rx *= 1.2f; h.rz *= 0.96f; h.jaw = 0.12f; }
     return h;
 }
 float Taper(const HeadShape& h, float y) {
@@ -335,22 +339,34 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
         const float off = 0.014f;
         o.Add("shirt/0", "shirt", FrameAA({-d.sw * 0.55f, d.hipY - 0.2f, -d.td}, {d.sw * 0.55f, d.shoulderY + 0.05f, d.td}), [&](const std::string& dg) {
             const float lower = dg == "jacket" ? 0.16f : 0.0f;
-            std::vector<Station> ts = TorsoStations(d, off, -lower, dg == "vest" ? 1.0f : 0.0f);
-            if (dg == "jacket") ts[0].c.y -= 0.0f;
+            const float lowerK = dg == "hoodie" ? 0.14f : lower;
+            std::vector<Station> ts = TorsoStations(d, off, -lowerK, dg == "vest" ? 1.0f : 0.0f);
             PolyMesh m = Loft(ts, kFwd, d.sides, false, true);
-            if (dg == "tshirt" || dg == "jacket") for (int side = 0; side < 2; ++side) {
+            const bool longSleeve = dg == "jacket" || dg == "longsleeve" || dg == "hoodie";
+            if (dg == "tshirt" || longSleeve) for (int side = 0; side < 2; ++side) {
                 const float s = side ? 1.0f : -1.0f;
-                const float ua = d.H * d.armF * 0.46f;
+                const float ua = d.H * d.armF * 0.46f, fa = d.H * d.armF * 0.40f;
                 const Vec3 S{s * d.sw * 0.5f, d.shoulderY - 0.04f, 0}, d1{s * std::sin(d.armA), -std::cos(d.armA), 0};
                 const Vec3 E = S + d1 * ua;
-                shapes::Append(m, Loft(LimbStations(S, E, d.th, kUpperArm, 0.014f, dg == "jacket" ? 1.0f : 0.5f, 0.95f), kFwd, d.limbSides, true, false));
+                shapes::Append(m, Loft(LimbStations(S, E, d.th, kUpperArm, 0.014f, longSleeve ? 1.0f : 0.5f, 0.95f), kFwd, d.limbSides, true, false));
+                if (dg == "longsleeve" || dg == "hoodie") {   // the forearm sleeve too, ending at the wrist
+                    Vec3 d2{d1.x, d1.y * std::cos(d.bend), -d1.y * std::sin(d.bend)};
+                    d2 = d2.Normalized();
+                    const Vec3 W = E + d2 * fa;
+                    shapes::Append(m, Loft(LimbStations(E + d1 * 0.004f, W, d.th * 0.85f, kForearm, 0.016f, 0.97f, 0.95f), kFwd, d.limbSides, false, true));
+                }
             }
+            if (dg == "hoodie") shapes::Append(m, Ell({0, d.shoulderY + 0.03f, -d.td * 0.5f}, d.sw * 0.2f, 0.1f, d.td * 0.34f, 4, 10));   // the hood resting on the back
             return m;
         });
         o.Add("pants/0", "pants", FrameAA({-d.sw * 0.5f, 0, -d.td}, {d.sw * 0.5f, d.hipY + 0.03f, d.td}), [&](const std::string& dg) {
             PolyMesh m;
             if (dg == "skirt") {
                 return Loft({{{0, d.hipY - 0.45f, 0}, d.td * 0.9f, d.sw * 0.62f}, {{0, d.hipY - 0.2f, 0}, d.td * 0.68f, d.sw * 0.5f}, {{0, d.hipY + 0.04f, 0}, d.td * 0.5f + off, d.sw * 0.34f + off}}, kFwd, d.sides, false, false);
+            }
+            if (dg == "longskirt") {   // down to the calves
+                const float yb = std::max(d.ankleY + 0.12f, d.hipY - 0.8f);
+                return Loft({{{0, yb + 0.0007f, 0}, d.td * 0.951f, d.sw * 0.703f}, {{0, d.hipY - 0.4011f, 0}, d.td * 0.723f, d.sw * 0.552f}, {{0, d.hipY - 0.1213f, 0}, d.td * 0.562f, d.sw * 0.423f}, {{0, d.hipY + 0.04f, 0}, d.td * 0.5f + off, d.sw * 0.34f + off}}, kFwd, d.sides, false, false);
             }
             std::vector<Station> waist = {{{0, d.hipY - 0.16f, 0}, d.td * 0.5f + off + 0.002f, d.sw * 0.4f + off + 0.002f}, {{0, d.hipY + 0.02f, 0}, d.td * 0.47f + off, d.sw * 0.36f + off}};
             m = Loft(waist, kFwd, d.sides, false, false);
@@ -360,9 +376,13 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
                 const float L = std::max(0.3f, (Hp.y - d.ankleY) / std::cos(d.stance));
                 const Vec3 d1{s * std::sin(d.stance), -std::cos(d.stance), 0};
                 const Vec3 K = Hp + d1 * (L * 0.5f), A = Hp + d1 * L;
-                const float R = d.th * 1.45f;
+                const float R = d.th * 1.45f * (dg == "jeans" ? 1.1f : dg == "cargo" ? 1.16f : dg == "leggings" ? 0.94f : 1.0f);
                 shapes::Append(m, Loft(LimbStations(Hp - d1 * 0.02f, K, R, kThigh, 0.016f, dg == "shorts" ? 0.7f : 1.0f, 1.0f), kFwd, d.limbSides, false, dg == "shorts"));
-                if (dg == "trousers" || dg == "greaves") shapes::Append(m, Loft(LimbStations(K, A, R, kCalf, 0.016f, 0.97f, 0.95f), kFwd, d.limbSides, false, true));
+                if (dg == "trousers" || dg == "greaves" || dg == "jeans" || dg == "cargo" || dg == "leggings") shapes::Append(m, Loft(LimbStations(K, A, R, kCalf, 0.016f, 0.97f, 0.95f), kFwd, d.limbSides, false, true));
+                if (dg == "cargo") {   // a pocket on the outside of each thigh
+                    const Vec3 c = Hp + d1 * (L * 0.3f);
+                    shapes::Append(m, BoxAA({c.x + s * (R * 1.12f) - 0.02f, c.y - 0.07f, c.z - 0.06f}, {c.x + s * (R * 1.12f) + 0.03f, c.y + 0.07f, c.z + 0.06f}));
+                }
             }
             return m;
         });
@@ -374,6 +394,12 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
             return m;
         });
     }
+    o.Add("scarf/0", "scarf", FrameAA({-hs * 0.4f, d.shoulderY - 0.1f, -hs * 0.4f}, {hs * 0.4f, d.hb + 0.04f, hs * 0.4f}), [&](const std::string& dg) {
+        const float nr = hs * 0.24f * 1.45f;
+        PolyMesh m = Loft({{{0, d.shoulderY - 0.01f, 0}, nr * 1.2f, nr * 1.2f}, {{0, d.shoulderY + (d.hb - d.shoulderY) * 0.55f, 0}, nr * 1.05f, nr * 1.08f}, {{0, d.hb - 0.005f, 0}, nr, nr}}, kFwd, d.limbSides, false, false);
+        if (dg == "long") shapes::Append(m, Loft({{{0.04f, d.shoulderY - 0.02f, nr * 1.05f}, 0.012f, 0.05f}, {{0.045f, d.shoulderY - 0.2f * d.tl, nr * 1.1f + 0.01f}, 0.012f, 0.055f}, {{0.05f, d.shoulderY - 0.45f * d.tl, nr * 1.12f + 0.012f}, 0.012f, 0.05f}}, kFwd, 8, false, false));
+        return m;
+    });
     // Hands and feet were built at the origin: move each to its joint.
     for (GeneratedPart& p : parts) {
         if (p.id.rfind("hand/", 0) == 0) {
@@ -386,6 +412,82 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
             const Vec3 W = E + d2.Normalized() * fa;
             for (Vec3& v : p.mesh.verts) v = v + W;
         }
+    }
+}
+
+
+// ---- The skeleton -----------------------------------------------------------------------------------------------------------
+bool HumanoidSkeleton(const Recipe& r, std::vector<RigJoint>& out) {
+    out.clear();
+    if (r.templateId != "human") return false;
+    const Dim d = MakeDim(r);
+    out.resize(15);
+    auto set = [&](int i, const char* name, int parent, Vec3 pos, Vec3 tail) { out[i].name = name; out[i].parent = parent; out[i].pos = pos; out[i].tail = tail; };
+    const Vec3 hips{0, d.hipY, 0}, spine{0, d.hipY + 0.5f * d.tl, 0}, headJ{0, d.shoulderY + (d.hb - d.shoulderY) * 0.5f, 0};
+    set(0, "pelvis", -1, hips, spine);
+    set(1, "spine_01", 0, spine, {0, d.shoulderY, 0});
+    set(2, "head", 1, headJ, {0, d.hb + d.hs, 0});
+    static const char* armN[2][3] = {{"upperarm_r", "lowerarm_r", "hand_r"}, {"upperarm_l", "lowerarm_l", "hand_l"}};
+    static const char* legN[2][3] = {{"thigh_r", "calf_r", "foot_r"}, {"thigh_l", "calf_l", "foot_l"}};
+    for (int side = 0; side < 2; ++side) {   // side 1 = +X = the figure's left (it faces +Z)
+        const float s = side ? 1.0f : -1.0f;
+        const float ua = d.H * d.armF * 0.46f, fa = d.H * d.armF * 0.40f, hl = d.H * d.armF * 0.14f;
+        const Vec3 S{s * d.sw * 0.5f, d.shoulderY - 0.04f, 0};
+        const Vec3 d1{s * std::sin(d.armA), -std::cos(d.armA), 0};
+        const Vec3 E = S + d1 * ua;
+        Vec3 d2{d1.x, d1.y * std::cos(d.bend), -d1.y * std::sin(d.bend)};
+        d2 = d2.Normalized();
+        const Vec3 W = E + d2 * fa;
+        const int a0 = 3 + side * 0 + (side ? 0 : 3);   // left arm bones are 3..5, right 6..8
+        set(a0, armN[side][0], 1, S, E);
+        set(a0 + 1, armN[side][1], a0, E, W);
+        set(a0 + 2, armN[side][2], a0 + 1, W, W + d2 * hl);
+        const Vec3 Hp{s * d.sw * 0.22f, d.hipY - 0.04f, 0};
+        const float L = std::max(0.3f, (Hp.y - d.ankleY) / std::cos(d.stance));
+        const Vec3 l1{s * std::sin(d.stance), -std::cos(d.stance), 0};
+        const Vec3 K = Hp + l1 * (L * 0.5f), A = Hp + l1 * L;
+        const int l0 = side ? 9 : 12;
+        set(l0, legN[side][0], 0, Hp, K);
+        set(l0 + 1, legN[side][1], l0, K, A);
+        set(l0 + 2, legN[side][2], l0 + 1, A, A + Vec3{0, 0, d.H * 0.07f});
+    }
+    return true;
+}
+
+void SkinVertices(const std::vector<Vec3>& verts, const std::vector<RigJoint>& joints,
+                  std::vector<std::array<int, 4>>& idx, std::vector<std::array<float, 4>>& wt) {
+    idx.assign(verts.size(), {0, 0, 0, 0});
+    wt.assign(verts.size(), {0, 0, 0, 0});
+    const int n = (int)joints.size();
+    std::vector<float> dist((size_t)n);
+    for (size_t v = 0; v < verts.size(); ++v) {
+        const Vec3 p = verts[v];
+        for (int j = 0; j < n; ++j) {
+            const Vec3 a = joints[j].pos, ab = joints[j].tail - a;
+            const float l2 = Vec3::Dot(ab, ab);
+            float t = l2 > 1e-9f ? Vec3::Dot(p - a, ab) / l2 : 0.0f;
+            t = std::min(1.0f, std::max(0.0f, t));
+            dist[j] = (p - (a + ab * t)).Magnitude();
+        }
+        int best[3] = {-1, -1, -1};
+        for (int k = 0; k < 3; ++k) {
+            float bd = 1e30f;
+            for (int j = 0; j < n; ++j) {
+                if (j == best[0] || j == best[1]) continue;
+                if (dist[j] < bd) { bd = dist[j]; best[k] = j; }
+            }
+        }
+        float sum = 0;
+        for (int k = 0; k < 3; ++k) {
+            if (best[k] < 0) continue;
+            const float w = 1.0f / std::pow(dist[best[k]] + 0.02f, 3.0f);
+            // a bone far behind the nearest one adds nothing: drop it below a fifth of the best weight
+            idx[v][k] = best[k]; wt[v][k] = w; sum += w;
+        }
+        const float top = wt[v][0];
+        sum = 0;
+        for (int k = 0; k < 3; ++k) { if (wt[v][k] < top * 0.2f) wt[v][k] = 0; sum += wt[v][k]; }
+        for (int k = 0; k < 4; ++k) wt[v][k] = sum > 0 ? wt[v][k] / sum : (k == 0 ? 1.0f : 0.0f);
     }
 }
 

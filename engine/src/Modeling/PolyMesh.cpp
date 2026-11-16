@@ -196,6 +196,22 @@ void PolyMesh::SetSeam(int a, int b, bool on) {
     else if (!on && it != seams.end()) seams.erase(it);
 }
 
+float PolyMesh::CreaseOf(int a, int b) const {
+    if (a > b) std::swap(a, b);
+    for (const EdgeCrease& c : creases) if (c.a == a && c.b == b) return c.w;
+    return 0.0f;
+}
+void PolyMesh::SetCrease(int a, int b, float w) {
+    if (a == b || a < 0 || b < 0) return;
+    if (a > b) std::swap(a, b);
+    for (std::size_t i = 0; i < creases.size(); ++i)
+        if (creases[i].a == a && creases[i].b == b) {
+            if (w > 0.0f) creases[i].w = w; else creases.erase(creases.begin() + i);
+            return;
+        }
+    if (w > 0.0f) creases.push_back({a, b, w});
+}
+
 PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::vector<int>* triFace) {
     PolyMesh pm;
     if (triFace) triFace->assign(mesh.TriangleCount(), -1);
@@ -220,9 +236,18 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
         pm.verts = mesh.vertices;
         for (int i = 0; i < nv; ++i) remap[i] = i;
     }
+    if (mesh.HasVertexColors()) {                       // the first vertex at a position gives the polygon vertex its colour
+        pm.vertColors.assign(pm.verts.size(), Color{1, 1, 1, 1});
+        std::vector<char> set(pm.verts.size(), 0);
+        for (int i = 0; i < nv; ++i) if (!set[remap[i]]) { set[remap[i]] = 1; pm.vertColors[remap[i]] = mesh.vertexColors[i]; }
+    }
     for (const auto& e : mesh.seams)
         if (e.first >= 0 && e.second >= 0 && e.first < nv && e.second < nv) pm.SetSeam(remap[e.first], remap[e.second], true);
+    for (const EdgeCrease& c : mesh.creases)
+        if (c.a >= 0 && c.b >= 0 && c.a < nv && c.b < nv && remap[c.a] != remap[c.b]) pm.SetCrease(remap[c.a], remap[c.b], std::max(c.w, pm.CreaseOf(remap[c.a], remap[c.b])));
     const bool hasGroups = (int)mesh.polyFace.size() == mesh.TriangleCount() && !mesh.polyFace.empty();
+    const bool hasSlots = mesh.HasSlots();
+    if (hasSlots) pm.slotColors = mesh.slotColors;
     std::vector<int> group;   // polyFace id of each kept triangle
     for (int t = 0; t < mesh.TriangleCount(); ++t) {
         PolyFace f;
@@ -235,6 +260,7 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
         }
         if (!ok || f.verts[0] == f.verts[1] || f.verts[1] == f.verts[2] || f.verts[0] == f.verts[2]) continue;
         if (hasCol) { f.hasColor = true; f.color = mesh.triColors[t]; }
+        if (hasSlots) f.material = std::max(0, mesh.triSlot[t]);
         pm.faces.push_back(f);
         srcTri.push_back(t);
         if (hasGroups) group.push_back(mesh.polyFace[t]);
@@ -369,11 +395,14 @@ static void MergeTrianglePairs(PolyMesh& pm, float planarDegrees, std::vector<in
 
 Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
     Mesh m;
-    bool anyUV = false, anyColor = false;
+    bool anyUV = false, anyColor = false, anySlot = false;
     for (const PolyFace& f : faces) {
         if (!f.uvs.empty() && f.uvs.size() == f.verts.size()) anyUV = true;
         if (f.hasColor) anyColor = true;
+        if (f.material != 0) anySlot = true;
     }
+    if (!slotColors.empty()) anySlot = true;
+    if (anySlot && !slotColors.empty()) anyColor = true;   // slot colours are drawn as face colours
     // One mesh vertex per (polygon vertex, UV): shared unless a seam splits it.
     std::map<std::tuple<int, long, long>, int> slot;
     auto vertexFor = [&](int pv, const Vec2& uv) {
@@ -384,6 +413,7 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
         const int id = (int)m.vertices.size();
         m.vertices.push_back(verts[pv]);
         if (anyUV) m.uvs.push_back(uv);
+        if (!vertColors.empty()) m.vertexColors.push_back(pv < (int)vertColors.size() ? vertColors[pv] : Color{1, 1, 1, 1});
         slot.emplace(key, id);
         return id;
     };
@@ -416,16 +446,27 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
                 m.triangles.push_back(vertexFor(f.verts[corner], uv));
                 if (anyUV && !splitSeams) m.cornerUVs.push_back(uv);
             }
-            if (anyColor) m.triColors.push_back(f.hasColor ? f.color : Color{1, 1, 1, 1});
+            if (anyColor) {
+                Color c = f.hasColor ? f.color : Color{1, 1, 1, 1};
+                if (!f.hasColor && !slotColors.empty() && f.material >= 0 && f.material < (int)slotColors.size()) c = slotColors[f.material];   // a face's own colour (paint) wins
+                m.triColors.push_back(c);
+            }
             m.polyFace.push_back(fi);
+            if (anySlot) m.triSlot.push_back(std::max(0, f.material));
         }
     }
+    if (anySlot) m.slotColors = slotColors;
     // Seams that are still edges of some face (vertex i of the mesh is polygon vertex i).
     if (!seams.empty()) {
         std::set<std::pair<int, int>> edges;
         for (const PolyFace& f : faces)
             for (std::size_t c = 0; c < f.verts.size(); ++c) edges.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
         for (const auto& e : seams) if (edges.count(Key(e.first, e.second))) m.seams.push_back(Key(e.first, e.second));
+    }
+    if (!creases.empty()) {                              // creases that are still edges of some face
+        std::set<std::pair<int, int>> edgeSet;
+        for (const PolyFace& f : faces) for (std::size_t c = 0; c < f.verts.size(); ++c) edgeSet.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
+        for (const EdgeCrease& c : creases) if (edgeSet.count(Key(c.a, c.b))) m.creases.push_back(c);
     }
     if (triFace) *triFace = m.polyFace;
     return m;
@@ -449,6 +490,14 @@ std::string PolyMesh::Serialize() const {
         if (f.material != 0) o << " mat " << f.material;
         o << "\n";
     }
+    for (std::size_t i = 0; i < slotColors.size(); ++i)
+        o << "slot " << i << " " << slotColors[i].r << " " << slotColors[i].g << " " << slotColors[i].b << " " << slotColors[i].a << "\n";
+    for (std::size_t i = 0; i < vertColors.size() && i < verts.size(); ++i) {
+        const Color& c = vertColors[i];
+        if (c.r == 1 && c.g == 1 && c.b == 1 && c.a == 1) continue;     // white is the default: only the painted vertices are written
+        o << "vcolor " << i << " " << c.r << " " << c.g << " " << c.b << " " << c.a << "\n";
+    }
+    for (const EdgeCrease& c : creases) o << "crease " << c.a << " " << c.b << " " << c.w << "\n";
     for (const auto& e : seams) o << "seam " << e.first << " " << e.second << "\n";
     return o.str();
 }
@@ -512,6 +561,21 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
                 } else return fail(lineNo, "unknown face field '" + key + "'");
             }
             pm.faces.push_back(f);
+        } else if (tag == "crease") {
+            int a = -1, b = -1; float w = 0;
+            if (!(ls >> a >> b >> w) || a < 0 || b < 0) return fail(lineNo, "a crease needs two vertex numbers and a sharpness");
+            if (std::isfinite(w) && w > 0.0f) pm.SetCrease(a, b, std::min(w, 10.0f));
+        } else if (tag == "vcolor") {
+            int idx = -1; Color c;
+            if (!(ls >> idx >> c.r >> c.g >> c.b >> c.a) || idx < 0) return fail(lineNo, "vcolor needs a vertex number and r g b a");
+            if (idx > (1 << 24)) return fail(lineNo, "vcolor vertex number is too large");
+            if ((int)pm.vertColors.size() <= idx) pm.vertColors.resize(idx + 1, Color{1, 1, 1, 1});
+            pm.vertColors[idx] = c;
+        } else if (tag == "slot") {
+            int idx = -1; Color c;
+            if (!(ls >> idx >> c.r >> c.g >> c.b >> c.a) || idx < 0 || idx > 255) return fail(lineNo, "a slot needs a number (0-255) and r g b a");
+            if ((int)pm.slotColors.size() <= idx) pm.slotColors.resize(idx + 1, Color{1, 1, 1, 1});
+            pm.slotColors[idx] = c;
         } else if (tag == "seam") {
             int a = -1, b = -1;
             if (!(ls >> a >> b)) return fail(lineNo, "a seam needs two vertex numbers");
@@ -525,6 +589,9 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
         for (int v : pm.faces[i].verts)
             if (v < 0 || v >= (int)pm.verts.size())
                 return fail(lineNo, "face " + std::to_string(i) + " uses vertex " + std::to_string(v) + ", which doesn't exist");
+    if (pm.vertColors.size() > pm.verts.size()) return fail(lineNo, "a vcolor uses vertex " + std::to_string(pm.vertColors.size() - 1) + ", which doesn't exist");
+    for (const EdgeCrease& c : pm.creases)
+        if (c.b >= (int)pm.verts.size()) return fail(lineNo, "a crease uses vertex " + std::to_string(c.b) + ", which doesn't exist");
     for (const auto& e : pm.seams)
         if (e.second >= (int)pm.verts.size())
             return fail(lineNo, "a seam uses vertex " + std::to_string(e.second) + ", which doesn't exist");

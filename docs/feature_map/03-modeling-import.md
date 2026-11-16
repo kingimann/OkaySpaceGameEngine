@@ -96,14 +96,23 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.5.3 Mesh asset load, save, hash - `Modeling/MeshAsset` - LoadMeshAsset (fallback to the scene folder in exported games), SaveMeshAsset, GeometryHash
   - 3.5.4 Link and write-back - `editor/EditorState.*`, `editor/main.cpp` - Save as Mesh Asset, shared files, SaveEditedMeshAssets on Ctrl+S, Build Game copies the file to Data
   - 3.5.5 Saved forms of a mesh - `Render/Mesh` - primitive by name, file by path, hand-edited verbatim (`meshgeo` in the scene), `.obj`-backed edits kept in the scene
+  - 3.5.7 Material slots - `Render/Mesh`, `Modeling/PolyMesh` - per-triangle slot and a colour per slot (Mesh::AssignSlot/ApplySlotColors), saved in the scene (`meshslots`, `slotcolors`) and `.okaymesh` (`slot N r g b a`); Edit Mesh > Paint > Material Slots
+  - 3.5.9 Spin, extrude along path, array along curve - `Modeling/PolyOps`, `Modeling/Modifiers` - SpinEdges, ExtrudeAlongPath, the Array Along Curve modifier (SamplePath); Edit Mesh buttons and the modifier stack
+  - 3.5.10 Measure and snap - `Modeling/Measure` - MeasureMesh / MeasureSelection readouts, SnapToGeometry (vertex, edge, face) used by the G move; Edit Mesh > Snapping and measuring
+  - 3.5.11 Material library and palettes - `Modeling/MaterialLibrary` - ready slot colours; Edit Mesh > Material Slots
+  - 3.5.12 Slot pictures - `Components/MeshRenderer`, `Render/SoftwareRenderer` - slotTextures drawn per triangle slot (software renderer only), `slottex` scene record
+  - 3.5.13 Faster modeling - `Modeling/SelectOps`, `editor/main.cpp` - GrowFaces / ShrinkFaces / SelectSimilar / SelectByNormal / SelectByArea, BakeTransform, recipes (MakeWindowHole, RoundEdges, MakeTable); one command list behind the quick toolbar, right-click menu, Ctrl+K palette, Shift+R, undo history
+  - 3.5.14 Hide, drag-select, symmetry, arrange - `Render/Mesh` (HideTriangles / RevealHidden / IsolateTriangles), `Modeling/ScreenSelect`, `Modeling/Arrange`, `Modeling/EditTransform` (mirror Y / Z), `Modeling/Measure` (RayMeshHit), `Modeling/SelectOps` (LooseParts); H / Alt+H / slash, B / C / L, Shift+D, E, I, join / separate / align / distribute / origin, add at cursor
+  - 3.5.15 Vertex colours, creases, shrinkwrap, mesh library - `Render/Mesh` (vertexColors, PaintVertices, creases), `Modeling/SelectOps` (Shrinkwrap), `Modeling/PolyOps` (creased Catmull-Clark), `Modeling/MeshLibrary`, the four renderers' vertex colour paths; Edit Mesh > Paint, Ctrl+K crease / shrinkwrap / reduce, Import > Mesh library
+  - 3.5.8 Repair Mesh - `Render/Mesh` - Mesh::Repair: merge doubles, drop collapsed triangles, cap holes, orient outward; Edit Mesh > Repair Mesh
   - 3.5.6 OBJ export and import helpers - `Render/Mesh` - SaveOBJ, LoadOBJ (UVs, vn normals), RecenterToOrigin, ScaleToFit, NormalizeImportScale
 - **Code:** `Render/Mesh`, `Modeling/MeshAsset`, `Modeling/PolyMesh`, `editor/EditorState.*`
 - **API:** `Mesh::Cube/Sphere/...`, `Mesh::FromName`, `LoadMeshAsset`, `SaveMeshAsset`, `GeometryHash`, `MeshRenderer::meshPath`; Inspector "Mesh File" field
 - **Editor:** GameObject > 3D Object menu (every primitive); Modeling > Import tab and Edit Mesh > Save as Mesh Asset; Mesh Renderer inspector
 - **Docs:** `docs/modeling.md`
-- **Tests:** `mesh3d`, `mesh_asset`, `mesh_variant_hash`, `meshedit`, `polymesh`, `obj_import`
-- **Status:** Partial - primitives and file round-trips are tested; per-face materials are not built and the inside-out claim below is unconfirmed
-- **Open:** M5b per-face materials: PolyFace has a material slot but Mesh has no per-triangle slot; old map says Sphere, Cylinder, Cone, Tube, Torus, TorusKnot and Capsule can be inside out (possible bug, unverified: mesh3d checks normals "regardless of winding")
+- **Tests:** `mesh3d`, `mesh_asset`, `mesh_variant_hash`, `meshedit`, `polymesh`, `obj_import`, `modeling_more`, `modeling_more_scene`, `modeling_fuzz`, `modifiers`
+- **Status:** Partial - primitives and file round-trips are tested; material slots (a colour per slot) are built; per-slot textures and renderer submeshes are not; the inside-out claim below is unconfirmed
+- **Open:** M5b: slots carry a colour only, not a texture or shader, and are drawn through per-face colours, not separate renderer submeshes; some triangle-level Mesh tools drop slot membership; old map says Sphere, Cylinder, Cone, Tube, Torus, TorusKnot and Capsule can be inside out (possible bug, unverified: mesh3d checks normals "regardless of winding")
 - **Related:** 3.1, 3.6, 2.1, 2.2, 1.5
 - **Words:** mesh, primitive, okaymesh, Mesh File, meshPath, OBJ, wedge, gear, icosphere, quad, polygon mesh, mesh asset
 - **Seen as:** a primitive is dark or inside out; an edited mesh reverts after reopening the scene; the exported game cannot find the mesh file; every object using the shared file changes at once

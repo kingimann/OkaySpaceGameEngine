@@ -116,4 +116,21 @@ std::vector<int> CompactVerts(PolyMesh& pm);
 /// are inherited. Original vertices keep their indices.
 PolyMesh CatmullClark(const PolyMesh& pm, int levels = 1);
 
+/// Spin: turn the edge chain(s) `edges` around the axis through `center` in direction `axis`
+/// by `angleDegrees` in `steps` steps and fill each step with a quad (a lathe of whatever edges
+/// you selected). A full turn (360 or more) closes up on itself. The first copy is the original
+/// vertices, so the edges stay where they are and new vertices are appended. `merge` joins
+/// vertices that sit on the axis (a cap point) into one. Returns the faces made, or 0 with the
+/// reason in `error`. A profile that runs up the axis on its +X side, spun a positive angle
+/// about +Y, faces outward; if yours came out facing inward, Flip Normals fixes it.
+int SpinEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& center, const Vec3& axis, float angleDegrees,
+              int steps, std::string* error = nullptr, bool merge = true);
+
+/// Extrude along a path: push the faces `faces` (face numbers) out along the polyline `path`,
+/// whose first point is where the face sits. The face is carried along turning with the path
+/// (no twist), side walls join each step, and the original faces become the end caps. Material
+/// slots carry over. Returns the faces made, or 0 with the reason in `error`.
+int ExtrudeAlongPath(PolyMesh& pm, const std::vector<int>& faces, const std::vector<Vec3>& path,
+                     std::string* error = nullptr);
+
 } // namespace okay::modeling

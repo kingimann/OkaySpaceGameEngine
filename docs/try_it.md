@@ -69,6 +69,7 @@ release job or the installer build for this change.
 | 7e | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
+| 7zh | Modeling: material slots, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, modifier cost and Copy, material library, Add to scene | `examples\modeling_tools\material_slots.okayscene` and `spin_path_curve.okayscene` (File > Open...), then the Modeling window | New in this change; real window and GPU renderers unverified |
 | 7zg | Guided modeling: make a fence from designs, customise it, swap parts, keep editing by hand | Modeling window > **Guided** page; `examples\modeling\guided_fences.okayscene` | New in this change; the engine rules are tested on Linux, the editor page compiles but was **never opened in a real window** (unverified) |
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
@@ -676,6 +677,81 @@ names and the favourites keys are checked by `tests/test_vs_categories.cpp` (com
 counts above come from that test's dump. The three screenshots show the panel working with the new topics. **Unverified:**
 how the sidebar looks and feels in the real editor window (font, dot colours, scrolling); nothing was run on Windows.
 
+## 7zh. Modeling: material slots and Repair Mesh
+
+**What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
+recolours every face in it at once. Slots are saved in the scene and in `.okaymesh` files. There is also a **Repair Mesh** button
+that cleans up a broken or imported mesh in one click. Slots are colours only for now: per-slot pictures (textures) and shaders are
+not built.
+
+**Try the example.**
+1. Open `Tools\OkayEngine.exe`, then **File > Open...** and pick `examples\modeling_tools\material_slots.okayscene`.
+2. You should see two objects: **Slot House** (cream walls, a red roof, a brown floor and a blue door) and **Slot Ball** (a white
+   ball with a green top and an orange bottom). Nothing else is needed: the colours come from the slots.
+3. Click **Slot House**, open the **Modeling** window (the menu bar), tick **Edit Mesh**, open the **Paint** area and find **Material Slots**.
+   You should see four rows: Slot 0 to Slot 3, each with a round button, a face count and a colour box.
+4. Click the colour box of **Slot 1** and pick green. Both roof faces turn green at once. Press **Ctrl+Z**: the roof is red again.
+5. Press key **3** (face mode), click one wall. Click the round button of **Slot 3**, press **Assign Sel**. That wall takes the door colour.
+   Press **Select Slot** with Slot 3 chosen: the door and that wall are selected. **Clear Slots** removes all slots and the colours they gave (the mesh goes back to its plain colour).
+6. Save the scene (Ctrl+S), close it and open it again: the slots and colours are still there.
+
+**Try Repair Mesh.** Select any object with a mesh, tick **Edit Mesh**, press **Delete Faces** on a face or two to make a hole, then
+**Repair Mesh**. The hole is capped and the Console says what was done, for example `Repair Mesh: merged 0 verts, capped 1 holes, flipped 0 faces; open edges 4 -> 0 (closed)`.
+
+**Files.** `examples\modeling_tools\slot_house.okaymesh` and `slot_ball.okaymesh` are the same two models as plain files: in the Inspector set **Mesh File**
+to one of them (it is in the Modeling window; the exact tab is unverified), or open one in a text editor to see the `slot N r g b a` lines.
+
+
+**More modeling tools (same example folder).** Open `examples\modeling_tools\spin_path_curve.okayscene`. You should see a blue **Spun Vase**, a **Bent Horn**
+(a box with a curved horn pulled out of its top) and a row of small cubes called **Curve Array** following a curve. `docs/images/modeling_more/spin_path_curve.png` is a
+headless software render of it.
+1. **Array Along Curve.** Click **Curve Array**. In the Inspector find **Modifiers**: the first one is *Array Along Curve*, with a time like `0.05 ms` under its name.
+   Drag one of the curve points: the cubes follow. Press **Wave** or **Helix** or **Arc**: the row takes that shape. Untick **Follow the curve**: the cubes stop turning.
+   Open its **...** menu and press **Copy**: a second identical modifier appears below it (the row is now doubled); **Remove** it again.
+2. **Spin.** Click **Spun Vase**, open the Modeling window, tick **Edit Mesh**, press key **2** (edge mode) and click one edge of the vase, then press **Spin**
+   (Y axis, 360 deg, 16 steps): a ring of new faces is made around the vase. Ctrl+Z removes it.
+3. **Extrude Along Path.** Click **Bent Horn** (or a cube), Edit Mesh, key **3** (faces), click the top face, choose **Arc**, press **Extrude Along Path**: a bent arm grows out of the face.
+4. **Measuring.** In Edit Mesh, under **Snapping and measuring**, read **Whole mesh** (width x height x depth, area, volume). Press key **1** (vertices), click two corners:
+   **Selection** shows their distance and the x, y, z difference. Select edges: it shows their total length; faces: their area.
+5. **Snapping.** Set **Snap to** to **Vertex** (or Edge or Face), tick **Snap (Ctrl)**, select a vertex, press **G** and move the mouse near another vertex: a yellow ring shows
+   it and the vertex jumps onto it; the bottom line says "snapping to Vertex". Enter confirms, Esc cancels.
+6. **Material library.** Select **Slot House**, Edit Mesh, **Material Slots**: pick a slot, open **Material library** and choose *Copper*: that slot takes the colour. Open **Palette** and choose *Barn*: four slots change at once.
+7. **Picture per slot.** In a slot row, type an image path (for example one of your own `Assets/brick.png`) in the **picture path** box: in the software renderer the slot's faces show the picture.
+   (The OpenGL and Direct3D renderers still show the colour; that part is not built yet.)
+8. **Add to scene as object.** Modeling window > **Import** page > **Add to scene as object**: choose **Exact mesh** and press **Add Copy to Scene**: a copy appears next to the object, with a Mesh Collider (choose **Box** or **No collider** for the others).
+9. **Shortcuts and recent tools.** Edit Mesh > **Shortcuts and recent tools** lists the keys and the last tools you used.
+
+
+**Model faster (same section; real window unverified).** Open `examples\modeling_tools\spin_path_curve.okayscene`: it now also has a **Table** and a **Window Wall** made by the "how do I" recipes.
+1. Click **Window Wall**, Modeling window, tick **Edit Mesh** (or press Tab). At the top of the 3D view, under the Object / Edit / Vertex / Edge / Face buttons, you should see a row of small tool buttons (Extrude Faces, Inset Faces, ... Repair Mesh, Sym X, Snap, Repeat, Find...). At the bottom-left a grey line says what to do.
+2. Press key **3** (faces), click a face of the wall. Hover **Extrude Faces**: the tooltip says what it does. Click it: the face is pushed out. Press **Shift+R**: it extrudes again. Ctrl+Z twice.
+3. **Right-click** (click, do not drag) in the 3D view: a menu of tools that fit the selection appears. Click **Inset Faces**.
+4. Press **Ctrl+K**: a box opens. Type `bevel`: *Bevel Edges* is first (greyed out until edges are selected; hover for why). Clear it and type `window`: *Make a Window Hole (how do I)*. Select a wall face, press Ctrl+K, type `window`, press **Enter**: an opening with a frame is cut.
+5. Select a few faces and press Ctrl+K, type `similar`, Enter on *Select Similar: Facing*: every face pointing the same way is selected. Try *Grow Selection*, *Shrink Selection*, *Select Up-Facing Faces*.
+6. Edge mode (key **2**), click an edge, Ctrl+K, `round`, Enter: the edge is rounded. Ctrl+K, `table`, Enter: a new **Table** object appears (Edit Mesh, Material Slots recolours top and legs).
+7. Open Edit Mesh > **Shortcuts and recent tools**: the **Recent** line lists your tools; **Undo history** lists them with names. Click an older step: the mesh goes back to before it.
+8. Scale an object (the Inspector scale to 2, 1, 1), then Ctrl+K, `apply scale`, Enter: the scale returns to 1 and the mesh is as wide as before (the Measure line stays the same).
+
+**Hide, drag-select and more (same section; real window unverified).** In `examples\modeling_tools\spin_path_curve.okayscene` the **House Roof Hidden** object has its roof faces hidden.
+1. Click **House Roof Hidden**, tick Edit Mesh (Tab). Press **Alt+H**: the red roof faces appear and are selected. Press **H**: they hide again. Select a wall and press **/**: only that wall shows (local view); **/** again shows everything. Ctrl+Z steps back through these.
+2. Press **B** and drag a rectangle round some vertices (Vertex mode, key 1): they are selected; try **C** (paint with the circle, wheel = size, Esc ends) and **L** (draw a loop). Without X-ray only the front side is picked; press **Alt+Z** (or the X-ray button) and drag again to select through the mesh.
+3. Face mode (key 3), select a face, press **Shift+D**: a copy appears and follows the mouse; Enter keeps it. Press **E** on a face: it is dragged out along its normal; type `0.5` and Enter for an exact distance. Press **I**: move the mouse toward the middle of the face; click to keep the inset.
+4. Edge mode (key 2): double-click an edge: its whole loop is selected.
+5. Press **Sym Y** (or **Z**) in the toolbar, select a vertex, press **G** and move: the partners across that plane move mirrored. In Edit Mesh tick **Start with symmetry on: X**, leave edit mode and enter it again: Symmetry X is already on.
+6. Ctrl+click two or more mesh objects in the Hierarchy, press **Ctrl+K**, type `join` and Enter: they become one object. Type `align` for Align Objects, `separate` on a mesh of several pieces to split it into objects, `cursor` then Enter to add a cube where the mouse pointed.
+
+**Vertex colours, creases, shrinkwrap, reduce, library (same section; real window unverified).** Open `examples\modeling_tools\vertex_paint_creases.okayscene`: a **Gradient Bar** already painted red to blue with vertex colours, a **Creased Cube** (its edges are pink in Edit Mesh) next to a plain cube, both with the Subdivision modifier, and a **Wrap Target** sphere.
+1. **Vertex colours.** Click **Gradient Bar**: it shows a smooth red-to-blue gradient. Tick Edit Mesh, Paint section, tick **Paint Brush (drag on mesh)** and **Vertex colours (smooth)**, pick green, drag over the bar: the colour blends in smoothly. Ctrl+Z undoes a stroke. Try **Smooth Colours** and **Clear Vertex Colours**. Switch the renderer in the editor's rendering settings (OpenGL, Direct3D 11, software) and look again.
+2. **Creases.** Click **Creased Cube** (it has a Subdivision modifier): it stays boxy; the plain cube beside it rounds into a blob. In Edit Mesh press key **2**, click an edge of the plain cube, set **Crease sharpness** to 2, press **Ctrl+K**, type `crease`, Enter: that edge turns pink and stays sharp after subdivision.
+3. **Shrinkwrap.** In the Hierarchy click **Gradient Bar**, Ctrl+click **Wrap Target**, tick Edit Mesh on the bar, select a few vertices (key 1), press Ctrl+K, type `snap`, Enter: those vertices jump onto the sphere. Try `shrinkwrap` for the whole mesh and change **Surface offset**.
+4. **Reduce Polygons.** Click the **Wrap Target** sphere (many triangles), Edit Mesh, set **Reduce to %** to 25, Ctrl+K, type `reduce`, Enter: the Console shows the triangle count dropping to about a quarter and the sphere still looks round.
+5. **Mesh library.** Use **Save as Mesh Asset** on a model, then Modeling > Import page > **Mesh library**: it appears (press Refresh); **Add** puts a copy in the scene.
+
+**Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
+
+**What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
+the software renderer drawing each slot's colour and picture, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, the library, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
+editor window (the editor code was only syntax-checked, the snapping ring and the buttons in steps 1 to 9 are unseen), run the Windows build, or looked at the OpenGL, Direct3D 11 or Direct3D 12 renderers (they draw per-face colours, as before).
 ## 7zg. Guided modeling: a fence from designs, then your own edits
 
 **What it is.** The existing Modeling window has a new **Guided** page. You pick a category, a thing (today only the
@@ -1285,104 +1361,3 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
-
-## 7s. Digging the voxel terrain no longer drops the frame rate
-
-**What it is.** Holding the dig (left mouse) or build (right mouse) button in a voxel terrain used to re-build and re-upload the
-whole terrain every frame. Now only the chunks you touched are. Details and numbers: `docs/voxel_edit_perf.md`.
-
-**Steps.**
-1. Start `Tools\OkayEngine.exe`. **File > Open...** and open `<install folder>\examples\voxel\voxel_big_world.okayscene`
-   (a bigger hill than the Sandbox, so the old stutter is easy to see). The normal size is `voxel_sandbox.okayscene`, or New Project >
-   Sandbox.
-2. Open **View > Panels > Profiler** and press **Play**. Click in the Game view, walk with WASD, look with the mouse.
-3. Hold **left mouse** on the ground (dig) and **right mouse** (build). Watch the frame rate (the Game view's stats, or **F3** in
-   the player). You should see it stay steady. In the Profiler the rows `Voxel.Edit`, `Voxel.Mesh` and `Voxel.Upload` appear while
-   you hold the button and each stays well under 1 ms.
-4. Press Stop, select the **Terrain** object: the Voxel Terrain card says "Drawn as one mesh". While Playing and after your first
-   dig it says "Drawn as N chunk objects", and the Hierarchy shows `Voxel Chunk x,y,z` children (they are never saved).
-5. To feel the old behaviour: close the editor, open a Command Prompt, run `set OKAY_VOXEL_OLD_REMESH=1`, start
-   `Tools\OkayEngine.exe` from that same window and repeat steps 2-3. The frame rate drops while you hold the button and
-   `Voxel.Mesh` plus `Voxel.Upload` are several times bigger. The Terrain card then says so.
-
-**Status.** Tests run on Linux (`ctest -R "voxel|mesh_hash|terrain_water_speed"`): 127 + 10 + 36 + 13 + 55 + 25 + 13 checks, 0
-failures. Software renderer pixels identical in both modes. CPU time per dig frame measured 3x to 16x lower; **no GPU, no Windows,
-no real editor window was available**, so the real frame rates and the Inspector and Profiler lines are unverified until you look.
-
-## 7t. Voxel terrain digs like real life
-
-**What it is.** Dug ground no longer disappears. The ground has materials (grass, dirt, clay, stone, ore, sand, snow) with their own
-colour and hardness. Digging drops debris that falls; walk up to it and it is counted ("Dirt 3.20 m3" on screen). Right mouse
-builds with what you hold. Pieces you cut loose fall. Ctrl+Z takes back the last stroke. All the options are in the Inspector.
-Details: `docs/terrain_water.md`, "Real-life digging".
-
-**Steps.**
-1. Start `Tools\OkayEngine.exe`. **File > Open...** and open `<install folder>\examples\voxel\voxel_realistic.okayscene`.
-2. Press **Play**. Click in the Game view, walk with WASD, look with the mouse.
-3. Hold **left mouse** on the ground. You should see the ground carve away and small blocks of it fall and bounce. Walk up to the
-   blocks: the text at the top-left changes from "Nothing collected" to something like "Dirt 3.20 m3 Grass 1.10 m3". Blocks you
-   do not pick up lie for a few seconds and then melt back into the ground where they are.
-4. Hold **left mouse** on a dark grey patch (stone): it digs much more slowly than dirt. Ore (yellow) is too hard for the
-   starting tool and does not dig at all (raise **Tool Power** on the Voxel Digger card to dig it).
-5. Hold **right mouse**: it builds ground back, using up the count. With nothing collected, nothing builds.
-6. Cut under a ledge or a thin column of ground from the side and release the button: the cut-off piece falls as one lump with its
-   own shape and settles back into the ground.
-7. Press **Ctrl+Z** after letting go of the mouse: the last stroke is taken back.
-8. Press Stop and select the **Terrain** object. The **Voxel Terrain** card has a **Materials** table (colour, hardness, drop...);
-   the **Voxel Digger** card has **Real life**: a Preset (Realistic, Arcade, Creative), Dug Ground, brush shape, depth limit, bedrock
-   height, debris limit and the count text. Pick **Arcade** and Play again: the ground vanishes as it did before.
-
-**Pictures** (software renders from the headless test machine, not the GPU renderer): `docs/images/voxel/1_layers_cut.png` (a cut
-through the layers), `2_dig_debris_falling.png` (a dig with falling debris), `3_after_release.png`.
-
-**Status.** Tests (`ctest -R "voxel_materials|voxel_digger_real|voxel_examples"`): 60 + 34 + 58 checks, 0 failures on Linux. Volume
-kept: a stroke of 63 m3 put back came to 63.1 m3 (restored to 0.0 percent), debris that landed returned the volume to within 0.05
-percent. **Unverified:** Windows, a real GPU, the editor's Inspector click path, the feel of the controls, and the sound and particle
-hooks per material (the table has the fields, the digger still plays the one dig sound).
-
-### 7t, more options (second pass)
-
-1. In `voxel_realistic.okayscene`, select **Terrain**. In the **Voxel Terrain** card tick **Catch bodies that fall out of the world**.
-   Play, and push a prop off the side of the world: it is put back on the ground instead of falling for ever. (Off: it falls.)
-2. In the **Voxel Digger** card, with **Slump loose ground** on, raise **Slump Passes** to 8 and dig into a sand slope (pale yellow):
-   the sand runs farther down than with 1.
-3. In the **Voxel Terrain** card, type a **Seed** and press **Generate**: the same seed gives the same hill every time.
-4. Move or turn the **Terrain** object (Inspector: Position, Rotation) before pressing Play: digging, the brush circle and the
-   falling debris all still match the ground.
-5. Dust colour follows the dug material (stone dust is grey, dirt dust brown). A per-material dig sound needs a Voxel Digger object
-   with an Audio Source and a WAV file named in the material's table entry; this is unverified.
-Tests: `ctest -R voxel_more`.
-
-### 7t, tools, items, veins, sound (third pass)
-
-1. **Pickaxe and shovel.** Voxel Digger card: tick **Tools from inventory** (the list shows `shovel:2,pickaxe:5,iron_pickaxe:7`).
-   Play on a scene that has an Inventory (the player). With empty hands you can only dig soft ground (sand, snow); stone
-   will not dig. Give the player an item called `pickaxe` (Inventory card, or a pickup) and stone digs.
-2. **Stackable dirt you can pick up and place.** Tick **Give inventory items**, dig: stacks of `dirt`, `stone`, `ore`... arrive in
-   the bag (8 dirt per cubic metre, set in the Materials table). Tick **Build from items**: right mouse now builds with those items
-   and uses them up; with none it does nothing.
-3. **Ore veins.** Voxel Terrain card: set **Ore Veins** to 30, press **Regenerate layers**: long winding yellow veins appear in the stone
-   (dig a trench to see them). The same **Seed** gives the same veins. **Topsoil**, **Dirt Depth**, **Rock Slope** and **Ore Pockets** are
-   sliders for the layers.
-4. **Dig sound per material.** Put a WAV file path in a material's table entry (code: `materials[i].digSound`), add an Audio Source to the
-   digger's object: the first time that material is dug the file is loaded and plays while you dig it. Tested headless that the clip is
-   loaded; the actual sound output is unverified.
-5. The brush marker now matches the brush shape (cube, flat disc, can).
-Tests: `ctest -R "voxel_more|voxel_bughunt"`.
-
-### 7t, fourth pass (switches, all off by default)
-
-**Tools scene.** Open `examples\voxel\voxel_tools.okayscene`, Play. The player holds a shovel and a pickaxe (the text on screen says what to
-try). Left mouse digs dirt and sand with either tool; stone needs the pickaxe (the shovel's power is 2, stone is 4); ore needs a better tool
-(`iron_pickaxe:7` in the digger's Tools list; give the player an item of that name to dig it). Walk onto falling debris: stacks of `dirt`, `stone`
-and so on arrive in the bag. Right mouse builds with dirt items and uses them up.
-
-1. **Cave-in.** Voxel Digger card, **Cave-in Span** to 4. Dig a wide tunnel (hold left mouse and sweep sideways under a hill), then let go: the roof
-   that is more than about 4 voxels from a wall comes down as debris. A narrow tunnel holds.
-2. **Big world generation.** In code or a script: `terrain.BeginGenerate(0.5, 8, 0.3, seed, true)`; the terrain fills itself a few milliseconds a
-   frame and shows up when done (`Generating()`, `GenerateProgress()`).
-3. **Water and lava.** Voxel Terrain card: tick **Water / lava flow in holes** (press **Lava preset** for lava). Voxel Digger card: type `f` in
-   **Pour Key**. Play, dig a pit, aim at it and press F: water (blue blocks) runs down and fills the pit from the bottom. Dig beside it and it flows out.
-4. **Footprints.** Voxel Terrain card: tick **Footprints and tracks**. Play and walk on dirt, grass or sand: a trail of small dents. Stone takes no print.
-5. The foliage brush now finds the ground on a voxel terrain fast (no visible change; `ctest -R voxel_more` times it).
-Tests: `ctest -R "voxel_more|voxel_bughunt|voxel_examples"`.

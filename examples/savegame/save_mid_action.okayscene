@@ -1,0 +1,78 @@
+okayscene 3
+name "Save mid-action"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+gameobject 0 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 1 1 1
+  boxcollider3d 20 1 20 0 0 0 0
+end
+gameobject 1 "Floor Mesh"
+  active 1
+  parent 0
+  transform 0 0 0 0 0 0 1 20 1 20
+  mesh "Cube" 0.35 0.4 0.35 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 2 "Door"
+  active 1
+  parent -1
+  transform -1 1.25 0 0 0 0 1 1 1 1
+  logictarget kind=0 mode=0 invert=0 dx=0 dy=0 dz=0 yaw=90 time=0.8
+end
+gameobject 3 "Door Panel"
+  active 1
+  parent 2
+  transform 0.75 0 0 0 0 0 1 1.5 2.5 0.15
+  mesh "Cube" 0.55 0.35 0.2 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 4 "Lever"
+  active 1
+  parent -1
+  transform 2 0.5 0 0 0 0 1 0.3 1 0.3
+  logicsource kind=0 toggle=1 startOn=0 key=0 pad=-1 io=2 io0o="OnTurnedOn" io0t="Door" io0i="TurnOn" io0p="" io0d=0 io0x=0 io0e=1 io1o="OnTurnedOff" io1t="Door" io1i="TurnOff" io1p="" io1d=0 io1x=0 io1e=1
+  mesh "Cube" 0.9 0.8 0.2 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 5 "Slider"
+  active 1
+  parent -1
+  transform -6 0.5 3 0 0 0 1 0.6 0.6 0.6
+  animator 1 1 0 "Slide" 1 "position.x" 2 0 -6 8 6
+  mesh "Cube" 0.2 0.6 0.9 1 0 "" 0
+  material 0 0 0 0 8 1 "" 1 1
+end
+gameobject 6 "Slow Bullet"
+  active 1
+  parent -1
+  transform 4 1 -6 0 0 0 1 0.3 0.3 0.3
+  proj3d vx=0 vy=0 vz=0.6 dmg=0 life=16 grav=0 force=0 pierce=0 bounce=0 bounces=0
+  mesh "Sphere" 0.95 0.3 0.3 1 0 "" 0
+  material 0 0 0 0 16 1 "" 1 1
+end
+gameobject 7 "Game"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "// O: pull the lever (opens / closes the door).  K: save to slot door_test.  L: load it.
+function update(dt) {
+  if (key_down(\"o\")) { logic_press(\"Lever\"); }
+  if (key_down(\"k\")) { save_game(\"door_test\", \"Save mid-action\"); print(\"Saved to slot door_test\"); }
+  if (key_down(\"l\")) { load_game(\"door_test\"); }
+}
+" "" 0
+end
+gameobject 8 "Directional Light"
+  active 1
+  parent -1
+  transform 0 6 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 9 "Main Camera"
+  active 1
+  parent -1
+  transform 0 4.5 11 -0.13485 0 0 0.99086 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

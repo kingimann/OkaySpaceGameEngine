@@ -313,6 +313,42 @@ int main() {
         }
     }
 
+    // ---- The shipped example (examples/savegame/save_mid_action.okayscene) ----
+    {
+        Scene a("Example");
+        const std::string file = std::string(OKAY_EXAMPLES_DIR) + "/savegame/save_mid_action.okayscene";
+        CHECK(SceneSerializer::LoadFromFile(a, file));
+        a.Start();
+        GameObject* door = Obj(a, "Door");
+        GameObject* lever = Obj(a, "Lever");
+        GameObject* slider = Obj(a, "Slider");
+        CHECK(door && lever && slider && Obj(a, "Slow Bullet"));
+        if (door && lever && slider) {
+            Run(a, 0.2f);
+            lever->GetComponent<LogicSource>()->Press();   // what O does (logic_press)
+            Run(a, 1.5f);
+            CHECK(door->GetComponent<LogicTarget>()->State());
+            CHECK(SameRot(door->transform->localRotation, openRot));
+            const float sliderT = slider->GetComponent<Animator>()->Time();
+            Scene b("Example");
+            CHECK(SaveAndLoad(a, "door_test", b));
+            GameObject* d2 = Obj(b, "Door");
+            GameObject* l2 = Obj(b, "Lever");
+            GameObject* s2 = Obj(b, "Slider");
+            CHECK(d2 && l2 && s2);
+            if (d2 && l2 && s2) {
+                CHECK_NEAR(s2->GetComponent<Animator>()->Time(), sliderT, 1e-3);
+                Run(b, 0.2f);
+                CHECK(SameRot(d2->transform->localRotation, openRot));
+                l2->GetComponent<LogicSource>()->Press();   // pull the lever again: the door shuts
+                Run(b, 1.5f);
+                CHECK(!d2->GetComponent<LogicTarget>()->State());
+                CHECK(SameRot(d2->transform->localRotation, closedRot));
+                CHECK_NEAR(d2->transform->localPosition.x, -1.0f, 1e-4);
+            }
+        }
+    }
+
     fs::remove_all(dir);
     TEST_MAIN_RESULT();
 }

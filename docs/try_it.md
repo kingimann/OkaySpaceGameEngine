@@ -1088,6 +1088,30 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Save games keep open doors, animations and bullets (branch `claude2/savegame-pose-and-anim`, not merged or released yet)
+
+Bug fix for issue #888, findings 62 and 63. Before: a door saved open could never close again after a load (its open
+pose became its "closed" pose), a lever left on came back off, animations replayed from the start and bullets got
+their whole lifetime back.
+
+1. Open the editor and use **File > Open** on `examples\savegame\save_mid_action.okayscene`, then press **Play**.
+   You see a brown door on the left, a yellow lever post on the right, a blue cube sliding left to right (a 6-second
+   one-shot animation) and a slow red ball moving towards the camera (a bullet with a 16-second lifetime).
+2. Press **O**: the door swings open (90 degrees).
+3. While the blue cube is half-way, press **K** to save (the Console says `Saved to slot door_test`).
+4. Wait a few seconds, then press **L** to load.
+5. Expect: the door is still open, the blue cube jumps back to where it was at the save and carries on (it does not
+   start again from the left), and the red ball is where it was and keeps going.
+6. Press **O** again: the door closes to where it started. Press **O** once more: it opens 90 degrees, not 180.
+7. Before this fix, step 6 left the door open, and the next open turned it a further 90 degrees.
+
+What is kept, and the slot format: `docs/save_games.md`, "Runtime state". Older save slots still load (doors, animations
+and bullets then start as they did before).
+
+**Status.** Tested headless on Linux (`test_savegame_pose_anim`, which also loads this example scene and does steps 2
+to 6 in code). Not tried in the Windows editor or player; the keys (O, K, L) and what you see are unverified until you
+look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

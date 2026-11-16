@@ -462,7 +462,7 @@ void Triangulate(const std::vector<std::array<double, 3>>& pts, std::vector<int>
 struct Curve {
     std::vector<double> t, v;           // seconds, value
     std::vector<int> flags;             // per key
-    std::vector<double> sr, sl;         // per key: right slope, next-left slope (value/sec) from the file
+    std::vector<double> sr, sl;         // per key: right slope, next-left slope (value/sec) from the file; empty when all are 0
     bool hasSlopes = false;             // the file carried KeyAttrDataFloat (slopes of auto keys are in it too)
     bool Empty() const { return t.empty(); }
     double Eval(double time) const { std::size_t h = (std::size_t)-1; return Eval(time, h); }
@@ -489,7 +489,7 @@ struct Curve {
         const double u = (time - t[lo]) / dt;
         if (f & 0x4) return v[lo] + (v[hi] - v[lo]) * u;              // linear
         // cubic Hermite from the key tangents
-        double m0 = sr[lo], m1 = sl[lo];
+        double m0 = sr.empty() ? 0.0 : sr[lo], m1 = sl.empty() ? 0.0 : sl[lo];   // (empty: no key had stored slopes, all 0)
         if ((f & 0x300) && !hasSlopes) {                              // auto / TCB without stored slopes: derive from the neighbours
             m0 = AutoSlope(lo, f); m1 = AutoSlope(hi, flags[hi]);
         }
@@ -1250,21 +1250,27 @@ struct Builder {
                 da = &daBitsArr;
             }
             const Array* rc = ArrayOf(*o.e, "KeyAttrRefCount");
-            std::vector<std::size_t> seg(n, 0);
-            if (rc) { std::size_t s = 0, left = rc->empty() ? n : (std::size_t)std::max(0.0, (*rc)[0]); for (std::size_t i = 0; i < n; ++i) { while (left == 0 && s + 1 < rc->size()) { ++s; left = (std::size_t)std::max(0.0, (*rc)[s]); } seg[i] = s; if (left) --left; } }
+            std::vector<std::size_t> seg;   // attribute set of each key (all 0 without KeyAttrRefCount)
+            if (rc) { seg.assign(n, 0); std::size_t s = 0, left = rc->empty() ? n : (std::size_t)std::max(0.0, (*rc)[0]); for (std::size_t i = 0; i < n; ++i) { while (left == 0 && s + 1 < rc->size()) { ++s; left = (std::size_t)std::max(0.0, (*rc)[s]); } seg[i] = s; if (left) --left; } }
+            c.t.reserve(n); c.v.reserve(n); c.flags.reserve(n);
+            if (da) { c.sr.reserve(n); c.sl.reserve(n); }
             double prev = -1e300;
             for (std::size_t i = 0; i < n; ++i) {
                 const double t = (*kt)[i] / kKTimePerSec;
                 if (!std::isfinite(t) || !std::isfinite((*kv)[i]) || t < prev) continue;   // keep keys sorted and finite
                 prev = t;
                 c.t.push_back(t); c.v.push_back((*kv)[i]);
+                const std::size_t sg = rc ? seg[i] : 0;
                 int flags = 0x8;
-                if (fl && !fl->empty()) flags = SafeInt((*fl)[std::min(seg[i], fl->size() - 1)]);
+                if (fl && !fl->empty()) flags = SafeInt((*fl)[std::min(sg, fl->size() - 1)]);
                 c.flags.push_back(flags);
-                double r = 0, l = 0;
-                if (da && (seg[i] * 4 + 1) < da->size()) { r = (*da)[seg[i] * 4]; l = (*da)[seg[i] * 4 + 1]; c.hasSlopes = true; }
-                c.sr.push_back(r); c.sl.push_back(l);
+                if (da) {   // without the array every slope is 0: nothing is stored (Eval reads 0)
+                    double r = 0, l = 0;
+                    if ((sg * 4 + 1) < da->size()) { r = (*da)[sg * 4]; l = (*da)[sg * 4 + 1]; c.hasSlopes = true; }
+                    c.sr.push_back(r); c.sl.push_back(l);
+                }
             }
+            if (!c.hasSlopes) { std::vector<double>().swap(c.sr); std::vector<double>().swap(c.sl); }   // all 0
             curveOf[ToId(o.e->props[0].Num())] = (int)curveStore.size();
             curveStore.push_back(std::move(c));
         }

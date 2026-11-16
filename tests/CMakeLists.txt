@@ -359,6 +359,12 @@ add_executable(test_script_path_guard_rest test_script_path_guard_rest.cpp)
 target_link_libraries(test_script_path_guard_rest PRIVATE okay::engine)
 add_test(NAME script_path_guard_rest COMMAND test_script_path_guard_rest)
 
+# Visual-script nodes that read or write files keep the same rule: PoolGet/SpawnEvery (GpSpawn), SpawnProjectile, BtRun,
+# LoadScene and Save/Load Creation refuse absolute, drive-letter and ".." paths with a log line; relative ones still work.
+add_executable(test_vs_path_guard test_vs_path_guard.cpp)
+target_link_libraries(test_vs_path_guard PRIVATE okay::engine)
+add_test(NAME vs_path_guard COMMAND test_vs_path_guard)
+
 add_executable(test_script_components test_script_components.cpp)
 target_link_libraries(test_script_components PRIVATE okay::engine)
 add_test(NAME script_components COMMAND test_script_components)

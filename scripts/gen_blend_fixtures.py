@@ -34,7 +34,7 @@ def S(*fields):
 
 def dna_defs(naming):
     """naming: '36' (totvert / vdata / poly_offset_indices), '41' (verts_num / vert_data / face_offset_indices),
-    'legacy' (2.7x: mvert / mpoly / mloop / dvert pointers)."""
+    'legacy' (2.7x: mvert / mpoly / mloop / dvert pointers), 'legacy_mods' (legacy plus MEdge and the modifier structs)."""
     d = {}
     d["ListBase"] = S("void *first", "void *last")
     d["ID"] = S("void *next", "void *prev", "ID *newid", "Library *lib", "char name[66]", "short flag", "int tag", "int us", "int icon_id", "IDProperty *properties")
@@ -48,10 +48,12 @@ def dna_defs(naming):
                     "float obmat[4][4]", "float parentinv[4][4]", "short rotmode", "bPose *pose", "ListBase defbase", "ListBase constraints")
     d["CustomDataLayer"] = S("int type", "int offset", "int flag", "int active", "int active_rnd", "int active_clone", "int active_mask", "int uid", "char name[64]", "void *data")
     d["CustomData"] = S("CustomDataLayer *layers", "int typemap[51]", "int totlayer", "int maxlayer", "int totsize", "void *pool", "void *external")
-    if naming == "legacy":
+    if naming in ("legacy", "legacy_mods"):
         d["Mesh"] = S("ID id", "AnimData *adt", "Key *key", "Material **mat", "MPoly *mpoly", "MLoop *mloop", "MLoopUV *mloopuv", "MVert *mvert",
                       "MDeformVert *dvert", "CustomData vdata", "CustomData edata", "CustomData fdata", "CustomData pdata", "CustomData ldata",
                       "int totvert", "int totedge", "int totface", "int totpoly", "int totloop", "short totcol", "short flag")
+        if naming == "legacy_mods":
+            d["Mesh"] = d["Mesh"] + S("MEdge *medge")
     elif naming == "36":
         d["Mesh"] = S("ID id", "AnimData *adt", "Key *key", "Material **mat", "int totvert", "int totedge", "int totpoly", "int totloop",
                       "CustomData vdata", "CustomData edata", "CustomData fdata", "CustomData pdata", "CustomData ldata", "int *poly_offset_indices",
@@ -99,6 +101,16 @@ def dna_defs(naming):
     d["FPoint"] = S("float vec[2]", "int flag", "int pad")
     d["BezTriple"] = S("float vec[3][3]", "float alfa", "float weight", "float radius", "char ipo", "char h1", "char h2", "char f1", "char f2", "char f3",
                        "char hide", "char easing", "float back", "float amplitude", "float period", "char pad[4]")
+    if naming == "legacy_mods":
+        # field names as Blender 2.7x writes them; the reader finds each by name, so the order here is free
+        d["MEdge"] = S("int v1", "int v2", "char crease", "char bweight", "short flag")
+        d["ModifierData"] = S("ModifierData *next", "ModifierData *prev", "int type", "int mode", "int stackindex", "short flag", "short pad",
+                              "char name[64]", "char *error")
+        d["MirrorModifierData"] = S("ModifierData modifier", "short axis", "short flag", "float tolerance", "float uv_offset[2]",
+                                    "float uv_offset_copy[2]", "Object *mirror_ob")
+        d["SubsurfModifierData"] = S("ModifierData modifier", "short subdivType", "short levels", "short renderLevels", "short flags",
+                                     "void *emCache", "void *mCache")
+        d["ArrayModifierData"] = S("ModifierData modifier", "Object *start_cap", "Object *end_cap", "int count")
     return d
 
 
@@ -481,6 +493,48 @@ def build_skin(ps=8, le=True):
     return b
 
 
+# ---------------------------------------------------------------------------------------------
+# Fixture 3: modifiers. An open box (x from 0 to 1, no face on x = 0) with Mirror X (merge 0.001, flip U), then an
+# Array (not supported: must be named), then Subdivision Surface level 1 (smooth UVs); edge 1-2 has crease 1.0 (byte 255,
+# written as -1 because SDNA calls the field char).
+# Expected: 12 vertices after the mirror (4 merged), 10 quads, 40 quads after one level = 80 triangles.
+# ---------------------------------------------------------------------------------------------
+BOX_POS = [(0, -1, -1), (1, -1, -1), (1, 1, -1), (0, 1, -1), (0, -1, 1), (1, -1, 1), (1, 1, 1), (0, 1, 1)]
+BOX_FACES = [[0, 3, 2, 1], [4, 5, 6, 7], [1, 2, 6, 5], [0, 1, 5, 4], [3, 7, 6, 2]]
+BOX_CREASE = (1, 2)
+
+
+def build_mods(ps=8, le=True):
+    b = Blend("legacy_mods", ps, le, 279)
+    mv_a = b.array_block("MVert", [{"co": list(v)} for v in BOX_POS])
+    loops, polys = [], []
+    for f in BOX_FACES:
+        polys.append({"loopstart": len(loops), "totloop": len(f), "mat_nr": 0, "flag": 1})
+        loops += f
+    ml_a = b.array_block("MLoop", [{"v": v, "e": 0} for v in loops])
+    mp_a = b.array_block("MPoly", polys)
+    uv_a = b.array_block("MLoopUV", [{"uv": [BOX_POS[v][0] * 0.5, (BOX_POS[v][1] + 1) * 0.25 + (BOX_POS[v][2] + 1) * 0.25]} for v in loops])
+    edges = set()
+    for f in BOX_FACES:
+        for i in range(len(f)):
+            a, c = f[i], f[(i + 1) % len(f)]
+            edges.add((min(a, c), max(a, c)))
+    edges = sorted(edges)
+    me_a = b.array_block("MEdge", [{"v1": a, "v2": c, "crease": -1 if (a, c) == BOX_CREASE else 0} for a, c in edges])
+    b.struct_block("ME", "Mesh", {"id": {"name": "MEBox"}, "mpoly": mp_a, "mloop": ml_a, "mloopuv": uv_a, "mvert": mv_a, "medge": me_a,
+                                  "totvert": len(BOX_POS), "totedge": len(edges), "totpoly": len(BOX_FACES), "totloop": len(loops)}, "me")
+    mir = b.struct_block("DATA", "MirrorModifierData", {"modifier": {"type": 5, "mode": 3, "name": "Mirror", "next": b.addr("arr")},
+                                                        "axis": 0, "flag": 8 | 2, "tolerance": 0.001}, "mir")
+    b.struct_block("DATA", "ArrayModifierData", {"modifier": {"type": 12, "mode": 3, "name": "Array", "prev": mir, "next": b.addr("sub")}, "count": 2}, "arr")
+    b.struct_block("DATA", "SubsurfModifierData", {"modifier": {"type": 1, "mode": 3, "name": "Subsurf", "prev": b.addr("arr")},
+                                                   "subdivType": 0, "levels": 1, "renderLevels": 1, "flags": 8}, "sub")
+    b.struct_block("OB", "Object", ob_vals("Box", 1, b.addr("me"), extra={"modifiers": {"first": mir, "last": b.addr("sub")}}), "ob")
+    base = b.struct_block("DATA", "Base", {"object": b.addr("ob")}, "base")
+    b.struct_block("SC", "Scene", {"id": {"name": "SCScene"}, "base": {"first": base, "last": base}, "r": {"frs_sec": 24, "frs_sec_base": 1.0, "cfra": 1, "sfra": 1, "efra": 250}}, "sc")
+    b.struct_block("GLOB", "FileGlobal", {"curscene": b.addr("sc")})
+    return b
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     files = {
@@ -488,6 +542,7 @@ def main():
         "blend_attr_36.blend": build_attr("36", 8, True).bytes(),
         "blend_attr_be32.blend": build_attr("36", 4, False).bytes(),
         "blend_skin_anim.blend": build_skin(8, True).bytes(),
+        "blend_modifiers.blend": build_mods(8, True).bytes(),
     }
     files["blend_attr_41_gz.blend"] = gzip.compress(files["blend_attr_41.blend"], 9, mtime=0)
     for name, data in files.items():

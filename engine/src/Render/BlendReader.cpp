@@ -592,7 +592,7 @@ struct Reader {
 
     std::map<std::string, int> skippedMods;   // "'Name' (Type)" -> objects
     int cntModDisabled = 0, cntModCapped = 0, cntMirrorBisect = 0, cntMirrorNoObj = 0;
-    std::size_t subdivFaceBudget = 16000000;   // faces made by subdivision over the whole file
+    std::size_t subdivFaceBudget = 8000000;    // faces made by subdivision over the whole file
     int cntCurves = 0, cntLamps = 0, cntCameras = 0, cntOtherTypes = 0, cntModifiers = 0, cntConstraints = 0, cntDupli = 0;
     int cntShapeKeys = 0, cntVertexCol = 0, cntAutoSmooth = 0, cntBadFaces = 0, cntVertexParent = 0, cntBoneParent = 0;
     int cntPacked = 0, cntBadMesh = 0, cntNoBone = 0, cntMatMismatch = 0, cntIpo = 0, cntNla = 0, cntDrivers = 0;
@@ -1555,11 +1555,28 @@ void Reader::ReadCreases(std::uint64_t meshAddr, MeshData& md) {
 std::shared_ptr<MeshData> Reader::EvaluateModifiers(ObjRec& o, const std::shared_ptr<MeshData>& base, std::uint64_t meshAddr) {
     if (!o.ob.Has("modifiers")) return base;
     std::shared_ptr<MeshData> cur = base;
-    bool copied = false, creasesRead = false;
+    bool copied = false, wantCreases = false;
     auto own = [&]() -> MeshData& {
-        if (!copied) { cur = std::make_shared<MeshData>(*base); cur->cornerN.clear(); cur->nDone = false; copied = true; }
+        if (!copied) {
+            cur = std::make_shared<MeshData>(*base); cur->cornerN.clear(); cur->nDone = false; copied = true;
+            // creases are read before any modifier runs, so a Mirror before the Subdivision copies them too
+            if (wantCreases) ReadCreases(meshAddr, *cur);
+        }
         return *cur;
     };
+    {   // is there a Subdivision Surface that uses creases?
+        std::uint64_t b = o.ob.Sub("modifiers").Ptr("first");
+        for (int guard = 0; b && guard < 1000; ++guard) {
+            Span sp = f.At(b);
+            if (!sp.p || sp.st < 0 || sp.n < (std::size_t)f.ps) break;
+            const StructInfo& si = f.structs[(std::size_t)sp.st];
+            if (si.name == "SubsurfModifierData" && sp.n >= si.size) {
+                Ref md; md.f = &f; md.p = sp.p; md.avail = sp.n; md.st = sp.st;
+                if (md.Int("subdivType") != 1 && (f.version < 290 || (md.Int("flags") & 16))) wantCreases = true;
+            }
+            b = f.PtrAt(sp.p);
+        }
+    }
     std::uint64_t a = o.ob.Sub("modifiers").Ptr("first");
     std::set<std::string> seenHere;
     for (int guard = 0; a && guard < 1000; ++guard) {
@@ -1624,10 +1641,6 @@ std::shared_ptr<MeshData> Reader::EvaluateModifiers(ObjRec& o, const std::shared
             ss.smoothUv = md.Has("uv_smooth") ? md.Int("uv_smooth") != 0 : (flags & 8) != 0;
             ss.useCreases = f.version >= 290 ? (flags & 16) != 0 : true;
             MeshData& m = own();
-            if (ss.useCreases && !creasesRead) {
-                creasesRead = true;
-                if (m.creases.empty()) ReadCreases(meshAddr, m);   // indices of the stored mesh (only valid before other modifiers)
-            }
             // a crease of 1 is sharp at every level; a partial crease c is sharp for c * levels levels (our choice)
             for (blendmod::Crease& c : m.creases) c.sharpness = c.sharpness >= 1.0f ? std::numeric_limits<float>::infinity() : c.sharpness * (float)levels;
             const std::size_t before = m.faceStart.size();
@@ -1963,7 +1976,7 @@ void Reader::Notes() {
         }
     }
     if (cntModDisabled) note(n(cntModDisabled) + " Mirror / Subdivision modifier(s) switched off for the viewport: not applied, like Blender's viewport");
-    if (cntModCapped) note(n(cntModCapped) + " Subdivision modifier(s) stopped at a lower level: the result would pass the face limit (16 M faces per file)");
+    if (cntModCapped) note(n(cntModCapped) + " Subdivision modifier(s) stopped at a lower level: the result would pass the face limit (8 M faces per file)");
     if (cntMirrorBisect) note(n(cntMirrorBisect) + " Mirror modifier(s) with bisect set: the mesh is mirrored without cutting it at the mirror plane");
     if (cntMirrorNoObj) note(n(cntMirrorNoObj) + " Mirror modifier(s) whose mirror object is not in the scene: mirrored in the object's own space");
     if (cntConstraints) note(n(cntConstraints) + " object(s) with constraints or a track-to target: not evaluated");

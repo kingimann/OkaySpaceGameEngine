@@ -3400,6 +3400,18 @@ target_include_directories(test_blend_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engi
 target_compile_definitions(test_blend_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME blend_hostile COMMAND test_blend_hostile WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(blend_hostile PROPERTIES TIMEOUT 600)
+# Mirror and Subdivision Surface modifiers of the Blender reader (BlendModifiers.cpp): hand-computed Catmull-Clark and
+# mirror results, the synthetic fixture blend_modifiers.blend, the real corpus files with modifiers (OKAY_MODEL_CORPUS) and
+# a fuzz of the modifier code on random meshes (OKAY_BLEND_MOD_FUZZ_ITERS). Standalone like blend_hostile, for sanitizer builds.
+add_executable(test_blend_modifiers test_blend_modifiers.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
+target_include_directories(test_blend_modifiers PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core ${PROJECT_SOURCE_DIR}/engine/src/Render)
+target_compile_definitions(test_blend_modifiers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME blend_modifiers COMMAND test_blend_modifiers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(blend_modifiers PROPERTIES TIMEOUT 600)
 # Batch B own readers (3MF / AMF / X3D / DXF / LWO): one test per reader on SYNTHETIC fixtures built in memory, and one
 # standalone hostile-input + mutation-fuzz test for all of them (no engine library: reader sources and the engine's
 # inflate only, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;

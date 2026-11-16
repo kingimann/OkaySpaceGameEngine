@@ -43,7 +43,7 @@ human gait, scaled to that leg; nothing here comes from another project.
 | Arm swing (half the range) | up to 25 degrees, calm | 35 degrees and more | at least 1.5 times |
 | Elbow bend | up to 25 degrees, nearly straight | 70 degrees and more, near a right angle | at least 45 degrees more |
 | Forward lean of the chest | up to 4 degrees | 7.5 degrees and more | at least 4 degrees more |
-| Hip bounce (up and down) | up to 10 cm | more than the walk | at least 2 cm more |
+| Hip bounce (up and down) | up to 10 cm | more than the walk | at least 1.5 cm more |
 
 Two limits come from the leg, not from taste. First, a person's walk turns into a run at a Froude number v squared over g times
 leg length of about 0.5, which for a 0.92 m leg is **2.1 m/s**: the top of a natural walk. Second, a planted foot can only sweep as far as

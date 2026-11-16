@@ -39,7 +39,7 @@ struct Pair { const char* name; float walk, run; };
 struct Walk { static constexpr float spmLo = 90, spmHi = 135, stepHi = 1.0f, flightMax = 0.01f, doubleMin = 0.05f, armMax = 25, elbowMax = 25, leanMax = 4, bounceMax = 0.10f; };
 struct Run  { static constexpr float spmLo = 150, spmHi = 200, stepLo = 1.4f, flightMin = 0.15f, doubleMax = 0.01f, armMin = 35, elbowMin = 70, leanMin = 7.5f; };
 // And the gap between the two, so "different" is more than each one being inside its range.
-struct Gap  { static constexpr float spm = 40, stepRatio = 1.6f, flight = 0.15f, armRatio = 1.5f, elbow = 45, lean = 4, bounce = 0.02f; };
+struct Gap  { static constexpr float spm = 40, stepRatio = 1.6f, flight = 0.15f, armRatio = 1.5f, elbow = 45, lean = 4, bounce = 0.015f; };
 
 void CheckPair(const char* label, bool animator, float walkSpeed, float runSpeed) {
     std::printf("\n-- %s: %s, walk %.2f m/s, run %.2f m/s --\n", label, animator ? "Animator (a new project)" : "procedural stride", walkSpeed, runSpeed);

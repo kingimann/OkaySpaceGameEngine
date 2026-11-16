@@ -89,7 +89,7 @@ Rgba RenderPose(const Mesh& body, float shiftZ) {
     {
         GameObject* g = s.CreateGameObject("Ground");
         auto* mr = g->AddComponent<MeshRenderer>();
-        mr->mesh = Mesh::Plane(40.0f);
+        mr->mesh = Mesh::Plane(4000.0f);
         mr->color = Color::FromBytes(170, 180, 165);
     }
     for (int i = -12; i <= 12; ++i) {

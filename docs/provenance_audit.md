@@ -223,3 +223,12 @@ Date: 2026-11-15, branch `claude/readers-e3`. Checked by hand when written; **no
 | `NdoReader.cpp` | Nothing but the header text `nendo `. It reads no geometry. A web search for a specification returned an importer-based summary whose passing facts (the `nendo 1.x` header, big endian, a count-width change at 1.2) were **seen** and are disclosed in `docs/own_ndo_reader.md`; only the header text is used | The importer source itself (never opened) |
 
 **The Assimp test tree was open in the scratchpad while this work was done.** Only its data files (`test/models/COB/*.cob`, `test/models/IQM/mrfixit.iqm`) were copied to a private folder and read; none of its source folders was opened, listed for content or searched. The shared helpers the readers use (`BinReader.hpp`, `ReaderCommon.hpp`, `PolygonTriangulate.hpp`, `TextReaderUtil.hpp`, `SceneRefPath.hpp`) are the project's own earlier files. The test files are hand-built from the structure; no real file is committed.
+
+## New own code written after this audit (stated sources)
+
+| File | Written from | Notes |
+|---|---|---|
+| `engine/src/Render/Gltf1Reader.cpp` (2026-11-15, branch `claude2/own-reader-gltf1`; brought into `claude/own-readers-6`) | The Khronos glTF 1.0 specification (`specification/1.0/README.md` and schemas) and the `KHR_binary_glTF` and `KHR_materials_common` extension descriptions | No importer source read; reuses the engine's own JSON parser and base64 decoder (`okay/Render/Gltf.hpp`). Compared with Assimp only by running it (`docs/own_gltf1_reader.md`) |
+| `examples/own_readers/box_v1.gltf`, `box_v1.glb` (2026-11-15) | Made by `scripts/gen_gltf1_samples.py` from numbers typed in the script (a box); no outside file or text | Our own data, no licence needed. The real-world glTF 1.0 files of the corpus (Assimp's test directory) are referenced by `tests/data/model_corpus_manifest.tsv` only, not copied into the repository or shipped |
+| `examples/own_readers/tiny_arena.bsp`, `tiny_arena.pk3` (2026-11-16) | Made by `scripts/gen_q3bsp_samples.py` from numbers typed in the script (a room); no outside file | Our own data, no licence needed |
+| `examples/own_readers/heffalump.sib`, `This Way Up.png`, `UV Mapping.png`, `heffalump-readme.txt` (2026-11-16) | Copied from the `test/models/SIB` directory of Assimp v5.4.3 (tag `v5.4.3`); the author, Richard Mitton, released them into the public domain in the readme | Recorded in `docs/THIRD_PARTY.md`; the only outside data files shipped with the E6 readers |

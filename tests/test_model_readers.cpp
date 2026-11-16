@@ -316,8 +316,8 @@ int main() {
 
     // ---------------- The seam: backend switch ----------------
     {
-        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && HasOwnReader(".dae") && HasOwnReader(".3ds") && HasOwnReader(".bvh") && HasOwnReader(".blend") && HasOwnReader(".iqm") && !HasOwnReader(".sib"));   // .sib (Silo, slot 32) has no reader
-        CHECK(!SetImportBackend(".sib", ImportBackend::Own));
+        CHECK(HasOwnReader(".obj") && HasOwnReader(".STL") && HasOwnReader(".ply") && HasOwnReader(".dae") && HasOwnReader(".3ds") && HasOwnReader(".bvh") && HasOwnReader(".blend") && HasOwnReader(".iqm") && HasOwnReader(".sib") && !HasOwnReader(".usd"));   // .sib (Silo, slot 32) has a reader since batch E6; .usd (Pixar USD) has none
+        CHECK(!SetImportBackend(".usd", ImportBackend::Own));
         SetImportBackend("*", ImportBackend::Default);
         CHECK(EffectiveImportBackend(".obj") == ImportBackend::Own);          // OBJ never went through Assimp
         if (AssimpAvailable()) CHECK(EffectiveImportBackend(".stl") == ImportBackend::Assimp || EffectiveImportBackend(".stl") == ImportBackend::Own);

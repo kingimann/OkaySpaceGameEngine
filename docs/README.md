@@ -97,7 +97,8 @@ Pages are grouped by what you are trying to do. New here? Start with
 - [own_md2_reader.md](own_md2_reader.md), [own_md3_reader.md](own_md3_reader.md), [own_irrmesh_reader.md](own_irrmesh_reader.md), [own_b3d_reader.md](own_b3d_reader.md), [own_x_reader.md](own_x_reader.md): our own MD2, MD3, Irrlicht mesh, B3D and DirectX `.x` readers (batch C).
 - [own_ac3d_reader.md](own_ac3d_reader.md), [own_ogre_reader.md](own_ogre_reader.md), [own_xgl_reader.md](own_xgl_reader.md), [own_irr_reader.md](own_irr_reader.md), [own_nff_reader.md](own_nff_reader.md): our own AC3D, OGRE XML mesh, XGL / ZGL, Irrlicht scene and NFF readers (batch D).
 - [own_terragen_reader.md](own_terragen_reader.md): our own Terragen terrain (`.ter`) reader.
-- [own_ogex_reader.md](own_ogex_reader.md), [own_mdl_reader.md](own_mdl_reader.md): our own OpenGEX reader and our own Quake 1 / Half-Life 1 MDL reader (batch E4; off by default, unverified against real files; 3D GameStudio MDL is not read).
+- [own_ogex_reader.md](own_ogex_reader.md), [own_mdl_reader.md](own_mdl_reader.md): our own OpenGEX reader and our own Quake 1 / Half-Life 1 MDL reader (batch E4; off by default; read on real files in batch E6, see model_corpus.md; 3D GameStudio MDL is not read).
+- [own_gltf1_reader.md](own_gltf1_reader.md), [own_q3bsp_reader.md](own_q3bsp_reader.md), [own_sib_reader.md](own_sib_reader.md): our own glTF 1.0, Quake III BSP (`.bsp`, `.pk3`) and Silo (`.sib`, written from one sample file) readers (batch E6; off by default).
 - [own_readers_remaining.md](own_readers_remaining.md): every model format Assimp reads that we have no own reader for yet: what it is, how hard, whether real files exist, and the order to write them in.
 - [data_assets.md](data_assets.md): data assets and data packs.
 - [particles.md](particles.md): particles, lines and trails.

@@ -241,6 +241,20 @@ Same corpus, same Assimp v5.4.3 sources, rebuilt with the OFF, SMD, MD5, MS3D, A
 - Many files in the corpus are tiny test cases or deliberately broken files, not production assets; the glTF files are sample models and a few generators' outputs, not the kind of files users export from their tools (the OBJ, PLY and STL files include a few exporter files). Real-world glTF from other tools is covered only by the repository's own rig fixtures (`tests/assets/rigs`).
 - The release note for the dropped formats, the default flips and the deletion of Assimp and ufbx have not been done; they wait for the owner (`docs/own_code_roadmap.md`).
 
+## Readers batch E6: OpenGEX, MDL, glTF 1.0, SIB, Quake III BSP (2026-11-16)
+
+Method: a sparse checkout of the `test/models` and `test/models-nonbsd` **test directories** of Assimp v5.4.3 (no `code/`: no importer source was opened), the files read through `test_model_corpus --list <reader> <dir>` with the reader switched on, rows in `tests/data/model_corpus_manifest.tsv` (reader names `ogex`, `mdl`, `gltf1`, `sib`, `q3bsp`; `OKAY_MODEL_CORPUS=<checkout>/test ctest -R model_corpus`). **None was compared with Assimp's output** (Assimp was not built for this run); each reader was checked against numbers worked out from the raw bytes by a separate script where that was possible.
+
+| Reader | Real files in the tree | Read | Refused (on purpose) | Checked against |
+|---|---|---|---|---|
+| glTF 1.0 | 7 (`glTF/` BoxTextured x4, CesiumMilkTruck, Cube_v1, TwoBoxes) | **7 of 7** | none | known sizes (box area 6, 12 triangles, 24 vertices; MilkTruck 3,624 triangles) |
+| OpenGEX | 6 | 4 | `empty_camera.ogex`, `light_issue1262.ogex` hold only camera or light objects and no node: "the file has no nodes and no meshes" (Assimp gives an empty scene) | counts only; `animation_example.ogex` gives 5 bones, 1 clip of 10.417 s |
+| MDL | 43 (`models/MDL` 40, `models-nonbsd/MDL` 3 Quake 1) | **17** (3 Quake 1, 14 Half-Life 1) | 19 Half-Life sequence-group files (`IDSQ`, `...01.mdl` and so on: they hold animations for another file), `manT.mdl` (a texture-only file, bone count 0), 6 3D GameStudio files (MDL3, 5, 7: not read by our reader) | **Quake 1: the three files equal the bytes**: triangles 404, 304, 1,702 (the headers say 408, 305, 1,748; the difference is exactly the zero-area triangles our script counts: 4, 1, 46) and surface areas 4004.086, 10257.636, 3709.325 (ours 4004.086, 10257.637, 3709.325). Half-Life: counts only, not re-derived |
+| SIB | 1 (`heffalump.sib`) | 1 | none | triangles 676, area 158.61, box and signed volume worked out from the bytes (`docs/own_sib_reader.md`) |
+| Quake III BSP | 1 (`PK3/SGDTT3.pk3`, a map of 336 faces) | 1 | none | 1,400 triangles, 2,084 vertexes; every triangle is stored clockwise against its stored normal, which is the rule the reader assumes (`docs/own_q3bsp_reader.md`) |
+
+Not covered by any real file: Quake III patches (the one map has none), SIB instances and mirrors, OpenGEX files from other exporters than the six, Half-Life files with several sub-models per body part beyond the ones here, texture-only and sequence-group Half-Life files (refused by design).
+
 ## Flip readiness (pre-flip verification, not an approval)
 
 This section is a status report for the owner. It flips nothing, deletes nothing and is not the release announcement. The roadmap's five replacement criteria (`docs/own_code_roadmap.md`, "Replacement criteria"), checked for the two rows that gate the plan (announce the dropped formats one release ahead, flip our readers to the default the release after, delete Assimp and ufbx the release after that).

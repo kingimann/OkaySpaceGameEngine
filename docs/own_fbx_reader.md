@@ -225,6 +225,36 @@ by `fbx_exact` (below).
   of NaNs gives depends on the compiler's operand order, so the old code did not define it either, and `fbx_exact` treats
   any NaN as equal to any NaN.
 
+## Coordinator measurement and promotion criteria (2026-11-16, branch `claude/own-readers-6`)
+
+**What was done.** The bench of `claude2/own-fbx-faster-2` (`tests/bench_fbx_reader.cpp`, not mine) was built against **main's own reader** (the reader as it is on main, before that branch) and run on the 42 readable real FBX files of the outside corpus plus the 12 fixtures and `cube_compressed_arrays.fbx` (55 files, 12,198 KB), and on the four large synthetic files of `scripts/gen_fbx_bench.py`. Then the branch `claude2/own-fbx-faster-2` (18 commits: speed and memory, output unchanged, proved by `fbx_exact` and `decimal_to_double`) was merged into this branch and the same bench was run again. Same machine, GCC 13, Release, one core of a shared machine under load (load average 4 to 7, so a single number can be off by 10 to 20 %), medians of 7 runs (main) and 9 runs (merged) for the real set, 5 for the synthetic set. **Not measured on Windows.**
+
+| Set | Measure | **main's reader** | **with the branch merged** |
+|---|---|---:|---:|
+| 55 real files and fixtures | reader alone, ours / ufbx | 137.6 / 21.4 ms = **6.43x** | 41.2 / 23.5 ms = **1.75x** |
+| | whole import, ours / ufbx | 245.1 / 56.5 ms = **4.33x** | 50.8 / 51.5 ms = **0.99x** |
+| | largest reader peak (ours / ufbx) | 14.45 / 3.84 MB (`pyramob.fbx`) | 3.79 / 3.84 MB |
+| | largest import peak (ours / ufbx) | 18.46 / 24.13 MB | 7.50 / 24.13 MB |
+| 4 large synthetic files (13.4 MB) | reader alone, ours / ufbx | 261.1 / 57.0 ms = **4.58x** | 136.6 / 62.9 ms = **2.17x** |
+| | whole import, ours / ufbx | 1106.0 / 206.0 ms = **5.37x** | 167.5 / 217.3 ms = **0.77x** |
+| | largest reader peak (ours / ufbx) | 103.50 / 29.25 MB | 25.01 / 29.25 MB |
+| | largest import peak (ours / ufbx) | 122.30 / 120.32 MB | 27.96 / 120.32 MB |
+
+The one real file that is still far slower on import is `2013_BINARY/anims_with_full_rotations_between_keys.fbx`: 8.1 ms against ufbx's 1.5 ms (main: 75.6 against 1.6 ms, 48x), because the reader bakes every animated node at 30 Hz where ufbx keeps the file's keys (the proposal at the end of the speed section, "the file's own keys instead of the 30 Hz bake", would change the output and needs the owner's decision). The slowest large file is the binary grid on reader time (3.23x: our reader triangulates and finds equal corners, which ufbx leaves to the import; the import is 0.59x). The per-file table is not kept in the repository; reproduce it with `bench_fbx_reader <corpus>/models/FBX <corpus>/models-nonbsd/FBX tests/assets/fbx` (a target of this branch; the corpus: `docs/model_corpus.md`; the large files: `python3 scripts/gen_fbx_bench.py <dir>`).
+
+**Correctness on the merged tree** (run for this measurement): `fbx_reader` 2,514 checks, 0 failures, with every fixture and **all 42 real files compared with ufbx** (counts, names, bounding boxes, surface area, skin weights, inverse binds, clip samples, material values); `fbx_exact` 16 checks, 0 failures (the fast paths against the plain code on 600,000 curve samples, 400,000 numbers and more); `decimal_to_double` 11 checks, 2,000,000 inputs, 0 differ from `strtod`; `anim_clip_tools` 70 checks; every manifest row of `model_corpus` whose file is in the sparse checkout used here matches (the checkout holds only the FBX, glTF, MDL, OpenGEX, SIB, PK3 and Q3D test directories, so the rows of other formats reported "missing", not a difference). **No difference between our reader and ufbx was found that this run could fix**: every remaining difference is in the list of known gaps above, and the speed differences are the ones in the table.
+
+**Which promotion criteria are still unmet** (`docs/own_code_roadmap.md`, "Replacement criteria"; the owner's speed targets from the same work):
+
+1. *Real files from more exporters.* **Unmet in breadth.** Everything above is one library's test directory (Assimp's), 43 files, the 2013 ASCII and binary sets and a few later files. No Mixamo download, no recent Blender 4.x export, no Unity or Unreal FBX, no FBX 7.7. (Met for this corpus.)
+2. *Windows.* **Unmet**: nothing here ran on Windows (MinGW under wine passed earlier; wine is not Windows). Timing and memory numbers above are Linux only.
+3. *Fuzz and sanitizers.* Met earlier (ASan, UBSan, float-cast-overflow, valgrind, mutation sweeps). **Re-run on the merged reader for this measurement, partly:** `fbx_exact` (all of it), `decimal_to_double` (300,000 inputs) and `fbx_reader` with all 42 real files and every fixture, with the reader's own sources compiled under ASan + UBSan + float-cast-overflow (no recover): clean. **Not re-run:** the mutation fuzz and the hostile-input tests of the FBX reader on the merged code, and valgrind. Do those before promotion.
+4. *No known bugs in the replacement.* **Unmet**: the list "What is NOT handled yet" above is real (Maya / Arnold standard-surface and ShaderFX materials, only the first UV set, scale inheritance modes, `Pose` objects, left-handed axis systems untested on a real file, no repair of damaged files, the 30 Hz bake turning a step into a one-frame ramp).
+5. *Owner approval.* **Not given.**
+6. *Speed (owner's targets):* import time at or below ufbx: **met in total on the 55 real files (0.99x) and on the large synthetic files (0.77x)**, **not met on one real file** (animation-heavy, 5.3x); reader alone at or below ufbx: **not met** (1.75x real, 2.17x synthetic). *Memory:* the import peak is below ufbx's on every large file and the largest real file; the reader's own peak is below ufbx's on the large synthetic files and equal on the largest real file but above it on a few small ones.
+
+So: **ufbx cannot be removed yet.** The reader is correct on every file we have and no longer slow in total; what is missing is breadth of files, Windows, a post-merge sanitizer run, the known gaps, and the owner's approval.
+
 ## Exact ASCII numbers
 
 ASCII FBX files store every number as text. `engine/src/Render/DecimalToDouble.hpp` turns a plain decimal (`12`, `-0.5`,

@@ -39,6 +39,15 @@ public:
     /// past it between two frames. Costs a shape cast per step while moving fast,
     /// so it's opt-in.
     bool     continuousCollision = false;
+    /// Rolling resistance (a length, metres): how quickly a ball or wheel that rolls on a surface slows down. The torque
+    /// that opposes the roll is at most this number times the force pressing the body onto the surface, so 0.03 stops a
+    /// ball rolling at 5 m/s in about 15 seconds and 0 rolls on until the angular damping eats the spin.
+    /// Used by the Improved physics quality only; the Classic step ignores it.
+    float    rollingResistance = 0.03f;
+    /// Treat the colliders on this object's child objects (children that have no Rigidbody of their own) as part of
+    /// this body: they hold it up, and its mass, centre of mass and turning inertia are worked out for the whole shape.
+    /// This is how a table (a top and four legs) or an L-shaped crate is built. Used by the Improved physics quality only.
+    bool     compoundChildren = false;
 
     // ---- Angular dynamics ----
     /// Angular velocity in RADIANS per second about each world axis.
@@ -147,6 +156,7 @@ private:
     Vec3  m_forceAccum  = Vec3::Zero;
     Vec3  m_torqueAccum = Vec3::Zero;
     float m_sleepTimer  = 0.0f;   // seconds spent under the sleep thresholds
+    int   m_solverIndex = -1;     // this step's slot in the contact solver (Improved quality); -1 = none
     Vec3 ConsumeForce()  { Vec3 f = m_forceAccum; m_forceAccum = Vec3::Zero; return f; }
     Vec3 ConsumeTorque() { Vec3 t = m_torqueAccum; m_torqueAccum = Vec3::Zero; return t; }
 };

@@ -570,9 +570,9 @@ the same (`tests/test_vs_node_fields.cpp` checks every node below).
 | Crossfade Animation | clip name | Clip list, like Play Clip |
 | Run Another Graph | `file.okayvs` or `file.okayvs\|Event` | Graph slot, like Run Tree. Picking a new file keeps the `\|Event` part |
 | Switch Camera, Start Dialogue | camera / object name | Object slot that stores the object's **name** (these nodes find the object by name). Start Dialogue empty shows Self: this object's Dialogue Runner |
-| Camera Follow, UITheme.ApplyTo, IK.SetLimbTarget (two-text form) | the Object Name pin | Object slot that stores the name |
+| Camera Follow, UITheme.ApplyTo, IK.SetLimbTarget (two-text form), IK.LookAt (by name) | the Object Name pin | Object slot that stores the name |
 | On Tag Enter / Stay / Exit, On Collision With Tag, Get Object by Tag | tag | Tag list: tags in this scene, then the project's tag list |
-| Count Nearby, Get Nearest / Farthest Object, the gameplay-library tag nodes (Count Objects With Tag, Set Tag on Object...) | the Tag pin | Tag list |
+| Count Nearby, Get Nearest / Farthest Object, Get Object by Tag, the gameplay-library tag nodes (Count Objects With Tag, Set Tag on Object...), GameObject.tag= and GameObject.FindWithTag | the Tag pin | Tag list |
 | Tween Move, Tween Move By Speed, Kill / Pause / Play Tweens With Tag | tag | Tween tag list: the tween tags this graph already uses (a tween's tag is not an object tag) |
 | Sphere Cast, Raycast All 3D | layers | Layer list, like Raycast 3D |
 | Set / Get Object Var | variable | Variable list, like Set Var |

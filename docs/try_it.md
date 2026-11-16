@@ -428,6 +428,9 @@ example scenes are in the `examples\` folder next to `OkaySpace.exe` (see "Where
 3. In the editor, **File > Open...** and open `bom_test.okayscene`. It opens and the Hierarchy lists the objects
    (Main Camera and the rest).
 
+   Known gap: only the scene loader was fixed. A project upgrade (it reads scene text another way) and nested or variant
+   prefabs still refuse a file with a BOM and say `missing 'okayscene' header` (see [scene_serializer.md](scene_serializer.md)).
+
 **2. A stray number is not kept and written back by every save.** `gravity 0 -9.81 0` in the two examples had a third
 number the 2D `gravity` record does not read; the loader kept it as an "unknown record" and every save wrote a line `0`
 back. The two examples (`spatial_audio`, `own_wav`) are fixed, and the loader no longer keeps such a number.
@@ -456,8 +459,10 @@ then did not open there). It is covered by the test `scene_subnormal` on Linux, 
 failed two checks under libc++ before the fix (a clang + libc++ build on Linux; no WebGL build was run).
 
 **Status.** Logic tested headless on Linux (GCC, Release); the test names and counts are in the pull request. The
-editor Inspector steps in 3 and the Notepad and editor steps in 1 and 2 are unverified until you look: nothing here ran on
-Windows or opened a real editor window.
+file part of steps 1 and 2 was also run with a small program on the real `spatial_audio` and `own_wav_test` scenes: a copy with
+a BOM loads, and a copy with the stray `0` loads and saves with no line that is only `0`. The Notepad clicks, the editor
+Inspector steps in 3 and the editor's File > Open are unverified until you look: nothing here ran on Windows or opened a
+real editor window.
 
 ## Team tooling (not part of the Windows release)
 

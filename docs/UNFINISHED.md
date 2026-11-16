@@ -52,6 +52,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 | D3D11 / D3D12 renderers | Not buildable or runnable in our Linux environment | Only compile-checked with MinGW in CI |
 | Software renderer: scene Ambient Occlusion and Depth of field | Not read / not drawn | The scene's Post-processing SSAO switch and depth of field do nothing in software (bloom, FXAA, exposure, tonemap, grading, vignette are read now). See [render_status.md](render_status.md) |
 | Direct3D 12 post chain | Not started (plan written) | `docs/render_status.md` has the steps; the post HLSL text is shared in `D3DPostHLSL.hpp` but D3D12 does not use it yet. Nothing GPU-side has been run |
+| Scene files saved with a UTF-8 byte-order mark (Notepad's "UTF-8 with BOM") | Open and merge work (`scene_bom_load`) | `SceneText::Parse` (canonical form, diff, merge, migration, so a project upgrade) and `PrefabTools::Instantiate` (nested and variant prefabs, Reapply, apply and revert) still say `missing 'okayscene' header`. One shared mark-stripping helper in the three parsers and a test for each would close it. See `docs/scene_serializer.md` |
 
 ## Own cryptography: no hired review, libsodium stays
 

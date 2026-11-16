@@ -14,6 +14,7 @@
 #include <functional>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <set>
 #include <tuple>
 #include <sstream>
@@ -166,6 +167,7 @@ struct Mesh {
     /// Take the given triangles out of the mesh and keep them hidden. Returns how many were hidden.
     /// Vertices only they used stay in the vertex list (nothing is renumbered), unused.
     int HideTriangles(const std::vector<int>& tris) {
+        AttrGuard attrGuard_(*this);
         if (!HiddenConsistent()) { hiddenPos.clear(); hiddenUV.clear(); hiddenSlot.clear(); hiddenPoly.clear(); hiddenColor.clear(); }
         const int nt = TriangleCount();
         std::vector<char> hide((std::size_t)nt, 0);
@@ -214,6 +216,7 @@ struct Mesh {
     }
     /// Hide every triangle except the given ones (local view). Returns how many were hidden.
     int IsolateTriangles(const std::vector<int>& keep) {
+        AttrGuard attrGuard_(*this);
         const int nt = TriangleCount();
         std::vector<char> k((std::size_t)nt, 0);
         for (int t : keep) if (t >= 0 && t < nt) k[t] = 1;
@@ -225,6 +228,7 @@ struct Mesh {
     /// vertex position reuse it, so the revealed faces join up with what is there. Returns the numbers of the
     /// triangles it added (so the editor can select them).
     std::vector<int> RevealHidden() {
+        AttrGuard attrGuard_(*this);
         std::vector<int> added;
         if (!HiddenConsistent() || hiddenPos.empty()) { hiddenPos.clear(); hiddenUV.clear(); hiddenSlot.clear(); hiddenPoly.clear(); hiddenColor.clear(); return added; }
         const int n = HiddenTriangleCount();
@@ -334,6 +338,87 @@ struct Mesh {
     bool HasNormals() const { return normals.size() == vertices.size() && !vertices.empty(); }
     bool HasCornerUVs() const { return !cornerUVs.empty() && cornerUVs.size() == triangles.size(); }
     bool HasUVs() const { return uvs.size() == vertices.size() && !uvs.empty(); }
+
+    /// After an operator that added, removed or reordered vertices or faces: give back what it left at the wrong
+    /// size. `old` is the mesh before the operator. A new vertex takes the UV and vertex colour of the nearest old
+    /// vertex, a new face the material slot and face colour of the old face whose middle is nearest (so extruded,
+    /// inset and subdivided faces keep the look of the face they came from). Vertices and faces that did not move
+    /// keep their own values exactly. Polygon ids and per-corner UVs cannot be carried over this way and are
+    /// dropped (the editor rebuilds polygons from the triangles). Lists that are already the right size are not touched.
+    void InheritAttributes(const Mesh& old) {
+        const int nv = (int)vertices.size(), nt = TriangleCount();
+        if (!polyFace.empty() && (int)polyFace.size() != nt) polyFace.clear();
+        if (!cornerUVs.empty() && cornerUVs.size() != triangles.size()) cornerUVs.clear();
+        const bool needUV = old.HasUVs() && !HasUVs(), needVC = old.HasVertexColors() && !HasVertexColors();
+        const bool needSlot = old.HasSlots() && !HasSlots(), needFC = old.HasFaceColors() && !HasFaceColors();
+        if (nv == 0 || (!needUV && !needVC && !needSlot && !needFC)) return;
+        struct Grid {
+            float cell = 1.0f; std::unordered_map<long long, std::vector<int>> cells; const std::vector<Vec3>* pts = nullptr;
+            long long Key(int x, int y, int z) const { return ((long long)(x & 0x1FFFFF) << 42) ^ ((long long)(y & 0x1FFFFF) << 21) ^ (long long)(z & 0x1FFFFF); }
+            void Build(const std::vector<Vec3>& p) {
+                pts = &p; Vec3 lo{1e30f, 1e30f, 1e30f}, hi{-1e30f, -1e30f, -1e30f};
+                for (const Vec3& v : p) { lo = {std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)}; hi = {std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)}; }
+                const float ext = std::max({hi.x - lo.x, hi.y - lo.y, hi.z - lo.z, 1e-3f});
+                cell = std::max(ext / std::max(1.0f, std::cbrt((float)p.size())), 1e-4f);
+                for (int i = 0; i < (int)p.size(); ++i) cells[Key((int)std::floor(p[i].x / cell), (int)std::floor(p[i].y / cell), (int)std::floor(p[i].z / cell))].push_back(i);
+            }
+            int Nearest(const Vec3& q) const {
+                if (!pts || pts->empty()) return -1;
+                const int cx = (int)std::floor(q.x / cell), cy = (int)std::floor(q.y / cell), cz = (int)std::floor(q.z / cell);
+                int best = -1; float bd = 1e30f;
+                for (int r = 0; r <= 6; ++r) {
+                    for (int x = cx - r; x <= cx + r; ++x) for (int y = cy - r; y <= cy + r; ++y) for (int z = cz - r; z <= cz + r; ++z) {
+                        if (std::max({std::abs(x - cx), std::abs(y - cy), std::abs(z - cz)}) != r) continue;   // only the new shell
+                        auto it = cells.find(Key(x, y, z)); if (it == cells.end()) continue;
+                        for (int i : it->second) { const float d = ((*pts)[i] - q).SqrMagnitude(); if (d < bd) { bd = d; best = i; } }
+                    }
+                    if (best >= 0 && std::sqrt(bd) <= (float)r * cell) break;
+                }
+                return best;
+            }
+        };
+        auto centroids = [](const Mesh& m) {
+            std::vector<Vec3> c((size_t)m.TriangleCount());
+            for (int t = 0; t < m.TriangleCount(); ++t) {
+                Vec3 sum{0, 0, 0};
+                for (int k = 0; k < 3; ++k) { const int i = m.triangles[t * 3 + k]; if (i >= 0 && i < (int)m.vertices.size()) sum = sum + m.vertices[i]; }
+                c[(size_t)t] = sum * (1.0f / 3.0f);
+            }
+            return c;
+        };
+        if (needUV || needVC) {
+            Grid g; g.Build(old.vertices);
+            std::vector<Vec2> nu; std::vector<Color> nc;
+            for (int i = 0; i < nv; ++i) {
+                int src = (i < (int)old.vertices.size() && old.vertices[(size_t)i] == vertices[(size_t)i]) ? i : g.Nearest(vertices[(size_t)i]);
+                if (src < 0) src = 0;
+                if (needUV) nu.push_back(old.uvs[(size_t)src]);
+                if (needVC) nc.push_back(old.vertexColors[(size_t)src]);
+            }
+            if (needUV) uvs = std::move(nu);
+            if (needVC) vertexColors = std::move(nc);
+        }
+        if (needSlot || needFC) {
+            const std::vector<Vec3> oc = centroids(old), nc = centroids(*this);
+            Grid g; g.Build(oc);
+            std::vector<int> ns; std::vector<Color> nf;
+            for (int t = 0; t < nt; ++t) {
+                int src = (t < (int)oc.size() && oc[(size_t)t] == nc[(size_t)t]) ? t : g.Nearest(nc[(size_t)t]);
+                if (src < 0) src = 0;
+                if (needSlot) ns.push_back(old.triSlot[(size_t)src]);
+                if (needFC) nf.push_back(old.triColors[(size_t)src]);
+            }
+            if (needSlot) { triSlot = std::move(ns); if (slotColors.empty()) slotColors = old.slotColors; }
+            if (needFC) triColors = std::move(nf);
+        }
+    }
+    /// Put at the top of an operator: when the operator returns, whatever it left at the wrong size is rebuilt from
+    /// the mesh as it was (see InheritAttributes). Costs one copy of the mesh, and only when it carries such lists.
+    struct AttrGuard {
+        Mesh& m; std::unique_ptr<Mesh> before;
+        explicit AttrGuard(Mesh& mesh) : m(mesh) { if (m.HasUVs() || m.HasVertexColors() || m.HasSlots() || m.HasFaceColors()) before.reset(new Mesh(m)); }
+        ~AttrGuard() { if (before) m.InheritAttributes(*before); }
+    };
 
     /// Copy the per-vertex UVs onto the triangle corners (before a weld would
     /// merge vertices that sit on a UV seam). Keeps existing corner UVs.
@@ -2529,6 +2614,7 @@ public:
     /// adds detail (and, after re-projecting, smooths primitives). Midpoints are
     /// shared between adjacent triangles so the mesh stays welded.
     void Subdivide() {
+        AttrGuard attrGuard_(*this);
         std::vector<int> out;
         std::map<std::pair<int, int>, int> mids;     // edge -> new midpoint index
         auto midpoint = [&](int a, int b) {
@@ -2879,6 +2965,7 @@ public:
     /// passed `faces` indices stay valid (those slots are re-pointed, not removed),
     /// so the caller's selection still refers to the extruded cap.
     void ExtrudeFaces(const std::vector<int>& faces, float dist) {
+        AttrGuard attrGuard_(*this);
         if (faces.empty() || !std::isfinite(dist)) return;
         // Averaged (area-weighted) normal of the selected faces.
         Vec3 N{0, 0, 0};
@@ -2942,6 +3029,7 @@ public:
     /// re-point the selected faces to the inner ring, and bridge the boundary so a
     /// smaller inner cap sits inside the original outline.
     void InsetFaces(const std::vector<int>& faces, float amount) {
+        AttrGuard attrGuard_(*this);
         if (faces.empty() || !std::isfinite(amount)) return;
         float t = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
         // Boundary edges (used by exactly one selected triangle).
@@ -2998,6 +3086,7 @@ public:
     /// shared between the selected faces (via an edge->midpoint map) so the region
     /// stays welded; unselected triangles are left untouched.
     void SubdivideFaces(const std::vector<int>& faces) {
+        AttrGuard attrGuard_(*this);
         if (faces.empty()) return;
         std::map<int, bool> sel;
         for (int f : faces) sel[f] = true;
@@ -3032,6 +3121,7 @@ public:
     /// editable centre point); positive spikes it, negative dimples it. Blender's
     /// Poke Faces. Face colors of the poked triangle carry to its three children.
     void PokeFaces(const std::vector<int>& faces, float height = 0.0f) {
+        AttrGuard attrGuard_(*this);
         if (!std::isfinite(height)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (faces.empty()) return;
         std::set<int> sel(faces.begin(), faces.end());
@@ -3063,6 +3153,7 @@ public:
     /// ExtrudeFaces (one connected cap along the averaged normal), each face gets
     /// its own detached cap + side walls. Vertices are duplicated per face.
     void ExtrudeFacesIndividual(const std::vector<int>& faces, float dist) {
+        AttrGuard attrGuard_(*this);
         if (faces.empty() || !std::isfinite(dist) || std::fabs(dist) < 1e-8f) return;
         std::set<int> sel(faces.begin(), faces.end());
         const bool hadColors = HasFaceColors();
@@ -3092,6 +3183,7 @@ public:
     /// ring), per face rather than as one shared region — Blender's "Inset
     /// Individual". Pairs with ExtrudeFacesIndividual for panel/greeble looks.
     void InsetFacesIndividual(const std::vector<int>& faces, float amount) {
+        AttrGuard attrGuard_(*this);
         if (faces.empty() || !std::isfinite(amount)) return;
         float t = amount < 0.0f ? 0.0f : (amount > 1.0f ? 1.0f : amount);
         std::set<int> sel(faces.begin(), faces.end());
@@ -3122,6 +3214,7 @@ public:
     /// descending so earlier erases don't shift later indices. Orphan vertices are
     /// left in place (harmless).
     void DeleteFaces(std::vector<int> faces) {
+        AttrGuard attrGuard_(*this);
         const bool hadColors = HasFaceColors();
         const bool hadSlots = HasSlots();
         std::sort(faces.begin(), faces.end(), std::greater<int>());
@@ -3140,6 +3233,7 @@ public:
     /// Reverse the winding of every triangle (swap the 2nd and 3rd index) so all
     /// faces point the other way, then recompute normals.
     void FlipNormals() {
+        AttrGuard attrGuard_(*this);
         const bool cuv = HasCornerUVs();
         for (std::size_t i = 0; i + 2 < triangles.size(); i += 3) {
             std::swap(triangles[i + 1], triangles[i + 2]);
@@ -3158,6 +3252,7 @@ public:
     /// Returns how many triangles were flipped. Coincident-vertex aware, so seams
     /// from Separate/Weld/hard-shading still count as connected.
     int OrientFacesOutward() {
+        AttrGuard attrGuard_(*this);
         const int nt = (int)triangles.size() / 3;
         if (nt == 0) return 0;
         std::vector<int> rep = CoincidentReps();
@@ -3299,7 +3394,8 @@ public:
     /// Array modifier: keep the original and append `count-1` more copies, each
     /// shifted a further `offset` along. Great for fences, columns, stairs, gears.
     void Array(int count, const Vec3& offset) {
-        if (count <= 1 || vertices.empty()) return;
+        AttrGuard attrGuard_(*this);
+        if (count <= 1 || vertices.empty() || !std::isfinite(offset.x + offset.y + offset.z)) return;   // a NaN or infinite offset would turn the copies into NaN
         Mesh base = *this;
         for (int i = 1; i < count; ++i)
             Add(base, {offset.x * (float)i, offset.y * (float)i, offset.z * (float)i});
@@ -3312,6 +3408,7 @@ public:
     /// A fast, robust way to cut triangle count on dense/imported meshes. Returns the
     /// new triangle count.
     int Decimate(float cellSize) {
+        AttrGuard attrGuard_(*this);
         if (!(cellSize > 1e-6f) || vertices.empty()) return TriangleCount();
         std::map<std::tuple<int, int, int>, int> cell;
         std::vector<Vec3> sum; std::vector<int> cnt; std::vector<int> remap(vertices.size());
@@ -3768,6 +3865,7 @@ public:
     /// are treated as one so unwelded seams don't read as boundaries. Returns the
     /// number of holes closed.
     int FillHoles() {
+        AttrGuard attrGuard_(*this);
         if (triangles.size() < 3 || vertices.empty()) return 0;
         // Representative index per coincident-vertex group.
         std::map<std::tuple<int, int, int>, int> grid;
@@ -3842,6 +3940,7 @@ public:
     /// (which also drops collapsed triangles), cap open holes (optional), then make every face
     /// point the same way, outward on closed shells. Painted colours and material slots stay.
     RepairReport Repair(float weldDist = 1e-5f, bool fillHoles = true) {
+        AttrGuard attrGuard_(*this);
         RepairReport r;
         const TopologyReport before = Topology();
         r.openEdgesBefore = before.boundaryEdges; r.nonManifoldBefore = before.nonManifoldEdges;
@@ -3935,6 +4034,7 @@ public:
     /// vertex) — remove edge loops, simplify dense areas. Degenerate triangles
     /// are dropped by the weld pass.
     void CollapseEdges(const std::vector<std::pair<int, int>>& es) {
+        AttrGuard attrGuard_(*this);
         if (es.empty()) return;
         for (const auto& e : es) {
             if (e.first < 0 || e.first >= (int)vertices.size() ||
@@ -3952,6 +4052,7 @@ public:
     /// triangle sharing that edge is cut in two — add local detail exactly where
     /// you need it without subdividing whole faces.
     void SplitEdges(const std::vector<std::pair<int, int>>& es) {
+        AttrGuard attrGuard_(*this);
         if (es.empty()) return;
         const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
         for (const auto& e : es) {
@@ -3984,6 +4085,7 @@ public:
     /// Append a detached copy of the listed triangles (new vertices, UVs carried)
     /// and return the indices of the NEW faces — duplicate-and-drag workflows.
     std::vector<int> DuplicateFaces(const std::vector<int>& faces) {
+        AttrGuard attrGuard_(*this);
         std::vector<int> newFaces;
         if (faces.empty()) return newFaces;
         const bool hadUV = uvs.size() == vertices.size() && !uvs.empty();
@@ -4324,6 +4426,7 @@ public:
     /// along every edge that meets it and the opening is capped with a flat facet —
     /// Blender's vertex bevel. Great for knocking the sharp corners off boxes.
     void BevelVertices(const std::vector<int>& sel, float amount) {
+        AttrGuard attrGuard_(*this);
         if (!std::isfinite(amount)) return;   // a NaN or infinite amount would turn every vertex into NaN
         if (sel.empty() || amount <= 1e-6f || triangles.empty()) return;
         std::set<int> S;

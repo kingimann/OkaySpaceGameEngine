@@ -183,8 +183,19 @@ void HashMesh(std::uint64_t& h, const Mesh& m) {
 
 } // namespace
 
+static bool ApplyModifierImpl(const Mesh& in, const MeshModifier& mod, const ModifierContext& ctx,
+                              Mesh& out, std::string* error);
+
 bool ApplyModifier(const Mesh& in, const MeshModifier& mod, const ModifierContext& ctx,
                    Mesh& out, std::string* error) {
+    const bool ok = ApplyModifierImpl(in, mod, ctx, out, error);
+    // Whatever list the modifier left at the wrong size (UVs, vertex colours, slots, face colours) is rebuilt from the input.
+    if (ok && (in.HasUVs() || in.HasVertexColors() || in.HasSlots() || in.HasFaceColors())) out.InheritAttributes(in);
+    return ok;
+}
+
+static bool ApplyModifierImpl(const Mesh& in, const MeshModifier& mod, const ModifierContext& ctx,
+                              Mesh& out, std::string* error) {
     using T = MeshModifier::Type;
     out = in;
     // A setting that is NaN or infinite (a hand-edited scene can hold one) would turn the whole mesh into NaN.

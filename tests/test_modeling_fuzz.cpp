@@ -83,6 +83,7 @@ Mesh RichMesh() {
     Mesh m = RandomMesh();
     const int nv = (int)m.vertices.size(), nt = m.TriangleCount();
     if (nv == 0 || nt == 0) return m;
+    m.uvs.clear(); m.vertexColors.clear(); m.triSlot.clear(); m.triColors.clear(); m.polyFace.clear(); m.cornerUVs.clear(); m.normals.clear();   // primitives bring their own
     for (int i = 0; i < nv; ++i) m.uvs.push_back(Vec2{F(0, 1), F(0, 1)});
     for (int i = 0; i < nv; ++i) m.vertexColors.push_back(Color{F(0, 1), F(0, 1), F(0, 1), 1});
     for (int t = 0; t < nt; ++t) { m.triSlot.push_back(R(3)); m.triColors.push_back(Color{F(0, 1), 0.5f, 0.5f, 1}); m.polyFace.push_back(t); }
@@ -121,11 +122,8 @@ void Op(const char* name, int rounds, const std::function<const char*()>& body) 
     ++okaytest::g_checks;
     // Known gaps: these operators still leave a stale optional list behind (the renderers ignore a list whose size
     // does not match, so the attribute is lost, not corrupted). Listed in docs/UNFINISHED.md; they are printed, not failed.
-    static const std::set<std::string> kKnownGaps = {
-        "rich ExtrudeFaces", "rich InsetFaces", "rich SubdivideFaces", "rich PokeFaces", "rich DeleteFaces", "rich DuplicateFaces",
-        "rich ExtrudeFacesIndividual", "rich InsetFacesIndividual", "rich FlipNormals", "rich OrientFacesOutward", "rich FillHoles",
-        "rich Repair", "rich Decimate", "rich CollapseEdges", "rich SplitEdges", "rich Subdivide", "rich HideReveal", "rich Isolate",
-        "rich SeparateFaces", "rich BevelVertices", "rich Array", "rich modifier Subdivision Surface", "rich modifier Decimate", "rich modifier Displace"};
+    static const std::set<std::string> kKnownGaps = {};   // empty: every operator must keep its lists in step
+
     if (bad && kKnownGaps.count(name)) { std::cout << "  GAP: " << name << ": " << bad << " of " << rounds << " runs leave a list out of step (" << first << ")\n"; return; }
     if (bad) { ++okaytest::g_failures; ++g_failedOps; std::cerr << "  FAIL: " << name << ": " << bad << " of " << rounds << " runs broke the mesh (" << first << ")\n"; }
 }

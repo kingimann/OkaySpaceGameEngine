@@ -1279,6 +1279,32 @@ int main() {
         std::vector<MeshUndoStep> u3, r3; for (int i = 0; i < 250; ++i) PushMeshUndo(u3, r3, tg, "x", 100);
         CHECK(u3.size() == 100);
     }
+    RUN_SUITE("operators keep UVs, vertex colours, slots and face colours (new faces take the look of the face they came from)");
+    {
+        auto rich = [] { Mesh m = Mesh::Cube(); const int nv = (int)m.vertices.size(), nt = m.TriangleCount();
+            m.uvs.clear(); for (int i = 0; i < nv; ++i) m.uvs.push_back(Vec2{m.vertices[(size_t)i].x + 0.5f, m.vertices[(size_t)i].y + 0.5f});
+            m.vertexColors.assign((size_t)nv, Color{1, 0, 0, 1});
+            m.triSlot.assign((size_t)nt, 0); m.slotColors = {Color{1, 1, 1, 1}, Color{0, 1, 0, 1}};
+            for (int t : {0, 1}) m.triSlot[(size_t)t] = 1;                       // two faces use slot 1
+            m.triColors.assign((size_t)nt, Color{0, 0, 1, 1}); return m; };
+        auto allIn = [](const Mesh& m) { return m.HasUVs() && m.HasVertexColors() && m.HasSlots() && m.HasFaceColors(); };
+        { Mesh m = rich(); m.ExtrudeFaces({0, 1}, 0.2f); CHECK(allIn(m));
+          // the side walls and the cap came from slot-1 faces, so slot 1 grew
+          int s1 = 0; for (int s : m.triSlot) s1 += (s == 1); CHECK(s1 >= 2); }
+        { Mesh m = rich(); m.InsetFaces({0, 1}, 0.2f); CHECK(allIn(m)); int s1 = 0; for (int s : m.triSlot) s1 += (s == 1); CHECK(s1 > 2); }
+        { Mesh m = rich(); m.SubdivideFaces({0, 1}); CHECK(allIn(m)); int s1 = 0; for (int s : m.triSlot) s1 += (s == 1); CHECK(s1 > 2); }
+        { Mesh m = rich(); m.PokeFaces({0}, 0.1f); CHECK(allIn(m)); }
+        { Mesh m = rich(); m.DeleteFaces({5}); CHECK(allIn(m) && m.TriangleCount() == 11); }
+        { Mesh m = rich(); m.DuplicateFaces({0, 1}); CHECK(allIn(m)); CHECK(m.triSlot.back() == 1); }
+        { Mesh m = rich(); m.Subdivide(); CHECK(allIn(m)); }
+        { Mesh m = rich(); m.Array(3, Vec3{2, 0, 0}); CHECK(allIn(m) && m.TriangleCount() == 36); }
+        { Mesh m = rich(); m.Array(3, Vec3{std::nanf(""), 0, 0}); CHECK(m.TriangleCount() == 12); for (const Vec3& v : m.vertices) CHECK(std::isfinite(v.x)); }
+        { Mesh m = rich(); m.SplitEdges({{0, 1}}); CHECK(allIn(m)); }
+        { Mesh m = rich(); m.Decimate(0.01f); CHECK(allIn(m)); }
+        { Mesh m = rich(); m.BevelVertices({0}, 0.1f); CHECK(allIn(m)); }
+        // A mesh that did not change keeps exactly the values it had.
+        { Mesh m = rich(); m.FlipNormals(); CHECK(allIn(m) && m.triSlot[0] == 1 && m.triSlot[5] == 0); }
+    }
     RUN_SUITE("which attributes survive each operator (printed)");
     {
         auto rich = [] { Mesh m = Mesh::Cube(); const int nv = (int)m.vertices.size(), nt = m.TriangleCount();

@@ -1719,7 +1719,7 @@ inline void TerrainSandbox(Scene& scene) {
 /// `grid` sizes the voxel field (cells along X, Y and Z); the default 72 x 44 x 72 is the owner's Sandbox. A bigger grid
 /// is the same scene on a bigger hill (examples/voxel/voxel_big_world.okayscene is 128 x 56 x 128: the digging frame
 /// rate matters much more there).
-inline void VoxelSandbox(Scene& scene, int gridX = 72, int gridY = 44, int gridZ = 72,
+inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
                          float hillHeight = 9.0f, unsigned seed = 2024u) {
     scene.Clear();
     scene.SetName("Sandbox");
@@ -1848,6 +1848,9 @@ inline void VoxelSandbox(Scene& scene, int gridX = 72, int gridY = 44, int gridZ
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();
 }
+/// The Sandbox at its default size. A separate overload (not default arguments) so `&Templates::VoxelSandbox` still converts to `void (*)(Scene&)`,
+/// which the template table and several tests rely on.
+inline void VoxelSandbox(Scene& scene) { VoxelSandbox(scene, 72, 44, 72); }
 
 } // namespace Templates
 

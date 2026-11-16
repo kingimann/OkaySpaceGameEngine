@@ -4,6 +4,13 @@
 // the same hold. Put it on the player. With no component, first person draws
 // nothing until the player is holding an item (a run still hides the hands).
 //
+// Presets (ApplyPreset / the Preset menu in the Inspector and the Fp Hands window):
+// Normal (the default for a new component: the arm is always in view, with a
+// forearm in the shirt colour that leaves the bottom of the screen, and a left
+// click swings it), Both arms, Right hand only, Minimal (the hand brick alone)
+// and Old look (the behaviour before presets, kept for comparison). The numbers
+// stay editable; Preset is only the name of the last one applied.
+//
 // Player view is the first-person copy. Others view nudges the real held
 // object (the arms follow it) and the item's own grip points pose the body.
 // Play mode reloads the scene on Stop; CaptureApplied / RestoreApplied keep
@@ -23,6 +30,34 @@ namespace okay {
 class FirstPersonHands : public Behaviour {
 public:
     enum class HoldMode { Right = 0, Left = 1, Two = 2 };
+    enum class Preset { Normal = 0, BothArms = 1, RightHandOnly = 2, Minimal = 3, OldLook = 4, Custom = 5 };
+    static constexpr int kPresetCount = 5;   ///< the ones you can pick (Custom is just "edited by hand")
+    static const char* PresetName(Preset p) {
+        switch (p) {
+            case Preset::Normal:        return "Normal";
+            case Preset::BothArms:      return "Both arms";
+            case Preset::RightHandOnly: return "Right hand only";
+            case Preset::Minimal:       return "Minimal (hand only)";
+            case Preset::OldLook:       return "Old look";
+            default:                    return "Custom";
+        }
+    }
+    static const char* PresetHelp(Preset p) {
+        switch (p) {
+            case Preset::Normal:
+                return "The arm is always in view (not only when you hold something): a hand and a forearm in your shirt colour that leaves the bottom of the screen. Left click swings it. A two-handed item uses both.";
+            case Preset::BothArms:
+                return "Normal, but both arms are in view all the time, like a boxing stance.";
+            case Preset::RightHandOnly:
+                return "Normal, but only the right arm ever shows, even for a two-handed item.";
+            case Preset::Minimal:
+                return "Just the hand block, no forearm. Small and out of the way. Left click swings it.";
+            case Preset::OldLook:
+                return "How it looked before presets: a floating hand block that only shows while you hold something, no forearm, no click swing. For comparing.";
+            default:
+                return "You changed the numbers by hand.";
+        }
+    }
 
     /// One hand in the owner's view. Right is the lower-right hand.
     /// The brick stays one block. There are no fingers.
@@ -38,9 +73,10 @@ public:
         bool  sleeve = false;
         float sleeveLength = 0.28f;
         Color sleeveColour = Color::FromBytes(60, 95, 75);
-        bool  forearm = false;            ///< the bar under the hand. Hidden unless asked for.
-        float forearmLength = 0.42f;
-        float forearmThickness = 0.07f;
+        bool  forearm = true;             ///< the arm under the hand. The Old look preset turns it off.
+        float forearmLength = 1.1f;       ///< long enough to leave the bottom of the screen
+        float forearmThickness = 0.085f;
+        bool  matchShirt = true;          ///< sleeve and forearm take the character's shirt colour (off = the colours below)
         Color forearmColour = Color::FromBytes(60, 95, 75);
         Vec3  wristOffset{0, 0, 0};       ///< extra camera-space nudge at the wrist
         Vec3  wristRotation{0, 0, 0};     ///< extra euler at the wrist, degrees
@@ -62,7 +98,10 @@ public:
     };
 
     // ---- Player view (first person) ----
-    bool  showWhenEmpty = false;
+    Preset preset = Preset::Normal;       ///< the last preset applied (a label only)
+    bool  swingOnClick = true;            ///< the attack button swings the arm (the real arm, so others see it)
+    int   attackButton = 0;               ///< mouse button that swings (0 = left)
+    bool  showWhenEmpty = true;           ///< arms in view with nothing held (Old look: only while holding)
     bool  showWhileRunning = false;
     float bobAmount = 1.0f;
     float swayAmount = 1.0f;
@@ -82,7 +121,51 @@ public:
     float othersArmForward = 0.0f;        ///< metres forward
     OthersArm othersRight, othersLeft;
 
+    /// Left click (attackButton) swings the arm in first person. Defined in Character.cpp.
+    void Update(float dt) override;
+
+    /// Set every player-view number to one preset. Others-view numbers are not touched.
+    void ApplyPreset(Preset p) {
+        const OthersArm keepR = othersRight, keepL = othersLeft;
+        const Vec3 oi = othersItemOffset, orot = othersItemRotation;
+        const float olift = othersArmLift, ofwd = othersArmForward;
+        const bool keepEnabled = enabled;
+        ResetPlayerView();
+        enabled = keepEnabled;
+        othersRight = keepR; othersLeft = keepL;
+        othersItemOffset = oi; othersItemRotation = orot; othersArmLift = olift; othersArmForward = ofwd;
+        preset = p;
+        switch (p) {
+            case Preset::Normal: break;
+            case Preset::BothArms:
+                holdMode = HoldMode::Two;
+                break;
+            case Preset::RightHandOnly:
+                left.enabled = false;
+                break;
+            case Preset::Minimal:
+                right.forearm = false; left.forearm = false;
+                right.uniformScale = 0.8f; left.uniformScale = 0.8f;
+                left.enabled = false;
+                break;
+            case Preset::OldLook:
+                showWhenEmpty = false;
+                swingOnClick = false;
+                right.forearm = false; left.forearm = false;
+                right.forearmLength = left.forearmLength = 0.42f;
+                right.forearmThickness = left.forearmThickness = 0.07f;
+                right.matchShirt = left.matchShirt = false;
+                break;
+            default: break;
+        }
+    }
+    void UseNormalArms() { ApplyPreset(Preset::Normal); }
+    void UseOldLook()    { ApplyPreset(Preset::OldLook); }
+
     void CopySettingsFrom(const FirstPersonHands& o) {
+        preset = o.preset;
+        swingOnClick = o.swingOnClick;
+        attackButton = o.attackButton;
         showWhenEmpty = o.showWhenEmpty;
         showWhileRunning = o.showWhileRunning;
         bobAmount = o.bobAmount;
@@ -105,6 +188,9 @@ public:
 
     void ResetPlayerView() {
         FirstPersonHands d;
+        preset = d.preset;
+        swingOnClick = d.swingOnClick;
+        attackButton = d.attackButton;
         showWhenEmpty = d.showWhenEmpty;
         showWhileRunning = d.showWhileRunning;
         bobAmount = d.bobAmount;

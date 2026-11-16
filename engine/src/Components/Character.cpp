@@ -7,6 +7,11 @@
 #include "okay/Components/FirstPersonHands.hpp"
 #include "okay/Components/HoldableObject.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Components/PlayerView.hpp"
+#include "okay/Components/FirstPersonController.hpp"
+#include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
+#include "okay/Core/Game.hpp"
 #include "okay/Components/FootIK.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -1338,7 +1343,7 @@ void PaintFpHand(GameObject* hand, GameObject* srcPart, const FirstPersonHands::
     }
 }
 
-void PaintFpSleeve(GameObject* fore, const FirstPersonHands::HandSide* side) {
+void PaintFpSleeve(GameObject* fore, const FirstPersonHands::HandSide* side, const Color& shirt) {
     if (!fore) return;
     auto* mr = fore->GetComponent<MeshRenderer>();
     if (!mr) return;
@@ -1357,15 +1362,15 @@ void PaintFpSleeve(GameObject* fore, const FirstPersonHands::HandSide* side) {
     mr->enabled = true;
     mr->castShadows = false;
     mr->doubleSided = false;
-    mr->color = side->sleeveColour;
-    mr->emissive = Color{side->sleeveColour.r * 0.37f, side->sleeveColour.g * 0.37f,
-                         side->sleeveColour.b * 0.37f, 1.0f};
+    const Color sc = side->matchShirt ? shirt : side->sleeveColour;
+    mr->color = sc;
+    mr->emissive = Color{sc.r * 0.37f, sc.g * 0.37f, sc.b * 0.37f, 1.0f};
 }
 
 // Optional bar under the hand. Off unless the hand asks for it, so a hold is
 // a brick in the palm and not a green sleeve filling the corner. `armInCam`
 // is the arm's rotation in camera space.
-void PaintFpForearm(GameObject* fore, const FirstPersonHands::HandSide* side, const Quat& armInCam) {
+void PaintFpForearm(GameObject* fore, const FirstPersonHands::HandSide* side, const Quat& armInCam, const Color& shirt) {
     if (!fore) return;
     auto* mr = fore->GetComponent<MeshRenderer>();
     if (!mr) return;
@@ -1374,7 +1379,7 @@ void PaintFpForearm(GameObject* fore, const FirstPersonHands::HandSide* side, co
         mr->enabled = false;
         return;
     }
-    Color col = side->forearmColour;
+    Color col = side->matchShirt ? shirt : side->forearmColour;
     float length = side->forearmLength;
     if (length < 0.05f) length = 0.05f;
     if (length > 1.2f) length = 1.2f;
@@ -1561,6 +1566,20 @@ void Character::RefreshOwnerArm() {
     PoseOwnerArm(CurrentSourcePose());
 }
 
+// A click swings the real arm (Character::Punch), so the owner's arm copy swings and other players
+// see the same swing. Only in first person: a third person body has no viewmodel to swing.
+void FirstPersonHands::Update(float) {
+    if (!swingOnClick || Game::Paused() || !gameObject) return;
+    Character* c = gameObject->GetComponent<Character>();
+    if (!c) return;
+    bool first = false;
+    if (auto* v = gameObject->GetComponent<PlayerView>()) first = v->Driving() ? v->FirstAmount() > 0.35f : v->TargetFirst();
+    else first = gameObject->GetComponent<FirstPersonController>() != nullptr;
+    if (!first) return;
+    if (GameInputBlocked(gameObject->scene())) return;
+    if (Input::GetMouseButtonDown(attackButton) && !c->Punching()) c->Punch();
+}
+
 void Character::ApplyFirstPersonHandDrive(bool showLeftArm, bool showWhileRunning) {
     FirstPersonHands* h = FirstPersonHands::FindOn(gameObject);
     if (h && !h->enabled) h = nullptr;
@@ -1741,7 +1760,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
     m_ownerHand->transform->localScale = (!m_fpSecond) ? FpHandScale(fpSide) : Vec3::One;
     if (!m_fpSecond && base + 2 < (int)m_parts.size()) {
         PaintFpHand(m_ownerHand, m_parts[base + 2], fpSide);
-        PaintFpSleeve(m_ownerFore, fpSide);
+        PaintFpSleeve(m_ownerFore, fpSide, shirt);
     }
     const float fovScale = FpFovScale(fpHands, cam);
     m_ownerArm->transform->localScale = Vec3{kFpHandScale * fovScale, kFpHandScale * fovScale, kFpHandScale * fovScale};
@@ -1905,7 +1924,7 @@ void Character::PoseOwnerArm(const std::vector<Vec3>&) {
         const Vec3 fwd = basis * Vec3{0.0f, 0.0f, -1.0f};
         m_ownerArm->transform->SetPosition(m_ownerArm->transform->Position() + fwd * (keep - minAhead));
     }
-    if (m_ownerFore) PaintFpForearm(m_ownerFore, m_fpSecond ? nullptr : fpSide, lag * camSpace);
+    if (m_ownerFore) PaintFpForearm(m_ownerFore, m_fpSecond ? nullptr : fpSide, lag * camSpace, shirt);
     SetOwnerArmActive(true);
     if (m_ownerItem && !showItem) m_ownerItem->active = false;
     if (m_fpSecond) FinishTwoHands(cam, depth, snap, bobS, bobC);
@@ -1945,7 +1964,7 @@ void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS,
             hand->transform->localScale = FpHandScale(side);
         }
         if (base + 2 < (int)m_parts.size()) PaintFpHand(hand, m_parts[base + 2], side);
-        PaintFpSleeve(fore, side);
+        PaintFpSleeve(fore, side, shirt);
     };
     prep(m_ownerArm, m_ownerFore, m_ownerHand, baseR, right);
     prep(m_ownerArm2, m_ownerFore2, m_ownerHand2, baseL, left);
@@ -2070,7 +2089,7 @@ void Character::FinishTwoHands(Camera* cam, float depth, float snap, float bobS,
         arm->active = true;
         if (hand && hand->transform && hand->transform->Parent() && hand->transform->Parent()->gameObject)
             PaintFpForearm(hand->transform->Parent()->gameObject, side,
-                           cam->transform->Rotation().Conjugate() * rot);
+                           cam->transform->Rotation().Conjugate() * rot, shirt);
         (void)snap;
     };
     placeHand(m_ownerArm, m_ownerHand, false, right);

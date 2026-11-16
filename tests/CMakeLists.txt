@@ -964,6 +964,17 @@ add_executable(test_fp_hand test_fp_hand.cpp)
 target_link_libraries(test_fp_hand PRIVATE okay::engine)
 add_test(NAME fp_hand COMMAND test_fp_hand)
 
+add_executable(test_fp_hand_normal test_fp_hand_normal.cpp)
+target_link_libraries(test_fp_hand_normal PRIVATE okay::engine)
+add_test(NAME fp_hand_normal COMMAND test_fp_hand_normal)
+
+# Headless pictures of the first-person hand (a tool, not a test). docs/try_it.md 7z.
+add_executable(fp_hand_shot fp_hand_shot.cpp)
+target_link_libraries(fp_hand_shot PRIVATE okay::engine)
+if(FP_SHOT_BEFORE)
+    target_compile_definitions(fp_hand_shot PRIVATE FPSHOT_BEFORE)
+endif()
+
 add_executable(test_run_feel test_run_feel.cpp)
 target_link_libraries(test_run_feel PRIVATE okay::engine)
 add_test(NAME run_feel COMMAND test_run_feel)

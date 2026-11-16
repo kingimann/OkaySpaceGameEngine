@@ -630,16 +630,16 @@ PolyMesh HatMesh(const Dim& d, const HeadShape& h, const std::string& design) {
         return m;
     }
     if (design == "helmet") {
-        m = HairCap(h, 0.06f, 0.026f, 0.014f, sides, rings);
+        m = HairCap(h, 0.06f, 0.0263f, 0.0143f, sides, rings);
         shapes::Append(m, Elp({0, yb + 0.07f * s, -0.01f * s}, 0.094f * s, 0.008f * s, 0.112f * s, 3, 16));   // the rim
         return m;
     }
     if (design == "beanie") {
-        m = HairCap(h, 0.11f, 0.02f, 0.02f, sides, rings);
+        m = HairCap(h, 0.11f, 0.0213f, 0.0207f, sides, rings);
         shapes::Append(m, Elp({0, yb + 0.285f * s, -0.004f * s}, 0.026f * s, 0.026f * s, 0.026f * s, 4, 8));   // a bobble
         return m;
     }
-    m = HairCap(h, 0.12f, 0.02f, 0.016f, sides, rings);   // cap
+    m = HairCap(h, 0.12f, 0.0213f, 0.0167f, sides, rings);   // cap
     shapes::Append(m, Elp({0, yb + 0.155f * s, FrontZ(h, 0, yb + 0.155f * s) + 0.034f * s}, 0.07f * s, 0.005f * s, 0.052f * s, 3, 12));   // the peak
     return m;
 }

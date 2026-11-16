@@ -1,6 +1,8 @@
 // The launcher off SDL for WAV reading and for its window calls (docs/own_code_roadmap.md, SDL2 row, stage A).
 //
-// 1. WAV: launcher/VoiceClipLoad.hpp reads a voice clip with our own decoder (okay::wav). Every WAV in the repository
+// 1. WAV: the launcher reads a voice clip with SDL by default and with our own decoder with OKAY_OWN_WAV=1
+//    (launcher/VoiceClipLoadSdl.hpp picks; launcher/VoiceClipLoad.hpp is ours). Both paths are checked: the selection
+//    follows OKAY_OWN_WAV, the SDL path gives exactly what the launcher always gave. Every WAV in the repository
 //    (examples/ and the ffmpeg-made fixtures in tests/data/audio/wav_ffmpeg/) and a few made here (the launcher's own
 //    16-bit mono recording format, 8-bit, 24-bit, float, an odd-sized extra chunk) are read both ways: with
 //    SDL_LoadWAV plus the conversion the launcher used to run on SDL's result, and with the new helper. Format,
@@ -14,12 +16,12 @@
 // Written from the RIFF / WAVE layout (Microsoft's multimedia registration documents) and the SDL2 public API names;
 // no SDL source or other project's code was read or followed.
 #include "test_framework.hpp"
-#include "VoiceClipLoad.hpp"   // launcher/: the helper under test
+#define SDL_MAIN_HANDLED   // our own main()
+#include <SDL.h>
+#include "VoiceClipLoadSdl.hpp"   // launcher/: the helpers under test (includes VoiceClipLoad.hpp)
 #include "okay/Audio/WavPlayback.hpp"
 #include "okay/Platform/Platform.hpp"
 
-#define SDL_MAIN_HANDLED   // our own main()
-#include <SDL.h>
 
 #include <algorithm>
 #include <cmath>
@@ -265,6 +267,70 @@ static void TestBars() {
     CHECK(!okay::launcher::VoicePeakBars(empty, keep, 4));
 }
 
+// ---- The switch: default SDL, OKAY_OWN_WAV=1 ours ---------------------------------------------------------------
+static void SetOwnWav(const char* v) {
+#ifdef _WIN32
+    _putenv_s("OKAY_OWN_WAV", v ? v : "");
+#else
+    if (v) setenv("OKAY_OWN_WAV", v, 1); else unsetenv("OKAY_OWN_WAV");
+#endif
+}
+static bool Same(const okay::wav::PlaybackClip& a, const okay::wav::PlaybackClip& b) {
+    return a.format == b.format && a.channels == b.channels && a.sampleRate == b.sampleRate && a.bytes == b.bytes && !a.bytes.empty();
+}
+static bool SameAsOld(const OldClip& o, const okay::wav::PlaybackClip& c) {
+    const bool f32 = o.spec.format == AUDIO_F32SYS;
+    return o.ok && f32 == (c.format == okay::wav::PlaybackFormat::F32) && int(o.spec.channels) == c.channels &&
+           o.spec.freq == c.sampleRate && o.bytes == c.bytes;
+}
+static void TestSelection() {
+    RUN_SUITE("Which reader: SDL by default, ours with OKAY_OWN_WAV=1 (both paths)");
+    Bytes s16; for (int i = 0; i < 4000; ++i) P16(s16, unsigned(i * 37) & 0xFFFF);
+    Bytes u8; for (int i = 0; i < 300; ++i) u8.push_back(std::uint8_t(i * 7));
+    Bytes s24; for (int i = 0; i < 300; ++i) { const std::int32_t v = (i - 150) * 50000; s24.push_back(v & 255); s24.push_back((v >> 8) & 255); s24.push_back((v >> 16) & 255); }
+    Bytes f32; for (int i = 0; i < 300; ++i) { float v = float(i - 150) / 200.0f; std::uint32_t u; std::memcpy(&u, &v, 4); P32(f32, u); }
+    struct M { const char* name; Bytes wav; };
+    std::vector<M> made = {{"okay_lww_sel_s16.wav", MakeWav(1, 1, 16000, 16, s16)}, {"okay_lww_sel_u8.wav", MakeWav(1, 2, 8000, 8, u8)},
+                           {"okay_lww_sel_s24.wav", MakeWav(1, 1, 22050, 24, s24)}, {"okay_lww_sel_f32.wav", MakeWav(3, 1, 44100, 32, f32)}};
+    std::vector<std::string> paths;
+    for (const M& m : made) { paths.push_back(TempPath(m.name)); CHECK(Put(paths.back(), m.wav)); }
+    paths.push_back(std::string(OKAY_SOURCE_DIR) + "/tests/data/audio/wav_ffmpeg/ima_stereo.wav");
+    paths.push_back(std::string(OKAY_SOURCE_DIR) + "/examples/own_wav/mulaw_tone.wav");
+    int checked = 0;
+    for (const std::string& p : paths) {
+        const OldClip old = OldLauncherLoad(p);   // raw SDL_LoadWAV + the old launcher conversion, whatever the switch says
+        okay::wav::PlaybackClip ours, sdl, pick0, pick1, pickDefault;
+        CHECK(okay::launcher::LoadVoiceClipFile(p, ours));
+        SetOwnWav("0");
+        CHECK(!okay::wav::OwnWavEnabled());
+        CHECK(okay::launcher::LoadVoiceClipSdl(p, sdl));
+        CHECK(okay::launcher::LoadVoiceClip(p, pick0));
+        CHECK(SameAsOld(old, sdl));     // the SDL path is exactly what the launcher always played
+        CHECK(Same(pick0, sdl));        // OKAY_OWN_WAV=0: the launcher takes the SDL path
+        SetOwnWav("1");
+        CHECK(okay::wav::OwnWavEnabled());
+        CHECK(okay::launcher::LoadVoiceClip(p, pick1));
+        CHECK(Same(pick1, ours));       // OKAY_OWN_WAV=1: our decoder
+        SetOwnWav(nullptr);             // no variable: the build default (CMake OKAY_OWN_WAV, off unless set)
+        CHECK(okay::launcher::LoadVoiceClip(p, pickDefault));
+        CHECK(Same(pickDefault, okay::wav::OwnWavEnabled() ? ours : sdl));
+        ++checked;
+    }
+    std::cout << "  this build's default (no variable): " << (okay::wav::OwnWavEnabled() ? "our decoder (OKAY_OWN_WAV=ON)" : "SDL") << "\n";
+    // A broken file fails on both paths, and leaves nothing behind.
+    const std::string bad = TempPath("okay_lww_sel_bad.wav");
+    CHECK(Put(bad, Bytes{'R', 'I', 'F', 'F', 1, 0, 0, 0, 'W', 'A', 'V', 'E'}));
+    for (const char* v : {"0", "1"}) {
+        SetOwnWav(v);
+        okay::wav::PlaybackClip c; std::string e;
+        CHECK(!okay::launcher::LoadVoiceClip(bad, c, &e) && c.bytes.empty() && !e.empty());
+    }
+    SetOwnWav(nullptr);
+    std::cout << "  " << checked << " files: default and OKAY_OWN_WAV=0 give the SDL result byte for byte, OKAY_OWN_WAV=1 gives ours\n";
+    for (std::size_t i = 0; i < made.size(); ++i) std::remove(paths[i].c_str());
+    std::remove(bad.c_str());
+}
+
 // ---- Window seam over a raw SDL window -------------------------------------------------------------------------
 static void TestWindowSeam() {
     RUN_SUITE("okay::platform::WrapSdl2Window answers what the launcher asked SDL (dummy video driver)");
@@ -326,6 +392,7 @@ int main(int, char**) {
     TestMadeWavs();
     TestTruncated();
     TestBars();
-    TestWindowSeam();
+    TestWindowSeam();      // SDL_Init(video) here; SDL_LoadWAV needs no init
+    TestSelection();
     TEST_MAIN_RESULT();
 }

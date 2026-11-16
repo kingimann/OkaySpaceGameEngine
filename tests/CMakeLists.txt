@@ -3529,7 +3529,7 @@ add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_S
 if(SDL2_FOUND)
     add_executable(test_launcher_wav_window test_launcher_wav_window.cpp)
     target_link_libraries(test_launcher_wav_window PRIVATE okay::engine)
-    target_include_directories(test_launcher_wav_window PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/launcher)
+    target_include_directories(test_launcher_wav_window PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared)
     target_compile_definitions(test_launcher_wav_window PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     if(TARGET SDL2::SDL2)
         target_link_libraries(test_launcher_wav_window PRIVATE SDL2::SDL2)

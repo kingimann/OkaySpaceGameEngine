@@ -8,7 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
-#include "VoiceClipLoad.hpp"   // voice clips: WAV read by our own decoder (okay::wav), no SDL_LoadWAV
+#include "VoiceClipLoadSdl.hpp"   // voice clips: SDL_LoadWAV by default, our own decoder with OKAY_OWN_WAV=1
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "LauncherThreads.hpp"   // threads, mutexes and atomics: our own (CoreThreads), in place of SDL's
 #include "AppIcon.hpp"
@@ -5309,7 +5309,7 @@ struct VoiceClip {
     int channels = 1, freq = 0;
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
-    std::vector<std::uint8_t> owned; // the clip's samples, as our WAV reader gave them (launcher/VoiceClipLoad.hpp)
+    std::vector<std::uint8_t> owned; // the clip's samples, as the WAV reader gave them (launcher/VoiceClipLoadSdl.hpp)
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
     VoiceClip() = default;
     ~VoiceClip() = default;          // `owned` frees the samples; nothing of SDL's is held (#718)
@@ -5402,9 +5402,9 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     std::error_code ec;
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
-        // Our own WAV reader (no SDL): 16-bit or float samples, ready for the device, in the clip's own storage.
+        // SDL_LoadWAV (default) or our own decoder (OKAY_OWN_WAV=1): 16-bit or float samples, ready for the device.
         okay::wav::PlaybackClip wav;
-        if (!failed && okay::launcher::LoadVoiceClipFile(cache.string(), wav)) {
+        if (!failed && okay::launcher::LoadVoiceClip(cache.string(), wav)) {
             // Real waveform: peak per slice (16-bit clips; float clips keep the stub).
             float peaks[kVoiceBars] = {};
             const bool real = okay::launcher::VoicePeakBars(wav, peaks, kVoiceBars);

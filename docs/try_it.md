@@ -1338,6 +1338,22 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## FBX reader speed and memory (developer bench, not part of the Windows release)
+
+Compares our own FBX reader with ufbx on the same files: time and peak memory of the reader alone and of the whole import.
+It is a program in the test build, not something in `OkaySpace.exe`, so it cannot be tried from the release. Linux (or any
+build with tests on; the memory columns need glibc, elsewhere they print `-`):
+
+1. Build it: `cmake -B build -DOKAY_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release`, then `ninja -C build bench_fbx_reader`.
+2. Make the large test files: `python3 scripts/gen_fbx_bench.py /tmp/fbxbench` (four files, 2.5 to 4.3 MB, a few seconds).
+3. Run it: `build/tests/bench_fbx_reader /tmp/fbxbench` (or a folder of your own `.fbx` files; with no argument it reads
+   `$OKAY_MODEL_CORPUS` and the fixtures in `tests/assets/fbx`).
+4. You should see a table, one row per file: milliseconds and peak MB for our reader and for ufbx, the ratio, the same for
+   the whole import, then totals and the five worst ratios. On the 204,800-triangle grid expect our import within about
+   1.2x of ufbx's and our import peak lower than ufbx's (`docs/own_fbx_reader.md`, "Speed and memory").
+5. `bench_fbx_reader --digest <files>` prints one hash per file of everything our reader produced; run it before and after
+   a change to the reader to show the output did not change.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -5,6 +5,8 @@
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
+#include <cmath>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -48,6 +50,60 @@ int main() {
         std::size_t before = c.KeyCount();
         c.Reduce();
         CHECK(before == 122 && c.KeyCount() == 4);
+    }
+
+    // ---- Reduce skips its recheck on runs of equal values (a speed change for baked imports, docs/own_fbx_reader.md):
+    // the kept keys must be exactly the ones the plain rule keeps (every key between two kept keys checked against the
+    // straight line), on curves with long flat runs, steps, ramps, repeated times and non-finite values.
+    {
+        auto reference = [](const std::vector<Keyframe>& k, float tol) {
+            std::vector<Keyframe> out; out.push_back(k[0]);
+            std::size_t a = 0;
+            while (a + 1 < k.size()) {
+                std::size_t b = a + 1;
+                while (b + 1 < k.size()) {
+                    const std::size_t c = b + 1;
+                    const float span = k[c].time - k[a].time;
+                    bool fits = span > 0.0f;
+                    for (std::size_t i = a + 1; i < c && fits; ++i) {
+                        const float u = (k[i].time - k[a].time) / span;
+                        if (std::fabs(k[a].value + (k[c].value - k[a].value) * u - k[i].value) > tol) fits = false;
+                    }
+                    if (!fits) break;
+                    b = c;
+                }
+                out.push_back(k[b]); a = b;
+            }
+            return out;
+        };
+        unsigned seed = 12345;
+        auto rnd = [&]() { seed = seed * 1103515245u + 12345u; return (seed >> 16) & 0x7FFF; };
+        int same = 0, runs = 0;
+        for (int trial = 0; trial < 400; ++trial) {
+            AnimationCurve cv; cv.smooth = false;
+            float t = 0.0f, v = 0.0f;
+            const int n = 3 + (int)(rnd() % 300);
+            for (int i = 0; i < n; ++i) {
+                const int kind = (int)(rnd() % 10);
+                if (kind < 5) {}                                   // flat: same value again
+                else if (kind < 7) v += 0.01f * (float)(rnd() % 7);  // small steps
+                else if (kind == 7) v = -0.0f;                     // signed zero
+                else if (kind == 8 && trial % 7 == 0) v = (rnd() % 2) ? INFINITY : NAN;
+                else v = (float)(rnd() % 100) * 0.5f;
+                if (rnd() % 20) t += 1.0f / 30.0f;                 // sometimes a repeated time
+                cv.AddKey(t, v);
+            }
+            const std::vector<Keyframe> want = reference(cv.Keys(), 0.0005f);
+            cv.Reduce(0.0005f);
+            bool eq = want.size() == cv.Keys().size();
+            for (std::size_t i = 0; eq && i < want.size(); ++i)
+                eq = std::memcmp(&want[i], &cv.Keys()[i], sizeof(Keyframe)) == 0;
+            same += eq; ++runs;
+        }
+        CHECK(same == runs);
+        AnimationCurve flat; flat.smooth = false;              // a long held track: two keys left, and quickly
+        for (int i = 0; i < 200000; ++i) flat.AddKey((float)i / 30.0f, 1.0f);
+        CHECK(flat.Reduce(0.0005f) == 199998);
     }
 
     // ---- Explicit length: short tracks hold instead of looping on their own span.

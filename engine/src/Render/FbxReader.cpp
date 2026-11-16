@@ -11,6 +11,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
+#include <type_traits>
 
 namespace okay {
 namespace fbx {
@@ -36,6 +38,38 @@ bool Inflate(const std::uint8_t* data, std::size_t n, std::vector<std::uint8_t>&
 // Binary FBX
 // ============================================================================
 namespace {
+
+// Reads element k of a little-endian array of T stored at an unaligned address, as a double.
+template <class T> struct LoadIter {
+    using iterator_category = std::random_access_iterator_tag;
+    using value_type = double; using difference_type = std::ptrdiff_t; using pointer = const double*; using reference = double;
+    const std::uint8_t* p;
+    double operator*() const {
+        if constexpr (std::is_same_v<T, bool>) return *p != 0 ? 1.0 : 0.0;
+        else { T x; std::memcpy(&x, p, sizeof(T)); return (double)x; }
+    }
+    static constexpr std::size_t kSize = std::is_same_v<T, bool> ? 1 : sizeof(T);
+    LoadIter& operator++() { p += kSize; return *this; }
+    LoadIter operator++(int) { LoadIter r = *this; p += kSize; return r; }
+    LoadIter& operator--() { p -= kSize; return *this; }
+    LoadIter operator--(int) { LoadIter r = *this; p -= kSize; return r; }
+    LoadIter& operator-=(difference_type n) { p -= n * (difference_type)kSize; return *this; }
+    LoadIter operator-(difference_type n) const { LoadIter r = *this; r -= n; return r; }
+    LoadIter& operator+=(difference_type n) { p += n * (difference_type)kSize; return *this; }
+    LoadIter operator+(difference_type n) const { LoadIter r = *this; r += n; return r; }
+    difference_type operator-(const LoadIter& o) const { return (p - o.p) / (difference_type)kSize; }
+    double operator[](difference_type n) const { return *(*this + n); }
+    bool operator==(const LoadIter& o) const { return p == o.p; }
+    bool operator!=(const LoadIter& o) const { return p != o.p; }
+    bool operator<(const LoadIter& o) const { return p < o.p; }
+    bool operator>(const LoadIter& o) const { return p > o.p; }
+    bool operator<=(const LoadIter& o) const { return p <= o.p; }
+    bool operator>=(const LoadIter& o) const { return p >= o.p; }
+};
+template <class T> void Fill(std::vector<double>& out, const std::uint8_t* src, std::uint32_t cnt) {
+    const LoadIter<T> b{src};
+    out.assign(b, b + (std::ptrdiff_t)cnt);
+}
 
 struct Reader {
     const std::uint8_t* p; std::size_t n; const Limits* lim; Document* doc;
@@ -89,18 +123,15 @@ struct Reader {
                     return Fail("unknown array encoding");
                 }
                 arrayBytes += raw;
-                out.arr.resize(cnt);
-                for (std::uint32_t k = 0; k < cnt; ++k) {
-                    double v;
-                    switch (t) {
-                        case 'd': { double x; std::memcpy(&x, src + (std::size_t)k * 8, 8); v = x; break; }
-                        case 'f': { float x; std::memcpy(&x, src + (std::size_t)k * 4, 4); v = x; break; }
-                        case 'l': { std::int64_t x; std::memcpy(&x, src + (std::size_t)k * 8, 8); v = (double)x; break; }
-                        case 'i': { std::int32_t x; std::memcpy(&x, src + (std::size_t)k * 4, 4); v = x; break; }
-                        case 'c': v = src[k]; break;   // byte array (written by newer SDKs, e.g. thumbnails)
-                        default:  v = src[k] != 0; break;
-                    }
-                    out.arr[k] = v;
+                // One allocation at the final size, each element converted as it is constructed (no zero-filled
+                // array that is then overwritten).
+                switch (t) {
+                    case 'd': Fill<double>(out.arr, src, cnt); break;
+                    case 'f': Fill<float>(out.arr, src, cnt); break;
+                    case 'l': Fill<std::int64_t>(out.arr, src, cnt); break;
+                    case 'i': Fill<std::int32_t>(out.arr, src, cnt); break;
+                    case 'c': Fill<std::uint8_t>(out.arr, src, cnt); break;   // byte array (written by newer SDKs, e.g. thumbnails)
+                    default:  Fill<bool>(out.arr, src, cnt); break;           // 'b': any non-zero byte is true
                 }
                 out.type = 'a';
                 pos += clen;
@@ -177,6 +208,51 @@ bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std:
 // ============================================================================
 namespace {
 
+// Exact fast path for the plain decimal numbers that fill ASCII arrays ("12", "-0.5", "1.25e-3"). When the digits form
+// an integer below 2^53 and the power of ten is at most 22, both are exact doubles, so ONE multiplication or division
+// gives the correctly rounded result (the classic observation in W. D. Clinger, "How to read floating point numbers
+// accurately", 1990), which is the value strtod returns. Anything else (more digits, a larger exponent, "inf", hex,
+// a malformed token) returns false and the caller uses strtod as before. No locale is involved: the point is '.'.
+bool FastDecimal(const char* p, std::size_t n, double& out) {
+    static const double kPow10[23] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+                                      1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+    std::size_t i = 0;
+    bool neg = false;
+    if (i < n && (p[i] == '+' || p[i] == '-')) { neg = p[i] == '-'; ++i; }
+    std::uint64_t m = 0; int digits = 0, scale = 0; bool any = false;
+    while (i < n && p[i] >= '0' && p[i] <= '9') {
+        any = true;
+        if (m || p[i] != '0') { if (++digits > 15) return false; m = m * 10 + (std::uint64_t)(p[i] - '0'); }
+        ++i;
+    }
+    if (i < n && p[i] == '.') {
+        ++i;
+        while (i < n && p[i] >= '0' && p[i] <= '9') {
+            any = true;
+            if (m || p[i] != '0') { if (++digits > 15) return false; m = m * 10 + (std::uint64_t)(p[i] - '0'); }
+            --scale; ++i;
+        }
+    }
+    if (!any) return false;
+    if (i < n && (p[i] == 'e' || p[i] == 'E')) {
+        ++i;
+        bool eneg = false;
+        if (i < n && (p[i] == '+' || p[i] == '-')) { eneg = p[i] == '-'; ++i; }
+        if (i >= n || p[i] < '0' || p[i] > '9') return false;
+        int e = 0;
+        while (i < n && p[i] >= '0' && p[i] <= '9') { if (e > 10000) return false; e = e * 10 + (p[i] - '0'); ++i; }
+        scale += eneg ? -e : e;
+    }
+    if (i != n) return false;
+    double v = (double)m;   // exact: m < 10^15 < 2^53
+    if (m != 0) {
+        if (scale < -22 || scale > 22) return false;
+        v = scale < 0 ? v / kPow10[-scale] : v * kPow10[scale];
+    }
+    out = neg ? -v : v;
+    return true;
+}
+
 struct Text {
     const char* s; std::size_t n, pos = 0; const Limits* lim; Document* doc; std::string err;
     std::size_t arrayBytes = 0;
@@ -240,10 +316,13 @@ struct Text {
             const std::size_t b = pos;
             while (pos < n && (IsIdent(s[pos]))) ++pos;
             if (pos == b) return Fail("bad value in array block");
-            const std::string tok(s + b, pos - b);
-            char* end = nullptr;
-            const double d = detail::StrToD(tok.c_str(), &end);
-            if (!end || *end) return Fail("bad number in array block");
+            double d;
+            if (!FastDecimal(s + b, pos - b, d)) {
+                const std::string tok(s + b, pos - b);
+                char* end = nullptr;
+                d = detail::StrToD(tok.c_str(), &end);
+                if (!end || *end) return Fail("bad number in array block");
+            }
             out.arr.push_back(d);
             if (out.arr.size() > lim->maxArrayBytes / 8) return Fail("arrays exceed the size limit");
         }

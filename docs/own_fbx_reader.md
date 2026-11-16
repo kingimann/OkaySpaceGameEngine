@@ -13,6 +13,7 @@ Written from the public description of the FBX format, with no code from ufbx, t
 | `engine/src/Render/FbxScene.cpp` | Element tree to scene: nodes, transforms, meshes, skins, blend shapes, materials, textures, baked animation |
 | `engine/src/Render/ModelImport.cpp` | The adapter (`ImportFbxSceneGraphOwn`, `ImportFbxMergedOwn`): builds the same GameObjects, `MeshRenderer`, `SkinnedMesh`, `BlendShapes` and `ModelAnimator` clips the ufbx path builds |
 | `scripts/gen_fbx_fixtures.py` | Writes the fixtures in `tests/assets/fbx/` (binary 7.4, binary 7.5, ASCII) |
+| `tests/bench_fbx_reader.cpp`, `scripts/gen_fbx_bench.py` | Speed and peak-memory bench against ufbx, and the large synthetic files it reads (section "Speed and memory") |
 
 The reader files use the standard library and one header-only file of our own, `engine/include/okay/Core/Inflate.hpp` (the engine's shared inflate; no `<mutex>`/`<thread>`, no engine library), so the hostile-input test still builds them on their own under sanitizers (it only needs `engine/include` on the include path).
 
@@ -68,7 +69,85 @@ Say plainly what a user might trip over:
 - Animation: constant (step) curves are baked at 30 Hz, so a jump becomes a one-frame ramp (ufbx emits a key pair at the jump); we emit every channel of an animated node at every sample (ufbx emits only animated channels with fewer keys); custom tangent weights and velocities are ignored; TCB tangents are treated like auto; auto-clamp is approximated; layer blending is simplified (first layer overrides, later layers add or lerp by weight, rotations are blended as Euler angles); only translation, rotation, scaling and `DeformPercent` are animated (not pivots, pre/post rotation or other properties); a take plays the span its `LocalStart` / `LocalStop` give (several takes can share one set of curves), else the range of its keys; ufbx keeps keys beyond the span in its clip, ours cuts there; a take whose curves animate only custom properties gives no clip (ufbx gives a constant one); no key reduction (ufbx reduces keys; the engine's `OptimizeClips` runs afterwards on both paths).
 - Left-handed source axis systems: the root node gets the (mirroring) axis matrix and nothing else is done about winding; untested against ufbx. `Transform` is assumed to be bone-relative as above; an exporter that writes the mesh's world matrix there instead would skin wrongly (ufbx makes the same assumption, but this has only been checked on our own fixtures).
 - No repair of damaged files. ufbx recovers from many malformed files; ours rejects them. Big-endian files, zlib checksums (Adler-32 is not verified), encrypted FBX and streaming are not supported.
-- Not benchmarked. Nothing has been measured against ufbx for speed or memory.
+- Slower than ufbx: about 3 times on the reader alone and up to 2 times on the whole import (section "Speed and memory" below). Animated files are the worst case for the reader alone, because ours bakes every animated node at 30 Hz.
+
+## Speed and memory
+
+Measured on 2026-11-16 with `bench_fbx_reader` (`tests/bench_fbx_reader.cpp`; how to run it: `docs/try_it.md`, "FBX reader
+speed and memory"). Linux, GCC 13, Release (`-O3`), one core of a shared 4-core cloud machine while other builds ran, so a
+single number can be off by 10 to 20 %; the ratios were stable over repeated runs. **Not measured on Windows.**
+
+What each column is: **load** is the reader alone, file bytes already in memory, into its own structures
+(`okay::fbx::LoadMemory`: element tree plus the scene build with baked clips, against `ufbx_load_memory` with the engine's
+ufbx options). **Import** is `ImportModelScene` through the seam, with our reader switched on and off: file read, reader,
+GameObjects, meshes, skins and clips, the work an editor import does. **Peak** is the most heap the call had allocated at one
+time, counted by replacing `malloc`/`free` in the bench (so ufbx's C allocations and our `new` count the same way). Times
+are medians of at least 7 runs.
+
+Files: the 42 readable FBX files of the outside corpus (`docs/model_corpus.md`; the 43rd is the damaged file both reject),
+the 12 fixtures, and four large synthetic files from `scripts/gen_fbx_bench.py` (not committed): a 204,800-triangle grid
+(binary 7.5), a 51,200-triangle grid in ASCII, 3,000 nodes each with its own box, and a 64-bone skinned rig with 1,800-key
+curves on every bone (345,600 keys, 60 seconds).
+
+**Totals** (sum of the medians; before = the code on main, after = this change):
+
+| Set | Our load, before | Our load, after | ufbx load | Our import, before | Our import, after | ufbx import | Largest peak, our load / ufbx load | Largest peak, our import / ufbx import |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 54 real files and fixtures (12 MB) | 128.9 ms (4.8x) | 77.4 ms (2.9x) | 26.6 ms | 241.6 ms (4.6x) | 103.4 ms (1.9x) | 55.1 ms | 9.5 MB / 3.8 MB | 13.2 MB / 24.1 MB |
+| 4 synthetic files (13 MB) | 333.1 ms (4.8x) | 210.3 ms (3.2x) | 65.6 ms | 1,316 ms (5.9x) | 303.0 ms (1.4x) | 213.4 ms | 56.4 MB / 29.3 MB | 83.2 MB / 120.3 MB |
+
+**The large files** (after):
+
+| File | KB | Our load | ufbx load | Ratio | Our peak | ufbx peak | Our import | ufbx import | Ratio | Import peak ours / ufbx |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| grid, 204,800 triangles, binary | 2,488 | 66.0 ms | 18.0 ms | 3.7x | 56.4 MB | 19.8 MB | 116.1 ms | 97.1 ms | 1.2x | 83.2 / 120.3 MB |
+| grid, 51,200 triangles, ASCII | 3,486 | 24.3 ms | 8.8 ms | 2.8x | 14.1 MB | 9.2 MB | 31.6 ms | 19.8 ms | 1.6x | 20.8 / 30.3 MB |
+| 3,000 nodes and boxes | 4,262 | 51.1 ms | 19.9 ms | 2.6x | 41.3 MB | 29.3 MB | 63.2 ms | 32.1 ms | 2.0x | 45.5 / 29.3 MB |
+| 64-bone rig, 345,600 keys | 3,127 | 68.8 ms | 18.8 ms | 3.7x | 32.0 MB | 24.5 MB | 92.0 ms | 64.4 ms | 1.4x | 35.1 / 28.3 MB |
+| `pyramob.fbx` (binary, the largest real file) | 826 | 15.4 ms | 4.9 ms | 3.2x | 9.2 MB | 3.2 MB | 17.8 ms | 11.5 ms | 1.6x | 13.1 / 24.1 MB |
+| `pyramob.fbx` (ASCII) | 3,798 | 17.5 ms | 6.3 ms | 2.8x | 9.5 MB | 3.8 MB | 26.3 ms | 14.3 ms | 1.8x | 13.2 / 24.1 MB |
+
+**Outliers.** Worst ratio on a real file: `anims_with_full_rotations_between_keys.fbx`, load 10.3 ms against 0.6 ms (17x)
+and import 15.5 ms against 2.0 ms (7.7x; it was 63 ms, 35x, before this change). The time is the 30 Hz bake: every
+animated node gets a full transform (Euler rotations, about 10 matrix products, a decomposition) at every sample, while
+ufbx keeps the file's keys. The fixtures are smaller than 15 KB: on the eight without animation or PBR materials ours takes
+0.74 to 1.06 times ufbx's time, on the animated ones and `pbr_bin.fbx` 2.4 to 3 times (0.08 to 0.16 ms), and on all of them
+ours needs less memory (ufbx starts at about 0.1 MB). Worst peak-memory ratio on the reader alone: 2.9x (`pyramob.fbx`,
+the 204,800-triangle grid). On the import, which is what a user waits for, ours uses **less** peak memory than the ufbx
+path on every large file except the 3,000-node one (1.6x), because the ufbx path holds the whole ufbx scene while it builds
+the engine meshes.
+
+**What was slow, and fixed** (each output-preserving: `bench_fbx_reader --digest` hashes every field our reader produces,
+bit for bit, and the hash of all 58 files is the same before and after; the agreement tests below pass unchanged):
+
+1. **Key reduction was quadratic on held tracks** (`AnimationCurve::Reduce`, shared by every import path): extending a
+   straight segment re-checked every key in it, so a constant track of n keys cost n²/2 checks. Ours bakes every channel of
+   an animated node, so most tracks are constant: 86 % of the rig import was here. A run of equal values now skips the
+   re-check (the result is provably the same; `anim_clip_tools` compares it with the plain rule on 400 random curves with
+   flat runs, signed zeros, infinities, NaN and repeated times). The rig import went from 928 ms to 92 ms.
+2. **Mesh corners grew by doubling.** Each part's corner list is now allocated once at its final size (the triangle count
+   is known after one pass over the polygons). Peak on the 204,800-triangle grid: 103.5 MB to 56.4 MB.
+3. **Vertex de-duplication allocated a string per corner** in the own import path; it is now an open-addressing table of
+   indices (same first-occurrence order).
+4. **zlib arrays grew by doubling and were zero-filled twice**: the decoded size is known from the array header and is now
+   allocated once, and the numbers are converted as the array is built.
+5. **ASCII numbers** went through a `std::string` and `strtod` each; plain decimals up to 15 digits with a power of ten up
+   to 22 are now converted exactly by one multiplication or division (Clinger's observation, 1990), anything else still
+   goes to `strtod`. Checked bit for bit against `strtod` on 10 million generated tokens.
+6. **Smaller ones:** pre- and post-rotation are computed once per node for a bake instead of once per sample; the shared
+   inflate refills its bit buffer 8 bytes at a time (`inflate_differential` and `own_http_inflate` pass); `LoadFile` reads
+   the file in one call.
+
+**What is still slower, and why** (not fixed here):
+
+- The reader alone stays about 3x ufbx. The design has two passes: a general element tree in which every number of every
+  array is stored as a `double` (an index array takes twice its file size, a float array twice), then the scene build. ufbx
+  reads in one pass into typed arrays. Typed arrays in `Prop` would change the reader's public structs; that is the next
+  step if the time matters.
+- Our scene stores meshes as triangle corners (48 bytes each: position, normal, UV, colour, control point), not indexed
+  vertices: the grid's 614,400 corners are 29.5 MB. The import de-duplicates them afterwards.
+- Baking at 30 Hz (above) costs time on long clips and on files with many animated nodes. ufbx does not bake.
+- The shared inflate decodes 30 to 50 % more instructions per byte than ufbx's on float arrays.
 
 ## Tests
 

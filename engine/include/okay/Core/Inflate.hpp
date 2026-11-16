@@ -76,6 +76,14 @@ struct BitReader {
 
     BitReader(const uint8_t* d, size_t n) : src(d), len(n) {}
     void Refill() {
+        if (cnt <= 56 && len - pos >= 8) {   // whole bytes at once while 8 input bytes remain: one load, not a loop
+            uint64_t w;
+            std::memcpy(&w, src + pos, 8);   // little-endian host assumed (as everywhere in the engine)
+            const int take = (63 - cnt) >> 3;   // bytes that fit above `cnt`: 0 to 7, so the shift below is < 64
+            buf |= (w & ((uint64_t(1) << (take * 8)) - 1)) << cnt;   // keep the bits above the new `cnt` zero
+            pos += size_t(take); cnt += take * 8;
+            return;
+        }
         while (cnt <= 56 && pos < len) { buf |= uint64_t(src[pos++]) << cnt; cnt += 8; }
     }
     uint32_t Take(int n) {             // n <= 16

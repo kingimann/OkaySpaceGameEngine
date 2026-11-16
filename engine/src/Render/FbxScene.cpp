@@ -579,10 +579,15 @@ struct Builder {
     struct XProps { double t[3], r[3], s[3], pre[3], post[3], roff[3], rp[3], soff[3], sp[3], gt[3], gr[3], gs[3]; int order; };
     std::vector<XProps> xp;
 
-    static Mat LocalMatrix(const XProps& x) {
+    /// Pre-rotation and inverse post-rotation, which animation never changes: computed once per node when a clip is
+    /// baked (the same values LocalMatrix would compute every sample).
+    struct FixedRot { Mat pre, postInv; };
+    static FixedRot FixedRotations(const XProps& x) { return {Euler(x.pre, 0), InvertOrIdentity(Euler(x.post, 0))}; }
+    static Mat LocalMatrix(const XProps& x) { const FixedRot f = FixedRotations(x); return LocalMatrix(x, f); }
+    static Mat LocalMatrix(const XProps& x, const FixedRot& fixed) {
         const Mat T = Translate(x.t[0], x.t[1], x.t[2]), Roff = Translate(x.roff[0], x.roff[1], x.roff[2]);
         const Mat Rp = Translate(x.rp[0], x.rp[1], x.rp[2]), RpI = Translate(-x.rp[0], -x.rp[1], -x.rp[2]);
-        const Mat Rpre = Euler(x.pre, 0), R = Euler(x.r, x.order), RpostI = InvertOrIdentity(Euler(x.post, 0));
+        const Mat& Rpre = fixed.pre; const Mat R = Euler(x.r, x.order); const Mat& RpostI = fixed.postInv;
         const Mat Soff = Translate(x.soff[0], x.soff[1], x.soff[2]);
         const Mat Sp = Translate(x.sp[0], x.sp[1], x.sp[2]), SpI = Translate(-x.sp[0], -x.sp[1], -x.sp[2]);
         const Mat S = ScaleM(x.s[0], x.s[1], x.s[2]);
@@ -1026,10 +1031,12 @@ struct Builder {
             for (auto& kv : perNode) {
                 NodeAnim na; na.node = kv.first;
                 const XProps base = xp[(std::size_t)kv.first];
+                const FixedRot fixed = FixedRotations(base);   // samples change only t, r and s
+                na.translation.reserve(times.size()); na.rotation.reserve(times.size()); na.scale.reserve(times.size());
                 for (double t : times) {
                     XProps x = base;
                     evalVec(kv.second, 0, base.t, t, x.t); evalVec(kv.second, 1, base.r, t, x.r); evalVec(kv.second, 2, base.s, t, x.s);
-                    const Mat local = conv.Local(LocalMatrix(x), sc.nodes[(std::size_t)kv.first].parent < 0);
+                    const Mat local = conv.Local(LocalMatrix(x, fixed), sc.nodes[(std::size_t)kv.first].parent < 0);
                     double tr[3], q[4], s[3]; Decompose(local, tr, q, s);
                     Key3 kt; kt.time = t; for (int k = 0; k < 3; ++k) kt.v[k] = tr[k];
                     Key4 kq; kq.time = t; for (int k = 0; k < 4; ++k) kq.v[k] = q[k];

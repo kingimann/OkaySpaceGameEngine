@@ -9,6 +9,21 @@ v2.877.0
     was removed. Saved graphs are not affected, and Favourites and Recents
     keep working. The old topic names are still search words, so searching for
     an old name finds the node in its new place.
+  - Project panel right-click menus (View > Panels > Project): more items,
+    every greyed-out item says why when you hover it, and opening files is
+    safer. Files that can run code (exe, bat, cmd, scr, msi, ps1, vbs, js, sh,
+    py, Office macro files and more) are never opened by default: they have no
+    "Open in External Editor", and "Open with Default App" is greyed out with
+    the reason. Names with $, %, quotes or a network path now open correctly.
+    Duplicate and Reimport on a selection that includes a folder and a file
+    inside it copy the folder once, as one Ctrl+Z step.
+  - Crash reports: when the editor crashes it now writes a much fuller report
+    (version, Windows, graphics card, the last steps and Console lines). The
+    launcher (Settings > Crash reports) shows exactly what would be sent
+    (names, folders and emails removed), tells you once that a sent report
+    becomes a public GitHub issue, and sends it for you. The sending part
+    does nothing until a one-time server setup is done; the local report
+    works now.
 
   Under the hood
   - One inflate (zip-style decompression) decoder instead of three copies:

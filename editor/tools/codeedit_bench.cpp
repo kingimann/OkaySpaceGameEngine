@@ -6,7 +6,9 @@
 //                                          (default 1000 10000 100000); prints a Markdown table
 //   codeedit_bench shots <out-directory>   the same script with colouring and an error marker in both editors:
 //                                          codeedit-imgui.png, codeedit-own.png (launcher look, as in the editor),
-//                                          codeedit-own-classic.png (OkayUI's 8x8 font)
+//                                          codeedit-own-classic.png (OkayUI's 8x8 font),
+//                                          and the hover help of both over a built-in and over the error:
+//                                          codeedit-{imgui,own}-tip-{word,error}.png
 //
 // What is timed is the widget's own frame on the CPU: ImGui::NewFrame .. ImGui::Render for the ImGui editor, OkayUI::BeginFrame ..
 // OkayUI::EndFrameData for ours. Rasterising is not timed (a GPU does that in the real editor). Memory is the bytes the process
@@ -483,6 +485,9 @@ const char* kShotScript =
     "    }\n"
     "}\n";
 
+struct ShotTip { const char* name; int line, col; };   // 0-based line, a column inside the word
+const ShotTip kShotTips[] = {{"word", 13, 10}, {"error", 9, 10}};
+
 int Shots(const std::string& dir, const std::string& suffix) {
     const std::string prefix = "codeedit-";
     const int W = 760, H = 400;
@@ -502,7 +507,7 @@ int Shots(const std::string& dir, const std::string& suffix) {
         te.SetErrorMarkers(marks);
         te.SetBreakpoints({14});
         te.SetCursorPosition(TextEditor::Coordinates(6, 12));
-        for (int i = 0; i < 4; ++i) {
+        auto frames = [&](int n) { for (int i = 0; i < n; ++i) {
             ImGui_ImplSDLRenderer2_NewFrame();
             ImGui::NewFrame();
             ImGui::SetNextWindowPos(ImVec2(x, y));
@@ -518,10 +523,17 @@ int Shots(const std::string& dir, const std::string& suffix) {
             SDL_RenderClear(rig.ren);
             ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), rig.ren);
             SDL_RenderFlush(rig.ren);
-        }
+        } };
+        frames(4);
         std::printf("ImGuiColorTextEdit: row height %.3f, character width %.3f, text starts %.1f px right of the content origin\n",
                     te.RowHeight(), te.CharWidth(), te.TextStartX() - te.ContentOrigin().x);
         ok = rig.Save(dir + "/" + prefix + "imgui" + suffix + ".png") && ok;
+        // the hover help: over the built-in `rotate` (line 14) and over the error's line (line 10)
+        for (const ShotTip& t : kShotTips) {
+            ImGui::GetIO().AddMousePosEvent(te.TextStartX() + t.col * te.CharWidth() + 3.0f, te.ContentOrigin().y + t.line * te.RowHeight() + 10.0f);
+            frames(3);
+            ok = rig.Save(dir + "/" + prefix + "imgui-tip-" + t.name + suffix + ".png") && ok;
+        }
     }
     {   // ours as the editor shows it: launcher look, hosted in the ImGui window (drawn into its draw list)
         HostedRig rig(W, H);
@@ -534,9 +546,17 @@ int Shots(const std::string& dir, const std::string& suffix) {
         se.Edit().Focus();
         se.SetCursorPosition(scripteditor::Coord(6, 12));
         for (int i = 0; i < 4; ++i) rig.Frame(se, true);
+        const ImVec2 origin(se.ContentOrigin().x, se.ContentOrigin().y);
         std::printf("OkayUI::CodeEdit (launcher look, hosted in ImGui): row height %.3f, character width %.3f, text starts %.1f px right of the content origin\n",
                     se.RowHeight(), se.CharWidth(), se.TextStartX() - se.ContentOrigin().x);
         ok = rig.im.Save(dir + "/" + prefix + "own" + suffix + ".png") && ok;
+        for (const ShotTip& t : kShotTips) {   // the same pointer places; ours draws the help as an ImGui tooltip (step 30)
+            const float px = se.TextStartX() + t.col * se.CharWidth() + 3.0f, py = origin.y + t.line * se.RowHeight() + 10.0f;
+            rig.sim.Move(px, py);
+            ImGui::GetIO().AddMousePosEvent(px, py);
+            for (int i = 0; i < 3; ++i) rig.Frame(se, true);
+            ok = rig.im.Save(dir + "/" + prefix + "own-tip-" + t.name + suffix + ".png") && ok;
+        }
     }
     for (int look = 1; look < 2; ++look) {
         okayuitest::Reset();

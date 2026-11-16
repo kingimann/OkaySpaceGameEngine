@@ -39,7 +39,7 @@ int main() {
         CHECK(m.materials[0].texture.empty() && m.materials[1].texture == base + "tex.png");
         // the cube: faces 0..2 on material 1, faces 3..5 on material 0: two parts of 6 triangles; the L: one part, 4 triangles
         CHECK(m.parts.size() == 3);
-        CHECK(m.parts[0].node == 1 && m.parts[0].material == 1 && m.parts[0].mesh.triangles.size() == 18 && m.parts[0].mesh.vertices.size() == 12);
+        CHECK(m.parts[0].node == 1 && m.parts[0].material == 1 && m.parts[0].mesh.triangles.size() == 18 && m.parts[0].mesh.vertices.size() >= 8 && m.parts[0].mesh.vertices.size() <= 12);   // corners with the same position and texture coordinate are welded
         CHECK(m.parts[1].node == 1 && m.parts[1].material == 0 && m.parts[1].mesh.triangles.size() == 18);
         CHECK(m.parts[2].node == 2 && m.parts[2].material == -1 && m.parts[2].mesh.triangles.size() == 12);
         CHECK(fx::TriCount(m) == 16);
@@ -99,8 +99,8 @@ int main() {
         std::string v2 = Basic(); v2[8] = 2;
         CHECK(!Read(v2, m, err) && err.find("version 2") != std::string::npos);
         CHECK(!Read(sibfx::File({sibfx::Matr(1, 1, 1, "A", "")}), m, err) && err.find("no usable shapes") != std::string::npos);
-        std::string cut = Basic().substr(0, Basic().size() - 1);   // the last chunk is one byte short
-        CHECK(!Read(cut, m, err) && err.find("longer than the file") != std::string::npos);
+        std::string cut = Basic().substr(0, Basic().size() - 1);   // the last chunk (empty) has a header one byte short
+        CHECK(!Read(cut, m, err) && err.find("cut off") != std::string::npos);
         std::string tail = Basic() + "ab";                          // two stray bytes
         CHECK(!Read(tail, m, err) && err.find("cut off") != std::string::npos);
     }

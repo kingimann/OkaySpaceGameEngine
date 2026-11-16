@@ -315,11 +315,13 @@ static bool ReadQ3bspImpl(const std::string& bytes, const std::vector<std::strin
             FixNormals(pb.mesh);
             ImportedPart part;
             part.mesh = std::move(pb.mesh);
+            part.mesh.name = texs[(std::size_t)pb.texture].name;
             part.node = node;
             part.material = materialFor((std::uint32_t)pb.texture);
             out.parts.push_back(std::move(part));
         }
     }
+    out.backend = "own";
     if (out.parts.empty()) return Fail(err, "no drawable geometry (every face was skipped or invalid)");
     if (skippedFlags) Note(out, std::to_string(skippedFlags) + " faces with the nodraw, hint or skip surface flags were left out");
     if (billboards) Note(out, std::to_string(billboards) + " billboard faces were not read");
@@ -337,7 +339,9 @@ static bool ReadQ3bspImpl(const std::string& bytes, const std::vector<std::strin
 }
 
 bool ReadQ3bspBuffer(const std::string& bytes, ImportedModel& out, std::string* err) {
-    return ReadQ3bspImpl(bytes, nullptr, out, err);
+    const bool ok = ReadQ3bspImpl(bytes, nullptr, out, err);
+    if (!ok) out = ImportedModel{};   // a refusal leaves nothing behind
+    return ok;
 }
 
 bool ReadQ3bspFile(const std::string& path, ImportedModel& out, std::string* err) {
@@ -361,6 +365,7 @@ bool ReadQ3bspFile(const std::string& path, ImportedModel& out, std::string* err
         std::string bsp;
         if (!zip.Extract(best, bsp)) return q3bsp::Fail(err, zip.err);
         const bool ok = ReadQ3bspImpl(bsp, &names, out, err);
+        if (!ok) out = ImportedModel{};
         if (ok) {
             int maps = 0;
             for (const std::string& n : names) { const std::string l = detail::rc::Lower(n); if (l.size() > 4 && l.compare(0, 5, "maps/") == 0 && l.compare(l.size() - 4, 4, ".bsp") == 0) ++maps; }

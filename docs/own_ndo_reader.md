@@ -13,6 +13,10 @@ Status: **header recognised, body NOT read.** Off by default (`OKAY_OWN_NDO`, sl
 - **Disclosure**: that search's summary text mentioned, in passing, that the header is `nendo 1.x`, that the file is big endian and that counts changed width at version 1.2. Only the `nendo ` header test uses that. Nothing else of it is used, but those three facts were seen, so the body is not "clean-room" untouched: whoever writes the body later should know that.
 - `ImportableExtensions()` does not list `.ndo`, even with `OKAY_OWN_NDO=1`, because the reader refuses everything (tested in `own_dispatch_e3`).
 
+## Checked again in batch E6 (2026-11-16)
+
+A sparse checkout of the `test/models` and `test/models-nonbsd` directories of Assimp v5.4.3 (test files only, no importer source) holds **no `.ndo` file** (`git ls-tree` of the whole tag lists none), and no public description of the body was found that rule 19a lets us follow. Without a sample or a description a reader would be invented, so **the seam stays a seam**. This is the one importer of the six that still has no reader, by decision, not by oversight. What would unlock it: one real `.ndo` file (then it can be analysed the way `docs/own_sib_reader.md` was) or a description.
+
 ## What is needed to finish it
 
 A format description we may follow (Izware's own, or a clean-room note by someone who did not copy code) or real files with a way to say what they contain (a Nendo install, to export the same model as OBJ and compare). Until then the format stays on Assimp. Honest status: **0% of the body.** Counting this row as done anywhere would be wrong.

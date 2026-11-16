@@ -3996,7 +3996,7 @@ struct OkayScriptVM::Impl {
         b["pool_get"] = [this](std::vector<Value>& a) {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{false};
             Scene* sc = rt.host->gameObject->scene();
-            if (!sc) return Value{false};
+            if (!sc || !ScriptPathOk(a[0].AsString(), "pool_get")) return Value{false};
             ObjectPool* pool = ObjectPool::ForPrefab(*sc, a[0].AsString());
             GameObject* go = pool ? pool->Get() : nullptr;
             if (!go) return Value{false};
@@ -4012,6 +4012,7 @@ struct OkayScriptVM::Impl {
             return Value{sc ? sc->Despawn(go) : false};
         };
         b["pool_prewarm"] = [this](std::vector<Value>& a) {
+            if (!a.empty() && !ScriptPathOk(a[0].AsString(), "pool_prewarm")) return Value{0.0f};
             Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
             if (!pool) return Value{0.0f};
@@ -4020,6 +4021,7 @@ struct OkayScriptVM::Impl {
             return Value{static_cast<float>(pool->IdleCount())};
         };
         b["pool_idle"] = [this](std::vector<Value>& a) {
+            if (!a.empty() && !ScriptPathOk(a[0].AsString(), "pool_idle")) return Value{0.0f};
             Scene* sc = (rt.host && rt.host->gameObject) ? rt.host->gameObject->scene() : nullptr;
             ObjectPool* pool = (sc && !a.empty()) ? ObjectPool::ForPrefab(*sc, a[0].AsString()) : nullptr;
             return Value{pool ? static_cast<float>(pool->IdleCount()) : 0.0f};
@@ -5048,7 +5050,7 @@ struct OkayScriptVM::Impl {
         };
         // ui_load_theme("Assets/UI/Forest.okaytheme") loads a saved theme into the scene's theme and restyles the UI.
         b["ui_load_theme"] = [sceneOf](std::vector<Value>& a) {
-            if (a.empty()) return Value{0.0f};
+            if (a.empty() || !ScriptPathOk(a[0].AsString(), "ui_load_theme")) return Value{0.0f};
             Scene* s = sceneOf();
             UITheme* th = s ? UITheme::Find(s, a.size() >= 2 ? a[1].AsString() : std::string()) : nullptr;
             if (!th) return Value{0.0f};
@@ -6175,6 +6177,7 @@ struct OkayScriptVM::Impl {
             auto* r = g->GetComponent<BehaviorTreeRunner>();
             if (!r) r = g->AddComponent<BehaviorTreeRunner>();
             if (!a.empty() && !a[0].AsString().empty()) {
+                if (!ScriptPathOk(a[0].AsString(), "bt_run")) return Value{0.0f};
                 std::string err;
                 if (!r->LoadTree(a[0].AsString(), &err)) { Log::Warning("[script] bt_run: ", err); return Value{0.0f}; }
             }
@@ -7764,6 +7767,7 @@ struct OkayScriptVM::Impl {
         // Spawn a prefab THIS peer owns + auto-syncs (bullets, items); returns its
         // sync id for a later net_despawn: net_spawn_owned("file", x, y[, z]).
         b["net_spawn_owned"] = [this](std::vector<Value>& a) {
+            if (!a.empty() && !ScriptPathOk(a[0].AsString(), "net_spawn_owned")) return Value{std::string{}};
             if (NetworkManager* n = Net(); n && !a.empty()) {
                 GameObject* g = n->SpawnOwned(a[0].AsString(),
                                               {a.size() > 1 ? a[1].AsFloat() : 0.0f,

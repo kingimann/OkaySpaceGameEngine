@@ -1511,7 +1511,9 @@ void ActionList::Update(float dt) {
             if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>()) n->Kick((std::uint32_t)Num(it, 0), Rest(it, 1));
         }
         else if (op == "net_spawn_owned") {
-            if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>())
+            if (!Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a prefab stays inside the game
+                Log::Error("[actions] net_spawn_owned: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
+            else if (scene) if (NetworkManager* n = scene->FindObjectOfType<NetworkManager>())
                 n->SpawnOwned(Str(it, 0), {Num(it, 1), Num(it, 2), Num(it, 3)});
         }
         else if (op == "net_despawn") {

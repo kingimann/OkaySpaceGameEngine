@@ -829,6 +829,10 @@ struct NetSpawnOwnedNode : VsNode {
     explicit NetSpawnOwnedNode(std::string p) : path(std::move(p)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
+        if (!Save::IsSafeRelative(VsBareAsset(path))) {   // graphs are game content: stay in the game's folders
+            OKAY_ERROR("[visual script] NetSpawnOwned: refusing '", VsBareAsset(path), "' (absolute paths and '..' aren't allowed)");
+            return 0;
+        }
         if (auto* n = VsNetOrSay(this, g, ctx))
             n->SpawnOwned(VsBareAsset(path), ctx.transform ? ctx.transform->localPosition : Vec3::Zero);
         return 0;

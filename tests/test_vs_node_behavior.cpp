@@ -68,7 +68,9 @@ static HealthStat* Hp(GameObject* go, float maxHp = 100) {
 static std::string Prefab() {
     static std::string path;
     if (!path.empty()) return path;
-    path = "/tmp/vs_behav_bullet.okayprefab";
+    // Relative: graphs may only spawn prefabs inside the game (absolute paths are refused, see
+    // tests/test_vs_path_guard.cpp). main() runs in a Sandbox folder, so the file lands there.
+    path = "vs_behav_bullet.okayprefab";
     Scene s; s.physicsEnabled = false;
     GameObject* b = s.CreateGameObject("Bullet");
     b->transform->SetPosition({0, 0, 0});

@@ -500,9 +500,9 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
-## Scene files: four fixes from the Grok review (branch `claude/grok-stack`, not merged or released yet)
+## Bug fixes from the Grok review, batch 1: scene files, bad numbers in physics and navigation (branch `claude/grok-stack`, not merged or released yet)
 
-Four bugs in how a scene file is read and written (issue #888; details in [scene_serializer.md](scene_serializer.md)). The
+Items 1 to 4 are four bugs in how a scene file is read and written (issue #888; details in [scene_serializer.md](scene_serializer.md)); items 5 to 8 are bad numbers (NaN) in physics queries, spring joints and navigation. The
 example scenes are in the `examples\` folder next to `OkaySpace.exe` (see "Where the files are"). Open a scene in the editor
 (`Tools\OkayEngine.exe`) with **File > Open...**, type or paste its path and press Open.
 
@@ -548,6 +548,25 @@ file part of steps 1 and 2 was also run with a small program on the real `spatia
 a BOM loads, and a copy with the stray `0` loads and saves with no line that is only `0`. The Notepad clicks, the editor
 Inspector steps in 3 and the editor's File > Open are unverified until you look: nothing here ran on Windows or opened a
 real editor window.
+
+**5. Physics queries ignore a NaN number.** (Grok findings 20 and 21.) A ray, line cast, shape cast or overlap whose origin,
+size, radius or direction is NaN ("not a number") or infinite now reports **no hit**. Before, a 3D sphere, box or capsule cast from
+`(0, NaN, 0)` said "hit at distance 0" with a NaN point, and a 2D ray from a NaN origin could hit a box 100 units away. The exact
+script call and what it prints are in [physics.md](physics.md), section "Bad numbers in queries and spring joints" (How to try it).
+It is not something you can click in the editor; it matters when a script divides by zero.
+
+**6. A spring joint on a very light body no longer explodes.** (Grok finding 16.) In the editor add a Cube with a **Rigidbody 3D**
+of mass **0.05** and gravity off, and a **Joint 3D** in **Spring** mode to an anchor 2 m away (rest length 1, damper 8). Press Play: the
+cube swings in to 1 m and stops. Before this change it was flung away and turned into NaN within a second and vanished.
+
+**7. A character that navigates never gets a NaN position.** (Grok findings 23 and 29.) A NavMesh agent given a destination or speed
+that is NaN stands still instead of writing NaN into its position, and a Jump link with an infinite arc height jumps flat instead of
+leaving the agent at a NaN height for good. Steps and the test scene: [navigation.md](navigation.md) ("How to try it"; test
+`grok_nan_navmesh`). Nothing to click in the editor either; it matters for scripts.
+
+**8. One undefined-behaviour fix and seven test fixes** (Grok finding 13): negative foliage chunks no longer shift a negative number
+(UB in C++17; in practice nothing changes today). Only the sanitizer test `foliage` can show it. Painting foliage left of and behind
+the origin in the editor still works as before.
 
 ## Team tooling (not part of the Windows release)
 

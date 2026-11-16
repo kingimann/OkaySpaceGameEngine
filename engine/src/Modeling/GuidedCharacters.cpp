@@ -557,7 +557,7 @@ Template MakeHuman() {
     B b;
     b.t.id = "human"; b.t.name = "Human"; b.t.category = "Characters"; b.t.version = 1;
     b.t.description = "A person: head, face, hair, torso, arms, hands, legs, feet, clothes and accessories, each a part you can change, with body proportion sliders.";
-    BipedParams(b, 1.75, 0.40, 0.24, 0.23, 0.50, 0.045, 0.44, 0.07);
+    BipedParams(b, 1.75, 0.40, 0.24, 0.23, 0.50, 0.045, 0.44, 0.09);
     b.P("build", "Build", 0.5, 0.0, 1.0, "Proportions", "Slim (0) to heavy (1): limb and body girth, belly.");
     b.P("muscle", "Muscle", 0.3, 0.0, 1.0, "Proportions", "Soft (0) to muscular (1): chest, shoulders, arms, legs, abs.");
     { ParamDef p; p.id = "style"; p.label = "Style"; p.kind = ParamDef::Kind::Choice; p.def = 0; p.min = 0; p.max = 3; p.group = "Proportions"; p.tip = "Realistic, stylised low poly (visible facets), cartoon (big head, short limbs) or blocky (always boxes, at every Detail level)."; p.choices = {"Realistic", "Stylised low poly", "Cartoon", "Blocky"}; b.t.params.push_back(p); }
@@ -578,13 +578,13 @@ Template MakeHuman() {
     b.S("hand", "Hands", {{"block", "Block"}, {"mitten", "Mitten"}, {"fist", "Fist"}, {"fingers", "Fingers"}}, kSkin, 0);
     b.S("leg", "Legs", LimbDesigns(), kSkin, 0);
     b.S("foot", "Feet", {{"block", "Bare foot"}, {"boot", "Boot"}, {"sneaker", "Sneaker"}, {"round", "Round shoe"}}, kSkin, 0);
-    b.S("shirt", "Top", {{"none", "None"}, {"tshirt", "T-shirt"}, {"jacket", "Jacket"}, {"vest", "Vest"}, {"tank", "Tank top"}, {"longsleeve", "Long sleeve"}, {"hoodie", "Hoodie"}}, kBlue, 3);
+    b.S("shirt", "Top", {{"none", "None"}, {"tshirt", "T-shirt"}, {"tucked", "Tucked shirt"}, {"jacket", "Jacket"}, {"vest", "Vest"}, {"tank", "Tank top"}, {"longsleeve", "Long sleeve"}, {"hoodie", "Hoodie"}}, kBlue, 3);
     b.S("pants", "Bottoms", {{"none", "None"}, {"shorts", "Shorts"}, {"trousers", "Trousers"}, {"skirt", "Skirt"}, {"jeans", "Jeans"}, {"cargo", "Cargo trousers"}, {"leggings", "Leggings"}, {"longskirt", "Long skirt"}}, kGrey, 4);
     b.S("hat", "Hat", {{"none", "None"}, {"cap", "Cap"}, {"tophat", "Top hat"}, {"helmet", "Helmet"}, {"beanie", "Beanie"}}, kRed, 5);
     b.S("glasses", "Glasses", {{"none", "None"}, {"round", "Round"}, {"square", "Square"}, {"visor", "Visor"}}, kBlack, 6);
     b.S("backpack", "Backpack", {{"none", "None"}, {"small", "Small"}, {"large", "Large"}}, kLeather, 7);
     b.S("belt", "Belt", {{"none", "None"}, {"belt", "Belt"}}, kLeather, 8);
-    b.S("fitting", "Fine fittings", {{"fine", "Buttons, placket and pockets (High and up)"}, {"none", "None"}}, kGrey, 17);
+    b.S("fitting", "Fine fittings", {{"fine", "Buttons, placket and pockets (High and up)"}, {"none", "None"}}, Color{0.93f, 0.9f, 0.8f, 1}, 17);
     b.S("scarf", "Scarf", {{"none", "None"}, {"scarf", "Scarf"}, {"long", "Long scarf"}}, kRed, 16);
     b.S("cape", "Cape", {{"none", "None"}, {"short", "Short cape"}, {"long", "Long cape"}}, kRed, 9);
     b.S("shoulder", "Shoulder pads", {{"none", "None"}, {"round", "Round"}, {"plate", "Plate"}, {"spike", "Spike"}}, kSteel, 10);

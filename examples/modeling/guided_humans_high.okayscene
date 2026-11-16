@@ -20,21 +20,21 @@ end
 gameobject 2 "Human woman (High)"
   active 1
   parent -1
-  transform 0.300215 0 0 0 0 0 1 1 1 1
+  transform 0.299748 0 0 0 0 0 1 1 1 1
   mesh "" 1 1 1 1 0 "human_high_woman.okaymesh" 0
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Human man (High)"
   active 1
   parent -1
-  transform 1.56728 0 0 0 0 0 1 1 1 1
+  transform 1.56634 0 0 0 0 0 1 1 1 1
   mesh "" 1 1 1 1 0 "human_high_man.okaymesh" 0
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 4 "Human elder (High)"
   active 1
   parent -1
-  transform 2.84505 0 0 0 0 0 1 1 1 1
+  transform 2.84412 0 0 0 0 0 1 1 1 1
   mesh "" 1 1 1 1 0 "human_high_elder.okaymesh" 0
   material 0 0 0 0 16 0 "" 1 1
 end

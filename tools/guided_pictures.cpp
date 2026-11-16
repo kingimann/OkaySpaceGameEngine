@@ -257,7 +257,7 @@ int main(int argc, char** argv) {
             const PolyMesh shoulder = pick({"torso", "arm", "neck", "hand"});
             Scene(cl, shoulder, 2, 422, 356, 416, 0.0f);
             Scene(cl, shoulder, 362, 422, 356, 416, 0.8f);
-            Scene(cl, pick({"leg", "foot", "pelvis"}), 722, 422, 356, 416, 0.7f);
+            g_zoom = 1.3f; Scene(cl, pick({"shirt", "pants"}), 722, 422, 356, 416, 0.7f); g_zoom = 2.1f;
             Scene(cl, pick({"torso", "pelvis"}), 1082, 422, 356, 416, 0.0f);
             Scene(cl, pick({"torso", "pelvis"}), 1442, 422, 356, 416, 2.6f);
             g_elev = 0.08f;

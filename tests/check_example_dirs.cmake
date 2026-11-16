@@ -1,5 +1,5 @@
 # The example scenes the Windows release ships (EXAMPLE_DIRS in scripts/build-windows-dist.sh) must all exist in the source tree,
-# each holding at least one file, and the render_effects sample (depth of field and ambient occlusion, docs/try_it.md 14) must be
+# each holding at least one file, and the render_effects sample (depth of field and ambient occlusion, docs/try_it.md 18) must be
 # in the list with its scene. The release script only fails when it runs; this fails the tests the moment a folder is renamed or
 # the sample is dropped from the list. Run: cmake -DROOT=<source dir> -P check_example_dirs.cmake
 cmake_policy(SET CMP0057 NEW)

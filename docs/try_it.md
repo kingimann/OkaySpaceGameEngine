@@ -50,7 +50,12 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
-| 14 | Depth of field and ambient occlusion in the software renderer | `examples\render_effects\render_effects.okayscene`, View > Panels > Lighting > Post-processing, View > Rendering & Performance > Use the software renderer (CPU), or `OKAY_SOFTWARE_RENDER=1` | New in this change; headless software renders checked here, the editor, the player and Windows unverified; the Windows default (Direct3D 11) is a different, unrun code path |
+| 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
+| 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
+| 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
+| 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
+| 18 | Depth of field and ambient occlusion in the software renderer | `examples\render_effects\render_effects.okayscene`, View > Panels > Lighting > Post-processing, View > Rendering & Performance > Use the software renderer (CPU), or `OKAY_SOFTWARE_RENDER=1` | New in this change; headless software renders checked here, the editor, the player and Windows unverified; the Windows default (Direct3D 11) is a different, unrun code path |
 
 ---
 
@@ -62,19 +67,26 @@ Code: `VehicleSeat` and `VehicleController` (`docs/vehicle_controller.md`).
 **Steps (template).**
 1. Open the editor (`Tools\OkayEngine.exe`) or the launcher's Create page. Choose **New Project**, pick the template
    **Vehicle (get in and drive)** (group "Game kits"), give it a name, create it.
-2. The scene opens with a red car and a person standing at its left (driver) door. The Hierarchy shows `Car`,
-   `Passenger Seat`, `Player`, `Ground`.
+2. The scene opens on a two-lane road with a red car (about 4 m long) and a person standing at its driver door, which is
+   on the -X side: the car's right side seen from behind. Cones and crates are further down the road. The Hierarchy
+   shows `Car` (with its wheels, seats and glass as children), `Passenger Seat`, `Player`, `Road`, `Ground`.
 3. Press **Play**.
 
 **Steps (example file).** Same scene without making a project: **File > Open...**, paste
 `<install folder>\examples\vehicle\vehicle_test.okayscene`, press Play.
 
 **In play.**
-* Walk to the left side of the car with **W A S D** and the mouse (third person: the camera orbits behind you).
-* Within about two metres of the driver door a prompt says **Drive**. Press **E**: you sit in the car.
-* **W / S** gas and brake or reverse, **A / D** steer, **Space** handbrake. The chase camera follows the car.
-* Press **E** again: you get out at the driver's side and the car brakes to a stop and ignores the keys.
-* Walk to the right door, the prompt says **Ride**. Press **E**: you are carried along but the car does not drive.
+* Walk to the driver door (the side with the steering wheel) with **W A S D** and the mouse (third person: the camera orbits behind you).
+* Within about two metres of the driver door a prompt says **Drive**. Press **E**: you sit down in the driver seat (the
+  chair sit pose, hands forward near the wheel) and the camera swings behind and above the car.
+* **W / S** gas and brake or reverse, **A / D** steer (D turns right), **Space** handbrake. The wheels roll and the
+  front wheels turn. The chase camera follows the car. Weave through the cones.
+* Press **E** again: you stand up beside the car, the camera goes back to you, and the car brakes to a stop and ignores the keys.
+* Walk to the other door (+X side), the prompt says **Ride**. Press **E**: you sit in the passenger seat and are carried
+  along, but the car does not drive.
+* **First person:** press **V** before getting in. After **E** the camera sits at your eyes in the car.
+* **Moving a seat to another car** (a bug fix, see `docs/vehicle_controller.md`): add a second car, press Play, sit in
+  the car, drag the seat object onto the other car in the Hierarchy, press **E**. The first car must not drive by itself.
 
 **How you know it worked.** Before you press E the car does not move when you press W. After E, W moves the car and
 the prompt is gone. After the second E you are standing outside again and W moves you, not the car.
@@ -83,8 +95,8 @@ the prompt is gone. After the second E you are standing outside again and W move
 a player with a first or third person controller). To try it, select `Player`, remove the Third Person Controller and
 add a First Person Controller in the Inspector. Unverified in the editor.
 
-**Known rough.** From `docs/vehicle_controller.md`: the wheels are for looks and do not spin or turn; no sitting or
-steering animation on the character; no camera per seat; multiplayer does not replicate seats; no script or visual
+**Known rough.** From `docs/vehicle_controller.md`: hands do not hold the wheel (generic chair sit); the car is a stack
+of boxes; first person has no mouse look from the seat; the look was only checked in software-renderer screenshots; multiplayer does not replicate seats; no script or visual
 script node for enter and exit yet; a scene saved while someone sits stores the person standing free.
 
 **Tested on main:** the headless test `vehicle_seat` loads `examples/vehicle/vehicle_test.okayscene` from disk and plays
@@ -237,6 +249,142 @@ compiled or run on this machine).
 
 ---
 
+## 16. Main menu bar (cleaned up)
+
+What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
+Where: the menu bar at the top of the editor, `Tools\OkayEngine.exe` (or start the editor from the launcher). Open any project.
+
+1. Click **File**. You should see, in this order: New 2D Scene, New 3D Scene, Open Scene... (Ctrl+O), Open Recent, **one** Examples
+   (it used to be three), then Save Scene / Save Scene As... / Save Project with their keys, then New Project... / Open Project Folder... /
+   Project Upgrade..., then Import Model... / Merge Scene into Current..., then Autosave and Build Settings... (Ctrl+B), then Exit.
+   Open **Examples**: UI Gallery, UI Gallery (phone), Visual Script Node Playground, Node Playground (flow and variables).
+   With no recent scenes, hover **Open Recent**: the tip says why it is greyed. Press Play, then open File: **Save Scene** is greyed and
+   the tip says "Stop Play first ...".
+2. Click **Edit**. Undo and Redo name the step ("Undo Move") and are grey, with a tip, when there is nothing to undo. With nothing selected,
+   Cut, Copy, Duplicate and Delete are grey ("Select an object ... first."). Select an object: they work. Ctrl+click three objects in the
+   Hierarchy, open Edit again: the labels read **Duplicate 3 Objects** and **Delete 3 Objects**, and Cut is grey with the reason. **Preferences**
+   holds UI Scale, Density, Theme and Accent color (they used to be View > Appearance). **Project Settings...** is at the bottom.
+3. Click **GameObject**. Create Empty, Create Empty Child and Create Empty Parent (Ctrl+Shift+G) come first; Child and Parent need a selection.
+   Then the categories: **2D Object, 3D Object, Player, Light, Camera, Audio, Effects, UI**. **Audio > Audio Source** (new) puts a sound object in
+   the scene and selects it; its Audio Source component is in the Inspector. Everything the old menu offered is in one of the categories
+   (the table in editor_menus.md says which).
+4. Click **View**. **Panels**, **Editors & Tools** and **Layout** are where they always were. Below: **Frame Selected (F)**, **Isolate Selection
+   (Shift+I)**, **UI Editing Mode**, **Scene Overlays**, **Camera Bookmarks** (hover "Go to slot 1" before saving one: the tip says to save
+   first), **Rendering & Performance**. There is no loose "Reset Layout" any more: it is inside **Layout**.
+5. Click **Help**. **Documentation (online)** opens the docs folder on GitHub in your browser. **Report a Bug...** opens the issue page and
+   puts `OkaySpace v<version>` on the clipboard (paste it somewhere to see). **Check for Updates...** moved here from the old Engine menu.
+6. The **Window** and **Engine** menus are gone: their items were duplicates (Items, Loot & Recipes is in View > Editors & Tools; Build
+   Settings is in File) or moved (Check for Updates to Help).
+
+Screenshots of the real editor (built and run on Linux, in a virtual display; not Windows): [docs/images/editor_menus/](images/editor_menus/)
+(`file.png`, `file_examples.png`, `file_play_save_greyed.png`, `edit_undo_named.png`, `gameobject.png`, `view.png`, `help.png`). What was and
+was not clicked is listed in [editor_menus.md](editor_menus.md) section 3b; "Checks run for this change" is at the end of section 17.
+
+## 17. Hierarchy right-click menus
+
+Where: the **Hierarchy** panel (left side by default). Map and the Existing / Gap table: [editor_menus.md](editor_menus.md), section 2.
+
+1. Right-click an object. The menu starts with Copy, Cut, Paste, Paste as Child, then Rename (F2), Duplicate, Delete, Delete Children, then
+   Create Empty Child, **Create Child**, Create Parent, Parent To, Unparent, Order, then Select, Expand All Below, then Deactivate, Lock, Focus in
+   Scene, Isolate, Transform, then **Add Component...**, Prefab, Save As Prefab..., Rig & IK, Copy Name or Path.
+2. **Create Child > 3D Object > Cube** (the submenu used to hold only 7 shapes; it now has 2D Object, 3D Object, Player, Light, Camera,
+   Audio, Effects, UI). A cube appears inside the object you clicked, at its origin, and is selected. **Ctrl+Z** removes it.
+3. Ctrl+click three objects, right-click one: the menu says **Delete 3 Objects**, **Duplicate 3 Objects**, **Deactivate 3 Objects**,
+   **Group 3 Objects**, and Cut is grey with the reason.
+4. **Select > Same Type (Light)** (the kind is the row's icon: Camera, Light, Mesh, Sprite, ...): every object of that kind is selected.
+   If there is no other one the item is grey and says so.
+5. **Add Component...**: the object is selected, the Inspector comes forward and its Add Component browser opens, ready to type in.
+6. Right-click the first row: **Move Up** and **Move to Top** are grey ("It is already the first of its siblings."). Right-click an object with
+   no children: **Delete Children** is grey ("This object has no children.").
+7. Right-click the empty space under the rows: Create Empty, the eight Create categories, Paste, Select All, Deselect, Expand All, Collapse All,
+   Sort A-Z. The **[+]** button at the top has Create Empty, Create Empty Child, Group Selected and the same categories.
+
+Screenshots of the real editor (Linux, virtual display): [docs/images/editor_menus/](images/editor_menus/) (`hierarchy_row_menu.png`,
+`hierarchy_create_child.png`, `hierarchy_create_child_result.png`, `hierarchy_three_selected.png`, `hierarchy_same_type_reason.png`,
+`hierarchy_add_component.png`, `hierarchy_empty_space.png`).
+
+**Checks run for this change** (menus, rows 16 and 17). Run here, on Linux, and seen:
+
+* `tests/test_menu_bar_model.cpp` (ctest `menu_bar_model`) and `tests/test_hierarchy_context_model.cpp` (`hierarchy_context_model`), built
+  with `g++ -std=c++17 -Wall -Wextra` and run: no failures (3079 and 2064 checks). The two tests also read `editor/*.cpp` and fail if a
+  menu id has no handler: that was shown by renaming a handler and seeing the test fail, then restoring it.
+* `editor/main.cpp` and `editor/UIRuntimeTools.cpp` with the editor's flags and `-fsyntax-only -Wall -Wextra`: no error and no warning in the
+  files changed.
+* **The real editor**, built from this branch (`okay-editor`, Linux, engine `-O1`, `main.cpp` `-O0`, asserts on) and run under Xvfb with the
+  software renderer, started with `--dev`, the mouse driven by `xdotool`: the clicks listed in [editor_menus.md](editor_menus.md) section 3b
+  worked as described (Create Child and its undo, Add Component, Same Type, Cut / Paste, Delete, Create Empty Parent / Child, Isolate, Panels,
+  Audio Source, the greyed items and their reasons, also while the game runs). No crash and no
+  Dear ImGui assert while clicking, in 15 sessions of this kind. The one assert seen was at shutdown, in two sessions that were closed with a
+  menu still open (`ImGui::DestroyPlatformWindow`, a pop-out menu's window still alive when the context is destroyed); asserts are off in a
+  release build, and it was not looked into further.
+* `python3 scripts/gen_feature_map.py --check`, `scripts/branch_lint.py all`, `scripts/bug_patterns.py`: clean.
+
+**Not seen:** anything on Windows (the editor was never run there); the Windows build (MinGW) of the changed files was not compiled; the
+items listed as "not clicked" in editor_menus.md section 3b (among them the Order submenu and Open Recent greyed with no history: the test
+project always has its scene in the list); Help > Documentation and Report a Bug open a browser, which this machine does not
+have, so the page and the clipboard line were not seen. The software renderer was used, so nothing about the GPU path was seen.
+## 7d. Add Node menu: 70 topics instead of 19
+
+**What it is.** The panel that opens when you add a node to a visual script (right-click the canvas, press Space, press
+Add node, or drop a wire on empty space). It had 19 topics, and one of them, Advanced, held 515 nodes. Now it has 70
+specific topics in 14 sections, and every node is in the topic you would look in. Nothing was removed and your saved
+graphs are unchanged (a graph stores a node's type, never its topic). Code: `editor/VisualScriptCategories.hpp`,
+`editor/VisualScriptPlaceRules.hpp`; the list and the rules are in [visual_scripting_naming.md](visual_scripting_naming.md),
+every node under its topic in [visual_scripting_topics.md](visual_scripting_topics.md), and the before-and-after
+measurement in [visual_script_category_audit.md](visual_script_category_audit.md).
+
+**How to reach it.**
+
+1. Open the editor (`Tools\OkayEngine.exe`, or the launcher), make or open any project, select an object (for example
+   the cube of a new project) and add a **Visual Script** component in the Inspector.
+2. In the Inspector's Visual Script section press **Open in node editor** (or open **View > Editors & Tools > Visual
+   Script**).
+3. Right-click the empty canvas, or press **Space**. The Add Node panel opens.
+
+**What you should see.**
+
+1. On the left, under Starter, Recently used, All and Favourites, the topics in small groups under grey headings:
+   Events, Flow, Variables / Lists & Saving, Math, Text, Objects, Movement & Physics, Gameplay, Characters & AI,
+   Sound / Camera & Screen, Scenes & Environment, Input, Online, Debugging. Each topic shows how many nodes it holds.
+   **Click a heading to fold its topics** (click again to open them). Hover a topic for a one-line description.
+2. Click a topic with many nodes (for example Numbers, Tweens or Multiplayer): the subcategories appear under it
+   (Rounding & Snapping, Limits & Wrapping, ... ). Hover one for its description. Click one to see only its nodes.
+3. Twelve nodes and where to find each (the name on the node, then topic / subcategory):
+
+   | Node | Where it is |
+   |---|---|
+   | On Start, On Every Frame | Game Events |
+   | On Key Pressed | Input Events (it used to be under Input / Keys) |
+   | On Collision Start | Collision & Trigger Events |
+   | Wait Seconds | Waiting & Timers |
+   | Spawn | Create & Destroy |
+   | Move Towards | Move & Follow |
+   | Add Force | Forces & Velocity |
+   | Set Weather | Weather & Fog (it used to be under Scene / Atmosphere) |
+   | Play Sound | Sound Effects |
+   | Start Quest | Quests & Dialogue / Quests |
+   | Host Game | Multiplayer / Hosting & Joining |
+
+4. **Search still finds everything.** Type `weather`: Set Weather and its twin Weather Set are at the top, and both sit in
+   Weather & Fog. Type `scene` or
+   `atmosphere`: the nodes that used to be under Scene (Set Weather, Set Fog, Set Post Effect, ...) are in the list too,
+   because the old topic name is kept as a search word. Type `advanced`: the text-script functions that used to be in
+   the Advanced bucket are listed.
+5. **Favourites keep working.** Click the star on On Key Pressed, close the panel and open it again: the star is still
+   there (it is stored by node name in `okay_vsnodes.txt`, never by topic).
+
+Screenshots (headless renders: the real Add Node panel code drawn with ImGui's software renderer and its default font, so
+the font and window frame differ from the editor):
+
+* [Numbers open, with its subcategories and the hover description](images/vs_palette_topics.png)
+* [Typing `weather`: nine nodes, all in Weather & Fog](images/vs_palette_search_weather.png)
+* [The Events section folded away](images/vs_palette_folded_section.png)
+
+Status: the topic list, the rule that every node has exactly one place, the size limits, the search words for old topic
+names and the favourites keys are checked by `tests/test_vs_categories.cpp` (compiled and run with g++ on Linux). The
+counts above come from that test's dump. The three screenshots show the panel working with the new topics. **Unverified:**
+how the sidebar looks and feels in the real editor window (font, dot colours, scrolling); nothing was run on Windows.
+
 ## Switches that are off by default (own code)
 
 CLAUDE.md rule 17 and `docs/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
@@ -283,7 +431,8 @@ Tested on main (Linux): the line format and that each variable changes it, by th
   `docs/own_readers_remaining.md`; the startup line only lists the 20 above, so for those the only proof is an import
   that works.
 * **Sample files** (shipped in `examples\own_readers`): `cube.off` (OFF), `cube.3ds` (3DS), `skinned_strip.dae`
-  (COLLADA). Tiny hand-written files from our tests, no outside source.
+  (COLLADA), `cube_gzip.blend` (gzip `.blend`) and `cube_compressed_arrays.fbx` (FBX with zlib arrays). Tiny files from our
+  tests (the last two written by our own `scripts/gen_blend_fixtures.py` and `scripts/gen_fbx_fixtures.py`), no outside source.
 * **Steps.**
   1. Start the editor with `set OKAY_OWN_OFF=1` (or `OKAY_OWN_STACK=1`), open **Help > About OkaySpace**. It should say
      `readers=own(off)+assimp` (with `OKAY_OWN_STACK=1`: a long `own(fbx,dae,3ds,...)` list).
@@ -345,7 +494,42 @@ Not switchable, by owner decision (2026-11-14, CLAUDE.md rule 18). libsodium is 
 environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup line must say `crypto=libsodium`.
 Nothing to try.
 
-## 14. Depth of field and ambient occlusion (the software renderer, and the sample scene)
+### 15. One shared inflate (zlib / gzip / DEFLATE) decoder
+
+**What it is.** Compressed data in PNG pictures, gzip `.blend` files, `.x` MSZIP, `.zgl`, 3MF/AMF zip packages, the arrays
+in binary FBX files and gzip answers from our own HTTP client used to be decoded by three separate copies of the same
+decoder. Now there is one (`engine/include/okay/Core/Inflate.hpp`) and the others call it. Nothing should look different:
+this change is about having less code to get wrong. Plain words: if every picture and model that worked before still
+loads, it worked.
+
+**Steps.**
+1. **PNG (always on).** In the editor, **File > Import Model...** and choose `examples\obj_texture_paths\cube_ok.obj`. The
+   cube shows the grid texture. That texture is `grid.png`, a PNG, and every PNG goes through the shared decoder. Any
+   other PNG you drop in as a texture does the same.
+2. **gzip `.blend`.** `set OKAY_OWN_BLEND=1` (or `OKAY_OWN_STACK=1`), start the editor, **File > Import Model...**,
+   choose `examples\own_readers\cube_gzip.blend` (a Blender file saved with "Compress File", our own test file). A small model
+   appears (the `blend_reader` test checks its numbers). (Without Assimp in the build this reader is the only way a `.blend` loads at all.)
+3. **FBX with compressed arrays.** `set OKAY_OWN_FBX=1`, start the editor, import
+   `examples\own_readers\cube_compressed_arrays.fbx` (a binary FBX 7.4 whose vertex and index arrays are zlib packed).
+   A cube should appear. (The About popup should then list `fbx` among the own readers.)
+4. **Not shipped as samples:** `.x` with MSZIP, `.zgl`, 3MF and AMF. Their files are only built inside the tests
+   (`x_reader`, `xgl_reader`, `3mf_reader`, `amf_reader`). If you have your own `.x` (MSZIP), `.zgl` or `.3mf` file,
+   import it with `OKAY_OWN_X=1`, `OKAY_OWN_XGL=1` or `OKAY_OWN_3MF=1`.
+5. **gzip HTTP answers.** Only our own HTTP client uses this, and it cannot be tried on Windows (see 10). On Linux:
+   build with `-DOKAY_OWN_HTTP=ON`, run with `OKAY_OWN_HTTP=1`, and fetch a URL whose server sends
+   `Content-Encoding: gzip`; the program must get the plain bytes (the tests `own_http` and `own_http_net` do this).
+
+**How you know it worked.** There is no log line that names the decoder (it is a function, not a switch). What you can
+see: the grid texture on the cube (step 1), the cube from each file (steps 2 and 3), and, on a machine with a
+build, the test run `ctest -R inflate_differential` (and `ctest -R png_hint`), which prints how many damaged and valid
+streams it compared with an independent slow decoder and ends with `ok:`.
+
+**Status.** Verified here (Linux, headless): `inflate_differential` (about 67,000 streams, ASan and UBSan clean),
+`own_http_inflate`, `png_hint`, and the existing `image_decoder`, `blend_reader`, `3mf_reader`, `amf_reader`, `fbx_reader`,
+`fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
+real editor window), anything on Windows, real-world files other than our own samples.
+
+### 18. Depth of field and ambient occlusion (the software renderer, and the sample scene)
 
 **Read this first: which renderer you see.** On Windows the editor and the player draw 3D on the GPU with Direct3D 11.
 Direct3D 11 has its own depth of field and ambient occlusion, but nobody has ever run them on a GPU, so on a default
@@ -461,6 +645,27 @@ code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3
 and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
 Anything on Windows. The NSIS installer and the zip.
 
+## Console: Collapse button (branch `claude/console-collapse`, not merged or released yet)
+
+Owner request 2026-11-15: "for console allow user to collapse the same log."
+
+1. Open the editor (`Tools\OkayEngine.exe` or Open from the launcher) and show **View > Console**.
+2. Make a log repeat. Easiest: press **Play** on a scene whose script logs every frame (for example a script that calls
+   `print` in `update`), or use any scene that logs the same warning many times.
+3. In the Console toolbar, to the right of the three count pills (Messages, Warnings, Errors), click **Collapse**.
+   Hover it: the tooltip says "Merge identical messages into one row with a count".
+4. You should see one row per distinct message, with `x37` (the count) in front of the text and the time of the newest
+   copy. The count keeps growing while Play runs. Click the row to see the details (count, first and newest time).
+5. Click **Collapse** again: every line is back. Close and reopen the editor: the button keeps its last state
+   (stored as `consolecollapse` in `okay_settings.txt`). It is off the first time.
+6. Search, the category dropdown and the pills still work while collapsed, and Clear empties everything.
+
+Rule: two lines merge only if level, category (the leading `[tag]`) and text are exactly the same, even when they are not
+next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still count every line, not rows.
+
+**Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
+`editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in
@@ -472,3 +677,15 @@ How to try the collaboration tools ([collaboration.md](collaboration.md)); these
 3. Push a branch named `claude2/x` that adds `#include <mutex>` to a header under `engine/include`: the **Branch lint** check
    fails with the file and line and says to use `debugutil::SpinLock`.
 4. Open a PR without a "How to try it" section: the **PR hygiene** check fails and says what to add.
+
+## UI Notify template: no freeze when toasts pile up (bug fix)
+
+The **UI Notify** prebuilt screen froze the editor when the fifth toast was pushed into its stack of four. Fixed: a toast that is
+pushed out now stops counting at once.
+
+1. Windows editor: open or create a scene, then **GameObject > UI > Prebuilt Screens > UI Notify** (or the same entry under the
+   UI menu), press **Play**.
+2. Click the buttons **Info**, **Saved**, **Error**, **Confirm** and **Cancel** one after another, quickly, more than five times.
+3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
+   and each card goes away by itself after about six seconds. The editor keeps responding.
+4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).

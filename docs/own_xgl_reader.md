@@ -10,7 +10,7 @@ XGL is a small XML scene format (written by 3D Studio exporters, Truespace and o
 |---|---|
 | `engine/src/Render/XglReader.cpp` | `okay::ReadXglBuffer` / `okay::ReadXglFile` (declared in `ModelData.hpp`) |
 | `engine/src/Render/XmlLite.hpp`, `TextReaderUtil.hpp`, `ReaderCommon.hpp` | Shared strict XML reader, UTF-16 conversion, number parsing, mesh builder |
-| `engine/src/Core/ImageDecode.cpp` | The engine's own inflate (`okay::Inflate`), used for ZGL |
+| `engine/src/Core/ImageDecode.cpp` | `okay::Inflate`, a wrapper over the engine's one inflate (`engine/include/okay/Core/Inflate.hpp`), used for ZGL |
 | `engine/src/Render/ModelImport.cpp` | The seam: slot 24 (extensions `.xgl`, `.zgl`) |
 | `tests/test_xgl_reader.cpp`, `tests/batchd_fixtures.hpp` | Hand-computed checks on synthetic files (`xgl_reader`) |
 | `tests/test_batchd_hostile.cpp` | Hostile input and mutation fuzz (`batchd_hostile`) |

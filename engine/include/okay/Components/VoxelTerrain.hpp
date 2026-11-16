@@ -49,6 +49,10 @@ public:
     /// Bounded band the density field is kept within (a clamped signed distance),
     /// so digging/adding with finite strength reliably opens/closes voxels.
     float Clamp() const;
+    /// One cell of a brush: `cell - amount * fall`, clamped to +-c. Dig and Edit both call this one function (defined once, not inline) so
+    /// they give the very same bits on every compiler and CPU: with fused multiply-add the same expression written twice can round
+    /// differently in two places, which made Edit with default options differ from Dig on CPUs that have FMA.
+    static float StepDensity(float cell, float amount, float fall, float c);
 
     int  Count() const { return nx * ny * nz; }
     int  Index(int x, int y, int z) const { return x + y * nx + z * nx * ny; }

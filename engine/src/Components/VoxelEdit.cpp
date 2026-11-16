@@ -241,7 +241,7 @@ VoxelTerrain::EditResult VoxelTerrain::Edit(const Vec3& localIn, float radius, f
                 const int idx = Index(x, y, z);
                 float& cell = density[(std::size_t)idx];
                 const int mid = mats ? (int)material[(std::size_t)idx] : 0;
-                float eff = amount * fall;
+                float amt = amount;                              // the brush amount for this cell (hardness divides it)
                 if (dig && cell <= iso && mats && o.power < 1.0e8f) {
                     // an air cell beside the surface moves the surface when it is lowered, so a tool too weak for the ground it
                     // touches must not lower it either: it may only change if some solid neighbour is a material the tool can dig
@@ -260,9 +260,9 @@ VoxelTerrain::EditResult VoxelTerrain::Edit(const Vec3& localIn, float radius, f
                 if (dig && cell > iso) {                         // only solid ground resists
                     const float hard = mats && mid < (int)materials.size() ? materials[(std::size_t)mid].hardness : 1.0f;
                     if (o.power < hard) continue;                // the tool is too weak for this material
-                    eff /= std::max(0.05f, hard * o.hardnessScale);
+                    amt /= std::max(0.05f, hard * o.hardnessScale);
                 }
-                const float nv = ClampF(cell - eff, Clamp());
+                const float nv = StepDensity(cell, amt, fall, Clamp());
                 if (nv == cell) continue;
                 LogStroke(idx);
                 const double dv = (Cover(nv, voxelSize) - Cover(cell, voxelSize)) * vs3;

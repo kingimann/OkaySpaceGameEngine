@@ -429,6 +429,7 @@ void VoxelTerrain::Resize(int X, int Y, int Z) {
 // rather than fighting an ever-larger interior value deep in the rock.
 float VoxelTerrain::Clamp() const { return voxelSize * 3.0f; }
 static float ClampTo(float v, float c) { return v < -c ? -c : (v > c ? c : v); }
+float VoxelTerrain::StepDensity(float cell, float amount, float fall, float c) { return ClampTo(cell - amount * fall, c); }
 
 void VoxelTerrain::FillSlab(float frac) {
     if (frac < 0) frac = 0; if (frac > 1) frac = 1;
@@ -546,7 +547,7 @@ bool VoxelTerrain::Dig(const Vec3& local, float radius, float amount) {
                 float t = 1.0f - d / gr;
                 float fall = t * t * (3.0f - 2.0f * t);    // smoothstep sphere (softer edge)
                 float& cell = density[Index(x, y, z)];
-                float nv = ClampTo(cell - amount * fall, Clamp());   // subtract = carve air
+                float nv = StepDensity(cell, amount, fall, Clamp());   // subtract = carve air
                 if (nv != cell) {
                     cell = nv; changed = true;
                     if (x < cx0) cx0 = x; if (x > cx1) cx1 = x;

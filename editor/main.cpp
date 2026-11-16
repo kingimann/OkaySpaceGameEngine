@@ -6513,6 +6513,25 @@ void DrawUIWidgetItems(EditorState& ed, bool& created) {
         if (ImGui::MenuItem("Keybind Field")) addUI("Keybind",    oked::BuildUIKeybindField);
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Game HUD")) {   // UI library slice 2
+        if (ImGui::MenuItem("Radial Menu"))          addUI("Radial Menu",    oked::BuildUIRadialMenu);
+        if (ImGui::MenuItem("Kill Feed"))            addUI("Kill Feed",      oked::BuildUIKillFeed);
+        if (ImGui::MenuItem("Ammo Counter"))         addUI("Ammo Counter",   oked::BuildUIAmmoCounter);
+        if (ImGui::MenuItem("Interaction Prompt"))   addUI("Interaction Prompt", oked::BuildUIInteractionPrompt);
+        if (ImGui::MenuItem("Objective Tracker"))    addUI("Objective Tracker", oked::BuildUIObjectiveTracker);
+        if (ImGui::MenuItem("Compass"))              addUI("Compass",        oked::BuildUICompass);
+        if (ImGui::MenuItem("Item Tooltip Card"))    addUI("Item Card",      oked::BuildUIItemTooltipCard);
+        if (ImGui::MenuItem("Ability Icon"))         addUI("Ability",        oked::BuildUIAbilityIcon);
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Data")) {
+        if (ImGui::MenuItem("Slider Bound to a Variable")) addUI("Bound Slider", oked::BuildUIBoundSlider);
+        if (ImGui::MenuItem("List From an Array"))   addUI("Bound List",    oked::BuildUIBoundList);
+        if (ImGui::MenuItem("Visible If (condition)")) addUI("Visible If",  oked::BuildUIVisibleIf);
+        if (ImGui::MenuItem("Hot Reload Watcher"))   addUI("Hot Reload",    oked::BuildUIHotReload);
+        ImGui::TextDisabled("Bind, Focus Hint and Rich Links: Add Component.");
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("App")) {
         if (ImGui::MenuItem("Search Bar"))         addUI("Search Bar",  oked::BuildUISearchBar);
         if (ImGui::MenuItem("Date and Time"))      addUI("Date and Time", oked::BuildUIDateTimePicker);
@@ -41881,6 +41900,20 @@ void DrawInspector(EditorState& ed) {
             if (item(!go->GetComponent<UIPagination>(), "UI Pagination")) { go->AddComponent<UIPagination>(); ed.dirty = true; }
             if (item(!go->GetComponent<UISkeleton>(), "UI Skeleton")) { go->AddComponent<UISkeleton>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIBottomSheet>(), "UI Bottom Sheet")) { go->AddComponent<UIBottomSheet>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIBind>(), "UI Bind (widget <-> variable)")) { go->AddComponent<UIBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIVisibleIf>(), "UI Visible If (show from a condition)")) { go->AddComponent<UIVisibleIf>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIListBind>() && go->GetComponent<UIListView>(), "UI List Bind (array -> list)")) { go->AddComponent<UIListBind>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIHotReload>(), "UI Hot Reload (watch a UI file)")) { go->AddComponent<UIHotReload>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIFocusHint>(), "UI Focus Hint (tab order, links)")) { go->AddComponent<UIFocusHint>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRichLinks>() && go->GetComponent<TextRenderer>(), "UI Rich Links (clickable [url] text)")) { go->AddComponent<UIRichLinks>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIRadialMenu>(), "UI Radial Menu")) { go->AddComponent<UIRadialMenu>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIKillFeed>(), "UI Kill Feed")) { go->AddComponent<UIKillFeed>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAmmoCounter>(), "UI Ammo Counter")) { go->AddComponent<UIAmmoCounter>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIInteractionPrompt>(), "UI Interaction Prompt")) { go->AddComponent<UIInteractionPrompt>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIObjectiveTracker>(), "UI Objective Tracker")) { go->AddComponent<UIObjectiveTracker>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UICompass>(), "UI Compass")) { go->AddComponent<UICompass>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIItemTooltipCard>(), "UI Item Tooltip Card")) { go->AddComponent<UIItemTooltipCard>(); ed.dirty = true; }
+            if (item(!go->GetComponent<UIAbilityIcon>() && go->GetComponent<UIRadialProgress>(), "UI Ability Icon (on a Radial Progress)")) { go->AddComponent<UIAbilityIcon>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIRangeSlider>(), "UI Range Slider (two handles)")) { go->AddComponent<UIRangeSlider>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIAspectRatio>(), "UI Aspect Ratio (keeps a shape)")) { go->AddComponent<UIAspectRatio>(); ed.dirty = true; }
             if (item(!go->GetComponent<UIInputValidator>() && go->GetComponent<UIInputField>(), "UI Input Validator (rules for an input field)")) { go->AddComponent<UIInputValidator>(); ed.dirty = true; }

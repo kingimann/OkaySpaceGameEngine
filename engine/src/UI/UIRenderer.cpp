@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -670,9 +671,52 @@ void DrawUIText(Painter& r, const std::string& text, float ox, float oy,
 // it on its line, so any font lines up. The lines advance like DrawUIText's, except that a line is as tall as the
 // largest [size] on it (RichLineScales): the line below starts under the big run instead of the big run climbing over
 // the line above, and a smaller run sits on its line's bottom. (oy is the top of the first line.)
+// The pictures an inline [icon=name] draws (okay/UI/RichText.hpp): a path to an image, else an item from the item
+// database (its own icon when it has one, else a tile in its rarity or a hash colour with its first letter).
+void DrawRichIcon(Painter& r, const std::string& name, float x, float y, float cell, RGBA tint) {
+    const bool isPath = name.find('.') != std::string::npos || name.find('/') != std::string::npos;
+    const std::string id = isPath ? std::string() : okay::ItemDatabase::Get().Resolve(name);
+    std::string path = isPath ? name : okay::ItemIconOf("", id).path;
+    if (!path.empty()) {
+        if (Tex t = r.LoadTexture(path)) {
+            FRect dst{x, y, cell, cell};
+            r.SetTextureAlphaMod(t, tint.a);
+            r.CopyF(t, nullptr, &dst);
+            return;
+        }
+    }
+    const okay::ItemDefinition* d = id.empty() ? nullptr : okay::ItemDatabase::Get().Find(id);
+    unsigned h = 2166136261u;
+    for (unsigned char c : name) { h ^= c; h *= 16777619u; }
+    std::uint8_t cr = (std::uint8_t)(70 + (h & 0x7F)), cg = (std::uint8_t)(70 + ((h >> 7) & 0x7F)), cb = (std::uint8_t)(70 + ((h >> 14) & 0x7F));
+    if (d && d->hasRarityColor) { cr = (std::uint8_t)(d->rarityColor.r * 255); cg = (std::uint8_t)(d->rarityColor.g * 255); cb = (std::uint8_t)(d->rarityColor.b * 255); }
+    const float in = cell > 6.0f ? 1.0f : 0.0f;
+    FRect box{x + in, y + in, cell - in * 2.0f, cell - in * 2.0f};
+    r.SetDrawColor(cr, cg, cb, tint.a);
+    r.FillRectF(&box);
+    std::string letter(1, '?');
+    const std::string& src = (d && !d->name.empty()) ? d->name : name;
+    for (char c : src) if (std::isalnum((unsigned char)c)) { letter.assign(1, (char)std::toupper((unsigned char)c)); break; }
+    const float px = cell / (float)Font8x8::Height * 0.8f;
+    DrawUIText(r, letter, x + (cell - 8.0f * px) * 0.5f, y + (cell - 8.0f * px) * 0.5f, px, RGBA{255, 255, 255, tint.a});
+}
+
+// The rectangles of the links the last draw of a text produced, per text object, in the space the text was drawn in.
+std::unordered_map<const okay::GameObject*, std::vector<RichLinkRect>>& RichLinkTable() {
+    static thread_local std::unordered_map<const okay::GameObject*, std::vector<RichLinkRect>> t;
+    return t;
+}
+const std::vector<RichLinkRect>& RichLinksOf(const okay::GameObject* go) {
+    static const std::vector<RichLinkRect> none;
+    auto& t = RichLinkTable();
+    auto it = t.find(go);
+    return it == t.end() ? none : it->second;
+}
+
 void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::RichStyle>& styles,
                   float ox, float oy, float px, RGBA base, float letterSp, float lineSp, bool italic,
-                  bool bold, float boldOff, TtfFont* ttf) {
+                  bool bold, float boldOff, TtfFont* ttf,
+                  const std::vector<std::string>* links = nullptr, const std::vector<std::string>* icons = nullptr, std::vector<RichLinkRect>* linkRects = nullptr) {
     TtfFont* f = FontForText(ttf ? ttf : g_uiDefaultFont, disp);
     const float logicalH = px * (float)Font8x8::Height;
     const float deviceH = logicalH * (g_uiDeviceScale > 0.05f ? g_uiDeviceScale : 1.0f);
@@ -711,8 +755,23 @@ void DrawRichRuns(Painter& r, const std::string& disp, const std::vector<okay::R
             const bool it = italic || runStyle.italic;
             // Every run sits on the bottom of its line: the line is as tall as its largest run (S), a smaller run starts lower.
             const float ry = y + (S - s) * (float)Font8x8::Height * px;
-            DrawUIText(r, run, cx, ry, rpx, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
-            cx += UITextW(run, rpx) + letterSp * rpx * (float)okay::utf8::Length(run);
+            float runW;
+            if (runStyle.icon >= 0 && icons && (std::size_t)runStyle.icon < icons->size()) {   // [icon=...]: one glyph cell, drawn as a picture
+                runW = (float)Font8x8::Height * rpx;
+                DrawRichIcon(r, (*icons)[(std::size_t)runStyle.icon], cx, ry, runW, col.a ? RGBA{255, 255, 255, col.a} : base);
+            } else {
+                DrawUIText(r, run, cx, ry, rpx, col, letterSp, lineSp, it, false, RGBA{0, 0, 0, 0}, ttf, bold || runStyle.bold);
+                runW = UITextW(run, rpx) + letterSp * rpx * (float)okay::utf8::Length(run);
+                if (runStyle.underline) {
+                    const float uy = ry + (float)Font8x8::Height * rpx + 1.0f;
+                    r.SetDrawColor(col.r, col.g, col.b, col.a);
+                    FRect line{cx, uy, runW, rpx > 1.5f ? 2.0f : 1.0f};
+                    r.FillRectF(&line);
+                }
+            }
+            if (runStyle.link >= 0 && links && linkRects && (std::size_t)runStyle.link < links->size())
+                linkRects->push_back(RichLinkRect{cx, ry, runW, (float)Font8x8::Height * rpx + 3.0f, (*links)[(std::size_t)runStyle.link]});
+            cx += runW;
             cxAt = end;
         };
         for (std::size_t i = 0; i < line.size();) {
@@ -2231,7 +2290,9 @@ static void RenderSceneUIImpl(Scene& scene, Painter& target, int w, int h, const
         }
         if (tr->richText && tr->screenSpace && RichTextHasTags(tr->text)) {
             const okay::RichText rt = okay::ParseRichText(tr->text);
-            DrawRichRuns(p, disp, rt.styles, o.x, o.y, ps, col, ls, lp, it, tr->bold, fo, fnt);
+            std::vector<RichLinkRect> rects;
+            DrawRichRuns(p, disp, rt.styles, o.x, o.y, ps, col, ls, lp, it, tr->bold, fo, fnt, &rt.links, &rt.icons, &rects);
+            if (rects.empty()) RichLinkTable().erase(up.get()); else RichLinkTable()[up.get()] = std::move(rects);
         } else {
             DrawUIText(p, disp, o.x, o.y, ps, col, ls, lp, it, tr->gradient, c2, fnt, tr->bold);
         }

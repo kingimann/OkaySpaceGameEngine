@@ -2,10 +2,13 @@
 // The UI component library example scenes (File > Examples > UI library, and examples/ui_library/*.okayscene).
 //
 // BuildSlice1() fills a scene with the parts added in slice 1 (range slider, input validation, aspect-ratio
-// container) next to plain on-screen instructions. Written for this engine from its own UI helpers
+// container) next to plain on-screen instructions. BuildSlice2() does the same for slice 2 (game HUD parts and the
+// data-driven glue: bindings, conditions, array lists, rich text links, hot reload). Written for this engine from its own UI helpers
 // (UITemplates, UIGallery's card helpers); no other project's code or assets were used.
 #include "okay/Scene/UIGallery.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
+#include "okay/Components/QuestLog.hpp"
+#include "okay/Components/UITextBind.hpp"
 #include <string>
 
 namespace okay { namespace UILibrary {
@@ -122,6 +125,207 @@ inline GameObject* BuildSlice1(Scene& scene) {
     GameObject* c4 = gx::Card(scene, root, "More", "Also in the library", {32, 448}, {392, 170});
     detail2::Note(scene, c4, "More1", "More parts: File > Examples > UI Gallery.", {20, 44}, 352, 40);
     detail2::Note(scene, c4, "More2", "Add any part: GameObject > UI > Controls, or Layout & Overlays.", {20, 96}, 352, 60);
+    return root;
+}
+
+/// The markup the hot-reload demo starts with (also the content of examples/ui_library/hot_reload_demo.okayui).
+inline const char* HotReloadDemoMarkup() {
+    return "text \"HOT RELOAD: change these words in hot_reload_demo.okayui and save\" pos=20,262 size=2 color=250,200,80,255\n";
+}
+
+/// Slice 2: game HUD parts and the data-driven glue. Returns the page root.
+inline GameObject* BuildSlice2(Scene& scene) {
+    GameObject* canvas = EnsureCanvas(scene);
+    if (Canvas* cv = canvas->GetComponent<Canvas>()) cv->referenceResolution = {1280.0f, 720.0f};
+    GameObject* root = Group(scene, canvas, "UI Library 2");
+    Panel(scene, root, "Backdrop", UIAnchor::StretchFull, {0, 0}, {0, 0}, slate::Backdrop(), 0.0f);
+    scene.Find("Backdrop")->GetComponent<UIPanel>()->borderWidth = 0.0f;
+    Text(scene, root, "Title", "UI Library 2", UIAnchor::TopLeft, {32, 12}, {600, 40}, 30.0f, slate::Text(), 0, true);
+    detail2::Note(scene, root, "Subtitle",
+         "Game parts and data-driven parts. Press Play, then use the buttons, the sliders and these keys: Q uses the ability, Tab moves the focus ring.",
+         {34, 50}, 820, 40);
+
+    // The no-code glue: a script on one object runs the quest buttons and fills the list.
+    GameObject* demo = Child(scene, root, "Demo");
+    demo->AddComponent<ScriptComponent>()->LoadSource(
+        "function start() {\n"
+        "  start_quest(\"wolves\");\n"
+        "  run_action(\"array_push scores 120 ; array_push scores 85 ; array_push scores 40\");\n"
+        "}\n"
+        "function quest_wolf() { add_quest_progress(\"wolves\", 0, 1); }\n"
+        "function quest_talk() { complete_objective(\"wolves\", 1); }\n"
+        "function quest_bridge() { complete_objective(\"wolves\", 2); }\n"
+        "function quest_again() { fail_quest(\"wolves\"); start_quest(\"wolves\"); }\n"
+        "function add_score() { run_action(\"array_push scores 55\"); }\n"
+        "function clear_scores() { run_action(\"array_clear scores\"); }\n");
+    {
+        GameObject* q = Child(scene, root, "Quests");
+        auto* log = q->AddComponent<QuestLog>();
+        log->showTracker = false;       // our own tracker below draws the list
+        log->showNotifications = false;
+        log->allowJournal = false;
+        QuestDef d;
+        d.id = "wolves"; d.title = "Wolf trouble"; d.repeatable = true;
+        QuestObjective o1; o1.kind = QuestObjective::Kind::Custom; o1.description = "Hunt the wolves"; o1.target = "wolf"; o1.count = 3;
+        QuestObjective o2; o2.kind = QuestObjective::Kind::Custom; o2.description = "Tell the mayor"; o2.target = "mayor";
+        QuestObjective o3; o3.kind = QuestObjective::Kind::Custom; o3.description = "Cross the bridge"; o3.target = "bridge";
+        d.objectives = {o1, o2, o3};
+        log->quests.push_back(d);
+    }
+    auto onClick = [&](GameObject* btn, const char* target, const char* fn) {
+        auto* b = btn->GetComponent<UIButton>();
+        b->clickTarget = target; b->clickFunction = fn; b->fontScale = 1.5f;
+        return btn;
+    };
+
+    // ---- Card 1: ammo, ability, prompt ----------------------------------------------------------------------
+    GameObject* c1 = gx::Card(scene, root, "AmmoCard", "Ammo, ability, prompt", {32, 96}, {392, 304});
+    {
+        GameObject* g = Child(scene, c1, "Ammo");
+        auto* w = g->AddComponent<UIAmmoCounter>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 44}; w->size = {214, 84};
+        w->current = 24; w->reserve = 90; w->magazine = 30;
+        onClick(gx::Btn(scene, c1, "Shoot", "Shoot", {248, 44}, {124, 36}, 0), "Ammo", "Shoot");
+        onClick(gx::Btn(scene, c1, "Reload", "Reload", {248, 92}, {124, 36}, 0), "Ammo", "Reload");
+    }
+    {
+        GameObject* g = Child(scene, c1, "Dash");
+        auto* ring = g->AddComponent<UIRadialProgress>();
+        ring->anchor = UIAnchor::TopLeft; ring->position = {20, 142}; ring->size = {72, 72};
+        ring->thickness = 7.0f; ring->value = 0.0f; ring->showPercent = false;
+        ring->fill = Color::FromBytes(14, 16, 24, 240); ring->background = Color::FromBytes(110, 215, 150, 220);
+        auto* a = g->AddComponent<UIAbilityIcon>();
+        a->label = "Q"; a->keyText = "Q"; a->useKey = 'q'; a->cooldown = 4.0f;
+        onClick(gx::Btn(scene, c1, "UseAbility", "Use (or press Q)", {108, 160}, {264, 36}, 0), "Dash", "Use");
+    }
+    {
+        GameObject* g = Child(scene, c1, "NearDoor");
+        auto* t = g->AddComponent<UIToggle>();
+        t->anchor = UIAnchor::TopLeft; t->position = {20, 226}; t->size = {28, 28};
+        t->label = "I am near the door"; t->on = false;
+        g->AddComponent<UIBind>()->var = "near_door";
+        GameObject* p = Child(scene, c1, "Prompt");
+        auto* ip = p->AddComponent<UIInteractionPrompt>();
+        ip->anchor = UIAnchor::TopLeft; ip->position = {20, 262}; ip->size = {352, 34};
+        ip->key = "E"; ip->action = "Open the door"; ip->showVar = "near_door";
+    }
+
+    // ---- Card 2: radial menu and kill feed ------------------------------------------------------------------
+    GameObject* c2 = gx::Card(scene, root, "WheelCard", "Radial menu, kill feed", {444, 96}, {392, 304});
+    {
+        GameObject* g = Child(scene, c2, "Wheel");
+        auto* w = g->AddComponent<UIRadialMenu>();
+        w->anchor = UIAnchor::TopLeft; w->position = {14, 54}; w->size = {232, 232};
+        w->items = "Attack|Defend|Heal|Run"; w->alwaysShown = true; w->holdToOpen = false; w->innerRadius = 36.0f;
+        w->chosenVar = "radial_pick";
+        GameObject* t = detail2::Note(scene, c2, "Picked", "You picked: {radial_pick_text|nothing yet}", {258, 64}, 120, 80);
+        t->AddComponent<UITextBind>()->format = "You picked: {radial_pick_text|nothing yet}";
+        t->GetComponent<TextRenderer>()->color = slate::Text();
+        onClick(gx::Btn(scene, c2, "NewKill", "New kill", {258, 168}, {114, 36}, 0), "KillFeed", "AddSampleKill");
+        detail2::Note(scene, c2, "WheelHint", "Point at the wheel and click a wedge. The kill feed is at the top right of the screen.", {258, 214}, 120, 80);
+    }
+    {
+        GameObject* g = Child(scene, root, "KillFeed");   // a HUD part: top right of the screen, over the cards' header row
+        auto* f = g->AddComponent<UIKillFeed>();
+        f->anchor = UIAnchor::TopRight; f->position = {-32, 10}; f->size = {400, 80};
+        f->maxEntries = 3; f->rowHeight = 26.0f; f->playerName = "Player";
+        f->Push("Raider", "Wolf", "Axe");
+        f->Push("Player", "Raider", "Rifle");
+        f->lifetime = 12.0f;
+    }
+
+    // ---- Card 3: quests and compass -------------------------------------------------------------------------
+    GameObject* c3 = gx::Card(scene, root, "QuestCard", "Objectives, compass", {856, 96}, {392, 304});
+    {
+        GameObject* g = Child(scene, c3, "Tracker");
+        auto* w = g->AddComponent<UIObjectiveTracker>();
+        w->anchor = UIAnchor::TopLeft; w->position = {20, 44}; w->size = {352, 124};
+        onClick(gx::Btn(scene, c3, "Wolf", "Wolf", {20, 176}, {80, 32}, 0), "Demo", "quest_wolf");
+        onClick(gx::Btn(scene, c3, "Talk", "Talk", {108, 176}, {80, 32}, 0), "Demo", "quest_talk");
+        onClick(gx::Btn(scene, c3, "Bridge", "Bridge", {196, 176}, {88, 32}, 0), "Demo", "quest_bridge");
+        onClick(gx::Btn(scene, c3, "Again", "Again", {292, 176}, {80, 32}, 1), "Demo", "quest_again");
+        gx::Label(scene, c3, "CompassLabel", "Turn the compass", {20, 218}, 200);
+        GameObject* sl = Child(scene, c3, "Heading");
+        auto* s = sl->AddComponent<UISlider>();
+        s->anchor = UIAnchor::TopLeft; s->position = {20, 240}; s->size = {352, 18};
+        s->minValue = 0; s->maxValue = 360; s->value = 20; s->showValue = true;
+        sl->AddComponent<UIBind>()->var = "compass_deg";
+        GameObject* cg = Child(scene, c3, "Compass");
+        auto* c = cg->AddComponent<UICompass>();
+        c->anchor = UIAnchor::TopLeft; c->position = {20, 264}; c->size = {352, 32};
+        c->headingVar = "compass_deg"; c->fieldOfView = 140.0f; c->showDegrees = false;
+    }
+
+    // ---- Card 4: item tooltip card --------------------------------------------------------------------------
+    GameObject* c4 = gx::Card(scene, root, "ItemCard", "Item tooltip card", {32, 412}, {392, 292});
+    {
+        GameObject* g = Child(scene, c4, "ItemPick");
+        auto* dd = g->AddComponent<UIDropdown>();
+        dd->anchor = UIAnchor::TopLeft; dd->position = {20, 44}; dd->size = {352, 34};
+        dd->options = {"Iron Sword", "Healing Potion", "Leather Cap"}; dd->value = 0;
+        g->AddComponent<UIBind>()->var = "item_pick";
+        GameObject* cg = Child(scene, c4, "Card");
+        auto* card = cg->AddComponent<UIItemTooltipCard>();
+        card->anchor = UIAnchor::TopLeft; card->position = {20, 92}; card->size = {352, 190};
+        card->item = "Iron Sword"; card->itemVar = "item_pick_text";
+        card->itemsFile = "examples/ui_library/ui_library_items.okayitems";
+    }
+
+    // ---- Card 5: two-way binding and conditions -------------------------------------------------------------
+    GameObject* c5 = gx::Card(scene, root, "BindCard", "Bindings and conditions", {444, 412}, {392, 292});
+    {
+        gx::Label(scene, c5, "VolLabel", "Volume (slider and box are the same number)", {20, 44}, 352);
+        GameObject* sl = Child(scene, c5, "Volume");
+        auto* s = sl->AddComponent<UISlider>();
+        s->anchor = UIAnchor::TopLeft; s->position = {20, 70}; s->size = {352, 20};
+        s->minValue = 0; s->maxValue = 100; s->value = 60; s->wholeNumbers = true;
+        sl->AddComponent<UIBind>()->var = "volume";
+        GameObject* in = Child(scene, c5, "VolumeBox");
+        auto* ib = in->AddComponent<UIInputField>();
+        ib->anchor = UIAnchor::TopLeft; ib->position = {20, 110}; ib->size = {170, 36}; ib->placeholder = "type 0 to 100";
+        ib->color = slate::Field(); ib->focusColor = slate::FieldHover(); ib->borderWidth = 1.0f;
+        in->AddComponent<UIBind>()->var = "volume";
+        GameObject* mute = Child(scene, c5, "Mute");
+        auto* mt = mute->AddComponent<UIToggle>();
+        mt->anchor = UIAnchor::TopLeft; mt->position = {212, 114}; mt->size = {28, 28}; mt->label = "Mute"; mt->on = false;
+        mute->AddComponent<UIBind>()->var = "muted";
+        GameObject* now = detail2::Note(scene, c5, "VolNow", "Volume is {volume|?}", {20, 160}, 352, 20);
+        now->AddComponent<UITextBind>()->format = "Volume is {volume|?}";
+        now->GetComponent<TextRenderer>()->color = slate::Text();
+        GameObject* warn = detail2::Note(scene, c5, "LowWarning", "Very quiet: turn it up", {20, 190}, 352, 20);
+        warn->GetComponent<TextRenderer>()->color = slate::Danger();
+        warn->AddComponent<UIVisibleIf>()->condition = "volume < 20 && !muted";
+        GameObject* muted = detail2::Note(scene, c5, "MutedNote", "Muted", {20, 190}, 352, 20);
+        muted->GetComponent<TextRenderer>()->color = slate::Accent();
+        muted->AddComponent<UIVisibleIf>()->condition = "muted";
+        detail2::Note(scene, c5, "BindHint", "Drag the slider, or type in the box. Slide below 20 for the warning. Turn Mute on to swap it.", {20, 224}, 352, 56);
+    }
+
+    // ---- Card 6: list from an array, links, hot reload ------------------------------------------------------
+    GameObject* c6 = gx::Card(scene, root, "ListCard", "List, links, hot reload", {856, 412}, {392, 292});
+    {
+        GameObject* lg = Child(scene, c6, "Scores");
+        auto* lv = lg->AddComponent<UIListView>();
+        lv->anchor = UIAnchor::TopLeft; lv->position = {20, 44}; lv->size = {352, 84}; lv->itemHeight = 26.0f; lv->spacing = 2.0f;
+        lv->background = Color::FromBytes(255, 255, 255, 14);
+        GameObject* row = Text(scene, lg, "Row", "row", UIAnchor::TopLeft, {8, 0}, {336, 26}, 14.0f, slate::Text());
+        (void)row;
+        auto* lb = lg->AddComponent<UIListBind>();
+        lb->var = "scores"; lb->format = "Score {index}:  {item} points"; lb->emptyText = "No scores yet";
+        onClick(gx::Btn(scene, c6, "AddScore", "Add a score", {20, 136}, {172, 30}, 0), "Demo", "add_score");
+        onClick(gx::Btn(scene, c6, "ClearScores", "Clear", {200, 136}, {172, 30}, 1), "Demo", "clear_scores");
+        GameObject* t = Text(scene, c6, "Links", "Read the [url=manual]manual[/url], or buy [icon=Iron Sword] and [icon=Healing Potion] for 5 [icon=coin].",
+                             UIAnchor::TopLeft, {20, 176}, {352, 40}, 14.0f, slate::Text());
+        auto* tr = t->GetComponent<TextRenderer>();
+        tr->richText = true; tr->wrap = true; tr->vcenter = false;
+        t->AddComponent<UIRichLinks>();
+        GameObject* last = detail2::Note(scene, c6, "LastLink", "Link you clicked: {ui_link|none yet}", {20, 222}, 352, 20);
+        last->AddComponent<UITextBind>()->format = "Link you clicked: {ui_link|none yet}";
+        GameObject* doc = Child(scene, c6, "HotDoc");
+        doc->AddComponent<UIDocument>()->markup = HotReloadDemoMarkup();
+        auto* hot = doc->AddComponent<UIHotReload>();
+        hot->file = "examples/ui_library/hot_reload_demo.okayui"; hot->interval = 0.5f;
+    }
     return root;
 }
 

@@ -20,5 +20,18 @@ void BuildUIBottomSheet(okay::GameObject* g);
 void BuildUIRangeSlider(okay::GameObject* g);
 void BuildUIAspectRatio(okay::GameObject* g);
 void BuildUIInputValidation(okay::GameObject* g);
+// Slice 2: game HUD parts and data glue (GameObject > UI > Game HUD / Data).
+void BuildUIRadialMenu(okay::GameObject* g);
+void BuildUIKillFeed(okay::GameObject* g);
+void BuildUIAmmoCounter(okay::GameObject* g);
+void BuildUIInteractionPrompt(okay::GameObject* g);
+void BuildUIObjectiveTracker(okay::GameObject* g);
+void BuildUICompass(okay::GameObject* g);
+void BuildUIItemTooltipCard(okay::GameObject* g);
+void BuildUIAbilityIcon(okay::GameObject* g);
+void BuildUIBoundSlider(okay::GameObject* g);
+void BuildUIBoundList(okay::GameObject* g);
+void BuildUIHotReload(okay::GameObject* g);
+void BuildUIVisibleIf(okay::GameObject* g);
 
 } // namespace oked

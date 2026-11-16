@@ -23,6 +23,8 @@
 #include "okay/Components/UIRangeSlider.hpp"
 #include "okay/Components/UIAspectRatio.hpp"
 #include "okay/Components/UIInputValidator.hpp"
+#include "okay/Components/UIGameHud.hpp"
+#include "okay/Components/UIDataGlue.hpp"
 #include "okay/Components/UIRawImage.hpp"
 #include "okay/Components/UIScrollView.hpp"
 #include "okay/Components/UISlider.hpp"
@@ -736,6 +738,166 @@ void RegisterMoreWidgets() {
     }
 }
 
+// UI library slice 2: the game HUD parts and the data glue.
+template <class B> B& HudBaseProps(B& b) {
+    b.AddVec2("position", &UIHudBase::position).Range(-kBig, kBig, 0.1).Tooltip("Pixels from the anchor")
+     .AddVec2("size", &UIHudBase::size).Range(1, kBig, 0.1).Tooltip("Width and height in pixels")
+     .AddEnum("anchor", &UIHudBase::anchor, AnchorNames()).Tooltip("Which edge of the screen this sits on")
+     .AddColor("background", &UIHudBase::background).Range(0, 1, 0.01).Tooltip("Colour of the panel behind it")
+     .AddColor("accent", &UIHudBase::accent).Range(0, 1, 0.01).Tooltip("Highlight colour")
+     .AddColor("textColor", &UIHudBase::textColor).Range(0, 1, 0.01).Tooltip("Colour of the words");
+    return b;
+}
+
+void RegisterUILibrary2() {
+    {
+        PropertyBuilder<UIRadialMenu> b("UIRadialMenu", "uiradialmenu", "UI");
+        HudBaseProps(b);
+        b.AddString("items", &UIRadialMenu::items).Tooltip("The choices, separated by | (up to 12)")
+         .AddFloat("innerRadius", &UIRadialMenu::innerRadius).Range(0, kBig, 1).Tooltip("The dead zone in the middle, in pixels")
+         .AddKey("openKey", &UIRadialMenu::openKey).Tooltip("Key that opens the wheel (0 = only a script opens it)")
+         .AddBool("holdToOpen", &UIRadialMenu::holdToOpen).Tooltip("Hold the key, point, let go to choose (off: click mode)")
+         .AddBool("closeOnSelect", &UIRadialMenu::closeOnSelect).Tooltip("Close the wheel after a choice")
+         .AddBool("alwaysShown", &UIRadialMenu::alwaysShown).Tooltip("Draw the wheel even while closed")
+         .AddString("centerText", &UIRadialMenu::centerText).Tooltip("Words in the middle (empty = the hovered choice)")
+         .AddString("chosenVar", &UIRadialMenu::chosenVar).Tooltip("A variable that receives the chosen number (<name>_text gets the label)");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIKillFeed> b("UIKillFeed", "uikillfeed", "UI");
+        HudBaseProps(b);
+        b.AddInt("maxEntries", &UIKillFeed::maxEntries).Range(1, 20, 1).Tooltip("Most lines on screen")
+         .AddFloat("lifetime", &UIKillFeed::lifetime).Range(0.5, 120, 0.1).Tooltip("Seconds a line stays")
+         .AddFloat("fadeTime", &UIKillFeed::fadeTime).Range(0, 10, 0.05).Tooltip("Seconds a line takes to fade out")
+         .AddFloat("rowHeight", &UIKillFeed::rowHeight).Range(8, 200, 1).Tooltip("Pixels from one line to the next")
+         .AddBool("alignRight", &UIKillFeed::alignRight).Tooltip("Lines hug the right edge of the box")
+         .AddString("playerName", &UIKillFeed::playerName).Tooltip("A line that names this is drawn in the accent colour")
+         .AddString("format", &UIKillFeed::format).Tooltip("Line text: {killer} and {victim}")
+         .AddString("weaponFormat", &UIKillFeed::weaponFormat).Tooltip("Line text when a weapon is given: {killer} {weapon} {victim}");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIAmmoCounter> b("UIAmmoCounter", "uiammo", "UI");
+        HudBaseProps(b);
+        b.AddString("weapon", &UIAmmoCounter::weapon).Tooltip("Object with the Ranged Weapon (empty = the Player)")
+         .AddString("currentVar", &UIAmmoCounter::currentVar).Tooltip("Variable with the rounds in the gun (overrides the weapon)")
+         .AddString("reserveVar", &UIAmmoCounter::reserveVar).Tooltip("Variable with the spare rounds")
+         .AddString("label", &UIAmmoCounter::label).Tooltip("Small word above the number")
+         .AddInt("current", &UIAmmoCounter::current).Range(0, 100000, 1).Tooltip("Rounds shown when no weapon or variable is found")
+         .AddInt("reserve", &UIAmmoCounter::reserve).Range(-1, 100000, 1).Tooltip("Spare rounds shown then (-1 = unlimited)")
+         .AddInt("magazine", &UIAmmoCounter::magazine).Range(0, 100000, 1).Tooltip("Magazine size shown then")
+         .AddBool("reloading", &UIAmmoCounter::reloading).Tooltip("Show RELOADING (typed values only)")
+         .AddFloat("lowFraction", &UIAmmoCounter::lowFraction).Range(0, 1, 0.01).Tooltip("The number turns amber at this part of the magazine")
+         .AddBool("showPips", &UIAmmoCounter::showPips).Tooltip("A bar of bullets under the number")
+         .AddBool("showReserve", &UIAmmoCounter::showReserve).Tooltip("Show the spare rounds after a slash");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIInteractionPrompt> b("UIInteractionPrompt", "uiprompt", "UI");
+        HudBaseProps(b);
+        b.AddString("key", &UIInteractionPrompt::key).Tooltip("The key shown in the cap (and the key that runs on_interact)")
+         .AddString("action", &UIInteractionPrompt::action).Tooltip("The word next to the key")
+         .AddString("target", &UIInteractionPrompt::target).Tooltip("Object the player must be near (empty = use the variable)")
+         .AddFloat("range", &UIInteractionPrompt::range).Range(0, 1000, 0.1).Tooltip("How close, in world units")
+         .AddString("showVar", &UIInteractionPrompt::showVar).Tooltip("A variable: the prompt shows while it is not 0")
+         .AddBool("alwaysShow", &UIInteractionPrompt::alwaysShow).Tooltip("Always show it")
+         .AddString("playerTag", &UIInteractionPrompt::playerTag).Tooltip("Tag of the player object")
+         .AddFloat("fadeSpeed", &UIInteractionPrompt::fadeSpeed).Range(0.1, 100, 0.1).Tooltip("Bigger fades faster");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIObjectiveTracker> b("UIObjectiveTracker", "uitracker", "UI");
+        HudBaseProps(b);
+        b.AddString("title", &UIObjectiveTracker::title).Tooltip("Heading of the box")
+         .AddString("questId", &UIObjectiveTracker::questId).Tooltip("Show only this quest (empty = the tracked or every active quest)")
+         .AddInt("maxQuests", &UIObjectiveTracker::maxQuests).Range(0, 20, 1).Tooltip("Most quests listed (0 = all)")
+         .AddBool("showDescription", &UIObjectiveTracker::showDescription).Tooltip("Show each quest's description")
+         .AddColor("doneColor", &UIObjectiveTracker::doneColor).Range(0, 1, 0.01).Tooltip("Colour of finished objectives");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UICompass> b("UICompass", "uicompass", "UI");
+        HudBaseProps(b);
+        b.AddString("source", &UICompass::source).Tooltip("Object whose facing is the heading (empty = the main camera)")
+         .AddFloat("heading", &UICompass::heading).Range(0, 360, 1).Tooltip("Degrees clockwise from north, used when there is no source or camera")
+         .AddFloat("fieldOfView", &UICompass::fieldOfView).Range(20, 360, 1).Tooltip("Degrees shown across the strip")
+         .AddString("markers", &UICompass::markers).Tooltip("Names of objects to mark, separated by |")
+         .AddString("headingVar", &UICompass::headingVar).Tooltip("A variable holding the heading in degrees (wins over the source and camera)")
+         .AddBool("showDegrees", &UICompass::showDegrees).Tooltip("Show the heading number under the strip")
+         .AddBool("showMarkerDistance", &UICompass::showMarkerDistance).Tooltip("Show how far each marker is")
+         .AddColor("markerColor", &UICompass::markerColor).Range(0, 1, 0.01).Tooltip("Colour of the markers");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIItemTooltipCard> b("UIItemTooltipCard", "uicard", "UI");
+        HudBaseProps(b);
+        b.AddString("item", &UIItemTooltipCard::item).Tooltip("Item id or name from the item database")
+         .AddString("itemVar", &UIItemTooltipCard::itemVar).Tooltip("Variable holding the item (wins while it is set)")
+         .AddInt("count", &UIItemTooltipCard::count).Range(0, 100000, 1).Tooltip("Stack size shown")
+         .AddString("equipment", &UIItemTooltipCard::equipment).Tooltip("Object with Equipment, to compare against")
+         .AddString("itemsFile", &UIItemTooltipCard::itemsFile).Tooltip("An .okayitems file to add to the item database (for a scene that ships its own items)")
+         .AddBool("showIcon", &UIItemTooltipCard::showIcon).Tooltip("Draw the item's icon (or a coloured tile)")
+         .AddColor("nameColor", &UIItemTooltipCard::nameColor).Range(0, 1, 0.01).Tooltip("Name colour when the item has no rarity colour");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIAbilityIcon> b("UIAbilityIcon", "uiability", "UI");
+        b.AddString("label", &UIAbilityIcon::label).Tooltip("Letters drawn as the icon")
+         .AddString("iconPath", &UIAbilityIcon::iconPath).Tooltip("Image for the icon (empty = the letters)")
+         .AddString("keyText", &UIAbilityIcon::keyText).Tooltip("Key shown in the corner")
+         .AddKey("useKey", &UIAbilityIcon::useKey).Tooltip("Key that uses the ability (0 = a script uses it)")
+         .AddFloat("cooldown", &UIAbilityIcon::cooldown).Range(0, 3600, 0.1).Tooltip("Seconds until the ability is ready again")
+         .AddInt("maxCharges", &UIAbilityIcon::maxCharges).Range(1, 20, 1).Tooltip("Uses held at once")
+         .AddColor("iconColor", &UIAbilityIcon::iconColor).Range(0, 1, 0.01).Tooltip("Colour of the icon tile")
+         .AddColor("readyColor", &UIAbilityIcon::readyColor).Range(0, 1, 0.01).Tooltip("Colour of the charge badge");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIBind> b("UIBind", "uidatabind", "UI");
+        b.AddEnum("mode", &UIBind::mode, {"Two way", "Widget writes variable", "Variable shows in widget"}).Tooltip("Which way the value travels")
+         .AddString("var", &UIBind::var).Tooltip("The variable (a range slider's low handle)")
+         .AddString("varHigh", &UIBind::varHigh).Tooltip("A range slider's high handle variable");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIVisibleIf> b("UIVisibleIf", "uivisible", "UI");
+        b.AddString("condition", &UIVisibleIf::condition).Tooltip("e.g. hp < 30, !hasKey, score >= 10 && lives > 0")
+         .AddString("target", &UIVisibleIf::target).Tooltip("Object to show or hide (empty = this one)")
+         .AddBool("invert", &UIVisibleIf::invert).Tooltip("Show while the condition is false");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIListBind> b("UIListBind", "uilistbind", "UI");
+        b.AddString("var", &UIListBind::var).Tooltip("The array variable")
+         .AddString("format", &UIListBind::format).Tooltip("First text of a row: {item}, {index}, or a field name for a list of maps")
+         .AddString("emptyText", &UIListBind::emptyText).Tooltip("Shown as one row when the array is empty");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIHotReload> b("UIHotReload", "uihotreload", "UI");
+        b.AddString("file", &UIHotReload::file).Tooltip("UI markup file or .okaytheme to watch")
+         .AddString("target", &UIHotReload::target).Tooltip("Object with the UI Document or UI Theme (empty = this one)")
+         .AddFloat("interval", &UIHotReload::interval).Range(0.05, 60, 0.05).Tooltip("Seconds between looks at the file")
+         .AddBool("loadAtStart", &UIHotReload::loadAtStart).Tooltip("Apply the file once when the game starts");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIRichLinks> b("UIRichLinks", "uirichlinks", "UI");
+        b.AddBool("fireEvent", &UIRichLinks::fireEvent).Tooltip("Run on_link() on the object's script when a link is clicked")
+         .AddBool("storeInPrefs", &UIRichLinks::storeInPrefs).Tooltip("Store the clicked target in the Prefs value ui_link");
+        b.Commit();
+    }
+    {
+        PropertyBuilder<UIFocusHint> b("UIFocusHint", "uifocushint", "UI");
+        b.AddInt("tabIndex", &UIFocusHint::tabIndex).Range(-100, 1000, 1).Tooltip("Tab order: lowest first, 0 after them in reading order, negative skipped by Tab")
+         .AddString("up", &UIFocusHint::up).Tooltip("Object focus goes to on Up ('-' keeps focus here)")
+         .AddString("down", &UIFocusHint::down).Tooltip("Object focus goes to on Down")
+         .AddString("left", &UIFocusHint::left).Tooltip("Object focus goes to on Left")
+         .AddString("right", &UIFocusHint::right).Tooltip("Object focus goes to on Right");
+        b.Commit();
+    }
+}
+
 void RegisterUIInventoryBind() {
     PropertyBuilder<UIInventoryBind> b("UIInventoryBind", "uiinvbind", "UI");
     b.AddString("inventoryName", &UIInventoryBind::inventoryName).Tooltip("Object that holds the Inventory (empty = the Player, else the first Inventory in the scene)")
@@ -818,6 +980,7 @@ void RegisterUIProperties() {
     RegisterUIDialogueBox();
     RegisterUIInventoryBind();
     RegisterMoreWidgets();
+    RegisterUILibrary2();
 }
 
 } // namespace detail

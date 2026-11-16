@@ -793,6 +793,17 @@ target_link_libraries(test_ui_library_example PRIVATE okay::engine)
 target_compile_definitions(test_ui_library_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME ui_library_example COMMAND test_ui_library_example)
 
+# UI library slice 2: game HUD parts and the data-driven glue (bind, visible-if, list bind, rich links, focus hints, hot reload)
+add_executable(test_ui_library2 test_ui_library2.cpp)
+target_link_libraries(test_ui_library2 PRIVATE okay::engine)
+add_test(NAME ui_library2 COMMAND test_ui_library2)
+
+# The shipped sample scene examples/ui_library/ui_library_2.okayscene, loaded and played
+add_executable(test_ui_library2_example test_ui_library2_example.cpp)
+target_link_libraries(test_ui_library2_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_library2_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_library2_example COMMAND test_ui_library2_example)
+
 add_executable(test_uicapture_look test_uicapture_look.cpp)
 target_link_libraries(test_uicapture_look PRIVATE okay::engine)
 add_test(NAME uicapture_look COMMAND test_uicapture_look)
@@ -2306,6 +2317,12 @@ if(SDL2_FOUND)
     target_include_directories(test_ui_library_shots PRIVATE ${SDL2_INCLUDE_DIRS})
     target_compile_definitions(test_ui_library_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_library_shots COMMAND test_ui_library_shots)
+
+    add_executable(test_ui_library2_shots test_ui_library2_shots.cpp)
+    target_link_libraries(test_ui_library2_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_library2_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_library2_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_library2_shots COMMAND test_ui_library2_shots)
 
     add_executable(test_ui_renderer_golden test_ui_renderer_golden.cpp)
     target_link_libraries(test_ui_renderer_golden PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})

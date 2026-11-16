@@ -1,4 +1,5 @@
 #include "okay/UI/UIWidgetsMoreDraw.hpp"
+#include "okay/UI/UIGameHudDraw.hpp"
 #include "okay/UI/UIRenderer.hpp"
 #include "okay/Components/UIElement.hpp"
 #include "okay/Graphics/Font.hpp"
@@ -243,6 +244,7 @@ bool DrawMoreUIWidget(int kind, GameObject* go, Painter& p, float logicalW, floa
     const bool ours = kind == K_Search || kind == K_DateTime || kind == K_FilePicker || kind == K_Accordion
         || kind == K_Breadcrumbs || kind == K_Pagination || kind == K_Skeleton || kind == K_BottomSheet
         || kind == K_RangeSlider || kind == K_Validator;
+    if (kind == K_GameHud) return DrawGameHud(go, p, logicalW, logicalH, opacity);   // slice 2 (UIGameHudDraw.cpp)
     if (!ours) return false;
     if (!go || !go->active || UIHidden(go)) return true;
     UIRect rect = GetUIRect(go);

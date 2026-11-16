@@ -1,6 +1,10 @@
 #include "UIInspectorWidgetsMore.hpp"
 #include "okay/Components/UIWidgetsMore.hpp"
+#include "okay/Components/UIListView.hpp"
+#include "okay/Components/TextRenderer.hpp"
+#include "okay/Scene/PropertyRegistry.hpp"
 #include "imgui.h"
+#include <cctype>
 #include <cstring>
 #include <string>
 
@@ -39,6 +43,125 @@ void EditLines(const char* label, std::string& s, EditorState& ed, const char* t
         ed.dirty = true;
     }
     if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+}
+
+// "innerRadius" -> "Inner radius"
+std::string Words(const std::string& camel) {
+    std::string out;
+    for (std::size_t i = 0; i < camel.size(); ++i) {
+        const char c = camel[i];
+        if (i == 0) out += (char)std::toupper((unsigned char)c);
+        else if (std::isupper((unsigned char)c)) { out += ' '; out += (char)std::tolower((unsigned char)c); }
+        else out += c;
+    }
+    return out;
+}
+
+// One inspector for any component that registered its properties (slice 2 parts): a row for every property the
+// registry lists, drawn by type, with the registered tooltip. Returns false when the component has no entry.
+bool DrawRegistryRows(Component* comp, EditorState& ed) {
+    auto info = PropertyRegistry::FindFor(*comp);
+    if (!info) return false;
+    for (const PropertyDesc& pd : info->properties) {
+        if (pd.IsHidden() || pd.IsReadOnly() || pd.IsRuntimeOnly()) continue;
+        ImGui::PushID(pd.name.c_str());
+        const std::string label = Words(pd.name);
+        const PropertyValue v = pd.Get(*comp);
+        auto commit = [&](const PropertyValue& nv) { if (pd.Set(*comp, nv)) ed.dirty = true; };
+        switch (pd.type) {
+            case PropertyType::Bool: {
+                bool b = v.AsBool();
+                if (ImGui::Checkbox(label.c_str(), &b)) commit(PropertyValue::MakeBool(b));
+                break;
+            }
+            case PropertyType::Int: {
+                const bool isKey = pd.name.size() > 3 && pd.name.compare(pd.name.size() - 3, 3, "Key") == 0;
+                if (isKey) {
+                    const long long code = v.AsInt();
+                    char buf[2] = {(code >= 33 && code < 127) ? (char)code : '\0', '\0'};
+                    if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) commit(PropertyValue::MakeInt(buf[0] ? (long long)std::tolower((unsigned char)buf[0]) : 0));
+                } else {
+                    int i = (int)v.AsInt();
+                    if (ImGui::DragInt(label.c_str(), &i, 0.2f, pd.hasRange ? (int)pd.rangeMin : -100000, pd.hasRange ? (int)pd.rangeMax : 100000)) commit(PropertyValue::MakeInt(i));
+                }
+                break;
+            }
+            case PropertyType::Float: {
+                float f = v.AsFloat();
+                const float step = pd.step > 0.0 ? (float)pd.step : 0.1f;
+                if (ImGui::DragFloat(label.c_str(), &f, step, pd.hasRange ? (float)pd.rangeMin : -1.0e6f, pd.hasRange ? (float)pd.rangeMax : 1.0e6f)) commit(PropertyValue::MakeFloat(f));
+                break;
+            }
+            case PropertyType::String: {
+                char buf[512];
+                std::strncpy(buf, v.AsString().c_str(), sizeof(buf) - 1);
+                buf[sizeof(buf) - 1] = '\0';
+                if (ImGui::InputText(label.c_str(), buf, sizeof(buf))) commit(PropertyValue::MakeString(buf));
+                break;
+            }
+            case PropertyType::Vec2: {
+                const Vec2 a = v.AsVec2();
+                float f[2] = {a.x, a.y};
+                if (ImGui::DragFloat2(label.c_str(), f, 1.0f)) commit(PropertyValue::MakeVec2({f[0], f[1]}));
+                break;
+            }
+            case PropertyType::Color: {
+                const Color c = v.AsColor();
+                float f[4] = {c.r, c.g, c.b, c.a};
+                if (ImGui::ColorEdit4(label.c_str(), f)) commit(PropertyValue::MakeColor({f[0], f[1], f[2], f[3]}));
+                break;
+            }
+            case PropertyType::Enum: {
+                int cur = v.AsEnum();
+                const char* shown = (cur >= 0 && cur < (int)pd.enumOptions.size()) ? pd.enumOptions[(std::size_t)cur].c_str() : "";
+                if (ImGui::BeginCombo(label.c_str(), shown)) {
+                    for (int i = 0; i < (int)pd.enumOptions.size(); ++i)
+                        if (ImGui::Selectable(pd.enumOptions[(std::size_t)i].c_str(), i == cur)) commit(PropertyValue::MakeEnum(i));
+                    ImGui::EndCombo();
+                }
+                break;
+            }
+            default: break;
+        }
+        if (!pd.tooltip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", pd.tooltip.c_str());
+        ImGui::PopID();
+    }
+    return true;
+}
+
+struct Slice2Part { const char* title; const char* help; };
+
+// Which slice 2 component this is (null when it is not one), with its heading and a plain sentence of help.
+const Slice2Part* Slice2Of(Component* comp) {
+    static const Slice2Part kRadial{"UI Radial Menu", "Hold the open key, point at a wedge, let go to choose. on_select runs on the object's script; Chosen() is the wedge number (0 is the top)."};
+    static const Slice2Part kFeed{"UI Kill Feed", "Lines stack here and fade out. A script calls UIKillFeed.Push(killer, victim, weapon)."};
+    static const Slice2Part kAmmo{"UI Ammo Counter", "Reads a Ranged Weapon (the Player's, or the object named in Weapon), or the variables named below, or the numbers typed here."};
+    static const Slice2Part kPrompt{"UI Interaction Prompt", "Shows only while the player is within Range of the Target object. Pressing the key runs on_interact on the script."};
+    static const Slice2Part kTracker{"UI Objective Tracker", "Lists the active quests of the scene's Quest Log. Turn Show Tracker off on the Quest Log so the two do not both draw."};
+    static const Slice2Part kCompass{"UI Compass", "The strip turns with the Source object (or the main camera). North is +Z. Put object names in Markers, separated by |."};
+    static const Slice2Part kCard{"UI Item Tooltip Card", "Shows one item from the item database: set Item, or Item Var to a variable that holds an item, or call UIItemTooltipCard.Show(id, count)."};
+    static const Slice2Part kAbility{"UI Ability Icon", "Needs a UI Radial Progress on the same object: that is the cooldown ring. Use() starts the cooldown; the key does the same."};
+    static const Slice2Part kBind{"UI Bind", "Keeps the slider, stepper, toggle, dropdown, range slider or input field on this object and a variable the same, both ways."};
+    static const Slice2Part kVisible{"UI Visible If", "Shows or hides the Target (or this object) while the game runs. Examples: hp < 30   !hasKey   score >= 10 && lives > 0   state == \"menu\"."};
+    static const Slice2Part kListBind{"UI List Bind", "Fills the List View on this object from an array variable. The List View's first child is the row template; {item}, {index} and map fields fill its texts."};
+    static const Slice2Part kHot{"UI Hot Reload", "Watches a markup file for the UI Document, or an .okaytheme for the UI Theme, on the Target object. Save the file and the screen updates while the game runs."};
+    static const Slice2Part kHint{"UI Focus Hint", "Tab and Shift+Tab walk the Tab Index (lowest first). Up, Down, Left, Right name the object focus goes to; a - keeps focus where it is."};
+    static const Slice2Part kLinks{"UI Rich Links", "Makes [url=target]words[/url] in this object's rich text clickable. A click runs on_link and stores the target in the Prefs value ui_link."};
+    if (dynamic_cast<UIRadialMenu*>(comp)) return &kRadial;
+    if (dynamic_cast<UIKillFeed*>(comp)) return &kFeed;
+    if (dynamic_cast<UIAmmoCounter*>(comp)) return &kAmmo;
+    if (dynamic_cast<UIInteractionPrompt*>(comp)) return &kPrompt;
+    if (dynamic_cast<UIObjectiveTracker*>(comp)) return &kTracker;
+    if (dynamic_cast<UICompass*>(comp)) return &kCompass;
+    if (dynamic_cast<UIItemTooltipCard*>(comp)) return &kCard;
+    if (dynamic_cast<UIAbilityIcon*>(comp)) return &kAbility;
+    if (dynamic_cast<UIBind*>(comp)) return &kBind;
+    if (dynamic_cast<UIVisibleIf*>(comp)) return &kVisible;
+    if (dynamic_cast<UIListBind*>(comp)) return &kListBind;
+    if (dynamic_cast<UIHotReload*>(comp)) return &kHot;
+    if (dynamic_cast<UIFocusHint*>(comp)) return &kHint;
+    if (dynamic_cast<UIRichLinks*>(comp)) return &kLinks;
+    return nullptr;
 }
 
 } // namespace
@@ -100,8 +223,83 @@ void BuildUIInputValidation(GameObject* g) {
     g->AddComponent<UIInputValidator>();
 }
 
+// ---- slice 2: create helpers (GameObject > UI > Game HUD and Data) ----
+void BuildUIRadialMenu(GameObject* g) {
+    auto* w = g->AddComponent<UIRadialMenu>();
+    w->size = {320, 320};
+    w->openKey = 'q';
+}
+void BuildUIKillFeed(GameObject* g) {
+    auto* w = g->AddComponent<UIKillFeed>();
+    w->anchor = UIAnchor::TopRight; w->size = {360, 140};
+    w->Push("Player", "Raider", "Rifle");
+    w->lifetime = 600.0f;   // a sample line that stays while you edit; the game's own lines use the default of 6 s
+}
+void BuildUIAmmoCounter(GameObject* g) {
+    auto* w = g->AddComponent<UIAmmoCounter>();
+    w->anchor = UIAnchor::BottomRight; w->size = {220, 84};
+}
+void BuildUIInteractionPrompt(GameObject* g) {
+    auto* w = g->AddComponent<UIInteractionPrompt>();
+    w->anchor = UIAnchor::BottomCenter; w->size = {320, 40};
+    w->alwaysShow = true;   // visible while you edit; turn it off and name a Target to hide it until the player is near
+}
+void BuildUIObjectiveTracker(GameObject* g) {
+    auto* w = g->AddComponent<UIObjectiveTracker>();
+    w->anchor = UIAnchor::TopRight; w->size = {300, 180};
+}
+void BuildUICompass(GameObject* g) {
+    auto* w = g->AddComponent<UICompass>();
+    w->anchor = UIAnchor::TopCenter; w->size = {560, 36};
+}
+void BuildUIItemTooltipCard(GameObject* g) {
+    auto* w = g->AddComponent<UIItemTooltipCard>();
+    w->size = {280, 160};
+}
+void BuildUIAbilityIcon(GameObject* g) {
+    auto* r = g->AddComponent<UIRadialProgress>();
+    r->size = {72, 72}; r->thickness = 6.0f; r->anchor = UIAnchor::BottomCenter;
+    r->fill = Color::FromBytes(20, 22, 30, 235); r->background = Color::FromBytes(120, 220, 150, 200);
+    g->AddComponent<UIAbilityIcon>();
+}
+void BuildUIBoundSlider(GameObject* g) {
+    auto* s = g->AddComponent<UISlider>();
+    s->size = {300, 24};
+    g->AddComponent<UIBind>()->var = "volume";
+}
+void BuildUIBoundList(GameObject* g) {
+    auto* lv = g->AddComponent<UIListView>();
+    lv->size = {300, 220};
+    GameObject* row = g->scene() ? g->scene()->CreateGameObject("Row") : nullptr;
+    if (row) {
+        row->transform->SetParent(g->transform, false);
+        auto* t = row->AddComponent<TextRenderer>();
+        t->screenSpace = true; t->text = "{item}"; t->pixelSize = 2.0f;
+    }
+    auto* lb = g->AddComponent<UIListBind>();
+    lb->var = "items";
+}
+void BuildUIHotReload(GameObject* g) {
+    g->AddComponent<UIHotReload>();
+}
+void BuildUIVisibleIf(GameObject* g) {
+    g->AddComponent<UIVisibleIf>();
+}
+
 void DrawMoreUIComponentInspector(Component* comp, EditorState& ed, Component** toRemove,
                                   const UIInspectorHooks& hooks) {
+    if (const Slice2Part* part = Slice2Of(comp)) {   // slice 2: a registry-driven inspector for the HUD parts and the data glue
+        if (!hooks.header(part->title, comp, toRemove, true)) return;
+        if (!DrawRegistryRows(comp, ed)) ImGui::TextDisabled("This part has no properties to show.");
+        if (dynamic_cast<UIAbilityIcon*>(comp) && comp->gameObject && !comp->gameObject->GetComponent<UIRadialProgress>())
+            ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "This object needs a UI Radial Progress (the cooldown ring).");
+        if (dynamic_cast<UIBind*>(comp) && comp->gameObject && !static_cast<UIBind*>(comp)->HasWidget())
+            ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "This object needs a Slider, Stepper, Toggle, Dropdown, Range Slider or Input Field.");
+        if (dynamic_cast<UIListBind*>(comp) && comp->gameObject && !comp->gameObject->GetComponent<UIListView>())
+            ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "This object needs a UI List View.");
+        ImGui::TextDisabled("%s", part->help);
+        return;
+    }
     if (auto* w = dynamic_cast<UISearchBar*>(comp)) {
         if (!hooks.header("UI Search Bar", w, toRemove, true)) return;
         hooks.anchorCombo("Anchor##search", w->anchor, ed);

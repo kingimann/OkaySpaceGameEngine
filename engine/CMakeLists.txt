@@ -144,6 +144,10 @@ add_library(okay_engine
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
     src/Components/UIBarBind.cpp
+    src/Components/UIVars.cpp
+    src/Components/UIDataGlue.cpp
+    src/Components/UIGameHud.cpp
+    src/UI/UIGameHudDraw.cpp
     src/Components/UIOwnerData.cpp
     src/Components/UIDamageNumbers.cpp
     src/Components/UIDialogueBox.cpp

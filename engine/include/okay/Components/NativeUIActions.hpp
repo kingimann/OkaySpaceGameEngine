@@ -8,6 +8,7 @@
 #include "okay/Components/UIModal.hpp"
 #include "okay/Components/UIDialogueBox.hpp"
 #include "okay/Components/UIDamageNumbers.hpp"
+#include "okay/Components/UIGameHud.hpp"
 #include <string>
 #include <vector>
 
@@ -121,6 +122,37 @@ inline bool InvokeNativeUIAction(GameObject* go, const std::string& fn, float ar
     if (auto* c = go->GetComponent<UIDamageNumbers>()) {   // floating combat text from a button, no script
         if (c->RunAction(fn, arg)) return true;
     }
+    // UI library slice 2: the game HUD parts, from a button with no script.
+    if (auto* c = go->GetComponent<UIRadialMenu>()) {
+        if (fn == "Open")   { c->Open();         return true; }
+        if (fn == "Close")  { c->Close(false);   return true; }
+        if (fn == "Choose") { c->Choose((int)arg); return true; }   // Amount = wedge number
+    }
+    if (auto* c = go->GetComponent<UIKillFeed>()) {
+        if (fn == "AddSampleKill") {   // a made-up line, to try the feed (a game pushes its own from a script)
+            static int n = 0;
+            static const char* killers[] = {"Player", "Raider", "Wolf", "Sentry"};
+            static const char* guns[] = {"Rifle", "Axe", "Bow", ""};
+            c->Push(killers[n % 4], killers[(n + 1 + (n / 4) % 3) % 4], guns[n % 4]);   // the victim is never the killer
+            ++n;
+            return true;
+        }
+        if (fn == "Clear") { c->Clear(); return true; }
+    }
+    if (auto* c = go->GetComponent<UIAbilityIcon>()) {
+        if (fn == "Use")   { c->Use();   return true; }
+        if (fn == "Reset") { c->Reset(); return true; }
+    }
+    if (auto* c = go->GetComponent<UIAmmoCounter>()) {   // these change the typed numbers (a counter that reads a weapon or variables follows those)
+        if (fn == "Shoot")  { if (c->current > 0) --c->current; return true; }
+        if (fn == "Reload") {
+            const int need = c->magazine - c->current;
+            const int take = c->reserve < 0 ? need : (need < c->reserve ? need : c->reserve);
+            c->current += take;
+            if (c->reserve >= 0) c->reserve -= take;
+            return true;
+        }
+    }
     // Consumables::UseItem is dispatched by UIButton (Consumables depends on this
     // header, so it can't be referenced here without a cycle).
     return false;
@@ -155,6 +187,10 @@ inline std::vector<std::string> NativeUIActionNames(GameObject* go) {
     if (go->GetComponent<UIModal>())         add({"Open", "Close"});
     if (go->GetComponent<UIDialogueBox>())   add({"Choose", "Advance", "Restart", "Close"});
     if (go->GetComponent<UIDamageNumbers>()) add({"Hit", "Crit", "Heal", "Miss", "Info"});
+    if (go->GetComponent<UIRadialMenu>())    add({"Open", "Close", "Choose"});
+    if (go->GetComponent<UIKillFeed>())      add({"AddSampleKill", "Clear"});
+    if (go->GetComponent<UIAbilityIcon>())   add({"Use", "Reset"});
+    if (go->GetComponent<UIAmmoCounter>())   add({"Shoot", "Reload"});
     return out;
 }
 

@@ -91,6 +91,14 @@ std::int32_t I(const Value& v) { if (auto* i = std::get_if<std::int32_t>(&v)) re
 const std::string& S(const Value& v) { static const std::string e; auto* s = std::get_if<std::string>(&v); return s ? *s : e; }
 Vec3 V(const Value& v) { if (auto* x = std::get_if<Vec3>(&v)) return *x; return Vec3::Zero; }
 
+// The component of type T on the object a script call is made on, or a plain-English error (slice 2 UI parts).
+template <class T> T* UiComp(const Value& self, CallContext& c, const char* nice) {
+    GameObject* g = Resolve(std::get<ObjRef>(self), c.loc);
+    auto* x = g->GetComponent<T>();
+    if (!x) throw RuntimeError("'" + g->name + "' has no " + std::string(nice), c.loc);
+    return x;
+}
+
 Transform* SelfTransform(const Value& self, CallContext& c) {
     return Resolve(std::get<ObjRef>(self), c.loc)->transform;
 }
@@ -1052,6 +1060,116 @@ EngineApi Build() {
             [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->IsOpen()}; },
             "True while the sheet is open.");
         n.pure = true; w.methods.push_back(std::move(n));
+        api.types.push_back(std::move(w));
+    }
+    // ---- UI library slice 2: game HUD parts and data glue ----
+    {
+        ApiType w; w.name = "UIRadialMenu"; w.isComponent = true;
+        w.doc = "A wheel of choices. on_select fires when one is chosen; Chosen() is its index (0 is the top, going clockwise).";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIRadialMenu>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIRadialMenu>(s, c, "UI Radial Menu"); };
+        w.methods.push_back(method("Open", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Open(); return Value{}; }, "Show the wheel."));
+        w.methods.push_back(method("Close", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Close(false); return Value{}; }, "Hide the wheel without choosing."));
+        w.methods.push_back(method("Choose", {tInt}, {"index"}, tBool,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { return Value{of(s, c)->Choose(I(a[0]))}; },
+            "Choose wedge number `index` as if the player picked it. False when there is no such wedge."));
+        ApiMethod ch = method("Chosen", {}, {}, tInt,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{(std::int32_t)of(s, c)->Chosen()}; },
+            "The wedge chosen last (-1 for none yet).");
+        ch.pure = true; w.methods.push_back(std::move(ch));
+        ApiMethod op = method("IsOpen", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->IsOpen()}; }, "True while the wheel is showing.");
+        op.pure = true; w.methods.push_back(std::move(op));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIKillFeed"; w.isComponent = true;
+        w.doc = "The lines that stack in a corner when something dies. Lines fade after their lifetime.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIKillFeed>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIKillFeed>(s, c, "UI Kill Feed"); };
+        w.methods.push_back(method("Push", {tString, tString, tString}, {"killer", "victim", "weapon"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->Push(S(a[0]), S(a[1]), S(a[2])); return Value{}; },
+            "Add a line. `weapon` may be an empty string."));
+        w.methods.push_back(method("Clear", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Clear(); return Value{}; }, "Remove every line."));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIAmmoCounter"; w.isComponent = true;
+        w.doc = "The ammo number. It reads a Ranged Weapon or variables; SetAmmo types the numbers in by hand.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIAmmoCounter>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIAmmoCounter>(s, c, "UI Ammo Counter"); };
+        w.methods.push_back(method("SetAmmo", {tInt, tInt}, {"current", "reserve"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { auto* x = of(s, c); x->current = I(a[0]); x->reserve = I(a[1]); return Value{}; },
+            "Show these numbers (used when no weapon or variable supplies them)."));
+        ApiMethod t = method("Text", {}, {}, tString,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Text()}; }, "The number as shown, like \"12 / 90\".");
+        t.pure = true; w.methods.push_back(std::move(t));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIInteractionPrompt"; w.isComponent = true;
+        w.doc = "A key cap and a word that shows only when the player is near. on_interact fires when the key is pressed while it shows.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIInteractionPrompt>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIInteractionPrompt>(s, c, "UI Interaction Prompt"); };
+        w.methods.push_back(method("SetAction", {tString}, {"text"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->action = S(a[0]); return Value{}; }, "Change the word next to the key."));
+        ApiMethod v = method("IsShowing", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->ShouldShow()}; }, "True when the prompt should be on screen now.");
+        v.pure = true; w.methods.push_back(std::move(v));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UICompass"; w.isComponent = true;
+        w.doc = "A heading strip. North is +Z.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UICompass>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UICompass>(s, c, "UI Compass"); };
+        ApiMethod h = method("Heading", {}, {}, tFloat,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Heading()}; },
+            "The heading now, in degrees clockwise from north.");
+        h.pure = true; w.methods.push_back(std::move(h));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIItemTooltipCard"; w.isComponent = true;
+        w.doc = "The card for one item from the item database.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIItemTooltipCard>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIItemTooltipCard>(s, c, "UI Item Tooltip Card"); };
+        w.methods.push_back(method("Show", {tString, tInt}, {"item", "count"}, tVoid,
+            [of](const Value& s, std::vector<Value>& a, CallContext& c) { of(s, c)->Show(S(a[0]), I(a[1])); return Value{}; },
+            "Show the card for this item id and stack size."));
+        w.methods.push_back(method("Hide", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Hide(); return Value{}; }, "Hide the card."));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIAbilityIcon"; w.isComponent = true;
+        w.doc = "An ability slot with a cooldown ring. on_ability_use and on_ability_ready fire on the object's script.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIAbilityIcon>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIAbilityIcon>(s, c, "UI Ability Icon"); };
+        w.methods.push_back(method("Use", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Use()}; },
+            "Spend a charge and start the cooldown. False when it is not ready."));
+        w.methods.push_back(method("Reset", {}, {}, tVoid,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { of(s, c)->Reset(); return Value{}; }, "Make the ability ready now."));
+        ApiMethod r = method("IsReady", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Ready()}; }, "True when a charge is ready.");
+        r.pure = true; w.methods.push_back(std::move(r));
+        ApiMethod l = method("SecondsLeft", {}, {}, tFloat,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->Remaining()}; }, "Seconds until the next charge.");
+        l.pure = true; w.methods.push_back(std::move(l));
+        api.types.push_back(std::move(w));
+    }
+    {
+        ApiType w; w.name = "UIHotReload"; w.isComponent = true;
+        w.doc = "Watches a UI markup file or .okaytheme and applies it when it changes.";
+        w.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<UIHotReload>() : nullptr; };
+        auto of = [](const Value& s, CallContext& c) { return UiComp<UIHotReload>(s, c, "UI Hot Reload"); };
+        w.methods.push_back(method("ReloadNow", {}, {}, tBool,
+            [of](const Value& s, std::vector<Value>&, CallContext& c) { return Value{of(s, c)->ReloadNow()}; },
+            "Apply the file now. False (and the reason in the log) when it could not be applied."));
         api.types.push_back(std::move(w));
     }
     // ---- Input ----

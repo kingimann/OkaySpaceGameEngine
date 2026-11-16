@@ -148,18 +148,25 @@ unset. Run `tests/bench_player.cpp` (target not in CMake on purpose; build it li
 * **Settings saved and shown**: Slope Limit, Step Offset, Fall Reset Y, Swim Speed, Swim Up Speed, Swim Down Speed.
 * **The obstacle course** `examples/player/player_obstacle_course.okayscene` (see `docs/try_it.md` row 7w).
 
+## Second round (same branch)
+
+Fixed, each with a `player_deep_*` check that fails with `OKAY_OLD_PLAYER=1`: riding a kinematic platform up (the
+rise was added twice: rider height range 6 cm and 25% of frames airborne, now 0 and 0%; downward carry kept),
+climbing out of water onto a bank (`player_deep_water_climb_out`), variable jump height (off by default, saved,
+Inspector: `variableJump`, `jumpCut`), ladders (a box trigger on an object tagged `Climbable`; `climbSpeed`),
+a hard-landing event (`onHardLand`, Action List message `player_hard_land`, `hardLandSpeed` 12; event only, nothing is
+hurt), buried-in-solid recovery (a body whose centre is inside a solid at start, after a teleport or while falling
+fast is stood on open ground instead of falling out of the world), and the Scene-view gizmo (`PlayerGizmo`).
+Coyote time and jump buffering already existed (on by default, saved, in the Inspector); `player_deep_coyote_jump`
+now pins them. Pictures of the course: `docs/images/player_course/`.
+
 ## Not done, and bugs for other lanes
 
-* Riding a kinematic platform UP wobbles 6 cm and loses the ground on a quarter of the frames (E12). The rider is
-  carried by the platform's drawn pose while the physics moves the platform in steps. Not fixed.
 * A kinematic body pushing the player into a static wall pushes it through (E12c): contact solver (physics lane).
   Probe: `E12c` in `tests/probe_player_audit.cpp`.
 * Scaled colliders ignore the scale in their centre offset (E22): `Collider3D::WorldCenter` (physics header).
 * `Physics3D::Overlap*` / `Sweep` search the whole scene on every call (see above): a one-line change per function to
   use the cached collider list; routed to the physics lane rather than edited here.
-* A body embedded 1.5 m or more into a floor falls out of the world (E14).
-* No way out of deep water onto a bank (E19), no ledge slide-off for the box body (E08), no variable jump height,
-  no ladder or climb volume, no fall damage hook (the `onLand` callback exists), no gizmo for the slope limit and
-  step height in the Scene view.
+* No ledge slide-off for the box body (E08). The Scene-view gizmo and the F3 lines were never seen on a real screen.
 * Unverified: everything on Windows, the editor panels (only compiled in the sense of "read"; `editor/main.cpp` was not
   built here), the F3 lines on screen, any picture, real game feel with a keyboard and mouse.

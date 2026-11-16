@@ -35666,6 +35666,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
             if (ImGui::DragFloat("Slope Limit##fp", &fp->slopeLimit, 0.5f, 0.0f, 89.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepest ground (degrees) the player can stand on and climb. Steeper ground slides the body back down. 0 = no limit.");
+            if (ImGui::Checkbox("Variable Jump##fp", &fp->variableJump)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let go of Space early and the jump ends early.");
+            if (fp->variableJump && ImGui::DragFloat("Jump Cut##fp", &fp->jumpCut, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Climb Speed##fp", &fp->climbSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed up and down a ladder: a box trigger on an object tagged Climbable. 0 = no climbing.");
+            if (ImGui::DragFloat("Hard Landing Speed##fp", &fp->hardLandSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A landing this fast (m/s) calls onHardLand and sends the message player_hard_land. 0 = off.");
             if (ImGui::Checkbox("Lock + Hide Cursor##fp", &fp->lockCursor)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing (mouse-look). Off keeps a normal pointer for clicking UI.");
 
@@ -35883,6 +35890,13 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
             if (ImGui::DragFloat("Slope Limit##tp", &tp->slopeLimit, 0.5f, 0.0f, 89.0f, "%.0f deg")) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepest ground (degrees) the player can stand on and climb. Steeper ground slides the body back down. 0 = no limit.");
+            if (ImGui::Checkbox("Variable Jump##tp", &tp->variableJump)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let go of Space early and the jump ends early.");
+            if (tp->variableJump && ImGui::DragFloat("Jump Cut##tp", &tp->jumpCut, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Climb Speed##tp", &tp->climbSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed up and down a ladder: a box trigger on an object tagged Climbable. 0 = no climbing.");
+            if (ImGui::DragFloat("Hard Landing Speed##tp", &tp->hardLandSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A landing this fast (m/s) calls onHardLand and sends the message player_hard_land. 0 = off.");
             {
                 const char* modes[] = {"None", "Locked", "Confined"};
                 int mode = tp->cursorMode;
@@ -43685,6 +43699,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             return t->Forward();
         };
         auto C = [&](const Vec3& p) { return vp * Vec4{p.x, p.y, p.z, 1.0f}; };
+        for (const PlayerGizmo::Seg& sg : PlayerGizmo::Lines(sel))   // a selected player: feet ring, slope limit spokes, step height ring
+            clipLine(C(sg.a), C(sg.b), sg.kind == 1 ? IM_COL32(255, 190, 60, 230) : sg.kind == 2 ? IM_COL32(120, 220, 120, 230) : IM_COL32(90, 200, 255, 230), 1.5f);
         auto drawRay = [&](const ActionList::Item& it) {
             if (it.op.rfind("raycast", 0) != 0) return;
             std::size_t dirIdx = (it.op == "raycast_tag" || it.op == "raycast_name") ? 1 : 0;

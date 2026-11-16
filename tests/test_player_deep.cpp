@@ -236,5 +236,124 @@ int main() {
         // player_deep_settings_saved
     }
 
+    // ---- Riding a kinematic platform UP: no wobble, no lost ground (it was lifted twice, so it hopped). ----
+    for (bool up : {true, false}) {
+        Rig r;
+        GameObject* plat = r.Box({0, up ? -0.25f : 3.75f, 0}, {8, 0.5f, 8});
+        auto* b = plat->AddComponent<Rigidbody3D>(); b->bodyType = Rigidbody3D::BodyType::Kinematic; b->gravityScale = 0; b->velocity = {0, up ? 2.0f : -2.0f, 0};
+        r.Spawn({0, up ? 0.0f : 4.0f, 0});
+        r.Frames(0.5, {});
+        int air = 0, n = 0; float lo = 9, hi = -9;
+        for (int i = 0; i < 120; ++i) {
+            r.Frame({});
+            const float rel = r.p->transform->Position().y - (plat->transform->Position().y + 0.25f);
+            lo = std::min(lo, rel); hi = std::max(hi, rel); ++n; if (!Grounded(r.p)) ++air;
+        }
+        CHECK(air * 20 < n);            // player_deep_platform_up_grounded
+        std::printf("[player_deep] platform %s: rider height range %.4f, air %d of %d\n", up ? "up" : "down", hi - lo, air, n);
+        CHECK(hi - lo < 0.03f);
+    }
+
+    // ---- Swimming into a bank climbs out onto it. ----
+    for (int bank = 0; bank < 2; ++bank) {
+        Rig r;
+        r.sc->physicsEnabled = true;
+        GameObject* w = r.sc->CreateGameObject("Water");
+        auto* wa = w->AddComponent<Water>(); wa->size = 20.0f; wa->depth = 4.0f; wa->waveHeight = 0.0f; wa->resolution = 8;
+        r.Box({0, -4.5f, 0}, {20, 1, 20});
+        r.Box({20.0f, -2.0f, 0}, {20, bank == 0 ? 4.6f : 3.8f, 20});   // top 0.3 m above the water, or 0.1 m under it
+        r.Spawn({0, 1.5f, 0});
+        r.p->GetComponent<FirstPersonController>()->yaw = -90.0f;
+        r.Frames(2.5, {});
+        r.Frames(6.0, {'w'});
+        CHECK(r.p->transform->Position().x > 10.5f);     // player_deep_water_climb_out
+        CHECK(r.p->transform->Position().y > -0.4f);
+    }
+
+    // ---- Variable jump height (off by default). ----
+    for (int on = 0; on < 2; ++on) {
+        float apex[2];
+        for (int held = 0; held < 2; ++held) {
+            Rig r;
+            r.Box({0, -0.5f, 0}, {40, 1, 40});
+            r.Spawn({0, 0, 0});
+            r.p->GetComponent<FirstPersonController>()->variableJump = on != 0;
+            r.Frames(0.6, {});
+            float y = 0;
+            for (int i = 0; i < 90; ++i) { r.Frame(held && i < 40 ? std::vector<char>{' '} : std::vector<char>{i == 0 ? ' ' : 0}); y = std::max(y, r.p->transform->Position().y); }
+            apex[held] = y;
+        }
+        if (on) CHECK(apex[0] < 0.6f * apex[1]);          // player_deep_variable_jump: a tap is a short hop
+        else CHECK(std::fabs(apex[0] - apex[1]) < 0.05f); // off: the same jump
+    }
+
+    // ---- Coyote time and jump buffer (already on by default): jump just after a ledge, press just before landing. ----
+    {
+        Rig r;
+        r.Box({-10, -0.5f, 0}, {20, 1, 20});   // floor for x < 0
+        r.Spawn({-1.0f, 0, 0});
+        r.p->GetComponent<FirstPersonController>()->yaw = -90.0f;
+        r.Frames(0.5, {});
+        for (int i = 0; i < 200 && r.p->transform->Position().x < 0.45f; ++i) r.Frame({'w'});   // walk until the centre is past the edge
+        for (int i = 0; i < 4; ++i) r.Frame({'w'});
+        r.Frame({'w', ' '});
+        CHECK(r.rb->velocity.y > 4.0f);                    // player_deep_coyote_jump
+    }
+
+    // ---- A ladder: a box trigger tagged Climbable. ----
+    {
+        Rig r;
+        r.Box({0, -0.5f, 0}, {40, 1, 40});
+        GameObject* ladder = r.sc->CreateGameObject("Ladder");
+        ladder->tag = "Climbable";
+        ladder->transform->localPosition = {0, 3.0f, -0.7f};
+        auto* t = ladder->AddComponent<BoxCollider3D>(); t->size = {1, 6, 1}; t->isTrigger = true;
+        r.Spawn({0, 0, 0});
+        r.Frames(0.5, {});
+        r.Frames(2.0, {'w'});
+        const float up = r.p->transform->Position().y;
+        CHECK(up > 2.5f);                                  // player_deep_ladder_climb
+        r.Frames(1.0, {});
+        CHECK(std::fabs(r.p->transform->Position().y - up) < 0.15f);   // holds on the ladder
+        r.Frame({' '}); r.Frames(0.5, {});                  // jump off
+        CHECK(r.p->transform->Position().y > up - 0.3f);
+    }
+
+    // ---- A hard landing is an event, not damage. ----
+    for (float h : {2.0f, 15.0f}) {
+        Rig r;
+        r.Box({0, -0.5f, 0}, {40, 1, 40});
+        r.Spawn({0, h, 0});
+        int hits = 0; float impact = 0;
+        auto* fp = r.p->GetComponent<FirstPersonController>();
+        fp->onHardLand = [&](float v) { ++hits; impact = v; };
+        int msgs = 0; (void)msgs;
+        r.Frames(3.0, {});
+        if (h > 10.0f) { CHECK(hits == 1); CHECK(impact > 12.0f); }   // player_deep_hard_land
+        else CHECK(hits == 0);
+    }
+
+    // ---- Buried in the ground (spawned or teleported in): pushed out onto open ground, not out of the world. ----
+    for (int kind = 0; kind < 3; ++kind) {
+        Rig r;
+        r.Box({0, -3.0f, 0}, {80, 6, 80});                 // a deep floor: the body is inside it, not under it
+        if (kind == 2) r.Box({0, 2, 0}, {10, 4, 6.0f});
+        r.Spawn({0, kind == 0 ? -1.5f : kind == 1 ? -3.0f : 0.0f, 0});
+        r.Frames(2.5, {});
+        CHECK(r.p->transform->Position().y > -0.5f);       // player_deep_buried_recovery
+        CHECK(r.p->transform->Position().y < 1.0f);
+    }
+
+    // ---- The Scene-view gizmo knows the slope limit and the step height. ----
+    {
+        Rig r;
+        r.Spawn({0, 0, 0});
+        auto* fp = r.p->GetComponent<FirstPersonController>();
+        fp->slopeLimit = 35.0f; fp->stepOffset = 0.3f;
+        int spokes = 0, step = 0;
+        for (const auto& sg : PlayerGizmo::Lines(r.p)) { if (sg.kind == 1) ++spokes; if (sg.kind == 2) ++step; }
+        CHECK(spokes == 4); CHECK(step == 24);              // player_deep_gizmo
+    }
+
     TEST_MAIN_RESULT();
 }

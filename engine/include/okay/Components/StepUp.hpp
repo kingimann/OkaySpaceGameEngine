@@ -152,6 +152,12 @@ inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool
             st.appliedYaw = yaw;
         }
         Vec3 d{cur.x - st.lastPos.x, cur.y - st.lastPos.y, cur.z - st.lastPos.z};
+        // A platform the physics moves (a kinematic body) already lifts the rider through the contact; adding its
+        // rise here as well lifted the rider twice, so it rose off the platform and fell back on every step.
+        if (!OldPlayerPath()) {
+            const auto* krb = plat->GetComponent<Rigidbody3D>();
+            if (krb && krb->bodyType == Rigidbody3D::BodyType::Kinematic && d.y > 0.0f) d.y = 0.0f;   // rising: the contact lifts the rider; falling: carry it down
+        }
         if (d.x != 0.0f || d.y != 0.0f || d.z != 0.0f) {
             go->transform->SetPosition(go->transform->Position() + d);
             st.applied = d;
@@ -284,6 +290,43 @@ inline void EaseStance(GameObject* go, StanceBody& st, float& level, int stance,
     if (!resize || !go) return;
     CaptureStance(go, st);
     ApplyStanceHeight(go, st, st.standH * StanceValue(level, 1.0f, crouchFrac, proneFrac));
+}
+
+/// Swimming against a bank or a pool edge: if something solid stands in front at chest height and its top is within
+/// reach above the water line (and there is room to stand on it), lift the body onto it. Returns true when it did.
+/// `surfaceY` is the water height at the body. One forward ray; the rest only when that ray hits.
+inline bool TryClimbOut(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& dir, float surfaceY) {
+    if (!go || !go->transform || !rb) return false;
+    Vec3 fw{dir.x, 0.0f, dir.z};
+    const float fl = std::sqrt(fw.x * fw.x + fw.z * fw.z);
+    if (fl < 1e-4f) return false;
+    fw.x /= fl; fw.z /= fl;
+    const Vec3 pos = go->transform->Position();
+    Physics3D::IgnoreHierarchy own(go);
+    auto& ph = sc.physics3D();
+    const float chestY = std::min(pos.y + 1.0f, surfaceY - 0.1f);
+    RaycastHit3D face = ph.Raycast(sc, {pos.x, chestY, pos.z}, fw, 0.8f, go, Physics3D::kAllLayers, false);
+    if (!face.hit || std::fabs(face.normal.y) > 0.5f) return false;
+    const Vec3 over{face.point.x + fw.x * 0.35f, surfaceY + 1.0f, face.point.z + fw.z * 0.35f};
+    RaycastHit3D top = ph.Raycast(sc, over, {0.0f, -1.0f, 0.0f}, 2.4f, go, Physics3D::kAllLayers, false);
+    if (!top.hit || top.normal.y < 0.6f) return false;
+    if (top.point.y > surfaceY + 0.9f || top.point.y < pos.y + 0.3f) return false;
+    RaycastHit3D roof = ph.Raycast(sc, {top.point.x, top.point.y + 0.05f, top.point.z}, {0.0f, 1.0f, 0.0f}, 1.7f, go,
+                                   Physics3D::kAllLayers, false);
+    if (roof.hit) return false;
+    go->transform->SetPosition({top.point.x, top.point.y + 0.02f, top.point.z});
+    rb->velocity = Vec3{fw.x * 1.0f, 0.0f, fw.z * 1.0f};
+    return true;
+}
+
+/// A body whose centre sits inside a solid (spawned in it, teleported into it, pushed in by something that
+/// moved): the contact solver can fling it through the world. If so, return true and put the open-ground
+/// position the clear-spawn search finds in `outFeet`.
+inline bool EmbeddedInSolid(Scene& sc, GameObject* go, const Vec3& centre) {
+    if (!go) return false;
+    if (!AnySolidNear(sc, go, centre - Vec3{0.2f, 0.2f, 0.2f}, centre + Vec3{0.2f, 0.2f, 0.2f})) return false;
+    Physics3D::IgnoreHierarchy own(go);
+    return !sc.physics3D().OverlapSphere(sc, centre, 0.1f, Physics3D::kAllLayers, false, go).empty();
 }
 
 } // namespace okay

@@ -57,6 +57,33 @@ inline const std::vector<Water*>& SceneWaters(const Scene& sc) {
     return list;
 }
 
+inline const std::vector<Collider3D*>& SceneColliders(const Scene& sc);
+
+/// Trigger boxes on objects tagged "Climbable": ladders and climb volumes. Found once per scene change.
+inline const std::vector<Collider3D*>& SceneClimbables(const Scene& sc) {
+    static SceneStamp stamp;
+    static std::vector<Collider3D*> list;
+    if (!stamp.Current(sc)) {
+        list.clear();
+        for (Collider3D* c : SceneColliders(sc))
+            if (c && c->isTrigger && c->gameObject && c->gameObject->tag == "Climbable") list.push_back(c);
+        stamp.Take(sc);
+    }
+    return list;
+}
+/// Is the world point inside a climb volume (a box trigger tagged "Climbable")?
+inline bool InClimbVolume(const Scene& sc, const Vec3& p) {
+    for (const Collider3D* c : SceneClimbables(sc)) {
+        if (!c->enabled || !c->gameObject->ActiveInHierarchy() || !c->transform) continue;
+        const auto* b = dynamic_cast<const BoxCollider3D*>(c);
+        if (!b) continue;
+        const Vec3 l = c->transform->InverseTransformPoint(p);
+        const Vec3 h = b->size * 0.5f;
+        if (std::fabs(l.x - c->offset.x) <= h.x && std::fabs(l.y - c->offset.y) <= h.y && std::fabs(l.z - c->offset.z) <= h.z) return true;
+    }
+    return false;
+}
+
 /// Water::ProbeAt, without searching the whole scene each call (the old path does, with OKAY_OLD_PLAYER=1).
 inline Water::Probe ProbeWater(const Scene* sc, const Vec3& feet, float bodyHeight) {
     if (!sc) return Water::Probe{};
@@ -168,6 +195,9 @@ struct PlayerDebugState {
     bool  platformMoves = false;
     bool  held = false;               ///< held in place on a slope
     bool  terrainGround = false;
+    bool  climbing = false;
+    float lastLandSpeed = 0.0f;       ///< speed of the last landing, m/s
+    int   hardLandings = 0;           ///< landings at or over the hard-landing speed
 };
 
 } // namespace okay

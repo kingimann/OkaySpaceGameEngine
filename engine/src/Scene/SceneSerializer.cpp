@@ -2536,7 +2536,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          .b("dive", fp->diveOnProneWhileSprinting)("diveHop", fp->diveHop)("diveSlide", fp->diveSlideTime)
          ("capSens", fp->capturedSensitivity)("capPx", fp->capturedPixelCap)
          ("slope", fp->slopeLimit)("step", fp->stepOffset)("fallY", fp->fallResetY)   // settings that were never saved
-         ("swim", fp->swimSpeed)("swimUp", fp->swimUpSpeed)("swimDown", fp->swimDownSpeed);
+         ("swim", fp->swimSpeed)("swimUp", fp->swimUpSpeed)("swimDown", fp->swimDownSpeed)
+         .b("varJump", fp->variableJump)("jumpCut", fp->jumpCut)("climb", fp->climbSpeed)("hardLand", fp->hardLandSpeed);
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -2578,7 +2579,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          .b("dive", tp->diveOnProneWhileSprinting)("diveHop", tp->diveHop)("diveSlide", tp->diveSlideTime)
          ("capSens", tp->capturedSensitivity)("capPx", tp->capturedPixelCap)
          ("slope", tp->slopeLimit)("step", tp->stepOffset)("fallY", tp->fallResetY)   // settings that were never saved
-         ("swim", tp->swimSpeed)("swimUp", tp->swimUpSpeed)("swimDown", tp->swimDownSpeed);
+         ("swim", tp->swimSpeed)("swimUp", tp->swimUpSpeed)("swimDown", tp->swimDownSpeed)
+         .b("varJump", tp->variableJump)("jumpCut", tp->jumpCut)("climb", tp->climbSpeed)("hardLand", tp->hardLandSpeed);
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -6763,6 +6765,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         k.f("capSens", c->capturedSensitivity); k.f("capPx", c->capturedPixelCap);
                         k.f("slope", c->slopeLimit); k.f("step", c->stepOffset); k.f("fallY", c->fallResetY);
                         k.f("swim", c->swimSpeed); k.f("swimUp", c->swimUpSpeed); k.f("swimDown", c->swimDownSpeed);
+                        k.b("varJump", c->variableJump); k.f("jumpCut", c->jumpCut); k.f("climb", c->climbSpeed); k.f("hardLand", c->hardLandSpeed);
                         // Saved crouched / prone: start that way (the collider was saved standing).
                         int st = 0; k.i("stance", st);
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;

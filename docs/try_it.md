@@ -660,8 +660,12 @@ Walk -Z (straight ahead) past the signs. Each sign says what to try; what you sh
 | 5 Tunnel 1.3 m | crouch (Ctrl), go in, press Ctrl again inside | you fit when crouched; standing up inside is refused until you are out |
 | 6 Moving platform and turning bridge | stand on the platform, jump off sideways | you ride it with no slipping; jumping off keeps the platform's speed; the bridge carries you round |
 | 7 Thin wall (2 cm) | hold Shift and run into it | you stop; you do not get through |
-| 8 Water | walk into the shallow end, then the deep end | shallow: you wade; deep: you swim (Space up, Ctrl down). (You cannot climb out onto a bank: known gap.) |
+| 8 Water | walk into the shallow end, then the deep end | shallow: you wade; deep: you swim (Space up, Ctrl down). (Swim into the stone edge on the east side to climb out.) |
 | 9 Voxel terrain patch | walk over the hill and the hole | you follow the ground without bouncing |
+| 10 Ladder tower | walk into the ladder and hold W; let go; press Space | you climb at 2.5 m/s, hang still when you let go, Space jumps off; the jump down from the top is a "hard landing" (F3 shows "last landing ... hard landings N") |
+| 11 Pool bank (east edge of the pool) | swim to the stone edge and keep pushing W | you climb out onto the bank (before, you stayed in the water) |
+| Variable jump (the course player has it on) | tap Space, then hold Space | a tap is a short hop, holding is the full jump. Off in a fresh player (Inspector: Variable Jump) |
+| Gizmo | in the editor select the player | a blue ring at the feet, four orange spokes rising at the Slope Limit, a green ring at the Step Offset height (Scene view, Gizmos on) |
 
 **Compare with the old player**: close the game, set the environment variable `OKAY_OLD_PLAYER=1` (for example in a command
 prompt: `set OKAY_OLD_PLAYER=1` then start `OkaySpacePlayer.exe` from that prompt, or start the editor from it), and walk the same
@@ -671,7 +675,9 @@ stairs down hop, a jump from the platform loses its speed, and every frame costs
 Settings you can now change and that are saved: select the player, the **Player Controller** panel, **Step Offset** and **Slope
 Limit** (first and third person).
 
-**Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (835 checks, each fails with `OKAY_OLD_PLAYER=1`),
+**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): `docs/images/player_course/` (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
+
+**Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (860 checks, each fails with `OKAY_OLD_PLAYER=1`),
 `tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,
 controller, stance, character and multiplayer prediction tests: all pass. Frame numbers: `docs/player_audit.md`.
 **Not seen:** Windows, a window, a picture of the course (none was made), the F3 text on screen, the Inspector fields, real feel.

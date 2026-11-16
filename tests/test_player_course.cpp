@@ -120,9 +120,27 @@ void BuildCourse(Scene& s) {
         vt->Dig({5.0f, 1.0f, 3.0f}, 1.4f, 1.0f); // a small hole
     }
 
+    // 10. Ladder (z = -168): a tower with a ladder volume (a box trigger tagged Climbable). Up, then jump off for a hard landing.
+    Label(s, "10 LADDER: walk into it and hold W to climb, Space to jump off; the jump down from the top is a hard landing (F3 counts them)", {-10, 8.0f, -164});
+    {
+        Slab(s, "Tower", {0, 3.0f, -172.0f}, {3, 6, 3}, kWall);   // top at 6 m, the ladder volume reaches 7 m
+        GameObject* l = s.CreateGameObject("Ladder");
+        l->tag = "Climbable";
+        l->transform->localPosition = {0, 3.5f, -169.9f};
+        auto* t = l->AddComponent<BoxCollider3D>(); t->size = {1.2f, 7, 1.2f}; t->isTrigger = true;
+        Slab(s, "Ladder rails", {0, 3.5f, -170.45f}, {1.2f, 7, 0.1f}, kRamp);
+    }
+
+    // 11. Pool bank (z = -132, east side): swim to the stone edge and climb out onto it.
+    Slab(s, "Pool bank", {9.0f, -0.9f, -134.0f}, {6, 2.4f, 12}, kFloor);   // top 0.3 m above the water
+
     // The player and its camera: a third-person player (V switches to the eyes).
     GameObject* player = Templates::AddThirdPersonPlayer(s, {0, 0.05f, 6});
     player->name = "Player";
+    if (auto* pc = PlayerController::Of(player)) {   // short hops when Space is let go early (off in a fresh player)
+        if (pc->first()) pc->first()->variableJump = true;
+        if (pc->third()) pc->third()->variableJump = true;
+    }
 }
 
 // Object ids are random each run; everything else is the same every time.
@@ -181,6 +199,10 @@ int main() {
         p->transform->SetPosition({0, 0.05f, -110.0f});
         frames(3.0, {'w', Input::KeyShift}, 0.0f);
         CHECK(p->transform->Position().z > -118.2f);
+        // Station 10: climb the ladder.
+        p->transform->SetPosition({0, 0.05f, -168.0f});
+        frames(3.0, {'w'}, 0.0f);
+        CHECK(p->transform->Position().y > 3.0f);
         // Station 1: stand on the 30 degree ramp, no creep.
         p->transform->SetPosition({-5.0f, 1.6f, -15.6f});
         frames(1.0, {}, 0.0f);

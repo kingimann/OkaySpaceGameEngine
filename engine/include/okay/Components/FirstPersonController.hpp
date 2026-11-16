@@ -30,6 +30,7 @@
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Traversal.hpp"
 #include "okay/Components/PlayerPerf.hpp"
+#include "okay/Components/ActionList.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -212,6 +213,16 @@ public:
     /// steeper ground the uphill velocity is cancelled and the body slides
     /// back down. 0 = no limit.
     float slopeLimit = 50.0f;
+    /// Let go of Space early and the jump ends early (the upward speed is cut to `jumpCut` of what is left). Off:
+    /// a jump is always the same height.
+    bool  variableJump = false;
+    float jumpCut = 0.5f;
+    /// Speed up and down a ladder: a box trigger on an object tagged "Climbable". 0 = no climbing.
+    float climbSpeed = 2.5f;
+    /// A landing at least this fast (m/s) is a hard landing: onHardLand is called and every Action List hears
+    /// "player_hard_land". Nothing is hurt by it; a game decides what a hard landing costs. 0 = off.
+    float hardLandSpeed = 12.0f;
+    std::function<void(float impactSpeed)> onHardLand;
     void Start() override {
         // The orbit controller, when it is the one running, owns the body size
         // and the camera's ignore. Applying both would stand a crouched player
@@ -377,7 +388,7 @@ public:
     }
 
     void OnCorrected(const Vec3& step) override { m_correctionY += step.y; }
-    void OnTeleported() override { m_stepOffsetY = 0.0f; m_haveBodyY = false; m_correctionY = 0.0f; }
+    void OnTeleported() override { m_stepOffsetY = 0.0f; m_haveBodyY = false; m_correctionY = 0.0f; m_embedAgain = true; }
 
     /// Look, stance, lean and move by `in` for `dt` seconds (local play and a
     /// server running this player's inputs). Reads no Input:: globals.
@@ -477,6 +488,23 @@ public:
         // double (or more) jumps.
         if (m_groundContact > 0.0f || terrainGround) m_jumpsUsed = 0;
         m_grounded = grounded;
+        if (rb && !OldPlayerPath() && gameObject->scene()) {
+            // Spawned or teleported inside a solid, or just fell with its centre in one: stand it on open ground.
+            const bool fastFall = !grounded && m_sinceGroundS > 0.2f && rb->velocity.y < -6.0f && ((++m_embedTick & 3) == 0);
+            if (!m_embedChecked || m_embedAgain || fastFall) {
+                m_embedChecked = true; m_embedAgain = false;
+                const Vec3 p = transform->Position();
+                if (EmbeddedInSolid(*gameObject->scene(), gameObject, p + Vec3{0.0f, 0.9f, 0.0f})) {
+                    transform->SetPosition(ClearFeetPosition(*gameObject->scene(), gameObject, p));
+                    rb->velocity = Vec3{0.0f, 0.0f, 0.0f}; rb->WakeUp();
+                    OnTeleported();
+                }
+            }
+        }
+        if (rb && !OldPlayerPath() && variableJump && m_cutArmed) {
+            if (rb->velocity.y <= 0.0f || (grounded && m_sinceJump > 0.1f)) m_cutArmed = false;
+            else if (!in.Held(PlayerInput::Jump)) { rb->velocity.y *= jumpCut; m_cutArmed = false; }
+        }
         if (rb) {
             m_sinceJump += dt;
             m_sinceGroundS = grounded ? 0.0f : m_sinceGroundS + dt;
@@ -544,7 +572,7 @@ public:
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
                     rb->velocity.y = jumpForce;
-                    m_sinceJump = 0.0f;
+                    m_sinceJump = 0.0f; m_cutArmed = true;
                     if (!OldPlayerPath() && m_platRide.platform && m_jumpsUsed == 0) {   // leaving a moving platform: keep its speed
                         const Vec3 pv = m_platRide.velocity;
                         m_inherit = {pv.x, 0.0f, pv.z};
@@ -567,7 +595,23 @@ public:
         // chest rides the surface unless Space / crouch is driving it. Wading
         // keeps gravity. A shore that has risen under the feet is left alone:
         // pulling the chest back down would pin the body in the bank.
-        if (rb && m_swimming) {
+        m_climbLock = Mathf::Max(0.0f, m_climbLock - dt);
+        m_climbOutCool = Mathf::Max(0.0f, m_climbOutCool - dt);
+        if (rb && !OldPlayerPath() && climbSpeed > 0.0f && !m_swimming && gameObject->scene() && m_climbLock <= 0.0f) {
+            const bool inVol = InClimbVolume(*gameObject->scene(), transform->Position() + Vec3{0.0f, 0.9f, 0.0f});
+            if (inVol && !m_climbing && (in.move.x != 0.0f || in.move.y != 0.0f) && !grounded) m_climbing = true;
+            if (inVol && !m_climbing && in.move.y > 0.0f) m_climbing = true;
+            if (m_climbing && (!inVol || in.Pressed(PlayerInput::Jump))) {
+                if (inVol && canJump) { rb->velocity.y = jumpForce * 0.7f; m_climbLock = 0.4f; }
+                m_climbing = false;
+            }
+        } else if (m_climbing) m_climbing = false;
+        if (rb && m_climbing) {
+            if (!m_heldGravity) { m_savedGravity = rb->gravityScale; m_heldGravity = true; }
+            rb->gravityScale = 0.0f;
+            rb->velocity = Vec3{0.0f, in.move.y * climbSpeed, 0.0f};
+            m_jumpBuf = 0.0f; m_ground.left = false; m_ground.fell = false;
+        } else if (rb && m_swimming) {
             if (!m_heldGravity) { m_savedGravity = rb->gravityScale; m_heldGravity = true; }
             rb->gravityScale = 0.0f;
             const bool floorUnder = m_groundContact > 0.0f || terrainGround;
@@ -579,7 +623,7 @@ public:
                 SwimVertical(*rb, transform->Position().y, m_waterY,
                              climb, dive, swimUpSpeed, swimDownSpeed, dt);
             }
-        } else if (rb && m_heldGravity) {
+        } else if (rb && m_heldGravity && !m_climbing) {
             rb->gravityScale = m_savedGravity;
             m_heldGravity = false;
         }
@@ -621,6 +665,9 @@ public:
         // nothing for the probe to hit, so a swimmer in the deep does not step.
         if (rb && moving && gameObject && gameObject->scene() && (grounded || m_swimming))
             TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded || m_swimming, moving, stepOffset);
+        // Swimming into a bank or a pool edge: climb out onto it.
+        if (rb && moving && m_swimming && !OldPlayerPath() && m_climbOutCool <= 0.0f && gameObject->scene() &&
+            TryClimbOut(*gameObject->scene(), gameObject, rb, dir, m_waterY)) m_climbOutCool = 0.5f;
         // Moving platforms: ride whatever we stand on (elevators, movers).
         if (gameObject && gameObject->scene()) {
             RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded, dt);
@@ -685,6 +732,7 @@ public:
                     // Reduce Motion (accessibility) turns the dip off; the landing itself still counts.
                     m_dip = Mathf::Min(landDip, impact * 0.012f) * Accessibility::MotionScale();
                     if (onLand) onLand(impact);
+                    HardLandEvent(impact);
                 }
             }
             m_dip *= 1.0f - EaseFactor(9.0f, dt);
@@ -749,7 +797,7 @@ public:
             m_dbg.slopeDeg = std::acos(Mathf::Clamp(m_dbg.groundNormal.y, 0.0f, 1.0f)) * Mathf::Rad2Deg;
             m_dbg.slopeLimit = slopeLimit;
             m_dbg.platform = m_platRide.platform; m_dbg.platformMoves = m_platRide.platformMoves();
-            m_dbg.held = m_holdOn; m_dbg.terrainGround = terrainGround;
+            m_dbg.held = m_holdOn; m_dbg.terrainGround = terrainGround; m_dbg.climbing = m_climbing;
         }
         m_jumped = false;
         // Full Body IK: the head (and some chest) follow where the camera looks, so
@@ -868,6 +916,20 @@ private:
     float m_sinceGroundS = 0.0f, m_sinceJump = 1.0f;
     Vec3  m_hold{0, 0, 0}; bool m_holdOn = false;   // idle on a slope: where the body is held
     bool  m_frictionSet = false;
+    bool  m_cutArmed = false;            // a jump that Space released early may still be cut short
+    bool  m_climbing = false;
+    float m_climbLock = 0.0f;            // seconds a jump off a ladder keeps the body from grabbing it again
+    bool  m_embedChecked = false, m_embedAgain = false;
+    int   m_embedTick = 0;
+    float m_climbOutCool = 0.0f;
+    void HardLandEvent(float impact) {
+        m_dbg.lastLandSpeed = impact;
+        if (OldPlayerPath() || hardLandSpeed <= 0.0f || impact < hardLandSpeed) return;
+        ++m_dbg.hardLandings;
+        if (onHardLand) onHardLand(impact);
+        if (gameObject && gameObject->scene())
+            for (ActionList* al : gameObject->scene()->FindObjectsOfType<ActionList>()) al->ReceiveMessage("player_hard_land");
+    }
     PlayerDebugState m_dbg;
 
     /// The normal the slope limit judges: the terrain's, else the one the ground contacts reported.

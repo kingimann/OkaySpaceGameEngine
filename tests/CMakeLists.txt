@@ -2990,6 +2990,27 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endforeach()
 endif()
 
+# The display list (Backend::Displays: monitors, usable area, DPI scale, primary) and the launcher's keep-on-screen rule:
+# the rule and the parsing alone, then our X11 backend under Xvfb with a work area, Xft.dpi and two RandR 1.5 monitors
+# that the test sets itself (tests/platform_fakedisplay.cpp, libX11 / libXrandr by dlopen), sdl2 against own on one
+# screen, and two Xvfb screens joined by Xinerama.
+if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_platform_display test_platform_display.cpp platform_fakedisplay.cpp)
+    target_link_libraries(test_platform_display PRIVATE okay::platform ${CMAKE_DL_LIBS})
+    target_include_directories(test_platform_display PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_display COMMAND test_platform_display unit)
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_display_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_display> ${_okay_pb})
+        set_tests_properties(platform_display_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                             ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}")
+    endforeach()
+    add_test(NAME platform_display_own_xinerama
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_display> own-xinerama 2)
+    set_tests_properties(platform_display_own_xinerama PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+                         ENVIRONMENT "OKAY_XVFB_SCREENS=+xinerama -screen 0 800x600x24 -screen 1 640x480x24")
+endif()
+
 # Safety nets for library code that previously had no test naming it.
 add_executable(test_lightmap test_lightmap.cpp)
 target_link_libraries(test_lightmap PRIVATE okay::engine)

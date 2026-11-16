@@ -1,11 +1,13 @@
 #!/bin/sh
 # Run a test program on a private Xvfb display. Exit 77 (ctest: skipped) when Xvfb
 # is not installed or does not start, so machines without it stay green.
-#   run_under_xvfb.sh <program> [args...]
+#   [OKAY_XVFB_SCREENS="..."] run_under_xvfb.sh <program> [args...]
 if ! command -v Xvfb >/dev/null 2>&1; then echo "SKIP: Xvfb not installed"; exit 77; fi
 tmp=$(mktemp -d) || exit 77
 trap 'kill "$xpid" 2>/dev/null; rm -rf "$tmp"' EXIT INT TERM
-Xvfb -displayfd 3 -screen 0 1024x768x24 -nolisten tcp -noreset 3>"$tmp/display" >"$tmp/xvfb.log" 2>&1 &
+# OKAY_XVFB_SCREENS replaces the screen list, e.g. "+xinerama -screen 0 800x600x24 -screen 1 640x480x24" (a multi-monitor desktop).
+# shellcheck disable=SC2086
+Xvfb -displayfd 3 ${OKAY_XVFB_SCREENS:--screen 0 1024x768x24} -nolisten tcp -noreset 3>"$tmp/display" >"$tmp/xvfb.log" 2>&1 &
 xpid=$!
 i=0
 while [ ! -s "$tmp/display" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done

@@ -2,8 +2,8 @@
 // the Win32 clipboard, QueryPerformanceCounter timers and XInput controllers.
 //
 // STATUS: COMPILES, UNTESTED. This file is only syntax-checked with MinGW on a Linux
-// machine; it has never been run on Windows. Audio devices are not written yet
-// (OpenAudio returns null). Treat every behaviour here as a first draft.
+// machine; it has never been run on Windows. Audio devices are only syntax-checked too
+// (audio: waveOut / waveIn in OwnWin32Audio.cpp, also never run). Treat every behaviour here as a first draft.
 #ifdef _WIN32
 #include "Internal.hpp"
 #ifndef NOMINMAX
@@ -16,6 +16,7 @@
 #include <shellapi.h>
 #include <xinput.h>
 #include <imm.h>      // COMPOSITIONFORM, CANDIDATEFORM (imm32.dll is loaded at run time, not linked)
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -277,7 +278,7 @@ private:
 class WinBackend final : public Backend {
 public:
     WinBackend() { g_backend = this; QueryPerformanceFrequency(&m_freq); QueryPerformanceCounter(&m_t0); }
-    ~WinBackend() override { if (g_backend == this) g_backend = nullptr; if (m_xinput) FreeLibrary(m_xinput); }
+    ~WinBackend() override { if (g_backend == this) g_backend = nullptr; if (m_xinput) FreeLibrary(m_xinput); if (m_shcore) FreeLibrary(m_shcore); }
     BackendKind Kind() const override { return BackendKind::Own; }
 
     bool Init(const InitFlags&) override {
@@ -474,12 +475,47 @@ public:
         return out;
     }
 
-    // Audio: not written for Windows yet.
-    std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec&, bool, const char*, AudioSpec*) override {
-        m_err = "the own Win32 backend has no audio device yet"; return nullptr;
+    // Audio: waveOut / waveIn (winmm.dll loaded at run time), OwnWin32Audio.cpp.
+    std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& want, bool capture, const char* name, AudioSpec* got) override {
+        std::string err;
+        auto d = OpenWinmmAudio(want, capture, name, got, err);
+        if (!d) m_err = err;
+        return d;
     }
-    int AudioDeviceCount(bool) override { return 0; }
-    std::string AudioDeviceName(int, bool) override { return std::string(); }
+    int AudioDeviceCount(bool capture) override { return WinmmDeviceCount(capture); }
+    std::string AudioDeviceName(int i, bool capture) override { return WinmmDeviceName(i, capture); }
+
+    // Displays: EnumDisplayMonitors + GetMonitorInfoW (user32), the DPI from GetDpiForMonitor (shcore.dll, Windows 8.1+,
+    // loaded at run time; the system DPI from GetDeviceCaps before that).
+    struct MonCtx { std::vector<DisplayInfo> out; HRESULT (WINAPI* getDpi)(HMONITOR, int, UINT*, UINT*); int sysDpi; };
+    std::vector<DisplayInfo> Displays() override {
+        MonCtx c; c.getDpi = nullptr; c.sysDpi = 96;
+        if (!m_shcoreTried) {
+            m_shcoreTried = true;
+            m_shcore = LoadLibraryW(L"shcore.dll");
+        }
+        if (m_shcore) c.getDpi = (HRESULT (WINAPI*)(HMONITOR, int, UINT*, UINT*))(void*)GetProcAddress(m_shcore, "GetDpiForMonitor");
+        if (HDC dc = GetDC(nullptr)) { c.sysDpi = GetDeviceCaps(dc, LOGPIXELSX); ReleaseDC(nullptr, dc); }
+        EnumDisplayMonitors(nullptr, nullptr, &WinBackend::MonitorProc, (LPARAM)&c);
+        std::stable_sort(c.out.begin(), c.out.end(), [](const DisplayInfo& a, const DisplayInfo& b) { return a.primary && !b.primary; });
+        return c.out;
+    }
+    static BOOL CALLBACK MonitorProc(HMONITOR mon, HDC, LPRECT, LPARAM lp) {
+        MonCtx& c = *(MonCtx*)lp;
+        MONITORINFOEXW mi; std::memset(&mi, 0, sizeof(mi));
+        mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(mon, (MONITORINFO*)&mi)) return TRUE;
+        DisplayInfo d;
+        d.bounds = DisplayRect{mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top};
+        d.usable = DisplayRect{mi.rcWork.left, mi.rcWork.top, mi.rcWork.right - mi.rcWork.left, mi.rcWork.bottom - mi.rcWork.top};
+        d.primary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
+        d.name = Utf8(mi.szDevice, (int)wcslen(mi.szDevice));
+        UINT dx = 0, dy = 0;
+        if (c.getDpi && c.getDpi(mon, 0 /* MDT_EFFECTIVE_DPI */, &dx, &dy) == S_OK && dx > 0) d.scale = (float)dx / 96.0f;
+        else if (c.sysDpi > 0) d.scale = (float)c.sysDpi / 96.0f;
+        c.out.push_back(d);
+        return TRUE;
+    }
 
     // Controllers: XInput, four slots, loaded on first use.
     int GamepadDeviceCount() override {
@@ -645,6 +681,8 @@ private:
     typedef DWORD (WINAPI *SetStateFn)(DWORD, XINPUT_VIBRATION*);
     LARGE_INTEGER m_freq, m_t0;
     HMODULE m_xinput = nullptr;
+    HMODULE m_shcore = nullptr;   // GetDpiForMonitor, loaded on the first Displays()
+    bool m_shcoreTried = false;
     GetStateFn m_getState = nullptr;
     SetStateFn m_setState = nullptr;
 };

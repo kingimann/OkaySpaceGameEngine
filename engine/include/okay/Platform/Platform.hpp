@@ -214,6 +214,25 @@ public:
 /// backend is not compiled in. Transitional: it goes away when the apps create their windows with Backend::MakeWindow.
 std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow);
 
+// ---- Displays -----------------------------------------------------------------
+/// A rectangle on the desktop, in the same coordinates as Window::GetPosition.
+struct DisplayRect { int x = 0, y = 0, w = 0, h = 0; };
+/// One monitor. `usable` is `bounds` minus task bars and panels (the OS's work area; equal to `bounds` when the OS
+/// says nothing). `scale` is the DPI scale the OS asks for: 1.0 = 96 DPI, 1.5 = 144 DPI.
+struct DisplayInfo {
+    std::string name;
+    DisplayRect bounds, usable;
+    float scale = 1.0f;
+    bool primary = false;
+};
+/// The displays of the default backend, the primary one first (empty when the backend has no video, or none is up).
+std::vector<DisplayInfo> Displays();
+/// Whether a window at (x, y) of size w x h can be reached: at least 160 x 80 of it on one display's usable area and its
+/// top edge (the title bar) inside that area, give or take 8 pixels above and 40 below. The launcher's "keep on screen" rule.
+bool WindowReachable(const std::vector<DisplayInfo>& displays, int x, int y, int w, int h);
+/// A window of w x h moved to the middle of the usable area of `d`, shrunk to leave a 20 pixel margin on each side.
+DisplayRect CenterOnDisplay(const DisplayInfo& d, int w, int h);
+
 // ---- Audio -------------------------------------------------------------------
 enum class SampleFormat { S16, F32 };   // native-endian, interleaved
 
@@ -378,6 +397,12 @@ public:
     /// messages; the sdl2 backend hands it to SDL. Null removes it. False = not supported here (every other platform).
     using NativeMessageHook = void (*)(void* user, void* hwnd, unsigned int msg, uint64_t wParam, int64_t lParam);
     virtual bool SetNativeMessageHook(NativeMessageHook hook, void* user) { (void)hook; (void)user; return false; }
+
+    /// The monitors, the primary one first (SDL_GetNumVideoDisplays / SDL_GetDisplayBounds / SDL_GetDisplayUsableBounds /
+    /// SDL_GetDisplayDPI). The own backends ask the OS: X11 RandR 1.5 monitors (libXrandr loaded at run time), else Xinerama,
+    /// else the root window, with _NET_WORKAREA as the usable area and Xft.dpi as the scale; Win32 EnumDisplayMonitors /
+    /// GetMonitorInfoW and GetDpiForMonitor (shcore.dll loaded at run time). Empty when video is not up.
+    virtual std::vector<DisplayInfo> Displays() { return {}; }
 };
 
 // ---- Free functions on the default backend ------------------------------------

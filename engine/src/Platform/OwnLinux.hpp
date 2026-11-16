@@ -43,7 +43,15 @@ public:
     virtual std::string GetClipboardText() = 0;
     /// Test hook: the window's current pixels as RGBA8 (XGetImage), top row first.
     virtual bool GrabWindow(Window& w, std::vector<uint8_t>& rgba, int& width, int& height) = 0;
+    /// The monitors, primary first: RandR 1.5 monitors (libXrandr.so.2, dlopen), else Xinerama (libXinerama.so.1), else the
+    /// root window. Usable area from _NET_WORKAREA, scale from Xft.dpi in the root's RESOURCE_MANAGER (read fresh each call).
+    virtual std::vector<DisplayInfo> Displays() = 0;
 };
+
+/// "Xft.dpi: 144" in an X resource string (the RESOURCE_MANAGER property) -> 1.5; 1.0 when absent or not a sane number.
+float ScaleFromXResources(const std::string& resources);
+/// The part of `bounds` inside `work` (an EWMH work area); `bounds` itself when they do not overlap or `work` is empty.
+DisplayRect ClipToWorkArea(const DisplayRect& bounds, const DisplayRect& work);
 
 // ---- ALSA, loaded with dlopen ----------------------------------------------------
 /// `device` null = $OKAY_ALSA_DEVICE or "default". Null result: `err` says why.

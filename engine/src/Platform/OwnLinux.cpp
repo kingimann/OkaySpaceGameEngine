@@ -2,6 +2,7 @@
 // controllers, all loaded at run time (see OwnLinux.hpp). No SDL.
 #include "Internal.hpp"
 #include "OwnLinux.hpp"
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <deque>
@@ -21,7 +22,10 @@ public:
     BackendKind Kind() const override { return BackendKind::Own; }
 
     bool Init(const InitFlags& f) override {
-        m_flags = f;
+        // A second Init adds subsystems and never turns one off (the launcher asks for audio alone after video is up).
+        if (!m_initDone) m_flags = f;
+        else { m_flags.video |= f.video; m_flags.audio |= f.audio; m_flags.gamepad |= f.gamepad; }
+        m_initDone = true;
         if (f.video && !m_x11) {
             std::string err;
             m_x11 = own::X11System::Open(err);
@@ -29,7 +33,7 @@ public:
         }
         return true;
     }
-    void Shutdown() override { m_x11.reset(); m_pending.clear(); }
+    void Shutdown() override { m_x11.reset(); m_pending.clear(); m_initDone = false; }
     std::string LastError() const override { return m_err; }
 
     uint64_t TicksMs() override { return (MonoNs() - m_epochNs) / 1000000ull; }
@@ -101,12 +105,15 @@ public:
     bool IsGamepad(int i) override { return i >= 0 && i < own::EvdevGamepadCount(); }
     std::unique_ptr<Gamepad> OpenGamepad(int i) override { return own::OpenEvdevGamepad(i); }
 
+    std::vector<DisplayInfo> Displays() override { return m_x11 ? m_x11->Displays() : std::vector<DisplayInfo>(); }
+
     own::X11System* X11() { return m_x11.get(); }
 
 private:
     void Drain() { for (auto& e : m_pendingVec) m_pending.push_back(std::move(e)); m_pendingVec.clear(); }
     uint64_t m_epochNs;
     InitFlags m_flags;
+    bool m_initDone = false;
     std::unique_ptr<own::X11System> m_x11;
     std::string m_err;
     std::deque<Event> m_pending;
@@ -118,6 +125,36 @@ private:
 std::unique_ptr<Backend> CreateOwnBackend() { return std::unique_ptr<Backend>(new OwnBackend()); }
 
 namespace own {
+float ScaleFromXResources(const std::string& res) {
+    // Lines "name:\tvalue"; the name may carry a leading '*' or '.' and spaces around the colon (Xlib resource syntax).
+    size_t pos = 0;
+    while (pos < res.size()) {
+        size_t end = res.find('\n', pos);
+        if (end == std::string::npos) end = res.size();
+        std::string line = res.substr(pos, end - pos);
+        pos = end + 1;
+        const size_t colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        std::string key = line.substr(0, colon);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        size_t k0 = 0;
+        while (k0 < key.size() && (key[k0] == ' ' || key[k0] == '\t' || key[k0] == '*' || key[k0] == '.')) ++k0;
+        if (key.compare(k0, std::string::npos, "Xft.dpi") != 0) continue;
+        const double dpi = std::strtod(line.c_str() + colon + 1, nullptr);
+        if (dpi >= 24.0 && dpi <= 960.0) return (float)(dpi / 96.0);
+        return 1.0f;
+    }
+    return 1.0f;
+}
+
+DisplayRect ClipToWorkArea(const DisplayRect& b, const DisplayRect& w) {
+    if (w.w <= 0 || w.h <= 0) return b;
+    const int x0 = std::max(b.x, w.x), y0 = std::max(b.y, w.y);
+    const int x1 = std::min(b.x + b.w, w.x + w.w), y1 = std::min(b.y + b.h, w.y + w.h);
+    if (x1 <= x0 || y1 <= y0) return b;
+    return DisplayRect{x0, y0, x1 - x0, y1 - y0};
+}
+
 /// Test hook: the pixels of one of our windows (see OwnLinux.hpp).
 bool GrabWindowPixels(Backend& b, Window& w, std::vector<uint8_t>& rgba, int& width, int& height) {
     if (b.Kind() != BackendKind::Own) return false;

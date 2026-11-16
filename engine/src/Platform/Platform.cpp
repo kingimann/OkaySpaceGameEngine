@@ -1,6 +1,7 @@
 // Backend registry and the timer fallbacks of okay::platform.
 #include "okay/Platform/Platform.hpp"
 #include "Internal.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <cstdio>
@@ -224,6 +225,32 @@ uint64_t PerfFrequency() {
 void DelayMs(uint32_t ms) {
     if (Backend* b = Default()) { b->DelayMs(ms); return; }
     std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
+std::vector<DisplayInfo> Displays() {
+    Backend* b = Default();
+    return b ? b->Displays() : std::vector<DisplayInfo>();
+}
+
+bool WindowReachable(const std::vector<DisplayInfo>& displays, int x, int y, int w, int h) {
+    for (const DisplayInfo& d : displays) {
+        const DisplayRect& b = d.usable.w > 0 && d.usable.h > 0 ? d.usable : d.bounds;
+        if (b.w <= 0 || b.h <= 0) continue;
+        const int ix = std::min(x + w, b.x + b.w) - std::max(x, b.x);
+        const int iy = std::min(y + h, b.y + b.h) - std::max(y, b.y);
+        if (ix >= 160 && iy >= 80 && y >= b.y - 8 && y < b.y + b.h - 40) return true;
+    }
+    return false;
+}
+
+DisplayRect CenterOnDisplay(const DisplayInfo& d, int w, int h) {
+    const DisplayRect& b = d.usable.w > 0 && d.usable.h > 0 ? d.usable : d.bounds;
+    DisplayRect r;
+    r.w = std::max(1, std::min(w, b.w - 40));
+    r.h = std::max(1, std::min(h, b.h - 40));
+    r.x = b.x + (b.w - r.w) / 2;
+    r.y = b.y + (b.h - r.h) / 2;
+    return r;
 }
 
 void Log(const std::string& line) {

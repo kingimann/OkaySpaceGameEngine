@@ -19,6 +19,7 @@ std::unique_ptr<X11System> X11System::Open(std::string& err) {
 #include <X11/keysym.h>
 #include <GL/glx.h>
 #include <dlfcn.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -809,6 +810,121 @@ public:
     }
     static int Shift(unsigned long mask) { int s = 0; while (mask && !(mask & 1)) { mask >>= 1; ++s; } return s; }
 
+    // ---- Displays ------------------------------------------------------------------------
+    // RandR 1.5's monitor list (XRRGetMonitors) is what the X server itself calls a monitor: one per active output, or
+    // what a user defined with `xrandr --setmonitor`. libXrandr is loaded at run time; its XRRMonitorInfo is laid out
+    // here from the library's public interface (field order and types), since the header is not needed otherwise.
+    struct RrMonitor {
+        Atom name; Bool primary; Bool automatic; int noutput;
+        int x, y, width, height, mwidth, mheight;
+        unsigned long* outputs;
+    };
+    struct XineramaScreen { int screen_number; short x_org, y_org, width, height; };   // XineramaScreenInfo
+    bool LoadDisplayLibs() {
+        if (m_dispLibsTried) return true;
+        m_dispLibsTried = true;
+        if (void* rr = dlopen("libXrandr.so.2", RTLD_NOW | RTLD_GLOBAL)) {
+            m_rrQueryExt = reinterpret_cast<Bool (*)(Display*, int*, int*)>(dlsym(rr, "XRRQueryExtension"));
+            m_rrQueryVer = reinterpret_cast<Status (*)(Display*, int*, int*)>(dlsym(rr, "XRRQueryVersion"));
+            m_rrGetMonitors = reinterpret_cast<RrMonitor* (*)(Display*, ::Window, Bool, int*)>(dlsym(rr, "XRRGetMonitors"));
+            m_rrFreeMonitors = reinterpret_cast<void (*)(RrMonitor*)>(dlsym(rr, "XRRFreeMonitors"));
+        }
+        if (void* xi = dlopen("libXinerama.so.1", RTLD_NOW | RTLD_GLOBAL)) {
+            m_xiIsActive = reinterpret_cast<Bool (*)(Display*)>(dlsym(xi, "XineramaIsActive"));
+            m_xiQuery = reinterpret_cast<XineramaScreen* (*)(Display*, int*)>(dlsym(xi, "XineramaQueryScreens"));
+        }
+        m_getAtomName = reinterpret_cast<char* (*)(Display*, Atom)>(dlsym(m_x.lib, "XGetAtomName"));
+        return true;
+    }
+    std::vector<DisplayInfo> MonitorsFromRandr() {
+        std::vector<DisplayInfo> out;
+        if (!m_rrQueryExt || !m_rrQueryVer || !m_rrGetMonitors || !m_rrFreeMonitors) return out;
+        int ev = 0, er = 0, maj = 0, min = 0;
+        if (!m_rrQueryExt(m_dpy, &ev, &er) || !m_rrQueryVer(m_dpy, &maj, &min)) return out;
+        if (maj < 1 || (maj == 1 && min < 5)) return out;   // XRRGetMonitors is RandR 1.5
+        int n = 0;
+        RrMonitor* m = m_rrGetMonitors(m_dpy, m_root, True, &n);
+        if (!m) return out;
+        for (int i = 0; i < n; ++i) {
+            if (m[i].width <= 0 || m[i].height <= 0) continue;
+            DisplayInfo d;
+            d.bounds = DisplayRect{m[i].x, m[i].y, m[i].width, m[i].height};
+            d.primary = m[i].primary != 0;
+            if (m_getAtomName && m[i].name) {
+                if (char* nm = m_getAtomName(m_dpy, m[i].name)) { d.name = nm; m_x.XFree(nm); }
+            }
+            out.push_back(d);
+        }
+        m_rrFreeMonitors(m);
+        return out;
+    }
+    std::vector<DisplayInfo> MonitorsFromXinerama() {
+        std::vector<DisplayInfo> out;
+        if (!m_xiIsActive || !m_xiQuery || !m_xiIsActive(m_dpy)) return out;
+        int n = 0;
+        XineramaScreen* s = m_xiQuery(m_dpy, &n);
+        if (!s) return out;
+        for (int i = 0; i < n; ++i) {
+            if (s[i].width <= 0 || s[i].height <= 0) continue;
+            DisplayInfo d;
+            d.bounds = DisplayRect{s[i].x_org, s[i].y_org, s[i].width, s[i].height};
+            d.primary = out.empty();   // Xinerama has no primary; its first screen is the usual stand-in
+            d.name = "Xinerama-" + std::to_string(s[i].screen_number);
+            out.push_back(d);
+        }
+        m_x.XFree(s);
+        return out;
+    }
+    // A property of the root window as 32-bit items (format 32 comes back as longs) or as bytes.
+    bool RootLongs(const char* atomName, std::vector<long>& out) {
+        out.clear();
+        const Atom a = m_x.XInternAtom(m_dpy, atomName, True);
+        if (!a) return false;
+        Atom type = 0; int fmt = 0; unsigned long n = 0, after = 0; unsigned char* data = nullptr;
+        if (m_x.XGetWindowProperty(m_dpy, m_root, a, 0, 1024, False, AnyPropertyType, &type, &fmt, &n, &after, &data) != Success) return false;
+        if (data && fmt == 32) out.assign((long*)data, (long*)data + n);
+        if (data) m_x.XFree(data);
+        return !out.empty();
+    }
+    std::string RootString(const char* atomName) {
+        const Atom a = m_x.XInternAtom(m_dpy, atomName, True);
+        if (!a) return std::string();
+        Atom type = 0; int fmt = 0; unsigned long n = 0, after = 0; unsigned char* data = nullptr;
+        if (m_x.XGetWindowProperty(m_dpy, m_root, a, 0, 1 << 20, False, AnyPropertyType, &type, &fmt, &n, &after, &data) != Success) return std::string();
+        std::string r = data && fmt == 8 ? std::string((const char*)data, n) : std::string();
+        if (data) m_x.XFree(data);
+        return r;
+    }
+    std::vector<DisplayInfo> Displays() override {
+        LoadDisplayLibs();
+        std::vector<DisplayInfo> out = MonitorsFromRandr();
+        // Real Xinerama (several X screens joined) can leave RandR describing only the first screen: take whichever
+        // list has more monitors, RandR on a tie (it has names and a primary).
+        std::vector<DisplayInfo> xi = MonitorsFromXinerama();
+        if (xi.size() > out.size()) out = xi;
+        if (out.empty()) {
+            DisplayInfo d;
+            d.name = "X11 screen " + std::to_string(m_screen);
+            d.bounds = DisplayRect{0, 0, DisplayWidth(m_dpy, m_screen), DisplayHeight(m_dpy, m_screen)};
+            d.primary = true;
+            out.push_back(d);
+        }
+        // EWMH work area: four numbers per desktop; the current desktop's (else the first).
+        DisplayRect work;
+        std::vector<long> wa, cur;
+        if (RootLongs("_NET_WORKAREA", wa) && wa.size() >= 4) {
+            size_t k = 0;
+            if (RootLongs("_NET_CURRENT_DESKTOP", cur) && cur[0] >= 0 && (size_t)cur[0] * 4 + 3 < wa.size()) k = (size_t)cur[0] * 4;
+            work = DisplayRect{(int)wa[k], (int)wa[k + 1], (int)wa[k + 2], (int)wa[k + 3]};
+        }
+        const float scale = ScaleFromXResources(RootString("RESOURCE_MANAGER"));
+        bool anyPrimary = false;
+        for (DisplayInfo& d : out) { d.usable = ClipToWorkArea(d.bounds, work); d.scale = scale; anyPrimary |= d.primary; }
+        if (!anyPrimary) out[0].primary = true;   // RandR without a primary output set: the first one
+        std::stable_sort(out.begin(), out.end(), [](const DisplayInfo& a, const DisplayInfo& b) { return a.primary && !b.primary; });
+        return out;
+    }
+
     XTable m_x;
     GlxTable m_glx;
     bool m_hasGlx = false;
@@ -835,6 +951,14 @@ public:
     std::string m_clip;
     bool m_ownsClip = false, m_selNotify = false;
     Atom m_selProp = 0;
+    bool m_dispLibsTried = false;
+    Bool (*m_rrQueryExt)(Display*, int*, int*) = nullptr;
+    Status (*m_rrQueryVer)(Display*, int*, int*) = nullptr;
+    RrMonitor* (*m_rrGetMonitors)(Display*, ::Window, Bool, int*) = nullptr;
+    void (*m_rrFreeMonitors)(RrMonitor*) = nullptr;
+    Bool (*m_xiIsActive)(Display*) = nullptr;
+    XineramaScreen* (*m_xiQuery)(Display*, int*) = nullptr;
+    char* (*m_getAtomName)(Display*, Atom) = nullptr;
 };
 
 // ---- X11Win methods ------------------------------------------------------------------

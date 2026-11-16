@@ -42,7 +42,7 @@ function(okay_add_platform_library)
 
     # --- own backend ----------------------------------------------------------------
     if(WIN32)
-        list(APPEND _srcs src/Platform/OwnWin32.cpp)
+        list(APPEND _srcs src/Platform/OwnWin32.cpp src/Platform/OwnWin32Audio.cpp)
         list(APPEND _defs OKAY_PLATFORM_HAVE_OWN)
         list(APPEND _libs user32 gdi32 opengl32 shell32)
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")

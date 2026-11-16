@@ -314,6 +314,25 @@ public:
     bool IsRelativeMouse() override { return SDL_GetRelativeMouseMode() == SDL_TRUE; }
     uint32_t GlobalMouseState(int* x, int* y) override { return SDL_GetGlobalMouseState(x, y); }
     void PumpEvents() override { SDL_PumpEvents(); }
+    std::vector<DisplayInfo> Displays() override {
+        std::vector<DisplayInfo> out;
+        if (!(SDL_WasInit(0) & SDL_INIT_VIDEO)) return out;   // asking would fail; the caller decides whether to start video
+        const int n = SDL_GetNumVideoDisplays();
+        for (int i = 0; i < n; ++i) {
+            SDL_Rect b, u;
+            if (SDL_GetDisplayBounds(i, &b) != 0) continue;
+            if (SDL_GetDisplayUsableBounds(i, &u) != 0) u = b;
+            DisplayInfo d;
+            if (const char* nm = SDL_GetDisplayName(i)) d.name = nm;
+            d.bounds = DisplayRect{b.x, b.y, b.w, b.h};
+            d.usable = DisplayRect{u.x, u.y, u.w, u.h};
+            float hdpi = 0.0f;
+            if (SDL_GetDisplayDPI(i, nullptr, &hdpi, nullptr) == 0 && hdpi > 0.0f) d.scale = hdpi / 96.0f;
+            d.primary = i == 0;   // SDL2 lists the primary display first (its display 0)
+            out.push_back(d);
+        }
+        return out;
+    }
 
     int GamepadDeviceCount() override {
         if (!(SDL_WasInit(0) & SDL_INIT_GAMECONTROLLER)) { if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) return 0; m_started |= SDL_INIT_GAMECONTROLLER; }

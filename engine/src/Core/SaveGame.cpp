@@ -10,8 +10,13 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Components/ScriptComponent.hpp"
 #include "okay/Components/VisualScriptComponent.hpp"
+#include "okay/Components/Animator.hpp"
+#include "okay/Components/LogicLinks.hpp"
+#include "okay/Components/Projectile3D.hpp"
+#include "okay/Components/SpriteAnimator.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <functional>
@@ -279,6 +284,124 @@ bool ReadSave(const std::string& slot, Parsed& out, std::string* error) {
     return false;
 }
 
+// Runtime state of components that the scene text keeps only as authored settings (#888
+// findings 62, 63). One line per component: kind, object path, the component's index among
+// its kind on that object, then space-separated numbers. Lines a build doesn't know are
+// skipped on load, and a slot without them loads as it always did.
+//   logic   LogicTarget:  state prevAct powered init t dir hasPose  closedPos(3) closedRot(4)
+//   lsrc    LogicSource:  out prevOut init timer
+//   anim    Animator:     time eventsPrimed
+//   sprite  SpriteAnimator: clip time frame hold playing
+//   proj3   Projectile3D: age hits bounces
+template <class PathFn>
+void WriteRuntimeState(std::ostringstream& out, GameObject* g, PathFn&& pathOf) {
+    auto b = [](bool v) { return v ? "1" : "0"; };
+    std::size_t k = 0;
+    for (auto* lt : g->GetComponents<LogicTarget>()) {
+        const LogicTarget::RuntimeState r = lt->GetRuntimeState();
+        if (r.init || r.t > 0.0f || r.hasPose)
+            out << "logic\t" << pathOf() << "\t" << k << "\t" << b(r.state) << " " << b(r.prevAct) << " "
+                << b(r.powered) << " " << b(r.init) << " " << Num(r.t) << " " << r.dir << " " << b(r.hasPose) << " "
+                << Num(r.closedPos.x) << " " << Num(r.closedPos.y) << " " << Num(r.closedPos.z) << " "
+                << Num(r.closedRot.x) << " " << Num(r.closedRot.y) << " " << Num(r.closedRot.z) << " "
+                << Num(r.closedRot.w) << "\n";
+        ++k;
+    }
+    k = 0;
+    for (auto* ls : g->GetComponents<LogicSource>()) {
+        const LogicSource::RuntimeState r = ls->GetRuntimeState();
+        if (r.init)
+            out << "lsrc\t" << pathOf() << "\t" << k << "\t" << b(r.out) << " " << b(r.prevOut) << " " << b(r.init)
+                << " " << Num(r.timer) << "\n";
+        ++k;
+    }
+    k = 0;
+    for (auto* an : g->GetComponents<Animator>()) {
+        if (an->Time() != 0.0f || an->EventsPrimed())
+            out << "anim\t" << pathOf() << "\t" << k << "\t" << Num(an->Time()) << " " << b(an->EventsPrimed()) << "\n";
+        ++k;
+    }
+    k = 0;
+    for (auto* sa : g->GetComponents<SpriteAnimator>()) {
+        const SpriteAnimator::Playhead p = sa->GetPlayhead();
+        if (p.clip >= 0 || p.time != 0.0f || p.frame != 0 || p.hold)
+            out << "sprite\t" << pathOf() << "\t" << k << "\t" << p.clip << " " << Num(p.time) << " " << p.frame << " "
+                << b(p.hold) << " " << b(p.playing) << "\n";
+        ++k;
+    }
+    k = 0;
+    for (auto* pj : g->GetComponents<Projectile3D>()) {
+        if (pj->Age() > 0.0f || pj->Hits() > 0 || pj->Bounces() > 0)
+            out << "proj3\t" << pathOf() << "\t" << k << "\t" << Num(pj->Age()) << " " << pj->Hits() << " "
+                << pj->Bounces() << "\n";
+        ++k;
+    }
+}
+
+// The `nth` component of type T on `g` (from a state line's index column), or nullptr.
+template <class T>
+T* NthComponent(GameObject* g, const std::string& index) {
+    if (!g) return nullptr;
+    const auto all = g->GetComponents<T>();
+    const int nth = std::atoi(index.c_str());
+    return (nth >= 0 && (std::size_t)nth < all.size()) ? all[(std::size_t)nth] : nullptr;
+}
+
+// Put back one runtime-state line (see WriteRuntimeState). False: not one of these kinds.
+bool ApplyRuntimeLine(const std::vector<std::string>& c, GameObject* g) {
+    const std::string& kind = c[0];
+    if (kind != "logic" && kind != "lsrc" && kind != "anim" && kind != "sprite" && kind != "proj3") return false;
+    if (c.size() < 4 || !g) return true;
+    if (kind == "logic") {
+        if (auto* lt = NthComponent<LogicTarget>(g, c[2])) {
+            const LogicTarget::RuntimeState now = lt->GetRuntimeState();
+            float v[14] = {0, 0, 0, 0, 0, 1, 0, now.closedPos.x, now.closedPos.y, now.closedPos.z,
+                           now.closedRot.x, now.closedRot.y, now.closedRot.z, now.closedRot.w};
+            ParseFloats(c[3], v, 14);
+            LogicTarget::RuntimeState r;
+            r.state = v[0] != 0.0f; r.prevAct = v[1] != 0.0f; r.powered = v[2] != 0.0f; r.init = v[3] != 0.0f;
+            r.t = v[4]; r.dir = v[5] < 0.0f ? -1 : 1; r.hasPose = v[6] != 0.0f;
+            r.closedPos = Vec3{v[7], v[8], v[9]};
+            r.closedRot = Quat{v[10], v[11], v[12], v[13]};
+            const float len = std::sqrt(v[10] * v[10] + v[11] * v[11] + v[12] * v[12] + v[13] * v[13]);
+            if (len > 1e-6f) r.closedRot = Quat{v[10] / len, v[11] / len, v[12] / len, v[13] / len};
+            else r.hasPose = false;   // a damaged rotation: measure from the loaded pose instead
+            lt->RestoreRuntimeState(r);
+        }
+    } else if (kind == "lsrc") {
+        if (auto* ls = NthComponent<LogicSource>(g, c[2])) {
+            float v[4] = {0, 0, 0, 0};
+            ParseFloats(c[3], v, 4);
+            LogicSource::RuntimeState r;
+            r.out = v[0] != 0.0f; r.prevOut = v[1] != 0.0f; r.init = v[2] != 0.0f; r.timer = v[3];
+            ls->RestoreRuntimeState(r);
+        }
+    } else if (kind == "anim") {
+        if (auto* an = NthComponent<Animator>(g, c[2])) {
+            float v[2] = {0, 0};
+            ParseFloats(c[3], v, 2);
+            if (std::isfinite(v[0])) an->RestorePlayhead(v[0], v[1] != 0.0f);
+        }
+    } else if (kind == "sprite") {
+        if (auto* sa = NthComponent<SpriteAnimator>(g, c[2])) {
+            const SpriteAnimator::Playhead now = sa->GetPlayhead();
+            float v[5] = {-1, 0, 0, 0, now.playing ? 1.0f : 0.0f};
+            ParseFloats(c[3], v, 5);
+            SpriteAnimator::Playhead p;
+            p.clip = (int)v[0]; p.time = std::isfinite(v[1]) ? v[1] : 0.0f; p.frame = (int)v[2];
+            p.hold = v[3] != 0.0f; p.playing = v[4] != 0.0f;
+            sa->RestorePlayhead(p);
+        }
+    } else if (kind == "proj3") {
+        if (auto* pj = NthComponent<Projectile3D>(g, c[2])) {
+            float v[3] = {0, 0, 0};
+            ParseFloats(c[3], v, 3);
+            pj->RestoreFlight(std::isfinite(v[0]) ? v[0] : 0.0f, (int)v[1], (int)v[2]);
+        }
+    }
+    return true;
+}
+
 // Put back what the scene text doesn't hold, after the loaded objects started.
 void ApplyState(Scene& scene, const Parsed& p) {
     const auto index = PathIndex(scene);
@@ -288,6 +411,7 @@ void ApplyState(Scene& scene, const Parsed& p) {
     };
     for (const auto& c : p.state) {
         const std::string& kind = c[0];
+        if (c.size() >= 2 && ApplyRuntimeLine(c, find(c[1]))) continue;
         if (kind == "body3" && c.size() >= 3) {
             if (GameObject* g = find(c[1]))
                 if (auto* rb = g->GetComponent<Rigidbody3D>()) {
@@ -391,6 +515,7 @@ bool SaveGame::Save(Scene& scene, const std::string& slot, const SaveOptions& op
             }
             ++k;
         }
+        WriteRuntimeState(out, g, pathOf);
     }
     for (const auto& kv : Save::File(Save::DefaultFile()).Raw())
         out << "kv\t" << Escape(kv.first) << "\t" << Escape(kv.second) << "\n";

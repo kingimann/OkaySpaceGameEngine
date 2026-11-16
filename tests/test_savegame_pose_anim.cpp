@@ -298,6 +298,9 @@ int main() {
         if (d2 && m2 && bu2) {
             // As before: the closed door works, the animation starts over, the bullet flies.
             CHECK_NEAR(m2->GetComponent<Animator>()->Time(), 0.0f, 1e-4);
+            // The bullet's age starts over: alive 1.6 s after the load (2.1 s of flight in all).
+            Run(b, 1.6f);
+            CHECK(Obj(b, "Bullet") != nullptr);
             auto* door = d2->GetComponent<LogicTarget>();
             CHECK(!door->State());
             Run(b, 0.1f);
@@ -307,7 +310,6 @@ int main() {
             door->SetState(false);
             Run(b, 1.0f);
             CHECK(SameRot(d2->transform->localRotation, closedRot));
-            CHECK(Obj(b, "Bullet") != nullptr);
         }
     }
 

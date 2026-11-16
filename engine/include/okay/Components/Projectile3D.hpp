@@ -51,6 +51,16 @@ public:
 
     int Hits() const { return m_hits; }
     bool Alive() const { return !m_dead; }
+    /// Seconds it has flown, and how many times it bounced.
+    float Age() const { return m_age; }
+    int Bounces() const { return m_bounces; }
+    /// Put saved flight state back (save games): age, hits and bounces, so a loaded bullet
+    /// keeps its remaining lifetime, pierce and bounce budget.
+    void RestoreFlight(float age, int hits, int bounces) {
+        m_age = age > 0.0f ? age : 0.0f;
+        m_hits = hits > 0 ? hits : 0;
+        m_bounces = bounces > 0 ? bounces : 0;
+    }
 
     void Update(float dt) override {
         if (m_dead || !transform || !gameObject) return;

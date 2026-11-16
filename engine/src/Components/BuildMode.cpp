@@ -444,6 +444,24 @@ void LogicTarget::ResetPose() {
     m_t = 0.0f; m_dir = 1;
 }
 
+LogicTarget::RuntimeState LogicTarget::GetRuntimeState() const {
+    RuntimeState r;
+    r.state = m_state; r.prevAct = m_prevAct; r.powered = m_powered; r.init = m_init;
+    r.t = m_t; r.dir = m_dir;
+    r.hasPose = m_hasPose; r.closedPos = m_closedPos; r.closedRot = m_closedRot;
+    return r;
+}
+
+void LogicTarget::RestoreRuntimeState(const RuntimeState& r) {
+    m_state = r.state; m_prevAct = r.prevAct; m_powered = r.powered; m_init = r.init;
+    m_t = std::min(1.0f, std::max(0.0f, r.t));
+    m_dir = r.dir < 0 ? -1 : 1;
+    m_hasPose = r.hasPose;
+    if (m_hasPose) { m_closedPos = r.closedPos; m_closedRot = r.closedRot; }
+    if (!m_hasPose && m_t > 0.0f) m_t = 0.0f;   // no closed pose to measure from: treat the loaded pose as closed
+    if (m_init) ApplyLight();
+}
+
 void LogicTarget::ApplyLight() {
     if (kind != Kind::Light || !gameObject) return;
     for (Light* l : InTree<Light>(gameObject)) l->intensity = m_state ? lightIntensity : 0.0f;

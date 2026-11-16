@@ -26,6 +26,11 @@ public:
     void  Play()  { playing = true; }
     void  Pause() { playing = false; }
     void  Restart() { m_time = 0.0f; m_eventsPrimed = false; ApplyAt(0.0f); }
+    /// Whether playback has run a frame (events at the very start were already sent).
+    bool  EventsPrimed() const { return m_eventsPrimed; }
+    /// Put a saved playhead back (save games): like SetTime, but events already passed
+    /// are not sent again.
+    void  RestorePlayhead(float t, bool eventsPrimed) { m_time = t; m_eventsPrimed = eventsPrimed; ApplyAt(t); }
 
     void Update(float dt) override {
         if (!playing) return;

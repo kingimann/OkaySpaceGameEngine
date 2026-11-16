@@ -106,6 +106,20 @@ public:
     /// that lasts longer than the clip). Cleared by the next clip that should cycle.
     void SetHoldAtEnd(bool hold) { m_hold = hold; }
 
+    /// The playhead a save game keeps: clip, clock, frame and hold (and `playing`).
+    struct Playhead { int clip = -1; float time = 0.0f; int frame = 0; bool hold = false; bool playing = true; };
+    Playhead GetPlayhead() const { return {m_clip, m_time, m_frame, m_hold, playing}; }
+    /// Put a saved playhead back (save games) and show its frame.
+    void RestorePlayhead(const Playhead& p) {
+        m_clip = (p.clip >= 0 && p.clip < (int)clips.size()) ? p.clip : -1;
+        m_time = p.time > 0.0f ? p.time : 0.0f;
+        const int count = FrameCount();
+        m_frame = (count > 0 && p.frame >= 0) ? (p.frame < count ? p.frame : count - 1) : 0;
+        m_hold = p.hold;
+        playing = p.playing;
+        Apply();
+    }
+
 private:
     const SpriteClip* Clip() const {
         return (m_clip >= 0 && m_clip < (int)clips.size()) ? &clips[m_clip] : nullptr;

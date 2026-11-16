@@ -111,6 +111,12 @@ public:
     /// Things in the plate / zone box last frame.
     int Occupants() const { return m_occupants; }
 
+    /// Runtime state a save game keeps (SaveGame writes it in the slot's state section),
+    /// so a lever left on is still on after a load.
+    struct RuntimeState { bool out = false, prevOut = false, init = false; float timer = 0.0f; };
+    RuntimeState GetRuntimeState() const { return {m_out, m_prevOut, m_init, m_timer}; }
+    void RestoreRuntimeState(const RuntimeState& r) { m_out = r.out; m_prevOut = r.prevOut; m_init = r.init; m_timer = r.timer; }
+
     bool HasLink(int targetId) const;
     bool AddLink(int targetId);      ///< false if already linked
     bool RemoveLink(int targetId);   ///< false if it wasn't linked
@@ -192,6 +198,23 @@ public:
     std::string SignalName() const;
     /// Spawn one now (Spawner kind). Returns the new object or nullptr.
     GameObject* SpawnNow();
+
+    /// Runtime state a save game keeps (SaveGame writes it in the slot's state section):
+    /// on / off, the door / mover travel and the closed pose it opens from. The closed pose
+    /// is kept apart from the object's transform, which a save holds as it is (open).
+    struct RuntimeState {
+        bool  state = false, prevAct = false, powered = false, init = false;
+        float t = 0.0f;
+        int   dir = 1;
+        bool  hasPose = false;
+        Vec3  closedPos;
+        Quat  closedRot;
+    };
+    RuntimeState GetRuntimeState() const;
+    /// Put saved runtime state back after a load (before the next frame). The door keeps the
+    /// closed pose it was saved with instead of taking the loaded (open) transform as closed.
+    /// No signal is raised; a Light target is relit.
+    void RestoreRuntimeState(const RuntimeState& r);
 
     static const char* KindName(Kind k);
 

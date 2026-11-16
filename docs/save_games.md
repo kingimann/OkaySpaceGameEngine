@@ -15,6 +15,16 @@ it and everything comes back:
 - **The game's own Save keys**: `save("gold", 120)` values in the default save
   file. Each slot has its own copy, so slots don't share progress.
 - **Play time.**
+- **Where things are part-way through** (the slot's state section, see below):
+  - **Logic doors, lifts and levers:** open or shut, how far a door or mover has
+    travelled, and the closed pose it opens from. A door saved open loads open and
+    still closes to the pose it was built in. A lever left on stays on.
+  - **Animations:** an `Animator`'s clip time and a `SpriteAnimator`'s clip, time,
+    frame and hold. A one-shot that had finished stays finished; one half-way
+    through carries on from there.
+  - **Projectiles:** a `Projectile3D`'s age, hits and bounces (its position and
+    velocity are in the scene). A bullet in flight keeps its remaining lifetime,
+    pierce and bounce budget.
 
 Slots are files in the player's save folder, under `saves/<slot>.okaygame`. A
 slot name uses letters, digits, `-` and `_` (up to 64): `1`, `quick`, `autosave`,
@@ -131,6 +141,34 @@ whole file and check it (use them for one slot, not a long list of big saves).
   load never touches.
 - Saves made with the older `save_game` (`saves/<slot>.okaysave`, scene only)
   don't load with the new format. Save again to make a new one.
+
+## Runtime state (the `--state--` section)
+
+A slot holds the scene text (the same text as a scene file, with every object where it is
+now) and then a `--state--` section with what the scene text can't hold: Rigidbody
+velocities (`body3`, `body2`), script and graph variables (`script`, `graph`), the save
+keys (`kv`) and component runtime state. `SaveGame::LoadNow` (and `Load`, at the end of the
+frame) reads the scene, starts it, and then puts the state lines back, before the first
+frame runs. Each component line is `kind<TAB>object path<TAB>index<TAB>numbers`, where the
+index is the component's place among its kind on that object:
+
+| Kind | Component | Numbers |
+| --- | --- | --- |
+| `logic` | Logic Target | state, last input, powered, started, travel 0..1, mover direction, has closed pose, closed position (3), closed rotation (4) |
+| `lsrc` | Logic Source | output, last output, started, timer |
+| `anim` | Animator | clip time, events primed |
+| `sprite` | Sprite Animator | clip index (-1 = base frames), clock, frame, hold, playing |
+| `proj3` | Projectile 3D | age, hits, bounces |
+
+A line is only written when the component has moved off its starting state. A build that
+doesn't know a kind skips the line, and a slot saved before these lines existed loads as it
+did before (doors take the loaded pose as closed, animations and bullets start over).
+Scene files and prefabs are not changed by this: the lines live only in save slots.
+
+Why the closed pose is stored: a Logic Target door measures its open pose from its closed
+pose, and it takes the closed pose from the transform whenever it is fully shut. The scene
+text holds the transform as it is, so a door saved open used to load with its open pose
+taken as "closed" and could never close again (#888 finding 62).
 
 ## What changed (hardening pass)
 

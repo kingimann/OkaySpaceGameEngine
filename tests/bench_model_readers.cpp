@@ -55,6 +55,12 @@
 #include <string>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/wait.h>
+#include <unistd.h>
+#define OKAY_BENCH_FORK 1
+#endif
+
 #if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__)
 #include <malloc.h>
 #define OKAY_BENCH_COUNT_HEAP 1
@@ -218,6 +224,24 @@ bool ReadWith(const std::string& path, ImportBackend b, ImportedModel& out, std:
     SetAll(ImportBackend::Default);
     return ok;
 }
+// Assimp 5.4.3 crashes on some corpus files (RAW/WithColor.raw and RAW/WithTexture.raw: a node's child list holds a bad
+// pointer). Read the file once in a child process first; a file that kills the child is reported as "crash" and not
+// measured. 0 = read, 1 = refused, 2 = crashed.
+int ProbeAssimp(const std::string& path) {
+#ifdef OKAY_BENCH_FORK
+    std::fflush(nullptr);
+    const pid_t pid = fork();
+    if (pid == 0) { ImportedModel im; SetImportBackend("*", ImportBackend::Assimp); _exit(ImportModelData(path, im, ImportBackend::Assimp, false, nullptr) ? 0 : 1); }
+    if (pid < 0) return 0;
+    int st = 0;
+    if (waitpid(pid, &st, 0) != pid) return 0;
+    if (WIFEXITED(st)) return WEXITSTATUS(st) == 0 ? 0 : 1;
+    return 2;
+#else
+    (void)path; return 0;
+#endif
+}
+
 bool ImportWith(const std::string& path, ImportBackend b) {
     SetAll(b);
     Scene sc("bench"); bool ok = false;
@@ -258,7 +282,7 @@ Stats StatsOf(const ImportedModel& im) {
 }
 
 struct Row {
-    std::string name, format; std::size_t bytes = 0;
+    std::string name, format; std::size_t bytes = 0; bool assimpCrash = false;
     Measure own, assimp, impOwn, impAssimp;
 };
 
@@ -266,7 +290,8 @@ std::string Mb(long long b) {
     if (b < 0) return "-";
     char s[32]; std::snprintf(s, sizeof(s), "%.2f", (double)b / (1024.0 * 1024.0)); return s;
 }
-std::string Ms(const Measure& m) {
+std::string Ms(const Measure& m, bool crash = false) {
+    if (crash) return "crash";
     if (!m.ok) return "fail";
     char s[32]; std::snprintf(s, sizeof(s), m.ms < 10 ? "%.3f" : "%.1f", m.ms); return s;
 }
@@ -353,8 +378,9 @@ int main(int argc, char** argv) {
         };
         for (const std::string& path : files) {
             ImportedModel a, b; std::string ea, eb;
-            const bool oa = ReadWith(path, ImportBackend::Own, a, &ea), ob = ReadWith(path, ImportBackend::Assimp, b, &eb);
-            std::printf("%s\t%s\town=%s\tassimp=%s", FormatOf(path).c_str(), ShortName(path).c_str(), oa ? "ok" : "fail", ob ? "ok" : "fail");
+            const bool crash = ProbeAssimp(path) == 2;
+            const bool oa = ReadWith(path, ImportBackend::Own, a, &ea), ob = !crash && ReadWith(path, ImportBackend::Assimp, b, &eb);
+            std::printf("%s\t%s\town=%s\tassimp=%s", FormatOf(path).c_str(), ShortName(path).c_str(), oa ? "ok" : "fail", crash ? "crash" : ob ? "ok" : "fail");
             if (!oa || !ob) { std::printf("\t%s\n", (oa == ob) ? "both-fail" : "DIFF read"); continue; }
             const Stats s = StatsOf(a), t = StatsOf(b);
             std::string diff;
@@ -390,7 +416,8 @@ int main(int argc, char** argv) {
             continue;
         }
         r.own = Run(runs, [&] { ImportedModel im; return ReadWith(path, ImportBackend::Own, im); });
-        if (haveAssimp) r.assimp = Run(runs, [&] { ImportedModel im; return ReadWith(path, ImportBackend::Assimp, im); });
+        r.assimpCrash = haveAssimp && ProbeAssimp(path) == 2;
+        if (haveAssimp && !r.assimpCrash) r.assimp = Run(runs, [&] { ImportedModel im; return ReadWith(path, ImportBackend::Assimp, im); });
         // the full import with our reader only when our reader reads the file (else the seam would fall back to Assimp)
         if (r.own.ok) r.impOwn = Run(runs, [&] { return ImportWith(path, ImportBackend::Own); });
         if (haveAssimp && r.assimp.ok) r.impAssimp = Run(runs, [&] { return ImportWith(path, ImportBackend::Assimp); });
@@ -407,9 +434,9 @@ int main(int argc, char** argv) {
     for (const Row& r : rows) {
         const bool both = r.own.ok && r.assimp.ok, ib = r.impOwn.ok && r.impAssimp.ok;
         std::printf("| %s | %s | %zu | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", r.format.c_str(), r.name.c_str(), r.bytes / 1024,
-                    Ms(r.own).c_str(), Ms(r.assimp).c_str(), both ? Ratio(r.own.ms, r.assimp.ms).c_str() : "-",
+                    Ms(r.own).c_str(), Ms(r.assimp, r.assimpCrash).c_str(), both ? Ratio(r.own.ms, r.assimp.ms).c_str() : "-",
                     Mb(r.own.peak).c_str(), Mb(r.assimp.peak).c_str(), both ? Ratio((double)r.own.peak, (double)r.assimp.peak).c_str() : "-",
-                    Ms(r.impOwn).c_str(), Ms(r.impAssimp).c_str(), ib ? Ratio(r.impOwn.ms, r.impAssimp.ms).c_str() : "-",
+                    Ms(r.impOwn).c_str(), Ms(r.impAssimp, r.assimpCrash).c_str(), ib ? Ratio(r.impOwn.ms, r.impAssimp.ms).c_str() : "-",
                     Mb(r.impOwn.peak).c_str(), Mb(r.impAssimp.peak).c_str());
     }
 
@@ -447,6 +474,7 @@ int main(int argc, char** argv) {
                     verdict(mm, (double)g.po, (double)g.pa).c_str(), g.io, g.ia, verdict(itm, g.io, g.ia).c_str(), Mb(g.ipo).c_str(), Mb(g.ipa).c_str(),
                     verdict(imm, (double)g.ipo, (double)g.ipa).c_str(), g.slower, g.heavier);
     }
+    for (const Row& r : rows) if (r.assimpCrash) std::printf("\nAssimp crashed (not measured; ours %s): %s\n", r.own.ok ? "reads it" : "refuses it", r.name.c_str());
     std::printf("\n%zu files. Runs per measurement: at least %d (until 50 ms). Assimp: %s. Heap counting: %s.\n", rows.size(), runs, haveAssimp ? "on" : "not built",
 #ifdef OKAY_BENCH_COUNT_HEAP
                 "on"

@@ -3,6 +3,7 @@
 #include "okay/AI/NavMesh.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/AI/Perception.hpp"
+#include "okay/Core/PositionSeed.hpp"
 #include "okay/Audio/AudioLoad.hpp"
 #include "okay/Components/ActionList.hpp"
 #include "okay/Components/AnimControl.hpp"
@@ -297,7 +298,7 @@ void BehaviorTreeRunner::Start() {
     if (m_agent) m_agentSpeed0 = m_agent->speed;
     if (m_npc) m_npc->SetExternalBrain(true);
     m_home = homeOverride ? homePoint : Position();
-    m_seed = (std::uint32_t)(std::fabs(m_home.x) * 73856093.0f + std::fabs(m_home.z) * 19349663.0f) + 7u;
+    m_seed = PositionSeed(m_home.x, m_home.z, 0x42547255u);   // safe far from the origin (issue #888, finding 52)
     if (!m_tree && !treePath.empty()) {
         std::string err;
         if (!LoadTree(std::string(), &err))

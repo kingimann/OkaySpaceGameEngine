@@ -9,6 +9,7 @@
 #include "okay/Components/Character.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Components/StanceControl.hpp"
+#include "okay/Core/PositionSeed.hpp"
 #include "okay/Components/SurvivalAfflictions.hpp"   // DamageHealthOn
 #include "okay/Net/NetOwnership.hpp"                  // IsLocallyControlled (MP-safe AI)
 #include "okay/Math/Quat.hpp"
@@ -159,7 +160,7 @@ public:
         stanceControl.Start(gameObject);
         health = maxHealth; m_dead = false; m_provoked = false;
         if (transform) m_home = transform->Position();
-        m_seed = (uint32_t)(std::fabs(m_home.x) * 73856093.0f + std::fabs(m_home.z) * 19349663.0f) + 1u;
+        m_seed = PositionSeed(m_home.x, m_home.z, 1u);   // safe far from the origin (issue #888, finding 52)
         m_state = State::Idle; m_wp = 0; m_wpDir = 1;
         PickWander();
         if (footIK) AttachCharacterFootIK(gameObject);

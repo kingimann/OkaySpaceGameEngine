@@ -79,17 +79,52 @@ const char* kObjNames[] = {"talk", "collect", "kill", "reach", "custom"};
 const char* kObjLabels[] = {"Talk to", "Collect", "Kill", "Reach", "Custom"};
 const char* kStatusNames[] = {"inactive", "active", "completed", "failed"};
 
+// The prerequisite list in `pre`: ids joined by commas. An id that a plain list cannot hold (a comma,
+// a quote, a backslash, spaces at either end, or empty) is written in quotes with \" and \\ escapes.
+// Spaces inside an id are kept (issue #888, finding 53: they used to be dropped on load); spaces
+// around the commas are not part of an id, so hand-written "a, b" still reads as a and b.
+bool NeedsQuotes(const std::string& id) {
+    if (id.empty() || id.front() == ' ' || id.back() == ' ' || id.front() == '\t' || id.back() == '\t') return true;
+    return id.find_first_of(",\"\\") != std::string::npos;
+}
 std::string Join(const std::vector<std::string>& v) {
     std::string s;
-    for (const auto& x : v) { if (!s.empty()) s += ','; s += x; }
+    bool first = true;
+    for (const auto& x : v) {
+        if (!first) s += ',';
+        first = false;
+        if (!NeedsQuotes(x)) { s += x; continue; }
+        s += '"';
+        for (char c : x) { if (c == '"' || c == '\\') s += '\\'; s += c; }
+        s += '"';
+    }
     return s;
 }
 std::vector<std::string> Split(const std::string& s) {
     std::vector<std::string> out;
-    std::string cur;
-    for (char c : s + ",") {
-        if (c == ',') { if (!cur.empty()) out.push_back(cur); cur.clear(); }
-        else if (c != ' ') cur += c;
+    const auto blank = [](char c) { return c == ' ' || c == '\t'; };
+    std::size_t i = 0;
+    while (i <= s.size()) {
+        while (i < s.size() && blank(s[i])) ++i;
+        std::string cur;
+        bool quoted = false;
+        if (i < s.size() && s[i] == '"') {
+            quoted = true;
+            for (++i; i < s.size() && s[i] != '"'; ++i) {
+                if (s[i] == '\\' && i + 1 < s.size()) ++i;
+                cur += s[i];
+            }
+            if (i < s.size()) ++i;                       // the closing quote
+            while (i < s.size() && s[i] != ',') ++i;     // anything after it up to the comma is ignored
+        } else {
+            const std::size_t start = i;
+            while (i < s.size() && s[i] != ',') ++i;
+            std::size_t end = i;
+            while (end > start && blank(s[end - 1])) --end;
+            cur = s.substr(start, end - start);
+        }
+        if (quoted || !cur.empty()) out.push_back(cur);
+        ++i;                                             // past the comma (or the end)
     }
     return out;
 }

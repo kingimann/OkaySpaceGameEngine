@@ -10,6 +10,9 @@
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/Spawner.hpp"
 #include "okay/Core/Localization.hpp"
+#include "okay/Core/PositionSeed.hpp"
+#include <cmath>
+#include <limits>
 #include <set>
 #include <string>
 #include <vector>
@@ -62,6 +65,20 @@ void TestSpawnerSeeds() {
     CHECK(Key(SpawnPattern(300.0f, 300.0f)) != Key(SpawnPattern(400.0f, 400.0f)));
     // The same place gives the same pattern (the seed is still deterministic).
     CHECK(Key(SpawnPattern(100.0f, 7.0f)) == Key(SpawnPattern(100.0f, 7.0f)));
+
+    // The shared helper: defined for any float, -0 == +0, salts and nearby points differ.
+    CHECK(PositionSeed(0.0f, 0.0f, 7u) == PositionSeed(-0.0f, -0.0f, 7u));
+    CHECK(PositionSeed(1.0f, 2.0f, 7u) != PositionSeed(1.0f, 2.0f, 1u));
+    CHECK(PositionSeed(1.0f, 2.0f, 7u) != PositionSeed(2.0f, 1.0f, 7u));
+    const float inf = std::numeric_limits<float>::infinity(), nan = std::numeric_limits<float>::quiet_NaN();
+    (void)PositionSeed(inf, -inf, 7u);
+    (void)PositionSeed(nan, 1.0e30f, 7u);
+    std::set<std::uint32_t> seeds;
+    int n = 0;
+    for (int x = -500; x <= 500; x += 10)
+        for (int z = -500; z <= 500; z += 10) { seeds.insert(PositionSeed((float)x, (float)z, 7u)); ++n; }
+    std::printf("  %d grid points -> %zu different seeds\n", n, seeds.size());
+    CHECK((int)seeds.size() == n);
 }
 
 QuestDef Quest(const std::string& id, std::vector<std::string> pre = {}) {
@@ -112,7 +129,8 @@ void TestQuestPrereqs() {
         log->quests.push_back(Quest("plain"));
         for (const char* id : {"Find the sword", "a,b", " padded ", "say \"hi\"", "back\\slash", "plain"}) {
             CHECK(log->StartQuest(id));
-            CHECK(log->CompleteQuest(id));
+            if (!log->IsCompleted(id)) CHECK(log->CompleteQuest(id));   // a quest with no objectives completes at once
+            CHECK(log->IsCompleted(id));
         }
         std::string why;
         const bool ok = log->CanStart("Slay dragon", &why);

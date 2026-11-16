@@ -203,10 +203,10 @@ public:
     /// (0 is "one"), and no plural (always other) for ja, zh, ko, vi, th, id, ms, lo, my,
     /// km, jv. Other languages use one / other. SetPluralRule overrides any of them.
     static PluralForm Plural(const std::string& lang, double n);
-    /// The plural form of a string-table key: looks up `key.one`, `key.few`...
-    /// (the form `count` takes in the current language) in the current language,
-    /// then `key.other`, then the same two in the default language, then `key` itself
-    /// as a {0, plural, ...} pattern. {count} and {0} are the number; `args` follow
+    /// The plural form of a string-table key: looks up `key.one`, `key.few`... and then
+    /// `key.other` in the current language, its parents (fr-CA -> fr) and the default
+    /// language, in that order, then `key` itself as a {0, plural, ...} pattern. The form
+    /// and the number format follow the language the text was found in. {count} and {0} are the number; `args` follow
     /// as {1}, {2} and by name. A key with none of these is reported and shown as is.
     static std::string PluralText(const std::string& key, double count, const std::vector<LocArg>& args = {});
     using PluralRule = std::function<PluralForm(double n)>;

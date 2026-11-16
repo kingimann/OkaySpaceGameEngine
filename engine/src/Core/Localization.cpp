@@ -280,12 +280,15 @@ void Report(const std::string& lang, const std::string& key, const std::string& 
 
 // The text of `key` without pseudo-localization: the current language, the
 // default, or the key. Misses are reported once when `report` is set.
-std::string Lookup(const std::string& key, bool report, bool* found = nullptr) {
+// `usedLang` is set to the language the text came from (the current one when nothing was found),
+// so the caller can apply that language's plural rule and number format (issue #888, finding 65).
+std::string Lookup(const std::string& key, bool report, bool* found = nullptr, std::string* usedLang = nullptr) {
     const StringTable& t = S().table;
     std::string lang = Localization::Language();
     const std::string def = t.DefaultLanguage();
     if (lang == Localization::kPseudo) lang = def;
     if (found) *found = true;
+    if (usedLang) *usedLang = lang;
     if (const std::string* v = t.Text(key, lang)) return *v;
     // pt-BR falls back to pt, zh-Hant-TW to zh-Hant and then zh (each when the table has it)
     // before the default language.
@@ -293,12 +296,14 @@ std::string Lookup(const std::string& key, bool report, bool* found = nullptr) {
         if (parent == def || !t.FindLanguage(parent)) continue;
         if (const std::string* v = t.Text(key, parent)) {
             if (report) Report(lang, key, parent);
+            if (usedLang) *usedLang = parent;
             return *v;
         }
     }
     if (def != lang)
         if (const std::string* v = t.Text(key, def)) {
             if (report) Report(lang, key, def);
+            if (usedLang) *usedLang = def;
             return *v;
         }
     if (found) *found = false;
@@ -723,9 +728,11 @@ std::string Localization::KeyPart(const std::string& name) {
 }
 
 std::string Localization::LocalizeArgs(const std::string& key, const std::vector<LocArg>& args) {
-    const std::string text = Lookup(key, true);
+    std::string used;
+    const std::string text = Lookup(key, true, nullptr, &used);
     if (S().language == kPseudo) return Pseudo(Format(text, args, S().table.DefaultLanguage()));
-    return Format(text, args);
+    // A text that fell back to another language is formatted by that language's plural rule.
+    return Format(text, args, used);
 }
 
 namespace {
@@ -986,15 +993,20 @@ std::string Localization::PluralText(const std::string& key, double count, const
     const std::string def = t.DefaultLanguage();
     const bool pseudo = lang == kPseudo;
     if (pseudo) lang = def;
-    const std::string form = PluralName(Plural(lang, count));
-    const std::string forms[2] = {key + "." + form, key + ".other"};
+    // The same chain as Get: the language, its parents (fr-CA -> fr), then the default language. The
+    // form is picked by the rule of the language being searched, so English text shown to a French
+    // player follows the English rule (issue #888, finding 65).
+    std::vector<std::string> order{lang};
+    for (const std::string& parent : Ancestors(lang))
+        if (parent != def && t.FindLanguage(parent)) order.push_back(parent);
+    if (def != lang) order.push_back(def);
     const std::string* text = nullptr;
     std::string used = lang;
-    const std::string* const order[2] = {&lang, &def};
-    for (const std::string* l : order) {
+    for (const std::string& l : order) {
+        const std::string forms[2] = {key + "." + PluralName(Plural(l, count)), key + ".other"};
         for (const std::string& k : forms)
-            if ((text = t.Text(k, *l)) != nullptr) break;
-        if (text) { used = *l; break; }
+            if ((text = t.Text(k, l)) != nullptr) break;
+        if (text) { used = l; break; }
     }
     std::vector<LocArg> args;
     LocArg first(count);
@@ -1004,10 +1016,11 @@ std::string Localization::PluralText(const std::string& key, double count, const
     std::string out;
     if (text) {
         if (used != lang) Report(lang, key, used);
-        out = Format(*text, args, lang);
+        out = Format(*text, args, used);
     } else {
         // No `key.<form>` entries: the key's own text may be a {0, plural, ...} pattern.
-        out = Format(Lookup(key, true), args, lang);
+        const std::string pattern = Lookup(key, true, nullptr, &used);
+        out = Format(pattern, args, used);
     }
     return pseudo ? Pseudo(out) : out;
 }

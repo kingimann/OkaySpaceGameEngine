@@ -1,6 +1,7 @@
 // Modeling "more": per-face material slots (the M5b gap) and the audit fixes.
 // Written from the spec in docs/modeling.md and docs/modeling_audit.md.
 #include "test_framework.hpp"
+#include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Modeling/MaterialLibrary.hpp"
 #include "okay/Modeling/Curve.hpp"
 #include "okay/Modeling/Remesh.hpp"
@@ -1176,6 +1177,18 @@ int main() {
         QuadRemeshOptions o3; o3.targetQuads = 40; QuadRemeshReport r3; PolyMesh out3 = QuadRemesh(plane, o3, &r3);
         float maxY = 0; for (const Vec3& v : out3.verts) maxY = std::max(maxY, std::fabs(v.z));
         CHECK(r3.ok && r3.outputQuads >= 8 && maxY < 1e-3f);
+    }
+    RUN_SUITE("GeometryHash sees every kind of edit (so leaving edit mode records an undo step)");
+    {
+        Mesh base = Mesh::Cube();
+        const std::uint64_t h0 = okay::modeling::GeometryHash(base);
+        Mesh a = base; a.seams.push_back({0, 1});                                  CHECK(okay::modeling::GeometryHash(a) != h0);   // a UV seam
+        Mesh b = base; b.cornerUVs.assign(base.triangles.size(), Vec2{0.5f, 0.5f}); CHECK(okay::modeling::GeometryHash(b) != h0);   // per-corner UVs
+        Mesh c = base; if (c.polyFace.empty()) c.polyFace.assign((size_t)c.TriangleCount(), 0);
+        Mesh c2 = c; c2.polyFace[0] = 7;                                            CHECK(okay::modeling::GeometryHash(c2) != okay::modeling::GeometryHash(c));   // which triangles form a polygon
+        Mesh d = base; d.hiddenPos.assign(3, Vec3{0, 0, 0}); d.hiddenSlot.assign(1, -1); d.hiddenPoly.assign(1, -1);   CHECK(okay::modeling::GeometryHash(d) != h0);   // hidden faces
+        Mesh e = base; e.vertices[0].x += 1e-3f;                                    CHECK(okay::modeling::GeometryHash(e) != h0);
+        CHECK(okay::modeling::GeometryHash(base) == h0);                            // and it is stable
     }
     TEST_MAIN_RESULT();
 }

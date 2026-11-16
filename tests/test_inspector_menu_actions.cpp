@@ -167,11 +167,14 @@ void TestDuplicate() {
     CHECK(CanDuplicate(*g, *vol, &why));
     Component* dup = DuplicateComponent(*g, *vol);
     CHECK(dup && dup != vol);
+    if (!dup || dup == vol) return;                                 // nothing to look at (and nothing to dereference)
     CHECK(CountType(g, "Volume") == 2);
     CHECK(Order(g) == (std::vector<std::string>{"Volume", "Volume", "Rigidbody2D"}));   // right below the original
     auto* dv = dynamic_cast<Volume*>(dup);
-    CHECK(dv && dv->size.x == 3.0f && dv->size.z == 5.0f && dv->eventName == "a" && dv->forceStrength == 7.5f);
-    CHECK(dv && !dv->enabled);                                      // the on / off state comes along
+    CHECK(dv != nullptr);
+    if (!dv) return;
+    CHECK(dv->size.x == 3.0f && dv->size.z == 5.0f && dv->eventName == "a" && dv->forceStrength == 7.5f);
+    CHECK(!dv->enabled);                                            // the on / off state comes along
     // The two are separate objects in memory: editing the copy leaves the original alone, and the other way round.
     dv->size = {9.0f, 9.0f, 9.0f}; dv->eventName = "copy";
     CHECK(vol->size.x == 3.0f && vol->eventName == "a");

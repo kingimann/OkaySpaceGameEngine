@@ -10,7 +10,7 @@ window (`tests/test_inspector_context_model.cpp`). The **operations** behind the
 values, reset one value, Transform parts, what Paste Value accepts) are in `editor/InspectorModel.*` and are tested headless too
 (`tests/test_inspector_menu_actions.cpp`). `editor/InspectorPanel.cpp` only draws the list and carries out the row that was
 clicked. Every value goes through the property registry (the same path Copy Values, the generated cards, Undo and the scene
-file already use), so there is no second idea of "a component's values". Four small header-only rule files keep the decisions
+file already use), so there is no second idea of "a component's values". Four small rule files keep the decisions
 out of the drawing code, each with its own test:
 
 | File | Decides | Test |
@@ -70,9 +70,10 @@ row, a row without a kind, a row still written the old way). A kind in the table
 with the reason "Only one per object: a second *Kind* cannot be added (the Add Component list does not offer one either)", and Paste As
 New of it is greyed on an object that already has one.
 
-What can still be duplicated is what the Add Component list offers again and again: the six **Volume** rows (Checkpoint, Kill, Force,
-Atmosphere, Ambience, Reverb), the UI Dropdown / Input Field / Scroll View / Layout Group family where it is added, Net Object / Net
-Transform / Sync Var and Player View. Scripts are attached from files (their Duplicate says so). A project's own
+Of the 109 kinds the property registry can add, 100 are in that table. What can still be duplicated is the other 9, the kinds the Add
+Component list offers again and again: **Volume** (the six Volume rows: Checkpoint, Kill, Force, Atmosphere, Ambience, Reverb), **UI
+Dropdown, UI Input Field, UI Scroll View, UI Layout Group, Net Object, Net Transform, Sync Var** and **Player View**. (The test prints
+this list; it is the list the run on 2026-11-16 found.) Scripts are attached from files (their Duplicate says so). A project's own
 `DisallowMultipleComponent` rule is asked as well.
 
 Several of these cards edit their own component: every component's card now has widget ids of its own
@@ -85,13 +86,27 @@ copy's box moved the original's too (shown with Dear ImGui itself in `tests/test
 Copy Values, Duplicate and Paste As New work from the property registry: the values scripts and Custom Actions can read and write.
 Some components save more than that to the scene file (a particle system's colour gradient and curves are not registered values). A
 copy made from the registered values of such a component would be a different component, so it is not offered. The menu finds out by
-trying: when a menu opens (or on Copy Values), the object's saved text is loaded into scratch scenes, a copy is made the way the menu
-would make it, and the records the scene file writes for the copy are compared with the ones it writes for the original
-(`CheckCopyIsExact`, nothing in your scene is touched). If they differ, **Duplicate Component** is greyed ("A copy would not be the
-same as the original: its saved "..." settings are not all part of its copyable values"), and a clipboard taken from that component
-cannot be used for **Paste As New** (Paste Values, which only writes the registered values into a component that exists, still works).
-`tests/test_inspector_menu_actions.cpp` checks the verdict for every registered kind against an independent comparison of the saved
-text of the original and a copy, and compares the saved text of original and copy for every kind it does offer.
+trying (`CheckCopyIsExact`, nothing in your scene is touched), when a menu opens or on Copy Values: the object's saved text is loaded
+into scratch scenes and
+
+1. **Is the copy the same?** On one scratch object the original is taken out and a copy, made the way the menu would make it, put in
+   its place. What the original added to the object's saved text and what the copy adds must be the same records (a record that exists
+   once per object, like a UI object's layout, is there on both sides). If they differ, **Duplicate Component** is greyed ("A copy would
+   not be the same as the original: its saved "..." settings are not all part of its copyable values"), and a clipboard taken from that
+   component cannot be used for **Paste As New** (Paste Values, which only writes the registered values into a component that exists,
+   still works). With the registered values changed and nothing else touched, every one of the 109 registered kinds comes out the same;
+   what makes a copy differ is state the registry does not hold, for example a particle system with a colour gradient or a size curve.
+2. **Can the file keep a second one?** A copy is put next to the original on another scratch object: the scene file has to save it
+   and to load it back as a second one. Some writers keep only one component of a kind per object (12 kinds: Ranged Weapon, Virtual
+   Joystick, Touch D Pad, Touch Button, UI Search Bar, UI Date Time Picker, UI File Picker, UI Accordion, UI Breadcrumbs, UI
+   Pagination, UI Skeleton, UI Bottom Sheet; all of them are "only one per object" in the Add Component list too). Only **Duplicate**
+   needs this; Paste As New puts the copy on an object that has none, so it is still offered for them.
+
+`tests/test_inspector_menu_actions.cpp` runs both questions for every registered kind and compares the first with an independent
+measure, the saved text of the original and of a copy made on another object; it also duplicates each kind the menu offers and compares
+the saved text of the original and the copy after a reload. Its first run found that the first version of the check was wrong for
+those 12 kinds and for four UI kinds (UI Panel, Text Renderer, UI Draggable, Player Controller), which share a record per object; this
+is the version that agrees for all 109.
 
 ## Transform menu
 
@@ -180,7 +195,7 @@ are of menus whose rows have not changed since they were taken (the Transform, f
 field menus gained tooltips only). Two pictures were **removed**: the Box Collider component menu showed Duplicate Component switched
 on (a Box Collider is "only one per object", so it is greyed now), and the "Remove Component greyed because a Box Collider needs a
 Rigidbody" picture showed a state the shipped editor cannot produce (it registers no `RequireComponent` rules). There are no new
-pictures of the greyed Duplicate or of the label-and-gap click; the steps in [try_it.md](try_it.md) section 16 show them in the editor.
+pictures of the greyed Duplicate or of the label-and-gap click; the steps in [try_it.md](try_it.md) section 18 show them in the editor.
 
 | Picture | What it shows |
 |---|---|
@@ -204,11 +219,21 @@ Searched first (the feature map, the code, `scripts/find_existing.py`): no other
 
 ## Limits (honest)
 
-* **Duplicate Component and Paste As New work for components the property registry knows** (most built-in kinds; the
-  test `duplicate every registered kind` duplicates each one). Script components, visual scripts and any hand-built component the
-  registry has no entry for are greyed out with a reason. What is copied is what **Copy Values** copied before: the registry's values,
-  not run-time state.
-* A value only the hand-written card knows (not in the registry) is not copied.
+* **Duplicate Component and Paste As New are offered for few kinds.** The Add Component list hides a kind once the object has one (208
+  kinds), and these two rows follow it, so for a Rigidbody, a collider, a Light, an Audio Source, a Particle System ... they are
+  greyed with the reason. What is left is what the list offers again and again, and only when the copy saves as the same scene
+  text: Volume, UI Dropdown, UI Input Field, UI Scroll View, UI Layout Group, Net Object, Net Transform, Sync Var and Player View.
+  `tests/test_inspector_menu_actions.cpp` prints the list it found, and every kind that is refused because a copy
+  would differ, each with its reason. Script components, visual scripts and any hand-built component the registry has no entry for
+  are greyed with a reason too. What a copy holds is what **Copy Values** copies: the registry's values, not run-time state.
+* "Would the copy be the same" is answered by saving the object's text and loading it into scratch scenes when the component menu
+  opens (or Copy Values is chosen). An object whose saved text is over 1 MB is not checked, and Duplicate is greyed for it ("its
+  saved text is too big to compare here").
+* A value only the hand-written card knows (not in the registry) is not copied; a kind that saves such a value is not offered for
+  Duplicate or Paste As New (see above).
+* **Pasted file paths.** A path inside the open project folder is accepted in the absolute form too, because the Project panel
+  stores the full path of a file you drop on a file field; with the strict switch (`allowAbsoluteInProject = false`) only
+  project-relative paths pass, and then Copy Value on one file field could not be pasted into another.
 * **A hand-drawn field answers only where its card calls the tooltip helper** (`oked::FieldTip`, about 1,350 call sites in `main.cpp`,
   which is also what shows the field's tooltip) and its label matches a registered property. A few rows do not call it yet; for
   example the Size and Offset rows of the Box Collider 3D card. The generated cards and the Transform rows always answer. The
@@ -221,22 +246,31 @@ Searched first (the feature map, the code, `scripts/find_existing.py`): no other
 
 ## Tested
 
-Run on Linux (g++ 13, Debug build without optimisation, engine library built before the last merge of main; the four newer commits
-on main do not touch anything these tests use):
+Run on Linux (g++ 13, no optimisation) on 2026-11-16, in a tests-only CMake build of this branch merged with main (engine library built
+from this branch). `ctest -R "inspector|add_component"`: **7 of 7 tests passed.**
 
-* `tests/test_inspector_context_model.cpp` (`inspector_context_model`): the rules, 465,583 checks over every combination of the
-  state flags, 0 failures. Header-only, builds with plain `g++` (also a mutation check: breaking a rule makes it fail).
-* `tests/test_inspector_menu_actions.cpp` (`inspector_menu_actions`): the operations, 173 checks, 0 failures. It duplicates every
-  kind of component the registry can add (109 kinds) with changed values (106 of them had values to change) and compares the copy
-  with the original in memory and, for the kinds the scene file keeps (97), after a save and load.
-* The existing `inspector_model` test (copy, paste, reset, prefab changes, one undo step per edit): 192 checks, 0 failures.
-* The three files and `InspectorPanel.cpp` / `InspectorModel.cpp` give no warning of their own with the project's flags
-  (`-Wall -Wextra -Wpedantic`).
-* Not in the repository: a throwaway program ran the real `InspectorPanel.cpp` menu code inside a Dear ImGui context with no window
-  and clicked through it with simulated mouse input (97 checks, 0 failures: the rows that open, the greyed rows, duplicate, move,
-  enable / disable, paste as new, copy and paste values, the field menu on a generated card and on a hand-drawn field, the Transform
-  menu with its submenu, the object and empty-space menus, several selected objects, a required component, script rows, undo
-  names). It found one real bug, fixed here: the right-click popup of a field was named after an item id that is 0 for a labelled
-  field, so two rows shared one popup (the same fault was in the prefab "Revert Property" popup). It also drew the pictures above.
-* **Not run:** the real editor (`main.cpp` was only syntax-checked with `g++ -fsyntax-only`; the editor target was not built or run),
-  the Windows build, and the script rows with the real Script Editor and node editor windows (the harness gave them stand-in hooks).
+* `inspector_context_model` (`tests/test_inspector_context_model.cpp`, header-only): 465,766 checks, 0 failures. Most of the checks are
+  the same structural rules applied to about 8,400 generated menu states (order, nothing listed twice, every greyed row has a reason
+  ...); the specific assertions about rows, labels and reasons are its 192 `CHECK` lines in 13 suites.
+* `inspector_click_rules` (header-only, 31,722 checks) and `inspector_clipboard_rules` (header-only, 82 checks): which menu a right
+  click opens and where a field's row is; what Paste Value takes from the clipboard.
+* `inspector_imgui` (37 checks): the four core Dear ImGui sources the editor uses, a window-less context and simulated mouse input:
+  one menu opens on a label, in a gap and on a box, never two; dragging the second of two same-kind cards leaves the first alone
+  (with `ComponentIdScope` the first card's value stays 1 while the second goes to 7; without it both move).
+* `inspector_menu_actions` (590 checks): the operations behind the rows, the copy check for all 109 registered kinds, camera scale
+  lock, Reset Rotation, Paste Value checks, the bounded number parsers (allocation counting) and `SerializeObject` without children.
+* `add_component_rules` (655 checks): the table (208 kinds) against the 210 rows in the browser's sources, the run-time answers, and the
+  three one-line fixes in `editor/main.cpp` that no test can run (read from the source).
+* `inspector_model` (existing, 192 checks): copy, paste, reset, prefab changes, one undo step per edit.
+* **Each new test fails without its fix.** `python3 scripts/inspector_menus_mutation_check.py --imgui <ImGui folder> --build <build
+  folder>` puts each old bug back, one at a time, in a copy of the source (the repository is not touched), builds and runs the
+  matching test and reports RED (caught) or GREEN (the test is too weak). It first runs the unchanged test and skips the mutations of
+  a test that is not green. 54 mutations, **all 54 caught** (20 on the header-only rules, 3 with Dear ImGui, 31 on the engine-linked tests: the model, the engine's number
+  parsers and `SerializeObject`, the table and the three lines of `editor/main.cpp`). Run on 2026-11-16 in about nine minutes.
+* The changed editor files give no new warning with `-Wall -Wextra -Wpedantic`; `editor/main.cpp`, `editor/InspectorPanel.cpp` and the
+  tool files compile with `-fsyntax-only` after the merge. The Inspector files, the four rule headers and the tool files also pass
+  `-fsyntax-only` with the MinGW win32 compiler (no `<mutex>` or `<thread>`); `main.cpp` could not be checked that way here (no Windows
+  SDL headers).
+* **Not run:** the real editor in a window (nobody has clicked the steps in [try_it.md](try_it.md) section 18; the drawing code in
+  `editor/main.cpp` and `editor/InspectorPanel.cpp` is only compiled, the parts that decide what it does are tested without a window),
+  anything on Windows, and the script rows with the real Script Editor and node editor windows. There are no new pictures.

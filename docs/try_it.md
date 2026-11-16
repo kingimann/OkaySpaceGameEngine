@@ -378,8 +378,9 @@ scaled by an edit that reaches several objects, and Paste As New names the numbe
 10. **A camera is never scaled.** Click `Main Camera`, then Ctrl+click `Car Body` (the Inspector shows the one you clicked last).
     Right-click the **Transform** header: **Reset
     Scale** is on, and hovering it says "1 selected camera keeps its scale (a camera cannot be scaled)". (Before, a camera in the
-    selection greyed Reset Scale for everything.) With the same two selected, right-click the **Scale** row: **Set to Zero**
-    hovered says "Skips 1 selected object: a camera cannot be scaled." and it changes `Car Body` only.
+    selection greyed Reset Scale for everything.) With the same two selected, right-click the **Scale** row: **Set to One**
+    hovered says "Skips 1 selected object: a camera cannot be scaled." Click it: `Car Body` becomes 1, 1, 1 and `Main Camera` keeps
+    its own scale (Ctrl+Z undoes it).
 11. **Reset Rotation needs a real rotation to be on.** Click `Car Body`, right-click the **Transform** header: **Reset Rotation** is
     grey (there is no rotation). Double-click the Rotation **Y** number, type `0.05` (a twentieth of a degree), press Enter, and
     right-click the header again: **Reset Rotation** is on now. (It used to stay grey until the turn was 0.16 degrees.)
@@ -407,7 +408,14 @@ style, so not the editor's look), taken before this round. The component-menu pi
 (they showed Duplicate switched on for a Box Collider and a state the editor cannot produce). There are no new pictures: the program
 that drew them is not in the repository and was not re-run.
 
-**Status.** @@STATUS@@
+**Status.** Run on Linux (g++ 13) on 2026-11-16: the seven Inspector tests, `ctest -R "inspector|add_component"`, **7 of 7 pass**
+(`inspector_context_model` 465,766 checks, `inspector_menu_actions` 590, `inspector_click_rules` 31,722, `inspector_clipboard_rules` 82,
+`inspector_imgui` 37 in a window-less Dear ImGui context with simulated mouse input, `add_component_rules` 655, `inspector_model` 192), and
+`python3 scripts/inspector_menus_mutation_check.py` puts 54 old bugs back one at a time: **54 of 54 make the matching test fail.**
+**Not run:** nobody has clicked the steps above in the editor (`editor/main.cpp` and `editor/InspectorPanel.cpp` are only compiled
+with `-fsyntax-only`; the rules they use are tested without a window); anything on Windows (the Inspector files also pass a MinGW
+`-fsyntax-only`, `main.cpp` could not be checked that way here); no new screenshots; the script rows (step 14) with the real Script
+Editor and node editor windows.
 
 ---
 

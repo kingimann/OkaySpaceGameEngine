@@ -1643,7 +1643,9 @@ void ActionList::Update(float dt) {
                 rb->AddForce({Num(it, 0), Num(it, 1), Num(it, 2)});
         }
         else if (op == "set_sprite") {
-            if (gameObject) if (auto* sr = gameObject->GetComponent<SpriteRenderer>()) sr->texture = Str(it, 0);
+            if (!Str(it, 0).empty() && !Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a texture stays inside the game
+                Log::Error("[actions] set_sprite: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
+            else if (gameObject) if (auto* sr = gameObject->GetComponent<SpriteRenderer>()) sr->texture = Str(it, 0);
         }
         else if (op == "set_visible") {
             bool vis = it.args.empty() ? true : Num(it, 0) != 0.0f;

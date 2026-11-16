@@ -13,7 +13,10 @@
 //
 // Entry points: OkayScript pool_get, pool_prewarm, pool_idle, ui_load_theme,
 // bt_run, net_spawn_owned; the ActionList op net_spawn_owned; the Visual Script
-// NetSpawnOwned node.
+// NetSpawnOwned node; music_play (the Music Player's track), set_texture,
+// set_image and set_mesh_texture (a texture file) and the ActionList op
+// set_sprite. For those the "file" is a name the component keeps and loads
+// later, so "loaded" means the name was taken.
 #include "test_framework.hpp"
 #include <Okay.hpp>
 
@@ -183,6 +186,20 @@ int main() {
         return (r && r->Tree()) ? 1 : 0;
     };
     const Setup addTheme = [](Scene& s, GameObject*) { s.CreateGameObject("Theme")->AddComponent<UITheme>(); };
+    const Setup addMusic = [](Scene& s, GameObject*) { s.CreateGameObject("Music")->AddComponent<MusicPlayer>(); };
+    const Probe musicTaken = [](Scene& s, GameObject*, IScriptVM*) {
+        auto all = s.FindObjectsOfType<MusicPlayer>();
+        return all.empty() ? 0 : (int)all.front()->tracks.size();
+    };
+    const Setup addSprite = [](Scene&, GameObject* g) { g->AddComponent<SpriteRenderer>(); };
+    const Setup addImage = [](Scene&, GameObject* g) { g->AddComponent<UIImage>(); };
+    const Setup addMesh = [](Scene&, GameObject* g) { g->AddComponent<MeshRenderer>(); };
+    const Probe spriteTex = [](Scene&, GameObject* g, IScriptVM*) {
+        auto* c = g->GetComponent<SpriteRenderer>(); return (c && !c->texture.empty()) ? 1 : 0; };
+    const Probe imageTex = [](Scene&, GameObject* g, IScriptVM*) {
+        auto* c = g->GetComponent<UIImage>(); return (c && !c->texture.empty()) ? 1 : 0; };
+    const Probe meshTex = [](Scene&, GameObject* g, IScriptVM*) {
+        auto* c = g->GetComponent<MeshRenderer>(); return (c && !c->texture.empty()) ? 1 : 0; };
 
     struct ScriptCase {
         const char* name;
@@ -202,9 +219,15 @@ int main() {
         {"bt_run", "okaybt", "r = bt_run({P})", treeLoaded, "r = bt_run({P})", treeLoaded, nullptr},
         {"net_spawn_owned", "okayprefab", "r = net_spawn_owned({P}, 1, 2)", countEvil, "r = net_spawn_owned({P}, 1, 2)",
          countGood, AddNet},
+        {"music_play", "wav", "r = music_play({P})", musicTaken, "r = music_play({P})", musicTaken, addMusic},
+        {"set_texture", "png", "set_texture({P})", spriteTex, "set_texture({P})", spriteTex, addSprite},
+        {"set_image", "png", "set_image({P})", imageTex, "set_image({P})", imageTex, addImage},
+        {"set_mesh_texture", "png", "set_mesh_texture({P})", meshTex, "set_mesh_texture({P})", meshTex, addMesh},
     };
     auto goodFor = [](const std::string& ext) {
         return ext == "okaytheme" ? std::string("themes/good.okaytheme")
+             : ext == "wav"       ? std::string("music/good.wav")
+             : ext == "png"       ? std::string("textures/good.png")
              : ext == "okaybt"    ? std::string("ai/good.okaybt")
                                   : std::string("prefabs/good.okayprefab");
     };
@@ -247,6 +270,24 @@ int main() {
     }
     g_log.clear();
     good("actions net_spawn_owned", RunActions("net_spawn_owned", {goodFor("okayprefab"), "1", "2", "0"}, "Good"));
+    auto runSetSprite = [](const std::string& p) {
+        Scene scene("A");
+        scene.physicsEnabled = false;
+        GameObject* o = scene.CreateGameObject("Hero");
+        auto* sr = o->AddComponent<SpriteRenderer>();
+        auto* al = o->AddComponent<ActionList>();
+        al->trigger = ActionList::Trigger::OnStart;
+        al->instructions = {ActionList::Item{"set_sprite", {p}}};
+        scene.Start();
+        scene.Update(0.016f);
+        return sr->texture.empty() ? 0 : 1;
+    };
+    for (const auto& p : badPaths("png")) {
+        g_log.clear();
+        report("actions set_sprite", p, runSetSprite(p));
+    }
+    g_log.clear();
+    good("actions set_sprite", runSetSprite(goodFor("png")));
     for (const auto& p : badPaths("okayprefab")) {
         g_log.clear();
         report("visual script NetSpawnOwned", p, RunVsNetSpawn(p, "Evil"));

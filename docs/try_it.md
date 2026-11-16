@@ -1105,9 +1105,13 @@ absolute paths, drive letters and `..`, like `spawn` does.
 Visual scripts too (branch `claude2/vs-path-guard`): give a **Take From Pool**, **Spawn Every Few Seconds**,
 **Spawn Projectile**, **Run Tree**, **Save Creation** or **Load Creation** node the path `C:\x.okayprefab` (or
 `../x.okaybt`, `/tmp/x`) and press **Play**: the Console shows `[visual script] <node>: refusing '...'` and nothing is
-spawned, loaded or written; `prefabs/bullet.okayprefab` still spawns.
+spawned, loaded or written; `prefabs/bullet.okayprefab` still spawns. The same goes for a **Play Music** node and for
+`music_play`, `set_texture`, `set_image`, `set_mesh_texture` and the action-list op `set_sprite`: try
+`music_play("C:\\x.ogg")` or `set_texture("../x.png")` and look for the `refusing` line; the music or texture does not
+change. `set_texture("hero.png")` still works.
 
-**Status.** Tested headless on Linux (`test_script_path_guard_rest`, `test_vs_path_guard`). Not tried on Windows or in
+**Status.** Tested headless on Linux (`test_script_path_guard_rest`, `test_vs_path_guard`); music is checked by the track being
+taken into the playlist, not by hearing it. Not tried on Windows or in
 the editor.
 
 ## Team tooling (not part of the Windows release)

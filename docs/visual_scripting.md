@@ -579,7 +579,7 @@ Graphs never freeze the game and never fail silently:
 - **Files outside the game.** Nodes that read or write a file take a name or
   a relative path inside the game's folders: Spawn, Spawn Every Few Seconds,
   Take From Pool, Spawn Projectile, Net Spawn Owned, Run Tree, Run Another
-  Graph, Load Scene, Save Creation and Load Creation. An absolute path
+  Graph, Load Scene, Save Creation, Load Creation and Play Music. An absolute path
   (`/x`, `C:\x`) or one with `..` loads or writes nothing and the Console
   shows a `refusing '<path>'` line (for most nodes
   `[visual script] <node>: refusing ...`).

@@ -5334,6 +5334,7 @@ struct OkayScriptVM::Impl {
         b["drop_source"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("drop_source", "")}; };
         b["drop_target"] = [](std::vector<Value>&) -> Value { return Value{Prefs::GetString("drop_target", "")}; };
         b["set_texture"] = [go](std::vector<Value>& a) {
+            if (!a.empty() && !a[0].AsString().empty() && !ScriptPathOk(a[0].AsString(), "set_texture")) return Value{};
             if (GameObject* g = go())
                 if (auto* sr = g->GetComponent<SpriteRenderer>())
                     sr->texture = a.empty() ? std::string{} : a[0].AsString();
@@ -5576,6 +5577,7 @@ struct OkayScriptVM::Impl {
         };
         // Set a sibling UIImage's texture from script (swap icons, states).
         b["set_image"] = [go](std::vector<Value>& a) {
+            if (!a.empty() && !a[0].AsString().empty() && !ScriptPathOk(a[0].AsString(), "set_image")) return Value{};
             if (GameObject* g = go()) if (auto* im = g->GetComponent<UIImage>())
                 im->texture = a.empty() ? std::string{} : a[0].AsString();
             return Value{};
@@ -6255,6 +6257,7 @@ struct OkayScriptVM::Impl {
             MusicPlayer* m = music();
             if (!m) return Value{false};
             if (a.empty()) return Value{m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex())};
+            if (a[0].IsString() && !ScriptPathOk(a[0].AsString(), "music_play")) return Value{false};
             if (a[0].IsString()) return Value{m->Play(a[0].AsString())};
             return Value{m->Play(SafeInt(a[0].AsFloat()))};
         };
@@ -9545,6 +9548,7 @@ struct OkayScriptVM::Impl {
             return Value{};
         };
         b["set_mesh_texture"] = [go](std::vector<Value>& a) {
+            if (!a.empty() && !a[0].AsString().empty() && !ScriptPathOk(a[0].AsString(), "set_mesh_texture")) return Value{};
             if (GameObject* g = go()) if (auto* mr = g->GetComponent<MeshRenderer>())
                 mr->texture = a.empty() ? std::string{} : a[0].AsString();
             return Value{};

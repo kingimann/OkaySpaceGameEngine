@@ -598,6 +598,7 @@ struct MusicPlayNode : VsNode {   // arg = track file or playlist number ("" = t
         const std::string file = VsBareAsset(track);
         if (file.empty()) m->Play(m->CurrentIndex() < 0 ? 0 : m->CurrentIndex());
         else if (std::all_of(file.begin(), file.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) m->Play(std::atoi(file.c_str()));
+        else if (!Save::IsSafeRelative(file)) OKAY_ERROR("[visual script] Play Music: refusing '", file, "' (absolute paths and '..' aren't allowed)");   // graphs are game content: stay in the game's folders
         else m->Play(file);
         return 0;
     }

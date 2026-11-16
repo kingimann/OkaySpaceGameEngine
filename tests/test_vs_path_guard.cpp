@@ -12,8 +12,9 @@
 // file inside the game must still load.
 //
 // Nodes: PoolGet and SpawnEvery (both spawn through GpSpawn), SpawnProjectile,
-// BtRun, LoadScene (already guarded: kept as a check), SaveCreation and
-// LoadCreation.
+// BtRun, LoadScene (already guarded: kept as a check), SaveCreation,
+// LoadCreation and MusicPlay (the track is a name the Music Player keeps: "loaded"
+// means it was added to the playlist).
 #include "test_framework.hpp"
 #include <Okay.hpp>
 
@@ -93,6 +94,7 @@ int RunNode(const std::string& type, const std::string& path, const Probe& probe
     Scene scene("V");
     scene.physicsEnabled = false;
     GameObject* go = scene.CreateGameObject("Spawner");
+    if (type == "MusicPlay") scene.CreateGameObject("Music")->AddComponent<MusicPlayer>();
     auto* v = go->AddComponent<VisualScriptComponent>();
     std::string err;
     const std::string entry = type == "SpawnEvery" ? "OnUpdate" : "OnStart";
@@ -154,6 +156,10 @@ int main() {
     const Probe sceneGood = [](Scene& s, GameObject*) { return (s.HasPendingLoad() ? 1 : 0) + CountNamed(s, "Good"); };
     // Load Creation: a refused call never reaches the file, so only the log tells.
     const Probe none = [](Scene&, GameObject*) { return 0; };
+    const Probe musicTaken = [](Scene& s, GameObject*) {
+        auto all = s.FindObjectsOfType<MusicPlayer>();
+        return all.empty() ? 0 : (int)all.front()->tracks.size();
+    };
     const Probe ranOk = [](Scene&, GameObject*) { return AnyRefusal() ? 0 : 1; };
 
     struct Case {
@@ -171,6 +177,7 @@ int main() {
         {"BtRun", "okaybt", treeLoaded, "ai/good.okaybt", treeLoaded, 0.016f},
         {"LoadScene", "okayscene", sceneEvil, "levels/good.okayscene", sceneGood, 0.016f},
         {"LoadCreation", "okaycreation", none, "good.okaycreation", ranOk, 0.016f},
+        {"MusicPlay", "wav", musicTaken, "music/good.wav", musicTaken, 0.016f},
     };
 
     int refused = 0, total = 0, goodOk = 0, goodTotal = 0;

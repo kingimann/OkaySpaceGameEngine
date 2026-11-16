@@ -592,9 +592,16 @@ Visual-script graphs follow the same rule in every node that reads or writes a
 file: **Spawn Every Few Seconds**, **Take From Pool** and **Spawn Projectile**
 (prefabs), **Run Tree** (a `.okaybt`), **Save Creation** and **Load Creation**,
 as well as **Spawn**, **NetSpawnOwned**, **Load Scene** and **Run Another
-Graph**, which already did. An outside path does nothing and the Console shows a
+Graph**, which already did, and **Play Music**. An outside path does nothing and the Console shows a
 `refusing` line, for the newly guarded nodes `[visual script] <node>: refusing
 '<path>' (absolute paths and '..' aren't allowed)`.
+
+Music and textures too: `music_play("file")` (a playlist number still works),
+`set_texture`, `set_image` and `set_mesh_texture`, and the action-list op
+`set_sprite`. `music_play("music/theme.ogg")` or `set_texture("hero.png")` work
+as before; `music_play("C:\\x.ogg")` returns false and `set_texture("../x.png")`
+leaves the texture as it was, each with a `refusing ...` line. An empty name
+still clears a texture.
 
 ### Rendering: post-processing, fog, weather, time of day
 

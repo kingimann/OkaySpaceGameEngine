@@ -845,7 +845,7 @@ struct Reader {
             for (std::size_t i = 0; i < nl; ++i) { const std::uint32_t u = f.U32(cvS.p + i * 4); md->loopVert[i] = u > 0x7fffffffu ? -1 : (int)u; }
             for (std::size_t i = 0; i < np; ++i) {
                 const std::uint32_t a = f.U32(offS.p + i * 4), b = f.U32(offS.p + (i + 1) * 4);
-                if (b < a + 3 || b > nl) { ++md->badFaces; continue; }
+                if ((std::uint64_t)b < (std::uint64_t)a + 3 || b > nl) { ++md->badFaces; continue; }
                 md->faceStart.push_back((int)a); md->faceCount.push_back((int)(b - a)); md->faceMat.push_back(0); md->faceSmooth.push_back(1);
             }
             // face attributes by name: material_index (int), sharp_face (bool)
@@ -856,7 +856,7 @@ struct Reader {
             md->faceStart.clear(); md->faceCount.clear(); md->faceMat.clear(); md->faceSmooth.clear();
             for (std::size_t i = 0; i < np; ++i) {
                 const std::uint32_t a = f.U32(offS.p + i * 4), b = f.U32(offS.p + (i + 1) * 4);
-                if (b < a + 3 || b > nl) continue;
+                if ((std::uint64_t)b < (std::uint64_t)a + 3 || b > nl) continue;
                 md->faceStart.push_back((int)a); md->faceCount.push_back((int)(b - a));
                 md->faceMat.push_back(ms.p && (i + 1) * 4 <= ms.n ? (int)(std::int32_t)f.U32(ms.p + i * 4) : 0);
                 md->faceSmooth.push_back(ss.p && i < ss.n ? (char)(ss.p[i] ? 0 : 1) : 1);

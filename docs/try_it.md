@@ -63,6 +63,7 @@ release job or the installer build for this change.
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 7f | Crash reports: a detailed report, sent for you, turned into a GitHub issue | `OKAY_TEST_CRASH_LATE=Test.Step` crashes the editor on purpose; launcher Settings > Crash reports | Local half new; the server half needs the owner's one-time setup (see 7f) |
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
+| 15b | Blender reader applies Mirror and Subdivision Surface modifiers (off by default, like the reader) | `OKAY_OWN_BLEND=1`, `examples\own_readers\mirror_subdiv_box.blend` | Tests only (Linux); not run in a Windows editor |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
@@ -1310,6 +1311,32 @@ streams it compared with an independent slow decoder and ends with `ok:`.
 `own_http_inflate`, `png_hint`, and the existing `image_decoder`, `blend_reader`, `3mf_reader`, `amf_reader`, `fbx_reader`,
 `fbx_hostile`, `x_reader`, `xgl_reader`, `own_http` tests. **Unverified:** every editor step above (nothing here opens a
 real editor window), anything on Windows, real-world files other than our own samples.
+
+### 15b. Blender files: Mirror and Subdivision Surface modifiers are applied
+
+**What it is.** Our own `.blend` reader (off by default, `OKAY_OWN_BLEND=1`) used to show a Blender model as it is stored,
+without its modifiers, so a model with a Subdivision Surface looked blocky and a mirrored model showed only one half.
+Now it applies the two modifiers Assimp applies, Mirror and Subdivision Surface, in the order of the modifier stack. Any
+other modifier (Array, Boolean, Solidify, ...) is skipped and named in one log line, for example
+`modifier 'Array' (Array) not applied (not supported) on 1 object(s)`.
+
+**Steps.**
+1. `set OKAY_OWN_BLEND=1`, start the editor (`Tools\OkayEngine.exe`).
+2. **File > Import Model...**, choose `examples\own_readers\mirror_subdiv_box.blend` (our own test file, written by
+   `scripts/gen_blend_fixtures.py`, not by Blender). It stores half a box (one side open) with Mirror, Array and
+   Subdivision Surface level 1.
+3. You should see one closed, rounded box, symmetric left to right (the mirror filled in the missing half and the
+   subdivision rounded it), 80 triangles. One bottom edge on each side stays straight (it has a crease). The console
+   or log shows the warning about the Array modifier.
+4. If you have Blender files with Subdivision Surface or Mirror of your own, import them the same way: the result should
+   look like Blender's viewport (the subdivision level used is the higher of the viewport and render levels).
+
+**What to expect if it is off** (`OKAY_OWN_BLEND` not set): Assimp reads the file, as before.
+
+**Status.** Verified here (Linux, headless): `blend_modifiers` (hand-computed results, the sample file, the four Assimp
+test files with modifiers: triangle counts equal Assimp's on `SuzanneSubdiv_252`, `yxa_1` and `HUMAN`), `blend_reader`,
+`blend_hostile`, `model_corpus`, ASan and UBSan runs. **Unverified:** the editor steps (no window opened), anything on
+Windows, real Blender 2.8+ files (the corpus files are Blender 2.49 to 2.60), and Blender's own output (no Blender run).
 
 ---
 

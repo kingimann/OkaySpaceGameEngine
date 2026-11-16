@@ -317,10 +317,53 @@ bool SubdivideOnce(PolyMesh& m, const SubsurfSettings& st, std::size_t maxFaces,
     return true;
 }
 
+// Keeps only loops that belong to faces, in face order, and drops faces that name a vertex outside the vertex list or
+// have fewer than 3 corners (a reader may hand over loops of faces it dropped). Afterwards face f's loops start where
+// face f-1's end, which the steps above rely on.
+void Compact(PolyMesh& m) {
+    const std::size_t nV = m.pos.size(), L = m.loopVert.size();
+    const bool uv = m.loopUv.size() == L;
+    if (!uv) m.loopUv.clear();
+    std::size_t expect = 0;
+    bool tidy = true;
+    for (std::size_t f = 0; f < m.faceStart.size() && tidy; ++f) {
+        if (m.faceStart[f] < 0 || (std::size_t)m.faceStart[f] != expect || m.faceCount[f] < 3) { tidy = false; break; }
+        expect += (std::size_t)m.faceCount[f];
+        if (expect > L) { tidy = false; break; }
+        for (std::size_t l = (std::size_t)m.faceStart[f]; l < expect; ++l) if (m.loopVert[l] < 0 || (std::size_t)m.loopVert[l] >= nV) { tidy = false; break; }
+    }
+    if (tidy && expect == L) return;
+    PolyMesh r;
+    r.pos = std::move(m.pos);
+    r.dvStart = std::move(m.dvStart); r.dvGroup = std::move(m.dvGroup); r.dvWeight = std::move(m.dvWeight);
+    r.creases = std::move(m.creases);
+    for (std::size_t f = 0; f < m.faceStart.size(); ++f) {
+        const long long st = m.faceStart[f], n = m.faceCount[f];
+        if (st < 0 || n < 3 || (std::size_t)(st + n) > L) continue;
+        bool ok = true;
+        for (long long l = st; l < st + n; ++l) if (m.loopVert[(std::size_t)l] < 0 || (std::size_t)m.loopVert[(std::size_t)l] >= nV) { ok = false; break; }
+        if (!ok) continue;
+        r.faceStart.push_back((int)r.loopVert.size()); r.faceCount.push_back((int)n);
+        r.faceMat.push_back(f < m.faceMat.size() ? m.faceMat[f] : 0); r.faceSmooth.push_back(f < m.faceSmooth.size() ? m.faceSmooth[f] : 1);
+        for (long long l = st; l < st + n; ++l) { r.loopVert.push_back(m.loopVert[(std::size_t)l]); if (uv) r.loopUv.push_back(m.loopUv[(std::size_t)l]); }
+    }
+    m = std::move(r);
+}
+
+// Vertex weights are used only when their arrays agree with each other and with the vertex list.
+void CheckWeights(PolyMesh& m) {
+    if (m.dvStart.empty()) return;
+    bool ok = m.dvStart.size() == m.pos.size() + 1 && m.dvGroup.size() == m.dvWeight.size() && m.dvStart[0] == 0 && m.dvStart.back() == m.dvGroup.size();
+    for (std::size_t i = 1; ok && i < m.dvStart.size(); ++i) if (m.dvStart[i] < m.dvStart[i - 1]) ok = false;
+    if (!ok) { m.dvStart.clear(); m.dvGroup.clear(); m.dvWeight.clear(); }
+}
+
 }  // namespace
 
 int Subdivide(PolyMesh& m, const SubsurfSettings& s, std::size_t maxFaces) {
     int done = 0;
+    Compact(m);
+    CheckWeights(m);
     if (s.joinCoincident && !m.pos.empty() && !m.faceStart.empty()) {
         // corners at bit-identical positions name one vertex, so a mesh stored split along its edges is smoothed as one
         // surface (what Assimp shows); the unused copies stay in the vertex list and are never drawn
@@ -345,6 +388,8 @@ int Subdivide(PolyMesh& m, const SubsurfSettings& s, std::size_t maxFaces) {
 
 int Mirror(PolyMesh& m, const MirrorSettings& s) {
     int merged = 0;
+    Compact(m);
+    CheckWeights(m);
     for (int a = 0; a < 3; ++a) {
         if (!s.axis[a]) continue;
         const std::size_t nV = m.pos.size(), nF = m.faceStart.size(), L = m.loopVert.size();

@@ -163,9 +163,14 @@ Differences that are not by design, or that are worth a second look (counts are 
   `molecule_ascii.cob`, NFF `cone.nff`, AC3D `SphereWithLight_UTF16LE.ac` and Blender `BlenderDefault_262.blend`** are read
   by ours and refused by Assimp. PLY `ant-half.ply` (truncated), OFF `invalid.off`, X3D `IndexedLineSet.x3d` and the three
   line-only AC3D files are refused by ours and read by Assimp (as meshes without triangles); all known and documented.
-- **Blender: modifiers.** Assimp applies subdivision and mirror modifiers, ours does not (documented): `SuzanneSubdiv_252`
-  968 / 251,904 triangles, `yxa_1` 1,808 / 115,712, `HUMAN` 267 / 8,560, `MirroredCube_252` 24 / 36, `CubeHierarchy_248`
-  122 / 86.
+- **Blender: modifiers (closed for the triangle counts).** Ours now applies Mirror and Subdivision Surface like Assimp
+  (`docs/own_blend_reader.md`, section Modifiers): `SuzanneSubdiv_252` 251,904 / 251,904 triangles, `yxa_1` 115,712 /
+  115,712, `HUMAN` 8,560 / 8,560, boxes equal. Left: `MirroredCube_252` 108 / 36 (the file mirrors on all three axes around
+  a mirror object; ours makes the eight copies, Assimp one copy that stays inside the original box), the Suzanne's open
+  boundaries (Assimp does not use the Catmull-Clark boundary rule; 85 of 2,010 points at level 1 differ by up to 0.02), and
+  `CubeHierarchy_248` 122 / 86 (Assimp drops three cubes; not a modifier). Speed with the modifiers: `SuzanneSubdiv_252`
+  56 / 269 ms, `yxa_1` 19 / 101 ms (ours / Assimp), after replacing the reader's per-vertex hash map with a flat table
+  (the read of that Suzanne was 240 ms before; the output is bit for bit the same).
 - **Skeleton-only files** (BVH, CSM, MD5 `.md5anim`, Collada `cameras.dae` and `lights.dae`): Assimp adds a stand-in mesh
   (164, 352 and 200 triangles), ours adds none (deliberate).
 - **Triangle counts that differ by a few per cent**: concave polygons (Collada, OBJ and LWO `ConcavePolygon` 64 / 58,

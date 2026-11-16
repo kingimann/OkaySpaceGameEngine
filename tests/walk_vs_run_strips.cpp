@@ -94,8 +94,8 @@ Rgba RenderPose(const Mesh& body, float shiftZ) {
     }
     for (int i = -12; i <= 12; ++i) {
         GameObject* t = s.CreateGameObject("Tick");
-        t->transform->localPosition = {0.0f, 0.004f, -0.5f * i + shiftZ - std::fmod(shiftZ, 0.5f)};
-        t->transform->localScale = {0.5f, 0.002f, 0.025f};
+        t->transform->localPosition = {0.0f, 0.003f, -0.5f * i + shiftZ - std::fmod(shiftZ, 0.5f)};
+        t->transform->localScale = {1.4f, 0.004f, 0.03f};   // a thin band across the ground, seen at a grazing angle from the side
         auto* mr = t->AddComponent<MeshRenderer>();
         mr->mesh = Mesh::Cube(1.0f);
         mr->color = (i % 2 == 0) ? Color::FromBytes(60, 60, 70) : Color::FromBytes(120, 120, 130);
@@ -137,6 +137,10 @@ Strip CaptureStrip(float speed, bool sprint, float walkSpeed, float runSpeed) {
     for (int i = 0; i < 180; ++i) w.Step(speed, sprint);                // settle
     std::vector<Mesh> frames; std::vector<float> lz; std::vector<int> leftDown;
     bool planted = false;
+    {   // start from where the left foot is now, so a foot already down is not counted as a touchdown
+        float h0[2];
+        if (w.FootHeights(h0)) planted = h0[0] < 0.0125f;
+    }
     const int N = 240;                                                  // 4 s: more than one stride at any speed here
     for (int i = 0; i < N; ++i) {
         w.Step(speed, sprint);

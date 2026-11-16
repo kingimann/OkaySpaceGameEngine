@@ -68,6 +68,7 @@
 #include "okay/UI/OkayUI.hpp"
 #include "OkayUIScreens.hpp"
 #include "OkayUIPanels.hpp"
+#include "OkayUILauncherPages.hpp"   // Downloads, Notifications, Achievements
 #else
 // Without OkayUI there is never an OkayUI frame (okayFrame stays false), but the page conditions below still name the host helper.
 namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) { return false; } }
@@ -506,6 +507,25 @@ struct DlItem {
 std::vector<std::shared_ptr<DlItem>> g_dls;
 SDL_mutex* g_dlMutex = nullptr;
 int g_dlNextId = 1;
+
+// OKAY_UI_DEMO_USER (the dev screenshot hook): the Downloads page starts with sample rows in every state (nothing is fetched;
+// the "downloading" one never moves), so both its Dear ImGui and its OkayUI version can be looked at without a marketplace.
+static void SeedDemoDownloads() {
+    static bool done = false;
+    if (done || !g_dlMutex || !std::getenv("OKAY_UI_DEMO_USER")) return;
+    done = true;
+    struct Seed { const char* title; const char* file; long long rec, tot; int st; };
+    const Seed seed[] = {{"Orbit Hopper", "orbit_hopper.zip", 44040192, 44040192, 2}, {"Neon Drift", "neon_drift.zip", 12582912, 50331648, 1},
+                         {"Puzzle Pack", "puzzle_pack.zip", 0, 0, 0}, {"Broken Link", "broken.zip", 1536, 900000, 3}};
+    SDL_LockMutex(g_dlMutex);
+    for (const Seed& sd : seed) {
+        auto d = std::make_shared<DlItem>();
+        d->id = g_dlNextId++; d->title = sd.title; d->dest = (fs::path(g_exeDir) / "downloads" / sd.file).string();
+        d->received = sd.rec; d->total = sd.tot; d->status = sd.st;
+        g_dls.push_back(d);
+    }
+    SDL_UnlockMutex(g_dlMutex);
+}
 
 long long FileSizeSafe(const std::string& p) {
     std::error_code ec; auto s = fs::file_size(p, ec); return ec ? 0 : (long long)s;
@@ -4704,6 +4724,45 @@ static void OkayUIClaimKeyboard() {
     SDL_StartTextInput();
 }
 #endif
+
+// ---- Developer timing of the screens that have an OkayUI port (OKAY_UI_TIMING=1; off otherwise) ----
+// Each ported screen's code is timed (its Dear ImGui or its OkayUI version, whichever drew this frame), and so is the frame's
+// render work (ImGui::Render, the ImGui draw data and OkayUI's EndFrame). After 300 frames of a screen on one backend the
+// medians are written to stdout and shown as a toast: "build" is the screen's own CPU time, "build + render" adds the whole
+// frame's render work (the part the screen's backend changes). See docs/own_ui_toolkit.md section 8.
+namespace uitiming {
+static const bool kOn = std::getenv("OKAY_UI_TIMING") != nullptr;
+static double NowUs() { return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+static std::map<std::string, double> g_frame;   // "screen|backend" -> this frame's build time
+struct Acc { std::vector<double> build, total, imguiRender, okayRender; };
+static std::map<std::string, Acc> g_acc;
+struct Scope {
+    std::string key; double t0 = 0.0;
+    Scope(const char* screen, const char* backend) { if (kOn) { key = std::string(screen) + "|" + backend; t0 = NowUs(); } }
+    ~Scope() { if (kOn) g_frame[key] += NowUs() - t0; }
+};
+static double Median(std::vector<double> v) { std::sort(v.begin(), v.end()); return v.empty() ? 0.0 : v[v.size() / 2]; }
+static void FrameDone(double imguiRenderUs, double okayRenderUs) {
+    if (!kOn) return;
+    for (const auto& kv : g_frame) {
+        Acc& a = g_acc[kv.first];
+        a.build.push_back(kv.second); a.total.push_back(kv.second + imguiRenderUs + okayRenderUs);
+        a.imguiRender.push_back(imguiRenderUs); a.okayRender.push_back(okayRenderUs);
+        if (a.build.size() >= 300) {
+            const std::size_t bar = kv.first.find('|');
+            char line[320];
+            std::snprintf(line, sizeof(line), "okayui-timing: %s on %s: build %.0f us, build + render %.0f us (median of 300 frames; "
+                          "render: Dear ImGui %.0f us, OkayUI %.0f us)",
+                          kv.first.substr(0, bar).c_str(), kv.first.substr(bar + 1).c_str(), Median(a.build), Median(a.total),
+                          Median(a.imguiRender), Median(a.okayRender));
+            std::printf("%s\n", line); std::fflush(stdout);
+            Toast(line, 0);
+            a = Acc();
+        }
+    }
+    g_frame.clear();
+}
+} // namespace uitiming
 
 void LoadPrefs() {
     std::ifstream f(fs::path(g_exeDir) / "launcher.cfg");
@@ -15261,6 +15320,33 @@ static void DrawAchMedal(ImDrawList* dl, ImVec2 c, float r, const std::string& i
     dl->AddRectFilled(ImVec2(c.x - 4.8f * s, c.y + 5.8f * s), ImVec2(c.x + 4.8f * s, c.y + 8.4f * s), g, 1.2f * s);
 }
 
+// The Achievements page's data (both the Dear ImGui page and its OkayUI port read it): the achievements on this device and the
+// local showcase, re-read from their small files a few times a second at most, not every frame. With OKAY_UI_DEMO_USER set
+// (the dev screenshot hook) a fixed demo list is used instead.
+struct AchPageData { std::vector<okay::Achievement> achs; PfLocalShowcase show; };
+static AchPageData& AchPageDataRefresh(bool kAchDemo) {
+    static AchPageData data;
+    static Uint32 achNext = 0;
+    std::vector<okay::Achievement>& achs = data.achs;
+    PfLocalShowcase& achShow = data.show;
+    if (okay::platform::TicksMs32() >= achNext) {
+        achNext = okay::platform::TicksMs32() + 1500;
+        achShow = LoadLocalShowcase();
+        if (!kAchDemo) achs = okay::Achievements::All();
+        else if (achs.empty()) {
+            const long t0 = (long)std::time(nullptr), day = 86400;
+            auto a = [&](const char* id, const char* lb, long ago) { okay::Achievement x; x.id = id; x.label = lb; x.when = t0 - ago;
+                x.points = (int)(std::hash<std::string>{}(id) % 4) == 0 ? 50 : (std::hash<std::string>{}(id) % 3 == 0 ? 25 : 10); achs.push_back(x); };
+            a("first_win", "First Victory", 120 * day); a("coin_hoarder", "Coin Hoarder", 60 * day);
+            a("speed_demon", "Speed Demon", 20 * day); a("night_owl", "Night Owl", 9 * day);
+            a("first_publish", "Published!", 3 * day); a("perfect_lap", "Perfect Lap", 2 * 3600);
+            a("untouchable", "Untouchable", 40 * 60); a("jam_survivor", "Jam Survivor", 26 * 60);
+        }
+        if (kAchDemo && achShow.ach.empty()) achShow.ach = {"perfect_lap", "untouchable", "first_win"};
+    }
+    return data;
+}
+
 // "first_win" -> "First Win" (label for showcase ids we have no row for).
 static std::string PfPrettyId(const std::string& id) {
     std::string o; bool up = true;
@@ -19034,6 +19120,58 @@ int main(int argc, char** argv) {
                 if (!isHidden(n)) { ++totalN; if (isUnread(n)) ++unreadN; ++kindN[kindOf(n)]; }
             int gotoTabReq = -1;
             bool closeReq = false;
+            // With the OkayUI preview backend the panel's inside is drawn by OkayUI (same feed, filters and actions); this ImGui
+            // window stays as its frame, its shadow and what closes it (Escape, a click outside). Differences: docs/own_ui_toolkit.md
+            // section 8.
+            const bool ntOkay = okayFrame && !okayuihost::PopupCoversRect(wpos.x, wpos.y, wsz.x, wsz.y);
+            uitiming::Scope uiT("Notifications", ntOkay ? "OkayUI" : "Dear ImGui");
+#ifdef OKAY_HAVE_OKAYUI
+            if (ntOkay) {
+                static okayuiscreens::NotificationsState ns;
+                ns.filter = ntFilter;
+                const Uint32 nowT = okay::platform::TicksMs32();
+                const long nowUnix = (long)std::time(nullptr);
+                const long today = DayKey(nowUnix), yday = DayKey(nowUnix - 86400);
+                okayuiscreens::NotificationsModel nm;
+                nm.drawFrame = false;   // this ImGui window already draws the panel's background, border and shadow
+                std::vector<int> feedIdx;   // model index -> g_notifs index
+                for (int i = 0; i < (int)g_notifs.size(); ++i) {
+                    const Notif& n = g_notifs[(std::size_t)i];
+                    if (isHidden(n)) continue;
+                    okayuiscreens::NotifEntry e;
+                    e.title = n.title; e.body = n.body; e.kind = kindOf(n); e.unread = isUnread(n);
+                    e.ageSeconds = (Uint32)(nowT - n.time) / 1000u;
+                    const long dk = DayKey(nowUnix - (long)e.ageSeconds);
+                    e.day = dk == today ? 0 : dk == yday ? 1 : 2;
+                    nm.items.push_back(e); feedIdx.push_back(i);
+                }
+                ImGui::SetCursorScreenPos(wpos);
+                ImGui::InvisibleButton("##okayui_notifs", wsz);
+                ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+                g_okayRegion.Offer(wpos.x, wpos.y, wsz.x, wsz.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+                const okayuiscreens::NotificationsResult nr = okayuiscreens::DrawNotifications(nm, ns, wpos.x, wpos.y, wsz.x, wsz.y);
+                ntFilter = ns.filter;
+                if (nr.markAllRead) { for (auto& n : g_notifs) n.read = true; g_notifFresh.clear(); }
+                if (nr.clearAll) { for (auto& n : g_notifs) { ntHidden.insert(sigOf(n)); n.read = true; } g_notifFresh.clear(); }
+                if (nr.close) closeReq = true;
+                if (nr.clicked >= 0) {
+                    Notif& n = g_notifs[(std::size_t)feedIdx[(std::size_t)nr.clicked]];
+                    n.read = true; g_notifFresh.erase(n.key);
+                    if (n.gotoTab >= 0) gotoTabReq = n.gotoTab;
+                    if (n.key.rfind("crash:", 0) == 0) g_setCatJump = 9;   // straight to Crash reports
+                }
+                if (nr.dismissed >= 0) {
+                    Notif& n = g_notifs[(std::size_t)feedIdx[(std::size_t)nr.dismissed]];
+                    ntHidden.insert(sigOf(n)); n.read = true; g_notifFresh.erase(n.key);
+                }
+                for (auto it = g_notifs.begin(); it != g_notifs.end();) {   // as below: dismissed static ones go for good
+                    const bool synced = it->key.rfind("dyn:", 0) == 0 || it->key.rfind("news:", 0) == 0;
+                    if (!synced && isHidden(*it)) it = g_notifs.erase(it);
+                    else ++it;
+                }
+            }
+#endif
+            if (!ntOkay) {   // ---- the Dear ImGui panel (the default); not re-indented, to keep the change small ----
 
             // ---- Header: title + "N new" pill, then Mark all read / Clear / close.
             const ImVec2 hp = ImGui::GetCursorScreenPos();
@@ -19282,6 +19420,7 @@ int main(int argc, char** argv) {
                 }
             }
             ImGui::EndChild();
+            }   // !ntOkay
             ImGui::End();
             if (gotoTabReq >= 0) { tab = gotoTabReq; closeReq = true; }
             if (closeReq || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) g_notifPanelOpen = false;
@@ -22683,13 +22822,13 @@ int main(int argc, char** argv) {
                     });
                     if (okayuibackend::SettingRowVisible(okayuibackend::DevMode(std::getenv("OKAY_DEV")))) {   // developer-only: not offered to users until the OkayUI ports are declared ready
                     rowDivider();
-                    {   // Which toolkit draws the pages that have an OkayUI port (today: What's New). Dear ImGui stays the default.
+                    {   // Which toolkit draws the pages that have an OkayUI port (What's New, Tips, Downloads, Achievements and the Notifications panel). Dear ImGui stays the default.
                         const char* envBackend = std::getenv("OKAY_UI_BACKEND");
                         const int src = okayuibackend::Source(envBackend, g_uiBackendSetting, true);
                         const bool can = okayuibackend::CompiledIn();
                         char bdesc[300];
                         std::snprintf(bdesc, sizeof(bdesc), "%s%s", can
-                            ? "OkayUI is the toolkit being built to replace Dear ImGui. Preview: only the What's New page is ported; every other page stays as it is. Applies at once."
+                            ? "OkayUI is the toolkit being built to replace Dear ImGui. Preview: What's New, Tips, Downloads, Achievements and the Notifications panel are ported; every other page stays as it is. Applies at once."
                             : "This build has no OkayUI, so every page uses Dear ImGui.",
                             src == 2 ? " The OKAY_UI_BACKEND environment variable is set and decides this." : "");
                         settingRow("UI backend", bdesc, 220.0f, ImGui::GetFrameHeight(), [&](float w) {
@@ -23483,30 +23622,68 @@ int main(int argc, char** argv) {
                 if (ImGui::Button("Cancel", ImVec2(110, 0))) ImGui::CloseCurrentPopup();
                 ImGui::EndPopup();
             }
+        } else if (tab == 5 && okayFrame && (std::getenv("OKAY_UI_DEMO_USER") != nullptr || account.IsLoggedIn()) &&
+                   !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Achievements, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same achievements, header, chips, sort, search, tiles and right-click menu as the Dear ImGui page below
+            // (signed out, that page's sign-in card shows instead); differences in docs/own_ui_toolkit.md section 8.
+            uitiming::Scope uiT("Achievements", "OkayUI");
+            static const bool kAchDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;
+            AchPageData& ad = AchPageDataRefresh(kAchDemo);
+            static okayuiscreens::AchievementsState as;
+            // The model (dates, "2h ago", medal colours) is rebuilt at most once a second, or at once after a showcase change,
+            // not every frame: the achievements file itself is only re-read every 1.5 s.
+            static okayuiscreens::AchievementsModel am;
+            static Uint32 amNext = 0;
+            static std::size_t amShowSize = (std::size_t)-1;
+            if (okay::platform::TicksMs32() >= amNext || amShowSize != ad.show.ach.size() || am.items.size() != ad.achs.size()) {
+            amNext = okay::platform::TicksMs32() + 1000; amShowSize = ad.show.ach.size();
+            am = okayuiscreens::AchievementsModel();
+            am.now = (long)std::time(nullptr);
+            for (const okay::Achievement& a : ad.achs) {
+                okayuiscreens::AchEntry e;
+                e.id = a.id; e.label = a.label; e.when = a.when; e.points = a.points; e.rel = RelTime(a.when);
+                if (a.when > 0) { std::time_t t = (std::time_t)a.when; char b[32] = ""; if (std::tm* tm = std::localtime(&t)) std::strftime(b, sizeof(b), "%b %d, %Y", tm); e.date = b; }
+                const ImVec4 nc = NameColor(a.id);
+                e.color[0] = (unsigned char)(nc.x * 255.0f + 0.5f); e.color[1] = (unsigned char)(nc.y * 255.0f + 0.5f); e.color[2] = (unsigned char)(nc.z * 255.0f + 0.5f);
+                e.showcased = std::find(ad.show.ach.begin(), ad.show.ach.end(), a.id) != ad.show.ach.end();
+                am.items.push_back(e);
+            }
+            am.points = okay::Achievements::TotalPoints(ad.achs);
+            am.level = okay::Achievements::Level(am.points) + 1;
+            am.levelProgress = okay::Achievements::LevelProgress(am.points);
+            am.showcaseCount = (int)ad.show.ach.size();
+            }
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
+            ImGui::InvisibleButton("##okayui_achievements", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            const okayuiscreens::AchievementsResult ar = okayuiscreens::DrawAchievements(am, as, rp.x, rp.y, ra.x, ra.y);
+            if (ar.viewProfile)
+                OpenPublicProfile(account.IsLoggedIn() ? account.UserId() : std::string(),
+                                  account.IsLoggedIn() ? account.CurrentSession().username : std::string(kAchDemo ? std::getenv("OKAY_UI_DEMO_USER") : ""));
+            if (ar.browseGames) tab = 1;
+            if (!ar.addShowcase.empty() && ad.show.ach.size() < 6) {
+                ad.show.ach.push_back(ar.addShowcase); SaveLocalShowcase(ad.show); Toast("Added to your showcase (Edit showcase on your profile to sync)", 1);
+            }
+            if (!ar.removeShowcase.empty()) {
+                ad.show.ach.erase(std::remove(ad.show.ach.begin(), ad.show.ach.end(), ar.removeShowcase), ad.show.ach.end());
+                SaveLocalShowcase(ad.show); Toast("Removed from your showcase (Edit showcase on your profile to sync)", 1);
+            }
+            if (!ar.copyId.empty()) { ImGui::SetClipboardText(ar.copyId.c_str()); Toast("Achievement id copied", 1); }
+#endif
         } else if (tab == 5) {                            // ---- Achievements ----
+            uitiming::Scope uiT("Achievements", "Dear ImGui");
             sectionHeader("Achievements", nullptr);
             static const bool kAchDemo = std::getenv("OKAY_UI_DEMO_USER") != nullptr;   // dev screenshot hook
             if (kAchDemo || loginGate("achievements")) {
-            // Achievements live on this device (okay::Achievements). Re-read the
-            // small file a few times a second at most, not every frame.
-            static std::vector<okay::Achievement> achs;
-            static Uint32 achNext = 0;
-            static PfLocalShowcase achShow;
-            if (okay::platform::TicksMs32() >= achNext) {
-                achNext = okay::platform::TicksMs32() + 1500;
-                achShow = LoadLocalShowcase();
-                if (!kAchDemo) achs = okay::Achievements::All();
-                else if (achs.empty()) {
-                    const long t0 = (long)std::time(nullptr), day = 86400;
-                    auto a = [&](const char* id, const char* lb, long ago) { okay::Achievement x; x.id = id; x.label = lb; x.when = t0 - ago;
-                        x.points = (int)(std::hash<std::string>{}(id) % 4) == 0 ? 50 : (std::hash<std::string>{}(id) % 3 == 0 ? 25 : 10); achs.push_back(x); };
-                    a("first_win", "First Victory", 120 * day); a("coin_hoarder", "Coin Hoarder", 60 * day);
-                    a("speed_demon", "Speed Demon", 20 * day); a("night_owl", "Night Owl", 9 * day);
-                    a("first_publish", "Published!", 3 * day); a("perfect_lap", "Perfect Lap", 2 * 3600);
-                    a("untouchable", "Untouchable", 40 * 60); a("jam_survivor", "Jam Survivor", 26 * 60);
-                }
-                if (kAchDemo && achShow.ach.empty()) achShow.ach = {"perfect_lap", "untouchable", "first_win"};
-            }
+            // Achievements live on this device (okay::Achievements), read by AchPageData (shared with the OkayUI page).
+            AchPageData& achData = AchPageDataRefresh(kAchDemo);
+            std::vector<okay::Achievement>& achs = achData.achs;
+            PfLocalShowcase& achShow = achData.show;
             const ImU32 cText = ImGui::GetColorU32(ImGuiCol_Text), cDim = ImGui::GetColorU32(ImGuiCol_TextDisabled);
             const ImVec4 accLt(kAccent.x * 0.55f + 0.45f, kAccent.y * 0.55f + 0.45f, kAccent.z * 0.55f + 0.45f, 1.0f);
             const ImU32 gold = IM_COL32(250, 200, 70, 255);
@@ -26933,7 +27110,49 @@ int main(int argc, char** argv) {
                     foReplyFocus = true;   // keep typing (Enter deactivates a single-line input)
                 }
             }
+        } else if (tab == 10 && okayFrame && !okayuihost::PopupCoversRect(ImGui::GetCursorScreenPos().x, ImGui::GetCursorScreenPos().y,
+                                                                          ImGui::GetContentRegionAvail().x, ImGui::GetContentRegionAvail().y)) {   // ---- Downloads, drawn by OkayUI (preview backend) ----
+#ifdef OKAY_HAVE_OKAYUI
+            // Same list, buttons and actions as the Dear ImGui page below; differences in docs/own_ui_toolkit.md section 8.
+            uitiming::Scope uiT("Downloads", "OkayUI");
+            SeedDemoDownloads();
+            const fs::path ddir = fs::path(g_exeDir) / "downloads";
+            okayuiscreens::DownloadsModel dm;
+            SDL_LockMutex(g_dlMutex);   // one copy of the list and its numbers, under the downloads' lock
+            for (const auto& d : g_dls) dm.items.push_back({d->id, d->title, d->dest, d->received, d->total, d->status});
+            SDL_UnlockMutex(g_dlMutex);
+            const ImVec2 rp = ImGui::GetCursorScreenPos();
+            ImVec2 ra = ImGui::GetContentRegionAvail();
+            ra.x = std::max(ra.x, 8.0f); ra.y = std::max(ra.y - 58.0f, 8.0f);   // the footer stays below, pinned by ImGui
+            ImGui::InvisibleButton("##okayui_downloads", ra);
+            ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+            g_okayRegion.Offer(rp.x, rp.y, ra.x, ra.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
+            const okayuiscreens::DownloadsResult dr = okayuiscreens::DrawDownloads(dm, rp.x, rp.y, ra.x, ra.y);
+            if (dr.openFolder) { std::error_code ec; fs::create_directories(ddir, ec); OpenExternal(ddir.string()); }
+            if (dr.openItemFolderId >= 0) OpenExternal(ddir.string());
+            if (dr.browseMarketplace) { tab = 7; g_lastTab = 7; SavePrefs(); }
+            if (dr.installId >= 0) {
+                for (const auto& d : dm.items) if (d.id == dr.installId) {
+                    const fs::path sub = CommunityDir() / fs::path(d.dest).stem();
+                    if (ExtractZip(d.dest, sub.string())) { Toast("Installed to Community", 1); scenes = FindScenes(); }
+                    else Toast("Couldn't extract the archive", 2);
+                }
+            }
+            if (dr.cancelId >= 0 || dr.removeId >= 0 || dr.clearFinished) {
+                SDL_LockMutex(g_dlMutex);
+                for (auto it = g_dls.begin(); it != g_dls.end(); ) {
+                    DlItem& d = **it;
+                    if (d.id == dr.cancelId) d.cancelReq = true;
+                    const bool drop = (d.id == dr.removeId && d.status >= 2) || (dr.clearFinished && d.status >= 2);
+                    if (drop) { if (d.th) SDL_WaitThread(d.th, nullptr); it = g_dls.erase(it); }
+                    else ++it;
+                }
+                SDL_UnlockMutex(g_dlMutex);
+            }
+#endif
         } else if (tab == 10) {                           // ---- Downloads ----
+            uitiming::Scope uiT("Downloads", "Dear ImGui");
+            SeedDemoDownloads();
             sectionHeader("Downloads", "Games you download from the marketplace land here.");
             fs::path ddir = fs::path(g_exeDir) / "downloads";
             if (ImGui::Button("Open downloads folder", ImVec2(200, 0))) {
@@ -27087,13 +27306,16 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         if (okayFrame) OkayUIClaimKeyboard();   // before Render: ImGui learns that a hosted OkayUI field has the keyboard
 #endif
+        const double uiRenderT0 = uitiming::kOn ? uitiming::NowUs() : 0.0;   // OKAY_UI_TIMING: the frame's render work
         ImGui::Render();
         SDL_SetRenderDrawColor(renderer, 30, 30, 32, 255);
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
+        const double uiRenderT1 = uitiming::kOn ? uitiming::NowUs() : 0.0;
 #ifdef OKAY_HAVE_OKAYUI
         if (okayFrame) OkayUI::EndFrame(renderer);   // on top of everything ImGui drew, through the same renderer
 #endif
+        if (uitiming::kOn) uitiming::FrameDone(uiRenderT1 - uiRenderT0, uitiming::NowUs() - uiRenderT1);
         SDL_RenderPresent(renderer);
         ChatHostFrame(account);
 

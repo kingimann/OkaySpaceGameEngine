@@ -8,9 +8,9 @@ Written from the public description of the FBX format, with no code from ufbx, t
 
 | File | What |
 |---|---|
-| `engine/include/okay/Render/FbxReader.hpp` | Public API: `okay::fbx::Parse`, `Build`, `LoadFile`, `Inflate`, the `Scene` result structs, the on/off switch |
+| `engine/include/okay/Render/FbxReader.hpp` | Public API: `okay::fbx::Parse`, `Build`, `LoadFile`, `Inflate`, the import steps `BuildParts` and `BuildClips`, the `Scene` result structs, the on/off switch |
 | `engine/src/Render/FbxReader.cpp` | Binary FBX 7.x reader (32-bit and 64-bit record offsets), ASCII FBX reader; zlib arrays go through the engine's one inflate. The element tree points into the parsed bytes (keep them alive while the `Document` is used) |
-| `engine/src/Render/FbxScene.cpp` | Element tree to scene: nodes, transforms, meshes, skins, blend shapes, materials, textures, baked animation |
+| `engine/src/Render/FbxScene.cpp` | Element tree to scene: nodes, transforms, meshes as the file's polygons, skins, blend shapes, materials, textures, animation curves and the clips they make; and the two import steps: `BuildParts` (triangulation, equal corners shared, parts per material) and `BuildClips` (the clips' keys) |
 | `engine/src/Render/ModelImport.cpp` | The adapter (`ImportFbxSceneGraphOwn`, `ImportFbxMergedOwn`): builds the same GameObjects, `MeshRenderer`, `SkinnedMesh`, `BlendShapes` and `ModelAnimator` clips the ufbx path builds |
 | `engine/src/Render/DecimalToDouble.hpp`, `engine/src/Render/Pow5Table.inc`, `scripts/gen_pow5_table.py` | Exact decimal-to-double conversion for ASCII numbers and its generated 5^q table (section "Exact ASCII numbers"); `tests/test_decimal_to_double.cpp` checks it against `strtod` |
 | `scripts/gen_fbx_fixtures.py` | Writes the fixtures in `tests/assets/fbx/` (binary 7.4, binary 7.5, ASCII) |
@@ -30,14 +30,14 @@ The reader files use the standard library and one header-only file of our own, `
 - Binary FBX 7.1 to 7.7 (32-bit offsets below 7500, 64-bit from 7500) and ASCII FBX 7.x. All array property types (`f d l i b` and the byte array `c`), raw and zlib-compressed. The zlib arrays are inflated by the engine's ONE inflate (`engine/include/okay/Core/Inflate.hpp`: stored, fixed and dynamic Huffman blocks); `okay::fbx::Inflate` is a thin wrapper that keeps the forgiving behaviour this reader always had (the Adler-32 and bytes after the stream are not checked). The FBX reader no longer has a decoder of its own.
 - Embedded textures (`Video` / `Content`, raw bytes in binary, base64 in ASCII) and texture file names.
 - Geometry (`Mesh`): positions, polygon vertex indices with the negative end marker, normals, UVs, vertex colors, per-polygon material ids. Mapping modes `ByPolygonVertex`, `ByVertice`, `ByPolygon`, `AllSame` and `ByEdge`; reference modes `Direct` and `IndexToDirect`. Missing normals are generated flat, one per polygon (ufbx does the same without smoothing data; smoothing groups are not used). Polygons with fewer than 3 corners or out-of-range indices are skipped.
-- Triangulation: triangles directly, quads and n-gons by ear clipping on the polygon's dominant plane (concave polygons keep their winding), fan fallback for degenerate input and for polygons over 256 corners.
-- Meshes split per material slot, in ascending slot order.
+- Triangulation (the import step `BuildParts`, since 2026-11-16; the reader keeps the file's polygons in `Mesh::polygons`): triangles directly, quads and n-gons by ear clipping on the polygon's dominant plane (concave polygons keep their winding), fan fallback for degenerate input and for polygons over 256 corners.
+- Meshes split per material slot, in ascending slot order (`BuildParts`).
 - Materials: diffuse color, emissive color and factor, shininess mapped to roughness (`1 - sqrt(shininess) * 0.1`, the mapping ufbx uses), diffuse and normal-map texture connections. PBR property sets written by 3ds Max (Physical Material, PBR metal/rough, PBR spec/gloss, the glTF material, OpenPBR), recognised by the class id in the material the way ufbx does (a material that says lambert or phong keeps the classic reading): base colour, roughness (glossiness inverted when `useGlossiness` is about 1), metalness, emission colour and factor, and the colour, normal and ambient-occlusion texture slots, which 3ds Max connects as `<name>_map`. A texture whose own Video has no picture takes it from another Video with the same file name.
 - Node hierarchy and transforms: Lcl translation, rotation, scaling, rotation order (all six), pre- and post-rotation, rotation and scaling pivots and offsets, geometric translation/rotation/scaling, local and world matrices, decomposed to translation, quaternion and scale.
 - Axis and unit settings from `GlobalSettings` (up, front, coord axes and signs, unit scale) are converted to right-handed Y-up, meters, the same way ufbx's "modify geometry" mode does it: the unit scale multiplies every translation, vertex, inverse bind and blend offset, and only the root nodes get the axis rotation, so every node below keeps the local axes the file was authored in (important for retargeting). Checked against ufbx on the fixtures (Z-up/cm and Y-up/m).
 - Skins: first skin deformer, clusters, per-control-point weights sorted strongest first, the cluster's `Transform` (mesh node relative to the bone, as Blender writes it and as ufbx reads it) times the geometric transform as the inverse bind (`geometryToBone`), bone node per cluster. `TransformLink` is not used.
 - Blend shapes: blend deformers, channels, `DeformPercent`, the channel's last target shape with position and normal offsets.
-- Animation: stacks, layers, curve nodes, curves (`KeyTime`, `KeyValueFloat`, `KeyAttrFlags`, `KeyAttrDataFloat`, `KeyAttrRefCount`). Constant, linear and cubic interpolation (Hermite from the slopes the file stores, or neighbour-derived for auto keys when it stores none). Translation, rotation and scaling of nodes plus blend `DeformPercent` become keys at the file's own key times plus the keys needed to stay within a stated tolerance (section "Animation keys"; `OKAY_FBX_BAKE30=1` brings back the old bake at 30 Hz, capped at 20000 samples), start trimmed to 0, one clip per stack.
+- Animation: stacks, layers, curve nodes, curves (`KeyTime`, `KeyValueFloat`, `KeyAttrFlags`, `KeyAttrDataFloat`, `KeyAttrRefCount`). Constant, linear and cubic interpolation (Hermite from the slopes the file stores, or neighbour-derived for auto keys when it stores none). The reader reads the curves and plans one clip per take (name, start, length); the keys are made by the import step `BuildClips` (since 2026-11-16). Translation, rotation and scaling of nodes plus blend `DeformPercent` become keys at the file's own key times plus the keys needed to stay within a stated tolerance (section "Animation keys"; `OKAY_FBX_BAKE30=1` brings back the old bake at 30 Hz, capped at 20000 samples), start trimmed to 0, one clip per stack.
 - Limits against hostile files (`okay::fbx::Limits`). Going past one fails the load with an error string (never a crash); parent cycles among models are broken instead of failing. The ufbx path in `ModelImport` enforces the same node and animation numbers (see `docs/model_import.md`).
 
   | Limit | Default | What it bounds |
@@ -46,7 +46,7 @@ The reader files use the standard library and one header-only file of our own, `
   | `maxElements` | 4 Mi | elements in the whole tree, and objects in a scene |
   | `maxArrayBytes` | 512 MiB | decoded array bytes, whole file |
   | `maxStringBytes` | 256 MiB | one string or raw blob |
-  | `maxCorners` | 8 Mi | triangle corners built, whole scene |
+  | `maxCorners` | 8 Mi | triangle corners the polygons give, whole scene (counted by the reader, before `BuildParts` makes them) |
   | `maxNodes` | 1 Mi | scene nodes (models) |
   | `maxNodeDepth` | 2048 | scene hierarchy depth (the walk is iterative, so depth is never call depth) |
   | `maxBakedSamples` | 20000 | baked samples per clip (the 30 Hz bake, `OKAY_FBX_BAKE30=1`) |
@@ -71,7 +71,7 @@ Say plainly what a user might trip over:
 - Animation: keys at the file's key times plus added ones (section "Animation keys"); a step jump becomes a key pair 0.2 ms apart (the engine merges keys closer than 0.1 ms), a ramp that short; between file keys at most 1/30 s apart nothing is added, so there the error is what linear playback between the file's own keys gives (as the 30 Hz bake gave on the same grid); we emit every channel of an animated node at every key (ufbx emits only animated channels); custom tangent weights and velocities are ignored; TCB tangents are treated like auto; auto-clamp is approximated; layer blending is simplified (first layer overrides, later layers add or lerp by weight, rotations are blended as Euler angles); only translation, rotation, scaling and `DeformPercent` are animated (not pivots, pre/post rotation or other properties); a take plays the span its `LocalStart` / `LocalStop` give (several takes can share one set of curves), else the range of its keys; ufbx keeps keys beyond the span in its clip, ours cuts there; a take whose curves animate only custom properties gives no clip (ufbx gives a constant one); no key reduction (ufbx reduces keys; the engine's `OptimizeClips` runs afterwards on both paths).
 - Left-handed source axis systems: the root node gets the (mirroring) axis matrix and nothing else is done about winding; untested against ufbx. `Transform` is assumed to be bone-relative as above; an exporter that writes the mesh's world matrix there instead would skin wrongly (ufbx makes the same assumption, but this has only been checked on our own fixtures).
 - No repair of damaged files. ufbx recovers from many malformed files; ours rejects them. Big-endian files, zlib checksums (Adler-32 is not verified), encrypted FBX and streaming are not supported.
-- Slower than ufbx on the reader alone (about 2 times on files with meshes, because our reader also triangulates and finds the distinct corners, which ufbx leaves to the import) The whole import is about 0.96 times ufbx's time on the real files together since animation keys follow the file's own key times (0.94x to 1.01x over three runs; section "Animation keys") and about 0.8 times on the large files (section "Speed and memory" below).
+- Speed (section "Speed and memory" below; Linux only, a busy shared machine): since the triangulation and the clip keys moved into the import steps (2026-11-16), the reader alone is about 0.82 times ufbx's time on the real files together and 0.89 times on the large files, the whole import about 0.95 and 0.78 times, with less peak memory everywhere measured. Single files are still slower on the reader alone in some runs: the binary `pyramob.fbx` (1.04x to 1.22x, inflate) and the ASCII grid (up to 1.21x, number parsing).
 
 ## Speed and memory
 
@@ -81,8 +81,9 @@ builds ran, so a single number can be off by 10 to 20 % (the ufbx columns moved 
 code). **Not measured on Windows.**
 
 What each column is: **load** is the reader alone, file bytes already in memory, into its own structures
-(`okay::fbx::LoadMemory`: element tree plus the scene build with baked clips, against `ufbx_load_memory` with the engine's
-ufbx options). **Import** is `ImportModelScene` through the seam, with our reader switched on and off: file read, reader,
+(`okay::fbx::LoadMemory`: element tree plus the scene build, against `ufbx_load_memory` with the engine's ufbx options;
+until step 15 that build also triangulated the meshes and made the clip keys, since step 16 those are import steps, as
+they are on the ufbx side). **Import** is `ImportModelScene` through the seam, with our reader switched on and off: file read, reader,
 GameObjects, meshes, skins and clips, the work an editor import does. **Peak** is the most heap the call had allocated at one
 time, counted by replacing `malloc`/`free` in the bench (so ufbx's C allocations and our `new` count the same way). Times
 are medians of at least 9 runs.
@@ -105,12 +106,30 @@ the first six fixes listed further down; each later row is a full bench run afte
 | 8 and 9. flat id tables, curve storage | 48.0 / 25.4 (1.89x) | 59.7 / 52.9 (1.13x) | 136.3 / 61.1 (2.23x) | 170.6 / 210.4 (0.81x) | 5.1 / 3.8; 28.4 / 29.3 | 8.8 / 24.1; 31.4 / 120.3 |
 | 10 to 14. exact ASCII numbers, curve sets, smaller tree, packed ASCII arrays, Base64 and Euler (**final**, branch `claude2/own-fbx-faster-2`; middle of three runs) | 43.7 / 25.2 (1.74x) | 56.4 / 52.2 (1.08x) | 129.4 / 65.3 (1.98x) | 176.3 / 215.4 (0.82x) | 3.8 / 3.8; 25.0 / 29.3 | 7.5 / 24.1; 28.0 / 120.3 |
 | 15. keys at the file's own key times (branch `claude2/own-fbx-file-keys`, **changes the clips**, section "Animation keys"; middle of three runs, against a re-run of row 14 that gave 1.14x) | 42.0 / 24.5 (1.72x) | 51.3 / 53.7 (**0.96x**) | 140.4 / 62.8 (2.24x) | 167.7 / 220.8 (0.76x) | 3.8 / 3.8; 25.0 / 29.3 | 7.5 / 24.1; 28.0 / 120.3 |
+| 16 to 21. triangles and clip keys made by the import, mesh arrays handed over, faster inflate (branch `claude2/own-fbx-faster-3`, **changes what `LoadMemory` returns**, see below; middle of three runs for each column, a machine with a load of 4 to 6 on 4 cores) | 27.1 / 33.1 (**0.82x**; 0.79x to 0.95x) | 57.5 / 60.7 (**0.95x**; 0.77x to 1.01x) | 66.4 / 74.6 (**0.89x**; 0.85x to 0.89x) | 225.3 / 290.5 (0.78x; 0.72x to 0.87x) | 2.6 / 3.8; 24.0 / 29.3 | 6.4 / 24.1; 28.1 / 120.3 |
 
 \* Step 2 alone made the reader slower on big meshes (it now finds equal corners, which the import used to do) and the
 import faster; the step after it won the time back.
 
-**Against the targets** (the owner's: our reader and our import at or below ufbx's time, with peak memory no higher;
-after step 14, the middle of three full runs; the three runs gave 1.07x, 1.08x and 1.15x for the real-file import):
+**Against the targets after steps 16 to 21** (branch `claude2/own-fbx-faster-3`, 2026-11-16; three full runs, the middle
+value of each; the machine was shared, so single files moved by up to 40 % between runs, ufbx's numbers as much as ours):
+
+| Target | Real files and fixtures | Large synthetic files |
+|---|---|---|
+| Reader alone at or below ufbx | **Met in total: 0.82x** (0.79x, 0.82x, 0.95x). Per file not everywhere: the binary `pyramob.fbx` is 1.04x to 1.22x (its zlib arrays: our inflate is still slower than ufbx's on them) | **Met in total: 0.89x** (0.85x to 0.89x). Per file: the rig 0.72x to 0.84x, the 3,000 nodes 0.81x to 0.87x, the binary grid 0.88x to 1.02x, the ASCII grid **0.93x to 1.21x** (not met in two of three runs) |
+| Reader peak memory not higher | **Met for every file listed**: binary `pyramob.fbx` 2.14 against 3.21 MB (was 3.66), ASCII `pyramob.fbx` 2.64 against 3.84, the animation-heavy file 1.27 against 1.66 (was 3.5) | **Met for all four**: binary grid 16.4 against 19.8 MB (was 25.0), rig 10.1 / 24.5, ASCII grid 4.5 / 9.2, 3,000 nodes 24.0 / 29.3 |
+| Import time at or below ufbx | **Met in the middle run, 0.95x** (0.77x, 0.95x, 1.01x); the animation-heavy file alone is 1.09x to 1.18x (2.2 against 1.9 ms) | **Met: 0.78x** (0.72x to 0.87x); the 3,000 nodes alone 0.96x to 1.13x |
+| Import peak memory not higher | **Met**, now also for the animation-heavy file (1.63 against 1.68 MB) | **Met for all four** (grid 25.0 / 120.3, rig 20.8 / 28.3, ASCII grid 7.9 / 30.3, nodes 28.1 / 29.3) |
+
+`--import-digest` (the whole imported scene) is the same on all 58 files before and after these steps, and so is
+`--parts-digest` (the scene after the import steps, hashed as `--digest` hashed it before) against the old `--digest`.
+`--digest` itself changed on purpose: what the reader returns is different now (polygons instead of triangles, clips
+without keys until `BuildClips`), and it now hashes the polygon arrays. **The comparison is fairer now, not just faster:**
+ufbx's `ufbx_load_memory` never triangulated or made clip keys either (the engine's ufbx path does both in its import),
+so "reader alone" now measures the same work on both sides; the import columns still include everything.
+
+**Before steps 16 to 21** (after step 14, the middle of three full runs; the three runs gave 1.07x, 1.08x and 1.15x for the
+real-file import):
 
 | Target | Real files and fixtures | Large synthetic files |
 |---|---|---|
@@ -119,7 +138,19 @@ after step 14, the middle of three full runs; the three runs gave 1.07x, 1.08x a
 | Reader alone at or below ufbx | **Not met: 1.74x** (was 1.89x) | **Not met: 1.98x** (was 2.23x) |
 | Reader peak memory not higher | **Met for the largest real file**: `pyramob.fbx` (ASCII) 3.79 against 3.84 MB (was 5.1); the binary `pyramob.fbx` is still above (3.66 against 3.21 MB), and so is the animation-heavy file (3.5 against 1.7 MB) | Met for three of four (rig 21.7 / 24.5, ASCII grid 5.2 / 9.2, 3,000 nodes 23.8 / 29.3); not for the binary grid (25.0 against 19.8 MB) |
 
-**The large files** (final, after step 14; same run as the totals above):
+**The large files after steps 16 to 21** (the middle run; the other two runs are in the targets table above):
+
+| File | KB | Our load | ufbx load | Ratio | Our peak | ufbx peak | Our import | ufbx import | Ratio | Import peak ours / ufbx |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| grid, 204,800 triangles, binary | 2,488 | 29.9 ms | 34.0 ms | 0.88x | 16.4 MB | 19.8 MB | 77.6 ms | 122.8 ms | 0.63x | 25.0 / 120.3 MB |
+| grid, 51,200 triangles, ASCII | 3,486 | 12.5 ms | 11.1 ms | 1.12x | 4.5 MB | 9.2 MB | 21.0 ms | 27.2 ms | 0.77x | 7.9 / 30.3 MB |
+| 3,000 nodes and boxes | 4,262 | 25.6 ms | 31.4 ms | 0.81x | 24.0 MB | 29.3 MB | 54.9 ms | 52.7 ms | 1.04x | 28.1 / 29.3 MB |
+| 64-bone rig, 345,600 keys | 3,127 | 25.9 ms | 34.0 ms | 0.76x | 10.1 MB | 24.5 MB | 71.8 ms | 87.9 ms | 0.82x | 20.8 / 28.3 MB |
+| `pyramob.fbx` (binary, the largest real file) | 826 | 5.7 ms | 4.7 ms | 1.22x | 2.1 MB | 3.2 MB | 10.8 ms | 12.0 ms | 0.90x | 3.7 / 24.1 MB |
+| `pyramob.fbx` (ASCII) | 3,798 | 6.2 ms | 10.0 ms | 0.62x | 2.6 MB | 3.8 MB | 17.1 ms | 16.6 ms | 1.03x | 6.4 / 24.1 MB |
+| `anims_with_full_rotations_between_keys.fbx` | 359 | 0.47 ms | 0.60 ms | 0.79x | 1.3 MB | 1.7 MB | 2.2 ms | 1.9 ms | 1.18x | 1.6 / 1.7 MB |
+
+**The large files** (after step 14; same run as the "before" totals above):
 
 | File | KB | Our load | ufbx load | Ratio | Our peak | ufbx peak | Our import | ufbx import | Ratio | Import peak ours / ufbx |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -204,13 +235,38 @@ by `fbx_exact` (below).
     texture (`box.FBX`: about 1.2 to 0.25 ms), and the bake's Euler rotations turn the matrix in place with the same sums
     in the same order (about 12 % off the animation-heavy file's load).
 
+19. **Triangles and clip keys made by the import** (steps 16 and 17, 2026-11-16). `LoadMemory` now returns each mesh as the
+    file's polygons (`Mesh::polygons`: positions, the polygon index list and the normal, UV, colour and material layers
+    with their mapping and index arrays) and each take as a planned clip (name, start, length; the curves kept in
+    `Scene::clipSource`). The import calls `fbx::BuildParts` (the same triangulation and corner sharing as before, moved
+    unchanged) and `fbx::BuildClips` (the same key making, moved unchanged into its own object). `ImportModel` (the
+    merged single mesh) does not make clip keys at all. The reader still refuses what it refused before: the corner
+    budget is counted from the polygon index list and every animation count budget is checked when the clips are
+    planned; only the evaluation budget of the key making is checked while the keys are made, as before. This is what
+    ufbx's load does too (it keeps polygons and curves; the engine's ufbx import triangulates and bakes).
+20. **Mesh arrays handed over, not copied** (step 18): the decoded zlib arrays and parsed ASCII arrays a mesh keeps are
+    moved from the `Document` into one store per mesh (one allocation), found by an index the parser records in the
+    property's padding (`Prop::own`); arrays that are views into the caller's bytes are copied. The reader's peak on the
+    binary grid went from 25.0 to 16.4 MB.
+21. **Inflate** (steps 18 to 21; shared with PNG and HTTP, `inflate_differential` and `own_http_inflate` pass, also under
+    ASan and UBSan): a Huffman table is only as wide as the longest code when that is under 10 bits (the 3,000-node
+    file's 3,000 small blocks fill 32-entry tables instead of 1,024) and is not cleared when the code fills it; the fast
+    path takes up to two more literals from the bit buffer before refilling, refills without masking, and leaves out the
+    output-cap tests it can never reach there (the general path keeps them); matches 2 to 7 bytes back are copied 8 bytes
+    a step; decoded FBX arrays (and ASCII number arrays) are not zero-filled before they are written
+    (`fbx::ByteBuffer`, an allocator that leaves new bytes unset). Instructions per file (callgrind): the binary grid's
+    load from 184 to 136 million, `pyramob.fbx` (binary) from 46 to 38 million, the 3,000-node file from 178 to 133
+    million.
+22. **Curve keys read directly** (step 20): `KeyTime` (int64) and `KeyValueFloat` (float) without the general accessor.
+
 **What is still slower, and why:**
 
-- **The reader alone is about 2x ufbx** on files with meshes. Our `LoadMemory` triangulates every polygon, finds the
-  distinct corners and builds the parts per material; ufbx's load does none of that (it keeps polygons and per-attribute
-  indices and the ufbx import path triangulates and de-duplicates afterwards), which is why our whole import is at or below
-  ufbx's on the big meshes while our reader alone is not. Moving that work out of the reader would change what `Scene`
-  holds; it was not done.
+- **The binary `pyramob.fbx` and the ASCII grid** are still at or above ufbx on the reader alone in some runs (1.04x to
+  1.22x and 0.93x to 1.21x). The first is all inflate: its arrays decode to many short matches, and ufbx's inflate is
+  faster than ours on them. The second is ASCII number parsing (17-digit numbers, about 10 ns each).
+- **The reader alone was about 2x ufbx** on files with meshes until steps 16 to 21, because our `LoadMemory` triangulated
+  every polygon and found the distinct corners, which ufbx's load does not do. That work is now in the import step
+  `BuildParts` (item 19).
 - **Animation was baked at 30 Hz** for every animated node: 23,040 samples for the 64 nodes of
   `anims_with_full_rotations_between_keys.fbx`, where ufbx keeps the file's keys; that one file was almost all of the
   remaining import gap on the real files. Since step 15 (the owner's decision, section "Animation keys") the clip has keys
@@ -359,4 +415,8 @@ above ufbx's. A shared machine moves single numbers by 10 to 20 %. Not measured 
 - Fixtures `pbr_bin.fbx` and `orphan_video_bin.fbx` came from the pre-flip verification. Fixtures `takes_bin.fbx` (three takes with their own spans, a `c` thumbnail) and `bridge_bin.fbx` (a polygon with a bridged hole) were added for the bugs the real files showed.
 - The hostile test was re-run with `-fsanitize=address,undefined,float-cast-overflow` (standalone build, 30,000 mutations per fixture): clean after the integer-conversion fix; the engine-linked tests were then run too (see above).
 - Regenerate fixtures with `python3 scripts/gen_fbx_fixtures.py`. They are 2 to 12 KB each.
+- Since the triangulation and the clip keys moved into the import steps (2026-11-16), the tests that look at parts or keys
+  call them after loading: `fbx_reader` (its `LoadBuilt` helper: `LoadFile`, `BuildParts`, `BuildClips`), `fbx_file_keys`
+  (`BuildClips`) and `fbx_hostile` (both, after every load that succeeds, so the fuzz still runs through the
+  triangulation and the key code). No check was added or removed; the counts are the same (2,559, 217,758 and 153).
 - `fbx_exact` (`tests/test_fbx_exact.cpp` with `tests/test_fbx_exact_numbers.cpp`): white-box, it compiles `FbxScene.cpp` and `FbxReader.cpp` itself. The speed shortcuts against the plain code they replaced, on random inputs that include -0, infinities, NaN and huge values: the matrix products without their zero terms, the Euler rotations, `LocalMatrix` and its short path (300,000 cases each), curve evaluation with a remembered key segment and with flags and slopes kept per attribute set, against the plain search over one copy per key (600,000 samples), Base64 four characters at a time against the bit-by-bit decoder (20,000 strings with junk characters), the one-pass ASCII number conversion (400,000 tokens: same accepted set, same values, and the values are `strtod`'s) and ASCII arrays kept as int32 or float32 (3,000 arrays: every element reads back as `strtod`'s double for its token). Bit for bit, except that any NaN equals any NaN (see "Speed and memory"). About one second; clean under ASan, UBSan and float-cast-overflow.

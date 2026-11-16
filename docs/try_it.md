@@ -1377,11 +1377,13 @@ build with tests on; the memory columns need glibc, elsewhere they print `-`):
    `$OKAY_MODEL_CORPUS` and the fixtures in `tests/assets/fbx`).
 4. You should see a table, one row per file: milliseconds and peak MB for our reader and for ufbx, the ratio, the same for
    the whole import, then totals and the five worst ratios. On the 204,800-triangle grid expect our import at about 0.6x
-   of ufbx's time with about a quarter of its peak memory, and our reader alone at about 2.5x ufbx's
-   (`docs/own_fbx_reader.md`, "Speed and memory"; a shared machine moves single numbers by 10 to 20 %).
-5. `bench_fbx_reader --digest <files>` prints one hash per file of everything our reader produced, and
-   `bench_fbx_reader --import-digest <files>` one hash of the whole imported scene; run them before and after a change to
-   the reader to show the output did not change (the lines must be identical).
+   of ufbx's time with about a quarter of its peak memory, and our reader alone at about 0.9x ufbx's with less peak
+   memory (16 against 20 MB; since 2026-11-16 the triangles and the clip keys are made by the import, as on the ufbx
+   side; `docs/own_fbx_reader.md`, "Speed and memory"; a shared machine moves single numbers by 10 to 40 %).
+5. `bench_fbx_reader --digest <files>` prints one hash per file of everything our reader produced (the meshes' polygon
+   arrays included), `bench_fbx_reader --parts-digest <files>` the same after the import steps, hashed without the
+   polygons (the triangles and keys), and `bench_fbx_reader --import-digest <files>` one hash of the whole imported scene;
+   run them before and after a change to the reader to show the output did not change (the lines must be identical).
 6. `build/tests/test_fbx_exact` (about a second) checks the reader's shortcuts against the plain code (matrices, curves,
    Base64, ASCII numbers and arrays); expect `16 checks, 0 failures`.
 7. `build/tests/test_decimal_to_double` (about five seconds) checks our exact decimal-to-double conversion (used for every

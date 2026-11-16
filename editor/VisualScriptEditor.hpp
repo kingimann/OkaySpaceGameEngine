@@ -124,11 +124,15 @@ inline std::vector<VsDef> VsWithApiDefs(std::vector<VsDef> defs) {
 inline bool IsApiNode(const std::string& t) { return okay::vs::VsApiFind(t) != nullptr; }
 
 // One node per text-script builtin, plus the escape hatches. Pointers stay valid:
-// BuiltinNodes() keeps its strings for the process lifetime.
+// BuiltinNodes() keeps its strings for the process lifetime. A builtin that reads more
+// than four arguments (dist3, raycast3, remap...) gets one input per argument.
 inline std::vector<VsDef> VsWithBuiltinDefs(std::vector<VsDef> defs) {
     for (const okay::vs::BuiltinNodeInfo& n : okay::vs::BuiltinNodes()) {
+        std::vector<const char*> args;
+        const int pins = okay::vs::BuiltinPinCount(n.builtin);
+        for (int i = 0; i < pins; ++i) args.push_back(okay::vs::BuiltinPinName(i));
         VsDef d{n.type.c_str(), VsFriendlyBuiltinTitle(n.builtin), CAT_SCRIPT, true, {""},
-                {"First", "Second", "Third", "Fourth"}, {"Result"}, 0, nullptr};
+                std::move(args), {"Result"}, 0, nullptr};
         defs.push_back(std::move(d));
     }
     defs.push_back({"GetProperty", "Get Property", CAT_DATA, true, {""}, {"Path","Target"}, {"Value"}, 1, "Component.property"});

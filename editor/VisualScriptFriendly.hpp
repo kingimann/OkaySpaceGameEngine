@@ -348,7 +348,7 @@ inline void VsFriendlyApiDocFixup(const okay::vs::VsApiEntry& e, VsNodeDoc& d) {
     }
 }
 
-// One node per text-script builtin (Fn.print ...): four optional arguments, one result.
+// One node per text-script builtin (Fn.print ...): one optional input per argument (at least four), one result.
 inline const VsNodeDoc* VsBuiltinDocFor(const std::string& type) {
     if (!okay::vs::IsBuiltinNode(type)) return nullptr;
     static std::unordered_map<std::string, VsNodeDoc> cache;
@@ -360,16 +360,19 @@ inline const VsNodeDoc* VsBuiltinDocFor(const std::string& type) {
     d.title = VsFriendlyBuiltinTitleString(name);
     const char* help = VsNodeHelp(type.c_str());
     d.description = help && help[0] ? std::string(help)
-        : "Calls the text-script function " + name + " with the values wired into First to Fourth, and gives back its result.";
+        : "Calls the text-script function " + name + " with the values wired into First to " +
+              okay::vs::BuiltinPinName(okay::vs::BuiltinPinCount(name) - 1) + ", and gives back its result.";
     d.requirements = "No component is required by the node itself. What " + name + " touches depends on the function. Runs in Play mode.";
     d.example = "In a text script this is " + name + "(First, Second). Wire the values you would pass into First and Second.";
     d.related = "Run Text Snippet, Call Script";
     d.keywords = name + " " + d.title + " text script builtin";
     d.pins.push_back({true, true, "", "Flow", "The flow arrives here. The function runs when a wire reaches this pin.", ""});
     d.pins.push_back({false, true, "", "Flow", "After the function finishes, the flow continues from here.", ""});
-    static const char* const argNames[4] = {"First", "Second", "Third", "Fourth"};
-    for (const char* a : argNames)
-        d.pins.push_back({true, false, a, "Any", std::string("An argument for ") + name + ". Leave it empty when the function takes fewer.", "nothing"});
+    // One input per argument the builtin reads (at least four, so old graphs keep their pins).
+    const int argPins = okay::vs::BuiltinPinCount(name);
+    for (int i = 0; i < argPins; ++i)
+        d.pins.push_back({true, false, okay::vs::BuiltinPinName(i), "Any",
+                          std::string("An argument for ") + name + ". Leave it empty when the function takes fewer.", "nothing"});
     d.pins.push_back({false, false, "Result", "Any", "What " + name + " gives back, or nothing when it returns no value.", ""});
     return &cache.emplace(type, std::move(d)).first->second;
 }

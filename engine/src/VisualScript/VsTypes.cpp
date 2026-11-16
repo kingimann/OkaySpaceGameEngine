@@ -655,7 +655,7 @@ const NodeSignature* SignatureFor(const std::string& type) {
         if (it != Table().end()) return &it->second;
     }
     if (const VsApiEntry* e = VsApiFind(type)) return &e->sig;
-    if (IsBuiltinNode(type)) return &BuiltinSignature();
+    if (IsBuiltinNode(type)) return &BuiltinSignatureFor(type);
     if (type == "GetProperty") { static const NodeSignature s{true, "TO", "A"}; return &s; }
     if (type == "SetProperty") { static const NodeSignature s{true, "ATO", ""}; return &s; }
     if (type == "CallMethod")  { static const NodeSignature s{true, "AAAAT", "A"}; return &s; }
@@ -1039,6 +1039,30 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
         const std::string hint = ConversionHint(from, to);
         if (!hint.empty()) m += " - " + hint;
         issues.push_back({0, d.consumer, m, d.inPin, 0});
+    }
+
+    // 1b) A typed value or a wire aimed at an input the node doesn't have (a hand edit, an old file, or a graph from
+    //     a newer version). The node never reads it. Checked for the nodes whose inputs are exactly their signature:
+    //     Fn.<builtin>, the engine-API bindings and the escape hatches (other nodes may read extra inputs).
+    {
+        auto fixedInputs = [&](int id) -> int {
+            auto it = nodes.find(id);
+            if (it == nodes.end()) return -1;
+            const std::string& t = it->second.type;
+            static const std::set<std::string> hatches = {"GetProperty", "SetProperty", "CallMethod", "GetComponent",
+                                                          "AddComponent", "FindByTag", "SendMessage", "Broadcast", "RunSnippet"};
+            if (!IsBuiltinNode(t) && !VsApiFind(t) && !hatches.count(t)) return -1;
+            const NodeSignature* s = SignatureFor(t);
+            return s ? (int)s->ins.size() : -1;
+        };
+        auto check = [&](int id, int pin, const char* what) {
+            const int have = fixedInputs(id);
+            if (have < 0 || pin < have) return;
+            issues.push_back({1, id, std::string(what) + " goes to input pin " + std::to_string(pin + 1) + ", but " + title(id) +
+                                     " has " + std::to_string(have) + " input pins, so it is ignored", pin, 0});
+        };
+        for (const auto& kv : typed) check(kv.first.first, kv.first.second, "a typed value");
+        for (const Data& d : datas) check(d.consumer, d.inPin, "a wire");
     }
 
     // 2) Exec nodes no event (or function) reaches never run.

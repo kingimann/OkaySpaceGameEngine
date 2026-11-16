@@ -24,8 +24,16 @@ bool IsBuiltinNode(const std::string& type);
 /// The node, or nullptr when `type` is neither a builtin node nor an escape hatch.
 /// `args` is the text after the type (a property path, Type.Method, a message, a snippet).
 std::unique_ptr<VsNode> MakeCoverageNode(const std::string& type, const std::vector<std::string>& args);
-/// Shared pin signature of every Fn.* node: four optional arguments, one result.
-const NodeSignature& BuiltinSignature();
+/// The most inputs a Fn.* node has (capsule_cast3 reads 13 arguments).
+constexpr int kBuiltinMaxPins = 13;
+/// How many inputs the node of text-script builtin `builtin` has: one per argument its code
+/// reads, and never fewer than four (every Fn.* node had four before, so saved graphs keep
+/// their pins). "dist3" -> 6, "print" -> 4.
+int BuiltinPinCount(const std::string& builtin);
+/// Label of argument input `pin`: "First", "Second" ... "Thirteenth" ("" outside the range).
+const char* BuiltinPinName(int pin);
+/// Pin signature of "Fn.<builtin>": BuiltinPinCount optional inputs (Any), one result.
+const NodeSignature& BuiltinSignatureFor(const std::string& type);
 
 /// System-level coverage (FEATURE_MAP area, how a graph reaches it, the node).
 std::string CoverageTableMarkdown();

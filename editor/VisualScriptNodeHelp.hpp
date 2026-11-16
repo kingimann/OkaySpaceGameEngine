@@ -92,7 +92,8 @@ inline const char* VsNodeHelp(const char* type) {
     }
     if (type && std::strncmp(type, "Fn.", 3) == 0)
         return "Calls this text-script builtin on the current object. Requires: wire only the arguments it takes "
-               "(First, Second, Third, Fourth). A failure is an error on this node. Search for the builtin name.";
+               "(First, Second, Third and on; a builtin with more arguments has more inputs). A failure is an error "
+               "on this node. Search for the builtin name.";
     static const std::unordered_map<std::string, const char*> help = {
         // ---- Events ----
         {"OnStart",        "Runs once when the object starts (the scene loads or the object is spawned)."},

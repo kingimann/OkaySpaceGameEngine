@@ -1,6 +1,6 @@
 #pragma once
 #include "okay/Math/Vec2.hpp"
-#include <unordered_map>
+#include <array>
 #include <vector>
 #include <string>
 
@@ -75,6 +75,30 @@ public:
 
     /// True while the key is held down.
     static bool GetKey(char key);
+    /// A key press that began and ended between two polls (a fast tap, or a frame that
+    /// ran long): the runtime calls this from its KeyDown event. The next FeedKeys then
+    /// reports the key down for that frame even though it is already up, so GetKeyDown
+    /// sees it and the release shows one frame later. A key that is held anyway is
+    /// unaffected. (Before this a tap shorter than the gap between two polls was lost.)
+    static void FeedKeyTap(char key);
+    /// The same for a mouse button (0 left, 1 right, 2 middle): call from MouseButtonDown.
+    static void FeedMouseTap(int button);
+    /// Forget taps nobody consumed (the game was not being fed that frame).
+    static void DropKeyTaps();
+
+    // ---- Typing versus playing ----
+    /// True while a text field owns the keyboard. The host sets it every frame (the
+    /// player from "a UI input field has focus"). While it is true the game's reads of
+    /// letters, digits, Space and the arrows (GetKeyGame, GetKeyDownGame, AxisWASD,
+    /// the action map, script key() / action()) report nothing, so typing a name does
+    /// not also walk the player. GetKey / GetKeyDown stay raw so the text field itself
+    /// can still see Backspace, Enter and the arrows.
+    static void SetTextFocused(bool focused);
+    static bool TextFocused();
+    /// GetKey / GetKeyDown as the GAME should see them: false for a typing key while
+    /// TextFocused(). Escape, Enter, F-keys, modifiers and Tab still come through.
+    static bool GetKeyGame(char key);
+    static bool GetKeyDownGame(char key);
     /// True only on the frame the key was first pressed.
     static bool GetKeyDown(char key);
     /// True only on the frame the key was released.
@@ -225,6 +249,9 @@ public:
         Vec2  start;
         Vec2  delta;
         Phase phase = Phase::Began;
+        /// True for the whole frame the finger went down, even when it also lifted in
+        /// that frame (a very quick tap reads phase Ended; this still says it began).
+        bool  began = true;
     };
     /// Fingers touching the screen this frame (a lifted finger stays one frame, Ended).
     static int TouchCount();
@@ -245,6 +272,21 @@ public:
     static bool TouchScreen();
     static void SetTouchScreen(bool present);
 
+    // ---- The device the player used last (for button pictures) ----
+    enum class Device { Keyboard, Mouse, Gamepad, Touch };
+    /// The device that produced input most recently. Drives "Press [E]" versus "Press [X]".
+    static Device LastDevice();
+    /// Which controller (0..3) was used last; meaningful when LastDevice() is Gamepad.
+    static int LastGamepad();
+    /// What kind of controller a slot is, for button pictures. The runtime sets it from the
+    /// device name; the default is Xbox.
+    enum class PadFamily { Xbox, PlayStation, Switch, Generic };
+    static void SetGamepadFamily(int player, PadFamily family);
+    static PadFamily GamepadFamily(int player = 0);
+    static PadFamily FamilyFromName(const std::string& deviceName);
+    /// "A" / "Cross" / "B" for a button in that family ("LB" / "L1" / "L").
+    static std::string GamepadButtonLabel(int button, PadFamily family);
+
     // ---- UI capture (modal panels: inventories, menus) ----
     /// True while a modal UI (an open inventory, a menu) owns the pointer — player
     /// controllers should pause mouse-look / movement so the game feels paused.
@@ -258,9 +300,17 @@ private:
     static void EndSession();     // restore terminal
     static void Poll();           // sample input once per frame
 
-    static std::unordered_map<char, bool> s_current;
-    static std::unordered_map<char, bool> s_previous;
+    static std::array<bool, 256> s_current;
+    static std::array<bool, 256> s_previous;
+    static std::array<bool, 256> s_tapKeys;   // taps seen since the last FeedKeys
+    static unsigned s_tapMouse;
     static bool s_interactive;
+    static bool s_textFocused;
+    static Device s_lastDevice;
+    static int s_lastPad;
+    static PadFamily s_padFamily[kMaxGamepads];
+    friend struct InputRecorderAccess;
+    static void NoteDevice(Device d, int pad = 0);
 
     static Vec2     s_mousePos;
     static bool     s_mouseFed;       // a mouse sample has arrived (first one has no delta)

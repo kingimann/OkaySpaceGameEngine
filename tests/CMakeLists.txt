@@ -2210,6 +2210,19 @@ add_executable(test_input_keys_gamepad test_input_keys_gamepad.cpp)
 target_link_libraries(test_input_keys_gamepad PRIVATE okay::engine)
 add_test(NAME input_keys_gamepad COMMAND test_input_keys_gamepad)
 
+# Input audit, end to end and headless: the bugs found (fast taps, typing moving the player, layouts without Latin letters,
+# rebinding Move), chords, wheel bindings, response curves, buffering, per-player actions, glyph families, recording and replay,
+# the debugger model, and the fast evaluation path against the old one (docs/input_audit.md)
+add_executable(test_input_deep test_input_deep.cpp)
+target_link_libraries(test_input_deep PRIVATE okay::engine)
+add_test(NAME input_deep COMMAND test_input_deep)
+
+# The shipped examples/input/input_playground.okayscene run headless: every station's script, with a software-rendered picture
+add_executable(test_input_playground test_input_playground.cpp)
+target_link_libraries(test_input_playground PRIVATE okay::engine)
+target_compile_definitions(test_input_playground PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME input_playground COMMAND test_input_playground)
+
 # Save games: slots, whole-scene state, script variables, deferred load, autosave
 add_executable(test_save_game test_save_game.cpp)
 target_link_libraries(test_save_game PRIVATE okay::engine)

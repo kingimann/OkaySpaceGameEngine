@@ -1,0 +1,175 @@
+okayscene 3
+name "Input playground"
+gravity 0 -9.8
+gravity3 0 -9.8 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "89248d7c942096ff2a07280b33912530"
+  active 1
+  parent -1
+  transform 0 8 -14 0 0 0 1 1 1 1
+  camera 1 5 52 0.07 0.08 0.12 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Setup"
+  guid "d42f32d1b24e6ee863bac90ac22d3cf2"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function start() {
+  define_action(\"undo\", \"chord:ctrl+z\");
+  define_action(\"nextweapon\", \"wheel:up\", \"pad:rb\");
+  define_action(\"prevweapon\", \"wheel:down\", \"pad:lb\");
+  set_per_player(\"jump\");
+  set_per_player(\"move\");
+  set_response(\"look\", 0.1, 1, 1);
+  set(\"curve\", 1);
+  set(\"dbl\", 0);
+  set(\"conf\", \"\");
+}" "" 0
+  text "" 1 1 1 1 1.5 1 24 12 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end
+gameobject 2 "Title"
+  guid "888ef0dbb05f9b2b916062495bc45c00"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function update(dt) {
+  set_text(\"INPUT PLAYGROUND   keys, mouse, controller or touch: each station shows what the engine sees\");
+}" "" 0
+  text "" 1 1 1 1 1.5 1 24 18.75 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end
+gameobject 3 "A Devices"
+  guid "cf66b97340fcfa4161fff7691c11abd1"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function update(dt) {
+  var s = \"A. DEVICES   last used: \" + input_device() + \"\\n\";
+  s = s + \"mouse \" + round(mouse_x()) + \",\" + round(mouse_y()) + \"   wheel \" + mouse_wheel() + \"   controllers \" + gamepad_count() + \"\\n\";
+  s = s + \"stick \" + to_fixed(gamepad_x(), 2) + \",\" + to_fixed(gamepad_y(), 2) + \"   Move \" + to_fixed(action_x(\"move\"), 2) + \",\" + to_fixed(action_y(\"move\"), 2) + \"\\n\";
+  s = s + \"Fire \" + to_fixed(action_value(\"fire\"), 2) + \"   Jump button: \" + action_label(\"jump\") + \"   Fire button: \" + action_label(\"fire\");
+  set_text(s);
+}" "" 0
+  text "" 1 1 1 1 1.5 1 24 66.5 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end
+gameobject 4 "B Timing"
+  guid "027f589be7d38e6c2bf7c1b2c82637c6"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function update(dt) {
+  if (key_down(\"c\")) { action_consume(\"jump\"); }
+  if (action_double_tap(\"interact\", 0.3)) { set(\"dbl\", 1.5); }
+  set(\"dbl\", max(0, get(\"dbl\") - dt));
+  var s = \"B. TIMING   tap Space, tap E twice fast, hold R\\n\";
+  s = s + \"Jump remembered (0.3 s): \" + action_buffered(\"jump\", 0.3) + \"   press C to use it up\\n\";
+  s = s + \"Double tap E: \";
+  if (get(\"dbl\") > 0) { s = s + \"DOUBLE TAP!\"; } else { s = s + \"-\"; }
+  s = s + \"\\nHold R for 1 s: \" + to_fixed(action_hold(\"reload\", 1) * 100, 0) + \"%\";
+  if (action_hold_done(\"reload\", 1)) { set(\"conf\", \"CONFIRMED\"); }
+  if (action_held(\"reload\") == 0) { set(\"conf\", \"\"); }
+  s = s + \" \" + get(\"conf\");
+  set_text(s);
+}" "" 0
+  text "" 1 1 1 1 1.5 1 24 134.5 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end
+gameobject 5 "C Chords"
+  guid "4c362df2b0ce759a8a91231406947ace"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function update(dt) {
+  var s = \"C. CHORDS and WHEEL   hold Ctrl, then press Z\\n\";
+  s = s + \"Undo (Ctrl+Z): \" + action(\"undo\") + \"   Crouch (Ctrl alone): \" + action(\"crouch\") + \"   (a chord keeps its keys to itself)\\n\";
+  s = s + \"Mouse wheel up: \" + action(\"nextweapon\") + \"   down: \" + action(\"prevweapon\");
+  set_text(s);
+}" "" 0
+  text "" 1 1 1 1 1.5 1 24 195.75 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end
+gameobject 6 "D Curve"
+  guid "dd7eef8ca9c0eb11e17e5a933a0a5d78"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function update(dt) {
+  if (key_down(\"4\")) {
+    var c = get(\"curve\") + 1;
+    if (c > 3 || c < 2) { c = 2; }
+    if (get(\"curve\") == 3) { c = 1; }
+    set(\"curve\", c);
+    set_response(\"look\", 0.1, c, 1);
+  }
+  if (get(\"curve\") < 1) { set(\"curve\", 1); }
+  var s = \"D. DEAD ZONE + CURVE   press 4 to change the curve   (Look = right stick or mouse)\\n\";
+  s = s + \"dead zone 0.10   curve \" + get(\"curve\") + \"   how far you push -> what the game gets\\n\";
+  var bars = \"\";
+  for (var i = 0; i < 6; i += 1) {
+    var t = i / 5;
+    var n = round(response_curve(\"look\", t) * 30);
+    bars = bars + to_fixed(t, 1) + \" \" + pad_left(\"\", n, \"#\") + \"\\n\";
+  }
+  var len = sqrt(action_x(\"look\") * action_x(\"look\") + action_y(\"look\") * action_y(\"look\"));
+  s = s + bars + \"Look right now: \" + to_fixed(len, 2);
+  set_text(s);
+}" "" 0
+  text "" 1 1 1 1 1.5 1 24 290.75 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end
+gameobject 7 "E Rebind"
+  guid "9dc5e716e6e7d558a610d749ce2943b3"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function update(dt) {
+  if (key_down(\"5\")) { rebind(\"interact\", \"key:f\"); }
+  if (key_down(\"6\")) { set(\"conf\", action_conflicts(\"jump\", \"key:e\")); rebind_swap(\"jump\", \"key:e\"); }
+  if (key_down(\"7\")) { reset_bindings(); set(\"conf\", \"\"); }
+  if (key_down(\"8\")) { input_preset(\"left\"); }
+  if (key_down(\"9\")) { input_preset(\"right\"); }
+  var s = \"E. REBINDING   5 Interact->F   6 Jump->E (swap)   7 reset all\\n\";
+  s = s + \"8 left-hand preset   9 right-hand preset\\n\";
+  s = s + \"Jump = \" + action_label(\"jump\") + \"   Interact = \" + action_label(\"interact\") + \"   Fire = \" + action_label(\"fire\") + \"\\n\";
+  s = s + \"E was also bound to: \" + get(\"conf\");
+  set_text(s);
+}" "" 0
+  text "" 1 1 1 1 1.5 1 24 392.5 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end
+gameobject 8 "F Players"
+  guid "62cc3673dc8728ff2d2ab58ca05f8087"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function update(dt) {
+  var s = \"F. TWO PLAYERS   player 1 = first controller, player 2 = second\\n\";
+  s = s + \"P1 jump \" + action(\"jump\", 0) + \" move \" + to_fixed(action_x(\"move\", 0), 1) + \",\" + to_fixed(action_y(\"move\", 0), 1) + \"   connected \" + gamepad_connected(0) + \"\\n\";
+  s = s + \"P2 jump \" + action(\"jump\", 1) + \" move \" + to_fixed(action_x(\"move\", 1), 1) + \",\" + to_fixed(action_y(\"move\", 1), 1) + \"   connected \" + gamepad_connected(1);
+  set_text(s);
+}" "" 0
+  text "" 1 1 1 1 1.5 1 24 453.75 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end
+gameobject 9 "G Record"
+  guid "ef8504a97604acd3fbd0eec90992e1ca"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "function update(dt) {
+  if (key_down(\"1\")) { input_record(\"start\"); }
+  if (key_down(\"2\")) { input_record(\"stop\"); }
+  if (key_down(\"3\")) { input_record(\"play\"); }
+  var s = \"G. RECORD / REPLAY   1 start   2 stop   3 replay\\n\";
+  s = s + \"status: \" + input_record(\"status\") + \"\\n\";
+  s = s + \"While it replays, the keys you press are ignored.\";
+  set_text(s);
+}" "" 0
+  text "" 1 1 1 1 1.5 1 24 508.25 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  comporder "TextRenderer" "ScriptComponent"
+end

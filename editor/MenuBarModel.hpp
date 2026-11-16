@@ -259,6 +259,7 @@ inline std::vector<Entry> PanelsSubmenu() {
     p.push_back(Toggle("panel.assetmanager", "Asset Manager"));
     p.push_back(Toggle("panel.crashlog", "Crash Log", "View past crash reports (okay_crashlog.txt) and copy them to send to support."));
     p.push_back(Toggle("panel.audiomixer", "Audio Mixer", "Master and group volumes (Music, SFX, UI, Voice), output levels while playing, and music ducking."));
+    p.push_back(Toggle("panel.input", "Input", "Live keys, mouse, controllers and actions while the game plays, the last events, input recording and replay, and each action's response curve."));
     return p;
 }
 

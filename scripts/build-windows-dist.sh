@@ -153,7 +153,7 @@ fi
 # scenes are self-contained (every file a scene names sits beside it, and scenes find their files relative to
 # the scene file, so the folder works from any install path). About 0.5 MB. Left out on purpose: account-server
 # (a Python server), netdemo and physicsdemo (C++ sources), editor-plugins and visual_script (not scenes).
-EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls"
+EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls input"
 for d in $EXAMPLE_DIRS; do
     [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
     mkdir -p "$OUT_DIR/examples/$d"

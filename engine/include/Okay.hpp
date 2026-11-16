@@ -46,6 +46,8 @@
 // Input
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/InputRecorder.hpp"
+#include "okay/Input/InputDebug.hpp"
 #include "okay/Input/GestureRecognizer.hpp"
 #include "okay/Input/Gestures.hpp"
 #include "okay/Components/TouchControls.hpp"

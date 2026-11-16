@@ -277,3 +277,76 @@ define_direction("steer", "keys:i,k,j,l", "stick:right")
 
 A player who rebound the action keeps their binding; the new defaults are what
 Backspace on a keybind field goes back to. In C++ it is `InputActions::Define`.
+
+## The input upgrade (audit: `docs/input_audit.md`)
+
+Everything here is also on show in the **input playground** example (`examples/input/input_playground.okayscene`,
+see `docs/try_it.md` row 7x). Old scenes and saved bindings keep working: new binding kinds are new text forms, and the
+saved format for a binding is unchanged.
+
+### Bug fixes
+* A key or click that is pressed and released between two polls is no longer lost (`Input::FeedKeyTap`, `FeedMouseTap`).
+* Typing in a text field no longer walks the player: while a field has the keyboard (`Input::SetTextFocused`), the game's
+  reads of letters, digits, Space and arrows report nothing (`Input::GetKeyGame`, script `key()` and `axis_x()`, every
+  action). Raw `Input::GetKey` is unchanged so the field still sees Backspace, Enter and the arrows.
+* Rebinding a direction action (Move, Look) to a single key or button is refused instead of breaking it.
+* Keyboard layouts with no Latin letters (Russian, Greek, Arabic...) fall back to the US key positions for W A S D and
+  the digits (`KeyForLetter` in `PlatformKeys.hpp`).
+* A touch that began and ended in one frame still reports `began` (`Input::Touch::began`).
+
+### New bindings
+| Text | Means |
+| --- | --- |
+| `chord:ctrl+z`, `chord:ctrl+shift+s` | two to four keys that must all be held. A held chord keeps its keys to itself: Ctrl+Z does not also Crouch (Ctrl) or fire a plain `key:z` |
+| `wheel:up`, `wheel:down` | one notch of the mouse wheel this frame (weapon switch, zoom) |
+
+### Response: dead zone, curve, sensitivity, invert
+Each action can shape its reading: `InputActions::SetResponse("Look", {deadzone, curve, sensitivity, invertX, invertY})`,
+OkayScript `set_response("look", 0.1, 2, 1)`. Dead zone (0..0.95) stretches the rest back to 0..1; curve is `in ^ curve`
+(2 = fine aim near the centre); sensitivity multiplies after the curve and may pass 1 (look speed), invert flips a
+direction's axes. The default is neutral, so old actions read exactly as before. `InputActions::ShapeValue(in, r)` gives
+the curve for drawing; the editor's Input panel draws it. Saved as `inputresp.<action>`.
+
+### Timing: buffering, double tap, hold to confirm
+Time is the seconds passed to `InputActions::Tick(dt)` (`Tick()` measures it).
+* `Buffered("Jump", 0.15)`: a press happened in the last 0.15 s and was not used yet; `Consume("Jump")` uses it up, so a
+  jump pressed just before landing fires once, on landing, and never twice. OkayScript `action_buffered`, `action_consume`.
+* `DoubleTap("Interact", 0.3)`: pressed now and also less than 0.3 s before.
+* `HeldFor`, `HoldProgress("Reload", 1.0)` (0..1 for a progress ring) and `HoldReached("Reload", 1.0)` (true on the frame
+  the second is reached) for hold-to-confirm.
+
+### Several local players
+`InputActions::SetPerPlayer("Jump")` makes an action also readable per controller: `Get("Jump", 2)` is the third
+controller. Controller bindings follow the player (a plain `pad:a` is A on whichever controller asks); the keyboard and
+mouse belong to player 0. OkayScript: `action("jump", 1)`, `action_x("move", 1)`. The plain `Get("Jump")` still reads the
+first controller and the keyboard.
+
+### Rebinding
+Conflict checks and swapping are the existing remap model (`RemapConflicts("Jump", "key:e")`, `RemapBind(..., RemapResolve::Swap)`
+in `RemapModel.hpp`, the data side of a Controls screen); it now understands chords and wheel bindings. OkayScript:
+`action_conflicts("jump", "key:e")`, `rebind_swap("jump", "key:e")`. `ExportBindings` / `ImportBindings` write and read a versioned block (`okayinput 1`);
+`SaveProfile("Player 2")` / `LoadProfile` keep named sets in Prefs. `ApplyPreset("left")` and `("right")` put every action
+on one half of the keyboard (one-handed play); `Reset()` undoes them.
+
+### Pictures that follow the device
+`Input::LastDevice()` says whether the player last used the keyboard, mouse, a controller or touch. `Input::GamepadFamily(p)`
+is Xbox, PlayStation or Switch (set from the controller's name when it is plugged in). `binding.Label(family)` prints
+"Cross" or "R2" for a PlayStation pad, "B" for the Switch's right button. OkayScript: `input_device()`, `action_label("jump")`.
+
+### Recording and replay (`InputRecorder`)
+`InputRecorder::StartRecording()` ... `StopRecording()`, then `StartPlayback(InputRecorder::Text())`. It works inside
+`InputActions::Tick`: recording copies the keys, mouse, wheel and every controller; playback puts the recorded frame back
+over what the host fed and rebuilds the press and release edges. The text is plain and versioned (`okayinputrec 1`) and
+carries a seed and a note so a bug report can say how to replay it. OkayScript: `input_record("start")`, `("stop")`,
+`("play")`, `("status")`. Not yet: tying frames to the scene file and the game's random seed automatically (feature map
+46.1 stays Planned for that part).
+
+### The Input panel (editor)
+**View > Panels > Input** (the Window menu in the editor): live keys, mouse, controllers and non-zero actions, the last
+events (`Key Space down`, `Pad 2 A down`, `Action Jump down`), record / replay buttons and, per action, sliders for dead
+zone, curve, sensitivity and invert with the curve drawn. It only shows input while the game plays.
+
+### Speed
+The action list is looked up through a hash map (it was a scan with two string copies per action), the per-frame
+evaluation allocates nothing, and the held-key table is a fixed array (it was copied as a hash map every frame).
+`OKAY_OLD_INPUT=1` restores the old lookup and evaluation order for comparison. Numbers: `docs/input_audit.md`.

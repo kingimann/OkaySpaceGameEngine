@@ -211,6 +211,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a ray misses a rotated box | [36.6](36-math-geometry.md#366-geometry-helpers-elsewhere) Geometry helpers elsewhere |
 | a rebinding is forgotten after restart | [8.3](08-input.md#83-input-actions-and-rebinding-ui) Input actions and rebinding UI |
 | a rebound key still triggers the old action | [8.3](08-input.md#83-input-actions-and-rebinding-ui) Input actions and rebinding UI |
+| a rebound Move stops working | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | a red tile for a broken image | [1.20](01-core-scene.md#120-asset-thumbnails) Asset thumbnails |
 | a release has no installer or is missing an exe the updater wants | [18.4](18-build-export-release.md#184-release-workflow) Release workflow |
 | a remote player can be driven by my keys | [16.8](16-networking.md#168-network-player-spawning-and-avatar-motion) Network player spawning and avatar motion |
@@ -299,6 +300,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a variable differs between players | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
 | a variable is empty after loading another scene | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
 | a very deep hierarchy crashed or hung | [1.3](01-core-scene.md#13-scene-graph) Scene graph |
+| a very quick tap is lost | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | a voice call won't connect | [16.7](16-networking.md#167-voice-chat-server) Voice chat server |
 | a Wait node never resumes | [14.3](14-visual-scripting.md#143-functions-loops-control-flow) Functions, loops, control flow |
 | a wall floats after its base is shot out | [6.6](06-physics.md#66-destructibles-and-projectiles) Destructibles and projectiles |
@@ -468,6 +470,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | crafting takes items but gives nothing | [11.3](11-gameplay-systems.md#113-crafting-and-recipes) Crafting and recipes |
 | Crash reports page empty | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
 | Ctrl+Tab picks the wrong panel | [15.9](15-editor.md#159-layout-undo-autosave) Layout, undo, autosave |
+| Ctrl+Z also crouches | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | Ctrl+Z undoes the wrong thing after mesh editing | [22.1](20-35-planned.md#221-undo-history) Undo history |
 | D3D12 view lacks bump detail | [26.4](20-35-planned.md#264-pbr) PBR |
 | damage ignores armor | [11.9](11-gameplay-systems.md#119-rpg-stats-and-xp) RPG stats and XP |
@@ -629,6 +632,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | Join does nothing | [17.15](17-launcher-platform.md#1715-multiplayer-page-and-game-link) Multiplayer page and game link |
 | jump feels floaty | [4.3](04-characters-cameras.md#43-2d-and-25d-controllers) 2D and 2.5D controllers |
 | jump plays when stepping off a curb | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |
+| jump pressed just before landing is ignored | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | knockback is too weak or too strong | [6.8](06-physics.md#68-forces-explosions-and-body-push-out) Forces, explosions and body push-out |
 | labels or favourites vanish | [20.1](20-35-planned.md#201-asset-browser) Asset browser |
 | lathe shape is inside out | [3.9](03-modeling-import.md#39-generate-and-whole-mesh-operations) Generate and whole-mesh operations |
@@ -1170,6 +1174,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | typed text misses capitals or symbols | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
 | typing does nothing or opens game input | [12.3](12-ingame-ui.md#123-input-widgets-slider-toggle-input-field-dropdown-stepper-keybind) Input widgets: slider, toggle, input field, dropdown, stepper, keybind |
 | typing in a script UI input also moves the character | [40.4](40-okayui-library.md#404-hosts-script-bridge-and-built-in-windows) Hosts, script bridge and built-in windows |
+| typing in a text field also moves the player | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | typing in a text field drops a character | [40.6](40-okayui-library.md#406-headless-software-backend-and-test-harness) Headless software backend and test harness |
 | typing lags in a big script | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | UDP port blocked by a firewall | [41.5](41-build-tools-infra.md#415-server-deployment-kits) Server deployment kits |
@@ -1198,6 +1203,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | vibration cannot be turned off by the player | [8.6](08-input.md#86-rumble-and-haptics) Rumble and haptics |
 | View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | vignette drawn twice | [2.5](02-rendering-world.md#25-post-processing) Post-processing |
+| W A S D dead on a Russian keyboard | [8.7](08-input.md#87-input-upgrade-timing-curves-per-player-actions-recording-the-input-panel) Input upgrade: timing, curves, per-player actions, recording, the Input panel |
 | Wait skips | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | waiting to be sent" never changes | [17.16](17-launcher-platform.md#1716-crash-reports-launcher-side) Crash reports (launcher side) |
 | walk hips snap at every footfall | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |

@@ -120,6 +120,8 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/InputRecorder.hpp"
+#include "okay/Input/RemapModel.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
 #include "okay/Core/GameSaves.hpp"
@@ -3846,23 +3848,92 @@ struct OkayScriptVM::Impl {
         b["key"]    = [](std::vector<Value>& a) {
             if (a.empty()) return Value{false};
             char c = KeyCharFromName(a[0].AsString());
-            return Value{c != 0 && Input::GetKey(c)};
+            return Value{c != 0 && Input::GetKeyGame(c)};
         };
         b["key_down"] = [](std::vector<Value>& a) {
             if (a.empty()) return Value{false};
             char c = KeyCharFromName(a[0].AsString());
-            return Value{c != 0 && Input::GetKeyDown(c)};
+            return Value{c != 0 && Input::GetKeyDownGame(c)};
         };
         // Game actions (InputActions): action("jump"), action_down / action_up,
         // action_value (0..1), action_x / action_y for Move / Look, rumble(low, high, s),
         // rebind("interact", "key:f").
         auto actName = [](std::vector<Value>& a) { return a.empty() ? std::string() : a[0].AsString(); };
-        b["action"]       = [actName](std::vector<Value>& a) { return Value{InputActions::Get(actName(a))}; };
-        b["action_down"]  = [actName](std::vector<Value>& a) { return Value{InputActions::Down(actName(a))}; };
-        b["action_up"]    = [actName](std::vector<Value>& a) { return Value{InputActions::Up(actName(a))}; };
-        b["action_value"] = [actName](std::vector<Value>& a) { return Value{InputActions::Value(actName(a))}; };
-        b["action_x"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).x}; };
-        b["action_y"]     = [actName](std::vector<Value>& a) { return Value{InputActions::Vector(actName(a)).y}; };
+        // A second argument names the controller (0..3) for an action marked per player.
+        auto playerOf = [](std::vector<Value>& a) { return a.size() > 1 ? SafeInt(a[1].AsFloat()) : -1; };
+        b["action"]       = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{p < 0 ? InputActions::Get(actName(a)) : InputActions::Get(actName(a), p)}; };
+        b["action_down"]  = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{p < 0 ? InputActions::Down(actName(a)) : InputActions::Down(actName(a), p)}; };
+        b["action_up"]    = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{p < 0 ? InputActions::Up(actName(a)) : InputActions::Up(actName(a), p)}; };
+        b["action_value"] = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{p < 0 ? InputActions::Value(actName(a)) : InputActions::Value(actName(a), p)}; };
+        b["action_x"]     = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{(p < 0 ? InputActions::Vector(actName(a)) : InputActions::Vector(actName(a), p)).x}; };
+        b["action_y"]     = [actName, playerOf](std::vector<Value>& a) { const int p = playerOf(a); return Value{(p < 0 ? InputActions::Vector(actName(a)) : InputActions::Vector(actName(a), p)).y}; };
+        // Timing: action_buffered("jump", 0.15) is true for a moment after a press until action_consume("jump")
+        // uses it; action_double_tap, action_held (seconds held), action_hold("x", 1.5) (0..1 progress).
+        b["action_buffered"]   = [actName](std::vector<Value>& a) { return Value{InputActions::Buffered(actName(a), a.size() > 1 ? a[1].AsFloat() : 0.15f)}; };
+        b["action_consume"]    = [actName](std::vector<Value>& a) { return Value{InputActions::Consume(actName(a))}; };
+        b["action_double_tap"] = [actName](std::vector<Value>& a) { return Value{InputActions::DoubleTap(actName(a), a.size() > 1 ? a[1].AsFloat() : 0.3f)}; };
+        b["action_held"]       = [actName](std::vector<Value>& a) { return Value{InputActions::HeldFor(actName(a))}; };
+        b["action_hold"]       = [actName](std::vector<Value>& a) { return Value{InputActions::HoldProgress(actName(a), a.size() > 1 ? a[1].AsFloat() : 1.0f)}; };
+        b["action_hold_done"]  = [actName](std::vector<Value>& a) { return Value{InputActions::HoldReached(actName(a), a.size() > 1 ? a[1].AsFloat() : 1.0f)}; };
+        // Which device the player used last, and the action's button as that device names it
+        // ("Cross" on a PlayStation pad, "E" on the keyboard).
+        b["input_device"] = [](std::vector<Value>&) {
+            switch (Input::LastDevice()) {
+                case Input::Device::Gamepad: return Value{std::string("gamepad")};
+                case Input::Device::Mouse:   return Value{std::string("mouse")};
+                case Input::Device::Touch:   return Value{std::string("touch")};
+                default:                     return Value{std::string("keyboard")};
+            }
+        };
+        b["action_label"] = [actName](std::vector<Value>& a) {
+            const InputActions::Action* act = InputActions::Find(actName(a));
+            if (!act) return Value{std::string()};
+            const bool pad = Input::LastDevice() == Input::Device::Gamepad;
+            const InputBinding* bnd = InputActions::Current(act->name, pad);
+            if (!bnd) bnd = InputActions::Current(act->name, !pad);
+            return Value{bnd ? bnd->Label(Input::GamepadFamily(Input::LastGamepad())) : std::string()};
+        };
+        b["action_conflicts"] = [](std::vector<Value>& a) {
+            std::string out;
+            if (a.size() >= 2) for (const RemapConflict& c : RemapConflicts(a[0].AsString(), a[1].AsString())) { if (!out.empty()) out += ", "; out += c.action; }
+            return Value{out};
+        };
+        b["rebind_swap"] = [](std::vector<Value>& a) { return Value{a.size() >= 2 && RemapBind(a[0].AsString(), a[1].AsString(), RemapResolve::Swap).ok}; };
+        b["reset_bindings"] = [](std::vector<Value>&) { InputActions::Reset(); InputActions::Save(); return Value{}; };
+        b["input_preset"] = [](std::vector<Value>& a) { return Value{!a.empty() && InputActions::ApplyPreset(a[0].AsString())}; };
+        b["set_response"] = [](std::vector<Value>& a) {   // (action, deadzone, curve, sensitivity [, invertX, invertY])
+            if (a.empty()) return Value{false};
+            InputActions::Response r = InputActions::GetResponse(a[0].AsString());
+            if (a.size() > 1) r.deadzone = a[1].AsFloat();
+            if (a.size() > 2) r.curve = a[2].AsFloat();
+            if (a.size() > 3) r.sensitivity = a[3].AsFloat();
+            if (a.size() > 4) r.invertX = a[4].AsFloat() != 0.0f;
+            if (a.size() > 5) r.invertY = a[5].AsFloat() != 0.0f;
+            return Value{InputActions::SetResponse(a[0].AsString(), r)};
+        };
+        b["response_curve"] = [](std::vector<Value>& a) {   // (action, t 0..1) -> shaped value, to draw the curve
+            return Value{a.size() < 2 ? 0.0f : InputActions::ShapeValue(a[1].AsFloat(), InputActions::GetResponse(a[0].AsString()))};
+        };
+        b["mouse_wheel"] = [](std::vector<Value>&) { return Value{Input::MouseWheel()}; };
+        b["gamepad_count"] = [](std::vector<Value>&) { return Value{(float)Input::GamepadCount()}; };
+        b["gamepad_connected"] = [](std::vector<Value>& a) { return Value{Input::GamepadConnected(a.empty() ? 0 : SafeInt(a[0].AsFloat()))}; };
+        b["set_per_player"] = [](std::vector<Value>& a) { if (!a.empty()) InputActions::SetPerPlayer(a[0].AsString(), a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };
+        // Input recording: input_record("start") ... input_record("stop"), then input_record("play")
+        // replays it. "status" says what it is doing. The recording is kept as text in the variable
+        // returned by input_record("text") (a bug report can paste it).
+        b["input_record"] = [](std::vector<Value>& a) {
+            const std::string cmd = a.empty() ? std::string("status") : a[0].AsString();
+            if (cmd == "start") { InputRecorder::StartRecording(); return Value{std::string("recording")}; }
+            if (cmd == "stop") { InputRecorder::StopRecording(); InputRecorder::StopPlayback(); return Value{std::to_string(InputRecorder::FrameCount()) + " frames"}; }
+            if (cmd == "play") {
+                const std::string text = InputRecorder::Text();
+                return Value{InputRecorder::StartPlayback(text) ? std::string("playing") : std::string("nothing recorded")};
+            }
+            if (cmd == "text") return Value{InputRecorder::Text()};
+            if (InputRecorder::Recording()) return Value{"recording, " + std::to_string(InputRecorder::FrameCount()) + " frames"};
+            if (InputRecorder::Playing()) return Value{"playing, frame " + std::to_string(InputRecorder::PlaybackFrame()) + " of " + std::to_string(InputRecorder::FrameCount())};
+            return Value{InputRecorder::FrameCount() ? std::to_string(InputRecorder::FrameCount()) + " frames kept" : std::string("idle")};
+        };
         // Touch gestures. gesture("tap"), gesture("double tap"), gesture("long press"),
         // gesture("swipe"), gesture("swipe up"|"down"|"left"|"right"), gesture("pinch"),
         // gesture("rotate"). True on the frame it happens.

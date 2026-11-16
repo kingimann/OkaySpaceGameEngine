@@ -26,7 +26,7 @@ asks for a scene path: type or paste it, or press **Browse...**. A scene finds t
 sequences) next to itself, so the folder works from any install path.
 
 What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
-`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
+`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`, `input`.
 Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
 `visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
 `scripts/build-windows-dist.sh` on Linux (see "How the packaging was checked" at the end); nobody has run the whole
@@ -57,6 +57,7 @@ release job or the installer build for this change.
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
+| 7x | Input upgrade: input playground scene, Input panel, fast taps kept, typing does not walk the player, chords, buffering, curves, rebinding, two players, controller button pictures, record and replay | `examples\input\input_playground.okayscene`; editor **Window > Input**; `OKAY_OLD_INPUT=1` brings the old slower evaluation back | New in this change; verified headless only (a picture of the scene was rendered with the software painter); not run in a real window or with a real controller |
 
 ---
 
@@ -224,6 +225,44 @@ and your turn is drawn as you set it.
 **Status.** Tested on main: headless `turn_interpolation` and `controller_interpolation` tests (a real third person
 controller at 30, 60 and 144 fps; the test failed on the old code and passes now). Unverified: the feel in the editor.
 The before-and-after of the bug needs the old release to compare.
+
+---
+
+## 7x. Input playground and the input upgrade
+
+**What it is.** Keys, mouse, controllers and touch were looked at end to end (`docs/input_audit.md`). Six bugs were fixed
+and a set of features was added. One example scene has a station for each, with live text on the screen.
+
+**Steps (Windows release).**
+1. Open `Tools\OkayEngine.exe`, **File > Open...**, paste the path to `examples\input\input_playground.okayscene` (see
+   "Where the files are" above), press **Play**, and click the Game view.
+2. Station **A, Devices**: press keys, move the mouse, spin the wheel, push a controller stick. The text shows the last device
+   used (keyboard, mouse or gamepad) and, for a PlayStation or Switch pad, **Jump button: Cross** or **B** instead of A.
+3. Station **B, Timing**: tap Space and look at "Jump remembered": it says true for 0.3 s; press C to use it up and it says
+   false. Tap E twice fast: "DOUBLE TAP!". Hold R for one second: the percentage climbs to 100% and says CONFIRMED.
+4. Station **C, Chords and wheel**: hold Ctrl then press Z. "Undo (Ctrl+Z)" says true and "Crouch (Ctrl alone)" stays false.
+   Roll the mouse wheel: "Mouse wheel up/down" flips.
+5. Station **D, Dead zone and curve**: push the right stick (or move the mouse) and watch "Look right now". Press 4 to change
+   the curve (1, 2, 3); the bars show how far you push against what the game gets.
+6. Station **E, Rebinding**: press 5 (Interact moves to F), 6 (Jump takes E; "E was also bound to: Interact" shows the
+   conflict and Interact gets Space, so nothing is left unbound), 8 or 9 (one-handed presets), 7 (everything back to normal).
+   These are saved for the player, so press 7 when you are done.
+7. Station **F, Two players**: with two controllers, press A on the second one. "P2 jump" turns true and "P1 jump" stays false.
+8. Station **G, Record / replay**: press 1, move around and press keys for a few seconds, press 2, then 3. The same input plays
+   back and the real keyboard is ignored until it ends.
+9. The editor **Window > Input** panel shows the same things in a window: keys held, mouse, controllers, the last events, record
+   and replay buttons, and a curve with sliders for each action. It shows input only while the game plays.
+10. Fixes you can feel: type in a UI text field while playing and the player no longer walks; on a Russian or Greek keyboard
+    layout W A S D still move; a very quick tap on a key is no longer lost.
+
+**Switch the old behaviour back.** Start the editor or player with the environment variable `OKAY_OLD_INPUT=1`: the action
+lookup and evaluation order go back to the old (slower) version. Results are the same (a test checks 600 random frames against
+it). The bug fixes and new features stay.
+
+**Status.** Headless tests only: `input_deep` (192 checks) and `input_playground` (the scene's scripts run and show the right words).
+A picture of the scene was rendered with the software painter (`docs/images/input-playground.png`), not a real window.
+Unverified: a real keyboard layout, a real controller, the Input panel in the real editor (its code compiles but was not run),
+fast-tap forwarding in a real window, and the Windows build.
 
 ---
 

@@ -100,6 +100,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Admin: create test servers without a game (not started: "test server" needs a definition from the owner; see unfinished_launcher.md)
 - Improve the editor Plugins menu
 - Editor menus, follow-ups from the 2026-11-15 clean-up ([editor_menus.md](editor_menus.md), section 5): Ctrl+X with several objects selected deletes them all but keeps only one on the clipboard (the menus refuse Cut for several, the key does not); Copy and the clipboard hold one object, not a selection; what a menu click does (`RunMenuAction`, `HierRowAction`) has no test, only the lists do; the Inspector and Project menus are separate branches
+- Input, left over from the 2026-11 input upgrade ([input_audit.md](input_audit.md)): (1) AZERTY and other layouts: the key labelled W is "W", there is no option to read key positions (ZQSD); (2) rumble keeps one pending request and has no patterns; (3) no gyro or touch-pad in the platform layer; (4) recording keeps keys, mouse and controllers but is not yet tied to the scene file and the game's random seed (46.1); (5) the editor Input panel and the fast-tap and text-focus hooks in `player/main.cpp` and `editor/main.cpp` compile but were never run in a real window; (6) stuck keys on focus loss, key repeat, high-DPI mouse scaling and controller hot-plug in the real backend were read, not run; (7) no Controls screen template yet uses the new `ApplyPreset` / profiles (the remap model, `RemapModel.hpp`, already does conflicts and swap)
 - Improve inventory systems (survival-game style): partly done (moves, stack and weight rules, slot-to-grid moves); see [inventory.md](inventory.md) for what is left
 - Scene Manager window in the editor
 - Full UI component library (essential, game, app, layout, data-driven)
@@ -295,7 +296,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | [32.1](feature_map/20-35-planned.md#321-controller-navigation) | Controller navigation | Partial | one shared ring is drawn from the theme and the accessibility settings; there is no focus sound; the graph is built from screen rectangles each time it is asked |
 | [32.2](feature_map/20-35-planned.md#322-subtitles) | Subtitles | Partial | speaker colours need a colour-vision-safe palette (32.3); subtitle size, background and speaker-name rows, and SRT import. An Audio Source caption is shown when sound captions are on. |
 | [32.3](feature_map/20-35-planned.md#323-colorblind-options) | Colorblind options | Partial | the GPU renderers do not read the settings; the speaker-colour palette in `CaptionManager` is the only consumer in the engine. |
-| [32.4](feature_map/20-35-planned.md#324-remapping) | Remapping | Partial | the UI navigation keys are fixed in code; mouse-button and wheel rebinding coverage is not checked. |
+| [32.4](feature_map/20-35-planned.md#324-remapping) | Remapping | Partial | the UI navigation keys are fixed in code; mouse-button rebinding coverage is not checked (wheel bindings `wheel:up` / `wheel:down` exist since the input upgrade). |
 
 ### 33. Automated testing (Critical)
 

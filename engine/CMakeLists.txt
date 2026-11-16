@@ -56,6 +56,8 @@ add_library(okay_engine
     src/Core/ThumbnailCache.cpp
     src/Core/Localization.cpp
     src/Input/Input.cpp
+    src/Input/InputRecorder.cpp
+    src/Input/InputDebug.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
     src/Input/GestureRecognizer.cpp

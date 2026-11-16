@@ -82,7 +82,7 @@ public:
         for (int q = 0; q < Input::kMaxGamepads; ++q)
             if (m_pads[q] && m_pads[q]->InstanceId() == pad->InstanceId()) return q;
         for (int p = 0; p < Input::kMaxGamepads; ++p)
-            if (!m_pads[p]) { m_pads[p] = std::move(pad); return p; }
+            if (!m_pads[p]) { m_pads[p] = std::move(pad); NoteFamily(p); return p; }
         return -1;
     }
     /// Open device `index` into the first free slot; returns the player index or -1.
@@ -96,6 +96,7 @@ public:
                 for (int q = 0; q < Input::kMaxGamepads; ++q)   // already open (a rescan)
                     if (m_pads[q] && m_pads[q]->InstanceId() == c->InstanceId()) return q;
                 m_pads[p] = std::move(c);
+                NoteFamily(p);
                 return p;
             }
         return -1;
@@ -113,6 +114,11 @@ public:
     }
     void CloseAll() { for (auto& c : m_pads) c.reset(); }
 private:
+    /// Pictures follow the controller that was plugged in (Xbox, PlayStation, Switch).
+    void NoteFamily(int p) {
+        const char* n = m_pads[p] ? m_pads[p]->Name() : nullptr;
+        Input::SetGamepadFamily(p, Input::FamilyFromName(n ? n : ""));
+    }
     std::unique_ptr<platform::Gamepad> m_pads[Input::kMaxGamepads];
 };
 

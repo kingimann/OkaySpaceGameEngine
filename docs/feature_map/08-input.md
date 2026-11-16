@@ -60,7 +60,7 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Docs:** `docs/input.md`
 - **Tests:** `input_actions`, `ui_input_guard`, `input_keys_gamepad`, `focus_remap`
 - **Status:** Works - InputActions.hpp and the defaults and rebind code in InputActions.cpp read; covered by `input_actions`; contexts (#571, `input_keys_gamepad`) and the remap model (#574, `focus_remap`) are on main
-- **Open:** the pause menu pushes the Pause context in Block mode while it is open (other menus still use only `Input::SetUICaptured`, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; no combos or chords
+- **Open:** the pause menu pushes the Pause context in Block mode while it is open (other menus still use only `Input::SetUICaptured`, 8.5); no Controls screen template yet (`RemapModel` is the data side, 32.4); action names are case-insensitive strings, with no editor to author actions; chords (`chord:ctrl+z`) and wheel bindings exist since the input upgrade (8.7)
 - **Related:** 8.2, 8.5, 12.3, 12.8, 32.4
 - **Words:** input action, InputActions, rebinding, keybind, key binding, controls menu, remap, Jump, Fire, Interact, input map, input contexts, action map, binding text
 - **Seen as:** a rebound key still triggers the old action; pressing the pause key also jumps; a rebinding is forgotten after restart; the same key works for two actions
@@ -118,3 +118,27 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
 - **Words:** rumble, vibration, haptics, force feedback, controller shake, Rumble, low motor, high motor
 - **Seen as:** the controller does not shake on a hit or explosion; vibration cannot be turned off by the player
 - **Ask me like:** "shake the controller when the player takes damage"; "add a vibration on/off setting"
+
+### 8.7 Input upgrade: timing, curves, per-player actions, recording, the Input panel
+- **What:** Fixes found by the input audit (fast taps, typing moving the player, layouts without Latin letters, rebinding Move) and new features built on 8.1-8.3: chord and wheel bindings, per-action dead zone / curve / sensitivity / invert, input buffering and double tap and hold-to-confirm, per-player actions, rebind conflicts and swap, profiles and one-handed presets, controller picture names by family, the last-used device, input recording and replay, and an editor Input panel.
+- **Parts:**
+  - 8.7.1 Fast taps and typing - `Input/Input` - `FeedKeyTap`, `FeedMouseTap` (a press shorter than a poll still counts); `SetTextFocused`, `GetKeyGame`, `GetKeyDownGame` (a text field keeps its keys from the game); `Touch::began`
+  - 8.7.2 Layout fallback - `Input/PlatformKeys` - `KeyForLetter`, `TapCharsForKey` (layouts with no Latin letters use the US key positions)
+  - 8.7.3 Chords, wheel, response - `Input/InputActions` - `chord:ctrl+z`, `wheel:up`, `SetResponse`, `ShapeValue`; a held chord keeps its keys from single-key bindings
+  - 8.7.4 Timing - `Input/InputActions` - `Buffered`, `Consume`, `DoubleTap`, `HeldFor`, `HoldProgress`, `HoldReached`, `Tick(dt)`
+  - 8.7.5 Players, rebinding, profiles - `Input/InputActions` - `SetPerPlayer`, `Get(name, player)`, `ExportBindings`, `SaveProfile`, `ApplyPreset` (conflicts and swap are the existing `RemapConflicts` / `RemapBind`, now chord- and wheel-aware)
+  - 8.7.6 Pictures and device - `Input/Input` - `LastDevice`, `GamepadFamily`, `GamepadButtonLabel`, `FamilyFromName`; `InputBinding::Label(family)`
+  - 8.7.7 Recording - `Input/InputRecorder` - `StartRecording`, `StartPlayback`, `Text`; plain versioned text with a seed and a note
+  - 8.7.8 Debugger - `Input/InputDebug`, `editor/InputDebugger.hpp` - the live state and the last events; Window > Input in the editor
+  - 8.7.9 Speed - `Input/InputActions` - hash lookup, no per-frame allocation, fixed key arrays; `OKAY_OLD_INPUT=1` for the old evaluation
+- **Code:** `Input/Input`, `Input/InputActions`, `Input/InputRecorder`, `Input/InputDebug`, `Input/PlatformKeys`, `engine/src/Input/*.cpp`, `editor/InputDebugger.hpp`, `player/main.cpp`, `editor/main.cpp`, `examples/input/input_playground.okayscene`
+- **API:** `Input::FeedKeyTap`, `Input::SetTextFocused`, `InputActions::SetResponse`, `InputActions::Buffered`, `InputActions::Consume`, `InputActions::SetPerPlayer`, `InputRecorder::StartRecording`, `InputDebug::Enable`, script `action_buffered`, `action_consume`, `action_double_tap`, `action_hold`, `set_response`, `action_label`, `input_device`, `input_record`
+- **Editor:** Window > Input (live keys, mouse, controllers, actions, last events, record and replay, response curves); `examples/input/input_playground.okayscene`
+- **Docs:** `docs/input.md`, `docs/input_audit.md`, `docs/try_it.md` row 7x
+- **Tests:** `input_deep`, `input_playground`, `input_actions`, `input_keys_gamepad`
+- **Status:** Works headless - 192 checks in `input_deep`, the shipped scene run by `input_playground`; not run in a real window, with a real controller or on a real keyboard layout
+- **Open:** AZERTY physical positions (ZQSD) are not an option; no haptic patterns; no gyro; recording does not yet tie frames to the scene file and the game's random seed (46.1); the Input panel was syntax-checked but not run; the old "pressed between polls" loss is fixed only where the host forwards key events (player and editor Play)
+- **Related:** 8.1, 8.2, 8.3, 8.6, 32.4, 46.1
+- **Words:** input buffer, jump buffer, coyote, double tap, hold to confirm, chord, combo, Ctrl+Z, mouse wheel binding, dead zone, response curve, sensitivity, invert Y, local multiplayer, two players, controller glyphs, PlayStation buttons, record input, replay input, input debugger, one-handed, typing moves the player
+- **Seen as:** a very quick tap is lost; typing in a text field also moves the player; W A S D dead on a Russian keyboard; Ctrl+Z also crouches; a rebound Move stops working; jump pressed just before landing is ignored
+- **Ask me like:** "buffer the jump so it still works just before landing"; "show PlayStation button pictures when a PlayStation pad is used"; "record my input so I can replay a bug"

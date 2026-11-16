@@ -655,6 +655,10 @@ add_executable(test_voxel test_voxel.cpp)
 target_link_libraries(test_voxel PRIVATE okay::engine)
 add_test(NAME voxel COMMAND test_voxel)
 
+add_executable(test_voxel_slope_friction test_voxel_slope_friction.cpp)
+target_link_libraries(test_voxel_slope_friction PRIVATE okay::engine)
+add_test(NAME voxel_slope_friction COMMAND test_voxel_slope_friction)
+
 add_executable(test_pausemenu test_pausemenu.cpp)
 target_link_libraries(test_pausemenu PRIVATE okay::engine)
 add_test(NAME pausemenu COMMAND test_pausemenu)

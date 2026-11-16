@@ -422,6 +422,29 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Voxel slopes: a player standing still stays put (branch `claude2/voxel-slope-friction`, not merged or released yet)
+
+Bug: in the **Sandbox** template the player slid slowly downhill (about 0.2 m/s) on a hill with no key held. Voxel
+ground had no friction; box and mesh floors did. Now voxel ground uses the same friction as they do.
+
+1. Make a project from the **Sandbox** template (launcher Create page, or File > New Project... in the editor) and press
+   **Play**.
+2. Walk (W) onto a hillside, not a cliff, and let go of every key.
+3. Expect: the player stops and stays where it stopped (after a few centimetres of settling). Before the fix it kept
+   creeping downhill for as long as you watched.
+4. Dig (left mouse) a steep wall and stand on it: on slopes steeper than the Player Controller's slope limit
+   (50 degrees by default) the player now slides down, as on heightmap terrain. Before, voxel ground never reported
+   its slope, so the limit never applied there.
+5. A crate pushed across flat voxel ground now slows and stops like on a box floor (before, it slid on and on).
+
+**Status.** Verified here (Linux, headless): `test_voxel_slope_friction` puts a capsule, the Sandbox player and the real
+Sandbox template's player (moved onto a 16 degree hillside) on voxel slopes. Before the fix the template player moved
+0.39 m in 2 s (0.2 m/s, the reported creep); after, 0.000 m. A 45 degree slope still slides, the same distance as on a
+mesh ramp. A one-off run put the Sandbox player on a 55 degree voxel slope: it slid 2 m in 1 s with the slope's normal
+reported (step 4). Unverified: the editor window and the Windows build. Known limit, same on every surface: a body that is not
+allowed to sleep (Rigidbody3D **Allow Sleep** off) still creeps a few centimetres a second on a slope, on voxel, box and
+mesh ground alike.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

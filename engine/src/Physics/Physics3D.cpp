@@ -864,6 +864,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             // can never slip BETWEEN two spheres and be missed.
             int spheres = (int)std::ceil((headY - footY) / std::max(radius, 0.01f)) + 1;
             if (spheres < 2) spheres = 2; if (spheres > 12) spheres = 12;
+            bool floorNormal = false;   // groundNormal came from a floor contact this step
 
             for (VoxelTerrain* vox : voxels) {
                 if (!vox->gameObject || !vox->gameObject->transform) continue;
@@ -910,8 +911,24 @@ void Physics3D::Step(Scene& scene, float dt) {
                             v.x -= vn * n.x * (1.0f + rest);
                             v.y -= vn * n.y * (1.0f + rest);
                             v.z -= vn * n.z * (1.0f + rest);
+                            // Coulomb friction, the model and values of a mesh contact: the
+                            // terrain is a static surface of friction 0.6, so mu = sqrt(body x
+                            // 0.6), and the sliding speed drops by at most mu x the speed the
+                            // push above took away. Without it the slope's pull stayed behind
+                            // as sideways speed and a body standing still crept downhill.
+                            Vec3 tang = v - n * Vec3::Dot(v, n);
+                            float tl = std::sqrt(Vec3::Dot(tang, tang));
+                            if (tl > 1e-4f) {
+                                float mu = std::sqrt(std::max(0.0f, rb->friction) * 0.6f);
+                                float drop = std::min(tl, mu * -vn * (1.0f + rest));
+                                v = v - tang * (drop / tl);
+                            }
                         }
-                        if (n.y > 0.4f) rb->groundedOnTerrain = true;   // standing on a floor
+                        if (n.y > 0.4f) {                // standing on a floor (its normal feeds slope limits)
+                            rb->groundedOnTerrain = true;
+                            rb->groundNormal = n;
+                            floorNormal = true;
+                        }
                     }
                 }
 
@@ -925,8 +942,14 @@ void Physics3D::Step(Scene& scene, float dt) {
                     Vec3 below{pos.x - vp.x, (pos.y + footY - radius - 0.06f) - vp.y, pos.z - vp.z};
                     bool solidBelow = vox->WithinBounds(below, 0.0f) &&
                                       vox->SampleDensity(below) > vox->iso;
-                    if (solidBelow) rb->groundedOnTerrain = true;
-                    else if (rb->sleeping) rb->WakeUp();
+                    if (solidBelow) {
+                        rb->groundedOnTerrain = true;
+                        // At rest (asleep, or no push this step) the normal comes from the
+                        // ground under the feet, as the heightmap pass does every step.
+                        if (!floorNormal) rb->groundNormal = vox->SurfaceNormal(below);
+                    } else if (rb->sleeping) {
+                        rb->WakeUp();
+                    }
                 }
             }
         }

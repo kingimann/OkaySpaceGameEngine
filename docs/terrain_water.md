@@ -12,6 +12,8 @@ The sibling Mesh Renderer is what every backend draws. Sculpting updates that me
 
 **GameObject > Create > Voxel Terrain** makes a 3D density field meshed with marching cubes, so the ground can have caves, tunnels, and overhangs. Dig, Add, Smooth, Dig Box, and Remove Floaters edit the field. A Voxel Digger uses the left mouse to dig and the right mouse to add while playing.
 
+Rigidbodies stand on voxel ground with the same friction as on box and mesh floors: the body's `friction` combined with the ground's 0.6 (`sqrt(friction x 0.6)`, about 0.55 for the default 0.5). A body or player standing still on a hill stays put; ground steeper than the friction limit (about 29 degrees for the default) still slides. Physics fills the body's ground normal from the voxel surface, so a controller's Slope Limit works on voxel hills as it does on heightmap terrain.
+
 ## Water
 
 **GameObject > Create > Water** builds an animated wave mesh with a reflective, semi-transparent material. It follows the global wind. Rigidbodies float according to `fluidDensity` and `linearDrag`.

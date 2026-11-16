@@ -2220,6 +2220,22 @@ public:
         for (int t : copy.triangles) triangles.push_back(t + base);
         if (faceCols && copy.HasFaceColors())
             triColors.insert(triColors.end(), copy.triColors.begin(), copy.triColors.end());
+        // Everything else that runs parallel to the vertices or faces is copied along, so the
+        // mirrored half keeps its UVs, vertex colours, material slots, polygons and edge weights.
+        if (copy.HasUVs() && uvs.size() == (std::size_t)base) uvs.insert(uvs.end(), copy.uvs.begin(), copy.uvs.end());
+        else if (!uvs.empty()) uvs.assign(vertices.size(), Vec2{0, 0});
+        if (copy.HasVertexColors() && vertexColors.size() == (std::size_t)base) vertexColors.insert(vertexColors.end(), copy.vertexColors.begin(), copy.vertexColors.end());
+        else if (!vertexColors.empty()) vertexColors.assign(vertices.size(), Color{1, 1, 1, 1});
+        if (copy.HasSlots()) triSlot.insert(triSlot.end(), copy.triSlot.begin(), copy.triSlot.end());
+        if (!copy.polyFace.empty() && copy.polyFace.size() == copy.triangles.size() / 3) {
+            int hi = 0; for (int id : polyFace) hi = std::max(hi, id + 1);
+            for (int id : copy.polyFace) polyFace.push_back(id + hi);
+        } else polyFace.clear();
+        if (copy.HasCornerUVs()) cornerUVs.insert(cornerUVs.end(), copy.cornerUVs.begin(), copy.cornerUVs.end());
+        else cornerUVs.clear();
+        for (const auto& sm : copy.seams) seams.push_back({sm.first + base, sm.second + base});
+        for (const EdgeCrease& c : copy.creases) creases.push_back({c.a + base, c.b + base, c.w});
+        for (const EdgeCrease& c : copy.bevelWeights) bevelWeights.push_back({c.a + base, c.b + base, c.w});
         normals.clear();
         name = "";
         if (weld) WeldVertices();

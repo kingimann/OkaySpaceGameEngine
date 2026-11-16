@@ -1190,5 +1190,28 @@ int main() {
         Mesh e = base; e.vertices[0].x += 1e-3f;                                    CHECK(okay::modeling::GeometryHash(e) != h0);
         CHECK(okay::modeling::GeometryHash(base) == h0);                            // and it is stable
     }
+    RUN_SUITE("mirror keeps every per-vertex and per-face attribute in step");
+    {
+        Mesh m = Mesh::Cube();
+        for (Vec3& v : m.vertices) v.x += 1.0f;                                   // a half model clear of the plane
+        m.uvs.assign(m.vertices.size(), Vec2{0.25f, 0.75f});
+        m.vertexColors.assign(m.vertices.size(), Color{1, 0, 0, 1});
+        m.triSlot.assign((size_t)m.TriangleCount(), 1); m.slotColors = {Color{1, 1, 1, 1}, Color{0, 1, 0, 1}};
+        m.polyFace.clear(); for (int f = 0; f < m.TriangleCount(); ++f) m.polyFace.push_back(f / 2);
+        const int nv0 = (int)m.vertices.size(), nt0 = m.TriangleCount();
+        m.Mirror(0, /*weld=*/false);
+        CHECK((int)m.vertices.size() == nv0 * 2 && m.TriangleCount() == nt0 * 2);
+        CHECK(m.uvs.size() == m.vertices.size());                                 // UVs follow the copied vertices
+        CHECK(m.vertexColors.size() == m.vertices.size());
+        CHECK((int)m.triSlot.size() == m.TriangleCount());                        // slots follow the copied faces
+        CHECK(m.polyFace.empty() || (int)m.polyFace.size() == m.TriangleCount());
+        CHECK(m.slotColors.size() == 2);
+        // With the weld on (the default) the lists must still match the welded mesh.
+        Mesh w = Mesh::Cube(); for (Vec3& v : w.vertices) v.x += 0.5f;
+        w.uvs.assign(w.vertices.size(), Vec2{0.5f, 0.5f}); w.triSlot.assign((size_t)w.TriangleCount(), 0); w.slotColors = {Color{1, 1, 1, 1}};
+        w.Mirror(0, true);
+        CHECK(w.uvs.size() == w.vertices.size() && (int)w.triSlot.size() == w.TriangleCount());
+        for (int t : w.triangles) CHECK(t >= 0 && t < (int)w.vertices.size());
+    }
     TEST_MAIN_RESULT();
 }

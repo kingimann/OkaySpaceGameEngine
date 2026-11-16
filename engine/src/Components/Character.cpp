@@ -683,7 +683,7 @@ bool Character::AnimatorSample(std::vector<Vec3>& pose, Vec3& root) const {
     pose.resize(B_COUNT, Vec3{0, 0, 0});
     // Landing on the move: the stride gives at the knees (a standing landing
     // plays the Land state instead).
-    if (m_landK > 0.0f && (anim == 2 || anim == 3)) root.y += HumanoidMotion::AbsorbLanding(pose, m_landK);
+    if (m_landK > 0.0f && (anim == 1 || anim == 2 || anim == 3)) root.y += HumanoidMotion::AbsorbLanding(pose, m_landK);
     return true;
 }
 

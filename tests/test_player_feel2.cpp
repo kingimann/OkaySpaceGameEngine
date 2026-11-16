@@ -181,7 +181,7 @@ int main() {
                 r.Frame({});
                 if (r.p->GetComponent<ThirdPersonController>()->IsGrounded()) {
                     if (after == 0) std::printf("[player_feel2]   touchdown: impact %.1f m/s, landImpact %.2f, anim %d\n", r.p->GetComponent<ThirdPersonController>()->debugState().lastLandSpeed, r.ch->LandImpact(), r.ch->anim);
-                    if (i == 1 && after < 24) { float lo = 1e9f; for (const Vec3& v : r.mr->mesh.vertices) lo = std::min(lo, r.p->transform->TransformPoint(v).y); std::printf("[player_feel2]   f%02d top %.3f lowest %.3f landImpact %.2f\n", after, r.Top(), lo - r.Pos().y, r.ch->LandImpact()); }
+                    if (i == 1 && after < 24) { float lo = 1e9f; for (const Vec3& v : r.mr->mesh.vertices) lo = std::min(lo, r.p->transform->TransformPoint(v).y); std::printf("[player_feel2]   f%02d top %.3f lowest %.3f landImpact %.2f posY %.3f stanceOffY %.3f animatorDriven %d height %.2f rigScale-ish\n", after, r.Top(), lo - r.Pos().y, r.ch->LandImpact(), r.Pos().y, r.ch->StanceOffset().y, (int)r.ch->AnimatorDriven(), r.ch->height); }
                     ++after; stand = std::max(stand, r.Top()); lowest = std::min(lowest, r.Top());
                     for (const Vec3& v : r.mr->mesh.vertices) lowestY = std::min(lowestY, r.p->transform->TransformPoint(v).y);
                 }
@@ -189,7 +189,10 @@ int main() {
             dip[i] = stand - lowest; lowFoot[i] = lowestY - r.Pos().y;
             std::printf("[player_feel2] standing landing from %.0f m: body drops %.3f m, lowest vertex %.3f m below the floor line\n", heights[i], dip[i], -lowFoot[i]);
         }
-        // The standing landing (idle) is hips-only and sinks the feet at depth: open gap, printed above, not asserted.
+        // The standing landing (idle, animator-driven body): knees bend and the body lowers by the same amount, feet stay.
+        CHECK(dip[1] > 0.30f);                 // player_feel2_idle_landing_pose: a hard standing landing is a clear crouch
+        CHECK(dip[1] > dip[0] * 1.5f);         // ...deeper than a step down
+        CHECK(lowFoot[0] > -0.03f && lowFoot[1] > -0.03f);   // feet stay at the floor line (they sank 16 cm when the hips dropped twice)
     }
 
     // ---- Third-person camera through a walk that changes speed: same path at 30 / 60 / 144 / 240 fps. ----

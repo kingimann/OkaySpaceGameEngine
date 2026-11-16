@@ -411,19 +411,16 @@ PolyMesh Neck(const Dim& d, const HeadShape& h, const std::string& design) {
     return SmoothLoft(st, kFwd, Sides(d, 14, 6), Rings(d, 7, 3), false, false);
 }
 // Two eyes as two parts: the white ball and the iris (a darker disc on its front), so each takes its own colour.
+// (Lids would be skin coloured, which a part of the eyes cannot be; they are left out.)
 PolyMesh EyeBalls(const HeadShape& h, const std::string& design, bool iris) {
     PolyMesh m;
     const float s = h.s, ey = h.yb + 0.118f * s, ex = (design == "big" ? 0.034f : 0.032f) * s;
-    const float er = (design == "big" ? 0.0155f : design == "narrow" ? 0.0105f : 0.0128f) * s;
+    const float er = (design == "big" ? 0.0145f : design == "narrow" ? 0.0098f : 0.0118f) * s;
     for (int sg = -1; sg <= 1; sg += 2) {
         const float z = FrontZ(h, sg * ex, ey) - er * 0.45f;
         const float ry = er * (design == "narrow" ? 0.65f : 0.92f);
         if (!iris) {
             shapes::Append(m, Elp({sg * ex, ey, z}, er, ry, er * 0.9f, 4, 8));
-            if (shapes::Detail() >= 2) {   // lids: a thin shell over the top and under the bottom of the eye
-                shapes::Append(m, Elp({sg * ex, ey + er * 0.62f, z + er * 0.1f}, er * 1.22f, er * 0.45f, er * 1.0f, 3, 8));
-                shapes::Append(m, Elp({sg * ex, ey - er * 0.72f, z + er * 0.05f}, er * 1.12f, er * 0.26f, er * 0.92f, 3, 8));
-            }
         } else {
             shapes::Append(m, Elp({sg * ex * 0.97f, ey, z + er * 0.80f}, er * 0.55f, std::min(er * 0.55f, ry * 0.92f), er * 0.34f, 3, 8));
         }

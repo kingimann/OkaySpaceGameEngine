@@ -557,7 +557,7 @@ Template MakeHuman() {
     B b;
     b.t.id = "human"; b.t.name = "Human"; b.t.category = "Characters"; b.t.version = 1;
     b.t.description = "A person: head, face, hair, torso, arms, hands, legs, feet, clothes and accessories, each a part you can change, with body proportion sliders.";
-    BipedParams(b, 1.75, 0.40, 0.24, 0.23, 0.50, 0.045, 0.44, 0.08);
+    BipedParams(b, 1.75, 0.40, 0.24, 0.23, 0.50, 0.045, 0.44, 0.07);
     b.P("build", "Build", 0.5, 0.0, 1.0, "Proportions", "Slim (0) to heavy (1): limb and body girth, belly.");
     b.P("muscle", "Muscle", 0.3, 0.0, 1.0, "Proportions", "Soft (0) to muscular (1): chest, shoulders, arms, legs, abs.");
     { ParamDef p; p.id = "style"; p.label = "Style"; p.kind = ParamDef::Kind::Choice; p.def = 0; p.min = 0; p.max = 3; p.group = "Proportions"; p.tip = "Realistic, stylised low poly (visible facets), cartoon (big head, short limbs) or blocky (always boxes, at every Detail level)."; p.choices = {"Realistic", "Stylised low poly", "Cartoon", "Blocky"}; b.t.params.push_back(p); }

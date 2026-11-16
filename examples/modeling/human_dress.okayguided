@@ -11,7 +11,7 @@ param height 1.75
 param legLength 0.5
 param limbThickness 0.037999999999999999
 param muscle 0.29999999999999999
-param neckLength 0.080000000000000002
+param neckLength 0.070000000000000007
 param shoulderWidth 0.37
 param stance 5
 param style 0

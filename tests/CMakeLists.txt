@@ -2290,6 +2290,14 @@ target_link_libraries(test_save_header_damage PRIVATE okay::engine)
 target_compile_definitions(test_save_header_damage PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME save_header_damage COMMAND test_save_header_damage)
 
+# The same first-line hole in Prefs (`okayprefs N`, now with a #end / #sum trailer) and SaveStore slots
+# (`okayslot N`): a damaged version is damage, a clean newer one is refused and kept, the trailer or header sum is
+# always checked, and every old layout still loads. Includes a 5000-case single-byte fuzz per format.
+add_executable(test_prefs_slot_header test_prefs_slot_header.cpp)
+target_link_libraries(test_prefs_slot_header PRIVATE okay::engine)
+target_compile_definitions(test_prefs_slot_header PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME prefs_slot_header COMMAND test_prefs_slot_header)
+
 # Script builtins batch 1: stats, hierarchy, light setters, WaitUntil/WaitWhile
 add_executable(test_script_batch1 test_script_batch1.cpp)
 target_link_libraries(test_script_batch1 PRIVATE okay::engine)

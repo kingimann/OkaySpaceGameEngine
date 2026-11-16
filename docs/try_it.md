@@ -550,6 +550,60 @@ save slots, the old formats, a newer format, and 5000 random one-byte changes of
 without the backup; before the fix 608 did). Nothing was run on Windows; the folder in step 2 and the Console text in
 step 4 are read from the code, not seen.
 
+## Settings file with a damaged first line loads its backup (bug fix, branch `claude2/prefs-slot-header-check`, not merged or released yet)
+
+The follow-up to #888 finding 47, for the prefs file (`game.okayprefs`: settings, high scores) and framework save
+slots (`.okayslot`). Before: a damaged first line in the prefs file turned off its end check, and any edited value
+loaded with no warning. Now the prefs file has a checksum line, it is checked whatever the first line says, and a
+damaged file loads the backup. Rules: `docs/save_games.md`, "Prefs and framework slots: damaged first lines".
+
+1. Open the editor (`Tools\OkayEngine.exe`, or Open from the launcher) and any scene. Add an empty object, give it a
+   Script component, and put this in the script:
+
+   ```csharp
+   void Start()
+   {
+       prefs_load("game.okayprefs");
+       print("volume loaded: " + prefs_get("volume", -1));
+       prefs_set("volume", 0.25);
+       prefs_save("game.okayprefs");
+       prefs_set("volume", 0.75);
+       prefs_save("game.okayprefs");
+   }
+   ```
+
+   Press **Play**, then **Stop**. The Console says `volume loaded: -1` (no file yet). The two saves wrote
+   `game.okayprefs` (volume 0.75) and kept the first one as `game.okayprefs.bak` (volume 0.25).
+2. Find `game.okayprefs`. It is in the same folder as `save.okaysave` in the section above (in the editor, the folder
+   the editor was started from: from the installer's launcher normally `%LOCALAPPDATA%\OkaySpace\`, from the zip the
+   unzipped folder; in a built game `%APPDATA%\<Company>\<Game title>\`). If it is not there, search for
+   `game.okayprefs` in Explorer. Open it in Notepad. It looks like:
+
+   ```
+   okayprefs 3
+   volume	0.75
+   #end
+   #sum 1a2b3c4d5e6f7a8b
+   ```
+3. Change one letter of the first line (`okayprefs 3` to `okayprefz 3`) and the value (`0.75` to `0.95`). Save in
+   Notepad.
+4. Press **Play** again (prefs are read from the disk on each `prefs_load`, so the editor does not need a restart).
+   You should see a yellow warning in the Console: `Prefs file ...game.okayprefs was damaged and its backup was loaded
+   instead: it doesn't match its checksum (damaged or edited); to edit the file by hand, set its first line to
+   okayprefs 2 and delete the #sum line`, and then `volume loaded: 0.25` (the backup's value). Before this fix there was
+   no warning and it said `volume loaded: 0.95`.
+
+Extra: to edit the file by hand on purpose, set the first line to `okayprefs 2` and delete the `#sum` line (keep
+`#end`); then the edited value loads. A built game reads `game.okayprefs` the same way when it starts (the player
+calls `Prefs::Load` at start-up), so the same steps work on a built game's settings file: the warning is in the
+game's log.
+
+**Status.** Tested headless on Linux: `tests/test_prefs_slot_header.cpp` (damaged and newer first lines, every old
+prefs layout, framework slots, and 5000 random one-byte changes per format: 0 load wrong data without the backup;
+before the fix 4044 of the 5000 prefs changes did). Nothing was run on Windows; the folder in step 2 and the Console text in step 4 are
+read from the code, not seen. Framework slots (`.okayslot`) have no menu to try by hand; they are covered by the test
+only.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -238,12 +238,12 @@ int main() {
         Prefs::DeleteKey("level");                       // already gone: silent
         CHECK(heard.size() == 1);
 
-        // The file format is the same one older builds read.
+        // The file format older builds still read (`okayprefs 3`: they skip the `#sum` line).
         const std::string path = (std::filesystem::temp_directory_path() / "okay_prefs_typed.okayprefs").string();
         CHECK(Prefs::Save(path));
         {
             std::ifstream f(path); std::string head; std::getline(f, head);
-            CHECK(head == "okayprefs 2");
+            CHECK(head == "okayprefs 3");
         }
         Prefs::DeleteAll();
         heard.clear();

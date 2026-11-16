@@ -348,6 +348,12 @@ store.RegisterMigration(2, [](SaveDocument& d, std::string* err) {   // 2 -> 3
   `Info` flags it `incompatible`, Continue skips it, and it is never half loaded.
   If this older build then saves over that slot, the newer file is first copied
   to `<slot>.okayslot.newer.bak`, so going back to the newer build finds it.
+- **A damaged first line is damage, not "newer".** The first line must be
+  `okayslot` and a clean number; anything else is damaged and the `.bak` is loaded.
+  A higher container number counts as newer only when the `headerSum` line matches
+  (or the file has none), so a changed digit (`okayslot 7`) loads the `.bak`
+  instead of being refused and kept as `.newer.bak`. See "Prefs and framework
+  slots: damaged first lines" in `docs/save_games.md`.
 - `store.Verify(slot, &report)` is a debug check: it reads the main file whole,
   checks both checksums, parses it, runs the migrations on a copy, and checks
   that the payload round-trips. `store.SetVerifyAfterWrite(true)` reads every

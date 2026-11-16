@@ -253,15 +253,28 @@ std::string BuildContainer(const SaveSlotInfo& info, const std::string& payload)
 // `bytes` holds at least the whole header; `totalSize` is the file's size.
 FileStatus ParseContainer(const std::string& bytes, std::size_t totalSize, Parsed& out, std::string* why) {
     auto bad = [&](const std::string& m) { if (why) *why = m; return FileStatus::Damaged; };
+    // The first line. Every writer (#572 on) wrote `okayslot 1`, so a line that starts `okayslot` with
+    // anything but one space and a clean number after it is a damaged header, and a clean number above
+    // kContainerVersion is a newer format only when the header checksum agrees: a slot with a
+    // `headerSum` line is checked whatever its first line says (the sum covers that line), so a
+    // damaged digit is damage (the .bak is used) and not "saved by a newer build".
     const std::size_t nl = bytes.find('\n');
-    if (nl == std::string::npos || bytes.compare(0, 9, "okayslot ") != 0) {
-        if (why) *why = "isn't a save slot";
-        return FileStatus::Damaged;
-    }
-    const int cv = std::atoi(bytes.c_str() + 9);
-    if (cv < 1) return bad("isn't a save slot");
+    int cv = 0;
+    std::string shown;
+    const savefmt::HeaderVersion hv = nl == std::string::npos ? savefmt::HeaderVersion::Other
+                                                              : savefmt::ParseHeaderVersion(bytes.substr(0, nl), "okayslot", cv, &shown);
+    if (hv == savefmt::HeaderVersion::Other) return bad("isn't a save slot");
+    if (hv == savefmt::HeaderVersion::Damaged)
+        return bad(shown.empty() ? "has no format version on its first line (damaged)" : "has an unknown format version '" + shown + "' (damaged)");
     if (cv > SaveStore::kContainerVersion) {
-        if (why) *why = "uses a newer save file format (" + std::to_string(cv) + ")";
+        const std::size_t at = bytes.find("\nheaderSum\t", nl);
+        const std::size_t e = at == std::string::npos ? std::string::npos : bytes.find('\n', at + 1);
+        if (e != std::string::npos) {
+            const std::string sum = bytes.substr(at + 11, e - (at + 11));
+            if (!IsHex16(sum) || savefmt::Hex16(savefmt::Fnv1a(bytes.data(), at + 1)) != sum)
+                return bad("header doesn't match its checksum (damaged or edited)");
+        }
+        if (why) *why = "uses a newer save file format (" + shown + ")";
         return FileStatus::Newer;
     }
     Parsed p;

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <filesystem>
 #include <vector>
 
@@ -213,54 +214,96 @@ std::string Decode(const std::string& s) {
 }
 
 constexpr std::size_t kMaxPrefsBytes = 64u * 1024u * 1024u;
+// The newest prefs format this build writes; a higher number is refused (never parsed).
+constexpr int kPrefsFormat = 3;
+// The last two lines of a version 3 file: `#end`, then `#sum <16 hex>` over every byte before the `#sum` line.
+const char kTrailerTail[] = "#end\n#sum ";
+const char kHandEditHint[] = "; to edit the file by hand, set its first line to okayprefs 2 and delete the #sum line";
 
-enum class ReadState { Ok, Missing, Damaged };
+enum class ReadState { Ok, Missing, Damaged, Newer };
 
-// Parse a prefs file's text into `fresh`. A version 2 file must end with the end line; a
-// file with text but no header and not one key line is not a prefs file (a zero-filled one
-// after a power cut looks like that).
+// Parse a prefs file's text into `fresh`. `why` says what is wrong with a damaged one (or that a newer
+// build wrote it).
+//
+// What each writer wrote (Prefs.cpp history): #24 and #279 `okayprefs 1` and `key<TAB>value` lines; #552 and
+// #611 `okayprefs 2`, the same lines and a last `#end` line; from this change `okayprefs 3`, the same lines,
+// `#end` and `#sum <16 hex>`. Load has always also taken a file with no header (`key<TAB>value` lines only).
+// So:
+//  * the `#end` / `#sum` lines are checked whenever they are there, whatever the first line says (the sum
+//    covers the first line too, so a byte changed there fails it like a byte anywhere else);
+//  * a first line that starts `okayprefs` must go on with one space and a number; anything else is damage,
+//    never "version 1" (which would skip the end-line check);
+//  * a number above kPrefsFormat is a newer format: refused, not parsed (its sum is checked first when it
+//    has one, so a damaged digit is still damage);
+//  * version 3 must have the trailer and version 2 the `#end` line (a file cut short has lost them);
+//  * no header is the oldest layout: its first line must be a key line, and it never had an `#end` line.
 ReadState ParsePrefsText(const std::string& raw, std::unordered_map<std::string, std::string>& fresh, std::string* why) {
     fresh.clear();
-    // A raw carriage return only comes from a tool that changed the line ends (the writer
-    // escapes the ones in values), so a file saved with CR LF reads like one with LF.
+    // A raw carriage return only comes from a tool that changed the line ends (the writer escapes the
+    // ones in values), so a file saved with CR LF reads like one with LF; a UTF-8 byte order mark an
+    // editor put in front is dropped too. Both before the checksum.
     std::string text = raw;
+    if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) text.erase(0, 3);
     if (text.find('\r') != std::string::npos) text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
-    std::size_t pos = 0;
-    auto nextLine = [&](std::string& line) {
-        if (pos >= text.size()) return false;
-        std::size_t e = text.find('\n', pos);
-        if (e == std::string::npos) e = text.size();
-        line = text.substr(pos, e - pos);
-        pos = e + 1;
-        return true;
-    };
-    std::string line;
-    int version = 1;
-    bool header = false;
-    if (nextLine(line)) {   // the header (ignored if absent)
-        if (line.rfind("okayprefs", 0) == 0) {
-            header = true;
-            version = std::atoi(line.c_str() + 9);
-            if (version < 1) version = 1;
-        } else if (!line.empty()) {
-            // No header: this first line is data too.
-            auto tab = line.find('\t');
-            if (tab != std::string::npos) fresh[Decode(line.substr(0, tab))] = Decode(line.substr(tab + 1));
-        }
+    const std::size_t nl = text.find('\n');
+    int version = 0;   // 0: no header
+    std::string shown;
+    switch (savefmt::ParseHeaderVersion(text.substr(0, nl), "okayprefs", version, &shown)) {
+        case savefmt::HeaderVersion::Other: version = 0; break;
+        case savefmt::HeaderVersion::Ok: break;
+        case savefmt::HeaderVersion::Damaged:
+            if (why) *why = shown.empty() ? "has no format version on its first line (damaged)"
+                                          : "has an unknown format version '" + shown + "' (damaged)";
+            return ReadState::Damaged;
     }
-    bool sawEnd = false;
-    while (nextLine(line)) {
+    const bool header = version > 0;
+    std::size_t bodyEnd = text.size();
+    const std::string tail = kTrailerTail;
+    const std::size_t at = text.rfind(tail);
+    if (at != std::string::npos) {
+        std::string hex = text.substr(at + tail.size());
+        while (!hex.empty() && hex.back() == '\n') hex.pop_back();
+        if (hex.size() != 16) { if (why) *why = "is cut short (bad checksum line)"; return ReadState::Damaged; }
+        const std::size_t sumLen = at + std::strlen("#end\n");
+        if (savefmt::Hex16(savefmt::Fnv1a(text.data(), sumLen)) != hex) {
+            if (why) *why = std::string("doesn't match its checksum (damaged or edited)") + kHandEditHint;
+            return ReadState::Damaged;
+        }
+        bodyEnd = at;
+    } else if (version == kPrefsFormat) {
+        if (why) *why = "is cut short (no end line)";
+        return ReadState::Damaged;
+    }
+    if (version > kPrefsFormat) {
+        if (why) *why = "was saved by a newer version of the game (prefs format " + shown + ", this build reads up to " +
+                        std::to_string(kPrefsFormat) + ")";
+        return ReadState::Newer;
+    }
+    std::size_t pos = header ? (nl == std::string::npos ? bodyEnd : nl + 1) : 0;
+    bool sawEnd = at != std::string::npos, firstKeyLine = true;
+    while (pos < bodyEnd) {
+        std::size_t e = text.find('\n', pos);
+        if (e == std::string::npos || e > bodyEnd) e = bodyEnd;
+        const std::string line = text.substr(pos, e - pos);
+        pos = e + 1;
         if (line.empty()) continue;
         if (line == kEndLine) { sawEnd = true; continue; }
-        auto tab = line.find('\t');
+        const auto tab = line.find('\t');
+        if (!header && firstKeyLine && tab == std::string::npos) {
+            // The oldest layout is nothing but key lines. A first line that isn't one (a damaged
+            // `okayprefs` line, zeros after a power cut, any other file) means this is not that layout.
+            if (why) *why = "isn't a prefs file (no okayprefs header, and its first line is not a key)";
+            return ReadState::Damaged;
+        }
+        firstKeyLine = false;
         if (tab == std::string::npos) continue;
         fresh[Decode(line.substr(0, tab))] = Decode(line.substr(tab + 1));
     }
-    if (version >= 2 && !sawEnd) { if (why) *why = "is cut short (no end line)"; return ReadState::Damaged; }
-    if (!header && fresh.empty() && text.find_first_not_of(" \t\n") != std::string::npos) {
-        if (why) *why = "isn't a prefs file";
+    if (!header && sawEnd) {
+        if (why) *why = "isn't a prefs file (an end line but no okayprefs header: its first line is damaged)";
         return ReadState::Damaged;
     }
+    if (version == 2 && !sawEnd) { if (why) *why = "is cut short (no end line)"; return ReadState::Damaged; }
     return ReadState::Ok;
 }
 
@@ -286,15 +329,25 @@ bool Prefs::Save(const std::string& path) {
         rows.assign(Store().begin(), Store().end());
     }
     std::sort(rows.begin(), rows.end());
-    std::string out = "okayprefs 2\n";
+    std::string out = "okayprefs " + std::to_string(kPrefsFormat) + "\n";
     for (const auto& [k, v] : rows)
         out += Encode(k) + '\t' + Encode(v) + '\n';
     out += kEndLine;
     out += '\n';
-    // The file being replaced: a good one becomes the backup, a damaged one is set aside.
-    savefmt::KeepBackup(path, [](const std::string& bytes) {
+    out += "#sum " + savefmt::Hex16(savefmt::Fnv1a(out.data(), out.size())) + "\n";
+    // The file being replaced: a good one becomes the backup, a damaged one is set aside, and one from
+    // a newer build is first kept as <path>.newer.bak (going back to that build finds it).
+    int call = 0;   // KeepBackup looks at the file on disk first, then (when that one is bad) at the .bak
+    savefmt::KeepBackup(path, [&](const std::string& bytes) {
         std::unordered_map<std::string, std::string> parsed;
-        return ParsePrefsText(bytes, parsed, nullptr) == ReadState::Ok;
+        const ReadState st = ParsePrefsText(bytes, parsed, nullptr);
+        if (st == ReadState::Newer && call == 0) {
+            const std::string newer = path + ".newer.bak";
+            std::string kept;
+            if (!(savefmt::ReadFileCapped(newer, kMaxPrefsBytes, kept, nullptr) && kept == bytes)) savefmt::AtomicWrite(newer, bytes);
+        }
+        ++call;
+        return st == ReadState::Ok;
     }, kMaxPrefsBytes);
     savefmt::WriteOptions opt;
     opt.sync = true;
@@ -312,6 +365,17 @@ bool Prefs::Load(const std::string& path) {
     ReadState st = ReadPrefsFile(path, fresh, &why);
     bool usedBackup = false;
     std::string error;
+    if (st == ReadState::Newer) {
+        // Never parsed, and its .bak isn't read instead: that is most likely the same newer build's
+        // file, and an older backup would quietly undo what was set in the newer build. The live keys
+        // stay; Save keeps the file as <path>.newer.bak before replacing it.
+        error = path + " " + why;
+        Log::Warning("Prefs file ", error, "; it was not loaded and the current settings were kept");
+        corethreads::LockGuard g(Lock());
+        ErrorText() = error;
+        g_usedBackup = false;
+        return false;
+    }
     if (st == ReadState::Damaged) {
         std::unordered_map<std::string, std::string> back;
         if (ReadPrefsFile(path + ".bak", back, nullptr) == ReadState::Ok) {
@@ -319,10 +383,10 @@ bool Prefs::Load(const std::string& path) {
             st = ReadState::Ok;
             usedBackup = true;
             error = path + " was damaged (" + why + "); loaded the backup of the previous save instead";
-            Log::Warning("Prefs file ", path, " was damaged; loaded its backup instead");
+            Log::Warning("Prefs file ", path, " was damaged and its backup was loaded instead: it ", why);
         } else {
             error = path + " " + why;
-            Log::Warning("Prefs file ", error);
+            Log::Warning("Prefs file ", error, "; no good backup, so the current settings were kept");
         }
     }
     if (st == ReadState::Damaged) {   // keep what we have

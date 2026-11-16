@@ -176,6 +176,53 @@ differently is a hand edit that changed the first line to `okaysave 2` but left 
 lines in: it is now checked, so the edit is refused and the backup loaded (the error says to delete
 those lines).
 
+## Prefs and framework slots: damaged first lines
+
+The same hole was in two more places, found while fixing finding 47:
+
+- **Prefs** (`game.okayprefs`, the settings and high-score file) read its first line with `atoi`.
+  `okayprefs 2` with a damaged digit read as version 1, and version 1 files are not checked for
+  their `#end` line, so a file that was cut short and had a damaged first line loaded as if it were
+  whole. A clean higher number (`okayprefs 9`) was read as if this build knew that format. Prefs also
+  had no checksum, so any changed byte in a key or value loaded silently.
+- **Framework slots** (`<slot>.okayslot`, `docs/save_framework.md`) read `okayslot 1` with `atoi`. A
+  damaged digit (`okayslot 7`) made a damaged slot look like one from a newer build: it was refused
+  instead of loading its `.bak`, listed as "incompatible", and kept as `.newer.bak` on the next save.
+
+What happens now:
+
+- **Prefs files are written as `okayprefs 3`**: the same `key<TAB>value` lines, then `#end` and a
+  `#sum <16 hex>` checksum line (the same trailer as `SaveFile`). Older builds still read them (they
+  skip the `#sum` line).
+- **The `#end` / `#sum` lines are checked whenever they are there**, whatever the first line says. A
+  changed byte anywhere (first line included) is damage: the `.bak` is loaded
+  (`Prefs::LastLoadUsedBackup()`), and the Console says `Prefs file ... was damaged and its backup was
+  loaded instead: it ...`. With no good backup, `Load` returns false and the settings the game already
+  had are kept (the Console says so).
+- **A first line that starts `okayprefs` or `okayslot` must go on with one space and a number.**
+  Anything else is damage ("has an unknown format version"), never "an old file".
+- **A higher number is a newer format**, refused and never parsed: `Prefs::Load` returns false, the
+  current settings stay, `LastError()` says "was saved by a newer version", and the `.bak` is not
+  used. The next `Prefs::Save` first copies it to `<file>.newer.bak`. A slot with a higher number is
+  only called newer when its `headerSum` line matches (or it has none); otherwise it is damage and its
+  `.bak` is loaded.
+- **Editing the prefs file by hand.** An edit to an `okayprefs 3` file fails its checksum, so the
+  backup is loaded instead (the error says how to edit it). To edit on purpose, set the first line
+  to `okayprefs 2` and delete the `#sum` line (keep `#end`). The next save writes `okayprefs 3` again.
+
+Old files that still load (each built by hand in `tests/test_prefs_slot_header.cpp`): prefs with no
+header (`key<TAB>value` lines only); `okayprefs 1` as #24 wrote it (only `\\` and `\n` escaped, a raw
+tab inside a value); `okayprefs 1` as #279 wrote it (`\t` and `\r` escaped too); `okayprefs 2` with its
+`#end` line (#552, #611), also with Windows line ends or a byte order mark; and `okayslot 1`, the only
+slot container version ever written (#572 on). Not accepted any more: a header-less prefs file whose
+first line is not a key line, or that has an `#end` line (no writer ever made one; this is what a
+prefs file with a destroyed first line looks like).
+
+Fuzz (`tests/test_prefs_slot_header.cpp`, 5000 random one-byte changes per format, fixed seed): before
+this fix 4044 of the 5000 prefs changes loaded "fine" with wrong data (43 of them from a byte in the
+first line), and slots had 0 (their checksums already caught every random change; the `okayslot 7`
+case above is a hand-made one, refused as "newer" before the fix); now 0 silent wrong loads and 0 damaged files mistaken for newer ones in both.
+
 ## What changed (hardening pass)
 
 - **One crash-safe write for everything.** `savefmt::AtomicWriteChecked` (`Core/SaveData.hpp`,

@@ -50,16 +50,22 @@ public:
     static int  AddListener(Listener fn);   ///< Returns an id for RemoveListener.
     static void RemoveListener(int id);
 
-    /// Write all keys to `path` (in key order). The file is written aside, flushed to the
-    /// disk and swapped in, so a crash or full disk leaves the old file alone; the old file,
-    /// when it was a good one, is kept as `<path>.bak`. False if it couldn't be written
+    /// Write all keys to `path` (in key order) as format `okayprefs 3`: `key<TAB>value` lines,
+    /// then `#end` and a `#sum <16 hex>` checksum line (older builds still read it). The file is
+    /// written aside, flushed to the disk and swapped in, so a crash or full disk leaves the old
+    /// file alone; the old file, when it was a good one, is kept as `<path>.bak`, and one from a
+    /// newer format is first copied to `<path>.newer.bak`. False if it couldn't be written
     /// (`LastError()` says why: disk full, read-only folder...).
     static bool Save(const std::string& path);
     /// Replace in-memory keys with the contents of `path`. A missing file gives an
-    /// empty store and returns false (no file was read). A file that is cut off, damaged or
-    /// unreadable falls back to `<path>.bak` (true; `LastLoadUsedBackup()` and `LastError()`
-    /// say so); with no good backup it returns false and leaves the current keys untouched.
-    /// Files saved on Windows with CR LF line ends load too.
+    /// empty store and returns false (no file was read). A file that is cut off, edited so it
+    /// fails its checksum, has a damaged first line or is unreadable falls back to `<path>.bak`
+    /// (true; `LastLoadUsedBackup()` and `LastError()` say so); with no good backup it returns
+    /// false and leaves the current keys untouched. A file from a newer format (`okayprefs 4`
+    /// and up) is not read: false, the current keys stay, `LastError()` says "newer version",
+    /// and its `.bak` is not used. Older files (`okayprefs 2`, `okayprefs 1`, no header) still
+    /// load. To edit a file by hand, set its first line to `okayprefs 2` and delete the `#sum`
+    /// line. Files saved on Windows with CR LF line ends, or with a byte order mark, load too.
     static bool Load(const std::string& path);
     /// Why the last Save or Load failed or fell back to a backup ("" when it went fine).
     static std::string LastError();

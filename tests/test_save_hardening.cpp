@@ -354,7 +354,7 @@ int main() {
             while (!done) {
                 const std::string text = ReadText(tp);
                 if (text.empty()) continue;
-                if (text.compare(0, 12, "okayprefs 2\n") != 0 || text.size() < 5 || text.compare(text.size() - 5, 5, "#end\n") != 0) ++torn;
+                if (text.compare(0, 12, "okayprefs 3\n") != 0 || text.size() < 27 || text.compare(text.size() - 27, 10, "#end\n#sum ") != 0) ++torn;
             }
         });
         std::vector<std::thread> ts;

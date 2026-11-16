@@ -432,7 +432,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 - **Docs:** `docs/core_logging_profiling.md`; `docs/debug_tools.md`
 - **Tests:** `log`; `debug_console`; `diagnostics`
 - **Status:** Works - the Console draws `ConsoleModel::Rows()` (category dropdown, collapse, severity filters, Error Pause, Open Script); clicking a row selects its source object; runtime script and graph errors carry that object; Problems is the single list of what is wrong.
-- **Exists today:** Parts 23.4.1-23.4.6. A leading `[tag]` on a log line (no colon or slash) is the category. Validators in `CollectProjectDiagnostics` merge `Scene::Validate` and `SceneValidator` and add RequireComponent, player collider and rigidbody, an Animator with no states, a Nav Mesh Agent with no bake, script compile errors, visual-script graph errors (including `AddNodeRequirement`) and `AssetDatabase::FindMissing`.
+- **Exists today:** Parts 23.4.1-23.4.6. A leading `[tag]` on a log line (no colon or slash) is the category. Validators in `CollectProjectDiagnostics` merge `Scene::Validate` and `SceneValidator` and add RequireComponent, player collider and rigidbody, an Animator with no states, a Nav Mesh Agent with no bake, sprites that will not draw because the main camera is Perspective (`render.sprite_under_perspective`, Fix switches it to Orthographic), script compile errors, visual-script graph errors (including `AddNodeRequirement`) and `AssetDatabase::FindMissing`.
 - **Work packages:**
   1. M - Console reads from `ConsoleModel` (category filter, source links). Depends on: #574 (on main). Done.
   2. M - Click an entry with an object source selects it in the Hierarchy; a script line stays available from the details pane. Depends on: package 1. Done.

@@ -29,6 +29,7 @@
 #include "okay/Physics/Rigidbody2D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/ComponentSerializer.hpp"
+#include "okay/Scene/EnsureCamera.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Testing/ObjectPath.hpp"
@@ -85,6 +86,9 @@ std::string HintFor(const std::string& code) {
         return "Add a Camera and leave Main turned on. The Fix button adds a Main Camera.";
     if (code == "scene.no_active_camera")
         return "Enable a camera, and make sure its object is active.";
+    if (code == "render.sprite_under_perspective")
+        return "The Game view and the built game draw sprites only through an Orthographic main camera. "
+               "Fix switches this camera to Orthographic. If the scene is 3D, keep Perspective and use meshes instead.";
     if (code == "asset.missing" || code == "scene.missing_asset" || code == "asset.db.missing")
         return "Point the field at a file that exists, or clear it. Fix re-imports when one matching file is in the project, otherwise it clears the broken path.";
     if (code == "asset.prefab_missing")
@@ -373,7 +377,56 @@ void AddBody(std::vector<Diagnostic>& out, GameObject& go, const char* code, con
     AddItem(out, std::move(d));
 }
 
+// render.sprite_under_perspective (#888 finding 40). The player and the editor's Game
+// view take the 3D path when the main camera is Perspective, and only the 2D path draws
+// SpriteRenderers, so every sprite disappears without a word. The camera is the one the
+// game renders through: PickRenderCamera over every Camera in scene order, the same call
+// as the editor's SceneCamera and Scene::ResolveMainCamera. Sprites that are switched
+// off (component disabled, object or a parent inactive) are not counted: they would not
+// show under an Orthographic camera either, so blaming the camera would be wrong.
+void CheckSpritesUnderPerspective(const Scene& scene, std::vector<Diagnostic>& out) {
+    std::vector<Camera*> cams;
+    for (const auto& up : scene.Objects()) {
+        if (!up || up->IsDestroyed()) continue;
+        if (Camera* c = up->GetComponent<Camera>()) cams.push_back(c);
+    }
+    Camera* cam = PickRenderCamera(scene.mainCamera, cams);
+    if (!CameraUsable(cam) || cam->projection != Camera::Projection::Perspective) return;
+
+    constexpr std::size_t kListed = 5;
+    std::vector<std::string> names;
+    int count = 0;
+    for (const auto& up : scene.Objects()) {
+        if (!up || up->IsDestroyed() || up->transient || !up->ActiveInHierarchy()) continue;
+        bool shown = false;
+        for (SpriteRenderer* sr : up->GetComponents<SpriteRenderer>())
+            if (sr && sr->enabled) shown = true;
+        if (!shown) continue;
+        ++count;
+        if (names.size() < kListed) names.push_back(testing::ObjectPath(up.get()));
+    }
+    if (count == 0) return;
+
+    std::string list;
+    for (std::size_t i = 0; i < names.size(); ++i) list += (i ? ", " : "") + names[i];
+    if ((std::size_t)count > names.size()) list += " and " + std::to_string(count - (int)names.size()) + " more";
+
+    Diagnostic d;
+    d.severity = DiagSeverity::Warning;
+    d.code = "render.sprite_under_perspective";
+    d.message = std::to_string(count) + (count == 1 ? " sprite won't draw" : " sprites won't draw") +
+                ": the main camera is Perspective (switch it to Orthographic). Camera: " +
+                testing::ObjectPath(cam->gameObject) + ". Sprites: " + list + ".";
+    d.source.objectGuid = cam->gameObject->Guid();
+    d.source.objectPath = testing::ObjectPath(cam->gameObject);
+    d.source.component = "Camera";
+    d.source.field = "projection";
+    d.fix.kind = DiagFixKind::MakeOrthographic;
+    AddItem(out, std::move(d));
+}
+
 void CheckGameplay(const Scene& scene, std::vector<Diagnostic>& out) {
+    CheckSpritesUnderPerspective(scene, out);
     bool anyCamera = false, anyMain = false;
     for (const auto& up : scene.Objects()) {
         if (!up || up->IsDestroyed()) continue;
@@ -702,6 +755,14 @@ bool ApplyDiagnosticFix(Scene& scene, const Diagnostic& d, std::string* error) {
             Camera* cam = go->GetComponent<Camera>();
             if (!cam) return fail("That object has no Camera.");
             cam->main = true;
+            return true;
+        }
+        case DiagFixKind::MakeOrthographic: {
+            if (!go) return fail("That object is no longer in the scene.");
+            Camera* cam = go->GetComponent<Camera>();
+            if (!cam) return fail("That object has no Camera.");
+            if (cam->projection == Camera::Projection::Orthographic) return fail("That camera is already Orthographic.");
+            cam->projection = Camera::Projection::Orthographic;
             return true;
         }
         case DiagFixKind::AddComponent: {

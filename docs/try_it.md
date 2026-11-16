@@ -938,6 +938,29 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Problems: "sprites won't draw" under a Perspective camera (branch `claude2/sprite-under-perspective`, not merged or released yet)
+
+Bug #888 finding 40: the Game view and the built game draw sprites only through an Orthographic main camera. With a
+Perspective main camera every sprite was silently invisible. The Problems panel now says so and can fix it.
+
+1. Open the editor and open `examples\node_playground\flow.okayscene` (File > Open Scene). Show **View > Problems**.
+   (If the examples branch already switched this scene to Orthographic, set the Main Camera's Projection to
+   Perspective in the Inspector first.)
+2. Look at the Game view: only the sky, no green square.
+3. The Problems panel lists a warning on **Main Camera**: "1 sprite won't draw: the main camera is Perspective (switch
+   it to Orthographic). Camera: Main Camera. Sprites: Runner." Hover **Fix** to read the hint.
+4. Click **Fix**. The Main Camera's Projection becomes Orthographic, the warning goes away, and the green square
+   appears in the Game view. Press Play: it steps right. **Edit > Undo** (Ctrl+Z) puts Perspective back in one step.
+5. The same warning is listed (not blocking) when you build a game from a scene like this.
+
+Rule: it counts enabled SpriteRenderers on active objects (inactive parents too) and names up to 5 of them. It looks at
+the camera the game renders through (the Main camera, the same pick the player and the Game view make), not the first
+camera in the list.
+
+**Status.** Rule and fix tested headless (`test_sprite_perspective_rule`, 38 checks, run on Linux). On main today it fires on three shipped examples: `node_playground/flow`, `physics2d/casts_and_blast` and `visual_script/playground/gl_animation`. The Problems panel code was not
+changed (its Fix button already pushes one undo step for every fix); the editor was not built here, so the panel text
+is unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -426,6 +426,11 @@ add_executable(test_diagnostics test_diagnostics.cpp)
 target_link_libraries(test_diagnostics PRIVATE okay::engine)
 add_test(NAME diagnostics COMMAND test_diagnostics)
 
+add_executable(test_sprite_perspective_rule test_sprite_perspective_rule.cpp)
+target_link_libraries(test_sprite_perspective_rule PRIVATE okay::engine)
+target_compile_definitions(test_sprite_perspective_rule PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME sprite_perspective_rule COMMAND test_sprite_perspective_rule)
+
 add_executable(test_debug_overlay test_debug_overlay.cpp)
 target_link_libraries(test_debug_overlay PRIVATE okay::engine)
 add_test(NAME debug_overlay COMMAND test_debug_overlay)

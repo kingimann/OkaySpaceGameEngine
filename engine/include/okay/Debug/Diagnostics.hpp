@@ -35,7 +35,8 @@ enum class DiagFixKind {
     ClearReference,    // blank the field named by the source
     Reimport,          // point the field at arg (a file that is actually on disk)
     AddCamera,         // create a Main Camera
-    MakeMainCamera     // flag the source object's camera as the main camera
+    MakeMainCamera,    // flag the source object's camera as the main camera
+    MakeOrthographic   // switch the source object's camera to Orthographic (sprites draw only then)
 };
 
 /// A safe one-click fix. None means the row is only a report.

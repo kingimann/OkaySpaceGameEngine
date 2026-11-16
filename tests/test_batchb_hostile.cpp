@@ -202,6 +202,43 @@ static const char* kX3d =
     "<Normal vector=\"0 0 1 0 1 0\"/><TextureCoordinate point=\"0 0 1 0 1 1 0 1\"/></IndexedFaceSet></Shape></Transform>"
     "<Group><Shape USE=\"S\"/><Switch whichChoice=\"0\"><Shape><Box size=\"1 2 3\"/></Shape></Switch><LOD><Shape><Sphere/></Shape><Shape><Cone/></Shape></LOD><Shape><Cylinder/></Shape></Group>";
 
+// Valid X3D files must read to the same output, bit for bit, as the reader gave before DEF/USE copies were counted ahead.
+// The strings were recorded from the reader before that change (main at 7516c6a7).
+// g0 holds `leaf`; every next level uses the one before twice, the second copy moved along x.
+static std::string LadderX3d(int levels, const std::string& leaf) {
+    std::string s = "<Group DEF=\"g0\">" + leaf + "</Group>";
+    for (int i = 1; i <= levels; ++i) s += "<Group DEF=\"g" + std::to_string(i) + "\"><Group USE=\"g" + std::to_string(i - 1) + "\"/><Transform translation=\"" + std::to_string(i) + " 0 0\"><Group USE=\"g" + std::to_string(i - 1) + "\"/></Transform></Group>";
+    return s;
+}
+static void X3dSameOutput() {
+    RUN_SUITE("x3d same output");
+    std::string reuse = "<Shape DEF=\"s\"><Box/></Shape>"; for (int i = 0; i < 3000; ++i) reuse += "<Transform translation=\"" + std::to_string(i) + " 0 0\"><Shape USE=\"s\"/></Transform>";
+    std::string ladder = "<Group DEF=\"g0\"><Shape><Appearance><Material diffuseColor=\"0 1 0\"/></Appearance><Box size=\"1 2 3\"/></Shape><Shape><Sphere radius=\"0.5\"/></Shape></Group>";
+    for (int i = 1; i <= 10; ++i) ladder += "<Group DEF=\"g" + std::to_string(i) + "\"><Group USE=\"g" + std::to_string(i - 1) + "\"/><Transform translation=\"" + std::to_string(i) + " 0 0\" scale=\"1 -1 1\"><Group USE=\"g" + std::to_string(i - 1) + "\"/></Transform></Group>";
+    std::string prims = "<Shape><Cylinder radius=\"2\" height=\"3\" top=\"false\"/></Shape><Shape><Cone/></Shape><Shape><Box size=\"0 0 0\"/></Shape><Shape><Extrusion/></Shape>"
+                        "<Shape><Extrusion spine=\"0 0 0 1 1 0 2 0 1 3 1 1\" scale=\"1 1 0.5 0.5 2 2 1 1\" creaseAngle=\"0.7\"/></Shape><Group USE=\"nothing\"/><Switch><Shape><Box/></Shape></Switch>";
+    const struct { const char* name; std::string text; const char* expect; } cases[] = {
+        {"kX3d", X3dDoc(kX3d), "parts=5 tris=642 verts=463 min=-1,-1,-1.5 max=1.87758,3,3.70646 hash=9ecd2ac333b89050"},
+        {"a box used 3000 times", X3dDoc(reuse), "parts=3001 tris=36012 verts=72024 min=-1,-1,-1 max=3000,1,1 hash=b07cc3097692ffc4"},
+        {"a 2^10 DEF/USE ladder", X3dDoc(ladder), "parts=4094 tris=1105380 verts=710309 min=-0.5,-1,-1.5 max=55.5,1,1.5 hash=775b57dd5f296299"},
+        {"primitives and extrusions", X3dDoc(prims), "parts=4 tris=160 verts=228 min=-2,-2.64224,-2 max=3.9856,2.64224,3.36329 hash=05499c7f110221d4"},
+        {"a 2^17 ladder in a Switch child that is not chosen", X3dDoc("<Switch whichChoice=\"0\"><Shape><Box/></Shape><Group>" + LadderX3d(17, "<Shape><Box/></Shape>") + "</Group></Switch>"), "parts=1 tris=12 verts=24 min=-1,-1,-1 max=1,1,1 hash=54d32b0d422dce64"},
+        {"a bad transform, then a 2^40 ladder", X3dDoc("<Transform translation=\"1 2\"><Shape><Box/></Shape></Transform>" + LadderX3d(40, "<Shape><Box/></Shape>")), "refused: X3D: an invalid translation value"},
+        {"a 2^40 ladder, then a bad transform", X3dDoc(LadderX3d(40, "<Shape><Box/></Shape>") + "<Transform translation=\"1 2\"><Shape><Box/></Shape></Transform>"), "refused: X3D: too many mesh parts"},
+        {"a 2^40 ladder with a flat box", X3dDoc(LadderX3d(40, "<Shape><Box/></Shape><Shape><Box size=\"0 0 0\"/></Shape>")), "refused: X3D: too many mesh parts"},
+        {"a 2^40 ladder scaled to nothing", X3dDoc("<Transform scale=\"0 0 0\">" + LadderX3d(40, "<Shape><Box/></Shape>") + "</Transform>"), "refused: X3D: scene graph too large (too many nodes, DEF/USE expansions included)"},
+        {"a cycle", X3dDoc("<Group DEF=\"a\"><Shape><Box/></Shape><Group USE=\"a\"/></Group>"), "parts=1 tris=12 verts=24 min=-1,-1,-1 max=1,1,1 hash=51ef3af87ef66671"},
+    };
+    for (const auto& c : cases) {
+        ImportedModel m; std::string e;
+        const double t0 = Now();
+        const bool ok = ReadX3d(c.text, m, e);
+        const std::string d = ok ? fx::Digest(m) : "refused: " + e;
+        std::fprintf(stderr, "  x3d %s: %s (%.3f s)\n", c.name, d.c_str(), Now() - t0);
+        CHECK(fx::SameDigest(d, c.expect));
+    }
+}
+
 static void HostileX3d() {
     RUN_SUITE("x3d hostile");
     const std::string good = X3dDoc(kX3d);
@@ -214,7 +251,15 @@ static void HostileX3d() {
     // an exponential DEF/USE expansion: each level uses the previous one twice (2^40 shapes if followed)
     { std::string s = "<Group DEF=\"g0\"><Shape><Box/></Shape></Group>";
       for (int i = 1; i <= 40; ++i) s += "<Group DEF=\"g" + std::to_string(i) + "\"><Group USE=\"g" + std::to_string(i - 1) + "\"/><Group USE=\"g" + std::to_string(i - 1) + "\"/></Group>";
-      const double t0 = Now(); CHECK(!x3d(s)); CHECK(Now() - t0 < 30.0); }
+      ImportedModel m; std::string e; const double t0 = Now(); const bool ok = ReadX3d(X3dDoc(s), m, e); const double t = Now() - t0;
+      std::fprintf(stderr, "  x3d 2^40 DEF/USE: %s in %.3f s (limit %.1f s)\n", ok ? "read" : e.c_str(), t, fx::kRefuseSeconds);
+      CHECK(!ok && e == "X3D: too many mesh parts" && m.parts.empty()); CHECK(t < fx::kRefuseSeconds); }
+    // the same with a different transform at every level, so no two copies are alike
+    { std::string s = "<Group DEF=\"g0\"><Shape><Box/></Shape></Group>";
+      for (int i = 1; i <= 40; ++i) s += "<Group DEF=\"g" + std::to_string(i) + "\"><Group USE=\"g" + std::to_string(i - 1) + "\"/><Transform translation=\"" + std::to_string(i) + " 0.5 0\"><Group USE=\"g" + std::to_string(i - 1) + "\"/></Transform></Group>";
+      ImportedModel m; std::string e; const double t0 = Now(); const bool ok = ReadX3d(X3dDoc(s), m, e); const double t = Now() - t0;
+      std::fprintf(stderr, "  x3d 2^40 DEF/USE with transforms: %s in %.3f s (limit %.1f s)\n", ok ? "read" : e.c_str(), t, fx::kRefuseSeconds);
+      CHECK(!ok && e == "X3D: too many mesh parts" && m.parts.empty()); CHECK(t < fx::kRefuseSeconds); }
     // a shape reused 3000 times
     { std::string s = "<Shape DEF=\"s\"><Box/></Shape>"; for (int i = 0; i < 3000; ++i) s += "<Transform translation=\"" + std::to_string(i) + " 0 0\"><Shape USE=\"s\"/></Transform>"; CHECK(x3d(s)); }
     CHECK(!x3d("<Group DEF=\"a\"><Group USE=\"a\"/></Group>"));
@@ -248,7 +293,10 @@ static void HostileX3d() {
     { std::string sp, cs; for (int i = 0; i < 2000; ++i) sp += std::to_string(std::sin(i * 0.1)) + " " + std::to_string(i * 0.01) + " " + std::to_string(std::cos(i * 0.1)) + " ";
       for (int i = 0; i < 1000; ++i) cs += std::to_string(std::cos(i * 0.00628)) + " " + std::to_string(std::sin(i * 0.00628)) + " ";
       const double t0 = Now(); x3d("<Shape><Extrusion spine=\"" + sp + "\" crossSection=\"" + cs + "\" creaseAngle=\"1\"/></Shape>"); CHECK(Now() - t0 < 30.0); }
-    { std::string sp, cs; for (int i = 0; i < 3000; ++i) sp += "0 " + std::to_string(i) + " 0 "; for (int i = 0; i < 2000; ++i) cs += "1 " + std::to_string(i) + " "; x3d("<Shape><Extrusion spine=\"" + sp + "\" crossSection=\"" + cs + "\"/></Shape>"); }   // 6 million points: refused
+    { std::string sp, cs; for (int i = 0; i < 3000; ++i) sp += "0 " + std::to_string(i) + " 0 "; for (int i = 0; i < 2000; ++i) cs += "1 " + std::to_string(i) + " ";   // 6 million points: refused
+      ImportedModel m; std::string e; const double t0 = Now(); const bool ok = ReadX3d(X3dDoc("<Shape><Extrusion spine=\"" + sp + "\" crossSection=\"" + cs + "\"/></Shape>"), m, e); const double t = Now() - t0;
+      std::fprintf(stderr, "  x3d 6-million-point Extrusion: %s in %.3f s (limit %.1f s)\n", ok ? "read" : e.c_str(), t, fx::kRefuseSeconds);
+      CHECK(!ok && e == "X3D: an Extrusion is too large"); CHECK(t < fx::kRefuseSeconds); }
     RUN_SUITE("x3d fuzz");
     const long n = Iters();
     for (long i = 0; i < n; ++i) Try(ReadX3d, Mutate(good));
@@ -396,6 +444,7 @@ int main() {
     Hostile3mf();
     HostileAmf();
     HostileX3d();
+    X3dSameOutput();
     HostileDxf();
     HostileLwo();
     TEST_MAIN_RESULT();

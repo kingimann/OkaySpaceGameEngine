@@ -116,4 +116,70 @@ inline double Area(const okay::ImportedModel& m) {
     return a;
 }
 inline std::size_t TriCount(const okay::ImportedModel& m) { std::size_t n = 0; for (const okay::ImportedPart& p : m.parts) n += p.mesh.triangles.size() / 3; return n; }
+
+// A one-line fingerprint of everything a reader returned: part, triangle and vertex counts, the bounds, and a 64-bit FNV-1a
+// hash over every vertex, index, normal, UV, part, material, node and note. Two reads give the same string only when their
+// output is the same to the bit, so a speed change in a reader can be checked against the string the old code gave.
+inline std::string Digest(const okay::ImportedModel& m) {
+    std::uint64_t h = 1469598103934665603ull;
+    auto bytes = [&](const void* p, std::size_t n) { const unsigned char* c = (const unsigned char*)p; for (std::size_t i = 0; i < n; ++i) { h ^= c[i]; h *= 1099511628211ull; } };
+    auto f = [&](float v) { bytes(&v, sizeof v); };
+    auto i32 = [&](long long v) { bytes(&v, sizeof v); };
+    auto str = [&](const std::string& s) { i32((long long)s.size()); bytes(s.data(), s.size()); };
+    std::size_t tris = 0, verts = 0;
+    float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+    for (const okay::ImportedPart& p : m.parts) {
+        const okay::Mesh& me = p.mesh;
+        tris += me.triangles.size() / 3; verts += me.vertices.size();
+        str(me.name); i32(p.material); i32(p.node);
+        i32((long long)me.vertices.size());
+        for (const okay::Vec3& v : me.vertices) {
+            f(v.x); f(v.y); f(v.z);
+            const float c[3] = {v.x, v.y, v.z};
+            for (int k = 0; k < 3; ++k) { if (c[k] < lo[k]) lo[k] = c[k]; if (c[k] > hi[k]) hi[k] = c[k]; }
+        }
+        i32((long long)me.triangles.size()); for (int t : me.triangles) i32(t);
+        i32((long long)me.normals.size()); for (const okay::Vec3& v : me.normals) { f(v.x); f(v.y); f(v.z); }
+        i32((long long)me.uvs.size()); for (const okay::Vec2& v : me.uvs) { f(v.x); f(v.y); }
+        i32((long long)me.cornerUVs.size()); for (const okay::Vec2& v : me.cornerUVs) { f(v.x); f(v.y); }
+        i32((long long)me.polyFace.size()); for (int t : me.polyFace) i32(t);
+        f(me.autoSmoothAngle);
+    }
+    for (const okay::ImportedMaterial& mt : m.materials) { str(mt.name); str(mt.texture); f(mt.diffuse.r); f(mt.diffuse.g); f(mt.diffuse.b); f(mt.diffuse.a); f(mt.shininess); i32(mt.hasDiffuse); i32(mt.hasEmissive); }
+    for (const okay::ImportedNode& n : m.nodes) { str(n.name); i32(n.parent); }
+    for (const std::string& s : m.notes) str(s);
+    char buf[256];
+    std::snprintf(buf, sizeof buf, "parts=%zu tris=%zu verts=%zu min=%.6g,%.6g,%.6g max=%.6g,%.6g,%.6g hash=%016llx", m.parts.size(), tris, verts,
+                  (double)lo[0], (double)lo[1], (double)lo[2], (double)hi[0], (double)hi[1], (double)hi[2], (unsigned long long)h);
+    return buf;
+}
+
+// Compares two Digest() strings. The counts and bounds must match everywhere; the bit-exact hash is compared only where the
+// strings were recorded (x86-64 Linux with GCC), because another compiler's sin / cos / sqrt may differ in the last bit.
+inline bool SameDigest(const std::string& got, const std::string& want) {
+#if defined(__linux__) && defined(__x86_64__) && defined(__GNUC__) && !defined(__clang__)
+    return got == want;
+#else
+    const std::size_t a = got.find(" hash="), b = want.find(" hash=");
+    return got.substr(0, a) == want.substr(0, b);
+#endif
+}
+
+// The time a hostile file may take before the reader refuses it: 0.5 s in an optimized build. A sanitizer or unoptimized
+// build is several times slower, so it gets five times as long.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__)
+#define OKAY_FX_SLOW_BUILD 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)
+#define OKAY_FX_SLOW_BUILD 1
+#endif
+#endif
+#if !defined(OKAY_FX_SLOW_BUILD) && ((defined(__GNUC__) && !defined(__OPTIMIZE__)) || (defined(_MSC_VER) && !defined(NDEBUG)))
+#define OKAY_FX_SLOW_BUILD 1
+#endif
+#ifdef OKAY_FX_SLOW_BUILD
+constexpr double kRefuseSeconds = 2.5;
+#else
+constexpr double kRefuseSeconds = 0.5;
+#endif
 } // namespace fx

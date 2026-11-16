@@ -573,6 +573,200 @@ struct Reader {
         return true;
     }
 
+    // ---- refusing an over-large DEF/USE expansion before it is built ----
+    // Each USE copies a whole subtree, so a small file can name 2^40 shapes. The walk above stops at kMaxParts parts, but
+    // only after it has built that many. Before the real walk, when the file could name more than kMaxParts shapes, a
+    // dry walk follows exactly the same path (the same nodes, depth, visit count, cycle skips, Switch and LOD choices and
+    // transforms) without building any part. Each shape must be certain to become a part, or certain to become nothing,
+    // with no error on the way: the geometry is read once per geometry node (not once per copy); the transformed bounding
+    // box must stay well inside the coordinate limit; a part is certain when its biggest triangle, transformed exactly as
+    // Emit does, is not degenerate, and nothing is certain when all its points are one point or the transform scales it
+    // to zero. If the dry walk reaches the part cap, the visit cap or the depth cap that way, every step before was certain,
+    // so the file is refused with the error the real walk would give at that point. On anything it cannot be sure of it
+    // gives up and the real walk runs as before. Nothing the dry walk does is kept, so a file that reads gives the same
+    // output as without it.
+    struct DryGeo { bool error = false, haveTri = false, onePoint = false; std::size_t tris = 0, points = 0; double t[9] = {}; double lo[3] = {0, 0, 0}, hi[3] = {0, 0, 0}; };
+    struct DryShape { int app = -1, geo = -1; };
+    enum { kDryGoOn = 0, kDryRefuse = 1, kDryGiveUp = 2 };
+
+    // An upper bound on the shapes the walk can reach, counting every USE copy (saturates just over kMaxParts). A node
+    // that is still being counted when it is reached again (a cycle), or that lies deeper than the walk may go, counts as
+    // "too many", so the dry walk then decides.
+    std::size_t ShapeBound(int raw, int depth, std::vector<std::size_t>& memo, std::vector<char>& busy) {
+        constexpr std::size_t kSat = kMaxParts + 1;
+        const int i = Resolve(raw);
+        if (i < 0) return 0;
+        if (busy[(std::size_t)i] || depth > kMaxDepth) return kSat;
+        if (memo[(std::size_t)i] != (std::size_t)-1) return memo[(std::size_t)i];
+        const std::string& n = d.Name(i);
+        std::size_t c = 0;
+        busy[(std::size_t)i] = 1;
+        if (n == "Shape") c = 1;
+        else if (n == "Transform" || n == "Group" || n == "Collision" || n == "Anchor" || n == "StaticGroup" || n == "Scene" || n == "X3D" || n == "CADLayer" || n == "CADAssembly" || n == "CADPart" || n == "Billboard") {
+            for (int k : d.Kids(i)) { c += ShapeBound(k, depth + 1, memo, busy); if (c >= kSat) { c = kSat; break; } }
+        } else if (n == "Switch" || n == "LOD") {
+            for (int k : d.Kids(i)) { c += ShapeBound(k, depth + 1, memo, busy); if (c >= kSat) { c = kSat; break; } }   // every child: an upper bound
+        }
+        busy[(std::size_t)i] = 0;
+        memo[(std::size_t)i] = c;
+        return c;
+    }
+
+    struct Dry {
+        std::unordered_map<int, DryGeo> geo;
+        std::unordered_map<int, DryShape> shape;
+        std::unordered_map<int, std::pair<bool, M4>> local;
+        std::unordered_map<int, bool> appOk;
+        std::vector<char> active;
+        std::size_t visits = 0, parts = 0, points = 0, tris = 0;
+        std::string why;   // the error the real walk would give, when the dry walk refuses
+    };
+
+    const DryGeo& DryGeometry(Dry& dr, int g) {
+        auto it = dr.geo.find(g);
+        if (it != dr.geo.end()) return it->second;
+        DryGeo r;
+        const std::string& gn = d.Name(g);
+        Geo geo; std::vector<Vec3> prim;
+        bool hasN = false, hasU = false;
+        totalPoints = 0; totalTris = 0;   // this node alone; the dry walk keeps its own running totals
+        bool ok;
+        if (gn == "IndexedFaceSet" || gn == "IndexedTriangleSet" || gn == "TriangleSet") ok = IndexedFaceSet(g, geo, prim, hasN, hasU, gn);
+        else if (gn == "Extrusion") ok = Extrusion(g, geo);
+        else ok = Primitive(g, gn, geo, prim);
+        r.error = !ok;
+        r.points = totalPoints;
+        r.tris = geo.tri.size() / 3;
+        if (ok && !geo.pos.empty()) {
+            for (int k = 0; k < 3; ++k) { r.lo[k] = geo.pos[(std::size_t)k]; r.hi[k] = geo.pos[(std::size_t)k]; }
+            for (std::size_t i = 0; i < geo.pos.size(); i += 3)
+                for (int k = 0; k < 3; ++k) { r.lo[k] = std::min(r.lo[k], geo.pos[i + (std::size_t)k]); r.hi[k] = std::max(r.hi[k], geo.pos[i + (std::size_t)k]); }
+            r.onePoint = r.lo[0] == r.hi[0] && r.lo[1] == r.hi[1] && r.lo[2] == r.hi[2];   // every triangle is a point, before and after any transform
+            // the triangle with the largest area: the one least likely to collapse under a transform
+            double best = 0;
+            for (std::size_t t = 0; t + 2 < geo.tri.size(); t += 3) {
+                const double* a = &geo.pos[(std::size_t)geo.tri[t] * 3];
+                const double* b = &geo.pos[(std::size_t)geo.tri[t + 1] * 3];
+                const double* c = &geo.pos[(std::size_t)geo.tri[t + 2] * 3];
+                const double ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+                const double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = nx * nx + ny * ny + nz * nz;
+                if (std::isfinite(l) && l > best) { best = l; r.haveTri = true; for (int k = 0; k < 3; ++k) { r.t[k] = a[k]; r.t[3 + k] = b[k]; r.t[6 + k] = c[k]; } }
+            }
+        }
+        return dr.geo.emplace(g, r).first->second;
+    }
+
+    bool DryAppearanceOk(Dry& dr, int app) {   // the checks MaterialOf makes that can fail
+        if (app < 0) return true;
+        auto it = dr.appOk.find(app);
+        if (it != dr.appOk.end()) return it->second;
+        bool ok = true;
+        const int mat = Child(app, {"Material"});
+        if (mat >= 0) {
+            double dc[3], ec[3], sh = 0, tr = 0;
+            ok = Vec(mat, "diffuseColor", dc, 3) && Vec(mat, "emissiveColor", ec, 3) && Num1(mat, "shininess", sh) && Num1(mat, "transparency", tr);
+        }
+        dr.appOk[app] = ok;
+        return ok;
+    }
+
+    int DryEmit(Dry& dr, int shape, const M4& xf) {
+        auto sit = dr.shape.find(shape);
+        if (sit == dr.shape.end()) {
+            DryShape ds;
+            ds.app = Child(shape, {"Appearance"});
+            for (int k : d.Kids(shape)) { const int r = Resolve(k); if (r < 0) continue; const std::string& n = d.Name(r); if (n != "Appearance" && n != "Metadata" && n.compare(0, 8, "Metadata") != 0) { ds.geo = r; break; } }
+            sit = dr.shape.emplace(shape, ds).first;
+        }
+        const DryShape ds = sit->second;
+        if (ds.geo < 0) return kDryGoOn;
+        const std::string& gn = d.Name(ds.geo);
+        const bool ifs = gn == "IndexedFaceSet" || gn == "IndexedTriangleSet" || gn == "TriangleSet";
+        if (!ifs && gn != "Box" && gn != "Sphere" && gn != "Cylinder" && gn != "Cone" && gn != "Extrusion") return kDryGoOn;
+        const DryGeo& g = DryGeometry(dr, ds.geo);
+        if (g.error) return kDryGiveUp;
+        if (ifs) { dr.points += g.points; if (dr.points > kMaxPoints) return kDryGiveUp; }
+        if (g.tris + dr.tris > kMaxTris) return kDryGiveUp;
+        dr.tris += g.tris;
+        if (g.tris == 0) return kDryGoOn;   // an empty shape: the real walk skips it too
+        // every position stays inside the coordinate limit: the corners of the bounding box, with a wide margin
+        for (int c = 0; c < 8; ++c) {
+            double x, y, z;
+            rc::Apply(xf, (c & 1) ? g.hi[0] : g.lo[0], (c & 2) ? g.hi[1] : g.lo[1], (c & 4) ? g.hi[2] : g.lo[2], x, y, z);
+            if (!std::isfinite(x + y + z) || std::fabs(x) > rc::kMaxCoord / 2 || std::fabs(y) > rc::kMaxCoord / 2 || std::fabs(z) > rc::kMaxCoord / 2) return kDryGiveUp;
+        }
+        // normals stay finite
+        double nm[9];
+        if (InvTranspose3(xf, nm)) for (double v : nm) if (!(std::fabs(v) < 1e30)) return kDryGiveUp;
+        // a part with nothing in it: every point is the same point, or the transform takes everything to one point
+        bool zeroScale = true;
+        for (int c = 0; c < 3; ++c) for (int r = 0; r < 3; ++r) if (xf.at(c, r) != 0.0) zeroScale = false;
+        if (g.onePoint || zeroScale) return kDryGoOn;
+        if (!g.haveTri || g.tris * 3 > 40000000) return kDryGiveUp;   // BuildMesh's own vertex cap is out of reach below this
+        // the biggest triangle, as BuildMesh will see it, is not degenerate, so the part has at least one triangle
+        Vec3 q[3];
+        for (int k = 0; k < 3; ++k) { double x, y, z; rc::Apply(xf, g.t[k * 3], g.t[k * 3 + 1], g.t[k * 3 + 2], x, y, z); q[k] = Vec3{(float)x, (float)y, (float)z}; }
+        const double ux = (double)q[1].x - q[0].x, uy = (double)q[1].y - q[0].y, uz = (double)q[1].z - q[0].z;
+        const double vx = (double)q[2].x - q[0].x, vy = (double)q[2].y - q[0].y, vz = (double)q[2].z - q[0].z;
+        const double nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, l = std::sqrt(nx * nx + ny * ny + nz * nz);
+        if (!(l > 1e-20) || !std::isfinite(l)) return kDryGiveUp;
+        if (dr.parts >= kMaxParts) { dr.why = "too many mesh parts"; return kDryRefuse; }   // where Emit fails
+        ++dr.parts;
+        if (!DryAppearanceOk(dr, ds.app)) return kDryGiveUp;
+        return kDryGoOn;
+    }
+
+    int DryWalk(Dry& dr, int raw, const M4& xf, int depth) {
+        const int i = Resolve(raw);
+        if (i < 0) return kDryGoOn;
+        if (depth > kMaxDepth) { dr.why = "scene graph nested too deep"; return kDryRefuse; }   // the errors Walk gives
+        if (++dr.visits > kMaxVisits) { dr.why = "scene graph too large (too many nodes, DEF/USE expansions included)"; return kDryRefuse; }
+        if (dr.active[(std::size_t)i]) return kDryGoOn;
+        const std::string& n = d.Name(i);
+        struct Guard { std::vector<char>& a; int k; ~Guard() { a[(std::size_t)k] = 0; } } guard{dr.active, i};
+        dr.active[(std::size_t)i] = 1;
+        auto kids = [&](const M4& m) { for (int k : d.Kids(i)) { const int r = DryWalk(dr, k, m, depth + 1); if (r != kDryGoOn) return r; } return (int)kDryGoOn; };
+        if (n == "Shape") return DryEmit(dr, i, xf);
+        if (n == "Transform") {
+            auto it = dr.local.find(i);
+            if (it == dr.local.end()) { M4 l; const bool ok = LocalMatrix(i, l); it = dr.local.emplace(i, std::make_pair(ok, l)).first; }
+            if (!it->second.first) return kDryGiveUp;
+            return kids(rc::Mul(xf, it->second.second));
+        }
+        if (n == "Group" || n == "Collision" || n == "Anchor" || n == "StaticGroup" || n == "Scene" || n == "X3D" || n == "CADLayer" || n == "CADAssembly" || n == "CADPart" || n == "Billboard") return kids(xf);
+        if (n == "Switch") {
+            double w = -1;
+            if (!Num1(i, "whichChoice", w)) return kDryGiveUp;
+            const auto& ks = d.Kids(i);
+            if (w >= 0 && w < (double)ks.size()) return DryWalk(dr, ks[(std::size_t)w], xf, depth + 1);
+            return kDryGoOn;
+        }
+        if (n == "LOD") { const auto& ks = d.Kids(i); return ks.empty() ? (int)kDryGoOn : DryWalk(dr, ks[0], xf, depth + 1); }
+        return kDryGoOn;
+    }
+
+    // True, with the error in `why`, when the walk would certainly fail on a cap (see above). Leaves the reader as it found it.
+    bool CertainlyOverCap(std::string& why) {
+        const std::string err0 = err;
+        const int badRefs0 = badRefs, badFaces0 = badFaces, badNormals0 = badNormals, badUv0 = badUv, colors0 = colors;
+        const std::size_t points0 = totalPoints, tris0 = totalTris;
+        bool refuse = false;
+        {
+            std::vector<std::size_t> memo(d.n.size(), (std::size_t)-1);
+            std::vector<char> busy(d.n.size(), 0);
+            if (ShapeBound(0, 0, memo, busy) > kMaxParts) {
+                Dry dr;
+                dr.active.assign(d.n.size(), 0);
+                refuse = DryWalk(dr, 0, M4{}, 0) == kDryRefuse;
+                why = dr.why;
+            }
+        }
+        err = err0;
+        badRefs = badRefs0; badFaces = badFaces0; badNormals = badNormals0; badUv = badUv0; colors = colors0;
+        totalPoints = points0; totalTris = tris0;
+        return refuse;
+    }
+
     void CollectDefs() {
         for (std::size_t i = 0; i < d.n.size(); ++i) {
             const std::string* def = d.Attr((int)i, "DEF");
@@ -588,6 +782,7 @@ struct Reader {
         if (!xml::Parse(text, d, e, lim)) return Fail(e);
         if (d.Name(0) != "X3D") return Fail(d.Name(0) == "Scene" ? "the root element is not <X3D>" : "this is not an X3D XML file (the root element is not <X3D>)");
         CollectDefs();
+        { std::string why; if (CertainlyOverCap(why)) return Fail(why); }
         ImportedNode root; root.name = "RootNode";
         model.nodes.push_back(root);
         if (!Walk(0, M4{}, 0)) return false;

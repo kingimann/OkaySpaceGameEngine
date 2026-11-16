@@ -236,6 +236,38 @@ static void Irr() {
 
 // ======================= NFF =======================
 static bool ReadNf(const std::string& b, ImportedModel& m, std::string& e) { return ReadNffBuffer(b, "", m, &e); }
+// Valid NFF files must read to the same output, bit for bit, as the reader gave before spheres were counted ahead and
+// built from a cached unit sphere. The strings were recorded from the reader before that change (main at 7516c6a7).
+static void NffSameOutput() {
+    RUN_SUITE("nff same output");
+    std::string polys = Repeat("p 3\n0 0 0\n1 0 0\n0 1 0\n", 100000);
+    std::string s8 = "nff\nObj\n3\n0 0 0\n1 0 0\n0 1 0\n100000\n" + Repeat("3 0 1 2 matid 1\n", 100000);
+    std::string tessAll;
+    for (int lvl = 0; lvl <= 6; ++lvl) tessAll += "tess " + std::to_string(lvl) + "\nf 0.1 0." + std::to_string(lvl) + " 1 0.5 0.5 3\ns " + std::to_string(lvl * 3) + " 1 -2 0.75 1.5 0.25\nc\n0 0 " + std::to_string(lvl) + " 1\n1 2 " + std::to_string(lvl + 3) + " 0.5\n";
+    std::string mixed = "v\nfrom 0 0 10\nat 0 0 0\nl 1 1 1\nf 1 0 0 1 0 0 0\ns 0 0 0 1\ns 3 0 0 1e-3\nhex 1 2 3 0.5\ntet 0 0 0 1\noct -2 0 0 1\ndod 2 2 2 1\nico 5 5 5 2\n"
+                        "tess 2\ns 0 0 5 2 1 0.5\nc\n0 0 0 1\n0 0 2 0\nf 0 1 0 0 0 0 0\npp 3\n0 0 0 0 0 1\n1 0 0 0 0 1\n0 1 0 0 0 1\np 4\n0 0 0\n1 0 0\n1 1 0\n0 1 0\ns 1e14 0 0 1e14\n";
+    std::string many; for (int i = 0; i < 20; ++i) many += "tess 6\ns " + std::to_string(i) + " 0 0 1\n";   // 20 tess-6 spheres: 4.9 million corners
+    const struct { const char* name; std::string text; const char* expect; } cases[] = {
+        {"BuildNff", fx::BuildNff(), "parts=5 tris=111 verts=99 min=-1,-1,-1 max=3,3,2 hash=95718df0b87a42e3"},
+        {"BuildNffSense8", fx::BuildNffSense8(), "parts=2 tris=3 verts=7 min=0,0,0 max=2,2,0 hash=ec9b84b27c10bc91"},
+        {"100000 polygons", polys, "parts=1 tris=100000 verts=300000 min=0,0,0 max=1,1,0 hash=07a4a39c7edfc8bb"},
+        {"sense8 100000 polygons", s8, "parts=1 tris=100000 verts=300000 min=0,0,0 max=1,1,0 hash=5d02eb9a89ca7354"},
+        {"tess 0..6 spheres and cones", tessAll, "parts=14 tris=131076 verts=76510 min=-0.963624,-0.845154,-2.25 max=18.75,2.5,9.29881 hash=294e45431b883c01"},
+        {"solids, ellipsoid, cone, patches", mixed, "parts=12 tris=10995 verts=5706 min=-3,-1e+14,-1e+14 max=2e+14,1e+14,1e+14 hash=65ebde8879b107b2"},
+        {"20 tess-6 spheres", many, "parts=20 tris=1638400 verts=819240 min=-1,-1,-1 max=20,1,1 hash=2baf3b13c9ed2568"},
+        {"over the cap, then a bad line", "tess 6\n" + Repeat("s 0 0 0 1\n", 200) + "s 0 0 bad\n", "refused: NFF: too many vertices"},
+        {"a bad line, then over the cap", "tess 6\n" + Repeat("s 0 0 0 1\n", 100) + "s 0 0 bad\n" + Repeat("s 0 0 0 1\n", 100), "refused: NFF: bad s on line 102"},
+    };
+    for (const auto& c : cases) {
+        ImportedModel m; std::string e;
+        const double t0 = Now();
+        const bool ok = ReadNf(c.text, m, e);
+        const std::string d = ok ? fx::Digest(m) : "refused: " + e;
+        std::fprintf(stderr, "  nff %s: %s (%.3f s)\n", c.name, d.c_str(), Now() - t0);
+        CHECK(fx::SameDigest(d, c.expect));
+    }
+}
+
 static void Nff() {
     const std::string good = fx::BuildNff();
     { ImportedModel m; std::string e; CHECK(ReadNf(good, m, e) && fx::Sane(m)); }
@@ -265,13 +297,19 @@ static void Nff() {
     }
     // a cone with zero length, equal ends at a point, a huge radius; a sphere with a huge radius; tess 6 solids, 2,000 of them (output cap)
     for (const char* c : {"c\n0 0 0 1\n0 0 0 1\n", "c\n0 0 0 0\n0 0 0 0\n", "c\n0 0 0 1e15\n0 0 1 1e15\n", "c\n0 0 0 -1\n0 0 1 1\n"}) Try(ReadNf, c);
-    { std::string s = "tess 6\n" + Repeat("s 0 0 0 1e14\n", 600); ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0); }
+    // 600 spheres at tess 6 make 147 million corners, over the 40 million cap: refused before the geometry is built
+    { std::string s = "tess 6\n" + Repeat("s 0 0 0 1e14\n", 600); ImportedModel m; std::string e; bool ok = true; const double t = Timed([&] { ok = ReadNf(s, m, e); });
+      std::fprintf(stderr, "  nff 600 tess-6 spheres: %s in %.3f s (limit %.1f s)\n", ok ? "read" : e.c_str(), t, fx::kRefuseSeconds);
+      CHECK(!ok && e == "NFF: too many vertices" && m.parts.empty()); CHECK(t < fx::kRefuseSeconds); }
     { std::string s = "tess 6\n" + Repeat("c\n0 0 0 1\n0 0 1 1\n", 300); ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0); }
     // 100,000 polygons, a polygon of 100,000 vertices, a Sense8 file of 100,000 polygons, 5,000 fills, a 3 MB token
     { std::string s = Repeat("p 3\n0 0 0\n1 0 0\n0 1 0\n", 100000); ImportedModel m; std::string e; const double t = Timed([&] { CHECK(ReadNf(s, m, e)); }); CHECK(fx::Sane(m) && m.parts.size() == 1 && fx::TriCount(m) == 100000); CHECK(t < 20.0); }
     { std::string s = "p 100000\n"; for (int i = 0; i < 100000; ++i) s += std::to_string(i % 977) + " " + std::to_string(i % 313) + " " + std::to_string(i % 7) + "\n"; ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 30.0); }
     { std::string s = "nff\nObj\n3\n0 0 0\n1 0 0\n0 1 0\n100000\n" + Repeat("3 0 1 2 matid 1\n", 100000); ImportedModel m; std::string e; const double t = Timed([&] { CHECK(ReadNf(s, m, e)); }); CHECK(fx::Sane(m)); CHECK(t < 20.0); }
-    { std::string s; for (int i = 0; i < 5000; ++i) s += "f 1 0 0 0 0 " + std::to_string(i) + "\ns 0 0 0 1\n"; ImportedModel m; std::string e; const double t = Timed([&] { ReadNf(s, m, e); }); CHECK(e.empty() ? fx::Sane(m) : !e.empty()); CHECK(t < 60.0); }
+    // 5,000 fills, each with a tess-4 sphere: 76.8 million corners, over the cap: refused before the geometry is built
+    { std::string s; for (int i = 0; i < 5000; ++i) s += "f 1 0 0 0 0 " + std::to_string(i) + "\ns 0 0 0 1\n"; ImportedModel m; std::string e; bool ok = true; const double t = Timed([&] { ok = ReadNf(s, m, e); });
+      std::fprintf(stderr, "  nff 5000 fills + spheres: %s in %.3f s (limit %.1f s)\n", ok ? "read" : e.c_str(), t, fx::kRefuseSeconds);
+      CHECK(!ok && e == "NFF: too many vertices" && m.parts.empty()); CHECK(t < fx::kRefuseSeconds); }
     Try(ReadNf, "s 0 0 0 " + std::string(3000000, '1') + "\n");
     Try(ReadNf, "f 1 1 1 " + std::string(3000000, 'x') + "\ns 0 0 0 1\n");
     // the Sense8 mtable: a path that climbs out, a name that is a folder, a 3 MB name
@@ -283,6 +321,6 @@ static void Nff() {
 int main() {
     RUN_SUITE("batchd_hostile");
     std::fprintf(stderr, "  mutation iterations per reader: %ld (OKAY_BATCHD_FUZZ_ITERS)\n", Iters());
-    Ac3d(); Ogre(); Xgl(); Irr(); Nff();
+    Ac3d(); Ogre(); Xgl(); Irr(); Nff(); NffSameOutput();
     TEST_MAIN_RESULT();
 }

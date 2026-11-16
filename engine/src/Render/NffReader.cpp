@@ -30,17 +30,29 @@ constexpr double kPi = 3.14159265358979323846;
 
 bool Fail(std::string* err, const std::string& m) { if (err) *err = "NFF: " + m; return false; }
 
-// A triangle mesh with explicit per-corner data, before it becomes a part.
+struct V3 { double x, y, z; };
+
+// A triangle mesh with explicit per-corner data, before it becomes a part. Spheres and cones are only described while the
+// file is read (their corner count is known from `tess` alone) and are built when the parts are made, so a file whose
+// spheres and cones add up to more than the vertex cap is refused before any of them is built.
 struct Prim {
+    enum Kind { Mesh, Sphere, Cone };
+    Kind kind = Mesh;
     detail::rc::Soup soup;
     bool explicitNormals = false;
     bool anyUv = false;
     double crease = 0;   // used when the normals are made here
     int mat = -1;
     std::string name;
+    int tess = 0;        // Sphere: subdivision level; Cone: segments
+    double g[8] = {};    // Sphere: centre and the three radii; Cone: base centre and radius, apex centre and radius
+    V3 e1{0, 0, 0}, e2{0, 0, 0};   // Cone: the two directions across the axis
 };
 
-struct V3 { double x, y, z; };
+// Corners (3 per triangle) of a sphere at subdivision level `tess`: 20 triangles, each split into 4 per level.
+std::size_t SphereCorners(int tess) { return (std::size_t)60 << (2 * tess); }
+// Corners of a cone or cylinder of `segs` segments: two side triangles per segment, plus one per segment for each cap.
+std::size_t ConeCorners(int segs, bool baseCap, bool apexCap) { return (std::size_t)segs * (6 + (baseCap ? 3 : 0) + (apexCap ? 3 : 0)); }
 
 // Icosahedron: 12 vertices on the unit sphere, 20 outward triangles (found from the edge length, not typed in).
 void Icosahedron(std::vector<V3>& v, std::vector<std::array<int, 3>>& f) {
@@ -121,6 +133,79 @@ void Solid(const std::string& kind, std::vector<V3>& v, std::vector<std::vector<
             cx += a.x; cy += a.y; cz += a.z;
         }
         if (nx * cx + ny * cy + nz * cz < 0) std::reverse(face.begin(), face.end());
+    }
+}
+
+// The unit sphere at one subdivision level: the icosahedron, each triangle split in four `tess` times, the new vertices
+// pushed out to the sphere. Edge midpoints are shared through a cache, so neighbouring triangles share them.
+struct UnitSphere { bool built = false; std::vector<V3> v; std::vector<std::array<int, 3>> tr; };
+void BuildUnitSphere(int tess, UnitSphere& u) {
+    std::vector<V3>& v = u.v;
+    std::vector<std::array<int, 3>>& tr = u.tr;
+    Icosahedron(v, tr);
+    for (int lvl = 0; lvl < tess; ++lvl) {
+        std::map<std::pair<int, int>, int> mid;
+        std::vector<std::array<int, 3>> nt;
+        nt.reserve(tr.size() * 4);
+        auto mp = [&](int x, int y) {
+            const auto key = std::make_pair(std::min(x, y), std::max(x, y));
+            auto it = mid.find(key);
+            if (it != mid.end()) return it->second;
+            V3 m{(v[(std::size_t)x].x + v[(std::size_t)y].x) / 2, (v[(std::size_t)x].y + v[(std::size_t)y].y) / 2, (v[(std::size_t)x].z + v[(std::size_t)y].z) / 2};
+            const double l = std::sqrt(m.x * m.x + m.y * m.y + m.z * m.z);
+            m = {m.x / l, m.y / l, m.z / l};
+            v.push_back(m);
+            return mid[key] = (int)v.size() - 1;
+        };
+        for (const auto& f : tr) {
+            const int ab = mp(f[0], f[1]), bc = mp(f[1], f[2]), ca = mp(f[2], f[0]);
+            nt.push_back({f[0], ab, ca}); nt.push_back({f[1], bc, ab}); nt.push_back({f[2], ca, bc}); nt.push_back({ab, bc, ca});
+        }
+        tr.swap(nt);
+    }
+    u.built = true;
+}
+
+// Fills the soup of a described sphere (an ellipsoid when the radii differ): positions scaled from the unit sphere, one
+// triangle per face in the face's own order, and the ellipsoid normal (the unit direction divided by the radii) per corner.
+void ExpandSphere(Prim& p, const UnitSphere& u) {
+    const double* a = p.g;
+    const double rx = a[3], ry = a[4], rz = a[5];
+    p.soup.pos.reserve(u.v.size());
+    for (const V3& q : u.v) p.soup.pos.push_back(Vec3{(float)(a[0] + q.x * rx), (float)(a[1] + q.y * ry), (float)(a[2] + q.z * rz)});
+    p.soup.ci.reserve(u.tr.size() * 3);
+    p.soup.cnrm.reserve(u.tr.size() * 3);
+    for (const auto& f : u.tr) for (int c = 0; c < 3; ++c) {
+        const int vi = f[(std::size_t)c];
+        p.soup.ci.push_back((std::uint32_t)vi);
+        const V3& q = u.v[(std::size_t)vi];
+        const double nx = q.x / rx, ny = q.y / ry, nz = q.z / rz, l = std::sqrt(nx * nx + ny * ny + nz * nz);
+        p.soup.cnrm.push_back(Vec3{(float)(nx / l), (float)(ny / l), (float)(nz / l)});
+    }
+}
+
+// Fills the soup of a described cone: a ring of `segs` points round the base and round the apex, the two centres, the side
+// as two triangles per segment and a cap fan at each end whose radius is above zero.
+void ExpandCone(Prim& p) {
+    const int segs = p.tess;
+    const double* bb = p.g;
+    const double* ee = p.g + 4;
+    const V3 &e1 = p.e1, &e2 = p.e2;
+    for (int ring = 0; ring < 2; ++ring) for (int i = 0; i < segs; ++i) {
+        const double ang = 2 * kPi * i / segs, r = ring ? ee[3] : bb[3];
+        const double* c = ring ? ee : bb;
+        p.soup.pos.push_back(Vec3{(float)(c[0] + r * (std::cos(ang) * e1.x + std::sin(ang) * e2.x)), (float)(c[1] + r * (std::cos(ang) * e1.y + std::sin(ang) * e2.y)),
+                                  (float)(c[2] + r * (std::cos(ang) * e1.z + std::sin(ang) * e2.z))});
+    }
+    const std::uint32_t cb = (std::uint32_t)p.soup.pos.size();
+    p.soup.pos.push_back(Vec3{(float)bb[0], (float)bb[1], (float)bb[2]});
+    p.soup.pos.push_back(Vec3{(float)ee[0], (float)ee[1], (float)ee[2]});
+    auto tri = [&](std::uint32_t x, std::uint32_t y, std::uint32_t z) { p.soup.ci.push_back(x); p.soup.ci.push_back(y); p.soup.ci.push_back(z); };
+    for (int i = 0; i < segs; ++i) {
+        const std::uint32_t b0 = (std::uint32_t)i, b1 = (std::uint32_t)((i + 1) % segs), a0 = (std::uint32_t)(segs + i), a1 = (std::uint32_t)(segs + (i + 1) % segs);
+        tri(b0, b1, a1); tri(b0, a1, a0);          // side, outward for a counter-clockwise ring seen from the apex
+        if (bb[3] > 0) tri(cb, b1, b0);            // base cap, facing away from the apex
+        if (ee[3] > 0) tri(cb + 1, a0, a1);        // apex cap
     }
 }
 
@@ -245,37 +330,20 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
                 Prim p;
                 p.mat = matIndex();
                 p.name = k;
+                if (k == "s") {   // described now, built when the parts are made; its corner count is known from tess
+                    p.kind = Prim::Sphere;
+                    p.explicitNormals = true;
+                    p.tess = tess;
+                    p.g[0] = a[0]; p.g[1] = a[1]; p.g[2] = a[2]; p.g[3] = a[3]; p.g[4] = ry; p.g[5] = rz;
+                    outVerts += SphereCorners(tess);
+                    if (outVerts > kMaxOutVerts) return Fail(err, "too many vertices");
+                    if (!addPrim(std::move(p))) return false;
+                    closePolys();
+                    continue;
+                }
                 std::vector<V3> v;
                 std::vector<std::vector<int>> faces;
-                if (k == "s") {
-                    std::vector<std::array<int, 3>> tr;
-                    Icosahedron(v, tr);
-                    // subdivide `tess` times; vertices are shared by the edge midpoint cache
-                    for (int lvl = 0; lvl < tess; ++lvl) {
-                        std::map<std::pair<int, int>, int> mid;
-                        std::vector<std::array<int, 3>> nt;
-                        nt.reserve(tr.size() * 4);
-                        auto mp = [&](int x, int y) {
-                            const auto key = std::make_pair(std::min(x, y), std::max(x, y));
-                            auto it = mid.find(key);
-                            if (it != mid.end()) return it->second;
-                            V3 m{(v[(std::size_t)x].x + v[(std::size_t)y].x) / 2, (v[(std::size_t)x].y + v[(std::size_t)y].y) / 2, (v[(std::size_t)x].z + v[(std::size_t)y].z) / 2};
-                            const double l = std::sqrt(m.x * m.x + m.y * m.y + m.z * m.z);
-                            m = {m.x / l, m.y / l, m.z / l};
-                            v.push_back(m);
-                            return mid[key] = (int)v.size() - 1;
-                        };
-                        for (const auto& f : tr) {
-                            const int ab = mp(f[0], f[1]), bc = mp(f[1], f[2]), ca = mp(f[2], f[0]);
-                            nt.push_back({f[0], ab, ca}); nt.push_back({f[1], bc, ab}); nt.push_back({f[2], ca, bc}); nt.push_back({ab, bc, ca});
-                        }
-                        tr.swap(nt);
-                    }
-                    for (const auto& f : tr) faces.push_back({f[0], f[1], f[2]});
-                    p.explicitNormals = true;
-                } else {
-                    Solid(k, v, faces);
-                }
+                Solid(k, v, faces);
                 for (const V3& q : v) p.soup.pos.push_back(Vec3{(float)(a[0] + q.x * a[3]), (float)(a[1] + q.y * ry), (float)(a[2] + q.z * rz)});
                 for (const auto& f : faces) {
                     std::vector<Vec3> poly;
@@ -285,11 +353,6 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
                     for (const auto& tt : tri) for (int c = 0; c < 3; ++c) {
                         const int vi = f[(std::size_t)tt[(std::size_t)c]];
                         p.soup.ci.push_back((std::uint32_t)vi);
-                        if (p.explicitNormals) {   // normal of an ellipsoid: the unit direction divided by the radii
-                            const V3& q = v[(std::size_t)vi];
-                            const double nx = q.x / a[3], ny = q.y / ry, nz = q.z / rz, l = std::sqrt(nx * nx + ny * ny + nz * nz);
-                            p.soup.cnrm.push_back(Vec3{(float)(nx / l), (float)(ny / l), (float)(nz / l)});
-                        }
                     }
                 }
                 outVerts += p.soup.ci.size();
@@ -316,24 +379,11 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
                 p.mat = matIndex();
                 p.name = "cone";
                 p.crease = 60;
-                // positions: base ring, apex ring, base centre, apex centre
-                for (int ring = 0; ring < 2; ++ring) for (int i = 0; i < segs; ++i) {
-                    const double ang = 2 * kPi * i / segs, r = ring ? ee[3] : bb[3];
-                    const double* c = ring ? ee : bb;
-                    p.soup.pos.push_back(Vec3{(float)(c[0] + r * (std::cos(ang) * e1.x + std::sin(ang) * e2.x)), (float)(c[1] + r * (std::cos(ang) * e1.y + std::sin(ang) * e2.y)),
-                                              (float)(c[2] + r * (std::cos(ang) * e1.z + std::sin(ang) * e2.z))});
-                }
-                const std::uint32_t cb = (std::uint32_t)p.soup.pos.size();
-                p.soup.pos.push_back(Vec3{(float)bb[0], (float)bb[1], (float)bb[2]});
-                p.soup.pos.push_back(Vec3{(float)ee[0], (float)ee[1], (float)ee[2]});
-                auto tri = [&](std::uint32_t x, std::uint32_t y, std::uint32_t z) { p.soup.ci.push_back(x); p.soup.ci.push_back(y); p.soup.ci.push_back(z); };
-                for (int i = 0; i < segs; ++i) {
-                    const std::uint32_t b0 = (std::uint32_t)i, b1 = (std::uint32_t)((i + 1) % segs), a0 = (std::uint32_t)(segs + i), a1 = (std::uint32_t)(segs + (i + 1) % segs);
-                    tri(b0, b1, a1); tri(b0, a1, a0);          // side, outward for a counter-clockwise ring seen from the apex
-                    if (bb[3] > 0) tri(cb, b1, b0);            // base cap, facing away from the apex
-                    if (ee[3] > 0) tri(cb + 1, a0, a1);        // apex cap
-                }
-                outVerts += p.soup.ci.size();
+                p.kind = Prim::Cone;   // described now, built when the parts are made
+                p.tess = segs;
+                for (int i = 0; i < 4; ++i) { p.g[i] = bb[i]; p.g[4 + i] = ee[i]; }
+                p.e1 = e1; p.e2 = e2;
+                outVerts += ConeCorners(segs, bb[3] > 0, ee[3] > 0);
                 if (outVerts > kMaxOutVerts) return Fail(err, "too many vertices");
                 if (!addPrim(std::move(p))) return false;
                 closePolys();
@@ -528,13 +578,22 @@ static bool ReadNffImpl(const std::string& input, const std::string& baseDir, Im
     std::map<int, int> matOut;
     int degenerate = 0;
     outVerts = 0;
+    std::array<UnitSphere, kMaxTess + 1> spheres;   // one unit sphere per subdivision level, made the first time it is needed
     for (Prim& p : prims) {
+        if (p.kind == Prim::Sphere) {
+            UnitSphere& u = spheres[(std::size_t)p.tess];
+            if (!u.built) BuildUnitSphere(p.tess, u);
+            ExpandSphere(p, u);
+        } else if (p.kind == Prim::Cone) {
+            ExpandCone(p);
+        }
         if (p.soup.ci.empty()) continue;
         ImportedPart part;
         detail::rc::BuildStats st;
         if (p.explicitNormals && p.soup.cnrm.size() != p.soup.ci.size()) p.soup.cnrm.clear();
         if (!p.anyUv) p.soup.cuv.clear();
         if (!detail::rc::BuildMesh(p.soup, p.explicitNormals ? 0.0 : p.crease, part.mesh, &st, kMaxOutVerts - std::min(outVerts, kMaxOutVerts))) return Fail(err, "too many output vertices");
+        p.soup = detail::rc::Soup{};   // the corners are in the part now; a big file should not hold both
         degenerate += st.degenerate;
         outVerts += part.mesh.vertices.size();
         if (part.mesh.triangles.empty()) continue;

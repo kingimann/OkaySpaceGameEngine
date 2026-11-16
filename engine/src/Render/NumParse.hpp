@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cstddef>
+#include <cstdint>
 #include <charconv>
 #include <system_error>
 #include <clocale>
@@ -59,6 +60,74 @@ inline bool FastDecimal(const char* p, const char* e, double& out) {
     v = scale < 0 ? v / kPow10[-scale] : v * kPow10[scale];
     out = neg ? -v : v;
     return true;
+}
+
+// Four ASCII digits at q (q + 4 must be readable) as their value, or -1 when one of the four bytes is not a digit. Little
+// endian only (the first character is the lowest byte); elsewhere it always says -1 and the callers go digit by digit.
+inline int FourDigits(const char* q) {
+#if (defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_MSC_VER)
+    std::uint32_t x;
+    std::memcpy(&x, q, 4);
+    // every byte in '0'..'9': its high nibble is 3, and adding 6 does not carry it out of 3 (no byte passes the first test
+    // with a value that could carry into the next byte)
+    if ((x & 0xF0F0F0F0u) != 0x30303030u || ((x + 0x06060606u) & 0xF0F0F0F0u) != 0x30303030u) return -1;
+    x -= 0x30303030u;                              // bytes d0 d1 d2 d3, d0 the first digit
+    x = (x * 10u + (x >> 8)) & 0x00FF00FFu;        // d0*10+d1 in byte 0, d2*10+d3 in byte 2
+    return (int)((x * 100u + (x >> 16)) & 0xFFFFu);
+#else
+    (void)q; return -1;
+#endif
+}
+
+// FastDecimal for the token that starts at `p` and ends at the first white space (' ', 9 to 13) or at `e`, read in one pass:
+// returns true with the same value FastDecimal(p, tokenEnd) gives, and moves p to the token end, when FastDecimal would
+// accept the token and it has at most `maxLen` characters. False (p unchanged) when FastDecimal would refuse it or the token
+// is longer: the caller then reads the token the old way.
+inline bool ScanDecimal(const char*& p, const char* e, double& out, std::ptrdiff_t maxLen) {
+#if defined(FLT_EVAL_METHOD) && FLT_EVAL_METHOD != 0
+    (void)p; (void)e; (void)out; (void)maxLen; return false;
+#else
+    static const double kPow10[23] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+                                      1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+    auto ws = [](char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; };
+    const char* q = p;
+    if (q >= e) return false;
+    const bool neg = *q == '-';
+    if (neg) ++q;
+    unsigned long long m = 0;
+    // m takes the digits, four at a time while it can (the same value as one at a time: m * 10^4 + v)
+    const char* const d0 = q;
+    for (int v; e - q >= 4 && (v = FourDigits(q)) >= 0; q += 4) m = m * 10000u + (unsigned)v;
+    for (unsigned d; q < e && (d = (unsigned)(unsigned char)*q - '0') <= 9; ++q) m = m * 10 + d;
+    std::ptrdiff_t nd = q - d0;
+    int scale = 0;
+    if (q < e && *q == '.') {
+        const char* const f0 = ++q;
+        for (int v; e - q >= 4 && (v = FourDigits(q)) >= 0; q += 4) m = m * 10000u + (unsigned)v;
+        for (unsigned d; q < e && (d = (unsigned)(unsigned char)*q - '0') <= 9; ++q) m = m * 10 + d;
+        scale = -(int)std::min<std::ptrdiff_t>(q - f0, 1000);
+        nd += q - f0;
+    }
+    if (nd == 0 || nd > 19) return false;
+    if (q < e && (*q == 'e' || *q == 'E')) {
+        ++q;
+        bool eneg = false;
+        if (q < e && (*q == '-' || *q == '+')) { eneg = *q == '-'; ++q; }
+        if (q >= e || ws(*q)) return false;   // FastDecimal: nothing after the 'e' (or its sign) in the token
+        int x = 0;
+        for (; q < e && *q >= '0' && *q <= '9'; ++q) { x = x * 10 + (*q - '0'); if (x > 1000) return false; }
+        scale += eneg ? -x : x;
+    }
+    if (q < e && !ws(*q)) return false;            // other characters in the token
+    if (q - p > maxLen) return false;
+    if (m == 0) { out = neg ? -0.0 : 0.0; p = q; return true; }
+    if (m > (1ull << 53) || scale < -22 || scale > 22) return false;
+    double v = (double)m;
+    v = scale < 0 ? v / kPow10[-scale] : v * kPow10[scale];
+    out = neg ? -v : v;
+    p = q;
+    return true;
+#endif
 }
 
 // A whole token [b, e) of a plain decimal number read without strtod when that gives the same value: FastDecimal, or

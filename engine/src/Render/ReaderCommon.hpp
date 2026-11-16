@@ -43,6 +43,14 @@ inline bool ParseNumber(const char* b, const char* e, double& v) {
     return std::isfinite(v) && std::fabs(v) <= kMaxCoord;
 }
 inline bool ParseNumber(const std::string& s, double& v) { return ParseNumber(s.data(), s.data() + s.size(), v); }
+// ParseNumber of the token that starts at `p` (not white space) and ends at the next white space or `e`, read in one pass
+// for the usual plain decimal (ScanDecimal); `p` is left at the token's end. The same result as ParseNumber(token).
+inline bool ScanNumber(const char*& p, const char* e, double& v) {
+    if (ScanDecimal(p, e, v, 63)) return std::isfinite(v) && std::fabs(v) <= kMaxCoord;
+    const char* const a = p;
+    while (p < e && !Ws(*p)) ++p;
+    return ParseNumber(a, p, v);
+}
 
 // A list of numbers separated by white space (and by commas when `commas`). False on any bad token or when
 // more than `maxCount` numbers are present.

@@ -95,6 +95,13 @@ static bool ReadCsmImpl(const std::string& text, ImportedModel& out, std::string
                 chans.resize(names.size());
                 for (std::size_t i = 0; i < names.size(); ++i) chans[i].node = names[i];
                 vals.assign(names.size() * 3 + 1, 0.0);
+                // room for the frames $FirstFrame / $LastFrame announce, at most what the rest of the text can hold (a frame line
+                // has at least two characters per value) and the key budget: no regrowth, no doubled capacity
+                if (haveFirst && haveLast && lastFrameHdr >= firstFrameHdr && lastFrameHdr - firstFrameHdr < 1e9) {
+                    const std::size_t announced = (std::size_t)(lastFrameHdr - firstFrameHdr) + 1;
+                    const std::size_t room = std::min<std::size_t>({announced, (text.size() - std::min(text.size(), lines.pos)) / (2 * (names.size() * 3 + 1)) + 1, (std::size_t)(kMaxKeys / names.size())});
+                    for (ImportedChannel& c : chans) c.position.reserve(room);
+                }
             } else if (kw == "$rate") {
                 double v;
                 if (!numberArg(v) || !(v > 0) || v > kMaxRate) return Fail(err, "$Rate is not a number between 0 and " + std::to_string((int)kMaxRate));
@@ -122,11 +129,12 @@ static bool ReadCsmImpl(const std::string& text, ImportedModel& out, std::string
         std::size_t got = 0;
         bool good = true;
         q = p;
-        const char *nb, *ne;
-        while (NextToken(q, end, nb, ne)) {
+        for (;;) {   // the tokens NextToken gives, each read as ParseNumber reads it (ScanNumber: in one pass)
+            while (q < end && detail::rc::Ws(*q)) ++q;
+            if (q >= end) break;
             if (got >= want) { good = false; break; }
             double v;
-            if (!detail::rc::ParseNumber(nb, ne, v)) { good = false; break; }
+            if (!detail::rc::ScanNumber(q, end, v)) { good = false; break; }
             vals[got++] = v;
         }
         if (!good || got != want) { ++badLines; continue; }

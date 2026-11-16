@@ -41,6 +41,7 @@ slot pelvis box
 slot scarf none
 slot shirt tshirt
 slot shoulder none
+slot sole rubber
 slot torso barrel
 color arm 0.870000005 0.680000007 0.550000012 1
 color backpack 0.449999988 0.300000012 0.180000007 1
@@ -67,6 +68,7 @@ color pelvis 0.870000005 0.680000007 0.550000012 1
 color scarf 0.75 0.150000006 0.150000006 1
 color shirt 0.899999976 0.75 0.150000006 1
 color shoulder 0.620000005 0.649999976 0.699999988 1
+color sole 0.159999996 0.159999996 0.170000002 1
 color torso 0.870000005 0.680000007 0.550000012 1
 material arm 0
 material backpack 7
@@ -93,4 +95,5 @@ material pelvis 0
 material scarf 16
 material shirt 3
 material shoulder 10
+material sole 18
 material torso 0

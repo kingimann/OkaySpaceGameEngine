@@ -846,8 +846,8 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
     }
     // clothes: fitted shells offset from the skin
     const float slack = std::max(0.0f, 1.0f - Mul()) * 0.032f;   // coarse rings sag between their corners: at Low the clothes stand further off the skin
-    const float off = 0.016f + slack;
-    const float offP = 0.008f + slack * 0.35f;                    // trousers sit under a shirt that hangs over them
+    const float off = 0.020f + slack;
+    const float offP = 0.006f + slack * 0.25f;                    // trousers sit under a shirt that hangs over them
     AddPart(o, "shirt/0", "shirt", [&](const std::string& dg) {
         const bool vest = dg == "vest" || dg == "tank";
         const bool tucked = dg == "tucked";
@@ -902,7 +902,7 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
         if (dg == "long") shapes::Append(m, SmoothLoft({{{0.05f, d.shoulderY - 0.03f, nr * 1.1f}, 0.012f, 0.05f}, {{0.055f, d.shoulderY - 0.2f * d.tl, nr * 1.15f + 0.01f}, 0.012f, 0.055f}, {{0.06f, d.shoulderY - 0.45f * d.tl, nr * 1.2f + 0.02f}, 0.012f, 0.05f}}, kFwd, 8, Rings(d, 6, 3), false, true));
         return m;
     });
-    // Fine detail (High and Ultra) on the clothes: a row of buttons down the front, a placket, the hem, and two pockets. A part of its own, removable.
+    // Fine detail (High and Ultra) on the clothes: a row of small buttons down the front (no placket or pockets: they read as dirt). A part of its own, removable.
     if (shapes::DetailF() >= 1.99f && r.DesignFor("shirt", "shirt/0") != "none" && !r.DesignFor("shirt", "shirt/0").empty() && r.DesignFor("shirt", "shirt/0") != "tshirt" && r.DesignFor("shirt", "shirt/0") != "tank" && r.DesignFor("shirt", "shirt/0") != "tucked") {
         const std::string sh = r.DesignFor("shirt", "shirt/0");
         const float yb = d.hipY + 0.16f * d.tl, yt = d.shoulderY - 0.1f;
@@ -916,33 +916,8 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
                 Frame f; f.origin = {0, y, zAt(y) - 0.006f}; f.t = {1, 0, 0}; f.u = {0, 0, 1}; f.n = {0, -1, 0}; f.sx = 0.014f; f.sy = 0.010f; f.sz = 0.014f;
                 shapes::Append(m, shapes::Prism(f, 8));
             }
-            if (sh != "tshirt" && sh != "tank") shapes::Append(m, BoxAA({-0.004f, yb - 0.02f, zAt(yb) - 0.012f}, {0.004f, yt + 0.02f, zAt(yt) - 0.002f}));   // the placket
             return m;
         });
-        if (sh == "jacket" || sh == "hoodie")
-            AddPart(o, "pocket/0", "fitting", [&](const std::string& dg) {
-                if (dg == "none") return PolyMesh();
-                PolyMesh m;
-                const float yp = d.hipY - 0.02f, zp = zAt(yp);
-                for (int sg = -1; sg <= 1; sg += 2) shapes::Append(m, BoxAA({sg * d.W * 0.5f - 0.045f, yp - 0.035f, zp - 0.012f}, {sg * d.W * 0.5f + 0.045f, yp + 0.04f, zp + 0.002f}));   // two pocket flaps
-                return m;
-            });
-    }
-    // a neutral head: nodded forward a few degrees about the top of the neck, so the eyes look level (the Frankfurt plane, ear to eye socket, horizontal)
-    {
-        static const char* kHead[] = {"head", "face", "eyes", "eyewhite", "brows", "nose", "mouth", "ears", "hair", "hat", "glasses"};
-        const float a = 0.12f, ca = std::cos(a), sa = std::sin(a);
-        const Vec3 pv{0, hd.yb + 0.07f * hd.s, -0.012f};
-        for (GeneratedPart& p : parts) {
-            bool isHead = false;
-            for (const char* sl : kHead) if (p.slot == sl) isHead = true;
-            if (!isHead) continue;
-            for (Vec3& v : p.mesh.verts) {
-                const float y = v.y - pv.y, z = v.z - pv.z;
-                v.y = pv.y + y * ca - z * sa;
-                v.z = pv.z + y * sa + z * ca;
-            }
-        }
     }
 }
 

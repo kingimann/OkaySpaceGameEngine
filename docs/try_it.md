@@ -763,7 +763,7 @@ editor window (the editor code was only syntax-checked, the snapping ring and th
 thousand, High 21 thousand, Ultra 44 thousand). It has human proportions (about 7.5 heads tall), a torso with chest, waist
 and hips, shoulders with a deltoid, arms and legs with muscle and fat taper and real elbows and knees, a neck, a skull with
 jaw, brow and cheeks, eyes with whites and lids, a nose, lips, ears, hands with four fingers and a thumb, feet with toes, 13
-hair styles, hats, glasses, and clothes that are fitted shells. New sliders: **Build** (slim to heavy) and **Muscle**. New
+hair styles, hats, glasses, soles (their own colour slot), and clothes that are fitted shells (shirt designs include Tucked shirt and Tunic). New sliders: **Build** (slim to heavy) and **Muscle**. New
 start designs: Slim, Elder, Woman, Man. Written from general modeling knowledge; no model, code or data from any other
 project (the bone names in the rig follow Mixamo's naming convention, nothing from Mixamo is used).
 The same page now has six more kinds: **Aircraft**, **Boat** (Vehicles), **Weapon**, **Lamp** (Props), **Tower**

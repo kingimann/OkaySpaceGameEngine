@@ -4,6 +4,9 @@
 
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
+#ifdef OKAY_OWN_SYNC
+#include "okay/Sync/Sync.hpp"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -19,13 +22,38 @@
 namespace okayversionsui {
 namespace {
 
+// Threads and the progress mutex: SDL's by default, okay::sync (docs/sync.md) when built with -DOKAY_OWN_SYNC=ON.
+#ifdef OKAY_OWN_SYNC
+using JobThread = std::unique_ptr<okay::sync::Thread>;
+using JobMutex = okay::sync::Mutex;
+JobThread StartJobThread(int (*fn)(void*), const char* name, void* arg) {
+    static bool said = false;   // one line, so a person can tell the own threads are the ones running
+    if (!said) { said = true; okay::platform::Log("sync: okay::sync threads in the Versions page (OKAY_OWN_SYNC)"); }
+    return okay::sync::Thread::Start(fn, name, arg);
+}
+void JoinJobThread(JobThread& t) { if (t) t->Join(); t.reset(); }
+JobMutex* NewJobMutex() { return new okay::sync::Mutex(); }
+void FreeJobMutex(JobMutex* m) { delete m; }
+void LockJobMutex(JobMutex* m) { m->Lock(); }
+void UnlockJobMutex(JobMutex* m) { m->Unlock(); }
+#else
+using JobThread = SDL_Thread*;
+using JobMutex = SDL_mutex;
+JobThread StartJobThread(int (*fn)(void*), const char* name, void* arg) { return StartJobThread(fn, name, arg); }
+void JoinJobThread(JobThread& t) { if (t) SDL_WaitThread(t, nullptr); t = nullptr; }
+JobMutex* NewJobMutex() { return NewJobMutex(); }
+void FreeJobMutex(JobMutex* m) { SDL_DestroyMutex(m); }
+void LockJobMutex(JobMutex* m) { LockJobMutex(m); }
+void UnlockJobMutex(JobMutex* m) { UnlockJobMutex(m); }
+#endif
+
 using namespace okayversions;
 namespace fs = std::filesystem;
 
 // ---- background jobs --------------------------------------------------------------------------------------------------------
 
 struct IndexJob {
-    SDL_Thread* th = nullptr;
+    JobThread th{};
     std::atomic<bool> done{false};
     Sources sources;
     FetchTextFn fetch;
@@ -39,18 +67,18 @@ int IndexWorker(void* p) {
 }
 
 struct InstallJob {
-    SDL_Thread* th = nullptr;
+    JobThread th{};
     std::atomic<bool> done{false}, cancel{false};
     std::atomic<std::uint64_t> fileBytes{0}, fileTotal{0}, doneBytes{0}, totalBytes{0};
     std::atomic<int> fileIndex{0}, fileCount{0};
-    SDL_mutex* mu = nullptr;
+    JobMutex* mu = nullptr;
     std::string file;                                   // guarded by mu
     std::string version;
     fs::path launcherDir;
     InstallPlan plan;
     InstallOptions options;
     Result result;
-    ~InstallJob() { if (mu) SDL_DestroyMutex(mu); }
+    ~InstallJob() { if (mu) FreeJobMutex(mu); }
 };
 int InstallWorker(void* p) {
     InstallJob* j = static_cast<InstallJob*>(p);
@@ -66,9 +94,9 @@ int InstallWorker(void* p) {
         j->totalBytes = pr.totalBytes;
         j->fileIndex = pr.fileIndex;
         j->fileCount = pr.fileCount;
-        SDL_LockMutex(j->mu);
+        LockJobMutex(j->mu);
         j->file = pr.file;
-        SDL_UnlockMutex(j->mu);
+        UnlockJobMutex(j->mu);
     };
     j->result = Install(j->launcherDir, plan, j->options, io);
     j->done = true;
@@ -202,7 +230,7 @@ void StartIndex(const Host& h) {
     st.indexJob = std::make_unique<IndexJob>();
     st.indexJob->sources = h.sources;
     st.indexJob->fetch = h.fetchText;
-    st.indexJob->th = SDL_CreateThread(IndexWorker, "okay-versions-index", st.indexJob.get());
+    st.indexJob->th = StartJobThread(IndexWorker, "okay-versions-index", st.indexJob.get());
     if (!st.indexJob->th) st.indexJob.reset();
 }
 
@@ -210,12 +238,12 @@ void StartJob(const Host& h, const InstallPlan& plan) {
     State& st = S();
     if (st.job) return;
     auto j = std::make_unique<InstallJob>();
-    j->mu = SDL_CreateMutex();
+    j->mu = NewJobMutex();
     j->version = plan.version;
     j->launcherDir = h.launcherDir;
     j->plan = plan;
     j->totalBytes = plan.totalBytes();
-    j->th = SDL_CreateThread(InstallWorker, "okay-versions-install", j.get());
+    j->th = StartJobThread(InstallWorker, "okay-versions-install", j.get());
     if (!j->th) { Toast(h, "Couldn't start the download.", 2); return; }
     st.notes.erase(plan.version);
     st.job = std::move(j);
@@ -597,9 +625,9 @@ void DrawAvailable(const Host& h) {
             if (lts) sub += "  \xC2\xB7  only gets fixes";
             if (mine) {
                 std::string file;
-                SDL_LockMutex(st.job->mu);
+                LockJobMutex(st.job->mu);
                 file = st.job->file;
-                SDL_UnlockMutex(st.job->mu);
+                UnlockJobMutex(st.job->mu);
                 sub = st.job->cancel ? std::string("Cancelling\xE2\x80\xA6") : "Downloading " + file + " (" + std::to_string(st.job->fileIndex.load()) + " of " + std::to_string(st.job->fileCount.load()) + ")";
             }
             DrawTextAt(r.dl, ImVec2(r.p0.x, r.p0.y + 33), Fit(sub, r.width - rightW - 16.0f).c_str(), ImGui::GetColorU32(ImGuiCol_TextDisabled));
@@ -706,7 +734,7 @@ void Tick(const Host& h) {
     State& st = S();
     if (!st.staleCleaned) { st.staleCleaned = true; CleanStale(h.launcherDir); }
     if (st.indexJob && st.indexJob->done) {
-        SDL_WaitThread(st.indexJob->th, nullptr);
+        JoinJobThread(st.indexJob->th);
         st.index = std::move(st.indexJob->result);
         st.indexJob.reset();
         st.haveIndex = true;
@@ -719,7 +747,7 @@ void Tick(const Host& h) {
         ResolveHighlight();
     }
     if (st.job && st.job->done) {
-        SDL_WaitThread(st.job->th, nullptr);
+        JoinJobThread(st.job->th);
         const Result r = st.job->result;
         const std::string v = st.job->version;
         st.job.reset();
@@ -769,11 +797,11 @@ void Shutdown() {
     State& st = S();
     if (st.job) {
         st.job->cancel = true;
-        SDL_WaitThread(st.job->th, nullptr);
+        JoinJobThread(st.job->th);
         st.job.reset();
     }
     if (st.indexJob) {
-        SDL_WaitThread(st.indexJob->th, nullptr);
+        JoinJobThread(st.indexJob->th);
         st.indexJob.reset();
     }
 }

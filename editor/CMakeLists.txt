@@ -110,6 +110,13 @@ if(WIN32)
     target_compile_options(okay-editor PRIVATE -g)
     target_link_options(okay-editor PRIVATE -g)
 endif()
+# Our own Dear ImGui backend (-DOKAY_OWN_IMGUI=ON, off by default; docs/own_imgui_backend.md). Today only the --vs-shot
+# screenshot tool can use it (OKAY_IMGUI_BACKEND=own); the editor window itself still runs on imgui_impl_sdl2.
+if(OKAY_OWN_IMGUI AND TARGET okay_ui_soft)
+    target_sources(okay-editor PRIVATE ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnBackend.cpp ${CMAKE_SOURCE_DIR}/shared/ImGuiOwnInput.cpp)
+    target_link_libraries(okay-editor PRIVATE okay_ui_soft)
+    target_compile_definitions(okay-editor PRIVATE OKAY_OWN_IMGUI=1)
+endif()
 # OkayUI overlay demo (renders on top of ImGui through the same SDL_Renderer).
 if(TARGET okay_ui)
     target_link_libraries(okay-editor PRIVATE okay_ui okay_ui_screens)

@@ -15,7 +15,7 @@ if(NOT OKAY_PLATFORM_BACKEND STREQUAL "sdl2" AND NOT OKAY_PLATFORM_BACKEND STREQ
 endif()
 
 function(okay_add_platform_library)
-    set(_srcs src/Platform/Platform.cpp src/Platform/SdlBackend.cpp)
+    set(_srcs src/Platform/Platform.cpp src/Platform/SdlBackend.cpp src/Sync/Sync.cpp)
     set(_defs "")
     set(_libs "")
     set(_incs "")

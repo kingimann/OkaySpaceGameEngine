@@ -64,6 +64,9 @@ enum class Key : uint16_t {
 };
 constexpr int kKeyCount = 512;
 
+/// System mouse cursor shapes a UI toolkit asks for (the nine Dear ImGui and OkayUI use).
+enum class CursorShape { Arrow, TextInput, ResizeAll, ResizeNS, ResizeEW, ResizeNESW, ResizeNWSE, Hand, NotAllowed };
+
 enum Mod : uint32_t { ModShift = 1, ModCtrl = 2, ModAlt = 4, ModGui = 8, ModCaps = 16, ModNum = 32 };
 
 enum MouseButton : int { MouseLeft = 1, MouseMiddle = 2, MouseRight = 3, MouseX1 = 4, MouseX2 = 5 };
@@ -270,6 +273,8 @@ public:
     virtual bool SetRelativeMouse(bool on) = 0;
     virtual void ShowCursor(bool show) = 0;
     virtual void WarpMouse(Window* w, int x, int y) = 0;
+    /// Show this system cursor shape over the windows. False = this backend cannot (own Linux today); the arrow stays.
+    virtual bool SetCursorShape(CursorShape shape) { (void)shape; return false; }
     /// Whether the cursor is visible (what ShowCursor last asked for; starts true).
     virtual bool IsCursorShown() { return true; }
     /// Mouse motion since the last call, and the button mask (MouseMask bits). Not

@@ -1446,3 +1446,20 @@ Windows CI job runs the logic test and the self-test on a hosted Windows runner 
 (`ctest -R okayui_painter_golden`). Nothing in the launcher, editor or player draws to a render target yet, so there is nothing to click;
 it is the seam the editor and launcher need before they can leave `SDL_Renderer`.
 
+## Own threads (`okay::sync`) and own Dear ImGui backend: build switches, developer-facing
+
+Both are **off in the release**. They are build options (the release is built without them), so there is nothing to click in the
+Windows release. How to try them where you build:
+
+1. `okay::sync` in the launcher's Versions page: configure with `-DOKAY_OWN_SYNC=ON`, start the launcher, open **Versions** and
+   start an install or refresh the list. The log has the line `sync: okay::sync threads in the Versions page (OKAY_OWN_SYNC)`.
+   The page must behave as before. Unverified in a real launcher (only compiled).
+2. Own Dear ImGui backend: configure with `-DOKAY_OWN_IMGUI=ON`, then run
+   `set OKAY_IMGUI_BACKEND=own` and `OkayEngine.exe --vs-shot shots examples\visual_script`. The log says
+   `[okay] imgui backend: own`, and `shots\` gets four PNG files (door, patrol, inventory, foreach_break) of the Visual Script editor,
+   drawn with no SDL window. Without the switch you get the old BMP files. Unverified: the editor was not built with it.
+3. Headless tests (any machine with a compiler): `ctest -R "sync|imgui_own"`. Run `tests/test_sync` under ThreadSanitizer with
+   `-DOKAY_SYNC_TSAN=ON` and `ctest -R sync_tsan`. On Windows CI `test_sync.exe` runs on a real Windows runner (not seen yet).
+
+Details: `docs/sync.md`, `docs/own_imgui_backend.md`.
+

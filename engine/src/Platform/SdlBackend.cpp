@@ -128,6 +128,7 @@ private:
 };
 
 class SdlBackend final : public Backend {
+    SDL_Cursor* m_cursors[9] = {};
 public:
     BackendKind Kind() const override { return BackendKind::Sdl2; }
 
@@ -195,6 +196,17 @@ public:
     }
     uint32_t MouseState(int* x, int* y) override { return SDL_GetMouseState(x, y); }
     bool SetRelativeMouse(bool on) override { return SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0; }
+    bool SetCursorShape(CursorShape shape) override {
+        static const SDL_SystemCursor kMap[] = {SDL_SYSTEM_CURSOR_ARROW, SDL_SYSTEM_CURSOR_IBEAM, SDL_SYSTEM_CURSOR_SIZEALL, SDL_SYSTEM_CURSOR_SIZENS,
+                                                SDL_SYSTEM_CURSOR_SIZEWE, SDL_SYSTEM_CURSOR_SIZENESW, SDL_SYSTEM_CURSOR_SIZENWSE, SDL_SYSTEM_CURSOR_HAND,
+                                                SDL_SYSTEM_CURSOR_NO};
+        const int i = (int)shape;
+        if (i < 0 || i > 8) return false;
+        if (!m_cursors[i]) m_cursors[i] = SDL_CreateSystemCursor(kMap[i]);
+        if (!m_cursors[i]) return false;
+        SDL_SetCursor(m_cursors[i]);
+        return true;
+    }
     void ShowCursor(bool s) override { SDL_ShowCursor(s ? SDL_ENABLE : SDL_DISABLE); }
     bool IsCursorShown() override { return SDL_ShowCursor(SDL_QUERY) != SDL_DISABLE; }
     uint32_t RelativeMouseState(int* dx, int* dy) override { return SDL_GetRelativeMouseState(dx, dy); }

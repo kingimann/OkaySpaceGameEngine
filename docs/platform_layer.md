@@ -122,6 +122,7 @@ New API (every addition has a default, so a backend that cannot do it says so; b
 | `Backend::RelativeMouseState` | yes | yes (summed from motion events) | yes |
 | `Backend::ModState`, `KeyForChar` | yes | `ModState` yes; `KeyForChar` follows the X keymap | `ModState` yes; `KeyForChar` assumes a US layout |
 | `Backend::IsCursorShown` | yes | yes | yes |
+| `Backend::SetCursorShape(CursorShape)` (nine system cursors; added for the own Dear ImGui backend, `docs/own_imgui_backend.md`) | yes (system cursors) | no (returns false, arrow stays) | yes (`IDC_*` through `WM_SETCURSOR`; never run) |
 | Touch events (`FingerDown/Motion/Up`) | yes | never fired | never fired |
 | `Event::wheelFlipped` | yes | never set | never set |
 | `ShowErrorBox` | yes | no (returns false, text goes to stderr) | yes (`MessageBoxW`) |

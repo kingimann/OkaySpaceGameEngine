@@ -7,6 +7,15 @@
 
 #include <SDL.h>
 
+#ifdef OKAY_OWN_IMGUI
+// Our own Dear ImGui backend (docs/own_imgui_backend.md): no SDL window, no SDL renderer; the frame is drawn through
+// okay::platform::Painter into a bitmap. Built with -DOKAY_OWN_IMGUI=ON and used only when OKAY_IMGUI_BACKEND=own.
+#include "ImGuiOwnBackend.hpp"
+#include "OkayUI_SoftPainter.hpp"
+#include "okay/Core/ImageWrite.hpp"
+#include <cstdlib>
+#endif
+
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -43,6 +52,45 @@ int RunVsGraphShot(int argc, char** argv) {
     ed.Play();
     for (int i = 0; i < 45; ++i) ed.Tick(1.0f / 60.0f);
 
+#ifdef OKAY_OWN_IMGUI
+    if (const char* b = std::getenv("OKAY_IMGUI_BACKEND"); b && std::string(b) == "own") {
+        auto painter = OkayUI::soft::CreateBitmapPainter(1680, 1000);
+        if (!painter) { std::cerr << "no bitmap painter\n"; return 1; }
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.IniFilename = nullptr;
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        ImGui::StyleColorsDark();
+        okay::imguibackend::OwnBackend own;
+        own.Init(nullptr, nullptr, painter.get());
+        std::cerr << "[okay] imgui backend: own (okay::platform::Painter, bitmap, PNG output)\n";
+        fs::create_directories(outDir);
+        for (const Item& it : items) {
+            okay::editor::vsed::OpenFile(it.path);
+            okay::editor::vsed::State().frameAll = true;
+            ed.Select(it.go);
+            own.NewFrame();
+            ImGui::NewFrame();
+            bool open = true;
+            okay::editor::vsed::Draw(ed, &open);
+            ImGui::Render();
+            painter->SetBlendMode(okay::platform::BlendMode::None);
+            painter->SetDrawColor(24, 26, 32, 255);
+            painter->Clear();
+            own.RenderDrawData(ImGui::GetDrawData());
+            std::vector<std::uint8_t> px; int w = 0, h = 0;
+            if (painter->ReadPixels(px, w, h)) {
+                const std::string png = (fs::path(outDir) / (it.stem + ".png")).string();
+                if (okay::ImageWrite::WritePNG(png, w, h, 4, px.data())) std::cout << "wrote " << png << "\n";
+                else std::cerr << "save " << png << " failed\n";
+            }
+        }
+        own.Shutdown();
+        ImGui::DestroyContext();
+        return 0;
+    }
+#endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         std::cerr << "SDL_Init: " << SDL_GetError() << "\n";
         return 1;

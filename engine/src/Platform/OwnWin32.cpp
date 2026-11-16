@@ -566,6 +566,7 @@ public:
         return MessageBoxW(parent ? (HWND)parent->NativeHandle() : nullptr, Wide(text).c_str(), Wide(title).c_str(),
                            MB_OK | MB_ICONERROR) != 0;
     }
+    bool SetCursorShape(CursorShape shape) override { m_shape = shape; ApplyCursor(); return true; }
     void ShowCursor(bool show) override { m_cursorShown = show; ApplyCursor(); }
     void WarpMouse(Window* w, int x, int y) override {
         HWND h = w ? (HWND)w->NativeHandle() : GetForegroundWindow();
@@ -784,7 +785,7 @@ public:
             return 0;
         }
         case WM_SETCURSOR:
-            if (LOWORD(lp) == HTCLIENT && (!b->m_cursorShown || b->m_relative)) { SetCursor(nullptr); return TRUE; }
+            if (LOWORD(lp) == HTCLIENT) { SetCursor((!b->m_cursorShown || b->m_relative) ? nullptr : b->ShapeCursor()); return TRUE; }
             break;
         default: break;
         }
@@ -810,7 +811,12 @@ public:
     }
     // Takes effect at once for a cursor that is already over our window; later moves go through WM_SETCURSOR.
     void ApplyCursor() {
-        if (m_focus) SetCursor((m_cursorShown && !m_relative) ? LoadCursorA(nullptr, IDC_ARROW) : nullptr);
+        if (m_focus) SetCursor((m_cursorShown && !m_relative) ? ShapeCursor() : nullptr);
+    }
+    // The system cursor for the requested shape (the standard IDC_ cursors; shared, never destroyed).
+    HCURSOR ShapeCursor() const {
+        static LPCSTR kIds[] = {IDC_ARROW, IDC_IBEAM, IDC_SIZEALL, IDC_SIZENS, IDC_SIZEWE, IDC_SIZENESW, IDC_SIZENWSE, IDC_HAND, IDC_NO};
+        return LoadCursorA(nullptr, kIds[(int)m_shape]);
     }
     uint32_t Mods() {
         uint32_t m = 0;
@@ -841,6 +847,7 @@ public:
     HWND m_focus = nullptr;
     uint32_t m_buttonsDown = 0;
     int m_pressClicks[8] = {};
+    CursorShape m_shape = CursorShape::Arrow;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false;
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;

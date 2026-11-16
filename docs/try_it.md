@@ -1122,9 +1122,11 @@ Issue #888, findings 69, 71 and 72.
    `okay_settings.txt`). Edit that file to `snapmovex1000 0` or `-5`: on the next start the step is the default (1).
 5. Drag the Move gizmo with Snap on: the object never turns into NaN or disappears.
 
-**Status.** Logic tested headless in `tests/test_editor_refs_multiedit_snap.cpp` (run on Linux). `editor/main.cpp`
-and `editor/SplineTools.cpp` were only syntax-checked, not built or run: the Inspector, the popup hint and the saved
-setting are unverified until you look.
+**Status.** Logic tested headless in `tests/test_editor_refs_multiedit_snap.cpp` (81 checks, 0 failures on Linux;
+15 of its first 24 checks failed before the fix). `test_inspector_model`, `test_asset_database`, `test_editor_undo`,
+`test_editor_hooks`, `test_project_panel`, `test_project_panel_db`, `test_project_menu_ops` and `test_prefab_editor`
+still pass. `editor/main.cpp` and `editor/SplineTools.cpp` were only syntax-checked, not built or run: the Inspector rows,
+the popup hint and the saved setting are unverified until you look.
 
 ## Team tooling (not part of the Windows release)
 

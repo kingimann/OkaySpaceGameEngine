@@ -1163,6 +1163,13 @@ Details: [scripting.md](scripting.md#object-references).
 **Status.** Engine tests run on Linux (see the PR). The editor and the Windows build were not run here, so steps 4
 to 6 are unverified on Windows; the same scene file is loaded and played headless by `test_okayscript_object_refs`.
 
+Rays, casts, overlaps and `nearest_tag` now return references too (branch `claude2/okayscript-query-refs`, not
+merged yet): in the same scene, select the yellow **Spinner**, open its script and add
+`Destroy(raycast3(10, 0.5f, 0, -1, 0, 0, 50));` as the first line inside `Start()`, then press **Play**. Expect: the
+ray, cast from the right, hits the **right** Enemy (x = 3) and only that one disappears at once. Before this fix the
+**left** Enemy (x = -3, the first "Enemy" in the scene) disappeared instead. Unverified on Windows; checked headless
+by `test_okayscript_query_refs`.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

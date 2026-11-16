@@ -652,6 +652,10 @@ inline bool IsNullish(const Value& v) {
 // the object's name. A plain name (old scripts, "Enemy") still works and means
 // the first object with that name, exactly as before.
 inline Value ObjectRef(const GameObject* g) { return g ? Value::Object(g->InstanceId()) : Value{}; }
+/// What a query (ray, cast, overlap, nearest_tag, get_child, ...) returns for
+/// the object it found: a reference, or "" when it found nothing (as before,
+/// so `hit == ""` and `if (!hit)` keep working).
+inline Value HitRef(const GameObject* g) { return g ? ObjectRef(g) : Value{std::string{}}; }
 /// The object `v` refers to: by instance id first (nullptr once destroyed), else
 /// by name in `s` (the first object with that name).
 inline GameObject* ResolveObject(Scene* s, const Value& v) {
@@ -828,7 +832,7 @@ struct Runtime {
     // through ray_object()/ray_x()/ray_dist()/... accessors.
     struct LastHit {
         bool hit = false;
-        std::string object;
+        Value object{std::string{}};    // a reference to what was hit ("" = nothing)
         float px = 0, py = 0, pz = 0;   // hit point
         float nx = 0, ny = 0, nz = 0;   // surface normal
         float dist = 0;
@@ -4303,13 +4307,13 @@ struct OkayScriptVM::Impl {
             if (a.size() >= 2) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0])) {
                 int i = SafeInt(a[1].AsFloat());
                 if (i >= 0 && i < g->transform->ChildCount() && g->transform->Children()[i]->gameObject)
-                    return Value{g->transform->Children()[i]->gameObject->name};
+                    return HitRef(g->transform->Children()[i]->gameObject);
             }
             return Value{std::string{}};
         };
         b["parent_of"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (!a.empty()) if (Scene* s = sceneOf()) if (GameObject* g = ResolveObject(s, a[0]))
-                if (Transform* p = g->transform->Parent(); p && p->gameObject) return Value{p->gameObject->name};
+                if (Transform* p = g->transform->Parent(); p && p->gameObject) return HitRef(p->gameObject);
             return Value{std::string{}};
         };
         // RPG / survival stats on a named object: hurt("Orc", 12) (defense-mitigated,
@@ -4369,57 +4373,57 @@ struct OkayScriptVM::Impl {
         // npc_goto("Guard", x, y, z): send the named NPC to a world point (it
         // pathfinds there if pathfinding is on, then broadcasts npc_arrived).
         // Omit the name ("" or self name) to command a sibling NPCController.
-        auto npcOf = [this, sceneOf](const std::string& name) -> NPCController* {
-            if (name.empty())
+        auto npcOf = [this, sceneOf](const Value& ref) -> NPCController* {
+            if (!ref.IsObject() && ref.AsString().empty())
                 return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<NPCController>() : nullptr;
             Scene* s = sceneOf(); if (!s) return nullptr;
-            GameObject* g = s->Find(name);
+            GameObject* g = ResolveObject(s, ref);   // a reference: that copy; a name: the first
             return g ? g->GetComponent<NPCController>() : nullptr;
         };
         b["npc_goto"] = [npcOf](std::vector<Value>& a) -> Value {
             if (a.size() < 4) return Value{false};
-            NPCController* n = npcOf(a[0].AsString()); if (!n) return Value{false};
+            NPCController* n = npcOf(a[0]); if (!n) return Value{false};
             n->CommandGoTo({a[1].AsFloat(), a[2].AsFloat(), a[3].AsFloat()});
             return Value{true};
         };
         b["npc_stop"] = [npcOf](std::vector<Value>& a) -> Value {
-            NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
+            NPCController* n = npcOf(a.empty() ? Value{std::string{}} : a[0]);
             if (!n) return Value{false};
             n->CancelCommand(); return Value{true};
         };
         // True while the NPC is still walking to its npc_goto point.
         b["npc_busy"] = [npcOf](std::vector<Value>& a) -> Value {
-            NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
+            NPCController* n = npcOf(a.empty() ? Value{std::string{}} : a[0]);
             return Value{n && n->Commanded()};
         };
         // Current AI state name: "Idle","Wander","Patrol","Follow","Flee",
         // "Chase","Search","Return" ("" if the object has no NPC Controller).
         b["npc_state"] = [npcOf](std::vector<Value>& a) -> Value {
-            NPCController* n = npcOf(a.empty() ? std::string{} : a[0].AsString());
+            NPCController* n = npcOf(a.empty() ? Value{std::string{}} : a[0]);
             return Value{std::string{n ? n->StateName() : ""}};
         };
         // ---- Spawner control: run enemy/pickup waves from a script ----------
         // Omit the name ("" ) to drive a sibling Spawner on this object.
-        auto spawnerOf = [this, sceneOf](const std::string& name) -> Spawner* {
-            if (name.empty())
+        auto spawnerOf = [this, sceneOf](const Value& ref) -> Spawner* {
+            if (!ref.IsObject() && ref.AsString().empty())
                 return (rt.host && rt.host->gameObject) ? rt.host->gameObject->GetComponent<Spawner>() : nullptr;
             Scene* s = sceneOf(); if (!s) return nullptr;
-            GameObject* g = s->Find(name);
+            GameObject* g = ResolveObject(s, ref);
             return g ? g->GetComponent<Spawner>() : nullptr;
         };
         b["spawner_start"] = [spawnerOf](std::vector<Value>& a) -> Value {
-            Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
+            Spawner* s = spawnerOf(a.empty() ? Value{std::string{}} : a[0]);
             if (!s) return Value{false};
             s->StartWaves(); return Value{true};
         };
         b["spawner_stop"] = [spawnerOf](std::vector<Value>& a) -> Value {
-            Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
+            Spawner* s = spawnerOf(a.empty() ? Value{std::string{}} : a[0]);
             if (!s) return Value{false};
             s->StopWaves(); return Value{true};
         };
         // Live objects a spawner created (wave HUDs: "3 enemies left").
         b["spawner_alive"] = [spawnerOf](std::vector<Value>& a) -> Value {
-            Spawner* s = spawnerOf(a.empty() ? std::string{} : a[0].AsString());
+            Spawner* s = spawnerOf(a.empty() ? Value{std::string{}} : a[0]);
             return Value{(float)(s ? s->AliveCount() : 0)};
         };
         // ---- In-game build mode + logic links (docs/build_mode.md) -----------
@@ -4502,7 +4506,8 @@ struct OkayScriptVM::Impl {
         b["logic_press"] = [this, sceneOf, argStr](std::vector<Value>& a) -> Value {
             Scene* s = sceneOf(); if (!s) return Value{false};
             std::string n = argStr(a, 0);
-            GameObject* g = n.empty() ? (rt.host ? rt.host->gameObject : nullptr) : s->Find(n);
+            GameObject* g = (!a.empty() && a[0].IsObject()) ? ResolveObject(s, a[0])
+                          : n.empty() ? (rt.host ? rt.host->gameObject : nullptr) : s->Find(n);
             LogicSource* ls = g ? g->GetComponent<LogicSource>() : nullptr;
             if (!ls) return Value{false};
             if (ls->kind == LogicSource::Kind::Button) ls->Press(); else ls->SetOutput(!ls->Output());
@@ -4512,7 +4517,8 @@ struct OkayScriptVM::Impl {
         b["logic_state"] = [this, sceneOf, argStr](std::vector<Value>& a) -> Value {
             Scene* s = sceneOf(); if (!s) return Value{false};
             std::string n = argStr(a, 0);
-            GameObject* g = n.empty() ? (rt.host ? rt.host->gameObject : nullptr) : s->Find(n);
+            GameObject* g = (!a.empty() && a[0].IsObject()) ? ResolveObject(s, a[0])
+                          : n.empty() ? (rt.host ? rt.host->gameObject : nullptr) : s->Find(n);
             if (!g) return Value{false};
             if (auto* lt = g->GetComponent<LogicTarget>()) return Value{lt->State()};
             if (auto* ls = g->GetComponent<LogicSource>()) return Value{ls->Output()};
@@ -4894,7 +4900,7 @@ struct OkayScriptVM::Impl {
         b["screen_w"] = [](std::vector<Value>&) { return Value{UICanvas::Width()}; };
         b["screen_h"] = [](std::vector<Value>&) { return Value{UICanvas::Height()}; };
         // Tag queries: count active objects with a tag, or find the nearest one
-        // to this object (returns its name, "" if none) — enemy targeting, "all
+        // to this object (returns a reference to it, "" if none) — enemy targeting, "all
         // coins collected?", proximity doors.
         b["count_tag"] = [sceneOf](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value{0.0f};
@@ -4908,15 +4914,15 @@ struct OkayScriptVM::Impl {
             if (a.empty() || !rt.host || !rt.host->gameObject) return Value{std::string{}};
             Scene* s = sceneOf(); if (!s) return Value{std::string{}};
             Vec3 me = rt.host->gameObject->transform->Position();
-            std::string best; float bestD = 0.0f;
+            GameObject* best = nullptr; float bestD = 0.0f;
             for (const auto& o : s->Objects()) {
                 if (!o->active || o->tag != a[0].AsString()) continue;
                 if (o.get() == rt.host->gameObject) continue;       // skip self
                 Vec3 p = o->transform->Position();
                 float dx = p.x - me.x, dy = p.y - me.y, d = dx * dx + dy * dy;
-                if (best.empty() || d < bestD) { best = o->name; bestD = d; }
+                if (!best || d < bestD) { best = o.get(); bestD = d; }
             }
-            return Value{best};
+            return HitRef(best);   // a reference to that copy ("" if none)
         };
         // Drive sibling components on this GameObject.
         auto go = [this]() -> GameObject* { return rt.host ? rt.host->gameObject : nullptr; };
@@ -5160,29 +5166,29 @@ struct OkayScriptVM::Impl {
         };
         // Rotation (degrees, clockwise on screen) and scale (width, height) of a UI frame.
         // One scale number sets both axes. A widget with no frame gets one when you set these.
-        auto uiFrame = [sceneOf](const std::string& name, bool create) -> UIFrame* {
+        auto uiFrame = [sceneOf](const Value& ref, bool create) -> UIFrame* {
             Scene* s = sceneOf();
-            GameObject* g = s ? s->Find(name) : nullptr;
+            GameObject* g = s ? ResolveObject(s, ref) : nullptr;
             if (!g) return nullptr;
             if (auto* f = g->GetComponent<UIFrame>()) return f;
             return create ? ConvertToUIFrame(g) : nullptr;
         };
         b["ui_get_rotation"] = [uiFrame](std::vector<Value>& a) -> Value {
             if (a.empty()) return Value{0.0f};
-            UIFrame* f = uiFrame(a[0].AsString(), false);
+            UIFrame* f = uiFrame(a[0], false);
             return Value{f ? f->rotation : 0.0f};
         };
         b["ui_set_rotation"] = [uiFrame](std::vector<Value>& a) {
-            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0].AsString(), true)) f->rotation = a[1].AsFloat();
+            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0], true)) f->rotation = a[1].AsFloat();
             return Value{};
         };
         b["ui_get_scale"] = [uiFrame](std::vector<Value>& a) -> Value {
             Vec2 s{1.0f, 1.0f};
-            if (!a.empty()) if (UIFrame* f = uiFrame(a[0].AsString(), false)) s = f->scale;
+            if (!a.empty()) if (UIFrame* f = uiFrame(a[0], false)) s = f->scale;
             return Value{Vec3{s.x, s.y, 0.0f}};
         };
         b["ui_set_scale"] = [uiFrame](std::vector<Value>& a) {
-            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0].AsString(), true)) {
+            if (a.size() >= 2) if (UIFrame* f = uiFrame(a[0], true)) {
                 if (a.size() >= 3) f->scale = {a[1].AsFloat(), a[2].AsFloat()};
                 else { const float u = a[1].AsFloat(); f->scale = {u, u}; }
             }
@@ -5500,7 +5506,7 @@ struct OkayScriptVM::Impl {
         };
         b["ui_pointer_over"] = [uiHit](std::vector<Value>&) -> Value { return Value{uiHit() != nullptr}; };
         b["ui_hovered"] = [uiHit](std::vector<Value>&) -> Value {
-            GameObject* h = uiHit(); return Value{h ? h->name : std::string{}};
+            return HitRef(uiHit());
         };
         b["ui_is_hovered"] = [uiHit](std::vector<Value>& a) -> Value {
             GameObject* h = uiHit(); return Value{h && !a.empty() && h->name == a[0].AsString()};
@@ -6463,8 +6469,8 @@ struct OkayScriptVM::Impl {
             float maxDist = a.size() > 4 ? a[4].AsFloat() : 1e9f;
             return Value{sc->physics().Raycast(*sc, origin, dir, maxDist).hit};
         };
-        // raycast(ox, oy, dx, dy [, maxDist]) casts a ray and returns the name of
-        // the object hit (empty string = nothing). Hit details are then available
+        // raycast(ox, oy, dx, dy [, maxDist]) casts a ray and returns a reference to
+        // the object hit (prints as its name; empty string = nothing). Hit details are then available
         // via ray_hit()/ray_object()/ray_x()/ray_y()/ray_dist()/ray_nx()/ray_ny().
         b["raycast"] = [this](std::vector<Value>& a) -> Value {
             rt.lastHit2D = Runtime::LastHit{};
@@ -6483,7 +6489,7 @@ struct OkayScriptVM::Impl {
             sc->physics().RecordQueryRay(origin, dir, maxDist, h);
             if (h.hit) {
                 rt.lastHit2D.hit = true;
-                rt.lastHit2D.object = h.gameObject ? h.gameObject->name : std::string{};
+                rt.lastHit2D.object = HitRef(h.gameObject);
                 rt.lastHit2D.px = h.point.x;   rt.lastHit2D.py = h.point.y;
                 rt.lastHit2D.nx = h.normal.x;  rt.lastHit2D.ny = h.normal.y;
                 rt.lastHit2D.dist = h.distance;
@@ -6516,7 +6522,7 @@ struct OkayScriptVM::Impl {
             sc->physics().RecordQueryRay(origin, dir, maxDist, hits.empty() ? RaycastHit2D{} : hits.front());
             for (const RaycastHit2D& h : hits) {
                 Runtime::LastHit l;
-                l.hit = true; l.object = h.gameObject ? h.gameObject->name : std::string{};
+                l.hit = true; l.object = HitRef(h.gameObject);
                 l.px = h.point.x; l.py = h.point.y; l.nx = h.normal.x; l.ny = h.normal.y;
                 l.dist = h.distance;
                 rt.lastHitAll.push_back(l);
@@ -6888,7 +6894,7 @@ struct OkayScriptVM::Impl {
                 if (a[0].IsNumber()) type = SafeInt(a[0].AsFloat());
                 else if (go->scene()) {
                     const std::string name = a[0].AsString();
-                    seat = go->scene()->Find(name);
+                    seat = ResolveObject(go->scene(), a[0]);   // a reference: that seat
                     if (!seat) {
                         std::string k = name;
                         for (char& c : k) c = (char)std::tolower((unsigned char)c);
@@ -7248,7 +7254,7 @@ struct OkayScriptVM::Impl {
         };
         b["hold_object"] = [holder](std::vector<Value>&) {
             ProceduralObjectHolding* h = holder();
-            return Value{h && h->Held() ? h->Held()->name : std::string()};
+            return HitRef(h ? h->Held() : nullptr);
         };
         // ---- Inventory ----
         // Every inv_* / grid_* call works on the host's Inventory (on it or its root), or
@@ -7424,7 +7430,7 @@ struct OkayScriptVM::Impl {
             Scene* sc = g ? g->scene() : nullptr;
             const Vec3 p{a.size() > 2 ? a[2].AsFloat() : 0.0f, a.size() > 3 ? a[3].AsFloat() : 0.0f, a.size() > 4 ? a[4].AsFloat() : 0.0f};
             GameObject* pk = sc ? ItemPickup::Spawn(*sc, itemArg(a, 0), std::max(1, intArg(a, 1, 1)), {}, p) : nullptr;
-            return Value{pk ? pk->name : std::string()};
+            return HitRef(pk);
         };
         b["loot_roll"] = [invObj](std::vector<Value>& a) {   // (table, target = host) -> items rolled
             GameObject* t = invObj(a, 1);
@@ -9397,7 +9403,7 @@ struct OkayScriptVM::Impl {
             Runtime::LastHit l;
             if (!h.hit) return l;
             l.hit = true;
-            l.object = h.gameObject ? h.gameObject->name : std::string{};
+            l.object = HitRef(h.gameObject);
             l.px = h.point.x;  l.py = h.point.y;  l.pz = h.point.z;
             l.nx = h.normal.x; l.ny = h.normal.y; l.nz = h.normal.z;
             l.dist = h.distance;
@@ -9441,7 +9447,7 @@ struct OkayScriptVM::Impl {
             return (i >= 0 && i < (int)rt.lastHitAll.size()) ? &rt.lastHitAll[(std::size_t)i] : nullptr;
         };
         b["ray_all_count"]  = [this](std::vector<Value>&) -> Value { return Value{(float)rt.lastHitAll.size()}; };
-        b["ray_all_object"] = [allAt](std::vector<Value>& a) -> Value { auto* h = allAt(a); return Value{h ? h->object : std::string{}}; };
+        b["ray_all_object"] = [allAt](std::vector<Value>& a) -> Value { auto* h = allAt(a); return h ? h->object : Value{std::string{}}; };
         b["ray_all_dist"]   = [allAt](std::vector<Value>& a) -> Value { auto* h = allAt(a); return Value{h ? h->dist : 0.0f}; };
         b["ray_all_point"]  = [allAt](std::vector<Value>& a) -> Value { auto* h = allAt(a); return Value{h ? Vec3{h->px, h->py, h->pz} : Vec3::Zero}; };
         b["ray_all_normal"] = [allAt](std::vector<Value>& a) -> Value { auto* h = allAt(a); return Value{h ? Vec3{h->nx, h->ny, h->nz} : Vec3::Zero}; };
@@ -9498,7 +9504,7 @@ struct OkayScriptVM::Impl {
             Runtime::LastHit l;
             if (!h.hit) return l;
             l.hit = true;
-            l.object = h.gameObject ? h.gameObject->name : std::string{};
+            l.object = HitRef(h.gameObject);
             l.px = h.point.x; l.py = h.point.y;
             l.nx = h.normal.x; l.ny = h.normal.y;
             l.dist = h.distance;
@@ -9509,7 +9515,7 @@ struct OkayScriptVM::Impl {
             if (what == "point") return Value{Vec3{h.point.x, h.point.y, 0.0f}};
             if (what == "normal") return Value{Vec3{h.normal.x, h.normal.y, 0.0f}};
             if (what == "distance") return Value{h.distance};
-            return Value{h.gameObject ? h.gameObject->name : std::string{}};
+            return HitRef(h.gameObject);
         };
         auto miss2 = [](const std::string& what) -> Value {
             if (what == "hit") return Value{false};
@@ -9557,7 +9563,7 @@ struct OkayScriptVM::Impl {
         auto names2 = [](const std::vector<Collider2D*>& cols) {
             Value out = Value::MakeArray();
             for (Collider2D* c : cols)
-                out.AsArray()->push_back(Value{c->gameObject ? c->gameObject->name : std::string{}});
+                out.AsArray()->push_back(HitRef(c->gameObject));
             return out;
         };
         // overlap_box(cx, cy, hx, hy [, layers [, ignore_triggers [, angle_deg]]])
@@ -9577,10 +9583,10 @@ struct OkayScriptVM::Impl {
                                                        {a[2].AsFloat(), a[3].AsFloat()}, a[4].AsFloat(),
                                                        maskArg(a, 5), trigArg(a, 6, true)));
         };
-        // Overlaps -> the names of every collider's object inside the shape.
+        // Overlaps -> a reference to every collider's object inside the shape.
         auto names3 = [](const std::vector<Collider3D*>& cols) {
             Value out = Value::MakeArray();
-            for (Collider3D* c : cols) out.AsArray()->push_back(Value{c->gameObject ? c->gameObject->name : std::string{}});
+            for (Collider3D* c : cols) out.AsArray()->push_back(HitRef(c->gameObject));
             return out;
         };
         // overlap_sphere3(cx,cy,cz, radius [, layers [, ignore_triggers]])
@@ -9626,7 +9632,7 @@ struct OkayScriptVM::Impl {
                 if (!sc || a.size() < 3) return out;
                 for (const RaycastHit3D& x : sc->physics3D().RaycastAll(*sc, a[1].AsVec3(), a[2].AsVec3(),
                         a.size() > 3 ? a[3].AsFloat() : 1e9f, rt.host->gameObject, maskArg(a, 4), trigArg(a, 5, true)))
-                    out.AsArray()->push_back(Value{x.gameObject ? x.gameObject->name : std::string{}});
+                    out.AsArray()->push_back(HitRef(x.gameObject));
                 return out;
             }
             if (sc && a.size() >= 3) {
@@ -9642,7 +9648,7 @@ struct OkayScriptVM::Impl {
             if (what == "point")    return Value{h.point};
             if (what == "normal")   return Value{h.normal};
             if (what == "distance") return Value{h.distance};
-            if (what == "object")   return Value{h.gameObject ? h.gameObject->name : std::string{}};
+            if (what == "object")   return HitRef(h.gameObject);
             return Value{h.hit};
         };
         // overlap3("sphere" | "box", center, radius_or_half_size [, layers]) -> names of
@@ -9659,7 +9665,7 @@ struct OkayScriptVM::Impl {
             for (Collider3D* c : cols) {
                 if (std::find(seen.begin(), seen.end(), c->gameObject) != seen.end()) continue;
                 seen.push_back(c->gameObject);
-                out.AsArray()->push_back(Value{c->gameObject ? c->gameObject->name : std::string{}});
+                out.AsArray()->push_back(HitRef(c->gameObject));
             }
             return out;
         };

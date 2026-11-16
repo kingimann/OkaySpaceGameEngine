@@ -143,7 +143,8 @@ each one with a warning saying what to delete:
 
 `other` in a collision or trigger handler, `GameObject.Find(..)`,
 `FindWithTag(..)`, each entry of `FindGameObjectsWithTag(..)`, `gameObject`,
-and what `Instantiate(..)` / `spawn(..)` return are **references**: they carry
+what `Instantiate(..)` / `spawn(..)` return, and what the query builtins
+return (below) are **references**: they carry
 the object's unique instance id, so they always mean that one object, even when
 spawned copies all have the same name ("Enemy", "Enemy", "Enemy"). A bullet
 that runs `Destroy(other)` destroys the enemy it hit, and a loop over
@@ -160,8 +161,26 @@ What you can do through a reference: read `.name`, `.tag`, `.activeSelf`,
 `localPosition`, `localScale`, `eulerAngles`; call `.CompareTag(..)`,
 `.SetActive(..)`, `.GetComponent<T>()` and `.transform.Translate / Rotate /
 LookAt(..)`; and pass it to `Destroy`, `send_event` and most builtins that take
-an object name. (A few builtins, such as the NPC, Spawner, logic and UI-frame
-helpers, still look the name up and so use the first object with that name.)
+an object name, including the NPC (`npc_goto`, `npc_stop`, ...), Spawner
+(`spawner_start`, ...), logic (`logic_press`, `logic_state`), UI-frame
+(`ui_set_rotation`, `ui_set_scale`, ...) and `sit(..)` helpers.
+
+The query builtins return references too, so acting on what they found reaches
+that copy even when several objects share its name:
+
+- rays and casts: `raycast`, `raycast3`, `ray_object()`, `ray3_object()`,
+  `raycast_all` / `raycast_all3` (each entry) and `ray_all_object(i)`,
+  `sphere_cast3`, `box_cast3`, `capsule_cast3`, `box_cast` / `capsule_cast`
+  (without a detail word, or with `"object"`), `ray3_cast("object" | "all", ..)`,
+  and the `Physics.Raycast` / `Physics2D.*` names for them;
+- overlaps (each entry): `overlap_box`, `overlap_capsule`, `overlap_sphere3`,
+  `overlap_box3`, `overlap_capsule3`, `overlap3`;
+- `nearest_tag(..)` (and `nearest_with_tag`), `get_child(..)`, `parent_of(..)`,
+  `hold_object()`, `spawn_pickup(..)` and `ui_hovered()`.
+
+`Destroy(raycast3(x, y, z, 1, 0, 0, 50))` destroys the crate the ray hit, not
+the first "Crate" in the scene. When a query finds nothing it still returns
+`""`, so `if (hit == "")` and `if (!hit)` keep working.
 
 A plain name in quotes (`Destroy("Enemy")`) still means the **first** object
 with that name, exactly as before. `GameObject.Find`, `FindWithTag` and
@@ -515,7 +534,7 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `on_object_placed(name)` / `on_object_removed(name)` | events: a player placed / deleted an object (globals `build_object`, `build_id`) |
 | `on_logic_signal(name)` | event: a wired Logic Target turned on or off (globals `signal_name`, `signal_on`) |
 | `count_tag(tag)` | how many active objects have a tag (coins left, enemies alive) |
-| `nearest_tag(tag)` | name of the nearest tagged object to this one ("" if none) — targeting |
+| `nearest_tag(tag)` | the nearest tagged object to this one, as a reference ("" if none) — targeting |
 | `screen_w()` / `screen_h()` | render-target size in pixels |
 | `set_bg(r, g, b[, a])` | set the main camera's background/clear color (flash, fades) |
 | `set_light(x, y, z)` | set the 3D directional light direction (day-night, mood) |
@@ -526,11 +545,11 @@ Key names are a single letter/digit, or a named key: `"space"`, `"up"`, `"down"`
 | `camera_follow("name"[, smoothing])` | the main camera eases after that object (adds a Camera Follow if needed; `""` stops); higher smoothing is snappier, 0 snaps |
 | `load_scene(path)` | load a `.okayscene` at end of frame (level change/restart) |
 | `raycast_hit(ox, oy, dx, dy[, dist])` | true if a ray hits a collider |
-| `raycast(ox, oy, dx, dy[, dist])` | cast a ray; returns the **name** of the object hit ("" = miss) |
+| `raycast(ox, oy, dx, dy[, dist])` | cast a ray; returns a reference to the object hit (prints as its name; "" = miss) |
 | `ray_hit()` / `ray_object()` | did the last `raycast()` hit, and what it hit |
 | `ray_x()` / `ray_y()` | last hit point; `ray_nx()`/`ray_ny()` surface normal; `ray_dist()` distance |
-| `raycast3(ox,oy,oz, dx,dy,dz[, dist])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
-| `raycast_all3(ox,oy,oz, dx,dy,dz[, dist])` / `raycast_all(ox,oy,dx,dy[, dist])` | every object the ray passes through, nearest first (a list of names; `ray_all_count/object/dist/point/normal(i)`) |
+| `raycast3(ox,oy,oz, dx,dy,dz[, dist])` | 3D ray; returns a reference to the hit object + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
+| `raycast_all3(ox,oy,oz, dx,dy,dz[, dist])` / `raycast_all(ox,oy,dx,dy[, dist])` | every object the ray passes through, nearest first (a list of references; `ray_all_count/object/dist/point/normal(i)`) |
 | `sphere_cast3(o.., d.., r[, dist])` / `box_cast3(c.., half.., d..[, dist])` / `capsule_cast3(a.., b.., r, d..[, dist])` | thick casts: the first thing the shape touches (details via `ray3_*`) |
 | `box_cast(cx, cy, hx, hy, dx, dy[, dist [, layers [, ignore_triggers [, angle]]]])` / `capsule_cast(ax, ay, bx, by, r, dx, dy[, dist])` | flat casts: the first thing a box or capsule touches (details via `ray_*`; angle is degrees) |
 | `overlap_box(cx, cy, hx, hy)` / `overlap_capsule(ax, ay, bx, by, r)` | names of the objects inside a flat box or capsule |

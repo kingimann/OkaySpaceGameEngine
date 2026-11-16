@@ -142,7 +142,7 @@ degrees per second, `bodyType = RigidbodyType2D.Kinematic`, ...). See
 | `set_active(b)` / `self_active()` | Enable / query this object |
 | `destroy()` | Destroy this object |
 | `set_parent("name")` / `detach()` | Re-parent / unparent |
-| `child_count("name")` / `get_child("name", i)` / `parent_of("name")` | Hierarchy queries (child name by index; `""` if none) |
+| `child_count("name")` / `get_child("name", i)` / `parent_of("name")` | Hierarchy queries (`get_child` / `parent_of` return a reference to that object; `""` if none) |
 | `hurt("name", n)` / `heal("name", n)` / `add_xp("name", n)` | Damage / heal / grant XP on a named object's `Stats` (or `SurvivalStats` for hurt/heal); fires `on_death` / `on_level_up`; return whether it applied |
 | `get_hp("name")` / `get_max_hp("name")` / `is_dead("name")` | Read health and death state (`is_dead()` with no argument is the humanoid check) |
 | `set_light_intensity("name", v)` / `set_light_range("name", v)` / `set_light_angle("name", deg)` / `set_light_color("name", r,g,b)` | Light component on a named object |
@@ -159,7 +159,7 @@ degrees per second, `bodyType = RigidbodyType2D.Kinematic`, ...). See
 | `dist_to("n")` | Distance to a named object |
 | `vel_toward("n", speed)` | Aim this body's velocity at a target |
 | `destroy_obj("n")` | Destroy a named object |
-| `count_tag("t")` / `nearest_tag("t")` | Tag queries |
+| `count_tag("t")` / `nearest_tag("t")` | Tag queries (`nearest_tag` returns a reference to that object, `""` if none) |
 | `set_cam(x, y)` / `move_cam(dx, dy)` / `set_cam_zoom(z)` | Camera control |
 | `set_bg(r,g,b)` / `set_light(x,y,z)` / `set_ambient(v)` | Background & lighting |
 | `load_scene("file")` | Switch to another scene |
@@ -541,15 +541,15 @@ Intuitive names for common builtins so code reads naturally:
 | Function | Description |
 |---|---|
 | `raycast_hit(ox, oy, dx, dy [, maxDist])` | 2D ray hits a collider? (boolean) |
-| `raycast(ox, oy, dx, dy [, maxDist])` | 2D ray; returns the **name** of the object hit ("" = miss) |
+| `raycast(ox, oy, dx, dy [, maxDist])` | 2D ray; returns a reference to the object hit (prints as its name; "" = miss) |
 | `ray_hit()` / `ray_object()` / `ray_x()` / `ray_y()` / `ray_nx()` / `ray_ny()` / `ray_dist()` | Details of the last `raycast()` |
 | `raycast_hit3(ox,oy,oz, dx,dy,dz [, maxDist])` | 3D ray hits a collider? (boolean) |
-| `raycast3(ox,oy,oz, dx,dy,dz [, maxDist [, layers [, ignore_triggers]]])` | 3D ray; returns hit name + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
+| `raycast3(ox,oy,oz, dx,dy,dz [, maxDist [, layers [, ignore_triggers]]])` | 3D ray; returns a reference to the hit object + `ray3_hit/object/x/y/z/nx/ny/nz/dist()` |
 | `raycast_all3(...)` / `raycast_all(ox,oy,dx,dy ...)` | Every object hit, nearest first (`ray_all_count/object/dist/point/normal(i)`) |
 | `sphere_cast3` / `box_cast3` / `capsule_cast3` | Thick shape casts (skip triggers); details via `ray3_*` |
 | `box_cast` / `capsule_cast` | Flat box and capsule casts (skip triggers); details via `ray_*`. A leading `"hit"` / `"point"` / `"normal"` / `"distance"` returns that detail |
-| `overlap_box` / `overlap_capsule` | Names of the objects inside a flat box or capsule |
-| `overlap_sphere3` / `overlap_box3` / `overlap_capsule3` | Names of the objects inside a 3D shape |
+| `overlap_box` / `overlap_capsule` | References to the objects inside a flat box or capsule |
+| `overlap_sphere3` / `overlap_box3` / `overlap_capsule3` | References to the objects inside a 3D shape |
 | `layer_mask("Default", "Enemy")` | A layers value (or pass `"0,3"` / `"Default,Enemy"` directly) |
 | `overlap(x, y)` | A 2D collider contains this point? |
 

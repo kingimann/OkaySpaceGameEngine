@@ -17,6 +17,7 @@
 #include "StartupUpdate.hpp"  // the start-up "Checking for updates" screen: when it runs, what it says (docs/updater.md)
 #include "Splash.hpp"   // branded loading frame so startup isn't a black screen
 #include "CrashReports.hpp"   // editor crash reports (Settings > Crash reports)
+#include "CrashUpload.hpp"    // scrub + send crash reports, and the prefilled GitHub issue address (docs/crash_reports.md)
 #include "OfficialGame.hpp"   // the official game: manifest, diff and the safe update swap (Play page)
 #include "AntiCheatIntegrity.hpp"   // opt-in anti-cheat: check a game against its Data/manifest.json before it starts
 #include "AntiCheatBackend.hpp"     // anti-cheat reports / bans / appeals (Admin > Anti-cheat, the ban banner)
@@ -2314,6 +2315,11 @@ void RemoveNotif(const std::string& key) {
 // The editor's crash handler writes okay_crashlog.txt beside the editor; the launcher
 // shows them in Settings > Crash reports and raises one notification per new crash.
 std::vector<okaycrash::Report> g_crashes;   // newest first
+bool g_crashUpload = true;   // send crash reports automatically (Settings > Crash reports; ON unless the person turns it off; OKAY_CRASH_UPLOAD=0 overrides it)
+bool g_crashNoticeSeen = false;   // the one-time notice (what is sent, that it becomes a public GitHub issue, how to turn it off) has been shown and answered; saved as crash_notice=1
+static bool g_crashNoticeReq = false;   // the pump asks the main loop to show that notice; nothing is sent before it has been answered
+static const char* const kCrashRepo = "kingimann/OkaySpaceGameEngine";   // where "Report on GitHub" opens a new issue
+static bool CrashUploadOn() { return okaycrash::upload::Enabled(g_crashUpload, std::getenv("OKAY_CRASH_UPLOAD")); }
 static fs::path CrashDir() {
     std::string ed = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
     if (const char* dev = std::getenv("OKAY_CRASH_DIR")) return fs::path(dev);   // (dev/test: another folder)
@@ -4716,6 +4722,8 @@ void LoadPrefs() {
         else if (k == "official_auto_update") g_officialAutoUpdate = (v != "0");
         else if (k == "anticheat") g_antiCheatMode = (int)okayac::ParseMode(v);
         else if (k == "chat_sounds") g_chatSounds = (v != "0");
+        else if (k == "crash_upload") g_crashUpload = (v != "0");
+        else if (k == "crash_notice") g_crashNoticeSeen = (v == "1");
         else if (k == "link_previews") g_linkPreviews = (v != "0");
         else if (k == "voice_speed") g_voiceSpeed = std::clamp(std::atoi(v.c_str()), 0, 2);
         else if (k == "tenor_key") g_tenorKey = v;
@@ -4834,6 +4842,8 @@ void SavePrefs() {
     f << "official_auto_update=" << (g_officialAutoUpdate ? 1 : 0) << "\n";
     if (g_antiCheatMode) f << "anticheat=" << okayac::ModeName(okayac::Mode(g_antiCheatMode)) << "\n";
     f << "chat_sounds=" << (g_chatSounds ? 1 : 0) << "\n";
+    f << "crash_upload=" << (g_crashUpload ? 1 : 0) << "\n";
+    f << "crash_notice=" << (g_crashNoticeSeen ? 1 : 0) << "\n";
     f << "voice_speed=" << g_voiceSpeed << "\n";
     f << "link_previews=" << (g_linkPreviews ? 1 : 0) << "\n";
     if (!g_tenorKey.empty()) f << "tenor_key=" << g_tenorKey << "\n";
@@ -5922,6 +5932,106 @@ static void PumpPrivacy(okay::account::AccountService& account) {
     g_privDirty = false; retryAt = 0; g_privBusy = true;
     if (SDL_Thread* t = SDL_CreateThread(PrivacyWorker, "okay-privacy", job)) SDL_DetachThread(t);
     else { g_privBusy = false; g_privDirty = true; delete job; }
+}
+// ---- Sending crash reports (docs/crash_reports.md, shared/CrashUpload.hpp) ----
+// A new report in okay_crashlog.txt is scrubbed and sent as one row of the Supabase table crash_reports by a worker thread. The rules (the
+// Settings switch and OKAY_CRASH_UPLOAD=0, at most 5 a day, never twice, retry after a pause, 64 KB, the notice before the first send, the anon key may only insert) are
+// shared/CrashUpload.hpp's and are tested there; this part only runs them. The sent / refused ids are kept in okay_crash_sent.txt next to
+// the reports. State is touched on the UI thread only; the worker hands its answer over under g_crashUpMutex.
+static std::string g_crashUpNote;                        // the last result, one plain sentence, shown on the Crash reports page
+static volatile bool g_crashUpBusy = false;
+static SDL_mutex* g_crashUpMutex = nullptr;
+struct CrashUpJob { std::vector<okaycrash::Report> reports; std::string ledgerPath; okaycrash::ScrubContext ctx; std::string nowLocal; };
+struct CrashUpResult { bool ready = false; std::string note; int sent = 0; };
+static CrashUpResult g_crashUpRes;
+static bool g_crashUpResetSince = false;                 // the switch was just turned on: only crashes from now on are sent (the pump records the moment)
+static std::string LocalNowText() {                      // "2026-11-15 12:00:00", local time: the format the editor writes in a report's When line
+    const std::time_t t = std::time(nullptr);
+    char b[32] = "";
+    if (const std::tm* lt = std::localtime(&t)) std::strftime(b, sizeof(b), "%Y-%m-%d %H:%M:%S", lt);
+    return b;
+}
+static int CrashUploadWorker(void* p) {
+    std::unique_ptr<CrashUpJob> j(static_cast<CrashUpJob*>(p));
+    CrashUpResult res;
+    try {
+        okaycrash::upload::Ledger ledger;
+        okaycrash::upload::LoadLedger(j->ledgerPath, ledger);
+        if (!okaycrash::upload::SaveLedger(j->ledgerPath, ledger)) {   // cannot remember what was sent = would send twice: send nothing
+            res.note = "Crash reports were not sent: the launcher cannot write okay_crash_sent.txt next to the editor.";
+        } else {
+            okay::account::AccountService a(fs::path(g_pollCfgDir), g_pollUrl, g_pollKey);
+            auto send = [&](const okaycrash::upload::Request& q) {
+                okaycrash::upload::Reply r;
+                const auto resp = a.ApiAnon(q.path, q.method, q.body, q.header);   // the public key only: the table accepts inserts from it and nothing else
+                r.reached = resp.reached; r.status = resp.status; r.body = resp.body;
+                return r;
+            };
+            okaycrash::upload::Options o;
+            o.now = (long)std::time(nullptr);
+            o.nowLocal = j->nowLocal;
+            const okaycrash::upload::Result out = okaycrash::upload::Run(j->reports, ledger, send, j->ctx, o);
+            if (out.changedLedger && !okaycrash::upload::SaveLedger(j->ledgerPath, ledger))
+                res.note = "Sent, but could not save okay_crash_sent.txt (the same report may be sent again).";
+            else res.note = out.note;
+            res.sent = out.sent + out.duplicates;
+        }
+    } catch (...) { res.note = "Could not send crash reports."; }
+    SDL_LockMutex(g_crashUpMutex); g_crashUpRes = std::move(res); g_crashUpRes.ready = true; SDL_UnlockMutex(g_crashUpMutex);
+    g_crashUpBusy = false;
+    return 0;
+}
+static void PumpCrashUpload() {
+    if (!g_crashUpMutex) g_crashUpMutex = SDL_CreateMutex();
+    SDL_LockMutex(g_crashUpMutex);
+    if (g_crashUpRes.ready) {
+        g_crashUpNote = g_crashUpRes.note;
+        if (g_crashUpRes.sent > 0) Toast("Crash report sent. Thank you.", 1);
+        g_crashUpRes = CrashUpResult();
+    }
+    SDL_UnlockMutex(g_crashUpMutex);
+    static Uint32 next = 0;
+    const Uint32 now = okay::platform::TicksMs32();
+    if (g_crashUpBusy || (now < next && !g_crashUpResetSince)) return;
+    next = now + 20000;   // a look every 20 seconds is plenty
+    const fs::path dir = CrashDir();
+    if (dir.empty()) return;
+    std::error_code ec;
+    {   // The ledger follows the switch: the first run on this computer (no ledger yet) and the switch just turned on both start "from now"; while sending is off
+        // (the Settings switch or OKAY_CRASH_UPLOAD=0) the ledger is marked paused, and the first look after it comes back on moves "since" to now. Reports from
+        // before that moment are never sent.
+        const std::string ledgerFile = (dir / okaycrash::upload::kLedgerName).string();
+        okaycrash::upload::Ledger l;
+        okaycrash::upload::LoadLedger(ledgerFile, l);   // (what was already sent is kept)
+        const std::string nowText = LocalNowText();
+        bool changed = false;
+        if (g_crashUpResetSince || !fs::exists(ledgerFile, ec)) { l.SetSince(nowText); l.SetPaused(false); changed = true; }
+        if (okaycrash::upload::FollowSwitch(l, CrashUploadOn(), nowText)) changed = true;
+        if (changed) okaycrash::upload::SaveLedger(ledgerFile, l);
+        g_crashUpResetSince = false;
+    }
+    if (!CrashUploadOn() || g_pollCfgDir.empty() || g_crashes.empty()) return;
+    const fs::path hist = fs::exists(dir / "okay_crashlog.txt", ec) ? dir / "okay_crashlog.txt" : dir / "okay_crash.txt";
+    const auto age = fs::file_time_type::clock::now() - fs::last_write_time(hist, ec);
+    if (ec || age < std::chrono::seconds(15)) return;   // let the editor finish writing (and, on Windows, naming the frames) first
+    okaycrash::upload::Ledger ledger;
+    okaycrash::upload::LoadLedger((dir / okaycrash::upload::kLedgerName).string(), ledger);
+    okaycrash::upload::Options o;
+    o.now = (long)std::time(nullptr);
+    if (ledger.Paused() || ledger.RetryAfter() > o.now) return;
+    switch (okaycrash::upload::NextStep(CrashUploadOn(), g_crashNoticeSeen, okaycrash::upload::Pending(g_crashes, ledger, o).size())) {
+        case okaycrash::upload::Step::Idle: return;
+        case okaycrash::upload::Step::ShowNotice: g_crashNoticeReq = true; return;   // the main loop shows the notice; the first report goes after it has been answered
+        case okaycrash::upload::Step::Send: break;
+    }
+    auto* job = new CrashUpJob;
+    job->reports = g_crashes;
+    job->ledgerPath = (dir / okaycrash::upload::kLedgerName).string();
+    job->ctx = okaycrash::LocalContext();
+    job->nowLocal = LocalNowText();
+    g_crashUpBusy = true;
+    if (SDL_Thread* t = SDL_CreateThread(CrashUploadWorker, "okay-crashup", job)) SDL_DetachThread(t);
+    else { g_crashUpBusy = false; delete job; }
 }
 static SDL_mutex*  g_chatMutex = nullptr;
 static SDL_Thread* g_chatThread = nullptr;
@@ -18608,6 +18718,30 @@ int main(int argc, char** argv) {
             }
         }
 
+        // ---- Crash reports: the one-time notice (shared/CrashUpload.hpp NoticeText) ----
+        // Sending is on by default, so before the FIRST report leaves this computer the person is told, once, what is sent, that it becomes a public
+        // GitHub issue and how to turn it off. Nothing is sent until this has been answered (the pump waits for g_crashNoticeSeen).
+        // (It opens when no other popup is open, so it never fights another dialog for the screen; until then nothing is sent.)
+        if (g_crashNoticeReq && !g_crashNoticeSeen && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) ImGui::OpenPopup("Crash reports##notice");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Crash reports##notice", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::TextUnformatted(okaycrash::upload::NoticeTitle());
+            ImGui::Dummy(ImVec2(0, 4));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + 540.0f);
+            ImGui::TextWrapped("%s", okaycrash::upload::NoticeText().c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::Dummy(ImVec2(0, 8));
+            if (ImGui::Button("OK, keep sending", ImVec2(180, 32))) {
+                g_crashNoticeSeen = true; g_crashNoticeReq = false; SavePrefs(); ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Turn it off", ImVec2(140, 32))) {
+                g_crashUpload = false; g_crashNoticeSeen = true; g_crashNoticeReq = false; g_crashUpNote.clear(); SavePrefs(); ImGui::CloseCurrentPopup();
+                Toast("Crash reports will not be sent. They stay on this computer.", 1);
+            }
+            ImGui::EndPopup();
+        }
+
         // ---- "Close the editor first" (exit / update while the editor is open) ----
         // The launcher never quits or replaces the editor under an open project: it
         // asks the editor to save everything and close, waits, then carries on.
@@ -19177,6 +19311,7 @@ int main(int argc, char** argv) {
         PumpRoleCheck(account.IsLoggedIn() && account.IsOnline());
         PumpBlocks(account);
         PumpPrivacy(account);
+        PumpCrashUpload();
         PumpAcMyBans(account.IsLoggedIn() && account.IsOnline());
         PumpTicketPreflight();
         PumpTokenRefresh(account);
@@ -23040,6 +23175,35 @@ int main(int argc, char** argv) {
                     RefreshCrashes(ImGui::IsWindowAppearing());
                     static int crashOpen = -1;          // expanded report (index), -1 = none
                     const fs::path crashDir = CrashDir();
+                    static int crashView = 0;           // what an expanded report shows: 0 = the report, 1 = what would be sent (scrubbed)
+                    static okaycrash::upload::Ledger crashLedger; static Uint32 crashLedgerAt = 0;
+                    if (ImGui::IsWindowAppearing() || okay::platform::TicksMs32() - crashLedgerAt > 2000) {   // what was already sent (a small file beside the reports)
+                        if (!crashDir.empty()) okaycrash::upload::LoadLedger((crashDir / okaycrash::upload::kLedgerName).string(), crashLedger);
+                        crashLedgerAt = okay::platform::TicksMs32();
+                    }
+                    cardBegin("##sc_crashsend", "SENDING CRASH REPORTS");
+                    settingRow("Send crash reports automatically", okaycrash::upload::DisclosureLine(), 40.0f, 22.0f, [&](float) {
+                        if (ToggleSwitch("##crashup", &g_crashUpload)) {
+                            SavePrefs();
+                            g_crashUpNote.clear();
+                            if (g_crashUpload) g_crashUpResetSince = true;   // turned on: only crashes from now on are sent, not the ones from while it was off
+                        }
+                    });
+                    {
+                        const std::string status = okaycrash::upload::StatusLine(g_crashUpload, std::getenv("OKAY_CRASH_UPLOAD"));
+                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::PushStyleColor(ImGuiCol_Text, cDim);
+                        ImGui::TextWrapped("%s", status.c_str());
+                        if (!g_crashUpNote.empty()) ImGui::TextWrapped("%s", g_crashUpNote.c_str());
+                        ImGui::PopStyleColor();
+                    }
+                    rowDivider();
+                    settingRow("Preview what would be sent", "The exact text of the newest report after names, folders, emails and addresses are removed. Looking sends nothing.", 130.0f, 30.0f, [&](float) {
+                        ImGui::BeginDisabled(g_crashes.empty());
+                        if (ImGui::Button("Preview", ImVec2(130, 30))) { crashOpen = 0; crashView = 1; }
+                        ImGui::EndDisabled();
+                    });
+                    cardEnd();
                     cardBegin("##sc_crash", "EDITOR CRASHES");
                     {
                         char sum[96];
@@ -23088,6 +23252,14 @@ int main(int argc, char** argv) {
                         std::string meta = r.when.empty() ? std::string("Unknown time") : r.when;
                         if (!r.version.empty()) meta += "  \xC2\xB7  v" + r.version;
                         if (i == 0) meta += "  \xC2\xB7  latest";
+                        {   // was it sent?
+                            const std::string id = okaycrash::upload::ReportId(r);
+                            const bool older = !crashLedger.Since().empty() && (!okaycrash::upload::LooksLikeWhen(r.when) || r.when < crashLedger.Since());
+                            meta += "  \xC2\xB7  ";
+                            meta += crashLedger.Sent(id) ? "sent" : crashLedger.Refused(id) ? "not sent (the server refused it)"
+                                  : older ? "not sent (from before sending was switched on)"
+                                  : CrashUploadOn() ? "waiting to be sent" : "not sent (sending is off)";
+                        }
                         dl->AddText(ImVec2(tx, p.y + 22), cDim, meta.c_str());
                         ImGui::Dummy(ImVec2(w, 44));
                         if (!r.lastStep.empty()) {
@@ -23105,21 +23277,48 @@ int main(int argc, char** argv) {
                         }
                         ImGui::Dummy(ImVec2(0, 4));
                         const bool open = crashOpen == i;
-                        if (ImGui::Button(open ? "Hide details" : "Details", ImVec2(110, 28))) crashOpen = open ? -1 : i;
+                        const bool showDetails = open && crashView == 0, showPreview = open && crashView == 1;
+                        if (ImGui::Button(showDetails ? "Hide details" : "Details", ImVec2(110, 28))) { crashOpen = showDetails ? -1 : i; crashView = 0; }
                         ImGui::SameLine();
                         if (ImGui::Button("Copy report", ImVec2(110, 28))) {
                             ImGui::SetClipboardText(r.text.c_str());
                             Toast("Crash report copied", 1);
                         }
+                        ImGui::SameLine();
+                        if (ImGui::Button(showPreview ? "Hide preview" : "What would be sent", ImVec2(150, 28))) { crashOpen = showPreview ? -1 : i; crashView = 1; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "The report as it would be sent: names, folders, emails and addresses removed.");
                         if (r.frames > 0) {
                             ImGui::SameLine();
                             ImGui::AlignTextToFramePadding();
                             ImGui::TextDisabled("%d stack frame%s", r.frames, r.frames == 1 ? "" : "s");
                         }
+                        // The fallback with no server: a new GitHub issue with the (scrubbed) report filled in, for the person to read and submit.
+                        if (ImGui::Button("Report on GitHub", ImVec2(150, 28))) {
+                            const okaycrash::ScrubContext sc = okaycrash::LocalContext();
+                            ImGui::SetClipboardText(okaycrash::Scrub(r.text, sc).c_str());   // the whole scrubbed report: a web address cannot carry it all
+                            bool cut = false;
+                            OpenExternal(okaycrash::upload::IssueUrl(kCrashRepo, r, sc, 3900, &cut));   // (OpenExternal refuses an address over 4096 bytes)
+                            Toast(cut ? "GitHub opened. The full report is on your clipboard: paste it into the issue."
+                                      : "GitHub opened with the report filled in. The full text is on your clipboard too.", 1);
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "Opens a new GitHub issue with the report filled in (personal details removed). You read it and press Submit yourself.");
                         if (open) {
                             ImGui::Dummy(ImVec2(0, 4));
                             static std::string shown;   // InputTextMultiline needs a mutable buffer
-                            shown = r.text;
+                            if (crashView == 1) {   // what would be sent: rebuilt only when another report (or the switch) is chosen
+                                static std::string pvKey, pvText;
+                                const std::string key = r.id + (CrashUploadOn() ? "1" : "0") + g_pollUrl;
+                                if (pvKey != key) {
+                                    const okaycrash::upload::Payload pl = okaycrash::upload::BuildPayload(r, okaycrash::LocalContext());
+                                    std::string host = g_pollUrl;
+                                    if (const std::size_t sch = host.find("://"); sch != std::string::npos) host = host.substr(sch + 3);
+                                    host = host.substr(0, host.find('/'));
+                                    pvText = pl.ok ? okaycrash::upload::PreviewText(pl, host) : "This report cannot be sent (" + pl.error + "). It stays on this computer.";
+                                    if (!CrashUploadOn()) pvText = "Sending is OFF, so this is NOT being sent. It is what would be sent if you turned it on.\n\n" + pvText;
+                                    pvKey = key;
+                                }
+                                shown = pvText;
+                            } else shown = r.text;
                             ImGui::PushStyleColor(ImGuiCol_FrameBg, okaytheme::kSunken);
                             ImGui::InputTextMultiline("##crashtext", shown.data(), shown.size() + 1, ImVec2(-1, 240),
                                                       ImGuiInputTextFlags_ReadOnly);

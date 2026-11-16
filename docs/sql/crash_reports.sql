@@ -1,0 +1,101 @@
+-- OkaySpace crash reports: the launcher sends each editor crash report, with the person's name, folders, email and addresses taken out
+-- first (docs/crash_reports.md), as one row in this table; a scheduled GitHub workflow (.github/workflows/crash-issues.yml) turns new
+-- rows into issues. Run once in your Supabase project's SQL editor. Needs nothing else (no other docs/sql file). Idempotent: re-running
+-- is safe (it also brings an older copy of this table up to date). Until it has run, the launcher keeps the reports on the computer and
+-- says the server is not set up (it never says "sent" unless the server accepted the row).
+--
+-- Who can do what (enforced here, not in the launcher):
+--   * anyone holding the public anon key (that is every copy of the launcher) can INSERT a row, and only the nine columns below. They
+--     cannot choose the id, the time, or the "processed" fields; they cannot read, change or delete any row, their own included.
+--     The launcher therefore asks for the answer without the row ("Prefer: return=minimal"): INSERT ... RETURNING would need SELECT.
+--   * the service role (the key the GitHub workflow holds as a secret) reads rows, marks them processed with the issue number, counts
+--     failed attempts, and deletes old ones. It bypasses row-level security, so no policy is written for it.
+--   * the shape of a row is checked here, whatever the sender claims: ids and signatures are 16 hex digits, the report starts with the
+--     report title and is at most 64 KB, every text column has a length limit, the same report id can be stored only once.
+--   * a flood is capped, and the cap holds even when many senders write at the same moment (an advisory lock makes the inserts queue up
+--     at the guard): at most 60 rows in any hour for the whole table (a normal day is a handful), and at most 32 MB of report text in the
+--     table. Beyond that an insert fails with "crash_rate_limit" or "crash_table_full"; the launcher keeps the report and tries again later.
+--   * the table empties itself (every insert first deletes what is old, so it does not depend on the workflow running): a row that was
+--     turned into an issue is deleted 7 days after that, a row nobody turned into an issue is deleted 14 days after it arrived. A copy of
+--     the report stays in the GitHub issue; the launcher also keeps the original on the computer.
+-- Nothing in the table is personal on purpose: the launcher scrubs first, and crash_to_issue.py scrubs again before writing an issue.
+-- (The sender's connection address is seen by Supabase like by any web service; it is not part of the row.)
+
+create table if not exists public.crash_reports (
+  id           uuid primary key default gen_random_uuid(),
+  created_at   timestamptz not null default now(),
+  report_id    text not null,            -- 16 hex: a hash of the report, so a retry never stores it twice
+  signature    text not null,            -- 16 hex: the same crash (same exception, same top frames) has the same signature
+  version      text not null,
+  build        text,
+  os           text,
+  exception    text not null,
+  last_step    text,
+  top_frame    text,
+  report       text not null,            -- the scrubbed report text
+  processed_at timestamptz,              -- set by the workflow when the row has been turned into an issue / a comment
+  issue_number integer,                  -- the issue it went to; 0 = a row the workflow gave up on (quarantined, no issue)
+  attempts     smallint not null default 0,   -- how many runs failed because of this row (the workflow gives up after 3)
+  constraint crash_reports_report_id_key unique (report_id),
+  constraint crash_reports_report_id_check check (report_id ~ '^[0-9a-f]{16}$'),
+  constraint crash_reports_signature_check check (signature ~ '^[0-9a-f]{16}$'),
+  constraint crash_reports_version_check   check (char_length(version) between 1 and 40),
+  constraint crash_reports_build_check     check (build is null or char_length(build) <= 120),
+  constraint crash_reports_os_check        check (os is null or char_length(os) <= 200),
+  constraint crash_reports_exception_check check (char_length(exception) between 1 and 120),
+  constraint crash_reports_last_step_check check (last_step is null or char_length(last_step) <= 200),
+  constraint crash_reports_top_frame_check check (top_frame is null or char_length(top_frame) <= 300)
+);
+
+-- An older copy of this file made the table without "attempts" and with a 100 KB limit on the report: bring it up to date. (NOT VALID: the new
+-- limit is checked for new rows; rows already there are left as they are.)
+alter table public.crash_reports add column if not exists attempts smallint not null default 0;
+alter table public.crash_reports drop constraint if exists crash_reports_report_check;
+alter table public.crash_reports add constraint crash_reports_report_check
+  check (octet_length(report) between 20 and 65536 and report like 'OkaySpace crash report%') not valid;
+
+create index if not exists crash_reports_created_idx on public.crash_reports (created_at);
+create index if not exists crash_reports_signature_idx on public.crash_reports (signature);
+create index if not exists crash_reports_unprocessed_idx on public.crash_reports (created_at) where processed_at is null;
+create index if not exists crash_reports_processed_idx on public.crash_reports (processed_at) where processed_at is not null;
+
+alter table public.crash_reports enable row level security;
+
+-- One policy, insert only, for the two roles a launcher can have. There is deliberately no select, update or delete policy.
+drop policy if exists "send crash reports" on public.crash_reports;
+create policy "send crash reports" on public.crash_reports for insert to anon, authenticated with check (true);
+
+-- Column grants: the sender supplies the nine columns and nothing else.
+revoke all on public.crash_reports from anon, authenticated;
+grant insert (report_id, signature, version, build, os, exception, last_step, top_frame, report) on public.crash_reports to anon, authenticated;
+grant select, update, delete on public.crash_reports to service_role;
+
+-- The guard, run before every inserted row. Security definer so it can count and delete rows the sender is not allowed to see.
+--   1. The advisory lock: the count below only sees rows that are already committed, so without the lock many senders at once all see
+--      "59 rows" and all get in (measured: 303 rows through a cap of 300 with 18 senders). With it, the next sender waits here until
+--      the one before has committed or rolled back, so the count it takes is the true one. (The lock number is arbitrary; it is only
+--      ever taken by this function. It is released at the end of the transaction, never by hand.)
+--   2. Housekeeping: delete what is old (see the top of this file).
+--   3. The caps: 60 rows in the last hour, 32 MB of report text in all.
+create or replace function public.crash_reports_guard() returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  recent integer;
+  stored bigint;
+begin
+  perform pg_advisory_xact_lock(7243100210);
+  delete from public.crash_reports
+   where (processed_at is not null and processed_at < now() - interval '7 days')
+      or (processed_at is null and created_at < now() - interval '14 days');
+  select count(*) into recent from public.crash_reports where created_at > now() - interval '1 hour';
+  if recent >= 60 then
+    raise exception 'crash_rate_limit' using hint = 'too many crash reports in the last hour; try again later';
+  end if;
+  select coalesce(sum(octet_length(report)), 0) into stored from public.crash_reports;
+  if stored > 33554432 then
+    raise exception 'crash_table_full' using hint = 'the crash report table is full; try again later';
+  end if;
+  return new;
+end $$;
+revoke all on function public.crash_reports_guard() from public, anon, authenticated;
+drop trigger if exists crash_reports_guard on public.crash_reports;
+create trigger crash_reports_guard before insert on public.crash_reports for each row execute function public.crash_reports_guard();

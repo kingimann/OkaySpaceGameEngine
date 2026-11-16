@@ -1412,8 +1412,9 @@ and curl exactly as before.
 On a Linux build (`cmake -DOKAY_OWN_HTTP=ON`, launcher and editor built), to try it:
 
 1. Start the launcher with `OKAY_OWN_HTTP=1 ./OkaySpace` (the launcher). Open **Versions** and download a version. Expect:
-   the download runs, a `<file>.part` file grows next to the target and is renamed to the real name only when the whole
-   file has arrived; the version then installs as with curl. Pull the network cable (or stop Wi-Fi) for a few seconds
+   the download runs, a `<file>.<key>.<pid>-<random>.part` file grows next to the target (a name of its own for each
+   download, so two downloads of the same file never write into one file) and is renamed to the real name only when the
+   whole file has arrived; the version then installs as with curl. Pull the network cable (or stop Wi-Fi) for a few seconds
    in the middle: the download continues where it stopped (up to two more tries) instead of starting over.
 2. Start the editor with `OKAY_OWN_HTTP=1 ./OkayEngine` and use **Engine > Check for Updates**. Expect: the version check and
    (if there is an update) the download work as before. With `OKAY_HTTP_CURL=1` as well, curl is used instead.

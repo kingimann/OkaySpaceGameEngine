@@ -108,7 +108,7 @@ DownloadResult DownloadFile(const std::string& url, const fs::path& dest, std::u
 #if defined(OKAY_OWN_HTTP_ACTIVE)
     // Our own client first (opt-in, docs/own_http_client.md). Anything that is not a clear answer (libssl missing,
     // certificate refused, proxy trouble, a malformed reply) falls through to curl below, as before.
-    // The file goes to "<dest>.part" first and is renamed when complete; a dropped connection is resumed with Range
+    // The file goes to a temporary "<dest>.<key>.<pid>-<random>.part" first and is renamed when complete; a dropped connection is resumed with Range
     // (two more tries, with backoff); SHA-256 is computed on the way (the caller still checks it against versions.json).
     if (okay::http::NativeAvailable()) {
         okay::http::OwnDownloadSpec sp;

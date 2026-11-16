@@ -290,7 +290,8 @@ struct DownloadSpec {
     bool resumeExisting = false;
     bool keepPartialOnFailure = false;  ///< leave the temporary file after a network failure or cancel (never after a checksum or size mismatch)
     /// Compute SHA-256 while streaming (returned in sha256Hex). Always on when expectedSha256 is set; turning it off
-    /// saves the hashing time (our SHA-256 runs at roughly 130 to 200 MB/s on one core) when nobody needs the hash.
+    /// saves the hashing time (our SHA-256: roughly 150 to 330 MB/s on one core with the portable block function,
+    /// 700 MB/s and more with the x86 SHA extensions) when nobody needs the hash.
     bool computeSha256 = true;
     bool syncBeforeRename = true;       ///< fsync the file (and the folder after the rename) so a crash cannot leave a short file under the final name
     RetryPolicy retry;                  ///< maxAttempts counts every try; a resume is a try

@@ -62,7 +62,7 @@ inline bool SleepUnlessCancelled(int ms, const std::function<bool()>& cancelled)
 } // namespace detail
 
 /// GET `url` into the file `path` (replacing it), like `curl -L -f [--max-filesize N] [--retry N] -o path url` with a
-/// progress callback and a cancel check. The bytes go to `path + ".part"` first, SHA-256 is computed while they arrive,
+/// progress callback and a cancel check. The bytes go to a temporary file of their own next to `path` first, SHA-256 is computed while they arrive,
 /// and only a complete (and, with expectedSha256, matching) file is renamed to `path`. A dropped connection is
 /// resumed with Range on the next try (sp.retries). On anything but Ok, `path` and the temporary file are removed.
 inline OwnDownloadResult OwnDownload(const std::string& url, const std::string& path, const OwnDownloadSpec& sp) {

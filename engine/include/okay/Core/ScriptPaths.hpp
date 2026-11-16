@@ -5,7 +5,10 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Core/PathSafety.hpp"
 #include "okay/Core/SaveData.hpp"
+#include <chrono>
 #include <string>
+#include <system_error>
+#include <unordered_map>
 
 namespace okay {
 
@@ -25,9 +28,25 @@ inline bool ScriptPathOk(const std::string& name, const char* api) {
     std::string why;
     const pathsafety::Why w = pathsafety::Check(name);
     if (w == pathsafety::Why::Ok) {
-        if (pathsafety::StaysInside(std::filesystem::path(), name, nullptr, &why) &&
-            (Save::BaseDir().empty() || pathsafety::StaysInside(std::filesystem::path(Save::BaseDir()), name, nullptr, &why)))
-            return true;
+        // The link check asks the file system, and scripts call file functions every frame (data_num in update()), so a
+        // verdict is remembered for two seconds (per thread; a link created in that time is seen a moment later).
+        struct Memo { bool ok; double at; std::string cwd; };
+        static thread_local std::unordered_map<std::string, Memo> memo;
+        const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        std::error_code ec;
+        const std::string cwd = std::filesystem::current_path(ec).string();
+        const std::string key = name + '\n' + Save::BaseDir();
+        auto it = memo.find(key);
+        if (it != memo.end() && it->second.cwd == cwd && now - it->second.at < 2.0) {
+            if (it->second.ok) return true;
+        } else {
+            const bool ok = pathsafety::StaysInside(std::filesystem::path(), name, nullptr, &why) &&
+                            (Save::BaseDir().empty() || pathsafety::StaysInside(std::filesystem::path(Save::BaseDir()), name, nullptr, &why));
+            if (memo.size() > 512) memo.clear();
+            memo[key] = Memo{ok, now, cwd};
+            if (ok) return true;
+        }
+        if (why.empty()) why = "resolves outside the game's folders (a link points out of it)";
     } else {
         why = pathsafety::Describe(w);
     }

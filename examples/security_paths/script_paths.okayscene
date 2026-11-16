@@ -12,7 +12,14 @@ gameobject 0 "Main Camera"
   transform 0 0 -10 0 0 0 1 1 1 1
   camera 0 5 60 0.47058824 0.65882355 0.8392157 1 1 1 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
-gameobject 1 "Path Tester"
+gameobject 1 "Board"
+  guid "7c3e2f4a9d5b6c8e0a1f2d3c4e5f6a71"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  sprite 35 0.2901961 0.50980395 0.25882354 1 6 3 "" 0 0 1 1 0 0 0 0 0
+end
+gameobject 2 "Path Tester"
   guid "6b2d1e3f8c4a5b7d9f0e1c2b3d4e5f60"
   active 1
   parent -1

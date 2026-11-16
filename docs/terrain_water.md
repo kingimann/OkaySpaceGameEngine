@@ -16,6 +16,11 @@ The sibling Mesh Renderer is what every backend draws. Sculpting updates that me
 
 **GameObject > 3D Object > Water** builds an animated wave mesh with a reflective, semi-transparent material. It follows the global wind. Rigidbodies float according to `fluidDensity` and `linearDrag`.
 
+The buoyancy and drag are added once per **physics step** (in `FixedUpdate`), not once per rendered frame, so a box
+floats at the same height and slows down the same way at 30, 60 or 144 frames per second. Before this fix they were added
+per frame, and a light box sank at 20 fps while a heavy one floated at 144 fps (issue #888, Finding 79). The force law did
+not change: lift = submerged volume x `fluidDensity` x 9.81, drag = -velocity x `linearDrag` x mass x the submerged share.
+
 ## What is not here
 
 Vegetation painting and scattering are separate. World streaming of terrain cells is the World Streamer component (prefab files named by cell), not an automatic split of one terrain.

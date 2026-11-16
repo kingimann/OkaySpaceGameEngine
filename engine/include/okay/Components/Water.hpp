@@ -61,7 +61,15 @@ public:
         if (ws > 1e-4f) { m_windDir = {wind.x / ws, wind.z / ws}; }
         m_time += dt * waveSpeed * (1.0f + 0.1f * ws);
         Animate();
-        if (dt > 0.0f && depth > 0.0f) BuoyBodies();
+    }
+
+    /// Buoyancy and drag push the bodies once per PHYSICS step: a force added with AddForce is
+    /// used by the next step and then cleared, so adding it per rendered frame (as Update did)
+    /// gave several pushes per step at a high frame rate and none on some steps at a low one
+    /// (issue #888, Finding 79). `step` is the fixed step, or the frame time when the scene
+    /// steps physics once per frame.
+    void FixedUpdate(float step) override {
+        if (step > 0.0f && depth > 0.0f) BuoyBodies();
     }
 
     /// World height of the waved surface at a world x/z, and the floor of the

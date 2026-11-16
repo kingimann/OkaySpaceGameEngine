@@ -33,6 +33,17 @@ namespace okay {
 /// four down-rays (at the wheelBase × trackWidth corners) drive a critically-damped
 /// vertical spring so the body rides at `rideHeight`, soaks up bumps, and the chassis
 /// rolls/pitches from per-wheel compression plus accel/cornering lean.
+///
+/// Timing: with a Rigidbody3D the driving (throttle, brakes, steering, grip and the
+/// suspension spring) runs once per PHYSICS step in FixedUpdate, sized by the fixed step,
+/// so a car drives the same at 30 or 144 frames per second. Without a Rigidbody3D it moves
+/// the Transform once per frame in Update. Wheel visuals and the chase camera run per frame.
+///
+/// Grip comes from the wheels: drive, braking, steering and sideways grip only act through
+/// wheels that touch the ground. Arcade mode casts one ray from the centre along the car's own
+/// down direction (groundCheckDistance long), so a car on its roof or in the air has no grip;
+/// suspension mode uses its four wheel rays and scales by how many hit. `airControl` keeps a
+/// share of control with no wheel down (0 by default). A body with gravity off always grips.
 class VehicleController : public Behaviour {
 public:
     VehicleController() { m_uid = ++NextUid(); Live().push_back({this, m_uid}); }
@@ -61,6 +72,10 @@ public:
     float grip         = 7.0f;           // how fast sideways slide is killed (higher = sticky)
     float handbrakeGrip = 0.6f;          // grip while the handbrake is held (low = drifty)
     float groundCheckDistance = 1.2f;    // down-ray length for "on the ground"
+    /// Share (0..1) of drive, braking, steering and grip the car keeps with no wheel on the
+    /// ground (in the air, or on its roof or side). 0, the default, is none: the wheels only
+    /// push while they touch the ground. 1 drives the same everywhere (the old behaviour).
+    float airControl = 0.0f;
 
     // ---- Per-wheel raycast suspension (opt-in) ----
     bool  suspension       = false;      // enable spring suspension + body tilt
@@ -96,6 +111,9 @@ public:
 
     float Speed() const { return m_speed; }              // signed forward speed (units/s)
     bool  IsGrounded() const { return m_grounded; }
+    /// Share (0..1) of the wheels on the ground at the last physics step: arcade mode is 0 or 1,
+    /// suspension mode is wheels hit / 4.
+    float GroundedShare() const { return m_groundShare; }
 
     /// ---- Wheel visuals (looks only; nothing here is saved) ----
     /// Every descendant named "Wheel..." that has a child named "Tire" is animated: the wheel object
@@ -118,20 +136,51 @@ public:
 
         // ---- Read input: WASD/arrow axis (y = throttle, x = steer) ----
         // With a driver seat, only a seated driver's keys count; empty = no input.
-        const bool unmanned = m_driverSeats > 0 && !m_driver;
-        float throttle = 0.0f, steer = 0.0f;
-        bool handbrake = false;
-        if (!unmanned) {
+        // The keys are read once per frame here and used by every physics step of this frame.
+        m_unmanned = m_driverSeats > 0 && !m_driver;
+        m_throttleIn = 0.0f; m_steerIn = 0.0f; m_handbrakeIn = false;
+        if (!m_unmanned) {
             Vec2 axis = Input::AxisWASD();
-            throttle = axis.y; steer = axis.x;
-            handbrake = handbrakeKey && Input::GetKey(handbrakeKey);
+            m_throttleIn = axis.y; m_steerIn = axis.x;
+            m_handbrakeIn = handbrakeKey && Input::GetKey(handbrakeKey);
         }
+
+        // No body: move the Transform directly, once per frame.
+        if (!Body()) Drive(dt, nullptr);
+
+        AnimateWheels(dt, m_speed, m_steerIn);
+        if (followCamera && !m_unmanned && !m_seatCamera) UpdateCamera(dt);
+    }
+
+    /// With a Rigidbody3D the car is driven here, once per physics step (`step` is the fixed
+    /// step, or the frame time when the scene steps physics once per frame). A force added
+    /// here (the suspension spring) is used by exactly the step that follows.
+    void FixedUpdate(float step) override {
+        if (!transform || step <= 0.0f) return;
+        if (!IsLocallyControlled(gameObject)) return;
+        if (Rigidbody3D* rb = Body()) Drive(step, rb);
+    }
+
+private:
+    Rigidbody3D* Body() const { return gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr; }
+
+    // One drive step of `dt` seconds: per physics step with a body, per frame without one.
+    void Drive(float dt, Rigidbody3D* rb) {
+        const bool unmanned = m_unmanned;
+        const float throttle = m_throttleIn, steer = m_steerIn;
+        const bool handbrake = m_handbrakeIn;
 
         // Planar facing axes (flatten Y so slopes don't change the drive plane).
         Vec3 F = transform->Forward(); Vec3 R = transform->Right();
         Vec3 fp = Planar(F), rp = Planar(R);
 
-        auto* rb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr;
+        // ---- Which wheels touch the ground: everything below acts only through them ----
+        // A body-less car has no physics, and a body with gravity off (gravityScale 0) has no
+        // "down" to fall to (a hover car, or a headless test without a floor): both always drive.
+        const float share = GroundShare(fp, rp);
+        const float ground = (rb && rb->gravityScale != 0.0f) ? share : 1.0f;
+        const float grip01 = ground + (1.0f - ground) * Mathf::Clamp(airControl, 0.0f, 1.0f);
+
         Vec3 vel = rb ? rb->velocity : m_kinematicVel;
         float speedF = vel.x * fp.x + vel.z * fp.z;       // velocity along facing
         float lat    = vel.x * rp.x + vel.z * rp.z;       // sideways velocity
@@ -142,7 +191,7 @@ public:
         // A positive yaw is counter-clockwise seen from above, which is a LEFT turn for any heading. D (steer > 0)
         // must turn right, so the yaw is the negative of the steering.
         float yawDelta = (std::fabs(steer) > 0.001f && steerScale > 0.001f)
-                       ? -steer * turnSpeed * steerScale * dirSign * dt : 0.0f;
+                       ? -steer * turnSpeed * steerScale * dirSign * grip01 * dt : 0.0f;
         if (suspension) {
             // Suspension owns the full orientation (yaw + pitch/roll), so track yaw
             // as a scalar and rebuild the rotation rather than accumulating quats.
@@ -164,32 +213,31 @@ public:
                    : (throttle == 0.0f) ? drag
                    : (throttle < 0.0f && speedF > 0.1f) ? brakeForce      // pressing back while rolling fwd = brake
                    : acceleration;
-        speedF = MoveToward(speedF, target, rate * dt);
+        speedF = MoveToward(speedF, target, rate * grip01 * dt);
 
         // ---- Lateral grip: shed sideways slide (less while handbraking = drift) ----
         float g = handbrake ? handbrakeGrip : grip;
-        lat *= Mathf::Clamp(1.0f - g * dt, 0.0f, 1.0f);
+        lat *= Mathf::Clamp(1.0f - g * grip01 * dt, 0.0f, 1.0f);
 
         // ---- Reassemble velocity (keep vertical for gravity) ----
         Vec3 planar = fp * speedF + rp * lat;
         m_speed = speedF;
-        AnimateWheels(dt, speedF, steer);
         if (suspension) {
-            ApplySuspension(dt, rb, fp, rp, planar, speedF, lat);
-        } else {
-            UpdateGrounded();
-            if (rb) {
+            ApplySuspension(dt, rb, planar, speedF, lat, grip01 > 0.0f);
+        } else if (rb) {
+            // No wheel down and no air control: the wheels do nothing, physics keeps the velocity.
+            if (grip01 > 0.0f) {
                 rb->velocity.x = planar.x;
                 rb->velocity.z = planar.z;
-                // leave rb->velocity.y to gravity/collision
-            } else {
-                m_kinematicVel = {planar.x, 0.0f, planar.z};
-                transform->Translate(Vec3{planar.x, 0.0f, planar.z} * dt);
             }
+            // leave rb->velocity.y to gravity/collision
+        } else {
+            m_kinematicVel = {planar.x, 0.0f, planar.z};
+            transform->Translate(Vec3{planar.x, 0.0f, planar.z} * dt);
         }
-
-        if (followCamera && !unmanned && !m_seatCamera) UpdateCamera(dt);
     }
+
+public:
 
     void OnObjectsDestroyed(const std::unordered_set<const GameObject*>& dying) override {
         if (m_driver && dying.count(m_driver)) m_driver = nullptr;   // never keep a freed driver
@@ -271,40 +319,58 @@ private:
         }
         m_proxyPos = pos; m_proxyInit = true;
     }
-    void UpdateGrounded() {
-        m_grounded = true;
-        if (gameObject && gameObject->scene() && transform) {
-            RaycastHit3D h = gameObject->scene()->physics3D().Raycast(
-                *gameObject->scene(), transform->Position(), Vec3{0, -1, 0},
-                groundCheckDistance, gameObject);
-            m_grounded = h.hit;
-        }
-    }
-    // Per-wheel raycast suspension: cast down at the four wheel corners, run a
-    // critically-damped vertical spring toward rideHeight (via AddForce so gravity
-    // composes through the integrator), and tilt the chassis from per-wheel
-    // compression plus dynamic accel/cornering lean.
-    void ApplySuspension(float dt, Rigidbody3D* rb, const Vec3& fp, const Vec3& rp,
-                         const Vec3& planar, float speedF, float lat) {
+    // Share of the wheels on the ground (0..1), and m_grounded. Arcade mode: one ray from the
+    // centre along the car's OWN down direction, so a car on its roof (the ray points up) or on
+    // its side counts as off the ground. Suspension mode: the four wheel rays (the spring keeps
+    // that body upright), share = wheels that hit / 4. The car's own colliders, children
+    // included, are never hit.
+    float GroundShare(const Vec3& fp, const Vec3& rp) {
         Scene* sc = gameObject ? gameObject->scene() : nullptr;
-        Vec3 pos = transform->Position();
-        float hb = wheelBase * 0.5f, ht = trackWidth * 0.5f;
-        // Corners: 0 front-right, 1 front-left, 2 rear-right, 3 rear-left.
-        Vec3 corner[4] = { pos + fp * hb + rp * ht, pos + fp * hb - rp * ht,
-                           pos - fp * hb + rp * ht, pos - fp * hb - rp * ht };
-        // Start each ray a little above the chassis and reach rideHeight+travel below
-        // it, so the wheel finds ground whether the spring is compressed or drooping.
-        float topMargin = 0.3f;
-        float maxRay = topMargin + rideHeight + suspensionTravel;
-        float groundY[4]; int nHit = 0; float sumGround = 0.0f;
+        if (suspension) {
+            CastWheels(sc, fp, rp);
+            m_groundShare = (float)m_wheelHits / 4.0f;
+        } else if (sc && transform) {
+            Physics3D::IgnoreHierarchy own(gameObject);
+            const Vec3 down = transform->Up() * -1.0f;
+            m_groundShare = sc->physics3D().Raycast(*sc, transform->Position(), down,
+                                                    groundCheckDistance, gameObject).hit ? 1.0f : 0.0f;
+        } else {
+            m_groundShare = 1.0f;
+        }
+        m_grounded = m_groundShare > 0.0f;
+        return m_groundShare;
+    }
+    // The suspension's four wheel rays, straight down from the wheelBase x trackWidth corners
+    // (0 front-right, 1 front-left, 2 rear-right, 3 rear-left). Each starts a little above the
+    // chassis and reaches rideHeight + travel below it, so a wheel finds the ground whether the
+    // spring is compressed or drooping. A wheel that misses rests at full droop.
+    void CastWheels(Scene* sc, const Vec3& fp, const Vec3& rp) {
+        const Vec3 pos = transform->Position();
+        const float hb = wheelBase * 0.5f, ht = trackWidth * 0.5f;
+        const Vec3 corner[4] = { pos + fp * hb + rp * ht, pos + fp * hb - rp * ht,
+                                 pos - fp * hb + rp * ht, pos - fp * hb - rp * ht };
+        const float topMargin = 0.3f, maxRay = topMargin + rideHeight + suspensionTravel;
+        m_wheelHits = 0; m_wheelSumY = 0.0f;
+        Physics3D::IgnoreHierarchy own(gameObject);   // never stand on our own wheels
         for (int i = 0; i < 4; ++i) {
             RaycastHit3D h{};
             if (sc) h = sc->physics3D().Raycast(*sc, corner[i] + Vec3{0, topMargin, 0},
                                                 Vec3{0, -1, 0}, maxRay, gameObject);
-            if (h.hit) { groundY[i] = h.point.y; sumGround += h.point.y; ++nHit; }
-            else       { groundY[i] = corner[i].y - suspensionTravel; }
+            if (h.hit) { m_wheelY[i] = h.point.y; m_wheelSumY += h.point.y; ++m_wheelHits; }
+            else       { m_wheelY[i] = corner[i].y - suspensionTravel; }
         }
-        m_grounded = nHit > 0;
+    }
+    // Per-wheel raycast suspension: from the four wheel rays (CastWheels), run a
+    // critically-damped vertical spring toward rideHeight (via AddForce so gravity
+    // composes through the integrator), and tilt the chassis from per-wheel
+    // compression plus dynamic accel/cornering lean.
+    void ApplySuspension(float dt, Rigidbody3D* rb, const Vec3& planar, float speedF, float lat,
+                         bool wheelsPush) {
+        // The wheel rays were cast by GroundShare at the start of this drive step.
+        const Vec3 pos = transform->Position();
+        const float* groundY = m_wheelY;
+        const int nHit = m_wheelHits;
+        const float sumGround = m_wheelSumY;
 
         // ---- Vertical spring toward (average ground + rideHeight) ----
         float velY = rb ? rb->velocity.y : m_kinematicVel.y;
@@ -334,8 +400,8 @@ private:
         m_roll  += (rollT  - m_roll)  * t;
         transform->localRotation = Quat::Euler(m_pitch, m_yaw, m_roll);
 
-        // ---- Commit velocity ----
-        if (rb) { rb->velocity.x = planar.x; rb->velocity.z = planar.z; }
+        // ---- Commit velocity (with no wheel down and no air control, physics keeps it) ----
+        if (rb) { if (wheelsPush) { rb->velocity.x = planar.x; rb->velocity.z = planar.z; } }
         else {
             m_kinematicVel = {planar.x, velY, planar.z};
             transform->Translate(Vec3{planar.x, velY, planar.z} * dt);
@@ -369,6 +435,13 @@ private:
     int   m_driverSeats = 0;             // runtime only: live driver seats (VehicleSeat)
     float m_speed = 0.0f;
     bool  m_grounded = true;
+    float m_groundShare = 1.0f;          // wheels on the ground at the last drive step (0..1)
+    float m_wheelY[4] = {0, 0, 0, 0};    // suspension: ground height under each wheel
+    float m_wheelSumY = 0.0f;
+    int   m_wheelHits = 0;
+    // Input read in Update, used by the drive steps (runtime only).
+    float m_throttleIn = 0.0f, m_steerIn = 0.0f;
+    bool  m_handbrakeIn = false, m_unmanned = false;
     Vec3  m_kinematicVel{0, 0, 0};
     // Suspension state: scalar yaw (so pitch/roll compose), smoothed tilt.
     float m_yaw = 0.0f, m_pitch = 0.0f, m_roll = 0.0f, m_prevSpeedF = 0.0f;

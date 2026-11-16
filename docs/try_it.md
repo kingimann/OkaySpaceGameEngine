@@ -1086,6 +1086,35 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Water and cars behave the same at any frame rate; a flipped car does not drive (bug fix)
+
+Branch `claude2/water-vehicle-fixed-step` (not merged or released yet). Issue #888, Findings 79 and 80.
+
+What changed: `Water` buoyancy and drag, and the `VehicleController` drive, steering and suspension spring, now run
+once per physics step instead of once per rendered frame. A car's wheels only push while they touch the ground.
+
+The frame-rate cap is in the built game, not in the editor's Play mode: **File > Build Settings... (Ctrl+B) > Display >
+Frame rate cap** (Uncapped, 30, 60, 120, 144, Custom). Untick **VSync** on the same page, or the screen's refresh rate
+paces the game instead.
+
+1. In the editor make a new 3D scene. **GameObject > 3D Object > Water**; in the Inspector set `depth` to 10 and
+   `waveHeight` to 0.
+2. Add a Cube at height 2 above the water, add a **Rigidbody3D** (mass 0.5) and a **BoxCollider3D**. Add a second Cube
+   next to it with mass 0.25.
+3. Open `examples\vehicle\vehicle_test.okayscene` in another project, or add a car to this scene: a Cube with
+   **Add Component > Gameplay > Vehicle Controller (Car)** on a ground Cube with a collider.
+4. Build with Frame rate cap **30**, run the game and watch the boxes settle: the 0.5 box floats half under, the 0.25
+   box a quarter under. Then build with **144** and run again: they float at the same heights.
+   (Before the fix, the 0.25 box sat about 0.33 m higher at 144 fps than at 30 fps.)
+5. Drive the car at full throttle at both caps: it reaches the same top speed in the same time.
+6. Flip the car: in the editor set its Rotation to (0, 0, 180) so it lies on its roof, press Play and hold **W** and
+   **D**. Nothing happens: it does not drive or turn. (Before: it drove along on its roof at full speed.)
+7. Put the car at height 30 and press Play while holding **W** and **D**: it falls straight down and does not steer.
+   Set its `airControl` to 1 in the Inspector to get the old "steer in the air" behaviour back; 0 is the default.
+
+**Tested:** the headless test `test_water_vehicle_step` runs the same scenes at 30, 60 and 144 frames per second on
+Linux. **Not tried:** the Windows build, the editor and the player were not built or run here.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

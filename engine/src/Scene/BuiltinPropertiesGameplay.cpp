@@ -649,6 +649,7 @@ void RegisterVehicleController() {
      .AddFloat("grip", &VehicleController::grip).Range(0, 1000, 0.01).Tooltip("How fast sideways slide is killed (higher = sticky)")
      .AddFloat("handbrakeGrip", &VehicleController::handbrakeGrip).Range(0, 1000, 0.01).Tooltip("Grip while the handbrake is held (low = drifty)")
      .AddFloat("groundCheckDistance", &VehicleController::groundCheckDistance).Range(0, kBig, 0.05).Tooltip("Down-ray length for \"on the ground\"")
+     .AddFloat("airControl", &VehicleController::airControl).Range(0, 1, 0.01).Tooltip("Share of drive, brakes, steering and grip kept with no wheel on the ground (in the air or upside down). 0 = none (default), 1 = full")
      .Section("Per-wheel raycast suspension")
      .AddBool("suspension", &VehicleController::suspension).Tooltip("Enable spring suspension + body tilt")
      .AddFloat("rideHeight", &VehicleController::rideHeight).Range(0, kBig, 0.05).Tooltip("Chassis height the spring rests at (units)")

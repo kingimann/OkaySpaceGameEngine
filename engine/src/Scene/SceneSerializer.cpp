@@ -2030,6 +2030,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->handbrakeGrip << " " << v->groundCheckDistance
             << " " << (v->followCamera ? 1 : 0) << " " << v->camDistance << " " << v->camHeight
             << " " << v->camLerp << " " << (int)(unsigned char)v->handbrakeKey << "\n";
+        if (v->airControl != 0.0f)   // written only when set, so older scenes and files stay the same
+            out << "  vehicleair " << v->airControl << "\n";
         if (v->suspension)
             out << "  vehiclesusp 1 " << v->rideHeight << " " << v->springStrength << " "
                 << v->springDamping << " " << v->suspensionTravel << " " << v->wheelBase << " "
@@ -5807,6 +5809,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     int fc = 0; in >> fc; v->followCamera = (fc != 0);
                     in >> v->camDistance >> v->camHeight >> v->camLerp;
                     int hk = 32; in >> hk; v->handbrakeKey = (char)hk;
+                } else if (field == "vehicleair") {
+                    auto* v = LastOf(go->GetComponents<VehicleController>());
+                    float a = 0.0f; in >> a;
+                    if (v) v->airControl = std::isfinite(a) ? std::min(1.0f, std::max(0.0f, a)) : 0.0f;
                 } else if (field == "vehiclesusp") {
                     auto* v = LastOf(go->GetComponents<VehicleController>());
                     int on = 0; in >> on;

@@ -26,7 +26,8 @@ steer, **Space** = handbrake (drift).
 | `turnSpeed` | steering rate (deg/s), scaled by current speed |
 | `grip` | how fast sideways slide is killed — high = sticky, low = slidey |
 | `handbrakeGrip` | grip while the handbrake is held (low = drift) |
-| `groundCheckDistance` | down-ray length used for `IsGrounded()` |
+| `groundCheckDistance` | length of the ray along the car's own down direction used for `IsGrounded()` (arcade mode) |
+| `airControl` | share (0 to 1) of drive, braking, steering and grip kept with no wheel on the ground; **0 by default** (none) |
 | `followCamera` (+ `camDistance`, `camHeight`, `camLerp`) | chase the scene's main camera behind the car |
 
 Without a Rigidbody3D it still drives by moving the Transform directly (handy for a
@@ -36,7 +37,32 @@ quick top-down/kinematic car).
 
 `Speed()` returns the signed forward speed (units/s) and `IsGrounded()` whether the
 down-ray hit — useful for engine-sound pitch, skid effects, or disabling control in
-the air.
+the air. `GroundedShare()` is the share of wheels on the ground (0 or 1 in arcade mode,
+wheels hit / 4 with suspension).
+
+## Timing and wheels on the ground
+
+* **Per physics step.** With a Rigidbody3D the car is driven in `FixedUpdate`, once per
+  physics step, sized by the fixed step (Project Settings' Physics Rate, 50 a second by
+  default). Throttle, brakes, steering, grip and the suspension spring therefore give the same
+  result at 30, 60 or 144 frames per second. The keys are read once per rendered frame in
+  `Update`, and the wheel visuals and chase camera still move per frame. Without a Rigidbody3D
+  the car moves its Transform once per frame, as before. (Before this fix the drive and the
+  suspension spring ran per rendered frame, so the ride height changed with the frame rate:
+  issue #888, Finding 79 addendum.)
+* **Only wheels on the ground push.** Drive, braking, steering and sideways grip act only
+  through wheels that touch the ground. Arcade mode casts one ray from the car's centre along
+  the car's **own** down direction (`groundCheckDistance` long): on its roof the ray points at
+  the sky, so a flipped car gets no drive and no steering, and neither does a car in the air.
+  Suspension mode scales by how many of its four wheel rays hit (2 of 4 wheels down = half the
+  grip). With no wheel down the velocity is left to physics (gravity, collisions). The car's own
+  colliders, children such as wheels included, never count as ground. (Issue #888, Finding 80.)
+* **Air control.** `airControl` (0 to 1) gives back that share of control with no wheel on the
+  ground. The default is **0**: no control in the air or upside down. 1 is the old behaviour
+  (full control everywhere).
+* **Gravity off.** A car whose Rigidbody3D has `gravityScale` 0 has no "down" to fall to (a hover
+  car), so it always grips, with or without ground under it, as before. A car without a
+  Rigidbody3D also always drives.
 
 ## Raycast suspension (opt-in)
 

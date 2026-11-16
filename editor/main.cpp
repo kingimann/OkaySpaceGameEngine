@@ -885,6 +885,7 @@ static void RunEditorPlayKeyTest(int& failures) {
     ped.Stop();
     Input::FeedKeys({});
 }
+#include "ExamplesRoot.hpp"
 #include "NodePlayground.hpp"      // File > Examples > Node Playground
 #include "TemplateTable.hpp"        // template title -> scene builder (New Project)
 #include "EditorWidgets.hpp"       // accent, category tints, toolbar icons, icon/search buttons
@@ -6636,11 +6637,12 @@ static void OpenVsPlayground(EditorState& ed, const char* demoId) {
     const std::string dir = okay::editor::vsed::VsPlaygroundDir();
     if (dir.empty()) {
         ConsoleLog("Node Playground scenes were not found (examples/visual_script/playground).", 2);
+        ShowErrorPopup("Example not found", "The Node Playground scenes were not found. They should be in the examples folder next to the editor (examples/visual_script/playground). Reinstall or update to get them.");
         return;
     }
     const std::string scene = dir + "/" + demo->scene;
     std::string err;
-    if (!ed.Load(scene, &err)) { ConsoleLog("Couldn't open " + scene + ": " + err, 2); return; }
+    if (!ed.Load(scene, &err)) { ConsoleLog("Couldn't open " + scene + ": " + err, 2); ShowErrorPopup("Couldn't open the example", scene + "\n" + err); return; }
     ConsoleLog(std::string("Node Playground: ") + demo->title + ". Press Play. " + demo->blurb);
     okay::GameObject* host = nullptr;
     std::string graphPath;
@@ -49434,6 +49436,7 @@ int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
+    okay::editor::ExamplesExeDir() = OkayExeDir();   // File > Examples finds the shipped "examples" folder beside the program
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
     okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
     {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on

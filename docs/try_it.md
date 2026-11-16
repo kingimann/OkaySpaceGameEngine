@@ -27,9 +27,8 @@ sequences) next to itself, so the folder works from any install path.
 
 What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
 `spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`,
-`ui_text`.
-Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
-`visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
+`ui_text`, and `visual_script/playground` (the Visual Script Node Playground scenes).
+Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` (not scenes). The packaging is checked by reading and by running the copy step of
 
 What is in `examples\` (about 1 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
 `spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`, and
@@ -1361,3 +1360,10 @@ pushed out now stops counting at once.
 3. You should see at most four toast cards stacked in the top-right corner. The oldest card disappears when a new one arrives,
    and each card goes away by itself after about six seconds. The editor keeps responding.
 4. Test: `ctest -R ui_toast` (it also pushes 10 toasts in one frame and runs the template's click sequence).
+
+## File > Examples opens the examples (fix)
+
+1. Open the editor from the Windows release (also when it was started from a project folder).
+2. Click **File > Examples > Visual Script Node Playground** and pick any entry, or **File > Examples > Node Playground**.
+3. You should see the example scene open, with a line in the Console. Press Play and follow the text on screen.
+4. If the examples folder is missing, a popup now says so instead of doing nothing.

@@ -12,6 +12,7 @@
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -111,6 +112,16 @@ int FindRoot(detail::zip::Archive& z, std::vector<std::string>& notes, std::stri
     return best;
 }
 
+// True when a file of `size` bytes is at `path` (a sidecar written by an earlier read of the same archive).
+bool SidecarThere(const std::string& path, std::uint64_t size) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path p = fs::u8path(path);
+    if (!fs::is_regular_file(p, ec)) return false;
+    const std::uintmax_t n = fs::file_size(p, ec);
+    return !ec && n == size;
+}
+
 // Writes `bytes` to `path` unless a file of the same size is there already. False when it cannot be written.
 bool WriteSidecar(const std::string& path, const std::string& bytes) {
     namespace fs = std::filesystem;
@@ -173,13 +184,13 @@ bool ReadImpl(const std::string& bytes, const std::string& zaePath, const std::s
             if (it == done.end()) {
                 std::string dest;
                 if (!zaePath.empty()) {
-                    std::string img;
-                    if (z.Extract(ix, img)) {
-                        std::string base = key.substr(key.find_last_of('/') == std::string::npos ? 0 : key.find_last_of('/') + 1);
-                        for (char& c : base) if (c == ':' || c == '\\' || (unsigned char)c < 32) c = '_';
-                        dest = diskDir + stem + "_zae_" + base;
-                        if (!WriteSidecar(dest, img)) dest.clear();
-                    } else z.err.clear();
+                    std::string base = key.substr(key.find_last_of('/') == std::string::npos ? 0 : key.find_last_of('/') + 1);
+                    for (char& c : base) if (c == ':' || c == '\\' || (unsigned char)c < 32) c = '_';
+                    dest = diskDir + stem + "_zae_" + base;
+                    if (!SidecarThere(dest, z.entries[(std::size_t)ix].usize)) {   // already written by an earlier read: not extracted again
+                        std::string img;
+                        if (!z.Extract(ix, img) || !WriteSidecar(dest, img)) { dest.clear(); z.err.clear(); }
+                    }
                 }
                 it = done.emplace(key, dest).first;
             }

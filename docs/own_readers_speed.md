@@ -86,10 +86,27 @@ to run; the instruction counts quoted below (callgrind) do not move.
 | x | 12 | 11 | 0.34x -> 0.28x (12.6 / 45.4 ms) | met | 2.41 / 3.23 -> 2.41 / 3.23 | met | 0.35x | 2.41 / 3.23 MB | 0 / 0 |
 | x3d | 4 | 3 | 1.11x -> 0.77x (2.4 / 3.1 ms) | met | 0.32 / 0.67 -> 0.32 / 0.67 | met | 0.81x | 0.43 / 0.67 MB | 1 / 1 |
 | xgl | 7 | 7 | 0.04x -> 0.03x (81.3 / 2545.3 ms) | met | 12.61 / 15.15 -> 12.60 / 15.15 | met | 0.03x | 12.60 / 15.15 MB | 0 / 0 |
+| **mesh** (OGRE binary, new) | 3 | 3 | 0.12x (1.1 / 8.6 ms) | met | 0.43 / 1.68 | met | 0.08x | 0.43 / 1.68 MB | 0 / 0 |
+| **zae** (new) | 3 | 3 | 0.68x (27.5 / 40.5 ms) | met | 6.00 / 11.15 | met | 0.70x | 6.00 / 11.15 MB | 0 / 0 |
+| **xml** (new: by root element) | 9 | 4 | 0.70x (0.51 / 0.73 ms) | met | 0.14 / 0.20 | met | 0.71x | 0.14 / 0.20 MB | 1 / 0 |
 
 `files slower / heavier` counts the files where ours took longer, or held more heap, than Assimp. "before" is the head of
 `claude2/own-collada-speed` (the first round, below); "now" is the head of `claude2/own-readers-speed-2`. LWS "before" had 14
 files both read (`QuickDraw v.2.2.lws` was refused); Q3D had none.
+
+The three rows in bold were added on branch `claude2/own-readers-gap` (2026-11-16): readers for extensions the shipped build
+still handed to Assimp with no reader of ours (`docs/own_code_roadmap.md`, "What still needs Assimp"). One run each
+(`bench_model_readers --format mesh|zae|xml`), same machine and build as the rest of that branch:
+
+- **mesh**: fish 0.10x the time / 0.58x the peak, ninja 0.13x / 0.25x, razor 0.25x / 0.81x. Assimp also builds the skeleton
+  (bones and clips), which ours does not read, so part of the gap is work ours skips.
+- **zae**: duck 0.69x the time / 0.52x the peak, duck without manifest 0.67x / 0.52x, human 0.68x / 0.54x. The inflate and the
+  COLLADA reader are most of the time. The image a duck's material names is written next to the `.zae` on the first read; later
+  reads find it there (same size) and neither extract nor write it again (the first version extracted it on every read: 0.77x).
+- **xml**: `AsXML.xml` (COLLADA) 0.35x / 0.39x, the XGL file 0.34x / 0.49x; the two Irrlicht mesh files are 0.99x and 1.01x the
+  time (0.69x and 0.73x the peak), which is the Irrlicht mesh reader's own speed on them (the same file renamed `.irrmesh`
+  measures the same within noise). A first version looked at the first 64 KiB of the file to pick the reader and held that
+  buffer during the read, which made the peak 1.05x Assimp's; it now looks at 8 KiB on the stack and the memory is met.
 
 ### Where it is not met, and why
 

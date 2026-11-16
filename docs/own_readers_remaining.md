@@ -34,6 +34,15 @@ AC3D, OGRE (XML only), XGL / ZGL, Irrlicht scene, NFF, Terragen, and in batch E 
 `docs/model_corpus.md` and in each reader's own page (`docs/own_ac3d_reader.md`, `own_ogre_reader.md`, `own_xgl_reader.md`,
 `own_irr_reader.md`, `own_nff_reader.md`).
 
+## Extensions, not only importers (2026-11-16)
+
+Counting importers hides extensions: an importer we cover can still take an extension our reader does not. The full list of
+the 64 extensions the shipped Windows build hands to Assimp, with corpus counts and who reads each, is in
+`docs/own_code_roadmap.md`, section **"What still needs Assimp"**. The gap batch of 2026-11-16 added `.mesh` (OGRE binary),
+`.zae` (COLLADA in a ZIP) and `.xml` (by root element), all off by default. Still without a reader of ours: `.ask`, `.prj`,
+`.md5camera`, `.vta`, `.lxo`, `.scn`, `.x3db`, `.vrm`, the Nendo body (`.ndo`), the OGRE skeletons, and what branch
+`claude/own-readers-6` is writing (OpenGEX, MDL, Q3BSP `.bsp` / `.pk3`, SIB, glTF 1.0).
+
 ## What is left
 
 "How common": how often the format shows up in the wild today (my judgement, not a measurement). "How hard": my estimate of
@@ -44,7 +53,7 @@ none were invented.
 
 | # | Format (extensions) | What it is | How common | How hard | Real files in the tree | Switched on in our build |
 |---|---|---|---|---|---|---|
-| 1 | **Ogre, the rest** (`.mesh`, `.skeleton`, `.skeleton.xml`) | OGRE3D: the binary mesh, and the skeleton in both forms with bones, bind pose and animations (the XML mesh geometry and materials are done, batch D) | medium-high | binary `.mesh`: medium; skeleton: medium (needs the skin and clip path of the other skinned readers) | 6 (`fish`, `ninja`, `razor` as `.mesh` and the skeletons as binary and XML) | yes |
+| 1 | **Ogre, the rest** (`.skeleton`, `.skeleton.xml`; the binary `.mesh` is **done**, 2026-11-16, off by default, `OKAY_OWN_OGREBIN`, `docs/own_ogre_reader.md`) | OGRE3D: the skeleton in both forms with bones, bind pose and animations (the XML and binary mesh geometry and materials are done) | medium-high | skeleton: medium (needs the skin and clip path of the other skinned readers) | 6 (`fish`, `ninja`, `razor` as `.mesh` and the skeletons as binary and XML) | yes |
 | 2 | **OpenGEX** (`.ogex`) | Open Game Engine Exchange: text (OpenDDL), meshes, skins, animation, materials | low-medium (growing) | medium | 6 | yes |
 | 3 | **MDL** (`.mdl`): Quake 1, Half-Life 1, 3D GameStudio MDL3/4/5/7 | four unrelated binary formats under one extension | medium (HL1 models are common) | Quake 1: easy; HL1: medium (bones, embedded textures); 3DGS: medium to hard (7 has skins and animation) | 43 (HL1, MDL3, MDL5, MDL7, alpha tests) | yes |
 | 4 | ~~**IQM** (`.iqm`)~~ **DONE in batch E3, off by default** (`docs/own_iqm_reader.md`): skeleton, skin and animation; read on the real `mrfixit.iqm` (numbers match its header); not compared with Assimp's output | low-medium | done | 1 (`mrfixit.iqm`, skinned and animated) | yes |

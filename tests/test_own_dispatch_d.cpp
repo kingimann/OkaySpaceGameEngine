@@ -129,15 +129,19 @@ int main() {
             ImportedModel m; std::string err;
             CHECK(HasOwnReader(".enff") && ImportModelData(path, m, ImportBackend::Own, false, &err) && fx::TriCount(m) == 111);
         }
-        {   // ".mesh.xml" is the OGRE format; another .xml and a plain .mesh are not routed to it
-            CHECK(HasOwnReader(".mesh.xml") && !HasOwnReader(".xml") && !HasOwnReader(".mesh"));
+        {   // ".mesh.xml" is the OGRE XML format (slot 23); another .xml goes to slot 45 (the reader is picked by the root element,
+            // test_own_dispatch_gap.cpp) and a plain .mesh to the OGRE binary reader (slot 43), which refuses XML text
+            CHECK(HasOwnReader(".mesh.xml") && HasOwnReader(".xml") && HasOwnReader(".mesh"));
             const std::string upper = (dir / "UP.MESH.XML").string();
             WriteFile(upper, fx::BuildOgreXml());
             ImportedModel m; std::string err;
             CHECK(ImportModelData(upper, m, ImportBackend::Own, false, &err) && m.backend == "own" && fx::TriCount(m) == 3);
             const std::string other = (dir / "t.xml").string();
             WriteFile(other, fx::BuildOgreXml());
-            CHECK(!ImportModelData(other, m, ImportBackend::Own, false, &err));
+            CHECK(ImportModelData(other, m, ImportBackend::Own, false, &err) && fx::TriCount(m) == 3);   // <mesh> with <submeshes>: the OGRE XML reader
+            const std::string bin = (dir / "t.mesh").string();
+            WriteFile(bin, fx::BuildOgreXml());
+            CHECK(!ImportModelData(bin, m, ImportBackend::Own, false, &err) && err.find("not an OGRE binary mesh") != std::string::npos);
         }
     }
     // a format is not absorbed by a neighbour's reader: an NFF file named .ac is refused by the AC3D reader

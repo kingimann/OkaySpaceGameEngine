@@ -60,6 +60,7 @@
 #include <atomic>
 #include "ModelImportInternal.hpp"
 #include "FileOpen.hpp"
+#include <cstring>
 #include <cstdio>
 
 namespace okay {
@@ -818,39 +819,50 @@ bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
     return false;
 }
 
-// .xml (slot 45): several formats Assimp reads under this extension, told apart by the root element. The first 64 KiB are
-// looked at (UTF-16 text is looked at with its zero bytes dropped); the file is then read by that format's own reader.
+// .xml (slot 45): several formats Assimp reads under this extension, told apart by the root element. Only the first 8 KiB are
+// looked at (UTF-16 text with its zero bytes dropped): the root element, and for <mesh> its first child element (<sharedgeometry>,
+// <submeshes> or <submesh> is OGRE XML, anything else an Irrlicht mesh). The file is then read by that format's own reader.
 static bool ReadXmlByRoot(const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* loader) {
-    std::string head;
+    char buf[8192];
+    std::size_t n = 0;
     {
         std::FILE* fp = detail::OpenRead(path);
         if (!fp) { if (err) *err = "cannot open file"; return false; }
-        head.resize(65536);
-        head.resize(std::fread(&head[0], 1, head.size(), fp));
+        n = std::fread(buf, 1, sizeof(buf), fp);
         std::fclose(fp);
     }
-    if (head.size() >= 2 && (((unsigned char)head[0] == 0xFF && (unsigned char)head[1] == 0xFE) || ((unsigned char)head[0] == 0xFE && (unsigned char)head[1] == 0xFF) || head.find('\0') != std::string::npos))
-        head.erase(std::remove(head.begin(), head.end(), '\0'), head.end());
-    std::string root;
-    for (std::size_t i = 0; i + 1 < head.size(); ++i) {
-        if (head[i] != '<') continue;
-        if (head[i + 1] == '?' || head[i + 1] == '!') continue;   // the XML declaration, comments, a DOCTYPE
-        std::size_t e = i + 1;
-        while (e < head.size() && (std::isalnum((unsigned char)head[e]) || head[e] == '_' || head[e] == '-' || head[e] == ':' || head[e] == '.')) ++e;
-        root = head.substr(i + 1, e - i - 1);
-        break;
-    }
-    const std::size_t colon = root.find(':');
-    if (colon != std::string::npos) root = root.substr(colon + 1);
-    const std::string r = Lower(root);
+    if (std::memchr(buf, 0, n)) n = (std::size_t)(std::remove(buf, buf + n, '\0') - buf);   // UTF-16: the ASCII names survive
+    // the next element name at or after `i` (the XML declaration, comments, a DOCTYPE and closing tags skipped); `i` ends after the name
+    auto nextElement = [&](std::size_t& i) -> std::string {
+        while (i + 1 < n) {
+            if (buf[i] != '<') { ++i; continue; }
+            if (i + 3 < n && buf[i + 1] == '!' && buf[i + 2] == '-' && buf[i + 3] == '-') {
+                std::size_t k = i + 4;
+                while (k + 2 < n && !(buf[k] == '-' && buf[k + 1] == '-' && buf[k + 2] == '>')) ++k;
+                i = k + 3; continue;
+            }
+            if (buf[i + 1] == '?' || buf[i + 1] == '!' || buf[i + 1] == '/') { ++i; continue; }
+            std::size_t e = i + 1;
+            while (e < n && (std::isalnum((unsigned char)buf[e]) || buf[e] == '_' || buf[e] == '-' || buf[e] == ':' || buf[e] == '.')) ++e;
+            std::string nm(buf + i + 1, e - i - 1);
+            i = e;
+            const std::size_t colon = nm.find(':');
+            return Lower(colon == std::string::npos ? nm : nm.substr(colon + 1));
+        }
+        i = n;
+        return std::string();
+    };
+    std::size_t at = 0;
+    const std::string r = nextElement(at);
     if (r == "irr_scene") return ReadIrrSceneFile(path, out, err, loader);
     if (r == "collada") return ReadColladaFile(path, out, err, flatten);
     if (r == "world") return ReadXglFile(path, out, err);
     if (r == "mesh") {
-        if (head.find("<submeshes") != std::string::npos || head.find("<sharedgeometry") != std::string::npos) return ReadOgreXmlFile(path, out, err);
+        const std::string kid = nextElement(at);
+        if (kid == "sharedgeometry" || kid == "submeshes" || kid == "submesh") return ReadOgreXmlFile(path, out, err);
         return ReadIrrMeshFile(path, out, err);
     }
-    if (err) *err = root.empty() ? "XML: no root element found" : "XML: the root element <" + root.substr(0, 60) + "> is not one this engine reads (irr_scene, mesh, COLLADA, WORLD)";
+    if (err) *err = r.empty() ? "XML: no root element found" : "XML: the root element <" + r.substr(0, 60) + "> is not one this engine reads (irr_scene, mesh, COLLADA, WORLD)";
     return false;
 }
 

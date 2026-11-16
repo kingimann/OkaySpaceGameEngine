@@ -48,8 +48,7 @@
 #include "okay/Optimize/MeshSimplify.hpp"      // edge-collapse polygon reduction
 #include "okay/Modeling/Curve.hpp"           // Bezier curves to pipes, ribbons and swept profiles
 #include "okay/Modeling/Remesh.hpp"          // Quad Remesh
-#include "okay/Modeling/Reference.hpp"
-#include "okay/Modeling/Remesh.hpp"       // blueprint plane corners
+#include "okay/Modeling/Reference.hpp"       // blueprint plane corners
 #include "okay/Modeling/Arrange.hpp"          // align / distribute objects
 #include "okay/Modeling/ScreenSelect.hpp"      // box / circle / lasso select
 #include "okay/Modeling/SelectOps.hpp"      // grow / shrink / select similar, apply scale, how-do-I recipes
@@ -44805,7 +44804,6 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         if (g_curveClosed && line.size() > 1) { ImVec2 s0, s1; if (toScreen(vp * Vec4{line.back(), 1}, s0) && toScreen(vp * Vec4{line.front(), 1}, s1)) dl->AddLine(s0, s1, IM_COL32(255, 170, 60, 230), 2.0f); }
         for (const Vec3& q : g_curvePts) { ImVec2 sp; if (toScreen(vp * Vec4{q, 1}, sp)) dl->AddCircleFilled(sp, 4.0f, IM_COL32(255, 220, 120, 255)); }
     }
-    for (GameObject* g : isoHidden) g->active = true;
     // The Animation window's onion skin, on top of the meshes like the skeleton
     // overlay below: the rig at the keys around the playhead.
     if (!gameView && g_showGizmos)

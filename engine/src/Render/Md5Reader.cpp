@@ -560,11 +560,12 @@ struct Reader {
 } // namespace md5
 } // namespace
 
-bool ReadMd5Buffer(const std::string& meshText, const std::string& animText, const std::string& baseDir, ImportedModel& out, std::string* err) {
+// The texts are taken by value: ReadMd5File hands its bytes over (no second copy of the files), ReadMd5Buffer copies.
+static bool ReadMd5Owned(std::string mesh, std::string anim, const std::string& baseDir, ImportedModel& out, std::string* err) {
     out = ImportedModel{};
     md5::Reader r;
     bool ok = true;
-    std::string mesh = meshText, anim = animText, why;
+    std::string why;
     bool conv = false;
     if (mesh.empty() && anim.empty()) { r.err = "MD5: empty file"; ok = false; }
     if (ok && !mesh.empty() && !detail::txt::NormalizeEncoding(mesh, conv, why, md5::kMaxFileBytes)) { r.err = "MD5: " + why; ok = false; }
@@ -577,6 +578,9 @@ bool ReadMd5Buffer(const std::string& meshText, const std::string& animText, con
         else if (mesh.empty()) { r.err = a.err; ok = false; }
         else animProblem = a.err;   // the mesh is still good: say what was wrong with the animation
     }
+    // parsed: the readers keep their own copies (mesh.empty() is not asked again below)
+    std::string().swap(mesh);
+    std::string().swap(anim);
     ok = ok && r.Build(out, baseDir);
     if (!ok) {
         const std::string m = r.err.empty() ? "MD5: could not read file" : r.err;
@@ -587,6 +591,10 @@ bool ReadMd5Buffer(const std::string& meshText, const std::string& animText, con
     if (!animProblem.empty()) out.notes.push_back("MD5: the animation was not read: " + animProblem);
     out.backend = "own";
     return true;
+}
+
+bool ReadMd5Buffer(const std::string& meshText, const std::string& animText, const std::string& baseDir, ImportedModel& out, std::string* err) {
+    return ReadMd5Owned(meshText, animText, baseDir, out, err);
 }
 
 bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err) {
@@ -600,14 +608,14 @@ bool ReadMd5File(const std::string& path, ImportedModel& out, std::string* err) 
     std::string a, b;
     if (ext == ".md5anim") {
         if (!detail::txt::ReadFileCapped(path, md5::kMaxFileBytes, b, err)) return false;
-        return ReadMd5Buffer(std::string(), b, dir, out, err);
+        return ReadMd5Owned(std::string(), std::move(b), dir, out, err);
     }
     if (!detail::txt::ReadFileCapped(path, md5::kMaxFileBytes, a, err)) return false;
     // the animation next to it, same name: optional
     std::string tmp, e2;
     const char* exts[] = {".md5anim", ".MD5ANIM"};
     for (const char* x : exts) { if (detail::txt::ReadFileCapped(base + x, md5::kMaxFileBytes, tmp, &e2)) { b = std::move(tmp); break; } }
-    return ReadMd5Buffer(a, b, dir, out, err);
+    return ReadMd5Owned(std::move(a), std::move(b), dir, out, err);
 }
 
 } // namespace okay

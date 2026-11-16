@@ -280,6 +280,17 @@ struct Reader {
         if (type == "CURV" || type == "MBAL" || type == "BONE") { ++curves; return true; }
         if (type != "FACE" && type != "PTCH") { ++curves; return true; }
         if (type == "PTCH") ++patches;
+        {   // count the polygons first (a copy of the cursor, the same walk without storing) and make room once
+            Cur k = c;
+            std::size_t count = 0;
+            while (k.Left() >= 2) {
+                const unsigned n = k.U16() & 0x3FFu;
+                for (unsigned i = 0; i < n; ++i) { if (k.Left() < 2) { k.bad = true; break; } k.VX(); }
+                if (k.bad) break;
+                ++count;
+            }
+            L.polys.reserve(L.polys.size() + std::min<std::size_t>(count, kMaxPolys));
+        }
         while (c.Left() >= 2) {
             const unsigned head = c.U16();
             const unsigned n = head & 0x3FFu;
@@ -593,7 +604,9 @@ struct Reader {
         return true;
     }
 
-    bool Run(const std::string& bytes, ImportedModel& model) {
+    // `release`: the caller's buffer behind `bytes`, freed once the chunks are read (nothing read points into it), so the
+    // file is not held while the meshes are built. ReadLwoFile passes its own bytes; ReadLwoBuffer passes none.
+    bool Run(const std::string& bytes, ImportedModel& model, std::string* release = nullptr) {
         out = &model;
         if (bytes.size() > kMaxFileBytes) return Fail("file too large");
         if (bytes.size() < 12) return Fail("the file is too short to be an LWO file");
@@ -607,6 +620,7 @@ struct Reader {
         else if (form == "LWOB") { lwob = true; if (!LwobChunks(d + 12, d + total)) return false; }
         else if (form == "LWLO") return Fail("LWLO (layered LWO3 variant) files are not supported");
         else return Fail("not a supported LWO file (form type '" + form + "')");
+        if (release) std::string().swap(*release);   // `bytes` and `d` are not used below
         if (layers.empty()) return Fail("the file has no points or polygons");
         if (!Build()) return false;
         auto note = [&](const std::string& s) { model.notes.push_back("LWO: " + s); };
@@ -658,7 +672,17 @@ bool ReadLwoFile(const std::string& path, ImportedModel& out, std::string* err) 
     std::fclose(fp);
     if (big) { if (err) *err = "file too large"; return false; }
     const std::size_t sl = path.find_last_of("/\\");
-    return ReadLwoBuffer(bytes, sl == std::string::npos ? std::string() : path.substr(0, sl + 1), out, err);
+    // as ReadLwoBuffer, but the file's bytes are freed once they are read
+    lwo::Reader r;
+    r.baseDir = sl == std::string::npos ? std::string() : path.substr(0, sl + 1);
+    if (!r.Run(bytes, out, &bytes)) {
+        const std::string m = r.err.empty() ? "LWO: could not read file" : r.err;
+        out = ImportedModel{};
+        if (err) *err = m;
+        return false;
+    }
+    out.backend = "own";
+    return true;
 }
 
 } // namespace okay

@@ -271,6 +271,63 @@ inline bool ToInt(std::string_view s, long long& v) {
     return true;
 }
 
+// Reads the tokens of one line straight from the text, for a reader's fast path: the tokens are the ones SplitInto gives
+// (white space as SplitInto takes it), except that a quote ends the scan (a quoted token is the general path's job), and
+// numbers are ToDouble's (ScanToDouble) and ToInt's. A reader commits nothing until the whole line has read.
+struct LineScan {
+    const char* p; const char* e;
+    static bool Ws(char c) { return IsWs(c); }
+    // the next token, or false at the end of the line or at a quote
+    bool Tok(std::string_view& t) {
+        while (p < e && IsWs(*p)) ++p;
+        if (p >= e || *p == '"') return false;
+        const char* a = p;
+        while (p < e && !IsWs(*p)) ++p;
+        t = std::string_view(a, (std::size_t)(p - a));
+        return true;
+    }
+    bool End() { while (p < e && IsWs(*p)) ++p; return p >= e; }
+    bool Num(double& v) { while (p < e && IsWs(*p)) ++p; return p < e && *p != '"' && ScanToDouble(p, e, v); }
+    bool Flt(float& f) { double d; if (!Num(d)) return false; f = (float)d; return true; }   // as ToFloat
+    bool Int(long long& v) { std::string_view t; return Tok(t) && ToInt(t, v); }
+    // an integer that may end in ':' (ASE's "12:"), as ASE's IntAt reads it
+    bool Index(long long& v) { std::string_view t; if (!Tok(t)) return false; if (!t.empty() && t.back() == ':') t.remove_suffix(1); return ToInt(t, v); }
+};
+
+// A vertex weld: a corner key of N 32-bit words (floats as their bits, compared bit for bit) -> the vertex made for it.
+// Open addressing in one array: no allocation per vertex and no string per key (the readers used an unordered_map keyed
+// by the key's bytes as a std::string; the vertices and their order do not depend on the lookup).
+template <int N>
+struct WeldMap {
+    struct E { std::uint32_t k[N]; int v; };
+    std::vector<E> t;
+    std::size_t n = 0;
+    static std::size_t Hash(const std::uint32_t* k) {
+        std::uint64_t h = 0x9E3779B97F4A7C15ull;
+        for (int i = 0; i < N; ++i) { h = (h ^ k[i]) * 0xBF58476D1CE4E5B9ull; h ^= h >> 31; }
+        return (std::size_t)h;
+    }
+    // The vertex of `k`, or `fresh` (stored for it) when the key is new; `added` says which.
+    int Get(const std::uint32_t* k, int fresh, bool& added) {
+        if ((n + 1) * 2 > t.size()) Grow();
+        const std::size_t mask = t.size() - 1;
+        for (std::size_t i = Hash(k) & mask;; i = (i + 1) & mask) {
+            E& e = t[i];
+            if (e.v < 0) { std::memcpy(e.k, k, sizeof e.k); e.v = fresh; ++n; added = true; return fresh; }
+            if (std::memcmp(e.k, k, sizeof e.k) == 0) { added = false; return e.v; }
+        }
+    }
+    void Grow() {
+        std::vector<E> old;
+        old.swap(t);
+        E empty{};
+        empty.v = -1;
+        t.assign(old.size() < 32 ? 64 : old.size() * 2, empty);
+        const std::size_t mask = t.size() - 1;
+        for (const E& e : old) if (e.v >= 0) for (std::size_t i = Hash(e.k) & mask;; i = (i + 1) & mask) if (t[i].v < 0) { t[i] = e; break; }
+    }
+};
+
 // Lists bones so that every parent comes before its children. `par[i]` is the parent index or -1; a parent loop is cut at
 // the bone that closes it (that bone becomes a root). `order` gets every index once. Returns the number of loops cut.
 // Iterative: a 100,000-deep chain does not recurse.

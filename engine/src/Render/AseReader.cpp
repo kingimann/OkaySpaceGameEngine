@@ -65,37 +65,6 @@ struct Obj {
     int extraChannels = 0, vertexColorBlocks = 0;
 };
 
-// The vertex weld of one part: corner key (vertex index, normal, uv, uv flag; 9 words compared bit for bit) -> vertex.
-// Open addressing in one array: no allocation per vertex and no hashing of a string (it was an unordered_map keyed by
-// the key's bytes as a std::string; the vertices and their order are the same, only the lookup changed).
-struct WeldMap {
-    struct E { std::uint32_t k[9]; int v; };
-    std::vector<E> t;
-    std::size_t n = 0;
-    static std::size_t Hash(const std::uint32_t* k) {
-        std::uint64_t h = 0x9E3779B97F4A7C15ull;
-        for (int i = 0; i < 9; ++i) { h = (h ^ k[i]) * 0xBF58476D1CE4E5B9ull; h ^= h >> 31; }
-        return (std::size_t)h;
-    }
-    // the vertex of `k`, or `fresh` (stored for it) when the key is new; `added` says which
-    int Get(const std::uint32_t* k, int fresh, bool& added) {
-        if ((n + 1) * 2 > t.size()) Grow();
-        const std::size_t mask = t.size() - 1;
-        for (std::size_t i = Hash(k) & mask;; i = (i + 1) & mask) {
-            E& e = t[i];
-            if (e.v < 0) { std::memcpy(e.k, k, sizeof e.k); e.v = fresh; ++n; added = true; return fresh; }
-            if (std::memcmp(e.k, k, sizeof e.k) == 0) { added = false; return e.v; }
-        }
-    }
-    void Grow() {
-        std::vector<E> old;
-        old.swap(t);
-        t.assign(std::max<std::size_t>(64, old.size() * 2), E{{0, 0, 0, 0, 0, 0, 0, 0, 0}, -1});
-        const std::size_t mask = t.size() - 1;
-        for (const E& e : old) if (e.v >= 0) for (std::size_t i = Hash(e.k) & mask;; i = (i + 1) & mask) if (t[i].v < 0) { t[i] = e; break; }
-    }
-};
-
 struct Reader {
     std::string err;
     std::string baseDir;
@@ -174,22 +143,7 @@ struct Reader {
     // same ToInt / ToDouble as the general path, and nothing is changed unless the whole line reads; anything else (a quote, a
     // token too many or too few, a bad number, an index out of range, a budget passed) returns false and the line goes the
     // general way, which reports it exactly as before.
-    struct Scan {
-        const char* p; const char* e;
-        static bool Ws(char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; }   // the set SplitInto uses
-        // the next token, or false at the end of the line or at a quote (a quoted token is the general path's job)
-        bool Tok(std::string_view& t) {
-            while (p < e && Ws(*p)) ++p;
-            if (p >= e || *p == '"') return false;
-            const char* a = p;
-            while (p < e && !Ws(*p)) ++p;
-            t = std::string_view(a, (std::size_t)(p - a));
-            return true;
-        }
-        bool End() { while (p < e && Ws(*p)) ++p; return p >= e; }
-        bool Num(double& v) { while (p < e && Ws(*p)) ++p; return p < e && *p != '"' && ScanToDouble(p, e, v); }
-        bool Index(long long& v) { std::string_view t; if (!Tok(t)) return false; if (!t.empty() && t.back() == ':') t.remove_suffix(1); return ToInt(t, v); }   // as IntAt
-    };
+    using Scan = LineScan;
     // "1" or "1,2,3": a list of smoothing group numbers (0 = none), or-ed into the face's groups
     void Smoothing(std::string_view s, Face& f) {
         std::size_t p = 0;
@@ -665,7 +619,7 @@ struct Reader {
                 incident.resize(o.pos.size());
                 for (int fi : goodFaces) for (int k = 0; k < 3; ++k) { auto& l = incident[(std::size_t)o.faces[(std::size_t)fi].v[k]]; if (l.size() < kMaxIncident) l.push_back(fi); else ++incidentCapped; }
             }
-            struct PartAcc { ImportedPart part; WeldMap weld; };
+            struct PartAcc { ImportedPart part; WeldMap<9> weld; };   // key: vertex index, normal, uv, uv flag
             std::unordered_map<int, PartAcc> parts;   // ImportedMaterial index (or -1) -> part
             std::vector<int> partOrder;
             const bool matOk = o.matRef >= 0 && (std::size_t)o.matRef < mats.size();

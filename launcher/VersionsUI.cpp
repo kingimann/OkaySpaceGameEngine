@@ -14,6 +14,7 @@
 #include <memory>
 
 #include "VersionsNet.hpp"
+#include "TestBuild.hpp"   // V(): a test build says so
 
 namespace okayversionsui {
 namespace {
@@ -169,7 +170,7 @@ bool DangerButton(const char* label, const ImVec2& size) {
     return hit;
 }
 
-std::string V(const std::string& version) { return "v" + version; }
+std::string V(const std::string& version) { return "v" + version + okay::testbuild::Suffix(version); }   // a test build says so: "v2.876.0.17 (test build)"
 
 void Toast(const Host& h, const std::string& m, int kind) { if (h.toast) h.toast(m, kind); }
 

@@ -11,6 +11,7 @@
 // (MVert / MFace / MPoly + MLoop) and the new attribute-based storage, UVs, materials (legacy colours
 // and image textures, node based Principled colours and image textures), armatures and vertex group
 // skin weights, and action F-Curves (location, rotation, scale of objects and pose bones).
+// Mirror and Subdivision Surface modifiers are applied in stack order (BlendModifiers.cpp); other modifiers are named.
 // Everything it did not read is listed in ImportedModel::notes. See docs/own_blend_reader.md.
 #include "FileOpen.hpp"
 #include "okay/Render/ModelData.hpp"
@@ -592,7 +593,7 @@ struct Reader {
 
     std::map<std::string, int> skippedMods;   // "'Name' (Type)" -> objects
     int cntModDisabled = 0, cntModCapped = 0, cntMirrorBisect = 0, cntMirrorNoObj = 0;
-    std::size_t subdivFaceBudget = 8000000;    // faces made by subdivision over the whole file
+    std::size_t subdivFaceBudget = 4000000;    // faces made by subdivision over the whole file
     int cntCurves = 0, cntLamps = 0, cntCameras = 0, cntOtherTypes = 0, cntModifiers = 0, cntConstraints = 0, cntDupli = 0;
     int cntShapeKeys = 0, cntVertexCol = 0, cntAutoSmooth = 0, cntBadFaces = 0, cntVertexParent = 0, cntBoneParent = 0;
     int cntPacked = 0, cntBadMesh = 0, cntNoBone = 0, cntMatMismatch = 0, cntIpo = 0, cntNla = 0, cntDrivers = 0;
@@ -1976,7 +1977,7 @@ void Reader::Notes() {
         }
     }
     if (cntModDisabled) note(n(cntModDisabled) + " Mirror / Subdivision modifier(s) switched off for the viewport: not applied, like Blender's viewport");
-    if (cntModCapped) note(n(cntModCapped) + " Subdivision modifier(s) stopped at a lower level: the result would pass the face limit (8 M faces per file)");
+    if (cntModCapped) note(n(cntModCapped) + " Subdivision modifier(s) stopped at a lower level: the result would pass the face limit (4 M faces per file)");
     if (cntMirrorBisect) note(n(cntMirrorBisect) + " Mirror modifier(s) with bisect set: the mesh is mirrored without cutting it at the mirror plane");
     if (cntMirrorNoObj) note(n(cntMirrorNoObj) + " Mirror modifier(s) whose mirror object is not in the scene: mirrored in the object's own space");
     if (cntConstraints) note(n(cntConstraints) + " object(s) with constraints or a track-to target: not evaluated");

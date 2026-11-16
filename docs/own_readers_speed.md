@@ -55,7 +55,7 @@ to run; the instruction counts quoted below (callgrind) do not move.
 | amf | 11 | 11 | 0.84x -> 0.86x (0.4 / 0.5 ms) | met | 0.05 / 0.13 -> 0.04 / 0.13 | met | 0.81x | 0.06 / 0.13 MB | 3 / 0 |
 | ase | 17 | 16 | 4.44x -> 1.05x (7.3 / 7.0 ms) | **not met** | 3.99 / 2.40 -> 1.99 / 2.40 | met | 1.07x | 1.99 / 2.40 MB | 4 / 0 |
 | b3d | 3 | 3 | 0.35x -> 0.35x (1.4 / 4.1 ms) | met | 1.21 / 1.75 -> 1.02 / 1.75 | met | 0.71x | 1.52 / 1.75 MB | 0 / 0 |
-| blend | 28 | 27 | 0.10x -> 0.12x (59.8 / 517.0 ms) | met | 4.60 / 84.07 -> 4.00 / 84.07 | met | 0.12x | 4.00 / 84.07 MB | 2 / 11 |
+| blend | 28 | 27 | 0.10x -> 0.12x -> 0.24x with modifiers (122.8 / 517.0 ms) | met | 4.60 / 84.07 -> 4.00 / 84.07 -> 33.22 / 84.07 with modifiers | met | 0.22x | 33.22 / 84.07 MB | 1 / 11 |
 | bvh | 3 | 3 | 1.24x -> 0.40x (28.4 / 70.6 ms) | met | 8.40 / 14.53 -> 7.66 / 14.53 | met | 0.94x | 8.89 / 14.53 MB | 0 / 0 |
 | cob | 8 | 6 | 1.03x -> 0.92x (7.9 / 8.6 ms) | met | 1.69 / 1.31 -> 1.19 / 1.31 | met | 0.96x | 1.19 / 1.31 MB | 1 / 1 |
 | csm | 1 | 1 | 7.14x -> 1.45x (9.9 / 6.8 ms) | **not met** | 6.73 / 6.73 -> 6.22 / 6.73 | met | 1.04x | 6.97 / 7.21 MB | 1 / 0 |
@@ -170,7 +170,9 @@ Differences that are not by design, or that are worth a second look (counts are 
   boundaries (Assimp does not use the Catmull-Clark boundary rule; 85 of 2,010 points at level 1 differ by up to 0.02), and
   `CubeHierarchy_248` 122 / 86 (Assimp drops three cubes; not a modifier). Speed with the modifiers: `SuzanneSubdiv_252`
   56 / 269 ms, `yxa_1` 19 / 101 ms (ours / Assimp), after replacing the reader's per-vertex hash map with a flat table
-  (the read of that Suzanne was 240 ms before; the output is bit for bit the same).
+  (the read of that Suzanne was 240 ms before; the output is bit for bit the same). The blend row above went from 0.12x to
+  0.24x and its largest peak from 4.0 to 33.2 MB because ours now makes the 251,904-triangle Suzanne too (Assimp: 84 MB);
+  both still met. Digests of the other 351 corpus files (24 of them `.blend`) are unchanged.
 - **Skeleton-only files** (BVH, CSM, MD5 `.md5anim`, Collada `cameras.dae` and `lights.dae`): Assimp adds a stand-in mesh
   (164, 352 and 200 triangles), ours adds none (deliberate).
 - **Triangle counts that differ by a few per cent**: concave polygons (Collada, OBJ and LWO `ConcavePolygon` 64 / 58,

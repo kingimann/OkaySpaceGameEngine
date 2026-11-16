@@ -266,6 +266,12 @@ struct IdentTable {
     IdentTable() : t{} { for (int c = 0; c < 256; ++c) t[c] = IdentChar((unsigned char)c); }
 };
 const IdentTable kIdent;
+// Between the values of an ASCII array: 1 for a space, comma, tab or line end, 2 for ';' (a comment to the line end).
+struct ArraySepTable {
+    unsigned char t[256];
+    ArraySepTable() : t{} { t[(unsigned char)' '] = t[(unsigned char)','] = t[(unsigned char)'\n'] = t[(unsigned char)'\r'] = t[(unsigned char)'\t'] = 1; t[(unsigned char)';'] = 2; }
+};
+const ArraySepTable kArraySep;
 
 // The same conversion as FastDecimal, but it finds the end of the token itself (the first character that cannot
 // be part of a token), so an array value is read in one pass instead of a scan for its end and then a parse.
@@ -365,9 +371,9 @@ struct Text {
         for (;;) {
             // spaces, line ends and commas between values (comments too, as SkipSpace does)
             while (pos < n) {
-                const char c = s[pos];
-                if (c == ' ' || c == ',' || c == '\n' || c == '\r' || c == '\t') ++pos;
-                else if (c == ';') { while (pos < n && s[pos] != '\n') ++pos; }
+                const unsigned char t = kArraySep.t[(unsigned char)s[pos]];
+                if (t == 1) ++pos;
+                else if (t == 2) { while (pos < n && s[pos] != '\n') ++pos; }
                 else break;
             }
             if (Cur() == '}') { ++pos; break; }
@@ -399,17 +405,27 @@ struct Text {
         // kept as int32, one whose values are all exact floats as float32. Array::operator[] gives (double)value,
         // which is the same double bit for bit (checked per value; -0 stays a double), and the readers' type-specific
         // paths (int32 indices, double vectors) give the same numbers as their general paths.
+        // Checked in blocks of 256 values without a branch per value (both answers for every value of a block; the
+        // loop stops after the block where both became false). A value outside the int32 range (or NaN) is replaced by
+        // 0.5 before the conversion and one beyond the largest float by 0.1: neither converts back to itself, so the
+        // answer is "no" for them, as it must be, and no conversion is out of range.
         bool allInt = true, allFloat = true;
-        for (std::size_t k = 0; k < nv && (allInt || allFloat); ++k) {
-            const double v = vals[k];
-            if (allInt) {
-                if (!(v >= -2147483648.0 && v <= 2147483647.0)) allInt = false;
-                else { const double b = (double)(std::int32_t)v; allInt = std::memcmp(&b, &v, 8) == 0; }
+        for (std::size_t k0 = 0; k0 < nv && (allInt || allFloat); k0 += 256) {
+            const std::size_t k1 = std::min(nv, k0 + 256);
+            bool okI = true, okF = true;
+            for (std::size_t k = k0; k < k1; ++k) {
+                const double v = vals[k];
+                std::uint64_t bv; std::memcpy(&bv, &v, 8);
+                const double ci = (v >= -2147483648.0 && v <= 2147483647.0) ? v : 0.5;
+                const double bi = (double)(std::int32_t)ci;
+                std::uint64_t ui; std::memcpy(&ui, &bi, 8);
+                okI &= ui == bv;
+                const double cf = (std::fabs(v) > 3.4028234663852886e38 && !std::isinf(v)) ? 0.1 : v;   // beyond the largest float
+                const double bf = (double)(float)cf;
+                std::uint64_t uf; std::memcpy(&uf, &bf, 8);
+                okF &= uf == bv;
             }
-            if (allFloat) {
-                if (std::fabs(v) > 3.4028234663852886e38 && !std::isinf(v)) allFloat = false;   // beyond the largest float
-                else { const double b = (double)(float)v; allFloat = std::memcmp(&b, &v, 8) == 0; }
-            }
+            allInt = allInt && okI; allFloat = allFloat && okF;
         }
         char type = 'd';
         if (nv && (allInt || allFloat)) {

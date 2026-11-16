@@ -82,6 +82,20 @@ inline int LeadingZeros64(std::uint64_t x) {   // x != 0
 #endif
 }
 
+inline int TrailingZeros64(std::uint64_t x) {   // x != 0
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(OKAY_DECIMAL_PORTABLE)
+    return __builtin_ctzll(x);
+#elif defined(_MSC_VER) && defined(_M_X64) && !defined(OKAY_DECIMAL_PORTABLE)
+    unsigned long i;
+    _BitScanForward64(&i, x);
+    return (int)i;
+#else
+    int n = 0;
+    while (!(x & 1)) { x >>= 1; ++n; }
+    return n;
+#endif
+}
+
 // u converted to the nearest double, ties to even, without relying on how the compiler converts an unsigned 64-bit
 // integer: below 2^53 the conversion is exact; above, the bits below the 53 kept ones are folded into a sticky bit that
 // sits below the round bit, so the signed conversion (correctly rounded by IEEE 754) of the halved value rounds the same.
@@ -196,9 +210,7 @@ inline std::uint64_t EightDigitsValue(std::uint64_t w) {
 inline int LeadingDigits8(std::uint64_t w) {
     const std::uint64_t nd = ((w - 0x3030303030303030ull) | (w + 0x4646464646464646ull)) & 0x8080808080808080ull;
     if (!nd) return 8;
-    // the lowest flag is bit 8k + 7; (1 << 8k) times 0x0001020304050607 has the byte k on top
-    const std::uint64_t lowest = nd & (0 - nd);
-    return (int)(((lowest >> 7) * 0x0001020304050607ull) >> 56);
+    return TrailingZeros64(nd) >> 3;   // the lowest flag is bit 8k + 7
 }
 // The value of the k (1..8) digits in the low k bytes of w.
 inline std::uint64_t FirstDigitsValue(std::uint64_t w, int k) {
@@ -220,8 +232,16 @@ OKAY_DECIMAL_INLINE const char* ScanDecimal(const char* p, const char* end, Deci
     if (p < end && (*p == '+' || *p == '-')) { neg = *p == '-'; ++p; }
     std::uint64_t w = 0; std::int64_t q = 0; bool any = false, cut = false;
     // integer digits: up to 8 at a time while w stays below 10^19, then one at a time; a digit past the 19th
-    // significant one is dropped and counts as a power of ten
-    for (;;) {
+    // significant one is dropped and counts as a power of ten. The first group of 8 is read before the loop (the usual
+    // number has fewer than 8 integer digits and never enters it); it is exactly the loop's first turn.
+    bool intDone = false;
+    if (end - p >= 8) {
+        const std::uint64_t x = Load8(p);
+        const int k = LeadingDigits8(x);
+        if (k) { w = FirstDigitsValue(x, k); any = true; p += k; }
+        intDone = k < 8;
+    }
+    if (!intDone) for (;;) {
         if (end - p >= 8 && w < kFits8) {
             const std::uint64_t x = Load8(p);
             const int k = LeadingDigits8(x);
@@ -239,7 +259,14 @@ OKAY_DECIMAL_INLINE const char* ScanDecimal(const char* p, const char* end, Deci
     }
     if (p < end && *p == '.') {
         ++p;
-        for (;;) {
+        bool fracDone = false;
+        if (end - p >= 8 && w < kFits8) {   // the first group of 8, as the loop's first turn would read it
+            const std::uint64_t x = Load8(p);
+            const int k = LeadingDigits8(x);
+            if (k) { w = w * kP10[k] + FirstDigitsValue(x, k); any = true; p += k; q -= k; }
+            fracDone = k < 8;
+        }
+        if (!fracDone) for (;;) {
             if (end - p >= 8 && w < kFits8) {
                 const std::uint64_t x = Load8(p);
                 const int k = LeadingDigits8(x);
@@ -257,7 +284,7 @@ OKAY_DECIMAL_INLINE const char* ScanDecimal(const char* p, const char* end, Deci
         }
     }
     if (!any) return nullptr;
-    if (p < end && (*p == 'e' || *p == 'E')) {
+    if (p < end && (*p | 0x20) == 'e') {   // 'e' or 'E' (no other byte gives 'e' with the 0x20 bit set)
         ++p;
         bool eneg = false;
         if (p < end && (*p == '+' || *p == '-')) { eneg = *p == '-'; ++p; }

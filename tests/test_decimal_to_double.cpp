@@ -11,6 +11,8 @@
 //   - subnormals and the edges of the range (2^-1074, half of it, DBL_MAX and the halfway point above it, 1e309, 1e-400);
 //   - long mantissas: 50 to 800 digits;
 //   - garbage made of digits, '.', 'e', 'E', '+' and '-': the scanner must accept exactly what strtod reads whole.
+// Every input is also read with text after it (SamePadded), which takes the scanner's short path where it applies: the
+// same end and the same parts as without.
 // A "fallback" is an input the conversion hands to strtod (the method cannot decide); they are counted and must be rare.
 #include "test_framework.hpp"
 #include "../engine/src/Render/DecimalToDouble.hpp"
@@ -97,6 +99,23 @@ struct Stats { long tried = 0, bad = 0, fallback = 0, accepted = 0; bool showFal
 
 std::uint64_t Bits(double d) { std::uint64_t b; std::memcpy(&b, &d, 8); return b; }
 
+// The same text with something after it, as in a file: a character that ends a number, then 64 more bytes (digits,
+// points and letters among them). The scanner reads up to 48 bytes ahead when it has them (ScanShortDecimal), so this is
+// what exercises that path; it must stop at the same place and give the same parts as on the bare text.
+void SamePadded(const std::string& s, const char* bareEnd, const DecimalParts& bare, Stats& st) {
+    static const char kStop[] = ", }\n\t;";
+    static const char kFill[] = "0123456789.eE+-,x ";
+    std::string padded = s;
+    padded += kStop[st.tried % 6];
+    for (int i = 0; i < 64; ++i) padded += kFill[(st.tried * 7 + i * 5) % 18];
+    DecimalParts d;
+    const char* end = ScanDecimal(padded.data(), padded.data() + padded.size(), d);
+    const bool same = bareEnd ? (end && end - padded.data() == bareEnd - s.data() && d.w == bare.w && d.q == bare.q &&
+                                 d.neg == bare.neg && d.truncated == bare.truncated)
+                              : end == nullptr;
+    if (!same && st.bad++ < 10) std::printf("  read differently with text after it: \"%.80s\"\n", s.c_str());
+}
+
 // s must be a plain decimal: the scanner must read all of it and give strtod's double.
 void Compare(const std::string& s, Stats& st) {
     ++st.tried;
@@ -106,6 +125,7 @@ void Compare(const std::string& s, Stats& st) {
     const double ref = std::strtod(s.c_str(), &se);
     DecimalParts d;
     const char* end = ScanDecimal(b, e, d);
+    SamePadded(s, end, d, st);
     if (end != e || se != s.c_str() + s.size()) {
         if (st.bad++ < 10) std::printf("  not read whole: \"%.80s\"\n", s.c_str());
         return;
@@ -124,6 +144,7 @@ void CompareGarbage(const std::string& s, Stats& st) {
     const bool strtodWhole = !s.empty() && se == s.c_str() + s.size();
     DecimalParts d;
     const char* end = ScanDecimal(s.data(), s.data() + s.size(), d);
+    SamePadded(s, end, d, st);
     const bool oursWhole = end == s.data() + s.size();
     if (oursWhole != strtodWhole) { if (st.bad++ < 10) std::printf("  grammar differs on \"%s\"\n", s.c_str()); return; }
     if (!oursWhole) return;

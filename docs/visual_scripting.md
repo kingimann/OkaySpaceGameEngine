@@ -626,7 +626,9 @@ with a "!" you can hover for the details. It finds:
 - **warnings** (probably not what you meant):
   - nodes no event's chain ever reaches;
   - events with nothing wired to them;
-  - variables the graph reads but never sets.
+  - variables the graph reads but never sets;
+  - a typed value (`default`) or a wire (`data`) aimed at an input the node does not
+    have, for example input 7 of `Fn.dist3`, which has six. The runtime ignores it.
 
 **Play** writes every problem in every graph of the scene to the Console.
 **Build** checks every graph in the scenes going into the build. If there are
@@ -743,6 +745,29 @@ The older hand-made nodes (Translate, Get Position, Add Force...) still work and
 in the same topic. The script-binding nodes are the ones that match the scripts exactly.
 The generated-code preview doesn't translate Engine API nodes yet. It lists them as
 not translated, and each node's tooltip gives the line of script.
+
+## Text-script function nodes (`Fn.<builtin>`)
+
+Every text-script builtin is also a node named `Fn.<builtin>` (search for the builtin's
+name). The node has one input per argument the builtin reads, named First, Second,
+Third and so on, and never fewer than four. Most builtins read four or fewer, so most
+nodes have four inputs. The ones that read more have more: `Fn.dist3` has six (two
+points), `Fn.remap` five, `Fn.raycast3` nine (origin, direction, distance, layers,
+ignore triggers), and `Fn.capsule_cast3` has the most, thirteen. The full list with
+each node's input count is in [visual_script_coverage.md](visual_script_coverage.md).
+
+The node passes the arguments up to the last input that has a wire or a typed value.
+Inputs after that are not passed, so a builtin that changes what it does by the number
+of arguments (for example `nav_path_length` with three or six) behaves as in a text
+script. An empty input before that last one is passed as nothing (0 or empty text), so
+every input keeps its place.
+
+Before this change (bug #888, finding 22) every `Fn.` node had four inputs, so a
+builtin that needs five or more arguments got too few and gave 0 or nothing back. A
+saved graph with four-input `Fn.` nodes loads and runs as before: inputs 0 to 3 keep
+their meaning. One difference: an old graph with an empty input between two used ones
+used to move the later values one place to the left; now each value stays on its own
+input.
 
 ## Loops, lists and variable scopes
 

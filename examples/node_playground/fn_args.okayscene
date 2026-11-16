@@ -1,0 +1,76 @@
+okayscene 3
+name "Fn Nodes With Many Inputs"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "7d2e94b0c6a14f53b8e1a9c05f3d7e62"
+  active 1
+  parent -1
+  transform 0 2.2 8 0 0 0 1 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Readout"
+  guid "4f6b2c8e1d9a47b3a0c5e7f19d2b6a83"
+  active 1
+  parent -1
+  transform 0 1.2 0 0 0 0 1 1 1 1
+  visualscript "# Fn nodes that take more than four arguments (bug 888, finding 22).
+node 1 OnStart
+pos 1 40 60
+entry OnStart 1
+node 2 Fn.dist3
+pos 2 260 60
+default 2 0 0
+default 2 1 0
+default 2 2 0
+default 2 3 3
+default 2 4 4
+default 2 5 0
+node 3 Print
+pos 3 520 60
+default 3 0 \"dist3 from 0,0,0 to 3,4,0\"
+data 3 1 2 0
+node 4 Fn.remap
+pos 4 760 60
+default 4 0 0.5
+default 4 1 0
+default 4 2 1
+default 4 3 0
+default 4 4 100
+node 5 Print
+pos 5 1020 60
+default 5 0 \"remap 0.5 from 0..1 to 0..100\"
+data 5 1 4 0
+node 6 Concat
+pos 6 520 360
+default 6 0 \"dist3 = \"
+data 6 1 2 0
+node 7 Concat
+pos 7 760 360
+data 7 0 6 0
+default 7 1 \"   remap = \"
+node 8 Concat
+pos 8 1020 360
+data 8 0 7 0
+data 8 1 4 0
+node 9 SetText self
+pos 9 1260 360
+data 9 0 8 0
+exec 1 0 2
+exec 2 0 3
+exec 3 0 4
+exec 4 0 5
+exec 5 0 9
+"
+  text "Press Play" 1 1 1 1 0.1 0 12 12 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 2 "Instructions"
+  guid "a1c37e5b9f0d4e28b6d4c2a07e9f3b51"
+  active 1
+  parent -1
+  transform 0 -0.4 0 0 0 0 1 0.6 0.6 0.6
+  text "Press Play. The text above changes to dist3 = 5   remap = 50 and the Console prints the same two numbers. Open the Readout graph to see Fn.dist3 with six inputs and Fn.remap with five." 1 1 1 1 0.1 0 12 12 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end

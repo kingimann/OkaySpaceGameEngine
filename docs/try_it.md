@@ -51,6 +51,7 @@ release job or the installer build for this change.
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
+| 15 | Visual Script `Fn.` nodes get one input per argument (dist3, remap, raycast3 and 50 more had only four) | `examples\node_playground\fn_args.okayscene`, or any graph: add **Fn.dist3** | Branch `claude2/grok-22-vs-fn-arity`, not merged or released yet; editor screens unverified |
 
 ---
 
@@ -234,6 +235,35 @@ you did not open since they were made are safe to remove; check the path before 
 **Status.** Tested on main once merged: `test_project_create` (289 checks) covers the rule that a template shortcut opens
 the Details step and cannot start a second create. Unverified: the launcher screens themselves (the launcher was not
 compiled or run on this machine).
+
+---
+
+## 15. Visual Script: `Fn.` nodes with more than four inputs (branch `claude2/grok-22-vs-fn-arity`, not merged or released yet)
+
+**What it is.** Every text-script builtin is a Visual Script node named `Fn.<builtin>`. They all had four inputs, so a
+builtin that needs five or more arguments got too few and gave 0 or nothing back: `dist3` (6 arguments), `remap` (5),
+`raycast3` (6 to 9), the shape casts and 50 more. Now each node has one input per argument (never fewer than four), and
+the graph checker warns about a typed value or wire aimed at an input a node does not have. Found by a tester (#888,
+finding 22).
+
+**Steps (the shipped example).**
+1. In the editor, **File > Open...** and pick `examples\node_playground\fn_args.okayscene`.
+2. Press **Play**. The text above the instructions changes to `dist3 = 5   remap = 50`, and the Console prints
+   `dist3 from 0,0,0 to 3,4,0: 5` and `remap 0.5 from 0..1 to 0..100: 50`. On the old release the same scene shows
+   `dist3 = 0   remap = 0.5`.
+3. Select **Readout** and open its graph: **Fn.dist3** has six inputs (First to Sixth) and **Fn.remap** five.
+
+**Steps (by hand).**
+1. Open any scene, select an object, add a Visual Script and open the graph.
+2. Add **On Start**, then search for `dist3` and add **Fn.dist3**. It has six inputs. Type 0, 0, 0, 3, 4, 0 into them.
+3. Add **Print**, wire the Fn.dist3 result into Print's value input, and wire On Start > Fn.dist3 > Print.
+4. Press **Play**. The Console prints `5`.
+5. Optional: in a graph file, a line like `default 2 6 9` (input 7 of a six-input node) now shows a warning in the
+   checker ("⚠ 1 problem").
+
+**Status.** Tested on Linux, headless: `test_vs_fn_arity` (new; it fails on the old code) and the Visual Script suites,
+see the PR. The example scene is loaded and played by that test. Unverified: the editor window itself (the node drawing
+with the extra inputs) on Windows.
 
 ---
 

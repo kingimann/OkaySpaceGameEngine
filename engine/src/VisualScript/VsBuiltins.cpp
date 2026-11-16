@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <unordered_map>
 
 namespace okay::vs {
 namespace {
@@ -63,10 +64,40 @@ void SendTo(GameObject* go, const std::string& message, const VsValue& arg) {
     if (auto* vs = go->GetComponent<VisualScriptComponent>()) vs->Send(message);
 }
 
+// Builtins that read more than four arguments, and how many: the highest argument index the
+// builtin's code in OkayScriptVM.cpp reads, plus one. Worked out by reading each builtin and
+// the helpers it passes its arguments to (2026-11-15, #888 finding 22). test_vs_fn_arity scans
+// the VM source on every run and fails when a builtin reads more arguments than its node has
+// inputs, so a new wide builtin gets caught there and added here.
+struct WideBuiltin { const char* name; int args; };
+const WideBuiltin kWideBuiltins[] = {
+    // 3D queries: origin x y z, direction x y z (shape sizes before it), then distance, layers, ignore triggers.
+    {"raycast3", 9}, {"Physics.Raycast", 9}, {"raycast_all3", 9}, {"raycast_hit3", 7}, {"ray3_cast", 7},
+    {"sphere_cast3", 10}, {"box_cast3", 12}, {"capsule_cast3", 13},
+    {"overlap_sphere3", 6}, {"overlap_box3", 8}, {"overlap_capsule3", 9},
+    // 2D queries and forces.
+    {"raycast", 7}, {"Physics2D.Raycast", 7}, {"cast_ray", 7}, {"raycast_all", 7}, {"raycast_hit", 5},
+    {"box_cast", 11}, {"Physics2D.BoxCast", 11}, {"capsule_cast", 11}, {"Physics2D.CapsuleCast", 11},
+    {"overlap_box", 7}, {"Physics2D.OverlapBox", 7}, {"overlap_capsule", 7}, {"Physics2D.OverlapCapsule", 7},
+    {"add_explosion_force", 5}, {"Rigidbody2D.AddExplosionForce", 5}, {"ragdoll_push", 6},
+    // Math.
+    {"dist3", 6}, {"remap", 5},
+    // Movement, navigation, IK.
+    {"patrol", 5}, {"nav_path_exists", 6}, {"nav_path_length", 6}, {"ik_hand", 5}, {"ik_foot", 5},
+    // Tweens: target values, seconds, then the ease and the function to call when done.
+    {"tween_move", 5}, {"tween_move3", 6}, {"tween_move_by", 5}, {"tween_move_world", 6}, {"tween_scale_xy", 5},
+    {"tween_rotate3", 6}, {"tween_jump", 6}, {"tween_color", 6}, {"tween_prop", 5}, {"tween_var", 5},
+    {"tween_ui_move", 5}, {"tween_ui_size", 5},
+    // Scene, UI and networking.
+    {"fog_set", 6}, {"set_light_color", 5}, {"spawn_pickup", 5}, {"ui_begin", 5}, {"ui_dialogue_show", 6},
+    {"mm_host", 6}, {"net_hit", 8},
+};
+
 struct BuiltinCallNode : VsNode {
     std::string name;
+    int pins;
     VsValue last;
-    explicit BuiltinCallNode(std::string n) : name(std::move(n)) {}
+    explicit BuiltinCallNode(std::string n) : name(std::move(n)), pins(BuiltinPinCount(name)) {}
     int ExecOutCount() const override { return 1; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return last; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
@@ -75,10 +106,14 @@ struct BuiltinCallNode : VsNode {
         host.transform = ctx.transform;
         host.deltaTime = ctx.deltaTime;
         ScratchVm().Bind(&host);
+        // Pass the arguments up to the last input with a wire or a typed value. An empty input before it is
+        // passed as nothing, so every value keeps its place. Inputs after it are not passed: several builtins
+        // change what they do by how many arguments they get (nav_path_length with 3 or 6, ragdoll_push).
+        int lastFed = -1;
+        for (int i = 0; i < pins; ++i)
+            if (HasInput(i)) lastFed = i;
         std::vector<VsValue> args;
-        for (int i = 0; i < 4; ++i)
-            if (HasInput(i) || (i < (int)hasDefault.size() && hasDefault[i]))
-                args.push_back(In(i, g, ctx));
+        for (int i = 0; i <= lastFed; ++i) args.push_back(In(i, g, ctx));
         std::string err;
         last = ScratchVm().CallBuiltin(name, std::move(args), &err);
         ScratchVm().Bind(nullptr);
@@ -272,9 +307,30 @@ struct RunSnippetNode : VsNode {
 
 } // namespace
 
-const NodeSignature& BuiltinSignature() {
-    static const NodeSignature sig{true, "AAAA", "A"};
-    return sig;
+int BuiltinPinCount(const std::string& builtin) {
+    static const std::unordered_map<std::string, int> wide = [] {
+        std::unordered_map<std::string, int> m;
+        for (const WideBuiltin& w : kWideBuiltins) m[w.name] = std::clamp(w.args, 4, kBuiltinMaxPins);
+        return m;
+    }();
+    const auto it = wide.find(builtin);
+    return it == wide.end() ? 4 : it->second;
+}
+
+const char* BuiltinPinName(int pin) {
+    static const char* const names[kBuiltinMaxPins] = {"First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh",
+                                                       "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth", "Thirteenth"};
+    return pin >= 0 && pin < kBuiltinMaxPins ? names[pin] : "";
+}
+
+const NodeSignature& BuiltinSignatureFor(const std::string& type) {
+    static const std::vector<NodeSignature> byCount = [] {
+        std::vector<NodeSignature> v;
+        for (int n = 0; n <= kBuiltinMaxPins; ++n) v.push_back(NodeSignature{true, std::string((std::size_t)n, 'A'), "A"});
+        return v;
+    }();
+    const std::string name = type.rfind("Fn.", 0) == 0 ? type.substr(3) : type;
+    return byCount[(std::size_t)BuiltinPinCount(name)];
 }
 
 const std::vector<BuiltinNodeInfo>& BuiltinNodes() {
@@ -371,9 +427,11 @@ std::string CoverageTableMarkdown() {
     md += "Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. ";
     md += "It runs that builtin on this object. Wire only the arguments it takes. ";
     md += std::to_string(BuiltinNodes().size()) + " builtins are nodes.\n\n";
-    md += "| Builtin | Node |\n| --- | --- |\n";
+    md += "Each node has one input per argument the builtin reads (First, Second, ...), and never fewer than four. ";
+    md += "The node passes the arguments up to the last input with a wire or a typed value.\n\n";
+    md += "| Builtin | Node | Inputs |\n| --- | --- | --- |\n";
     for (const auto& n : BuiltinNodes())
-        md += "| `" + n.builtin + "` | `" + n.type + "` |\n";
+        md += "| `" + n.builtin + "` | `" + n.type + "` | " + std::to_string(BuiltinPinCount(n.builtin)) + " |\n";
     md += "\n## Gaps\n\n";
     md += "Editor-only tools (undo, the launcher, modeling, the asset browser), GPU backend choice, ";
     md += "and anti-cheat internals have no text-script builtin and no engine-API binding, so there is nothing ";

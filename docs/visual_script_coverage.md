@@ -34,1438 +34,1450 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1378 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1438 builtins are nodes.
 
-| Builtin | Node |
-| --- | --- |
-| `AddComponent` | `Fn.AddComponent` |
-| `Application.Quit` | `Fn.Application.Quit` |
-| `ApplyUITheme` | `Fn.ApplyUITheme` |
-| `CancelInvoke` | `Fn.CancelInvoke` |
-| `Color` | `Fn.Color` |
-| `Color.Lerp` | `Fn.Color.Lerp` |
-| `CompareTag` | `Fn.CompareTag` |
-| `Convert.ToInt32` | `Fn.Convert.ToInt32` |
-| `Convert.ToSingle` | `Fn.Convert.ToSingle` |
-| `Debug.Log` | `Fn.Debug.Log` |
-| `Debug.LogError` | `Fn.Debug.LogError` |
-| `Debug.LogFormat` | `Fn.Debug.LogFormat` |
-| `Debug.LogWarning` | `Fn.Debug.LogWarning` |
-| `Destroy` | `Fn.Destroy` |
-| `ForceMode2D.Impulse` | `Fn.ForceMode2D.Impulse` |
-| `GameObject.Find` | `Fn.GameObject.Find` |
-| `GameObject.FindGameObjectWithTag` | `Fn.GameObject.FindGameObjectWithTag` |
-| `GameObject.FindGameObjectsWithTag` | `Fn.GameObject.FindGameObjectsWithTag` |
-| `GameObject.FindWithTag` | `Fn.GameObject.FindWithTag` |
-| `GetComponent` | `Fn.GetComponent` |
-| `GetView` | `Fn.GetView` |
-| `Input.GetAxis` | `Fn.Input.GetAxis` |
-| `Input.GetAxisRaw` | `Fn.Input.GetAxisRaw` |
-| `Input.GetButton` | `Fn.Input.GetButton` |
-| `Input.GetButtonDown` | `Fn.Input.GetButtonDown` |
-| `Input.GetButtonUp` | `Fn.Input.GetButtonUp` |
-| `Input.GetKey` | `Fn.Input.GetKey` |
-| `Input.GetKeyDown` | `Fn.Input.GetKeyDown` |
-| `Input.GetKeyUp` | `Fn.Input.GetKeyUp` |
-| `Input.GetMouseButton` | `Fn.Input.GetMouseButton` |
-| `Input.GetMouseButtonDown` | `Fn.Input.GetMouseButtonDown` |
-| `Input.GetMouseButtonUp` | `Fn.Input.GetMouseButtonUp` |
-| `Instantiate` | `Fn.Instantiate` |
-| `Invoke` | `Fn.Invoke` |
-| `InvokeRepeating` | `Fn.InvokeRepeating` |
-| `Mathf.Abs` | `Fn.Mathf.Abs` |
-| `Mathf.Acos` | `Fn.Mathf.Acos` |
-| `Mathf.Approximately` | `Fn.Mathf.Approximately` |
-| `Mathf.Asin` | `Fn.Mathf.Asin` |
-| `Mathf.Atan` | `Fn.Mathf.Atan` |
-| `Mathf.Atan2` | `Fn.Mathf.Atan2` |
-| `Mathf.Ceil` | `Fn.Mathf.Ceil` |
-| `Mathf.CeilToInt` | `Fn.Mathf.CeilToInt` |
-| `Mathf.Clamp` | `Fn.Mathf.Clamp` |
-| `Mathf.Clamp01` | `Fn.Mathf.Clamp01` |
-| `Mathf.Cos` | `Fn.Mathf.Cos` |
-| `Mathf.DeltaAngle` | `Fn.Mathf.DeltaAngle` |
-| `Mathf.Exp` | `Fn.Mathf.Exp` |
-| `Mathf.Floor` | `Fn.Mathf.Floor` |
-| `Mathf.FloorToInt` | `Fn.Mathf.FloorToInt` |
-| `Mathf.InverseLerp` | `Fn.Mathf.InverseLerp` |
-| `Mathf.Lerp` | `Fn.Mathf.Lerp` |
-| `Mathf.LerpAngle` | `Fn.Mathf.LerpAngle` |
-| `Mathf.Log` | `Fn.Mathf.Log` |
-| `Mathf.Log10` | `Fn.Mathf.Log10` |
-| `Mathf.Max` | `Fn.Mathf.Max` |
-| `Mathf.Min` | `Fn.Mathf.Min` |
-| `Mathf.MoveTowards` | `Fn.Mathf.MoveTowards` |
-| `Mathf.PerlinNoise` | `Fn.Mathf.PerlinNoise` |
-| `Mathf.PingPong` | `Fn.Mathf.PingPong` |
-| `Mathf.Pow` | `Fn.Mathf.Pow` |
-| `Mathf.Repeat` | `Fn.Mathf.Repeat` |
-| `Mathf.Round` | `Fn.Mathf.Round` |
-| `Mathf.RoundToInt` | `Fn.Mathf.RoundToInt` |
-| `Mathf.Sign` | `Fn.Mathf.Sign` |
-| `Mathf.Sin` | `Fn.Mathf.Sin` |
-| `Mathf.SmoothStep` | `Fn.Mathf.SmoothStep` |
-| `Mathf.Sqrt` | `Fn.Mathf.Sqrt` |
-| `Mathf.Tan` | `Fn.Mathf.Tan` |
-| `Object.Destroy` | `Fn.Object.Destroy` |
-| `Object.Instantiate` | `Fn.Object.Instantiate` |
-| `Physics.Raycast` | `Fn.Physics.Raycast` |
-| `Physics2D.BoxCast` | `Fn.Physics2D.BoxCast` |
-| `Physics2D.CapsuleCast` | `Fn.Physics2D.CapsuleCast` |
-| `Physics2D.OverlapBox` | `Fn.Physics2D.OverlapBox` |
-| `Physics2D.OverlapCapsule` | `Fn.Physics2D.OverlapCapsule` |
-| `Physics2D.Raycast` | `Fn.Physics2D.Raycast` |
-| `Quaternion.Euler` | `Fn.Quaternion.Euler` |
-| `Random.Range` | `Fn.Random.Range` |
-| `Rigidbody2D.AddExplosionForce` | `Fn.Rigidbody2D.AddExplosionForce` |
-| `SceneManager.LoadScene` | `Fn.SceneManager.LoadScene` |
-| `SetUITheme` | `Fn.SetUITheme` |
-| `SetView` | `Fn.SetView` |
-| `StartCoroutine` | `Fn.StartCoroutine` |
-| `StopAllCoroutines` | `Fn.StopAllCoroutines` |
-| `StopCoroutine` | `Fn.StopCoroutine` |
-| `String.Format` | `Fn.String.Format` |
-| `String.IsNullOrEmpty` | `Fn.String.IsNullOrEmpty` |
-| `String.Join` | `Fn.String.Join` |
-| `Time.HitStop` | `Fn.Time.HitStop` |
-| `Time.IsPausedBy` | `Fn.Time.IsPausedBy` |
-| `Time.PopPause` | `Fn.Time.PopPause` |
-| `Time.PushPause` | `Fn.Time.PushPause` |
-| `Time.RampTimeScale` | `Fn.Time.RampTimeScale` |
-| `Time.SlowMotion` | `Fn.Time.SlowMotion` |
-| `TryGetComponent` | `Fn.TryGetComponent` |
-| `Vector2` | `Fn.Vector2` |
-| `Vector2.Angle` | `Fn.Vector2.Angle` |
-| `Vector2.Distance` | `Fn.Vector2.Distance` |
-| `Vector2.Lerp` | `Fn.Vector2.Lerp` |
-| `Vector3` | `Fn.Vector3` |
-| `Vector3.Angle` | `Fn.Vector3.Angle` |
-| `Vector3.ClampMagnitude` | `Fn.Vector3.ClampMagnitude` |
-| `Vector3.Cross` | `Fn.Vector3.Cross` |
-| `Vector3.Distance` | `Fn.Vector3.Distance` |
-| `Vector3.Dot` | `Fn.Vector3.Dot` |
-| `Vector3.Lerp` | `Fn.Vector3.Lerp` |
-| `Vector3.LerpUnclamped` | `Fn.Vector3.LerpUnclamped` |
-| `Vector3.MoveTowards` | `Fn.Vector3.MoveTowards` |
-| `Vector3.Normalize` | `Fn.Vector3.Normalize` |
-| `Vector3.Reflect` | `Fn.Vector3.Reflect` |
-| `WaitForEndOfFrame` | `Fn.WaitForEndOfFrame` |
-| `WaitForFixedUpdate` | `Fn.WaitForFixedUpdate` |
-| `WaitForSeconds` | `Fn.WaitForSeconds` |
-| `WaitForSecondsRealtime` | `Fn.WaitForSecondsRealtime` |
-| `WaitUntil` | `Fn.WaitUntil` |
-| `WaitWhile` | `Fn.WaitWhile` |
-| `__call_component` | `Fn.__call_component` |
-| `__get_component` | `Fn.__get_component` |
-| `__new_array` | `Fn.__new_array` |
-| `__new_list` | `Fn.__new_list` |
-| `__new_map` | `Fn.__new_map` |
-| `__object_CompareTag` | `Fn.__object_CompareTag` |
-| `__object_GetComponent` | `Fn.__object_GetComponent` |
-| `__object_SetActive` | `Fn.__object_SetActive` |
-| `__set_component` | `Fn.__set_component` |
-| `abs` | `Fn.abs` |
-| `account_error` | `Fn.account_error` |
-| `account_get` | `Fn.account_get` |
-| `account_is_logged_in` | `Fn.account_is_logged_in` |
-| `account_is_online` | `Fn.account_is_online` |
-| `account_login` | `Fn.account_login` |
-| `account_logout` | `Fn.account_logout` |
-| `account_post` | `Fn.account_post` |
-| `account_register` | `Fn.account_register` |
-| `account_token` | `Fn.account_token` |
-| `account_username` | `Fn.account_username` |
-| `account_verify` | `Fn.account_verify` |
-| `acos` | `Fn.acos` |
-| `action` | `Fn.action` |
-| `action_down` | `Fn.action_down` |
-| `action_time` | `Fn.action_time` |
-| `action_up` | `Fn.action_up` |
-| `action_value` | `Fn.action_value` |
-| `action_x` | `Fn.action_x` |
-| `action_y` | `Fn.action_y` |
-| `actions_load` | `Fn.actions_load` |
-| `activate` | `Fn.activate` |
-| `add_explosion_force` | `Fn.add_explosion_force` |
-| `add_force` | `Fn.add_force` |
-| `add_force3` | `Fn.add_force3` |
-| `add_impulse` | `Fn.add_impulse` |
-| `add_impulse3` | `Fn.add_impulse3` |
-| `add_quest_progress` | `Fn.add_quest_progress` |
-| `add_score` | `Fn.add_score` |
-| `add_xp` | `Fn.add_xp` |
-| `after` | `Fn.after` |
-| `aim` | `Fn.aim` |
-| `all_fn` | `Fn.all_fn` |
-| `ambient` | `Fn.ambient` |
-| `angle_to` | `Fn.angle_to` |
-| `anim_event` | `Fn.anim_event` |
-| `anim_get_bool` | `Fn.anim_get_bool` |
-| `anim_get_float` | `Fn.anim_get_float` |
-| `anim_get_int` | `Fn.anim_get_int` |
-| `anim_get_layer_weight` | `Fn.anim_get_layer_weight` |
-| `anim_goto` | `Fn.anim_goto` |
-| `anim_normalized_time` | `Fn.anim_normalized_time` |
-| `anim_prev_state` | `Fn.anim_prev_state` |
-| `anim_set_bool` | `Fn.anim_set_bool` |
-| `anim_set_float` | `Fn.anim_set_float` |
-| `anim_set_layer_weight` | `Fn.anim_set_layer_weight` |
-| `anim_state` | `Fn.anim_state` |
-| `anim_state_time` | `Fn.anim_state_time` |
-| `anim_trigger` | `Fn.anim_trigger` |
-| `any_fn` | `Fn.any_fn` |
-| `apply_force` | `Fn.apply_force` |
-| `apply_impulse` | `Fn.apply_impulse` |
-| `apply_ui_theme` | `Fn.apply_ui_theme` |
-| `approach` | `Fn.approach` |
-| `approximately` | `Fn.approximately` |
-| `array` | `Fn.array` |
-| `asin` | `Fn.asin` |
-| `assert` | `Fn.assert` |
-| `atan` | `Fn.atan` |
-| `atan2` | `Fn.atan2` |
-| `avg` | `Fn.avg` |
-| `axis_x` | `Fn.axis_x` |
-| `axis_y` | `Fn.axis_y` |
-| `begin_display_confirm` | `Fn.begin_display_confirm` |
-| `bit_and` | `Fn.bit_and` |
-| `bit_clear` | `Fn.bit_clear` |
-| `bit_not` | `Fn.bit_not` |
-| `bit_or` | `Fn.bit_or` |
-| `bit_set` | `Fn.bit_set` |
-| `bit_test` | `Fn.bit_test` |
-| `bit_toggle` | `Fn.bit_toggle` |
-| `bit_xor` | `Fn.bit_xor` |
-| `blend` | `Fn.blend` |
-| `blend_param` | `Fn.blend_param` |
-| `blend_shape` | `Fn.blend_shape` |
-| `blend_shape_get` | `Fn.blend_shape_get` |
-| `blend_tree` | `Fn.blend_tree` |
-| `blink` | `Fn.blink` |
-| `bob` | `Fn.bob` |
-| `bounce_in_box` | `Fn.bounce_in_box` |
-| `box_cast` | `Fn.box_cast` |
-| `box_cast3` | `Fn.box_cast3` |
-| `broadcast_event` | `Fn.broadcast_event` |
-| `bt_get` | `Fn.bt_get` |
-| `bt_run` | `Fn.bt_run` |
-| `bt_set` | `Fn.bt_set` |
-| `bt_stop` | `Fn.bt_stop` |
-| `build_active` | `Fn.build_active` |
-| `build_clear` | `Fn.build_clear` |
-| `build_count` | `Fn.build_count` |
-| `build_enter` | `Fn.build_enter` |
-| `build_exists` | `Fn.build_exists` |
-| `build_exit` | `Fn.build_exit` |
-| `build_link_mode` | `Fn.build_link_mode` |
-| `build_load` | `Fn.build_load` |
-| `build_palette_add` | `Fn.build_palette_add` |
-| `build_palette_clear` | `Fn.build_palette_clear` |
-| `build_palette_select` | `Fn.build_palette_select` |
-| `build_redo` | `Fn.build_redo` |
-| `build_save` | `Fn.build_save` |
-| `build_selected` | `Fn.build_selected` |
-| `build_toggle` | `Fn.build_toggle` |
-| `build_undo` | `Fn.build_undo` |
-| `call` | `Fn.call` |
-| `call_later` | `Fn.call_later` |
-| `cam_shake` | `Fn.cam_shake` |
-| `cam_x` | `Fn.cam_x` |
-| `cam_y` | `Fn.cam_y` |
-| `cam_zoom` | `Fn.cam_zoom` |
-| `camera_dutch` | `Fn.camera_dutch` |
-| `camera_follow` | `Fn.camera_follow` |
-| `camera_fov` | `Fn.camera_fov` |
-| `camera_shake` | `Fn.camera_shake` |
-| `camera_x` | `Fn.camera_x` |
-| `camera_y` | `Fn.camera_y` |
-| `camera_zoom` | `Fn.camera_zoom` |
-| `camera_zoom_to` | `Fn.camera_zoom_to` |
-| `can_craft` | `Fn.can_craft` |
-| `can_dive` | `Fn.can_dive` |
-| `cancel_timers` | `Fn.cancel_timers` |
-| `capitalize` | `Fn.capitalize` |
-| `capsule_cast` | `Fn.capsule_cast` |
-| `capsule_cast3` | `Fn.capsule_cast3` |
-| `capture_pose` | `Fn.capture_pose` |
-| `cast_ray` | `Fn.cast_ray` |
-| `ceil` | `Fn.ceil` |
-| `chance` | `Fn.chance` |
-| `char_at` | `Fn.char_at` |
-| `chase` | `Fn.chase` |
-| `check_action` | `Fn.check_action` |
-| `child_count` | `Fn.child_count` |
-| `choose` | `Fn.choose` |
-| `clamp` | `Fn.clamp` |
-| `clamp01` | `Fn.clamp01` |
-| `clear` | `Fn.clear` |
-| `clear_blend_tree` | `Fn.clear_blend_tree` |
-| `climb_up` | `Fn.climb_up` |
-| `clip_duration` | `Fn.clip_duration` |
-| `clip_finished` | `Fn.clip_finished` |
-| `clip_normalized` | `Fn.clip_normalized` |
-| `clip_speed` | `Fn.clip_speed` |
-| `clip_time` | `Fn.clip_time` |
-| `close_tab` | `Fn.close_tab` |
-| `cloud_delete` | `Fn.cloud_delete` |
-| `cloud_has` | `Fn.cloud_has` |
-| `cloud_list` | `Fn.cloud_list` |
-| `cloud_load` | `Fn.cloud_load` |
-| `cloud_save` | `Fn.cloud_save` |
-| `complete_objective` | `Fn.complete_objective` |
-| `complete_quest` | `Fn.complete_quest` |
-| `concat` | `Fn.concat` |
-| `contains` | `Fn.contains` |
-| `cooldown` | `Fn.cooldown` |
-| `cos` | `Fn.cos` |
-| `count` | `Fn.count` |
-| `count_fn` | `Fn.count_fn` |
-| `count_tag` | `Fn.count_tag` |
-| `count_with_tag` | `Fn.count_with_tag` |
-| `craft` | `Fn.craft` |
-| `create_object` | `Fn.create_object` |
-| `create_object_3d` | `Fn.create_object_3d` |
-| `crouch` | `Fn.crouch` |
-| `cursor_lock` | `Fn.cursor_lock` |
-| `cursor_lock_mode` | `Fn.cursor_lock_mode` |
-| `data_has` | `Fn.data_has` |
-| `data_num` | `Fn.data_num` |
-| `data_save` | `Fn.data_save` |
-| `data_set` | `Fn.data_set` |
-| `data_str` | `Fn.data_str` |
-| `deactivate` | `Fn.deactivate` |
-| `debug` | `Fn.debug` |
-| `debug_log` | `Fn.debug_log` |
-| `define_action` | `Fn.define_action` |
-| `define_direction` | `Fn.define_direction` |
-| `deg2rad` | `Fn.deg2rad` |
-| `delete_save` | `Fn.delete_save` |
-| `delta_angle` | `Fn.delta_angle` |
-| `delta_time` | `Fn.delta_time` |
-| `destroy` | `Fn.destroy` |
-| `destroy_obj` | `Fn.destroy_obj` |
-| `destroy_self` | `Fn.destroy_self` |
-| `detach` | `Fn.detach` |
-| `dialogue_active` | `Fn.dialogue_active` |
-| `die` | `Fn.die` |
-| `dist` | `Fn.dist` |
-| `dist3` | `Fn.dist3` |
-| `dist3_to` | `Fn.dist3_to` |
-| `dist_to` | `Fn.dist_to` |
-| `distance` | `Fn.distance` |
-| `distance_to` | `Fn.distance_to` |
-| `dive` | `Fn.dive` |
-| `dodge` | `Fn.dodge` |
-| `dot` | `Fn.dot` |
-| `double.Parse` | `Fn.double.Parse` |
-| `drop_item` | `Fn.drop_item` |
-| `drop_source` | `Fn.drop_source` |
-| `drop_target` | `Fn.drop_target` |
-| `dt` | `Fn.dt` |
-| `ease_back` | `Fn.ease_back` |
-| `ease_bounce` | `Fn.ease_bounce` |
-| `ease_curve` | `Fn.ease_curve` |
-| `ease_elastic` | `Fn.ease_elastic` |
-| `ease_in` | `Fn.ease_in` |
-| `ease_in_cubic` | `Fn.ease_in_cubic` |
-| `ease_in_out` | `Fn.ease_in_out` |
-| `ease_in_out_cubic` | `Fn.ease_in_out_cubic` |
-| `ease_out` | `Fn.ease_out` |
-| `ease_out_cubic` | `Fn.ease_out_cubic` |
-| `emit` | `Fn.emit` |
-| `emit_particles` | `Fn.emit_particles` |
-| `ends_with` | `Fn.ends_with` |
-| `equip` | `Fn.equip` |
-| `equipped` | `Fn.equipped` |
-| `every` | `Fn.every` |
-| `exists` | `Fn.exists` |
-| `exp` | `Fn.exp` |
-| `explode` | `Fn.explode` |
-| `face` | `Fn.face` |
-| `face_3d` | `Fn.face_3d` |
-| `face_velocity` | `Fn.face_velocity` |
-| `fail_quest` | `Fn.fail_quest` |
-| `filter_fn` | `Fn.filter_fn` |
-| `find_fn` | `Fn.find_fn` |
-| `fire_output` | `Fn.fire_output` |
-| `first` | `Fn.first` |
-| `flash` | `Fn.flash` |
-| `flee` | `Fn.flee` |
-| `flip_x` | `Fn.flip_x` |
-| `flip_y` | `Fn.flip_y` |
-| `float.Parse` | `Fn.float.Parse` |
-| `floor` | `Fn.floor` |
-| `fog_set` | `Fn.fog_set` |
-| `follow` | `Fn.follow` |
-| `follow3` | `Fn.follow3` |
-| `follower_set_speed` | `Fn.follower_set_speed` |
-| `for_each` | `Fn.for_each` |
-| `format` | `Fn.format` |
-| `forward_x` | `Fn.forward_x` |
-| `forward_y` | `Fn.forward_y` |
-| `forward_z` | `Fn.forward_z` |
-| `fps` | `Fn.fps` |
-| `frac` | `Fn.frac` |
-| `fract` | `Fn.fract` |
-| `frame_count` | `Fn.frame_count` |
-| `frame_time` | `Fn.frame_time` |
-| `from_json` | `Fn.from_json` |
-| `gameObject.CompareTag` | `Fn.gameObject.CompareTag` |
-| `gameObject.GetComponent` | `Fn.gameObject.GetComponent` |
-| `gameObject.SetActive` | `Fn.gameObject.SetActive` |
-| `game_autosave` | `Fn.game_autosave` |
-| `game_can_continue` | `Fn.game_can_continue` |
-| `game_continue` | `Fn.game_continue` |
-| `game_delete_slot` | `Fn.game_delete_slot` |
-| `game_load` | `Fn.game_load` |
-| `game_save` | `Fn.game_save` |
-| `game_slot_age` | `Fn.game_slot_age` |
-| `game_slot_exists` | `Fn.game_slot_exists` |
-| `game_slot_label` | `Fn.game_slot_label` |
-| `game_slot_text` | `Fn.game_slot_text` |
-| `game_time` | `Fn.game_time` |
-| `gamepad` | `Fn.gamepad` |
-| `gamepad_down` | `Fn.gamepad_down` |
-| `gamepad_x` | `Fn.gamepad_x` |
-| `gamepad_y` | `Fn.gamepad_y` |
-| `gc_get` | `Fn.gc_get` |
-| `gc_set` | `Fn.gc_set` |
-| `get` | `Fn.get` |
-| `get_anim` | `Fn.get_anim` |
-| `get_child` | `Fn.get_child` |
-| `get_clipboard_text` | `Fn.get_clipboard_text` |
-| `get_display_confirm_seconds` | `Fn.get_display_confirm_seconds` |
-| `get_display_height` | `Fn.get_display_height` |
-| `get_display_mode` | `Fn.get_display_mode` |
-| `get_display_resolutions` | `Fn.get_display_resolutions` |
-| `get_display_width` | `Fn.get_display_width` |
-| `get_hp` | `Fn.get_hp` |
-| `get_key` | `Fn.get_key` |
-| `get_key_down` | `Fn.get_key_down` |
-| `get_key_up` | `Fn.get_key_up` |
-| `get_language` | `Fn.get_language` |
-| `get_max_hp` | `Fn.get_max_hp` |
-| `get_monitor` | `Fn.get_monitor` |
-| `get_monitors` | `Fn.get_monitors` |
-| `get_object_var` | `Fn.get_object_var` |
-| `get_refresh_rate` | `Fn.get_refresh_rate` |
-| `get_refresh_rates` | `Fn.get_refresh_rates` |
-| `get_story` | `Fn.get_story` |
-| `get_tile` | `Fn.get_tile` |
-| `get_velocity_x` | `Fn.get_velocity_x` |
-| `get_velocity_y` | `Fn.get_velocity_y` |
-| `get_view` | `Fn.get_view` |
-| `get_x` | `Fn.get_x` |
-| `get_y` | `Fn.get_y` |
-| `get_z` | `Fn.get_z` |
-| `grid_add` | `Fn.grid_add` |
-| `grid_arrived` | `Fn.grid_arrived` |
-| `grid_block` | `Fn.grid_block` |
-| `grid_clear` | `Fn.grid_clear` |
-| `grid_fits` | `Fn.grid_fits` |
-| `grid_move_cell` | `Fn.grid_move_cell` |
-| `grid_move_to` | `Fn.grid_move_to` |
-| `grid_set_cell_cost` | `Fn.grid_set_cell_cost` |
-| `grid_set_tile_cost` | `Fn.grid_set_tile_cost` |
-| `grid_snap` | `Fn.grid_snap` |
-| `grid_stop` | `Fn.grid_stop` |
-| `grid_weight` | `Fn.grid_weight` |
-| `group_volume` | `Fn.group_volume` |
-| `has_clip` | `Fn.has_clip` |
-| `has_parent` | `Fn.has_parent` |
-| `has_save` | `Fn.has_save` |
-| `has_story` | `Fn.has_story` |
-| `has_tag` | `Fn.has_tag` |
-| `has_var` | `Fn.has_var` |
-| `heal` | `Fn.heal` |
-| `hex` | `Fn.hex` |
-| `hide` | `Fn.hide` |
-| `hide_object` | `Fn.hide_object` |
-| `hit_react` | `Fn.hit_react` |
-| `hit_stop` | `Fn.hit_stop` |
-| `hitch_count` | `Fn.hitch_count` |
-| `hold_charge` | `Fn.hold_charge` |
-| `hold_drop` | `Fn.hold_drop` |
-| `hold_nearest` | `Fn.hold_nearest` |
-| `hold_object` | `Fn.hold_object` |
-| `hold_pickup` | `Fn.hold_pickup` |
-| `hold_throw` | `Fn.hold_throw` |
-| `hurt` | `Fn.hurt` |
-| `hypot` | `Fn.hypot` |
-| `ik_clear_target` | `Fn.ik_clear_target` |
-| `ik_enable` | `Fn.ik_enable` |
-| `ik_foot` | `Fn.ik_foot` |
-| `ik_hand` | `Fn.ik_hand` |
-| `ik_look` | `Fn.ik_look` |
-| `ik_look_at` | `Fn.ik_look_at` |
-| `ik_reached` | `Fn.ik_reached` |
-| `ik_release` | `Fn.ik_release` |
-| `ik_set_pole` | `Fn.ik_set_pole` |
-| `ik_set_target` | `Fn.ik_set_target` |
-| `ik_set_weight` | `Fn.ik_set_weight` |
-| `index_of` | `Fn.index_of` |
-| `input_horizontal` | `Fn.input_horizontal` |
-| `input_vertical` | `Fn.input_vertical` |
-| `insert_at` | `Fn.insert_at` |
-| `instantiate` | `Fn.instantiate` |
-| `instantiate3` | `Fn.instantiate3` |
-| `int.Parse` | `Fn.int.Parse` |
-| `interact` | `Fn.interact` |
-| `inv_add` | `Fn.inv_add` |
-| `inv_capacity` | `Fn.inv_capacity` |
-| `inv_clear` | `Fn.inv_clear` |
-| `inv_count` | `Fn.inv_count` |
-| `inv_has` | `Fn.inv_has` |
-| `inv_move` | `Fn.inv_move` |
-| `inv_remove` | `Fn.inv_remove` |
-| `inv_select` | `Fn.inv_select` |
-| `inv_selected` | `Fn.inv_selected` |
-| `inv_set_slot` | `Fn.inv_set_slot` |
-| `inv_slot` | `Fn.inv_slot` |
-| `inv_transfer` | `Fn.inv_transfer` |
-| `inverse_lerp` | `Fn.inverse_lerp` |
-| `inverse_lerp_value` | `Fn.inverse_lerp_value` |
-| `invoke_after` | `Fn.invoke_after` |
-| `is_active` | `Fn.is_active` |
-| `is_array` | `Fn.is_array` |
-| `is_bool` | `Fn.is_bool` |
-| `is_dead` | `Fn.is_dead` |
-| `is_finite` | `Fn.is_finite` |
-| `is_hanging` | `Fn.is_hanging` |
-| `is_in_action` | `Fn.is_in_action` |
-| `is_key_down` | `Fn.is_key_down` |
-| `is_key_held` | `Fn.is_key_held` |
-| `is_map` | `Fn.is_map` |
-| `is_mouse_held` | `Fn.is_mouse_held` |
-| `is_moving` | `Fn.is_moving` |
-| `is_nan` | `Fn.is_nan` |
-| `is_num` | `Fn.is_num` |
-| `is_object_active` | `Fn.is_object_active` |
-| `is_overlapping` | `Fn.is_overlapping` |
-| `is_paused` | `Fn.is_paused` |
-| `is_paused_by` | `Fn.is_paused_by` |
-| `is_playing_clip` | `Fn.is_playing_clip` |
-| `is_ragdoll` | `Fn.is_ragdoll` |
-| `is_sitting` | `Fn.is_sitting` |
-| `is_str` | `Fn.is_str` |
-| `is_tweening` | `Fn.is_tweening` |
-| `item_def` | `Fn.item_def` |
-| `join` | `Fn.join` |
-| `json_parse` | `Fn.json_parse` |
-| `json_stringify` | `Fn.json_stringify` |
-| `jump` | `Fn.jump` |
-| `keep_display_settings` | `Fn.keep_display_settings` |
-| `keep_in_box` | `Fn.keep_in_box` |
-| `key` | `Fn.key` |
-| `key_down` | `Fn.key_down` |
-| `key_pressed` | `Fn.key_pressed` |
-| `key_released` | `Fn.key_released` |
-| `key_up` | `Fn.key_up` |
-| `kick_spread` | `Fn.kick_spread` |
-| `language_name` | `Fn.language_name` |
-| `languages` | `Fn.languages` |
-| `last` | `Fn.last` |
-| `layer_mask` | `Fn.layer_mask` |
-| `leaderboard_submit` | `Fn.leaderboard_submit` |
-| `leaderboard_top` | `Fn.leaderboard_top` |
-| `ledge_grab` | `Fn.ledge_grab` |
-| `len` | `Fn.len` |
-| `lerp` | `Fn.lerp` |
-| `lerp_angle` | `Fn.lerp_angle` |
-| `lerp_color` | `Fn.lerp_color` |
-| `let_go` | `Fn.let_go` |
-| `line_set_points` | `Fn.line_set_points` |
-| `load` | `Fn.load` |
-| `load_clips` | `Fn.load_clips` |
-| `load_game` | `Fn.load_game` |
-| `load_next_scene` | `Fn.load_next_scene` |
-| `load_number` | `Fn.load_number` |
-| `load_scene` | `Fn.load_scene` |
-| `load_scene_additive` | `Fn.load_scene_additive` |
-| `load_scene_index` | `Fn.load_scene_index` |
-| `load_scene_name` | `Fn.load_scene_name` |
-| `load_text` | `Fn.load_text` |
-| `load_value` | `Fn.load_value` |
-| `loc` | `Fn.loc` |
-| `log` | `Fn.log` |
-| `log_error` | `Fn.log_error` |
-| `log_info` | `Fn.log_info` |
-| `log_message` | `Fn.log_message` |
-| `log_warn` | `Fn.log_warn` |
-| `logic_press` | `Fn.logic_press` |
-| `logic_state` | `Fn.logic_state` |
-| `look_at` | `Fn.look_at` |
-| `look_at3` | `Fn.look_at3` |
-| `loot_roll` | `Fn.loot_roll` |
-| `lower` | `Fn.lower` |
-| `mantle` | `Fn.mantle` |
-| `map` | `Fn.map` |
-| `map_clear` | `Fn.map_clear` |
-| `map_count` | `Fn.map_count` |
-| `map_fn` | `Fn.map_fn` |
-| `map_get` | `Fn.map_get` |
-| `map_has` | `Fn.map_has` |
-| `map_keys` | `Fn.map_keys` |
-| `map_merge` | `Fn.map_merge` |
-| `map_remove` | `Fn.map_remove` |
-| `map_set` | `Fn.map_set` |
-| `map_values` | `Fn.map_values` |
-| `math_repeat` | `Fn.math_repeat` |
-| `max` | `Fn.max` |
-| `max3` | `Fn.max3` |
-| `max_of` | `Fn.max_of` |
-| `min` | `Fn.min` |
-| `min3` | `Fn.min3` |
-| `min_of` | `Fn.min_of` |
-| `mm_addr` | `Fn.mm_addr` |
-| `mm_count` | `Fn.mm_count` |
-| `mm_heartbeat` | `Fn.mm_heartbeat` |
-| `mm_host` | `Fn.mm_host` |
-| `mm_join` | `Fn.mm_join` |
-| `mm_max` | `Fn.mm_max` |
-| `mm_name` | `Fn.mm_name` |
-| `mm_players` | `Fn.mm_players` |
-| `mm_port` | `Fn.mm_port` |
-| `mm_refresh` | `Fn.mm_refresh` |
-| `mm_room` | `Fn.mm_room` |
-| `mm_unregister` | `Fn.mm_unregister` |
-| `mod` | `Fn.mod` |
-| `modal_close` | `Fn.modal_close` |
-| `modal_open` | `Fn.modal_open` |
-| `mouse` | `Fn.mouse` |
-| `mouse_down` | `Fn.mouse_down` |
-| `mouse_held` | `Fn.mouse_held` |
-| `mouse_position_x` | `Fn.mouse_position_x` |
-| `mouse_position_y` | `Fn.mouse_position_y` |
-| `mouse_pressed` | `Fn.mouse_pressed` |
-| `mouse_released` | `Fn.mouse_released` |
-| `mouse_up` | `Fn.mouse_up` |
-| `mouse_wheel` | `Fn.mouse_wheel` |
-| `mouse_x` | `Fn.mouse_x` |
-| `mouse_y` | `Fn.mouse_y` |
-| `move` | `Fn.move` |
-| `move3` | `Fn.move3` |
-| `move_by` | `Fn.move_by` |
-| `move_cam` | `Fn.move_cam` |
-| `move_camera` | `Fn.move_camera` |
-| `move_forward` | `Fn.move_forward` |
-| `move_input_x` | `Fn.move_input_x` |
-| `move_input_y` | `Fn.move_input_y` |
-| `move_right` | `Fn.move_right` |
-| `move_to` | `Fn.move_to` |
-| `move_toward` | `Fn.move_toward` |
-| `move_toward3` | `Fn.move_toward3` |
-| `move_toward_object` | `Fn.move_toward_object` |
-| `move_towards` | `Fn.move_towards` |
-| `move_towards_object` | `Fn.move_towards_object` |
-| `music_next` | `Fn.music_next` |
-| `music_pause` | `Fn.music_pause` |
-| `music_play` | `Fn.music_play` |
-| `music_previous` | `Fn.music_previous` |
-| `music_resume` | `Fn.music_resume` |
-| `music_stop` | `Fn.music_stop` |
-| `mute` | `Fn.mute` |
-| `mute_group` | `Fn.mute_group` |
-| `name` | `Fn.name` |
-| `nav_arrived` | `Fn.nav_arrived` |
-| `nav_move_to` | `Fn.nav_move_to` |
-| `nav_nearest_point` | `Fn.nav_nearest_point` |
-| `nav_path_exists` | `Fn.nav_path_exists` |
-| `nav_path_length` | `Fn.nav_path_length` |
-| `nav_point_walkable` | `Fn.nav_point_walkable` |
-| `nav_remaining` | `Fn.nav_remaining` |
-| `nav_stop` | `Fn.nav_stop` |
-| `nearest_tag` | `Fn.nearest_tag` |
-| `nearest_with_tag` | `Fn.nearest_with_tag` |
-| `net_all_ready` | `Fn.net_all_ready` |
-| `net_anticheat` | `Fn.net_anticheat` |
-| `net_anticheat_load` | `Fn.net_anticheat_load` |
-| `net_auth_token` | `Fn.net_auth_token` |
-| `net_authoritative` | `Fn.net_authoritative` |
-| `net_browser_address` | `Fn.net_browser_address` |
-| `net_browser_busy` | `Fn.net_browser_busy` |
-| `net_browser_close` | `Fn.net_browser_close` |
-| `net_browser_count` | `Fn.net_browser_count` |
-| `net_browser_is_open` | `Fn.net_browser_is_open` |
-| `net_browser_join` | `Fn.net_browser_join` |
-| `net_browser_locked` | `Fn.net_browser_locked` |
-| `net_browser_map` | `Fn.net_browser_map` |
-| `net_browser_max` | `Fn.net_browser_max` |
-| `net_browser_name` | `Fn.net_browser_name` |
-| `net_browser_open` | `Fn.net_browser_open` |
-| `net_browser_ping` | `Fn.net_browser_ping` |
-| `net_browser_players` | `Fn.net_browser_players` |
-| `net_browser_refresh` | `Fn.net_browser_refresh` |
-| `net_budget` | `Fn.net_budget` |
-| `net_chat` | `Fn.net_chat` |
-| `net_connected` | `Fn.net_connected` |
-| `net_despawn` | `Fn.net_despawn` |
-| `net_disconnect` | `Fn.net_disconnect` |
-| `net_encrypt` | `Fn.net_encrypt` |
-| `net_encrypted` | `Fn.net_encrypted` |
-| `net_get` | `Fn.net_get` |
-| `net_hit` | `Fn.net_hit` |
-| `net_host` | `Fn.net_host` |
-| `net_host_relay` | `Fn.net_host_relay` |
-| `net_id` | `Fn.net_id` |
-| `net_invite_friends` | `Fn.net_invite_friends` |
-| `net_is_client` | `Fn.net_is_client` |
-| `net_is_server` | `Fn.net_is_server` |
-| `net_join` | `Fn.net_join` |
-| `net_join_link` | `Fn.net_join_link` |
-| `net_join_relay` | `Fn.net_join_relay` |
-| `net_kick` | `Fn.net_kick` |
-| `net_launch_join` | `Fn.net_launch_join` |
-| `net_match_end` | `Fn.net_match_end` |
-| `net_match_seconds` | `Fn.net_match_seconds` |
-| `net_match_start` | `Fn.net_match_start` |
-| `net_match_started` | `Fn.net_match_started` |
-| `net_match_status` | `Fn.net_match_status` |
-| `net_max_speed` | `Fn.net_max_speed` |
-| `net_msg_channel` | `Fn.net_msg_channel` |
-| `net_msg_data` | `Fn.net_msg_data` |
-| `net_msg_from` | `Fn.net_msg_from` |
-| `net_name` | `Fn.net_name` |
-| `net_obj_id` | `Fn.net_obj_id` |
-| `net_obj_owned` | `Fn.net_obj_owned` |
-| `net_obj_rpc` | `Fn.net_obj_rpc` |
-| `net_obj_rpc_data` | `Fn.net_obj_rpc_data` |
-| `net_obj_rpc_from` | `Fn.net_obj_rpc_from` |
-| `net_obj_rpc_name` | `Fn.net_obj_rpc_name` |
-| `net_obj_rpc_poll` | `Fn.net_obj_rpc_poll` |
-| `net_obj_rpc_reliable` | `Fn.net_obj_rpc_reliable` |
-| `net_obj_rpc_to` | `Fn.net_obj_rpc_to` |
-| `net_peer_name` | `Fn.net_peer_name` |
-| `net_peers` | `Fn.net_peers` |
-| `net_pin_host` | `Fn.net_pin_host` |
-| `net_ping` | `Fn.net_ping` |
-| `net_poll` | `Fn.net_poll` |
-| `net_queue_accept` | `Fn.net_queue_accept` |
-| `net_queue_auto` | `Fn.net_queue_auto` |
-| `net_queue_cancel` | `Fn.net_queue_cancel` |
-| `net_queue_count` | `Fn.net_queue_count` |
-| `net_queue_error` | `Fn.net_queue_error` |
-| `net_queue_is_host` | `Fn.net_queue_is_host` |
-| `net_queue_join` | `Fn.net_queue_join` |
-| `net_queue_state` | `Fn.net_queue_state` |
-| `net_queue_time` | `Fn.net_queue_time` |
-| `net_rate_limit` | `Fn.net_rate_limit` |
-| `net_ready` | `Fn.net_ready` |
-| `net_ready_count` | `Fn.net_ready_count` |
-| `net_relay_ready` | `Fn.net_relay_ready` |
-| `net_room` | `Fn.net_room` |
-| `net_roster_count` | `Fn.net_roster_count` |
-| `net_roster_id` | `Fn.net_roster_id` |
-| `net_rpc` | `Fn.net_rpc` |
-| `net_score` | `Fn.net_score` |
-| `net_send` | `Fn.net_send` |
-| `net_send_reliable` | `Fn.net_send_reliable` |
-| `net_send_reliable_to` | `Fn.net_send_reliable_to` |
-| `net_send_to` | `Fn.net_send_to` |
-| `net_server_name` | `Fn.net_server_name` |
-| `net_set` | `Fn.net_set` |
-| `net_set_pawn` | `Fn.net_set_pawn` |
-| `net_set_score` | `Fn.net_set_score` |
-| `net_spawn` | `Fn.net_spawn` |
-| `net_spawn_owned` | `Fn.net_spawn_owned` |
-| `net_start_match` | `Fn.net_start_match` |
-| `net_stats_mine` | `Fn.net_stats_mine` |
-| `net_stats_top` | `Fn.net_stats_top` |
-| `net_syncvar_get` | `Fn.net_syncvar_get` |
-| `net_syncvar_set` | `Fn.net_syncvar_set` |
-| `net_teleport` | `Fn.net_teleport` |
-| `net_tick` | `Fn.net_tick` |
-| `net_tick_rate` | `Fn.net_tick_rate` |
-| `net_user_id` | `Fn.net_user_id` |
-| `net_violations` | `Fn.net_violations` |
-| `net_was_kicked` | `Fn.net_was_kicked` |
-| `noise` | `Fn.noise` |
-| `npc_busy` | `Fn.npc_busy` |
-| `npc_goto` | `Fn.npc_goto` |
-| `npc_state` | `Fn.npc_state` |
-| `npc_stop` | `Fn.npc_stop` |
-| `num` | `Fn.num` |
-| `obj_x` | `Fn.obj_x` |
-| `obj_y` | `Fn.obj_y` |
-| `obj_z` | `Fn.obj_z` |
-| `object_exists` | `Fn.object_exists` |
-| `object_x` | `Fn.object_x` |
-| `object_y` | `Fn.object_y` |
-| `object_z` | `Fn.object_z` |
-| `on_key` | `Fn.on_key` |
-| `on_key_move` | `Fn.on_key_move` |
-| `on_key_move3` | `Fn.on_key_move3` |
-| `once` | `Fn.once` |
-| `orbit` | `Fn.orbit` |
-| `overlap` | `Fn.overlap` |
-| `overlap3` | `Fn.overlap3` |
-| `overlap_box` | `Fn.overlap_box` |
-| `overlap_box3` | `Fn.overlap_box3` |
-| `overlap_capsule` | `Fn.overlap_capsule` |
-| `overlap_capsule3` | `Fn.overlap_capsule3` |
-| `overlap_sphere3` | `Fn.overlap_sphere3` |
-| `pad_left` | `Fn.pad_left` |
-| `pad_right` | `Fn.pad_right` |
-| `parent_of` | `Fn.parent_of` |
-| `parse_int` | `Fn.parse_int` |
-| `particles_alive` | `Fn.particles_alive` |
-| `particles_on` | `Fn.particles_on` |
-| `patrol` | `Fn.patrol` |
-| `pause_game` | `Fn.pause_game` |
-| `pf_delete` | `Fn.pf_delete` |
-| `pf_error` | `Fn.pf_error` |
-| `pf_id` | `Fn.pf_id` |
-| `pf_leaderboard_top` | `Fn.pf_leaderboard_top` |
-| `pf_load` | `Fn.pf_load` |
-| `pf_logged_in` | `Fn.pf_logged_in` |
-| `pf_login` | `Fn.pf_login` |
-| `pf_login_password` | `Fn.pf_login_password` |
-| `pf_name` | `Fn.pf_name` |
-| `pf_register` | `Fn.pf_register` |
-| `pf_save` | `Fn.pf_save` |
-| `pf_set_stat` | `Fn.pf_set_stat` |
-| `pi` | `Fn.pi` |
-| `pick` | `Fn.pick` |
-| `ping_pong` | `Fn.ping_pong` |
-| `place_at` | `Fn.place_at` |
-| `platformer` | `Fn.platformer` |
-| `play_action` | `Fn.play_action` |
-| `play_anim` | `Fn.play_anim` |
-| `play_audio` | `Fn.play_audio` |
-| `play_clip` | `Fn.play_clip` |
-| `play_clip_once` | `Fn.play_clip_once` |
-| `play_layer` | `Fn.play_layer` |
-| `play_sequence` | `Fn.play_sequence` |
-| `play_sfx` | `Fn.play_sfx` |
-| `play_sound` | `Fn.play_sound` |
-| `play_time` | `Fn.play_time` |
-| `playing_clip` | `Fn.playing_clip` |
-| `point_overlaps` | `Fn.point_overlaps` |
-| `pool_get` | `Fn.pool_get` |
-| `pool_idle` | `Fn.pool_idle` |
-| `pool_prewarm` | `Fn.pool_prewarm` |
-| `pool_release` | `Fn.pool_release` |
-| `pop` | `Fn.pop` |
-| `pop_pause` | `Fn.pop_pause` |
-| `pos_x` | `Fn.pos_x` |
-| `pos_y` | `Fn.pos_y` |
-| `pos_z` | `Fn.pos_z` |
-| `position_of` | `Fn.position_of` |
-| `position_x` | `Fn.position_x` |
-| `position_y` | `Fn.position_y` |
-| `position_z` | `Fn.position_z` |
-| `post_set` | `Fn.post_set` |
-| `pow` | `Fn.pow` |
-| `prefs_get` | `Fn.prefs_get` |
-| `prefs_get_str` | `Fn.prefs_get_str` |
-| `prefs_load` | `Fn.prefs_load` |
-| `prefs_save` | `Fn.prefs_save` |
-| `prefs_set` | `Fn.prefs_set` |
-| `print` | `Fn.print` |
-| `prone` | `Fn.prone` |
-| `pulse` | `Fn.pulse` |
-| `push` | `Fn.push` |
-| `push_pause` | `Fn.push_pause` |
-| `quest_active` | `Fn.quest_active` |
-| `quest_completed` | `Fn.quest_completed` |
-| `quest_state` | `Fn.quest_state` |
-| `quit` | `Fn.quit` |
-| `rad2deg` | `Fn.rad2deg` |
-| `ragdoll` | `Fn.ragdoll` |
-| `ragdoll_push` | `Fn.ragdoll_push` |
-| `raise` | `Fn.raise` |
-| `ramp_time_scale` | `Fn.ramp_time_scale` |
-| `ramp_timescale` | `Fn.ramp_timescale` |
-| `rand` | `Fn.rand` |
-| `randi` | `Fn.randi` |
-| `random` | `Fn.random` |
-| `random_chance` | `Fn.random_chance` |
-| `random_float` | `Fn.random_float` |
-| `random_int` | `Fn.random_int` |
-| `random_range` | `Fn.random_range` |
-| `range` | `Fn.range` |
-| `ray3_cast` | `Fn.ray3_cast` |
-| `ray3_dist` | `Fn.ray3_dist` |
-| `ray3_hit` | `Fn.ray3_hit` |
-| `ray3_normal` | `Fn.ray3_normal` |
-| `ray3_nx` | `Fn.ray3_nx` |
-| `ray3_ny` | `Fn.ray3_ny` |
-| `ray3_nz` | `Fn.ray3_nz` |
-| `ray3_object` | `Fn.ray3_object` |
-| `ray3_point` | `Fn.ray3_point` |
-| `ray3_x` | `Fn.ray3_x` |
-| `ray3_y` | `Fn.ray3_y` |
-| `ray3_z` | `Fn.ray3_z` |
-| `ray_all_count` | `Fn.ray_all_count` |
-| `ray_all_dist` | `Fn.ray_all_dist` |
-| `ray_all_normal` | `Fn.ray_all_normal` |
-| `ray_all_object` | `Fn.ray_all_object` |
-| `ray_all_point` | `Fn.ray_all_point` |
-| `ray_dist` | `Fn.ray_dist` |
-| `ray_hit` | `Fn.ray_hit` |
-| `ray_nx` | `Fn.ray_nx` |
-| `ray_ny` | `Fn.ray_ny` |
-| `ray_object` | `Fn.ray_object` |
-| `ray_x` | `Fn.ray_x` |
-| `ray_y` | `Fn.ray_y` |
-| `raycast` | `Fn.raycast` |
-| `raycast3` | `Fn.raycast3` |
-| `raycast_all` | `Fn.raycast_all` |
-| `raycast_all3` | `Fn.raycast_all3` |
-| `raycast_hit` | `Fn.raycast_hit` |
-| `raycast_hit3` | `Fn.raycast_hit3` |
-| `read_save` | `Fn.read_save` |
-| `rebind` | `Fn.rebind` |
-| `recoil` | `Fn.recoil` |
-| `reduce_fn` | `Fn.reduce_fn` |
-| `reload_scene` | `Fn.reload_scene` |
-| `remap` | `Fn.remap` |
-| `remove_at` | `Fn.remove_at` |
-| `remove_object` | `Fn.remove_object` |
-| `repeat` | `Fn.repeat` |
-| `repeat_every` | `Fn.repeat_every` |
-| `replace` | `Fn.replace` |
-| `reverse` | `Fn.reverse` |
-| `revert_display_settings` | `Fn.revert_display_settings` |
-| `revive` | `Fn.revive` |
-| `right_x` | `Fn.right_x` |
-| `right_y` | `Fn.right_y` |
-| `right_z` | `Fn.right_z` |
-| `roll` | `Fn.roll` |
-| `roll_chance` | `Fn.roll_chance` |
-| `rotate` | `Fn.rotate` |
-| `rotate3` | `Fn.rotate3` |
-| `rotate_z` | `Fn.rotate_z` |
-| `rotation_euler` | `Fn.rotation_euler` |
-| `round` | `Fn.round` |
-| `rumble` | `Fn.rumble` |
-| `run_action` | `Fn.run_action` |
-| `run_from` | `Fn.run_from` |
-| `save` | `Fn.save` |
-| `save_ago` | `Fn.save_ago` |
-| `save_audio_settings` | `Fn.save_audio_settings` |
-| `save_clear` | `Fn.save_clear` |
-| `save_date` | `Fn.save_date` |
-| `save_delete` | `Fn.save_delete` |
-| `save_delete_file` | `Fn.save_delete_file` |
-| `save_exists` | `Fn.save_exists` |
-| `save_game` | `Fn.save_game` |
-| `save_has` | `Fn.save_has` |
-| `save_label` | `Fn.save_label` |
-| `save_play_text` | `Fn.save_play_text` |
-| `save_play_time` | `Fn.save_play_time` |
-| `save_scene` | `Fn.save_scene` |
-| `save_slots` | `Fn.save_slots` |
-| `save_valid` | `Fn.save_valid` |
-| `save_value` | `Fn.save_value` |
-| `scale_x` | `Fn.scale_x` |
-| `scale_y` | `Fn.scale_y` |
-| `scale_z` | `Fn.scale_z` |
-| `scene_count` | `Fn.scene_count` |
-| `scene_index` | `Fn.scene_index` |
-| `scene_name` | `Fn.scene_name` |
-| `score` | `Fn.score` |
-| `screen_h` | `Fn.screen_h` |
-| `screen_height` | `Fn.screen_height` |
-| `screen_w` | `Fn.screen_w` |
-| `screen_width` | `Fn.screen_width` |
-| `seat_prompt` | `Fn.seat_prompt` |
-| `self_active` | `Fn.self_active` |
-| `send_event` | `Fn.send_event` |
-| `send_message` | `Fn.send_message` |
-| `seq_append` | `Fn.seq_append` |
-| `seq_callback` | `Fn.seq_callback` |
-| `seq_insert` | `Fn.seq_insert` |
-| `seq_insert_callback` | `Fn.seq_insert_callback` |
-| `seq_interval` | `Fn.seq_interval` |
-| `seq_join` | `Fn.seq_join` |
-| `seq_join_callback` | `Fn.seq_join_callback` |
-| `seq_new` | `Fn.seq_new` |
-| `seq_prepend` | `Fn.seq_prepend` |
-| `seq_prepend_interval` | `Fn.seq_prepend_interval` |
-| `sequence_playing` | `Fn.sequence_playing` |
-| `sequence_time` | `Fn.sequence_time` |
-| `session_frame_count` | `Fn.session_frame_count` |
-| `session_time` | `Fn.session_time` |
-| `session_unscaled_time` | `Fn.session_unscaled_time` |
-| `set` | `Fn.set` |
-| `set_active` | `Fn.set_active` |
-| `set_active_of` | `Fn.set_active_of` |
-| `set_ambient` | `Fn.set_ambient` |
-| `set_anim` | `Fn.set_anim` |
-| `set_background` | `Fn.set_background` |
-| `set_background_color` | `Fn.set_background_color` |
-| `set_bar_format` | `Fn.set_bar_format` |
-| `set_bar_segments` | `Fn.set_bar_segments` |
-| `set_bar_trail` | `Fn.set_bar_trail` |
-| `set_bg` | `Fn.set_bg` |
-| `set_button_ease` | `Fn.set_button_ease` |
-| `set_button_enabled` | `Fn.set_button_enabled` |
-| `set_cam` | `Fn.set_cam` |
-| `set_cam_zoom` | `Fn.set_cam_zoom` |
-| `set_camera` | `Fn.set_camera` |
-| `set_camera_zoom` | `Fn.set_camera_zoom` |
-| `set_character_model` | `Fn.set_character_model` |
-| `set_clipboard_text` | `Fn.set_clipboard_text` |
-| `set_color` | `Fn.set_color` |
-| `set_display_mode` | `Fn.set_display_mode` |
-| `set_display_resolution` | `Fn.set_display_resolution` |
-| `set_dropdown_icon` | `Fn.set_dropdown_icon` |
-| `set_dropdown_max` | `Fn.set_dropdown_max` |
-| `set_dropdown_search` | `Fn.set_dropdown_search` |
-| `set_ducking` | `Fn.set_ducking` |
-| `set_emissive` | `Fn.set_emissive` |
-| `set_flip_x` | `Fn.set_flip_x` |
-| `set_flip_y` | `Fn.set_flip_y` |
-| `set_glyph` | `Fn.set_glyph` |
-| `set_gravity` | `Fn.set_gravity` |
-| `set_gravity3` | `Fn.set_gravity3` |
-| `physics_steps` | `Fn.physics_steps` |
-| `set_physics_steps` | `Fn.set_physics_steps` |
-| `physics_smooth` | `Fn.physics_smooth` |
-| `set_physics_smooth` | `Fn.set_physics_smooth` |
-| `set_group_volume` | `Fn.set_group_volume` |
-| `set_image` | `Fn.set_image` |
-| `set_input_limit` | `Fn.set_input_limit` |
-| `set_input_multiline` | `Fn.set_input_multiline` |
-| `set_input_type` | `Fn.set_input_type` |
-| `set_interactable` | `Fn.set_interactable` |
-| `set_language` | `Fn.set_language` |
-| `set_light` | `Fn.set_light` |
-| `set_light_angle` | `Fn.set_light_angle` |
-| `set_light_color` | `Fn.set_light_color` |
-| `set_light_direction` | `Fn.set_light_direction` |
-| `set_light_intensity` | `Fn.set_light_intensity` |
-| `set_light_range` | `Fn.set_light_range` |
-| `set_master_volume` | `Fn.set_master_volume` |
-| `set_mesh` | `Fn.set_mesh` |
-| `set_monitor` | `Fn.set_monitor` |
-| `set_mesh_texture` | `Fn.set_mesh_texture` |
-| `set_modal_cancel` | `Fn.set_modal_cancel` |
-| `set_modal_confirm` | `Fn.set_modal_confirm` |
-| `set_modal_message` | `Fn.set_modal_message` |
-| `set_modal_style` | `Fn.set_modal_style` |
-| `set_modal_title` | `Fn.set_modal_title` |
-| `set_name` | `Fn.set_name` |
-| `set_object_position` | `Fn.set_object_position` |
-| `set_object_var` | `Fn.set_object_var` |
-| `set_parent` | `Fn.set_parent` |
-| `set_pos` | `Fn.set_pos` |
-| `set_pos3` | `Fn.set_pos3` |
-| `set_position` | `Fn.set_position` |
-| `set_position_x` | `Fn.set_position_x` |
-| `set_position_y` | `Fn.set_position_y` |
-| `set_progress` | `Fn.set_progress` |
-| `set_progress_bar` | `Fn.set_progress_bar` |
-| `set_radial` | `Fn.set_radial` |
-| `set_refresh_rate` | `Fn.set_refresh_rate` |
-| `set_radial_clockwise` | `Fn.set_radial_clockwise` |
-| `set_radial_percent` | `Fn.set_radial_percent` |
-| `set_radial_spin` | `Fn.set_radial_spin` |
-| `set_radial_start` | `Fn.set_radial_start` |
-| `set_radial_thickness` | `Fn.set_radial_thickness` |
-| `set_root_motion` | `Fn.set_root_motion` |
-| `set_rot3` | `Fn.set_rot3` |
-| `set_rotation` | `Fn.set_rotation` |
-| `set_scale` | `Fn.set_scale` |
-| `set_scale3` | `Fn.set_scale3` |
-| `set_score` | `Fn.set_score` |
-| `set_scroll_bar` | `Fn.set_scroll_bar` |
-| `set_scroll_elastic` | `Fn.set_scroll_elastic` |
-| `set_scroll_inertia` | `Fn.set_scroll_inertia` |
-| `set_size` | `Fn.set_size` |
-| `set_slider` | `Fn.set_slider` |
-| `set_slider_format` | `Fn.set_slider_format` |
-| `set_slider_step` | `Fn.set_slider_step` |
-| `set_slot` | `Fn.set_slot` |
-| `set_specular` | `Fn.set_specular` |
-| `set_spread` | `Fn.set_spread` |
-| `set_spread_recover` | `Fn.set_spread_recover` |
-| `set_sprite` | `Fn.set_sprite` |
-| `set_stance` | `Fn.set_stance` |
-| `set_story` | `Fn.set_story` |
-| `set_story_flag` | `Fn.set_story_flag` |
-| `set_swatch` | `Fn.set_swatch` |
-| `set_tab` | `Fn.set_tab` |
-| `set_tab_badge` | `Fn.set_tab_badge` |
-| `set_tab_enabled` | `Fn.set_tab_enabled` |
-| `set_tabs_closable` | `Fn.set_tabs_closable` |
-| `set_tag` | `Fn.set_tag` |
-| `set_text` | `Fn.set_text` |
-| `set_text_of` | `Fn.set_text_of` |
-| `set_texture` | `Fn.set_texture` |
-| `set_tile` | `Fn.set_tile` |
-| `set_tiling` | `Fn.set_tiling` |
-| `set_time_scale` | `Fn.set_time_scale` |
-| `set_timescale` | `Fn.set_timescale` |
-| `set_tint` | `Fn.set_tint` |
-| `set_toast_corner` | `Fn.set_toast_corner` |
-| `set_toast_duration` | `Fn.set_toast_duration` |
-| `set_toast_max` | `Fn.set_toast_max` |
-| `set_toggle` | `Fn.set_toggle` |
-| `set_tooltip_delay` | `Fn.set_tooltip_delay` |
-| `set_tooltip_offset` | `Fn.set_tooltip_offset` |
-| `set_tooltip_rich` | `Fn.set_tooltip_rich` |
-| `set_ui_image` | `Fn.set_ui_image` |
-| `set_ui_theme` | `Fn.set_ui_theme` |
-| `set_unlit` | `Fn.set_unlit` |
-| `set_velocity` | `Fn.set_velocity` |
-| `set_velocity3` | `Fn.set_velocity3` |
-| `set_view` | `Fn.set_view` |
-| `set_visible` | `Fn.set_visible` |
-| `set_volume` | `Fn.set_volume` |
-| `set_vx` | `Fn.set_vx` |
-| `set_vy` | `Fn.set_vy` |
-| `set_vz` | `Fn.set_vz` |
-| `set_x` | `Fn.set_x` |
-| `set_y` | `Fn.set_y` |
-| `set_z` | `Fn.set_z` |
-| `set_zoom` | `Fn.set_zoom` |
-| `shake` | `Fn.shake` |
-| `shake_camera` | `Fn.shake_camera` |
-| `shimmy` | `Fn.shimmy` |
-| `shl` | `Fn.shl` |
-| `shoot_at` | `Fn.shoot_at` |
-| `show` | `Fn.show` |
-| `show_cursor` | `Fn.show_cursor` |
-| `show_object` | `Fn.show_object` |
-| `shr` | `Fn.shr` |
-| `shuffle` | `Fn.shuffle` |
-| `sign` | `Fn.sign` |
-| `sin` | `Fn.sin` |
-| `sit` | `Fn.sit` |
-| `slice` | `Fn.slice` |
-| `slider_value` | `Fn.slider_value` |
-| `slot_value` | `Fn.slot_value` |
-| `slow_motion` | `Fn.slow_motion` |
-| `smooth_follow` | `Fn.smooth_follow` |
-| `smoothstep` | `Fn.smoothstep` |
-| `snap` | `Fn.snap` |
-| `sort_num` | `Fn.sort_num` |
-| `sort_str` | `Fn.sort_str` |
-| `spawn` | `Fn.spawn` |
-| `spawn3` | `Fn.spawn3` |
-| `spawn_pickup` | `Fn.spawn_pickup` |
-| `spawn_wave` | `Fn.spawn_wave` |
-| `spawner_alive` | `Fn.spawner_alive` |
-| `spawner_start` | `Fn.spawner_start` |
-| `spawner_stop` | `Fn.spawner_stop` |
-| `sphere_cast3` | `Fn.sphere_cast3` |
-| `spin` | `Fn.spin` |
-| `spline_length` | `Fn.spline_length` |
-| `spline_point` | `Fn.spline_point` |
-| `split` | `Fn.split` |
-| `spring_to` | `Fn.spring_to` |
-| `sprite_size` | `Fn.sprite_size` |
-| `sqrt` | `Fn.sqrt` |
-| `stand` | `Fn.stand` |
-| `stand_up` | `Fn.stand_up` |
-| `start_dialogue` | `Fn.start_dialogue` |
-| `start_quest` | `Fn.start_quest` |
-| `starts_with` | `Fn.starts_with` |
-| `steam_achievement_count` | `Fn.steam_achievement_count` |
-| `steam_achievement_name` | `Fn.steam_achievement_name` |
-| `steam_clear` | `Fn.steam_clear` |
-| `steam_cloud_count` | `Fn.steam_cloud_count` |
-| `steam_cloud_delete` | `Fn.steam_cloud_delete` |
-| `steam_cloud_has` | `Fn.steam_cloud_has` |
-| `steam_cloud_read` | `Fn.steam_cloud_read` |
-| `steam_cloud_write` | `Fn.steam_cloud_write` |
-| `steam_friend_id` | `Fn.steam_friend_id` |
-| `steam_friend_name` | `Fn.steam_friend_name` |
-| `steam_friends` | `Fn.steam_friends` |
-| `steam_get_presence` | `Fn.steam_get_presence` |
-| `steam_get_stat` | `Fn.steam_get_stat` |
-| `steam_get_stat_int` | `Fn.steam_get_stat_int` |
-| `steam_inc_stat` | `Fn.steam_inc_stat` |
-| `steam_inc_stat_int` | `Fn.steam_inc_stat_int` |
-| `steam_invite` | `Fn.steam_invite` |
-| `steam_is_unlocked` | `Fn.steam_is_unlocked` |
-| `steam_language` | `Fn.steam_language` |
-| `steam_leaderboard` | `Fn.steam_leaderboard` |
-| `steam_leaderboard_top` | `Fn.steam_leaderboard_top` |
-| `steam_lobby_create` | `Fn.steam_lobby_create` |
-| `steam_lobby_current` | `Fn.steam_lobby_current` |
-| `steam_lobby_get_data` | `Fn.steam_lobby_get_data` |
-| `steam_lobby_join` | `Fn.steam_lobby_join` |
-| `steam_lobby_leave` | `Fn.steam_lobby_leave` |
-| `steam_lobby_list` | `Fn.steam_lobby_list` |
-| `steam_lobby_members` | `Fn.steam_lobby_members` |
-| `steam_lobby_set_data` | `Fn.steam_lobby_set_data` |
-| `steam_name` | `Fn.steam_name` |
-| `steam_overlay` | `Fn.steam_overlay` |
-| `steam_owns` | `Fn.steam_owns` |
-| `steam_owns_dlc` | `Fn.steam_owns_dlc` |
-| `steam_presence` | `Fn.steam_presence` |
-| `steam_progress` | `Fn.steam_progress` |
-| `steam_set_stat` | `Fn.steam_set_stat` |
-| `steam_set_stat_int` | `Fn.steam_set_stat_int` |
-| `steam_store` | `Fn.steam_store` |
-| `steam_unlock` | `Fn.steam_unlock` |
-| `steam_workshop_count` | `Fn.steam_workshop_count` |
-| `steam_workshop_path` | `Fn.steam_workshop_path` |
-| `steam_workshop_publish` | `Fn.steam_workshop_publish` |
-| `steam_workshop_subscribe` | `Fn.steam_workshop_subscribe` |
-| `steam_workshop_unsubscribe` | `Fn.steam_workshop_unsubscribe` |
-| `stop` | `Fn.stop` |
-| `stop_anim` | `Fn.stop_anim` |
-| `stop_clip` | `Fn.stop_clip` |
-| `stop_dialogue` | `Fn.stop_dialogue` |
-| `stop_layer` | `Fn.stop_layer` |
-| `stop_sequence` | `Fn.stop_sequence` |
-| `story_flag` | `Fn.story_flag` |
-| `str` | `Fn.str` |
-| `str_contains` | `Fn.str_contains` |
-| `str_find` | `Fn.str_find` |
-| `str_len` | `Fn.str_len` |
-| `str_repeat` | `Fn.str_repeat` |
-| `str_reverse` | `Fn.str_reverse` |
-| `string.Format` | `Fn.string.Format` |
-| `string.IsNullOrEmpty` | `Fn.string.IsNullOrEmpty` |
-| `string.IsNullOrWhiteSpace` | `Fn.string.IsNullOrWhiteSpace` |
-| `string.Join` | `Fn.string.Join` |
-| `string_length` | `Fn.string_length` |
-| `substr` | `Fn.substr` |
-| `sum` | `Fn.sum` |
-| `swatch_value` | `Fn.swatch_value` |
-| `tab_value` | `Fn.tab_value` |
-| `tag` | `Fn.tag` |
-| `tag_of` | `Fn.tag_of` |
-| `tan` | `Fn.tan` |
-| `tile_h` | `Fn.tile_h` |
-| `tile_resize` | `Fn.tile_resize` |
-| `tile_w` | `Fn.tile_w` |
-| `time` | `Fn.time` |
-| `time_elapsed` | `Fn.time_elapsed` |
-| `time_of_day` | `Fn.time_of_day` |
-| `time_scale` | `Fn.time_scale` |
-| `timer` | `Fn.timer` |
-| `timescale` | `Fn.timescale` |
-| `title_case` | `Fn.title_case` |
-| `to_fixed` | `Fn.to_fixed` |
-| `to_json` | `Fn.to_json` |
-| `to_num` | `Fn.to_num` |
-| `to_number` | `Fn.to_number` |
-| `to_str` | `Fn.to_str` |
-| `to_string` | `Fn.to_string` |
-| `toast_count` | `Fn.toast_count` |
-| `toast_push` | `Fn.toast_push` |
-| `toggle_journal` | `Fn.toggle_journal` |
-| `toggle_on` | `Fn.toggle_on` |
-| `trace` | `Fn.trace` |
-| `trail_clear` | `Fn.trail_clear` |
-| `transform.LookAt` | `Fn.transform.LookAt` |
-| `transform.Rotate` | `Fn.transform.Rotate` |
-| `transform.Translate` | `Fn.transform.Translate` |
-| `translate` | `Fn.translate` |
-| `trim` | `Fn.trim` |
-| `trim_end` | `Fn.trim_end` |
-| `trim_start` | `Fn.trim_start` |
-| `turn` | `Fn.turn` |
-| `tween_active` | `Fn.tween_active` |
-| `tween_backwards` | `Fn.tween_backwards` |
-| `tween_call` | `Fn.tween_call` |
-| `tween_clock` | `Fn.tween_clock` |
-| `tween_color` | `Fn.tween_color` |
-| `tween_complete` | `Fn.tween_complete` |
-| `tween_complete_tag` | `Fn.tween_complete_tag` |
-| `tween_decay` | `Fn.tween_decay` |
-| `tween_delay` | `Fn.tween_delay` |
-| `tween_ease` | `Fn.tween_ease` |
-| `tween_fade` | `Fn.tween_fade` |
-| `tween_from` | `Fn.tween_from` |
-| `tween_goto` | `Fn.tween_goto` |
-| `tween_jump` | `Fn.tween_jump` |
-| `tween_keep` | `Fn.tween_keep` |
-| `tween_kill` | `Fn.tween_kill` |
-| `tween_kill_all` | `Fn.tween_kill_all` |
-| `tween_kill_id` | `Fn.tween_kill_id` |
-| `tween_kill_tag` | `Fn.tween_kill_tag` |
-| `tween_loop_move` | `Fn.tween_loop_move` |
-| `tween_loop_rotate` | `Fn.tween_loop_rotate` |
-| `tween_loop_scale` | `Fn.tween_loop_scale` |
-| `tween_loops` | `Fn.tween_loops` |
-| `tween_move` | `Fn.tween_move` |
-| `tween_move3` | `Fn.tween_move3` |
-| `tween_move_by` | `Fn.tween_move_by` |
-| `tween_move_world` | `Fn.tween_move_world` |
-| `tween_number` | `Fn.tween_number` |
-| `tween_on_complete` | `Fn.tween_on_complete` |
-| `tween_on_start` | `Fn.tween_on_start` |
-| `tween_on_step` | `Fn.tween_on_step` |
-| `tween_on_update` | `Fn.tween_on_update` |
-| `tween_path` | `Fn.tween_path` |
-| `tween_path_smooth` | `Fn.tween_path_smooth` |
-| `tween_pause` | `Fn.tween_pause` |
-| `tween_pause_all` | `Fn.tween_pause_all` |
-| `tween_pause_id` | `Fn.tween_pause_id` |
-| `tween_pause_tag` | `Fn.tween_pause_tag` |
-| `tween_play` | `Fn.tween_play` |
-| `tween_play_all` | `Fn.tween_play_all` |
-| `tween_play_id` | `Fn.tween_play_id` |
-| `tween_play_tag` | `Fn.tween_play_tag` |
-| `tween_playing` | `Fn.tween_playing` |
-| `tween_progress` | `Fn.tween_progress` |
-| `tween_prop` | `Fn.tween_prop` |
-| `tween_punch_pos` | `Fn.tween_punch_pos` |
-| `tween_punch_rotate` | `Fn.tween_punch_rotate` |
-| `tween_punch_scale` | `Fn.tween_punch_scale` |
-| `tween_relative` | `Fn.tween_relative` |
-| `tween_restart` | `Fn.tween_restart` |
-| `tween_restart_id` | `Fn.tween_restart_id` |
-| `tween_rewind` | `Fn.tween_rewind` |
-| `tween_rewind_id` | `Fn.tween_rewind_id` |
-| `tween_rotate` | `Fn.tween_rotate` |
-| `tween_rotate3` | `Fn.tween_rotate3` |
-| `tween_rotate_to` | `Fn.tween_rotate_to` |
-| `tween_scale` | `Fn.tween_scale` |
-| `tween_scale_xy` | `Fn.tween_scale_xy` |
-| `tween_set_id` | `Fn.tween_set_id` |
-| `tween_shake` | `Fn.tween_shake` |
-| `tween_shake_rotate` | `Fn.tween_shake_rotate` |
-| `tween_shake_scale` | `Fn.tween_shake_scale` |
-| `tween_speed` | `Fn.tween_speed` |
-| `tween_speed_based` | `Fn.tween_speed_based` |
-| `tween_tag` | `Fn.tween_tag` |
-| `tween_text` | `Fn.tween_text` |
-| `tween_toggle` | `Fn.tween_toggle` |
-| `tween_ui_move` | `Fn.tween_ui_move` |
-| `tween_ui_size` | `Fn.tween_ui_size` |
-| `tween_unscaled` | `Fn.tween_unscaled` |
-| `tween_var` | `Fn.tween_var` |
-| `typeof` | `Fn.typeof` |
-| `ui_avatar` | `Fn.ui_avatar` |
-| `ui_badge` | `Fn.ui_badge` |
-| `ui_begin` | `Fn.ui_begin` |
-| `ui_button` | `Fn.ui_button` |
-| `ui_caption` | `Fn.ui_caption` |
-| `ui_card_begin` | `Fn.ui_card_begin` |
-| `ui_card_end` | `Fn.ui_card_end` |
-| `ui_checkbox` | `Fn.ui_checkbox` |
-| `ui_clicked` | `Fn.ui_clicked` |
-| `ui_damage_number` | `Fn.ui_damage_number` |
-| `ui_dialogue_choice` | `Fn.ui_dialogue_choice` |
-| `ui_dialogue_open` | `Fn.ui_dialogue_open` |
-| `ui_dialogue_show` | `Fn.ui_dialogue_show` |
-| `ui_drop_source` | `Fn.ui_drop_source` |
-| `ui_drop_target` | `Fn.ui_drop_target` |
-| `ui_dropdown_text` | `Fn.ui_dropdown_text` |
-| `ui_dropdown_value` | `Fn.ui_dropdown_value` |
-| `ui_end` | `Fn.ui_end` |
-| `ui_get_text` | `Fn.ui_get_text` |
-| `ui_get_rotation` | `Fn.ui_get_rotation` |
-| `ui_get_scale` | `Fn.ui_get_scale` |
-| `ui_heading` | `Fn.ui_heading` |
-| `ui_hide` | `Fn.ui_hide` |
-| `ui_hovered` | `Fn.ui_hovered` |
-| `ui_input` | `Fn.ui_input` |
-| `ui_is_hovered` | `Fn.ui_is_hovered` |
-| `ui_key_value` | `Fn.ui_key_value` |
-| `ui_list_item` | `Fn.ui_list_item` |
-| `ui_load_theme` | `Fn.ui_load_theme` |
-| `ui_play` | `Fn.ui_play` |
-| `ui_pointer_over` | `Fn.ui_pointer_over` |
-| `ui_primary_button` | `Fn.ui_primary_button` |
-| `ui_progress` | `Fn.ui_progress` |
-| `ui_radio_value` | `Fn.ui_radio_value` |
-| `ui_sameline` | `Fn.ui_sameline` |
-| `ui_separator` | `Fn.ui_separator` |
-| `ui_set_bar_format` | `Fn.ui_set_bar_format` |
-| `ui_set_bar_segments` | `Fn.ui_set_bar_segments` |
-| `ui_set_bar_trail` | `Fn.ui_set_bar_trail` |
-| `ui_set_button_ease` | `Fn.ui_set_button_ease` |
-| `ui_set_dropdown` | `Fn.ui_set_dropdown` |
-| `ui_set_fill` | `Fn.ui_set_fill` |
-| `ui_set_focus` | `Fn.ui_set_focus` |
-| `ui_set_interactable` | `Fn.ui_set_interactable` |
-| `ui_set_progress` | `Fn.ui_set_progress` |
-| `ui_set_radio` | `Fn.ui_set_radio` |
-| `ui_set_rich` | `Fn.ui_set_rich` |
-| `ui_set_rotation` | `Fn.ui_set_rotation` |
-| `ui_set_scale` | `Fn.ui_set_scale` |
-| `ui_set_slider` | `Fn.ui_set_slider` |
-| `ui_set_slider_format` | `Fn.ui_set_slider_format` |
-| `ui_set_slider_step` | `Fn.ui_set_slider_step` |
-| `ui_set_tab` | `Fn.ui_set_tab` |
-| `ui_accordion_open` | `Fn.ui_accordion_open` |
-| `ui_accordion_toggle` | `Fn.ui_accordion_toggle` |
-| `ui_breadcrumb_path` | `Fn.ui_breadcrumb_path` |
-| `ui_breadcrumb_select` | `Fn.ui_breadcrumb_select` |
-| `ui_date_text` | `Fn.ui_date_text` |
-| `ui_file_open` | `Fn.ui_file_open` |
-| `ui_file_selected` | `Fn.ui_file_selected` |
-| `ui_file_set_root` | `Fn.ui_file_set_root` |
-| `ui_page` | `Fn.ui_page` |
-| `ui_page_count` | `Fn.ui_page_count` |
-| `ui_search_count` | `Fn.ui_search_count` |
-| `ui_search_query` | `Fn.ui_search_query` |
-| `ui_set_date` | `Fn.ui_set_date` |
-| `ui_set_loading` | `Fn.ui_set_loading` |
-| `ui_set_page` | `Fn.ui_set_page` |
-| `ui_set_search` | `Fn.ui_set_search` |
-| `ui_set_time` | `Fn.ui_set_time` |
-| `ui_sheet_close` | `Fn.ui_sheet_close` |
-| `ui_sheet_open` | `Fn.ui_sheet_open` |
-| `ui_sheet_open_state` | `Fn.ui_sheet_open_state` |
-| `ui_set_tab_badge` | `Fn.ui_set_tab_badge` |
-| `ui_set_tab_enabled` | `Fn.ui_set_tab_enabled` |
-| `ui_set_text` | `Fn.ui_set_text` |
-| `ui_set_toggle` | `Fn.ui_set_toggle` |
-| `ui_set_variant` | `Fn.ui_set_variant` |
-| `ui_show` | `Fn.ui_show` |
-| `ui_slider` | `Fn.ui_slider` |
-| `ui_slider_value` | `Fn.ui_slider_value` |
-| `ui_spacing` | `Fn.ui_spacing` |
-| `ui_spinner` | `Fn.ui_spinner` |
-| `ui_style` | `Fn.ui_style` |
-| `ui_switch` | `Fn.ui_switch` |
-| `ui_tab_text` | `Fn.ui_tab_text` |
-| `ui_tab_value` | `Fn.ui_tab_value` |
-| `ui_tabs` | `Fn.ui_tabs` |
-| `ui_text` | `Fn.ui_text` |
-| `ui_text_dim` | `Fn.ui_text_dim` |
-| `ui_text_wrapped` | `Fn.ui_text_wrapped` |
-| `ui_theme_preset` | `Fn.ui_theme_preset` |
-| `ui_toast` | `Fn.ui_toast` |
-| `ui_toggle_value` | `Fn.ui_toggle_value` |
-| `unequip` | `Fn.unequip` |
-| `unscaled_dt` | `Fn.unscaled_dt` |
-| `upper` | `Fn.upper` |
-| `vault` | `Fn.vault` |
-| `vec2` | `Fn.vec2` |
-| `vec3` | `Fn.vec3` |
-| `vec_add` | `Fn.vec_add` |
-| `vec_angle` | `Fn.vec_angle` |
-| `vec_clamp_len` | `Fn.vec_clamp_len` |
-| `vec_cross` | `Fn.vec_cross` |
-| `vec_distance` | `Fn.vec_distance` |
-| `vec_dot` | `Fn.vec_dot` |
-| `vec_length` | `Fn.vec_length` |
-| `vec_lerp` | `Fn.vec_lerp` |
-| `vec_move_towards` | `Fn.vec_move_towards` |
-| `vec_normalize` | `Fn.vec_normalize` |
-| `vec_reflect` | `Fn.vec_reflect` |
-| `vec_scale` | `Fn.vec_scale` |
-| `vec_sub` | `Fn.vec_sub` |
-| `vec_x` | `Fn.vec_x` |
-| `vec_y` | `Fn.vec_y` |
-| `vec_z` | `Fn.vec_z` |
-| `vel_toward` | `Fn.vel_toward` |
-| `velocity` | `Fn.velocity` |
-| `velocity_x` | `Fn.velocity_x` |
-| `velocity_y` | `Fn.velocity_y` |
-| `velocity_z` | `Fn.velocity_z` |
-| `volume` | `Fn.volume` |
-| `walk` | `Fn.walk` |
-| `wander` | `Fn.wander` |
-| `wasd_move` | `Fn.wasd_move` |
-| `wasd_move3` | `Fn.wasd_move3` |
-| `watch` | `Fn.watch` |
-| `weather_set` | `Fn.weather_set` |
-| `wrap` | `Fn.wrap` |
-| `wrap_in_box` | `Fn.wrap_in_box` |
-| `write_save` | `Fn.write_save` |
-| `zoom_camera` | `Fn.zoom_camera` |
+Each node has one input per argument the builtin reads (First, Second, ...), and never fewer than four. The node passes the arguments up to the last input with a wire or a typed value.
+
+| Builtin | Node | Inputs |
+| --- | --- | --- |
+| `AddComponent` | `Fn.AddComponent` | 4 |
+| `Application.Quit` | `Fn.Application.Quit` | 4 |
+| `ApplyUITheme` | `Fn.ApplyUITheme` | 4 |
+| `CancelInvoke` | `Fn.CancelInvoke` | 4 |
+| `Color` | `Fn.Color` | 4 |
+| `Color.Lerp` | `Fn.Color.Lerp` | 4 |
+| `CompareTag` | `Fn.CompareTag` | 4 |
+| `Convert.ToInt32` | `Fn.Convert.ToInt32` | 4 |
+| `Convert.ToSingle` | `Fn.Convert.ToSingle` | 4 |
+| `Debug.Log` | `Fn.Debug.Log` | 4 |
+| `Debug.LogError` | `Fn.Debug.LogError` | 4 |
+| `Debug.LogFormat` | `Fn.Debug.LogFormat` | 4 |
+| `Debug.LogWarning` | `Fn.Debug.LogWarning` | 4 |
+| `Destroy` | `Fn.Destroy` | 4 |
+| `ForceMode2D.Impulse` | `Fn.ForceMode2D.Impulse` | 4 |
+| `GameObject.Find` | `Fn.GameObject.Find` | 4 |
+| `GameObject.FindGameObjectWithTag` | `Fn.GameObject.FindGameObjectWithTag` | 4 |
+| `GameObject.FindGameObjectsWithTag` | `Fn.GameObject.FindGameObjectsWithTag` | 4 |
+| `GameObject.FindWithTag` | `Fn.GameObject.FindWithTag` | 4 |
+| `GetComponent` | `Fn.GetComponent` | 4 |
+| `GetView` | `Fn.GetView` | 4 |
+| `Input.GetAxis` | `Fn.Input.GetAxis` | 4 |
+| `Input.GetAxisRaw` | `Fn.Input.GetAxisRaw` | 4 |
+| `Input.GetButton` | `Fn.Input.GetButton` | 4 |
+| `Input.GetButtonDown` | `Fn.Input.GetButtonDown` | 4 |
+| `Input.GetButtonUp` | `Fn.Input.GetButtonUp` | 4 |
+| `Input.GetKey` | `Fn.Input.GetKey` | 4 |
+| `Input.GetKeyDown` | `Fn.Input.GetKeyDown` | 4 |
+| `Input.GetKeyUp` | `Fn.Input.GetKeyUp` | 4 |
+| `Input.GetMouseButton` | `Fn.Input.GetMouseButton` | 4 |
+| `Input.GetMouseButtonDown` | `Fn.Input.GetMouseButtonDown` | 4 |
+| `Input.GetMouseButtonUp` | `Fn.Input.GetMouseButtonUp` | 4 |
+| `Instantiate` | `Fn.Instantiate` | 4 |
+| `Invoke` | `Fn.Invoke` | 4 |
+| `InvokeRepeating` | `Fn.InvokeRepeating` | 4 |
+| `Mathf.Abs` | `Fn.Mathf.Abs` | 4 |
+| `Mathf.Acos` | `Fn.Mathf.Acos` | 4 |
+| `Mathf.Approximately` | `Fn.Mathf.Approximately` | 4 |
+| `Mathf.Asin` | `Fn.Mathf.Asin` | 4 |
+| `Mathf.Atan` | `Fn.Mathf.Atan` | 4 |
+| `Mathf.Atan2` | `Fn.Mathf.Atan2` | 4 |
+| `Mathf.Ceil` | `Fn.Mathf.Ceil` | 4 |
+| `Mathf.CeilToInt` | `Fn.Mathf.CeilToInt` | 4 |
+| `Mathf.Clamp` | `Fn.Mathf.Clamp` | 4 |
+| `Mathf.Clamp01` | `Fn.Mathf.Clamp01` | 4 |
+| `Mathf.Cos` | `Fn.Mathf.Cos` | 4 |
+| `Mathf.DeltaAngle` | `Fn.Mathf.DeltaAngle` | 4 |
+| `Mathf.Exp` | `Fn.Mathf.Exp` | 4 |
+| `Mathf.Floor` | `Fn.Mathf.Floor` | 4 |
+| `Mathf.FloorToInt` | `Fn.Mathf.FloorToInt` | 4 |
+| `Mathf.InverseLerp` | `Fn.Mathf.InverseLerp` | 4 |
+| `Mathf.Lerp` | `Fn.Mathf.Lerp` | 4 |
+| `Mathf.LerpAngle` | `Fn.Mathf.LerpAngle` | 4 |
+| `Mathf.Log` | `Fn.Mathf.Log` | 4 |
+| `Mathf.Log10` | `Fn.Mathf.Log10` | 4 |
+| `Mathf.Max` | `Fn.Mathf.Max` | 4 |
+| `Mathf.Min` | `Fn.Mathf.Min` | 4 |
+| `Mathf.MoveTowards` | `Fn.Mathf.MoveTowards` | 4 |
+| `Mathf.PerlinNoise` | `Fn.Mathf.PerlinNoise` | 4 |
+| `Mathf.PingPong` | `Fn.Mathf.PingPong` | 4 |
+| `Mathf.Pow` | `Fn.Mathf.Pow` | 4 |
+| `Mathf.Repeat` | `Fn.Mathf.Repeat` | 4 |
+| `Mathf.Round` | `Fn.Mathf.Round` | 4 |
+| `Mathf.RoundToInt` | `Fn.Mathf.RoundToInt` | 4 |
+| `Mathf.Sign` | `Fn.Mathf.Sign` | 4 |
+| `Mathf.Sin` | `Fn.Mathf.Sin` | 4 |
+| `Mathf.SmoothStep` | `Fn.Mathf.SmoothStep` | 4 |
+| `Mathf.Sqrt` | `Fn.Mathf.Sqrt` | 4 |
+| `Mathf.Tan` | `Fn.Mathf.Tan` | 4 |
+| `Object.Destroy` | `Fn.Object.Destroy` | 4 |
+| `Object.Instantiate` | `Fn.Object.Instantiate` | 4 |
+| `Physics.Raycast` | `Fn.Physics.Raycast` | 9 |
+| `Physics2D.BoxCast` | `Fn.Physics2D.BoxCast` | 11 |
+| `Physics2D.CapsuleCast` | `Fn.Physics2D.CapsuleCast` | 11 |
+| `Physics2D.OverlapBox` | `Fn.Physics2D.OverlapBox` | 7 |
+| `Physics2D.OverlapCapsule` | `Fn.Physics2D.OverlapCapsule` | 7 |
+| `Physics2D.Raycast` | `Fn.Physics2D.Raycast` | 7 |
+| `Quaternion.Euler` | `Fn.Quaternion.Euler` | 4 |
+| `Random.Range` | `Fn.Random.Range` | 4 |
+| `Rigidbody2D.AddExplosionForce` | `Fn.Rigidbody2D.AddExplosionForce` | 5 |
+| `SceneManager.LoadScene` | `Fn.SceneManager.LoadScene` | 4 |
+| `SetUITheme` | `Fn.SetUITheme` | 4 |
+| `SetView` | `Fn.SetView` | 4 |
+| `StartCoroutine` | `Fn.StartCoroutine` | 4 |
+| `StopAllCoroutines` | `Fn.StopAllCoroutines` | 4 |
+| `StopCoroutine` | `Fn.StopCoroutine` | 4 |
+| `String.Format` | `Fn.String.Format` | 4 |
+| `String.IsNullOrEmpty` | `Fn.String.IsNullOrEmpty` | 4 |
+| `String.Join` | `Fn.String.Join` | 4 |
+| `Time.HitStop` | `Fn.Time.HitStop` | 4 |
+| `Time.IsPausedBy` | `Fn.Time.IsPausedBy` | 4 |
+| `Time.PopPause` | `Fn.Time.PopPause` | 4 |
+| `Time.PushPause` | `Fn.Time.PushPause` | 4 |
+| `Time.RampTimeScale` | `Fn.Time.RampTimeScale` | 4 |
+| `Time.SlowMotion` | `Fn.Time.SlowMotion` | 4 |
+| `TryGetComponent` | `Fn.TryGetComponent` | 4 |
+| `Vector2` | `Fn.Vector2` | 4 |
+| `Vector2.Angle` | `Fn.Vector2.Angle` | 4 |
+| `Vector2.Distance` | `Fn.Vector2.Distance` | 4 |
+| `Vector2.Lerp` | `Fn.Vector2.Lerp` | 4 |
+| `Vector3` | `Fn.Vector3` | 4 |
+| `Vector3.Angle` | `Fn.Vector3.Angle` | 4 |
+| `Vector3.ClampMagnitude` | `Fn.Vector3.ClampMagnitude` | 4 |
+| `Vector3.Cross` | `Fn.Vector3.Cross` | 4 |
+| `Vector3.Distance` | `Fn.Vector3.Distance` | 4 |
+| `Vector3.Dot` | `Fn.Vector3.Dot` | 4 |
+| `Vector3.Lerp` | `Fn.Vector3.Lerp` | 4 |
+| `Vector3.LerpUnclamped` | `Fn.Vector3.LerpUnclamped` | 4 |
+| `Vector3.MoveTowards` | `Fn.Vector3.MoveTowards` | 4 |
+| `Vector3.Normalize` | `Fn.Vector3.Normalize` | 4 |
+| `Vector3.Reflect` | `Fn.Vector3.Reflect` | 4 |
+| `WaitForEndOfFrame` | `Fn.WaitForEndOfFrame` | 4 |
+| `WaitForFixedUpdate` | `Fn.WaitForFixedUpdate` | 4 |
+| `WaitForSeconds` | `Fn.WaitForSeconds` | 4 |
+| `WaitForSecondsRealtime` | `Fn.WaitForSecondsRealtime` | 4 |
+| `WaitUntil` | `Fn.WaitUntil` | 4 |
+| `WaitWhile` | `Fn.WaitWhile` | 4 |
+| `__call_component` | `Fn.__call_component` | 4 |
+| `__get_component` | `Fn.__get_component` | 4 |
+| `__new_array` | `Fn.__new_array` | 4 |
+| `__new_list` | `Fn.__new_list` | 4 |
+| `__new_map` | `Fn.__new_map` | 4 |
+| `__object_CompareTag` | `Fn.__object_CompareTag` | 4 |
+| `__object_GetComponent` | `Fn.__object_GetComponent` | 4 |
+| `__object_SetActive` | `Fn.__object_SetActive` | 4 |
+| `__set_component` | `Fn.__set_component` | 4 |
+| `abs` | `Fn.abs` | 4 |
+| `account_error` | `Fn.account_error` | 4 |
+| `account_get` | `Fn.account_get` | 4 |
+| `account_is_logged_in` | `Fn.account_is_logged_in` | 4 |
+| `account_is_online` | `Fn.account_is_online` | 4 |
+| `account_login` | `Fn.account_login` | 4 |
+| `account_logout` | `Fn.account_logout` | 4 |
+| `account_post` | `Fn.account_post` | 4 |
+| `account_register` | `Fn.account_register` | 4 |
+| `account_token` | `Fn.account_token` | 4 |
+| `account_username` | `Fn.account_username` | 4 |
+| `account_verify` | `Fn.account_verify` | 4 |
+| `acos` | `Fn.acos` | 4 |
+| `action` | `Fn.action` | 4 |
+| `action_down` | `Fn.action_down` | 4 |
+| `action_time` | `Fn.action_time` | 4 |
+| `action_up` | `Fn.action_up` | 4 |
+| `action_value` | `Fn.action_value` | 4 |
+| `action_x` | `Fn.action_x` | 4 |
+| `action_y` | `Fn.action_y` | 4 |
+| `actions_load` | `Fn.actions_load` | 4 |
+| `activate` | `Fn.activate` | 4 |
+| `add_explosion_force` | `Fn.add_explosion_force` | 5 |
+| `add_force` | `Fn.add_force` | 4 |
+| `add_force3` | `Fn.add_force3` | 4 |
+| `add_impulse` | `Fn.add_impulse` | 4 |
+| `add_impulse3` | `Fn.add_impulse3` | 4 |
+| `add_quest_progress` | `Fn.add_quest_progress` | 4 |
+| `add_score` | `Fn.add_score` | 4 |
+| `add_xp` | `Fn.add_xp` | 4 |
+| `after` | `Fn.after` | 4 |
+| `aim` | `Fn.aim` | 4 |
+| `all_fn` | `Fn.all_fn` | 4 |
+| `ambient` | `Fn.ambient` | 4 |
+| `angle_to` | `Fn.angle_to` | 4 |
+| `anim_event` | `Fn.anim_event` | 4 |
+| `anim_get_bool` | `Fn.anim_get_bool` | 4 |
+| `anim_get_float` | `Fn.anim_get_float` | 4 |
+| `anim_get_int` | `Fn.anim_get_int` | 4 |
+| `anim_get_layer_weight` | `Fn.anim_get_layer_weight` | 4 |
+| `anim_goto` | `Fn.anim_goto` | 4 |
+| `anim_normalized_time` | `Fn.anim_normalized_time` | 4 |
+| `anim_prev_state` | `Fn.anim_prev_state` | 4 |
+| `anim_set_bool` | `Fn.anim_set_bool` | 4 |
+| `anim_set_float` | `Fn.anim_set_float` | 4 |
+| `anim_set_layer_weight` | `Fn.anim_set_layer_weight` | 4 |
+| `anim_state` | `Fn.anim_state` | 4 |
+| `anim_state_time` | `Fn.anim_state_time` | 4 |
+| `anim_trigger` | `Fn.anim_trigger` | 4 |
+| `any_fn` | `Fn.any_fn` | 4 |
+| `apply_force` | `Fn.apply_force` | 4 |
+| `apply_impulse` | `Fn.apply_impulse` | 4 |
+| `apply_ui_theme` | `Fn.apply_ui_theme` | 4 |
+| `approach` | `Fn.approach` | 4 |
+| `approximately` | `Fn.approximately` | 4 |
+| `array` | `Fn.array` | 4 |
+| `asin` | `Fn.asin` | 4 |
+| `assert` | `Fn.assert` | 4 |
+| `atan` | `Fn.atan` | 4 |
+| `atan2` | `Fn.atan2` | 4 |
+| `avg` | `Fn.avg` | 4 |
+| `axis_x` | `Fn.axis_x` | 4 |
+| `axis_y` | `Fn.axis_y` | 4 |
+| `begin_display_confirm` | `Fn.begin_display_confirm` | 4 |
+| `bit_and` | `Fn.bit_and` | 4 |
+| `bit_clear` | `Fn.bit_clear` | 4 |
+| `bit_not` | `Fn.bit_not` | 4 |
+| `bit_or` | `Fn.bit_or` | 4 |
+| `bit_set` | `Fn.bit_set` | 4 |
+| `bit_test` | `Fn.bit_test` | 4 |
+| `bit_toggle` | `Fn.bit_toggle` | 4 |
+| `bit_xor` | `Fn.bit_xor` | 4 |
+| `blend` | `Fn.blend` | 4 |
+| `blend_param` | `Fn.blend_param` | 4 |
+| `blend_shape` | `Fn.blend_shape` | 4 |
+| `blend_shape_get` | `Fn.blend_shape_get` | 4 |
+| `blend_tree` | `Fn.blend_tree` | 4 |
+| `blink` | `Fn.blink` | 4 |
+| `bob` | `Fn.bob` | 4 |
+| `bounce_in_box` | `Fn.bounce_in_box` | 4 |
+| `box_cast` | `Fn.box_cast` | 11 |
+| `box_cast3` | `Fn.box_cast3` | 12 |
+| `broadcast_event` | `Fn.broadcast_event` | 4 |
+| `bt_get` | `Fn.bt_get` | 4 |
+| `bt_run` | `Fn.bt_run` | 4 |
+| `bt_set` | `Fn.bt_set` | 4 |
+| `bt_stop` | `Fn.bt_stop` | 4 |
+| `build_active` | `Fn.build_active` | 4 |
+| `build_clear` | `Fn.build_clear` | 4 |
+| `build_count` | `Fn.build_count` | 4 |
+| `build_enter` | `Fn.build_enter` | 4 |
+| `build_exists` | `Fn.build_exists` | 4 |
+| `build_exit` | `Fn.build_exit` | 4 |
+| `build_link_mode` | `Fn.build_link_mode` | 4 |
+| `build_load` | `Fn.build_load` | 4 |
+| `build_palette_add` | `Fn.build_palette_add` | 4 |
+| `build_palette_clear` | `Fn.build_palette_clear` | 4 |
+| `build_palette_select` | `Fn.build_palette_select` | 4 |
+| `build_redo` | `Fn.build_redo` | 4 |
+| `build_save` | `Fn.build_save` | 4 |
+| `build_selected` | `Fn.build_selected` | 4 |
+| `build_toggle` | `Fn.build_toggle` | 4 |
+| `build_undo` | `Fn.build_undo` | 4 |
+| `call` | `Fn.call` | 4 |
+| `call_later` | `Fn.call_later` | 4 |
+| `cam_shake` | `Fn.cam_shake` | 4 |
+| `cam_x` | `Fn.cam_x` | 4 |
+| `cam_y` | `Fn.cam_y` | 4 |
+| `cam_zoom` | `Fn.cam_zoom` | 4 |
+| `camera_dutch` | `Fn.camera_dutch` | 4 |
+| `camera_follow` | `Fn.camera_follow` | 4 |
+| `camera_fov` | `Fn.camera_fov` | 4 |
+| `camera_shake` | `Fn.camera_shake` | 4 |
+| `camera_x` | `Fn.camera_x` | 4 |
+| `camera_y` | `Fn.camera_y` | 4 |
+| `camera_zoom` | `Fn.camera_zoom` | 4 |
+| `camera_zoom_to` | `Fn.camera_zoom_to` | 4 |
+| `can_craft` | `Fn.can_craft` | 4 |
+| `can_dive` | `Fn.can_dive` | 4 |
+| `cancel_timers` | `Fn.cancel_timers` | 4 |
+| `capitalize` | `Fn.capitalize` | 4 |
+| `capsule_cast` | `Fn.capsule_cast` | 11 |
+| `capsule_cast3` | `Fn.capsule_cast3` | 13 |
+| `capture_pose` | `Fn.capture_pose` | 4 |
+| `cast_ray` | `Fn.cast_ray` | 7 |
+| `ceil` | `Fn.ceil` | 4 |
+| `chance` | `Fn.chance` | 4 |
+| `char_at` | `Fn.char_at` | 4 |
+| `chase` | `Fn.chase` | 4 |
+| `check_action` | `Fn.check_action` | 4 |
+| `child_count` | `Fn.child_count` | 4 |
+| `choose` | `Fn.choose` | 4 |
+| `clamp` | `Fn.clamp` | 4 |
+| `clamp01` | `Fn.clamp01` | 4 |
+| `clear` | `Fn.clear` | 4 |
+| `clear_blend_tree` | `Fn.clear_blend_tree` | 4 |
+| `climb_up` | `Fn.climb_up` | 4 |
+| `clip_duration` | `Fn.clip_duration` | 4 |
+| `clip_finished` | `Fn.clip_finished` | 4 |
+| `clip_normalized` | `Fn.clip_normalized` | 4 |
+| `clip_speed` | `Fn.clip_speed` | 4 |
+| `clip_time` | `Fn.clip_time` | 4 |
+| `close_tab` | `Fn.close_tab` | 4 |
+| `cloud_delete` | `Fn.cloud_delete` | 4 |
+| `cloud_has` | `Fn.cloud_has` | 4 |
+| `cloud_list` | `Fn.cloud_list` | 4 |
+| `cloud_load` | `Fn.cloud_load` | 4 |
+| `cloud_save` | `Fn.cloud_save` | 4 |
+| `complete_objective` | `Fn.complete_objective` | 4 |
+| `complete_quest` | `Fn.complete_quest` | 4 |
+| `concat` | `Fn.concat` | 4 |
+| `contains` | `Fn.contains` | 4 |
+| `cooldown` | `Fn.cooldown` | 4 |
+| `cos` | `Fn.cos` | 4 |
+| `count` | `Fn.count` | 4 |
+| `count_fn` | `Fn.count_fn` | 4 |
+| `count_tag` | `Fn.count_tag` | 4 |
+| `count_with_tag` | `Fn.count_with_tag` | 4 |
+| `craft` | `Fn.craft` | 4 |
+| `create_object` | `Fn.create_object` | 4 |
+| `create_object_3d` | `Fn.create_object_3d` | 4 |
+| `crouch` | `Fn.crouch` | 4 |
+| `cursor_lock` | `Fn.cursor_lock` | 4 |
+| `cursor_lock_mode` | `Fn.cursor_lock_mode` | 4 |
+| `data_has` | `Fn.data_has` | 4 |
+| `data_num` | `Fn.data_num` | 4 |
+| `data_save` | `Fn.data_save` | 4 |
+| `data_set` | `Fn.data_set` | 4 |
+| `data_str` | `Fn.data_str` | 4 |
+| `deactivate` | `Fn.deactivate` | 4 |
+| `debug` | `Fn.debug` | 4 |
+| `debug_log` | `Fn.debug_log` | 4 |
+| `define_action` | `Fn.define_action` | 4 |
+| `define_direction` | `Fn.define_direction` | 4 |
+| `deg2rad` | `Fn.deg2rad` | 4 |
+| `delete_save` | `Fn.delete_save` | 4 |
+| `delta_angle` | `Fn.delta_angle` | 4 |
+| `delta_time` | `Fn.delta_time` | 4 |
+| `destroy` | `Fn.destroy` | 4 |
+| `destroy_obj` | `Fn.destroy_obj` | 4 |
+| `destroy_self` | `Fn.destroy_self` | 4 |
+| `detach` | `Fn.detach` | 4 |
+| `dialogue_active` | `Fn.dialogue_active` | 4 |
+| `die` | `Fn.die` | 4 |
+| `dist` | `Fn.dist` | 4 |
+| `dist3` | `Fn.dist3` | 6 |
+| `dist3_to` | `Fn.dist3_to` | 4 |
+| `dist_to` | `Fn.dist_to` | 4 |
+| `distance` | `Fn.distance` | 4 |
+| `distance_to` | `Fn.distance_to` | 4 |
+| `dive` | `Fn.dive` | 4 |
+| `dodge` | `Fn.dodge` | 4 |
+| `dot` | `Fn.dot` | 4 |
+| `double.Parse` | `Fn.double.Parse` | 4 |
+| `drop_item` | `Fn.drop_item` | 4 |
+| `drop_source` | `Fn.drop_source` | 4 |
+| `drop_target` | `Fn.drop_target` | 4 |
+| `dt` | `Fn.dt` | 4 |
+| `ease_back` | `Fn.ease_back` | 4 |
+| `ease_bounce` | `Fn.ease_bounce` | 4 |
+| `ease_curve` | `Fn.ease_curve` | 4 |
+| `ease_elastic` | `Fn.ease_elastic` | 4 |
+| `ease_in` | `Fn.ease_in` | 4 |
+| `ease_in_cubic` | `Fn.ease_in_cubic` | 4 |
+| `ease_in_out` | `Fn.ease_in_out` | 4 |
+| `ease_in_out_cubic` | `Fn.ease_in_out_cubic` | 4 |
+| `ease_out` | `Fn.ease_out` | 4 |
+| `ease_out_cubic` | `Fn.ease_out_cubic` | 4 |
+| `emit` | `Fn.emit` | 4 |
+| `emit_particles` | `Fn.emit_particles` | 4 |
+| `ends_with` | `Fn.ends_with` | 4 |
+| `equip` | `Fn.equip` | 4 |
+| `equipped` | `Fn.equipped` | 4 |
+| `every` | `Fn.every` | 4 |
+| `exists` | `Fn.exists` | 4 |
+| `exp` | `Fn.exp` | 4 |
+| `explode` | `Fn.explode` | 4 |
+| `face` | `Fn.face` | 4 |
+| `face_3d` | `Fn.face_3d` | 4 |
+| `face_velocity` | `Fn.face_velocity` | 4 |
+| `fail_quest` | `Fn.fail_quest` | 4 |
+| `filter_fn` | `Fn.filter_fn` | 4 |
+| `find_fn` | `Fn.find_fn` | 4 |
+| `fire_output` | `Fn.fire_output` | 4 |
+| `first` | `Fn.first` | 4 |
+| `flash` | `Fn.flash` | 4 |
+| `flee` | `Fn.flee` | 4 |
+| `flip_x` | `Fn.flip_x` | 4 |
+| `flip_y` | `Fn.flip_y` | 4 |
+| `float.Parse` | `Fn.float.Parse` | 4 |
+| `floor` | `Fn.floor` | 4 |
+| `fog_set` | `Fn.fog_set` | 6 |
+| `follow` | `Fn.follow` | 4 |
+| `follow3` | `Fn.follow3` | 4 |
+| `follower_set_speed` | `Fn.follower_set_speed` | 4 |
+| `for_each` | `Fn.for_each` | 4 |
+| `format` | `Fn.format` | 4 |
+| `forward_x` | `Fn.forward_x` | 4 |
+| `forward_y` | `Fn.forward_y` | 4 |
+| `forward_z` | `Fn.forward_z` | 4 |
+| `fps` | `Fn.fps` | 4 |
+| `frac` | `Fn.frac` | 4 |
+| `fract` | `Fn.fract` | 4 |
+| `frame_count` | `Fn.frame_count` | 4 |
+| `frame_time` | `Fn.frame_time` | 4 |
+| `from_json` | `Fn.from_json` | 4 |
+| `gameObject.CompareTag` | `Fn.gameObject.CompareTag` | 4 |
+| `gameObject.GetComponent` | `Fn.gameObject.GetComponent` | 4 |
+| `gameObject.SetActive` | `Fn.gameObject.SetActive` | 4 |
+| `game_autosave` | `Fn.game_autosave` | 4 |
+| `game_can_continue` | `Fn.game_can_continue` | 4 |
+| `game_continue` | `Fn.game_continue` | 4 |
+| `game_delete_slot` | `Fn.game_delete_slot` | 4 |
+| `game_load` | `Fn.game_load` | 4 |
+| `game_save` | `Fn.game_save` | 4 |
+| `game_slot_age` | `Fn.game_slot_age` | 4 |
+| `game_slot_exists` | `Fn.game_slot_exists` | 4 |
+| `game_slot_label` | `Fn.game_slot_label` | 4 |
+| `game_slot_text` | `Fn.game_slot_text` | 4 |
+| `game_time` | `Fn.game_time` | 4 |
+| `gamepad` | `Fn.gamepad` | 4 |
+| `gamepad_down` | `Fn.gamepad_down` | 4 |
+| `gamepad_x` | `Fn.gamepad_x` | 4 |
+| `gamepad_y` | `Fn.gamepad_y` | 4 |
+| `gc_get` | `Fn.gc_get` | 4 |
+| `gc_set` | `Fn.gc_set` | 4 |
+| `gesture` | `Fn.gesture` | 4 |
+| `get` | `Fn.get` | 4 |
+| `get_anim` | `Fn.get_anim` | 4 |
+| `get_child` | `Fn.get_child` | 4 |
+| `get_clipboard_text` | `Fn.get_clipboard_text` | 4 |
+| `get_display_confirm_seconds` | `Fn.get_display_confirm_seconds` | 4 |
+| `get_display_height` | `Fn.get_display_height` | 4 |
+| `get_display_mode` | `Fn.get_display_mode` | 4 |
+| `get_display_resolutions` | `Fn.get_display_resolutions` | 4 |
+| `get_display_width` | `Fn.get_display_width` | 4 |
+| `get_hp` | `Fn.get_hp` | 4 |
+| `get_key` | `Fn.get_key` | 4 |
+| `get_key_down` | `Fn.get_key_down` | 4 |
+| `get_key_up` | `Fn.get_key_up` | 4 |
+| `get_language` | `Fn.get_language` | 4 |
+| `get_max_hp` | `Fn.get_max_hp` | 4 |
+| `get_monitor` | `Fn.get_monitor` | 4 |
+| `get_monitors` | `Fn.get_monitors` | 4 |
+| `get_object_var` | `Fn.get_object_var` | 4 |
+| `get_refresh_rate` | `Fn.get_refresh_rate` | 4 |
+| `get_refresh_rates` | `Fn.get_refresh_rates` | 4 |
+| `get_story` | `Fn.get_story` | 4 |
+| `get_tile` | `Fn.get_tile` | 4 |
+| `get_velocity_x` | `Fn.get_velocity_x` | 4 |
+| `get_velocity_y` | `Fn.get_velocity_y` | 4 |
+| `get_view` | `Fn.get_view` | 4 |
+| `get_x` | `Fn.get_x` | 4 |
+| `get_y` | `Fn.get_y` | 4 |
+| `get_z` | `Fn.get_z` | 4 |
+| `grid_add` | `Fn.grid_add` | 4 |
+| `grid_arrived` | `Fn.grid_arrived` | 4 |
+| `grid_block` | `Fn.grid_block` | 4 |
+| `grid_clear` | `Fn.grid_clear` | 4 |
+| `grid_fits` | `Fn.grid_fits` | 4 |
+| `grid_move_cell` | `Fn.grid_move_cell` | 4 |
+| `grid_move_to` | `Fn.grid_move_to` | 4 |
+| `grid_set_cell_cost` | `Fn.grid_set_cell_cost` | 4 |
+| `grid_set_tile_cost` | `Fn.grid_set_tile_cost` | 4 |
+| `grid_snap` | `Fn.grid_snap` | 4 |
+| `grid_stop` | `Fn.grid_stop` | 4 |
+| `grid_weight` | `Fn.grid_weight` | 4 |
+| `group_volume` | `Fn.group_volume` | 4 |
+| `has_clip` | `Fn.has_clip` | 4 |
+| `has_parent` | `Fn.has_parent` | 4 |
+| `has_save` | `Fn.has_save` | 4 |
+| `has_story` | `Fn.has_story` | 4 |
+| `has_tag` | `Fn.has_tag` | 4 |
+| `has_var` | `Fn.has_var` | 4 |
+| `heal` | `Fn.heal` | 4 |
+| `hex` | `Fn.hex` | 4 |
+| `hide` | `Fn.hide` | 4 |
+| `hide_object` | `Fn.hide_object` | 4 |
+| `hit_react` | `Fn.hit_react` | 4 |
+| `hit_stop` | `Fn.hit_stop` | 4 |
+| `hitch_count` | `Fn.hitch_count` | 4 |
+| `hold_charge` | `Fn.hold_charge` | 4 |
+| `hold_drop` | `Fn.hold_drop` | 4 |
+| `hold_nearest` | `Fn.hold_nearest` | 4 |
+| `hold_object` | `Fn.hold_object` | 4 |
+| `hold_pickup` | `Fn.hold_pickup` | 4 |
+| `hold_throw` | `Fn.hold_throw` | 4 |
+| `hurt` | `Fn.hurt` | 4 |
+| `hypot` | `Fn.hypot` | 4 |
+| `ik_clear_target` | `Fn.ik_clear_target` | 4 |
+| `ik_enable` | `Fn.ik_enable` | 4 |
+| `ik_foot` | `Fn.ik_foot` | 5 |
+| `ik_hand` | `Fn.ik_hand` | 5 |
+| `ik_look` | `Fn.ik_look` | 4 |
+| `ik_look_at` | `Fn.ik_look_at` | 4 |
+| `ik_reached` | `Fn.ik_reached` | 4 |
+| `ik_release` | `Fn.ik_release` | 4 |
+| `ik_set_pole` | `Fn.ik_set_pole` | 4 |
+| `ik_set_target` | `Fn.ik_set_target` | 4 |
+| `ik_set_weight` | `Fn.ik_set_weight` | 4 |
+| `index_of` | `Fn.index_of` | 4 |
+| `input_horizontal` | `Fn.input_horizontal` | 4 |
+| `input_vertical` | `Fn.input_vertical` | 4 |
+| `insert_at` | `Fn.insert_at` | 4 |
+| `instantiate` | `Fn.instantiate` | 4 |
+| `instantiate3` | `Fn.instantiate3` | 4 |
+| `int.Parse` | `Fn.int.Parse` | 4 |
+| `interact` | `Fn.interact` | 4 |
+| `inv_add` | `Fn.inv_add` | 4 |
+| `inv_capacity` | `Fn.inv_capacity` | 4 |
+| `inv_clear` | `Fn.inv_clear` | 4 |
+| `inv_count` | `Fn.inv_count` | 4 |
+| `inv_has` | `Fn.inv_has` | 4 |
+| `inv_move` | `Fn.inv_move` | 4 |
+| `inv_remove` | `Fn.inv_remove` | 4 |
+| `inv_select` | `Fn.inv_select` | 4 |
+| `inv_selected` | `Fn.inv_selected` | 4 |
+| `inv_set_slot` | `Fn.inv_set_slot` | 4 |
+| `inv_slot` | `Fn.inv_slot` | 4 |
+| `inv_transfer` | `Fn.inv_transfer` | 4 |
+| `inverse_lerp` | `Fn.inverse_lerp` | 4 |
+| `inverse_lerp_value` | `Fn.inverse_lerp_value` | 4 |
+| `invoke_after` | `Fn.invoke_after` | 4 |
+| `is_active` | `Fn.is_active` | 4 |
+| `is_array` | `Fn.is_array` | 4 |
+| `is_bool` | `Fn.is_bool` | 4 |
+| `is_dead` | `Fn.is_dead` | 4 |
+| `is_finite` | `Fn.is_finite` | 4 |
+| `is_hanging` | `Fn.is_hanging` | 4 |
+| `is_in_action` | `Fn.is_in_action` | 4 |
+| `is_key_down` | `Fn.is_key_down` | 4 |
+| `is_key_held` | `Fn.is_key_held` | 4 |
+| `is_map` | `Fn.is_map` | 4 |
+| `is_mouse_held` | `Fn.is_mouse_held` | 4 |
+| `is_moving` | `Fn.is_moving` | 4 |
+| `is_nan` | `Fn.is_nan` | 4 |
+| `is_num` | `Fn.is_num` | 4 |
+| `is_object_active` | `Fn.is_object_active` | 4 |
+| `is_overlapping` | `Fn.is_overlapping` | 4 |
+| `is_paused` | `Fn.is_paused` | 4 |
+| `is_paused_by` | `Fn.is_paused_by` | 4 |
+| `is_playing_clip` | `Fn.is_playing_clip` | 4 |
+| `is_ragdoll` | `Fn.is_ragdoll` | 4 |
+| `is_sitting` | `Fn.is_sitting` | 4 |
+| `is_str` | `Fn.is_str` | 4 |
+| `is_touch_screen` | `Fn.is_touch_screen` | 4 |
+| `is_tweening` | `Fn.is_tweening` | 4 |
+| `item_def` | `Fn.item_def` | 4 |
+| `join` | `Fn.join` | 4 |
+| `json_parse` | `Fn.json_parse` | 4 |
+| `json_stringify` | `Fn.json_stringify` | 4 |
+| `jump` | `Fn.jump` | 4 |
+| `keep_display_settings` | `Fn.keep_display_settings` | 4 |
+| `keep_in_box` | `Fn.keep_in_box` | 4 |
+| `key` | `Fn.key` | 4 |
+| `key_down` | `Fn.key_down` | 4 |
+| `key_pressed` | `Fn.key_pressed` | 4 |
+| `key_released` | `Fn.key_released` | 4 |
+| `key_up` | `Fn.key_up` | 4 |
+| `kick_spread` | `Fn.kick_spread` | 4 |
+| `language_name` | `Fn.language_name` | 4 |
+| `languages` | `Fn.languages` | 4 |
+| `last` | `Fn.last` | 4 |
+| `layer_mask` | `Fn.layer_mask` | 4 |
+| `leaderboard_submit` | `Fn.leaderboard_submit` | 4 |
+| `leaderboard_top` | `Fn.leaderboard_top` | 4 |
+| `ledge_grab` | `Fn.ledge_grab` | 4 |
+| `len` | `Fn.len` | 4 |
+| `lerp` | `Fn.lerp` | 4 |
+| `lerp_angle` | `Fn.lerp_angle` | 4 |
+| `lerp_color` | `Fn.lerp_color` | 4 |
+| `let_go` | `Fn.let_go` | 4 |
+| `line_set_points` | `Fn.line_set_points` | 4 |
+| `load` | `Fn.load` | 4 |
+| `load_clips` | `Fn.load_clips` | 4 |
+| `load_game` | `Fn.load_game` | 4 |
+| `load_next_scene` | `Fn.load_next_scene` | 4 |
+| `load_number` | `Fn.load_number` | 4 |
+| `load_scene` | `Fn.load_scene` | 4 |
+| `load_scene_additive` | `Fn.load_scene_additive` | 4 |
+| `load_scene_index` | `Fn.load_scene_index` | 4 |
+| `load_scene_name` | `Fn.load_scene_name` | 4 |
+| `load_text` | `Fn.load_text` | 4 |
+| `load_value` | `Fn.load_value` | 4 |
+| `loc` | `Fn.loc` | 4 |
+| `log` | `Fn.log` | 4 |
+| `log_error` | `Fn.log_error` | 4 |
+| `log_info` | `Fn.log_info` | 4 |
+| `log_message` | `Fn.log_message` | 4 |
+| `log_warn` | `Fn.log_warn` | 4 |
+| `logic_press` | `Fn.logic_press` | 4 |
+| `logic_state` | `Fn.logic_state` | 4 |
+| `look_at` | `Fn.look_at` | 4 |
+| `look_at3` | `Fn.look_at3` | 4 |
+| `loot_roll` | `Fn.loot_roll` | 4 |
+| `lower` | `Fn.lower` | 4 |
+| `mantle` | `Fn.mantle` | 4 |
+| `map` | `Fn.map` | 4 |
+| `map_clear` | `Fn.map_clear` | 4 |
+| `map_count` | `Fn.map_count` | 4 |
+| `map_fn` | `Fn.map_fn` | 4 |
+| `map_get` | `Fn.map_get` | 4 |
+| `map_has` | `Fn.map_has` | 4 |
+| `map_keys` | `Fn.map_keys` | 4 |
+| `map_merge` | `Fn.map_merge` | 4 |
+| `map_remove` | `Fn.map_remove` | 4 |
+| `map_set` | `Fn.map_set` | 4 |
+| `map_values` | `Fn.map_values` | 4 |
+| `math_repeat` | `Fn.math_repeat` | 4 |
+| `max` | `Fn.max` | 4 |
+| `max3` | `Fn.max3` | 4 |
+| `max_of` | `Fn.max_of` | 4 |
+| `min` | `Fn.min` | 4 |
+| `min3` | `Fn.min3` | 4 |
+| `min_of` | `Fn.min_of` | 4 |
+| `mm_addr` | `Fn.mm_addr` | 4 |
+| `mm_count` | `Fn.mm_count` | 4 |
+| `mm_heartbeat` | `Fn.mm_heartbeat` | 4 |
+| `mm_host` | `Fn.mm_host` | 6 |
+| `mm_join` | `Fn.mm_join` | 4 |
+| `mm_max` | `Fn.mm_max` | 4 |
+| `mm_name` | `Fn.mm_name` | 4 |
+| `mm_players` | `Fn.mm_players` | 4 |
+| `mm_port` | `Fn.mm_port` | 4 |
+| `mm_refresh` | `Fn.mm_refresh` | 4 |
+| `mm_room` | `Fn.mm_room` | 4 |
+| `mm_unregister` | `Fn.mm_unregister` | 4 |
+| `mod` | `Fn.mod` | 4 |
+| `modal_close` | `Fn.modal_close` | 4 |
+| `modal_open` | `Fn.modal_open` | 4 |
+| `mouse` | `Fn.mouse` | 4 |
+| `mouse_down` | `Fn.mouse_down` | 4 |
+| `mouse_held` | `Fn.mouse_held` | 4 |
+| `mouse_position_x` | `Fn.mouse_position_x` | 4 |
+| `mouse_position_y` | `Fn.mouse_position_y` | 4 |
+| `mouse_pressed` | `Fn.mouse_pressed` | 4 |
+| `mouse_released` | `Fn.mouse_released` | 4 |
+| `mouse_up` | `Fn.mouse_up` | 4 |
+| `mouse_wheel` | `Fn.mouse_wheel` | 4 |
+| `mouse_x` | `Fn.mouse_x` | 4 |
+| `mouse_y` | `Fn.mouse_y` | 4 |
+| `move` | `Fn.move` | 4 |
+| `move3` | `Fn.move3` | 4 |
+| `move_by` | `Fn.move_by` | 4 |
+| `move_cam` | `Fn.move_cam` | 4 |
+| `move_camera` | `Fn.move_camera` | 4 |
+| `move_forward` | `Fn.move_forward` | 4 |
+| `move_input_x` | `Fn.move_input_x` | 4 |
+| `move_input_y` | `Fn.move_input_y` | 4 |
+| `move_right` | `Fn.move_right` | 4 |
+| `move_to` | `Fn.move_to` | 4 |
+| `move_toward` | `Fn.move_toward` | 4 |
+| `move_toward3` | `Fn.move_toward3` | 4 |
+| `move_toward_object` | `Fn.move_toward_object` | 4 |
+| `move_towards` | `Fn.move_towards` | 4 |
+| `move_towards_object` | `Fn.move_towards_object` | 4 |
+| `music_next` | `Fn.music_next` | 4 |
+| `music_pause` | `Fn.music_pause` | 4 |
+| `music_play` | `Fn.music_play` | 4 |
+| `music_previous` | `Fn.music_previous` | 4 |
+| `music_resume` | `Fn.music_resume` | 4 |
+| `music_stop` | `Fn.music_stop` | 4 |
+| `mute` | `Fn.mute` | 4 |
+| `mute_group` | `Fn.mute_group` | 4 |
+| `name` | `Fn.name` | 4 |
+| `nav_arrived` | `Fn.nav_arrived` | 4 |
+| `nav_move_to` | `Fn.nav_move_to` | 4 |
+| `nav_nearest_point` | `Fn.nav_nearest_point` | 4 |
+| `nav_path_exists` | `Fn.nav_path_exists` | 6 |
+| `nav_path_length` | `Fn.nav_path_length` | 6 |
+| `nav_point_walkable` | `Fn.nav_point_walkable` | 4 |
+| `nav_remaining` | `Fn.nav_remaining` | 4 |
+| `nav_stop` | `Fn.nav_stop` | 4 |
+| `nearest_tag` | `Fn.nearest_tag` | 4 |
+| `nearest_with_tag` | `Fn.nearest_with_tag` | 4 |
+| `net_all_ready` | `Fn.net_all_ready` | 4 |
+| `net_anticheat` | `Fn.net_anticheat` | 4 |
+| `net_anticheat_load` | `Fn.net_anticheat_load` | 4 |
+| `net_auth_token` | `Fn.net_auth_token` | 4 |
+| `net_authoritative` | `Fn.net_authoritative` | 4 |
+| `net_browser_address` | `Fn.net_browser_address` | 4 |
+| `net_browser_busy` | `Fn.net_browser_busy` | 4 |
+| `net_browser_close` | `Fn.net_browser_close` | 4 |
+| `net_browser_count` | `Fn.net_browser_count` | 4 |
+| `net_browser_is_open` | `Fn.net_browser_is_open` | 4 |
+| `net_browser_join` | `Fn.net_browser_join` | 4 |
+| `net_browser_locked` | `Fn.net_browser_locked` | 4 |
+| `net_browser_map` | `Fn.net_browser_map` | 4 |
+| `net_browser_max` | `Fn.net_browser_max` | 4 |
+| `net_browser_name` | `Fn.net_browser_name` | 4 |
+| `net_browser_open` | `Fn.net_browser_open` | 4 |
+| `net_browser_ping` | `Fn.net_browser_ping` | 4 |
+| `net_browser_players` | `Fn.net_browser_players` | 4 |
+| `net_browser_refresh` | `Fn.net_browser_refresh` | 4 |
+| `net_budget` | `Fn.net_budget` | 4 |
+| `net_chat` | `Fn.net_chat` | 4 |
+| `net_connected` | `Fn.net_connected` | 4 |
+| `net_despawn` | `Fn.net_despawn` | 4 |
+| `net_disconnect` | `Fn.net_disconnect` | 4 |
+| `net_encrypt` | `Fn.net_encrypt` | 4 |
+| `net_encrypted` | `Fn.net_encrypted` | 4 |
+| `net_get` | `Fn.net_get` | 4 |
+| `net_hit` | `Fn.net_hit` | 8 |
+| `net_host` | `Fn.net_host` | 4 |
+| `net_host_relay` | `Fn.net_host_relay` | 4 |
+| `net_id` | `Fn.net_id` | 4 |
+| `net_invite_friends` | `Fn.net_invite_friends` | 4 |
+| `net_is_client` | `Fn.net_is_client` | 4 |
+| `net_is_server` | `Fn.net_is_server` | 4 |
+| `net_join` | `Fn.net_join` | 4 |
+| `net_join_link` | `Fn.net_join_link` | 4 |
+| `net_join_relay` | `Fn.net_join_relay` | 4 |
+| `net_kick` | `Fn.net_kick` | 4 |
+| `net_launch_join` | `Fn.net_launch_join` | 4 |
+| `net_match_end` | `Fn.net_match_end` | 4 |
+| `net_match_seconds` | `Fn.net_match_seconds` | 4 |
+| `net_match_start` | `Fn.net_match_start` | 4 |
+| `net_match_started` | `Fn.net_match_started` | 4 |
+| `net_match_status` | `Fn.net_match_status` | 4 |
+| `net_max_speed` | `Fn.net_max_speed` | 4 |
+| `net_msg_channel` | `Fn.net_msg_channel` | 4 |
+| `net_msg_data` | `Fn.net_msg_data` | 4 |
+| `net_msg_from` | `Fn.net_msg_from` | 4 |
+| `net_name` | `Fn.net_name` | 4 |
+| `net_obj_id` | `Fn.net_obj_id` | 4 |
+| `net_obj_owned` | `Fn.net_obj_owned` | 4 |
+| `net_obj_rpc` | `Fn.net_obj_rpc` | 4 |
+| `net_obj_rpc_data` | `Fn.net_obj_rpc_data` | 4 |
+| `net_obj_rpc_from` | `Fn.net_obj_rpc_from` | 4 |
+| `net_obj_rpc_name` | `Fn.net_obj_rpc_name` | 4 |
+| `net_obj_rpc_poll` | `Fn.net_obj_rpc_poll` | 4 |
+| `net_obj_rpc_reliable` | `Fn.net_obj_rpc_reliable` | 4 |
+| `net_obj_rpc_to` | `Fn.net_obj_rpc_to` | 4 |
+| `net_peer_name` | `Fn.net_peer_name` | 4 |
+| `net_peers` | `Fn.net_peers` | 4 |
+| `net_pin_host` | `Fn.net_pin_host` | 4 |
+| `net_ping` | `Fn.net_ping` | 4 |
+| `net_poll` | `Fn.net_poll` | 4 |
+| `net_queue_accept` | `Fn.net_queue_accept` | 4 |
+| `net_queue_auto` | `Fn.net_queue_auto` | 4 |
+| `net_queue_cancel` | `Fn.net_queue_cancel` | 4 |
+| `net_queue_count` | `Fn.net_queue_count` | 4 |
+| `net_queue_error` | `Fn.net_queue_error` | 4 |
+| `net_queue_is_host` | `Fn.net_queue_is_host` | 4 |
+| `net_queue_join` | `Fn.net_queue_join` | 4 |
+| `net_queue_state` | `Fn.net_queue_state` | 4 |
+| `net_queue_time` | `Fn.net_queue_time` | 4 |
+| `net_rate_limit` | `Fn.net_rate_limit` | 4 |
+| `net_ready` | `Fn.net_ready` | 4 |
+| `net_ready_count` | `Fn.net_ready_count` | 4 |
+| `net_relay_ready` | `Fn.net_relay_ready` | 4 |
+| `net_room` | `Fn.net_room` | 4 |
+| `net_roster_count` | `Fn.net_roster_count` | 4 |
+| `net_roster_id` | `Fn.net_roster_id` | 4 |
+| `net_rpc` | `Fn.net_rpc` | 4 |
+| `net_score` | `Fn.net_score` | 4 |
+| `net_send` | `Fn.net_send` | 4 |
+| `net_send_reliable` | `Fn.net_send_reliable` | 4 |
+| `net_send_reliable_to` | `Fn.net_send_reliable_to` | 4 |
+| `net_send_to` | `Fn.net_send_to` | 4 |
+| `net_server_name` | `Fn.net_server_name` | 4 |
+| `net_set` | `Fn.net_set` | 4 |
+| `net_set_pawn` | `Fn.net_set_pawn` | 4 |
+| `net_set_score` | `Fn.net_set_score` | 4 |
+| `net_spawn` | `Fn.net_spawn` | 4 |
+| `net_spawn_owned` | `Fn.net_spawn_owned` | 4 |
+| `net_start_match` | `Fn.net_start_match` | 4 |
+| `net_stats_mine` | `Fn.net_stats_mine` | 4 |
+| `net_stats_top` | `Fn.net_stats_top` | 4 |
+| `net_syncvar_get` | `Fn.net_syncvar_get` | 4 |
+| `net_syncvar_set` | `Fn.net_syncvar_set` | 4 |
+| `net_teleport` | `Fn.net_teleport` | 4 |
+| `net_tick` | `Fn.net_tick` | 4 |
+| `net_tick_rate` | `Fn.net_tick_rate` | 4 |
+| `net_user_id` | `Fn.net_user_id` | 4 |
+| `net_violations` | `Fn.net_violations` | 4 |
+| `net_was_kicked` | `Fn.net_was_kicked` | 4 |
+| `noise` | `Fn.noise` | 4 |
+| `npc_busy` | `Fn.npc_busy` | 4 |
+| `npc_goto` | `Fn.npc_goto` | 4 |
+| `npc_state` | `Fn.npc_state` | 4 |
+| `npc_stop` | `Fn.npc_stop` | 4 |
+| `num` | `Fn.num` | 4 |
+| `obj_x` | `Fn.obj_x` | 4 |
+| `obj_y` | `Fn.obj_y` | 4 |
+| `obj_z` | `Fn.obj_z` | 4 |
+| `object_exists` | `Fn.object_exists` | 4 |
+| `object_x` | `Fn.object_x` | 4 |
+| `object_y` | `Fn.object_y` | 4 |
+| `object_z` | `Fn.object_z` | 4 |
+| `on_key` | `Fn.on_key` | 4 |
+| `on_key_move` | `Fn.on_key_move` | 4 |
+| `on_key_move3` | `Fn.on_key_move3` | 4 |
+| `once` | `Fn.once` | 4 |
+| `orbit` | `Fn.orbit` | 4 |
+| `overlap` | `Fn.overlap` | 4 |
+| `overlap3` | `Fn.overlap3` | 4 |
+| `overlap_box` | `Fn.overlap_box` | 7 |
+| `overlap_box3` | `Fn.overlap_box3` | 8 |
+| `overlap_capsule` | `Fn.overlap_capsule` | 7 |
+| `overlap_capsule3` | `Fn.overlap_capsule3` | 9 |
+| `overlap_sphere3` | `Fn.overlap_sphere3` | 6 |
+| `pad_left` | `Fn.pad_left` | 4 |
+| `pad_right` | `Fn.pad_right` | 4 |
+| `parent_of` | `Fn.parent_of` | 4 |
+| `parse_int` | `Fn.parse_int` | 4 |
+| `particles_alive` | `Fn.particles_alive` | 4 |
+| `particles_on` | `Fn.particles_on` | 4 |
+| `patrol` | `Fn.patrol` | 5 |
+| `pause_game` | `Fn.pause_game` | 4 |
+| `pf_delete` | `Fn.pf_delete` | 4 |
+| `pf_error` | `Fn.pf_error` | 4 |
+| `pf_id` | `Fn.pf_id` | 4 |
+| `pf_leaderboard_top` | `Fn.pf_leaderboard_top` | 4 |
+| `pf_load` | `Fn.pf_load` | 4 |
+| `pf_logged_in` | `Fn.pf_logged_in` | 4 |
+| `pf_login` | `Fn.pf_login` | 4 |
+| `pf_login_password` | `Fn.pf_login_password` | 4 |
+| `pf_name` | `Fn.pf_name` | 4 |
+| `pf_register` | `Fn.pf_register` | 4 |
+| `pf_save` | `Fn.pf_save` | 4 |
+| `pf_set_stat` | `Fn.pf_set_stat` | 4 |
+| `physics_smooth` | `Fn.physics_smooth` | 4 |
+| `physics_steps` | `Fn.physics_steps` | 4 |
+| `pi` | `Fn.pi` | 4 |
+| `pick` | `Fn.pick` | 4 |
+| `pinch_scale` | `Fn.pinch_scale` | 4 |
+| `ping_pong` | `Fn.ping_pong` | 4 |
+| `place_at` | `Fn.place_at` | 4 |
+| `platformer` | `Fn.platformer` | 4 |
+| `play_action` | `Fn.play_action` | 4 |
+| `play_anim` | `Fn.play_anim` | 4 |
+| `play_audio` | `Fn.play_audio` | 4 |
+| `play_clip` | `Fn.play_clip` | 4 |
+| `play_clip_once` | `Fn.play_clip_once` | 4 |
+| `play_layer` | `Fn.play_layer` | 4 |
+| `play_sequence` | `Fn.play_sequence` | 4 |
+| `play_sfx` | `Fn.play_sfx` | 4 |
+| `play_sound` | `Fn.play_sound` | 4 |
+| `play_time` | `Fn.play_time` | 4 |
+| `playing_clip` | `Fn.playing_clip` | 4 |
+| `point_overlaps` | `Fn.point_overlaps` | 4 |
+| `pool_get` | `Fn.pool_get` | 4 |
+| `pool_idle` | `Fn.pool_idle` | 4 |
+| `pool_prewarm` | `Fn.pool_prewarm` | 4 |
+| `pool_release` | `Fn.pool_release` | 4 |
+| `pop` | `Fn.pop` | 4 |
+| `pop_pause` | `Fn.pop_pause` | 4 |
+| `pos_x` | `Fn.pos_x` | 4 |
+| `pos_y` | `Fn.pos_y` | 4 |
+| `pos_z` | `Fn.pos_z` | 4 |
+| `position_of` | `Fn.position_of` | 4 |
+| `position_x` | `Fn.position_x` | 4 |
+| `position_y` | `Fn.position_y` | 4 |
+| `position_z` | `Fn.position_z` | 4 |
+| `post_set` | `Fn.post_set` | 4 |
+| `pow` | `Fn.pow` | 4 |
+| `prefs_get` | `Fn.prefs_get` | 4 |
+| `prefs_get_str` | `Fn.prefs_get_str` | 4 |
+| `prefs_load` | `Fn.prefs_load` | 4 |
+| `prefs_save` | `Fn.prefs_save` | 4 |
+| `prefs_set` | `Fn.prefs_set` | 4 |
+| `print` | `Fn.print` | 4 |
+| `prone` | `Fn.prone` | 4 |
+| `pulse` | `Fn.pulse` | 4 |
+| `push` | `Fn.push` | 4 |
+| `push_pause` | `Fn.push_pause` | 4 |
+| `quest_active` | `Fn.quest_active` | 4 |
+| `quest_completed` | `Fn.quest_completed` | 4 |
+| `quest_state` | `Fn.quest_state` | 4 |
+| `quit` | `Fn.quit` | 4 |
+| `rad2deg` | `Fn.rad2deg` | 4 |
+| `ragdoll` | `Fn.ragdoll` | 4 |
+| `ragdoll_push` | `Fn.ragdoll_push` | 6 |
+| `raise` | `Fn.raise` | 4 |
+| `ramp_time_scale` | `Fn.ramp_time_scale` | 4 |
+| `ramp_timescale` | `Fn.ramp_timescale` | 4 |
+| `rand` | `Fn.rand` | 4 |
+| `randi` | `Fn.randi` | 4 |
+| `random` | `Fn.random` | 4 |
+| `random_chance` | `Fn.random_chance` | 4 |
+| `random_float` | `Fn.random_float` | 4 |
+| `random_int` | `Fn.random_int` | 4 |
+| `random_range` | `Fn.random_range` | 4 |
+| `range` | `Fn.range` | 4 |
+| `ray3_cast` | `Fn.ray3_cast` | 7 |
+| `ray3_dist` | `Fn.ray3_dist` | 4 |
+| `ray3_hit` | `Fn.ray3_hit` | 4 |
+| `ray3_normal` | `Fn.ray3_normal` | 4 |
+| `ray3_nx` | `Fn.ray3_nx` | 4 |
+| `ray3_ny` | `Fn.ray3_ny` | 4 |
+| `ray3_nz` | `Fn.ray3_nz` | 4 |
+| `ray3_object` | `Fn.ray3_object` | 4 |
+| `ray3_point` | `Fn.ray3_point` | 4 |
+| `ray3_x` | `Fn.ray3_x` | 4 |
+| `ray3_y` | `Fn.ray3_y` | 4 |
+| `ray3_z` | `Fn.ray3_z` | 4 |
+| `ray_all_count` | `Fn.ray_all_count` | 4 |
+| `ray_all_dist` | `Fn.ray_all_dist` | 4 |
+| `ray_all_normal` | `Fn.ray_all_normal` | 4 |
+| `ray_all_object` | `Fn.ray_all_object` | 4 |
+| `ray_all_point` | `Fn.ray_all_point` | 4 |
+| `ray_dist` | `Fn.ray_dist` | 4 |
+| `ray_hit` | `Fn.ray_hit` | 4 |
+| `ray_nx` | `Fn.ray_nx` | 4 |
+| `ray_ny` | `Fn.ray_ny` | 4 |
+| `ray_object` | `Fn.ray_object` | 4 |
+| `ray_x` | `Fn.ray_x` | 4 |
+| `ray_y` | `Fn.ray_y` | 4 |
+| `raycast` | `Fn.raycast` | 7 |
+| `raycast3` | `Fn.raycast3` | 9 |
+| `raycast_all` | `Fn.raycast_all` | 7 |
+| `raycast_all3` | `Fn.raycast_all3` | 9 |
+| `raycast_hit` | `Fn.raycast_hit` | 5 |
+| `raycast_hit3` | `Fn.raycast_hit3` | 7 |
+| `read_save` | `Fn.read_save` | 4 |
+| `rebind` | `Fn.rebind` | 4 |
+| `recoil` | `Fn.recoil` | 4 |
+| `reduce_fn` | `Fn.reduce_fn` | 4 |
+| `reload_scene` | `Fn.reload_scene` | 4 |
+| `remap` | `Fn.remap` | 5 |
+| `remove_at` | `Fn.remove_at` | 4 |
+| `remove_object` | `Fn.remove_object` | 4 |
+| `repeat` | `Fn.repeat` | 4 |
+| `repeat_every` | `Fn.repeat_every` | 4 |
+| `replace` | `Fn.replace` | 4 |
+| `reverse` | `Fn.reverse` | 4 |
+| `revert_display_settings` | `Fn.revert_display_settings` | 4 |
+| `revive` | `Fn.revive` | 4 |
+| `right_x` | `Fn.right_x` | 4 |
+| `right_y` | `Fn.right_y` | 4 |
+| `right_z` | `Fn.right_z` | 4 |
+| `roll` | `Fn.roll` | 4 |
+| `roll_chance` | `Fn.roll_chance` | 4 |
+| `rotate` | `Fn.rotate` | 4 |
+| `rotate3` | `Fn.rotate3` | 4 |
+| `rotate_z` | `Fn.rotate_z` | 4 |
+| `rotation_euler` | `Fn.rotation_euler` | 4 |
+| `round` | `Fn.round` | 4 |
+| `rumble` | `Fn.rumble` | 4 |
+| `run_action` | `Fn.run_action` | 4 |
+| `run_from` | `Fn.run_from` | 4 |
+| `save` | `Fn.save` | 4 |
+| `save_ago` | `Fn.save_ago` | 4 |
+| `save_audio_settings` | `Fn.save_audio_settings` | 4 |
+| `save_clear` | `Fn.save_clear` | 4 |
+| `save_date` | `Fn.save_date` | 4 |
+| `save_delete` | `Fn.save_delete` | 4 |
+| `save_delete_file` | `Fn.save_delete_file` | 4 |
+| `save_exists` | `Fn.save_exists` | 4 |
+| `save_game` | `Fn.save_game` | 4 |
+| `save_has` | `Fn.save_has` | 4 |
+| `save_label` | `Fn.save_label` | 4 |
+| `save_play_text` | `Fn.save_play_text` | 4 |
+| `save_play_time` | `Fn.save_play_time` | 4 |
+| `save_scene` | `Fn.save_scene` | 4 |
+| `save_slots` | `Fn.save_slots` | 4 |
+| `save_valid` | `Fn.save_valid` | 4 |
+| `save_value` | `Fn.save_value` | 4 |
+| `scale_x` | `Fn.scale_x` | 4 |
+| `scale_y` | `Fn.scale_y` | 4 |
+| `scale_z` | `Fn.scale_z` | 4 |
+| `scene_count` | `Fn.scene_count` | 4 |
+| `scene_index` | `Fn.scene_index` | 4 |
+| `scene_name` | `Fn.scene_name` | 4 |
+| `score` | `Fn.score` | 4 |
+| `screen_h` | `Fn.screen_h` | 4 |
+| `screen_height` | `Fn.screen_height` | 4 |
+| `screen_w` | `Fn.screen_w` | 4 |
+| `screen_width` | `Fn.screen_width` | 4 |
+| `seat_prompt` | `Fn.seat_prompt` | 4 |
+| `self_active` | `Fn.self_active` | 4 |
+| `send_event` | `Fn.send_event` | 4 |
+| `send_message` | `Fn.send_message` | 4 |
+| `seq_append` | `Fn.seq_append` | 4 |
+| `seq_callback` | `Fn.seq_callback` | 4 |
+| `seq_insert` | `Fn.seq_insert` | 4 |
+| `seq_insert_callback` | `Fn.seq_insert_callback` | 4 |
+| `seq_interval` | `Fn.seq_interval` | 4 |
+| `seq_join` | `Fn.seq_join` | 4 |
+| `seq_join_callback` | `Fn.seq_join_callback` | 4 |
+| `seq_new` | `Fn.seq_new` | 4 |
+| `seq_prepend` | `Fn.seq_prepend` | 4 |
+| `seq_prepend_interval` | `Fn.seq_prepend_interval` | 4 |
+| `sequence_playing` | `Fn.sequence_playing` | 4 |
+| `sequence_time` | `Fn.sequence_time` | 4 |
+| `session_frame_count` | `Fn.session_frame_count` | 4 |
+| `session_time` | `Fn.session_time` | 4 |
+| `session_unscaled_time` | `Fn.session_unscaled_time` | 4 |
+| `set` | `Fn.set` | 4 |
+| `set_active` | `Fn.set_active` | 4 |
+| `set_active_of` | `Fn.set_active_of` | 4 |
+| `set_ambient` | `Fn.set_ambient` | 4 |
+| `set_anim` | `Fn.set_anim` | 4 |
+| `set_background` | `Fn.set_background` | 4 |
+| `set_background_color` | `Fn.set_background_color` | 4 |
+| `set_bar_format` | `Fn.set_bar_format` | 4 |
+| `set_bar_segments` | `Fn.set_bar_segments` | 4 |
+| `set_bar_trail` | `Fn.set_bar_trail` | 4 |
+| `set_bg` | `Fn.set_bg` | 4 |
+| `set_button_ease` | `Fn.set_button_ease` | 4 |
+| `set_button_enabled` | `Fn.set_button_enabled` | 4 |
+| `set_cam` | `Fn.set_cam` | 4 |
+| `set_cam_zoom` | `Fn.set_cam_zoom` | 4 |
+| `set_camera` | `Fn.set_camera` | 4 |
+| `set_camera_zoom` | `Fn.set_camera_zoom` | 4 |
+| `set_character_model` | `Fn.set_character_model` | 4 |
+| `set_clipboard_text` | `Fn.set_clipboard_text` | 4 |
+| `set_color` | `Fn.set_color` | 4 |
+| `set_display_mode` | `Fn.set_display_mode` | 4 |
+| `set_display_resolution` | `Fn.set_display_resolution` | 4 |
+| `set_dropdown_icon` | `Fn.set_dropdown_icon` | 4 |
+| `set_dropdown_max` | `Fn.set_dropdown_max` | 4 |
+| `set_dropdown_search` | `Fn.set_dropdown_search` | 4 |
+| `set_ducking` | `Fn.set_ducking` | 4 |
+| `set_emissive` | `Fn.set_emissive` | 4 |
+| `set_flip_x` | `Fn.set_flip_x` | 4 |
+| `set_flip_y` | `Fn.set_flip_y` | 4 |
+| `set_glyph` | `Fn.set_glyph` | 4 |
+| `set_gravity` | `Fn.set_gravity` | 4 |
+| `set_gravity3` | `Fn.set_gravity3` | 4 |
+| `set_group_volume` | `Fn.set_group_volume` | 4 |
+| `set_image` | `Fn.set_image` | 4 |
+| `set_input_limit` | `Fn.set_input_limit` | 4 |
+| `set_input_multiline` | `Fn.set_input_multiline` | 4 |
+| `set_input_type` | `Fn.set_input_type` | 4 |
+| `set_interactable` | `Fn.set_interactable` | 4 |
+| `set_language` | `Fn.set_language` | 4 |
+| `set_light` | `Fn.set_light` | 4 |
+| `set_light_angle` | `Fn.set_light_angle` | 4 |
+| `set_light_color` | `Fn.set_light_color` | 5 |
+| `set_light_direction` | `Fn.set_light_direction` | 4 |
+| `set_light_intensity` | `Fn.set_light_intensity` | 4 |
+| `set_light_range` | `Fn.set_light_range` | 4 |
+| `set_master_volume` | `Fn.set_master_volume` | 4 |
+| `set_mesh` | `Fn.set_mesh` | 4 |
+| `set_mesh_texture` | `Fn.set_mesh_texture` | 4 |
+| `set_modal_cancel` | `Fn.set_modal_cancel` | 4 |
+| `set_modal_confirm` | `Fn.set_modal_confirm` | 4 |
+| `set_modal_message` | `Fn.set_modal_message` | 4 |
+| `set_modal_style` | `Fn.set_modal_style` | 4 |
+| `set_modal_title` | `Fn.set_modal_title` | 4 |
+| `set_monitor` | `Fn.set_monitor` | 4 |
+| `set_name` | `Fn.set_name` | 4 |
+| `set_object_position` | `Fn.set_object_position` | 4 |
+| `set_object_var` | `Fn.set_object_var` | 4 |
+| `set_parent` | `Fn.set_parent` | 4 |
+| `set_physics_smooth` | `Fn.set_physics_smooth` | 4 |
+| `set_physics_steps` | `Fn.set_physics_steps` | 4 |
+| `set_pos` | `Fn.set_pos` | 4 |
+| `set_pos3` | `Fn.set_pos3` | 4 |
+| `set_position` | `Fn.set_position` | 4 |
+| `set_position_x` | `Fn.set_position_x` | 4 |
+| `set_position_y` | `Fn.set_position_y` | 4 |
+| `set_progress` | `Fn.set_progress` | 4 |
+| `set_progress_bar` | `Fn.set_progress_bar` | 4 |
+| `set_radial` | `Fn.set_radial` | 4 |
+| `set_radial_clockwise` | `Fn.set_radial_clockwise` | 4 |
+| `set_radial_percent` | `Fn.set_radial_percent` | 4 |
+| `set_radial_spin` | `Fn.set_radial_spin` | 4 |
+| `set_radial_start` | `Fn.set_radial_start` | 4 |
+| `set_radial_thickness` | `Fn.set_radial_thickness` | 4 |
+| `set_refresh_rate` | `Fn.set_refresh_rate` | 4 |
+| `set_root_motion` | `Fn.set_root_motion` | 4 |
+| `set_rot3` | `Fn.set_rot3` | 4 |
+| `set_rotation` | `Fn.set_rotation` | 4 |
+| `set_scale` | `Fn.set_scale` | 4 |
+| `set_scale3` | `Fn.set_scale3` | 4 |
+| `set_score` | `Fn.set_score` | 4 |
+| `set_scroll_bar` | `Fn.set_scroll_bar` | 4 |
+| `set_scroll_elastic` | `Fn.set_scroll_elastic` | 4 |
+| `set_scroll_inertia` | `Fn.set_scroll_inertia` | 4 |
+| `set_size` | `Fn.set_size` | 4 |
+| `set_slider` | `Fn.set_slider` | 4 |
+| `set_slider_format` | `Fn.set_slider_format` | 4 |
+| `set_slider_step` | `Fn.set_slider_step` | 4 |
+| `set_slot` | `Fn.set_slot` | 4 |
+| `set_specular` | `Fn.set_specular` | 4 |
+| `set_spread` | `Fn.set_spread` | 4 |
+| `set_spread_recover` | `Fn.set_spread_recover` | 4 |
+| `set_sprite` | `Fn.set_sprite` | 4 |
+| `set_stance` | `Fn.set_stance` | 4 |
+| `set_story` | `Fn.set_story` | 4 |
+| `set_story_flag` | `Fn.set_story_flag` | 4 |
+| `set_swatch` | `Fn.set_swatch` | 4 |
+| `set_tab` | `Fn.set_tab` | 4 |
+| `set_tab_badge` | `Fn.set_tab_badge` | 4 |
+| `set_tab_enabled` | `Fn.set_tab_enabled` | 4 |
+| `set_tabs_closable` | `Fn.set_tabs_closable` | 4 |
+| `set_tag` | `Fn.set_tag` | 4 |
+| `set_text` | `Fn.set_text` | 4 |
+| `set_text_of` | `Fn.set_text_of` | 4 |
+| `set_texture` | `Fn.set_texture` | 4 |
+| `set_tile` | `Fn.set_tile` | 4 |
+| `set_tiling` | `Fn.set_tiling` | 4 |
+| `set_time_scale` | `Fn.set_time_scale` | 4 |
+| `set_timescale` | `Fn.set_timescale` | 4 |
+| `set_tint` | `Fn.set_tint` | 4 |
+| `set_toast_corner` | `Fn.set_toast_corner` | 4 |
+| `set_toast_duration` | `Fn.set_toast_duration` | 4 |
+| `set_toast_max` | `Fn.set_toast_max` | 4 |
+| `set_toggle` | `Fn.set_toggle` | 4 |
+| `set_tooltip_delay` | `Fn.set_tooltip_delay` | 4 |
+| `set_tooltip_offset` | `Fn.set_tooltip_offset` | 4 |
+| `set_tooltip_rich` | `Fn.set_tooltip_rich` | 4 |
+| `set_ui_image` | `Fn.set_ui_image` | 4 |
+| `set_ui_theme` | `Fn.set_ui_theme` | 4 |
+| `set_unlit` | `Fn.set_unlit` | 4 |
+| `set_velocity` | `Fn.set_velocity` | 4 |
+| `set_velocity3` | `Fn.set_velocity3` | 4 |
+| `set_view` | `Fn.set_view` | 4 |
+| `set_visible` | `Fn.set_visible` | 4 |
+| `set_volume` | `Fn.set_volume` | 4 |
+| `set_vx` | `Fn.set_vx` | 4 |
+| `set_vy` | `Fn.set_vy` | 4 |
+| `set_vz` | `Fn.set_vz` | 4 |
+| `set_x` | `Fn.set_x` | 4 |
+| `set_y` | `Fn.set_y` | 4 |
+| `set_z` | `Fn.set_z` | 4 |
+| `set_zoom` | `Fn.set_zoom` | 4 |
+| `shake` | `Fn.shake` | 4 |
+| `shake_camera` | `Fn.shake_camera` | 4 |
+| `shimmy` | `Fn.shimmy` | 4 |
+| `shl` | `Fn.shl` | 4 |
+| `shoot_at` | `Fn.shoot_at` | 4 |
+| `show` | `Fn.show` | 4 |
+| `show_cursor` | `Fn.show_cursor` | 4 |
+| `show_object` | `Fn.show_object` | 4 |
+| `shr` | `Fn.shr` | 4 |
+| `shuffle` | `Fn.shuffle` | 4 |
+| `sign` | `Fn.sign` | 4 |
+| `sin` | `Fn.sin` | 4 |
+| `sit` | `Fn.sit` | 4 |
+| `slice` | `Fn.slice` | 4 |
+| `slider_value` | `Fn.slider_value` | 4 |
+| `slot_value` | `Fn.slot_value` | 4 |
+| `slow_motion` | `Fn.slow_motion` | 4 |
+| `smooth_follow` | `Fn.smooth_follow` | 4 |
+| `smoothstep` | `Fn.smoothstep` | 4 |
+| `snap` | `Fn.snap` | 4 |
+| `sort_num` | `Fn.sort_num` | 4 |
+| `sort_str` | `Fn.sort_str` | 4 |
+| `spawn` | `Fn.spawn` | 4 |
+| `spawn3` | `Fn.spawn3` | 4 |
+| `spawn_pickup` | `Fn.spawn_pickup` | 5 |
+| `spawn_wave` | `Fn.spawn_wave` | 4 |
+| `spawner_alive` | `Fn.spawner_alive` | 4 |
+| `spawner_start` | `Fn.spawner_start` | 4 |
+| `spawner_stop` | `Fn.spawner_stop` | 4 |
+| `sphere_cast3` | `Fn.sphere_cast3` | 10 |
+| `spin` | `Fn.spin` | 4 |
+| `spline_length` | `Fn.spline_length` | 4 |
+| `spline_point` | `Fn.spline_point` | 4 |
+| `split` | `Fn.split` | 4 |
+| `spring_to` | `Fn.spring_to` | 4 |
+| `sprite_size` | `Fn.sprite_size` | 4 |
+| `sqrt` | `Fn.sqrt` | 4 |
+| `stand` | `Fn.stand` | 4 |
+| `stand_up` | `Fn.stand_up` | 4 |
+| `start_dialogue` | `Fn.start_dialogue` | 4 |
+| `start_quest` | `Fn.start_quest` | 4 |
+| `starts_with` | `Fn.starts_with` | 4 |
+| `steam_achievement_count` | `Fn.steam_achievement_count` | 4 |
+| `steam_achievement_name` | `Fn.steam_achievement_name` | 4 |
+| `steam_clear` | `Fn.steam_clear` | 4 |
+| `steam_cloud_count` | `Fn.steam_cloud_count` | 4 |
+| `steam_cloud_delete` | `Fn.steam_cloud_delete` | 4 |
+| `steam_cloud_has` | `Fn.steam_cloud_has` | 4 |
+| `steam_cloud_read` | `Fn.steam_cloud_read` | 4 |
+| `steam_cloud_write` | `Fn.steam_cloud_write` | 4 |
+| `steam_friend_id` | `Fn.steam_friend_id` | 4 |
+| `steam_friend_name` | `Fn.steam_friend_name` | 4 |
+| `steam_friends` | `Fn.steam_friends` | 4 |
+| `steam_get_presence` | `Fn.steam_get_presence` | 4 |
+| `steam_get_stat` | `Fn.steam_get_stat` | 4 |
+| `steam_get_stat_int` | `Fn.steam_get_stat_int` | 4 |
+| `steam_inc_stat` | `Fn.steam_inc_stat` | 4 |
+| `steam_inc_stat_int` | `Fn.steam_inc_stat_int` | 4 |
+| `steam_invite` | `Fn.steam_invite` | 4 |
+| `steam_is_unlocked` | `Fn.steam_is_unlocked` | 4 |
+| `steam_language` | `Fn.steam_language` | 4 |
+| `steam_leaderboard` | `Fn.steam_leaderboard` | 4 |
+| `steam_leaderboard_top` | `Fn.steam_leaderboard_top` | 4 |
+| `steam_lobby_create` | `Fn.steam_lobby_create` | 4 |
+| `steam_lobby_current` | `Fn.steam_lobby_current` | 4 |
+| `steam_lobby_get_data` | `Fn.steam_lobby_get_data` | 4 |
+| `steam_lobby_join` | `Fn.steam_lobby_join` | 4 |
+| `steam_lobby_leave` | `Fn.steam_lobby_leave` | 4 |
+| `steam_lobby_list` | `Fn.steam_lobby_list` | 4 |
+| `steam_lobby_members` | `Fn.steam_lobby_members` | 4 |
+| `steam_lobby_set_data` | `Fn.steam_lobby_set_data` | 4 |
+| `steam_name` | `Fn.steam_name` | 4 |
+| `steam_overlay` | `Fn.steam_overlay` | 4 |
+| `steam_owns` | `Fn.steam_owns` | 4 |
+| `steam_owns_dlc` | `Fn.steam_owns_dlc` | 4 |
+| `steam_presence` | `Fn.steam_presence` | 4 |
+| `steam_progress` | `Fn.steam_progress` | 4 |
+| `steam_set_stat` | `Fn.steam_set_stat` | 4 |
+| `steam_set_stat_int` | `Fn.steam_set_stat_int` | 4 |
+| `steam_store` | `Fn.steam_store` | 4 |
+| `steam_unlock` | `Fn.steam_unlock` | 4 |
+| `steam_workshop_count` | `Fn.steam_workshop_count` | 4 |
+| `steam_workshop_path` | `Fn.steam_workshop_path` | 4 |
+| `steam_workshop_publish` | `Fn.steam_workshop_publish` | 4 |
+| `steam_workshop_subscribe` | `Fn.steam_workshop_subscribe` | 4 |
+| `steam_workshop_unsubscribe` | `Fn.steam_workshop_unsubscribe` | 4 |
+| `stop` | `Fn.stop` | 4 |
+| `stop_anim` | `Fn.stop_anim` | 4 |
+| `stop_clip` | `Fn.stop_clip` | 4 |
+| `stop_dialogue` | `Fn.stop_dialogue` | 4 |
+| `stop_layer` | `Fn.stop_layer` | 4 |
+| `stop_sequence` | `Fn.stop_sequence` | 4 |
+| `story_flag` | `Fn.story_flag` | 4 |
+| `str` | `Fn.str` | 4 |
+| `str_contains` | `Fn.str_contains` | 4 |
+| `str_find` | `Fn.str_find` | 4 |
+| `str_len` | `Fn.str_len` | 4 |
+| `str_repeat` | `Fn.str_repeat` | 4 |
+| `str_reverse` | `Fn.str_reverse` | 4 |
+| `string.Format` | `Fn.string.Format` | 4 |
+| `string.IsNullOrEmpty` | `Fn.string.IsNullOrEmpty` | 4 |
+| `string.IsNullOrWhiteSpace` | `Fn.string.IsNullOrWhiteSpace` | 4 |
+| `string.Join` | `Fn.string.Join` | 4 |
+| `string_length` | `Fn.string_length` | 4 |
+| `substr` | `Fn.substr` | 4 |
+| `sum` | `Fn.sum` | 4 |
+| `swatch_value` | `Fn.swatch_value` | 4 |
+| `swipe_direction` | `Fn.swipe_direction` | 4 |
+| `tab_value` | `Fn.tab_value` | 4 |
+| `tag` | `Fn.tag` | 4 |
+| `tag_of` | `Fn.tag_of` | 4 |
+| `tan` | `Fn.tan` | 4 |
+| `tile_h` | `Fn.tile_h` | 4 |
+| `tile_resize` | `Fn.tile_resize` | 4 |
+| `tile_w` | `Fn.tile_w` | 4 |
+| `time` | `Fn.time` | 4 |
+| `time_elapsed` | `Fn.time_elapsed` | 4 |
+| `time_of_day` | `Fn.time_of_day` | 4 |
+| `time_scale` | `Fn.time_scale` | 4 |
+| `timer` | `Fn.timer` | 4 |
+| `timescale` | `Fn.timescale` | 4 |
+| `title_case` | `Fn.title_case` | 4 |
+| `to_fixed` | `Fn.to_fixed` | 4 |
+| `to_json` | `Fn.to_json` | 4 |
+| `to_num` | `Fn.to_num` | 4 |
+| `to_number` | `Fn.to_number` | 4 |
+| `to_str` | `Fn.to_str` | 4 |
+| `to_string` | `Fn.to_string` | 4 |
+| `toast_count` | `Fn.toast_count` | 4 |
+| `toast_push` | `Fn.toast_push` | 4 |
+| `toggle_journal` | `Fn.toggle_journal` | 4 |
+| `toggle_on` | `Fn.toggle_on` | 4 |
+| `trace` | `Fn.trace` | 4 |
+| `trail_clear` | `Fn.trail_clear` | 4 |
+| `transform.LookAt` | `Fn.transform.LookAt` | 4 |
+| `transform.Rotate` | `Fn.transform.Rotate` | 4 |
+| `transform.Translate` | `Fn.transform.Translate` | 4 |
+| `translate` | `Fn.translate` | 4 |
+| `trim` | `Fn.trim` | 4 |
+| `trim_end` | `Fn.trim_end` | 4 |
+| `trim_start` | `Fn.trim_start` | 4 |
+| `turn` | `Fn.turn` | 4 |
+| `tween_active` | `Fn.tween_active` | 4 |
+| `tween_backwards` | `Fn.tween_backwards` | 4 |
+| `tween_call` | `Fn.tween_call` | 4 |
+| `tween_clock` | `Fn.tween_clock` | 4 |
+| `tween_color` | `Fn.tween_color` | 6 |
+| `tween_complete` | `Fn.tween_complete` | 4 |
+| `tween_complete_tag` | `Fn.tween_complete_tag` | 4 |
+| `tween_decay` | `Fn.tween_decay` | 4 |
+| `tween_delay` | `Fn.tween_delay` | 4 |
+| `tween_ease` | `Fn.tween_ease` | 4 |
+| `tween_fade` | `Fn.tween_fade` | 4 |
+| `tween_from` | `Fn.tween_from` | 4 |
+| `tween_goto` | `Fn.tween_goto` | 4 |
+| `tween_jump` | `Fn.tween_jump` | 6 |
+| `tween_keep` | `Fn.tween_keep` | 4 |
+| `tween_kill` | `Fn.tween_kill` | 4 |
+| `tween_kill_all` | `Fn.tween_kill_all` | 4 |
+| `tween_kill_id` | `Fn.tween_kill_id` | 4 |
+| `tween_kill_tag` | `Fn.tween_kill_tag` | 4 |
+| `tween_loop_move` | `Fn.tween_loop_move` | 4 |
+| `tween_loop_rotate` | `Fn.tween_loop_rotate` | 4 |
+| `tween_loop_scale` | `Fn.tween_loop_scale` | 4 |
+| `tween_loops` | `Fn.tween_loops` | 4 |
+| `tween_move` | `Fn.tween_move` | 5 |
+| `tween_move3` | `Fn.tween_move3` | 6 |
+| `tween_move_by` | `Fn.tween_move_by` | 5 |
+| `tween_move_world` | `Fn.tween_move_world` | 6 |
+| `tween_number` | `Fn.tween_number` | 4 |
+| `tween_on_complete` | `Fn.tween_on_complete` | 4 |
+| `tween_on_start` | `Fn.tween_on_start` | 4 |
+| `tween_on_step` | `Fn.tween_on_step` | 4 |
+| `tween_on_update` | `Fn.tween_on_update` | 4 |
+| `tween_path` | `Fn.tween_path` | 4 |
+| `tween_path_smooth` | `Fn.tween_path_smooth` | 4 |
+| `tween_pause` | `Fn.tween_pause` | 4 |
+| `tween_pause_all` | `Fn.tween_pause_all` | 4 |
+| `tween_pause_id` | `Fn.tween_pause_id` | 4 |
+| `tween_pause_tag` | `Fn.tween_pause_tag` | 4 |
+| `tween_play` | `Fn.tween_play` | 4 |
+| `tween_play_all` | `Fn.tween_play_all` | 4 |
+| `tween_play_id` | `Fn.tween_play_id` | 4 |
+| `tween_play_tag` | `Fn.tween_play_tag` | 4 |
+| `tween_playing` | `Fn.tween_playing` | 4 |
+| `tween_progress` | `Fn.tween_progress` | 4 |
+| `tween_prop` | `Fn.tween_prop` | 5 |
+| `tween_punch_pos` | `Fn.tween_punch_pos` | 4 |
+| `tween_punch_rotate` | `Fn.tween_punch_rotate` | 4 |
+| `tween_punch_scale` | `Fn.tween_punch_scale` | 4 |
+| `tween_relative` | `Fn.tween_relative` | 4 |
+| `tween_restart` | `Fn.tween_restart` | 4 |
+| `tween_restart_id` | `Fn.tween_restart_id` | 4 |
+| `tween_rewind` | `Fn.tween_rewind` | 4 |
+| `tween_rewind_id` | `Fn.tween_rewind_id` | 4 |
+| `tween_rotate` | `Fn.tween_rotate` | 4 |
+| `tween_rotate3` | `Fn.tween_rotate3` | 6 |
+| `tween_rotate_to` | `Fn.tween_rotate_to` | 4 |
+| `tween_scale` | `Fn.tween_scale` | 4 |
+| `tween_scale_xy` | `Fn.tween_scale_xy` | 5 |
+| `tween_set_id` | `Fn.tween_set_id` | 4 |
+| `tween_shake` | `Fn.tween_shake` | 4 |
+| `tween_shake_rotate` | `Fn.tween_shake_rotate` | 4 |
+| `tween_shake_scale` | `Fn.tween_shake_scale` | 4 |
+| `tween_speed` | `Fn.tween_speed` | 4 |
+| `tween_speed_based` | `Fn.tween_speed_based` | 4 |
+| `tween_tag` | `Fn.tween_tag` | 4 |
+| `tween_text` | `Fn.tween_text` | 4 |
+| `tween_toggle` | `Fn.tween_toggle` | 4 |
+| `tween_ui_move` | `Fn.tween_ui_move` | 5 |
+| `tween_ui_size` | `Fn.tween_ui_size` | 5 |
+| `tween_unscaled` | `Fn.tween_unscaled` | 4 |
+| `tween_var` | `Fn.tween_var` | 5 |
+| `twist_degrees` | `Fn.twist_degrees` | 4 |
+| `typeof` | `Fn.typeof` | 4 |
+| `ui_accordion_open` | `Fn.ui_accordion_open` | 4 |
+| `ui_accordion_toggle` | `Fn.ui_accordion_toggle` | 4 |
+| `ui_avatar` | `Fn.ui_avatar` | 4 |
+| `ui_badge` | `Fn.ui_badge` | 4 |
+| `ui_begin` | `Fn.ui_begin` | 5 |
+| `ui_breadcrumb_path` | `Fn.ui_breadcrumb_path` | 4 |
+| `ui_breadcrumb_select` | `Fn.ui_breadcrumb_select` | 4 |
+| `ui_button` | `Fn.ui_button` | 4 |
+| `ui_caption` | `Fn.ui_caption` | 4 |
+| `ui_card_begin` | `Fn.ui_card_begin` | 4 |
+| `ui_card_end` | `Fn.ui_card_end` | 4 |
+| `ui_checkbox` | `Fn.ui_checkbox` | 4 |
+| `ui_clicked` | `Fn.ui_clicked` | 4 |
+| `ui_damage_number` | `Fn.ui_damage_number` | 4 |
+| `ui_date_text` | `Fn.ui_date_text` | 4 |
+| `ui_dialogue_choice` | `Fn.ui_dialogue_choice` | 4 |
+| `ui_dialogue_open` | `Fn.ui_dialogue_open` | 4 |
+| `ui_dialogue_show` | `Fn.ui_dialogue_show` | 6 |
+| `ui_drop_source` | `Fn.ui_drop_source` | 4 |
+| `ui_drop_target` | `Fn.ui_drop_target` | 4 |
+| `ui_dropdown_text` | `Fn.ui_dropdown_text` | 4 |
+| `ui_dropdown_value` | `Fn.ui_dropdown_value` | 4 |
+| `ui_end` | `Fn.ui_end` | 4 |
+| `ui_file_open` | `Fn.ui_file_open` | 4 |
+| `ui_file_selected` | `Fn.ui_file_selected` | 4 |
+| `ui_file_set_root` | `Fn.ui_file_set_root` | 4 |
+| `ui_get_rotation` | `Fn.ui_get_rotation` | 4 |
+| `ui_get_scale` | `Fn.ui_get_scale` | 4 |
+| `ui_get_text` | `Fn.ui_get_text` | 4 |
+| `ui_heading` | `Fn.ui_heading` | 4 |
+| `ui_hide` | `Fn.ui_hide` | 4 |
+| `ui_hovered` | `Fn.ui_hovered` | 4 |
+| `ui_input` | `Fn.ui_input` | 4 |
+| `ui_is_hovered` | `Fn.ui_is_hovered` | 4 |
+| `ui_key_value` | `Fn.ui_key_value` | 4 |
+| `ui_list_item` | `Fn.ui_list_item` | 4 |
+| `ui_load_theme` | `Fn.ui_load_theme` | 4 |
+| `ui_page` | `Fn.ui_page` | 4 |
+| `ui_page_count` | `Fn.ui_page_count` | 4 |
+| `ui_play` | `Fn.ui_play` | 4 |
+| `ui_pointer_over` | `Fn.ui_pointer_over` | 4 |
+| `ui_primary_button` | `Fn.ui_primary_button` | 4 |
+| `ui_progress` | `Fn.ui_progress` | 4 |
+| `ui_radio_value` | `Fn.ui_radio_value` | 4 |
+| `ui_sameline` | `Fn.ui_sameline` | 4 |
+| `ui_search_count` | `Fn.ui_search_count` | 4 |
+| `ui_search_query` | `Fn.ui_search_query` | 4 |
+| `ui_separator` | `Fn.ui_separator` | 4 |
+| `ui_set_bar_format` | `Fn.ui_set_bar_format` | 4 |
+| `ui_set_bar_segments` | `Fn.ui_set_bar_segments` | 4 |
+| `ui_set_bar_trail` | `Fn.ui_set_bar_trail` | 4 |
+| `ui_set_button_ease` | `Fn.ui_set_button_ease` | 4 |
+| `ui_set_date` | `Fn.ui_set_date` | 4 |
+| `ui_set_dropdown` | `Fn.ui_set_dropdown` | 4 |
+| `ui_set_fill` | `Fn.ui_set_fill` | 4 |
+| `ui_set_focus` | `Fn.ui_set_focus` | 4 |
+| `ui_set_interactable` | `Fn.ui_set_interactable` | 4 |
+| `ui_set_loading` | `Fn.ui_set_loading` | 4 |
+| `ui_set_page` | `Fn.ui_set_page` | 4 |
+| `ui_set_progress` | `Fn.ui_set_progress` | 4 |
+| `ui_set_radio` | `Fn.ui_set_radio` | 4 |
+| `ui_set_rich` | `Fn.ui_set_rich` | 4 |
+| `ui_set_rotation` | `Fn.ui_set_rotation` | 4 |
+| `ui_set_scale` | `Fn.ui_set_scale` | 4 |
+| `ui_set_search` | `Fn.ui_set_search` | 4 |
+| `ui_set_slider` | `Fn.ui_set_slider` | 4 |
+| `ui_set_slider_format` | `Fn.ui_set_slider_format` | 4 |
+| `ui_set_slider_step` | `Fn.ui_set_slider_step` | 4 |
+| `ui_set_tab` | `Fn.ui_set_tab` | 4 |
+| `ui_set_tab_badge` | `Fn.ui_set_tab_badge` | 4 |
+| `ui_set_tab_enabled` | `Fn.ui_set_tab_enabled` | 4 |
+| `ui_set_text` | `Fn.ui_set_text` | 4 |
+| `ui_set_time` | `Fn.ui_set_time` | 4 |
+| `ui_set_toggle` | `Fn.ui_set_toggle` | 4 |
+| `ui_set_variant` | `Fn.ui_set_variant` | 4 |
+| `ui_sheet_close` | `Fn.ui_sheet_close` | 4 |
+| `ui_sheet_open` | `Fn.ui_sheet_open` | 4 |
+| `ui_sheet_open_state` | `Fn.ui_sheet_open_state` | 4 |
+| `ui_show` | `Fn.ui_show` | 4 |
+| `ui_slider` | `Fn.ui_slider` | 4 |
+| `ui_slider_value` | `Fn.ui_slider_value` | 4 |
+| `ui_spacing` | `Fn.ui_spacing` | 4 |
+| `ui_spinner` | `Fn.ui_spinner` | 4 |
+| `ui_style` | `Fn.ui_style` | 4 |
+| `ui_switch` | `Fn.ui_switch` | 4 |
+| `ui_tab_text` | `Fn.ui_tab_text` | 4 |
+| `ui_tab_value` | `Fn.ui_tab_value` | 4 |
+| `ui_tabs` | `Fn.ui_tabs` | 4 |
+| `ui_text` | `Fn.ui_text` | 4 |
+| `ui_text_dim` | `Fn.ui_text_dim` | 4 |
+| `ui_text_wrapped` | `Fn.ui_text_wrapped` | 4 |
+| `ui_theme_preset` | `Fn.ui_theme_preset` | 4 |
+| `ui_toast` | `Fn.ui_toast` | 4 |
+| `ui_toggle_value` | `Fn.ui_toggle_value` | 4 |
+| `unequip` | `Fn.unequip` | 4 |
+| `unscaled_dt` | `Fn.unscaled_dt` | 4 |
+| `upper` | `Fn.upper` | 4 |
+| `vault` | `Fn.vault` | 4 |
+| `vec2` | `Fn.vec2` | 4 |
+| `vec3` | `Fn.vec3` | 4 |
+| `vec_add` | `Fn.vec_add` | 4 |
+| `vec_angle` | `Fn.vec_angle` | 4 |
+| `vec_clamp_len` | `Fn.vec_clamp_len` | 4 |
+| `vec_cross` | `Fn.vec_cross` | 4 |
+| `vec_distance` | `Fn.vec_distance` | 4 |
+| `vec_dot` | `Fn.vec_dot` | 4 |
+| `vec_length` | `Fn.vec_length` | 4 |
+| `vec_lerp` | `Fn.vec_lerp` | 4 |
+| `vec_move_towards` | `Fn.vec_move_towards` | 4 |
+| `vec_normalize` | `Fn.vec_normalize` | 4 |
+| `vec_reflect` | `Fn.vec_reflect` | 4 |
+| `vec_scale` | `Fn.vec_scale` | 4 |
+| `vec_sub` | `Fn.vec_sub` | 4 |
+| `vec_x` | `Fn.vec_x` | 4 |
+| `vec_y` | `Fn.vec_y` | 4 |
+| `vec_z` | `Fn.vec_z` | 4 |
+| `vel_toward` | `Fn.vel_toward` | 4 |
+| `velocity` | `Fn.velocity` | 4 |
+| `velocity_x` | `Fn.velocity_x` | 4 |
+| `velocity_y` | `Fn.velocity_y` | 4 |
+| `velocity_z` | `Fn.velocity_z` | 4 |
+| `volume` | `Fn.volume` | 4 |
+| `walk` | `Fn.walk` | 4 |
+| `wander` | `Fn.wander` | 4 |
+| `wasd_move` | `Fn.wasd_move` | 4 |
+| `wasd_move3` | `Fn.wasd_move3` | 4 |
+| `watch` | `Fn.watch` | 4 |
+| `weapon_ammo` | `Fn.weapon_ammo` | 4 |
+| `weapon_fire` | `Fn.weapon_fire` | 4 |
+| `weapon_reload` | `Fn.weapon_reload` | 4 |
+| `weapon_set` | `Fn.weapon_set` | 4 |
+| `weapon_swing` | `Fn.weapon_swing` | 4 |
+| `weather_set` | `Fn.weather_set` | 4 |
+| `wrap` | `Fn.wrap` | 4 |
+| `wrap_in_box` | `Fn.wrap_in_box` | 4 |
+| `write_save` | `Fn.write_save` | 4 |
+| `zoom_camera` | `Fn.zoom_camera` | 4 |
 
 ## Gaps
 

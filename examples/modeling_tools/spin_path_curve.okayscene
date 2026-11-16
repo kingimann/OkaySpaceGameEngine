@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "cf6eb92fb35e8172164f085206654c04"
+  guid "284c5eb2f4e895327ff362739d88fd9c"
   active 1
   parent -1
-  transform 0.2 2.2 13 0 0 0 1 1 1 1
+  transform 1.4 2.4 16 0 0 0 1 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Sun"
-  guid "47c63e46b48a6781b5dd813f72cd54af"
+  guid "9e896701688614964ebbd56dfe1d4fda"
   active 1
   parent -1
   transform 0 0 0 0.3303661 -0.24321036 0.08852133 0.9076734 1 1 1
   light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
 end
 gameobject 2 "Spun Vase"
-  guid "d17e505c17f2400ce21a6a488fcd450b"
+  guid "6ffef5e95900f1d0b978fdd8024a566d"
   active 1
   parent -1
   transform -3 0 0 0 0 0 1 1 1 1
@@ -33,7 +33,7 @@ gameobject 2 "Spun Vase"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Bent Horn"
-  guid "fd1d11652c8c0acc1648a513efd08cf5"
+  guid "f879e2b4f9d40ce5ccce3c492cf192ce"
   active 1
   parent -1
   transform -1 0 0 0 0 0 1 1 1 1
@@ -43,7 +43,7 @@ gameobject 3 "Bent Horn"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 4 "Table"
-  guid "285b57f69ee5ebbcc97ea8c80818ac3b"
+  guid "3bd13be4594279ef0a5abad2af1edde5"
   active 1
   parent -1
   transform 6 0 0 0 0 0 1 1 1 1
@@ -55,7 +55,7 @@ gameobject 4 "Table"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 5 "Window Wall"
-  guid "d034aa389818cd1976e81cc9a8386581"
+  guid "f1985015d82a6a5bea638bc6be7cd2e7"
   active 1
   parent -1
   transform -5.6 0.6 0 0 0 0 1 1 1 1
@@ -63,8 +63,22 @@ gameobject 5 "Window Wall"
   meshgeo 12 -0.8 -0.6 -0.125 0.8 -0.6 -0.125 0.8 0.6 -0.125 -0.8 0.6 -0.125 -0.8 -0.6 0.125 0.8 -0.6 0.125 0.8 0.6 0.125 -0.8 0.6 0.125 -0.56 -0.42000002 0.125 0.56 -0.42000002 0.125 0.56 0.42000002 0.125 -0.56 0.42000002 0.125 54 0 2 1 0 3 2 4 1 5 4 0 1 3 6 2 3 7 6 4 3 0 4 7 3 1 6 5 1 2 6 4 5 9 4 9 8 5 6 10 5 10 9 6 7 11 6 11 10 7 4 8 7 8 11
   material 0 0 0 0 16 0 "" 1 1
 end
-gameobject 6 "Curve Array"
-  guid "89359a436d5f98fb48d51ae960d8611b"
+gameobject 6 "House Roof Hidden"
+  guid "09c4d76c8ebc39678c1f1d0bd8449a6b"
+  active 1
+  parent -1
+  transform 8.6 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "" 0
+  meshgeo 14 -1 0 -0.8 1 0 -0.8 1 0 0.8 -1 0 0.8 -1 1 -0.8 1 1 -0.8 1 1 0.8 -1 1 0.8 -1 1.7 0 1 1.7 0 -0.2 0 0.805 0.2 0 0.805 0.2 0.6 0.805 -0.2 0.6 0.805 42 1 0 3 3 2 1 7 3 2 2 6 7 5 1 0 0 4 5 6 2 1 1 5 6 4 0 3 3 7 4 6 5 9 4 7 8 13 10 11 11 12 13
+  meshpoly 14 0 0 1 1 2 2 3 3 4 4 5 6 9 9
+  meshcolors 14 0.35 0.25 0.16 1 0.35 0.25 0.16 1 0.92 0.86 0.7 1 0.92 0.86 0.7 1 0.92 0.86 0.7 1 0.92 0.86 0.7 1 0.92 0.86 0.7 1 0.92 0.86 0.7 1 0.92 0.86 0.7 1 0.92 0.86 0.7 1 0.92 0.86 0.7 1 0.92 0.86 0.7 1 0.15 0.3 0.75 1 0.15 0.3 0.75 1
+  meshslots 14 2 2 0 0 0 0 0 0 0 0 0 0 3 3
+  slotcolors 4 0.92 0.86 0.7 1 0.75 0.18 0.12 1 0.35 0.25 0.16 1 0.15 0.3 0.75 1
+  meshhidden 4 0 1 -1 1.7 0 -1 1 0.8 1 1 0.8 1 7 0.75 0.18 0.12 1 1 1 0.8 1 1.7 0 -1 1.7 0 1 7 0.75 0.18 0.12 1 1 1.7 0 1 1 -0.8 -1 1 -0.8 1 8 0.75 0.18 0.12 1 -1 1 -0.8 -1 1.7 0 1 1.7 0 1 8 0.75 0.18 0.12 1
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Curve Array"
+  guid "c3ff64981ffe70cfd2a13b927944dd1d"
   active 1
   parent -1
   transform 0.8 0.4 0 0 0 0 1 1 1 1

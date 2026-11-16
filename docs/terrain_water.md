@@ -96,7 +96,8 @@ tool); Arcade = everything vanishes, building is free (the old behaviour); Creat
   this part is unverified.
 * **World-edge catch** (`catchFalling`, `catchMargin`, `onFall`): a body that fell more than `catchMargin` voxels below the grid is put back
   on the ground at the nearest point inside it with its speed cleared, or handed to `onFall` (a respawn hook). Checked every
-  sixth frame over the scene's rigid bodies. Off by default; the Voxel Terrain card has the switch.
+  sixth frame over the scene's rigid bodies (0.017 ms per pass for 300 bodies, `bench_voxel_real`). Inside the grid's own width a body below
+  the grid is pushed up by the ground, so the catch matters past the sides. Off by default; the Voxel Terrain card has the switch.
 * **Avalanche** (`slumpPasses`): several bounded slump passes per frame, so loose ground runs farther down a slope.
 * **Seed**: the Voxel Terrain card has a Seed field; the same seed gives the same ground and layers.
 

@@ -87,7 +87,7 @@ int main() {
         if (on) {                                                          // the respawn hook replaces the default
             int hooked = 0;
             w.v->onFall = [&](GameObject&) { ++hooked; };
-            b->transform->SetPosition({0, -30, 0});
+            b->transform->SetPosition({w.v->HalfX() + 15.0f, -30.0f, 0.0f});   // outside the grid (inside it the ground pushes a body up)
             for (int i = 0; i < 12; ++i) w.s.Update(1.0f / 60.0f);
             std::cout << "  hook calls " << hooked << ", ball y " << b->transform->Position().y << ", caught " << w.v->caughtCount << "\n";
             CHECK(hooked >= 1);

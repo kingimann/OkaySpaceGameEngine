@@ -5,6 +5,7 @@
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/VoxelDigger.hpp"
 #include "okay/Components/Camera.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -83,6 +84,18 @@ int main(int argc, char** argv) {
         }
         const Stats a = Pct(sl), b = Pct(ex);
         std::printf("== passes on a 160x64x160 field (655k voxels), per stroke frame\n  Slump(40): median %.3f ms, worst %.3f ms\n  ExtractFloaters(6): median %.3f ms, worst %.3f ms\n", a.med, a.worst, b.med, b.worst);
+    }
+    // the world-edge catch (VoxelTerrain::catchFalling): one pass over every rigid body, done every sixth frame
+    {
+        Scene s("C"); s.physicsEnabled = false;
+        GameObject* g = s.CreateGameObject("Terrain");
+        auto* v = g->AddComponent<VoxelTerrain>(); v->Resize(72, 44, 72); v->voxelSize = 1.5f; v->FillSlab(0.5f);
+        for (int i = 0; i < 300; ++i) { GameObject* b = s.CreateGameObject("B"); b->transform->localPosition = {(float)(i % 20), 30.0f, (float)(i / 20)}; b->AddComponent<Rigidbody3D>(); }
+        s.Update(0.0f);
+        std::vector<double> t;
+        for (int i = 0; i < 50; ++i) { const double t0 = NowMs(); v->CatchFallers(); t.push_back(NowMs() - t0); }
+        const Stats a = Pct(t);
+        std::printf("== world-edge catch over 300 rigid bodies: median %.3f ms per pass (one pass every 6th frame)\n", a.med);
     }
     return 0;
 }

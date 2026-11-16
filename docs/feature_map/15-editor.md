@@ -243,11 +243,12 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.11.6 Variables watch - `editor/main.cpp` (`DrawVarWatch` ~2252) - live visual-script variables
   - 15.11.7 Status bar - `editor/main.cpp` (`DrawStatusBar` ~6412) - selection, object count, tool, mode, FPS, and a Problems count that opens the Problems panel
   - 15.11.8 Problems panel - `editor/ProblemsPanel.*`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - one live list of what is wrong, grouped by object, asset or script, with error / warning / info filters; a click selects the object, opens the script or frames the graph node; Fix adds a missing component, clears a broken reference, re-imports a file that is on disk, or adds a Main Camera
+  - 15.11.10 Frame-time overlay and editor speed settings - `editor/EditorPerf.hpp`, `editor/main.cpp` (`DrawPerfOverlay`, `DrawRenderingMenuItems`, the frame limiter before the profiler's `EndFrame`) - View > Rendering: a small window with FPS, ms, 95th percentile, worst, a graph of the last 120 frames and where the frame goes (3D view render, upload, viewport gizmos, panels, ImGui, present, play mode, limiter sleep, not timed) with a Copy report button; frame rate limit, slow down when idle, viewport resolution, performance mode (cheaper Scene view only); all off by default and remembered in `okay_settings.txt`
   - 15.11.9 Inline markers - `editor/main.cpp` (Hierarchy rows, Inspector component headers), `editor/VisualScriptEditor.hpp` - a warning or error badge with a tooltip on the object and on the component; a long name is cut with an ellipsis before the badge; graph nodes keep an error or warning badge and a bad wire's pins are drawn red
 - **Code:** `editor/ConsolePanel.*`, `editor/ProblemsPanel.*`, `editor/NetSimPanel.*`, `editor/main.cpp`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics`
 - **API:** `ConsoleLog(text, level)`; `EditorDiagnostics`, `CollectProjectDiagnostics`, `ApplyDiagnosticFix`, `AddNodeRequirement`; View > Panels > Console, Problems, Crash Log, Stats, Profiler, Net, Variables (watch)
 - **Editor:** each panel; Problems is docked with the Console
-- **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/core_logging_profiling.md`
+- **Docs:** `docs/editor.md` (Scene & Game view extras), `docs/core_logging_profiling.md`, `docs/editor_performance.md`
 - **Tests:** `profiler`, `profiler_export`, `log` (engine side), `crash_reports`, `diagnostics`, `debug_console`
 - **Status:** Works - the Console, Problems and the inline badges read one diagnostic list; the list updates in edit mode when the scene changes
 - **Open:** planned area 23 still wants a CPU and GPU timeline window, memory tracking and a frame debugger

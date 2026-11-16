@@ -1648,6 +1648,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - frame time (1.10, 23.1)
 - frame time test (58.2)
 - Frame-stat export and loop console (1.1.16)
+- Frame-time overlay and editor speed settings (15.11.10)
 - Frame-time recorder and player (#581) (46.1.5)
 - FrameArena (1.18)
 - framebuffer (38.9)

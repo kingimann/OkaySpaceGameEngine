@@ -3308,6 +3308,12 @@ add_executable(test_editor_layout test_editor_layout.cpp)
 target_include_directories(test_editor_layout PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 add_test(NAME editor_layout COMMAND test_editor_layout)
 
+# The editor's frame-time maths (editor/EditorPerf.hpp, UI-library free): section breakdown, history numbers, idle throttle, viewport scale, performance mode.
+add_executable(test_editor_perf test_editor_perf.cpp)
+target_include_directories(test_editor_perf PRIVATE ${CMAKE_SOURCE_DIR}/editor)
+target_link_libraries(test_editor_perf PRIVATE okay::engine)
+add_test(NAME editor_perf COMMAND test_editor_perf)
+
 add_executable(test_net_reconnect test_net_reconnect.cpp)
 target_link_libraries(test_net_reconnect PRIVATE okay::engine)
 add_test(NAME net_reconnect COMMAND test_net_reconnect)

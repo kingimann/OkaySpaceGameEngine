@@ -8,6 +8,7 @@
 // window — used in CI where there's no display.
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
+#include "EditorPerf.hpp"            // frame-time maths, idle throttle, viewport scale, performance mode (tests/test_editor_perf.cpp)
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
 #include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
@@ -1031,6 +1032,13 @@ int g_ssaa = 1;   // 3D anti-aliasing: 1 = off (FXAA still on), 2 = 2x supersamp
                   // which tanked FPS (badly on HiDPI displays). Cheap FXAA still
                   // smooths edges; turn 2x on in View > 3D Anti-aliasing if wanted.
 float g_renderScale = 1.0f;  // 3D view render resolution (1.0 = native; lower = faster, softer)
+// View > Rendering: editor frame rate and cost switches (okay::editor::perf in EditorPerf.hpp). All off by default; remembered in okay_settings.txt.
+int   g_fpsCapEditor = 0;       // 0 = no cap; else the editor sleeps out the rest of each frame
+bool  g_idleThrottle = false;   // slow to g_idleFps while nothing is clicked, typed or playing
+int   g_idleFps = 30;
+bool  g_perfMode = false;       // cheaper Scene-view rendering (no AO / bloom / FXAA / supersampling, one small shadow cascade)
+bool  g_showPerfOverlay = false; // the frame-time overlay (FPS, ms graph, where the frame went)
+double g_secSinceInput = 0.0;   // seconds since the last click / key / wheel / touch (for the idle throttle)
 bool g_autoPerf = true;  // auto-drop supersampling when the scene gets heavy
 bool g_vsync = false;    // false = uncapped FPS (no 60 Hz limit); true = vsync
 bool g_smoothFrameTime = true;   // Play steps by an evened-out frame time (Time::SmoothDelta)
@@ -1126,8 +1134,27 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // Render at a fraction of the panel resolution when render scale < 1: the
     // texture is drawn STRETCHED to the panel, so a smaller buffer upscales for
     // free (linear filtered) — a near-linear FPS win for the software renderer.
-    float scale = g_renderScale < 0.25f ? 0.25f : (g_renderScale > 1.0f ? 1.0f : g_renderScale);
+    const bool perfView = g_perfMode && slot == 0;   // performance mode is for the Scene view only
+    float scale = okay::editor::perf::EffectiveScale(g_renderScale, perfView);
     int ss = g_ssaa;
+    // Performance mode: cheaper switches for this render only; put back on every way out of the function.
+    struct PerfModeGuard {
+        okay::editor::perf::ViewKnobs saved; bool on = false; int* ssaa = nullptr; int savedSsaa = 1;
+        PerfModeGuard(bool active, int& ssaaRef, bool changeShadowSize) {
+            if (!active) return;
+            on = true; ssaa = &ssaaRef; savedSsaa = ssaaRef;
+            saved = {ShadowsEnabled(), ShadowMapResolution(), ShadowCascades(), SSAOEnabled(), BloomEnabled(), FXAAEnabled(), ssaaRef};
+            const auto c = okay::editor::perf::Cheaper(saved, changeShadowSize);
+            ShadowMapResolution() = c.shadowResolution; ShadowCascades() = c.shadowCascades;
+            SSAOEnabled() = c.ssao; BloomEnabled() = c.bloom; FXAAEnabled() = c.fxaa;
+        }
+        ~PerfModeGuard() {
+            if (!on) return;
+            ShadowMapResolution() = saved.shadowResolution; ShadowCascades() = saved.shadowCascades;
+            SSAOEnabled() = saved.ssao; BloomEnabled() = saved.bloom; FXAAEnabled() = saved.fxaa;
+        }
+    } perfGuard(perfView, g_ssaa, !g_showGame);   // (g_ssaa itself is never changed: ss below is the local copy)
+    if (perfView) ss = 1;
     int rw = (int)(w * scale); if (rw < 1) rw = 1;
     int rh = (int)(h * scale); if (rh < 1) rh = 1;
     // Cap the offscreen 3D buffer's long edge. The viewport is rendered to a texture
@@ -1252,7 +1279,7 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
         SDL_SetTextureScaleMode(g_view3DTex[slot], SDL_ScaleModeLinear);  // smooth upscale
         g_view3DW[slot] = rw; g_view3DH[slot] = rh; g_view3DIsTarget[slot] = false;
     }
-    SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, rw * 4);
+    { OKAY_PROFILE("Render3D.Upload"); SDL_UpdateTexture(g_view3DTex[slot], nullptr, px, rw * 4); }
     return g_view3DTex[slot];
 }
 
@@ -2466,6 +2493,11 @@ void LoadSettings() {
         else if (k == "smoothframetime") g_smoothFrameTime = (v != 0);
         else if (k == "ssaa") g_ssaa = v < 1 ? 1 : (v > 2 ? 2 : v);
         else if (k == "renderscalepct") g_renderScale = (v < 25 ? 25 : (v > 100 ? 100 : v)) / 100.0f;
+        else if (k == "editorfpscap") g_fpsCapEditor = v < 0 ? 0 : (v > 1000 ? 1000 : v);
+        else if (k == "idlethrottle") g_idleThrottle = (v != 0);
+        else if (k == "idlefps") g_idleFps = v < 5 ? 5 : (v > 240 ? 240 : v);
+        else if (k == "perfmode") g_perfMode = (v != 0);
+        else if (k == "perfoverlay") g_showPerfOverlay = (v != 0);
         else if (k == "showgizmos") g_showGizmos = (v != 0);
         else if (k == "showvolumes") oked::g_showVolumes = (v != 0);
         else if (k == "volumelabels") oked::g_showVolumeLabels = (v != 0);
@@ -2535,6 +2567,11 @@ void SaveSettings() {
       << "smoothframetime " << (g_smoothFrameTime ? 1 : 0) << "\n"
       << "ssaa "       << g_ssaa << "\n"
       << "renderscalepct " << (int)(g_renderScale * 100 + 0.5f) << "\n"
+      << "editorfpscap " << g_fpsCapEditor << "\n"
+      << "idlethrottle " << (g_idleThrottle ? 1 : 0) << "\n"
+      << "idlefps " << g_idleFps << "\n"
+      << "perfmode " << (g_perfMode ? 1 : 0) << "\n"
+      << "perfoverlay " << (g_showPerfOverlay ? 1 : 0) << "\n"
       << "showgizmos " << (g_showGizmos ? 1 : 0) << "\n"
       << "showvolumes " << (oked::g_showVolumes ? 1 : 0) << "\n"
       << "volumelabels " << (oked::g_showVolumeLabels ? 1 : 0) << "\n"
@@ -7066,6 +7103,38 @@ static void DrawRenderingMenuItems(EditorState& ed) {
     // Multi-window panels are always on now (drag a tab to a second monitor) — no toggle.
     if (ImGui::MenuItem("Auto performance", nullptr, &g_autoPerf)) SaveSettings();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Automatically drop anti-aliasing when the scene\nhas many models, to keep the editor smooth.");
+    // Editor frame rate: see the numbers, then pick what helps (docs/editor_performance.md; okay::editor::perf).
+    ImGui::Separator();
+    if (ImGui::MenuItem("Frame-time overlay", nullptr, &g_showPerfOverlay)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A small window with FPS, frame time, a graph of the last frames and where the frame goes\n(3D view, panels, ImGui, present). Its Copy report button puts the numbers on the clipboard.");
+    if (ImGui::MenuItem("Profiler window", nullptr, &g_showProfiler)) SaveSettings();
+    if (ImGui::BeginMenu("Viewport resolution")) {
+        const int pcts[] = {100, 75, 50, 35};
+        for (int p : pcts) {
+            char lb[40]; std::snprintf(lb, sizeof(lb), p == 100 ? "100%% (native)" : "%d%%", p);
+            if (ImGui::MenuItem(lb, nullptr, (int)(g_renderScale * 100 + 0.5f) == p)) { g_renderScale = p / 100.0f; SaveSettings(); }
+        }
+        ImGui::TextDisabled("The 3D view is drawn smaller and stretched.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Frame rate limit")) {
+        const int caps[] = {0, 60, 90, 120, 144, 240};
+        for (int c : caps) {
+            char lb[32]; if (c == 0) std::snprintf(lb, sizeof(lb), "Off (as fast as it goes)"); else std::snprintf(lb, sizeof(lb), "%d FPS", c);
+            if (ImGui::MenuItem(lb, nullptr, g_fpsCapEditor == c)) { g_fpsCapEditor = c; SaveSettings(); }
+        }
+        ImGui::TextDisabled("A limit makes the editor sleep, which frees the GPU and CPU.");
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Slow down when idle", nullptr, &g_idleThrottle)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("When nothing is clicked or typed for a moment (and the game is not playing),\nthe editor drops to %d FPS so it stops burning the GPU. It speeds up again at once on any input.", g_idleFps);
+    if (ImGui::BeginMenu("Idle frame rate")) {
+        const int rates[] = {15, 20, 30, 60};
+        for (int r : rates) { char lb[24]; std::snprintf(lb, sizeof(lb), "%d FPS", r); if (ImGui::MenuItem(lb, nullptr, g_idleFps == r)) { g_idleFps = r; SaveSettings(); } }
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Performance mode (Scene view)", nullptr, &g_perfMode)) SaveSettings();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cheaper Scene view only (the Game view and your builds keep the scene's own look):\nno ambient occlusion, bloom, FXAA or supersampling, render scale at most 75%%,\nand one small shadow cascade while the Game panel is closed.");
 }
 
 // ---- GameObject > <category>, Hierarchy > Create: every creator the editor has, grouped (Create Child passes the parent). ----
@@ -20810,20 +20879,24 @@ void DrawHierarchy(EditorState& ed) {
             // The name stops before the eye, the lock and the error badge.
             char cnt[16] = ""; if (childCount > 0) std::snprintf(cnt, sizeof(cnt), "  (%d)", childCount);
             const std::string tail = std::string(cnt) + (node->active ? "" : "  (off)");
-            const bool diag = ObjectHasDiag(node);
-            const float nameRoom = ImGui::GetContentRegionAvail().x
+            // A row scrolled out of the panel is not drawn, so its decorations (icon, badges, eye, lock, the width fitting of its
+            // name) are skipped: in a big scene most rows are out of view and this was most of the Hierarchy's per-frame cost.
+            // (The row still goes through TreeNodeEx below, so open / closed state and the keyboard order stay right.)
+            const bool rowShown = ImGui::IsRectVisible(ImVec2(ImGui::GetContentRegionAvail().x, ImGui::GetFrameHeight()));
+            const bool diag = rowShown && ObjectHasDiag(node);
+            const float nameRoom = rowShown ? ImGui::GetContentRegionAvail().x
                 - (ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f)
                 - ImGui::CalcTextSize("     ").x
                 - ImGui::CalcTextSize(tail.c_str()).x
                 - kHierEyeW * 2.0f - 8.0f
-                - (diag ? 22.0f : 0.0f);
-            const std::string shown = EllipsizeToWidth(node->name, nameRoom);
+                - (diag ? 22.0f : 0.0f) : 0.0f;
+            const std::string shown = rowShown ? EllipsizeToWidth(node->name, nameRoom) : node->name;
             bool open = ImGui::TreeNodeEx(node, flags, "     %s%s", shown.c_str(), tail.c_str());
             if (shown != node->name && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", node->name.c_str());
             if (dim || prefabRoot) ImGui::PopStyleColor();
             ImVec2 rowMin = ImGui::GetItemRectMin(), rowMax = ImGui::GetItemRectMax();
             if (revealSel == node && !ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.4f);   // selected in the Scene view: scroll to it
-            {   // drawn type icon in the leading space (after the tree arrow zone)
+            if (rowShown) {   // drawn type icon in the leading space (after the tree arrow zone)
                 float isz = ImGui::GetFontSize();
                 float ax = isz + ImGui::GetStyle().FramePadding.x * 2.0f;   // arrow width
                 const ImVec2 ip(rowMin.x + ax, rowMin.y + (rowMax.y - rowMin.y - isz) * 0.5f);
@@ -20835,14 +20908,14 @@ void DrawHierarchy(EditorState& ed) {
             if (ed.IsSelected(node))
                 ImGui::GetWindowDrawList()->AddRectFilled(
                     rowMin, ImVec2(rowMin.x + 3.0f, rowMax.y), ImGui::GetColorU32(AccentCol(1.0f)));
-            {   // badges only where the name leaves room
+            if (rowShown) {   // badges only where the name leaves room
                 const float labelEnd = rowMin.x + ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 2.0f +
                                        ImGui::CalcTextSize(("     " + shown + tail).c_str()).x + 8.0f;
                 HierComponentBadges(node, rowMin, ImVec2(rowMax.x - kHierEyeW * 2.0f, rowMax.y), labelEnd);
+                DrawObjectDiagMarker(node, rowMin, rowMax);
+                HierEye(node, rowMin, rowMax);
+                HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
             }
-            DrawObjectDiagMarker(node, rowMin, rowMax);
-            HierEye(node, rowMin, rowMax);
-            HierLock(node, ImGui::IsItemHovered(), rowMin, rowMax);
             float mx = ImGui::GetIO().MousePos.x;
             bool inEye  = mx >= rowMax.x - kHierEyeW && mx <= rowMax.x;
             bool inLock = mx >= rowMax.x - kHierEyeW * 2.0f && mx < rowMax.x - kHierEyeW;
@@ -48060,6 +48133,73 @@ void DrawUIThemer(EditorState& ed) {
     ImGui::End();
 }
 
+// The frame-time overlay (View > Rendering > Frame-time overlay): FPS and frame time over the last frames, a graph, and where
+// the newest frames went (okay::editor::perf::Break over the profiler's own scopes; same data as the Profiler window, in a
+// small panel you can leave open). "Copy report" puts a plain-text version on the clipboard to send back.
+void DrawPerfOverlay(EditorState& ed) {
+    namespace perf = okay::editor::perf;
+    okay::Profiler& P = okay::Prof();
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetMainViewport()->WorkPos.x + ImGui::GetMainViewport()->WorkSize.x - 12.0f,
+                                   ImGui::GetMainViewport()->WorkPos.y + 36.0f), ImGuiCond_FirstUseEver, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    const bool open = ImGui::Begin("Frame time###PerfOverlay", &g_showPerfOverlay,
+                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+    if (!g_showPerfOverlay) SaveSettings();   // closed with its X
+    if (!open) { ImGui::End(); return; }
+    const int n = P.Count();
+    const int kStatFrames = 120, kBreakFrames = 30;
+    static std::vector<double> ms; static std::vector<float> plot;
+    ms.clear(); plot.clear();
+    for (int i = std::max(0, n - kStatFrames); i < n; ++i) { ms.push_back(P.FrameAt(i).total); plot.push_back((float)P.FrameAt(i).total); }
+    const perf::HistoryStats st = perf::Stats(ms);
+    // Average of the newest frames, section by section (one frame jumps around too much to read).
+    perf::Breakdown avg;
+    int bn = 0;
+    for (int i = std::max(0, n - kBreakFrames); i < n; ++i) {
+        const perf::Breakdown b = perf::Break(P.FrameAt(i));
+        for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] += b.ms[k];
+        avg.total += b.total; ++bn;
+    }
+    if (bn > 0) { for (int k = 0; k < (int)perf::Section::Count; ++k) avg.ms[k] /= bn; avg.total /= bn; }
+    const double sleepMs = avg.ms[(int)perf::Section::Sleep];
+    const double workMs = avg.total - sleepMs;   // what the frame costs without the on-purpose sleep
+    ImVec4 col = st.fps >= 100.0 ? ImVec4(0.45f, 0.85f, 0.55f, 1) : st.fps >= 60.0 ? ImVec4(0.95f, 0.80f, 0.35f, 1) : ImVec4(0.95f, 0.45f, 0.40f, 1);
+    ImGui::TextColored(col, "%.0f FPS", st.fps);
+    ImGui::SameLine(); ImGui::TextDisabled("%.2f ms avg   95%%: %.2f   worst: %.2f   1%% low: %.0f FPS", st.avgMs, st.p95Ms, st.worstMs, st.lowFps);
+    if (sleepMs > 0.05 && workMs > 0.0) ImGui::TextDisabled("Without the limiter's sleep: %.2f ms = %.0f FPS possible", workMs, 1000.0 / workMs);
+    if (!P.enabled || n < 2) ImGui::TextDisabled("Collecting frames ...");
+    if (!plot.empty()) {
+        const float top = (float)std::max(16.7, st.worstMs * 1.1);
+        char ov[48]; std::snprintf(ov, sizeof(ov), "last %d frames, top %.0f ms", (int)plot.size(), (double)top);
+        ImGui::PlotLines("##perfms", plot.data(), (int)plot.size(), 0, ov, 0.0f, top, ImVec2(360, 56));
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Where the frame goes (average of the last %d frames)", bn);
+    int order[(int)perf::Section::Count];
+    for (int k = 0; k < (int)perf::Section::Count; ++k) order[k] = k;
+    std::sort(order, order + (int)perf::Section::Count, [&](int a, int b) { return avg.ms[a] > avg.ms[b]; });
+    for (int oi = 0; oi < (int)perf::Section::Count; ++oi) {
+        const int k = order[oi];
+        if (avg.ms[k] < 0.005 && k != (int)perf::Section::Viewport3D) continue;
+        const float share = avg.total > 0.0 ? (float)(avg.ms[k] / avg.total) : 0.0f;
+        char lb[40]; std::snprintf(lb, sizeof(lb), "%.2f ms  %.0f%%", avg.ms[k], (double)share * 100.0);
+        ImGui::ProgressBar(share, ImVec2(150, 0), lb);
+        ImGui::SameLine(); ImGui::TextUnformatted(perf::SectionName((perf::Section)k));
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Renderer: %s", okay::FrameOverlay::RendererName().c_str());
+    ImGui::TextDisabled("Scene view %dx%d, scale %.2f%s", g_lastSceneW, g_lastSceneH, (double)perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode ? ", performance mode" : "");
+    if (ImGui::Button("Copy report")) {
+        const std::string rep = perf::Report(st, bn > 0 ? avg : perf::Break(P.Displayed()), okay::FrameOverlay::RendererName().c_str(), ed.isPlaying(),
+                                              g_lastSceneW, g_lastSceneH, perf::EffectiveScale(g_renderScale, g_perfMode), g_perfMode, g_fpsCapEditor, g_idleThrottle);
+        ImGui::SetClipboardText(rep.c_str());
+        ConsoleLog("Frame-time report copied to the clipboard.");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Open Profiler")) g_showProfiler = true;
+    ImGui::End();
+}
+
 // Advanced CPU/GPU profiler. A frame/CPU/GPU timeline you can pause and
 // scrub, a stacked CPU-category area (Scripts / Physics / Render / Other), per-section
 // self/total/calls/%-of-frame with min/avg/max over the window, live draw stats, and
@@ -50206,7 +50346,7 @@ int main(int argc, char** argv) {
             }
         }
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
-        okay::Prof().enabled = g_showProfiler || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
+        okay::Prof().enabled = g_showProfiler || g_showPerfOverlay || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&
@@ -50239,6 +50379,12 @@ int main(int argc, char** argv) {
                 SDL_GetKeyboardFocus() == nullptr && SDL_GetMouseFocus() == window)
                 SDL_SetWindowInputFocus(window);
             s_prevViewports = vps;
+        }
+        {   // seconds since the last event of any kind (the idle throttle reads this; the first frame counts as just now)
+            static Uint64 s_lastInput = okay::platform::PerfCounter();
+            g_secSinceInput = (double)(okay::platform::PerfCounter() - s_lastInput) / (double)okay::platform::PerfFrequency();
+            SDL_PumpEvents();
+            if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) { s_lastInput = okay::platform::PerfCounter(); g_secSinceInput = 0.0; }
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -50313,6 +50459,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::Prof().Begin("Editor.Update");   // closed before the window title below (nothing in between leaves the loop body early)
         Uint64 now = okay::platform::PerfCounter();
         float dt = (float)((now - last) / (double)okay::platform::PerfFrequency());
         last = now;
@@ -50836,6 +50983,7 @@ int main(int argc, char** argv) {
             }
         }
 
+        okay::Prof().End();
         // Keep the window title in sync with the scene + dirty state.
         std::string title = "OkaySpace Editor  -  ";
         if (!ed.projectDir().empty()) title += std::filesystem::path(ed.projectDir()).filename().string() + "  /  ";
@@ -50855,8 +51003,7 @@ int main(int argc, char** argv) {
         else
             ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-        ImGui_ImplSDLRenderer2_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
+        { OKAY_PROFILE("ImGui.NewFrame"); ImGui_ImplSDLRenderer2_NewFrame(); ImGui_ImplSDL2_NewFrame(); }
         // Skinned meshes deform on the GPU when the Direct3D 11 renderer draws the
         // views (one upload of the bind pose, bone matrices per frame) instead of
         // every vertex on the CPU + a full mesh re-upload each frame.
@@ -51517,6 +51664,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
+        { OKAY_PROFILE("UI.PerfOverlay"); if (g_showPerfOverlay) DrawPerfOverlay(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }
         DrawFpHandsPreviewWindow(ed);
         { OKAY_PROFILE("UI.Console"); if (g_showConsole)   DrawConsole(); }
@@ -51738,6 +51886,15 @@ int main(int argc, char** argv) {
             else               io.ConfigFlags &= ~ImGuiConfigFlags_ViewportsEnable;
         }
 
+        {   // Frame limiter and idle throttle (View > Rendering; both off by default): sleep out the rest of the frame budget.
+            const okay::editor::perf::PacingSettings ps{g_fpsCapEditor, g_idleThrottle, g_idleFps, 0.75};
+            const double target = okay::editor::perf::TargetFps(ps, ed.isPlaying(), ImGui::IsAnyMouseDown(), g_secSinceInput);
+            if (target > 0.0) {
+                const double elapsed = (double)(okay::platform::PerfCounter() - g_frameT0) / (double)okay::platform::PerfFrequency();
+                const double wait = okay::editor::perf::SleepSeconds(target, elapsed);
+                if (wait >= 0.001) { OKAY_PROFILE("Pacing.Sleep"); SDL_Delay((Uint32)(wait * 1000.0)); }
+            }
+        }
         {   // Close out the profiler frame (total wall time incl. present).
             Uint64 f1 = okay::platform::PerfCounter();
             double frameMs = (double)(f1 - g_frameT0) / (double)okay::platform::PerfFrequency() * 1000.0;

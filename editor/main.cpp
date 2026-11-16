@@ -2197,6 +2197,7 @@ std::string g_newProjectRoot;     // project folder requested via --new-project 
 std::string g_newProjectVersion;  // project.okayproj version from the launcher's More options ("" = 1.0.0)
 int g_newProjectGpu = -1;         // 1 GPU, 0 software, -1 leave the build default
 std::string g_openScenePath;      // scene to open at startup via --open (launcher)
+std::string g_handoffAnswer, g_handoffAnswerPid;   // the launcher's answer to the version question (--project-answer) a hand-off carried, and that launcher's pid
 
 // Panel visibility (View menu).
 bool g_showHierarchy = true, g_showInspector = true, g_showConsole = true,
@@ -47440,6 +47441,8 @@ static void WriteHandoff() {
     if (g_newProjectGpu == 0 || g_newProjectGpu == 1) body += std::string("gpu\t") + (g_newProjectGpu ? "1" : "0") + "\n";
     if (!g_openScenePath.empty())      body += "open\t"        + g_openScenePath + "\n";
     if (!g_openScenePath.empty() && KeepVersionRequested()) body += "keep-version\t" + RunningVersion() + "\n";   // the version this editor is: honored only by an editor of that version
+    if (!g_openScenePath.empty() && !ProjectAnswerRequested().empty())   // the launcher already asked the version question: the editor that is open must not ask again
+        body += "project-answer\t" + ProjectAnswerRequested() + "\nlauncher\t" + std::to_string(ProjectAnswerLauncherPid()) + "\n";
     if (body.empty()) body = "focus\t1\n";   // plain "Open Editor": just bring to front
     std::error_code ec;
     std::filesystem::path f = OkayHandoffPath();
@@ -47460,6 +47463,7 @@ static bool PollHandoff(bool& raiseWindow) {
     if (!std::filesystem::exists(f, ec)) return false;
     std::ifstream in(f, std::ios::binary);
     std::string line, keepVersion; bool request = false;
+    g_handoffAnswer.clear(); g_handoffAnswerPid.clear();
     while (std::getline(in, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         auto tab = line.find('\t');
@@ -47471,6 +47475,8 @@ static bool PollHandoff(bool& raiseWindow) {
         else if (k == "gpu")         { g_newProjectGpu = v == "0" ? 0 : 1; }
         else if (k == "open")        { g_openScenePath = v;      request = true; }
         else if (k == "keep-version") { keepVersion = v; }
+        else if (k == "project-answer") { g_handoffAnswer = v; }
+        else if (k == "launcher")       { g_handoffAnswerPid = v; }
         else if (k == "focus")       { /* just raise */ }
     }
     in.close();
@@ -49037,10 +49043,13 @@ int main(int argc, char** argv) {
         {
             bool raise = false;
             if (PollHandoff(raise)) {
-                const std::string hoRoot = g_newProjectRoot, hoTpl = g_newProjectTemplate, hoOpen = g_openScenePath;
+                const std::string hoRoot = g_newProjectRoot, hoTpl = g_newProjectTemplate, hoOpen = g_openScenePath, hoAnswer = g_handoffAnswer, hoAnswerPid = g_handoffAnswerPid;
                 g_newProjectRoot.clear(); g_newProjectTemplate.clear(); g_openScenePath.clear();
                 RunAfterSavePrompt(ed, !hoOpen.empty() ? "opening another project" : "creating a new project",
-                                   [hoRoot, hoTpl, hoOpen] { g_newProjectRoot = hoRoot; g_newProjectTemplate = hoTpl; g_openScenePath = hoOpen; },
+                                   [hoRoot, hoTpl, hoOpen, hoAnswer, hoAnswerPid] {
+                                       g_newProjectRoot = hoRoot; g_newProjectTemplate = hoTpl; g_openScenePath = hoOpen;
+                                       if (!hoAnswer.empty() && !hoOpen.empty()) NoteProjectAnswerHandoff(hoOpen, hoAnswer, hoAnswerPid);   // the launcher asked; its answer is used only when this open really runs
+                                   },
                                    // Cancel: the empty folder the launcher made for a new project must not be left behind.
                                    [hoRoot] { if (!hoRoot.empty()) okayproj::RemoveEmptyShell(hoRoot); });
             }

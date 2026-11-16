@@ -240,15 +240,16 @@ Line numbers below are for `launcher/main.cpp` at version 2.848.0 and drift. Nob
   - 17.12.1 Project list and New Project - `launcher/main.cpp` (tab 0, L17892) - every `<Location>/<Name>/Assets` folder holding a `.okayscene`, plus projects opened from elsewhere; the template choice is passed to the editor as `--template`
   - 17.12.2 Safe delete - `shared/ProjectDelete.hpp` - what counts as a project folder, and the folders never deleted (drive root, home, launcher folder, projects folder)
   - 17.12.3 Git for projects - `launcher/main.cpp` (L543-809) - clone, pull, commit and push, publish to GitHub (right-click a project)
-- **Code:** `shared/ProjectDelete.hpp`, `launcher/main.cpp`
-- **API:** launcher Create page; right-click menu: Delete project, Publish to GitHub, Commit & Push
-- **Editor:** the project opens in the editor; the starter templates are 1.6
-- **Docs:** `docs/making_a_game.md`
-- **Tests:** `project_delete`
+  - 17.12.4 The version question before Open - `launcher/OpenProjectGate.hpp`, `launcher/OpenProjectUI.cpp`, `shared/ProjectQuestion.hpp`, `shared/ProjectRoot.hpp`, `shared/ProjectAnswer.hpp` - a plain Open on a project made with another version asks in the launcher, before any editor window exists (Upgrade project / Open with v2.850.x or Install it / Cancel; for a newer project Check for updates / Open anyway / Cancel), then starts the editor with `--project-answer=upgrade|open-anyway` so it does not ask again; every open path (Open, Open in editor, Open with, Open Project) goes through `OpenProjectChecked`
+- **Code:** `shared/ProjectDelete.hpp`, `launcher/main.cpp`, `launcher/OpenProjectGate.hpp`, `launcher/OpenProjectUI.cpp`, `shared/ProjectQuestion.hpp`, `shared/ProjectRoot.hpp`, `shared/ProjectAnswer.hpp`, `tools/launcher_open_shot.cpp`
+- **API:** launcher Create page; right-click menu: Delete project, Publish to GitHub, Commit & Push; Open, Open in editor, Open with, Open Project; `okayopen::Ask`, `okayopen::Resolve`, `okayroot::ProjectRootForScene`, `okayver::ParsePreAnswer`; editor flag `--project-answer=upgrade|open-anyway`
+- **Editor:** the project opens in the editor; the starter templates are 1.6; the editor keeps its own version question for every other way in (25.3.5)
+- **Docs:** `docs/making_a_game.md`, `docs/project_upgrade.md`, `docs/launcher_versions.md`
+- **Tests:** `project_delete`, `open_project_gate`, `project_answer`
 - **Status:** Works - the safety rules are unit tested (added in 2.829.0, #334); Git calls shell out and are untested
 - **Open:** project templates are static scene templates; project migration across engine versions is planned (area 25)
 - **Related:** 1.6, 25.1, 15.4
-- **Words:** Create page, projects, new project, template, delete project, remove, Projects folder, Git, GitHub, commit, push
+- **Words:** Create page, projects, new project, template, delete project, remove, Projects folder, Git, GitHub, commit, push, upgrade question, project version, older project, Open with, Open anyway, project-answer
 - **Seen as:** a project is missing from the list; "setting up..." never finishes; deleting is refused
 - **Ask me like:** "why can't I delete this project from the launcher?"
 

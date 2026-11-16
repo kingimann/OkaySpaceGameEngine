@@ -504,6 +504,8 @@ recorded, or that a newer version saved, **asks before anything in the project i
 - A project with no version recorded (made before this) offers Upgrade or Cancel. A project saved by a *newer* version offers Cancel, **Open
   anyway (a backup is made first)** and **Update OkaySpace**.
 - Another patch of the same line (`2.850.0` and `2.850.1`) never asks, and a development build never asks.
+- A plain **Open** on a project card in the launcher asks the same question **in the launcher, before the editor starts**, and tells the editor the
+  answer so it does not ask again. Every other way in (File > Open inside the editor, a double-clicked `.okayscene`, the command line) is asked here.
 
 **File > Project Upgrade...** shows both versions, runs the upgrade again, and lists the project's backups with **Restore...**. The status
 bar shows `v2.850.0 (kept)` for a project opened with its own version. Details, the backup layout and the launcher's side:

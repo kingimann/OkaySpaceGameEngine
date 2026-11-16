@@ -9,6 +9,7 @@
 #include "ProjectState.hpp"
 #include "AppRestart.hpp"
 #include "StartupModals.hpp"
+#include "ProjectQuestion.hpp"   // the sentences of the question (shared with the launcher, which asks it before the editor starts)
 
 #include <optional>
 
@@ -26,6 +27,7 @@ namespace fs = std::filesystem;
 
 okayup::ProjectGate g_gate;
 bool g_keepFlag = false;                          // --keep-version was on this process's command line
+okayver::PreAnswerRequest g_preAnswer;            // the launcher's answer (--project-answer) this process was started with, when it was honoured
 std::optional<okay::restart::Request> g_exitLaunch;   // an editor to start once this process is gone
 bool g_openWindow = false;                        // File > Project Upgrade... asked for
 std::string g_restoreSummary;                     // the "Restored" window's text ("" = not showing)
@@ -190,53 +192,50 @@ void DrawGatePrompt() {
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(620, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Project version", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar)) return;
+    namespace qs = okayver::question;
     const std::string pv = pr.projectVersion, rv = pr.runningVersion;
-    const std::string pvLabel = pv.empty() ? std::string() : "v" + pv;
     const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
     bool first = true;
     const float textW = ImGui::GetContentRegionAvail().x;
 
     switch (wanted ? pr.kind : PromptKind::None) {
         case PromptKind::Older: {
-            ImGui::TextDisabled("PROJECT VERSION");
-            Heading(("This project was made with " + pvLabel + ". This editor is v" + rv + ".").c_str(), ImVec4(1, 1, 1, 1));
+            ImGui::TextDisabled("%s", qs::Eyebrow());
+            Heading(qs::OlderHeading("This project", pv, rv).c_str(), ImVec4(1, 1, 1, 1));
             ImGui::TextDisabled("%s", FitEnd(pr.root, textW).c_str());
             ImGui::Dummy(ImVec2(0, 4));
-            ImGui::TextWrapped("Upgrading brings the project's scenes and prefabs up to date for v%s. A complete backup copy of the project is made "
-                               "first, next to it, so you can always go back.", rv.c_str());
+            ImGui::TextWrapped("%s", qs::UpgradeParagraph(rv).c_str());
             ImGui::Dummy(ImVec2(0, 2));
-            ImGui::TextWrapped("Keeping %s does not touch the project at all: it opens with that version's editor instead.", okayver::LineLabel(pv).c_str());
-            if (!pr.keepTarget.empty()) ImGui::TextColored(kGreen, "v%s is installed and would open it.", pr.keepTarget.c_str());
-            else ImGui::TextColored(kAmber, "%s isn't installed on this computer.", okayver::LineLabel(pv).c_str());
+            ImGui::TextWrapped("%s", qs::KeepParagraph("Keeping " + okayver::LineLabel(pv)).c_str());
+            if (!pr.keepTarget.empty()) ImGui::TextColored(kGreen, "%s", qs::InstalledLine(pr.keepTarget).c_str());
+            else ImGui::TextColored(kAmber, "%s", qs::NotInstalledLine(pv).c_str());
             ImGui::Dummy(ImVec2(0, 8));
-            if (Btn(("Upgrade project to v" + rv).c_str(), first, true)) g_gate.Answer(Choice::Upgrade);
-            if (Btn(("Keep " + okayver::LineLabel(pv)).c_str(), first)) g_gate.Answer(Choice::Keep);
-            if (Btn("Cancel", first) || esc) g_gate.Answer(Choice::Cancel);
+            if (Btn(qs::UpgradeLabel(rv).c_str(), first, true)) g_gate.Answer(Choice::Upgrade);
+            if (Btn(qs::KeepLabel(pv).c_str(), first)) g_gate.Answer(Choice::Keep);
+            if (Btn(qs::CancelLabel(), first) || esc) g_gate.Answer(Choice::Cancel);
             break;
         }
         case PromptKind::Unknown: {
-            ImGui::TextDisabled("PROJECT VERSION");
-            Heading(("This project has no version recorded (made before this feature). This editor is v" + rv + ".").c_str(), ImVec4(1, 1, 1, 1));
+            ImGui::TextDisabled("%s", qs::Eyebrow());
+            Heading(qs::UnknownHeading("This project", rv).c_str(), ImVec4(1, 1, 1, 1));
             ImGui::TextDisabled("%s", FitEnd(pr.root, textW).c_str());
             ImGui::Dummy(ImVec2(0, 4));
-            ImGui::TextWrapped("There is no way to tell which version made it, so only upgrading is offered. A complete backup copy of the project is made first, "
-                               "next to it, then its scenes and prefabs are brought up to date for v%s and the project is marked with that version.", rv.c_str());
+            ImGui::TextWrapped("%s", qs::UnknownParagraph(rv).c_str());
             ImGui::Dummy(ImVec2(0, 8));
-            if (Btn(("Upgrade project to v" + rv).c_str(), first, true)) g_gate.Answer(Choice::Upgrade);
-            if (Btn("Cancel", first) || esc) g_gate.Answer(Choice::Cancel);
+            if (Btn(qs::UpgradeLabel(rv).c_str(), first, true)) g_gate.Answer(Choice::Upgrade);
+            if (Btn(qs::CancelLabel(), first) || esc) g_gate.Answer(Choice::Cancel);
             break;
         }
         case PromptKind::Newer: {
-            ImGui::TextDisabled("PROJECT VERSION");
-            Heading(("This project was last saved by " + pvLabel + ", which is newer than this editor (v" + rv + ").").c_str(), kAmber);
+            ImGui::TextDisabled("%s", qs::Eyebrow());
+            Heading(qs::NewerHeading("This project", pv, rv).c_str(), kAmber);
             ImGui::TextDisabled("%s", FitEnd(pr.root, textW).c_str());
             ImGui::Dummy(ImVec2(0, 4));
-            ImGui::TextWrapped("This editor may drop data it does not understand when it saves. Update OkaySpace to open it safely, or open it anyway: "
-                               "a complete backup copy is made first, next to the project, and nothing in the project is changed by that.");
+            ImGui::TextWrapped("%s", qs::NewerParagraph().c_str());
             ImGui::Dummy(ImVec2(0, 8));
-            if (Btn("Cancel", first) || esc) g_gate.Answer(Choice::Cancel);
-            if (Btn("Open anyway (a backup is made first)", first)) g_gate.Answer(Choice::OpenAnyway);
-            if (Btn("Update OkaySpace", first, true)) g_gate.Answer(Choice::UpdateEditor);
+            if (Btn(qs::CancelLabel(), first) || esc) g_gate.Answer(Choice::Cancel);
+            if (Btn(qs::OpenAnywayLabel(), first)) g_gate.Answer(Choice::OpenAnyway);
+            if (Btn(qs::UpdateLabel(), first, true)) g_gate.Answer(Choice::UpdateEditor);
             break;
         }
         case PromptKind::NotInstalled: {
@@ -490,6 +489,9 @@ void ProjectUpgradeInit(int argc, char** argv) {
         else if (a.rfind(std::string(okayver::KeepVersionFlag()) + "=", 0) == 0) { g_keepFlag = true; keepFor = a.substr(std::strlen(okayver::KeepVersionFlag()) + 1); }
     }
     if (g_keepFlag && !open.empty()) g_gate.NoteKeepRequest(open, keepFor);
+    // The launcher already asked the version question (--project-answer): honoured only for a live launcher and only for the --open project.
+    g_preAnswer = okayver::ParsePreAnswer(args, okay::restart::PidAlive);
+    if (g_preAnswer.Valid()) g_gate.NotePreAnswer(g_preAnswer.scene, g_preAnswer.answer);
     okay::editor::EditorState::beforeLoad = [](const std::string& path, std::string* why) { return g_gate.MayLoad(path, why); };
     okay::editor::EditorState::projectRootOf = [](const std::string& path) { return g_gate.RootOf(path); };   // File > Open roots the project as the gate does
 }
@@ -530,6 +532,15 @@ bool ProjectGateBusy() { return g_gate.Busy(); }
 void NoteKeepVersionHandoff(const std::string& scene, const std::string& version) { g_gate.NoteKeepRequest(scene, version); }
 
 bool KeepVersionRequested() { return g_keepFlag; }
+
+std::string ProjectAnswerRequested() { return okayver::PreAnswerName(g_preAnswer.answer); }
+
+unsigned long ProjectAnswerLauncherPid() { return g_preAnswer.launcherPid; }
+
+void NoteProjectAnswerHandoff(const std::string& scene, const std::string& answerName, const std::string& launcherPid) {
+    const okayver::PreAnswerRequest r = okayver::PreAnswerFromHandoff(answerName, launcherPid, scene, okay::restart::PidAlive);
+    if (r.Valid()) g_gate.NotePreAnswer(r.scene, r.answer);
+}
 
 void ProjectUpgradeDraw(okay::editor::EditorState& ed) {
     {   // development builds only (screenshots): OKAY_UI_UPGRADE_ANSWER=upgrade answers the version question with Upgrade, once

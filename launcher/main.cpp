@@ -111,6 +111,9 @@ namespace okayuihost { inline bool PopupCoversRect(float, float, float, float) {
 #include "VersionsManager.hpp"   // the Versions page: installed editors, Latest / LTS, keeping the previous editor (docs/launcher_versions.md)
 #include "VersionsNet.hpp"
 #include "VersionsUI.hpp"
+#include "OpenProjectGate.hpp"   // the version question the launcher asks BEFORE it starts the editor on a project (docs/project_upgrade.md, "The launcher's side")
+#include "OpenProjectUI.hpp"     // ... and its window
+#include "ProjectRoot.hpp"       // which folder is the project: the same rule the editor's own question uses
 #include "MemberModeration.hpp"   // kick / ban / unban / admin role for servers and group chats
 
 #if defined(_WIN32)
@@ -1685,10 +1688,102 @@ bool LaunchEditorVersion(const std::string& version, const std::string& scene) {
     g_editorStartedVersion = okayver::NormalizeVersion(version);
     return true;
 }
-// An "Open with" that waits for the open editor to close (the "Close the editor first" window, action 4).
-std::string g_pendingOpenScene, g_pendingOpenVersion, g_pendingOpenName;   // version "" = this launcher's editor
+// An open that waits for the open editor to close (the "Close the editor first" window, action 4).
+std::string g_pendingOpenVersion, g_pendingOpenName;   // version "" = this launcher's editor
+std::vector<std::string> g_pendingOpenArgs;            // its arguments after the program, as OpenProjectGate planned them
 
 void Toast(const std::string& m, int kind);   // defined below; used by CreateProject
+
+// ---- Opening a project: the version question comes first --------------------------------------------------------------------------
+// A plain Open used to start the editor, and only then did a window INSIDE the editor ask "This project was made with v2.850.0 ...".
+// Now the launcher asks first (okayopen::Ask, drawn by okayopenui::Draw in the main loop), before any editor window exists, and starts the
+// editor the way the answer says. EVERY way of opening an existing project calls OpenProjectChecked, so none can skip the question: a
+// card's Open and "Open in editor", "Open with <version>", and "Open Project" (a folder from anywhere). Creating a project is not opening
+// one (CreateProject keeps calling LaunchEditor with its template). The editor keeps its own question for every other way a project
+// reaches it (File > Open inside the editor, a double-clicked .okayscene, the command line), and is told not to ask twice
+// (--project-answer, shared/ProjectAnswer.hpp). See docs/project_upgrade.md, "The launcher's side".
+struct PendingOpenAsk { bool active = false; okayopen::Input in; okayopen::Prompt prompt; };
+PendingOpenAsk g_openAsk;   // the question on screen (drawn each frame by the main loop until it is answered)
+
+// The editor a plain Open starts, for the question's sentences: this launcher's own version. Development builds only (OKAY_DEV set):
+// OKAY_FAKE_VERSION, the override the editor reads too (editor/ProjectUpgradeUI.cpp, RunningVersion), so a project made with "another"
+// version can be tried without two releases.
+static std::string EditorVersionForOpen() {
+    const char* dev = std::getenv("OKAY_DEV");
+    if (dev && dev[0] && dev[0] != '0')
+        if (const char* f = std::getenv("OKAY_FAKE_VERSION"); f && *f) return f;
+    return LocalVersion();
+}
+
+// Start the editor the way OpenProjectGate planned it. `version` "" = this launcher's own editor, otherwise an installed version under
+// Versions/; `args` are the arguments after the program (--launcher <pid> --open <scene> [--keep-version] [--project-answer=...]).
+// Blocked means an update is being installed (UpdateBlocksLaunch has already told the person); Failed means that editor is not there or did not start.
+enum class PlannedLaunch { Started, Failed, Blocked };
+static PlannedLaunch LaunchEditorPlanned(const std::string& version, const std::vector<std::string>& args) {
+    if (args.empty()) return PlannedLaunch::Failed;
+    if (UpdateBlocksLaunch()) return PlannedLaunch::Blocked;   // (an update is being installed)
+    std::string exe;
+    if (version.empty()) exe = FindExe({"OkayEngine.exe", "OkaySpaceEngine.exe", "okay-editor.exe", "okay-editor", "OkayEngine"});
+    else {
+        const fs::path p = okayver::InstalledEditorPath(LauncherDirPath(), version);
+        std::error_code ec;
+        if (!p.empty() && fs::is_regular_file(p, ec)) exe = p.string();
+    }
+    if (exe.empty()) return PlannedLaunch::Failed;
+    const std::string joined = okayversions::JoinArgs(args);   // every argument quoted for the platform (spaces, quotes and `$` in a path stay one argument)
+    g_editorStartedVersion.clear();
+    if (SpawnTracked(exe, joined, "editor", "OkaySpace Editor")) {   // time in the editor counts too
+        g_editorStartedVersion = version.empty() ? std::string() : okayver::NormalizeVersion(version);
+        return PlannedLaunch::Started;
+    }
+    if (!version.empty()) return PlannedLaunch::Failed;
+#if defined(_WIN32)
+    RunCmd("start \"\" \"" + exe + "\" " + joined, false);   // as LaunchEditor does when the process cannot be tracked
+#else
+    RunCmd("\"" + exe + "\" " + joined + " >/dev/null 2>&1 &", false);
+#endif
+    return PlannedLaunch::Started;
+}
+
+// Start an open: when an editor of another version is running it has to close first (one editor at a time), otherwise start it now.
+static void StartProjectOpen(const okayopen::Outcome& o, const std::string& name) {
+    if (!o.launch.start) return;
+    if (okayversions::MustCloseEditorFirst(EditorRunning(), g_editorStartedVersion, LocalVersion(), o.launch.editorVersion)) {
+        g_pendingOpenVersion = o.launch.editorVersion; g_pendingOpenArgs = o.launch.args; g_pendingOpenName = name;
+        g_afterEditor = 4;   // "Close the editor first" window: save, close, then start it (see the main loop)
+        return;
+    }
+    switch (LaunchEditorPlanned(o.launch.editorVersion, o.launch.args)) {
+        case PlannedLaunch::Started: Toast(o.message, 1); break;
+        case PlannedLaunch::Blocked: break;
+        case PlannedLaunch::Failed:
+            if (o.launch.editorVersion.empty()) Toast("Couldn't start the editor", 2);
+            else { Toast("v" + o.launch.editorVersion + " isn't installed any more", 2); okayversionsui::InvalidateInstalled(); }
+            break;
+    }
+}
+
+// THE way to open an existing project in the editor. `chosenVersion` ("" = a plain Open) is an installed editor the person picked on
+// purpose ("Open with"). Asks the version question first when the project is from another version (the window is drawn by the main
+// loop; the answer then calls StartProjectOpen); otherwise starts the editor at once, as before.
+static void OpenProjectChecked(const std::string& scene, const std::string& name, const std::string& chosenVersion = std::string()) {
+    okayopen::Input in;
+    const okayroot::ProjectInfo info = okayroot::ProjectInfoForScene(scene);   // reads project.okayproj; the launcher never writes into a project
+    in.scene = scene;
+    in.projectName = name;
+    in.projectRoot = info.root;
+    in.projectVersion = info.version;
+    in.editorVersion = EditorVersionForOpen();
+    in.chosenVersion = chosenVersion;
+    in.installed = okayver::InstalledVersions(LauncherDirPath());
+    in.defaultEditor = okayversions::GlobalSettings().defaultEditor;
+    in.launcherPid = CurrentPid();
+    okayopen::Prompt prompt = okayopen::Ask(in);
+    if (prompt.question == okayopen::Question::None) { StartProjectOpen(okayopen::Proceed(in), name); return; }
+    g_openAsk.in = std::move(in);
+    g_openAsk.prompt = std::move(prompt);
+    g_openAsk.active = true;
+}
 
 // The Create tab asks for a rescan + highlight after making a project.
 bool        g_projectsNeedRescan = false;   // force "Your projects" to re-list
@@ -18515,6 +18610,22 @@ int main(int argc, char** argv) {
             }
         }
 
+        // ---- The version question: asked here, BEFORE the editor starts on a project made with another version ----
+        // OpenProjectChecked sets g_openAsk; this draws it and acts on the answer. It waits while another launcher window is up, so the
+        // two never fight over the popup level (ImGui keeps one modal per level).
+        if (g_openAsk.active) {
+            if (!closeConfirm && !g_afterEditor && !g_upModalOpen && !ImGui::IsPopupOpen(okayopenui::PopupName())) ImGui::OpenPopup(okayopenui::PopupName());
+            okayopenui::Look look; look.accent = kAccent; look.accentDim = kAccentDim;
+            if (const std::optional<okayopen::Answer> asked = okayopenui::Draw(g_openAsk.prompt, look)) {
+                const okayopen::Outcome out = okayopen::Resolve(g_openAsk.in, *asked);
+                const std::string name = g_openAsk.in.projectName;
+                g_openAsk = PendingOpenAsk();
+                StartProjectOpen(out, name);
+                if (out.next == okayopen::Next::ShowVersions) okayversionsui::RequestPage(out.version);   // the Versions page, that version highlighted
+                else if (out.next == okayopen::Next::CheckForUpdates) StartUpdateCheck(true);               // the launcher's own update check
+            }
+        }
+
         // ---- "Close the editor first" (exit / update while the editor is open) ----
         // The launcher never quits or replaces the editor under an open project: it
         // asks the editor to save everything and close, waits, then carries on.
@@ -18536,11 +18647,11 @@ int main(int argc, char** argv) {
                     if (act == 1) running = false;
                     else if (act == 2) StartUpdateCheck(g_afterEditorShowDialog);
                     else if (act == 3) { if (BeginUpdatedRestart()) running = false; }   // restart to finish an update
-                    else if (act == 4) {   // the editor that was open is closed: open the project with the version asked for
-                        if (g_pendingOpenVersion.empty()) LaunchEditor(editor, "", "", g_pendingOpenScene);
-                        else if (!LaunchEditorVersion(g_pendingOpenVersion, g_pendingOpenScene)) Toast("v" + g_pendingOpenVersion + " isn't installed any more", 2);
-                        else Toast("Opening " + g_pendingOpenName + " with v" + g_pendingOpenVersion, 1);
-                        g_pendingOpenScene.clear(); g_pendingOpenVersion.clear(); g_pendingOpenName.clear();
+                    else if (act == 4) {   // the editor that was open is closed: open the project the way the answer planned
+                        const PlannedLaunch pl = LaunchEditorPlanned(g_pendingOpenVersion, g_pendingOpenArgs);
+                        if (pl == PlannedLaunch::Failed) Toast(g_pendingOpenVersion.empty() ? std::string("Couldn't start the editor") : "v" + g_pendingOpenVersion + " isn't installed any more", 2);
+                        else if (pl == PlannedLaunch::Started) Toast("Opening " + g_pendingOpenName + (g_pendingOpenVersion.empty() ? std::string() : " with v" + g_pendingOpenVersion), 1);
+                        g_pendingOpenArgs.clear(); g_pendingOpenVersion.clear(); g_pendingOpenName.clear();
                     }
                 } else if (!s_closing) {
                     ImGui::TextUnformatted("The OkaySpace editor is still open.");
@@ -18554,7 +18665,7 @@ int main(int argc, char** argv) {
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Cancel", ImVec2(110, 32)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-                        g_afterEditor = 0; g_pendingOpenScene.clear(); g_pendingOpenVersion.clear(); g_pendingOpenName.clear(); ImGui::CloseCurrentPopup();
+                        g_afterEditor = 0; g_pendingOpenArgs.clear(); g_pendingOpenVersion.clear(); g_pendingOpenName.clear(); ImGui::CloseCurrentPopup();
                     }
                 } else if (ack == "save-failed") {
                     ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.45f, 1.0f), "The editor couldn't save everything, so it stayed open.");
@@ -19556,7 +19667,7 @@ int main(int argc, char** argv) {
                     pr.ready = fs::exists(fs::path(scene), e);
                     pr.missing = extra && !pr.ready;   // moved or deleted outside the launcher
                     if (pr.ready) pr.mtime = (long long)fs::last_write_time(fs::path(scene), e).time_since_epoch().count();
-                    if (pr.ready) pr.ver = okayver::ReadProjectVersion(okayproj::RootOfScene(fs::path(scene)).string());   // read only: the launcher never writes into a project
+                    if (pr.ready) pr.ver = okayroot::ProjectInfoForScene(scene).version;   // read only: the launcher never writes into a project. The same project the question asks about
                     s_projects.push_back(pr);
                 };
                 for (const auto& lp : okayproj::ScanProjects(fs::path(npLoc), g_hiddenProjects, g_extraProjects))
@@ -19572,26 +19683,18 @@ int main(int argc, char** argv) {
                 if (okay::platform::TicksMs32() - t > 1000) { t = okay::platform::TicksMs32(); s_projScanned = "\x01"; }
             } else { s_watchUntil = 0; s_highlight.clear(); }
 
-            // Open `pr` with the editor of `version` ("" = this launcher's). One editor runs at a time, so when the open one is another
-            // version it is asked to save and close first (docs/project_upgrade.md, "One editor at a time").
+            // Open `pr` with the editor of `version` ("Open with"; "" = this launcher's). Every way of opening a project goes through
+            // OpenProjectChecked: the version question is asked first when it applies, then the editor is started (one editor runs at a time, so
+            // when the open one is another version it is asked to save and close first: docs/project_upgrade.md, "One editor at a time").
             auto openProjectWith = [&](const CrProj& pr, const std::string& version) {
                 if (!pr.ready || (version.empty() && editor.empty())) return;
-                if (okayversions::MustCloseEditorFirst(EditorRunning(), g_editorStartedVersion, LocalVersion(), version)) {
-                    g_pendingOpenScene = pr.scene; g_pendingOpenVersion = version; g_pendingOpenName = pr.name;
-                    g_afterEditor = 4;
-                    return;
-                }
-                if (version.empty()) { LaunchEditor(editor, "", "", pr.scene); Toast("Opening " + pr.name, 1); }
-                else if (LaunchEditorVersion(version, pr.scene)) Toast("Opening " + pr.name + " with v" + version, 1);
-                else { Toast("v" + version + " isn't installed any more", 2); okayversionsui::InvalidateInstalled(); }
+                OpenProjectChecked(pr.scene, pr.name, version);
             };
-            // A plain Open starts this launcher's editor, which asks the upgrade question itself (no second question here); a project with no
-            // version recorded goes to the default editor when one is set (Versions page).
+            // A plain Open: the launcher asks the version question first when the project is from another version (a project with no version
+            // recorded goes to the default editor when one is set on the Versions page, with no question), then starts the editor.
             auto openProject = [&](const CrProj& pr) {
                 if (editor.empty() || !pr.ready) return;
-                const okayversions::OpenTarget t = okayversions::ChooseEditorForOpen(pr.ver, LocalVersion(),
-                    okayversionsui::InstalledVersionsCached(LauncherDirPath()), okayversions::GlobalSettings().defaultEditor);
-                openProjectWith(pr, t.version);
+                OpenProjectChecked(pr.scene, pr.name);
             };
             auto playProject = [&](const CrProj& pr) {
                 if (player.empty() || !pr.ready) return;
@@ -19620,7 +19723,7 @@ int main(int argc, char** argv) {
                     else if (g_extraProjects.size() != before) SavePrefs();
                 }
                 s_projScanned = "\x01";
-                if (!editorExe.empty()) { LaunchEditor(editorExe, "", "", sc); Toast("Opening " + root.filename().string(), 1); }
+                if (!editorExe.empty()) OpenProjectChecked(sc, root.filename().string());   // asks the version question first when it applies
             });
             };
             // ---- Home: two actions. Making a project happens in the popup, never from one click here. ----

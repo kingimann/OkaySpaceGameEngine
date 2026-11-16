@@ -49,6 +49,7 @@ set(OKAY_LAUNCHER_SOURCES main.cpp
     VersionsManager.cpp   # the Versions page: installed editors, install / remove / prune, Latest / LTS (no SDL or ImGui; tested by launcher_versions)
     VersionsNet.cpp       # the cancellable curl download behind it
     VersionsUI.cpp        # the page itself
+    OpenProjectUI.cpp     # the version question the launcher asks before it starts the editor on a project of another version (the decision is OpenProjectGate.hpp, tested by open_project_gate)
     ${CMAKE_SOURCE_DIR}/shared/FileDialog.cpp                         # file picker (chat attachments): system dialogs or the built-in browser
     ${CMAKE_SOURCE_DIR}/shared/FileDialogUI.cpp
     ${CMAKE_SOURCE_DIR}/engine/src/Net/ServerQuery.cpp                # server browser queries (+ LAN scan)

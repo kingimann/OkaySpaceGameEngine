@@ -1,7 +1,9 @@
 # Project versions and upgrading a project
 
-A project remembers which version of OkaySpace last saved it. When you open it with an editor of another version, the editor
-asks before it touches anything: upgrade the project (after a full backup), keep its version, or leave it alone. The rules live in
+A project remembers which version of OkaySpace last saved it. When you open it with an editor of another version, you are asked
+before anything is touched: upgrade the project (after a full backup), keep its version, or leave it alone. A plain **Open** in the
+launcher asks **in the launcher, before any editor window appears** (see "The question before Open"); the editor asks the same
+question for every other way a project reaches it. The rules live in
 `shared/ProjectVersion.hpp` (no editor, ImGui or engine code, so the launcher uses the same ones) and `editor/ProjectUpgrade.hpp`
 (the backup, the upgrade and the question, no ImGui); the windows are `editor/ProjectUpgradeUI.cpp`.
 
@@ -41,9 +43,12 @@ of the same build number (`2.850.1`, `2.850.2`). A patch never changes a file fo
 | `Unknown` | nothing recorded (made before this feature) | asks: **Upgrade project to v2.855.0** or **Cancel** (the old version can't be known, so Keep is not offered) |
 | `Newer` | a newer line | asks: **Cancel**, **Open anyway (a backup is made first)**, **Update OkaySpace** |
 
-The question is asked for every way of opening a project: the startup chooser, File > Open Project Folder, File > Open Recent and
-File > Open, a scene opened from the Project panel or dropped on the Hierarchy or Scene view, and a project handed over by the launcher
-(`--open`). It is asked **before anything of the project is read for writing or written**: no stamp, no autosave, no settings file, not even the
+The editor asks the question for every way of opening a project: the startup chooser, File > Open Project Folder, File > Open Recent and
+File > Open, a scene opened from the Project panel or dropped on the Hierarchy or Scene view, a scene given on the command line, and a
+project handed over by the launcher (`--open`). The one difference: when the launcher has already asked (a plain Open on a project card),
+it passes the answer on (`--project-answer`, see "The question before Open") and the editor does **not** ask a second time. Without that
+flag the editor asks, exactly as before: it is the safety net for every way in that did not come through the launcher's question.
+It is asked **before anything of the project is read for writing or written**: no stamp, no autosave, no settings file, not even the
 look at `project.okayproj` the loading screen takes. The old shared `project.okayproj` is only copied into a project once the question is answered.
 As a safety net, `EditorState::Load` itself refuses a scene of a project nobody has answered for (`EditorState::beforeLoad`), so a future
 way of opening scenes that forgot the question cannot skip it.
@@ -261,18 +266,85 @@ and starts the other one after it has exited (the same helper process the self-u
 **The launcher's half is built** ([launcher_versions.md](launcher_versions.md)): the Versions page installs, removes and prunes those folders
 (whole or not at all, every download checked against `versions.json`), keeps the editor an update replaces, and offers the Latest / LTS
 channel. Project cards show the project's version and an **older: v2.850.x** / **newer** badge; **Open with** starts
-`InstalledEditorPath(...)` with `--launcher <pid> --open "<scene>" --keep-version`. A plain **Open** starts the current editor, which asks the
-question above (the launcher asks nothing); only a project with no version goes to the launcher's default editor, if one is set. When the open
+`InstalledEditorPath(...)` with `--launcher <pid> --open "<scene>" --keep-version`. A plain **Open** asks the question above **in the
+launcher first** (next section), then starts the current editor; a project with no version goes to the launcher's default editor, if one is
+set, with no question. When the open
 editor is another version, the launcher uses its save-and-close request first (one editor at a time). The "not installed" window has an
 **Open launcher** button: it starts `OkaySpace --versions <version>` (through the same helper process), which shows the Versions page with
 that version highlighted; a launcher that is already running is brought forward instead of a second one.
+
+### The question before Open
+
+Before this change a plain **Open** on a project card started the editor, and only then did a window inside the editor ask "This project
+was made with v2.850.0 ...". Now the launcher asks first, in its own window, before any editor window exists. Every way of opening an existing
+project in the launcher goes through one function, `OpenProjectChecked` (`launcher/main.cpp`), so none can skip the question: a card's **Open**,
+**Open in editor** in its menu, **Open with** `<version>`, and **Open Project** (a folder from anywhere). Making a new project is not opening one and
+is unchanged.
+
+| The project was last saved by | The launcher asks | Buttons (the first is the default) |
+|---|---|---|
+| this version, another patch of this line, or the editor is a development build, or the scene is not part of a project | nothing | the editor starts as before |
+| an older line | "MyGame was made with v2.850.0. This editor is v2.875.0." | **Upgrade project to v2.875.0**, **Open with v2.850.x** (only when an editor of that line is installed; the newest one is used) or **Install v2.850.x** (when none is: opens the Versions page with it highlighted), **Cancel** |
+| nothing recorded | "MyGame has no version recorded (made before this feature). This editor is v2.875.0." | **Upgrade project to v2.875.0**, **Cancel** (a default editor set on the Versions page takes such a project with no question, as before) |
+| a newer line | "MyGame was last saved by v2.880.0, which is newer than this editor (v2.875.0)." (the data-loss question, in amber) | **Check for updates** (the launcher's own update check), **Open anyway (a backup is made first)**, **Cancel** |
+
+The sentences and button labels are the editor's own: both windows build them from `shared/ProjectQuestion.hpp`, so they read the same.
+**Open with** (an editor picked on purpose) never gets the upgrade question: an older or unversioned project opens in it as before; a project newer than
+that editor gets the newer question, naming that editor.
+
+![The launcher's question for a project made with an older version, v2.850.1 installed](images/launcher_open/older.png)
+
+![The same question when no v2.850 editor is installed: Install v2.850.x replaces Open with](images/launcher_open/older_not_installed.png)
+
+![The question for a project from a newer version](images/launcher_open/newer.png)
+
+![A project with no version recorded](images/launcher_open/unversioned.png)
+
+(Headless pictures made by `tools/launcher_open_shot.cpp`: the launcher's real drawing code, `launcher/OpenProjectUI.cpp`, in its Slate look and
+Roboto font, on SDL's software renderer. The rest of the launcher is not drawn: the window is what the launcher shows. Not a Windows screenshot.)
+
+**What each answer does.**
+
+- **Upgrade project** starts this launcher's own editor with `--launcher <pid> --open "<scene>" --project-answer=upgrade`. The editor skips its question and
+  runs the upgrade at once: the same backup, progress window and result window as always (they are the editor's, not the launcher's).
+- **Open anyway** starts the editor with `--project-answer=open-anyway`: the editor skips its newer question and makes the same complete backup copy first,
+  then opens the project (nothing in the project is changed). With **Open with** it also keeps `--keep-version` and starts that editor.
+- **Open with v2.850.x** starts `Versions/<newest 2.850.x>/Tools/OkayEngine` with `--launcher <pid> --open "<scene>" --keep-version`, as the card menu always did.
+- **Install v2.850.x** opens the Versions page with that version highlighted (the same page the editor's "not installed" window opens). **Check for
+  updates** starts the launcher's update check. Neither starts the editor; press **Open** again afterwards. **Cancel** (or Escape) does nothing.
+
+Then the usual rule applies: if an editor of another version is already open, the launcher asks it to save and close first ("One editor at a time" above),
+and starts the project's editor after that. An editor of the same version that is already open is handed the project (the single-instance hand-off) and the
+answer goes with it.
+
+**How the editor knows not to ask again: `--project-answer=upgrade|open-anyway`.** It is honoured only when all of this holds (`okayver::ParsePreAnswer`,
+`shared/ProjectAnswer.hpp`; each point is a test in `project_answer`):
+
+- the editor was started by a live launcher: `--launcher <pid>` is on the command line and that process is running (the hand-shake the editor needs to start at all);
+- the flag is for the project of the `--open` scene, and for that project only (the gate keeps it per project folder);
+- the name is spelled exactly (`upgrade`, `open-anyway`), in the one-token form `--project-answer=<name>`.
+
+Anything else is ignored and the editor asks its own question. The gate (`ProjectGate::NotePreAnswer`) uses the answer **once**, and only while the project is
+still what the launcher saw: "upgrade" never applies to a project from a newer version, "open anyway" never to an older one, and a project that was
+upgraded in between just opens. A held open that is replaced takes its answer with it. The very-big-folder question (above) is still the editor's own and can
+still appear. The flag is not remembered when the editor restarts itself (after a restore or an update): the restarted editor asks again. An editor from before this
+change ignores the flag and asks its own question (so a kept older editor opened with **Open anyway** may ask once more).
+
+**Which folder is the project.** The launcher finds it with the same rule as the editor: `okayroot::ProjectRootForScene` (`shared/ProjectRoot.hpp`; it used to be
+in `editor/ProjectUpgrade.cpp` and moved unchanged, the editor still calls it as `okayup::ProjectRootForScene`). So a scene in `Levels/` belongs to its stamped project, a
+loose scene or one under an unstamped copy of the shared settings file is no project, and the project card's version label uses the same rule.
+
+**Known limits.** The launcher cannot see what the running editor has already answered this session (a project opened anyway in the open editor is asked
+about again if you press Open on it in the launcher); a development launcher compares with `OKAY_FAKE_VERSION` when `OKAY_DEV` is set (the editor reads the same
+variable); on Windows nothing of this has been run (see `docs/try_it.md`, 7m).
 
 ## Command line and environment
 
 | | |
 |---|---|
 | `--keep-version` / `--keep-version=<ver>` | the version was chosen on purpose for the `--open` project (see above) |
-| `OKAY_DEV=1` with `OKAY_FAKE_VERSION=2.855.0` | development builds only: the editor reports and stamps that version, so a project stamped `2.850.0` can be opened by "another" editor and the question tried |
+| `--project-answer=upgrade` / `=open-anyway` | the launcher already asked the version question and the person answered; honoured only for a live `--launcher <pid>` and the `--open` project (see "The question before Open") |
+| `OKAY_DEV=1` with `OKAY_FAKE_VERSION=2.855.0` | development builds only: the editor reports and stamps that version, so a project stamped `2.850.0` can be opened by "another" editor and the question tried. The launcher reads the same two variables, so its question compares with that version too |
 | `OKAY_DEV=1` with `OKAY_UI_UPGRADE_ANSWER=upgrade` | development builds only (screenshots): the version question is answered with Upgrade once |
 
 ## Failure cases
@@ -335,6 +407,11 @@ the very-big-folder limit; the loose-file checks stop their search at the test's
 them) `editor_hooks` (`EditorState::Load` under the gate, and File > Open rooting the project where the gate finds it) and
 `startup_modals` (the version question and a waiting recovery copy at startup, stepped frame by frame: exactly one question asks at a time,
 the scene opens after the answer, then the recovery question asks).
+`open_project_gate` (the launcher's question: every combination of project version, editor version, installed versions, default editor, "Open with" and
+"is it a project", the options in order, what each answer starts with its exact arguments and quoting, the answer flag never produced without a hand-shake, and,
+on temp folders, that a scene outside a project never asks; the editor's sentences are kept as literal text), `project_answer` (the `--project-answer` flag: honoured
+only for a live launcher and the `--open` project, the same through the hand-off, never remembered for a restart) and, in `project_upgrade`, the gate applying the
+answer (upgrade, open anyway, once, only for that project, not for a project that does not fit, held opens).
 `scene_bom_bug_load_from_file` (`tests/test_scene_bom_bug.cpp`) is the loader's byte-order-mark check; it only runs with
 `-DOKAY_RUN_KNOWN_BUG_TESTS=ON`. The issue #888 known-bug file `tests/test_upgrade_bugs.cpp` is gone: every check in it is fixed and lives in
 `project_upgrade` (and `startup_modals` for the two startup windows).
@@ -350,3 +427,10 @@ where the recovery folder is), used by `DrawGatePrompt` (`editor/ProjectUpgradeU
 
 Launcher side (see [launcher_versions.md](launcher_versions.md)): the launcher's own `CompareVersions` now calls the shared one too; the
 "v2.850.x is not installed" window gained **Open launcher** (`editor/ProjectUpgradeUI.cpp`).
+
+The launcher asks first (this change): new `launcher/OpenProjectGate.hpp` (the decision), `launcher/OpenProjectUI.cpp/.hpp` (the window),
+`shared/ProjectQuestion.hpp` (the sentences, shared with the editor), `shared/ProjectAnswer.hpp` (`--project-answer`), `shared/ProjectRoot.hpp` (which folder
+is the project, moved from `editor/ProjectUpgrade.cpp`), `tools/launcher_open_shot.cpp` (the headless pictures), `tests/test_open_project_gate.cpp`,
+`tests/test_project_answer.cpp`. Edited: `launcher/main.cpp` (`OpenProjectChecked` and the three open paths, the window, the plan after "Close the editor first"),
+`editor/ProjectUpgrade.hpp/.cpp` (`NotePreAnswer`), `editor/ProjectUpgradeUI.cpp/.hpp` (reads the flag; uses the shared sentences), `editor/main.cpp` (the
+hand-off carries the answer), `shared/AppRestart.hpp` (a restart forgets the answer), `tests/test_project_upgrade.cpp`.

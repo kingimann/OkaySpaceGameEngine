@@ -1748,6 +1748,27 @@ target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
+# The question the launcher asks BEFORE it starts the editor on a project of another version (launcher/OpenProjectGate.hpp, header-only; the words are
+# shared/ProjectQuestion.hpp, the folder rule shared/ProjectRoot.hpp): which question for every combination, the options in order, what each answer
+# starts (editor, exact arguments, quoting), the answer flag never produced without a launcher hand-shake, a scene outside a project never asked about.
+# No window, no engine link. (docs/project_upgrade.md, "The launcher's side".)
+add_executable(test_open_project_gate test_open_project_gate.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_open_project_gate PRIVATE cxx_std_17)
+target_include_directories(test_open_project_gate PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_open_project_gate PRIVATE Threads::Threads okay::crypto)   # (VersionsManager.cpp: the signed versions.json check)
+add_test(NAME open_project_gate COMMAND test_open_project_gate)
+
+# `--project-answer=upgrade|open-anyway` (shared/ProjectAnswer.hpp, header-only): honoured only for a live `--launcher <pid>` and the `--open` project; the
+# same through the single-instance hand-off; never remembered for a restart. The gate that applies it is checked in project_upgrade.
+add_executable(test_project_answer test_project_answer.cpp)
+target_compile_features(test_project_answer PRIVATE cxx_std_17)
+target_include_directories(test_project_answer PRIVATE ${CMAKE_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_project_answer PRIVATE Threads::Threads)
+if(WIN32)
+    target_link_libraries(test_project_answer PRIVATE shell32)
+endif()
+add_test(NAME project_answer COMMAND test_project_answer)
+
 # The same download through our own HTTP client (docs/own_http_readiness.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
 if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
     add_executable(test_launcher_download_own test_launcher_download_own.cpp

@@ -14,41 +14,29 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <vector>
+#include "../shared/ProjectAnswer.hpp"
+#include "../shared/ProjectRoot.hpp"
 #include "../shared/ProjectVersion.hpp"
 
 namespace okayup {
 namespace fs = std::filesystem;
 
 // ---- which folder is "the project" ------------------------------------------------------------------------------------
-
-/// True when `dir` is a project folder: it has an Assets folder or a project.okayproj file in it. (A .okay folder alone
-/// does not count: the editor leaves one next to any scene it opened, project or not.)
-bool IsProjectRoot(const fs::path& dir);
-
-/// What ProjectRootForScene needs from the machine, so the rules can be tried anywhere (tests pass their own).
-struct RootRules {
-    bool assetsAnyCase = false;   ///< an "Assets" folder the scene is inside may be spelled in any case (Windows)
-    fs::path workingFolder;       ///< the editor's working folder: its project.okayproj is the old shared settings file
-    fs::path home;                ///< the person's home folder: never a project
-    fs::path ceiling;             ///< tests: the search goes no higher than this folder ("" = up to the drive root)
-};
-/// This machine's rules: any case on Windows, the current folder, HOME (USERPROFILE on Windows).
-RootRules DefaultRootRules();
-/// The project folder a scene belongs to. From the scene's folder upwards, the nearest folder that is clearly a project:
-///   - it holds the scene through a folder called Assets (any case when `assetsAnyCase`): <project>/Assets/.../scene;
-///   - or it holds a project.okayproj with an engine_version stamp (not the working folder: its file is the old shared one,
-///     which a release build stamps too).
-/// Only when no folder up the path is clearly a project: the scene's own folder when it holds project.okayproj or an Assets
-/// folder (the old flat layout; not the working folder). A drive root and the home folder are never a project. Not evidence:
-/// an unstamped project.okayproj above the scene (a copy of the shared file) and an Assets folder beside a folder above the
-/// scene (the release folder holds Assets/ next to examples/). "" for a loose file.
-std::string ProjectRootForScene(const std::string& scene, const RootRules& rules);
-std::string ProjectRootForScene(const std::string& scene);   ///< with DefaultRootRules()
+// The rule (IsProjectRoot, RootRules, DefaultRootRules, ProjectRootForScene, IsDriveRoot, SameFolder) lives in
+// shared/ProjectRoot.hpp, header-only, so the launcher's question before it starts the editor finds the same project the
+// editor's own question does. These names are the same functions under their old home (see that file for the rules).
+using okayroot::IsProjectRoot;
+using okayroot::RootRules;
+using okayroot::DefaultRootRules;
+using okayroot::ProjectRootForScene;   // (scene, rules) and (scene) with DefaultRootRules()
+using okayroot::IsDriveRoot;
+using okayroot::SameFolder;
 /// The project File > Project Upgrade works on: the project of `scene`, else `projectDir` when that is a project folder
 /// (no scene saved yet). The window shows this folder and its Upgrade button upgrades this folder.
 std::string UpgradeRootFor(const std::string& scene, const std::string& projectDir, const RootRules& rules);
@@ -56,11 +44,6 @@ std::string UpgradeRootFor(const std::string& scene, const std::string& projectD
 /// folder (it has project.okayproj or an Assets folder), else "" (the editor's shared file). So the old shared file is only
 /// ever copied into a real project, never into a scene's folder.
 std::string SettingsFolderFor(const std::string& projectDir);
-/// True for the root of a drive or a network share ("C:\", "/", "\\server\share").
-bool IsDriveRoot(const fs::path& dir);
-/// `a` and `b` are the same folder on disk, however each is spelled (a link, 8.3 name, another case on Windows, a trailing
-/// separator). False when either is missing.
-bool SameFolder(const fs::path& a, const fs::path& b);
 /// A folder as a map key: absolute, normalized, no trailing separator, lower case on Windows.
 std::string RootKey(const std::string& root);
 
@@ -246,6 +229,15 @@ public:
     /// An older or unversioned project is then opened without a question, for the rest of the session; a newer one still asks.
     void NoteKeepRequest(const std::string& scene, const std::string& forVersion = {});
     bool IsKept(const std::string& root) const;
+    /// The launcher already asked the question and the person answered it (`--project-answer`, shared/ProjectAnswer.hpp; the caller has checked
+    /// that a live launcher vouched for it, ParsePreAnswer does). The NEXT Open of the project `scene` belongs to does not ask: for an older or
+    /// unversioned project, Upgrade starts the backup and upgrade at once (progress and result window as always); for a project from a newer
+    /// version, OpenAnyway starts the backup at once, then the project opens. It is used once, for that project only, and only while the
+    /// project is still what the launcher saw: an answer that does not fit (Upgrade for a newer project, OpenAnyway for an older one, or a
+    /// project that has been upgraded since) is dropped and the usual question is asked. A held request that is replaced or dropped takes its
+    /// answer with it. A scene that is not in a project keeps nothing.
+    void NotePreAnswer(const std::string& scene, okayver::PreAnswer answer);
+    bool HasPreAnswer(const std::string& root) const;
     /// The safety net under EditorState::Load: may this scene be opened now? Same-version and development projects, and
     /// ones already answered, yes (and are remembered); everything else no, with the reason.
     bool MayLoad(const std::string& scene, std::string* why);
@@ -265,6 +257,7 @@ private:
     void Ask(PromptKind k, const std::string& root, const std::string& scene, const std::string& version);
     void StartJob(bool migrate, bool allowLarge = false);
     void RunHeld();
+    okayver::PreAnswer TakePreAnswer(const std::string& root);
     void Finish(bool proceed);
     void KeepVersion();
 
@@ -275,6 +268,7 @@ private:
     std::optional<Held> held_;
     std::unique_ptr<UpgradeJob> job_;
     std::set<std::string> cleared_, kept_;
+    std::map<std::string, okayver::PreAnswer> preAnswer_;   ///< by RootKey: what the launcher's question was answered with, until the project is opened
     bool quit_ = false, update_ = false;
     unsigned revision_ = 0;
     std::optional<Launch> launch_;

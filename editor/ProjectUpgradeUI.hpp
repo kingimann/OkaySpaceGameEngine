@@ -43,6 +43,14 @@ bool ProjectGateBusy();
 void NoteKeepVersionHandoff(const std::string& scene, const std::string& version);
 /// True when this process was started with --keep-version (its hand-off to a running editor must say so).
 bool KeepVersionRequested();
+/// The launcher's answer to the version question this process was started with (`--project-answer=upgrade|open-anyway`, shared/ProjectAnswer.hpp):
+/// "" unless it was honoured, which takes a live `--launcher <pid>` and an `--open` project. A hand-off to a running editor must carry it.
+std::string ProjectAnswerRequested();
+/// The process id of the launcher that gave it (0 when there is no answer).
+unsigned long ProjectAnswerLauncherPid();
+/// A hand-over from another editor instance (started by the launcher) carried the launcher's answer for `scene` (its name and the launcher's pid
+/// as text): the gate uses it for that project's next open, once the launcher is checked to be still there. Nothing happens if it is not.
+void NoteProjectAnswerHandoff(const std::string& scene, const std::string& answerName, const std::string& launcherPid);
 /// Every frame, after the other dialogs: advances the upgrade and draws the windows.
 void ProjectUpgradeDraw(okay::editor::EditorState& ed);
 /// True once an answer has asked the editor to close (Keep started another version's editor, or a restore wants a restart):

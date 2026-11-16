@@ -155,115 +155,9 @@ std::string PathKey(const fs::path& p) {
 }  // namespace
 
 // ---- which folder is the project ---------------------------------------------------------------------------------------
-// Written from the folder layout the editor makes (docs/project_upgrade.md, "Which folder is the project"); no other code.
-
-bool IsProjectRoot(const fs::path& dir) {
-    std::error_code ec;
-    if (!fs::is_directory(dir, ec)) return false;
-    // A ".okay" folder alone is not enough: the editor leaves one (autosave, the build list) next to any scene it opened, so a
-    // loose scene folder would turn into a "project" that is asked about and copied whole by an upgrade (issue #888).
-    return fs::is_directory(dir / "Assets", ec) || fs::is_regular_file(dir / okayproj::SettingsFileName(), ec);
-}
-
-namespace {
-
-// "Assets" as a folder name. Windows folder names ignore case (a project copied around may end up with "assets"), so
-// there any case counts (`anyCase`); elsewhere the name must be exactly "Assets", as the editor makes it. Compared on the
-// native characters, so a name that has no narrow spelling on Windows can't throw.
-bool IsAssetsFolderName(const fs::path& name, bool anyCase) {
-    const auto& n = name.native();
-    static const char kWord[] = "Assets";
-    if (n.size() != sizeof(kWord) - 1) return false;
-    for (std::size_t i = 0; i < n.size(); ++i) {
-        long c = static_cast<long>(n[i]);
-        long w = static_cast<long>(static_cast<unsigned char>(kWord[i]));
-        if (anyCase) {   // ASCII letters only
-            if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-            if (w >= 'A' && w <= 'Z') w += 'a' - 'A';
-        }
-        if (c != w) return false;
-    }
-    return true;
-}
-
-// The folder as the disk spells it: links resolved, absolute, no trailing separator (okayproj::Normalized's rule).
-fs::path Canon(const fs::path& p) {
-    std::error_code ec;
-    fs::path n = fs::weakly_canonical(p, ec);
-    if (ec || n.empty()) n = okayproj::Absolute(p);
-    n = n.lexically_normal();
-    if (n.filename().empty() && n.has_relative_path()) n = n.parent_path();
-    return n;
-}
-
-// project.okayproj in `dir` with an engine_version line: written by an editor that knows about versions for this project.
-bool HasStampedProjectFile(const fs::path& dir) {
-    const okayver::Stamp st = okayver::ReadProjectStamp(dir.string());
-    return st.fileFound && !st.version.empty();
-}
-
-}  // namespace
-
-bool IsDriveRoot(const fs::path& dir) {
-    if (dir.empty()) return false;
-    const fs::path n = Canon(dir);
-    const fs::path rel = n.relative_path();
-    if (rel.empty()) return true;                                                     // "/", "C:\"
-    // "\\server\share": a network share's root (its name is part of the root on Windows)
-    return n.root_name().native().size() > 2 && std::distance(rel.begin(), rel.end()) == 1;
-}
-
-bool SameFolder(const fs::path& a, const fs::path& b) {
-    if (a.empty() || b.empty()) return false;
-    std::error_code ec;
-    const bool same = fs::equivalent(a, b, ec);                                       // the same folder on disk (links, 8.3 names, \\?\, case)
-    if (!ec) return same;
-    std::error_code e2;
-    if (!fs::exists(a, e2) || !fs::exists(b, e2)) return false;                       // a missing folder is nobody's
-    return PathKey(Canon(a)) == PathKey(Canon(b));                                    // the disk couldn't say: compare the spellings
-}
-
-RootRules DefaultRootRules() {
-    RootRules r;
-#if defined(_WIN32)
-    r.assetsAnyCase = true;
-    const char* home = std::getenv("USERPROFILE");
-#else
-    const char* home = std::getenv("HOME");
-#endif
-    if (home && *home) r.home = fs::path(home);
-    std::error_code ec;
-    r.workingFolder = fs::current_path(ec);
-    if (ec) r.workingFolder.clear();
-    return r;
-}
-
-std::string ProjectRootForScene(const std::string& scene, const RootRules& rules) {
-    if (scene.empty()) return {};
-    std::error_code ec;
-    fs::path abs = fs::absolute(fs::path(scene), ec);
-    if (ec) return {};
-    abs = abs.lexically_normal();
-    const fs::path dir = abs.parent_path();
-    auto never = [&](const fs::path& p) { return IsDriveRoot(p) || (!rules.home.empty() && SameFolder(p, rules.home)); };
-    auto working = [&](const fs::path& p) { return !rules.workingFolder.empty() && SameFolder(p, rules.workingFolder); };
-    // The nearest folder that is clearly a project: it holds the scene through Assets/, or it has a stamped project.okayproj.
-    const fs::path ceiling = rules.ceiling.empty() ? fs::path() : okayproj::Absolute(rules.ceiling);
-    fs::path child;   // the folder below `p` on the way to the scene
-    for (fs::path p = dir; !p.empty(); child = p, p = p.parent_path()) {
-        if (!ceiling.empty() && child == ceiling) break;                             // tests: nothing above the ceiling
-        if (!never(p)) {
-            if (!child.empty() && IsAssetsFolderName(child.filename(), rules.assetsAnyCase) && fs::is_directory(child, ec)) return p.string();
-            if (!working(p) && HasStampedProjectFile(p)) return p.string();
-        }
-        if (p == p.parent_path()) break;
-    }
-    // The old flat layout: project.okayproj (or Assets) right beside the scene.
-    if (IsProjectRoot(dir) && !never(dir) && !working(dir)) return dir.string();
-    return {};
-}
-
-std::string ProjectRootForScene(const std::string& scene) { return ProjectRootForScene(scene, DefaultRootRules()); }
+// The rule itself (IsProjectRoot, DefaultRootRules, ProjectRootForScene, IsDriveRoot, SameFolder) moved to shared/ProjectRoot.hpp so the
+// launcher asks about the same project the editor does; ProjectUpgrade.hpp brings the names back into okayup. What stays here is what
+// only the editor needs: the folder File > Project Upgrade works on, and where the settings file goes.
 
 std::string UpgradeRootFor(const std::string& scene, const std::string& projectDir, const RootRules& rules) {
     std::string root = ProjectRootForScene(scene, rules);
@@ -1008,6 +902,25 @@ void ProjectGate::NoteKeepRequest(const std::string& scene, const std::string& f
     ++revision_;
 }
 
+void ProjectGate::NotePreAnswer(const std::string& scene, okayver::PreAnswer answer) {
+    const std::string root = RootOf(scene);
+    if (root.empty()) return;                                    // not part of a project: there was nothing to ask about
+    if (answer == okayver::PreAnswer::None) preAnswer_.erase(RootKey(root));
+    else preAnswer_[RootKey(root)] = answer;
+}
+
+bool ProjectGate::HasPreAnswer(const std::string& root) const { return !root.empty() && preAnswer_.count(RootKey(root)) != 0; }
+
+// An answer is used once: taken (and forgotten) whether or not it fits what the project turns out to be.
+okayver::PreAnswer ProjectGate::TakePreAnswer(const std::string& root) {
+    if (root.empty()) return okayver::PreAnswer::None;
+    const auto it = preAnswer_.find(RootKey(root));
+    if (it == preAnswer_.end()) return okayver::PreAnswer::None;
+    const okayver::PreAnswer a = it->second;
+    preAnswer_.erase(it);
+    return a;
+}
+
 bool ProjectGate::MayLoad(const std::string& scene, std::string* why) {
     const std::string root = RootOf(scene);
     if (root.empty() || IsCleared(root)) return true;
@@ -1029,11 +942,15 @@ bool ProjectGate::MayLoad(const std::string& scene, std::string* why) {
 
 void ProjectGate::Open(const std::string& scene, std::function<void()> proceed, std::function<void()> cancel) {
     if (Busy()) {   // one window at a time: hold the request (the launcher handing over another project) until this one closes
-        if (held_ && held_->cancel) { auto old = std::move(held_->cancel); held_.reset(); old(); }   // a newer request replaces it
+        if (held_) {   // a newer request replaces it, and takes the launcher's answer for it away too
+            TakePreAnswer(RootOf(held_->scene));
+            if (held_->cancel) { auto old = std::move(held_->cancel); held_.reset(); old(); }
+        }
         held_ = Held{scene, std::move(proceed), std::move(cancel)};
         return;
     }
     const std::string root = RootOf(scene);
+    const okayver::PreAnswer pre = TakePreAnswer(root);   // the launcher's answer for this project: used once, whether or not it fits
     if (root.empty() || IsCleared(root)) { if (proceed) proceed(); return; }
     const okayver::Stamp st = okayver::ReadProjectStamp(root);
     const okayver::Decision d = okayver::Decide(st.version, env_.running);
@@ -1049,10 +966,12 @@ void ProjectGate::Open(const std::string& scene, std::function<void()> proceed, 
             if (IsKept(root)) { MarkCleared(root); if (proceed) proceed(); return; }
             proceed_ = std::move(proceed); cancel_ = std::move(cancel);
             Ask(d == okayver::Decision::Older ? PromptKind::Older : PromptKind::Unknown, root, scene, st.version);
+            if (pre == okayver::PreAnswer::Upgrade) StartJob(true);    // the launcher asked and the person said Upgrade: do not ask again
             return;
         case okayver::Decision::Newer:
             proceed_ = std::move(proceed); cancel_ = std::move(cancel);
             Ask(PromptKind::Newer, root, scene, st.version);
+            if (pre == okayver::PreAnswer::OpenAnyway) StartJob(false);   // ... and Open anyway: the backup first, as the question promises
             return;
     }
 }
@@ -1115,7 +1034,7 @@ void ProjectGate::RunHeld() {
     if (!held_ || Busy()) return;
     Held h = std::move(*held_);
     held_.reset();
-    if (quit_) { if (h.cancel) h.cancel(); return; }   // this editor is closing (Keep started another one): nothing more opens here
+    if (quit_) { TakePreAnswer(RootOf(h.scene)); if (h.cancel) h.cancel(); return; }   // this editor is closing (Keep started another one): nothing more opens here
     Open(h.scene, std::move(h.proceed), std::move(h.cancel));
 }
 

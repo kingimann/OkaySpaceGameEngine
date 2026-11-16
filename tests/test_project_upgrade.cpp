@@ -1533,5 +1533,214 @@ int main() {
         }
     }
 
+    // ---- the launcher already asked (--project-answer): the gate does what was answered and does not ask a second time -------------------
+    // docs/project_upgrade.md, "The launcher's side". The answer is applied once, to the project the launcher named, and only while the
+    // project is still what the launcher saw: "upgrade" never to a project from a newer version, "open anyway" never to an older one.
+    {
+        using okayver::PreAnswer;
+        auto sceneOf = [](const Proj& p) { return (p.root / "Assets" / "Scenes" / "Level1.okayscene").string(); };
+        auto stamp = [](const Proj& p, const char* v) { std::string e; if (*v) CHECK(okayver::WriteProjectVersion(p.root.string(), v, &e)); };
+        auto finish = [](ProjectGate& g) { for (int i = 0; i < 100000 && g.prompt().kind == PromptKind::Working; ++i) g.Tick(std::chrono::milliseconds(0)); };
+        GateEnv env;
+        env.running = "2.855.0";
+
+        {   // Older + "upgrade": no question, the backup and upgrade start at once, the result window as usual, then the project opens
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.850.0");
+            ProjectGate g(env);
+            int go = 0, no = 0;
+            g.NotePreAnswer(sceneOf(p), PreAnswer::Upgrade);
+            CHECK(g.HasPreAnswer(p.root.string()));
+            g.Open(sceneOf(p), [&] { ++go; }, [&] { ++no; });
+            CHECK(g.prompt().kind == PromptKind::Working && !g.prompt().backupOnly && go == 0 && no == 0);   // straight to the progress window
+            CHECK(g.prompt().projectVersion == "2.850.0" && g.prompt().runningVersion == "2.855.0" && g.prompt().root == p.root.string());
+            CHECK(!g.HasPreAnswer(p.root.string()));                                          // used up
+            finish(g);
+            CHECK(g.prompt().kind == PromptKind::Done && g.prompt().result.ok && go == 0);    // the result window, as today
+            CHECK(okayver::ReadProjectVersion(p.root.string()) == "2.855.0" && BackupCount(p) == 1);
+            g.Answer(Choice::Continue);
+            CHECK(go == 1 && no == 0 && !g.Busy() && g.IsCleared(p.root.string()));
+            g.Open(sceneOf(p), [&] { ++go; });                                                // and it is not asked about again
+            CHECK(go == 2 && !g.Busy());
+        }
+        {   // no version recorded + "upgrade": the same
+            TempDir td; Proj p(td.path, 20 * 1024);                                            // (the Proj has a project.okayproj without a stamp)
+            ProjectGate g(env);
+            int go = 0;
+            g.NotePreAnswer(sceneOf(p), PreAnswer::Upgrade);
+            g.Open(sceneOf(p), [&] { ++go; });
+            CHECK(g.prompt().kind == PromptKind::Working && !g.prompt().backupOnly && g.prompt().projectVersion.empty());
+            finish(g);
+            CHECK(g.prompt().kind == PromptKind::Done && okayver::ReadProjectVersion(p.root.string()) == "2.855.0");
+            g.Answer(Choice::Continue);
+            CHECK(go == 1 && !g.Busy());
+        }
+        {   // Newer + "open anyway": the backup first (the question's own promise), nothing in the project changed, then it opens
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.860.0");
+            ProjectGate g(env);
+            int go = 0, no = 0;
+            g.NotePreAnswer(sceneOf(p), PreAnswer::OpenAnyway);
+            g.Open(sceneOf(p), [&] { ++go; }, [&] { ++no; });
+            CHECK(g.prompt().kind == PromptKind::Working && g.prompt().backupOnly && go == 0 && no == 0);
+            finish(g);
+            CHECK(g.prompt().kind == PromptKind::Done && g.prompt().backupOnly && g.prompt().result.ok);
+            CHECK(okayver::ReadProjectVersion(p.root.string()) == "2.860.0" && BackupCount(p) == 1);   // the stamp is the newer editor's still
+            g.Answer(Choice::Continue);
+            CHECK(go == 1 && no == 0 && !g.Busy());
+        }
+        {   // an answer that does not fit the project is dropped and the editor asks its own question
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.860.0");                       // newer than the editor
+            const Tree before = Snap(p.root);
+            ProjectGate g(env);
+            int go = 0, no = 0;
+            g.NotePreAnswer(sceneOf(p), PreAnswer::Upgrade);                                   // never "upgrade" a project from a newer version
+            g.Open(sceneOf(p), [&] { ++go; }, [&] { ++no; });
+            CHECK(g.prompt().kind == PromptKind::Newer && go == 0 && no == 0 && Snap(p.root) == before && BackupCount(p) == 0);
+            CHECK(!g.HasPreAnswer(p.root.string()));
+            g.Answer(Choice::Cancel);
+            g.Open(sceneOf(p), [&] { ++go; });                                                 // and it was a single use: the next open asks as well
+            CHECK(g.prompt().kind == PromptKind::Newer);
+            g.Answer(Choice::Cancel);
+        }
+        {
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.850.0");                       // older than the editor
+            const Tree before = Snap(p.root);
+            ProjectGate g(env);
+            g.NotePreAnswer(sceneOf(p), PreAnswer::OpenAnyway);                                // "open anyway" is for newer projects
+            g.Open(sceneOf(p), [] {});
+            CHECK(g.prompt().kind == PromptKind::Older && Snap(p.root) == before);
+            g.Answer(Choice::Cancel);
+        }
+        {   // the project is not what the launcher saw (someone upgraded it meanwhile): it just opens, and the answer is used up, not kept
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.855.0");
+            const Tree before = Snap(p.root);
+            ProjectGate g(env);
+            int go = 0;
+            g.NotePreAnswer(sceneOf(p), PreAnswer::Upgrade);
+            g.Open(sceneOf(p), [&] { ++go; });
+            CHECK(go == 1 && !g.Busy() && Snap(p.root) == before && !g.HasPreAnswer(p.root.string()));
+            // ... so a stale answer can't upgrade the project later, in another session of opening it
+            TempDir td2; Proj q(td2.path, 20 * 1024); stamp(q, "2.855.0");
+            ProjectGate g2(env);
+            g2.NotePreAnswer(sceneOf(q), PreAnswer::Upgrade);
+            g2.Open(sceneOf(q), [] {});
+            stamp(q, "2.850.0");                                                               // the project is older again
+            ProjectGate g3(env);                                                               // (a cleared project is never asked again in a session, so use a new gate to look)
+            g3.Open(sceneOf(q), [] {});
+            CHECK(g3.prompt().kind == PromptKind::Older);
+            g3.Answer(Choice::Cancel);
+        }
+        {   // only the project the answer was for: another older project asks its own question
+            TempDir td; Proj a(td.path / "A", 20 * 1024), b(td.path / "B", 20 * 1024); stamp(a, "2.850.0"); stamp(b, "2.850.0");
+            ProjectGate g(env);
+            g.NotePreAnswer(sceneOf(a), PreAnswer::Upgrade);
+            g.Open(sceneOf(b), [] {});
+            CHECK(g.prompt().kind == PromptKind::Older && g.prompt().root == b.root.string() && g.HasPreAnswer(a.root.string()));
+            g.Answer(Choice::Cancel);
+            g.Open(sceneOf(a), [] {});                                                         // A still has its answer
+            CHECK(g.prompt().kind == PromptKind::Working && g.prompt().root == a.root.string());
+            finish(g);
+            g.Answer(Choice::Continue);
+        }
+        {   // a scene of the same project (another folder in it) is the same project
+            TempDir td;
+            const fs::path game = td.path / "Game";
+            WriteFile(game / "project.okayproj", "engine_version=2.850.0\n");
+            WriteFile(game / "Assets" / "main.okayscene", Current("Main", 1));
+            WriteFile(game / "Levels" / "b.okayscene", Current("B", 1));
+            GateEnv fe = FencedEnv(td.path);
+            ProjectGate g(fe);
+            g.NotePreAnswer((game / "Assets" / "main.okayscene").string(), PreAnswer::Upgrade);
+            g.Open((game / "Levels" / "b.okayscene").string(), [] {});
+            CHECK(g.prompt().kind == PromptKind::Working && g.prompt().root == game.string());
+            finish(g);
+            CHECK(g.prompt().kind == PromptKind::Done);
+            g.Answer(Choice::Continue);
+        }
+        {   // a scene that is not in a project: nothing to answer for, nothing kept
+            TempDir td;
+            WriteFile(td.path / "loose" / "x.okayscene", Current("x", 1));
+            ProjectGate g(FencedEnv(td.path));
+            int go = 0;
+            g.NotePreAnswer((td.path / "loose" / "x.okayscene").string(), PreAnswer::Upgrade);
+            g.NotePreAnswer("", PreAnswer::Upgrade);
+            g.NotePreAnswer((td.path / "nowhere" / "y.okayscene").string(), PreAnswer::OpenAnyway);
+            g.Open((td.path / "loose" / "x.okayscene").string(), [&] { ++go; });
+            CHECK(go == 1 && !g.Busy() && fs::exists(td.path / "loose") && !fs::exists(td.path / "loose" / "project.okayproj"));
+            g.NotePreAnswer((td.path / "loose" / "x.okayscene").string(), PreAnswer::None);   // "no answer" is not an answer
+            CHECK(!g.HasPreAnswer((td.path / "loose").string()));
+        }
+        {   // while another window is on screen the open is held, and its answer is kept for it until it runs
+            TempDir td; Proj a(td.path / "A", 20 * 1024), b(td.path / "B", 20 * 1024), c(td.path / "C", 20 * 1024);
+            stamp(a, "2.850.0"); stamp(b, "2.850.0"); stamp(c, "2.850.0");
+            {
+                ProjectGate g(env);
+                int goB = 0, noB = 0;
+                g.Open(sceneOf(a), [] {}, [] {});                                              // A's question is on screen
+                g.NotePreAnswer(sceneOf(b), PreAnswer::Upgrade);
+                g.Open(sceneOf(b), [&] { ++goB; }, [&] { ++noB; });                            // the launcher hands B over: held
+                CHECK(g.HasHeldOpen() && g.prompt().root == a.root.string() && g.HasPreAnswer(b.root.string()));
+                g.Answer(Choice::Cancel);                                                      // A is cancelled: B opens, and its answer is used
+                CHECK(g.prompt().kind == PromptKind::Working && g.prompt().root == b.root.string() && !g.HasHeldOpen());
+                finish(g);
+                g.Answer(Choice::Continue);
+                CHECK(goB == 1 && noB == 0 && !g.Busy());
+            }
+            {   // a held open that is replaced by a newer one takes its answer with it
+                ProjectGate g(env);
+                int noB = 0;
+                g.Open(sceneOf(a), [] {}, [] {});
+                g.NotePreAnswer(sceneOf(b), PreAnswer::Upgrade);
+                g.Open(sceneOf(b), [] {}, [&] { ++noB; });
+                g.Open(sceneOf(c), [] {}, [] {});                                              // replaces B
+                CHECK(noB == 1 && !g.HasPreAnswer(b.root.string()));
+                g.Answer(Choice::Cancel);                                                      // A cancelled; C asks its own question
+                CHECK(g.prompt().kind == PromptKind::Older && g.prompt().root == c.root.string());
+                g.Answer(Choice::Cancel);
+                g.Open(sceneOf(b), [] {});                                                     // B asks, it was not upgraded behind anyone's back
+                CHECK(g.prompt().kind == PromptKind::Older);
+                g.Answer(Choice::Cancel);
+            }
+        }
+        {   // the safety net under EditorState::Load is not loosened by an answer that has not been used yet
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.850.0");
+            ProjectGate g(env);
+            g.NotePreAnswer(sceneOf(p), PreAnswer::Upgrade);
+            std::string why;
+            CHECK(!g.MayLoad(sceneOf(p), &why) && !why.empty());
+            CHECK(g.HasPreAnswer(p.root.string()));
+        }
+        {   // --keep-version (chosen on purpose) still wins for an older project: it opens in this editor as it always did
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.850.0");
+            const Tree before = Snap(p.root);
+            ProjectGate g(env);
+            int go = 0;
+            g.NoteKeepRequest(sceneOf(p));
+            g.NotePreAnswer(sceneOf(p), PreAnswer::Upgrade);
+            g.Open(sceneOf(p), [&] { ++go; });
+            CHECK(go == 1 && !g.Busy() && Snap(p.root) == before);
+        }
+        {   // a development build never asks and never upgrades, answer or not
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.850.0");
+            const Tree before = Snap(p.root);
+            GateEnv de = env; de.running = "dev";
+            ProjectGate g(de);
+            int go = 0;
+            g.NotePreAnswer(sceneOf(p), PreAnswer::Upgrade);
+            g.Open(sceneOf(p), [&] { ++go; });
+            CHECK(go == 1 && !g.Busy() && Snap(p.root) == before);
+        }
+        {   // the very big folder guard is still the editor's own question, answer or not
+            TempDir td; Proj p(td.path, 20 * 1024); stamp(p, "2.850.0");
+            GateEnv ge = env; ge.largeFiles = 3;
+            ProjectGate g(ge);
+            g.NotePreAnswer(sceneOf(p), PreAnswer::Upgrade);
+            g.Open(sceneOf(p), [] {});
+            finish(g);
+            CHECK(g.prompt().kind == PromptKind::Large && BackupCount(p) == 0);
+            g.Answer(Choice::Cancel);
+            CHECK(!g.Busy() && okayver::ReadProjectVersion(p.root.string()) == "2.850.0");
+        }
+    }
+
     TEST_MAIN_RESULT();
 }

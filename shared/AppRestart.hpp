@@ -152,6 +152,9 @@ inline void RememberArguments(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (!argv[i]) continue;
         if (std::strcmp(argv[i], "--okay-restart-helper") == 0) continue;
+        // The launcher's answer to the version question (`--project-answer=upgrade`, shared/ProjectAnswer.hpp) is for ONE start. A restart
+        // (after a restore, or an update) has to ask again, so the answer is not remembered with the rest.
+        if (std::strncmp(argv[i], "--project-answer", 16) == 0 && (argv[i][16] == '\0' || argv[i][16] == '=')) continue;
         StoredArguments().emplace_back(argv[i]);
     }
 }

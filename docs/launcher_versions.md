@@ -94,8 +94,14 @@ reason in the update dialog, is logged in `okay_update.log`, and leaves the inst
 * Right-click (or **...**) > **Open with** lists every installed editor, the project's line first ("this project's version"), then
   **Get more versions...**. The editor is started as `<launcher dir>/Versions/<v>/Tools/OkayEngine --launcher <pid> --open "<scene>"
   --keep-version`.
-* A plain **Open** starts this launcher's editor, which asks the upgrade question itself: the launcher asks nothing. The exception is the
-  default editor: a project with no version goes to it (with `--keep-version`).
+* A plain **Open** asks the version question **in the launcher, before the editor starts** (`launcher/OpenProjectGate.hpp`, window
+  `launcher/OpenProjectUI.cpp`; see [project_upgrade.md](project_upgrade.md), "The question before Open"): for a project made with an older line
+  **Upgrade project to v...**, **Open with v2.850.x** (or **Install v2.850.x**, which opens this page with it highlighted) and **Cancel**; for a project with
+  no version **Upgrade project** and **Cancel**; for a project from a newer line **Check for updates**, **Open anyway (a backup is made first)** and
+  **Cancel**. Nothing is asked when the project is of this line, the editor is a development build, or the scene is not part of a project. Then the launcher
+  starts the editor and tells it the answer (`--project-answer=upgrade|open-anyway`), so the editor does not ask a second time. The exception is the
+  default editor: a project with no version goes to it (with `--keep-version`) with no question. **Open with** never gets the upgrade question (you chose
+  the version); a project newer than the chosen editor gets the newer question.
 * **One editor at a time.** The editors share a single-instance lock, so a second one only hands its project to the first. If the open
   editor is another version than the one wanted, the launcher asks it to save and close (the same window the update uses), then starts the
   other. The launcher remembers which version it started last; an editor opened by hand is taken to be this version's.
@@ -137,7 +143,8 @@ head reconciliation; download sources and plans; install (good path, bucket tamp
 at five points, full disk, a failure at every one of the 13 steps in turn); installing without a checksum; remove with every guard;
 keep-on-update with a failure at every step; prune planning and on disk; the channel decision for every combination; settings lines; badges;
 Open with choices, command-line quoting for both platforms and unicode/space/quote paths; the project folder staying byte-identical; the
-`--versions` command line and hand-off; the cancellable download with a stub `curl` (no network).
+`--versions` command line and hand-off; the cancellable download with a stub `curl` (no network). `open_project_gate` is the launcher's question before Open
+(see [project_upgrade.md](project_upgrade.md)).
 
 ## Design choices
 
@@ -148,7 +155,10 @@ Open with choices, command-line quoting for both platforms and unicode/space/quo
 * **LTS never falls back to Latest.** Offline, or with no LTS published, choosing LTS changes nothing; a silent move to a newer line would
   be the one thing a person on LTS does not want.
 * **Only automatic copies are pruned.** Anything installed on purpose stays until it is removed on purpose.
-* **No second prompt.** The editor owns the upgrade question; the launcher only picks which editor starts.
+* **One question, asked before the editor opens.** The launcher asks (the decision is `okayopen::Ask`, tested); the editor is told the answer
+  (`--project-answer`) and keeps its own question as the safety net for every other way a project reaches it (File > Open inside the editor, a
+  double-clicked `.okayscene`, the command line). The words are shared (`shared/ProjectQuestion.hpp`) and so is the rule for which folder is the project
+  (`shared/ProjectRoot.hpp`), so the two windows cannot disagree. (Before this change the editor owned the question and the launcher asked nothing.)
 * **Windows paths.** The launcher's own folder is found with the wide-character API; its older helpers still turn paths into the ANSI code
   page on Windows (`CreateProcessA`), so a launcher installed in a folder with characters outside that code page cannot start an editor
   (this was already so). On other platforms every path with spaces, quotes or unicode is quoted per argument.
@@ -156,7 +166,7 @@ Open with choices, command-line quoting for both platforms and unicode/space/quo
 ## What changed
 
 New: `launcher/VersionsManager.hpp/.cpp`, `launcher/VersionsNet.hpp/.cpp`, `launcher/VersionsUI.hpp/.cpp`, `tests/test_launcher_versions.cpp`, this
-page. Edited: `launcher/main.cpp` (hook calls: version comparison, prefs, update flow, command line and hand-off, nav row and page, Settings
+page. (Later: `launcher/OpenProjectGate.hpp`, `launcher/OpenProjectUI.hpp/.cpp` and `tests/test_open_project_gate.cpp`, the question before Open.) Edited: `launcher/main.cpp` (hook calls: version comparison, prefs, update flow, command line and hand-off, nav row and page, Settings
 rows, project cards and Open with), `launcher/CMakeLists.txt`, `editor/ProjectUpgradeUI.cpp` (the **Open launcher** button),
 `tests/CMakeLists.txt`, [project_upgrade.md](project_upgrade.md), [release_channels.md](release_channels.md). The launcher's own
 `CompareVersions` now calls `okayver::CompareVersions` (one difference: `0.0.0` used to equal text that is no version, now it is newer).

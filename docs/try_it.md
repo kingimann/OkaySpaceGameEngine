@@ -1136,6 +1136,25 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Launcher: every sidebar entry is reachable in a short window (branch `claude2/launcher-sidebar-scroll`, not merged or released yet)
+
+Issue #888 finding 55: in a short launcher window the left sidebar was cut off (at about 700x450 right after Multiplayer
+or the SOCIAL label), with no scrollbar, so Friends, Chat, Servers, Forums, Achievements, What's New, Tips and Admin
+could not be reached. Even at 1280x800, Tips was cut off.
+
+1. Start the launcher (`OkaySpace.exe`) and make the window as short as it goes (drag the bottom edge up).
+2. The bottom of the sidebar stays pinned: Notifications, Settings and the Sign in / profile card are always visible.
+3. The rows above them now show a thin scrollbar, and a fade with a small down arrow while more rows are below.
+   Scroll with the mouse wheel or drag the scrollbar: SOCIAL, LEARN (What's New, Tips) and MODERATION are all there.
+4. With an update waiting, the "Update available" card shrinks to one row ("Update available") when space is short.
+   Click it to install, the same as "Install now". In a tall window it is the full card again.
+5. Make the window tall again: when all rows fit, the scrollbar, fade and arrow go away and the sidebar looks as before.
+6. If a page is opened another way (a link, a notification) and its row is scrolled out of view, the list scrolls to show it.
+
+**Checks run (Linux):** `test_launcher_sidebar_layout` (the height plan in `launcher/SidebarLayout.hpp`): 18 checks,
+0 failures. The launcher was built and run under Xvfb at 1280x800 and 700x450 with `OKAY_UI_DEMO_UPDATE=99.0.0`;
+before and after screenshots were taken. **Not run:** anything on Windows.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

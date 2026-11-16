@@ -29,6 +29,7 @@
 #include "ProjectList.hpp"    // Create page: the project list, "Remove from list", prefs lines
 #include "ProjectCreate.hpp"  // Create page: template list, name and version checks
 #include "NetGuard.hpp"   // Content-Length parsing, GIF dims bounds, SSRF host guard (tests/test_net_guard.cpp)
+#include "SidebarLayout.hpp"   // left nav: rows height, one-row update card, scrollbar on short windows (tests/test_launcher_sidebar_layout.cpp)
 #include "okay/Platform/Account/AccountService.hpp"
 #include "okay/Platform/NativeFetch.hpp"   // own HTTP client in front of curl for downloads, size probes and previews (only with OKAY_OWN_HTTP)
 #include "okay/Platform/Account/AccountData.hpp"   // Account > Your data: export my data, delete my account
@@ -19358,12 +19359,24 @@ int main(int argc, char** argv) {
         const ImU32 navRed    = IM_COL32(222, 76, 76, 255);
         const ImU32 navAccent = ImGui::GetColorU32(kAccent);
 
+        // The open page changed (a click, a link, a shortcut): if its row sits
+        // outside the scrolled part of the list, scroll it into view once.
+        static int s_navSeenTab = -1;
+        const bool navFollow = (tab != s_navSeenTab);
+        s_navSeenTab = tab;
+        bool navInRows = false;   // true while drawing the scrolling rows (not the pinned footer)
+
         // One sidebar row: icon + label (+ count pill). Returns true on click.
         auto navRow = [&](const char* id, const char* label, int icon, bool sel, int badge, ImU32 badgeCol) -> bool {
             ImVec2 mn = ImGui::GetCursorScreenPos();
             float w = ImGui::GetContentRegionAvail().x;
             ImVec2 mx(mn.x + w, mn.y + navRowH);
             bool click = ImGui::InvisibleButton(id, ImVec2(w, navRowH));
+            if (sel && navFollow && navInRows) {
+                const float top = ImGui::GetWindowPos().y, bot = top + ImGui::GetWindowSize().y;
+                if (mn.y < top) ImGui::SetScrollHereY(0.0f);
+                else if (mx.y > bot) ImGui::SetScrollHereY(1.0f);
+            }
             bool hov = ImGui::IsItemHovered();
             ImDrawList* dl = ImGui::GetWindowDrawList();
             if (sel || hov) dl->AddRectFilled(mn, mx, sel ? navSel : navHover, 7.0f);
@@ -19476,8 +19489,9 @@ int main(int argc, char** argv) {
         RefreshNotifs();
 
         // Footer (pinned): an update card while something is happening, then
-        // Notifications, Settings and the profile card. The rows above scroll on
-        // short windows instead of running into it.
+        // Notifications, Settings and the profile card. On short windows the
+        // update card first shrinks to one row, then the rows above scroll, with
+        // a thin scrollbar and a fade + arrow showing there is more (#888 finding 55).
         const UpState st = GetState();
         const bool upBusy = (st == Up_Checking || st == Up_Downloading);
         const bool upAvail = !g_upAvailable.empty() && !upBusy && st != Up_Updated;
@@ -19485,8 +19499,19 @@ int main(int argc, char** argv) {
         const float profH = g_navCollapsed ? 44.0f : 52.0f;
         const float upH = upNote ? (g_navCollapsed ? navRowH + 2.0f : ((g_upRelaunchNeeded && st == Up_Updated) || upAvail ? 84.0f : 58.0f)) : 0.0f;
         const float voiceH = g_call.kind ? (g_navCollapsed ? navRowH + 2.0f : VoicePanelHeight(true) + 4.0f) : 0.0f;
-        const float footH = upH + voiceH + (navRowH + 2.0f) * 2 + 15.0f + profH;
-        ImGui::BeginChild("navitems", ImVec2(0, ImGui::GetContentRegionAvail().y - footH), false, ImGuiWindowFlags_NoScrollbar);
+        const float footRest = voiceH + (navRowH + 2.0f) * 2 + 15.0f + profH;
+        const float upHRow = upNote ? navRowH + 2.0f : 0.0f;   // the one-row update card
+        static float s_navRowsH = 0.0f;                         // the rows' height, measured last frame
+        const okaysidebar::Layout navPlan = okaysidebar::Plan(ImGui::GetContentRegionAvail().y, upH + footRest,
+                                                              upHRow + footRest, s_navRowsH, (navRowH + 2.0f) * 2);
+        const bool upCompact = navPlan.compactUpdate;
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 6.0f);
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, ImVec4(0, 0, 0, 0));
+        ImGui::BeginChild("navitems", ImVec2(0, navPlan.itemsH), ImGuiChildFlags_None,
+                          navPlan.scrolls ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollbar);
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        navInRows = true;
         const char* navs[] = {"Create", "Play", "Community", "Account", "Settings", "Achievements", "Friends", "Market", "Servers", "Forums", "Downloads"};
         auto tabRow = [&](int i, int badge = 0, ImU32 badgeCol = 0) {
             char id[16]; std::snprintf(id, sizeof(id), "##nav%d", i);
@@ -19520,6 +19545,24 @@ int main(int argc, char** argv) {
             navSection("MODERATION");
             if (navRow("##navadmin", "Admin", kIcoShield, tab == 11 && !g_pfOpen, 0, 0)) { tab = 11; ClosePublicProfile(); }
         }
+        navInRows = false;
+        s_navRowsH = ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y;   // content height (cursor is in scrolled space)
+        if (navPlan.scrolls) {   // fades at the clipped edges, and an arrow while more rows are below
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+            const float x0 = wp.x, x1 = wp.x + ws.x - 8.0f;   // leave the scrollbar uncovered
+            const ImU32 clear = ImGui::GetColorU32(ImVec4(navBg.x, navBg.y, navBg.z, 0.0f)), solid = ImGui::GetColorU32(navBg);
+            const float sy = ImGui::GetScrollY(), sm = ImGui::GetScrollMaxY();
+            if (sy > 1.0f)
+                dl->AddRectFilledMultiColor(ImVec2(x0, wp.y), ImVec2(x1, wp.y + 14.0f), solid, solid, clear, clear);
+            if (sy < sm - 1.0f) {
+                const float yb = wp.y + ws.y;
+                dl->AddRectFilledMultiColor(ImVec2(x0, yb - 26.0f), ImVec2(x1, yb), clear, clear, solid, solid);
+                const float cx = (x0 + x1) * 0.5f, cy = yb - 8.0f;
+                const ImVec2 chev[3] = {ImVec2(cx - 5.0f, cy - 3.0f), ImVec2(cx, cy + 2.0f), ImVec2(cx + 5.0f, cy - 3.0f)};
+                dl->AddPolyline(chev, 3, navIcon, ImDrawFlags_None, 1.6f);
+            }
+        }
         ImGui::EndChild();   // end scrollable nav items
 
         {   // ---- Update card (only while checking/downloading, or with news) ----
@@ -19532,12 +19575,16 @@ int main(int argc, char** argv) {
                        : (st == Up_Failed) ? IM_COL32(240, 120, 120, 255)
                        : (st == Up_Updated) ? IM_COL32(110, 205, 140, 255) : navAccent;
             std::string upMsg = upAvail ? (g_upAvailableTitle.empty() ? "v" + g_upAvailable + " is ready" : g_upAvailableTitle + " is ready") : GetUpMsg();
-            if (upNote && g_navCollapsed) {
+            if (upNote && (g_navCollapsed || upCompact)) {   // one row: the collapsed rail, or a short window
                 ImVec2 mn = ImGui::GetCursorScreenPos();
                 float w = ImGui::GetContentRegionAvail().x;
                 bool click = ImGui::InvisibleButton("##navupd", ImVec2(w, navRowH));
                 ImDrawList* dl = ImGui::GetWindowDrawList();
-                ImVec2 uc(mn.x + w * 0.5f, mn.y + navRowH * 0.5f);
+                ImVec2 uc(g_navCollapsed ? mn.x + w * 0.5f : mn.x + 22.0f, mn.y + navRowH * 0.5f);
+                if (!g_navCollapsed) {
+                    dl->AddRectFilled(mn, ImVec2(mn.x + 3, mn.y + navRowH), tone, 1.5f);
+                    dl->AddText(ImVec2(mn.x + 42.0f, uc.y - ImGui::GetTextLineHeight() * 0.5f), navTextHi, head);
+                }
                 if (ImGui::IsItemHovered()) {
                     dl->AddRectFilled(mn, ImVec2(mn.x + w, mn.y + navRowH), navHover, 7.0f);
                     ImGui::SetTooltip("%s\n%s%s", head, upMsg.c_str(),

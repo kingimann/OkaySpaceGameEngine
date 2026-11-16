@@ -59,6 +59,8 @@
 
 #include <atomic>
 #include "ModelImportInternal.hpp"
+#include "FileOpen.hpp"
+#include <cstdio>
 
 namespace okay {
 // Validate a freshly built skin's joint indices against its joint list (the one
@@ -98,7 +100,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot", ".mesh", ".zae", ".xml"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -590,6 +592,24 @@ constexpr bool kOwnLwsDefault = true;
 constexpr bool kOwnLwsDefault = false;
 #endif
 
+#ifdef OKAY_OWN_OGREBIN_DEFAULT
+constexpr bool kOwnOgreBinDefault = true;
+#else
+constexpr bool kOwnOgreBinDefault = false;
+#endif
+
+#ifdef OKAY_OWN_ZAE_DEFAULT
+constexpr bool kOwnZaeDefault = true;
+#else
+constexpr bool kOwnZaeDefault = false;
+#endif
+
+#ifdef OKAY_OWN_XML_DEFAULT
+constexpr bool kOwnXmlDefault = true;
+#else
+constexpr bool kOwnXmlDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -639,8 +659,13 @@ constexpr OptInFormat kOptIn[] = {
     {"", "", false},                                       // 38 (reader e4: MDL, not on main yet; reserved, never reached)
     {"OKAY_OWN_PMX",     "PMX",     kOwnPmxDefault},       // 39
     {"OKAY_OWN_LWS",     "LWS",     kOwnLwsDefault},       // 40 (.lws and .mot)
+    {"", "", false},                                       // 41 (reserved: glTF 1.0, branch claude/own-readers-6; never reached)
+    {"", "", false},                                       // 42 (reserved: Q3BSP, branch claude/own-readers-6; never reached)
+    {"OKAY_OWN_OGREBIN", "OGRE binary", kOwnOgreBinDefault},   // 43 (.mesh)
+    {"OKAY_OWN_ZAE",     "ZAE",     kOwnZaeDefault},       // 44 (.zae)
+    {"OKAY_OWN_XML",     "XML",     kOwnXmlDefault},       // 45 (.xml: the reader is picked by the root element)
 };
-constexpr int kOwnSlots = 41;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are reserved for reader e4 (OpenGEX, MDL), 39 and 40 are PMX and LWS/MOT (batch E5); raise this (and add rows above) when a reader needs a slot beyond 40
+constexpr int kOwnSlots = 46;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are reserved for reader e4 (OpenGEX, MDL), 39 and 40 are PMX and LWS/MOT (batch E5), 41 and 42 are reserved for glTF 1.0 and Q3BSP, 43 to 45 are OGRE binary, ZAE and .xml (the gap batch); raise this (and add rows above) when a reader needs a slot beyond 45
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -683,6 +708,9 @@ int OwnSlot(const std::string& ext) {
     if (e == ".ndo") return 36;
     if (e == ".pmx") return 39;
     if (e == ".lws" || e == ".mot") return 40;
+    if (e == ".mesh") return 43;
+    if (e == ".zae") return 44;
+    if (e == ".xml") return 45;
     return -1;
 }
 std::atomic<int> g_backendChoice[kOwnSlots] = {};   // ImportBackend per own-reader format (0 = Default)
@@ -790,6 +818,42 @@ bool RunReaderGuarded(const std::function<bool()>& read, std::string& err) {
     return false;
 }
 
+// .xml (slot 45): several formats Assimp reads under this extension, told apart by the root element. The first 64 KiB are
+// looked at (UTF-16 text is looked at with its zero bytes dropped); the file is then read by that format's own reader.
+static bool ReadXmlByRoot(const std::string& path, ImportedModel& out, std::string* err, bool flatten, const IrrMeshLoader* loader) {
+    std::string head;
+    {
+        std::FILE* fp = detail::OpenRead(path);
+        if (!fp) { if (err) *err = "cannot open file"; return false; }
+        head.resize(65536);
+        head.resize(std::fread(&head[0], 1, head.size(), fp));
+        std::fclose(fp);
+    }
+    if (head.size() >= 2 && (((unsigned char)head[0] == 0xFF && (unsigned char)head[1] == 0xFE) || ((unsigned char)head[0] == 0xFE && (unsigned char)head[1] == 0xFF) || head.find('\0') != std::string::npos))
+        head.erase(std::remove(head.begin(), head.end(), '\0'), head.end());
+    std::string root;
+    for (std::size_t i = 0; i + 1 < head.size(); ++i) {
+        if (head[i] != '<') continue;
+        if (head[i + 1] == '?' || head[i + 1] == '!') continue;   // the XML declaration, comments, a DOCTYPE
+        std::size_t e = i + 1;
+        while (e < head.size() && (std::isalnum((unsigned char)head[e]) || head[e] == '_' || head[e] == '-' || head[e] == ':' || head[e] == '.')) ++e;
+        root = head.substr(i + 1, e - i - 1);
+        break;
+    }
+    const std::size_t colon = root.find(':');
+    if (colon != std::string::npos) root = root.substr(colon + 1);
+    const std::string r = Lower(root);
+    if (r == "irr_scene") return ReadIrrSceneFile(path, out, err, loader);
+    if (r == "collada") return ReadColladaFile(path, out, err, flatten);
+    if (r == "world") return ReadXglFile(path, out, err);
+    if (r == "mesh") {
+        if (head.find("<submeshes") != std::string::npos || head.find("<sharedgeometry") != std::string::npos) return ReadOgreXmlFile(path, out, err);
+        return ReadIrrMeshFile(path, out, err);
+    }
+    if (err) *err = root.empty() ? "XML: no root element found" : "XML: the root element <" + root.substr(0, 60) + "> is not one this engine reads (irr_scene, mesh, COLLADA, WORLD)";
+    return false;
+}
+
 bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend which, bool flatten, std::string* err) {
     out = ImportedModel{};
     // `flatten` matters to Assimp and to our Collada reader (the others have no node transforms).
@@ -860,9 +924,12 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 36 ? ReadNdoFile(path, out, &e1)
                   : s == 39 ? ReadPmxFile(path, out, &e1)
                   : s == 40 ? ReadLwsFile(path, out, &e1, &irrLoader)
+                  : s == 43 ? ReadOgreBinaryFile(path, out, &e1)
+                  : s == 44 ? ReadZaeFile(path, out, &e1, flatten)
+                  : s == 45 ? ReadXmlByRoot(path, out, &e1, flatten, &irrLoader)
                   : (e1 = "no reader is wired to this slot", false); }, e1);   // slots 27 (Terragen) to 31 (Q3D), 33 (RAW) and 34 to 36 (IQM, COB, NDO), 39 (PMX) and 40 (LWS) are wired above; 37 and 38 are reserved for reader e4
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
-        if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
+        if (good && flatten && ((s >= 6 && s <= 10) || (s >= 17 && s != 44))) FlattenImportedModel(out);   // ZAE (44) is flattened by the COLLADA reader   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {
             for (const std::string& n : out.notes) Log::Warning("model import '", path, "': ", n);
             return true;

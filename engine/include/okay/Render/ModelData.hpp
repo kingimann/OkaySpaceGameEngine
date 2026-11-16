@@ -8,7 +8,7 @@
 //     format: our own reader, or Assimp when the build has it (OKAY_USE_ASSIMP).
 //     ModelImport.cpp builds scenes and meshes from ImportedModel only.
 //   * Our own readers (OBJ+MTL, STL ascii/binary, PLY ascii/binary, COLLADA, 3DS, BVH, OFF, SMD, MD5, MS3D, ASE, 3MF, AMF,
-//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS / MOT) are
+//     X3D, DXF, LWO, Blender, MD2, MD3, Irrlicht mesh, B3D, DirectX .x, AC3D, OGRE XML and binary, ZAE, XGL / ZGL, Irrlicht scene, NFF, Terragen, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS / MOT) are
 //     always compiled in. Which backend a format uses is a per-format switch
 //     (SetImportBackend) with a build-time default (CMake OKAY_PREFER_OWN_READERS).
 //
@@ -249,6 +249,12 @@ bool ReadAc3dBuffer(const std::string& text, const std::string& baseDir, Importe
 /// detail and vertex colours are not read (reported in `out.notes`). Coordinates, winding and texture coordinates as written.
 bool ReadOgreXmlBuffer(const std::string& text, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
                        const std::vector<std::string>* materialScripts = nullptr);
+/// OGRE binary mesh (.mesh, little endian, serializer v1.8 and later): the same parts, materials and notes as the XML reader
+/// gives for the XML form of the same mesh (position, normal and the first texture coordinate set of 32-bit float vertex
+/// elements; triangle lists, strips and fans). Skeleton, bone assignments, levels of detail, edge lists, poses and animations
+/// are skipped (reported in `out.notes`); big-endian files are refused.
+bool ReadOgreBinaryBuffer(const std::string& bytes, const std::string& baseDir, ImportedModel& out, std::string* err = nullptr,
+                          const std::vector<std::string>* materialScripts = nullptr);
 /// XGL (.xgl, XML) and ZGL (.zgl, the same text as one zlib stream; told apart by the zlib header): one part per (mesh,
 /// material) on a node for each <OBJECT> that places it (<TRANSFORM> forward / up / position / scale), the <MAT> colours,
 /// shininess and alpha, normals and texture coordinates per face corner. Lines, patches, lights and textures are not read.
@@ -326,6 +332,11 @@ bool ReadObjFile(const std::string& path, ImportedModel& out, std::string* err =
 bool ReadStlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadPlyFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadColladaFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+/// ZAE (.zae): a COLLADA document in a ZIP archive (the root document named by manifest.xml, else the .dae nearest the
+/// archive's top), read by the COLLADA reader above. Images inside the archive that the document uses are written next to
+/// the .zae as "<name>_zae_<file>" by the path version; the buffer version writes nothing and leaves those textures empty.
+bool ReadZaeBuffer(const std::string& bytes, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
+bool ReadZaeFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 bool Read3dsFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, bool flatten = false);
 bool ReadBvhFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadOffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
@@ -343,6 +354,8 @@ bool ReadXFile(const std::string& path, ImportedModel& out, std::string* err = n
 bool ReadAc3dFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 /// Reads the .material files next to the mesh to find the submeshes' materials.
 bool ReadOgreXmlFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
+/// Reads the .material files next to the mesh, as ReadOgreXmlFile does.
+bool ReadOgreBinaryFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadXglFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);
 bool ReadIrrSceneFile(const std::string& path, ImportedModel& out, std::string* err = nullptr, const IrrMeshLoader* loader = nullptr);
 bool ReadNffFile(const std::string& path, ImportedModel& out, std::string* err = nullptr);

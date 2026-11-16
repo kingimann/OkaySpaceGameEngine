@@ -8,7 +8,7 @@
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include "okay/Platform/Platform.hpp"   // okay::platform: timers (and the SDL seam)
-#include "WavPlayback.hpp"   // the one WAV loading seam (SDL_LoadWAV, or our own decoder with OKAY_OWN_WAV)
+#include "VoiceClipLoad.hpp"   // voice clips: WAV read by our own decoder (okay::wav), no SDL_LoadWAV
 #include "VoiceChat.hpp"   // voice calls (first: winsock2.h must precede windows.h)
 #include "LauncherThreads.hpp"   // threads, mutexes and atomics: our own (CoreThreads), in place of SDL's
 #include "AppIcon.hpp"
@@ -5304,22 +5304,21 @@ static void FinishVoiceRecord(bool send) {
 static constexpr int kVoiceBars = 30;
 struct VoiceClip {
     bool ok = false;                 // decoded (false = unplayable; don't retry)
-    Uint8* pcm = nullptr; Uint32 len = 0;   // points into `owned` (never into an SDL buffer)
-    SDL_AudioSpec spec{};
+    const std::uint8_t* pcm = nullptr; std::uint32_t len = 0;   // points into `owned`
+    okay::platform::SampleFormat format = okay::platform::SampleFormat::S16;   // native-endian 16-bit, or float for float files
+    int channels = 1, freq = 0;
     float secs = 0, bytesPerSec = 1;
     float bars[kVoiceBars] = {};
-    std::vector<Uint8> owned;        // the clip's samples (converted to 16-bit when the file was not native 16-bit / float)
+    std::vector<std::uint8_t> owned; // the clip's samples, as our WAV reader gave them (launcher/VoiceClipLoad.hpp)
     std::map<int, std::vector<Uint8>> fast;   // time-stretched copies by speed index (built on first use)
     VoiceClip() = default;
-    // `owned` frees the samples. SDL_LoadWAV's buffer is copied into `owned` and
-    // released at load, so there is no SDL buffer left for this destructor to free (#718).
-    ~VoiceClip() = default;
+    ~VoiceClip() = default;          // `owned` frees the samples; nothing of SDL's is held (#718)
     VoiceClip(const VoiceClip&) = delete;             // pcm ownership is exclusive: no shallow copies
     VoiceClip& operator=(const VoiceClip&) = delete;
     VoiceClip(VoiceClip&& o) noexcept { *this = std::move(o); }
     VoiceClip& operator=(VoiceClip&& o) noexcept {
         if (this != &o) {
-            ok = o.ok; pcm = o.pcm; len = o.len; spec = o.spec;
+            ok = o.ok; pcm = o.pcm; len = o.len; format = o.format; channels = o.channels; freq = o.freq;
             secs = o.secs; bytesPerSec = o.bytesPerSec;
             for (int i = 0; i < kVoiceBars; ++i) bars[i] = o.bars[i];
             owned = std::move(o.owned); fast = std::move(o.fast);
@@ -5330,42 +5329,6 @@ struct VoiceClip {
     }
 };
 static std::map<std::string, VoiceClip> g_voiceClips;
-// The platform audio layer plays native-endian 16-bit or float samples. A clip in any other
-// PCM layout (8-bit, 32-bit integer, big-endian) is converted to 16-bit once, at load.
-static void VoiceClipToPlayable(VoiceClip& c) {
-    const SDL_AudioFormat f = c.spec.format;
-    if (f == AUDIO_S16SYS || f == AUDIO_F32SYS || !c.pcm || !c.len) return;
-    const int width = SDL_AUDIO_BITSIZE(f) / 8;
-    if (width < 1 || width > 4) { c.len = 0; return; }
-    // Samples already live in c.owned. VoiceClipFor copies the SDL_LoadWAV buffer
-    // and frees it before this runs, so the bytes are read from `owned` and the
-    // old vector storage is released when it is replaced. SDL_FreeWAV here would
-    // free that storage a second time (#718).
-    const std::size_t n = c.len / (std::size_t)width;
-    std::vector<Uint8> out(n * 2);
-    for (std::size_t i = 0; i < n; ++i) {
-        const Uint8* p = c.pcm + i * (std::size_t)width;
-        float v = 0.0f;   // -1..1
-        if (SDL_AUDIO_ISFLOAT(f)) {
-            Uint32 u = 0;
-            for (int b = 0; b < 4; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? 3 - b : b] << (8 * b);
-            std::memcpy(&v, &u, 4);
-        } else if (width == 1) {
-            v = SDL_AUDIO_ISSIGNED(f) ? (float)(Sint8)p[0] / 128.0f : ((float)p[0] - 128.0f) / 128.0f;
-        } else {
-            Uint32 u = 0;
-            for (int b = 0; b < width; ++b) u |= (Uint32)p[SDL_AUDIO_ISBIGENDIAN(f) ? width - 1 - b : b] << (8 * b);
-            const long long top = 1ll << (8 * width - 1);
-            long long sv = SDL_AUDIO_ISSIGNED(f) ? (long long)(Sint32)(u << (32 - 8 * width)) >> (32 - 8 * width) : (long long)u - top;
-            v = (float)sv / (float)top;
-        }
-        const Sint16 s16 = (Sint16)std::clamp(v * 32767.0f, -32768.0f, 32767.0f);
-        std::memcpy(out.data() + i * 2, &s16, 2);
-    }
-    c.owned = std::move(out);
-    c.pcm = c.owned.data(); c.len = (Uint32)c.owned.size();
-    c.spec.format = AUDIO_S16SYS;
-}
 static std::unique_ptr<okay::platform::AudioDevice> g_playDev;
 static std::string       g_playUrl;          // clip loaded on g_playDev
 static bool              g_playPaused = false;
@@ -5439,35 +5402,24 @@ static VoiceClip* VoiceClipFor(const std::string& url) {
     std::error_code ec;
     if (failed || fs::exists(cache, ec)) {
         VoiceClip& c = g_voiceClips[url];
-        // SDL hands back a buffer that only SDL_FreeWAV may release. Copy the samples into the
-        // clip's own storage and free SDL's at once, so no path (a converted clip, an
-        // unsupported width, a replaced entry) can leave it behind (#718).
-        SDL_AudioSpec wavSpec{};
-        if (!failed && okay::wav::LoadWavForSdl(cache.string(), wavSpec, c.owned)) {
-            c.spec = wavSpec;
+        // Our own WAV reader (no SDL): 16-bit or float samples, ready for the device, in the clip's own storage.
+        okay::wav::PlaybackClip wav;
+        if (!failed && okay::launcher::LoadVoiceClipFile(cache.string(), wav)) {
+            // Real waveform: peak per slice (16-bit clips; float clips keep the stub).
+            float peaks[kVoiceBars] = {};
+            const bool real = okay::launcher::VoicePeakBars(wav, peaks, kVoiceBars);
+            c.format = okay::launcher::VoiceDeviceFormat(wav);
+            c.channels = std::max(1, wav.channels);
+            c.freq = wav.sampleRate;
+            c.owned = std::move(wav.bytes);
             c.pcm = c.owned.empty() ? nullptr : c.owned.data();
-            c.len = (Uint32)c.owned.size();
-            VoiceClipToPlayable(c);
-            const int bps = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
-            c.bytesPerSec = (float)c.spec.freq * bps;
+            c.len = (std::uint32_t)c.owned.size();
+            const int bps = okay::platform::BytesPerSample(c.format) * c.channels;
+            c.bytesPerSec = (float)c.freq * bps;
             c.secs = c.len / c.bytesPerSec;
             c.ok = c.len > 0;
-            // Real waveform: peak per slice (16-bit clips; anything else keeps the stub).
-            const Uint32 frames = bps ? c.len / bps : 0;
-            const bool s16 = c.spec.format == AUDIO_S16LSB || c.spec.format == AUDIO_S16MSB;
             float top = 0.0001f;
-            for (int b = 0; b < kVoiceBars; ++b) {
-                float peak = 0;
-                if (s16 && frames) {
-                    Uint32 a = frames * b / kVoiceBars, e = frames * (b + 1) / kVoiceBars;
-                    for (Uint32 f = a; f < e; ++f) {
-                        Sint16 v; std::memcpy(&v, c.pcm + (std::size_t)f * bps, 2);
-                        if (c.spec.format == AUDIO_S16MSB) v = (Sint16)SDL_Swap16((Uint16)v);
-                        peak = std::max(peak, std::abs((float)v) / 32768.0f);
-                    }
-                } else peak = VoiceBarStub(url, b);
-                c.bars[b] = peak; top = std::max(top, peak);
-            }
+            for (int b = 0; b < kVoiceBars; ++b) { c.bars[b] = real ? peaks[b] : VoiceBarStub(url, b); top = std::max(top, c.bars[b]); }
             for (float& v : c.bars) v = 0.12f + 0.88f * std::sqrt(v / top);
         }
         return &c;
@@ -5486,11 +5438,11 @@ static void StopVoice() {
 // time-stretched copy (16-bit mono clips, i.e. our own recordings).
 static const Uint8* VoiceBuffer(VoiceClip& c, Uint32& len) {
     const int si = std::clamp(g_voiceSpeed, 0, 2);
-    const bool s16mono = c.spec.format == AUDIO_S16SYS && c.spec.channels == 1;
+    const bool s16mono = c.format == okay::platform::SampleFormat::S16 && c.channels == 1;
     if (si == 0 || !s16mono || c.len < 4) { len = c.len; return c.pcm; }
     auto it = c.fast.find(si);
     if (it == c.fast.end()) {
-        auto st = VoiceTimeStretch(reinterpret_cast<const Sint16*>(c.pcm), c.len / 2, c.spec.freq, kVoiceSpeeds[si]);
+        auto st = VoiceTimeStretch(reinterpret_cast<const Sint16*>(c.pcm), c.len / 2, c.freq, kVoiceSpeeds[si]);
         std::vector<Uint8> bytes(st.size() * 2);
         if (!st.empty()) std::memcpy(bytes.data(), st.data(), bytes.size());
         it = c.fast.emplace(si, std::move(bytes)).first;
@@ -5506,8 +5458,9 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
     if (g_playUrl != url || !g_playDev) {
         StopVoice();
         okay::platform::AudioSpec want;
-        want.freq = c.spec.freq; want.channels = std::max<int>(1, c.spec.channels); want.frames = std::max<int>(256, c.spec.samples);
-        want.format = c.spec.format == AUDIO_F32SYS ? okay::platform::SampleFormat::F32 : okay::platform::SampleFormat::S16;   // other formats were converted to s16 at load
+        // 4096 frames: the buffer size SDL_LoadWAV used to suggest for these clips.
+        want.freq = c.freq; want.channels = std::max(1, c.channels); want.frames = 4096;
+        want.format = c.format;   // our reader gives 16-bit, or float for float files
         okay::platform::Backend* pb = okay::platform::Default();
         g_playDev = pb ? pb->OpenAudio(want, false, nullptr, nullptr) : nullptr;
         if (!g_playDev) { Toast("No audio output device", 2); return; }
@@ -5516,7 +5469,7 @@ static void PlayVoiceAt(const std::string& url, VoiceClip& c, float frac) {
     g_playDev->ClearQueued();
     Uint32 len = 0;
     const Uint8* buf = VoiceBuffer(c, len);
-    const Uint32 frame = SDL_AUDIO_BITSIZE(c.spec.format) / 8 * std::max<int>(1, c.spec.channels);
+    const Uint32 frame = (Uint32)(okay::platform::BytesPerSample(c.format) * std::max(1, c.channels));
     Uint32 off = (Uint32)(std::clamp(frac, 0.0f, 1.0f) * len);
     off -= off % std::max<Uint32>(1, frame);
     if (off >= len) off = 0;
@@ -11202,7 +11155,9 @@ static int FriendsListWorker(void*) {
 // inviting friends, and the server browser's data. The running game reports to
 // us through okay/Platform/GameIpc.hpp files.
 // ============================================================================
-static SDL_Window* g_launcherWindow = nullptr;   // brought forward when a game asks for the invite window
+// The launcher's main window through the okay::platform seam (a non-owning WrapSdl2Window view of the SDL window main() makes):
+// window state, raise and restore go through it. Brought forward when a game asks for the invite window.
+static std::unique_ptr<okay::platform::Window> g_launcherPw;
 
 struct MyGame {
     bool running = false;
@@ -11461,7 +11416,7 @@ static void PumpMultiplayer() {
     // Shift+Tab in a game (or net_invite_friends()): bring up Invite friends.
     if (!okay::GameIpc::TakeInviteRequests().empty()) {
         g_inviteOpenReq = true; g_inviteMode = 0;
-        if (g_launcherWindow) { SDL_RestoreWindow(g_launcherWindow); SDL_RaiseWindow(g_launcherWindow); }
+        if (g_launcherPw) { g_launcherPw->Restore(); g_launcherPw->Raise(); }
     }
 }
 
@@ -16695,11 +16650,11 @@ static ChatWindowHost g_chatHost;
 // Keep a window reachable: when too little of it (or its title bar) is on any
 // display (a monitor was unplugged, a minimized position got saved...), put it
 // back in the middle of the first display, shrunk to fit.
-static void KeepWindowOnScreen(SDL_Window* w) {
+static void KeepWindowOnScreen(okay::platform::Window* w) {
     if (!w) return;
-    if (SDL_GetWindowFlags(w) & SDL_WINDOW_MINIMIZED) SDL_RestoreWindow(w);
+    if (w->IsMinimized()) w->Restore();
     int x = 0, y = 0, ww = 0, wh = 0;
-    SDL_GetWindowPosition(w, &x, &y); SDL_GetWindowSize(w, &ww, &wh);
+    w->GetPosition(x, y); w->GetSize(ww, wh);
     for (int d = 0; d < SDL_GetNumVideoDisplays(); ++d) {
         SDL_Rect b;
         if (SDL_GetDisplayUsableBounds(d, &b) != 0) continue;
@@ -16710,14 +16665,14 @@ static void KeepWindowOnScreen(SDL_Window* w) {
     SDL_Rect b;
     if (SDL_GetDisplayUsableBounds(0, &b) != 0) return;
     ww = std::min(ww, b.w - 40); wh = std::min(wh, b.h - 40);
-    SDL_SetWindowSize(w, ww, wh);
-    SDL_SetWindowPosition(w, b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
+    w->SetSize(ww, wh);
+    w->SetPosition(b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
 }
 static void ChatHostSaveGeometry() {
-    if (!g_chatHost.win || !g_chatHost.shown) return;
-    if (SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED) return;   // (its position is meaningless then)
-    SDL_GetWindowPosition(g_chatHost.win, &g_chatWinX, &g_chatWinY);
-    SDL_GetWindowSize(g_chatHost.win, &g_chatWinW, &g_chatWinH);
+    if (!g_chatHost.win || !g_chatHost.pw || !g_chatHost.shown) return;
+    if (g_chatHost.pw->IsMinimized()) return;   // (its position is meaningless then)
+    g_chatHost.pw->GetPosition(g_chatWinX, g_chatWinY);
+    g_chatHost.pw->GetSize(g_chatWinW, g_chatWinH);
 }
 static bool ChatHostCreate() {
     if (g_chatHost.win) return true;
@@ -16727,13 +16682,14 @@ static bool ChatHostCreate() {
                                       SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (!g_chatHost.win) return false;
     g_chatHost.pw = okay::platform::WrapSdl2Window(g_chatHost.win);
-    SDL_SetWindowMinimumSize(g_chatHost.win, 520, 380);
+    if (!g_chatHost.pw) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; return false; }
+    g_chatHost.pw->SetMinimumSize(520, 380);
     okay::SetAppIcon(g_chatHost.win);
     // No VSync here: the launcher's present already paces the loop.
     g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, SDL_RENDERER_ACCELERATED);
     if (!g_chatHost.ren) g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, 0);
     if (!g_chatHost.ren) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; g_chatHost.pw.reset(); return false; }
-    g_chatHost.id = SDL_GetWindowID(g_chatHost.win);
+    g_chatHost.id = g_chatHost.pw->Id();
     g_chatHost.ctx = ImGui::CreateContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
     ImGui::GetIO().IniFilename = nullptr;
@@ -16756,20 +16712,20 @@ static void ChatHostSync() {
     const bool want = g_chatSeparate && g_chatWinOpen;
     if (want && !g_chatHost.shown) {
         if (!ChatHostCreate()) { g_chatSeparate = false; return; }   // fall back to the in-launcher window
-        SDL_ShowWindow(g_chatHost.win);
-        KeepWindowOnScreen(g_chatHost.win);
-        SDL_RaiseWindow(g_chatHost.win);
+        g_chatHost.pw->Show();
+        KeepWindowOnScreen(g_chatHost.pw.get());
+        g_chatHost.pw->Raise();
         g_chatHost.shown = true;
     } else if (!want && g_chatHost.shown) {
         ChatHostSaveGeometry(); SavePrefs();
-        SDL_HideWindow(g_chatHost.win);
+        g_chatHost.pw->Hide();
         g_chatHost.shown = false;
     }
 }
 static bool ChatHostFocused() {
     return g_chatHost.shown && g_chatHost.pw && g_chatHost.pw->IsFocused();
 }
-static void ChatHostRaise() { if (g_chatHost.shown) { SDL_RestoreWindow(g_chatHost.win); KeepWindowOnScreen(g_chatHost.win); SDL_RaiseWindow(g_chatHost.win); } }
+static void ChatHostRaise() { if (g_chatHost.shown && g_chatHost.pw) { g_chatHost.pw->Restore(); KeepWindowOnScreen(g_chatHost.pw.get()); g_chatHost.pw->Raise(); } }
 // Route an SDL event to the chat window; true when it belonged to it.
 static bool ChatHostEvent(const SDL_Event& e) {
     if (!g_chatHost.win) return false;
@@ -18194,8 +18150,10 @@ int main(int argc, char** argv) {
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, g_winW, g_winH,
         SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (!window) return 1;
-    g_launcherWindow = window;   // games ask us to come forward (Invite friends)
-    SDL_SetWindowMinimumSize(window, 720, 480);   // the fixed layout needs this much
+    g_launcherPw = okay::platform::WrapSdl2Window(window);   // the seam view; games ask us to come forward (Invite friends)
+    if (!g_launcherPw) { std::fprintf(stderr, "launcher: no okay::platform view of the window (the sdl2 platform backend is missing)\n"); return 1; }
+    okay::platform::Window& mainWin = *g_launcherPw;
+    mainWin.SetMinimumSize(720, 480);   // the fixed layout needs this much
     okay::SetAppIcon(window);   // placeholder OkaySpace logo
 #if defined(_WIN32)
     SDL_SetWindowsMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
@@ -18239,8 +18197,8 @@ int main(int argc, char** argv) {
         okay::DrawSplashStyled(renderer, sw, sh, splashStyle());
     };
     firstSplash();                 // draw + present while still hidden
-    SDL_ShowWindow(window);        // reveal with the splash already composited
-    SDL_RaiseWindow(window);
+    mainWin.Show();                // reveal with the splash already composited
+    mainWin.Raise();
     firstSplash();                 // present once more so the shown frame is the splash
 
     IMGUI_CHECKVERSION();
@@ -18431,9 +18389,9 @@ int main(int argc, char** argv) {
             // around, SDL reports the launcher's [X] as a window close, not a quit.)
             if (e.type == SDL_QUIT) closeConfirm = true;
             else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
-                     e.window.windowID == SDL_GetWindowID(window)) g_launcherRefocused = true;   // check for updates
+                     e.window.windowID == mainWin.Id()) g_launcherRefocused = true;   // check for updates
             else if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE &&
-                     e.window.windowID == SDL_GetWindowID(window)) closeConfirm = true;
+                     e.window.windowID == mainWin.Id()) closeConfirm = true;
             // NOTE: minimizing does a plain Windows minimize (to the taskbar) and
             // is always restored by clicking the taskbar button. The launcher does
             // NOT hide itself to the system tray — that could trap the window with
@@ -18449,7 +18407,7 @@ int main(int argc, char** argv) {
                 if (g_chatWinOpen && g_chatDropOk && (!g_chatDropUid.empty() || g_chatDropGroup > 0)) {
                     int gx = 0, gy = 0, wx = 0, wy = 0;
                     SdlSeam().GlobalMouseState(&gx, &gy);
-                    SDL_GetWindowPosition(window, &wx, &wy);
+                    mainWin.GetPosition(wx, wy);
                     float mx = (float)(gx - wx), my = (float)(gy - wy);
                     toChat = mx >= g_chatDropMin.x && mx <= g_chatDropMax.x && my >= g_chatDropMin.y && my <= g_chatDropMax.y;
                 }
@@ -18505,9 +18463,9 @@ int main(int argc, char** argv) {
         if (g_trayRestoreReq) {
             g_trayRestoreReq = false;
             OkayTrayRemove();
-            SDL_ShowWindow(window);
-            SDL_RestoreWindow(window);
-            SDL_RaiseWindow(window);
+            mainWin.Show();
+            mainWin.Restore();
+            mainWin.Raise();
         }
 #endif
         // A finished git job (clone/pull/push) reports its result as a toast.
@@ -18593,8 +18551,8 @@ int main(int argc, char** argv) {
                 okayversions::LauncherArgs ha;
                 if (okayversions::TakeHandoff(okayversions::HandoffFile(), (long long)std::time(nullptr), &ha)) {
                     okayversionsui::RequestPage(ha.version);
-                    SDL_RestoreWindow(window);
-                    SDL_RaiseWindow(window);
+                    mainWin.Restore();
+                    mainWin.Raise();
                 }
             }
             if (okayversionsui::TakePageRequest()) { tab = 15; ClosePublicProfile(); }
@@ -18646,7 +18604,7 @@ int main(int argc, char** argv) {
                                 g_upAvailableTitle + " (v" + latest + ") is ready. It can be broken. Install it from the sidebar.", 3, -1);
                 }
 #if SDL_VERSION_ATLEAST(2, 0, 16)
-                if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_INPUT_FOCUS)) != SDL_WINDOW_INPUT_FOCUS)
+                if (mainWin.IsMinimized() || !mainWin.IsFocused())
                     SDL_FlashWindow(window, SDL_FLASH_UNTIL_FOCUSED);   // taskbar attention while minimized/unfocused
 #endif
             }
@@ -18678,9 +18636,9 @@ int main(int argc, char** argv) {
             }
         }
         ChatHostSync();
-        if (g_raiseMainReq) { g_raiseMainReq = false; SDL_RestoreWindow(window); SDL_RaiseWindow(window); }
-        if ((SDL_GetWindowFlags(window) & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED)) != 0) {
-            if (g_chatHost.shown && !(SDL_GetWindowFlags(g_chatHost.win) & SDL_WINDOW_MINIMIZED)) {
+        if (g_raiseMainReq) { g_raiseMainReq = false; mainWin.Restore(); mainWin.Raise(); }
+        if (!mainWin.IsVisible() || mainWin.IsMinimized()) {
+            if (g_chatHost.shown && g_chatHost.pw && !g_chatHost.pw->IsMinimized()) {
                 ChatHostFrame(account);   // the chat window keeps going on its own
                 okay::platform::DelayMs(ChatHostFocused() ? 15 : 45);
             } else okay::platform::DelayMs(120);
@@ -27110,8 +27068,7 @@ int main(int argc, char** argv) {
         // window is in the background. With real VSync the present already took a
         // frame, so the extra delay is ~0 when focused.
         {
-            Uint32 flags = SDL_GetWindowFlags(window);
-            bool focused = (flags & (SDL_WINDOW_INPUT_FOCUS | SDL_WINDOW_MOUSE_FOCUS)) != 0 || ChatHostFocused();
+            bool focused = mainWin.IsFocused() || mainWin.HasMouseFocus() || ChatHostFocused();
             double targetMs = focused ? (1000.0 / 60.0) : (1000.0 / 20.0);
             double elapsed = (double)(okay::platform::PerfCounter() - frameStart) * 1000.0
                            / (double)okay::platform::PerfFrequency();
@@ -27121,7 +27078,7 @@ int main(int argc, char** argv) {
 
     // Remember the window size for next launch.
     ChatHostSaveGeometry();
-    { int w = 0, h = 0; SDL_GetWindowSize(window, &w, &h);
+    { int w = 0, h = 0; mainWin.GetSize(w, h);
       if (w > 0 && h > 0) { g_winW = w; g_winH = h; SavePrefs(); } }
 
     // Stop the background friends/DM poll + chat poll threads.
@@ -27154,6 +27111,8 @@ int main(int argc, char** argv) {
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
     SDL_DestroyRenderer(renderer);
+    g_chatHost.pw.reset();   // the seam views go before the windows they look at
+    g_launcherPw.reset();
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;

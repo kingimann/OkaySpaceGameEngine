@@ -2279,6 +2279,11 @@ add_executable(test_save_game test_save_game.cpp)
 target_link_libraries(test_save_game PRIVATE okay::engine)
 add_test(NAME save_game COMMAND test_save_game)
 
+# Save games must not stack up helper objects (tile colliders, music voices, build ghosts) on every load
+add_executable(test_save_helper_leaks test_save_helper_leaks.cpp)
+target_link_libraries(test_save_helper_leaks PRIVATE okay::engine)
+add_test(NAME save_helper_leaks COMMAND test_save_helper_leaks)
+
 add_executable(test_ragdoll test_ragdoll.cpp)
 target_link_libraries(test_ragdoll PRIVATE okay::engine)
 add_test(NAME ragdoll COMMAND test_ragdoll)

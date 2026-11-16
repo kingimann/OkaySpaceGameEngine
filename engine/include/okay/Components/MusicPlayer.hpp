@@ -112,15 +112,40 @@ private:
     AudioSource* Current() const { return m_voice[m_cur]; }
     AudioSource* Other() const   { return m_voice[1 - m_cur]; }
 
+    /// The two voices are "Music A" / "Music B" children with an AudioSource. They are runtime-only
+    /// (`transient`), so a save never writes them. A child of that name that is already there is used
+    /// instead of making a new one; this also cleans up saves from before the voices were transient,
+    /// which hold one more saved pair per load: the first is kept (stopped, ready for Play) and the
+    /// extra copies are removed.
     void EnsureVoices() {
         if (m_voice[0] && m_voice[1]) return;
         Scene* scene = gameObject ? gameObject->scene() : nullptr;
         if (!scene) return;
         for (int i = 0; i < 2; ++i) {
             if (m_voice[i]) continue;
-            GameObject* go = scene->CreateGameObject(i == 0 ? "Music A" : "Music B");
-            go->transform->SetParent(transform, false);
-            m_voice[i] = go->AddComponent<AudioSource>();
+            const char* name = i == 0 ? "Music A" : "Music B";
+            GameObject* found = nullptr;
+            if (transform) {
+                std::vector<GameObject*> extra;
+                for (Transform* t : transform->Children()) {
+                    GameObject* c = t ? t->gameObject : nullptr;
+                    if (!c || c->IsDestroyed() || c->name != name || !c->GetComponent<AudioSource>()) continue;
+                    if (!found) found = c; else extra.push_back(c);
+                }
+                for (GameObject* c : extra) scene->Destroy(c);
+            }
+            if (found) {
+                found->transient = true;
+                m_voice[i] = found->GetComponent<AudioSource>();
+                m_voice[i]->Stop();               // a saved voice may have been set to play on its own
+                m_voice[i]->playOnAwake = false;
+                m_voice[i]->loop = false;
+            } else {
+                GameObject* go = scene->CreateGameObject(name);
+                go->transient = true;             // made again on every Start: never saved
+                go->transform->SetParent(transform, false);
+                m_voice[i] = go->AddComponent<AudioSource>();
+            }
             m_voice[i]->group = AudioGroup::Music;
         }
     }

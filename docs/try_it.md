@@ -1086,6 +1086,38 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Save and load no longer piles up helper objects (bug fix, branch `claude2/save-helper-leaks`, not merged or released yet)
+
+Before: every save-game load (`save_game` then `load_game`, or `SaveGame::Save` then `LoadNow`) added one more copy
+of objects that some components make for themselves: the **TileCollider** boxes of a Tilemap Collider 2D, the
+**Music A / Music B** voices of a Music Player, and the wireframe build ghost (**BlockPreview**, **BuildPreview**,
+**StructurePreview**) of Block Builder, Builder Mode and Structure Builder. A tilemap that moved also left its
+collision behind where it started. (Issue #888, Finding 54 and its two addenda.)
+
+Now these helpers are runtime-only: a save never writes them, and each component makes them again when the scene
+starts. The tile boxes are children of the tilemap, so they move with it. A save made by an older build that already
+holds extra copies is cleaned up when it loads.
+
+1. Open the editor and make a new 2D scene. Add an object with a **Tilemap**, paint a row of tiles, and add a
+   **Tilemap Collider 2D**.
+2. Add a **Script** component (OkayScript) to any object with:
+   ```
+   function update(dt) {
+       if (key_down("k")) { save_game("leaktest"); print("saved"); }
+       if (key_down("l")) { load_game("leaktest"); print("loaded"); }
+   }
+   ```
+3. Press **Play**. In the Hierarchy, the **TileCollider** objects are now under the tilemap object (before: at the
+   top level). Press **K**, then **L** a few times. You should see the same number of TileCollider objects after every
+   load (before: one more set per load).
+4. Same check with a **Music Player** (give it a track): after each load there is still one Music A and one Music B
+   under it, and only one piece of music plays. With a **Block Builder**: after each load there is one BlockPreview
+   ghost, and it still follows your aim.
+5. Moving tilemap: give the tilemap a script that moves it (or move it while playing). The collision moves with it.
+
+**Status.** Tested headless on Linux by `tests/test_save_helper_leaks.cpp` (the five components, an old save with
+copies, a moved tilemap, and a scan over every component type). Not tried in the Windows editor yet.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

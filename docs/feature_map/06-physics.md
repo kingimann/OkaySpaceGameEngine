@@ -13,7 +13,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
   - 6.1.1 2D solver - `Physics/Physics2D` - Step: integrate, resolve contacts, fire collision and trigger callbacks, sleep resting bodies
   - 6.1.2 Rigidbody2D - `Physics/Rigidbody2D` - Dynamic / Kinematic / Static, mass, drag, gravity scale, bounciness, friction, spin (off by default), sleeping, opt-in continuous collision
   - 6.1.3 2D collider shapes - `Physics/Collider2D` - box, circle, capsule, edge (one-way platforms) and polygon colliders, trigger flag, offset, layer
-  - 6.1.4 Tilemap collider - `Components/TilemapCollider2D` - builds merged box strips from a sibling Tilemap on Start
+  - 6.1.4 Tilemap collider - `Components/TilemapCollider2D` - builds merged box strips from a sibling Tilemap on Start (child objects that move with the tilemap and are never saved, so a save-game load cannot stack up copies)
 - **Code:** `Physics/Physics2D`, `Physics/Rigidbody2D`, `Physics/Collider2D`, `Components/TilemapCollider2D`, `editor/main.cpp` (Add Component and Inspector sections)
 - **API:** `Rigidbody2D`, `BoxCollider2D`, `CircleCollider2D`, `CapsuleCollider2D`, `EdgeCollider2D`, `PolygonCollider2D`, `TilemapCollider2D`, `OnCollisionEnter2D`, `OnTriggerEnter2D`, `scene.physics()`, `Collision2D`
 - **Editor:** Add Component > Physics 2D rows; Inspector sections for each component; Scene view collider gizmos (View > Scene Overlays > Colliders)

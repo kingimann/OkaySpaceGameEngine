@@ -126,6 +126,13 @@ An object is saved when it has a **Saveable** component. Two other ways to pick
 objects exist: `SaveCaptureOptions::includeTag` (every object with that tag) and
 `allObjects` (every object that isn't transient).
 
+Helper objects that a component makes for itself while playing are **transient**: no save writes them, and the
+component makes them again when the loaded scene starts. These are the TileCollider boxes of a Tilemap Collider 2D
+(children of the tilemap), the Music A / Music B voices of a Music Player, and the build ghosts of Block Builder,
+Builder Mode and Structure Builder. A save made before this held them as saved objects, one more set per load;
+loading such a save removes the extra copies. `tests/test_save_helper_leaks.cpp` checks every component type for
+this kind of growth.
+
 | Saveable setting | What it does |
 | --- | --- |
 | `saveId` | The object's stable key. Survives renaming and re-parenting. |

@@ -1,4 +1,5 @@
 #pragma once
+#include <vector>
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -384,8 +385,16 @@ private:
     }
     GameObject* EnsurePreview(Scene& s) {
         if (preview_) return preview_;
+        // Saves from before the ghost was transient hold it as a saved object (one more per load):
+        // remove those leftovers. A live ghost is transient, so another builder's is left alone.
+        std::vector<GameObject*> stale;
+        for (const auto& up : s.Objects())
+            if (up && !up->transient && !up->IsDestroyed() && up->name == "StructurePreview" && up->tag == "StructurePreview")
+                stale.push_back(up.get());
+        for (GameObject* old : stale) s.Destroy(old);
         GameObject* g = s.CreateGameObject("StructurePreview");
         if (!g) return nullptr;
+        g->transient = true;   // a runtime-only ghost: never saved, so a load cannot leave one behind
         g->tag = "StructurePreview";
         auto* mr = g->AddComponent<MeshRenderer>();
         mr->mesh = Mesh::Cube();

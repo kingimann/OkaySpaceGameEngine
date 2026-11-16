@@ -25,6 +25,7 @@ int main() {
 
     // --- tiny and empty grids: nothing may crash or write outside the field ---------------------------------------------------------
     {
+        int done = 0;
         const int sizes[][3] = {{0, 0, 0}, {1, 1, 1}, {2, 2, 2}, {3, 1, 5}, {4, 4, 4}};
         for (auto& sz : sizes) {
             Scene s("T"); s.physicsEnabled = false;
@@ -45,8 +46,9 @@ int main() {
             CHECK(v->density.size() == (std::size_t)v->nx * v->ny * v->nz);
             std::cout << "  grid " << sz[0] << "x" << sz[1] << "x" << sz[2] << " became " << v->nx << "x" << v->ny << "x" << v->nz << "\n";
             s.Update(1.0f / 60.0f);
+            ++done;
         }
-        CHECK(true);   // reaching here without a crash is the check
+        CHECK(done == 5);   // every size got through every call without a crash
     }
 
     // --- NaN, infinite, huge and tiny brushes ---------------------------------------------------------------------------------------

@@ -15,7 +15,7 @@
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <dlfcn.h>
-#if __has_include(<SDL.h>) && __has_include(<SDL_syswm.h>)
+#if defined(OKAY_PLATFORM_HAVE_SDL2) && __has_include(<SDL.h>) && __has_include(<SDL_syswm.h>)
 #include <SDL.h>
 #include <SDL_syswm.h>
 #define OKAY_FAKEWM_SDL 1

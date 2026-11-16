@@ -1,3 +1,13 @@
+# -DOKAY_WITH_SDL=OFF (docs/sdl_removal_plan.md, "Tests without SDL"): SDL2 is not looked for here either. The tests that exist
+# only to drive or compare with SDL (the golden images drawn on SDL's renderer, the sdl2 side of the platform_* tests, OkayUI's
+# SDL_Renderer test, the voice-race and WAV-through-SDL tests) are left out; every other test builds the same way.
+if(OKAY_WITH_SDL)
+    set(OKAY_TEST_PLATFORM_BACKENDS sdl2 own)   # the platform_* entries run once per backend
+else()
+    set(OKAY_TEST_PLATFORM_BACKENDS own)
+    set(SDL2_FOUND FALSE)
+endif()
+
 # The sandbox the file-writing tests run in (temp folder as working and save folder; guard against writes into the source tree)
 add_executable(test_sandbox test_sandbox.cpp)
 target_link_libraries(test_sandbox PRIVATE okay::engine)
@@ -1067,7 +1077,7 @@ add_test(NAME script_ui COMMAND test_script_ui)
 
 # OkayUI renders through SDL_Renderer, so this test drives a headless SOFTWARE
 # renderer and reads pixels back. Only built when SDL2 (hence okay_ui) is present.
-if(TARGET okay_ui)
+if(TARGET okay_ui AND OKAY_WITH_SDL)
     add_executable(test_okayui test_okayui.cpp)
     target_link_libraries(test_okayui PRIVATE okay_ui)
     add_test(NAME okayui COMMAND test_okayui)
@@ -2243,7 +2253,9 @@ add_test(NAME script_paths COMMAND test_script_paths)
 
 # Golden images for the engine UI renderer, drawn on SDL's software renderer
 # (needs SDL2; skipped quietly without it).
-find_package(SDL2 QUIET)
+if(OKAY_WITH_SDL)
+    find_package(SDL2 QUIET)
+endif()
 if(SDL2_FOUND)
     if(TARGET SDL2::SDL2)
         set(OKAY_TEST_SDL_LIB SDL2::SDL2)
@@ -2290,8 +2302,10 @@ if(SDL2_FOUND)
     target_compile_definitions(test_ui_text_shots PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
     target_compile_definitions(test_ui_text_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
     add_test(NAME ui_text_shots COMMAND test_ui_text_shots)
-else()
+elseif(OKAY_WITH_SDL)
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
+else()
+    message(STATUS "OKAY_WITH_SDL=OFF: the golden images drawn on SDL's renderer (ui_renderer_golden and 6 more) are left out")
 endif()
 
 # Untrusted network input + thread safety of the shared net state (also run under ASan/UBSan/TSan)
@@ -2923,7 +2937,7 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     endif()
     add_test(NAME platform COMMAND test_platform)
     # OKAY_PLATFORM_BACKEND in the environment overrides the build's default backend at run time.
-    foreach(_okay_pb sdl2 own)
+    foreach(_okay_pb ${OKAY_TEST_PLATFORM_BACKENDS})
         add_test(NAME platform_default_env_${_okay_pb} COMMAND test_platform --print-default)
         set_tests_properties(platform_default_env_${_okay_pb} PROPERTIES
             ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}" PASS_REGULAR_EXPRESSION "default=${_okay_pb}")
@@ -2935,7 +2949,7 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
         target_link_libraries(test_platform_window PRIVATE SDL2::SDL2)   # pushes touch / natural-scroll events through the sdl2 backend
     endif()
     target_include_directories(test_platform_window PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
-    foreach(_okay_pb sdl2 own)
+    foreach(_okay_pb ${OKAY_TEST_PLATFORM_BACKENDS})
         add_test(NAME platform_window_${_okay_pb}
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_window> ${_okay_pb})
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -3047,7 +3061,7 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_libraries(test_platform_state PRIVATE SDL2::SDL2)   # raw SDL windows for WrapSdl2Window, SDL_GetWindowFlags to compare with
     endif()
     target_include_directories(test_platform_state PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
-    foreach(_okay_pb sdl2 own)
+    foreach(_okay_pb ${OKAY_TEST_PLATFORM_BACKENDS})
         add_test(NAME platform_state_${_okay_pb}
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_state> ${_okay_pb})
         set_tests_properties(platform_state_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -3076,13 +3090,13 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(test_platform_display PRIVATE okay::platform ${CMAKE_DL_LIBS})
     target_include_directories(test_platform_display PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
     add_test(NAME platform_display COMMAND test_platform_display unit)
-    foreach(_okay_pb sdl2 own)
+    foreach(_okay_pb ${OKAY_TEST_PLATFORM_BACKENDS})
         add_test(NAME platform_display_${_okay_pb}
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_display> ${_okay_pb})
         set_tests_properties(platform_display_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
                              ENVIRONMENT "OKAY_PLATFORM_BACKEND=${_okay_pb}")
     endforeach()
-    foreach(_okay_pb sdl2 own)
+    foreach(_okay_pb ${OKAY_TEST_PLATFORM_BACKENDS})
         add_test(NAME platform_display_modes_${_okay_pb}
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_display> modes-${_okay_pb})
         set_tests_properties(platform_display_modes_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
@@ -3628,7 +3642,9 @@ add_test(NAME own_dispatch_e COMMAND test_own_dispatch_e WORKING_DIRECTORY ${CMA
 # equivalence. check_wav_seam_wiring fails if a raw SDL_LoadWAV call appears outside the seam.
 add_executable(test_wav_playback test_wav_playback.cpp)
 target_link_libraries(test_wav_playback PRIVATE okay::engine)
-find_package(SDL2 QUIET)
+if(OKAY_WITH_SDL)
+    find_package(SDL2 QUIET)
+endif()
 if(SDL2_FOUND)
     target_compile_definitions(test_wav_playback PRIVATE OKAY_TEST_HAVE_SDL)
     target_include_directories(test_wav_playback PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/shared)

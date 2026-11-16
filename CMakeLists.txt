@@ -29,14 +29,12 @@ option(OKAY_BUILD_PLAYER   "Build the standalone game player runtime (needs SDL2
 # always and every switch keeps its SDL default. OFF: SDL2 is not looked for or linked; the SDL backend, every *Sdl.cpp side and
 # Dear ImGui's SDL backends are left out; the switches' defaults become our own code (OKAY_PLATFORM_BACKEND=own,
 # OKAY_LAUNCHER_RENDERER=own, OKAY_EDITOR_PLATFORM=own, OKAY_EDITOR_RENDERER=own); code that exists only on the SDL path is
-# compiled out (#ifdef OKAY_PLATFORM_HAVE_SDL2). For trying our own stack; not for releases. Tests: OKAY_BUILD_TESTS must be OFF.
+# compiled out (#ifdef OKAY_PLATFORM_HAVE_SDL2). For trying our own stack; not for releases. Tests build too: the ones that
+# only drive or compare with SDL are left out (tests/CMakeLists.txt).
 option(OKAY_WITH_SDL "Build with SDL2 (ON, the default). OFF: no SDL2 is found or linked, our own platform code only (not for releases)" ON)
 if(NOT OKAY_WITH_SDL)
     if(EMSCRIPTEN)
         message(FATAL_ERROR "OKAY_WITH_SDL=OFF: the web build has no own platform backend; it needs SDL2")
-    endif()
-    if(OKAY_BUILD_TESTS)
-        message(FATAL_ERROR "OKAY_WITH_SDL=OFF builds the programs only: configure it with -DOKAY_BUILD_TESTS=OFF (many tests compare against SDL)")
     endif()
     message(STATUS "OkaySpace: OKAY_WITH_SDL=OFF (no SDL2: own platform backend, own renderers, own UI glue by default)")
 endif()

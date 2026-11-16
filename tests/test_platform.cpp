@@ -21,7 +21,7 @@
 #include <vector>
 
 #if defined(__has_include)
-#if __has_include(<SDL_scancode.h>)
+#if defined(OKAY_PLATFORM_HAVE_SDL2) && __has_include(<SDL_scancode.h>)
 #include <SDL_scancode.h>
 #define OKAY_TEST_HAVE_SDL_HEADERS 1
 #endif

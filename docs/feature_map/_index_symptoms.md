@@ -203,6 +203,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a problem does not select its object | [15.11](15-editor.md#1511-console-and-diagnostics-panels) Console and diagnostics panels |
 | a project is missing from the list | [17.12](17-launcher-platform.md#1712-create-page-projects-templates-and-git) Create page: projects, templates and Git |
 | a Project panel row without a type or a wrong Used By count | [1.12](01-core-scene.md#112-asset-database) Asset database |
+| a project that was made in a kept editor is gone after Remove | [17.18](17-launcher-platform.md#1718-versions-page-other-editors-side-by-side-safe-remove-kept-copies) Versions page: other editors side by side, safe Remove, kept copies |
 | a proxy `version.dll` next to the exe is flagged | [39.4](39-security-anticheat.md#394-client-integrity-signed-manifest-and-launch-check) Client integrity: signed manifest and launch check |
 | a public field is missing or reset in the Inspector | [13.4](13-scripting.md#134-script-components-and-script-ui) Script components and script UI |
 | a quest cannot be restarted | [10.3](10-story-cinematics.md#103-quests-and-story-variables) Quests and story variables |
@@ -363,6 +364,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an object stays where the cutscene left it | [10.1](10-story-cinematics.md#101-cutscene-sequences-and-sequence-player) Cutscene sequences and Sequence Player |
 | an object survives (or does not survive) a scene change | [1.4](01-core-scene.md#14-scene-lifecycle) Scene lifecycle |
 | an old client can't join a server with replay protection | [39.2](39-security-anticheat.md#392-transport-security-encryption-replay-protection-sealed-join-host-keys) Transport security: encryption, replay protection, sealed join, host keys |
+| an old editor offers to update itself | [17.18](17-launcher-platform.md#1718-versions-page-other-editors-side-by-side-safe-remove-kept-copies) Versions page: other editors side by side, safe Remove, kept copies |
 | an old object with Actions behaves differently in the graph | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | an old scene loads but its script is silent | [13.3](13-scripting.md#133-removed-lua-and-c-mono-backends) Removed Lua and C# (Mono) backends |
 | an option has no effect | [41.1](41-build-tools-infra.md#411-cmake-project-layout-and-options) CMake project layout and options |
@@ -807,6 +809,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | reloading a save re-rolls a chest | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | remote player does not roll or die | [5.12](05-animation-ik.md#512-built-in-action-clips) Built-in action clips |
 | remote players are sprites instead of characters | [16.8](16-networking.md#168-network-player-spawning-and-avatar-motion) Network player spawning and avatar motion |
+| Remove says "Move it out first | [17.18](17-launcher-platform.md#1718-versions-page-other-editors-side-by-side-safe-remove-kept-copies) Versions page: other editors side by side, safe Remove, kept copies |
 | Rename misses a usage | [13.5](13-scripting.md#135-script-editor-autocomplete-errors-rename-format) Script editor: autocomplete, errors, rename, format |
 | renaming a file breaks scenes that used it | [20.3](20-35-planned.md#203-guids) GUIDs |
 | replaced a texture and the game still shows the old one | [34.3](20-35-planned.md#343-hot-reload) Hot reload |
@@ -1079,6 +1082,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the relay is flooded or runs out of slots | [16.14](16-networking.md#1614-relay-server-nat-traversal) Relay server (NAT traversal) |
 | the release log warns "No trusted anti-cheat keys | [39.7](39-security-anticheat.md#397-trusted-keys-and-signing-keys-at-build-time) Trusted keys and signing keys at build time |
 | the release workflow lacks a secret | [41.8](41-build-tools-infra.md#418-github-workflows-and-templates) GitHub workflows and templates |
+| the Remove window lists a project path | [17.18](17-launcher-platform.md#1718-versions-page-other-editors-side-by-side-safe-remove-kept-copies) Versions page: other editors side by side, safe Remove, kept copies |
 | the reward is not given | [10.3](10-story-cinematics.md#103-quests-and-story-variables) Quests and story variables |
 | the roadmap disagrees with what is merged | [19.5](19-docs-tests-health.md#195-roadmap-and-pr-template) Roadmap and PR template |
 | the same "random" result every run | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
@@ -1130,6 +1134,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the wrong camera renders after switching | [2.10](02-rendering-world.md#210-cameras-and-the-camera-stack) Cameras and the camera stack |
 | the wrong clip plays or two clips fight | [5.1](05-animation-ik.md#51-animator-and-state-machines) Animator and state machines |
 | the wrong widget gets the click | [12.12](12-ingame-ui.md#1212-ui-input-focus-and-navigation) UI input, focus and navigation |
+| This is a kept copy of v2.850.1 | [17.18](17-launcher-platform.md#1718-versions-page-other-editors-side-by-side-safe-remove-kept-copies) Versions page: other editors side by side, safe Remove, kept copies |
 | this wire can't work | [14.2](14-visual-scripting.md#142-typed-pins-variables-and-scopes-object-references) Typed pins, variables and scopes, object references |
 | thousands of objects drawn behind a wall | [27.2](20-35-planned.md#272-occlusion-culling) Occlusion culling |
 | thousands of repeated lines | [23.4](20-35-planned.md#234-error-console) Error console |

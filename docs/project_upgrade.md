@@ -57,14 +57,15 @@ Answering is remembered for the session: once a project is upgraded, opened anyw
 - **Keep v2.850.x** does not touch the project. If an editor of that line is installed (see "The launcher's Versions folder") this editor
   starts it on the project and closes; the newest installed editor of the line is used (a `2.850.0` project keeps `2.850.1` when that
   is installed). Otherwise: "v2.850.x is not installed. Open the OkaySpace launcher > Versions to install it." with **Back** and **Cancel**.
-  The editor that is started gets `--keep-version`, and shows `v2.850.1 (kept)` in the status bar. This editor closes first (without asking
+  The editor that is started gets `--keep-version=2.850.1` (the flag names the version it is for), and shows `v2.850.1 (kept)` in the status bar. This editor closes first (without asking
   about unsaved changes again: that was asked before the project was left) and the other one is started after it has exited, through the
   helper process the self-updater uses, so the two never fight over the single-instance lock.
 
 ### Newer: open anyway or update
 
 An older editor may drop data it does not understand when it saves. **Update OkaySpace** opens the same window as Help > Check for
-Updates (Download & Install; the editor reopens afterwards with the arguments it was started with). **Open anyway** first makes the same complete backup
+Updates (Download & Install; the editor reopens afterwards with the arguments it was started with; in a kept copy it shows the one line "This is a
+kept copy of v2.850.1. Update OkaySpace from the launcher." instead: see "Kept copies" below). **Open anyway** first makes the same complete backup
 copy as an upgrade (`<Name> (backup v2.860.0)`), changes nothing in the project, and then opens it. Why before opening rather than "before
 the first save": the editor writes into the project in many places (new scripts, materials, settings, autosave), not only on Save, so
 the only point that covers all of them is before the project is opened.
@@ -142,14 +143,28 @@ with its own version: `ResolveKeepTarget(projectVersion, InstalledVersions(launc
 (`""` when none is installed: offer to download it). Start `InstalledEditorPath(launcherDir, thatVersion)` with
 
 ```
---launcher <pid> --open "<scene>" --keep-version
+--launcher <pid> --open "<scene>" --keep-version=<thatVersion>
 ```
 
-(`KeepVersionArgs(scene)` plus the launcher's own `--launcher <pid>`). The editor that gets `--keep-version` skips the question for that project
-for the session when the project is older or unversioned, and shows `v2.850.1 (kept)` in the status bar. A project that is *newer* than the
-editor is still asked about (it is the data-loss question). `--keep-version=<version>` is honored only when that is the editor's own version.
-An editor from before this feature ignores the flag and opens the project as it always did. `Decide` and `CompareVersions` replace the
+(`KeepVersionArgs(scene, thatVersion)` plus the launcher's own `--launcher <pid>`). The editor that trusts the flag skips the question for that
+project for the session when the project is older or unversioned, and shows `v2.850.1 (kept)` in the status bar. A project that is *newer* than the
+editor is still asked about (it is the data-loss question). Who trusts which spelling (`okayver::HonoursKeepFlag`):
+
+| The flag | Trusted by |
+|---|---|
+| `--keep-version=2.850.1` (names a version) | an editor of exactly that version, kept copy or not; no other editor. Text that is not a version: nobody |
+| `--keep-version` (bare: what launchers before the install audit passed to every editor) | a **kept copy** only, never the current editor |
+
+Why: a kept editor that replaced itself with the newest one restarts with the same arguments. With a bare flag trusted by everyone, the newest
+editor opened the old project with no question and no backup (install audit, finding 1). With the named flag it sees "not my version" and asks its
+usual question. An editor from before this feature ignores the flag and opens the project as it always did. `Decide` and `CompareVersions` replace the
 launcher's own copy of the comparison (done: the launcher calls `okayver::CompareVersions`).
+
+**Kept copies.** An editor whose exe is in `<launcher dir>/Versions/<v>/Tools` is a kept copy (`okayver::IsKeptCopyDir`): it never checks for updates,
+never shows the Engine Update window, never installs an update and never offers automatic updates; where the update window would be (Help > Check for
+Updates..., the question's **Update OkaySpace**) it shows one line, "This is a kept copy of v2.850.1. Update OkaySpace from the launcher.", with the
+**Open launcher** button. Details, and what it cannot do (a copy kept before this change still has the old code), are in
+[launcher_versions.md](launcher_versions.md#kept-copies-never-update-themselves).
 
 **One editor at a time.** The editor's single-instance lock and hand-off file are shared by all versions. An editor started while another
 runs does not open: it writes its request (`open`, and `keep-version` with its own version) for the running one and exits. The running editor
@@ -163,7 +178,7 @@ and starts the other one after it has exited (the same helper process the self-u
 **The launcher's half is built** ([launcher_versions.md](launcher_versions.md)): the Versions page installs, removes and prunes those folders
 (whole or not at all, every download checked against `versions.json`), keeps the editor an update replaces, and offers the Latest / LTS
 channel. Project cards show the project's version and an **older: v2.850.x** / **newer** badge; **Open with** starts
-`InstalledEditorPath(...)` with `--launcher <pid> --open "<scene>" --keep-version`. A plain **Open** starts the current editor, which asks the
+`InstalledEditorPath(...)` with `--launcher <pid> --open "<scene>" --keep-version=<v>`. A plain **Open** starts the current editor, which asks the
 question above (the launcher asks nothing); only a project with no version goes to the launcher's default editor, if one is set. When the open
 editor is another version, the launcher uses its save-and-close request first (one editor at a time). The "not installed" window has an
 **Open launcher** button: it starts `OkaySpace --versions <version>` (through the same helper process), which shows the Versions page with
@@ -173,7 +188,8 @@ that version highlighted; a launcher that is already running is brought forward 
 
 | | |
 |---|---|
-| `--keep-version` / `--keep-version=<ver>` | the version was chosen on purpose for the `--open` project (see above) |
+| `--keep-version=<ver>` | the version was chosen on purpose for the `--open` project; trusted only by an editor of exactly that version (see above) |
+| `--keep-version` | the same, bare: trusted only by a kept copy (see above) |
 | `OKAY_DEV=1` with `OKAY_FAKE_VERSION=2.855.0` | development builds only: the editor reports and stamps that version, so a project stamped `2.850.0` can be opened by "another" editor and the question tried |
 
 ## Failure cases
@@ -201,13 +217,16 @@ that version highlighted; a launcher that is already running is brought forward 
 - **A stamp is the last writer's.** After "Open anyway" and a save in an older editor the project says the older version, which is true.
 - **Keep ignores `--keep-version` for a newer project**, because that flag means "I chose this version for an older project"; the data-loss
   question stays.
+- **A bare `--keep-version` is trusted only by a kept copy**, and the launcher names the version. The flag skips a safety question, so it must be
+  unable to travel to an editor it was not meant for (an old editor that updated itself and restarted with the same arguments).
 
 ## Tests
 
 `project_version` (parse and compare matrix, Decide table, the stamp line in text and in files, CRLF, BOM, read-only, release lines, the
 keep target, the Versions layout; links nothing), `project_upgrade` (the upgrade end to end, backup completeness, space refusal, the disk
-failing at every step in turn, damaged and read-only files, restore, the whole gate state machine) and `editor_hooks` (`EditorState::Load`
-under the gate).
+failing at every step in turn, damaged and read-only files, restore, the whole gate state machine, and the `--keep-version` cases: bare or named,
+kept copy or current editor, the audit's `repro_gate`) and `editor_hooks` (`EditorState::Load` under the gate). `versions_safety` has the pure rules
+(`IsKeptCopyDir` in every path spelling, `HonoursKeepFlag`, the arguments the launcher builds).
 
 ## What changed
 
@@ -216,3 +235,8 @@ New: `shared/ProjectVersion.hpp`, `editor/ProjectUpgrade.hpp/.cpp`, `editor/Proj
 
 Launcher side (see [launcher_versions.md](launcher_versions.md)): the launcher's own `CompareVersions` now calls the shared one too; the
 "v2.850.x is not installed" window gained **Open launcher** (`editor/ProjectUpgradeUI.cpp`).
+
+Install audit (findings 1 and 2): `shared/ProjectVersion.hpp` (`IsKeptCopyDir`, `HonoursKeepFlag`, `ParseKeepFlag`, the named `KeepVersionArgs`),
+`editor/ProjectUpgrade.*` (`GateEnv::keptCopy`, `NoteKeepRequest` uses the rule and says whether it trusted the flag), `editor/ProjectUpgradeUI.*` (the
+kept-copy window, one **Open launcher** button for both windows, `(kept)` in the status bar), `editor/main.cpp` (five small edits: the start-up check,
+the Engine Update window, `InstallUpdate`, Help > Check for Updates..., the question's Update button).

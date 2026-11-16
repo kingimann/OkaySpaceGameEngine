@@ -13,7 +13,7 @@ downloader), the download is `launcher/VersionsNet.cpp`, and the page is `launch
 |---|---|
 | **This version** | The version you are running, with **Latest** / **LTS** badges (from the version list), **Check again**, and **Open install folder**. If the version list is incomplete or unreachable it says so here. |
 | **Update channel** | **Latest** or **Long-term support (LTS)**, a short explanation, and the LTS offer (see below). Also the **Default editor** for projects that have no version yet. |
-| **Installed next to this version** | Every version under `Versions/`, with its size, where it came from (kept when the launcher updated / installed by you), **Make default** and **Remove**. At the bottom: **Keep previous versions: N** (default 1) and how much room the folder uses. |
+| **Installed next to this version** | Every version under `Versions/`, with its size, where it came from (kept when the launcher updated / installed by you), **Make default** and **Remove** (which never deletes a folder that holds a project of yours: see "Removing a version never deletes a project"). At the bottom: **Keep previous versions: N** (default 1) and how much room the folder uses. |
 | **Available to install** | The versions in the list that are not installed, newest first, with **Install**, a progress bar and **Cancel**. A failed check ("OkayEngine.exe did not match its checksum, so it was not installed. The download may be damaged: try again.") stays under the row until the next try. |
 
 Wording stays plain: "v2.850.x is the long-term-support version: it only gets fixes."
@@ -87,18 +87,71 @@ versions you installed yourself, the newest installed patch of the LTS line, the
 the version or no checksum the update is refused, and so is a failed download, a size or checksum mismatch or a failed swap. Each case shows its
 reason in the update dialog, is logged in `okay_update.log`, and leaves the installed files as they were (every file is staged and checked before any is replaced).
 
+## Removing a version never deletes a project
+
+The editor's default folder for a new project is beside its exe. For a kept editor that is `Versions/<v>/Tools/Projects`, so a project made there
+lives **inside the version folder** (before this change "Remove" deleted it, while its window said "Your projects are not touched").
+Before anything is deleted the launcher looks through the folder (`ScanFolderForProjects` and `CheckBeforeDelete` in
+`launcher/VersionsManager.cpp`; no window, nothing written):
+
+* **What counts as yours:** a `project.okayproj` file, a scene (`.okayscene`), or any file inside an `Assets` folder (names are not case
+  sensitive). **Not yours:** a `.okay` folder on its own, an empty `Assets` folder, the editor's own files (crash logs, `imgui.ini`, ...).
+* **The look is bounded:** 12 folders deep and 20,000 files and folders (`ScanLimits`; a real version folder holds about ten), breadth first, so
+  the shallowest project is named first. **Links are never followed** (a symbolic link, and on Windows a junction): a folder with a link in it
+  is refused too, because deleting could reach what the link points at. A link to a file, or to nowhere, is only a link.
+* **When in doubt, nothing is deleted.** A project, a link, a folder too big or too deep to be sure about, or one that could not be read is
+  refused with a plain reason: "This version folder has a project of yours: `<path>`. Move it out first. Nothing was removed." (`DeleteCheck`).
+
+Every delete of a version folder goes through that check: the **Remove** button; the **prune** after an update and "Remove them now" (a version
+that stays says why: `PruneResult::notRemoved`); installing or keeping a version over a folder that is "in the way" (a folder of that name with
+no editor in it, which used to be deleted whole); discarding a kept copy after a failed update; and the start-up clean-up of scratch folders.
+
+**The Remove window** looks when it opens (not every frame). With a project inside it shows the message and an **Open folder** button (the
+same opener as "Open install folder"; it shows the folder that holds the project) and **Close**: there is no Remove button until the project is
+moved out (cut it and paste it into your Projects folder). Otherwise it says "This frees 41.2 MB. Your projects are not touched." and how many of
+your projects were made with that release line: "3 of your projects were made with v2.850.x. You can open them with that version again after you
+install it." (`CountProjectsMadeWith`; the project versions are the ones the launcher already reads for the card badges). `Remove` itself looks again,
+so a project that arrives while the window is open is still refused. There is no bulk "remove copies no project needs" yet (audit item 5).
+
 ## Project cards and Open with (Create page)
 
 * Each card shows the project's version (`okayver::ReadProjectVersion`; "version unknown" when there is none) and a small badge when it is
   not this editor's line: **older: v2.850.x**, **newer** (hover for the sentence).
 * Right-click (or **...**) > **Open with** lists every installed editor, the project's line first ("this project's version"), then
   **Get more versions...**. The editor is started as `<launcher dir>/Versions/<v>/Tools/OkayEngine --launcher <pid> --open "<scene>"
-  --keep-version`.
+  --keep-version=<v>`. The flag **names the version**: only an editor of exactly `<v>` trusts it (see "Kept copies never update themselves").
 * A plain **Open** starts this launcher's editor, which asks the upgrade question itself: the launcher asks nothing. The exception is the
-  default editor: a project with no version goes to it (with `--keep-version`).
+  default editor: a project with no version goes to it (with `--keep-version=<v>`).
 * **One editor at a time.** The editors share a single-instance lock, so a second one only hands its project to the first. If the open
   editor is another version than the one wanted, the launcher asks it to save and close (the same window the update uses), then starts the
   other. The launcher remembers which version it started last; an editor opened by hand is taken to be this version's.
+
+## Kept copies never update themselves
+
+An editor that runs from `<launcher dir>/Versions/<v>/Tools` is a **kept copy** (`okayver::IsKeptCopyDir`, `shared/ProjectVersion.hpp`: pure text,
+so both kinds of slash, a trailing slash and, on Windows, any letter case work; the folder must be `<anything>/Versions/<version>/Tools` with the
+version spelled the way the launcher writes it). Before this change every editor, a kept one too, checked for a newer release at start-up and offered
+**Download & Install**. That replaced the version-labelled file with the newest editor and restarted it with the same arguments, and the newest
+editor then opened the old project with no question and no backup. Now a kept copy:
+
+* does not check for updates at start-up, never shows the **Engine Update** window, never installs an update (`InstallUpdate` refuses), and so
+  never offers "Automatically install future updates" (that box lives in the Engine Update window);
+* shows **one plain line** where the update window would be (Help > Check for Updates..., and the "Update OkaySpace" button of the version
+  question): "This is a kept copy of v2.850.1. Update OkaySpace from the launcher.", with the existing **Open launcher** button (it opens this
+  page); no Download & Install;
+* shows `(kept)` after its version in the status bar.
+
+Two rules about `--keep-version` close the rest of that chain (`okayver::HonoursKeepFlag`, tested in `versions_safety` and `project_upgrade`):
+the launcher passes the form that **names a version**, and only an editor of exactly that version trusts it; a **bare** `--keep-version` (what
+older launchers passed to every editor) is trusted only by a kept copy, never by the current editor. So even a kept editor that did replace itself
+would not make the newest editor open the old project silently: it asks its upgrade question as usual.
+
+What this does not do:
+
+* A kept copy made **before** this change is an older program with the old code. It still updates itself, and nothing in the launcher can change a
+  program that is already on disk. The named flag still stops the silent open for it. Every copy kept from now on carries the new code.
+* The check is by folder name only, so a folder that merely looks like `.../Versions/<version>/Tools` counts as a kept copy (it just will not update
+  itself: the safe side). A kept copy moved somewhere else is no longer one.
 
 ## Command line
 
@@ -126,6 +179,7 @@ Latest, Keep previous versions to 1 and the default editor to "this version" (in
 | A file does not match its checksum / size | not kept; the other source is tried; then "did not match its checksum, so it was not installed" |
 | No checksum known | refused before anything is downloaded ("no checksum in the version list"; there is no install-anyway) |
 | Remove the running version, the launcher's version, the default editor, a version an open editor uses | refused with the reason |
+| Remove (or prune, or install over) a version folder that holds a project of yours, has a link in it, or is too big, too deep or unreadable to check | refused with the reason and the path; nothing deleted; the window offers **Open folder** |
 | A remove cannot delete everything after renaming | the version is gone from the list; the scratch folder is deleted at the next start |
 | The Versions folder cannot be made (a file is in the way, read-only) | a plain failure message |
 
@@ -138,6 +192,13 @@ at five points, full disk, a failure at every one of the 13 steps in turn); inst
 keep-on-update with a failure at every step; prune planning and on disk; the channel decision for every combination; settings lines; badges;
 Open with choices, command-line quoting for both platforms and unicode/space/quote paths; the project folder staying byte-identical; the
 `--versions` command line and hand-off; the cancellable download with a stub `curl` (no network).
+
+`versions_safety` (`tests/test_versions_safety.cpp`, temp folders only): kept-copy detection in every path spelling; the `--keep-version` matrix (bare or
+named, kept copy or current editor) and the arguments the launcher builds; what counts as a project; Remove refused with a project beside the exe, deep
+inside, in `Tools/Projects`, a scene or an `Assets` folder with no project file, a link, a loop, a folder too big or too deep (and an unreadable one,
+when not run as root); the same refusal for the prune, Install, KeepCurrent, DiscardKept and CleanStale; a version with no project still removed
+(only an `.okay` folder, an empty `Assets` skeleton, the editor's own files); the count of projects per version. The editor's side of the flag is in
+`project_upgrade`.
 
 ## Design choices
 
@@ -160,3 +221,9 @@ page. Edited: `launcher/main.cpp` (hook calls: version comparison, prefs, update
 rows, project cards and Open with), `launcher/CMakeLists.txt`, `editor/ProjectUpgradeUI.cpp` (the **Open launcher** button),
 `tests/CMakeLists.txt`, [project_upgrade.md](project_upgrade.md), [release_channels.md](release_channels.md). The launcher's own
 `CompareVersions` now calls `okayver::CompareVersions` (one difference: `0.0.0` used to equal text that is no version, now it is newer).
+
+Later, from the install audit ([install_audit.md](install_audit.md), findings 1 and 2): `shared/ProjectVersion.hpp` (`IsKeptCopyDir`, `HonoursKeepFlag`,
+`ParseKeepFlag`, the named `KeepVersionArgs`), `launcher/VersionsManager.*` (`ScanFolderForProjects`, `CheckBeforeDelete`, `CountProjectsMadeWith`, the named
+`OpenWithArgs`, the guard in every delete), `launcher/VersionsUI.*` (the Remove window, `Host::projectVersions`), `launcher/main.cpp` (two small calls),
+`editor/ProjectUpgrade.*` and `editor/ProjectUpgradeUI.*` (the gate, the kept-copy window), `editor/main.cpp` (five small edits in the update code),
+`tests/test_versions_safety.cpp`, `tests/test_project_upgrade.cpp`.

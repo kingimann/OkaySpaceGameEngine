@@ -4,7 +4,7 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **123** rows that are Partial or Planned.
+The feature map currently has **124** rows that are Partial or Planned.
 
 ## Audits
 
@@ -12,7 +12,7 @@ The feature map currently has **123** rows that are Partial or Planned.
 
 - [Launcher audit](unfinished_launcher.md): 38 findings in six areas (6 High open, 2 more High done in code and waiting on the owner to run SQL; 15 Medium, 15 Low), with file and line, impact and size, and a top 10 to tackle first. The High items: typing indicators and read receipts need database tables no SQL file creates, voice calls need a deployed voice server, blocking and privacy settings only filter on the device, there is no user report button, the forgot-password email has no landing page, no account deletion or data export, and updates are not signed (kick, ban and admin roles for servers and group chats are now built; the owner applies `docs/sql/member_moderation.sql`).
 
-- [Install, uninstall and editor versions audit](install_audit.md): a file map of everything Setup, the launcher and the editor write, the installer scenarios (run under wine), the Versions page cases, 24 ranked findings and a 12-item plan (phase 1, audit only; nothing in the program changed). The worst: an old kept editor can update itself in place and reopen an old project without asking, "Remove version" can delete a project made inside the version folder, Setup says projects are in Documents (they are in the install folder), and uninstall leaves most of what the launcher made. Owner decisions are listed in its section 7. A comparison with three well-known launchers is [install_comparison.md](install_comparison.md).
+- [Install, uninstall and editor versions audit](install_audit.md): a file map of everything Setup, the launcher and the editor write, the installer scenarios (run under wine), the Versions page cases, 24 ranked findings and a 12-item plan (phase 1, audit; the two data-loss findings are now built on branch `claude/versions-safety`, see row 17.18 below, and the rest is unchanged). The worst: an old kept editor could update itself in place and reopen an old project without asking (built: kept copies never update themselves), "Remove version" could delete a project made inside the version folder (built: Remove, prune and reinstall refuse), Setup says projects are in Documents (they are in the install folder), and uninstall leaves most of what the launcher made. Owner decisions are listed in its section 7. A comparison with three well-known launchers is [install_comparison.md](install_comparison.md).
 
 ## Hidden, removed or limited today
 
@@ -175,6 +175,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [17.11](feature_map/17-launcher-platform.md#1711-security-plan-sec1) | Security plan SEC1 | Partial | sign the launcher, editor and player downloads (ed25519 as the anti-cheat manifest does) and verify before swapping; the SEC1... |
+| [17.18](feature_map/17-launcher-platform.md#1718-versions-page-other-editors-side-by-side-safe-remove-kept-copies) | Versions page: other editors side by side, safe Remove, kept copies | Partial | built on `claude/versions-safety` (not merged): kept copies never update themselves, Remove, prune and reinstall never delete a folder that holds a project; Windows and both new windows unverified; a copy kept by an older release still updates itself; the Windows junction check is unverified; no bulk "remove copies no project needs", no verify or repair, no resume. |
 
 ### 18. Build, export & release
 

@@ -2036,6 +2036,7 @@ UpdateInfo CheckLatest() {
     UpdateInfo info;
     info.current = OKAY_ENGINE_VERSION;
     info.checked = true;
+    if (oked::IsKeptCopy()) return info;   // a kept copy never looks for an update (no network, nothing "available"): the launcher owns its folder
     std::error_code ec;
     fs::path tmp = fs::temp_directory_path(ec);
     // The published version at one place ("" if unreachable or not a version).
@@ -48212,7 +48213,7 @@ int main(int argc, char** argv) {
     // Automatically check for a newer build at startup, in the background so it
     // never blocks the editor. The result is picked up in the main loop and, if
     // an update is available, the Update window pops up on its own.
-    if (!oked::IsKeptCopy()) g_updateCheck = std::async(std::launch::async, updater::CheckLatest);   // (a kept copy never checks: see ProjectUpgradeUI.hpp)
+    g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
 
     bool running = true;
     std::string lastTitle;

@@ -3,6 +3,11 @@
 Status: **audit and plan only.** No program code, CMake or workflow was changed. Branch `claude/install-audit`, read from
 `origin/main` at `fbdf8698` (2026-11-15).
 
+**Update 2026-11-16:** findings 1 and 2 (plan items 1 and 2) are built on branch `claude/versions-safety` (not merged yet): kept editors never
+update themselves and Remove never deletes a folder that holds a project. What was built, and how to try it, is in
+[launcher_versions.md](launcher_versions.md) and `docs/try_it.md` section 7o. The scratch programs of Appendix B became
+`tests/test_versions_safety.cpp` and `tests/test_project_upgrade.cpp` (red first, then green). Everything else in this page is still the audit as it was.
+
 The owner asked (2026-11-15): "i also want installing to looked into, how editor is installed from launcher, same with how
 launcher is installed. make it proper with proper file management. make installing editors on launcher proper and better same
 with uninstalling." A comparison with other launchers is in [install_comparison.md](install_comparison.md) (a separate page on
@@ -285,6 +290,8 @@ Severity words: **data loss**, **broken install**, **confusing**, **cosmetic**. 
   2.860.0. The update chain is Windows only, unverified (use a **copy** of a project): install an older version, "Open with" it,
   click Download & Install.
 * **Severity.** Data loss risk (a project re-saved by a newer editor with no backup). **Confidence.** C, gate step R.
+* **Status (2026-11-16):** built on `claude/versions-safety`. A kept copy skips the check and the window, `InstallUpdate` refuses, and the flag rules
+  (named flag only for its version, bare flag only for a kept copy) mean the newest editor asks its question. A copy kept before this fix still has the old code.
 
 **2. "Remove version" deletes a project that was made inside the version folder, and says projects are safe.**
 * **What.** `Remove` renames the whole `Versions\<v>` folder and deletes it (VM:646-650). The editor's default folder for a new
@@ -295,6 +302,9 @@ Severity words: **data loss**, **broken install**, **confusing**, **cosmetic**. 
   `okay_recent.txt`, or after "Clear").
 * **Reproduce.** Appendix B `repro_versions` R1 (R): a project under `Versions/2.850.1/Tools/Projects/MyGame` is gone after `Remove`.
 * **Severity.** Data loss. **Confidence.** R for the removal, C for the default folder.
+* **Status (2026-11-16):** built on `claude/versions-safety`. Remove, the prune, installing or keeping over a folder that is in the way, discarding a kept
+  copy and the start-up clean-up look through the folder first (a project, a link, or a folder too big to be sure about is refused with the path); the window
+  says where the project is and offers Open folder.
 
 **3. Setup says projects are in Documents. They are in the install folder.**
 * **What.** The Setup welcome page says "your games, projects and saves (in your Documents folder) are never touched" (nsi:82).
@@ -498,7 +508,7 @@ must either wait for item 2 or itself keep any folder that holds a `project.okay
 * **Owner can try it.** Versions page > install an older version > Open with it: no "Engine Update" window; the status bar says
   "(kept)"; its Settings do not offer automatic updates.
 * **Existing / Gap.** Existing: the update window and the `--keep-version` gate. Gap: no kept-copy guard, bare flag trusted.
-* **Size** small. **Owner decision** no (safe default: never update a kept copy).
+* **Size** small. **Owner decision** no (safe default: never update a kept copy). **Built:** `claude/versions-safety` (2026-11-16).
 
 ### 2. Remove and prune never delete a folder that holds a project
 
@@ -510,7 +520,7 @@ must either wait for item 2 or itself keep any folder that holds a `project.okay
 * **Test.** Linux unit tests; Appendix B R1 and R4 become the failing tests.
 * **Owner can try it.** Make a project in a kept editor's default folder; press Remove on that version: refused, with the path.
 * **Existing / Gap.** Existing: `RemoveGuards` (running, launcher, default, in use). Gap: no project check at all.
-* **Size** small. **Owner decision** no.
+* **Size** small. **Owner decision** no. **Built:** `claude/versions-safety` (2026-11-16), except the bulk "Remove copies no project needs" (that stays in item 5).
 
 ### 3. Setup that is honest and safe
 

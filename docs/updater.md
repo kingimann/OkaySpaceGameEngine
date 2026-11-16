@@ -76,6 +76,10 @@ Signing: `shared/UpdateSignature.hpp`, `scripts/sign_index.py`, [Signed releases
   already closed). Not seen; a timeout is a small follow-up.
 - On Windows, renaming a running `.exe` works, but a scanner holding the file can make the swap fail: that case is reported (row 3 of the
   table) but was not reproduced here.
+- **A kept copy never runs any of this.** An editor in `Versions/<v>/Tools` (an older version the launcher keeps) does not check for updates, does not
+  show the Engine Update window and `InstallUpdate` refuses: the launcher owns that folder, and a kept editor that replaced itself with the newest one
+  made the Versions page lie and reopened old projects with no question (install audit, finding 1; [launcher_versions.md](launcher_versions.md#kept-copies-never-update-themselves)).
+  A copy kept before that fix is an older program and still has the old behaviour.
 - The editor's own update gets the same checksum rule, self-check and rollback, but has no start-up verdict: after a rollback the previous
   editor simply starts again and the reason is only in `okay_update.log`. Its download code compiles with the launcher's list reader
   (`launcher/VersionsManager.cpp`) but was not run against a fake server here.

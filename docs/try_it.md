@@ -55,6 +55,7 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
+| 7o | Kept editors never update themselves; Remove never deletes a version folder that holds a project | Launcher > Versions (Remove); a kept editor's Help > Check for Updates... | New in this change (branch `claude/versions-safety`). Tested headless; Windows steps and both new windows unverified |
 
 ---
 
@@ -267,10 +268,70 @@ a real one, because two of the checks touch projects.
 4. **Does an old editor update itself?** (Use a copy of a project.) Install an older version on the Versions page, right-click the
    copy of a project > **Open with** that version. The audit predicts an **Engine Update** window; do **not** press Download & Install
    unless you want to see the problem (the old editor is replaced by the newest one and reopens your project without asking).
+   (Since 7o below: a kept copy built with the fix shows no such window. A copy kept by an older release is an older program and still does.)
 
 **Status.** Windows steps unverified. What was run: the installer under wine on Linux (install, update, uninstall, running programs,
 full disk, odd folders) and two small test programs against the real Versions and project-gate code. Details, results and the plan to
 fix each item are in `docs/install_audit.md`; the comparison with other launchers is `docs/install_comparison.md`.
+
+---
+
+## 7o. Kept editors never update themselves, and Remove never deletes a project
+
+Why: the install audit (`docs/install_audit.md`, findings 1 and 2) found two ways to lose work on the Versions page. (1) An older editor that the
+launcher keeps (a "kept copy") offered to update itself, replaced itself with the newest editor, and then opened your old project with no question and
+no backup. (2) **Remove** on a version deleted the whole version folder, including a project you had made inside it (a kept editor's default folder for
+new projects is `Versions\<v>\Tools\Projects`), while its window said "Your projects are not touched". Both are fixed in this change. **Use a copy of a
+project for every step below, never a real one.**
+
+`<install>` below is `%LOCALAPPDATA%\OkaySpace` after the installer (paste it into the Explorer address bar), or the unzipped folder for the zip.
+
+**Part A. A kept editor never updates itself.** This only holds for a kept copy built with this change. A version from before it (for example v2.850.1)
+is an older program and still shows the Engine Update window, so do not use one for part A (part B works with any version). Two ways to get a kept copy:
+
+* The natural way, once two releases carry this change: launcher > **Versions** > **Available to install** > **Install** on the older one, then on
+  **Create** right-click a copy of a project > **Open with** that version.
+* Today, by hand: in Explorer make the folders `<install>\Versions\<version>\` (use the version the Versions page says you are running, for example
+  `2.876.0`), copy the whole `<install>\Tools` folder into it, and double-click `<install>\Versions\<version>\Tools\OkayEngine.exe`. It does not appear in
+  **Open with** (that lists other versions only), but the Versions page lists it as "Put here by hand".
+
+What you should see:
+
+1. The status bar shows the version followed by `(kept)`, for example `v2.876.0 (kept)`.
+2. **Help > Check for Updates...** opens a small window titled **Kept copy** with one line, "This is a kept copy of v2.876.0. Update OkaySpace from
+   the launcher.", and two buttons: **Open launcher** (shows the launcher's Versions page) and **Close**. An ordinary editor shows the **Engine Update**
+   window here ("You're up to date." or Download & Install), so this is where you can see the difference at once.
+3. There is no Download & Install button and no "Automatically install future updates" box anywhere in a kept copy.
+4. When a release newer than the kept copy exists, an ordinary older editor pops up **Engine Update** when it starts. A kept copy does not.
+5. If you open a project that a newer editor saved, the kept copy asks its usual question first (Cancel, Open anyway, Update OkaySpace). **Update OkaySpace**
+   shows the same **Kept copy** window. Cancel changes nothing in the project.
+
+**Part B. Remove never deletes a project.**
+
+1. Launcher > **Versions**. You need a version under "Installed next to this version" that you are not running and that is not your default editor. Install
+   any older one from the list, or without a network make one by hand: copy `<install>\Tools` to `<install>\Versions\2.700.0\Tools` (the Versions page lists it
+   as "Put here by hand"; it is only for this test).
+2. Put a project in that version's own default project folder: make `<install>\Versions\<v>\Tools\Projects\MyTest` and copy a **copy** of a project into it (a
+   folder with `Assets` and `project.okayproj`; for example copy a folder from `<install>\Projects`). If you have a real older editor you can instead start it,
+   File > New Project, and leave the Location on its default.
+3. Press **Remove** on that version. The **Remove this version?** window shows, in amber, "This version folder has a project of yours:
+   `<install>\Versions\<v>\Tools\Projects\MyTest`. Move it out first." There is **no Remove button**: only **Open folder** and **Close**. Press **Open folder**:
+   Explorer shows `...\Tools\Projects` with `MyTest` in it.
+4. Check that `MyTest` and everything in it is still there and the version is still listed.
+5. Cut `MyTest` and paste it into `<install>\Projects`. Press **Remove** again. The window now says "This frees ... MB. Your projects are not touched." and one
+   more line about your projects ("None of your projects were made with v2.700.x." or "3 of your projects were made with v2.850.x. You can open them with that
+   version again after you install it."). Press **Remove**: the version goes, and `MyTest` in `<install>\Projects` is untouched.
+
+Also: **Remove them now** (shown when more kept copies exist than "Keep previous versions: N") and the clean-up after every update skip a version that has
+a project inside, and the message says which. A folder that has a link to another folder in it (a symbolic link or a junction, not an ordinary `.lnk` shortcut), or is too big to check, is refused the same way.
+
+**Status.** Tested headless on Linux: `versions_safety` 184 checks and `project_upgrade` 490 checks (the new cases were red before the fix: 110 and 11
+failures), with `project_version` 301, `launcher_versions` 15534 and `editor_hooks` 198 still green (run by hand against the engine libraries of another
+branch's build, so CI is the real check). The real `VersionsManager.cpp` was also cross-compiled with MinGW and run in a scratch program under wine 9.0:
+Windows paths and case folding, Remove refused with a project in `Tools\Projects`, an `.okay`-only folder removed. **Unverified:** everything on real Windows;
+the two new windows (**Remove this version?** with a project inside, and **Kept copy**) have never been drawn or seen (the launcher and editor were only
+syntax-checked); the **Open folder** button; links and Windows junctions (wine here could not make one); and a kept copy made by an older release, which
+still updates itself. Details: `docs/launcher_versions.md` ("Removing a version never deletes a project", "Kept copies never update themselves").
 
 ---
 

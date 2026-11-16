@@ -2329,6 +2329,11 @@ add_executable(test_save_game test_save_game.cpp)
 target_link_libraries(test_save_game PRIVATE okay::engine)
 add_test(NAME save_game COMMAND test_save_game)
 
+# Save games keep door / mover / lever, animation and projectile runtime state (#888 findings 62, 63)
+add_executable(test_savegame_pose_anim test_savegame_pose_anim.cpp)
+target_link_libraries(test_savegame_pose_anim PRIVATE okay::engine)
+add_test(NAME savegame_pose_anim COMMAND test_savegame_pose_anim)
+
 add_executable(test_ragdoll test_ragdoll.cpp)
 target_link_libraries(test_ragdoll PRIVATE okay::engine)
 add_test(NAME ragdoll COMMAND test_ragdoll)

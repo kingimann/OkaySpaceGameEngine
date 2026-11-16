@@ -196,9 +196,11 @@ int main() {
         }
     }
 
-    // The startup line's reader list (shared/OwnStack.hpp): each switch it names has a sample.
+    // The startup line's reader list (shared/OwnStack.hpp): each model reader switch it names has a sample. Entries that are
+    // not model readers (OKAY_OWN_WAV, the audio decoder: its sample is examples/own_wav) are skipped.
     for (const ownstack::ReaderSwitch& rs : ownstack::Readers()) {
         const std::string ext = rs.ext[0] ? Lower(rs.ext) : std::string(".fbx");   // "" is FBX, which has its own switch
+        if (ext != ".fbx" && !HasOwnReader(ext)) { std::printf("  %-10s skipped (not a model reader)\n", rs.var); continue; }
         const int r = RowOf(ext);
         if (r < 0) { std::fprintf(stderr, "  %s (%s): not in this test's table\n", rs.var, ext.c_str()); CHECK(r >= 0); continue; }
         if (Table()[(std::size_t)r].skip) continue;

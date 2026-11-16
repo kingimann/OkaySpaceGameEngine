@@ -542,6 +542,10 @@ Nothing to try.
 * Run here: `bash -n` on the script, and the new copy block on its own against the real source tree, then a listing of
   the result. **Not run:** the full Windows cross build, the zip, `makensis`, the installer, anything on Windows.
 * `release.yml` was not changed and no workflow was run.
+* Own reader samples (branch `claude2/own-reader-samples`): the copy step now also ships a folder's `README.txt` (other
+  `.txt` files are still skipped) and fails if any file of `examples/own_readers` is missing from the output. Run here:
+  `bash -n`, and the copy block on its own against the source tree: all 41 files of `examples/own_readers`, the README
+  included, arrived. **Not run:** the full Windows build, the zip, the installer.
 
 ## Remove from list and Delete project (launcher Create page)
 

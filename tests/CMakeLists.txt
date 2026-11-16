@@ -3549,3 +3549,19 @@ add_test(NAME software_scene_ssao COMMAND test_software_scene_ssao)
 add_executable(test_software_dof test_software_dof.cpp)
 target_link_libraries(test_software_dof PRIVATE okay::engine)
 add_test(NAME software_dof COMMAND test_software_dof)
+
+# Software SSAO banding and halo near a crease (the 4x4 rotated sample pattern); measured on a box on a floor.
+add_executable(test_software_ssao_quality test_software_ssao_quality.cpp)
+target_link_libraries(test_software_ssao_quality PRIVATE okay::engine)
+add_test(NAME software_ssao_quality COMMAND test_software_ssao_quality)
+
+# The shipped example scene examples/render_effects (depth of field and ambient occlusion) loads, equals the scene the test
+# builds, and both effects show in the software renderer's frames.
+add_executable(test_render_effects_example test_render_effects_example.cpp)
+target_link_libraries(test_render_effects_example PRIVATE okay::engine)
+target_compile_definitions(test_render_effects_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME render_effects_example COMMAND test_render_effects_example)
+
+# Every example folder the Windows release ships exists in the tree, and the render_effects sample is among them.
+add_test(NAME example_dirs
+    COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_example_dirs.cmake)

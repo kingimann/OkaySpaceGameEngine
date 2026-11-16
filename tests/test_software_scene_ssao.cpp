@@ -108,5 +108,28 @@ int main() {
     SSAOEnabled() = false; SSAOStrength() = 0.6f;
     std::printf("  process AO: strength 1.0 %.0f, strength 1.5 %.0f\n", Brightness(s10), Brightness(s15));
     CHECK(Brightness(s15) < Brightness(s10));
+
+    // reachable with shadows and per-pixel lighting both OFF (the Low quality preset, or the two switches unticked): only meshes
+    // drawn per pixel fill the G-buffer, and shadows being on is what usually puts them on that path. While ambient occlusion is on,
+    // lit meshes are drawn per pixel whatever those switches say. Before, the switch did nothing at all here: the frame with it on
+    // was the frame with it off, bit for bit.
+    ShadowsEnabled() = false;
+    SSAOEnabled() = false;
+    post.ssao = false; PerPixelLighting() = true;
+    const Raster refPP = Render(s);                          // per pixel, no ambient occlusion
+    post.ssao = true; post.ssaoRadius = 0.5f; post.ssaoIntensity = 0.8f; post.ssaoPower = 1.0f;
+    const Raster aoPP = Render(s);                           // per pixel, ambient occlusion
+    PerPixelLighting() = false;
+    const Raster aoSwitchesOff = Render(s);                  // per-pixel lighting off: must be the same frame
+    post.ssao = false;
+    SSAOEnabled() = true; SSAORadius() = 0.5f; SSAOStrength() = 0.8f;
+    const Raster procSwitchesOff = Render(s);                // and the process-wide switch does the same
+    SSAOEnabled() = false;
+    std::printf("  shadows and per-pixel lighting off: AO off %.0f, AO on %.0f\n", Brightness(refPP), Brightness(aoSwitchesOff));
+    CHECK(aoPP.color != refPP.color);
+    CHECK(Brightness(aoSwitchesOff) < Brightness(refPP));
+    CHECK(aoSwitchesOff.color == aoPP.color);
+    CHECK(procSwitchesOff.color == aoPP.color);
+    ShadowsEnabled() = true; PerPixelLighting() = true;
     TEST_MAIN_RESULT();
 }

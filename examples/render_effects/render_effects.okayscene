@@ -1,0 +1,255 @@
+okayscene 3
+name "Render effects"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.2 0.28 0.45 0.72 0.78 0.86 0.4 0.42 0.46 0.15
+fog 1 0.72 0.78 0.86 25 80
+tonemap 1
+post 1 1 0 1 0.6 1 0 0 0 1 1 0 0 0 0 0 0 0 0 0 0.5 0 1 1.2 1 1 6 2
+postq 0 1.5
+gameobject 0 "Main Camera"
+  guid "081b2d35832ad51a463cf38732738f9e"
+  active 1
+  parent -1
+  transform 0 2.1 -7.5 3.0491523e-09 0.9975641 0.06975647 -4.360491e-08 1 1 1
+  camera 1 5 55 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Sun"
+  guid "242dbcb620e9a59b7f6b6f66aa14dfdb"
+  active 1
+  parent -1
+  transform 0 0 0 0.39287746 0.23644297 -0.1052712 0.88241714 1 1 1
+  light 1 1 1 1 0.25 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 2 "Floor"
+  guid "355f27ced8a148f5388d6e1b5137699a"
+  active 1
+  parent -1
+  transform 0 -0.1 25 0 0 0 1 160 0.2 90
+  mesh "Cube" 0.54901963 0.54901963 0.53333336 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Crate A"
+  guid "c1d028ca101afb4eae1fe179576d8af9"
+  active 1
+  parent -1
+  transform 0 0.5 -1.5 0 0 0 1 1 1 1
+  mesh "Cube" 0.80784315 0.54901963 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Crate B"
+  guid "a704b28d6859e7a2091197e8839d1ba8"
+  active 1
+  parent -1
+  transform 0.12 1.4 -1.5 0 0.1736482 0 0.9848078 0.8 0.8 0.8
+  mesh "Cube" 0.80784315 0.54901963 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Crate C"
+  guid "c490a91edefb2182868dafd2effacfba"
+  active 1
+  parent -1
+  transform 1.25 0.35 -1.1 0 -0.1305262 0 0.9914449 0.7 0.7 0.7
+  mesh "Cube" 0.27450982 0.50980395 0.78431374 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "Crate D"
+  guid "aa1cbfcaf17141ba0ba3ef6fa1b158cf"
+  active 1
+  parent -1
+  transform -1.2 0.25 -1.3 0 0.3007058 0 0.95371693 0.5 0.5 0.5
+  mesh "Cube" 0.47058824 0.74509805 0.43137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Nook Back Wall"
+  guid "77c30b917d7d4d5a56b203eb8b9b7f94"
+  active 1
+  parent -1
+  transform 3 1 0.2 0 0 0 1 3 2 0.3
+  mesh "Cube" 0.8392157 0.8156863 0.76862746 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Nook Side Wall"
+  guid "dcc05310a3538aa98efa73c6d2199562"
+  active 1
+  parent -1
+  transform 4.65 1 -1.3 0 0 0 1 0.3 2 3.3
+  mesh "Cube" 0.8392157 0.8156863 0.76862746 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Nook Box"
+  guid "5d389e74d5247f7df663c4cdbebe485b"
+  active 1
+  parent -1
+  transform 3.5 0.3 -0.45 0 0.08715574 0 0.9961947 0.6 0.6 0.6
+  mesh "Cube" 0.78431374 0.3529412 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Near Box Yellow"
+  guid "964cf83cf378ae8cf1828340fe32b818"
+  active 1
+  parent -1
+  transform -1.3 0.35 -4.5 0 0.21643962 0 0.976296 0.7 0.7 0.7
+  mesh "Cube" 0.9019608 0.78431374 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Near Box Pink"
+  guid "b81c4d352eac27718de992e23e6d9bde"
+  active 1
+  parent -1
+  transform 1.5 0.25 -4.8 0 -0.1736482 0 0.9848078 0.5 0.5 0.5
+  mesh "Cube" 0.8235294 0.3529412 0.5882353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Round Pillar 1"
+  guid "bd6b2e374ada3833ecced6c1f51bd73a"
+  active 1
+  parent -1
+  transform -3.6 1.6 3 0 0 0 1 0.9 3.2 0.9
+  mesh "Cylinder" 0.87058824 0.74509805 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Square Pillar 1"
+  guid "7809bd4ba45e8d649a39649b26e828ab"
+  active 1
+  parent -1
+  transform 3.6 1.6 4.8 0 0 0 1 0.9 3.2 0.9
+  mesh "Cube" 0.23529412 0.627451 0.6666667 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Round Pillar 2"
+  guid "6b106160540023e0d925c62914f3213f"
+  active 1
+  parent -1
+  transform -3.6 1.6 6.6 0 0 0 1 0.9 3.2 0.9
+  mesh "Cylinder" 0.78431374 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Square Pillar 2"
+  guid "c1768af1815aca4b06b3ce48aa598304"
+  active 1
+  parent -1
+  transform 3.6 1.6 8.4 0 0 0 1 0.9 3.2 0.9
+  mesh "Cube" 0.5882353 0.43137255 0.74509805 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Round Pillar 3"
+  guid "41df0a20da129f9104807ee58814e8e8"
+  active 1
+  parent -1
+  transform -3.6 1.6 10.2 0 0 0 1 0.9 3.2 0.9
+  mesh "Cylinder" 0.23529412 0.627451 0.6666667 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Square Pillar 3"
+  guid "cb5a37248c2e92b4214eab42caf75f76"
+  active 1
+  parent -1
+  transform 3.6 1.6 12 0 0 0 1 0.9 3.2 0.9
+  mesh "Cube" 0.87058824 0.74509805 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Round Pillar 4"
+  guid "a45b0baf0430dd09379d689afb6526ac"
+  active 1
+  parent -1
+  transform -3.6 1.6 13.799999 0 0 0 1 0.9 3.2 0.9
+  mesh "Cylinder" 0.5882353 0.43137255 0.74509805 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Square Pillar 4"
+  guid "a815d403c19a166a59527c5bdc5d5922"
+  active 1
+  parent -1
+  transform 3.6 1.6 15.599999 0 0 0 1 0.9 3.2 0.9
+  mesh "Cube" 0.78431374 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Round Pillar 5"
+  guid "1dada0a05b4716d6c0771157434c887d"
+  active 1
+  parent -1
+  transform -3.6 1.6 17.4 0 0 0 1 0.9 3.2 0.9
+  mesh "Cylinder" 0.87058824 0.74509805 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Square Pillar 5"
+  guid "58c2c9b6f6532cafa95fd0b984a10db6"
+  active 1
+  parent -1
+  transform 3.6 1.6 19.199999 0 0 0 1 0.9 3.2 0.9
+  mesh "Cube" 0.23529412 0.627451 0.6666667 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Round Pillar 6"
+  guid "b3c3172581fb331d2b83f40aff6b7359"
+  active 1
+  parent -1
+  transform -3.6 1.6 21 0 0 0 1 0.9 3.2 0.9
+  mesh "Cylinder" 0.78431374 0.27450982 0.23529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Square Pillar 6"
+  guid "8c77ffe8f87f38615fb6b449dcaf510c"
+  active 1
+  parent -1
+  transform 3.6 1.6 22.8 0 0 0 1 0.9 3.2 0.9
+  mesh "Cube" 0.5882353 0.43137255 0.74509805 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Round Pillar 7"
+  guid "13f53ab578739f3bcbdcbb962c46cb73"
+  active 1
+  parent -1
+  transform -3.6 1.6 24.599998 0 0 0 1 0.9 3.2 0.9
+  mesh "Cylinder" 0.23529412 0.627451 0.6666667 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 25 "Square Pillar 7"
+  guid "2ae7bd717d34958cdae1159c115a11cf"
+  active 1
+  parent -1
+  transform 3.6 1.6 26.399998 0 0 0 1 0.9 3.2 0.9
+  mesh "Cube" 0.87058824 0.74509805 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 26 "Stone 1"
+  guid "48bb207015819d077b941246a6d65906"
+  active 1
+  parent -1
+  transform 0 0.25 3 0 0 0 1 1 0.5 1
+  mesh "Cube" 0.74509805 0.74509805 0.7294118 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 27 "Stone 2"
+  guid "d6c1cea9109c905009f7f6ed77d75d71"
+  active 1
+  parent -1
+  transform 0 0.25 7 0 0 0 1 1 0.5 1
+  mesh "Cube" 0.74509805 0.74509805 0.7294118 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 28 "Stone 3"
+  guid "cd98b97fba00f59488f6ec80e6a2ab54"
+  active 1
+  parent -1
+  transform 0 0.25 11 0 0 0 1 1 0.5 1
+  mesh "Cube" 0.74509805 0.74509805 0.7294118 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 29 "Stone 4"
+  guid "d27638a74ff07947fc29e17463ee0cfc"
+  active 1
+  parent -1
+  transform 0 0.25 15 0 0 0 1 1 0.5 1
+  mesh "Cube" 0.74509805 0.74509805 0.7294118 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 30 "Stone 5"
+  guid "81e31a49dbc5153b1a0f1d0a8f702d78"
+  active 1
+  parent -1
+  transform 0 0.25 19 0 0 0 1 1 0.5 1
+  mesh "Cube" 0.74509805 0.74509805 0.7294118 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end

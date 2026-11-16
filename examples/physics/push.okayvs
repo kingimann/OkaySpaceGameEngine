@@ -1,0 +1,8 @@
+# Push the heavy crate along at 5 m/s as soon as Play starts.
+node 1 OnStart
+entry OnStart 1
+node 2 SetVelocity
+default 2 0 5
+default 2 1 0
+default 2 2 0
+exec 1 0 2

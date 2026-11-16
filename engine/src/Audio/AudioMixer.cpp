@@ -8,6 +8,7 @@
 #include "okay/Math/Mathf.hpp"
 #include "okay/Physics/Physics3D.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/Time.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -243,6 +244,10 @@ Vec3 MotionVelocity(const Vec3& now, const Vec3& then, float dt) {
 
 } // namespace
 
+bool AudioMixer::GamePausedForAudio() {
+    return !(Time::TimeScale() > 0.0f);
+}
+
 void AudioMixer::ResetSpatial() {
     ReverbBus().Clear();
     Motion() = MotionMemory{};
@@ -254,13 +259,17 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
     const float dt = (float)frames / (float)outRate;
     const Vec3 right = listenerRight.SqrMagnitude() > 1e-8f ? listenerRight.Normalized() : Vec3::Zero;
     const auto sources = scene.FindObjectsOfType<AudioSource>();
+    // While the game is paused, sources in a group that pauses with it are held:
+    // no sound, and nothing about them moves (playhead, one-shots, fade).
+    const bool gamePaused = GamePausedForAudio();
+    auto held = [&](const AudioSource& s) { return gamePaused && PausesWithGame(s.group); };
 
     // Ducking: while anything in the Voice group plays, the Music group dips to
     // duckLevel (attack), then comes back up (release). Ramped across the buffer.
     bool voiceActive = false;
     if (duckMusicUnderVoice)
         for (AudioSource* src : sources)
-            if (src->group == AudioGroup::Voice && Sounding(*src, src->m_playing, !src->m_shots.empty())) { voiceActive = true; break; }
+            if (src->group == AudioGroup::Voice && !held(*src) && Sounding(*src, src->m_playing, !src->m_shots.empty())) { voiceActive = true; break; }
     const float duckFrom = duckGain;
     const float duckTarget = (duckMusicUnderVoice && voiceActive) ? Mathf::Clamp(duckLevel, 0.0f, 1.0f) : 1.0f;
     const float duckTime = duckTarget < duckGain ? duckAttack : duckRelease;
@@ -291,6 +300,15 @@ int AudioMixer::RenderStereo(Scene& scene, float* out, int frames) {
     int mixed = 0;
     for (AudioSource* src : sources) {
         if (!Sounding(*src, src->m_playing, !src->m_shots.empty())) continue;
+        if (held(*src)) {
+            // Keep the remembered position current, so resuming does not read the
+            // whole pause's movement as one buffer of motion (a doppler jump).
+            if (src->spatial && src->transform) {
+                src->m_spatialPos = src->transform->Position();
+                src->m_hasSpatialPos = true;
+            }
+            continue;
+        }
 
         float vol = src->volume * GroupGain(src->group);
         float pan = src->pan;

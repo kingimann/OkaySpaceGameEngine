@@ -127,6 +127,14 @@ Every source plays through one **group**, under the **master** volume:
 - **Music**, **SFX**, **UI** and **Voice** each have a volume (0 to 1) and a mute.
 - **Ducking**: when it's on, the Music group dips while anything in the Voice group
   plays (level, attack and release are adjustable), so dialogue stays clear.
+- **Pause**: while the game is paused (the Pause Menu, `Game::SetPaused(true)`, any
+  pause hold, or `Time.timeScale = 0`), the **SFX** and **Voice** groups stop where
+  they are: no sound, and the playhead, one-shots and fades wait. When the game
+  resumes they carry on from the same sample, so a gunshot or a voice line is not
+  lost. **Music** and **UI** keep playing (menu music, button clicks). Change it per
+  group in code: `AudioMixer::pausesWithGame[(int)AudioGroup::Music] = true;` pauses
+  music too. Slow motion (a scale above 0) and a hit stop do not pause or slow sound.
+  The cut is instant (no fade), so a loud sound can click as it stops.
 
 Open **View > Panels > Audio Mixer** in the editor to set the levels, watch the
 output meters while playing, and try ducking. Levels set there are for the editor

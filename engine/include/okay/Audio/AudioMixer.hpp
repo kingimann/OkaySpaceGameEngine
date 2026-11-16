@@ -10,7 +10,8 @@ class Scene;
 /// call RenderStereo() to pull audio; tests call Render() for a mono mix.
 struct AudioMixer {
     /// Interleaved stereo (L, R, L, R, ...) into `out`, `frames` frames long,
-    /// clamped to [-1, 1]; advances each source's playhead. Returns the number
+    /// clamped to [-1, 1]; advances each source's playhead (except sources held by a
+    /// game pause, see pausesWithGame). Returns the number
     /// of sources mixed. The mix is scaled by the source's group volume and by
     /// `masterVolume` (and silenced when `muted`).
     static int RenderStereo(Scene& scene, float* out, int frames);
@@ -41,6 +42,20 @@ struct AudioMixer {
         const int i = (int)g;
         return (i >= 0 && i < (int)AudioGroup::Count) ? names[i] : "SFX";
     }
+    /// Which groups stop while the game is paused (Game::SetPaused, a pause hold, or
+    /// Time timeScale 0). A paused source makes no sound, and its playhead, one-shots
+    /// and fade wait; when the game resumes it carries on from the same sample. By
+    /// default SFX and Voice pause, and Music and UI keep playing (menu music and
+    /// button clicks over the Pause Menu). A game can change any entry. Slow motion
+    /// (a scale above 0) and a hit stop do not pause or slow sound.
+    static inline bool pausesWithGame[(int)AudioGroup::Count] = {true, false, false, true};
+    static bool PausesWithGame(AudioGroup g) {
+        const int i = (int)g;
+        return i >= 0 && i < (int)AudioGroup::Count && pausesWithGame[i];
+    }
+    /// True while the game counts as paused for sound: Game paused (Time frozen) or a
+    /// time scale of 0. A hit stop is not a pause.
+    static bool GamePausedForAudio();
     /// "music", "SFX", ... (any case) -> group; false when the name is unknown.
     static bool GroupFromName(const char* name, AudioGroup& out);
 

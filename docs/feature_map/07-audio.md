@@ -11,22 +11,22 @@ model (`Core/Subtitles`, see 10.1 and 32.2) that audio does not feed yet.
 - **What:** The mixer sums every playing audio source into stereo, applies group volumes, master volume, mute, music ducking under voice, distance panning, and (when asked) doppler, occlusion, distance muffling and a reverb zone, and reports peak levels for the editor meters.
 - **Parts:**
   - 7.1.1 Mixer core - `Audio/AudioMixer` - `RenderStereo` and `Render`: voices, resampling to the device rate, stereo voices, pan gains (balance for stereo 2D, mono-then-pan for 3D), one-pole low-pass per channel, streaming voices, clamping
-  - 7.1.2 Groups, master and mute - `Audio/AudioMixer` - SFX, Music, UI and Voice groups each with volume and mute under `masterVolume`; `focusMuted` for a background window
+  - 7.1.2 Groups, master and mute - `Audio/AudioMixer` - SFX, Music, UI and Voice groups each with volume and mute under `masterVolume`; `focusMuted` for a background window; `pausesWithGame` holds SFX and Voice (no sound, playhead and one-shots wait) while the game is paused or the time scale is 0, Music and UI play on
   - 7.1.3 Ducking - `Audio/AudioMixer` - Music dips while a Voice source plays (level, attack, release)
   - 7.1.4 Spatial listener - `Audio/AudioMixer` - `SetListener` set from the main camera each audio refill; `Attenuation` and `PanGains`; doppler from the listener and source motion between refills
   - 7.1.7 Reverb bus - `Audio/SpatialFx` (`RoomReverb`, old name `SchroederReverb`) - our own feedback delay network (eight prime-length lines, Hadamard mix, decay-time loss and low-pass per line, two input diffusers; written from the papers, numbers our own), fed by 3D sources while the listener is inside a Reverb volume; skipped entirely when dry so an old mix is unchanged
   - 7.1.5 Audio Mixer panel - `editor/main.cpp` - master and group sliders, mutes, output meters, ducking controls
   - 7.1.6 Device feed - `player/main.cpp`, `editor/main.cpp` - open the audio device through `okay::platform` (SDL2 by default, our own ALSA backend with `-DOKAY_PLATFORM_BACKEND=own`) and keep about 70 ms queued from `RenderStereo`
 - **Code:** `Audio/AudioMixer`, `editor/main.cpp` (Audio Mixer panel), `player/main.cpp` (audio device loop)
-- **API:** `AudioMixer::masterVolume`, `AudioMixer::groupVolume`, `AudioMixer::groupMuted`, `AudioMixer::duckMusicUnderVoice`, `AudioMixer::SetListener`, `AudioMixer::peak`, script `Audio.SetGroupVolume`, `set_group_volume`, `set_ducking`
+- **API:** `AudioMixer::masterVolume`, `AudioMixer::groupVolume`, `AudioMixer::groupMuted`, `AudioMixer::duckMusicUnderVoice`, `AudioMixer::pausesWithGame`, `AudioMixer::GamePausedForAudio`, `AudioMixer::SetListener`, `AudioMixer::peak`, script `Audio.SetGroupVolume`, `set_group_volume`, `set_ducking`
 - **Editor:** View > Panels > Audio Mixer
 - **Docs:** `docs/audio.md`
-- **Tests:** `audio_mixer`, `master_volume`, `audio`, `spatial_audio`, `volumes`
+- **Tests:** `audio_mixer`, `master_volume`, `audio`, `spatial_audio`, `volumes`, `pause_sound`
 - **Status:** Works - AudioMixer.hpp and the mixing code in AudioMixer.cpp read (ducking ramp, low-pass, spatial pan, doppler, occlusion, distance low-pass, reverb send); player and editor feed it; covered by `audio_mixer`, `master_volume` and `spatial_audio`
 - **Open:** only four fixed groups (no user-made buses, effect chain or snapshots); levels set in the editor panel are for the editor session only (players save their own, 7.4); one reverb bus for the listener (not a send per source, and the tail is not added once the listener has left the zone)
 - **Related:** 7.3, 7.4, 4.7, 37.1
 - **Words:** mixer, Audio Mixer, master volume, group volume, ducking, bus, SFX, Music, UI, Voice, mute, meters, peak, AudioMixer
-- **Seen as:** no sound at all; music too loud under dialogue; everything the same volume; the sound pans the wrong way or stays in the centre; sound stops when the window loses focus
+- **Seen as:** no sound at all; music too loud under dialogue; everything the same volume; the sound pans the wrong way or stays in the centre; sound stops when the window loses focus; sound keeps playing in the pause menu
 - **Ask me like:** "make the music quieter while someone is talking"; "why is the game silent in the build?"
 
 ### 7.2 Formats and clips

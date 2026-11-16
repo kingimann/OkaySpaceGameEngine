@@ -53,6 +53,7 @@ loop.OnUpdate      = [&](float dt) { scene.Update(dt); };   // once a frame, dt 
 loop.OnLateUpdate  = [&](float dt) { camera.Follow(dt); };
 loop.OnPause       = [&] { audio.Duck(true); };
 loop.OnResume      = [&] { audio.Duck(false); };
+// (Game sounds already stop on pause by themselves: AudioMixer::pausesWithGame, docs/audio.md.)
 
 bool running = true;
 while (running) {

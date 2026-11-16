@@ -70,6 +70,11 @@ add_executable(test_audio_mixer test_audio_mixer.cpp)
 target_link_libraries(test_audio_mixer PRIVATE okay::engine)
 add_test(NAME audio_mixer COMMAND test_audio_mixer)
 
+# Pausing the game pauses game sounds (#888 finding 64).
+add_executable(test_pause_sound test_pause_sound.cpp)
+target_link_libraries(test_pause_sound PRIVATE okay::engine)
+add_test(NAME pause_sound COMMAND test_pause_sound)
+
 add_executable(test_spatial_audio test_spatial_audio.cpp)
 target_link_libraries(test_spatial_audio PRIVATE okay::engine)
 target_compile_definitions(test_spatial_audio PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

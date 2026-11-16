@@ -1189,6 +1189,12 @@ add_executable(bench_voxel_edit bench_voxel_edit.cpp)
 target_link_libraries(bench_voxel_edit PRIVATE okay::engine)
 add_executable(bench_voxel_real bench_voxel_real.cpp)
 target_link_libraries(bench_voxel_real PRIVATE okay::engine)
+add_executable(test_voxel_overlay_depth test_voxel_overlay_depth.cpp)
+target_link_libraries(test_voxel_overlay_depth PRIVATE okay::engine)
+add_test(NAME voxel_overlay_depth COMMAND test_voxel_overlay_depth)
+
+add_executable(bench_voxel_frame bench_voxel_frame.cpp)
+target_link_libraries(bench_voxel_frame PRIVATE okay::engine)
 
 add_executable(test_api_expand test_api_expand.cpp)
 target_link_libraries(test_api_expand PRIVATE okay::engine)
@@ -1218,6 +1224,24 @@ add_test(NAME camera_cine COMMAND test_camera_cine)
 add_executable(test_player_fixes test_player_fixes.cpp)
 target_link_libraries(test_player_fixes PRIVATE okay::engine)
 add_test(NAME player_fixes COMMAND test_player_fixes)
+
+# The player deep audit (docs/player_audit.md): one check per proven bug, each failing with OKAY_OLD_PLAYER=1.
+add_executable(test_player_deep test_player_deep.cpp)
+target_link_libraries(test_player_deep PRIVATE okay::engine)
+add_test(NAME player_deep COMMAND test_player_deep)
+
+# The shipped obstacle course scene (examples/player): the file is what the code writes; a player walks its stations.
+add_executable(test_player_course test_player_course.cpp)
+target_link_libraries(test_player_course PRIVATE okay::engine)
+target_compile_definitions(test_player_course PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_course COMMAND test_player_course)
+add_executable(test_player_feel test_player_feel.cpp)
+target_link_libraries(test_player_feel PRIVATE okay::engine)
+add_test(NAME player_feel COMMAND test_player_feel)
+add_executable(test_player_feel_lab test_player_feel_lab.cpp)
+target_link_libraries(test_player_feel_lab PRIVATE okay::engine)
+target_compile_definitions(test_player_feel_lab PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_feel_lab COMMAND test_player_feel_lab)
 
 add_executable(test_terrain_ops test_terrain_ops.cpp)
 target_link_libraries(test_terrain_ops PRIVATE okay::engine)
@@ -1759,6 +1783,11 @@ add_test(NAME cheat_detect COMMAND test_cheat_detect)
 add_executable(test_anticheat_sim test_anticheat_sim.cpp)
 target_link_libraries(test_anticheat_sim PRIVATE okay::engine)
 add_test(NAME anticheat_sim COMMAND test_anticheat_sim)
+
+# Anti-cheat hardening follow-up: ban list file, audit log, packet ceiling, input regularity, cheat simulator, hostile-field fuzz
+add_executable(test_anticheat_hard test_anticheat_hard.cpp)
+target_link_libraries(test_anticheat_hard PRIVATE okay::engine)
+add_test(NAME anticheat_hard COMMAND test_anticheat_hard)
 
 add_executable(test_net_anticheat_ph1 test_net_anticheat_ph1.cpp)
 target_link_libraries(test_net_anticheat_ph1 PRIVATE okay::engine)

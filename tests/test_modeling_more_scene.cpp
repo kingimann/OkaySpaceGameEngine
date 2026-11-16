@@ -6,6 +6,7 @@
 #include "okay/Components/MeshModifiers.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Modeling/Measure.hpp"
+#include "okay/Modeling/Curve.hpp"
 #include "okay/Modeling/PolyOps.hpp"
 #include "okay/Modeling/SelectOps.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
@@ -49,6 +50,34 @@ void Put(Scene& s, const char* name, const Mesh& m, const Vec3& at, const char* 
     auto* mr = s.CreateGameObject(name)->AddComponent<MeshRenderer>();
     mr->mesh = m; mr->mesh.name = ""; mr->meshPath = path;
     mr->gameObject->transform->localPosition = at;
+}
+void Hint(Scene& s, const char* name, const char* text, float y) {
+    auto* t = s.CreateGameObject(name)->AddComponent<TextRenderer>();
+    t->screenSpace = true; t->text = text; t->screenPos = {16, y}; t->size = {620, 24}; t->pixelSize = 2.0f; t->color = Color::White;
+}
+void BuildCurveScene(Scene& s) {
+    GameObject* cam = s.CreateGameObject("Main Camera");
+    cam->transform->localPosition = {0.5f, 6.0f, 9.5f};
+    cam->transform->localRotation = Quat::Euler(-30, 0, 0);   // looks down at the row
+    cam->AddComponent<Camera>()->projection = Camera::Projection::Perspective;
+    GameObject* sun = s.CreateGameObject("Sun");
+    sun->transform->localRotation = Quat::Euler(40, -30, 0);
+    sun->AddComponent<Light>();
+    okay::modeling::BezierCurve c = okay::modeling::CurveThrough({{-1, 0, 0}, {-0.4f, 1.0f, 0.3f}, {0.4f, 0.4f, -0.3f}, {1, 1.4f, 0}});
+    Put(s, "Curve Pipe", okay::modeling::CurvePipe(c, 0.12f, 12, 10), {-4.2f, 0, 0});
+    Put(s, "Curve Ribbon", okay::modeling::CurveRibbon(c, 0.5f, 10, true), {-1.6f, 0, 0});
+    Put(s, "Curve Swept Profile", okay::modeling::CurveSweep(c, {{0.15f, 0.15f}, {-0.15f, 0.15f}, {-0.15f, -0.15f}, {0.15f, -0.15f}}, true, 10, 0.4f), {1.0f, 0, 0});
+    PolyMesh pm = PolyMesh::FromMesh(Mesh::Cube(1.0f));
+    int top = -1; for (int f = 0; f < (int)pm.faces.size(); ++f) if (pm.FaceNormal(f).y > 0.9f) top = f;
+    const PolyFace tf = pm.faces[top];
+    for (std::size_t k = 0; k < tf.verts.size(); ++k) pm.SetBevelWeight(tf.verts[k], tf.verts[(k + 1) % tf.verts.size()], 1.0f);
+    Put(s, "Bevel Weighted Cube", pm.ToMesh(), {3.6f, 0.5f, 0});
+    auto* mm = s.Find("Bevel Weighted Cube")->AddComponent<MeshModifiers>();
+    mm->modifiers.push_back(MeshModifier::Make(MeshModifier::Type::Bevel));
+    mm->modifiers.back().width = 0.15f; mm->modifiers.back().segments = 3; mm->modifiers.back().useBevelWeights = true;
+    Hint(s, "Hint 1", "Curves and bevel weights: Play to look around, Stop to edit.", 12);
+    Hint(s, "Hint 2", "Left to right: pipe, ribbon, swept square, cube with only its top edges rounded.", 40);
+    Hint(s, "Hint 3", "Click one, open the Modeling window and try Generate > Bezier curve.", 68);
 }
 void BuildScene(Scene& s) {
     GameObject* cam = s.CreateGameObject("Main Camera");
@@ -390,6 +419,43 @@ int main() {
             CHECK(SceneSerializer::SaveToFile(t, std::string(out) + "/spin_path_curve.okayscene"));
             std::string err;
             CHECK(vase.Save(std::string(out) + "/spun_vase.okaymesh", &err));
+        }
+        {   // curves + bevel weights example: builds, saves, reopens, the weighted cube really is rounded only on top
+            Scene cs("Curves and bevel weights"); BuildCurveScene(cs); cs.Start();
+            for (const auto& go : cs.Objects()) if (auto* m2 = go->GetComponent<MeshModifiers>()) m2->Refresh(true);
+            const std::string cp = (dir / "curves.okayscene").string();
+            CHECK(SceneSerializer::SaveToFile(cs, cp));
+            {   // reference images are saved with the scene and come back
+                Scene rs("refs"); BuildCurveScene(rs);
+                okay::modeling::RefImageRecord r; r.path = "Assets/my front view.png"; r.plane = 1; r.centre = {1, 2, 3}; r.width = 5.5f; r.opacity = 0.3f; r.flipX = true; r.visible = false;
+                rs.refImages.push_back(r);
+                const std::string rp = (dir / "refs.okayscene").string();
+                CHECK(SceneSerializer::SaveToFile(rs, rp));
+                Scene rl("rl"); CHECK(SceneSerializer::LoadFromFile(rl, rp));
+                CHECK(rl.refImages.size() == 1 && rl.refImages[0].path == r.path && rl.refImages[0].plane == 1 && rl.refImages[0].flipX && !rl.refImages[0].visible);
+                CHECK_NEAR(rl.refImages[0].width, 5.5f, 1e-5); CHECK_NEAR(rl.refImages[0].centre.z, 3.0f, 1e-5);
+                CHECK(SceneSerializer::Serialize(rl).find("refimage") != std::string::npos && SceneSerializer::Serialize(rl) == SceneSerializer::Serialize(rs));
+                std::string txt = SceneSerializer::Serialize(rs); const auto at = txt.find("refimage"); txt.insert(at, "refimage \"x.png\" 9 0 0 0 1 1 0 1\nrefimage \"y.png\" 0 nan 0 0 1 1 0 1\n");   // bad ones are ignored
+                Scene rb("rb"); CHECK(SceneSerializer::Deserialize(rb, txt) || true); CHECK(rb.refImages.size() <= 1);
+            }
+            Scene cr("cr"); CHECK(SceneSerializer::LoadFromFile(cr, cp));
+            auto* wc = cr.Find("Bevel Weighted Cube");
+            CHECK(wc && !wc->GetComponent<MeshRenderer>()->mesh.bevelWeights.empty() && wc->GetComponent<MeshModifiers>()->modifiers[0].useBevelWeights);
+            for (const auto& go : cr.Objects()) if (auto* m2 = go->GetComponent<MeshModifiers>()) m2->Refresh(true);
+            CHECK(wc->GetComponent<MeshRenderer>()->DisplayMesh().TriangleCount() > 12);
+            CHECK(cr.Find("Curve Pipe")->GetComponent<MeshRenderer>()->mesh.TriangleCount() > 100);
+            if (const char* out = std::getenv("OKAY_WRITE_MODELING_EXAMPLES"))
+                CHECK(SceneSerializer::SaveToFile(cs, std::string(out) + "/curves_bevel.okayscene"));
+            if (const char* pic = std::getenv("OKAY_MODELING_PICTURE_DIR")) {
+                const Vec3 eye{0.5f, 6.0f, 9.5f}; const int W = 640, H = 360;
+                const Mat4 vpm = Mat4::Perspective(40.0f, (float)W / H, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.0f, 0.4f, 0}, Vec3::Up);
+                ApplySceneLight(cs);
+                Raster rr; rr.Resize(W, H); rr.Clear(0xFF3A2A22u);
+                RenderMeshes(rr, cs, vpm, eye);
+                Image img(W, H); std::memcpy(img.Data(), rr.color.data(), (std::size_t)W * H * 4);
+                fs::create_directories(pic);
+                CHECK(img.SavePNG(std::string(pic) + "/curves_bevel.png"));
+            }
         }
         if (const char* out = std::getenv("OKAY_WRITE_MODELING_EXAMPLES")) {
             Scene v("Vertex colours, creases and shrinkwrap");

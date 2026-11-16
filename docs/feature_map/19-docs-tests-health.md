@@ -213,11 +213,11 @@ run one. Since 2.848.0 the suite grew by about 65 `add_test` lines and 13 docs p
 - **Docs:** `ROADMAP.md`
 - **Tests:** -
 - **Status:** Partial - kept current by the coordinating session, but parts are stale
-- **Open:** the anti-cheat hardening list still shows items 5, 6, 8, 9, 10, 12, 13, 14 as open, although `git log` has #350, #360, #363, #365, #368, #376, #384, #392 and #394 on main; the "Now" table is dated 2026-10-26; rows up to 2.851.0 are in (each merged with its release PR); 2.852.0 (draft PR #588) will add its own
+- **Open:** the anti-cheat hardening list is now ticked from the code (`docs/anticheat_hardening_status.md`); the "Now" table is dated 2026-10-26; rows up to 2.851.0 are in (each merged with its release PR); 2.852.0 (draft PR #588) will add its own
 - **Related:** 18.4, 19.1
 - **Words:** roadmap, ROADMAP.md, plan, release notes, pull request template, what is next
 - **Seen as:** the roadmap disagrees with what is merged
-- **Ask me like:** "update the roadmap's hardening list from git log"
+- **Ask me like:** "update the roadmap's hardening list from the code"
 
 ### 19.6 Repository hygiene
 - **What:** Files that should not be in the repository, or checks that are missing, found while mapping.

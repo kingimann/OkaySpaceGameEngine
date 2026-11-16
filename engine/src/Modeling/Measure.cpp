@@ -1,3 +1,4 @@
+#include <map>
 #include "okay/Modeling/Measure.hpp"
 #include <algorithm>
 #include <cmath>
@@ -132,12 +133,36 @@ SnapHit SnapToGeometry(const Mesh& m, const Vec3& p, SnapTarget target, float ra
         for (int v = 0; v < (int)m.vertices.size(); ++v) if (!skip[v]) offer(m.vertices[v], v, -1);
         return best;
     }
+    // With polygons known (n-gons made of several triangles) the edge between two triangles of the same
+    // polygon is not a real edge: it is not offered. Edges are keyed by vertex pair.
+    std::map<std::pair<int, int>, int> inner;   // edge -> polygon id seen first; -1 once found to be a real edge
+    const bool hasPoly = target == SnapTarget::Edge && (int)m.polyFace.size() == m.TriangleCount();
+    if (hasPoly) {
+        for (int t = 0; t < m.TriangleCount(); ++t) for (int k = 0; k < 3; ++k) {
+            const int a = m.triangles[t * 3 + k], b = m.triangles[t * 3 + (k + 1) % 3];
+            const std::pair<int, int> key{std::min(a, b), std::max(a, b)};
+            auto it = inner.find(key);
+            if (it == inner.end()) inner[key] = m.polyFace[t];
+            else if (it->second != m.polyFace[t]) it->second = -1;
+        }
+        // An edge used by one triangle, or by triangles of different polygons, is real; mark the rest as inner (-2 = counted twice in one polygon).
+        std::map<std::pair<int, int>, int> uses;
+        for (int t = 0; t < m.TriangleCount(); ++t) for (int k = 0; k < 3; ++k) {
+            const int a = m.triangles[t * 3 + k], b = m.triangles[t * 3 + (k + 1) % 3];
+            ++uses[{std::min(a, b), std::max(a, b)}];
+        }
+        for (auto& e : inner) if (e.second >= 0 && uses[e.first] < 2) e.second = -1;
+    }
     for (int t = 0; t < m.TriangleCount(); ++t) {
         const int i[3] = {m.triangles[t * 3], m.triangles[t * 3 + 1], m.triangles[t * 3 + 2]};
-        if (!Ok(m, i[0]) || !Ok(m, i[1]) || !Ok(m, i[2]) || skip[i[0]] || skip[i[1]] || skip[i[2]]) continue;
-        if (target == SnapTarget::Face) offer(ClosestOnTriangle(p, m.vertices[i[0]], m.vertices[i[1]], m.vertices[i[2]]), t, -1);
-        else for (int k = 0; k < 3; ++k) {
+        if (!Ok(m, i[0]) || !Ok(m, i[1]) || !Ok(m, i[2])) continue;
+        if (target == SnapTarget::Face) {
+            if (skip[i[0]] || skip[i[1]] || skip[i[2]]) continue;
+            offer(ClosestOnTriangle(p, m.vertices[i[0]], m.vertices[i[1]], m.vertices[i[2]]), t, -1);
+        } else for (int k = 0; k < 3; ++k) {
             const int a = i[k], b = i[(k + 1) % 3];
+            if (skip[a] || skip[b]) continue;                  // only the edges that touch a moving vertex are out
+            if (hasPoly) { auto it = inner.find({std::min(a, b), std::max(a, b)}); if (it != inner.end() && it->second >= 0) continue; }
             offer(ClosestOnSegment(p, m.vertices[a], m.vertices[b]), std::min(a, b), std::max(a, b));
         }
     }

@@ -46,6 +46,18 @@ fi
 [ -n "${OKAY_IMGUI_SRC:-}" ] && EXTRA+=("-DFETCHCONTENT_SOURCE_DIR_IMGUI=$OKAY_IMGUI_SRC")
 # Bake a default account server into the binaries when provided (e.g. from a CI
 # secret), so the release build is online with no key file on disk.
+# The account server comes from config/public-account.json (CMake reads it itself); OKAY_DEFAULT_ACCOUNT_URL / _KEY in the
+# environment (the optional GitHub repository variables) override it. Never print a value.
+. "$(dirname "$0")/public-account.sh"
+_ACCT_URL="${OKAY_DEFAULT_ACCOUNT_URL:-$(okay_public_account url)}"
+_ACCT_KEY="${OKAY_DEFAULT_ACCOUNT_KEY:-$(okay_public_account key)}"
+# Keep the key out of the logs (GitHub Actions only; a publishable key is public by design, but keep it out of sight).
+[ -n "${GITHUB_ACTIONS:-}" ] && [ -n "$_ACCT_KEY" ] && echo "::add-mask::$_ACCT_KEY"
+# CI release/test builds set OKAY_REQUIRE_ACCOUNT=1: stop if neither the override nor the file gives both values, so nothing ships offline.
+if [ "${OKAY_REQUIRE_ACCOUNT:-}" = "1" ] && { [ -z "$_ACCT_URL" ] || [ -z "$_ACCT_KEY" ]; }; then
+    echo "::error title=No account server for this build::config/public-account.json has no url/key and OKAY_DEFAULT_ACCOUNT_URL / _KEY are not set. See docs/accounts.md." >&2
+    exit 1
+fi
 [ -n "${OKAY_DEFAULT_ACCOUNT_URL:-}" ] && EXTRA+=("-DOKAY_DEFAULT_ACCOUNT_URL=$OKAY_DEFAULT_ACCOUNT_URL")
 [ -n "${OKAY_DEFAULT_ACCOUNT_KEY:-}" ] && EXTRA+=("-DOKAY_DEFAULT_ACCOUNT_KEY=$OKAY_DEFAULT_ACCOUNT_KEY")
 # The launcher's trusted anti-cheat keys (public ed25519 keys, hex, comma-separated;
@@ -155,7 +167,7 @@ fi
 # File > Examples > Visual Script Node Playground opens its scenes from (tests/test_examples_work.cpp checks that every
 # folder a File > Examples entry needs is listed here). Left out on purpose: account-server (a Python server), netdemo
 # and physicsdemo (C++ sources), editor-plugins, and the loose graphs in visual_script itself (not scenes).
-EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls visual_script/playground ui_text voxel modeling modeling_tools fp_hand"
+EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls visual_script/playground ui_text voxel modeling modeling_tools fp_hand player"
 for d in $EXAMPLE_DIRS; do
     [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
     mkdir -p "$OUT_DIR/examples/$d"

@@ -3,6 +3,7 @@
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Occluder.hpp"
 #include "okay/Core/Profiler.hpp"
+#include "okay/Core/FrameOverlay.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Scene/GameObject.hpp"
@@ -1225,6 +1226,18 @@ void VoxelTerrain::DestroyChunkObjects() {
     }
 }
 
+long VoxelTerrain::DrawnTriangles() const {
+    // cached for a few frames: summing the chunk meshes is a walk over every chunk object
+    if (trisCacheTick_ != lastStats.chunksRemeshed + (int)editCount * 7 + (int)chunked_ || trisCache_ < 0) {
+        long n = 0;
+        if (gameObject) if (auto* mr = gameObject->GetComponent<MeshRenderer>()) n += mr->mesh.TriangleCount();
+        for (const McChunk& c : mcChunks_)
+            if (c.obj) if (GameObject* g = GameObject::FromInstanceId(c.obj)) if (auto* mr = g->GetComponent<MeshRenderer>()) n += mr->mesh.TriangleCount();
+        trisCache_ = n; trisCacheTick_ = lastStats.chunksRemeshed + (int)editCount * 7 + (int)chunked_;
+    }
+    return trisCache_;
+}
+
 int VoxelTerrain::ChunkObjectCount() const {
     int n = 0;
     for (const McChunk& c : mcChunks_)
@@ -1252,7 +1265,30 @@ int VoxelTerrain::CatchFallers() {
     return n;
 }
 
+namespace {
+// Reports this terrain's per-frame cost to the overlay (FrameOverlay::Lines) when the frame ends.
+struct VoxelFrameTimer {
+    VoxelTerrain* t; std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    explicit VoxelFrameTimer(VoxelTerrain* v) : t(v) {}
+    ~VoxelFrameTimer() {
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        VoxelOverlayStats& o = FrameOverlay::Voxel();
+        const double now = FrameOverlay::NowSeconds();
+        if (now - o.seenAt > 1.0) { o.terrains = 0; o.triangles = 0; o.updateMs = ms; }
+        o.updateMs = o.updateMs * 0.9 + ms * 0.1;
+        o.seenAt = now;
+        o.terrains = std::max(o.terrains, 1);
+        o.chunkObjects = t->ChunkObjectCount();
+        o.chunksTotal = t->lastStats.chunksTotal;
+        o.triangles = t->DrawnTriangles();
+        o.lastMeshMs = t->lastStats.totalMs; o.lastChunksRemeshed = t->lastStats.chunksRemeshed;
+        o.oldRemesh = VoxelTerrain::OldRemeshActive();
+    }
+};
+}
+
 void VoxelTerrain::Update(float dt) {
+    VoxelFrameTimer frameTimer(this);
     if (fluidOn || fluidObj_) UpdateFluid(dt);
     if (footprints && ((++footTick_) % 3) == 0) UpdateFootprints();
     if (genPhase_ != 0 && StepGenerate(generateBudgetMs)) Apply();

@@ -10,6 +10,23 @@
 namespace okay::modeling {
 
 namespace {
+// The look (material slot and colour) a face made out of nothing takes: that of the first of the first `limit` faces
+// that uses one of `verts`, so a bridge, a fill, a grid fill, a spin or a bevel cap matches the surface it joins.
+struct Look { int material = 0; bool hasColor = false; Color color{1, 1, 1, 1}; };
+Look LookNear(const PolyMesh& pm, const std::vector<int>& verts, int limit) {
+    Look lk;
+    const int n = std::min(limit, (int)pm.faces.size());
+    for (int f = 0; f < n; ++f)
+        for (int v : pm.faces[(std::size_t)f].verts)
+            if (std::find(verts.begin(), verts.end(), v) != verts.end()) {
+                const PolyFace& F = pm.faces[(std::size_t)f];
+                lk.material = F.material; lk.hasColor = F.hasColor; lk.color = F.color; return lk;
+            }
+    if (n > 0) { const PolyFace& F = pm.faces[0]; lk.material = F.material; lk.hasColor = F.hasColor; lk.color = F.color; }   // nothing touches those vertices: match the mesh
+    return lk;
+}
+void ApplyLook(PolyFace& f, const Look& lk) { f.material = lk.material; f.hasColor = lk.hasColor; f.color = lk.color; }
+
 std::pair<int, int> Key(int a, int b) { return a < b ? std::make_pair(a, b) : std::make_pair(b, a); }
 
 int CornerIn(const PolyFace& f, int v) {
@@ -543,11 +560,14 @@ int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error) {
     }
     const bool uv = MeshHasUV(pm);
     const int faces = A.closed ? n : n - 1;
+    std::vector<int> rim = A.verts; rim.insert(rim.end(), B.verts.begin(), B.verts.end());
+    const Look bridgeLook = LookNear(pm, rim, (int)pm.faces.size());
     for (int i = 0; i < faces; ++i) {
         const int a0 = A.verts[i], a1 = A.verts[(i + 1) % n];
         const int b0 = B.verts[(i + shift) % n], b1 = B.verts[(i + 1 + shift) % n];
         PolyFace f;
         f.verts = {a0, a1, b1, b0};
+        ApplyLook(f, bridgeLook);
         if (uv) for (int v : f.verts) { Vec2 t{0, 0}; AnyUV(pm, v, t); f.uvs.push_back(t); }
         pm.faces.push_back(f);
     }
@@ -890,6 +910,7 @@ int BevelEdges(PolyMesh& pm, const EdgeList& edgesIn, float width, std::string* 
             const int l = end == 0 ? rvL.back() : rwR.back();
             PolyFace C;
             C.verts = {l, at, r};
+            ApplyLook(C, LookNear(pm, {at}, (int)pm.faces.size()));
             if (anyUV) for (int vert : C.verts) { Vec2 t{0, 0}; AnyUV(pm, vert, t); C.uvs.push_back(t); }
             pm.faces.push_back(C);
         }
@@ -898,6 +919,7 @@ int BevelEdges(PolyMesh& pm, const EdgeList& edgesIn, float width, std::string* 
     for (const auto& kv : patch) {
         PolyFace P;
         P.verts = kv.second;
+        ApplyLook(P, LookNear(pm, kv.second, (int)pm.faces.size()));
         if (anyUV) for (int vert : P.verts) { Vec2 t{0, 0}; AnyUV(pm, vert, t); P.uvs.push_back(t); }
         pm.faces.push_back(P);
     }
@@ -949,6 +971,7 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
     std::vector<EdgeChain> chains = OrderChains(ValidEdges(pm, edges));
     if (chains.empty()) return fail("Select the edges round a hole (or a chain of three or more vertices).");
     const bool uv = MeshHasUV(pm);
+    const int facesBefore = (int)pm.faces.size();
     int made = 0;
     for (EdgeChain& c : chains) {
         if (c.verts.size() < 3) continue;
@@ -961,6 +984,7 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
         OrientAgainstNeighbours(pm, c.verts);
         PolyFace f;
         f.verts = c.verts;
+        ApplyLook(f, LookNear(pm, c.verts, facesBefore));
         if (uv) for (int v : f.verts) { Vec2 t{0, 0}; AnyUV(pm, v, t); f.uvs.push_back(t); }
         pm.faces.push_back(f);
         ++made;
@@ -1026,9 +1050,11 @@ int GridFill(PolyMesh& pm, const EdgeList& edges, int span, std::string* error) 
             }
     }
     int made = 0;
+    const Look gridLook = LookNear(pm, L, (int)pm.faces.size());
     for (int i = 0; i < a; ++i)
         for (int j = 0; j < b; ++j) {
             PolyFace f;
+            ApplyLook(f, gridLook);
             f.verts = {g[i][j], g[i + 1][j], g[i + 1][j + 1], g[i][j + 1]};
             if (uv) f.uvs = {gu[i][j], gu[i + 1][j], gu[i + 1][j + 1], gu[i][j + 1]};
             pm.faces.push_back(f);
@@ -1076,14 +1102,14 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
         if (a >= 0 && b >= 0 && a != b) seams.push_back(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
     }
     pm.seams = std::move(seams);
-    {
+    for (std::vector<EdgeCrease>* list : {&pm.creases, &pm.bevelWeights}) {
         std::vector<EdgeCrease> cr;
-        for (const EdgeCrease& c : pm.creases) {
+        for (const EdgeCrease& c : *list) {
             if (c.a < 0 || c.b < 0 || c.a >= (int)remap.size() || c.b >= (int)remap.size()) continue;
             const int a = remap[c.a], b = remap[c.b];
             if (a >= 0 && b >= 0 && a != b) cr.push_back({std::min(a, b), std::max(a, b), c.w});
         }
-        pm.creases = std::move(cr);
+        *list = std::move(cr);
     }
     return remap;
 }
@@ -1284,14 +1310,17 @@ int SpinEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& center, const Vec
         }
     }
     int made = 0;
+    const int spinFaces = (int)pm.faces.size();
     for (const auto& e : edges) {
         auto ia = slot.find(e.first), ib = slot.find(e.second);
         if (ia == slot.end() || ib == slot.end()) continue;
+        const Look spinLook = LookNear(pm, {e.first, e.second}, spinFaces);
         for (int r = 0; r < steps; ++r) {
             const int r2 = (r + 1) % rings;
             const int a0 = ring[r][ia->second], b0 = ring[r][ib->second];
             const int a1 = ring[r2][ia->second], b1 = ring[r2][ib->second];
             PolyFace f;
+            ApplyLook(f, spinLook);
             for (int v : {a0, a1, b1, b0}) if (f.verts.empty() || f.verts.back() != v) f.verts.push_back(v);
             if (f.verts.size() > 1 && f.verts.front() == f.verts.back()) f.verts.pop_back();
             if (f.verts.size() < 3) continue;           // collapsed onto the axis

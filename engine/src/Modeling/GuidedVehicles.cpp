@@ -127,6 +127,18 @@ PolyMesh WheelMesh(const std::string& design, float x, float y, float radius, fl
             shapes::Append(m, shapes::Box(f));
         }
     }
+    if (shapes::Detail() >= 2) {   // tyre tread: blocks around the outside of the tyre (High and up)
+        const int nt = shapes::Detail() == 2 ? 24 : 40;
+        for (int k = 0; k < nt; ++k) {
+            const float a = 2 * kPi * (float)k / (float)nt;
+            Frame f;
+            f.t = {-std::sin(a), std::cos(a), 0}; f.u = {std::cos(a), std::sin(a), 0}; f.n = {0, 0, -1};
+            f.origin = {x + std::cos(a) * (radius - 0.006f), y + std::sin(a) * (radius - 0.006f), zc - w * 0.4f * 0.0f + 0.0f};
+            f.origin.z = zc + w * 0.4f;
+            f.sx = radius * 2 * kPi / (float)nt * 0.55f; f.sy = std::min(0.03f, radius * 0.1f); f.sz = w * 0.8f;
+            shapes::Append(m, shapes::Box(f));
+        }
+    }
     if (shapes::Detail() >= 2 && design != "plain") {   // lug nuts on the hub (High and up)
         const int n = shapes::Detail() == 2 ? 5 : 8;
         for (int k = 0; k < n; ++k) {
@@ -140,7 +152,7 @@ PolyMesh WheelMesh(const std::string& design, float x, float y, float radius, fl
 }
 
 void Wheel(Out& o, const std::string& id, float x, float zCentre, float radius, float width) {
-    x += 0.0013f * (float)std::atoi(id.c_str() + std::min<size_t>(6, id.size()));   // wheels of one vehicle never share a corner
+    x += 0.0071f * (float)std::atoi(id.c_str() + std::min<size_t>(6, id.size()));   // wheels of one vehicle never share a corner
     const float z0 = zCentre - width * 0.5f, z1 = zCentre + width * 0.5f;
     Frame f;
     f.origin = {x, radius, z0};
@@ -250,7 +262,20 @@ void GenerateCar(const Recipe& r, std::vector<GeneratedPart>& parts) {
     if (!userBody) {
         const std::vector<Vec2> cab = {{bx0, hb - 0.02f}, {bx1, hb - 0.02f}, {tx1, roof}, {tx0, roof}};
         Frame fr = FrameAA({bx0, hb, -Wc / 2}, {bx1, roof, Wc / 2});
-        o.Add("cabin/0", "cabin", fr, [&](const std::string&) { return Side(cab, -Wc / 2, Wc / 2); });
+        o.Add("cabin/0", "cabin", fr, [&](const std::string&) {
+            PolyMesh m = Side(cab, -Wc / 2, Wc / 2);
+            if (shapes::Detail() >= 2) {   // door seams and handles on both sides (High and up)
+                const float xm = (bx0 + bx1) * 0.5f;
+                for (int s = -1; s <= 1; s += 2) {
+                    const float zo = s * Wc / 2;
+                    const float za = std::min(zo - s * 0.002f, zo + s * 0.006f), zb = std::max(zo - s * 0.002f, zo + s * 0.006f);
+                    shapes::Append(m, BoxAA({xm - 0.004f, hb + 0.02f, za}, {xm + 0.004f, hb + (roof - hb) * 0.85f, zb}));
+                    shapes::Append(m, BoxAA({bx0 + (bx1 - bx0) * 0.2f, hb + 0.06f, std::min(zo - s * 0.002f, zo + s * 0.02f)}, {bx0 + (bx1 - bx0) * 0.2f + 0.002f * 0 + 0.1f, hb + 0.09f, std::max(zo - s * 0.002f, zo + s * 0.02f)}));
+                    shapes::Append(m, BoxAA({xm + 0.15f, hb + 0.06f, std::min(zo - s * 0.002f, zo + s * 0.02f)}, {xm + 0.25f, hb + 0.09f, std::max(zo - s * 0.002f, zo + s * 0.02f)}));
+                }
+            }
+            return m;
+        });
         // side glass: the cabin side shrunk inwards
         const float yb = hb + 0.07f, yt = roof - 0.08f;
         auto xAt = [&](float y, bool front) {

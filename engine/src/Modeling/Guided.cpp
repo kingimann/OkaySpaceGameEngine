@@ -1,4 +1,5 @@
 #include "okay/Modeling/Guided.hpp"
+#include "okay/Modeling/PolyOps.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -15,12 +16,12 @@ namespace okay::modeling::guided {
 // =====================================================================================================
 namespace shapes {
 
-static thread_local int g_detail = 1;
-int Detail() { return g_detail; }
+static thread_local float g_detail = 1.0f;
+int Detail() { return (int)std::lround(g_detail); }
+float DetailF() { return g_detail; }
 int Scale(int base, int minimum) {
-    const int mult4[4] = {1, 2, 4, 8};   // quarters: 0.5, 1, 2, 4
-    const int v = (base * mult4[std::min(std::max(g_detail, 0), 3)] + 1) / 2;
-    return std::max(minimum, v);
+    const float mult = 0.5f * std::exp2(std::min(std::max(g_detail, 0.0f), 3.0f));   // 0.5, 1, 2, 4 at the whole levels
+    return std::max(minimum, (int)std::lround((float)base * mult));
 }
 
 static bool RightHanded(const Vec3& a, const Vec3& b, const Vec3& c) { return Vec3::Dot(Vec3::Cross(a, b), c) >= 0.0f; }
@@ -85,11 +86,11 @@ PolyMesh ExtrudeProfile(const Frame& f, const std::vector<Vec2>& profile) {
 }
 
 PolyMesh Box(const Frame& f) {
-    if (g_detail < 2) return ExtrudeProfile(f, {{0, 0}, {1, 0}, {1, 1}, {0, 1}});
+    if (g_detail < 1.5f) return ExtrudeProfile(f, {{0, 0}, {1, 0}, {1, 1}, {0, 1}});
     // High: the four long edges are chamfered; Ultra: rounded with three steps per corner.
     const float c = std::min(0.03f, 0.3f * std::min(f.sx, f.sy));
     const float ux = c / f.sx, uy = c / f.sy;
-    const int k = g_detail == 2 ? 1 : 3;
+    const int k = g_detail < 2.5f ? 1 : 3;
     const float cxs[4] = {1 - ux, 1 - ux, ux, ux}, cys[4] = {uy, 1 - uy, 1 - uy, uy};
     std::vector<Vec2> p;
     for (int corner = 0; corner < 4; ++corner)
@@ -398,9 +399,8 @@ void Registry::Register(const Template& in) {
     bool has = false;
     for (const ParamDef& p : t.params) if (p.id == kDetailParam) has = true;
     if (!has) {   // every template gets the shared Detail setting (Medium = the original shapes)
-        ParamDef p; p.id = kDetailParam; p.label = "Detail"; p.group = "Detail"; p.kind = ParamDef::Kind::Choice; p.def = 1; p.min = 0; p.max = 3;
-        p.choices = {"Low", "Medium", "High", "Ultra"};
-        p.tip = "Low: few flat blocky polygons. Medium: the standard shapes. High: rounder curves and bevelled edges. Ultra: finer still.";
+        ParamDef p; p.id = kDetailParam; p.label = "Detail"; p.group = "Detail"; p.kind = ParamDef::Kind::Float; p.def = 1; p.min = 0; p.max = 3;
+        p.tip = "0 to 3 (0 to 100 percent): Low is blocky low poly, Medium rounded, High smooth with fine detail parts, Ultra subdivided and finest.";
         t.params.push_back(p);
     }
     for (Template& e : templates_) if (e.id == t.id) { e = t; return; }
@@ -466,9 +466,20 @@ std::vector<GeneratedPart> Generate(const Recipe& in, std::string* error) {
     if (!t || !t->generate) { if (error) *error = "unknown template '" + in.templateId + "'"; return out; }
     const Recipe r = Normalize(*t, in);
     std::vector<GeneratedPart> all;
-    const int saved = shapes::g_detail;
-    shapes::g_detail = std::min(std::max((int)r.Param(kDetailParam, 1), 0), 3);
+    const float saved = shapes::g_detail;
+    const float dv = (float)r.Param(kDetailParam, 1);
+    shapes::g_detail = std::min(std::max(dv == dv ? dv : 1.0f, 0.0f), 3.0f);
     t->generate(r, all);
+    // Ultra: every part is subdivided (Catmull-Clark) one or two times, within a face budget per part, for a truly smooth high-poly surface.
+    if (shapes::g_detail >= 2.5f) {
+        const int levels = shapes::g_detail >= 2.95f ? 2 : 1;
+        for (GeneratedPart& p : all) {
+            int lv = levels;
+            long faces = (long)p.mesh.faces.size();
+            while (lv > 0 && faces * (long)(1 << (2 * lv)) > 2500) --lv;
+            if (lv > 0 && !p.mesh.faces.empty()) p.mesh = CatmullClark(p.mesh, lv);
+        }
+    }
     shapes::g_detail = saved;
     for (GeneratedPart& p : all) {
         if (r.detached.count(p.id) || p.mesh.faces.empty()) continue;

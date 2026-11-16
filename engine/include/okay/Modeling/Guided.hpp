@@ -216,15 +216,17 @@ private:
 int TriangleCount(const PolyMesh& m);
 /// The core "Detail" setting every template gets: Low, Medium, High, Ultra (Medium when a recipe has none).
 extern const char* const kDetailParam;
-inline int DetailOf(const Recipe& r) { return (int)r.Param("detail", 1); }
+inline float DetailOf(const Recipe& r) { return (float)r.Param("detail", 1); }
 
 // ---- Shape helpers (also used by templates in other files) --------------------------------------------------
 
 namespace shapes {
-/// The detail level the parts being generated are built at: 0 Low, 1 Medium (the original shapes), 2 High, 3 Ultra.
+/// The detail the parts being generated are built at, 0 to 3 continuous: 0 Low (blocky, few segments), 1 Medium (rounded),
+/// 2 High (smooth, fine detail parts), 3 Ultra (subdivided, finest detail). Detail() is the nearest whole level.
 /// Set for the duration of Generate() from the recipe's "detail" setting; the shape helpers below follow it
 /// (fewer or more segments on curves, bevelled edges from High up). Templates can read it for extra detail parts.
 int Detail();
+float DetailF();
 /// `base` segments at Medium: half at Low, double at High, four times at Ultra (never below `minimum`).
 int Scale(int base, int minimum = 3);
 /// A box filling the frame: 6 quads, outward.

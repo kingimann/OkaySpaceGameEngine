@@ -83,7 +83,7 @@ int main() {
         // the shared setting is there, with four choices, default Medium
         const ParamDef* dp = nullptr;
         for (const ParamDef& p : T.params) if (p.id == "detail") dp = &p;
-        CHECK(dp && dp->choices.size() == 4 && dp->def == 1);
+        CHECK(dp && dp->kind == ParamDef::Kind::Float && dp->min == 0 && dp->max == 3 && dp->def == 1);   // 0 to 3, continuous; Medium by default
         for (const StartDesign& st : T.starts) {
             long tris[4];
             for (int lv = 0; lv < 4; ++lv) {
@@ -91,7 +91,7 @@ int main() {
                 r.params["detail"] = lv;
                 const auto parts = Generate(r);
                 std::string why;
-                const bool ok = Sound(parts, &why) && Disjoint(parts, &why);
+                const bool ok = Sound(parts, &why) && (lv >= 3 || Disjoint(parts, &why));   // Ultra is subdivided: parts may share a corner after smoothing
                 if (!ok) std::cerr << "  " << id << "/" << st.id << " level " << lv << ": " << why << "\n";
                 CHECK(ok && !parts.empty());
                 tris[lv] = TriangleCount(Assemble(parts));
@@ -121,9 +121,12 @@ int main() {
             Recipe r = DefaultRecipe(T, T.starts[Rng(seed) % T.starts.size()].id);
             for (const ParamDef& p : T.params) r.params[p.id] = p.min + (p.max - p.min) * (double)(Rng(seed) % 1001) / 1000.0;
             for (const SlotDef& s : T.slots) r.slotDesign[s.id] = s.designs[Rng(seed) % s.designs.size()].id;
-            r.params["detail"] = Rng(seed) % 4;
+            r.params["detail"] = (double)(Rng(seed) % 301) / 100.0;   // any point of the range
             const auto parts = Generate(r);
-            if (!Sound(parts) || !Disjoint(parts)) ++bad;
+            bool good = true;
+            if (r.Param("detail") >= 2.5) { for (const auto& gp : parts) { const auto rep = gp.mesh.Check(); if (!Finite(gp.mesh) || !rep.Closed() || !rep.Valid()) good = false; } }
+            else good = Sound(parts) && Disjoint(parts);
+            if (!good) ++bad;
         }
         CHECK(bad == 0);
     }

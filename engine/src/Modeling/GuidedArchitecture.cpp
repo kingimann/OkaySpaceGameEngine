@@ -120,6 +120,27 @@ Frame LocalFrame(float w, float h, float d) {   // the box x 0..w, y 0..h, z -d/
     return f;
 }
 
+// Raised brick courses across a wall panel (local x 0..len, y 0..H, z centred, front face at +T/2): thin horizontal boards that
+// stop at the openings. High: every 0.3 m; Ultra: every 0.15 m.
+PolyMesh Courses(float len, float H, float T, const std::vector<Opening>& holes, float step) {
+    PolyMesh m;
+    for (float y = step; y < H - step * 0.6f; y += step) {
+        std::vector<std::pair<float, float>> free = {{0.04f, len - 0.04f}};
+        for (const Opening& o : holes) {
+            if (y + 0.012f < o.y0 - 0.03f || y - 0.012f > o.y1 + 0.03f) continue;
+            std::vector<std::pair<float, float>> nf;
+            for (const auto& f : free) {
+                if (o.x1 + 0.03f <= f.first || o.x0 - 0.03f >= f.second) { nf.push_back(f); continue; }
+                if (o.x0 - 0.03f > f.first + 0.05f) nf.push_back({f.first, o.x0 - 0.03f});
+                if (o.x1 + 0.03f < f.second - 0.05f) nf.push_back({o.x1 + 0.03f, f.second});
+            }
+            free = nf;
+        }
+        for (const auto& f : free) shapes::Append(m, BoxAA({f.first, y - 0.006f, T / 2 - 0.004f}, {f.second, y + 0.006f, T / 2 + 0.01f}));
+    }
+    return m;
+}
+
 // ---- Window ------------------------------------------------------------------------------------------------
 struct WindowSpec { float w, h, d, fw; std::string frame, grid, glass, sill, shutters; };
 struct WindowParts { PolyMesh frame, grid, glass, sill, shutters[2]; };
@@ -579,6 +600,7 @@ void GenerateWall(const Recipe& r, std::vector<GeneratedPart>& out) {
                 if (!hit) shapes::Append(panel, BoxAA({0.02f, y, -T / 2 - 0.03f}, {len + e0 + e1 - 0.02f, y + 0.12f, T / 2 + 0.03f}));
             }
         }
+        if (shapes::Detail() >= 2) shapes::Append(panel, Courses(len + e0 + e1, height - 0.25f, T, holes, shapes::Detail() >= 3 ? 0.15f : 0.3f));
         if (shapes::Detail() >= 2) {   // High: a cornice along the top; Ultra: and a second ledge under it
             shapes::Append(panel, BoxAA({0.02f, height - 0.1f, -T / 2 - 0.03f}, {len + e0 + e1 - 0.02f, height - 0.0f, T / 2 + 0.03f}));
             if (shapes::Detail() >= 3) shapes::Append(panel, BoxAA({0.03f, height - 0.2f, -T / 2 - 0.02f}, {len + e0 + e1 - 0.03f, height - 0.14f, T / 2 + 0.02f}));
@@ -899,6 +921,7 @@ void GenerateBuilding(const Recipe& r, std::vector<GeneratedPart>& out) {
                 for (const Opening& h : holes) if (h.y1 > FH - 0.4f) hit = true;
                 if (!hit) shapes::Append(panel, BoxAA({0.02f, FH - 0.16f, -T / 2 - 0.03f}, {len - 0.02f, FH - 0.04f, T / 2 + 0.03f}));
             }
+            if (shapes::Detail() >= 2) shapes::Append(panel, Courses(len, FH - 0.25f, T, holes, shapes::Detail() >= 3 ? 0.15f : 0.3f));
             if (shapes::Detail() >= 2 && f + 1 == floors) {   // cornice under the roof
                 shapes::Append(panel, BoxAA({0.02f, FH - 0.1f, -T / 2 - 0.03f}, {len - 0.02f, FH - 0.0f, T / 2 + 0.03f}));
                 if (shapes::Detail() >= 3) shapes::Append(panel, BoxAA({0.03f, FH - 0.2f, -T / 2 - 0.02f}, {len - 0.03f, FH - 0.14f, T / 2 + 0.02f}));
@@ -927,6 +950,12 @@ void GenerateBuilding(const Recipe& r, std::vector<GeneratedPart>& out) {
                     ws.frame = "plain"; ws.grid = design.rfind("user:", 0) == 0 ? "single" : design; ws.glass = "clear"; ws.sill = "slab"; ws.shutters = "none";
                     WindowParts p = BuildWindow(ws);
                     shapes::Append(m, p.frame); shapes::Append(m, p.grid); shapes::Append(m, p.glass); shapes::Append(m, p.sill);
+                    if (shapes::Detail() >= 2) {   // trim round the window on the outside face (High and up)
+                        const float w2 = ws.w, h2 = ws.h, zt = T / 2 - ws.d * 0.0f;
+                        shapes::Append(m, BoxAA({-0.07f, h2, zt - 0.008f}, {w2 + 0.07f, h2 + 0.09f, zt + 0.035f}));
+                        shapes::Append(m, BoxAA({-0.07f, -0.02f, zt - 0.008f}, {0.0f - 0.004f, h2 + 0.01f, zt + 0.03f}));
+                        shapes::Append(m, BoxAA({w2 + 0.004f, -0.02f, zt - 0.008f}, {w2 + 0.07f, h2 + 0.01f, zt + 0.03f}));
+                    }
                     if (design.rfind("user:", 0) == 0) m = Fill(r, design, LocalFrame(ow - 2 * inset, oh - 2 * inset, T * 0.6f), [&](const std::string&) { return PolyMesh(); });
                 }
                 for (Vec3& v : m.verts) { v.x += h.x0 + inset; v.y += h.y0 + (fl.second ? 0.0f : inset); }

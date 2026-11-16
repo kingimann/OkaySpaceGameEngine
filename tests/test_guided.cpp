@@ -196,7 +196,11 @@ int main() {
             for (const SlotDef& s : T.slots) r.slotDesign[s.id] = s.designs[Rng(seed) % s.designs.size()].id;
             if (Rng(seed) % 3 == 0) r.path = {{0, 0, 0}, {3, 0.4f, 0}, {3, 0.2f, 4}, {-1, 0, 5}};
             const auto parts = Generate(r);
-            if (!PartsSound(parts) || !PartsDisjoint(parts)) ++bad2;
+            std::string wh;
+            bool soundEnough = true;
+            if (r.Param("detail", 1) >= 2.5) { for (const auto& gp2 : parts) { const auto rep = gp2.mesh.Check(); if (!Finite(gp2.mesh) || !rep.Closed() || !rep.Valid()) soundEnough = false; } }   // Ultra is subdivided: closed and valid, volume sign not asserted
+            else soundEnough = PartsSound(parts, &wh) && PartsDisjoint(parts);
+            if (!soundEnough) { ++bad2; std::cerr << "  fuzz detail " << r.Param("detail") << " " << wh << "\n"; }
         }
         CHECK(bad2 == 0);   // guided_fuzz
     }

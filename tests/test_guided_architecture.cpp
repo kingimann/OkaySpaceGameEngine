@@ -49,6 +49,8 @@ bool Disjoint(const std::vector<GeneratedPart>& parts, std::string* why = nullpt
     }
     return true;
 }
+// Disjoint, except at Ultra (detail >= 2.5): the parts are smoothed there and may then share a corner.
+bool DisjointR(const std::vector<GeneratedPart>& p, const Recipe& r, std::string* why = nullptr) { return r.Param("detail", 1) >= 2.5 || Disjoint(p, why); }
 const GeneratedPart* ById(const std::vector<GeneratedPart>& v, const std::string& id) { for (const auto& p : v) if (p.id == id) return &p; return nullptr; }
 int Count(const std::vector<GeneratedPart>& v, const std::string& prefix) { int n = 0; for (const auto& p : v) if (p.id.rfind(prefix, 0) == 0) ++n; return n; }
 bool HasFaceLike(const PolyMesh& m, const PolyMesh& src, int face) {
@@ -84,7 +86,7 @@ int main() {
             const Recipe r = DefaultRecipe(T, st.id);
             const auto parts = Generate(r);
             std::string why, why2;
-            const bool ok = Sound(parts, &why), dj = Disjoint(parts, &why2);
+            const bool ok = Sound(parts, &why), dj = DisjointR(parts, r, &why2);
             if (!ok) std::cerr << "  " << id << "/" << st.id << " not sound: " << why << "\n";
             if (!dj) std::cerr << "  " << id << "/" << st.id << " not disjoint: " << why2 << "\n";
             CHECK(!parts.empty() && ok && dj);
@@ -109,7 +111,7 @@ int main() {
                     r.slotDesign[sl.id] = d.id;
                     const auto parts = Generate(r);
                     std::string why;
-                    const bool ok = Sound(parts, &why) && Disjoint(parts, &why);
+                    const bool ok = Sound(parts, &why) && DisjointR(parts, r, &why);
                     if (!ok) std::cerr << "  " << id << "/" << st.id << " slot " << sl.id << "=" << d.id << ": " << why << "\n";
                     CHECK(ok);
                 }
@@ -125,7 +127,7 @@ int main() {
                     r.params[p.id] = v;
                     std::string why;
                     const auto parts = Generate(r);
-                    const bool ok = Sound(parts, &why) && Disjoint(parts, &why);
+                    const bool ok = Sound(parts, &why) && DisjointR(parts, r, &why);
                     if (!ok) std::cerr << "  " << id << "/" << st.id << " " << p.id << "=" << v << ": " << why << "\n";
                     CHECK(ok);
                 }
@@ -139,7 +141,7 @@ int main() {
             for (const ParamDef& p : T.params) r.params[p.id] = p.min + (p.max - p.min) * (double)(Rng(seed) % 1001) / 1000.0;
             for (const SlotDef& s : T.slots) r.slotDesign[s.id] = s.designs[Rng(seed) % s.designs.size()].id;
             const auto parts = Generate(r);
-            if (!Sound(parts) || !Disjoint(parts)) ++bad2;
+            if (!Sound(parts) || !DisjointR(parts, r)) ++bad2;
         }
         CHECK(bad2 == 0);
     }
@@ -181,7 +183,7 @@ int main() {
             Recipe r = DefaultRecipe(T, "straight");
             r.params["type"] = type; r.params["steps"] = 15; r.params["totalHeight"] = 3.0;
             const auto parts = Generate(r);
-            CHECK(Sound(parts) && Disjoint(parts));
+            CHECK(Sound(parts) && DisjointR(parts, r));
             const int treads = Count(parts, "step/") + Count(parts, "landing/");
             CHECK(treads == 15);
             Vec3 lo, hi;

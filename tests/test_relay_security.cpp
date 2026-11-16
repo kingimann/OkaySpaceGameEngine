@@ -361,6 +361,7 @@ int main() {
         for (std::uint32_t i = 0; i < 70000; ++i)
             relay.HandleDatagram(Endpoint{0x0A010000u + i, 4000}, spoof.data(), spoof.size());
         CHECK(relay.PeerCount() == 0);      // nothing was allocated for a forged address
+        relay.Poll(0.5f, 1e9f);   // half a second later the forged rows are back to full buckets, so the table has room again
         // A real player from a new address (a legacy hello needs no cookie round) still gets in.
         const Endpoint real{0xC6336407u, 5000};   // 198.51.100.7
         const auto hello = HelloBytes(RelayHost, "REAL-ROOM");
@@ -388,6 +389,7 @@ int main() {
                 relay.HandleDatagram(e, ch.data(), ch.size());
                 clients.push_back(e);
             }
+            relay.Poll(2.0f, 1e9f);   // stay within the address's hello rate while the test sets up
         }
         CHECK(relay.PeerCount() == 48);
         std::vector<std::uint8_t> big(64000, 0x5A);
@@ -417,6 +419,7 @@ int main() {
             clients.push_back(e);
         }
         CHECK(relay.PeerCount() == 31);
+        relay.Poll(10.0f, 1e9f);   // let the host's forwarding allowance fill to what a 30-client host may send
         std::vector<std::uint8_t> big(64000, 0x5A);
         // The host sends 1.8 MB to each of 30 clients: 54 MB through one session, with every per-peer cap respected.
         for (const auto& c : clients) {

@@ -166,6 +166,7 @@ hardening items are merged. The opt-in detection engine (39.12) was added afterw
   - 39.8.4 Caps and rate limits - `Net/RelayServer` - 4,096 peers, 2,048 sessions, 32 peers per session, 64 peers and 16 sessions per address, 1,000 packets and 1 MB per second per peer, hellos 10 per second per address, random slots
   - 39.8.5 Legacy hellos - `relay/main.cpp` - `--legacy-hello=off` refuses version-1 and -2 hellos; now the default, `=on` re-allows them
   - 39.8.6 Welcome nonce - `Net/RelayProtocol` - a version-4 game puts a random nonce in its hellos and ignores any welcome that doesn't echo it, so a forged welcome can't pair, redirect or end a session; an older relay needs `allowUnverifiedRelay`
+  - 39.8.7 Flow caps and hello-table protection (SEC1) - `Net/RelayServer` - 8 MiB/s forwarded per IP address and 16 MiB/s per session (two-second burst; loopback exempt from the address cap), and a hello table that is pruned exactly and falls back to one shared allowance (2,000/s) when forged sources fill it, so new players can still join
 - **Code:** `Net/RelayServer`, `Net/RelayProtocol`, `relay/main.cpp`
 - **API:** `RelayServer::SetLegacyHello`, `kMaxPeers`, `kPacketsPerSecond`, `RelayRefused`, flag `--legacy-hello`
 - **Editor:** none

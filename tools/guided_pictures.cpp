@@ -385,6 +385,7 @@ int main(int argc, char** argv) {
             }
             ++row;
         }
+        arch += CameraRecord(aid++, 45.0, 40.0, 160.0);
         std::ofstream(ex + "/guided_architecture.okayscene", std::ios::binary) << arch;
 
         // The vehicle examples: every start design of every vehicle type.
@@ -408,6 +409,7 @@ int main(int argc, char** argv) {
             }
             ++vrow;
         }
+        veh += CameraRecord(vid++, 80.0, 50.0, 190.0);
         std::ofstream(ex + "/guided_vehicles.okayscene", std::ios::binary) << veh;
         std::printf("wrote %d vehicle models\n", vtotal);
 
@@ -430,6 +432,7 @@ int main(int argc, char** argv) {
                       "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
                 ++ci;
             }
+            cs += CameraRecord(cid++, 18.0, 5.0, 24.0);
             std::ofstream(ex + "/guided_car_styles.okayscene", std::ios::binary) << cs;
             std::printf("wrote the car styles example\n");
         }
@@ -455,6 +458,7 @@ int main(int argc, char** argv) {
             }
             ++crow;
         }
+        chr += CameraRecord(cid++, 22.0, 7.0, 36.0);
         std::ofstream(ex + "/guided_characters.okayscene", std::ios::binary) << chr;
         std::printf("wrote %d character models\n", ctotal);
         std::printf("wrote %d architecture models\n", total);

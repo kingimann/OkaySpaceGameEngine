@@ -24,6 +24,7 @@
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <cstdint>
+#include <array>
 #include <cstring>
 #include <cmath>
 #include <vector>
@@ -650,11 +651,13 @@ struct D3D11Renderer::Impl {
         unsigned lastUse = 0, lastFullHash = 0;
         std::uint64_t version = 0;   // SkinnedMesh::version when skinned (0 = static)
         int cap = 0;                 // dynamic buffers: capacity in vertices
+        std::vector<std::array<int, 3>> slotRanges;   // material slots: {slot, first vertex, vertex count}, empty = one draw
     };
     std::unordered_map<const void*, MeshVB> meshVB;
     unsigned frame = 0;
-    MeshVB* EnsureMeshVB(const Mesh& mesh, std::uint64_t version = 0);   // expand + upload on miss
-    void BuildExpandedVerts(const Mesh& mesh); // fill `verts` (14 floats/vertex)
+    MeshVB* EnsureMeshVB(const Mesh& mesh, std::uint64_t version = 0, bool allowSlots = true);   // expand + upload on miss
+    void BuildExpandedVerts(const Mesh& mesh, bool groupBySlot = false);
+    std::vector<std::array<int, 3>> slotRanges;   // filled by BuildExpandedVerts(.., true) // fill `verts` (14 floats/vertex)
 
     ID3D11ShaderResourceView* TextureFor(const std::string& name);
     bool EnsureTargets(int W, int H, int S);
@@ -1082,8 +1085,8 @@ static std::uint64_t FnvBytes(const void* data, std::size_t nbytes,
     return meshhash::Bytes(data, nbytes, seed);
 }
 static std::uint64_t MeshSampleHash(const Mesh& m) {
-    std::size_t sizes[6] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
-                             m.uvs.size(), m.triColors.size(), m.vertexColors.size() };
+    std::size_t sizes[7] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
+                             m.uvs.size(), m.triColors.size(), m.vertexColors.size(), m.triSlot.size() };
     std::uint64_t h = FnvBytes(sizes, sizeof(sizes));
     { const std::size_t cn = m.vertexColors.size(), cstep = cn / 2048 + 1;     // a stroke of vertex paint shows at once
       for (std::size_t i = 0; i < cn; i += cstep) h = FnvBytes(&m.vertexColors[i], sizeof(Color), h); }
@@ -1105,6 +1108,7 @@ static std::uint64_t MeshFullHash(const Mesh& m) {
     if (!m.triangles.empty()) h = FnvBytes(m.triangles.data(), m.triangles.size() * sizeof(int),   h);
     if (!m.triColors.empty()) h = FnvBytes(m.triColors.data(), m.triColors.size() * sizeof(Color), h);
     if (!m.vertexColors.empty()) h = FnvBytes(m.vertexColors.data(), m.vertexColors.size() * sizeof(Color), h);
+    if (!m.triSlot.empty()) h = FnvBytes(m.triSlot.data(), m.triSlot.size() * sizeof(int), h);
     return h;
 }
 
@@ -1130,7 +1134,7 @@ static std::uint64_t SkinFullHash(const SkinnedMesh& sm) {
 
 // Expand indexed triangles into the interleaved non-indexed layout the shader
 // consumes: pos(3)+normal(3)+uv(2)+color(3)+tangent(3) = 14 floats per vertex.
-void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
+void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh, bool groupBySlot) {
     const auto& V = mesh.vertices; const auto& T = mesh.triangles;
     const bool hasN = mesh.HasNormals();
     const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
@@ -1139,7 +1143,20 @@ void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
     const int nv = (int)V.size();
     verts.resize(T.size() / 3 * 3 * 14);   // written through a raw pointer, trimmed at the end
     float* out = verts.data();
-    for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+    // Per-slot drawing: with material slots the triangles are written grouped by slot (stable order) and each group's first
+    // vertex and count are kept, so each slot can be drawn with its own picture (same idea as the OpenGL renderer).
+    slotRanges.clear();
+    std::vector<int> order;
+    const bool bySlot = groupBySlot && mesh.HasSlots();
+    if (bySlot) order = mesh.GroupBySlot().order;
+    const std::size_t triCount = T.size() / 3;
+    for (std::size_t oi = 0; oi < triCount; ++oi) {
+        const std::size_t i = (bySlot ? (std::size_t)order[oi] : oi) * 3;
+        if (bySlot) {
+            const int slot = mesh.triSlot[i / 3];
+            const int firstVert = (int)((out - verts.data()) / 14);
+            if (slotRanges.empty() || slotRanges.back()[0] != slot) slotRanges.push_back({slot, firstVert, 0});
+        }
         int a = T[i], b = T[i + 1], cc = T[i + 2];
         if (a < 0 || b < 0 || cc < 0 || a >= nv || b >= nv || cc >= nv) continue; // skip bad tris
         Vec3 fn = Vec3::Cross(V[b] - V[a], V[cc] - V[a]);
@@ -1175,6 +1192,10 @@ void D3D11Renderer::Impl::BuildExpandedVerts(const Mesh& mesh) {
         }
     }
     verts.resize((std::size_t)(out - verts.data()));
+    if (bySlot) {
+        const int total = (int)(verts.size() / 14);
+        for (std::size_t r = 0; r < slotRanges.size(); ++r) slotRanges[r][2] = (r + 1 < slotRanges.size() ? slotRanges[r + 1][1] : total) - slotRanges[r][1];
+    }
 }
 
 // Return the up-to-date cached GPU buffer for a mesh, expanding + uploading only
@@ -1232,7 +1253,7 @@ bool D3D11Renderer::Impl::UploadBones(const SkinnedMesh& sm) {
     return true;
 }
 
-D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh, std::uint64_t version) {
+D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh, std::uint64_t version, bool allowSlots) {
     MeshVB& e = meshVB[&mesh];
     e.lastUse = frame;
     bool same = e.vbuf != nullptr &&
@@ -1253,7 +1274,8 @@ D3D11Renderer::Impl::MeshVB* D3D11Renderer::Impl::EnsureMeshVB(const Mesh& mesh,
         if (fh != e.fullHash) same = false; else e.fullHash = fh;
     }
     if (same) return e.vertCount > 0 ? &e : nullptr;
-    BuildExpandedVerts(mesh);
+    BuildExpandedVerts(mesh, allowSlots && version == 0);
+    e.slotRanges = slotRanges;
     e.vp  = mesh.vertices.data();  e.vn  = mesh.vertices.size();
     e.tp  = mesh.triangles.data(); e.tn  = mesh.triangles.size();
     e.np  = mesh.normals.data();   e.nn  = mesh.normals.size();
@@ -1513,7 +1535,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             const bool deformed = go->GetComponent<Character>() != nullptr;
             const auto* skinD = go->GetComponent<SkinnedMesh>();
             if (!deformed && p->CanGpuSkin(skinD) && p->vsDepthSkin && p->layoutDepthSkin) {
-                Impl::MeshVB* mv = p->EnsureMeshVB(skinD->bind, 0);
+                Impl::MeshVB* mv = p->EnsureMeshVB(skinD->bind, 0, false);
                 Impl::SkinVB* sv = mv ? p->EnsureSkinVB(*skinD) : nullptr;
                 if (!mv || !sv || sv->count != mv->vertCount || !p->UploadBones(*skinD)) continue;
                 c->IASetInputLayout(p->layoutDepthSkin);
@@ -1786,7 +1808,7 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
         D3D11_MAPPED_SUBRESOURCE ms;
         if (!deformed && p->CanGpuSkin(skin)) {
             // GPU skinning: the bind pose is uploaded once; only the bones change.
-            mvb = p->EnsureMeshVB(skin->bind, 0);
+            mvb = p->EnsureMeshVB(skin->bind, 0, false);
             svb = mvb ? p->EnsureSkinVB(*skin) : nullptr;
             if (!mvb) continue;
             if (!svb || svb->count != mvb->vertCount || !p->UploadBones(*skin)) svb = nullptr;
@@ -1914,6 +1936,34 @@ const std::uint32_t* D3D11Renderer::RenderToPixels(const Scene& scene, const Mat
             c->OMSetBlendState(p->blend, blendF, 0xffffffff);
             c->OMSetDepthStencilState(p->depthNoWrite, 0);
         }
+        // Per-slot pictures: with material slots that have their own picture, one draw per slot range with that picture.
+        bool slotDraw = false;
+        if (mvb && !svb && !mvb->slotRanges.empty())
+            for (const std::string& st : mr->slotTextures) if (!st.empty()) slotDraw = true;
+        if (slotDraw) {
+            ID3D11ShaderResourceView* bound = srv;
+            for (const auto& rg : mvb->slotRanges) {
+                if (rg[2] <= 0) continue;
+                ID3D11ShaderResourceView* want = srv;
+                if (rg[0] >= 0 && rg[0] < (int)mr->slotTextures.size() && !mr->slotTextures[rg[0]].empty()) {
+                    if (ID3D11ShaderResourceView* st = p->TextureFor(mr->slotTextures[rg[0]])) want = st;
+                }
+                if (want != bound) {
+                    cb.useTex = want ? 1.0f : 0.0f;
+                    cb.tiling[0] = want ? mr->tiling.x : 1.0f; cb.tiling[1] = want ? mr->tiling.y : 1.0f;
+                    if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) { std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0); }
+                    if (want) c->PSSetShaderResources(0, 1, &want);
+                    bound = want;
+                }
+                c->Draw((UINT)rg[2], (UINT)rg[1]);
+            }
+            if (bound != srv) {   // put the object's own picture back for the shadow pass below
+                cb.useTex = srv ? 1.0f : 0.0f;
+                cb.tiling[0] = srv ? mr->tiling.x : 1.0f; cb.tiling[1] = srv ? mr->tiling.y : 1.0f;
+                if (SUCCEEDED(c->Map(p->cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) { std::memcpy(ms.pData, &cb, sizeof(cb)); c->Unmap(p->cb, 0); }
+                if (srv) c->PSSetShaderResources(0, 1, &srv);
+            }
+        } else
         c->Draw((UINT)vcount, 0);
         if (transparent) {
             c->OMSetBlendState(nullptr, blendF, 0xffffffff);

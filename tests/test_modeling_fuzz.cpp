@@ -2,6 +2,8 @@
 // or leave a non-finite vertex or a triangle that points outside the vertex list. Same seeds every run.
 #include "test_framework.hpp"
 #include "okay/Modeling/Modifiers.hpp"
+#include "okay/Modeling/Curve.hpp"
+#include "okay/Modeling/Remesh.hpp"
 #include "okay/Modeling/PolyOps.hpp"
 #include "okay/Modeling/SelectOps.hpp"
 #include "okay/Optimize/MeshSimplify.hpp"
@@ -133,6 +135,32 @@ int main() {
     MESHOP("Mirror", m.Mirror(R(5) - 1, R(2) == 0));
     MESHOP("Bisect", m.Bisect(Vec3{0, a, 0}, Vec3{R(2) ? 1.0f : 0.0f, 1, 0}, R(2) == 0, R(2) == 0));
     MESHOP("Displace", m.Displace(a, a, R(100)));
+    MESHOP("BevelWeights+Weld", { for (const auto& ed : e) m.SetBevelWeight(ed.first, ed.second, a); m.WeldVertices(F(0.0f, 0.5f)); });
+    Op("Quad remesh + TrisToQuads", N / 4 + 1, []() -> const char* {
+        Mesh m = RandomMesh(); okay::modeling::QuadRemeshOptions o; o.targetQuads = R(60) - 5; o.allQuads = R(2) == 0; o.relaxIterations = R(8) - 1; o.snapToSource = R(2) == 0;
+        okay::modeling::QuadRemeshReport rep; const PolyMesh p = okay::modeling::QuadRemesh(m, o, &rep);
+        if (const char* w = SanePoly(p)) return w;
+        int l = 0; const PolyMesh q = okay::modeling::TrisToQuads(m, RandomAmount(), RandomAmount(), &l);
+        return SanePoly(q);
+    });
+    Op("Curve builders", N, []() -> const char* {
+        std::vector<Vec3> pts; for (int i = 0, n = R(7); i < n; ++i) pts.push_back(R(8) == 0 ? Vec3{RandomAmount(), 0, 0} : Vec3{F(-3, 3), F(-3, 3), F(-3, 3)});
+        if (R(4) == 0 && !pts.empty()) pts.push_back(pts[0]);
+        const auto c = okay::modeling::CurveThrough(pts, R(2) == 0, RandomAmount());
+        std::vector<Vec2> prof; for (int i = 0, n = R(6); i < n; ++i) prof.push_back({F(-1, 1), F(-1, 1)});
+        const Mesh a = okay::modeling::CurvePipe(c, RandomAmount(), R(20) - 2, R(12) - 2, R(2) == 0);
+        const Mesh b = okay::modeling::CurveSweep(c, prof, R(2) == 0, R(12) - 2, RandomAmount(), R(2) == 0);
+        const Mesh r = okay::modeling::CurveRibbon(c, RandomAmount(), R(12) - 2);
+        for (const Mesh* m : {&a, &b, &r}) if (const char* w = Sane(*m)) return w;
+        return nullptr;
+    });
+    Op("Bevel modifier with weights", N, []() -> const char* {
+        Mesh m = RandomMesh(); const auto e = RandomEdges(m);
+        for (const auto& ed : e) m.SetBevelWeight(ed.first, ed.second, RandomAmount());
+        MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Bevel); mod.width = RandomAmount(); mod.segments = R(6) - 1; mod.useBevelWeights = R(3) != 0;
+        Mesh out; std::string err; ApplyModifier(m, mod, ModifierContext(), out, &err);
+        return Sane(out);
+    });
     MESHOP("HideReveal", { m.HideTriangles(t); m.RevealHidden(); });
     MESHOP("Isolate", { m.IsolateTriangles(t); m.RevealHidden(); });
     MESHOP("Combine", m.Combine(RandomMesh()));

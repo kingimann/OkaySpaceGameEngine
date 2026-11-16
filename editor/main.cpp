@@ -46,7 +46,9 @@
 #include "okay/Modeling/MeshLibrary.hpp"        // browse .okaymesh parts in the project
 #include "okay/Optimize/MeshSimplify.hpp"      // edge-collapse polygon reduction
 #include "okay/Modeling/Curve.hpp"           // Bezier curves to pipes, ribbons and swept profiles
-#include "okay/Modeling/Reference.hpp"       // blueprint plane corners
+#include "okay/Modeling/Remesh.hpp"          // Quad Remesh
+#include "okay/Modeling/Reference.hpp"
+#include "okay/Modeling/Remesh.hpp"       // blueprint plane corners
 #include "okay/Modeling/Arrange.hpp"          // align / distribute objects
 #include "okay/Modeling/ScreenSelect.hpp"      // box / circle / lasso select
 #include "okay/Modeling/SelectOps.hpp"      // grow / shrink / select similar, apply scale, how-do-I recipes
@@ -3247,12 +3249,11 @@ bool  g_meshSymZ    = false;          // ... across local Z=0 (G / R / S)
 bool  g_paintVertex = false;          // the paint brush paints smooth per-vertex colours instead of whole faces
 float g_paintHardness = 0.3f;         // vertex paint: 0 = soft falloff all the way, near 1 = solid centre
 bool  g_meshXray    = false;          // box / circle / lasso select picks through the mesh
-struct RefImage { std::string path; int plane = 0; Vec3 centre{0, 0, 0}; float width = 4.0f; float opacity = 0.45f; bool flipX = false; bool visible = true; };
+using RefImage = okay::modeling::RefImageRecord;   // saved in the scene (Scene::refImages)
 std::vector<Vec3> g_curvePts = {{-2, 0, 0}, {-1, 1, 0}, {1, -1, 0}, {2, 0, 0}};   // the Bezier curve being built (world space), drawn in the 3D view
 bool  g_curveClosed = false;
 float g_curveTension = 0.5f;
 bool  g_curveShow = true;
-std::vector<RefImage> g_refImages;    // reference images / blueprint planes drawn over the 3D view (this session only)
 int   g_selTool     = 0;              // 0 none, 1 box, 2 circle, 3 lasso (the active drag-select tool)
 float g_circleRadius = 40.0f;         // circle select radius in screen pixels (mouse wheel changes it)
 bool  g_meshSoftSel = false;          // proportional editing: moves fall off around selection
@@ -3561,6 +3562,8 @@ static int  g_cmdPaletteSel = 0;
 static char g_cmdFilter[64] = "";
 static float g_quickBevelW = 0.1f;
 static float g_reduceRatio = 50.0f;    // Reduce Polygons: percent of the triangles to keep
+static int   g_quadTarget = 400;       // Quad Remesh: about how many faces to end with
+static bool  g_quadAllQuads = true;    // Quad Remesh: split leftovers so there are no triangles
 static float g_bevelWeight = 1.0f;     // bevel weight 0..1 for Set Bevel Weight
 static float g_creaseW = 2.0f;         // crease sharpness: levels of subdivision the edge stays sharp
 static float g_wrapOffset = 0.0f;      // shrinkwrap / snap to surface: how far to stay off the surface
@@ -3649,6 +3652,17 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         EditUndoPoint(ed, mr);
         for (const auto& e : edges) mr->mesh.SetCrease(e.first, e.second, 0.0f);
         ed.dirty = true;
+    });
+    add("Quad Remesh", "", "Edit", "Rebuild the whole mesh as quads: fewer faces (the Quads target in Edit Mesh), the same shape. Slots, vertex colours and UVs are dropped; Undo brings them back.", mr->mesh.TriangleCount() > 0, "The mesh has no triangles.", [&ed, mr] {
+        okay::modeling::QuadRemeshOptions qo; qo.targetQuads = g_quadTarget; qo.allQuads = g_quadAllQuads;
+        okay::modeling::QuadRemeshReport rep; const int before = mr->mesh.TriangleCount();
+        const Mesh src = mr->mesh;
+        const bool ok = ApplyPoly(ed, mr, [&](okay::modeling::PolyMesh& pm) {
+            pm = okay::modeling::QuadRemesh(src, qo, &rep);
+            g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_meshSelFaces.clear();
+            return rep.ok;
+        });
+        ConsoleLog(ok ? "Quad Remesh: " + std::to_string(before) + " triangles -> " + std::to_string(rep.outputQuads) + " quads, " + std::to_string(rep.outputTriangles) + " triangles left" : "Quad Remesh: " + rep.error);
     });
     add("Set Bevel Weight on Selected Edges", "", "Edit", "Mark the selected edges for the Bevel modifier's 'Use edge weights' option (weight set in Edit Mesh: 1 = full width).", anyEdges, needEdges, [&ed, mr] {
         const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
@@ -28779,7 +28793,7 @@ void DrawModeling(EditorState& ed) {
             const pmo::BezierCurve bc = pmo::CurveThrough(g_curvePts, g_curveClosed, g_curveTension);
             if (ImGui::Button("Make Pipe##curvepipe")) makeObject("Curve Pipe", pmo::CurvePipe(bc, s_cRadius, s_cSides, s_cSpan, s_cCaps));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A round pipe along the curve as a new object (an editable mesh).");
-            ImGui::SameLine(); if (ImGui::Button("Make Ribbon##curverib")) makeObject("Curve Ribbon", pmo::CurveRibbon(bc, s_cWidth, s_cSpan));
+            ImGui::SameLine(); if (ImGui::Button("Make Ribbon##curverib")) makeObject("Curve Ribbon", pmo::CurveRibbon(bc, s_cWidth, s_cSpan, true));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A flat strip along the curve (roads, paths, flags).");
             ImGui::SameLine(); if (ImGui::Button("Sweep Profile##curvesweep") && s_profile.size() >= 2) makeObject("Curve Sweep", pmo::CurveSweep(bc, s_profile, true, s_cSpan, s_cTaper, s_cCaps));
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sweeps the profile points above (radius across, height up) along the curve, tapering by the taper value.");
@@ -29141,6 +29155,9 @@ void DrawModeling(EditorState& ed) {
                 ImGui::SetNextItemWidth(110); ImGui::DragFloat("Reduce to %##mereduce", &g_reduceRatio, 0.5f, 2.0f, 100.0f, "%.0f%%");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reduce Polygons (Ctrl+K, type reduce) keeps this percent of the triangles.");
                 ImGui::SetNextItemWidth(110); ImGui::DragFloat("Crease sharpness##mecrease", &g_creaseW, 0.05f, 0.1f, 10.0f, "%.1f");
+                ImGui::SetNextItemWidth(110); ImGui::DragInt("Quads target##mequad", &g_quadTarget, 2.0f, 8, 100000);
+                ImGui::SameLine(); ImGui::Checkbox("All quads##mequad2", &g_quadAllQuads);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used by Quad Remesh (Ctrl+K, type quad): about how many faces to end with, and whether leftover triangles are split into quads.");
                 ImGui::SetNextItemWidth(110); ImGui::SliderFloat("Bevel weight##mebw", &g_bevelWeight, 0.1f, 1.0f, "%.1f");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used by Set Bevel Weight on Selected Edges (Ctrl+K, type bevel weight); the Bevel modifier needs Use edge weights ticked.");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used by Set Crease on Selected Edges (Ctrl+K, type crease): how many levels of subdivision the edge stays sharp.");
@@ -29725,13 +29742,13 @@ void DrawModeling(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Add##refimg") && s_refPath[0]) {
                 RefImage ri; ri.path = s_refPath;
-                ri.plane = (int)g_refImages.size() % 3;                         // front, then side, then top
-                g_refImages.push_back(ri);
+                ri.plane = (int)ed.scene().refImages.size() % 3;                         // front, then side, then top
+                ed.scene().refImages.push_back(ri); ed.dirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a picture as a blueprint plane. The first is the front view (XY), then side (ZY), then top (XZ). Drawn over the 3D view at its opacity.");
             int refDel = -1;
-            for (int ri = 0; ri < (int)g_refImages.size(); ++ri) {
-                RefImage& r = g_refImages[ri];
+            for (int ri = 0; ri < (int)ed.scene().refImages.size(); ++ri) {
+                RefImage& r = ed.scene().refImages[ri];
                 ImGui::PushID(ri);
                 ImGui::Checkbox("##refvis", &r.visible); ImGui::SameLine();
                 ImGui::TextUnformatted(r.path.c_str());
@@ -29745,8 +29762,8 @@ void DrawModeling(EditorState& ed) {
                 ImGui::SameLine(); if (ImGui::SmallButton("Remove##refdel")) refDel = ri;
                 ImGui::PopID();
             }
-            if (refDel >= 0) g_refImages.erase(g_refImages.begin() + refDel);
-            if (g_refImages.empty()) ImGui::TextDisabled("None yet. Use any PNG or JPG in your project (the picture, its width in world units, its opacity and centre are shown above).");
+            if (refDel >= 0) { ed.scene().refImages.erase(ed.scene().refImages.begin() + refDel); ed.dirty = true; }
+            if (ed.scene().refImages.empty()) ImGui::TextDisabled("None yet. Use any PNG or JPG in your project (the picture, its width in world units, its opacity and centre are shown above).");
         }
         // Mesh library: the .okaymesh parts in the project's Assets folder, ready to drop into the scene.
         {
@@ -44683,8 +44700,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
     for (GameObject* g : isoHidden) g->active = true;
     // Reference images (blueprint planes): each one a flat picture in the world (front, side or top), drawn over the view
     // at its opacity so a model can be traced. Corners are projected through the camera like everything else.
-    if (!gameView && !g_refImages.empty()) {
-        for (const RefImage& ri : g_refImages) {
+    if (!gameView && !ed.scene().refImages.empty()) {
+        for (const RefImage& ri : ed.scene().refImages) {
             if (!ri.visible || ri.path.empty() || !(ri.width > 0.0f)) continue;
             SDL_Texture* rt = GetThumb(ri.path);
             if (!rt) continue;
@@ -45337,11 +45354,17 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
         // they're drawn with.
         std::set<std::pair<int, int>> creaseSet;
         for (const EdgeCrease& c : mesh.creases) creaseSet.insert({std::min(c.a, c.b), std::max(c.a, c.b)});
+        std::set<std::pair<int, int>> bevelSet;
+        for (const auto& c : mesh.bevelWeights) bevelSet.insert({std::min(c.a, c.b), std::max(c.a, c.b)});
         for (const auto& e : EditPolyEdges(mesh)) {
             ImVec2 a, b;
             if (vScreen(e.first, a) && vScreen(e.second, b)) {
-                const bool cr = !creaseSet.empty() && creaseSet.count({std::min(e.first, e.second), std::max(e.first, e.second)});
-                dl->AddLine(a, b, cr ? IM_COL32(235, 90, 200, 235) : IM_COL32(150, 172, 205, 150), cr ? 2.5f : 1.0f);   // creases are pink
+                const std::pair<int, int> key{std::min(e.first, e.second), std::max(e.first, e.second)};
+                const bool cr = !creaseSet.empty() && creaseSet.count(key);
+                const bool bw = !bevelSet.empty() && bevelSet.count(key);
+                // creases are pink, bevel weights are green (an edge with both is pink with a green core)
+                dl->AddLine(a, b, cr ? IM_COL32(235, 90, 200, 235) : bw ? IM_COL32(70, 220, 120, 235) : IM_COL32(150, 172, 205, 150), (cr || bw) ? 2.5f : 1.0f);
+                if (cr && bw) dl->AddLine(a, b, IM_COL32(70, 220, 120, 235), 1.0f);
             }
         }
         // UV seams, in red (Modeling > Edit Mesh > UVs & Seams).

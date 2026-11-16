@@ -132,7 +132,7 @@ Mesh CurvePipe(const BezierCurve& c, float radius, int sides, int perSpan, bool 
     return CurveSweep(c, prof, true, perSpan, 1.0f, caps);
 }
 
-Mesh CurveRibbon(const BezierCurve& c, float width, int perSpan) {
+Mesh CurveRibbon(const BezierCurve& c, float width, int perSpan, bool bothSides) {
     if (!(width > 0.0f) || !std::isfinite(width)) return Mesh{};
     const std::vector<Vec2> prof = {{0, -width * 0.5f}, {0, width * 0.5f}};   // across the curve sideways (the carried frame's binormal), so the strip lies flat
     Mesh m = CurveSweep(c, prof, false, perSpan, 1.0f, false);
@@ -141,6 +141,10 @@ Mesh CurveRibbon(const BezierCurve& c, float width, int perSpan) {
         Vec3 n{0, 0, 0};
         for (int t = 0; t < m.TriangleCount(); ++t) { const Vec3& a = m.vertices[m.triangles[t * 3]]; n += Vec3::Cross(m.vertices[m.triangles[t * 3 + 1]] - a, m.vertices[m.triangles[t * 3 + 2]] - a); }
         if (n.y < 0) m.FlipWinding();
+    }
+    if (bothSides && m.TriangleCount() > 0) {   // a second copy of every triangle, wound the other way, on the same points
+        const std::size_t n0 = m.triangles.size();
+        for (std::size_t i = 0; i + 2 < n0; i += 3) { m.triangles.push_back(m.triangles[i]); m.triangles.push_back(m.triangles[i + 2]); m.triangles.push_back(m.triangles[i + 1]); }
     }
     return m;
 }

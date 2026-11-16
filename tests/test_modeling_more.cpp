@@ -1,7 +1,12 @@
 // Modeling "more": per-face material slots (the M5b gap) and the audit fixes.
 // Written from the spec in docs/modeling.md and docs/modeling_audit.md.
 #include "test_framework.hpp"
+#include "okay/Modeling/MeshAsset.hpp"
+#include "okay/Modeling/MeshUndo.hpp"
 #include "okay/Modeling/MaterialLibrary.hpp"
+#include "okay/Modeling/Curve.hpp"
+#include "okay/Modeling/Remesh.hpp"
+#include "okay/Modeling/Reference.hpp"
 #include "okay/Modeling/Arrange.hpp"
 #include "okay/Modeling/EditTransform.hpp"
 #include "okay/Modeling/MeshLibrary.hpp"
@@ -980,6 +985,398 @@ int main() {
         Mesh tiny = Mesh::Cube();
         CHECK(okay::optimize::SimplifyMesh(tiny, o).mesh.TriangleCount() >= 4);
         CHECK(okay::optimize::SimplifyMesh(Mesh{}, o).mesh.TriangleCount() == 0);
+    }
+    RUN_SUITE("slot groups (what the OpenGL renderer draws one range per slot from)");
+    {
+        Mesh m = Mesh::Cube();
+        m.AssignSlot({0, 5, 7}, 2); m.AssignSlot({1, 2}, 1);
+        const Mesh::SlotGroups g = m.GroupBySlot();
+        CHECK(g.order.size() == 12 && g.groups.size() == 3);
+        CHECK(g.groups[0][0] == 0 && g.groups[0][2] == 7 && g.groups[1][0] == 1 && g.groups[1][2] == 2 && g.groups[2][0] == 2 && g.groups[2][2] == 3);
+        CHECK(g.groups[1][1] == 7 && g.groups[2][1] == 9);                       // each group starts where the last one ended
+        std::set<int> seen(g.order.begin(), g.order.end());
+        CHECK(seen.size() == 12);                                                // every triangle exactly once
+        CHECK(g.order[7] == 1 && g.order[8] == 2 && g.order[9] == 0 && g.order[10] == 5 && g.order[11] == 7);   // stable inside a slot
+        for (const auto& gr : g.groups) for (int i = 0; i < gr[2]; ++i) CHECK(m.triSlot[g.order[gr[1] + i]] == gr[0]);
+        const Mesh::SlotGroups none = Mesh::Cube().GroupBySlot();
+        CHECK(none.groups.size() == 1 && none.groups[0][2] == 12 && none.order[5] == 5);
+        CHECK(Mesh{}.GroupBySlot().groups.empty());
+    }
+    RUN_SUITE("reference image planes");
+    {
+        const auto f = RefPlaneCorners(RefPlane::Front, Vec3{1, 2, 3}, 4.0f, 0.5f);       // 4 wide, 2 tall
+        CHECK(f[0].x == -1 && f[0].y == 3 && f[0].z == 3 && f[1].x == 3 && f[1].y == 3 && f[2].x == 3 && f[2].y == 1 && f[3].x == -1 && f[3].y == 1);
+        const auto fl = RefPlaneCorners(RefPlane::Front, Vec3{0, 0, 0}, 4.0f, 0.5f, true);
+        CHECK(fl[0].x == 2 && fl[1].x == -2 && fl[0].y == 1 && fl[3].y == -1);          // mirrored left to right, same height
+        const auto sd = RefPlaneCorners(RefPlane::Side, Vec3{0, 0, 0}, 4.0f, 0.5f);      // the picture's left edge is toward +Z
+        CHECK(sd[0].z == 2 && sd[1].z == -2 && sd[0].x == 0 && sd[0].y == 1 && sd[3].y == -1);
+        const auto tp = RefPlaneCorners(RefPlane::Top, Vec3{0, 5, 0}, 4.0f, 0.5f);       // the picture's top edge is toward -Z
+        CHECK(tp[0].z == -1 && tp[3].z == 1 && tp[0].x == -2 && tp[1].x == 2 && tp[0].y == 5);
+        // Bad sizes give a point (nothing is drawn), never a crash or NaN.
+        for (const auto& bad : {RefPlaneCorners(RefPlane::Front, Vec3{1, 1, 1}, 0.0f, 1.0f), RefPlaneCorners(RefPlane::Front, Vec3{1, 1, 1}, 2.0f, -1.0f),
+                                RefPlaneCorners(RefPlane::Top, Vec3{1, 1, 1}, std::nanf(""), 1.0f), RefPlaneCorners(RefPlane::Side, Vec3{1, 1, 1}, INFINITY, 1.0f)})
+            for (const Vec3& v : bad) CHECK(!std::isnan(v.y) && (v - bad[0]).Magnitude() < 1e-6f);
+        // The corners go clockwise on screen from the viewing side: top-left, top-right, bottom-right, bottom-left.
+        const Vec3 e1 = f[1] - f[0], e2 = f[2] - f[1];
+        CHECK(Vec3::Cross(e1, e2).z < 0);                                                  // (viewed from +Z, clockwise)
+    }
+    RUN_SUITE("bezier curves to meshes");
+    {
+        const std::vector<Vec3> pts = {{0, 0, 0}, {1, 1, 0}, {2, 0, 0}, {3, 1, 0}};
+        const BezierCurve c = CurveThrough(pts);
+        CHECK(c.pts.size() == 4 && !c.closed && c.Spans() == 3);
+        const auto s8 = SampleCurve(c, 8);
+        CHECK(s8.size() == 3 * 8 + 1);
+        CHECK((s8.front() - pts[0]).Magnitude() < 1e-5f && (s8.back() - pts[3]).Magnitude() < 1e-5f);
+        for (int i = 0; i < 4; ++i) CHECK((s8[i * 8] - pts[i]).Magnitude() < 1e-5f);                    // it passes through every control point
+        // Smooth: the direction going into a point matches the direction leaving it.
+        for (int i = 1; i < 3; ++i) { const auto fine = SampleCurve(c, 64); const Vec3 din = (fine[i * 64] - fine[i * 64 - 1]).Normalized(), dout = (fine[i * 64 + 1] - fine[i * 64]).Normalized(); CHECK(Vec3::Dot(din, dout) > 0.99f); }
+        // Collinear points stay a straight line of the right length; tension 0 is straight segments.
+        const BezierCurve line = CurveThrough({{0, 0, 0}, {1, 0, 0}, {3, 0, 0}, {4, 0, 0}});
+        CHECK_NEAR(CurveLength(line), 4.0f, 1e-3);
+        for (const Vec3& q : SampleCurve(line, 6)) CHECK(std::fabs(q.y) < 1e-6f && q.x >= -1e-5f && q.x <= 4.0f + 1e-5f);
+        CHECK_NEAR(CurveLength(CurveThrough({{0, 0, 0}, {3, 0, 0}, {3, 4, 0}}, false, 0.0f), 4), 7.0f, 1e-3);
+        // Closed: no repeated first point, a loop.
+        const BezierCurve loop = CurveThrough({{2, 0, 0}, {0, 0, 2}, {-2, 0, 0}, {0, 0, -2}}, true);
+        CHECK(loop.closed && loop.Spans() == 4 && SampleCurve(loop, 5).size() == 20);
+        CHECK(CurveLength(loop, 16) > 2 * 3.14159f * 2 * 0.9f && CurveLength(loop, 16) < 2 * 3.14159f * 2 * 1.05f);   // about a circle of radius 2
+        // Not enough points, NaN points, and absurd sample counts are handled.
+        CHECK(SampleCurve(CurveThrough({{0, 0, 0}}), 8).empty() && SampleCurve(BezierCurve{}, 8).empty());
+        CHECK(CurveThrough({{0, 0, 0}, {std::nanf(""), 0, 0}, {1, 0, 0}}).pts.size() == 2);
+        CHECK(SampleCurve(c, 0).size() == 3 + 1 && SampleCurve(c, 100000).size() == 3 * 256 + 1);
+        // A straight pipe is a closed solid with the right volume.
+        const BezierCurve straight = CurveThrough({{0, 0, 0}, {4, 0, 0}}, false, 0.0f);
+        const Mesh pipe = CurvePipe(straight, 0.25f, 8, 4, true);
+        CHECK(pipe.TriangleCount() > 0 && pipe.Topology().Closed());
+        const float octArea = 0.5f * 8.0f * 0.25f * 0.25f * std::sin(6.28318530718f / 8.0f);
+        CHECK_NEAR(MeasureMesh(pipe).volume, octArea * 4.0f, 0.01);
+        CHECK(!CurvePipe(straight, 0.25f, 8, 4, false).Topology().Closed());                            // no caps: open at both ends
+        PolyMesh pp = PolyMesh::FromMesh(pipe); CHECK(pp.EulerCharacteristic() == 2);
+        // A pipe round a closed loop is a ring (torus: Euler 0), closed, positive volume.
+        const Mesh ringPipe = CurvePipe(loop, 0.2f, 10, 6);
+        PolyMesh rp = PolyMesh::FromMesh(ringPipe);
+        CHECK(ringPipe.Topology().Closed() && rp.EulerCharacteristic() == 0 && MeasureMesh(ringPipe).volume > 0);
+        // A ribbon: a flat strip facing up, area = width x length.
+        const Mesh rib = CurveRibbon(straight, 1.0f, 4);
+        CHECK_NEAR(MeasureMesh(rib).area, 4.0f, 1e-3);
+        Vec3 nsum{0, 0, 0}; for (int t = 0; t < rib.TriangleCount(); ++t) { const Vec3& a = rib.vertices[rib.triangles[t * 3]]; nsum += Vec3::Cross(rib.vertices[rib.triangles[t * 3 + 1]] - a, rib.vertices[rib.triangles[t * 3 + 2]] - a); }
+        CHECK(nsum.y > 0 && std::fabs(nsum.x) < 1e-4f && std::fabs(nsum.z) < 1e-4f);
+        const Mesh rib2 = CurveRibbon(straight, 1.0f, 4, true);
+        CHECK(rib2.TriangleCount() == rib.TriangleCount() * 2);
+        { Vec3 ns{0, 0, 0}; for (int t = 0; t < rib2.TriangleCount(); ++t) { const Vec3& a = rib2.vertices[rib2.triangles[t * 3]]; ns += Vec3::Cross(rib2.vertices[rib2.triangles[t * 3 + 1]] - a, rib2.vertices[rib2.triangles[t * 3 + 2]] - a); } CHECK(ns.Magnitude() < 1e-3f); }   // up and down faces cancel
+        // A square profile tapering to half size loses volume; a profile can be open (a flat strip).
+        const std::vector<Vec2> sq = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {0.5f, 0.5f}, {-0.5f, 0.5f}};
+        const float vFull = MeasureMesh(CurveSweep(straight, sq, true, 4, 1.0f, true)).volume, vTaper = MeasureMesh(CurveSweep(straight, sq, true, 4, 0.5f, true)).volume;
+        CHECK_NEAR(vFull, 4.0f, 0.01); CHECK(vTaper > 0.3f * vFull && vTaper < 0.6f * vFull);
+        // Bad input gives an empty mesh and never a crash or NaN.
+        CHECK(CurvePipe(straight, 0.0f).TriangleCount() == 0 && CurvePipe(straight, std::nanf("")).TriangleCount() == 0 && CurvePipe(CurveThrough({{0, 0, 0}}), 1.0f).TriangleCount() == 0);
+        CHECK(CurveSweep(straight, {{0, 0}}, true).TriangleCount() == 0 && CurveSweep(straight, {{0, 0}, {std::nanf(""), 1}}, false).TriangleCount() == 0);
+        CHECK(CurveRibbon(straight, -1.0f).TriangleCount() == 0 && CurveSweep(straight, sq, true, 4, std::nanf("")).TriangleCount() == 0);
+        // A twisty path stays sound (the carried frame never flips or goes NaN).
+        std::vector<Vec3> wild; for (int i = 0; i < 40; ++i) wild.push_back({std::cos(i * 0.7f) * 2, i * 0.3f, std::sin(i * 0.7f) * 2});
+        const Mesh helix = CurvePipe(CurveThrough(wild), 0.1f, 8, 6);
+        bool fin = true; for (const Vec3& v : helix.vertices) if (!std::isfinite(v.x + v.y + v.z)) fin = false;
+        CHECK(fin && helix.TriangleCount() > 1000 && helix.Topology().Closed() && MeasureMesh(helix).volume > 0);
+        // A straight-up path (the usual "up" is along it) still builds.
+        CHECK(CurvePipe(CurveThrough({{0, 0, 0}, {0, 3, 0}}, false, 0.0f), 0.3f, 6, 2).Topology().Closed());
+        // Big: many points, high sample counts, many sides stays quick.
+        std::vector<Vec3> many; for (int i = 0; i < 60; ++i) many.push_back({(float)i, std::sin(i * 0.5f), 0});
+        const auto t0 = std::chrono::steady_clock::now();
+        const Mesh bigp = CurvePipe(CurveThrough(many), 0.1f, 32, 64);
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        CHECK(bigp.TriangleCount() > 100000 && secs < 20.0);
+    }
+    RUN_SUITE("bevel weights");
+    {
+        Mesh m = Mesh::Cube();
+        m.SetBevelWeight(3, 1, 0.5f); m.SetBevelWeight(1, 3, 5.0f); m.SetBevelWeight(2, 2, 1.0f); m.SetBevelWeight(0, 4, std::nanf(""));
+        CHECK(m.bevelWeights.size() == 1 && m.bevelWeights[0].a == 1 && m.bevelWeights[0].b == 3 && m.bevelWeights[0].w == 1.0f);   // order does not matter; the weight is capped at 1
+        m.SetBevelWeight(3, 1, 0.0f); CHECK(m.bevelWeights.empty());
+        // Through the polygon mesh and the .okaymesh file.
+        PolyMesh pm = PolyMesh::FromMesh(Mesh::Cube());
+        const auto e0 = pm.Edges()[0], e1 = pm.Edges()[1];
+        pm.SetBevelWeight(e0.a, e0.b, 0.7f); pm.SetBevelWeight(e1.b, e1.a, 0.2f);
+        CHECK(pm.BevelWeightOf(e0.b, e0.a) == 0.7f && pm.ToMesh().bevelWeights.size() == 2);
+        PolyMesh round; std::string err;
+        CHECK(PolyMesh::Parse(pm.Serialize(), round, &err) && round.BevelWeightOf(e1.a, e1.b) == 0.2f);
+        CHECK(PolyMesh::FromMesh(Mesh::Cube()).Serialize().find("bevelw") == std::string::npos);
+        CHECK(!PolyMesh::Parse("okaymesh 1\nverts 0\nfaces 0\nbevelw 3 4 0.5\n", round, &err) && !PolyMesh::Parse("okaymesh 1\nverts 0\nfaces 0\nbevelw 3 4\n", round, &err));
+        PolyMesh cp = PolyMesh::FromMesh(Mesh::Cube()); cp.verts.push_back(Vec3{9, 9, 9}); cp.SetBevelWeight(7, 6, 1.0f);
+        const std::vector<int> rm = CompactVerts(cp);
+        CHECK(cp.bevelWeights.size() == 1 && cp.bevelWeights[0].a == std::min(rm[6], rm[7]));
+        // The Bevel modifier with "use weights" rounds only the weighted edges; without weights it leaves the mesh alone.
+        auto volume = [](const Mesh& x) { return MeasureMesh(x).volume; };
+        Mesh cube = Mesh::Cube();
+        PolyMesh base = PolyMesh::FromMesh(cube);
+        int top = -1; for (int f = 0; f < (int)base.faces.size(); ++f) if (base.FaceNormal(f).y > 0.9f) top = f;
+        const PolyFace tf = base.faces[top];
+        auto weighted = [&](float w) {
+            PolyMesh b = base;
+            for (std::size_t k = 0; k < tf.verts.size(); ++k) b.SetBevelWeight(tf.verts[k], tf.verts[(k + 1) % tf.verts.size()], w);
+            return b.ToMesh();
+        };
+        MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Bevel); mod.width = 0.1f; mod.segments = 2; mod.useBevelWeights = true;
+        Mesh out; std::string merr;
+        CHECK(ApplyModifier(cube, mod, ModifierContext(), out, &merr) && out.TriangleCount() == 12);                // no weights: unchanged
+        Mesh full, half;
+        CHECK(ApplyModifier(weighted(1.0f), mod, ModifierContext(), full, &merr) && full.TriangleCount() > 12 && full.Topology().Closed());
+        CHECK(ApplyModifier(weighted(0.5f), mod, ModifierContext(), half, &merr) && half.TriangleCount() > 12);
+        CHECK(volume(full) < 1.0f && volume(half) < 1.0f && volume(full) < volume(half));                           // a heavier weight takes a wider bevel
+        // Only the top edges were rounded: the bottom corners are still sharp (lowest vertices stay at y = -0.5, the full width).
+        float lowest = 9, widest = 0; for (const Vec3& v : full.vertices) { lowest = std::min(lowest, v.y); if (v.y < -0.49f) widest = std::max(widest, std::fabs(v.x)); }
+        CHECK(lowest < -0.499f && widest > 0.499f);
+        MeshModifier off = mod; off.useBevelWeights = false; off.angle = 30.0f;
+        Mesh angled; CHECK(ApplyModifier(weighted(1.0f), off, ModifierContext(), angled, &merr) && angled.TriangleCount() > full.TriangleCount());   // by angle it bevels all 12 edges
+        // A changed weight or the flag changes the stack's identity.
+        Mesh w1 = weighted(0.5f), w2 = weighted(1.0f);
+        CHECK(ModifierInputHash(w1, {}, ModifierContext()) != ModifierInputHash(w2, {}, ModifierContext()));
+        std::vector<MeshModifier> a = {mod}, b = a; b[0].useBevelWeights = false;
+        CHECK(!SameModifiers(a, b));
+        // Weld renumbers vertices: the weight follows.
+        Mesh wm = Mesh::Cube(); const Vec3 pa = wm.vertices[2]; wm.vertices.push_back(pa); wm.triangles.insert(wm.triangles.end(), {8, 0, 1});
+        wm.bevelWeights = {{8, 1, 0.5f}}; wm.WeldVertices();
+        CHECK(wm.bevelWeights.size() == 1 && wm.bevelWeights[0].b < (int)wm.vertices.size() && wm.bevelWeights[0].w == 0.5f);
+    }
+    RUN_SUITE("quad remesh");
+    {
+        // A grid of triangles pairs into quads: a flat 6x6 grid is 72 triangles, which become 36 quads with none left.
+        Mesh grid = Mesh::Quad(1.0f);
+        for (int i = 0; i < 3; ++i) grid.Subdivide();
+        int left = -1;
+        PolyMesh q = TrisToQuads(grid, 40.0f, 0.3f, &left);
+        CHECK(q.faces.size() > 0 && left == 0 && (int)q.faces.size() * 2 == grid.TriangleCount());
+        for (const PolyFace& f : q.faces) CHECK(f.Size() == 4);
+        // A bent seam (90 degrees) is not paired when the angle limit is smaller, and is when it is larger.
+        Mesh bent; bent.vertices = {{0, 0, 0}, {1, 0, 0}, {0, 0, 1}, {1, 1, 1}}; bent.triangles = {0, 2, 1, 1, 2, 3};
+        int l2 = 0; TrisToQuads(bent, 10.0f, 0.0f, &l2); CHECK(l2 == 2);
+        // A dart shape (not convex) is never paired.
+        Mesh dart; dart.vertices = {{0, 0, 0}, {2, 0, 0}, {1, 0.2f, 0}, {1, 2, 0}}; dart.triangles = {0, 1, 2, 0, 2, 3};
+        int l3 = 0; TrisToQuads(dart, 80.0f, 0.0f, &l3); CHECK(l3 == 2 || l3 == 0);
+        // Hostile input: bad indices and NaN do not crash.
+        Mesh bad = Mesh::Cube(); bad.triangles.push_back(99); bad.triangles.push_back(-1); bad.triangles.push_back(2); bad.vertices[3].x = std::nanf("");
+        QuadRemeshReport br; PolyMesh bq = QuadRemesh(bad, QuadRemeshOptions(), &br); (void)bq;
+        CHECK(br.inputTriangles == bad.TriangleCount());
+        QuadRemeshReport er; PolyMesh eq = QuadRemesh(Mesh{}, QuadRemeshOptions(), &er);
+        CHECK(!er.ok && !er.error.empty() && eq.faces.empty());
+        // A sphere with thousands of triangles becomes about the asked number of quads, with no triangles, on the same surface.
+        Mesh sphere = Mesh::Sphere(1.0f, 40, 56);
+        QuadRemeshOptions o; o.targetQuads = 300;
+        QuadRemeshReport r; PolyMesh out = QuadRemesh(sphere, o, &r);
+        CHECK(r.ok && r.outputTriangles == 0 && r.outputQuads == (int)out.faces.size());
+        CHECK(r.outputQuads > 100 && r.outputQuads < 900 && r.outputQuads < sphere.TriangleCount() / 3);
+        float lo = 9, hi = 0; for (const Vec3& v : out.verts) { const float d = v.Magnitude(); lo = std::min(lo, d); hi = std::max(hi, d); }
+        CHECK(lo > 0.93f && hi < 1.02f);                                  // stays on the unit sphere
+        const Mesh om = out.ToMesh();
+        CHECK(om.Topology().Closed());
+        CHECK(MeasureMesh(om).volume > 0.8f * MeasureMesh(sphere).volume);
+        // Quad-dominant mode keeps triangles where they did not pair.
+        QuadRemeshOptions o2; o2.targetQuads = 300; o2.allQuads = false;
+        QuadRemeshReport r2; PolyMesh out2 = QuadRemesh(sphere, o2, &r2);
+        CHECK(r2.ok && r2.outputQuads > 0 && r2.outputQuads + r2.outputTriangles == (int)out2.faces.size());
+        // An open mesh keeps its border: a flat patch stays flat.
+        Mesh plane = Mesh::Quad(2.0f); for (int i = 0; i < 5; ++i) plane.Subdivide();
+        QuadRemeshOptions o3; o3.targetQuads = 40; QuadRemeshReport r3; PolyMesh out3 = QuadRemesh(plane, o3, &r3);
+        float maxY = 0; for (const Vec3& v : out3.verts) maxY = std::max(maxY, std::fabs(v.z));
+        CHECK(r3.ok && r3.outputQuads >= 8 && maxY < 1e-3f);
+    }
+    RUN_SUITE("GeometryHash sees every kind of edit (so leaving edit mode records an undo step)");
+    {
+        Mesh base = Mesh::Cube();
+        const std::uint64_t h0 = okay::modeling::GeometryHash(base);
+        Mesh a = base; a.seams.push_back({0, 1});                                  CHECK(okay::modeling::GeometryHash(a) != h0);   // a UV seam
+        Mesh b = base; b.cornerUVs.assign(base.triangles.size(), Vec2{0.5f, 0.5f}); CHECK(okay::modeling::GeometryHash(b) != h0);   // per-corner UVs
+        Mesh c = base; if (c.polyFace.empty()) c.polyFace.assign((size_t)c.TriangleCount(), 0);
+        Mesh c2 = c; c2.polyFace[0] = 7;                                            CHECK(okay::modeling::GeometryHash(c2) != okay::modeling::GeometryHash(c));   // which triangles form a polygon
+        Mesh d = base; d.hiddenPos.assign(3, Vec3{0, 0, 0}); d.hiddenSlot.assign(1, -1); d.hiddenPoly.assign(1, -1);   CHECK(okay::modeling::GeometryHash(d) != h0);   // hidden faces
+        Mesh e = base; e.vertices[0].x += 1e-3f;                                    CHECK(okay::modeling::GeometryHash(e) != h0);
+        CHECK(okay::modeling::GeometryHash(base) == h0);                            // and it is stable
+    }
+    RUN_SUITE("mirror keeps every per-vertex and per-face attribute in step");
+    {
+        Mesh m = Mesh::Cube();
+        for (Vec3& v : m.vertices) v.x += 1.0f;                                   // a half model clear of the plane
+        m.uvs.assign(m.vertices.size(), Vec2{0.25f, 0.75f});
+        m.vertexColors.assign(m.vertices.size(), Color{1, 0, 0, 1});
+        m.triSlot.assign((size_t)m.TriangleCount(), 1); m.slotColors = {Color{1, 1, 1, 1}, Color{0, 1, 0, 1}};
+        m.polyFace.clear(); for (int f = 0; f < m.TriangleCount(); ++f) m.polyFace.push_back(f / 2);
+        const int nv0 = (int)m.vertices.size(), nt0 = m.TriangleCount();
+        m.Mirror(0, /*weld=*/false);
+        CHECK((int)m.vertices.size() == nv0 * 2 && m.TriangleCount() == nt0 * 2);
+        CHECK(m.uvs.size() == m.vertices.size());                                 // UVs follow the copied vertices
+        CHECK(m.vertexColors.size() == m.vertices.size());
+        CHECK((int)m.triSlot.size() == m.TriangleCount());                        // slots follow the copied faces
+        CHECK(m.polyFace.empty() || (int)m.polyFace.size() == m.TriangleCount());
+        CHECK(m.slotColors.size() == 2);
+        // With the weld on (the default) the lists must still match the welded mesh.
+        Mesh w = Mesh::Cube(); for (Vec3& v : w.vertices) v.x += 0.5f;
+        w.uvs.assign(w.vertices.size(), Vec2{0.5f, 0.5f}); w.triSlot.assign((size_t)w.TriangleCount(), 0); w.slotColors = {Color{1, 1, 1, 1}};
+        w.Mirror(0, true);
+        CHECK(w.uvs.size() == w.vertices.size() && (int)w.triSlot.size() == w.TriangleCount());
+        for (int t : w.triangles) CHECK(t >= 0 && t < (int)w.vertices.size());
+    }
+    RUN_SUITE("edge snapping: skipped vertices and polygon diagonals");
+    {
+        // Moving vertex 2 of a quad must still let it snap to edges that do not touch it (here the edge 0-1).
+        Mesh q = Mesh::Quad(2.0f);                                       // corners 0..3; triangles (0,1,2) and (0,2,3)
+        SnapHit h = SnapToGeometry(q, Vec3{0.0f, -1.05f, 0.0f}, SnapTarget::Edge, 0.2f, {2});
+        CHECK(h.found && h.a == 0 && h.b == 1);
+        // The diagonal 0-2 is inside one polygon, not an edge the artist sees: with the polygon known it is not offered.
+        q.polyFace = {0, 0};
+        SnapHit d = SnapToGeometry(q, Vec3{0.02f, 0.0f, 0.0f}, SnapTarget::Edge, 0.3f);
+        CHECK(!d.found);
+        SnapHit b = SnapToGeometry(q, Vec3{0.0f, -0.95f, 0.0f}, SnapTarget::Edge, 0.3f);
+        CHECK(b.found && b.a == 0 && b.b == 1);                         // the border still snaps
+    }
+    RUN_SUITE("selection and snapping speed on a 240k-triangle mesh (times are printed)");
+    {
+        Mesh big = Mesh::Sphere(1, 300, 400);
+        const int nt = big.TriangleCount();
+        std::vector<int> some; for (int t = 0; t < nt; t += 50) some.push_back(t);
+        auto timeIt = [&](const char* what, auto&& fn) {
+            const auto t0 = std::chrono::steady_clock::now(); fn();
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            std::printf("  PERF select %-22s %8.1f ms\n", what, ms); return ms; };
+        std::vector<double> all;
+        all.push_back(timeIt("GrowFaces", [&] { (void)GrowFaces(big, some); }));
+        all.push_back(timeIt("ShrinkFaces", [&] { (void)ShrinkFaces(big, some); }));
+        all.push_back(timeIt("SelectSimilar(area)", [&] { (void)SelectSimilar(big, {0}, SimilarKind::Area, 0.1f); }));
+        all.push_back(timeIt("SelectByNormal", [&] { (void)SelectByNormal(big, Vec3{0, 1, 0}, 20.0f); }));
+        all.push_back(timeIt("SelectByArea", [&] { (void)SelectByArea(big, 0.0f, 1.0f); }));
+        all.push_back(timeIt("LooseParts", [&] { (void)LooseParts(big); }));
+        std::vector<ScreenPoint> proj(big.vertices.size());
+        for (size_t i = 0; i < proj.size(); ++i) { proj[i].x = big.vertices[i].x * 300 + 400; proj[i].y = big.vertices[i].y * 300 + 400; proj[i].ok = true; }
+        const SelectShape box = SelectShape::Box(Vec2{200, 200}, Vec2{500, 500});
+        const Vec3 eye{0, 0, 10};
+        all.push_back(timeIt("SelectVerticesIn", [&] { (void)SelectVerticesIn(big, proj, box, false, eye); }));
+        all.push_back(timeIt("SelectFacesIn", [&] { (void)SelectFacesIn(big, proj, box, false, eye); }));
+        all.push_back(timeIt("SnapToGeometry vertex", [&] { (void)SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Vertex, 0.05f); }));
+        all.push_back(timeIt("SnapToGeometry edge", [&] { (void)SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Edge, 0.05f); }));
+        all.push_back(timeIt("SnapToGeometry face", [&] { (void)SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Face, 0.05f); }));
+        (void)all;   // the times are printed for people to read; a seconds bound cannot fail meaningfully, so the checks below count results
+        CHECK((int)GrowFaces(big, some).size() > (int)some.size());
+        CHECK(SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Vertex, 0.05f).found);
+        CHECK(SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Edge, 0.05f).found);
+        CHECK(SnapToGeometry(big, Vec3{0, 0, 1}, SnapTarget::Face, 0.05f).found);
+    }
+    RUN_SUITE("mesh edit undo steps carry the modifier list");
+    {
+        using namespace okay::modeling;
+        Mesh mesh = Mesh::Cube(); std::vector<int> v{0, 1}, f{2}; std::vector<std::pair<int, int>> e{{0, 1}};
+        std::vector<MeshModifier> mods(1); mods[0].type = MeshModifier::Type::Mirror;
+        MeshUndoTarget tg; tg.mesh = &mesh; tg.verts = &v; tg.faces = &f; tg.edges = &e; tg.mods = &mods;
+        std::vector<MeshUndoStep> undo, redo;
+        PushMeshUndo(undo, redo, tg, "Add Array");                       // step: mesh + [Mirror]
+        MeshModifier arr; arr.type = MeshModifier::Type::Array; arr.count = 5; mods.push_back(arr);   // the artist adds an Array...
+        mesh.vertices[0].x += 2.0f; v = {3};                              // ...and moves a vertex
+        CHECK(StepMeshUndo(undo, redo, tg, false));
+        CHECK(mods.size() == 1 && mods[0].type == MeshModifier::Type::Mirror);    // the modifier change is undone with the mesh
+        CHECK(mesh.vertices[0].x < 1.0f && v.size() == 2);
+        CHECK(redo.size() == 1 && redo[0].label == "Add Array");
+        CHECK(StepMeshUndo(undo, redo, tg, true));                        // redo brings both back
+        CHECK(mods.size() == 2 && mods[1].count == 5 && mesh.vertices[0].x > 1.0f && v.size() == 1);
+        CHECK(!StepMeshUndo(undo, redo, tg, true));
+        // An object without modifiers: steps still work and the pointer stays null.
+        MeshUndoTarget tn = tg; tn.mods = nullptr; std::vector<MeshUndoStep> u2, r2;
+        PushMeshUndo(u2, r2, tn, ""); CHECK(u2[0].label == "Edit");
+        CHECK(StepMeshUndo(u2, r2, tn, false));
+        // Bounded history.
+        std::vector<MeshUndoStep> u3, r3; for (int i = 0; i < 250; ++i) PushMeshUndo(u3, r3, tg, "x", 100);
+        CHECK(u3.size() == 100);
+    }
+    RUN_SUITE("operators keep UVs, vertex colours, slots and face colours (new faces take the look of the face they came from)");
+    {
+        auto rich = [] { Mesh m = Mesh::Cube(); const int nv = (int)m.vertices.size(), nt = m.TriangleCount();
+            m.uvs.clear(); for (int i = 0; i < nv; ++i) m.uvs.push_back(Vec2{m.vertices[(size_t)i].x + 0.5f, m.vertices[(size_t)i].y + 0.5f});
+            m.vertexColors.assign((size_t)nv, Color{1, 0, 0, 1});
+            m.triSlot.assign((size_t)nt, 0); m.slotColors = {Color{1, 1, 1, 1}, Color{0, 1, 0, 1}};
+            for (int t : {0, 1}) m.triSlot[(size_t)t] = 1;                       // two faces use slot 1
+            m.triColors.assign((size_t)nt, Color{0, 0, 1, 1}); return m; };
+        auto allIn = [](const Mesh& m) { return m.HasUVs() && m.HasVertexColors() && m.HasSlots() && m.HasFaceColors(); };
+        { Mesh m = rich(); m.ExtrudeFaces({0, 1}, 0.2f); CHECK(allIn(m));
+          // the side walls and the cap came from slot-1 faces, so slot 1 grew
+          int s1 = 0; for (int s : m.triSlot) s1 += (s == 1); CHECK(s1 >= 2); }
+        { Mesh m = rich(); m.InsetFaces({0, 1}, 0.2f); CHECK(allIn(m)); int s1 = 0; for (int s : m.triSlot) s1 += (s == 1); CHECK(s1 > 2); }
+        { Mesh m = rich(); m.SubdivideFaces({0, 1}); CHECK(allIn(m)); int s1 = 0; for (int s : m.triSlot) s1 += (s == 1); CHECK(s1 > 2); }
+        { Mesh m = rich(); m.PokeFaces({0}, 0.1f); CHECK(allIn(m)); }
+        { Mesh m = rich(); m.DeleteFaces({5}); CHECK(allIn(m) && m.TriangleCount() == 11); }
+        { Mesh m = rich(); m.DuplicateFaces({0, 1}); CHECK(allIn(m)); CHECK(m.triSlot.back() == 1); }
+        { Mesh m = rich(); m.Subdivide(); CHECK(allIn(m)); }
+        { Mesh m = rich(); m.Array(3, Vec3{2, 0, 0}); CHECK(allIn(m) && m.TriangleCount() == 36); }
+        { Mesh m = rich(); m.Array(3, Vec3{std::nanf(""), 0, 0}); CHECK(m.TriangleCount() == 12); for (const Vec3& v : m.vertices) CHECK(std::isfinite(v.x)); }
+        { Mesh m = rich(); m.SplitEdges({{0, 1}}); CHECK(allIn(m)); }
+        { Mesh m = rich(); m.Decimate(0.01f); CHECK(allIn(m)); }
+        { Mesh m = rich(); m.BevelVertices({0}, 0.1f); CHECK(allIn(m)); }
+        // A mesh that did not change keeps exactly the values it had.
+        { Mesh m = rich(); m.FlipNormals(); CHECK(allIn(m) && m.triSlot[0] == 1 && m.triSlot[5] == 0); }
+    }
+    RUN_SUITE("per-corner UVs and UV seams survive operators");
+    {
+        auto withUV = [] { Mesh m = Mesh::Cube(); m.uvs.clear(); for (const Vec3& v : m.vertices) m.uvs.push_back(Vec2{v.x + 0.5f, v.y + 0.5f}); m.CaptureCornerUVs(); return m; };
+        auto cornerOk = [](const Mesh& m, float tol) {   // each corner's UV is the planar mapping of its position
+            if (!m.HasCornerUVs()) return false;
+            for (int i = 0; i < (int)m.triangles.size(); ++i) { const Vec3& p = m.vertices[(size_t)m.triangles[(size_t)i]]; if (std::fabs(m.cornerUVs[(size_t)i].x - (p.x + 0.5f)) > tol || std::fabs(m.cornerUVs[(size_t)i].y - (p.y + 0.5f)) > tol) return false; }
+            return true; };
+        { Mesh m = withUV(); CHECK(cornerOk(m, 1e-6f)); m.SubdivideFaces({0, 1}); CHECK(cornerOk(m, 1e-4f)); }   // new faces get the UVs of the old face they grew from
+        { Mesh m = withUV(); m.Subdivide(); CHECK(cornerOk(m, 1e-4f)); }
+        { Mesh m = withUV(); m.DeleteFaces({3}); CHECK(cornerOk(m, 1e-6f)); }
+        { Mesh m = withUV(); m.PokeFaces({0}, 0.0f); CHECK(cornerOk(m, 1e-4f)); }
+        { Mesh m = withUV(); m.ExtrudeFaces({0, 1}, 0.2f); CHECK(m.HasCornerUVs()); }
+        // Seams: a seam is still a seam after operators that renumber or split vertices.
+        auto hasSeam = [](const Mesh& m, const Vec3& pa, const Vec3& pb) {
+            for (const auto& sm : m.seams) { if (sm.first < 0 || sm.second < 0 || sm.first >= (int)m.vertices.size() || sm.second >= (int)m.vertices.size()) continue;
+                const Vec3 &a = m.vertices[(size_t)sm.first], &b = m.vertices[(size_t)sm.second];
+                if ((a == pa && b == pb) || (a == pb && b == pa)) return true; }
+            return false; };
+        Mesh base = withUV(); const int sa = base.triangles[0], sb = base.triangles[1];
+        base.seams.push_back({sa, sb}); const Vec3 pa = base.vertices[(size_t)sa], pb = base.vertices[(size_t)sb];
+        { Mesh m = base; m.DeleteFaces({11}); CHECK(hasSeam(m, pa, pb)); }
+        { Mesh m = base; m.WeldVertices(); CHECK(hasSeam(m, pa, pb)); }
+        { Mesh m = base; m.SubdivideFaces({8}); CHECK(hasSeam(m, pa, pb)); }
+        { Mesh m = base; m.Subdivide();                                        // the edge is split in two: both halves are seams
+          const Vec3 mid = (pa + pb) * 0.5f; CHECK(hasSeam(m, pa, mid) && hasSeam(m, mid, pb)); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Array); mod.count = 2; Mesh out; std::string err; okay::ApplyModifier(base, mod, okay::ModifierContext(), out, &err); CHECK(hasSeam(out, pa, pb)); }
+    }
+    RUN_SUITE("remove and reorder material slots");
+    {
+        auto three = [] { Mesh m = Mesh::Cube(); const int nt = m.TriangleCount(); m.triSlot.assign((size_t)nt, 0);
+            for (int t = 0; t < nt; ++t) m.triSlot[(size_t)t] = t % 3; m.slotColors = {Color{1, 0, 0, 1}, Color{0, 1, 0, 1}, Color{0, 0, 1, 1}}; return m; };
+        { Mesh m = three(); CHECK(m.RemoveSlot(1)); CHECK(m.slotColors.size() == 2 && m.slotColors[1].b == 1.0f);        // blue is now slot 1
+          for (int t = 0; t < m.TriangleCount(); ++t) CHECK(m.triSlot[(size_t)t] == (t % 3 == 2 ? 1 : 0)); }              // green faces fell back to slot 0, blue moved down
+        { Mesh m = three(); CHECK(m.RemoveSlot(0)); CHECK(m.slotColors.size() == 2 && m.slotColors[0].g == 1.0f); for (int s : m.triSlot) CHECK(s >= 0 && s < 2); }
+        { Mesh m = three(); CHECK(!m.RemoveSlot(3) && !m.RemoveSlot(-1)); Mesh one = Mesh::Cube(); one.slotColors = {Color{1, 1, 1, 1}}; CHECK(!one.RemoveSlot(0)); }
+        { Mesh m = three(); const Mesh before = m; CHECK(m.MoveSlot(0, 2));
+          CHECK(m.slotColors[2].r == 1.0f && m.slotColors[0].g == 1.0f && m.slotColors[1].b == 1.0f);                       // red went last
+          for (int t = 0; t < m.TriangleCount(); ++t) CHECK(m.slotColors[(size_t)m.triSlot[(size_t)t]].r == before.slotColors[(size_t)before.triSlot[(size_t)t]].r);   // every face keeps its colour
+          CHECK(!m.MoveSlot(0, 9) && m.MoveSlot(1, 1)); }
+    }
+    RUN_SUITE("which attributes survive each operator (printed)");
+    {
+        auto rich = [] { Mesh m = Mesh::Cube(); const int nv = (int)m.vertices.size(), nt = m.TriangleCount();
+            m.uvs.assign((size_t)nv, Vec2{0.1f, 0.2f}); m.vertexColors.assign((size_t)nv, Color{1, 0, 0, 1});
+            m.triSlot.assign((size_t)nt, 1); m.slotColors = {Color{1, 1, 1, 1}, Color{0, 1, 0, 1}};
+            m.triColors.assign((size_t)nt, Color{0, 0, 1, 1}); m.polyFace.clear(); for (int t = 0; t < nt; ++t) m.polyFace.push_back(t / 2); return m; };
+        auto rep = [](const char* n, const Mesh& m) { std::printf("  KEEPS %-22s uv=%d vcol=%d slot=%d fcol=%d poly=%d\n", n, (int)m.HasUVs(), (int)m.HasVertexColors(), (int)m.HasSlots(), (int)m.HasFaceColors(), (int)(!m.polyFace.empty() && (int)m.polyFace.size() == m.TriangleCount())); };
+        { Mesh m = rich(); m.ExtrudeFaces({0, 1}, 0.2f); rep("ExtrudeFaces", m); }
+        { Mesh m = rich(); m.InsetFaces({0, 1}, 0.2f); rep("InsetFaces", m); }
+        { Mesh m = rich(); m.SubdivideFaces({0, 1}); rep("SubdivideFaces", m); }
+        { Mesh m = rich(); m.PokeFaces({0, 1}, 0.1f); rep("PokeFaces", m); }
+        { Mesh m = rich(); m.DeleteFaces({0, 1}); rep("DeleteFaces", m); }
+        { Mesh m = rich(); m.Subdivide(); rep("Subdivide", m); }
+        { Mesh m = rich(); m.Solidify(0.1f); rep("Solidify", m); }
+        { Mesh m = rich(); m.Array(3, Vec3{2, 0, 0}); rep("Array", m); }
+        { Mesh m = rich(); m.Decimate(0.01f); rep("Decimate", m); }
+        { Mesh m = rich(); m.WeldVertices(); rep("WeldVertices", m); }
+        { Mesh m = rich(); m.FlipNormals(); rep("FlipNormals", m); }
+        { Mesh m = rich(); m.DuplicateFaces({0, 1}); rep("DuplicateFaces", m); }
+        { Mesh m = rich(); m.SplitEdges({{0, 1}}); rep("SplitEdges", m); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Array); mod.count = 3; Mesh out; std::string err; okay::ApplyModifier(rich(), mod, okay::ModifierContext(), out, &err); rep("modifier Array", out);
+          CHECK(out.HasSlots() && out.HasUVs() && out.HasVertexColors() && out.HasFaceColors());      // every copy keeps its material slots
+          CHECK(out.slotColors.size() == 2 && out.triSlot.size() == (size_t)out.TriangleCount() && out.triSlot.back() == 1); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Solidify); Mesh out; std::string err; okay::ApplyModifier(rich(), mod, okay::ModifierContext(), out, &err); rep("modifier Solidify", out);
+          CHECK(out.HasSlots() && out.HasUVs() && out.HasVertexColors() && out.HasFaceColors());     // the inner shell keeps the outer one's UVs, colours and slots
+          CHECK(out.TriangleCount() == 2 * Mesh::Cube().TriangleCount() && out.triSlot.back() == 1); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Subdivision); Mesh out; std::string err; okay::ApplyModifier(rich(), mod, okay::ModifierContext(), out, &err); rep("modifier Subdivision", out); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Mirror); Mesh in = rich(); for (Vec3& v : in.vertices) v.x += 1.0f; Mesh out; std::string err; okay::ApplyModifier(in, mod, okay::ModifierContext(), out, &err); rep("modifier Mirror", out); }
     }
     TEST_MAIN_RESULT();
 }

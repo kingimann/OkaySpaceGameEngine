@@ -215,7 +215,7 @@ inline Marker ParseMarker(std::string_view text) {
         const std::string_view lv(line);
         const std::size_t eq = lv.find('=');
         if (eq == std::string_view::npos) continue;
-        const std::string_view k = lv.substr(0, eq), v = lv.substr(eq + 1);
+        const std::string_view k = lv.substr(0, eq), v = lv.substr(eq + 1, lv.size() - eq - 1);   // (views: nothing is copied)
         if (k == "version") m.version = okayver::NormalizeVersion(v);
         else if (k == "branch") m.branch = CleanBranch(v);
         else if (k == "sha") m.sha = CleanSha(v);

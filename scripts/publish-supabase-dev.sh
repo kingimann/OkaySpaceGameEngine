@@ -161,7 +161,7 @@ else
     note "DRY_RUN: the server could not be read; the base release was not checked."
 fi
 
-# ---- The service key, or fetch it with a management token (not needed for a dry run) ----------------------------------------------
+# ---- Credentials: the service key, or a management token it is fetched with (a dry run needs none) ----
 KEY="${SUPABASE_SERVICE_KEY:-}"
 AUTH=()
 if [ "${DRY_RUN:-0}" != 1 ]; then

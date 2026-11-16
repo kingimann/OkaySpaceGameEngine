@@ -1279,5 +1279,34 @@ int main() {
         std::vector<MeshUndoStep> u3, r3; for (int i = 0; i < 250; ++i) PushMeshUndo(u3, r3, tg, "x", 100);
         CHECK(u3.size() == 100);
     }
+    RUN_SUITE("which attributes survive each operator (printed)");
+    {
+        auto rich = [] { Mesh m = Mesh::Cube(); const int nv = (int)m.vertices.size(), nt = m.TriangleCount();
+            m.uvs.assign((size_t)nv, Vec2{0.1f, 0.2f}); m.vertexColors.assign((size_t)nv, Color{1, 0, 0, 1});
+            m.triSlot.assign((size_t)nt, 1); m.slotColors = {Color{1, 1, 1, 1}, Color{0, 1, 0, 1}};
+            m.triColors.assign((size_t)nt, Color{0, 0, 1, 1}); m.polyFace.clear(); for (int t = 0; t < nt; ++t) m.polyFace.push_back(t / 2); return m; };
+        auto rep = [](const char* n, const Mesh& m) { std::printf("  KEEPS %-22s uv=%d vcol=%d slot=%d fcol=%d poly=%d\n", n, (int)m.HasUVs(), (int)m.HasVertexColors(), (int)m.HasSlots(), (int)m.HasFaceColors(), (int)(!m.polyFace.empty() && (int)m.polyFace.size() == m.TriangleCount())); };
+        { Mesh m = rich(); m.ExtrudeFaces({0, 1}, 0.2f); rep("ExtrudeFaces", m); }
+        { Mesh m = rich(); m.InsetFaces({0, 1}, 0.2f); rep("InsetFaces", m); }
+        { Mesh m = rich(); m.SubdivideFaces({0, 1}); rep("SubdivideFaces", m); }
+        { Mesh m = rich(); m.PokeFaces({0, 1}, 0.1f); rep("PokeFaces", m); }
+        { Mesh m = rich(); m.DeleteFaces({0, 1}); rep("DeleteFaces", m); }
+        { Mesh m = rich(); m.Subdivide(); rep("Subdivide", m); }
+        { Mesh m = rich(); m.Solidify(0.1f); rep("Solidify", m); }
+        { Mesh m = rich(); m.Array(3, Vec3{2, 0, 0}); rep("Array", m); }
+        { Mesh m = rich(); m.Decimate(0.01f); rep("Decimate", m); }
+        { Mesh m = rich(); m.WeldVertices(); rep("WeldVertices", m); }
+        { Mesh m = rich(); m.FlipNormals(); rep("FlipNormals", m); }
+        { Mesh m = rich(); m.DuplicateFaces({0, 1}); rep("DuplicateFaces", m); }
+        { Mesh m = rich(); m.SplitEdges({{0, 1}}); rep("SplitEdges", m); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Array); mod.count = 3; Mesh out; std::string err; okay::ApplyModifier(rich(), mod, okay::ModifierContext(), out, &err); rep("modifier Array", out);
+          CHECK(out.HasSlots() && out.HasUVs() && out.HasVertexColors() && out.HasFaceColors());      // every copy keeps its material slots
+          CHECK(out.slotColors.size() == 2 && out.triSlot.size() == (size_t)out.TriangleCount() && out.triSlot.back() == 1); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Solidify); Mesh out; std::string err; okay::ApplyModifier(rich(), mod, okay::ModifierContext(), out, &err); rep("modifier Solidify", out);
+          CHECK(out.HasSlots() && out.HasUVs() && out.HasVertexColors() && out.HasFaceColors());     // the inner shell keeps the outer one's UVs, colours and slots
+          CHECK(out.TriangleCount() == 2 * Mesh::Cube().TriangleCount() && out.triSlot.back() == 1); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Subdivision); Mesh out; std::string err; okay::ApplyModifier(rich(), mod, okay::ModifierContext(), out, &err); rep("modifier Subdivision", out); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Mirror); Mesh in = rich(); for (Vec3& v : in.vertices) v.x += 1.0f; Mesh out; std::string err; okay::ApplyModifier(in, mod, okay::ModifierContext(), out, &err); rep("modifier Mirror", out); }
+    }
     TEST_MAIN_RESULT();
 }

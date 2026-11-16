@@ -85,6 +85,7 @@ Mesh ArrayCopies(const Mesh& in, int count, const Vec3& step) {
     const bool uv = in.uvs.size() == in.vertices.size();
     const bool nrm = in.normals.size() == in.vertices.size();
     const bool fc = in.triColors.size() * 3 == in.triangles.size() && !in.triColors.empty();
+    const bool sl = in.HasSlots();
     for (int c = 1; c < count; ++c) {
         const int base = (int)out.vertices.size();
         for (const Vec3& v : in.vertices) out.vertices.push_back(v + step * (float)c);
@@ -93,9 +94,11 @@ Mesh ArrayCopies(const Mesh& in, int count, const Vec3& step) {
         if (nrm) out.normals.insert(out.normals.end(), in.normals.begin(), in.normals.end());
         for (int t : in.triangles) out.triangles.push_back(t + base);
         if (fc) out.triColors.insert(out.triColors.end(), in.triColors.begin(), in.triColors.end());
+        if (sl) out.triSlot.insert(out.triSlot.end(), in.triSlot.begin(), in.triSlot.end());   // every copy keeps its material slots
         if (pf) for (int id : in.polyFace) out.polyFace.push_back(id + c * (maxId + 1));
     }
     if (!uv) out.uvs.clear();
+    if (!sl) out.triSlot.clear();
     if (!nrm) out.normals.clear();
     if (!fc) out.triColors.clear();
     SyncPolyFace(out);

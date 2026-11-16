@@ -2360,6 +2360,15 @@ public:
         vertices.insert(vertices.end(), inner.vertices.begin(), inner.vertices.end());
         for (int t : inner.triangles) triangles.push_back(t + base);
         if (!innerCols.empty()) triColors.insert(triColors.end(), innerCols.begin(), innerCols.end());
+        // The inner shell is a copy of the surface, so it keeps the same UVs, vertex colours, material slots and polygons.
+        if (src.HasUVs()) uvs.insert(uvs.end(), src.uvs.begin(), src.uvs.end()); else uvs.clear();
+        if (src.HasVertexColors()) vertexColors.insert(vertexColors.end(), src.vertexColors.begin(), src.vertexColors.end()); else vertexColors.clear();
+        if (src.HasSlots()) triSlot.insert(triSlot.end(), src.triSlot.begin(), src.triSlot.end()); else triSlot.clear();
+        if (!src.polyFace.empty() && src.polyFace.size() == src.triangles.size() / 3) {
+            int hi = 0; for (int id : src.polyFace) hi = std::max(hi, id + 1);
+            for (int id : src.polyFace) polyFace.push_back(id + hi);
+        } else polyFace.clear();
+        if (src.HasCornerUVs()) cornerUVs.insert(cornerUVs.end(), inner.cornerUVs.begin(), inner.cornerUVs.end()); else cornerUVs.clear();
         normals.clear();
         name = "";
     }

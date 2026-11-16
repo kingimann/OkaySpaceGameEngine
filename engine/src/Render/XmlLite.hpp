@@ -26,6 +26,10 @@ struct Limits {
     int         maxAttrs = 256;
     std::size_t maxNameBytes = 256;
     std::size_t maxTextBytes = 512u * 1024u * 1024u;   // all character data together
+    // false: character data is checked as usual (the limits, entity references) but not stored, so Text() is always empty.
+    // For readers that only use elements and attributes (OGRE): the white space between the elements of a pretty-printed file
+    // otherwise gives every parent a text string on the heap.
+    bool keepText = true;
 };
 
 struct Node {
@@ -128,6 +132,7 @@ inline bool Parse(const std::string& s, Doc& x, std::string& err, const Limits& 
         x.n.reserve(std::min(starts, lim.maxElements));
     }
     std::vector<std::pair<std::string, std::string>> attrs;   // one element's attributes, then moved in at their exact size
+    std::string scratch;   // keepText off: where a text piece with a '&' is decoded to check it
     while (p < n) {
         if (s[p] != '<') {
             std::size_t e = s.find('<', p);
@@ -137,7 +142,11 @@ inline bool Parse(const std::string& s, Doc& x, std::string& err, const Limits& 
             } else {
                 textBytes += e - p;
                 if (textBytes > lim.maxTextBytes) return fail("XML: too much character data");
-                if (!Decode(x.n[(std::size_t)stack.back()].text, s, p, e)) return fail("XML: unknown or malformed entity reference");
+                if (lim.keepText) { if (!Decode(x.n[(std::size_t)stack.back()].text, s, p, e)) return fail("XML: unknown or malformed entity reference"); }
+                else if (std::memchr(s.data() + p, '&', e - p) != nullptr) {   // not kept, but a bad reference still fails the file
+                    scratch.clear();
+                    if (!Decode(scratch, s, p, e)) return fail("XML: unknown or malformed entity reference");
+                }
             }
             p = e;
             continue;
@@ -153,7 +162,7 @@ inline bool Parse(const std::string& s, Doc& x, std::string& err, const Limits& 
             if (stack.empty()) return fail("XML: CDATA outside the root element");
             textBytes += e - p - 9;
             if (textBytes > lim.maxTextBytes) return fail("XML: too much character data");
-            x.n[(std::size_t)stack.back()].text.append(s, p + 9, e - p - 9);
+            if (lim.keepText) x.n[(std::size_t)stack.back()].text.append(s, p + 9, e - p - 9);
             p = e + 3; continue;
         }
         if (s.compare(p, 2, "<?") == 0) {

@@ -159,7 +159,12 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
     if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
     detail::xml::Doc doc;
     std::string xerr;
-    if (!detail::xml::Parse(text, doc, xerr)) return Fail(err, xerr);
+    {
+        detail::xml::Limits lim;
+        lim.keepText = false;   // an OGRE mesh is all elements and attributes: the white space between them is not stored
+        if (!detail::xml::Parse(text, doc, xerr, lim)) return Fail(err, xerr);
+    }
+    std::string().swap(text);   // the document holds what is needed: the file's bytes are freed before the meshes are built
     if (doc.Name(0) != "mesh") return Fail(err, "not an OGRE mesh (the root element is <" + doc.Name(0) + ">, not <mesh>)");
 
     std::map<std::string, Mat> mats;

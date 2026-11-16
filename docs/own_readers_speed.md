@@ -49,72 +49,78 @@ to run; the instruction counts quoted below (callgrind) do not move.
 
 | Reader | files | both read | read time ours / Assimp (before -> now) | time | largest peak heap ours / Assimp MB (before -> now) | memory | import time ours / Assimp | import peak ours / Assimp | files slower / heavier |
 |---|---:|---:|---|---|---|---|---|---|---|
-| 3ds | 16 | 15 | 0.25x -> 0.22x (8.7 / 39.9 ms) | met | 5.24 / 13.32 -> 4.91 / 13.32 | met | 0.24x | 4.91 / 13.32 MB | 0 / 0 |
-| 3mf | 2 | 2 | 0.71x -> 0.67x (0.1 / 0.2 ms) | met | 0.02 / 0.11 -> 0.02 / 0.11 | met | 0.80x | 0.02 / 0.11 MB | 0 / 0 |
-| ac | 11 | 7 | 0.47x -> 0.57x (239.4 / 422.8 ms) | met | 57.93 / 73.92 -> 57.93 / 73.92 | met | 0.41x | 57.93 / 73.92 MB | 4 / 3 |
-| amf | 11 | 11 | 0.84x -> 0.86x (0.4 / 0.5 ms) | met | 0.05 / 0.13 -> 0.04 / 0.13 | met | 0.81x | 0.06 / 0.13 MB | 3 / 0 |
-| ase | 17 | 16 | 4.44x -> 1.05x (7.3 / 7.0 ms) | **not met** | 3.99 / 2.40 -> 1.99 / 2.40 | met | 1.07x | 1.99 / 2.40 MB | 4 / 0 |
-| b3d | 3 | 3 | 0.35x -> 0.35x (1.4 / 4.1 ms) | met | 1.21 / 1.75 -> 1.02 / 1.75 | met | 0.71x | 1.52 / 1.75 MB | 0 / 0 |
-| blend | 28 | 27 | 0.10x -> 0.12x (59.8 / 517.0 ms) | met | 4.60 / 84.07 -> 4.00 / 84.07 | met | 0.12x | 4.00 / 84.07 MB | 2 / 11 |
-| bvh | 3 | 3 | 1.24x -> 0.40x (28.4 / 70.6 ms) | met | 8.40 / 14.53 -> 7.66 / 14.53 | met | 0.94x | 8.89 / 14.53 MB | 0 / 0 |
-| cob | 8 | 6 | 1.03x -> 0.92x (7.9 / 8.6 ms) | met | 1.69 / 1.31 -> 1.19 / 1.31 | met | 0.96x | 1.19 / 1.31 MB | 1 / 1 |
-| csm | 1 | 1 | 7.14x -> 1.45x (9.9 / 6.8 ms) | **not met** | 6.73 / 6.73 -> 6.22 / 6.73 | met | 1.04x | 6.97 / 7.21 MB | 1 / 0 |
-| dae | 26 | 25 | 4.32x -> 0.79x (26.0 / 32.7 ms) | met | 4.46 / 3.44 -> 3.26 / 3.45 | met | 0.78x | 3.26 / 3.45 MB | 2 / 0 |
-| dxf | 5 | 5 | 0.99x -> 0.63x (5.0 / 8.0 ms) | met | 1.43 / 1.60 -> 1.39 / 1.60 | met | 0.62x | 1.39 / 1.60 MB | 0 / 1 |
-| hmp | 2 | 2 | 0.08x -> 0.07x (0.1 / 1.9 ms) | met | 1.50 / 1.58 -> 0.64 / 1.58 | met | 0.07x | 0.64 / 1.58 MB | 0 / 0 |
-| iqm | 1 | 1 | 0.83x -> 0.80x (0.6 / 0.7 ms) | met | 0.68 / 0.69 -> 0.68 / 0.69 | met | 5.18x | 1.46 / 0.69 MB | 0 / 0 |
-| irr | 21 | 21 | 0.72x -> 0.35x (36.0 / 104.1 ms) | met | 2.32 / 1.91 -> 1.73 / 1.91 | met | 0.37x | 1.84 / 2.41 MB | 0 / 0 |
-| irrmesh | 5 | 5 | 1.70x -> 0.77x (3.6 / 4.7 ms) | met | 1.25 / 0.76 -> 0.74 / 0.76 | met | 0.79x | 0.74 / 0.76 MB | 0 / 0 |
-| lwo | 54 | 53 | 0.88x -> 0.89x (31.8 / 35.9 ms) | met | 1.83 / 1.60 -> 1.66 / 1.60 | **not met** | 0.89x | 1.66 / 1.60 MB | 14 / 1 |
-| lws | 15 | 14 | 0.66x -> 0.54x (1.6 / 3.1 ms) | met | 0.03 / 0.11 -> 0.02 / 0.11 | met | 0.60x | 0.02 / 0.11 MB | 0 / 0 |
-| md2 | 5 | 5 | 0.51x -> 0.56x (0.7 / 1.3 ms) | met | 0.75 / 0.43 -> 0.44 / 0.43 | **not met** | 0.49x | 0.44 / 0.43 MB | 0 / 2 |
-| md3 | 3 | 3 | 0.34x -> 0.39x (0.3 / 0.8 ms) | met | 0.13 / 0.30 -> 0.12 / 0.30 | met | 0.39x | 0.13 / 0.30 MB | 0 / 0 |
-| md5 | 5 | 4 | 1.20x -> 0.54x (5.6 / 10.3 ms) | met | 1.61 / 1.26 -> 0.59 / 1.26 | met | 0.82x | 1.25 / 1.26 MB | 0 / 0 |
-| mdc | 1 | 1 | 0.62x -> 0.54x (0.8 / 1.5 ms) | met | 1.50 / 1.30 -> 1.05 / 1.30 | met | 0.58x | 1.05 / 1.30 MB | 0 / 0 |
-| ms3d | 4 | 4 | 0.72x -> 0.69x (2.3 / 3.4 ms) | met | 1.28 / 1.56 -> 1.09 / 1.56 | met | 0.65x | 1.09 / 1.56 MB | 0 / 0 |
-| nff | 13 | 12 | 1.19x -> 1.19x (113.3 / 95.1 ms) | **not met** | 6.76 / 13.09 -> 6.76 / 13.09 | met | 1.02x | 6.76 / 13.09 MB | 6 / 2 |
-| obj | 28 | 25 | 0.13x -> 0.12x (6.5 / 53.9 ms) | met | 0.86 / 17.28 -> 0.85 / 17.28 | met | 0.12x | 0.85 / 17.28 MB | 0 / 0 |
-| off | 5 | 2 | 1.96x -> 0.93x (1.4 / 1.5 ms) | met | 0.65 / 0.97 -> 0.55 / 0.97 | met | 0.91x | 0.55 / 0.97 MB | 0 / 0; Assimp crashes on 1 |
-| ogre | 4 | 3 | 0.89x -> 0.72x (10.4 / 14.4 ms) | met | 5.43 / 4.20 -> 3.51 / 4.20 | met | 0.63x | 3.51 / 4.20 MB | 1 / 2 |
-| ply | 12 | 9 | 0.32x -> 0.37x (18.4 / 50.5 ms) | met | 7.05 / 6.62 -> 5.12 / 6.62 | met | 0.34x | 5.51 / 6.62 MB | 1 / 0 |
-| pmx | 1 | 1 | 0.22x -> 0.21x (1.5 / 7.2 ms) | met | 1.70 / 3.39 -> 1.50 / 3.39 | met | 0.18x | 1.51 / 3.39 MB | 0 / 0 |
-| q3d | 4 | 0 | - | - | - | - | - | - | 4 only Assimp |
-| raw | 4 | 1 | 2.35x -> 1.04x (2.4 / 2.3 ms) | **not met** | 1.26 / 1.43 -> 1.06 / 1.43 | met | 0.97x | 1.06 / 1.43 MB | 1 / 0; Assimp crashes on 2 |
-| smd | 4 | 3 | 4.49x -> 1.20x (5.5 / 4.6 ms) | **not met** | 3.64 / 3.30 -> 2.64 / 3.30 | met | 1.16x | 2.64 / 3.30 MB | 2 / 0 |
-| stl | 8 | 8 | 0.66x -> 0.64x (5.4 / 8.5 ms) | met | 1.37 / 2.10 -> 1.29 / 2.10 | met | 0.71x | 1.29 / 2.10 MB | 2 / 0 |
-| ter | 2 | 2 | 0.01x -> 0.01x (6.5 / 618.3 ms) | met | 17.04 / 157.51 -> 16.54 / 157.51 | met | 0.02x | 28.07 / 157.51 MB | 0 / 0 |
-| x | 12 | 11 | 0.64x -> 0.34x (15.9 / 46.6 ms) | met | 2.61 / 3.23 -> 2.41 / 3.23 | met | 0.37x | 2.41 / 3.23 MB | 0 / 0 |
-| x3d | 4 | 3 | 1.07x -> 1.11x (3.2 / 2.8 ms) | **not met** | 0.39 / 0.67 -> 0.32 / 0.67 | met | 1.17x | 0.43 / 0.67 MB | 1 / 1 |
-| xgl | 7 | 7 | 0.04x -> 0.04x (90.8 / 2505.9 ms) | met | 24.04 / 15.15 -> 12.61 / 15.15 | met | 0.04x | 12.61 / 15.15 MB | 1 / 0 |
+| 3ds | 16 | 15 | 0.22x -> 0.21x (8.2 / 38.7 ms) | met | 4.91 / 13.32 -> 4.91 / 13.32 | met | 0.23x | 4.91 / 13.32 MB | 0 / 0 |
+| 3mf | 2 | 2 | 0.67x -> 0.86x (0.1 / 0.1 ms) | met | 0.02 / 0.11 -> 0.02 / 0.11 | met | 0.84x | 0.02 / 0.11 MB | 1 / 0 |
+| ac | 11 | 7 | 0.57x -> 0.40x (183.5 / 457.9 ms) | met | 57.93 / 73.92 -> 57.01 / 73.92 | met | 0.39x | 57.01 / 73.92 MB | 4 / 5 |
+| amf | 11 | 11 | 0.86x -> 0.84x (0.4 / 0.5 ms) | met | 0.04 / 0.13 -> 0.04 / 0.13 | met | 0.80x | 0.06 / 0.13 MB | 2 / 0 |
+| ase | 17 | 16 | 1.05x -> 0.72x (5.5 / 7.6 ms) | met | 1.99 / 2.40 -> 1.99 / 2.40 | met | 0.69x | 1.99 / 2.40 MB | 0 / 0 |
+| b3d | 3 | 3 | 0.35x -> 0.35x (1.4 / 4.1 ms) | met | 1.02 / 1.75 -> 1.02 / 1.75 | met | 0.75x | 1.52 / 1.75 MB | 0 / 0 |
+| blend | 28 | 27 | 0.12x -> 0.09x (55.3 / 591.5 ms) | met | 4.00 / 84.07 -> 4.00 / 84.07 | met | 0.10x | 4.00 / 84.07 MB | 1 / 11 |
+| bvh | 3 | 3 | 0.40x -> 0.39x (27.8 / 72.1 ms) | met | 7.66 / 14.53 -> 7.66 / 14.53 | met | 0.94x | 8.89 / 14.53 MB | 0 / 0 |
+| cob | 8 | 6 | 0.92x -> 0.92x (6.2 / 6.8 ms) | met | 1.19 / 1.31 -> 1.19 / 1.31 | met | 0.90x | 1.19 / 1.31 MB | 2 / 1 |
+| csm | 1 | 1 | 1.45x -> 0.90x (5.8 / 6.4 ms) | met | 6.22 / 6.73 -> 5.11 / 6.73 | met | 0.96x | 5.88 / 7.21 MB | 0 / 0 |
+| dae | 26 | 25 | 0.79x -> 0.73x (25.4 / 34.9 ms) | met | 3.26 / 3.45 -> 3.26 / 3.45 | met | 0.83x | 3.26 / 3.45 MB | 2 / 0 |
+| dxf | 5 | 5 | 0.63x -> 0.54x (4.2 / 7.8 ms) | met | 1.39 / 1.60 -> 1.45 / 1.60 | met | 0.58x | 1.45 / 1.60 MB | 0 / 1 |
+| hmp | 2 | 2 | 0.07x -> 0.06x (0.1 / 1.7 ms) | met | 0.64 / 1.58 -> 0.64 / 1.58 | met | 0.07x | 0.64 / 1.58 MB | 0 / 0 |
+| iqm | 1 | 1 | 0.80x -> 0.84x (0.6 / 0.7 ms) | met | 0.68 / 0.69 -> 0.68 / 0.69 | met | 5.17x | 1.46 / 0.69 MB | 0 / 0 |
+| irr | 21 | 21 | 0.35x -> 0.38x (37.0 / 97.5 ms) | met | 1.73 / 1.91 -> 1.73 / 1.91 | met | 0.37x | 1.84 / 2.40 MB | 0 / 0 |
+| irrmesh | 5 | 5 | 0.77x -> 0.71x (3.6 / 5.1 ms) | met | 0.74 / 0.76 -> 0.72 / 0.76 | met | 0.66x | 0.72 / 0.76 MB | 0 / 0 |
+| lwo | 54 | 53 | 0.89x -> 0.56x (19.2 / 34.3 ms) | met | 1.66 / 1.60 -> 1.01 / 1.60 | met | 0.54x | 1.01 / 1.60 MB | 0 / 0 |
+| lws | 15 | 15 | 0.54x -> 0.44x (12.9 / 29.5 ms) | met | 0.02 / 0.11 -> 1.78 / 3.67 | met | 0.62x | 1.78 / 3.67 MB | 0 / 0 |
+| md2 | 5 | 5 | 0.56x -> 0.43x (0.6 / 1.3 ms) | met | 0.44 / 0.43 -> 0.34 / 0.43 | met | 0.43x | 0.34 / 0.43 MB | 0 / 0 |
+| md3 | 3 | 3 | 0.39x -> 0.24x (0.2 / 0.7 ms) | met | 0.12 / 0.30 -> 0.12 / 0.30 | met | 0.25x | 0.12 / 0.30 MB | 0 / 0 |
+| md5 | 5 | 4 | 0.54x -> 0.49x (5.6 / 11.5 ms) | met | 0.59 / 1.26 -> 0.59 / 1.26 | met | 0.77x | 1.25 / 1.26 MB | 0 / 0 |
+| mdc | 1 | 1 | 0.54x -> 0.45x (0.4 / 1.0 ms) | met | 1.05 / 1.30 -> 1.05 / 1.30 | met | 0.49x | 1.05 / 1.30 MB | 0 / 0 |
+| ms3d | 4 | 4 | 0.69x -> 0.74x (2.4 / 3.2 ms) | met | 1.09 / 1.56 -> 1.09 / 1.56 | met | 0.74x | 1.09 / 1.56 MB | 0 / 0 |
+| nff | 13 | 12 | 1.19x -> 0.77x (72.1 / 93.4 ms) | met | 6.76 / 13.09 -> 6.27 / 13.09 | met | 0.67x | 6.27 / 13.09 MB | 0 / 2 |
+| obj | 28 | 25 | 0.12x -> 0.12x (6.4 / 53.4 ms) | met | 0.85 / 17.28 -> 0.85 / 17.28 | met | 0.13x | 0.85 / 17.28 MB | 0 / 0 |
+| off | 5 | 2 | 0.93x -> 0.95x (1.4 / 1.5 ms) | met | 0.55 / 0.97 -> 0.55 / 0.97 | met | 0.86x | 0.55 / 0.97 MB | 0 / 0; Assimp crashes on 1 |
+| ogre | 4 | 3 | 0.72x -> 0.74x (10.3 / 13.9 ms) | met | 3.51 / 4.20 -> 3.49 / 3.38 | **not met** in this run (see below) | 0.86x | 3.49 / 3.38 MB | 2 / 3 |
+| ply | 12 | 9 | 0.37x -> 0.28x (20.6 / 73.2 ms) | met | 5.12 / 6.62 -> 5.12 / 6.62 | met | 0.27x | 5.51 / 6.62 MB | 0 / 0 |
+| pmx | 1 | 1 | 0.21x -> 0.10x (1.3 / 13.2 ms) | met | 1.50 / 3.39 -> 1.50 / 3.39 | met | 0.23x | 1.51 / 3.39 MB | 0 / 0 |
+| q3d | 4 | 4 | 0.34x (6.7 / 19.8 ms) | met | 1.28 / 4.10 | met | 0.83x | 1.28 / 4.10 MB | 0 / 0 |
+| raw | 4 | 1 | 1.04x -> 0.70x (2.0 / 2.8 ms) | met | 1.06 / 1.43 -> 1.00 / 1.43 | met | 0.85x | 1.00 / 1.43 MB | 0 / 0; Assimp crashes on 2 |
+| smd | 4 | 3 | 1.20x -> 0.66x (3.2 / 4.8 ms) | met | 2.64 / 3.30 -> 2.66 / 3.30 | met | 0.70x | 2.66 / 3.30 MB | 0 / 0 |
+| stl | 8 | 8 | 0.64x -> 0.68x (5.2 / 7.6 ms) | met | 1.29 / 2.10 -> 1.30 / 2.10 | met | 0.48x | 1.30 / 2.10 MB | 2 / 0 |
+| ter | 2 | 2 | 0.01x -> 0.01x (6.3 / 733.4 ms) | met | 16.54 / 157.51 -> 16.54 / 157.51 | met | 0.01x | 28.07 / 157.51 MB | 0 / 0 |
+| x | 12 | 11 | 0.34x -> 0.28x (12.6 / 45.4 ms) | met | 2.41 / 3.23 -> 2.41 / 3.23 | met | 0.35x | 2.41 / 3.23 MB | 0 / 0 |
+| x3d | 4 | 3 | 1.11x -> 0.77x (2.4 / 3.1 ms) | met | 0.32 / 0.67 -> 0.32 / 0.67 | met | 0.81x | 0.43 / 0.67 MB | 1 / 1 |
+| xgl | 7 | 7 | 0.04x -> 0.03x (81.3 / 2545.3 ms) | met | 12.61 / 15.15 -> 12.60 / 15.15 | met | 0.03x | 12.60 / 15.15 MB | 0 / 0 |
 
-`files slower / heavier` counts the files where ours took longer, or held more heap, than Assimp. "before" is the code before this work
-(Collada: a run of main's code; the other readers: a run after only the Collada changes, which did not touch them); "now"
-is the head of `claude2/own-collada-speed`.
+`files slower / heavier` counts the files where ours took longer, or held more heap, than Assimp. "before" is the head of
+`claude2/own-collada-speed` (the first round, below); "now" is the head of `claude2/own-readers-speed-2`. LWS "before" had 14
+files both read (`QuickDraw v.2.2.lws` was refused); Q3D had none.
 
 ### Where it is not met, and why
 
-Of the 36 readers measured (Q3D could not be: ours refuses all four corpus files, see below), **28 meet both time and memory**.
-The rest:
+All 37 readers were measured (Q3D for the first time). **36 meet both time and memory in this run; OGRE misses memory**:
 
-- **ASE, 1.05x time.** Inside the noise on small files, but real on the biggest file: on `MotionCaptureROM.ase` ours runs
-  54 million instructions to Assimp's 39. What is left is the line dispatch (a chain of block-name compares per line) and
-  number parsing, which reads every number exactly as `strtod` would (Assimp's parser is faster and not correctly rounded).
-  Next step: dispatch on a code computed once per block.
-- **CSM, 1.45x time** (one file, 3.6 MB of numbers: 138 million instructions to Assimp's 82, down from 482). Number parsing
-  is now most of it.
-- **NFF, 1.19x time.** Equal instruction counts on the largest file (`HOME4.NFF`: 93 million, Assimp 94) but slower in
-  time: the mesh building (`rc::BuildMesh`, a hash map per vertex) misses the cache more. The classic files with spheres
-  (`ManyEarthsNotJustOne`, `positionTest`) are also where ours tessellates differently from Assimp.
-- **SMD, 1.20x time** (51 million instructions to Assimp's 39 on `WusonSMD.smd`, down from 95).
-- **RAW, 1.04x time**: one file both read (Assimp crashes on the other two); within the noise.
-- **X3D, 1.11x time**: all of it is `ComputerKeyboard.x3d`, where ours builds 100 parts and 2,020 triangles from the
-  Extrusion nodes and Assimp builds 4 parts and 100 triangles; on the other two files ours is faster. Not a like-for-like
-  comparison.
-- **LWO, memory**: one file (`QuickDraw--Chasis.lwo`, 88 KB) peaks at 1.66 MB to Assimp's 1.60; summed over the 53 files
-  ours needs 0.68x. The rest of the peak is the per-surface triangle soup (`rc::Soup`), which grows as it is filled.
-- **MD2, memory**: 0.44 MB to 0.43 MB on the largest file, 0.87x summed: the file buffer is most of both peaks.
+- **OGRE, memory (not changed by this work).** Ours is heavier than Assimp on 3 of the 3 files both read in this run
+  (`TheThing/Mesh.mesh.xml` 3.49 / 3.38 MB, `razor` 1.17 / 1.02, `fish` 1.79 / 1.73). Whether the reader "meets" memory
+  depends on which files Assimp reads: **Assimp's OGRE importer fails on `ninja.mesh.xml` in some runs and on `fish.mesh.xml` in
+  others** (same build, same files); when it reads `ninja` (4.20 MB) the largest peak is Assimp's and the line says met (as in
+  the first round and in a `--format ogre` run after this one, 3.49 / 4.20). The per-file heap is the honest number: ours is
+  1.04x to 1.14x on three of four files. Not worked on here.
 
-The import columns (the whole scene import) follow the read columns, except **IQM**: the import with ours takes 5.4x the
+What was not met before this round, and where it is now (instruction counts are callgrind's, whole program):
+
+- **ASE 1.05x -> 0.72x** (`MotionCaptureROM.ase` 52.5 -> 36.8 M, Assimp 39.3).
+- **CSM 1.45x -> 0.90x** (118.4 -> 76.6 M, Assimp 82.3); peak 6.22 -> 5.11 MB.
+- **NFF 1.19x -> 0.77x** (`positionTest` 303.6 -> 137.0 M, Assimp 288.1; `HOME4` 93.3 -> 77.3 M, Assimp 95.3; `teapot` 39.2 -> 24.2 M,
+  Assimp 32.8). No NFF file is slower now.
+- **SMD 1.20x -> 0.66x** (`WusonSMD.smd` 50.5 -> 33.3 M, Assimp 39.3).
+- **RAW 1.04x -> 0.70x** (`Wuson.raw` 28.3 -> 21.4 M, Assimp 27.1; one file both read).
+- **X3D 1.11x -> 0.77x**: the reader was not changed for speed; the shared weld made `ComputerKeyboard.x3d` faster. That file is
+  still the one slower X3D file, and it is not like for like: ours builds the 98 keys the file instances, Assimp builds 2 (see
+  "Accuracy").
+- **LWO memory 1.66 / 1.60 -> 1.01 / 1.60 MB** (and time 0.89x -> 0.56x).
+- **MD2 memory 0.44 / 0.43 -> 0.34 / 0.43 MB.**
+
+Small changes elsewhere from the shared weld table: DXF's largest peak 1.39 -> 1.45 MB (Assimp 1.60), the others equal or lower.
+Timings move by up to 20% from run to run on this machine (3MF and STL read slower in this run than in the last one; neither was
+changed).
+
+The import columns (the whole scene import) follow the read columns, except **IQM**: the import with ours takes 5.2x the
 time and 2.1x the heap of Assimp's because ours imports the file's animation clip and Assimp does not (a difference in what
 is read, not in speed).
 
@@ -138,6 +144,23 @@ failures (380 files read, 34 recorded as failing).
 | XML reader (`XmlLite`) | Reserves the element array from a count of start tags and gives each element its attributes at their exact size. | OGRE 5.43 -> 3.51 MB, XGL/ZGL 24.0 -> 12.6 MB |
 | LWO polygons | Each polygon list is reserved from a count. | |
 
+### Second round (branch `claude2/own-readers-speed-2`, 2026-11-16)
+
+The same check after every step: `--digest` and `--import-digest` identical on every corpus file except the five files whose
+reading was fixed on purpose (four Q3D files, `QuickDraw v.2.2.lws`; see "Accuracy"). Instruction counts are callgrind's for
+one `--only own-read` run of the whole program (about 3.5 M of each is the program's start, the same for both sides).
+
+| Step | What it does | Effect on the corpus |
+|---|---|---|
+| ASE: block codes | Each open block gets a code once, when it opens; a line is dispatched on the code instead of a chain of block-name compares. | |
+| Number lines in one pass | `detail::ScanDecimal` (`NumParse.hpp`) reads the FastDecimal case of the token at hand while it finds the token's end, four digits at a time (`FourDigits`, little endian); it gives FastDecimal's value or declines, and then the token is read the old way (`ToDouble` / `ParseNumber`), so every value is the same. `txt::LineScan` reads a line's tokens straight from the text. Used for ASE vertex, normal, texture, face and animation-sample lines, SMD vertex, material and pose lines, CSM frame lines and RAW triangle lines, each only when the line has the usual layout (anything else goes the general way, which reports errors as before). | ASE 52.5 -> 36.8 M (Assimp 39.3), SMD 50.5 -> 33.3 M (39.3), CSM 118.4 -> 76.6 M (82.3), RAW 28.3 -> 21.4 M (27.1) |
+| One weld table (`WeldMap.hpp`) | The keys side by side in one array and a table of key numbers (open addressing) instead of `unordered_map`s with a node per vertex (keyed by a `std::string` in ASE and SMD). Used by `rc::BuildMesh` (AMF, X3D, DXF, LWO, NFF, AC3D, Irrlicht, OGRE, XGL, Q3D, RAW, ...), ASE, SMD, RAW and the LWO point map. Only the lookup changed: the vertices and their order are the same. | NFF `positionTest` 303.6 -> 137.0 M (Assimp 288.1) with the next step |
+| NFF solids | A sphere's triangles go straight into the soup (a triangle triangulates to itself) instead of three vectors per triangle; Sense8 polygons reuse their buffers and the group of the polygon before. | `teapot.nff` 39.2 -> 24.2 M (Assimp 32.8) |
+| CSM keys | The key arrays reserve the frames `$FirstFrame` / `$LastFrame` announce (capped by the text left and the key budget). | CSM peak 6.22 -> 5.11 MB (Assimp 6.73) |
+| LWO memory | Once a layer's polygons are in the per-surface soups, the layer's points, polygons and UV maps are freed, and each soup is freed when its mesh is built. | `QuickDraw--Chasis.lwo` peak 1.66 -> 1.01 MB (Assimp 1.60) |
+| MD2 memory | `ReadMd2File` frees the file once its tables are read, before the mesh is built (`ReadMd2Buffer` does not own its buffer and is unchanged). | `faerie.md2` peak 0.43 -> 0.34 MB (Assimp 0.42) |
+| RAW weld | The weld table of a group is freed before its mesh is built. | |
+
 The two number helpers are written from the arithmetic, not from any library: `detail::FastDecimal` is the exact fast case
 of decimal conversion (W. D. Clinger, "How to read floating point numbers accurately", 1990: digits that fit in 53 bits and a
 power of ten of at most 22 are both exact doubles, so one multiplication or division rounds correctly and gives the value
@@ -148,18 +171,30 @@ decimal point (it is correctly rounded like `strtod`); under another locale the 
 ## Accuracy: where our reader and Assimp disagree
 
 `--compare` reads each file with both and compares part, triangle, vertex, node, material, clip and bone counts, the
-bounding box in world space (1/1000 of the diagonal) and the node names. Of the 355 files, 61 agree on everything, 14 are
+bounding box in world space (1/1000 of the diagonal) and the node names. Of the 355 files, 62 agree on everything (61 before this round; `WusonOrange.q3o` is the new one), 14 are
 refused by both, and the rest differ in at least one number. Most differences are by design and documented in each reader's
 page: vertex counts (Assimp joins identical vertices, we weld per corner key), node counts (Assimp adds or merges nodes), material counts
 (Assimp adds a default material), and boxes for readers that turn Z-up files to Y-up at the root when Assimp does not.
 
 Differences that are not by design, or that are worth a second look (counts are ours / Assimp's):
 
-- **Q3D: ours refuses all four corpus files that Assimp reads** (`E-AT-AT.q3o`, `earth.q3o`: "bad vertex count";
-  `WusonOrange.q3o` / `.q3s`: "an unexpected or repeated chunk type 158"). The Q3D reader is not in the `model_corpus`
-  manifest, so no test caught it. It needs fixing before Q3D can switch.
+- **Q3D: fixed (2026-11-16).** Ours refused all four corpus files (`E-AT-AT.q3o`, `earth.q3o`: "bad vertex count";
+  `WusonOrange.q3o` / `.q3s`: "an unexpected or repeated chunk type 158"). Cause, from the bytes of the files: a mesh always
+  holds a texture coordinate count (the reader left it out when the header names no texture), a material ends with a
+  texture index (not read), and the `.q3s` file says `quick3Do` but has a scene chunk. All four read now, with Assimp's
+  triangle and material counts and boxes (the `.q3s` box differs: Assimp applies the scene chunk's placement, ours does not
+  read it); one part per mesh and material, as before. Q3D is in the `model_corpus` manifest now (`docs/own_q3d_reader.md`).
+- **LWS: fixed (2026-11-16).** `QuickDraw v.2.2.lws` was refused: its objects are `../LWO/LWO2/LWSReferences/*.lwo` and the
+  scene-folder rule refused every `..`. LightWave objects with exactly one leading `../` are now looked up in the folder
+  above the scene (LightWave's content directory), and `PivotPosition` is applied, which the file needs (without it the
+  parts sat twice as far out). It reads with Assimp's box and 22,144 / 22,073 triangles (the LWO concave-polygon
+  differences below). In the manifest now (`docs/own_lws_reader.md`).
+- **X3D `ComputerKeyboard.x3d`: ours is right.** 98 keys are `USE`s of one `DEF`ed key (some inside a group that is itself
+  used three times); X3D draws a `USE` wherever it is used, so 100 shapes and 2,020 triangles. Assimp builds 4 meshes and 100
+  triangles: it drops 96 keys (`docs/own_x3d_reader.md`).
+- **Assimp's OGRE importer is not repeatable**: in one run it fails on `ninja.mesh.xml`, in another on `fish.mesh.xml`.
 - **RAW: Assimp crashes on two files ours reads** (`WithColor.raw`, `WithTexture.raw`); see above.
-- **LWS: `QuickDraw v.2.2.lws` is refused by ours** and read by Assimp. **OGRE `fish.mesh.xml`, COB `dwarf_ascii.cob` and
+- **OGRE `fish.mesh.xml` (in some runs), COB `dwarf_ascii.cob` and
   `molecule_ascii.cob`, NFF `cone.nff`, AC3D `SphereWithLight_UTF16LE.ac` and Blender `BlenderDefault_262.blend`** are read
   by ours and refused by Assimp. PLY `ant-half.ply` (truncated), OFF `invalid.off`, X3D `IndexedLineSet.x3d` and the three
   line-only AC3D files are refused by ours and read by Assimp (as meshes without triangles); all known and documented.
@@ -173,7 +208,7 @@ Differences that are not by design, or that are worth a second look (counts are 
   (1,312 / 1,368: zero-area triangles ours drops), `PinkEggFromLW.dxf` 528 / 576 (the same), `horse.md2` 683 / 690, three
   LWO files of the LWS references (+24 each) and two LWO vertex-colour files (-13 to -22), `box_longline.obj` 944 / 634.
 - **More geometry in ours**: AMF `test7`, `test8`, `test_with_mat` (Assimp reads one volume of several),
-  `ComputerKeyboard.x3d` (Extrusion), `ChevyTahoe.x3d` 1,298 / 1,234, the Irrlicht scenes with spheres and animators
+  `ComputerKeyboard.x3d` (instanced keys, above), `ChevyTahoe.x3d` 1,298 / 1,234, the Irrlicht scenes with spheres and animators
   (480 / 1,280 and 3,140 / 4,740: sphere tessellation), `HelloX3dTrademark.x3d` 528 / 1,280 (sphere).
 - **ASE UTF-16**: Assimp reads the two UTF-16 `ThreeCubesGreen` files as one part of 8 triangles; ours reads the 3 cubes
   (36 triangles), like the UTF-8 file.
@@ -186,6 +221,23 @@ Differences that are not by design, or that are worth a second look (counts are 
 The full per-file list: run `bench_model_readers --compare` (one tab-separated line per file, `DIFF` and the fields).
 
 ## Tests run (Linux, 2026-11-16)
+
+Second round (`claude2/own-readers-speed-2`):
+
+- `ctest -R "model|import|collada|reader|obj|gltf|mesh|anim"` with `OKAY_MODEL_CORPUS` set, Release, `OKAY_USE_ASSIMP=ON`:
+  104 of 104 passed; `model_corpus`: 4,080 checks, 0 failures (433 rows: 399 read, 34 recorded failing). Also passed:
+  `batche2_hostile`, `batche2_budget`, `pmxlws_hostile`, `own_pmx_lws_default`, `own_dispatch_e5`, `ase_hostile`,
+  `smd_hostile`, `batchb_hostile` to `batche_hostile`.
+- Under ASan + UBSan + float-cast-overflow (`-O1`, `-fno-sanitize-recover=all`, reader sources only, built by hand):
+  `ase_hostile`, `smd_hostile`, `batchb_hostile` (LWO, X3D, DXF, AMF, 3MF), `batchc_hostile` (MD2), `batchd_hostile` (NFF,
+  AC3D, OGRE, XGL, IRR), `batche_hostile` (CSM, with the real file), `batche2_hostile`, `q3d_reader`, `raw_reader`,
+  `lws_reader`, `pmxlws_hostile`: 11 of 11 passed, no sanitizer report. The engine-linked tests (`model_readers_fuzz`,
+  `model_corpus`) were **not** run under sanitizers this round.
+- **Found, not fixed (not caused by this work):** `own_dispatch_e2` crashes (segmentation fault inside Assimp's RAW
+  importer, the node-child bug above) in a build with `OKAY_USE_ASSIMP=ON`; it crashes the same on the code before this
+  branch. It is not in the ctest regex above.
+
+First round:
 
 - `ctest -R "model|import|collada|reader|obj|gltf|mesh|anim"` with `OKAY_MODEL_CORPUS` set, in a Release build with
   `OKAY_USE_ASSIMP=ON`: 104 of 104 passed (`model_corpus`: 3871 checks, 0 failures, 380 read, 34 recorded failing). Five of

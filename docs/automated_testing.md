@@ -255,6 +255,52 @@ itself. A new test that writes files without choosing a temp folder of its own s
 of `main()` after `RUN_SUITE`, and `CHECK(sandbox.Verify())` at the end). The two regeneration switches
 (`OKAY_WRITE_COVERAGE`) write into `docs/` and `examples/` on purpose and are off by default.
 
+## CI speed
+
+Why the "Build & test (Ubuntu)" job was the slowest job (about 62 minutes in run 43950229920: 10 minutes waiting for a
+runner, 54 minutes build, 6.6 minutes test) and what `.github/workflows/ci.yml` does about it. **The speed-up is unverified
+until a real CI run; the first run after a cache change is cold.** No job, test or lint was removed or loosened, and every job
+still runs on pull requests and on main under the same name. To check it, see `docs/try_it/ci1-ci-speedup.md`.
+
+* **Tests run four at a time:** `ctest -j4 --timeout 300`. Before this the 805 tests ran one by one. A scan of `tests/` found no
+  two tests that write the same file or listen on the same port (temp folders are unique, servers use port 0, the few fixed
+  ports are each used by one test). Tests that time a real operation against a tight limit are marked `RUN_SERIAL` at the end
+  of `tests/CMakeLists.txt` (`physics_deep_improved` 6 ms per step, `loop_audit2`, `bughunt_round3`, `frame_pacing`,
+  `platform`, `own_http_net`, `launcher_versions`, `launcher_download_own`, `native_fetch`, `playfab_own`), so ctest runs each of
+  them with nothing else running. A new test with a tight timing limit should be added to that list. `--timeout 300` is only the
+  default: a test with its own `TIMEOUT` property keeps it.
+* **Compiler cache is saved by pushes to main only.** Each C++ job restores its ccache with `actions/cache/restore` and ends with
+  a "Save compiler cache (main only)" step (`actions/cache/save`, `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`).
+  Before, every PR run of eight jobs saved a new cache of up to 2 GB per commit, far over GitHub's 10 GB repository limit, so caches
+  were evicted and builds ran cold. A PR run now starts from main's latest cache (a PR can read the default branch's caches) and
+  writes nothing. Cost: a second push to the same PR does not get the first push's objects; it gets main's. The key prefixes
+  (`ccache-ubuntu-ci-`, `-player-`, `-editor-`, `-ownstack-`, `-anticheat-`, `-assimp-`, `-mingw-ci-`, `-web-`) did not change.
+  The main job prints `ccache -s` at its end ("Compiler cache statistics") so the hit rate is visible. `release.yml` still saves its
+  own `ccache-mingw-` cache and was not changed.
+* **lld linker** in "Build & test (Ubuntu)": each of the roughly 740 test programs links the whole engine. The Configure step
+  adds `-fuse-ld=lld` only when `ld.lld` is installed (the install step tries `apt-get install lld`); otherwise it links as before
+  and the log says `linker: default`. Compile flags are unchanged, so ccache keeps hitting.
+* **Nothing built twice, nothing dropped.** The Ubuntu test job used to build the launcher (also built by the "editor" job, which
+  configures `OKAY_BUILD_LAUNCHER=ON`) and the sandbox game plus `netdemo` and `physicsdemo` (built nowhere else). The launcher is now
+  left to the editor job and the sandbox and examples moved to the "player" job (`-DOKAY_BUILD_SANDBOX=ON`), which runs in
+  parallel. Configuring both ways gives the same 805 tests (`ctest -N` compared), so no test was lost.
+* **Release safety** (`release.yml`): a first step fails the run if `v<version>` already has a GitHub release (never re-run a
+  version); a `release` concurrency group queues a second release run behind the first (never cancelled); the "Make the release
+  visible (latest)" job now needs the Linux server job to have **succeeded** (before: anything but cancelled, so a failed server build
+  still became latest). The publish, signing, secrets and checksum steps were not touched.
+
+### Considered and not done
+
+* **Build tests at -O2:** the release programs are built at -O3, tests would then run different code than players get, and the
+  6 ms physics timing test would get less headroom. Not worth the fidelity loss.
+* **Sharding the Ubuntu job into 2 or 3 jobs:** would need a map from test to test program for each shard, and each shard rebuilds
+  the engine. Not safe to do blind. If wanted later: keep `Build & test (Ubuntu)` as a gate job that `needs` the shards.
+* **Folding the 6 Windows tests into the dist tree** (`windows-cross`): the dist tree is the release script's build (tests off, Assimp
+  on, libsodium required). Turning tests on there would change the release build script. The second tree is kept.
+* **Unity or shared object libraries for the tests:** changes how every test compiles; not safe without a measured CI run.
+* **`paths-ignore` for docs-only PRs:** left out on purpose (it can leave required checks missing).
+* Not added: ccache to the ASan job (`sanitizers`) and `own-http` jobs, which have none today.
+
 ## Tests of the testing code
 
 `test_testing_registry`, `test_playtest`, `test_scene_validator` and `test_regression` in

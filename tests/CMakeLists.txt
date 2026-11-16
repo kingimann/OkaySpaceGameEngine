@@ -3856,3 +3856,14 @@ add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINA
 add_executable(test_guided_perf test_guided_perf.cpp)
 target_link_libraries(test_guided_perf PRIVATE okay::engine)
 add_test(NAME guided_perf COMMAND test_guided_perf)
+
+# Tests that time a real operation against a tight limit (a 6 ms physics step, a 500 ms loop, sleeps that must land in a window,
+# a 2 s network cancel). CI runs ctest with -j4, and a test sharing the machine with three others could miss such a limit for
+# reasons that have nothing to do with the code. RUN_SERIAL makes ctest run each of these with nothing else running, so they
+# see the same quiet machine as before; the other tests still run four at a time. Nothing is skipped or loosened (docs/automated_testing.md "CI speed").
+foreach(_serial_test physics_deep_improved loop_audit2 bughunt_round3 frame_pacing platform own_http_net
+                     launcher_download_own launcher_versions native_fetch playfab_own)
+    if(TEST ${_serial_test})
+        set_tests_properties(${_serial_test} PROPERTIES RUN_SERIAL TRUE)
+    endif()
+endforeach()

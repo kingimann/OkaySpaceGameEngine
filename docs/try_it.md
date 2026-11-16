@@ -482,8 +482,11 @@ get the same slot or dropdown as the node that already did it right, and the one
     changes (typed names stay names, typed paths stay paths).
 
 **Status.** `tests/test_vs_node_fields.cpp` checks every field kind, the required list in the editor and in the checker,
-and that the saved text round-trips byte for byte. See the report on the branch for what was run; the editor drawing
-was only checked in a headless screenshot on Linux, never on Windows.
+and that the saved text round-trips byte for byte (435 checks, 0 failures; 77 failures on the code before). Verified
+here: the Linux editor, opened headless on a graph with these nodes, draws the Missing badges and "Required: ..." lines,
+the Prefab / Object / Graph slots (`Grf boss.okayvs | Phase2`, `Obj Self`), the clip, variable and Tag-pin dropdowns,
+and the checker lists the Required warnings. Unverified: clicking (opening a dropdown, typing in its box, dragging a
+file onto a slot), and anything on Windows.
 
 ## Team tooling (not part of the Windows release)
 

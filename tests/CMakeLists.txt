@@ -1216,6 +1216,11 @@ add_executable(test_npc_ai test_npc_ai.cpp)
 target_link_libraries(test_npc_ai PRIVATE okay::engine)
 add_test(NAME npc_ai COMMAND test_npc_ai)
 
+# Findings 102 and 106: NPC separation and ModelAnimator refresh no longer scan the whole scene.
+add_executable(test_perf_npc_anim_scans test_perf_npc_anim_scans.cpp)
+target_link_libraries(test_perf_npc_anim_scans PRIVATE okay::engine)
+add_test(NAME perf_npc_anim_scans COMMAND test_perf_npc_anim_scans)
+
 add_executable(test_perception test_perception.cpp)
 target_link_libraries(test_perception PRIVATE okay::engine)
 add_test(NAME perception COMMAND test_perception)

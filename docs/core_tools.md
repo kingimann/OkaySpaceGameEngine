@@ -61,6 +61,14 @@ Paths::AddAssetBaseDirListener([](const std::string& d) { Save::SetBaseDir(d); }
 The `...For(platform, env, app)` functions compute any platform's folders from a given environment (used by the
 tests). Existing per-class `SetBaseDir` calls keep working; a listener is the way to feed them from `Paths`.
 
+`Paths::FindFile(path, base)` is the one "try as written, then under the base folder" rule: it returns `path` when it is
+absolute or names a file from the working directory, else `base/path` when that file exists, else `path` unchanged (so an
+error names the path as written). It only checks the disk. `Paths::FindAsset(path)` is the same with `AssetBaseDir()`.
+`Image::Load`, `TtfFont::LoadFromFile` and the texture `.okaymeta` readers use `FindAsset`; the audio loaders use
+`FindFile` with `AudioBaseDir()`. The player sets `AssetBaseDir()` to the game's data folder right after `FindDataDir`
+(a double-clicked exe runs in the exe's folder, see `docs/build_pipeline.md`, "How the running game finds a file"); the
+editor sets it to the open project.
+
 ## EventBus extras
 
 The existing API is unchanged (a publish still dispatches to a snapshot of the handlers).

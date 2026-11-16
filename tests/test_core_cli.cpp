@@ -1,6 +1,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include <filesystem>
+#include <fstream>
 
 using namespace okay;
 using Strs = std::vector<std::string>;
@@ -134,6 +135,30 @@ int main() {
         CHECK(calls == 2);
         Paths::SetAssetBaseDir("");
         CHECK(Paths::Resolve("a") == "a");
+    }
+    {   // FindFile / FindAsset: as written first, then under the base folder, else unchanged (#888 finding 45)
+        namespace fs = std::filesystem;
+        const fs::path root = fs::temp_directory_path() / "okay_paths_find_test";
+        fs::remove_all(root);
+        fs::create_directories(root / "data" / "Assets");
+        { std::ofstream(root / "data" / "Assets" / "a.png") << "x"; }
+        fs::create_directories(root / "data" / "Assets" / "folder.png");   // a folder is not a file
+        const std::string base = root.generic_string() + "/data/";
+        CHECK(Paths::FindFile("Assets/a.png", base) == base + "Assets/a.png");
+        CHECK(Paths::FindFile("Assets/a.png", root.generic_string() + "/data") == root.generic_string() + "/data/Assets/a.png");
+        CHECK(Paths::FindFile("Assets/missing.png", base) == "Assets/missing.png");   // missing: the path as written
+        CHECK(Paths::FindFile("Assets/folder.png", base) == "Assets/folder.png");
+        CHECK(Paths::FindFile("Assets/a.png", "") == "Assets/a.png");                  // no base folder: unchanged
+        CHECK(Paths::FindFile("", base).empty());
+        CHECK(Paths::FindFile("/abs/Assets/a.png", base) == "/abs/Assets/a.png");      // absolute: as it is
+        CHECK(Paths::FindFile("C:/abs/a.png", base) == "C:/abs/a.png");
+        const std::string absFile = (root / "data" / "Assets" / "a.png").string();
+        CHECK(Paths::FindFile(absFile, "/elsewhere") == absFile);
+        Paths::SetAssetBaseDir(base);
+        CHECK(Paths::FindAsset("Assets/a.png") == base + "Assets/a.png");
+        Paths::SetAssetBaseDir("");
+        CHECK(Paths::FindAsset("Assets/a.png") == "Assets/a.png");
+        fs::remove_all(root);
     }
 
     // ---- BuildInfo ----

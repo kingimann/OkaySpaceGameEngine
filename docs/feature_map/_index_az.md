@@ -989,6 +989,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - data pack (1.14, 1.14.2, 39.10)
 - Data packs and obfuscation (39.10)
 - Data-driven content (47.1.1)
+- Data-folder lookup at run time (18.6.10)
 - DataAsset (1.14)
 - Database bridge (34.3.4)
 - Database search model (20.1.6)

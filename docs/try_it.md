@@ -500,6 +500,51 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Built games find their textures and fonts when you double-click the exe (bug fix, branch `claude2/export-data-dir-assets`, not merged or released yet)
+
+**What was wrong** (#888 finding 45). Build Game copies `Assets\grid.png` to `<Name>_Data\Assets\grid.png`, and the
+scene still says `Assets/grid.png`. Double-clicking `<Name>.exe` starts the game in the exe's folder, not in
+`<Name>_Data`, so the game looked for `Assets\grid.png` next to the exe, found nothing, and drew the model plain white.
+Fonts named by a Text or Button failed the same way and fell back to the built-in font. Sounds already worked, but the
+log still said "cannot load audio" for sounds that then played.
+
+**What it does now.** A texture, a font or a sound named by a relative path is tried as written first (exactly as
+before), then under the game's data folder (`<Name>_Data\`). In the editor the second try is under the project folder.
+An absolute path (`C:\...`) is used as it is. A sound that is found on the second try logs nothing; a file that is
+missing everywhere logs one line.
+
+**Steps.**
+
+1. Open a project in the editor (`Tools\OkayEngine.exe`, or Open from the launcher). Copy any PNG into the project's
+   `Assets` folder, for example `examples\obj_texture_paths\grid.png` to `<project>\Assets\grid.png`.
+2. **GameObject > 3D Object > Cube**. Select the cube. In the Inspector, under **Mesh Renderer**, click the **Texture**
+   box, type `Assets/grid.png` and press Enter. Type it: dragging the picture from the Project panel stores the full
+   `C:\...` path, which works on your own PC even without this fix, so it would not show the bug.
+3. The cube in the Scene view should show the grid (also new: the editor now finds a project-relative path even when it
+   was not started from the project folder). Save the scene (**File > Save Scene**, Ctrl+S).
+4. **File > Build Settings...** (Ctrl+B). Tick **Development build** if you want a log file. Press **Build** and note the
+   output folder.
+5. Open the output folder in Explorer and double-click `<Name>.exe`.
+6. You should see: the cube with the grid. Before this fix it was plain white, and the development log (`<Name>.log`
+   beside the exe) had `[asset] cannot load image 'Assets/grid.png': cannot open file`.
+7. Fonts **cannot be tried from the editor today**, for two other reasons: the Text component's **Font** slot only takes a
+   font dragged from the Project panel, which stores the full `C:\...` path (so the game finds it on your PC anyway), and
+   Build Game does not copy fonts named by a Text yet (#888 finding 41, a separate bug). The font part is covered by the
+   headless test only. By hand it would be: in the saved `.okayscene`, change the Text's font to `Assets/MyFont.ttf`,
+   copy the `.ttf` into `<Name>_Data\Assets\`, double-click the exe; the text uses the font (before: the built-in font,
+   and `[ttf] cannot open Assets/MyFont.ttf` in the log).
+
+**Status.** Verified here (Linux, headless): the new `export_asset_base` test lays out a data folder, moves the working
+directory elsewhere, sets the folders the way the player does and loads a PNG, DejaVu Sans and a WAV through the engine's
+own loaders. With the old loader code it gave 13 failures in 41 checks (texture, its import settings and font not found,
+a "cannot load audio" line for a sound that loaded, two lines for one missing sound); with the fix, 43 checks, 0
+failures. Also verified here: the Linux player, started from the exe folder of a hand-made `TexGame` + `TexGame_Data`
+layout under a virtual display, logged no image warning with `Assets/checker.png` in the data folder, and logged
+`cannot load image 'Assets/checker.png'` when the file was removed (so the renderer does ask for it). **Unverified:** no
+screenshot was taken; the folder was laid out by hand, not by Build Game (the editor was not built here); the editor
+change is compiled through the `editor_hooks` test but the editor was not run; nothing was run on Windows. The menu
+names above were read from the code.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

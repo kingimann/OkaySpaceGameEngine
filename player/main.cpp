@@ -1288,6 +1288,11 @@ int main(int argc, char** argv) {
     // Resolve where the game files live: <Name>_Data/ beside the exe (the Folder layout), Data/ (the compact
     // layout), or the exe's own folder (the flat layout older builds used), so every build the editor ever made still runs.
     const std::string baseDir = okay::buildpipe::FindDataDir(pb->BasePath(), PlayerExeStem(argv[0]));
+    // The scene names files as the project did ("Assets/x.png") and Build Game keeps them under that path in the data
+    // folder, but a double-clicked exe runs in the exe's folder. Textures, fonts and texture import settings try a
+    // relative path as written and then under this folder (Paths::FindAsset); sounds get it from LoadSceneAudio below.
+    // The working directory is left alone, so scripts see the folder the game was started from (#888 finding 45).
+    okay::Paths::SetAssetBaseDir(baseDir);
     okay::Paths::SetStreamingAssetsDir(std::filesystem::is_directory(std::filesystem::u8path(baseDir) / "StreamingAssets") ? baseDir + "StreamingAssets/" : std::string());
 
     // Build settings (written by the editor's Build Settings) live in an optional

@@ -131,6 +131,26 @@ std::string Paths::Resolve(const std::string& relative) {
     return Join(AssetDirRef(), relative);
 }
 
+namespace {
+// A file (not a folder) is at `p`. Never throws: a name that is not valid UTF-8 counts as "not there".
+bool IsFileAt(const std::string& p) {
+    try {
+        std::error_code ec;
+        return std::filesystem::is_regular_file(std::filesystem::u8path(p), ec);
+    } catch (...) {
+        return false;
+    }
+}
+}
+
+std::string Paths::FindFile(const std::string& path, const std::string& base) {
+    // An absolute path is used as it is, without a look at the disk (the loader reports it if it is missing).
+    if (path.empty() || IsAbsolute(path) || base.empty() || IsFileAt(path)) return path;
+    const std::string under = Join(base, path);
+    return IsFileAt(under) ? under : path;
+}
+std::string Paths::FindAsset(const std::string& path) { return FindFile(path, AssetDirRef()); }
+
 static std::string& StreamingDirRef() { static std::string d; return d; }
 void Paths::SetStreamingAssetsDir(const std::string& dir) { StreamingDirRef() = dir; }
 const std::string& Paths::StreamingAssetsDir() { return StreamingDirRef(); }

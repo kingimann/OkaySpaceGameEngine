@@ -9,6 +9,7 @@
 //     (see ModelImport.cpp, which reads them through ReadModelImportOptions below).
 // compress and sRGB are stored but no importer reads them, and the editor does not offer them.
 // Audio `loadMode` and `forceMono` are read by the audio loader (quality is kept for old files and not applied).
+#include "okay/Core/Paths.hpp"
 #include "okay/Graphics/Image.hpp"
 
 #include <cctype>
@@ -39,9 +40,11 @@ inline std::string ReadImportSetting(const std::string& assetPath, const char* i
 }
 
 /// Texture `maxSize` from the sidecar: 0 when there is none, or it is 0 (no limit). Values below 32 are ignored.
+/// The sidecar is the one beside the picture Image::Load opens (Paths::FindAsset: as written, else under the asset folder).
 inline int TextureImportMaxSize(const std::string& imagePath) {
-    std::string v = ReadImportSetting(imagePath, "texture", "maxSize");
-    if (v.empty()) v = ReadImportSetting(imagePath, "texture", "maxsize");   // the older layout
+    const std::string file = Paths::FindAsset(imagePath);
+    std::string v = ReadImportSetting(file, "texture", "maxSize");
+    if (v.empty()) v = ReadImportSetting(file, "texture", "maxsize");   // the older layout
     if (v.empty()) return 0;
     const int n = std::atoi(v.c_str());
     return n >= 32 && n <= 16384 ? n : 0;
@@ -68,17 +71,18 @@ struct TextureSampling {
 inline TextureSampling TextureImportSampling(const std::string& imagePath) {
     TextureSampling t;
     if (imagePath.empty() || imagePath[0] == '@' || imagePath.rfind("proc:", 0) == 0) return t;
+    const std::string file = Paths::FindAsset(imagePath);   // beside the picture Image::Load opens (a built game's data folder)
     auto low = [](std::string s) { for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; };
-    const std::string f = low(ReadImportSetting(imagePath, "texture", "filter"));
+    const std::string f = low(ReadImportSetting(file, "texture", "filter"));
     if (f == "point" || f == "nearest") t.filter = TextureSampling::Point;
     else if (f == "bilinear" || f == "linear") t.filter = TextureSampling::Bilinear;
     else if (f == "trilinear") t.filter = TextureSampling::Trilinear;
-    const std::string w = low(ReadImportSetting(imagePath, "texture", "wrap"));
+    const std::string w = low(ReadImportSetting(file, "texture", "wrap"));
     if (w == "clamp") t.wrap = TextureSampling::Clamp;
     else if (w == "mirror") t.wrap = TextureSampling::Mirror;
     else if (w == "repeat") t.wrap = TextureSampling::Repeat;
-    std::string m = ReadImportSetting(imagePath, "texture", "mipmaps");
-    if (m.empty()) m = ReadImportSetting(imagePath, "texture", "mips");
+    std::string m = ReadImportSetting(file, "texture", "mipmaps");
+    if (m.empty()) m = ReadImportSetting(file, "texture", "mips");
     m = low(m);
     if (m == "0" || m == "false" || m == "off") t.mipmaps = false;
     return t;

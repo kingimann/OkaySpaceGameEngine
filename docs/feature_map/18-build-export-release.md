@@ -121,16 +121,17 @@ Release 2.851.0 is live (tag `v2.851.0`, 2026-11-09); the 2.852.0 release PR (#5
   - 18.6.7 Layout check - `tests/export/verify_layout.sh` - exports a project with an unused asset and StreamingAssets, checks the Folder, flat (old), Compact, no-strip, Zip and dry-run outputs, and runs the player from the Folder, flat and Compact layouts
   - 18.6.8 Build report - `editor/main.cpp` (Build Result window), `.okay/build_report.txt` - by kind, by type, files with why, left out with reason, warnings, time, archive size
   - 18.6.9 Player build info - `player/main.cpp` - `--build-info`, the development overlay and log line, `Paths::StreamingAssetsDir`
-- **Code:** `editor/main.cpp`, `editor/ProjectState.hpp`, `engine/src/Core/BuildPipeline.cpp`, `player/main.cpp`, `Core/DataPack`, `tests/export/verify.sh`, `tests/export/verify.ps1`, `tests/export/verify_layout.sh`
-- **API:** `builder::Build`, `okay::buildpipe::*`, `Paths::StreamingAssetsDir`, `OkayEngine --build-game`, `<Game> --build-info`, `OKAY_AC_SIGNING_KEY_FILE`
+  - 18.6.10 Data-folder lookup at run time - `player/main.cpp`, `Core/Paths` (`FindFile`, `FindAsset`), `Graphics/Image.cpp`, `Graphics/TtfFont.cpp`, `Core/ImportSidecar.hpp`, `Audio/AudioLoad.hpp` - a texture, font, texture import setting or sound named by a relative path is tried as written, then under `<Name>_Data/`, so a game double-clicked from its exe folder finds them (#888 finding 45); the editor uses the project folder
+- **Code:** `editor/main.cpp`, `editor/ProjectState.hpp`, `engine/src/Core/BuildPipeline.cpp`, `player/main.cpp`, `Core/DataPack`, `Core/Paths`, `tests/export/verify.sh`, `tests/export/verify.ps1`, `tests/export/verify_layout.sh`
+- **API:** `builder::Build`, `okay::buildpipe::*`, `Paths::StreamingAssetsDir`, `Paths::FindAsset`, `Paths::FindFile`, `OkayEngine --build-game`, `<Game> --build-info`, `OKAY_AC_SIGNING_KEY_FILE`
 - **Editor:** File > Build Settings (Ctrl+B): scenes in build, window, platform, Output page (layout, build number, stripping, compression, archive name), Dry Run, anti-cheat, build profiles
 - **Docs:** `docs/build_pipeline.md`, `docs/making_a_game.md`, `docs/editor.md`, `docs/packaging.md`
-- **Tests:** `build_pipeline` (ctest; layout, data-folder lookup, dependency walk, manifest, report, zip, settings text); the layout check and the export check run in CI (18.3)
+- **Tests:** `build_pipeline` (ctest; layout, data-folder lookup, dependency walk, manifest, report, zip, settings text); `export_asset_base` (textures, fonts and sounds load from the data folder with the working directory elsewhere); the layout check and the export check run in CI (18.3)
 - **Status:** Works - the layout check exports and runs real builds; no pack file, no `Plugins/`, no separate symbol files (docs/build_pipeline.md, known gaps)
 - **Open:** the build code lives inside the huge `editor/main.cpp` (split, see 15.10); the export check covers visual scripts and one mesh, not UI, audio or networking; anti-cheat forces the compact layout; Web, Android and server exports ignore the new Output settings
 - **Related:** 15.7, 18.3, 39.4, 42.6
 - **Words:** Build Game, export, Build Settings, Data folder, _Data, Folder layout, Compact layout, Zip archive, build.json, build number, StreamingAssets, asset stripping, dependency walk, dry run, build report, game.okayconfig, player runtime, scenes in build, --build-game, --build-info, verify.sh, manifest
-- **Seen as:** the exported game is missing a texture or sound; the build refuses the folder; game starts but a scene doesn't load; the exe has the wrong name; a file you did not expect is (or is not) in the build
+- **Seen as:** the exported game is missing a texture or sound; models are plain white or text uses the built-in font when the game is started by double-clicking its exe; the build refuses the folder; game starts but a scene doesn't load; the exe has the wrong name; a file you did not expect is (or is not) in the build
 - **Ask me like:** "build the game from the command line", "why isn't my audio file in the build?", "what is in the build and how big is it?"
 
 ### 18.7 Dedicated server export and Linux server build

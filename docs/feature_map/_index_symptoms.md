@@ -669,6 +669,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | model faces the wrong way after rigging | [30.2](20-35-planned.md#302-rig-generation) Rig generation |
 | model faces the wrong way or is a tiny or huge size | [3.6](03-modeling-import.md#36-model-import) Model import |
 | model floats or sinks | [3.7](03-modeling-import.md#37-rigging-and-playable-setup) Rigging and playable setup |
+| models are plain white or text uses the built-in font when the game is started by double-clicking its exe | [18.6](18-build-export-release.md#186-desktop-game-export-build-game-and-the-export-check) Desktop game export (Build Game) and the export check |
 | mouse-look jumps on the first frame | [8.1](08-input.md#81-keyboard-and-mouse) Keyboard and mouse |
 | movement judders although the frame rate looks steady | [1.1](01-core-scene.md#11-loop-and-time) Loop and time |
 | movement stutters or jitters when frame rate differs from the physics rate | [6.4](06-physics.md#64-fixed-step-with-render-interpolation-pose-history) Fixed step with render interpolation, pose history |

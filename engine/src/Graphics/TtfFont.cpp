@@ -3,6 +3,7 @@
 #include "okay/UI/UIFontPolicy.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/Paths.hpp"
 #include "okay/Core/Utf8.hpp"
 
 #include <algorithm>
@@ -29,17 +30,19 @@ TtfFont::~TtfFont() = default;
 
 bool TtfFont::LoadFromFile(const std::string& path, float bakeHeightPx) {
     m_valid = false;
-    // Read the whole font file.
-    std::FILE* f = std::fopen(path.c_str(), "rb");
-    if (!f) { Log::Error("[ttf] cannot open ", path); return false; }
+    // Read the whole font file. A relative path is tried as written, then under the asset folder (a built game's
+    // <Name>_Data/, the editor's project): Paths::FindAsset (#888 finding 45). The font keeps the name as written.
+    const std::string file = Paths::FindAsset(path);
+    std::FILE* f = std::fopen(file.c_str(), "rb");
+    if (!f) { Log::Error("[ttf] cannot open ", file); return false; }
     std::fseek(f, 0, SEEK_END);
     long sz = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
-    if (sz <= 0) { std::fclose(f); Log::Error("[ttf] empty file ", path); return false; }
+    if (sz <= 0) { std::fclose(f); Log::Error("[ttf] empty file ", file); return false; }
     std::vector<unsigned char> data((std::size_t)sz);
     std::size_t got = std::fread(data.data(), 1, (std::size_t)sz, f);
     std::fclose(f);
-    if (got != (std::size_t)sz) { Log::Error("[ttf] short read ", path); return false; }
+    if (got != (std::size_t)sz) { Log::Error("[ttf] short read ", file); return false; }
     m_bytes = std::move(data);
     return Bake(m_bytes.data(), m_bytes.size(), bakeHeightPx, path);
 }

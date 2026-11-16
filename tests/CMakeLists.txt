@@ -873,6 +873,12 @@ add_executable(test_build_pipeline test_build_pipeline.cpp)
 target_link_libraries(test_build_pipeline PRIVATE okay::engine)
 add_test(NAME build_pipeline COMMAND test_build_pipeline)
 
+# A built game started from its exe's folder loads textures, fonts and sounds from the data folder (#888 finding 45).
+add_executable(test_export_asset_base test_export_asset_base.cpp)
+target_link_libraries(test_export_asset_base PRIVATE okay::engine)
+target_compile_definitions(test_export_asset_base PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME export_asset_base COMMAND test_export_asset_base)
+
 add_executable(test_project_state test_project_state.cpp)
 target_link_libraries(test_project_state PRIVATE okay::engine)
 add_test(NAME project_state COMMAND test_project_state)

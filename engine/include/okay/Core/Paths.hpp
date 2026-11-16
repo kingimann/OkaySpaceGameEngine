@@ -63,6 +63,14 @@ public:
     /// `relative` under the asset folder; an absolute path (or one with a drive letter) is returned as is.
     static std::string Resolve(const std::string& relative);
     static bool IsAbsolute(const std::string& path);
+    /// The file a load should open for `path`, the one rule textures, fonts and sounds share: `path` itself when it is
+    /// absolute or names a file from the working directory (so nothing that loaded before changes); otherwise the same
+    /// relative path under `base` when that file is there; otherwise `path` unchanged, so the caller's error names the
+    /// path as it was written. Only looks at the disk; opens nothing.
+    static std::string FindFile(const std::string& path, const std::string& base);
+    /// FindFile(path, AssetBaseDir()). A built game sets the folder to its data folder (<Name>_Data/), because a
+    /// double-clicked exe runs in the exe's folder while the scene names "Assets/x.png"; the editor sets the project.
+    static std::string FindAsset(const std::string& path);
     /// The StreamingAssets folder of a built game: files the game opens by name at run time, copied from the
     /// project's StreamingAssets/ folder as they are (<Name>_Data/StreamingAssets/). Empty when the game has none.
     /// The player sets it at startup; it ends in '/'.

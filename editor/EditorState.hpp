@@ -186,6 +186,10 @@ public:
         m_projectDir = d;
         // Model files in this project may name textures anywhere in the project (absolute or "../" paths); nothing outside it.
         okay::SetModelTextureRoots(d.empty() ? std::vector<std::string>() : std::vector<std::string>{d});
+        // A project-relative texture or font ("Assets/x.png") that does not open from the working directory is tried
+        // under the project too, as a built game tries its data folder (Paths::FindAsset). Paths that opened before
+        // still open the same file.
+        okay::Paths::SetAssetBaseDir(d);
         if (onProjectChanged) onProjectChanged(old, d);
         okay::ItemDatabase::Get().Clear();   // each project has its own item definitions
         if (!d.empty()) okay::ItemDatabase::Get().Load(ItemDatabasePath());

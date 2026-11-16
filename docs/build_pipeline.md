@@ -65,7 +65,9 @@ With **Strip unused assets** on (the default) a build ships:
 4. the visual-script files of scenes that are copied as files (a scene written from the editor embeds its graphs).
 
 A reference is found as written, then under the project folder, its `Assets/` folder, the referring file's folder and
-the scenes' folders. It is stored under the path the scene writes, so the running game finds it where the scene says.
+the scenes' folders. It is stored in the data folder under the path the scene writes (`Assets/hero.png` becomes
+`<Name>_Data/Assets/hero.png`); the scene itself is not changed.
+
 References never climb out of the project with `..`; an absolute path is copied by file name and warned about (the game
 would still look for the original path); `@name` pictures, `proc:` textures and URLs are not files. A reference that
 resolves to nothing is a **warning** (missing asset) and is not shipped.
@@ -73,6 +75,27 @@ resolves to nothing is a **warning** (missing asset) and is not shipped.
 With stripping off, every file under `Assets/` ships too (except scenes that are not in the build, editor-only files such as
 `.psd .blend .bak`, and `.okaymeta` sidecars), under `Assets/<path>`; the report warns how many unused files and bytes
 that added.
+
+## How the running game finds a file
+
+A double-clicked exe runs in the exe's folder, not in `<Name>_Data/`, so a scene path such as `Assets/hero.png` does not
+open as written there. The player does not change the working directory (scripts keep the folder the game was started
+from). Instead it gives the data folder to the loaders, and each one tries a relative path **as written first, then under
+the data folder**:
+
+| What | How | Base folder |
+|---|---|---|
+| Textures, UI images, icons, splash (`Image::Load`, so `GetCachedTexture` and every renderer) and a texture's `.okaymeta` | `Paths::FindAsset` | `Paths::SetAssetBaseDir(<data folder>)`, set right after `FindDataDir` |
+| Fonts (`TtfFont::LoadFromFile`, so `GetFont`, Text and Button fonts, the UI font) | `Paths::FindAsset` | the same |
+| Sounds and music (`LoadAudioFile`, `OpenAudioStream`, `LoadSceneAudio`) | `ResolveAudioPath` (`Paths::FindFile` with the audio folder) | `AudioBaseDir()`, set by `LoadSceneAudio` |
+| Meshes named by a scene | the scene loader's own fallback | the scene's folder |
+| Data assets, a Character's clips file, anti-cheat rules, behavior trees, foliage and spline-mesh prefabs, quests, dialogue | each class's own `SetAssetBaseDir` / `SetBaseDir` | the data folder |
+
+A path that opens from the working directory still wins, and an absolute path is used as it is. A sound found on the
+second try logs nothing; a file missing everywhere logs one line naming the path as written. In the editor the same base
+folder is the open project (`EditorState::setProjectDir`). Before this (#888 finding 45) only sounds had the second try,
+so a game started from its exe folder drew every textured model plain white and fell back to the built-in font.
+Tested by `tests/test_export_asset_base.cpp`.
 
 ## Settings
 

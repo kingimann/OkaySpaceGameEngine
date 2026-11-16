@@ -164,10 +164,6 @@ for d in $EXAMPLE_DIRS; do
         [ -f "$f" ] && cp "$f" "$OUT_DIR/examples/$d/"
     done
 done
-# File > Examples > Visual Script Node Playground opens these (found next to the editor program).
-mkdir -p "$OUT_DIR/examples/visual_script/playground"
-cp examples/visual_script/playground/* "$OUT_DIR/examples/visual_script/playground/"
-[ -s "$OUT_DIR/examples/visual_script/playground/movement.okayscene" ] || { echo "error: visual_script/playground did not make it into the distribution" >&2; exit 1; }
 # The texture the obj_texture_paths cubes name (the same starter file that ships in Assets/Textures).
 cp assets/textures/grid.png "$OUT_DIR/examples/obj_texture_paths/"
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }

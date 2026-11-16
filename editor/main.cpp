@@ -6852,7 +6852,7 @@ static void DrawExampleMenuItems(EditorState& ed) {
             if (ImGui::MenuItem(name.c_str())) {
                 std::string err;
                 if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
-                else ConsoleLog("Open failed: " + err, 2);
+                else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
             }
         }
         ImGui::EndMenu();
@@ -6861,14 +6861,7 @@ static void DrawExampleMenuItems(EditorState& ed) {
     // Guided modeling: the fences and the architecture models, all made by the Guided page's own designs.
     {
         namespace fs = std::filesystem;
-        std::vector<std::string> guided;
-        for (const fs::path root : {fs::path("examples/modeling"), fs::path("../examples/modeling"), fs::path("../../examples/modeling")}) {
-            std::error_code ec;
-            if (!fs::is_directory(root, ec)) continue;
-            for (const auto& f : fs::directory_iterator(root, ec)) { if (ec) break; if (f.path().extension() == ".okayscene") guided.push_back(f.path().lexically_normal().string()); }
-            if (!guided.empty()) break;
-        }
-        std::sort(guided.begin(), guided.end());
+        const std::vector<std::string> guided = okay::editor::ExampleScenes("modeling");
         if (ImGui::BeginMenu("Guided modeling (fences, buildings, stairs...)", !guided.empty())) {
             ImGui::TextDisabled("Select a model, then Modeling > Guided to change it.");
             for (const std::string& p : guided) {
@@ -6876,7 +6869,7 @@ static void DrawExampleMenuItems(EditorState& ed) {
                 if (ImGui::MenuItem(name.c_str())) {
                     std::string err;
                     if (ed.Load(p, &err)) { ConsoleLog("Opened " + p); AddRecent(p); }
-                    else ConsoleLog("Open failed: " + err, 2);
+                    else { ConsoleLog("Open failed: " + err, 2); ShowErrorPopup("Couldn't open the example", p + "\n" + err); }
                 }
             }
             ImGui::EndMenu();

@@ -41,6 +41,13 @@ AssetType AssetTypeFromExtension(const std::string& extension);
 AssetType AssetTypeFromPath(const std::string& path);
 /// Lower-case extensions (no dot) a kind covers, in a stable order. Empty for Unknown/Other.
 std::vector<std::string> ExtensionsOfType(AssetType kind);
+/// Extensions (lower case, no dot) the engine, editor and launcher use for files that are NOT project assets:
+/// saves, per-user settings, sidecars, package archives, debug recordings. Nothing in a project references them by
+/// path, so the asset table leaves them out on purpose (they stay Other). tests/test_asset_ext_table.cpp checks that
+/// every ".okay<x>" the sources use is either in the asset table or in this list, so a new file type is not forgotten.
+const std::vector<std::string>& NonAssetExtensions();
+/// True when `extension` (with or without the dot, any case) is in NonAssetExtensions().
+bool IsNonAssetExtension(const std::string& extension);
 /// Lower-case extension of a path without the dot ("" when the file name has none).
 std::string AssetExtension(const std::string& path);
 /// "Assets/Art/hero.png" -> "hero.png" (the part after the last '/' or '\\').

@@ -170,6 +170,32 @@ AssetType AssetTypeFromName(const std::string& name) {
     return AssetType::Unknown;
 }
 
+const std::vector<std::string>& NonAssetExtensions() {
+    static const std::vector<std::string> list = {
+        "okaymeta",      // the asset database's own sidecar next to each asset
+        "okayasset",     // the launcher's sidecar next to a downloaded file (title / author / kind)
+        "okayproj",      // project.okayproj: the project's settings, one per project
+        "okaylabels",    // <project>/.okaylabels: the editor's colour labels
+        "okayprefs",     // Prefs: per-player preferences (game.okayprefs)
+        "okayconfig",    // game.okayconfig: written by a build next to the player
+        "okaysave",      // SaveData files, per player
+        "okaygame",      // SaveGame slots (saves/<slot>.okaygame)
+        "okayslot",      // SaveFramework slots (<slot>.okayslot)
+        "okaycreation",  // what a player built in build mode, kept in the save folder
+        "okayframes",    // a frame recording (debug capture of a play session)
+        "okaypkg",       // a package archive in the launcher's downloads
+        "okayspace",     // not a file type: the per-user ~/.okayspace folder and okayspace.net host names
+    };
+    return list;
+}
+
+bool IsNonAssetExtension(const std::string& extension) {
+    std::string e = Lower(extension);
+    if (!e.empty() && e[0] == '.') e.erase(0, 1);
+    for (const std::string& n : NonAssetExtensions()) if (e == n) return true;
+    return false;
+}
+
 AssetType AssetTypeFromExtension(const std::string& extension) {
     std::string e = Lower(extension);
     if (!e.empty() && e[0] == '.') e.erase(0, 1);

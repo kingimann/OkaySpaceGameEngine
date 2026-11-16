@@ -920,6 +920,14 @@ target_include_directories(test_project_panel_db PRIVATE ${PROJECT_SOURCE_DIR}/e
 target_link_libraries(test_project_panel_db PRIVATE okay::engine)
 add_test(NAME project_panel_db COMMAND test_project_panel_db)
 
+# Asset type table: every ".okay<x>" the engine / editor / launcher sources use is a known asset type or on the
+# explicit not-assets list; .okayui / .okayac references are found and rewritten on rename.
+add_executable(test_asset_ext_table test_asset_ext_table.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectBrowser.cpp)
+target_include_directories(test_asset_ext_table PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_link_libraries(test_asset_ext_table PRIVATE okay::engine)
+target_compile_definitions(test_asset_ext_table PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME asset_ext_table COMMAND test_asset_ext_table)
+
 # The Project panel's right-click menus (editor/ProjectContextModel.hpp, header-only, no ImGui, no engine): order, labels and plurals of the item, folder, tree, favourites and empty-space menus, what is greyed and why, no doubled separators, Copy Text, Assets-relative paths, the file types that run code (never offered to the system's open, and .js is not a text file), a folder that is gone, the path text helpers (Outermost, NearestFolder), the Move to... rule, Set as Start Scene, dates and the Properties rows.
 add_executable(test_project_context_model test_project_context_model.cpp)
 target_compile_features(test_project_context_model PRIVATE cxx_std_17)

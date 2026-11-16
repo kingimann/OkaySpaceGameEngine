@@ -67,6 +67,7 @@ release job or the installer build for this change.
 | 7e | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
+| 7zh | Modeling: material slots (give faces their own colour slot), Repair Mesh | `examples\modeling_tools\material_slots.okayscene` (File > Open...), then Modeling window > Edit Mesh > Paint > Material Slots | New in this change; real window and GPU renderers unverified |
 
 ---
 
@@ -637,6 +638,36 @@ Status: the topic list, the rule that every node has exactly one place, the size
 names and the favourites keys are checked by `tests/test_vs_categories.cpp` (compiled and run with g++ on Linux). The
 counts above come from that test's dump. The three screenshots show the panel working with the new topics. **Unverified:**
 how the sidebar looks and feels in the real editor window (font, dot colours, scrolling); nothing was run on Windows.
+
+## 7zh. Modeling: material slots and Repair Mesh
+
+**What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
+recolours every face in it at once. Slots are saved in the scene and in `.okaymesh` files. There is also a **Repair Mesh** button
+that cleans up a broken or imported mesh in one click. Slots are colours only for now: per-slot pictures (textures) and shaders are
+not built.
+
+**Try the example.**
+1. Open `Tools\OkayEngine.exe`, then **File > Open...** and pick `examples\modeling_tools\material_slots.okayscene`.
+2. You should see two objects: **Slot House** (cream walls, a red roof, a brown floor and a blue door) and **Slot Ball** (a white
+   ball with a green top and an orange bottom). Nothing else is needed: the colours come from the slots.
+3. Click **Slot House**, open the **Modeling** window (the menu bar), tick **Edit Mesh**, open the **Paint** area and find **Material Slots**.
+   You should see four rows: Slot 0 to Slot 3, each with a round button, a face count and a colour box.
+4. Click the colour box of **Slot 1** and pick green. Both roof faces turn green at once. Press **Ctrl+Z**: the roof is red again.
+5. Press key **3** (face mode), click one wall. Click the round button of **Slot 3**, press **Assign Sel**. That wall takes the door colour.
+   Press **Select Slot** with Slot 3 chosen: the door and that wall are selected. **Clear Slots** removes all slots and the colours they gave (the mesh goes back to its plain colour).
+6. Save the scene (Ctrl+S), close it and open it again: the slots and colours are still there.
+
+**Try Repair Mesh.** Select any object with a mesh, tick **Edit Mesh**, press **Delete Faces** on a face or two to make a hole, then
+**Repair Mesh**. The hole is capped and the Console says what was done, for example `Repair Mesh: merged 0 verts, capped 1 holes, flipped 0 faces; open edges 4 -> 0 (closed)`.
+
+**Files.** `examples\modeling_tools\slot_house.okaymesh` and `slot_ball.okaymesh` are the same two models as plain files: in the Inspector set **Mesh File**
+to one of them (it is in the Modeling window; the exact tab is unverified), or open one in a text editor to see the `slot N r g b a` lines.
+
+**Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
+
+**What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,
+the software renderer drawing each slot's colour, Repair Mesh, the dissolve/weld/delete fixes). Nobody has clicked these buttons in the real
+editor window, run the Windows build, or looked at the OpenGL, Direct3D 11 or Direct3D 12 renderers (they draw per-face colours, as before).
 
 ## Switches that are off by default (own code)
 

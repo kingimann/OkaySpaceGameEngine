@@ -264,7 +264,10 @@ to the first selected vertex (grab one island of a combined mesh), and
   face's winding consistent with its neighbours and points closed shells
   outward — the one-click fix for dark/inside-out faces after welds,
   bridges, booleans, mirrored halves or imports),
-  **Merge by Distance**, **Duplicate Sel** (copy the selected faces in
+  **Merge by Distance**, **Repair Mesh** (one click: merge doubled vertices,
+  drop collapsed triangles, cap holes, make every face point outward; keeps
+  paint and material slots; the Console says what changed),
+  **Duplicate Sel** (copy the selected faces in
   place, copies stay selected — drag them away).
 - Per-face detailing (Blender's Individual ops): **Poke** fans each face
   from a raised centre (spikes, pyramids, dimples); **Extrude Indiv** pushes
@@ -363,6 +366,34 @@ multiply with the material color, save with the scene, and work on
 primitives without turning them into custom geometry (Symmetry X mirrors
 paint strokes too).
 
+### Material slots
+
+Under Paint, **Material Slots** gives a mesh several named-by-number
+materials (each is a colour) and lets you hand faces to them:
+
+1. Select faces (key 3, then click faces).
+2. Pick a slot (the round button), press **Assign Sel**. The faces take the
+   slot's colour. **+ Slot** adds another slot; the colour box next to a slot
+   recolours every face in it at once; **Select Slot** selects its faces;
+   **Clear Slots** removes them all (and the colours they gave).
+
+Slots live on the mesh (`Mesh::triSlot` per triangle and `Mesh::slotColors`),
+so they survive edit-mode tools, undo (one step per assignment or colour
+drag), the modifier stack (Subdivision, Mirror and the others carry each face's
+slot to its children), scene save/load (`meshslots` / `slotcolors` records) and
+`.okaymesh` files (`slot N r g b a` lines; the `mat k` on a face is the slot).
+Older scenes and `.okaymesh` files have none and load unchanged. All four
+renderers (OpenGL, Direct3D 11, Direct3D 12, software) already draw per-face
+colours, so slots show everywhere without renderer changes.
+
+**What slots are not (yet):** a slot is a colour, not a full material. Per-slot
+textures, shaders and separate draw calls per slot (real renderer submeshes)
+are not built; they are listed in `docs/UNFINISHED.md`. A few older
+triangle-level tools (Split by plane, Extrude Individual and similar) rebuild
+triangles without carrying slots; the colours they leave stay, and the faces
+fall back to no slot. Tools that go through the polygon mesh (loop cut,
+bevel, dissolve, bridge, subdivision, mirror) keep them.
+
 ## Import
 
 Load an `.obj` or `.okaymesh` file into the renderer by path (the **Mesh File** field), and one-click **Add Physics**
@@ -394,6 +425,7 @@ f 4 6 7 4 5 uv ...     # optional: per-corner UVs, color r g b a, mat k
 - **Faces:** a face can have any number of corners (quads and n-gons included).
 - **Vertex order:** stays the same when you edit, so vertex 5 is still vertex 5 after a save.
 - **What a face can carry:** per-corner UVs, a face color and a material slot.
+- **Slot colours:** `slot N r g b a` lines (after the faces) give slot N its colour; a face's `mat k` picks the slot. A file without `slot` lines is read as before.
 
 ## How edits are saved
 

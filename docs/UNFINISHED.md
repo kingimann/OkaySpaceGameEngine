@@ -105,7 +105,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Full UI component library (essential, game, app, layout, data-driven)
 - Improve the blocky character's arms, especially in first person
 - Script language phases 2 to 5: classes, physics and events, visual-script shared layer, tooling and debugger, export, replace the old VM
-- Per-face materials (renderer submeshes)
+- Per-face materials, the rest (renderer submeshes): material slots with a colour each are built (see [modeling.md](modeling.md), Material slots); per-slot textures and shaders, and separate draw calls per slot in the four renderers, are not
 - Script editor: classes, default templates, no random script on New Script
 - Prone for first and third person
 - Player customization: more options

@@ -1309,6 +1309,46 @@ int main() {
         // A mesh that did not change keeps exactly the values it had.
         { Mesh m = rich(); m.FlipNormals(); CHECK(allIn(m) && m.triSlot[0] == 1 && m.triSlot[5] == 0); }
     }
+    RUN_SUITE("per-corner UVs and UV seams survive operators");
+    {
+        auto withUV = [] { Mesh m = Mesh::Cube(); m.uvs.clear(); for (const Vec3& v : m.vertices) m.uvs.push_back(Vec2{v.x + 0.5f, v.y + 0.5f}); m.CaptureCornerUVs(); return m; };
+        auto cornerOk = [](const Mesh& m, float tol) {   // each corner's UV is the planar mapping of its position
+            if (!m.HasCornerUVs()) return false;
+            for (int i = 0; i < (int)m.triangles.size(); ++i) { const Vec3& p = m.vertices[(size_t)m.triangles[(size_t)i]]; if (std::fabs(m.cornerUVs[(size_t)i].x - (p.x + 0.5f)) > tol || std::fabs(m.cornerUVs[(size_t)i].y - (p.y + 0.5f)) > tol) return false; }
+            return true; };
+        { Mesh m = withUV(); CHECK(cornerOk(m, 1e-6f)); m.SubdivideFaces({0, 1}); CHECK(cornerOk(m, 1e-4f)); }   // new faces get the UVs of the old face they grew from
+        { Mesh m = withUV(); m.Subdivide(); CHECK(cornerOk(m, 1e-4f)); }
+        { Mesh m = withUV(); m.DeleteFaces({3}); CHECK(cornerOk(m, 1e-6f)); }
+        { Mesh m = withUV(); m.PokeFaces({0}, 0.0f); CHECK(cornerOk(m, 1e-4f)); }
+        { Mesh m = withUV(); m.ExtrudeFaces({0, 1}, 0.2f); CHECK(m.HasCornerUVs()); }
+        // Seams: a seam is still a seam after operators that renumber or split vertices.
+        auto hasSeam = [](const Mesh& m, const Vec3& pa, const Vec3& pb) {
+            for (const auto& sm : m.seams) { if (sm.first < 0 || sm.second < 0 || sm.first >= (int)m.vertices.size() || sm.second >= (int)m.vertices.size()) continue;
+                const Vec3 &a = m.vertices[(size_t)sm.first], &b = m.vertices[(size_t)sm.second];
+                if ((a == pa && b == pb) || (a == pb && b == pa)) return true; }
+            return false; };
+        Mesh base = withUV(); const int sa = base.triangles[0], sb = base.triangles[1];
+        base.seams.push_back({sa, sb}); const Vec3 pa = base.vertices[(size_t)sa], pb = base.vertices[(size_t)sb];
+        { Mesh m = base; m.DeleteFaces({11}); CHECK(hasSeam(m, pa, pb)); }
+        { Mesh m = base; m.WeldVertices(); CHECK(hasSeam(m, pa, pb)); }
+        { Mesh m = base; m.SubdivideFaces({8}); CHECK(hasSeam(m, pa, pb)); }
+        { Mesh m = base; m.Subdivide();                                        // the edge is split in two: both halves are seams
+          const Vec3 mid = (pa + pb) * 0.5f; CHECK(hasSeam(m, pa, mid) && hasSeam(m, mid, pb)); }
+        { MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Array); mod.count = 2; Mesh out; std::string err; okay::ApplyModifier(base, mod, okay::ModifierContext(), out, &err); CHECK(hasSeam(out, pa, pb)); }
+    }
+    RUN_SUITE("remove and reorder material slots");
+    {
+        auto three = [] { Mesh m = Mesh::Cube(); const int nt = m.TriangleCount(); m.triSlot.assign((size_t)nt, 0);
+            for (int t = 0; t < nt; ++t) m.triSlot[(size_t)t] = t % 3; m.slotColors = {Color{1, 0, 0, 1}, Color{0, 1, 0, 1}, Color{0, 0, 1, 1}}; return m; };
+        { Mesh m = three(); CHECK(m.RemoveSlot(1)); CHECK(m.slotColors.size() == 2 && m.slotColors[1].b == 1.0f);        // blue is now slot 1
+          for (int t = 0; t < m.TriangleCount(); ++t) CHECK(m.triSlot[(size_t)t] == (t % 3 == 2 ? 1 : 0)); }              // green faces fell back to slot 0, blue moved down
+        { Mesh m = three(); CHECK(m.RemoveSlot(0)); CHECK(m.slotColors.size() == 2 && m.slotColors[0].g == 1.0f); for (int s : m.triSlot) CHECK(s >= 0 && s < 2); }
+        { Mesh m = three(); CHECK(!m.RemoveSlot(3) && !m.RemoveSlot(-1)); Mesh one = Mesh::Cube(); one.slotColors = {Color{1, 1, 1, 1}}; CHECK(!one.RemoveSlot(0)); }
+        { Mesh m = three(); const Mesh before = m; CHECK(m.MoveSlot(0, 2));
+          CHECK(m.slotColors[2].r == 1.0f && m.slotColors[0].g == 1.0f && m.slotColors[1].b == 1.0f);                       // red went last
+          for (int t = 0; t < m.TriangleCount(); ++t) CHECK(m.slotColors[(size_t)m.triSlot[(size_t)t]].r == before.slotColors[(size_t)before.triSlot[(size_t)t]].r);   // every face keeps its colour
+          CHECK(!m.MoveSlot(0, 9) && m.MoveSlot(1, 1)); }
+    }
     RUN_SUITE("which attributes survive each operator (printed)");
     {
         auto rich = [] { Mesh m = Mesh::Cube(); const int nv = (int)m.vertices.size(), nt = m.TriangleCount();

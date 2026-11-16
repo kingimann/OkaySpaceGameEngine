@@ -88,6 +88,8 @@ Mesh RichMesh() {
     for (int i = 0; i < nv; ++i) m.vertexColors.push_back(Color{F(0, 1), F(0, 1), F(0, 1), 1});
     for (int t = 0; t < nt; ++t) { m.triSlot.push_back(R(3)); m.triColors.push_back(Color{F(0, 1), 0.5f, 0.5f, 1}); m.polyFace.push_back(t); }
     m.slotColors = {Color{1, 0, 0, 1}, Color{0, 1, 0, 1}, Color{0, 0, 1, 1}};
+    m.CaptureCornerUVs();                                                       // per-corner UVs and a few seams ride along too
+    for (int i = 0; i < 3 && nt > 0; ++i) m.seams.push_back({m.triangles[(size_t)(R(nt) * 3)], m.triangles[(size_t)(R(nt) * 3 + 1)]});
     return m;
 }
 // Stricter than Sane: every optional list is empty or exactly in step with the vertices / triangles it describes.

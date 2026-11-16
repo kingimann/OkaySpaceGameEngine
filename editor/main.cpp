@@ -29763,6 +29763,25 @@ void DrawModeling(EditorState& ed) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add another material slot (a colour you can give faces to).");
             ImGui::SameLine();
+            if (ToolButton("- Slot##slot", slotN > 1, "A mesh keeps at least one slot (use Clear Slots to remove them all).", true)) {
+                EditUndoPoint(ed, mr);
+                if (mr->mesh.RemoveSlot(s_slot)) {
+                    if (s_slot < (int)mr->slotTextures.size()) mr->slotTextures.erase(mr->slotTextures.begin() + s_slot);
+                    mr->mesh.ApplySlotColors(); s_slot = std::max(0, std::min(s_slot, slotN - 2)); ed.dirty = true;
+                }
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Remove the chosen slot: its faces go to slot 0, later slots move down.");
+            ImGui::SameLine();
+            if (ToolButton("Up##slot", s_slot > 0, "The chosen slot is already first.", true)) {
+                EditUndoPoint(ed, mr);
+                if (mr->mesh.MoveSlot(s_slot, s_slot - 1)) { if (s_slot < (int)mr->slotTextures.size()) std::swap(mr->slotTextures[s_slot], mr->slotTextures[s_slot - 1]); --s_slot; ed.dirty = true; }
+            }
+            ImGui::SameLine();
+            if (ToolButton("Down##slot", s_slot + 1 < slotN, "The chosen slot is already last.", true)) {
+                EditUndoPoint(ed, mr);
+                if (mr->mesh.MoveSlot(s_slot, s_slot + 1)) { if (s_slot + 1 < (int)mr->slotTextures.size()) std::swap(mr->slotTextures[s_slot], mr->slotTextures[s_slot + 1]); ++s_slot; ed.dirty = true; }
+            }
+            ImGui::SameLine();
             if (ToolButton("Assign Sel##slot", !g_meshSelFaces.empty(), kNeedFaces, true)) {
                 EditUndoPoint(ed, mr);
                 mr->mesh.AssignSlot(g_meshSelFaces, s_slot);

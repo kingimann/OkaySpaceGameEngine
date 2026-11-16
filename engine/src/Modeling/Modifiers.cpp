@@ -190,7 +190,7 @@ bool ApplyModifier(const Mesh& in, const MeshModifier& mod, const ModifierContex
                    Mesh& out, std::string* error) {
     const bool ok = ApplyModifierImpl(in, mod, ctx, out, error);
     // Whatever list the modifier left at the wrong size (UVs, vertex colours, slots, face colours) is rebuilt from the input.
-    if (ok && (in.HasUVs() || in.HasVertexColors() || in.HasSlots() || in.HasFaceColors())) out.InheritAttributes(in);
+    if (ok && (in.HasUVs() || in.HasVertexColors() || in.HasSlots() || in.HasFaceColors() || in.HasCornerUVs() || !in.seams.empty())) out.InheritAttributes(in);
     return ok;
 }
 

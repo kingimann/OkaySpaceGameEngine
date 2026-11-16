@@ -11,6 +11,7 @@
 #include "okay/Components/MoveSpeed.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/NaturalGait.hpp"
 #include "okay/Components/CharacterIK.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/GameInput.hpp"
@@ -54,8 +55,9 @@ public:
     int ExecutionOrder() const override { return -10; }
     bool IgnoresBuoyancy() const override { return true; }
     // ---- Movement ----
-    float walkSpeed = 4.5f;
-    float runSpeed  = 8.0f;
+    // A real walk and a real run (docs/walk_vs_run.md): 2.0 and 5.5 m/s. OKAY_OLD_GAIT=1 brings back 4.5 and 8.0.
+    float walkSpeed = NaturalGait::WalkSpeed();
+    float runSpeed  = NaturalGait::RunSpeed();
     float jumpForce = 6.0f;
     char  sprintKey = Input::KeyShift;  // hold (or tap, if toggleRun) to run; 0 = disabled
     bool  toggleRun = false;            // tap sprint to keep running instead of holding
@@ -70,8 +72,8 @@ public:
     char  crouchKey = Input::KeyCtrl;   // 0 = disabled
     char  proneKey  = 'z';              // 0 = disabled
     bool  toggleStance = true;          // tap to toggle vs hold
-    float crouchSpeed = 2.2f;
-    float proneSpeed  = 1.1f;
+    float crouchSpeed = NaturalGait::CrouchSpeed();   // well under the walk
+    float proneSpeed  = NaturalGait::ProneSpeed();
     bool  allowProne = true;            // false: no prone at all (key and gamepad)
     bool  resizeBody = true;            // crouch / prone shrink the collider (crawl under things; no standing into a ceiling)
     float crouchHeight = 0.65f;         // crouched body height, fraction of standing
@@ -188,7 +190,7 @@ public:
     float recenterDelay = 1.5f;
     float recenterSpeed = 2.5f;
     float landShake = 0.25f;            // camera bump on hard landings (world units, max)
-    float strideLength = 1.5f;          // distance per footstep event at walk speed
+    float strideLength = 1.5f;          // distance per footstep event at walk speed (used when no Character gait drives the body: with one, a footstep lands with each foot)
 
     // ---- Slide (sprint, then crouch) ----
     bool  canSlide = true;
@@ -650,6 +652,12 @@ public:
             }
             if (grounded && hSpeed > 0.3f && m_slideT <= 0.0f) {
                 float stride = strideLength * Mathf::Max(0.6f, Mathf::Sqrt(Mathf::Max(0.1f, hSpeed / Mathf::Max(0.1f, walkSpeed))));
+                // A Character that strides: one footstep per step of its gait, so the sound keeps time with the feet at any speed
+                // (the first-person bob does the same). Without one, the distance rule above.
+                if (Character* gaitBody = FindCharacter()) {
+                    const float cyc = gaitBody->GaitCycleSeconds(gaitBody->anim);
+                    if (cyc > 0.05f) stride = Mathf::Max(0.05f, hSpeed * 0.5f * cyc);
+                }
                 m_stepDist += hSpeed * dt;
                 if (m_stepDist >= stride) { m_stepDist -= stride; ++m_steps; if (onFootstep) onFootstep((m_steps & 1) != 0); }
             }

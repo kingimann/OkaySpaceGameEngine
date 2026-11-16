@@ -225,6 +225,8 @@ namespace okay {
 // The folder of the scene file being loaded (LoadFromFile), so mesh files it
 // points at can be found next to it in an exported game.
 static thread_local std::string g_loadingSceneDir;
+// The folder of the scene file loaded last: restoring a scene from text (Stop after Play, Undo) finds mesh files next to it again.
+static thread_local std::string g_lastSceneDir;
 
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
@@ -916,7 +918,8 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             editedFromFile = modeling::GeometryHash(mr->mesh) != mr->meshPathHash;
         }
         // A Spline Mesh builds its renderer's mesh again on load: none of it is saved.
-        const bool generated = go->GetComponent<SplineMesh>() != nullptr;
+        // (A Voxel Terrain does too: its per-face colours were 0.4 MB of every saved Sandbox scene, rebuilt on load anyway.)
+        const bool generated = go->GetComponent<SplineMesh>() != nullptr || go->GetComponent<VoxelTerrain>() != nullptr;
         if (mr->mesh.name.empty() && (mr->meshPath.empty() || editedFromFile) && !mr->mesh.vertices.empty()
             && !go->GetComponent<SkinnedMesh>() && !generated) {
             // A mesh in edit mode is welded with its exact UVs per corner: write it
@@ -1418,6 +1421,19 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->snowColor.r << " " << v->snowColor.g << " " << v->snowColor.b
             << " " << v->textureTiling << " " << Quote(v->texture)
             << " " << v->EncodeDensity() << "\n";
+        if (v->catchFalling) out << "  voxelcatch " << v->catchMargin << "\n";
+        if (v->footprints) out << "  voxelfoot " << Quote(v->footprintTag) << " " << (v->footprintBodies ? 1 : 0) << " " << v->footprintStep << " " << v->footprintRadius << " " << v->footprintDepth << " " << v->footprintPower << "\n";
+        if (v->fluidOn) out << "  voxelfluid " << v->fluidBudget << " " << v->fluidMaxCells << " " << v->fluidRate << " " << (v->fluidGlow ? 1 : 0) << " "
+                            << v->fluidColor.r << " " << v->fluidColor.g << " " << v->fluidColor.b << " " << v->fluidColor.a << "\n";
+        // Materials (optional records after the terrain, so a build that does not know them keeps them as unknown records)
+        if (v->UseMaterials()) {
+            out << "  voxelmats " << v->materials.size() << " " << v->EncodeMaterials() << "\n";
+            for (const auto& m : v->materials)
+                out << "  voxelmat " << Quote(m.name) << " " << m.color.r << " " << m.color.g << " " << m.color.b << " " << m.color.a
+                    << " " << m.hardness << " " << m.density << " " << (m.loose ? 1 : 0) << " " << Quote(m.drop) << " " << m.dropPerM3
+                    << " " << Quote(m.texture) << " " << Quote(m.digSound)
+                    << " " << m.particle.r << " " << m.particle.g << " " << m.particle.b << "\n";
+        }
     }
     for (auto* vd : go->GetComponents<VoxelDigger>()) {
         out << "  voxeldigger " << (int)vd->mode << " " << vd->button
@@ -1425,7 +1441,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vd->range << " " << (vd->showBrush ? 1 : 0)
             << " " << vd->brushColor.r << " " << vd->brushColor.g
             << " " << vd->brushColor.b << " " << vd->brushColor.a
-            << " " << vd->addButton << "\n";
+            << " " << vd->addButton
+            << " " << (int)vd->collect << " " << (vd->needsMaterial ? 1 : 0) << " " << (vd->creative ? 1 : 0) << " " << vd->addMaterial
+            << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
+            << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
+            << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << " " << (vd->toolsFromInventory ? 1 : 0) << " " << (vd->buildFromItems ? 1 : 0)
+            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -7505,6 +7526,63 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     vd->button = btn; vd->key = (char)k; vd->showBrush = (sb != 0);
                     in >> std::ws;
                     if (std::isdigit(in.peek()) || in.peek() == '-') in >> vd->addButton;
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {   // real-life options (optional: older scenes end above)
+                        int col = 0, nm = 0, cr = 0, shp = 0, sn = 0, sl = 0, co = 0, gi = 0;
+                        in >> col >> nm >> cr >> vd->addMaterial >> vd->power >> vd->hardnessScale >> shp >> vd->depthLimit >> vd->protectBelow
+                           >> sn >> vd->debrisMax >> vd->debrisLife >> sl >> co >> gi;
+                        vd->hudTarget = ReadQuoted(in);
+                        in >> std::ws;
+                        if (std::isdigit(in.peek())) {
+                            int tf = 0, bf = 0;
+                            in >> vd->slumpPasses; vd->slumpPasses = std::max(1, std::min(64, vd->slumpPasses));
+                            in >> std::ws;
+                            if (std::isdigit(in.peek())) { in >> tf >> bf >> vd->bareHandsPower; vd->tools = ReadQuoted(in); vd->toolsFromInventory = tf != 0; vd->buildFromItems = bf != 0;
+                                in >> std::ws; if (std::isdigit(in.peek())) { in >> vd->caveInSpan; vd->caveInSpan = std::max(0, std::min(64, vd->caveInSpan));
+                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells)); } } }
+                        }
+                        vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
+                        vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;
+                        vd->shape = (VoxelTerrain::EditOptions::Shape)std::max(0, std::min(3, shp));
+                        vd->slump = sl != 0; vd->collapse = co != 0; vd->giveItems = gi != 0;
+                    }
+                } else if (field == "voxelcatch") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) { v->catchFalling = true; in >> v->catchMargin; }
+                } else if (field == "voxelfoot") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        int fb = 0; v->footprints = true; v->footprintTag = ReadQuoted(in);
+                        in >> fb >> v->footprintStep >> v->footprintRadius >> v->footprintDepth >> v->footprintPower;
+                        v->footprintBodies = fb != 0;
+                        v->footprintStep = std::max(0.1f, v->footprintStep); v->footprintRadius = std::max(0.05f, std::min(5.0f, v->footprintRadius));
+                    }
+                } else if (field == "voxelfluid") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        int gl = 0; v->fluidOn = true;
+                        in >> v->fluidBudget >> v->fluidMaxCells >> v->fluidRate >> gl >> v->fluidColor.r >> v->fluidColor.g >> v->fluidColor.b >> v->fluidColor.a;
+                        v->fluidGlow = gl != 0;
+                        v->fluidBudget = std::max(1, std::min(100000, v->fluidBudget)); v->fluidMaxCells = std::max(0, std::min(2000000, v->fluidMaxCells));
+                        v->fluidRate = std::max(0.1f, std::min(120.0f, v->fluidRate));
+                    }
+                } else if (field == "voxelmats") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        std::size_t n = 0; std::string blob; in >> n >> blob;
+                        v->DecodeMaterials(blob); v->matCountExpected_ = n;
+                    }
+                } else if (field == "voxelmat") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        if (v->materials.size() >= 255) { /* ignore the rest */ }
+                        else {
+                            VoxelTerrain::VoxelMaterial m; int lo = 0;
+                            m.name = ReadQuoted(in);
+                            in >> m.color.r >> m.color.g >> m.color.b >> m.color.a >> m.hardness >> m.density >> lo;
+                            m.loose = lo != 0; m.drop = ReadQuoted(in); in >> m.dropPerM3;
+                            m.texture = ReadQuoted(in); m.digSound = ReadQuoted(in);
+                            in >> m.particle.r >> m.particle.g >> m.particle.b;
+                            if (v->materials.empty() || !v->loadedMaterialTable_) { v->materials.clear(); v->loadedMaterialTable_ = true; }
+                            v->materials.push_back(m);
+                            if (v->materials.size() == v->matCountExpected_) v->Apply();   // the table is complete: colour the surface by material
+                        }
+                    }
                 } else if (field == "pausemenu") {
                     auto* pm = go->AddComponent<PauseMenu>();
                     int tk = 27, sr = 1, sq = 1;
@@ -9147,6 +9225,11 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
 
 bool SceneSerializer::Deserialize(Scene& scene, const std::string& text, std::string* error,
                                   std::vector<std::string>* warnings) {
+    if (g_loadingSceneDir.empty() && !g_lastSceneDir.empty()) {
+        g_loadingSceneDir = g_lastSceneDir;
+        struct Reset { ~Reset() { g_loadingSceneDir.clear(); } } reset;
+        return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
+    }
     return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
 }
 
@@ -9436,6 +9519,7 @@ bool SceneSerializer::LoadFromFile(Scene& scene, const std::string& path, std::s
     const std::string prevDir = g_loadingSceneDir;
     g_loadingSceneDir = slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
     const bool ok = Deserialize(scene, text, error, warnings);
+    if (ok && !g_loadingSceneDir.empty()) g_lastSceneDir = g_loadingSceneDir;
     g_loadingSceneDir = prevDir;
     return ok;
 }

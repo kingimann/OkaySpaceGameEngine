@@ -146,6 +146,14 @@ void Save(const std::string& dir, const std::string& name, const Img& im) {
 
 } // namespace
 
+// A Main Camera for an example scene: in front of the models (+Z side, the engine's camera looks down -Z), tilted down a little.
+static std::string CameraRecord(int id, double x, double y, double z) {
+    char b[400];
+    std::snprintf(b, sizeof b, "gameobject %d \"Main Camera\"\n  active 1\n  parent -1\n  transform %g %g %g -0.13 0 0 0.9915 1 1 1\n"
+                  "  camera 1 5 50 0.55 0.72 0.88 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.4 3 14 1.5\nend\n", id, x, y, z);
+    return b;
+}
+
 int main(int argc, char** argv) {
     const std::string dir = argc > 1 ? argv[1] : "docs/images/guided_modeling";
     std::filesystem::create_directories(dir);
@@ -352,6 +360,7 @@ int main(int argc, char** argv) {
             scene += "gameobject " + std::to_string(id++) + " \"Fence " + items[i].first + "\"\n  active 1\n  parent -1\n" + tr +
                      "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
         }
+        scene += CameraRecord(id++, -3.0, 6.0, 26.0);
         std::ofstream(ex + "/guided_fences.okayscene", std::ios::binary) << scene;
         std::printf("wrote the example folder %s (%d fences)\n", ex.c_str(), (int)items.size());
 
@@ -376,6 +385,7 @@ int main(int argc, char** argv) {
             }
             ++row;
         }
+        arch += CameraRecord(aid++, 45.0, 40.0, 160.0);
         std::ofstream(ex + "/guided_architecture.okayscene", std::ios::binary) << arch;
 
         // The vehicle examples: every start design of every vehicle type.
@@ -399,6 +409,7 @@ int main(int argc, char** argv) {
             }
             ++vrow;
         }
+        veh += CameraRecord(vid++, 80.0, 50.0, 190.0);
         std::ofstream(ex + "/guided_vehicles.okayscene", std::ios::binary) << veh;
         std::printf("wrote %d vehicle models\n", vtotal);
 
@@ -421,6 +432,7 @@ int main(int argc, char** argv) {
                       "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
                 ++ci;
             }
+            cs += CameraRecord(cid++, 18.0, 5.0, 24.0);
             std::ofstream(ex + "/guided_car_styles.okayscene", std::ios::binary) << cs;
             std::printf("wrote the car styles example\n");
         }
@@ -446,6 +458,7 @@ int main(int argc, char** argv) {
             }
             ++crow;
         }
+        chr += CameraRecord(cid++, 22.0, 7.0, 36.0);
         std::ofstream(ex + "/guided_characters.okayscene", std::ios::binary) << chr;
         std::printf("wrote %d character models\n", ctotal);
         std::printf("wrote %d architecture models\n", total);

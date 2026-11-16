@@ -1716,7 +1716,11 @@ inline void TerrainSandbox(Scene& scene) {
 /// animated water, a first-person player with full voxel collision (you stand on
 /// the ground and in caves, not fall through), and a pause menu. Left mouse digs,
 /// right mouse fills, Space jumps, Esc pauses.
-inline void VoxelSandbox(Scene& scene) {
+/// `grid` sizes the voxel field (cells along X, Y and Z); the default 72 x 44 x 72 is the owner's Sandbox. A bigger grid
+/// is the same scene on a bigger hill (examples/voxel/voxel_big_world.okayscene is 128 x 56 x 128: the digging frame
+/// rate matters much more there).
+inline void VoxelSandbox(Scene& scene, int gridX, int gridY, int gridZ,
+                         float hillHeight = 9.0f, unsigned seed = 2024u) {
     scene.Clear();
     scene.SetName("Sandbox");
 
@@ -1735,9 +1739,9 @@ inline void VoxelSandbox(Scene& scene) {
     // The single terrain: a voxel field with rolling hills and a cave network.
     GameObject* ground = scene.CreateGameObject("Terrain");
     auto* vox = ground->AddComponent<VoxelTerrain>();
-    vox->Resize(72, 44, 72);
+    vox->Resize(gridX, gridY, gridZ);
     vox->voxelSize = 1.5f;
-    vox->Generate(0.55f, 9.0f, 0.0f, 2024u);   // solid hills — NO pre-cut caves; dig your own
+    vox->Generate(0.55f, hillHeight, 0.0f, seed);   // solid hills — NO pre-cut caves; dig your own
     // A scene file stores each density as one byte. Round the field to that now, so the terrain in memory is exactly what
     // a save and reopen gives back (otherwise the first Play and Stop, or the first reopen, changes the terrain's text
     // and the editor asks to save a scene nobody changed).
@@ -1844,6 +1848,9 @@ inline void VoxelSandbox(Scene& scene) {
 
     scene.CreateGameObject("Pause Menu")->AddComponent<PauseMenu>();
 }
+/// The Sandbox at its default size. A separate overload (not default arguments) so `&Templates::VoxelSandbox` still converts to `void (*)(Scene&)`,
+/// which the template table and several tests rely on.
+inline void VoxelSandbox(Scene& scene) { VoxelSandbox(scene, 72, 44, 72); }
 
 } // namespace Templates
 

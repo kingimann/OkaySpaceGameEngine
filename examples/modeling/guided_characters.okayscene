@@ -199,3 +199,9 @@ gameobject 27 "Creature Spider"
   mesh "" 1 1 1 1 0 "creature_spider.okaymesh" 0
   material 0 0 0 0 16 0 "" 1 1
 end
+gameobject 28 "Main Camera"
+  active 1
+  parent -1
+  transform 22 7 36 -0.13 0 0 0.9915 1 1 1
+  camera 1 5 50 0.55 0.72 0.88 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.4 3 14 1.5
+end

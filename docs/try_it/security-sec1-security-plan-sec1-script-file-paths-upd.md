@@ -1,6 +1,6 @@
 ---
 id: security-sec1
-row: | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | Where to reach it in the release (menu, template, example scene, switch) | New in this change; what is unverified |
+row: | security-sec1 | Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL | examples\security_paths\script_paths.okayscene (Play, read Console); Settings > About and Help > About line; SQL and relay are owner steps | Tests on Linux only; editor/launcher lines not run; nothing on Windows or real Supabase |
 ---
 ## Security plan SEC1: script file paths, update signature status, relay caps, reactions SQL
 

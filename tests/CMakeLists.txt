@@ -3640,6 +3640,10 @@ target_link_libraries(test_model_corpus PRIVATE okay::engine)
 target_compile_definitions(test_model_corpus PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME model_corpus COMMAND test_model_corpus WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(model_corpus PROPERTIES TIMEOUT 600)
+# Not a test: speed and peak heap of our own model readers against Assimp, per corpus file (docs/own_readers_speed.md).
+# Built, never run by ctest. Configure with -DOKAY_USE_ASSIMP=ON for the Assimp side; OKAY_MODEL_CORPUS names the files.
+add_executable(bench_model_readers bench_model_readers.cpp)
+target_link_libraries(bench_model_readers PRIVATE okay::engine)
 
 # Game clipboard: sanitize, input-field copy/paste, text-script and visual-script nodes.
 add_executable(test_clipboard test_clipboard.cpp)

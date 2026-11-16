@@ -1561,6 +1561,10 @@ add_executable(test_okayscript_object_refs test_okayscript_object_refs.cpp)
 target_link_libraries(test_okayscript_object_refs PRIVATE okay::engine)
 target_compile_definitions(test_okayscript_object_refs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME okayscript_object_refs COMMAND test_okayscript_object_refs)
+# Query builtins (rays, casts, overlaps, nearest_tag, hierarchy) return references too.
+add_executable(test_okayscript_query_refs test_okayscript_query_refs.cpp)
+target_link_libraries(test_okayscript_query_refs PRIVATE okay::engine)
+add_test(NAME okayscript_query_refs COMMAND test_okayscript_query_refs)
 
 # Built-in animations on imported rigs: humanoid bone matching (Mixamo / UE / Rigify).
 add_executable(test_humanoid_retarget test_humanoid_retarget.cpp)

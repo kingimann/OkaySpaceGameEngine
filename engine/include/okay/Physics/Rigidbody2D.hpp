@@ -29,6 +29,10 @@ public:
     /// fast object (bullet, thrown ball) stops at a thin wall instead of jumping
     /// past it between two frames. Opt-in (a circle cast per fast step).
     bool     continuousCollision = false;
+    /// Rolling resistance (a length): how quickly a ball or wheel that rolls on a surface slows down; the torque that
+    /// opposes the roll is at most this number times the force pressing the body onto the surface.
+    /// Used by the Improved physics quality only; the Classic step ignores it.
+    float    rollingResistance = 0.03f;
 
     // ---- Angular dynamics (rotation about Z) ----
     /// Spin rate in DEGREES per second.
@@ -121,6 +125,7 @@ private:
     Vec2  m_forceAccum  = Vec2::Zero;
     float m_torqueAccum = 0.0f;
     float m_sleepTimer  = 0.0f;   // seconds spent under the sleep thresholds
+    int   m_solverIndex = -1;     // this step's slot in the contact solver (Improved quality); -1 = none
     Vec2  ConsumeForce()  { Vec2 f = m_forceAccum; m_forceAccum = Vec2::Zero; return f; }
     float ConsumeTorque() { float t = m_torqueAccum; m_torqueAccum = 0.0f; return t; }
 };

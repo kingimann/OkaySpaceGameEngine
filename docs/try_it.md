@@ -55,6 +55,7 @@ release job or the installer build for this change.
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
+| 7p | Setup checks first and can be put back; the uninstaller asks, removes the rest and lists what it kept | `OkaySpace-Setup.exe` (also with `/S`), Settings > Apps > Installed apps > OkaySpace > Uninstall, the logs `%TEMP%\OkaySpace-setup.log` and `%TEMP%\OkaySpace-uninstall.log` | New in this change. Run only under wine on Linux, **unverified on Windows**; see section 7p |
 
 ---
 
@@ -250,6 +251,10 @@ compiled or run on this machine).
 
 ## 7g. Install, uninstall and Versions: look at today's behaviour yourself (audit)
 
+**Update:** this section describes Setup and uninstall as they were in 2.875.0 and earlier. The branch `claude/installer-honest` changes steps 1 to 3
+(the Setup text, what uninstall leaves, uninstall with the launcher open); use section 7p for it. Step 4 (an old kept editor updating itself) is
+unchanged until the Versions branch lands.
+
 Why: the install audit (`docs/install_audit.md`) found things it could only read in code or run on a Linux test machine. Nothing
 in the program changed in that branch. These steps let you see on Windows whether it is right. They use a **copy** of a project, never
 a real one, because two of the checks touch projects.
@@ -271,6 +276,51 @@ a real one, because two of the checks touch projects.
 **Status.** Windows steps unverified. What was run: the installer under wine on Linux (install, update, uninstall, running programs,
 full disk, odd folders) and two small test programs against the real Versions and project-gate code. Details, results and the plan to
 fix each item are in `docs/install_audit.md`; the comparison with other launchers is `docs/install_comparison.md`.
+
+---
+
+## 7p. Setup that checks first, and an uninstaller that asks and lists what it kept
+
+Why: the install audit found that Setup could say "done" with nothing installed, overwrote an old install with no way back, checked only three programs,
+and that uninstall left most of what the launcher made (all of `Versions\`, logs, the sign-in token) without saying so. This change fixes those. What it
+does, the exit codes and the tests: `docs/installer.md`. Use the real `OkaySpace-Setup.exe` of the release that has this change (it needs a release; the
+zip has no Setup). Take care with step 4: it deletes real data when you tick the box, so make a throwaway project first.
+
+1. **Install.** Run `OkaySpace-Setup.exe`. The first page now says your projects are in the **Projects folder inside the OkaySpace folder**, not in
+   Documents, and what an update keeps. Next, the folder (default `%LOCALAPPDATA%\OkaySpace`), Install, Finish. You should see: the log
+   `%TEMP%\OkaySpace-setup.log` (paste that into the Explorer address bar; Notepad opens it) ends with `Setup finished. Exit code 0.`; the Start
+   Menu has an **OkaySpace** folder with two shortcuts; Settings > Apps > Installed apps > OkaySpace shows a size and the version; the install folder
+   holds a new file `installed-files.txt` (the list Setup uses to update and uninstall).
+2. **A folder it cannot write.** Do this on a PC where OkaySpace is not installed (or after step 4; with an install present Setup updates that one and
+   ignores the folder). In a normal (not administrator) command window, in the folder that holds the Setup file:
+   `start /wait "" OkaySpace-Setup.exe /S /D=C:\Windows\System32\OkaySpaceTest` and then `echo %errorlevel%`. You should see **11**, no new shortcuts, no
+   entry in Settings > Apps, and the log says `FAILED: Setup cannot write to C:\Windows\System32...`. (`start /wait` is needed: Setup is a window program, so
+   a plain command returns at once and `%errorlevel%` would show 0.) Without `/S`, typing that folder on the folder page and pressing Install gives the
+   same message in a box and stays on the page.
+3. **Setup with OkaySpace open.** Open the launcher, then run Setup again (Next, Install). A box says `OkaySpace is still running: OkaySpace.exe`
+   with Retry and Cancel. Cancel: nothing changed. Try again with the editor (`Tools\OkayEngine.exe`) and the relay (`Tools\okayspace-relay.exe`) open: each
+   is named. With the launcher open, `start /wait "" OkaySpace-Setup.exe /S` and `echo %errorlevel%` give **10**. Close it, run Setup again: it updates.
+   (An older `OkaySpace-Setup.exe` from an earlier release over this install asks `A newer OkaySpace ... Install the older version anyway?`, default No;
+   with `/S` it gives **13** unless you add `/FORCE`.)
+4. **Uninstall.** In the launcher make a project called `TryUninstall` (Create > New Project) and, on the Versions page, install one older version. Close
+   every OkaySpace program. Settings > Apps > Installed apps > OkaySpace > Uninstall. The page lists what will be removed and kept and has one box,
+   **Also remove my projects, settings and sign-in**, **off**. Press Uninstall. The last page lists `Kept:` lines (your projects, your settings). Then look:
+   `%LOCALAPPDATA%\OkaySpace` holds only what was kept (`Projects\TryUninstall`, `launcher.cfg` and the like); there is no `Versions\`, no
+   `OkaySpace.exe`, no `okay_update.log`; `%APPDATA%\OkaySpace` has **no `session.txt`** (the sign-in token; `accounts.db` and `servers.cfg` stay if you
+   had them); the Start Menu folder is gone; Settings > Apps no longer lists OkaySpace; `%TEMP%\OkaySpace-uninstall.log` has the `Kept:` lines and ends
+   with `Uninstall finished. Exit code 0.` A folder inside `Versions\` that holds a project of yours stays and is named.
+5. **The box ticked.** Run Setup again, make another throwaway project, uninstall again and tick the box: a second question asks you to confirm. Afterwards
+   the OkaySpace folder and `%APPDATA%\OkaySpace` are gone (unless you put your own files in them: those are never removed and are listed).
+6. **Uninstall with OkaySpace open.** Open the launcher, start the uninstall: the same Retry / Cancel box. Nothing is removed. Before this change it left
+   `OkaySpace.exe` behind, removed the Settings > Apps entry and said nothing.
+
+**Status.** Windows steps **unverified**. What was run: the installer built with `makensis` and run under wine 9.0 on Linux, Setup and uninstall in silent
+mode by the script test `installer_wine` (249 checks: fresh install, update, older Setup, each program running, unwritable folders, a full disk, a swap
+that fails half way, uninstall with the box off and on, links, a tampered list); the dialogs on a virtual screen under wine (pictures in
+`docs/installer.md`, headless renders, not Windows). **Not run:** real Windows (UAC, `Program Files`, antivirus or Explorer holding a file, the real
+dialogs, how Settings > Apps runs the uninstall, removing a junction), a real release build of `OkaySpace-Setup.exe`, signing. **Not done:** the launcher
+writing the new version into Settings > Apps after a self-update (after one, the entry still shows the install-time version); the Versions page
+changes of the audit (items 1, 2, 5 and 6) and moving user data out of the program folder (item 8).
 
 ---
 

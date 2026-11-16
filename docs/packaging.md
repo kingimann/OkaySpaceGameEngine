@@ -40,6 +40,13 @@ export SDL2_MINGW_PREFIX=/path/to/SDL2-<ver>/x86_64-w64-mingw32
 The script builds the launcher, editor, player, and relay, then arranges them as
 shown and writes `README.txt`. Zip `build-win-dist/` for release.
 
+## The installer
+
+`scripts/okayspace-installer.nsi` makes `OkaySpace-Setup.exe` from this layout: per-user, staged update with rollback, a log, and an uninstaller
+that keeps projects and settings unless asked. It reads the list of files to install from the distribution folder (made by
+`scripts/gen-installer-filelist.py` each time `makensis` runs; `build-windows-dist.sh` checks the folder with `--check`, so a missing program or an
+odd file name fails the build there). What it does and what it was tested with: [installer.md](installer.md).
+
 ## Code signing (Authenticode)
 
 Unsigned programs make Windows SmartScreen show "unknown publisher" the first time someone runs them. The release

@@ -365,6 +365,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | an old client can't join a server with replay protection | [39.2](39-security-anticheat.md#392-transport-security-encryption-replay-protection-sealed-join-host-keys) Transport security: encryption, replay protection, sealed join, host keys |
 | an old object with Actions behaves differently in the graph | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
 | an old scene loads but its script is silent | [13.3](13-scripting.md#133-removed-lua-and-c-mono-backends) Removed Lua and C# (Mono) backends |
+| an older Setup asks before replacing a newer install | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | an option has no effect | [41.1](41-build-tools-infra.md#411-cmake-project-layout-and-options) CMake project layout and options |
 | an overlay is reported as an unknown module | [39.5](39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) Runtime checks and the clock heartbeat |
 | an RPC is ignored (rate limited) | [16.11](16-networking.md#1611-rpc-syncvars-spawning-and-chat) RPC, SyncVars, spawning and chat |
@@ -844,6 +845,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | setting up..." never finishes | [17.12](17-launcher-platform.md#1712-create-page-projects-templates-and-git) Create page: projects, templates and Git |
 | settings lost when opening a project from another folder | [25.2](20-35-planned.md#252-project-settings) Project settings |
 | settings reset on restart | [1.7](01-core-scene.md#17-saves-and-prefs) Saves and prefs |
+| Setup refuses a folder or a full disk with a message and a non-zero code | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | shadows leak through a thin wall | [36.6](36-math-geometry.md#366-geometry-helpers-elsewhere) Geometry helpers elsewhere |
 | shadows look wrong, blocky or shimmer | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
 | shadows missing after turning `ShadowsUsePerPixel` off | [38.5](38-render-backends.md#385-software-rasterizer) Software rasterizer |
@@ -1021,7 +1023,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the head shows inside the first-person lens | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |
 | the head stares at the origin or the target behind | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the Inspector is slow with many components | [15.2](15-editor.md#152-inspector-add-component-menu-character-model-panel) Inspector, Add Component menu, Character Model panel |
-| the installer asks to close OkaySpace | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
+| the installer asks to close OkaySpace (any program of it, not only three) | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | the Issues tab shows missing waypoints | [9.4](09-ai-navigation.md#94-behavior-trees) Behavior trees |
 | the item does not snap to the zone | [11.11](11-gameplay-systems.md#1111-world-drag-and-drop) World drag and drop |
 | the item list does not refresh | [15.13](15-editor.md#1513-content-editors-and-tool-windows) Content editors and tool windows |
@@ -1117,6 +1119,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the tracker shows the wrong quest | [10.3](10-story-cinematics.md#103-quests-and-story-variables) Quests and story variables |
 | the tree restarts every frame | [9.4](09-ai-navigation.md#94-behavior-trees) Behavior trees |
 | the UI is invisible in the Scene view | [12.10](12-ingame-ui.md#1210-ui-editing-in-the-editor) UI editing in the editor |
+| the uninstaller shows one box and lists what it kept | [18.1](18-build-export-release.md#181-windows-build-and-installer) Windows build and installer |
 | the update prompt loops | [15.15](15-editor.md#1515-editor-shell-startup-and-lifecycle) Editor shell, startup and lifecycle |
 | the volume slider changes nothing | [7.4](07-audio.md#74-saved-volume-settings) Saved volume settings |
 | the volume the player chose is forgotten next launch | [7.4](07-audio.md#74-saved-volume-settings) Saved volume settings |

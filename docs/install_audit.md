@@ -3,6 +3,11 @@
 Status: **audit and plan only.** No program code, CMake or workflow was changed. Branch `claude/install-audit`, read from
 `origin/main` at `fbdf8698` (2026-11-15).
 
+**Update (2026-11-16).** Plan items 3, 4 and 10 (the Setup and uninstaller part) are built on the branch `claude/installer-honest`: see
+[installer.md](installer.md) for what changed and [try_it.md](try_it.md) section 7p for how to try it. That fixes findings 3, 4, 5, 7, 8 and 11 and most of 13 and 14 (a shipped file the
+person edited is still replaced by an update; Settings > Apps still shows the install-time version after a self-update); tested under wine on Linux, not on Windows). Still open: the launcher writing `DisplayVersion` after a self-update, plan items 5 to 9, 11 and 12, and
+items 1 and 2 (branch `claude/versions-safety`). The tables and findings below describe the Setup as it was when the audit was made.
+
 The owner asked (2026-11-15): "i also want installing to looked into, how editor is installed from launcher, same with how
 launcher is installed. make it proper with proper file management. make installing editors on launcher proper and better same
 with uninstalling." A comparison with other launchers is in [install_comparison.md](install_comparison.md) (a separate page on

@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <deque>
+#include <unistd.h>   // gethostname (PathsFromUriList)
 
 namespace okay::platform {
 namespace {
@@ -106,6 +107,11 @@ public:
     std::unique_ptr<Gamepad> OpenGamepad(int i) override { return own::OpenEvdevGamepad(i); }
 
     std::vector<DisplayInfo> Displays() override { return m_x11 ? m_x11->Displays() : std::vector<DisplayInfo>(); }
+    bool ShowErrorBox(const std::string& title, const std::string& text, Window* parent) override {
+        std::string err;
+        if (own::X11MessageBox(title, text, err)) return true;
+        return Backend::ShowErrorBox(title, text, parent);   // no X: the text goes to stderr
+    }
 
     own::X11System* X11() { return m_x11.get(); }
 
@@ -145,6 +151,41 @@ float ScaleFromXResources(const std::string& res) {
         return 1.0f;
     }
     return 1.0f;
+}
+
+std::vector<std::string> PathsFromUriList(const std::string& list) {
+    std::vector<std::string> out;
+    char host[256] = {0};
+    if (gethostname(host, sizeof(host) - 1) != 0) host[0] = 0;
+    auto hexv = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
+    size_t pos = 0;
+    while (pos < list.size()) {
+        size_t end = list.find('\n', pos);
+        if (end == std::string::npos) end = list.size();
+        std::string line = list.substr(pos, end - pos);
+        pos = end + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t' || line.back() == '\0')) line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        if (line.size() < 5 || (line.compare(0, 5, "file:") != 0 && line.compare(0, 5, "FILE:") != 0)) continue;
+        std::string rest = line.substr(5);
+        if (rest.compare(0, 2, "//") == 0) {   // file://host/path: the host must be this machine
+            const size_t slash = rest.find('/', 2);
+            if (slash == std::string::npos) continue;
+            const std::string h = rest.substr(2, slash - 2);
+            if (!h.empty() && h != "localhost" && (!host[0] || h != host)) continue;
+            rest = rest.substr(slash);
+        }
+        if (rest.empty() || rest[0] != '/') continue;   // only absolute local paths
+        std::string path;
+        for (size_t i = 0; i < rest.size(); ++i) {
+            if (rest[i] == '%' && i + 2 < rest.size() && hexv(rest[i + 1]) >= 0 && hexv(rest[i + 2]) >= 0) {
+                path += (char)(hexv(rest[i + 1]) * 16 + hexv(rest[i + 2]));
+                i += 2;
+            } else path += rest[i];
+        }
+        out.push_back(path);
+    }
+    return out;
 }
 
 DisplayRect ClipToWorkArea(const DisplayRect& b, const DisplayRect& w) {

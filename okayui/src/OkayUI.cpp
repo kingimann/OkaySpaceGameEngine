@@ -4794,14 +4794,25 @@ void SetKeyboardFocusId(int id) { g_focus = id; if (id != 0) g_focusClaimed = tr
 
 // The clipboard: kept here, and mirrored to the system clipboard when a window system is up (so it works headless too).
 static char g_clip[kClipboardMax] = {0};
+static void (*g_sysClipSet)(const char*) = nullptr;   // the host's clipboard instead of SDL's (SetSystemClipboard)
+static const char* (*g_sysClipGet)() = nullptr;
+void SetSystemClipboard(void (*set)(const char* text), const char* (*get)()) { g_sysClipSet = set; g_sysClipGet = get; }
 void SetClipboardText(const char* text) {
     if (!text) text = "";
     std::size_t n = std::strlen(text); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
     std::memcpy(g_clip, text, n); g_clip[n] = 0;
     trimPartialChar(g_clip);
+    if (g_sysClipSet) { g_sysClipSet(g_clip); return; }
     SDL_SetClipboardText(g_clip);                      // fails quietly with no video: the copy above is enough
 }
 const char* GetClipboardText() {
+    if (g_sysClipGet) {
+        if (const char* sys = g_sysClipGet(); sys && sys[0] && std::strcmp(sys, g_clip) != 0) {
+            std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;
+            std::memcpy(g_clip, sys, n); g_clip[n] = 0; trimPartialChar(g_clip);
+        }
+        return g_clip;
+    }
     if (char* sys = SDL_GetClipboardText()) {          // someone else may have copied something since
         if (sys[0] && std::strcmp(sys, g_clip) != 0) {
             std::size_t n = std::strlen(sys); if (n > (std::size_t)kClipboardMax - 1) n = (std::size_t)kClipboardMax - 1;

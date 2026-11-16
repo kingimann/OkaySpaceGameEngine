@@ -48,6 +48,14 @@ public:
     virtual std::vector<DisplayInfo> Displays() = 0;
 };
 
+/// The local file paths in a text/uri-list (RFC 2483: one URI per line, CR LF or LF, '#' lines are comments), what an XDND
+/// drop carries: each "file:" URI on this machine (no host, "localhost" or this machine's name), percent-decoded. Other URIs
+/// and other hosts are left out.
+std::vector<std::string> PathsFromUriList(const std::string& list);
+/// A modal message box (title, text, an OK button) on its own X connection, for when no window is up (or the backend was
+/// never started). Waits until OK, Return, Escape or the close button. False (with `err`) when X cannot be reached.
+bool X11MessageBox(const std::string& title, const std::string& text, std::string& err);
+
 /// "Xft.dpi: 144" in an X resource string (the RESOURCE_MANAGER property) -> 1.5; 1.0 when absent or not a sane number.
 float ScaleFromXResources(const std::string& resources);
 /// The part of `bounds` inside `work` (an EWMH work area); `bounds` itself when they do not overlap or `work` is empty.

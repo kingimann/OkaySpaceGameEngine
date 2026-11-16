@@ -10,10 +10,13 @@
 //                       are made through okay::platform::Default() (sdl2, or our X11 / Win32 code with
 //                       OKAY_PLATFORM_BACKEND=own) (EditorPlatform.cpp).
 //
-// What stays SDL's in both: the main window is an SDL window (SDL_Renderer draws it by default; with the drawing seam's own
-// renderer, OKAY_EDITOR_RENDERER=own (stage E2, EditorGfx.hpp), our GL painter draws it through a GL context SDL made), and the
-// events are read from SDL's queue (main.cpp still reads the SDL_Event for its own shortcuts, drops and play-mode input; `own`
-// translates each one with okay::platform::TranslateSdl2Event for ImGui).
+// With `own` and SDL_Renderer drawing (stages E1 / E2): the main window is an SDL window made through okay::platform's sdl2 backend,
+// and the events are read from SDL's queue (main.cpp reads the SDL_Event; `own` translates each one with
+// okay::platform::TranslateSdl2Event for ImGui).
+// With `own` and our own renderer (OKAY_EDITOR_RENDERER=own, stage E3): the main window is made by okay::platform::Default() (our
+// own X11 / Win32 code with OKAY_PLATFORM_BACKEND=own) with an OpenGL context for our painter, and main.cpp reads its events from
+// that backend (PollEvent) instead of SDL's queue (EventsFromPlatform). With OKAY_PLATFORM_BACKEND=own too, the editor makes no
+// SDL call at all (scripts/editor_no_sdl_check.sh proves it).
 // `own` has no ImGui multi-viewport windows (panels dragged out of the editor stay inside it).
 //
 // OWN CODE, NOT READY: `own` is off by default until the owner approves it (rule 17). Written from the okay::platform interfaces
@@ -46,15 +49,20 @@ public:
     virtual std::string LastError() const = 0;
 
     // ---- the main window -------------------------------------------------------------------------
-    /// The editor's main window: centred, `w` x `h`, resizable, high-DPI, created HIDDEN. Returns the SDL_Window* (it is an SDL
-    /// window in both implementations until stage E3: main.cpp reads SDL's event queue); null on failure (see LastError).
-    /// `opengl`: the window will carry an OpenGL context (the drawing seam's own renderer, OKAY_EDITOR_RENDERER=own, stage E2).
+    /// The editor's main window: centred, `w` x `h`, resizable, high-DPI, created HIDDEN. Returns the window's native handle (the
+    /// SDL_Window* when it is an SDL window); null on failure (see LastError).
+    /// `opengl`: the window will carry an OpenGL context (the drawing seam's own renderer, OKAY_EDITOR_RENDERER=own, stage E2). On
+    /// `own` this also makes it an okay::platform::Default() window whose events main.cpp reads with PollEvent (stage E3).
     virtual void* CreateMainWindow(const std::string& title, int w, int h, bool opengl = false) = 0;
     /// okay::platform's view of the main window (null before CreateMainWindow).
     virtual okay::platform::Window* MainWindow() = 0;
-    /// The okay::platform backend that made the main window (its GL functions, for the own renderer): the sdl2 backend in both
-    /// implementations for now; null when okay::platform has no sdl2 backend.
+    /// The okay::platform backend that made the main window: its GL functions (the own renderer), and the keyboard, mouse,
+    /// cursor, text input and focus calls main.cpp makes (on the sdl2 backend these are the SDL calls main.cpp made itself).
+    /// The sdl2 backend, except on `own` with an OpenGL main window (stage E3): then okay::platform::Default().
     virtual okay::platform::Backend* MainWindowBackend() = 0;
+    /// Whether main.cpp reads the events from MainWindowBackend()->PollEvent (and gives them to ImGui with ProcessEvent) instead of
+    /// SDL's queue: `own` with an OpenGL main window (stage E3). False before CreateMainWindow and on `sdl`.
+    virtual bool EventsFromPlatform() const { return false; }
     virtual void DestroyMainWindow() = 0;
 
     // ---- Dear ImGui's platform side (the ImGui context exists and is current) ------------------------
@@ -63,6 +71,8 @@ public:
     virtual void ShutdownImGui() = 0;
     /// Give ImGui one event that main.cpp read with SDL_PollEvent (`sdlEvent` is a const SDL_Event*). True when ImGui used it.
     virtual bool ProcessSdlEvent(const void* sdlEvent) = 0;
+    /// Give ImGui one event read from MainWindowBackend()->PollEvent (EventsFromPlatform()). True when ImGui used it.
+    virtual bool ProcessEvent(const okay::platform::Event& e) { (void)e; return false; }
     /// Before ImGui::NewFrame.
     virtual void NewFrame() = 0;
     /// Whether ImGui panels can become their own OS windows (ImGuiConfigFlags_ViewportsEnable). False on `own`.

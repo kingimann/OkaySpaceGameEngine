@@ -314,6 +314,7 @@ public:
     bool IsRelativeMouse() override { return SDL_GetRelativeMouseMode() == SDL_TRUE; }
     uint32_t GlobalMouseState(int* x, int* y) override { return SDL_GetGlobalMouseState(x, y); }
     void PumpEvents() override { SDL_PumpEvents(); }
+    int TouchDeviceCount() override { return SDL_GetNumTouchDevices(); }
     std::vector<DisplayInfo> Displays() override {
         std::vector<DisplayInfo> out;
         if (!(SDL_WasInit(0) & SDL_INIT_VIDEO)) return out;   // asking would fail; the caller decides whether to start video

@@ -827,6 +827,10 @@ bool WantsTextInput();
 /// GetClipboardText() is valid until the next call. Text fields copy (Input::copy), cut (Input::cut) and paste (Input::paste) with it.
 void SetClipboardText(const char* text);
 const char* GetClipboardText();
+/// Where the system clipboard is when it is not SDL's: a host that makes no SDL call (the editor's no-SDL mode,
+/// docs/sdl_removal_plan.md stage E3) passes its own two functions. `get` returns text that stays valid until its next call, or
+/// null. Both null (the default) = SDL's clipboard, as before.
+void SetSystemClipboard(void (*set)(const char* text), const char* (*get)());
 /// Hooks for widgets written in other files (OkayUICodeEdit.hpp): this frame's raw input, and the keyboard focus. SetKeyboardFocusId
 /// gives the keyboard to the widget with this id (the GetItemID() of its InvisibleButton) and marks this frame's click as taken, so
 /// the click does not drop the focus again; 0 releases it.

@@ -398,6 +398,10 @@ public:
     /// Read the OS events that are waiting without taking one: window state and focus are current afterwards, and PollEvent still
     /// returns every event (SDL_PumpEvents).
     virtual void PumpEvents() {}
+    /// How many touch screens / touch pads deliver finger events (FingerDown / FingerMotion / FingerUp) through this backend
+    /// (SDL_GetNumTouchDevices on sdl2). The own X11 and Win32 backends deliver no finger events (touch comes as the mouse there),
+    /// so they say 0 and a game's touch controls stay off.
+    virtual int TouchDeviceCount() { return 0; }
 
     /// Windows only: a function called with every window message (HWND, message, wParam, lParam) of this backend's windows,
     /// before the backend handles it (SDL_SetWindowsMessageHook): the launcher reads its tray icon's clicks and the message a

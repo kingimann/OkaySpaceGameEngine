@@ -239,6 +239,20 @@ public:
         FlashWindowEx(&fi);
         return true;
     }
+    // The refresh rate of the monitor the window is on: its device name from GetMonitorInfoW, then the current mode of that
+    // device (EnumDisplaySettingsW with ENUM_CURRENT_SETTINGS, dmDisplayFrequency). Windows reports 0 or 1 for "the hardware's
+    // default rate": that is unknown here (0).
+    int RefreshRateHz() const override {
+        MONITORINFOEXW mi;
+        ZeroMemory(&mi, sizeof(mi));
+        mi.cbSize = sizeof(mi);
+        if (!GetMonitorInfoW(MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTONEAREST), (MONITORINFO*)&mi)) return 0;
+        DEVMODEW dm;
+        ZeroMemory(&dm, sizeof(dm));
+        dm.dmSize = sizeof(dm);
+        if (!EnumDisplaySettingsW(mi.szDevice, ENUM_CURRENT_SETTINGS, &dm)) return 0;
+        return dm.dmDisplayFrequency > 1 ? (int)dm.dmDisplayFrequency : 0;
+    }
     bool SetTextInputArea(int x, int y, int w, int h) override {
         if (!g_imm.Load()) return false;
         HIMC c = g_imm.getContext(m_hwnd);

@@ -3038,6 +3038,19 @@ if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endforeach()
 endif()
 
+# The okay::platform calls added for the editor's stage E3 (docs/sdl_removal_plan.md): XDND file drops, the refresh rate and the
+# message box of our X11 backend (this test plays the drag source and closes the box itself, libX11 by dlopen), and the editor's
+# display-settings and clipboard helpers on okay::platform (shared/PlatformDisplays.hpp, shared/PlatformClipboard.hpp).
+if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_platform_editor_calls test_platform_editor_calls.cpp)
+    target_link_libraries(test_platform_editor_calls PRIVATE okay::engine okay::platform ${CMAKE_DL_LIBS})
+    target_include_directories(test_platform_editor_calls PRIVATE ${CMAKE_SOURCE_DIR}/engine/src ${CMAKE_SOURCE_DIR}/shared)
+    add_test(NAME platform_editor_calls COMMAND test_platform_editor_calls unit)
+    add_test(NAME platform_editor_calls_own
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_editor_calls> own)
+    set_tests_properties(platform_editor_calls_own PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 ENVIRONMENT "OKAY_PLATFORM_BACKEND=own")
+endif()
+
 # The display list (Backend::Displays: monitors, usable area, DPI scale, primary) and the launcher's keep-on-screen rule:
 # the rule and the parsing alone, then our X11 backend under Xvfb with a work area, Xft.dpi and two RandR 1.5 monitors
 # that the test sets itself (tests/platform_fakedisplay.cpp, libX11 / libXrandr by dlopen), sdl2 against own on one

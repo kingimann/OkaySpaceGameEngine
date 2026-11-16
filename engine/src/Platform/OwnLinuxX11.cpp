@@ -10,6 +10,10 @@ std::unique_ptr<X11System> X11System::Open(std::string& err) {
     err = "built without X11 headers; the own backend has no windowing in this build";
     return nullptr;
 }
+bool X11MessageBox(const std::string&, const std::string&, std::string& err) {
+    err = "built without X11 headers";
+    return false;
+}
 } // namespace okay::platform::own
 #else
 
@@ -105,7 +109,15 @@ namespace {
     F(XWMHints*, XAllocWMHints, (void)) \
     F(XWMHints*, XGetWMHints, (Display*, ::Window)) \
     F(int, XSetWMHints, (Display*, ::Window, XWMHints*)) \
-    F(int, XRefreshKeyboardMapping, (XMappingEvent*))
+    F(int, XRefreshKeyboardMapping, (XMappingEvent*)) \
+    F(int, XDrawString, (Display*, ::Drawable, GC, int, int, const char*, int)) \
+    F(int, XFillRectangle, (Display*, ::Drawable, GC, int, int, unsigned, unsigned)) \
+    F(int, XDrawRectangle, (Display*, ::Drawable, GC, int, int, unsigned, unsigned)) \
+    F(int, XSetForeground, (Display*, GC, unsigned long)) \
+    F(int, XSetFont, (Display*, GC, Font)) \
+    F(XFontStruct*, XLoadQueryFont, (Display*, const char*)) \
+    F(int, XFreeFont, (Display*, XFontStruct*)) \
+    F(int, XTextWidth, (XFontStruct*, const char*, int))
 
 #define OKAY_GLX_FUNCS(F) \
     F(GLXFBConfig*, glXChooseFBConfig, (Display*, int, const int*, int*)) \
@@ -247,6 +259,7 @@ public:
     bool SetIcon(const uint8_t* rgba, int w, int h) override;
     bool Flash(FlashMode m) override;
     bool SetTextInputArea(int x, int y, int w, int h) override;
+    int RefreshRateHz() const override;
     void SetUrgent(bool on);
     bool PresentPixels(const uint8_t* rgba, int w, int h) override;
     bool CreateGLContext(const GLAttributes& a) override;
@@ -308,6 +321,18 @@ public:
         m_aTargets = m_x.XInternAtom(m_dpy, "TARGETS", False);
         m_aProp = m_x.XInternAtom(m_dpy, "OKAY_SELECTION", False);
         m_aTextPlain = m_x.XInternAtom(m_dpy, "text/plain;charset=utf-8", False);
+        m_aXdndAware = m_x.XInternAtom(m_dpy, "XdndAware", False);
+        m_aXdndEnter = m_x.XInternAtom(m_dpy, "XdndEnter", False);
+        m_aXdndPosition = m_x.XInternAtom(m_dpy, "XdndPosition", False);
+        m_aXdndStatus = m_x.XInternAtom(m_dpy, "XdndStatus", False);
+        m_aXdndLeave = m_x.XInternAtom(m_dpy, "XdndLeave", False);
+        m_aXdndDrop = m_x.XInternAtom(m_dpy, "XdndDrop", False);
+        m_aXdndFinished = m_x.XInternAtom(m_dpy, "XdndFinished", False);
+        m_aXdndSelection = m_x.XInternAtom(m_dpy, "XdndSelection", False);
+        m_aXdndActionCopy = m_x.XInternAtom(m_dpy, "XdndActionCopy", False);
+        m_aXdndTypeList = m_x.XInternAtom(m_dpy, "XdndTypeList", False);
+        m_aUriList = m_x.XInternAtom(m_dpy, "text/uri-list", False);
+        m_aDropProp = m_x.XInternAtom(m_dpy, "OKAY_XDND", False);
         if (m_x.XSupportsLocale()) {
             m_x.XSetLocaleModifiers("");
             m_im = m_x.XOpenIM(m_dpy, nullptr, nullptr, nullptr);
@@ -373,6 +398,10 @@ public:
         m_wins[w] = win;
         Atom protos[1] = {m_aDelete};
         m_x.XSetWMProtocols(m_dpy, w, protos, 1);
+        {   // files can be dropped on every window (XDND): the protocol version we speak
+            const long version = kXdndVersion;
+            m_x.XChangeProperty(m_dpy, w, m_aXdndAware, XA_ATOM, 32, PropModeReplace, (const unsigned char*)&version, 1);
+        }
         win->SetTitle(d.title);
         XSizeHints* sh2 = m_x.XAllocSizeHints();
         if (sh2) {
@@ -456,7 +485,7 @@ public:
             if (win && ev.xclient.message_type == m_aProtocols && (Atom)ev.xclient.data.l[0] == m_aDelete) {
                 e.type = EventType::WindowClose; m_pending.push_back(e);
                 if (m_wins.size() == 1) { Event q; q.type = EventType::Quit; q.timestampMs = e.timestampMs; m_pending.push_back(q); }
-            }
+            } else if (win) HandleXdnd(ev.xclient, win);
             break;
         case ConfigureNotify:
             if (win) {
@@ -515,7 +544,10 @@ public:
             break;
         case SelectionRequest: HandleSelectionRequest(ev.xselectionrequest); break;
         case SelectionClear: m_ownsClip = false; break;
-        case SelectionNotify: m_selNotify = true; m_selProp = ev.xselection.property; break;
+        case SelectionNotify:
+            if (ev.xselection.selection == m_aXdndSelection) { FinishDrop(ev.xselection, e.timestampMs); break; }
+            m_selNotify = true; m_selProp = ev.xselection.property;
+            break;
         default: break;
         }
     }
@@ -592,6 +624,133 @@ public:
         }
         e.clicks = m_clicks;
         m_pending.push_back(e);
+    }
+
+    // ---- file drops (XDND) ------------------------------------------------------------
+    // Written from the XDND protocol description (freedesktop.org, "Drag-and-Drop Protocol for the X Window System", version 5):
+    // a window that sets XdndAware gets XdndEnter / XdndPosition / XdndLeave / XdndDrop client messages from the drag source,
+    // answers each XdndPosition with XdndStatus (accept or not, and the action), and on XdndDrop asks for the XdndSelection
+    // selection as text/uri-list; when the data has come it sends XdndFinished. Each file:// URI becomes one DropFile event
+    // (the path, percent-decoded), the same event the sdl2 backend makes from SDL_DROPFILE.
+    static constexpr long kXdndVersion = 5;
+    void SendXdnd(::Window to, Atom type, long l1, long l2, long l3, long l4, ::Window from) {
+        XEvent r; std::memset(&r, 0, sizeof(r));
+        r.xclient.type = ClientMessage;
+        r.xclient.display = m_dpy;
+        r.xclient.window = to;
+        r.xclient.message_type = type;
+        r.xclient.format = 32;
+        r.xclient.data.l[0] = (long)from;
+        r.xclient.data.l[1] = l1; r.xclient.data.l[2] = l2; r.xclient.data.l[3] = l3; r.xclient.data.l[4] = l4;
+        m_x.XSendEvent(m_dpy, to, False, NoEventMask, &r);
+        m_x.XFlush(m_dpy);
+    }
+    void HandleXdnd(const XClientMessageEvent& cm, X11Win* win) {
+        const ::Window source = (::Window)cm.data.l[0];
+        if (cm.message_type == m_aXdndEnter) {
+            m_dnd = DndState();
+            m_dnd.source = source;
+            m_dnd.target = win->m_win;
+            m_dnd.version = (int)((unsigned long)cm.data.l[1] >> 24);
+            // Up to three types in the message; more are in the source's XdndTypeList property (bit 0 of l[1]).
+            for (int i = 2; i <= 4; ++i) if ((Atom)cm.data.l[i] == m_aUriList) m_dnd.uriOffered = true;
+            if (!m_dnd.uriOffered && (cm.data.l[1] & 1)) {
+                Atom type = 0; int fmt = 0; unsigned long n = 0, after = 0; unsigned char* data = nullptr;
+                if (m_x.XGetWindowProperty(m_dpy, source, m_aXdndTypeList, 0, 1024, False, XA_ATOM, &type, &fmt, &n, &after, &data) == Success && data) {
+                    if (fmt == 32) for (unsigned long i = 0; i < n; ++i) if ((Atom)((long*)data)[i] == m_aUriList) m_dnd.uriOffered = true;
+                    m_x.XFree(data);
+                }
+            }
+        } else if (cm.message_type == m_aXdndPosition) {
+            if (source != m_dnd.source) return;   // a position from a drag we never saw enter
+            const bool accept = m_dnd.uriOffered && m_dnd.version <= kXdndVersion;
+            // l[1] bit 0: we accept; bit 1: keep sending positions (an empty "no more messages" rectangle, l[2] / l[3] = 0).
+            SendXdnd(source, m_aXdndStatus, accept ? 3 : 2, 0, 0, accept ? (long)m_aXdndActionCopy : 0L, win->m_win);
+        } else if (cm.message_type == m_aXdndLeave) {
+            if (source == m_dnd.source) m_dnd = DndState();
+        } else if (cm.message_type == m_aXdndDrop) {
+            if (source != m_dnd.source) return;
+            if (!m_dnd.uriOffered) {   // nothing we can take: the source must still hear that the drop is over
+                SendXdnd(source, m_aXdndFinished, 0, 0, 0, 0, win->m_win);
+                m_dnd = DndState();
+                return;
+            }
+            const Time t = m_dnd.version >= 1 ? (Time)cm.data.l[2] : CurrentTime;
+            m_dnd.dropped = true;
+            m_x.XDeleteProperty(m_dpy, win->m_win, m_aDropProp);
+            m_x.XConvertSelection(m_dpy, m_aXdndSelection, m_aUriList, m_aDropProp, win->m_win, t);
+            m_x.XFlush(m_dpy);
+        }
+    }
+    void FinishDrop(const XSelectionEvent& se, uint32_t stamp) {
+        if (!m_dnd.dropped || se.requestor != m_dnd.target) return;
+        bool ok = false;
+        if (se.property != None) {
+            Atom type = 0; int fmt = 0; unsigned long n = 0, after = 0; unsigned char* data = nullptr;
+            if (m_x.XGetWindowProperty(m_dpy, m_dnd.target, m_aDropProp, 0, 1 << 22, True, AnyPropertyType, &type, &fmt, &n, &after, &data) == Success && data) {
+                if (fmt == 8) {
+                    for (const std::string& path : PathsFromUriList(std::string((const char*)data, n))) {
+                        Event d; d.type = EventType::DropFile; d.windowId = (uint32_t)m_dnd.target; d.timestampMs = stamp; d.text = path;
+                        m_pending.push_back(d);
+                        ok = true;
+                    }
+                }
+                m_x.XFree(data);
+            }
+        }
+        // XdndFinished: l[1] bit 0 = the drop was taken (version 5), l[2] = the action done.
+        SendXdnd(m_dnd.source, m_aXdndFinished, ok ? 1 : 0, ok ? (long)m_aXdndActionCopy : 0L, 0, 0, m_dnd.target);
+        m_dnd = DndState();
+    }
+
+    // ---- refresh rate -------------------------------------------------------------------
+    // RandR's screen resources: the CRTC (a scan-out engine) that shows the window's centre and its mode's timings. Refresh =
+    // pixel clock / (horizontal total x vertical total), doubled for an interlaced mode and halved for a double-scan one (the
+    // X RandR protocol's mode description). The structs are laid out from libXrandr's public interface, as RrMonitor below.
+    struct RrModeInfo {
+        unsigned long id; unsigned width, height; unsigned long dotClock;
+        unsigned hSyncStart, hSyncEnd, hTotal, hSkew, vSyncStart, vSyncEnd, vTotal;
+        char* name; unsigned nameLength; unsigned long modeFlags;
+    };
+    struct RrScreenResources {
+        Time timestamp, configTimestamp; int ncrtc; unsigned long* crtcs; int noutput; unsigned long* outputs;
+        int nmode; RrModeInfo* modes;
+    };
+    struct RrCrtcInfo {
+        Time timestamp; int x, y; unsigned width, height; unsigned long mode; unsigned short rotation; int noutput;
+        unsigned long* outputs; unsigned short rotations; int npossible; unsigned long* possible;
+    };
+    static int RefreshFromMode(const RrModeInfo& m) {
+        if (!m.dotClock || !m.hTotal || !m.vTotal) return 0;
+        double hz = (double)m.dotClock / ((double)m.hTotal * (double)m.vTotal);
+        if (m.modeFlags & 0x10) hz *= 2.0;   // RR_Interlace
+        if (m.modeFlags & 0x20) hz /= 2.0;   // RR_DoubleScan
+        return (int)(hz + 0.5);
+    }
+    int RefreshRateAt(int cx, int cy) {
+        LoadDisplayLibs();
+        if (!m_rrGetRes || !m_rrFreeRes || !m_rrGetCrtc || !m_rrFreeCrtc) return 0;
+        int ev = 0, er = 0;
+        if (!m_rrQueryExt || !m_rrQueryExt(m_dpy, &ev, &er)) return 0;
+        RrScreenResources* res = m_rrGetRes(m_dpy, m_root);
+        if (!res) return 0;
+        int best = 0, first = 0;
+        for (int i = 0; i < res->ncrtc && !best; ++i) {
+            RrCrtcInfo* c = m_rrGetCrtc(m_dpy, res, res->crtcs[i]);
+            if (!c) continue;
+            if (c->mode) {
+                for (int k = 0; k < res->nmode; ++k) {
+                    if (res->modes[k].id != c->mode) continue;
+                    const int hz = RefreshFromMode(res->modes[k]);
+                    if (!first) first = hz;
+                    if (cx >= c->x && cy >= c->y && cx < c->x + (int)c->width && cy < c->y + (int)c->height) best = hz;
+                    break;
+                }
+            }
+            m_rrFreeCrtc(c);
+        }
+        m_rrFreeRes(res);
+        return best ? best : first;   // a window off every CRTC: the first lit one
     }
 
     // ---- misc input ------------------------------------------------------------------
@@ -828,6 +987,10 @@ public:
             m_rrQueryVer = reinterpret_cast<Status (*)(Display*, int*, int*)>(dlsym(rr, "XRRQueryVersion"));
             m_rrGetMonitors = reinterpret_cast<RrMonitor* (*)(Display*, ::Window, Bool, int*)>(dlsym(rr, "XRRGetMonitors"));
             m_rrFreeMonitors = reinterpret_cast<void (*)(RrMonitor*)>(dlsym(rr, "XRRFreeMonitors"));
+            m_rrGetRes = reinterpret_cast<RrScreenResources* (*)(Display*, ::Window)>(dlsym(rr, "XRRGetScreenResourcesCurrent"));
+            m_rrFreeRes = reinterpret_cast<void (*)(RrScreenResources*)>(dlsym(rr, "XRRFreeScreenResources"));
+            m_rrGetCrtc = reinterpret_cast<RrCrtcInfo* (*)(Display*, RrScreenResources*, unsigned long)>(dlsym(rr, "XRRGetCrtcInfo"));
+            m_rrFreeCrtc = reinterpret_cast<void (*)(RrCrtcInfo*)>(dlsym(rr, "XRRFreeCrtcInfo"));
         }
         if (void* xi = dlopen("libXinerama.so.1", RTLD_NOW | RTLD_GLOBAL)) {
             m_xiIsActive = reinterpret_cast<Bool (*)(Display*)>(dlsym(xi, "XineramaIsActive"));
@@ -956,6 +1119,15 @@ public:
     Status (*m_rrQueryVer)(Display*, int*, int*) = nullptr;
     RrMonitor* (*m_rrGetMonitors)(Display*, ::Window, Bool, int*) = nullptr;
     void (*m_rrFreeMonitors)(RrMonitor*) = nullptr;
+    RrScreenResources* (*m_rrGetRes)(Display*, ::Window) = nullptr;
+    void (*m_rrFreeRes)(RrScreenResources*) = nullptr;
+    RrCrtcInfo* (*m_rrGetCrtc)(Display*, RrScreenResources*, unsigned long) = nullptr;
+    void (*m_rrFreeCrtc)(RrCrtcInfo*) = nullptr;
+    // XDND (file drops)
+    Atom m_aXdndAware = 0, m_aXdndEnter = 0, m_aXdndPosition = 0, m_aXdndStatus = 0, m_aXdndLeave = 0, m_aXdndDrop = 0,
+         m_aXdndFinished = 0, m_aXdndSelection = 0, m_aXdndActionCopy = 0, m_aXdndTypeList = 0, m_aUriList = 0, m_aDropProp = 0;
+    struct DndState { ::Window source = 0, target = 0; int version = 0; bool uriOffered = false, dropped = false; };
+    DndState m_dnd;
     Bool (*m_xiIsActive)(Display*) = nullptr;
     XineramaScreen* (*m_xiQuery)(Display*, int*) = nullptr;
     char* (*m_getAtomName)(Display*, Atom) = nullptr;
@@ -1022,6 +1194,12 @@ void X11Win::Raise() {
     XF.XSync(XD, False);
 }
 void X11Win::Minimize() { XF.XIconifyWindow(XD, m_win, m_sys->m_screen); XF.XFlush(XD); }
+int X11Win::RefreshRateHz() const {
+    int x = 0, y = 0, w = 0, h = 0;
+    GetPosition(x, y);
+    GetSize(w, h);
+    return m_sys->RefreshRateAt(x + w / 2, y + h / 2);
+}
 void X11Win::Restore() { m_hidden = false; XF.XMapWindow(XD, m_win); XF.XRaiseWindow(XD, m_win); XF.XFlush(XD); }
 bool X11Win::SetIcon(const uint8_t* rgba, int w, int h) {
     if (!rgba || w <= 0 || h <= 0) return false;
@@ -1196,6 +1374,112 @@ std::unique_ptr<X11System> X11System::Open(std::string& err) {
     std::unique_ptr<X11Impl> s(new X11Impl());
     if (!s->Connect(err)) return nullptr;
     return s;
+}
+
+// A message box drawn with core X requests on its own connection (so it works before, after or without the backend's own):
+// the text in the server's "fixed" font, one line per '\n', and an OK button. Written from the Xlib manual (windows, graphics
+// contexts, XDrawString, events); the look is ours. The window is titled `title`, asks the window manager for a dialog
+// (_NET_WM_WINDOW_TYPE_DIALOG) and is centred on the screen.
+bool X11MessageBox(const std::string& title, const std::string& text, std::string& err) {
+    XTable x;
+    if (!LoadX(x, err)) return false;
+    XErrorHandler prevHandler = x.XSetErrorHandler(OkayXErrorHandler);
+    Display* dpy = x.XOpenDisplay(nullptr);
+    if (!dpy) { err = "cannot open the X display"; x.XSetErrorHandler(prevHandler); return false; }
+    const int screen = DefaultScreen(dpy);
+    const ::Window root = RootWindow(dpy, screen);
+    XFontStruct* font = x.XLoadQueryFont(dpy, "fixed");
+    const int lineH = font ? font->ascent + font->descent + 4 : 17;
+    const int ascent = font ? font->ascent : 11;
+    auto textW = [&](const std::string& s) { return font ? x.XTextWidth(font, s.data(), (int)s.size()) : (int)s.size() * 7; };
+    std::vector<std::string> lines;
+    for (size_t pos = 0; pos <= text.size();) {
+        size_t nl = text.find('\n', pos);
+        if (nl == std::string::npos) nl = text.size();
+        lines.push_back(text.substr(pos, nl - pos));
+        pos = nl + 1;
+    }
+    const int pad = 20, btnW = 90, btnH = 28;
+    int w = 320;
+    for (const std::string& l : lines) w = std::max(w, textW(l) + 2 * pad);
+    w = std::min(w, DisplayWidth(dpy, screen) - 40);
+    const int h = pad + (int)lines.size() * lineH + pad + btnH + pad;
+    XSetWindowAttributes swa; std::memset(&swa, 0, sizeof(swa));
+    swa.background_pixel = WhitePixel(dpy, screen);
+    swa.border_pixel = BlackPixel(dpy, screen);
+    swa.event_mask = ExposureMask | KeyPressMask | ButtonPressMask | ButtonReleaseMask | StructureNotifyMask;
+    const int wx = (DisplayWidth(dpy, screen) - w) / 2, wy = (DisplayHeight(dpy, screen) - h) / 2;
+    ::Window win = x.XCreateWindow(dpy, root, wx, wy, (unsigned)w, (unsigned)h, 1, CopyFromParent, InputOutput,
+                                   CopyFromParent, CWBackPixel | CWBorderPixel | CWEventMask, &swa);
+    if (!win) { err = "XCreateWindow failed"; if (font) x.XFreeFont(dpy, font); x.XCloseDisplay(dpy); x.XSetErrorHandler(prevHandler); return false; }
+    x.XStoreName(dpy, win, title.c_str());
+    const Atom utf8 = x.XInternAtom(dpy, "UTF8_STRING", False);
+    x.XChangeProperty(dpy, win, x.XInternAtom(dpy, "_NET_WM_NAME", False), utf8, 8, PropModeReplace,
+                      (const unsigned char*)title.data(), (int)title.size());
+    const Atom dialog = x.XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+    x.XChangeProperty(dpy, win, x.XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False), XA_ATOM, 32, PropModeReplace,
+                      (const unsigned char*)&dialog, 1);
+    Atom del = x.XInternAtom(dpy, "WM_DELETE_WINDOW", False);
+    const Atom protocols = x.XInternAtom(dpy, "WM_PROTOCOLS", False);
+    x.XSetWMProtocols(dpy, win, &del, 1);
+    if (XSizeHints* sh = x.XAllocSizeHints()) {   // a fixed size, where we put it
+        sh->flags = PPosition | PMinSize | PMaxSize;
+        sh->x = wx; sh->y = wy; sh->min_width = sh->max_width = w; sh->min_height = sh->max_height = h;
+        x.XSetWMNormalHints(dpy, win, sh);
+        x.XFree(sh);
+    }
+    GC gc = x.XCreateGC(dpy, win, 0, nullptr);
+    if (font) x.XSetFont(dpy, gc, font->fid);
+    x.XMapWindow(dpy, win);
+    x.XRaiseWindow(dpy, win);
+    x.XFlush(dpy);
+    const int bx = w - pad - btnW, by = h - pad - btnH;
+    auto draw = [&](bool pressed) {
+        x.XSetForeground(dpy, gc, WhitePixel(dpy, screen));
+        x.XFillRectangle(dpy, win, gc, 0, 0, (unsigned)w, (unsigned)h);
+        x.XSetForeground(dpy, gc, BlackPixel(dpy, screen));
+        for (size_t i = 0; i < lines.size(); ++i)
+            x.XDrawString(dpy, win, gc, pad, pad + ascent + (int)i * lineH, lines[i].data(), (int)lines[i].size());
+        if (pressed) x.XFillRectangle(dpy, win, gc, bx, by, (unsigned)btnW, (unsigned)btnH);
+        else x.XDrawRectangle(dpy, win, gc, bx, by, (unsigned)btnW, (unsigned)btnH);
+        x.XSetForeground(dpy, gc, pressed ? WhitePixel(dpy, screen) : BlackPixel(dpy, screen));
+        x.XDrawString(dpy, win, gc, bx + (btnW - textW("OK")) / 2, by + (btnH + ascent) / 2 - 1, "OK", 2);
+        x.XFlush(dpy);
+    };
+    auto onButton = [&](int px, int py) { return px >= bx && py >= by && px < bx + btnW && py < by + btnH; };
+    bool done = false, pressed = false;
+    while (!done) {
+        XEvent ev;
+        x.XNextEvent(dpy, &ev);
+        if (ev.xany.window != win) continue;
+        switch (ev.type) {
+        case Expose: if (ev.xexpose.count == 0) draw(pressed); break;
+        case ButtonPress: if (ev.xbutton.button == Button1 && onButton(ev.xbutton.x, ev.xbutton.y)) { pressed = true; draw(true); } break;
+        case ButtonRelease:
+            if (ev.xbutton.button == Button1) {
+                if (pressed && onButton(ev.xbutton.x, ev.xbutton.y)) done = true;
+                pressed = false;
+                if (!done) draw(false);
+            }
+            break;
+        case KeyPress: {
+            const KeySym ks = x.XLookupKeysym(&ev.xkey, 0);
+            if (ks == XK_Return || ks == XK_KP_Enter || ks == XK_Escape || ks == XK_space) done = true;
+            break;
+        }
+        case ClientMessage:
+            if (ev.xclient.message_type == protocols && (Atom)ev.xclient.data.l[0] == del) done = true;
+            break;
+        case DestroyNotify: done = true; win = 0; break;
+        default: break;
+        }
+    }
+    x.XFreeGC(dpy, gc);
+    if (win) x.XDestroyWindow(dpy, win);
+    if (font) x.XFreeFont(dpy, font);
+    x.XCloseDisplay(dpy);
+    x.XSetErrorHandler(prevHandler);
+    return true;
 }
 
 } // namespace okay::platform::own

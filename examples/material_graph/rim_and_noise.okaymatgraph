@@ -1,0 +1,35 @@
+okaymatgraph 1
+node 1 Output pos=900,100
+node 2 Noise pos=0,0
+node 3 Vec3 v=0.550000012,0.180000007,0.119999997,0 pos=0,160
+node 4 Vec3 v=0.850000024,0.620000005,0.449999988,0 pos=0,260
+node 5 Lerp pos=250,100
+node 6 Lerp pos=250,300
+node 7 Fresnel pos=250,450
+node 8 Vec3 v=0.200000003,0.449999988,1,0 pos=250,550
+node 9 Multiply pos=500,450
+node 10 Time pos=250,650
+node 11 Sin pos=400,650
+node 12 Multiply pos=550,650
+node 13 Add pos=700,650
+node 14 Multiply pos=700,450
+def 2.Scale 6,0,0,0
+def 6.A 0.300000012,0,0,0
+def 6.B 0.899999976,0,0,0
+def 7.Power 3,0,0,0
+def 12.B 0.25,0,0,0
+def 13.B 0.75,0,0,0
+link 3.Value 5.A
+link 4.Value 5.B
+link 2.Result 5.T
+link 5.Result 1.BaseColor
+link 2.Result 6.T
+link 6.Result 1.Roughness
+link 7.Result 9.A
+link 8.Value 9.B
+link 10.Time 11.In
+link 11.Result 12.A
+link 12.Result 13.A
+link 9.Result 14.A
+link 13.Result 14.B
+link 14.Result 1.Emission

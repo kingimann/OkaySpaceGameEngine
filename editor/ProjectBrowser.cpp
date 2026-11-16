@@ -190,7 +190,7 @@ bool FilterMatches(Filter f, const std::string& e) {
         case Filter::Scripts: return e == ".okay" || e == ".lua" || e == ".cs" || e == ".okayvs";
         case Filter::Images: return e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".bmp" || e == ".tga" || e == ".gif" || e == ".hdr" || e == ".psd";
         case Filter::Scenes: return e == ".okayscene";
-        case Filter::Materials: return e == ".okaymat";
+        case Filter::Materials: return e == ".okaymat" || e == ".okaymatgraph";
         case Filter::Prefabs: return e == ".okayprefab";
         case Filter::Data: return e == ".okaydata" || e == ".okayitems" || e == ".okayloot" || e == ".okayrecipes" || e == ".okayweapon" || e == ".json";
         case Filter::Audio: return e == ".wav" || e == ".ogg" || e == ".mp3" || e == ".flac";
@@ -207,6 +207,7 @@ std::string TypeLabel(const std::string& e, bool isDir) {
     if (e == ".okayscene") return "Scene";
     if (e == ".okayprefab") return "Prefab";
     if (e == ".okaymat") return "Material";
+    if (e == ".okaymatgraph") return "Material graph";
     if (e == ".okaydata") return "Data";
     if (e == ".okayanim" || e == ".okayclip") return "Animation";
     if (e == ".okaydialog") return "Dialogue";

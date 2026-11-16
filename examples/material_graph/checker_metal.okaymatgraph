@@ -1,0 +1,20 @@
+okaymatgraph 1
+node 1 Output pos=700,60
+node 2 TextureSample pos=0,0 path=proc:checker
+node 3 Vec3 v=0.899999976,0.550000012,0.200000003,0 pos=0,150
+node 4 Multiply pos=250,40
+node 5 Split pos=250,220
+node 6 OneMinus pos=420,220
+node 7 Lerp pos=560,220
+node 8 Saturate pos=420,320
+def 7.A 0.25,0,0,0
+def 7.B 0.800000012,0,0,0
+link 2.RGB 4.A
+link 3.Value 4.B
+link 4.Result 1.BaseColor
+link 2.RGB 5.In
+link 5.X 6.In
+link 6.Result 7.T
+link 7.Result 1.Roughness
+link 5.X 8.In
+link 8.Result 1.Metallic

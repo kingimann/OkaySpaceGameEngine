@@ -22,6 +22,7 @@
 #include "TimelineWindow.hpp"          // the Timeline window (cutscene sequences)
 #include "NavigationWindow.hpp"        // the Navigation window (navmesh bake, overlays, agent inspectors)
 #include "DialogueWindow.hpp"          // the Dialogue window (graph editor + Quests tab) and the story inspectors
+#include "MaterialGraphWindow.hpp"    // the Material Graph window (.okaymatgraph shader-node graphs, CPU preview)
 #include "BehaviorTreeWindow.hpp"      // the Behavior Tree window (NPC AI trees, runner inspector)
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
@@ -5425,6 +5426,7 @@ static const DockPanelDef* DockPanels(int& n) {
         {"Navigation",    "Navigation",                &g_showNavigation,    "Editors & Tools", PI_Scene},
         {"Dialogue",      "Dialogue",                  &g_showDialogue,      "Editors & Tools", PI_Nodes},
         {"Behavior Tree", "Behavior Tree###BehaviorTree", &g_showBehaviorTree, "Editors & Tools", PI_Nodes},
+        {"Material Graph", "Material Graph",           &g_showMaterialGraph, "Editors & Tools", PI_Nodes},
         {"Modeling",      "Modeling",                  &g_showModeling,      "Editors & Tools", PI_Modeling},
         {"UV Editor",     "UV Editor",                 &g_showUVEditor,      "Editors & Tools", PI_Modeling},
         {"Sprite Editor", "Sprite Editor",             &g_showSpriteEditor,  "Editors & Tools", PI_Sprite},
@@ -6804,7 +6806,7 @@ static bool* MenuFlag(const std::string& id) {
         {"panel.assetmanager", &g_showAssetManager}, {"panel.crashlog", &g_showCrashLog}, {"panel.audiomixer", &g_showAudioMixer},
         {"tool.customactions", &g_showCustomActions}, {"tool.visualscript", &g_showVisualScript}, {"tool.scripteditor", &g_showScriptEditor},
         {"tool.animation", &g_showAnimation}, {"tool.animator", &g_showAnimatorGraph}, {"tool.timeline", &g_showTimeline},
-        {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree},
+        {"tool.navigation", &g_showNavigation}, {"tool.dialogue", &g_showDialogue}, {"tool.behaviortree", &g_showBehaviorTree}, {"tool.materialgraph", &g_showMaterialGraph},
         {"tool.modeling", &g_showModeling}, {"tool.uveditor", &g_showUVEditor}, {"tool.spriteeditor", &g_showSpriteEditor},
         {"tool.uieditor", &g_showUIEditor}, {"tool.uitheme", &g_showUIThemer}, {"tool.items", &g_showItemDatabase},
         {"tool.weapons", &g_showWeapons}, {"tool.localization", &g_showLocalization}, {"view.uionly", &g_uiOnlyMode},
@@ -6869,6 +6871,16 @@ static void DrawExampleMenuItems(EditorState& ed) {
     }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Ready-made scenes for the high-level visual script nodes.");
+    {
+        const auto mgFiles = oked::MaterialGraphExampleFiles();
+        if (ImGui::BeginMenu("Material Graph (shader nodes)")) {
+            ImGui::TextDisabled("Opens the Material Graph window with a preview sphere.");
+            if (ImGui::MenuItem("Built-in example")) oked::OpenMaterialGraphExample();
+            for (const std::string& f : mgFiles)
+                if (ImGui::MenuItem(std::filesystem::path(f).stem().string().c_str())) oked::OpenMaterialGraphFile(f);
+            ImGui::EndMenu();
+        }
+    }
     const auto basics = okay::editor::NodePlaygroundScenes();
     if (ImGui::BeginMenu("Node Playground (flow and variables)", !basics.empty())) {
         for (const std::string& p : basics) {
@@ -8362,6 +8374,7 @@ static AssetKind KindOf(const std::string& extLower, bool isDir) {
     if (extLower == ".okay")       return {IM_COL32(120, 180, 255, 255), "OKS", AssetIcon::Script};
     if (extLower == ".lua" || extLower == ".cs") return {IM_COL32(150, 140, 235, 255), "SCR", AssetIcon::Script};
     if (extLower == ".okaymat")    return {IM_COL32(235, 110, 170, 255), "MAT", AssetIcon::Material};
+    if (extLower == ".okaymatgraph") return {IM_COL32(235, 140, 90, 255), "MGR", AssetIcon::Material};
     if (extLower == ".okaydata")   return {IM_COL32(110, 205, 190, 255), "DAT", AssetIcon::Data};
     if (extLower == ".obj")        return {IM_COL32(150, 175, 210, 255), "OBJ", AssetIcon::Mesh};
     if (extLower == ".okayvs")     return {IM_COL32(150, 200, 170, 255), "VS",  AssetIcon::Visual};
@@ -10315,7 +10328,7 @@ static bool IsStartSceneFile(const std::string& scenePath) {
 // Open for the types that have no editor window and points to Open with Default App).
 static bool ProjectOpensInEditor(const std::string& extLower, bool isDir) {
     if (isDir) return true;
-    for (const char* e : {".okayscene", ".okayprefab", ".okayweapon", ".okaydata", ".okaymat", ".okay", ".lua", ".cs", ".okayvs", ".okayseq",
+    for (const char* e : {".okayscene", ".okayprefab", ".okayweapon", ".okaydata", ".okaymat", ".okaymatgraph", ".okay", ".lua", ".cs", ".okayvs", ".okayseq",
                           ".okaydialog", ".okayquest", ".okayitems", ".okayloot", ".okayrecipes", ".okaybt", ".okayclip"})
         if (extLower == e) return true;
     return IsModelExt(extLower);   // a model is imported into the scene
@@ -11240,6 +11253,8 @@ void DrawProject(EditorState& ed) {
             g_dataAssetPath = full; g_dataAssetOpen = true;
         } else if (ext == ".okaymat") {
             g_matAssetPath = full; g_matAssetOpen = true;
+        } else if (ext == ".okaymatgraph") {
+            oked::OpenMaterialGraphFile(full);   // the Material Graph window
         } else if (ext == ".okay" || ext == ".lua" || ext == ".cs") {
             OpenScriptFileInEditor(full);    // edit in the in-app Script Editor
         } else if (ext == ".okayvs") {
@@ -51461,6 +51476,7 @@ int main(int argc, char** argv) {
         { OKAY_PROFILE("UI.UIPanel"); if (g_showUIEditor) DrawViewport(ed, /*uiPanel=*/true); }   // dedicated dockable "UI" tab
         { OKAY_PROFILE("UI.DataAssetEditor"); DrawDataAssetEditor(); }
         { OKAY_PROFILE("UI.MaterialEditor"); DrawMaterialEditor(ed); }
+        { OKAY_PROFILE("UI.MaterialGraph"); oked::DrawMaterialGraphWindow(g_sdlRenderer); }
         { OKAY_PROFILE("UI.GameView"); if (g_showGame)      DrawGameView(ed); }
         { OKAY_PROFILE("UI.Profiler"); if (g_showProfiler)  DrawProfiler(ed); }
         { OKAY_PROFILE("UI.Inspector"); if (g_showInspector) DrawInspector(ed); }

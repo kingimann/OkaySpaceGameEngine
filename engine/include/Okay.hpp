@@ -93,6 +93,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Render/CameraStack.hpp"
 #include "okay/Render/Visibility.hpp"
+#include "okay/Render/MaterialGraph.hpp"
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Components/Occluder.hpp"
 #include "okay/Components/SpriteRenderer.hpp"

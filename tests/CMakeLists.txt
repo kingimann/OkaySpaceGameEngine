@@ -155,6 +155,11 @@ add_executable(test_material test_material.cpp)
 target_link_libraries(test_material PRIVATE okay::engine)
 add_test(NAME material COMMAND test_material)
 
+add_executable(test_matgraph test_matgraph.cpp)
+target_compile_definitions(test_matgraph PRIVATE OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
+target_link_libraries(test_matgraph PRIVATE okay::engine)
+add_test(NAME matgraph COMMAND test_matgraph)
+
 add_executable(test_actionlist test_actionlist.cpp)
 target_link_libraries(test_actionlist PRIVATE okay::engine)
 add_test(NAME actionlist COMMAND test_actionlist)

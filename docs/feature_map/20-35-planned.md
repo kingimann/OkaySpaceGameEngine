@@ -650,26 +650,30 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
 ### 26.1 Visual shader graphs
 - **What:** Build a surface look by connecting nodes (textures, colours, maths, time) instead of writing shader code.
 - **Parts:**
-  - 26.1.1 Node graph editor (for gameplay logic, reusable canvas) - `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph` - not a shader editor today
-  - 26.1.2 Shader graph - `-` - not built
-- **Code:** `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph`
-- **API:** none yet
-- **Editor:** none yet
-- **Docs:** `docs/visual_scripting.md` (logic graphs)
-- **Tests:** none
-- **Status:** Planned - no shader graph data model exists.
-- **Exists today:** Only the logic graph editor, which could supply the canvas. All shading is hard-coded in each renderer.
+  - 26.1.1 Node graph editor (for gameplay logic, reusable canvas) - `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph` - the gameplay logic editor; its canvas is tied to script values, so the material graph window has its own small canvas
+  - 26.1.2 Material graph asset - `Render/MaterialGraph` - `.okaymatgraph` text file (version 1): 28 node types, typed pins, wires; loader, saver, checks (unknown node, bad pin, type fit, cycle, one Output)
+  - 26.1.3 CPU evaluator and preview sphere - `Render/MaterialGraph` - `Compile`, `Run`, `Evaluate`, `RenderPreviewSphere`: base colour, emission, roughness, metallic, alpha, normal without a GPU
+  - 26.1.4 GLSL 120 and HLSL text - `Render/MaterialGraph` - `EmitShader`: one function `okay_material(...)` plus the texture lines and the noise helper; golden-string tested, not compiled by a GPU compiler and not wired into any renderer
+  - 26.1.5 Material Graph window - `editor/MaterialGraphWindow` - read-only canvas, node list with editable values and wire pickers, checks, preview sphere, Save; double-click a `.okaymatgraph` or File > Examples > Material Graph
+- **Code:** `Render/MaterialGraph`, `editor/MaterialGraphWindow`, `editor/VisualScriptEditor.hpp`, `VisualScript/NodeGraph`
+- **API:** `okay::matgraph::Graph`, `Validate`, `Compile`, `Run`, `Evaluate`, `RenderPreviewSphere`, `EmitShader`, `NodeLibrary`
+- **Editor:** Window > Material Graph; File > Examples > Material Graph (shader nodes); Project panel double-click on `.okaymatgraph`
+- **Docs:** `docs/material_graph.md`, `docs/visual_scripting.md` (logic graphs)
+- **Tests:** `matgraph`
+- **Status:** Partial - the file, the checks, the CPU evaluator, the shader text and a basic editor window exist; no renderer uses a graph yet.
+- **Exists today:** The logic graph editor (not reusable for this: its pins carry script values) and `.okaymat` presets (flat fields, no graph). All shading is hard-coded in each renderer.
 - **Work packages:**
-  1. M - Shader graph file format `.okayshader` (nodes, pins, outputs albedo, emissive, alpha, normal). Depends on: nothing.
-  2. L - CPU evaluator in the software renderer as the reference. Depends on: package 1.
-  3. L - Generate GLSL and HLSL snippets inserted into the standard shaders (GL, D3D11). Depends on: package 2.
-  4. M - Editor window reusing the node canvas, with a live preview. Depends on: package 1, 26.2 package 2.
-  5. M - A material can point at a shader graph asset. Depends on: package 1, 26.2.
-- **Open:** four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has no normal, gloss or AO maps today.
+  1. Done - Shader graph file format (`.okaymatgraph`, not `.okayshader`; `.okaymat` is taken by the flat presets). Depends on: nothing.
+  2. Done (CPU evaluator and preview as library code; the software renderer does not call it). Depends on: package 1.
+  3. M - Insert the generated GLSL and HLSL into the standard shaders (GL, D3D11) behind a default-off switch, and compile-check it on a GPU. Depends on: package 2.
+  4. M - Window upgrade: a real draggable canvas (move nodes, drag wires), undo, node search palette. Depends on: package 1.
+  5. M - A material (`.okaymat` or the MeshRenderer) can point at a graph asset; software renderer evaluates it per pixel. Depends on: package 1, 26.2.
+  6. S - Nodes still missing: Vertex colour, World position, Screen position, Step/Smoothstep, Abs, Floor/Fract, Min/Max, Remap, Hue shift, Gradient, Voronoi, Parallax, Custom function. Depends on: package 1.
+- **Open:** four renderers (software, GL, D3D11, D3D12) must stay consistent; D3D12 has no normal, gloss or AO maps today. The noise uses a sine-based hash that can differ by a little between GPUs and the CPU. Divide by zero is 0 on the CPU and undefined on a GPU.
 - **Related:** 2.1, 2.2, 14.1, 26.3
-- **Words:** shader graph, visual shader, node shader, material graph, shader nodes, procedural material
+- **Words:** shader graph, visual shader, node shader, material graph, shader nodes, procedural material, okaymatgraph
 - **Seen as:** cannot make a custom effect without editing engine code
-- **Ask me like:** "design a shader graph file format"; "add a fresnel node to a shader graph"
+- **Ask me like:** "add a Smoothstep node to the material graph"; "show the material graph in the renderer"
 
 ### 26.2 Material editor
 - **What:** A window to design a material (colours, textures, shininess) with a live preview and reuse it on many objects.

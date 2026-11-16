@@ -53,6 +53,10 @@ thirst to damage health.
 - *Mitigation*: `resistance` (0–1 of post-armor damage ignored), `minDamage` (a hit
   always stings at least this much), `invincibleTime` (i-frames after a hit), and a
   `godMode` toggle. `Damage()` runs armor → resistance → min-damage floor.
+- *Bad numbers*: a damage, heal, armor or server-health amount that is NaN or infinite (for example `pow(-1, 0.5)`
+  in script math) is ignored, with one Console warning per component, so it can't turn the health into NaN and make
+  the object impossible to kill. The same holds for Stats, Survival Stats, NPC Controller and Build Piece, and an
+  item whose `armor` field is not a number counts as no armor.
 - *Overheal*: `Heal` can stack up to `overhealMax` above max, bleeding off at
   `overhealDecay`/s (shields/buffs).
 - *Death / respawn*: `destroyOnDeath`, or `respawn` after `respawnDelay` (back at the

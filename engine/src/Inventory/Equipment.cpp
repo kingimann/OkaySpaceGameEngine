@@ -1,4 +1,5 @@
 #include "okay/Components/Equipment.hpp"
+#include "okay/Components/DamageGuard.hpp"
 #include "okay/Components/GridInventory.hpp"
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Components/ProceduralObjectHolding.hpp"
@@ -301,6 +302,9 @@ void Equipment::OnDestroy() {
 
 void Equipment::ApplyBonuses(float armor, int defense, float weight) {
     if (!gameObject) return;
+    // An item's "armor" field that reads as NaN or infinity would turn every later hit into NaN damage
+    // (and the health into NaN, an object that can no longer die): such armor counts as none.
+    if (!AcceptFiniteAmount(armor, m_warnedArmor, gameObject, "Equipment armor")) armor = 0.0f;
     if (auto* h = gameObject->GetComponent<HealthStat>()) h->equipArmor = armor;
     if (auto* ss = gameObject->GetComponent<SurvivalStats>()) ss->equipArmor = armor;
     if (auto* st = gameObject->GetComponent<Stats>()) st->equipDefense = defense;

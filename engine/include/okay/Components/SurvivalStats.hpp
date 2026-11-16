@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/DamageGuard.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -127,6 +128,7 @@ public:
 
     // ---- Actions (callable from On Click / Action List / code) ----
     void Damage(float amount) {
+        if (!AcceptFiniteAmount(amount, m_warnedNonFinite, gameObject, "SurvivalStats.Damage")) return;
         if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
         float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor)) * (1.0f - Mathf::Clamp01(resistance));
         health -= dmg;
@@ -136,12 +138,18 @@ public:
     }
     void SetGodMode(bool on) { godMode = on; }
     bool IsInvincible() const { return godMode || m_iframes > 0.0f; }
-    void Heal(float a)    { if (!dead) health = Mathf::Min(maxHealth, health + a); }
+    void Heal(float a)    {
+        if (!AcceptFiniteAmount(a, m_warnedNonFinite, gameObject, "SurvivalStats.Heal")) return;
+        if (!dead) health = Mathf::Min(maxHealth, health + a);
+    }
     void Eat(float a)     { hunger = Mathf::Min(maxHunger, hunger + a); if (a > 0) m_starv = false; }
     void Drink(float a)   { thirst = Mathf::Min(maxThirst, thirst + a); if (a > 0) m_dehy = false; }
     void Breathe(float a) { oxygen = Mathf::Min(maxOxygen, oxygen + a); if (a > 0) m_drown = false; }
     void Warm(float a)    { warmth = Mathf::Min(maxWarmth, warmth + a); if (a > 0) m_freeze = false; }
-    void AddArmor(float a){ armor += a; }
+    void AddArmor(float a){
+        if (!AcceptFiniteAmount(a, m_warnedNonFinite, gameObject, "SurvivalStats.AddArmor")) return;
+        armor += a;
+    }
     void Revive() {
         dead = false; health = maxHealth; m_regenTimer = 0.0f;
         if (gameObject) gameObject->active = true;
@@ -151,6 +159,7 @@ public:
     void SetCold(bool on)      { cold = on; }
 
 private:
+    bool m_warnedNonFinite = false;   // one warning for a NaN / infinite amount (DamageGuard.hpp)
     static float Frac(float v, float mx) { return mx > 0.0f ? Mathf::Clamp01(v / mx) : 0.0f; }
 
     // If `stat` is empty, apply `dps` damage and fire `msg` once. Returns true if it

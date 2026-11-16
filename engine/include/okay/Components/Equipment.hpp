@@ -89,6 +89,7 @@ public:
 
 private:
     bool m_dirty = true;
+    bool m_warnedArmor = false;   // one warning for an item armor value that is NaN / infinite
     void Show(int i);
     void Hide(int i);
     void ApplyBonuses(float armor, int defense, float weight);

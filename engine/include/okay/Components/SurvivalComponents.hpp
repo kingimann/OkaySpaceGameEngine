@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/DamageGuard.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -180,6 +181,7 @@ public:
     }
 
     void ApplyDamage(float amount) {
+        if (!AcceptFiniteAmount(amount, m_warnedNonFinite, gameObject, "HealthStat.Damage")) return;
         if (dead || godMode || m_iframes > 0.0f || amount <= 0.0f) return;
         if (HumanoidActions::DodgeIFrames(gameObject)) return;
         float dmg = Mathf::Max(0.0f, amount - (armor + equipArmor));
@@ -194,16 +196,21 @@ public:
         Publish();
     }
     void Heal(float a) {
+        if (!AcceptFiniteAmount(a, m_warnedNonFinite, gameObject, "HealthStat.Heal")) return;
         if (dead || a <= 0.0f) return;
         health = Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), health + a);
         Publish();
     }
-    void AddArmor(float a) { armor += a; }
+    void AddArmor(float a) {
+        if (!AcceptFiniteAmount(a, m_warnedNonFinite, gameObject, "HealthStat.AddArmor")) return;
+        armor += a;
+    }
     void Revive()          { Respawn(); }
     /// Multiplayer: the server's health for this object, set as is (armor and
     /// the rest were applied on the server, which validated the hit).
     void SetHealthFromServer(float h) {
-        if (dead || !std::isfinite(h)) return;
+        if (!AcceptFiniteAmount(h, m_warnedNonFinite, gameObject, "HealthStat.SetHealthFromServer")) return;
+        if (dead) return;
         health = Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h);
         if (health <= 0.0f) { OnDeath(); m_awaitServerRespawn = true; }
         Publish();
@@ -212,7 +219,7 @@ public:
     /// the transform's business). Brings a dead copy back, or just sets the health of a live
     /// one; a non-finite `h` is ignored and the value is kept within the maximum.
     void RespawnFromServer(float h) {
-        if (!std::isfinite(h)) return;
+        if (!AcceptFiniteAmount(h, m_warnedNonFinite, gameObject, "HealthStat.RespawnFromServer")) return;
         Respawn(false);
         health = Mathf::Max(1.0f, Mathf::Min(maxHealth + Mathf::Max(0.0f, overhealMax), h));
         Publish();
@@ -277,6 +284,7 @@ private:
         Publish();
         if (moveToStart) NetNoteRespawn(gameObject);
     }
+    bool m_warnedNonFinite = false;     // one warning for a NaN / infinite amount (DamageGuard.hpp)
     bool m_awaitServerRespawn = false;   // died by the server's word: only its respawn brings it back
     void Publish() { SaveValue("health", health, maxHealth); SetBar("HealthBar", Fraction()); }
     float m_timer = 0.0f, m_iframes = 0.0f, m_respawnTimer = 0.0f;

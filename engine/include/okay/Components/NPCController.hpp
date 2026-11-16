@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/DamageGuard.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/AI/Navigation.hpp"
 #include "okay/AI/Perception.hpp"
@@ -136,6 +137,7 @@ public:
     /// Take damage; provokes (if allowed), and on death broadcasts `npc_died`, plays a
     /// sibling AudioSource and removes the object. Call from a weapon or trap.
     void Damage(float amount) {
+        if (!AcceptFiniteAmount(amount, m_warnedNonFinite, gameObject, "NPCController.Damage")) return;
         if (m_dead || invulnerable || amount <= 0.0f) return;
         health -= amount;
         if (provokable) { m_provoked = true; m_sightLost = 0.0f; if (GameObject* t = Target()) m_lastKnown = TP(t); }
@@ -337,6 +339,7 @@ public:
     int CurrentPathIndex() const { return m_pathIdx; }
 
 private:
+    bool  m_warnedNonFinite = false;   // one warning for a NaN / infinite amount (DamageGuard.hpp)
     std::vector<Vec3> m_path;      // current A* route (world waypoints)
     int   m_pathIdx  = 0;
     float m_repath   = 0.0f;

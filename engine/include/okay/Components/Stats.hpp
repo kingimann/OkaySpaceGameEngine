@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/DamageGuard.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Components/ScriptComponent.hpp"
@@ -27,12 +28,16 @@ public:
     /// Apply incoming damage mitigated by defense (always at least 1). Fires on_death
     /// the moment health reaches 0.
     void TakeDamage(float amount) {
+        if (!AcceptFiniteAmount(amount, m_warnedNonFinite, gameObject, "Stats.TakeDamage")) return;
         if (IsDead()) return;
         float dmg = Mathf::Max(1.0f, amount - (float)(defense + equipDefense));
         health = Mathf::Max(0.0f, health - dmg);
         if (health <= 0.0f) Event("on_death");
     }
-    void Heal(float amount)      { health = Mathf::Clamp(health + amount, 0.0f, maxHealth); }
+    void Heal(float amount)      {
+        if (!AcceptFiniteAmount(amount, m_warnedNonFinite, gameObject, "Stats.Heal")) return;
+        health = Mathf::Clamp(health + amount, 0.0f, maxHealth);
+    }
     void UseMana(float amount)   { mana = Mathf::Max(0.0f, mana - amount); }
     void RestoreMana(float amt)  { mana = Mathf::Clamp(mana + amt, 0.0f, maxMana); }
     bool HasMana(float amount) const { return mana >= amount; }
@@ -55,6 +60,7 @@ public:
     }
 
 private:
+    bool m_warnedNonFinite = false;   // one warning for a NaN / infinite amount (DamageGuard.hpp)
     void Event(const char* name) {
         if (gameObject)
             if (auto* sc = gameObject->GetComponent<ScriptComponent>())

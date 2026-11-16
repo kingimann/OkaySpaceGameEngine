@@ -1027,6 +1027,11 @@ add_executable(test_survival test_survival.cpp)
 target_link_libraries(test_survival PRIVATE okay::engine)
 add_test(NAME survival COMMAND test_survival)
 
+# A NaN or infinite damage / heal amount is refused (no immortal NaN health), finite hits unchanged
+add_executable(test_nan_damage test_nan_damage.cpp)
+target_link_libraries(test_nan_damage PRIVATE okay::engine)
+add_test(NAME nan_damage COMMAND test_nan_damage)
+
 add_executable(test_volumes test_volumes.cpp)
 target_link_libraries(test_volumes PRIVATE okay::engine)
 add_test(NAME volumes COMMAND test_volumes)

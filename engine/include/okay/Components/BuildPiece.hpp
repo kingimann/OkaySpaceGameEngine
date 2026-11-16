@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Components/DamageGuard.hpp"
 #include "okay/Scene/Component.hpp"
 #include <string>
 #include <algorithm>
@@ -20,13 +21,20 @@ public:
 
     /// Apply damage; returns true if it just got destroyed (health hit 0).
     bool Damage(float amount) {
+        if (!AcceptFiniteAmount(amount, m_warnedNonFinite, gameObject, "BuildPiece.Damage")) return false;
         if (amount <= 0.0f) return false;
         health -= amount;
         if (health <= 0.0f) { health = 0.0f; return true; }
         return false;
     }
-    void Heal(float amount) { health = std::min(maxHealth, health + std::max(0.0f, amount)); }
+    void Heal(float amount) {
+        if (!AcceptFiniteAmount(amount, m_warnedNonFinite, gameObject, "BuildPiece.Heal")) return;
+        health = std::min(maxHealth, health + std::max(0.0f, amount));
+    }
     bool FullHealth() const { return health >= maxHealth - 1e-3f; }
+
+private:
+    bool m_warnedNonFinite = false;   // one warning for a NaN / infinite amount (DamageGuard.hpp)
 };
 
 } // namespace okay

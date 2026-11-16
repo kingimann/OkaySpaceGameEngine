@@ -299,7 +299,7 @@ const WeaponDefinition* WeaponForHolder(GameObject* go) {
 }
 
 bool ApplyCombatDamage(GameObject* target, float amount, const Vec3& from, const Vec3& impulse) {
-    if (!target || !(amount > 0.0f)) return false;
+    if (!target || !(amount > 0.0f) || !std::isfinite(amount)) return false;   // NaN and infinity: no hit (Finding 57)
     bool hurt = false;
     if (auto* hp = target->GetComponent<HealthStat>()) {
         if (!hp->IsDead()) { hp->Damage(amount, from); hurt = true; }

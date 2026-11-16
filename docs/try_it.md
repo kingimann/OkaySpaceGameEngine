@@ -1086,6 +1086,31 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## A NaN damage value no longer makes a character immortal (bug fix, branch `claude2/nan-damage`, not merged or released yet)
+
+Before: one damage or heal amount that was NaN ("not a number", for example `pow(-1, 0.5)` in a script, or `0.0f / 0.0f` in C++) or infinite
+turned the health into NaN. NaN is never "0 or less", so that character could never die again, and its health bar
+broke. (Issue #888, Finding 57.)
+
+Now every damage, heal and set-health call (Health, Stats, Survival Stats, NPC Controller, Build Piece, armor, and
+the weapon and affliction helpers) ignores a NaN or infinite amount: the health stays as it was, and the Console
+shows one warning per component, for example `Stats.TakeDamage got nan on 'Enemy': a NaN or infinite amount is
+ignored`. Normal hits work exactly as before.
+
+1. Open the editor, add an object named **Enemy** with a **Stats** component.
+2. Add a **Script** component (OkayScript) to any object with:
+   ```
+   function update(dt) {
+       if (key_down("n")) { hurt("Enemy", pow(-1, 0.5)); print("nan hit, hp " + get_hp("Enemy")); }
+       if (key_down("k")) { hurt("Enemy", 500); print("big hit, hp " + get_hp("Enemy")); }
+   }
+   ```
+3. Press **Play**, press **N** a few times: the hp stays at 100 and one warning appears in the Console (before: hp
+   became `nan`). Then press **K**: the hp goes to 0 and the enemy dies (before: it stayed alive with `nan` forever).
+
+**Status.** Tested headless on Linux by `tests/test_nan_damage.cpp` (every entry point, plus the same script calls).
+Not tried in the Windows editor yet.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

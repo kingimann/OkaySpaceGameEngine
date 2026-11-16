@@ -1,3 +1,4 @@
+#include "okay/Core/Profiler.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
@@ -1029,6 +1030,7 @@ void Character::CaptureLeavingPose() {
 }
 
 void Character::Update(float dt) {
+    OKAY_PROFILE("Anim.Character");
     TickFeel(dt);
     NoteStateChange();
     if (m_landT >= 0.0f) {
@@ -1172,6 +1174,7 @@ void Character::Update(float dt) {
 }
 
 void Character::LateUpdate(float dt) {
+    OKAY_PROFILE("Anim.Character");
     // Turning the Animator component back on does not restart it, so the stale
     // clip would pop on. The first time we see it stays instant (play start).
     // This runs after every Update, so it doesn't matter which component ticked first.

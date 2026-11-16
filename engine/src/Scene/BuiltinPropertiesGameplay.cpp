@@ -84,7 +84,8 @@ void RegisterPlayerView() {
      .AddBool("snapSwitch", &PlayerView::snapSwitch).Tooltip("True: the camera jumps, no blend")
      .AddVec3("eyeOffset", &PlayerView::eyeOffset).Range(-kBig, kBig, 0.1).Tooltip("Added at the eyes (local: +X right, +Y up, +Z back)")
      .AddFloat("thirdPersonDistance", &PlayerView::thirdPersonDistance).Range(-1, kBig, 0.05).Tooltip("Orbit distance while this view is driving; below 0 = the controller's own")
-     .AddFloat("shoulderOffset", &PlayerView::shoulderOffset).Range(-kBig, kBig, 0.05).Tooltip("Over-the-shoulder shift while this view is driving");
+     .AddFloat("shoulderOffset", &PlayerView::shoulderOffset).Range(-kBig, kBig, 0.05).Tooltip("Over-the-shoulder shift while this view is driving")
+     .AddBool("presetHotkeys", &PlayerView::presetHotkeys).Tooltip("Keys 1-5 apply a feel preset (Classic, Modern, Arcade, Realistic, Shooter) while playing");
     b.Commit();
 }
 
@@ -113,6 +114,8 @@ void RegisterFirstPersonController() {
      .AddFloat("jumpCut", &FirstPersonController::jumpCut).Range(0, 1, 0.05).Tooltip("With Variable Jump: the share of the upward speed kept when Space is released")
      .AddFloat("climbSpeed", &FirstPersonController::climbSpeed).Range(0, 20, 0.1).Tooltip("Speed up and down a ladder (a box trigger on an object tagged Climbable). 0 = no climbing")
      .AddFloat("hardLandSpeed", &FirstPersonController::hardLandSpeed).Range(0, 1000, 0.5).Tooltip("A landing this fast (m/s) is a hard landing: onHardLand and the Action List message player_hard_land. 0 = off")
+     .AddInt("controllerPreset", &FirstPersonController::controllerPreset).Range(0, 4, 1).Tooltip("The feel preset last applied: 0 Classic, 1 Modern, 2 Arcade, 3 Realistic, 4 Shooter (pick one in the Inspector to apply it)")
+     .AddFloat("stickLookRamp", &FirstPersonController::stickLookRamp).Range(0, 3, 0.05).Tooltip("Gamepad camera acceleration: seconds from 45% to full look speed at full stick throw. 0 = off")
      .AddBool("driveAnimation", &FirstPersonController::driveAnimation).Tooltip("Set a sibling Character's anim from movement")
      .AddBool("footIK", &FirstPersonController::footIK).Tooltip("Plant the Character's feet on the ground (foot IK)")
      .Section("Look")
@@ -201,6 +204,8 @@ void RegisterThirdPersonController() {
      .AddFloat("jumpCut", &ThirdPersonController::jumpCut).Range(0, 1, 0.05).Tooltip("With Variable Jump: the share of the upward speed kept when Space is released")
      .AddFloat("climbSpeed", &ThirdPersonController::climbSpeed).Range(0, 20, 0.1).Tooltip("Speed up and down a ladder (a box trigger on an object tagged Climbable). 0 = no climbing")
      .AddFloat("hardLandSpeed", &ThirdPersonController::hardLandSpeed).Range(0, 1000, 0.5).Tooltip("A landing this fast (m/s) is a hard landing: onHardLand and the Action List message player_hard_land. 0 = off")
+     .AddInt("controllerPreset", &ThirdPersonController::controllerPreset).Range(0, 4, 1).Tooltip("The feel preset last applied: 0 Classic, 1 Modern, 2 Arcade, 3 Realistic, 4 Shooter (pick one in the Inspector to apply it)")
+     .AddFloat("stickLookRamp", &ThirdPersonController::stickLookRamp).Range(0, 3, 0.05).Tooltip("Gamepad camera acceleration: seconds from 45% to full look speed at full stick throw. 0 = off")
      .AddBool("driveAnimation", &ThirdPersonController::driveAnimation).Tooltip("Drive a sibling Character's idle, walk and run from the movement")
      .AddBool("footIK", &ThirdPersonController::footIK).Tooltip("Plant the Character's feet on the ground")
      .AddFloat("turnSpeed", &ThirdPersonController::turnSpeed).Range(0, 36000, 1).Tooltip("How fast the body turns toward movement (1/s)")

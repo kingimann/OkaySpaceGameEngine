@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/ControllerPresets.hpp"
 #include "okay/Components/PlayerPerf.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -31,6 +32,12 @@ public:
             else if (auto* tp = go->GetComponent<ThirdPersonController>(); tp && tp->SimActive()) { st = &tp->debugState(); view = "third person"; }
             if (!st || !st->valid) continue;
             Format(*st, go->name, view, out);
+            int preset = 0; float ramp = 0.0f;
+            if (auto* fp = go->GetComponent<FirstPersonController>(); fp && fp->SimActive()) { preset = fp->controllerPreset; ramp = fp->stickLookRamp; }
+            else if (auto* tp = go->GetComponent<ThirdPersonController>()) { preset = tp->controllerPreset; ramp = tp->stickLookRamp; }
+            char pb[120];
+            std::snprintf(pb, sizeof pb, "  feel preset: %s%s", ControllerPresets::Name(preset), ramp > 0.0f ? "  (stick look ramp on)" : "");
+            out.emplace_back(pb);
             break;   // one local player
         }
         return out;

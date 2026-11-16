@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <cstdlib>
+#include <typeindex>
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Core/Scheduler.hpp"
@@ -314,12 +316,32 @@ public:
     /// Collect every component of type T across all GameObjects in the scene.
     template <typename T>
     std::vector<T*> FindObjectsOfType() const {
+        if (!OldSceneQueries()) {
+            // The answer only changes when a component or an object is added, removed or reparented, so it is
+            // kept per type and stamped with the scene's structure / component versions. A call in a frame where
+            // nothing changed copies the pointer list instead of walking every object with dynamic_cast.
+            // (OKAY_OLD_SCENE_QUERIES=1 turns this off to compare.)
+            TypeQueryEntry& e = m_typeQueries[std::type_index(typeid(T))];
+            const bool fresh = e.list && e.structure == m_structureVersion && e.component == m_componentVersion &&
+                               e.objects == m_objects.size();
+            if (!fresh) {
+                auto list = std::make_shared<std::vector<T*>>();
+                list->reserve(m_objects.size());
+                for (const auto& go : m_objects) go->template CollectComponents<T>(*list);
+                e.list = std::move(list);
+                e.structure = m_structureVersion; e.component = m_componentVersion; e.objects = m_objects.size();
+            }
+            return *static_cast<std::vector<T*>*>(e.list.get());
+        }
         std::vector<T*> out;
         out.reserve(m_objects.size());   // typically ~1 of a given type per object
         for (const auto& go : m_objects)
             go->template CollectComponents<T>(out);   // append directly — no per-object temp vector
         return out;
     }
+    /// True when OKAY_OLD_SCENE_QUERIES=1: FindObjectsOfType walks every object each call (the old behaviour).
+    static bool& OldSceneQueriesFlag() { static bool v = [] { const char* e = std::getenv("OKAY_OLD_SCENE_QUERIES"); return e && *e == '1'; }(); return v; }
+    static bool OldSceneQueries() { return OldSceneQueriesFlag(); }
     /// The first component of type T found in the scene, or nullptr.
     template <typename T>
     T* FindObjectOfType() const {
@@ -634,6 +656,8 @@ private:
     /// cleared so a component still pointing at a deleted bone / target / follow
     /// object reads a frozen transform instead of freed memory.
     std::vector<std::unique_ptr<GameObject>> m_graveyard;
+    struct TypeQueryEntry { std::shared_ptr<void> list; std::uint64_t structure = 0, component = 0; std::size_t objects = 0; };
+    mutable std::unordered_map<std::type_index, TypeQueryEntry> m_typeQueries;   ///< FindObjectsOfType<T> answers
     std::uint64_t m_structureVersion = 1;
     std::uint64_t m_componentVersion = 1;
     std::uint64_t m_uid = 0;

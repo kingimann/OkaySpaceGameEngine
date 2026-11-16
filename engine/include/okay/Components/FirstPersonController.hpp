@@ -224,6 +224,8 @@ public:
     /// A landing at least this fast (m/s) is a hard landing: onHardLand is called and every Action List hears
     /// "player_hard_land". Nothing is hurt by it; a game decides what a hard landing costs. 0 = off.
     float hardLandSpeed = 12.0f;
+    int   controllerPreset = 0;          ///< the feel preset last applied (ControllerPresets.hpp: 0 Classic, 1 Modern, 2 Arcade, 3 Realistic, 4 Shooter). Saved; changing a field by hand does not change it.
+    float stickLookRamp = 0.0f;          ///< gamepad: seconds the right stick takes to go from 45% to full look speed while held at full throw (0 = off, constant speed)
     std::function<void(float impactSpeed)> onHardLand;
     void Start() override {
         // The orbit controller, when it is the one running, owns the body size
@@ -955,12 +957,17 @@ private:
     }
 
     /// Right-stick look. Aim assist pulls only while the stick is already moving.
+    StickLookRamp m_stickRamp;
     void ApplyStickLook(bool uiBlocked, bool pitchUp) {
         if (uiBlocked || m_lookDt <= 0.0f) return;
         const Vec2 stick = Input::GamepadRightAxis();
-        if (std::fabs(stick.x) + std::fabs(stick.y) <= kStickLookDeadzone) return;
+        if (std::fabs(stick.x) + std::fabs(stick.y) <= kStickLookDeadzone) { m_stickRamp.Reset(); return; }
         float dYaw = 0.0f, dPitch = 0.0f;
         StickLookDelta(stick.x, stick.y, m_lookDt, pitchUp, invertY, dYaw, dPitch);
+        if (stickLookRamp > 0.0f) {   // camera stick acceleration (off by default)
+            const float g = m_stickRamp.Gain(std::fmax(std::fabs(stick.x), std::fabs(stick.y)), m_lookDt, stickLookRamp);
+            dYaw *= g; dPitch *= g;
+        }
         const float strength = Accessibility::AimAssistStrength();
         std::vector<LookAim> targets;
         if (strength > 0.0f) {

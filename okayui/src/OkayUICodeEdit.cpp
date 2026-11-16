@@ -991,7 +991,10 @@ void CodeEdit::layout(const Rect& item) {
     textLeft_ = view_.x;
     clampScroll();
     vTrack_ = Rect{view_.x + view_.w, item.y, sb, view_.y + view_.h - item.y};
-    hTrack_ = Rect{item.x, view_.y + view_.h, view_.x + view_.w - item.x, sb};
+    {   // the horizontal bar runs under the gutter too (from the edge with ImGui's child-window style, else inside the padding)
+        const float hx = alwaysH_ ? item.x : item.x + padX_;
+        hTrack_ = Rect{hx, view_.y + view_.h, view_.x + view_.w - hx, sb};
+    }
     const float maxY = std::max(0.0f, contentH_ - view_.h), maxX = std::max(0.0f, contentW_ - view_.w);
     {
         const float th = std::min(vTrack_.h, std::max(20.0f, vTrack_.h * (contentH_ > 0 ? view_.h / contentH_ : 1.0f)));

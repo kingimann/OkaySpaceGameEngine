@@ -1254,14 +1254,19 @@ unset) keeps the old one.
    line numbers, the caret and selection; typing, Enter with auto-indent, Tab and Shift+Tab, Ctrl+Z / Ctrl+Y, Ctrl+C / X / V,
    Ctrl+A, the Insert key (a block caret: typing overwrites), Shift+Delete (cut), Ctrl+Insert / Shift+Insert (copy / paste),
    the mouse wheel and the scroll bars, double click for a word, a click on the line numbers for a line. Break the script
-   (type `labl` where a name is expected) and a red mark appears on that line; hover it to read the message. Hover a
+   (type `labl` where a name is expected): the line turns red and the message (for example `unknown name 'labl'`) is written
+   after the end of the line in red, as in the old editor; hover it for `Error at line N: ...`. A warning is amber. Hover a
    built-in such as `print` to see its signature. Ctrl+wheel zoom also zooms the code.
+   It should look like the old editor: the same code font (JetBrains Mono), the same line height and letter spacing, the
+   current line boxed, a bookmarked line (the old editor's breakpoint) filled blue. Type `pri` so the autocomplete list opens
+   over the code: the list must be drawn ON TOP of the code (before this change it was hidden under it).
 4. How to tell it is on: `okay_log.txt` (next to the editor) has the line `Script editor code widget: own (OkayUI::CodeEdit, OKAY_CODE_EDITOR=own)`
    the first time a script is opened. Without the variable the line says `imgui (default)`.
 
-Known differences, said plainly: the autocomplete popup and other ImGui popups that overlap the code are drawn under it (the
-code is drawn last, by OkayUI); the code uses OkayUI's font (the launcher look's Roboto, one character per cell), not the
-ImGui editor's code font. **Unverified**: this path has never been run in a real window or on Windows; only headless tests ran.
+Known differences, said plainly: ours also boxes the matching bracket next to the caret (the old one does not); glyph edges
+are a little sharper (our own TrueType rasteriser, no 2x oversampling). Hover tooltips of our own widget are still drawn by
+OkayUI on top of everything. **Unverified**: this path has never been run in a real window or on Windows; only headless tests
+and headless screenshots ran (`codeedit_bench shots`).
 If the Windows build has no OkayUI compiled in, the log line says so and the old editor is used.
 
 ### 13. Own cryptography

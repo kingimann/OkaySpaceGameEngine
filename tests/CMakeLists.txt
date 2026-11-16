@@ -2958,7 +2958,7 @@ endif()
 # (engine/src/Platform/GlPainter.cpp) on an sdl2 and an own window. Own code, off by default; the tests only check it.
 if(TARGET launcher_imgui AND TARGET okay_ui_soft)
     add_executable(test_launcher_imgui_renderer test_launcher_imgui_renderer.cpp ${PROJECT_SOURCE_DIR}/launcher/ImGuiOwnBackend.cpp)
-    target_include_directories(test_launcher_imgui_renderer PRIVATE ${PROJECT_SOURCE_DIR}/launcher)
+    target_include_directories(test_launcher_imgui_renderer PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared)
     target_link_libraries(test_launcher_imgui_renderer PRIVATE launcher_imgui okay_ui_soft)
     add_test(NAME launcher_imgui_renderer COMMAND test_launcher_imgui_renderer)
     if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")

@@ -8,6 +8,8 @@
 //    SetTexID and SetStatus.
 //  * ImGuiIO input events: AddMousePosEvent, AddMouseButtonEvent, AddMouseWheelEvent (y > 0 up, x > 0 left),
 //    AddKeyEvent, AddInputCharactersUTF8, AddFocusEvent; DisplaySize, DisplayFramebufferScale, DeltaTime.
+//  * ImGuiPlatformIO::Platform_SetImeDataFn: called at the end of a frame with the caret position (InputPos, in ImGui's
+//    coordinates, minus the viewport's Pos) and the line height while a text field wants the input method (WantVisible).
 #include "ImGuiOwnBackend.hpp"
 
 #include "imgui.h"
@@ -22,6 +24,8 @@ namespace okay::launchergfx {
 namespace plat = okay::platform;
 
 namespace {
+// The cursor shape the backend was last told (one pointer, shared by every window and every glue): -2 = none yet.
+int g_appliedCursor = -2;
 // Our marker for ImGui's "reset render state" request: nothing to reset (every command sets its own clip and texture).
 void ResetRenderState(const ImDrawList*, const ImDrawCmd*) {}
 
@@ -231,6 +235,8 @@ ImGuiPlatformGlue::ImGuiPlatformGlue(plat::Backend& b, plat::Window& w) : m_b(b)
     pio.Platform_GetClipboardTextFn = GetClipboard;
     pio.Platform_SetClipboardTextFn = SetClipboard;
     pio.Platform_ClipboardUserData = this;
+    pio.Platform_SetImeDataFn = SetImeData;
+    pio.Platform_ImeUserData = this;
     m_lastTicks = m_b.PerfCounter();
     m_b.StopTextInput();   // on only while an ImGui text field wants it (NewFrame)
 }
@@ -243,6 +249,9 @@ ImGuiPlatformGlue::~ImGuiPlatformGlue() {
     pio.Platform_GetClipboardTextFn = nullptr;
     pio.Platform_SetClipboardTextFn = nullptr;
     pio.Platform_ClipboardUserData = nullptr;
+    pio.Platform_SetImeDataFn = nullptr;
+    pio.Platform_ImeUserData = nullptr;
+    g_appliedCursor = -2;
     ImGuiIO& io = ImGui::GetIO();
     io.BackendPlatformName = nullptr;
     io.BackendFlags &= ~ImGuiBackendFlags_HasMouseCursors;
@@ -258,6 +267,18 @@ const char* ImGuiPlatformGlue::GetClipboard(ImGuiContext*) {
 void ImGuiPlatformGlue::SetClipboard(ImGuiContext*, const char* text) {
     ImGuiPlatformGlue* g = (ImGuiPlatformGlue*)ImGui::GetPlatformIO().Platform_ClipboardUserData;
     if (g) g->m_b.SetClipboardText(text ? text : "");
+}
+
+void ImGuiPlatformGlue::SetImeData(ImGuiContext*, ImGuiViewport* vp, ImGuiPlatformImeData* d) {
+    ImGuiPlatformGlue* g = (ImGuiPlatformGlue*)ImGui::GetPlatformIO().Platform_ImeUserData;
+    if (!g || !d || !d->WantVisible) return;   // no text field has the keyboard: the input method keeps where it was
+    const float ox = vp ? vp->Pos.x : 0.0f, oy = vp ? vp->Pos.y : 0.0f;
+    const int x = (int)std::floor(d->InputPos.x - ox), y = (int)std::floor(d->InputPos.y - oy);
+    const int h = (int)std::ceil(d->InputLineHeight);
+    if (g->m_imeSet && x == g->m_imeX && y == g->m_imeY && h == g->m_imeH) return;
+    g->m_imeSet = true; g->m_imeX = x; g->m_imeY = y; g->m_imeH = h;
+    g->m_imeTaken = g->m_w.SetTextInputArea(x, y, 1, h);
+    if (g->m_log) std::fprintf(stderr, "launcher-input: ime caret %d,%d height %d (%s)\n", x, y, h, g->m_imeTaken ? "taken" : "not taken");
 }
 
 bool ImGuiPlatformGlue::ProcessEvent(const plat::Event& e) {
@@ -342,10 +363,12 @@ void ImGuiPlatformGlue::NewFrame() {
         if (m_textOn) m_b.StartTextInput(); else m_b.StopTextInput();
     }
 
-    if (!(io.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange)) {
+    // The shape: one pointer for every window, so only the glue of the window under the pointer sets it, and only when it
+    // differs from what any glue set last (the chat window's text cursor must not stay over the launcher).
+    if (!(io.ConfigFlags & ImGuiConfigFlags_NoMouseCursorChange) && (inside || g_appliedCursor == -2)) {
         const int c = io.MouseDrawCursor ? (int)ImGuiMouseCursor_None : (int)ImGui::GetMouseCursor();
-        if (c != m_cursor) {
-            m_cursor = c;
+        if (c != g_appliedCursor) {
+            g_appliedCursor = c;
             if (c == ImGuiMouseCursor_None) m_b.ShowCursor(false);
             else {
                 plat::SystemCursor sc = plat::SystemCursor::Arrow;

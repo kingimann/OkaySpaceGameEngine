@@ -32,55 +32,63 @@ public:
     /// Feed every SDL event (the host may also pass it to ImGui; the collector never consumes events).
     void Feed(const SDL_Event& e) {
         switch (e.type) {
-        case SDL_TEXTINPUT: {
-            const std::size_t have = std::strlen(m_text);
-            const std::size_t add = std::strlen(e.text.text);
-            if (have + add < sizeof(m_text)) std::memcpy(m_text + have, e.text.text, add + 1);   // a full buffer drops the rest
-            break;
-        }
+        case SDL_TEXTINPUT: AddText(e.text.text); break;
         case SDL_MOUSEBUTTONDOWN:   // a press and release that both arrive before one frame must still show as one pressed frame
-            if (e.button.button == SDL_BUTTON_LEFT) m_leftTap = true;
-            else if (e.button.button == SDL_BUTTON_RIGHT) m_rightTap = true;
+            if (e.button.button == SDL_BUTTON_LEFT) AddButtonDown(0);
+            else if (e.button.button == SDL_BUTTON_RIGHT) AddButtonDown(1);
             break;
         case SDL_MOUSEWHEEL: {
             float y = (float)e.wheel.y;
             if (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) y = -y;
-            m_wheel += y;
+            AddWheel(y);
             break;
         }
         case SDL_KEYDOWN:
-        case SDL_KEYUP: {
-            m_shift = (e.key.keysym.mod & KMOD_SHIFT) != 0;
-            const bool ctrl = (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0;
-            m_ctrl = ctrl;
-            {   // held state of the named keys (Input::keyDown); a press and release between two frames still shows for one frame
-                const int id = KeyIdOf(e.key.keysym.sym);
-                if (id != OkayUI::KeyId_None) {
-                    m_keyHeld[id] = (e.type == SDL_KEYDOWN);
-                    if (e.type == SDL_KEYDOWN) m_keyTap[id] = true;
-                }
-            }
-            if (e.type != SDL_KEYDOWN) break;                 // key repeat arrives as more KEYDOWN events: each one is an edge
-            switch (e.key.keysym.sym) {
-            case SDLK_BACKSPACE: m_back = true; break;
-            case SDLK_DELETE:    m_del = true; break;
-            case SDLK_LEFT:      m_left = true; break;
-            case SDLK_RIGHT:     m_right = true; break;
-            case SDLK_HOME:      m_home = true; break;
-            case SDLK_END:       m_end = true; break;
-            case SDLK_RETURN:
-            case SDLK_KP_ENTER:  m_enter = true; break;
-            case SDLK_ESCAPE:    m_escape = true; break;
-            case SDLK_UP:        m_up = true; break;
-            case SDLK_DOWN:      m_down = true; break;
-            case SDLK_a:         if (ctrl) m_selectAll = true; break;
-            case SDLK_c:         if (ctrl) m_copy = true; break;
-            case SDLK_x:         if (ctrl) m_cut = true; break;
-            case SDLK_v:         if (ctrl) m_paste = true; break;
-            default: break;
-            }
+        case SDL_KEYUP:
+            AddKey(KeyIdOf(e.key.keysym.sym), e.type == SDL_KEYDOWN, (e.key.keysym.mod & KMOD_SHIFT) != 0,
+                   (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0);
             break;
+        default: break;
         }
+    }
+
+    // ---- The same input without SDL (an okay::platform host feeds these: OkayUIHostPlatform.hpp) ----
+    /// Typed text (UTF-8). A full buffer drops the rest.
+    void AddText(const char* utf8) {
+        if (!utf8) return;
+        const std::size_t have = std::strlen(m_text);
+        const std::size_t add = std::strlen(utf8);
+        if (have + add < sizeof(m_text)) std::memcpy(m_text + have, utf8, add + 1);
+    }
+    /// A mouse button went down: 0 = left, 1 = right (others are not OkayUI's).
+    void AddButtonDown(int button) { if (button == 0) m_leftTap = true; else if (button == 1) m_rightTap = true; }
+    /// Wheel notches, up = +y.
+    void AddWheel(float y) { m_wheel += y; }
+    /// A key went down (each key repeat is another down) or up. `id` is an OkayUI KeyId (KeyId_None for keys OkayUI does not
+    /// name: only the modifiers are taken then); `ctrl` is Ctrl or the Command / Windows key.
+    void AddKey(int id, bool down, bool shift, bool ctrl) {
+        m_shift = shift;
+        m_ctrl = ctrl;
+        if (id != OkayUI::KeyId_None && id >= 0 && id < OkayUI::KeyId_COUNT) {   // held state; a press and release between two frames still shows for one frame
+            m_keyHeld[id] = down;
+            if (down) m_keyTap[id] = true;
+        }
+        if (!down) return;
+        switch (id) {
+        case OkayUI::KeyId_Backspace: m_back = true; break;
+        case OkayUI::KeyId_Delete:    m_del = true; break;
+        case OkayUI::KeyId_Left:      m_left = true; break;
+        case OkayUI::KeyId_Right:     m_right = true; break;
+        case OkayUI::KeyId_Home:      m_home = true; break;
+        case OkayUI::KeyId_End:       m_end = true; break;
+        case OkayUI::KeyId_Enter:     m_enter = true; break;
+        case OkayUI::KeyId_Escape:    m_escape = true; break;
+        case OkayUI::KeyId_Up:        m_up = true; break;
+        case OkayUI::KeyId_Down:      m_down = true; break;
+        case OkayUI::KeyId_A:         if (ctrl) m_selectAll = true; break;
+        case OkayUI::KeyId_C:         if (ctrl) m_copy = true; break;
+        case OkayUI::KeyId_X:         if (ctrl) m_cut = true; break;
+        case OkayUI::KeyId_V:         if (ctrl) m_paste = true; break;
         default: break;
         }
     }

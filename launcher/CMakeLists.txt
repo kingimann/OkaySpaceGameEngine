@@ -94,6 +94,11 @@ if(TARGET okay_ui_soft)
     target_link_libraries(okayspace-launcher PRIVATE okay_ui_soft)
     target_compile_definitions(okayspace-launcher PRIVATE OKAY_LAUNCHER_HAVE_SOFT_PAINTER=1)
 endif()
+# OkayUI's render interface (okayui/render): the own renderer draws hosted OkayUI screens on its painter with it.
+if(TARGET okay_ui_render)
+    target_link_libraries(okayspace-launcher PRIVATE okay_ui_render)
+    target_compile_definitions(okayspace-launcher PRIVATE OKAY_LAUNCHER_HAVE_OKAYUI_RENDER=1)
+endif()
 # okay::platform: the seam over SDL2 (timers, audio devices); it brings its own SDL2 link.
 target_link_libraries(okayspace-launcher PRIVATE launcher_imgui ${OKAY_LAUNCHER_SDL} okay::platform)
 if(TARGET okay_engine)

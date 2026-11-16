@@ -80,6 +80,7 @@ public:
     }
     void ShutdownImGui() override { m_glue.reset(); m_renderer.reset(); }
     void NewFrame() override { if (m_glue) m_glue->NewFrame(); }
+    bool FeedEvent(const plat::Event& e) override { return m_glue && m_glue->ProcessEvent(e); }
     bool PollEvent(plat::Event& e) override {
         if (!m_b.PollEvent(e)) return false;
         if (m_glue) m_glue->ProcessEvent(e);
@@ -106,6 +107,7 @@ std::unique_ptr<Gfx> CreateOwnGfx(const WindowSpec& spec, std::string* err) {
 
     plat::WindowDesc d;
     d.title = spec.title;
+    d.x = spec.x; d.y = spec.y;
     d.width = spec.width; d.height = spec.height;
     d.resizable = true; d.hidden = true; d.highDpi = true;
     d.opengl = true;

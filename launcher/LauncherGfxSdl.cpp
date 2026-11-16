@@ -65,7 +65,9 @@ private:
 
 std::unique_ptr<Gfx> CreateSdlGfx(const WindowSpec& spec, std::string* err) {
     // Created HIDDEN so the OS never composites a black, uninitialised rectangle; main.cpp shows it after the first splash frame.
-    SDL_Window* window = SDL_CreateWindow(spec.title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, spec.width, spec.height,
+    const int x = spec.x == okay::platform::kCentered ? (int)SDL_WINDOWPOS_CENTERED : spec.x;
+    const int y = spec.y == okay::platform::kCentered ? (int)SDL_WINDOWPOS_CENTERED : spec.y;
+    SDL_Window* window = SDL_CreateWindow(spec.title.c_str(), x, y, spec.width, spec.height,
                                           SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
     if (!window) { if (err) *err = SDL_GetError(); return nullptr; }
     std::unique_ptr<okay::platform::Window> pw = okay::platform::WrapSdl2Window(window);   // the seam view of the window

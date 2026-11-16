@@ -66,8 +66,13 @@
 #include "LauncherTips.hpp"
 #ifdef OKAY_HAVE_OKAYUI
 #include "OkayUIHost.hpp"
+#include "OkayUIHostPlatform.hpp"   // the same input from okay::platform events (the own renderer)
 #include "OkayUIHostImGui.hpp"   // is an ImGui popup in the way of the hosted rectangle?
 #include "okay/UI/OkayUI.hpp"
+#ifdef OKAY_LAUNCHER_HAVE_OKAYUI_RENDER
+#include "okay/UI/OkayUIRender.hpp"           // OkayUI's draw data on our painter (the own renderer: no SDL_Renderer to hand it)
+#include "okay/UI/OkayUIRenderBackends.hpp"
+#endif
 #include "OkayUIScreens.hpp"
 #include "OkayUIPanels.hpp"
 #else
@@ -154,7 +159,7 @@ std::string g_exeDir = ".";
 std::string g_selfPath;   // absolute path of the running launcher exe
 std::vector<std::string> g_libraryDirs;  // extra folders to scan for games (persisted)
 // The painter image textures (covers, avatars, chat images, emoji) are uploaded to, per "render slot":
-// 0 = the launcher window (the drawing seam's painter, LauncherGfx.hpp), 1 = the chat's own window (sdl only).
+// 0 = the launcher window (the drawing seam's painter, LauncherGfx.hpp), 1 = the chat's own window (its own seam).
 // Textures belong to one painter, so every texture cache keeps a copy per slot. g_rslot is switched while the
 // chat window's frame is drawn.
 okay::platform::Painter* g_slotPainter[2] = {nullptr, nullptr};
@@ -176,12 +181,18 @@ void TexSize(okay::ui2d::Tex t, int* w, int* h) {
     if (t && g_texPainter) g_texPainter->QueryTexture(t, w, h);
 }
 bool g_chatSeparate = true;              // chat in its own window (persisted; off = floating inside the launcher)
-bool g_chatOwnWindowAllowed = true;      // false with the own renderer (OKAY_LAUNCHER_RENDERER=own): the chat's own window is sdl only
-static bool ChatSeparate() { return g_chatSeparate && g_chatOwnWindowAllowed; }   // the chat really is in its own window
+static bool ChatSeparate() { return g_chatSeparate; }   // the chat is in its own window (sdl and own renderers alike)
 std::unique_ptr<okay::launchergfx::Gfx> g_gfx;   // the drawing seam: window, painter, ImGui backends (set in main())
 // The backend that made the launcher's window: sdl2 for the sdl renderer, the platform default for the own one.
 okay::platform::Backend& WindowSeam() { return g_gfx ? g_gfx->Backend() : SdlSeam(); }
 bool g_chatInOwnWindow = false;          // true while drawing the chat window's own frame
+// Ask for the user's attention (Window::Flash: the task-bar button flashes on Windows, the urgency hint on X11).
+// OKAY_LAUNCHER_FLASH_LOG=1 logs each request (the Xvfb check reads it).
+static void FlashWindowFor(okay::platform::Window& w, okay::platform::FlashMode m, const char* why) {
+    const bool asked = w.Flash(m);
+    if (const char* fl = std::getenv("OKAY_LAUNCHER_FLASH_LOG"); fl && *fl && std::strcmp(fl, "0") != 0)
+        std::fprintf(stderr, "launcher: flash %s: %s\n", why, asked ? "asked" : "not supported here");
+}
 
 // Resolve an engine/player exe by name, searching next to the launcher and in the
 // Tools/ subfolder (defined fully below; forward-declared for the updater).
@@ -4695,7 +4706,9 @@ static void SyncNewsHistory() {
 // With Settings > Appearance > UI backend on "OkayUI (preview)" (or OKAY_UI_BACKEND=okayui), the pages that have an OkayUI
 // port (What's New) are drawn by OkayUI into a rectangle the ImGui page reserves; everything else stays Dear ImGui. OkayUI
 // shares ImGui's SDL_Renderer and is flushed after ImGui's draw data, so it needs no window or renderer of its own.
-okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events
+// With the own renderer (OKAY_LAUNCHER_RENDERER=own) its input comes from okay::platform events and its draw data goes through
+// OkayUI's render interface onto the launcher's painter (OkayUIRender.hpp, the Painter backend), after ImGui's.
+okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL (or okay::platform) events
 okayuihost::Region         g_okayRegion;  // where the hosted page was last frame: who owns the mouse there
 
 static void OkayUIFrameBegin() {
@@ -4708,18 +4721,50 @@ static void OkayUIFrameBegin() {
     ImGuiIO& io = ImGui::GetIO();
     g_okayRegion.NextFrame();
     int mx = 0, my = 0;
-    const Uint32 mb = SDL_GetMouseState(&mx, &my);
+    const std::uint32_t mb = WindowSeam().MouseState(&mx, &my);   // SDL_GetMouseState on the sdl2 backend
     const bool blocked = io.WantCaptureMouse && !g_okayRegion.Owns((float)mx, (float)my);
     const bool keys = OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;   // an ImGui field being pressed or typed in keeps the keys
-    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0,
-                                         (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys));
+    OkayUI::BeginFrame(g_okayInput.Build((float)mx, (float)my, (mb & okay::platform::MouseMask(okay::platform::MouseLeft)) != 0,
+                                         (mb & okay::platform::MouseMask(okay::platform::MouseRight)) != 0, blocked, keys));
+}
+#ifdef OKAY_LAUNCHER_HAVE_OKAYUI_RENDER
+static std::unique_ptr<OkayUI::render::Backend> g_okayRenderBackend;   // the own renderer: OkayUI on the launcher's painter
+static std::unique_ptr<OkayUI::render::Renderer> g_okayRenderer;
+#endif
+// After ImGui's draw data: OkayUI on top. The sdl renderer hands OkayUI its SDL_Renderer; the own one draws OkayUI's draw data
+// on the painter through OkayUI's render interface.
+static void OkayUIFrameEnd() {
+    if (void* ren = g_gfx->SdlRenderer()) { OkayUI::EndFrame((SDL_Renderer*)ren); return; }
+    int ww = 0, wh = 0, fw = 0, fh = 0;
+    g_gfx->Window().GetSize(ww, wh);
+    g_gfx->Painter().OutputSize(&fw, &fh);
+    OkayUI::EndFrameData(ww, wh);   // (also builds OkayUI's toasts for that size)
+#ifdef OKAY_LAUNCHER_HAVE_OKAYUI_RENDER
+    if (ww <= 0 || wh <= 0 || fw <= 0 || fh <= 0) return;
+    if (!g_okayRenderer) {
+        g_okayRenderBackend = OkayUI::render::CreatePainterBackend(g_gfx->Painter());
+        g_okayRenderer.reset(new OkayUI::render::Renderer(*g_okayRenderBackend));
+    }
+    OkayUI::render::FrameInfo fi;
+    fi.fbWidth = fw; fi.fbHeight = fh; fi.dpi = (float)fw / (float)ww;
+    const OkayUI::render::Stats st = g_okayRenderer->Render(OkayUI::GetDrawData(), fi);
+    static bool said = false;
+    if (st.refused && !said) { said = true; std::fprintf(stderr, "launcher: an OkayUI frame was not drawn (%s)\n", st.message.c_str()); }
+#endif
+}
+static void OkayUIRenderRelease() {
+#ifdef OKAY_LAUNCHER_HAVE_OKAYUI_RENDER
+    if (g_okayRenderer) g_okayRenderer->ReleaseAll();
+    g_okayRenderer.reset();
+    g_okayRenderBackend.reset();
+#endif
 }
 // ImGui must not treat typing in a hosted OkayUI field as shortcuts or text for something else.
 static void OkayUIClaimKeyboard() {
     if (!OkayUI::WantsTextInput()) return;
     GImGui->PlatformImeData.WantTextInput = true;
     ImGui::SetNextFrameWantCaptureKeyboard(true);
-    SDL_StartTextInput();
+    WindowSeam().StartTextInput();
 }
 #endif
 
@@ -10798,15 +10843,18 @@ static const UINT    OKAY_TRAY_UID = 1;
 // itself (single-instance). Registered in main() before the hook can fire.
 static UINT          g_showMsg = 0;
 
-static HWND OkayWindowHWND(SDL_Window* w) {
+// The HWND of a launcher window: an sdl2 window's through SDL_GetWindowWMInfo, the own Win32 backend's is its native handle.
+static HWND OkayWindowHWND(okay::platform::Window* w) {
+    if (!w) return nullptr;
+    if (w->Kind() != okay::platform::BackendKind::Sdl2) return (HWND)w->NativeHandle();
     SDL_SysWMinfo wm; SDL_VERSION(&wm.version);
-    if (w && SDL_GetWindowWMInfo(w, &wm) && wm.subsystem == SDL_SYSWM_WINDOWS)
+    if (SDL_GetWindowWMInfo((SDL_Window*)w->NativeHandle(), &wm) && wm.subsystem == SDL_SYSWM_WINDOWS)
         return wm.info.win.window;
     return nullptr;
 }
 // Returns true only if the tray icon was actually registered. Retained for
 // possible future use; the launcher no longer hides itself to the tray.
-[[maybe_unused]] static bool OkayTrayAdd(SDL_Window* w) {
+[[maybe_unused]] static bool OkayTrayAdd(okay::platform::Window* w) {
     if (g_trayActive) return true;
     g_trayHwnd = OkayWindowHWND(w);
     if (!g_trayHwnd) return false;
@@ -10849,10 +10897,10 @@ static void OkayTrayShowMenu() {
     if (cmd == 1)      g_trayRestoreReq = true;
     else if (cmd == 2) g_trayQuitReq = true;
 }
-// SDL pumps Win32 messages on the main thread, so this hook runs there too; it
-// just flags work the main loop performs (any left-click opens the app; a
-// right-click raises the menu; a broadcast from a 2nd launch also surfaces us).
-static void SDLCALL OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, Uint64 wParam, Sint64 lParam) {
+// The platform backend (SDL, or our own Win32 window procedure) pumps Win32 messages on the main thread, so this hook
+// (okay::platform::Backend::SetNativeMessageHook) runs there too; it just flags work the main loop performs (any
+// left-click opens the app; a right-click raises the menu; a broadcast from a 2nd launch also surfaces us).
+static void OkayMsgHook(void* userdata, void* hWnd, unsigned int msg, std::uint64_t wParam, std::int64_t lParam) {
     (void)userdata; (void)hWnd; (void)wParam;
     if (msg == WM_OKAYTRAY) {
         UINT ev = (UINT)(lParam & 0xFFFF);
@@ -16651,14 +16699,15 @@ static void DrawToastOverlay() {
 }
 
 // ---- The chat's own window (Steam-style) ------------------------------------
-// A second SDL window + renderer + ImGui context hosting DrawChatWindow, so
-// chat can sit beside a game or stay open while the launcher is minimized.
-// Created on first open; closing it just hides it.
+// A second window with its own drawing seam (LauncherGfx.hpp: the same renderer as the launcher, sdl or own) and its own
+// ImGui context hosting DrawChatWindow, so chat can sit beside a game or stay open while the launcher is minimized.
+// Created on first open; closing it just hides it. Its image textures are uploaded again on its painter (render slot 1):
+// neither SDL renderers nor GL contexts share textures.
 struct ChatWindowHost {
-    SDL_Window* win = nullptr; SDL_Renderer* ren = nullptr; ImGuiContext* ctx = nullptr;
+    std::unique_ptr<okay::launchergfx::Gfx> gfx;   // the window, the painter, ImGui's two backends
+    okay::platform::Window* pw = nullptr;          // gfx->Window(): window state asks go through it
+    ImGuiContext* ctx = nullptr;
     ImFont* mono = nullptr; Uint32 id = 0; bool shown = false;
-    std::unique_ptr<okay::platform::Window> pw;   // a non-owning seam view of `win` (okay::platform::WrapSdl2Window): window state asks go through it
-    std::unique_ptr<okay::platform::Painter> painter;   // a non-owning painter over `ren`: the chat's image textures (render slot 1)
 };
 static ChatWindowHost g_chatHost;
 // Keep a window reachable: when too little of it (or its title bar) is on any
@@ -16683,34 +16732,35 @@ static void KeepWindowOnScreen(okay::platform::Window* w) {
     w->SetPosition(b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
 }
 static void ChatHostSaveGeometry() {
-    if (!g_chatHost.win || !g_chatHost.pw || !g_chatHost.shown) return;
+    if (!g_chatHost.pw || !g_chatHost.shown) return;
     if (g_chatHost.pw->IsMinimized()) return;   // (its position is meaningless then)
     g_chatHost.pw->GetPosition(g_chatWinX, g_chatWinY);
     g_chatHost.pw->GetSize(g_chatWinW, g_chatWinH);
 }
 static bool ChatHostCreate() {
-    if (g_chatHost.win) return true;
-    ImGuiContext* mainCtx = ImGui::GetCurrentContext();
-    const int x = g_chatWinX >= 0 ? g_chatWinX : (int)SDL_WINDOWPOS_CENTERED, y = g_chatWinY >= 0 ? g_chatWinY : (int)SDL_WINDOWPOS_CENTERED;
-    g_chatHost.win = SDL_CreateWindow("OkaySpace Chat", x, y, g_chatWinW, g_chatWinH,
-                                      SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN);
-    if (!g_chatHost.win) return false;
-    g_chatHost.pw = okay::platform::WrapSdl2Window(g_chatHost.win);
-    if (!g_chatHost.pw) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; return false; }
+    if (g_chatHost.gfx) return true;
+    namespace lg = okay::launchergfx;
+    lg::WindowSpec spec;
+    spec.title = "OkaySpace Chat";
+    if (g_chatWinX >= 0) spec.x = g_chatWinX;
+    if (g_chatWinY >= 0) spec.y = g_chatWinY;
+    spec.width = g_chatWinW; spec.height = g_chatWinH;
+    spec.vsync = false;   // the launcher's present already paces the loop
+    std::string err;
+    g_chatHost.gfx = g_gfx && g_gfx->Kind() == lg::RendererKind::Own ? lg::CreateOwnGfx(spec, &err) : lg::CreateSdlGfx(spec, &err);
+    if (!g_chatHost.gfx) { std::fprintf(stderr, "launcher: the chat window could not be made (%s)\n", err.c_str()); return false; }
+    std::fprintf(stderr, "launcher: chat window %s\n", g_chatHost.gfx->Describe().c_str());
+    g_chatHost.pw = &g_chatHost.gfx->Window();
     g_chatHost.pw->SetMinimumSize(520, 380);
-    okay::SetAppIcon(g_chatHost.win);
-    // No VSync here: the launcher's present already paces the loop.
-    g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, SDL_RENDERER_ACCELERATED);
-    if (!g_chatHost.ren) g_chatHost.ren = SDL_CreateRenderer(g_chatHost.win, -1, 0);
-    if (!g_chatHost.ren) { SDL_DestroyWindow(g_chatHost.win); g_chatHost.win = nullptr; g_chatHost.pw.reset(); return false; }
-    g_chatHost.painter = okay::platform::WrapSdl2Renderer(g_chatHost.ren);
-    g_slotPainter[1] = g_chatHost.painter.get();
+    okay::SetAppIconOn(*g_chatHost.pw);
+    g_slotPainter[1] = &g_chatHost.gfx->Painter();
     g_chatHost.id = g_chatHost.pw->Id();
+    ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     g_chatHost.ctx = ImGui::CreateContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
     ImGui::GetIO().IniFilename = nullptr;
     ImGui::GetIO().ConfigDebugHighlightIdConflicts = false;
-    {   // same fonts as the launcher (each renderer needs its own atlas texture)
+    {   // same fonts as the launcher (each painter needs its own atlas texture)
         ImFontConfig fc;
         fc.OversampleH = 2; fc.OversampleV = 2; fc.PixelSnapH = true;
         if (!ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(RobotoMedium_compressed_data_base85, 17.0f, &fc))
@@ -16718,10 +16768,34 @@ static bool ChatHostCreate() {
         MergeEmojiFallback(17.0f);
         g_chatHost.mono = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedBase85TTF(JetBrainsMono_compressed_data_base85, 16.0f, &fc);
     }
-    ImGui_ImplSDL2_InitForSDLRenderer(g_chatHost.win, g_chatHost.ren);
-    ImGui_ImplSDLRenderer2_Init(g_chatHost.ren);
+    const bool ok = g_chatHost.gfx->InitImGui();   // with the chat's context current: the backends belong to it
     ImGui::SetCurrentContext(mainCtx);
+    if (!ok) {
+        std::fprintf(stderr, "launcher: the chat window's ImGui backends did not start\n");
+        ImGui::DestroyContext(g_chatHost.ctx); g_chatHost.ctx = nullptr;
+        ImGui::SetCurrentContext(mainCtx);
+        g_slotPainter[1] = nullptr; g_chatHost.pw = nullptr; g_chatHost.gfx.reset();
+        return false;
+    }
     return true;
+}
+// Free the chat window (at exit): its ImGui backends with its context current, then the context, then the window.
+// The image textures of render slot 1 die with its painter.
+static void ChatHostDestroy() {
+    if (!g_chatHost.gfx) return;
+    ChatHostSaveGeometry();
+    ImGuiContext* mainCtx = ImGui::GetCurrentContext();
+    if (g_chatHost.ctx) {
+        ImGui::SetCurrentContext(g_chatHost.ctx);
+        g_chatHost.gfx->ShutdownImGui();
+        ImGui::DestroyContext(g_chatHost.ctx);
+        g_chatHost.ctx = nullptr;
+    }
+    ImGui::SetCurrentContext(mainCtx);
+    g_slotPainter[1] = nullptr;
+    g_chatHost.pw = nullptr;
+    g_chatHost.gfx.reset();
+    g_chatHost.shown = false;
 }
 // Show/hide the window to match g_chatWinOpen (and the setting).
 static void ChatHostSync() {
@@ -16729,7 +16803,7 @@ static void ChatHostSync() {
     if (want && !g_chatHost.shown) {
         if (!ChatHostCreate()) { g_chatSeparate = false; return; }   // fall back to the in-launcher window
         g_chatHost.pw->Show();
-        KeepWindowOnScreen(g_chatHost.pw.get());
+        KeepWindowOnScreen(g_chatHost.pw);
         g_chatHost.pw->Raise();
         g_chatHost.shown = true;
     } else if (!want && g_chatHost.shown) {
@@ -16741,10 +16815,19 @@ static void ChatHostSync() {
 static bool ChatHostFocused() {
     return g_chatHost.shown && g_chatHost.pw && g_chatHost.pw->IsFocused();
 }
-static void ChatHostRaise() { if (g_chatHost.shown && g_chatHost.pw) { g_chatHost.pw->Restore(); KeepWindowOnScreen(g_chatHost.pw.get()); g_chatHost.pw->Raise(); } }
-// Route an SDL event to the chat window; true when it belonged to it.
+static void ChatHostRaise() { if (g_chatHost.shown && g_chatHost.pw) { g_chatHost.pw->Restore(); KeepWindowOnScreen(g_chatHost.pw); g_chatHost.pw->Raise(); } }
+// A file dropped onto the chat window: send it to the open conversation.
+static void ChatHostDrop(const std::string& dropped) {
+    if (!g_chatDropOk || (g_chatDropUid.empty() && g_chatDropGroup <= 0)) { Toast("Open a conversation to send a file", 2); return; }
+    std::error_code fec; auto fsz = fs::file_size(fs::path(dropped), fec);
+    if (fec || fs::is_directory(dropped, fec)) Toast("Only files can be sent", 2);
+    else if ((unsigned long long)fsz > kMaxChatUpload) Toast("Files are limited to 25 MB", 2);
+    else if (g_attBusy) Toast("An upload is already in progress", 2);
+    else { StartChatUpload(dropped, g_chatDropUid, g_chatDropGroup); Toast("Sending " + fs::path(dropped).filename().string(), 1); }
+}
+// Route an SDL event to the chat window (the sdl renderer); true when it belonged to it.
 static bool ChatHostEvent(const SDL_Event& e) {
-    if (!g_chatHost.win) return false;
+    if (!g_chatHost.gfx) return false;
     Uint32 wid = 0;
     switch (e.type) {
         case SDL_WINDOWEVENT: wid = e.window.windowID; break;
@@ -16762,17 +16845,24 @@ static bool ChatHostEvent(const SDL_Event& e) {
     if (e.type == SDL_DROPFILE) {   // dropped onto the chat: send it to the open conversation
         if (!e.drop.file) return true;
         std::string dropped = e.drop.file; SDL_free(e.drop.file);
-        if (!g_chatDropOk || (g_chatDropUid.empty() && g_chatDropGroup <= 0)) { Toast("Open a conversation to send a file", 2); return true; }
-        std::error_code fec; auto fsz = fs::file_size(fs::path(dropped), fec);
-        if (fec || fs::is_directory(dropped, fec)) Toast("Only files can be sent", 2);
-        else if ((unsigned long long)fsz > kMaxChatUpload) Toast("Files are limited to 25 MB", 2);
-        else if (g_attBusy) Toast("An upload is already in progress", 2);
-        else { StartChatUpload(dropped, g_chatDropUid, g_chatDropGroup); Toast("Sending " + fs::path(dropped).filename().string(), 1); }
+        ChatHostDrop(dropped);
         return true;
     }
     ImGuiContext* mainCtx = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(g_chatHost.ctx);
-    ImGui_ImplSDL2_ProcessEvent(&e);
+    g_chatHost.gfx->ProcessSdlEvent(&e);
+    ImGui::SetCurrentContext(mainCtx);
+    return true;
+}
+// The same for an okay::platform event (the own renderer: the launcher's PollEvent reads every window's events).
+static bool ChatHostPlatformEvent(const okay::platform::Event& e) {
+    if (!g_chatHost.gfx || e.windowId == 0 || e.windowId != g_chatHost.id) return false;
+    using ET = okay::platform::EventType;
+    if (e.type == ET::WindowClose) { g_chatWinOpen = false; return true; }
+    if (e.type == ET::DropFile) { if (!e.text.empty()) ChatHostDrop(e.text); return true; }
+    ImGuiContext* mainCtx = ImGui::GetCurrentContext();
+    ImGui::SetCurrentContext(g_chatHost.ctx);
+    g_chatHost.gfx->FeedEvent(e);
     ImGui::SetCurrentContext(mainCtx);
     return true;
 }
@@ -16810,18 +16900,16 @@ static void ChatHostFrame(okay::account::AccountService& account) {
     ImGui::SetCurrentContext(g_chatHost.ctx);
     ImGui::GetStyle() = style; ImGui::GetIO().FontGlobalScale = fontScale;
     g_rslot = 1; g_fontMono = g_chatHost.mono; g_chatInOwnWindow = true;
-    ImGui_ImplSDLRenderer2_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
+    g_chatHost.gfx->NewFrame();
     ImGui::NewFrame();
     DrawChatWindow(account);
     DrawIncomingCall();
     okay::filedialog::DrawBuiltin();   // a file picked from the chat (attach, emoji) opens here, in the chat's own window
     DrawToastOverlay();
     ImGui::Render();
-    SDL_SetRenderDrawColor(g_chatHost.ren, 21, 23, 29, 255);
-    SDL_RenderClear(g_chatHost.ren);
-    ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), g_chatHost.ren);
-    SDL_RenderPresent(g_chatHost.ren);
+    g_chatHost.gfx->BeginFrame(21, 23, 29);
+    g_chatHost.gfx->RenderImGui(ImGui::GetDrawData());
+    g_chatHost.gfx->Present();
     g_rslot = 0; g_fontMono = prevMono; g_chatInOwnWindow = false;
     ImGui::SetCurrentContext(mainCtx);
 }
@@ -18183,21 +18271,14 @@ int main(int argc, char** argv) {
     const bool ownRenderer = g_gfx->Kind() == okay::launchergfx::RendererKind::Own;
     g_launcherPw = &g_gfx->Window();   // the seam view; games ask us to come forward (Invite friends)
     okay::platform::Window& mainWin = *g_launcherPw;
-    SDL_Window* window = (SDL_Window*)g_gfx->SdlWindow();   // null when the window is not an SDL one (OKAY_PLATFORM_BACKEND=own)
     okay::platform::Painter& painter = g_gfx->Painter();
     mainWin.SetMinimumSize(720, 480);   // the fixed layout needs this much
-    if (window) okay::SetAppIcon(window);   // placeholder OkaySpace logo
+    okay::SetAppIconOn(mainWin);   // placeholder OkaySpace logo (Window::SetIcon: SDL's or our own backend's)
 #if defined(_WIN32)
-    SDL_SetWindowsMessageHook(OkayMsgHook, nullptr);   // receive tray-icon clicks
+    if (!WindowSeam().SetNativeMessageHook(OkayMsgHook, nullptr))   // receive tray-icon clicks and a 2nd launch's call
+        std::fprintf(stderr, "launcher: no window-message hook on this backend (tray clicks and a second launch are not seen)\n");
 #endif
     g_slotPainter[0] = &painter;   // lets GameCover() and the rest upload image textures
-    if (ownRenderer) {
-        g_chatOwnWindowAllowed = false;   // the chat's own window is sdl only: it stays inside the launcher
-        if (g_uiBackend == okayuibackend::Backend::OkayUI) {   // hosted OkayUI screens read SDL events: Dear ImGui with the own renderer
-            std::fprintf(stderr, "launcher: the OkayUI backend needs the sdl renderer; using Dear ImGui\n");
-            g_uiBackend = okayuibackend::Backend::ImGui;
-        }
-    }
     // Paint a loading frame into the back buffer, reveal the window, then present
     // again so the reveal lands on the splash (not a black frame), whatever the
     // platform's show-vs-present ordering.
@@ -18496,6 +18577,10 @@ int main(int argc, char** argv) {
             okay::platform::Event pe;
             while (g_gfx->PollEvent(pe)) {
                 using ET = okay::platform::EventType;
+                if (ChatHostPlatformEvent(pe)) continue;   // belonged to the chat's own window
+#ifdef OKAY_HAVE_OKAYUI
+                okayuihost::FeedPlatform(g_okayInput, pe);   // typed text, key edges and the wheel for hosted OkayUI screens
+#endif
                 if (pe.type == ET::Quit) closeConfirm = true;
                 else if (pe.type == ET::WindowFocusGained && pe.windowId == mainWin.Id()) g_launcherRefocused = true;
                 else if (pe.type == ET::WindowClose && pe.windowId == mainWin.Id()) closeConfirm = true;
@@ -18651,10 +18736,8 @@ int main(int argc, char** argv) {
                     UpsertNotif("update:" + latest, "Test build available",
                                 g_upAvailableTitle + " (v" + latest + ") is ready. It can be broken. Install it from the sidebar.", 3, -1);
                 }
-#if SDL_VERSION_ATLEAST(2, 0, 16)
-                if (window && (mainWin.IsMinimized() || !mainWin.IsFocused()))
-                    SDL_FlashWindow(window, SDL_FLASH_UNTIL_FOCUSED);   // taskbar attention while minimized/unfocused
-#endif
+                if (mainWin.IsMinimized() || !mainWin.IsFocused())
+                    FlashWindowFor(mainWin, okay::platform::FlashMode::UntilFocused, "launcher (update available)");   // taskbar attention while minimized/unfocused
             }
             if (us == Up_Updated || us == Up_UpToDate) {   // a real check/install supersedes the hint
                 if (!g_upAvailable.empty() && (us == Up_Updated || CompareVersions(LocalVersion(), g_upAvailable) >= 0)) { g_upAvailable.clear(); g_upAvailableTitle.clear(); }
@@ -18678,9 +18761,8 @@ int main(int argc, char** argv) {
             static Uint32 nextRing = 0;
             if (okay::platform::TicksMs32() >= nextRing) {
                 PlayChatChime(); nextRing = okay::platform::TicksMs32() + 2200;
-#if SDL_VERSION_ATLEAST(2, 0, 16)
-                if (SDL_Window* fw = g_chatHost.shown ? g_chatHost.win : window) SDL_FlashWindow(fw, SDL_FLASH_BRIEFLY);
-#endif
+                if (g_chatHost.shown && g_chatHost.pw) FlashWindowFor(*g_chatHost.pw, okay::platform::FlashMode::Briefly, "chat (incoming call)");
+                else FlashWindowFor(mainWin, okay::platform::FlashMode::Briefly, "launcher (incoming call)");
             }
         }
         ChatHostSync();
@@ -18698,7 +18780,7 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
         okayFrame = false;
 #ifdef OKAY_HAVE_OKAYUI
-        if (g_uiBackend == okayuibackend::Backend::OkayUI && !ownRenderer) { OkayUIFrameBegin(); okayFrame = true; }   // (sdl renderer only)
+        if (g_uiBackend == okayuibackend::Backend::OkayUI) { OkayUIFrameBegin(); okayFrame = true; }
 #endif
 
         // ---- Exit / Minimize confirmation (raised by the window [X] or Alt+F4) ----
@@ -27105,7 +27187,7 @@ int main(int argc, char** argv) {
         g_gfx->BeginFrame(30, 30, 32);
         g_gfx->RenderImGui(ImGui::GetDrawData());
 #ifdef OKAY_HAVE_OKAYUI
-        if (okayFrame) OkayUI::EndFrame((SDL_Renderer*)g_gfx->SdlRenderer());   // on top of everything ImGui drew, through the same renderer (sdl only)
+        if (okayFrame) OkayUIFrameEnd();   // on top of everything ImGui drew, through the same renderer or painter
 #endif
         g_gfx->Present();
         if (frameStats.Active()) {
@@ -27161,10 +27243,14 @@ int main(int argc, char** argv) {
     }
 #if defined(_WIN32)
     OkayTrayRemove();   // make sure no stray tray icon lingers after exit
+    WindowSeam().SetNativeMessageHook(nullptr, nullptr);
+#endif
+    ChatHostDestroy();       // the chat window: its ImGui backends, its context, its painter and window
+#ifdef OKAY_HAVE_OKAYUI
+    OkayUIRenderRelease();   // OkayUI's textures on the launcher's painter (own renderer)
 #endif
     g_gfx->ShutdownImGui();
     ImGui::DestroyContext();
-    g_chatHost.pw.reset();   // the seam views go before the windows they look at
     g_slotPainter[0] = nullptr;
     g_launcherPw = nullptr;
     g_gfx.reset();           // the painter, then the window (sdl: SDL_DestroyRenderer, SDL_DestroyWindow)

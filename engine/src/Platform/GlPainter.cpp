@@ -103,9 +103,16 @@ struct GTex {
 
 inline std::uint8_t Mul255(int a, int b) { return (std::uint8_t)((a * b + 127) / 255); }
 
+class GlPainter;
+// The painter whose context this thread made current last. Every painter call that touches GL makes its own context
+// current first when another painter's is (two windows, two contexts: the launcher and its chat window). The launcher
+// draws from one thread only; a program that makes contexts current itself must call Painter calls on that thread too.
+GlPainter* g_current = nullptr;
+
 class GlPainter final : public Painter {
 public:
     GlPainter(Window& w, const Gl& gl) : m_win(w), m_gl(gl) {
+        g_current = this;   // CreateGLContext left our context current
         GLint_ mx = 0;
         m_gl.GetIntegerv(kMaxTextureSize, &mx);
         m_maxTex = mx > 0 ? mx : 2048;
@@ -122,18 +129,21 @@ public:
     }
     ~GlPainter() override {
         m_win.MakeCurrent();
+        g_current = this;
         ReleaseCachedTextures();
         for (GTex* t : m_texs) { m_gl.DeleteTextures(1, &t->id); delete t; }
         m_texs.clear();
         m_win.DestroyGLContext();
+        g_current = nullptr;   // no context is current now
     }
 
     PainterKind Kind() const override { return PainterKind::OpenGL; }
     void* NativeRenderer() override { return nullptr; }
 
     // ---- target -------------------------------------------------------------------------------
-    void OutputSize(int* w, int* h) override { Sync(false); if (w) *w = m_w; if (h) *h = m_h; }
+    void OutputSize(int* w, int* h) override { Use(); Sync(false); if (w) *w = m_w; if (h) *h = m_h; }
     void Clear() override {
+        Use();
         Sync(false);
         m_gl.Disable(kScissorTest);
         m_gl.ClearColor(m_r / 255.0f, m_g / 255.0f, m_b / 255.0f, m_a / 255.0f);
@@ -147,6 +157,7 @@ public:
     // ---- clip and scale ---------------------------------------------------------------------------
     void SetClipRect(const ui2d::Rect* r) override {
         if (r) { m_clipOn = true; m_clip = *r; } else m_clipOn = false;
+        Use();
         ApplyClip();
     }
     void GetClipRect(ui2d::Rect* r) override { if (r) *r = m_clipOn ? m_clip : ui2d::Rect{0, 0, 0, 0}; }
@@ -154,6 +165,7 @@ public:
     void SetScale(float sx, float sy) override {
         if (!(sx > 0 && sy > 0 && std::isfinite(sx) && std::isfinite(sy))) return;
         m_sx = sx; m_sy = sy;
+        Use();
         Project();
         ApplyClip();
     }
@@ -183,6 +195,7 @@ public:
         const float ox = 0.5f / m_sx, oy = 0.5f / m_sy;
         const ui2d::RGBA c{m_r, m_g, m_b, m_a};
         ui2d::Vertex v[3] = {{{x0 + ox, y0 + oy}, c, {0, 0}}, {{x1 + ox, y1 + oy}, c, {0, 0}}, {{x1 + ox, y1 + oy}, c, {0, 0}}};
+        Use();
         Bind(nullptr, m_blend);
         Pointers(v);
         m_gl.DrawArrays(kLines, 0, 2);
@@ -192,6 +205,7 @@ public:
     // ---- textures --------------------------------------------------------------------------------
     ui2d::Tex CreateTexture(const TextureDesc& d, const std::uint8_t* rgba) override {
         if (d.width <= 0 || d.height <= 0 || d.width > m_maxTex || d.height > m_maxTex) return nullptr;
+        Use();
         GTex* t = new GTex();
         t->w = d.width; t->h = d.height; t->blend = d.blend; t->scale = d.scale;
         m_gl.GenTextures(1, &t->id);
@@ -220,6 +234,7 @@ public:
         if (r) rc = *r;
         if (rc.x < 0 || rc.y < 0 || rc.w <= 0 || rc.h <= 0 || rc.x + (long long)rc.w > t->w || rc.y + (long long)rc.h > t->h) return false;
         if (pitch < rc.w * 4) return false;
+        Use();
         m_gl.BindTexture(kTexture2D, t->id);
         m_bound = t->id;
         if (pitch % 4 == 0) {
@@ -237,6 +252,7 @@ public:
     void DestroyTexture(ui2d::Tex tex) override {
         GTex* t = T(tex);
         if (!t) return;
+        Use();
         if (m_bound == t->id) m_bound = 0;
         m_gl.DeleteTextures(1, &t->id);
         m_texs.erase(t);
@@ -247,6 +263,7 @@ public:
         GTex* t = T(tex);
         if (!t || t->scale == m) return;
         t->scale = m;
+        Use();
         m_gl.BindTexture(kTexture2D, t->id);
         m_bound = t->id;
         const GLint_ f = m == ScaleMode::Linear ? (GLint_)kLinear : (GLint_)kNearest;
@@ -290,6 +307,7 @@ public:
             }
             src = m_vtmp.data();
         }
+        Use();
         Bind(t, t ? t->blend : m_blend);
         Pointers(src);
         const int tri = n - n % 3;
@@ -307,9 +325,10 @@ public:
     }
 
     // ---- the frame ------------------------------------------------------------------------------
-    void Present() override { m_win.SwapBuffers(); }
-    bool SetVSync(bool on) override { return m_win.SetSwapInterval(on ? 1 : 0) && on; }
+    void Present() override { Use(); m_win.SwapBuffers(); }
+    bool SetVSync(bool on) override { Use(); return m_win.SetSwapInterval(on ? 1 : 0) && on; }
     bool ReadPixels(std::vector<std::uint8_t>& rgba, int& w, int& h) override {
+        Use();
         Sync(false);
         w = m_w; h = m_h;
         if (w <= 0 || h <= 0) return false;
@@ -322,6 +341,7 @@ public:
     }
 
 private:
+    void Use() { if (g_current != this) { m_win.MakeCurrent(); g_current = this; } }
     GTex* T(ui2d::Tex t) const {
         GTex* s = (GTex*)t;
         return s && m_texs.count(s) ? s : nullptr;

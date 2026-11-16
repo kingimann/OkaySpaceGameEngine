@@ -5,7 +5,9 @@
 //                         okay::platform::Painter (the OpenGL painter, the software painter, even the sdl2 one), and
 //                         serves ImGui's texture requests (ImTextureData: create, update, destroy) as painter textures.
 //   ImGuiPlatformGlue     feeds ImGui from okay::platform: window size and DPI, mouse, keys, text input, wheel, focus,
-//                         clipboard and the mouse cursor shape.
+//                         clipboard and the mouse cursor shape; and tells the window where ImGui's text caret is, so the
+//                         input method's candidate window opens there (Window::SetTextInputArea). One glue per ImGui
+//                         context and window: the launcher and its chat window each have one.
 //
 // Written from Dear ImGui's public API contract (imgui.h: ImDrawData, ImDrawCmd, ImTextureData, ImGuiIO,
 // ImGuiPlatformIO) and the okay::platform interfaces. Not copied or ported from ImGui's example backends or from SDL.
@@ -21,6 +23,8 @@
 struct ImDrawData;
 struct ImTextureData;
 struct ImGuiContext;
+struct ImGuiViewport;
+struct ImGuiPlatformImeData;
 
 namespace okay::launchergfx {
 
@@ -66,17 +70,27 @@ public:
     /// OKAY_LAUNCHER_INPUT_LOG=1: log every mouse button, key and text event ImGui is given (the Xvfb test reads it).
     void SetInputLog(bool on) { m_log = on; }
 
+    /// The last caret rectangle given to the window for the input method (window pixels), and whether the window took it.
+    /// False when ImGui has not asked for one yet.
+    bool LastImeArea(int& x, int& y, int& h, bool* taken = nullptr) const {
+        x = m_imeX; y = m_imeY; h = m_imeH;
+        if (taken) *taken = m_imeTaken;
+        return m_imeSet;
+    }
+
 private:
     okay::platform::Backend& m_b;
     okay::platform::Window& m_w;
     std::uint64_t m_lastTicks = 0;
-    int m_cursor = -2;          // the ImGuiMouseCursor last applied (-2 = none yet)
     bool m_textOn = false;
     bool m_mouseInside = false;
     bool m_log = false;
     std::string m_clip;         // keeps the clipboard text alive for ImGui
+    bool m_imeSet = false, m_imeTaken = false;
+    int m_imeX = 0, m_imeY = 0, m_imeH = 0;
     static const char* GetClipboard(ImGuiContext* ctx);
     static void SetClipboard(ImGuiContext* ctx, const char* text);
+    static void SetImeData(ImGuiContext* ctx, ImGuiViewport* vp, ImGuiPlatformImeData* data);
 };
 
 /// The ImGuiKey for one of our physical keys (USB HID numbering); ImGuiKey_None (0) when ImGui has no such key.

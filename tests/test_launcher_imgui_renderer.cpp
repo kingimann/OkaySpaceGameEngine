@@ -5,7 +5,10 @@
 //   barycentrically, texel times vertex colour, source-over blending.
 // Scenes: flat and gradient shapes with alpha, nested clip rectangles, a user texture (nearest) with a tint, text
 // (ImGui's font atlas, served through ImTextureData requests, sampled linearly), a framebuffer scale of 2 and a
-// non-zero DisplayPos. Also: the texture requests (create / destroy) and the key table.
+// non-zero DisplayPos. Also: the texture requests (create / destroy) and the key table; two GL painters on two windows
+// drawn in turn (the launcher and its chat window: each painter makes its own context current); the glue telling the
+// window where ImGui's text caret is (the input method's candidate window); and the OkayUI host fed from okay::platform
+// events gives OkayUI the same input as the SDL feed.
 //
 //   test_launcher_imgui_renderer          the software painter (okayui/soft), headless
 //   test_launcher_imgui_renderer --gl     our OpenGL painter on a real window (sdl2 and own backends), under Xvfb;
@@ -13,6 +16,7 @@
 #include "test_framework.hpp"
 #include "ImGuiOwnBackend.hpp"
 #include "OkayUI_SoftPainter.hpp"
+#include "OkayUIHostPlatform.hpp"
 #include "okay/Platform/Painter.hpp"
 #include "okay/Platform/Platform.hpp"
 
@@ -33,6 +37,7 @@
 
 namespace plat = okay::platform;
 using okay::launchergfx::ImGuiPainterRenderer;
+using okay::launchergfx::ImGuiPlatformGlue;
 
 namespace {
 
@@ -336,6 +341,115 @@ void KeyTable() {
     CHECK(seen.size() >= 100);
 }
 
+// The OkayUI host fed from okay::platform events (the own renderer) builds the same OkayUI input as the SDL feed (the sdl
+// renderer) for the same keys, text, clicks and wheel.
+void OkayUIHostFeeds() {
+    RUN_SUITE("OkayUI host: okay::platform events give the same input as SDL events");
+    using ET = plat::EventType;
+    okayuihost::InputCollector viaSdl, viaPlat;
+    auto both = [&](const SDL_Event& se, const plat::Event& pe) { viaSdl.Feed(se); okayuihost::FeedPlatform(viaPlat, pe); };
+    SDL_Event se; plat::Event pe;
+    auto key = [&](SDL_Keycode sym, plat::Key k, bool down, Uint16 smod, std::uint32_t pmod) {
+        SDL_memset(&se, 0, sizeof(se)); se.type = down ? SDL_KEYDOWN : SDL_KEYUP; se.key.keysym.sym = sym; se.key.keysym.mod = smod;
+        pe = plat::Event(); pe.type = down ? ET::KeyDown : ET::KeyUp; pe.key = k; pe.mods = pmod;
+        both(se, pe);
+    };
+    auto compare = [&](const char* what) {
+        const OkayUI::Input a = viaSdl.Build(10, 20, false, false, false, true);
+        const OkayUI::Input b = viaPlat.Build(10, 20, false, false, false, true);
+        const std::string ta = a.text ? a.text : "", tb = b.text ? b.text : "";
+        bool same = ta == tb && a.mouseDown == b.mouseDown && a.rightDown == b.rightDown && a.wheel == b.wheel &&
+                    a.backspace == b.backspace && a.del == b.del && a.left == b.left && a.right == b.right && a.home == b.home &&
+                    a.end == b.end && a.enter == b.enter && a.escape == b.escape && a.copy == b.copy && a.cut == b.cut &&
+                    a.paste == b.paste && a.up == b.up && a.down == b.down && a.selectAll == b.selectAll && a.shift == b.shift &&
+                    a.ctrl == b.ctrl;
+        for (int k = 0; k < OkayUI::KeyId_COUNT; ++k) same = same && a.keyDown[k] == b.keyDown[k];
+        std::printf("  %-44s %s (text \"%s\")\n", what, same ? "same" : "DIFFERENT", tb.c_str());
+        CHECK(same);
+        return b;
+    };
+    // typed text, a left click, two wheel notches up
+    SDL_memset(&se, 0, sizeof(se)); se.type = SDL_TEXTINPUT; std::strcpy(se.text.text, "h\xC3\xA9");
+    pe = plat::Event(); pe.type = ET::TextInput; pe.text = "h\xC3\xA9";
+    both(se, pe);
+    SDL_memset(&se, 0, sizeof(se)); se.type = SDL_MOUSEBUTTONDOWN; se.button.button = SDL_BUTTON_LEFT;
+    pe = plat::Event(); pe.type = ET::MouseButtonDown; pe.button = plat::MouseLeft;
+    both(se, pe);
+    SDL_memset(&se, 0, sizeof(se)); se.type = SDL_MOUSEWHEEL; se.wheel.y = 2; se.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+    pe = plat::Event(); pe.type = ET::MouseWheel; pe.wheelY = 2.0f;
+    both(se, pe);
+    OkayUI::Input in = compare("text, click and wheel");
+    CHECK(in.text && std::strcmp(in.text, "h\xC3\xA9") == 0 && in.mouseDown && in.wheel == 2.0f);
+    // editing keys and shortcuts
+    key(SDLK_BACKSPACE, plat::Key::Backspace, true, 0, 0);
+    key(SDLK_a, plat::Key::A, true, KMOD_LCTRL, plat::ModCtrl);
+    key(SDLK_LEFT, plat::Key::Left, true, KMOD_LSHIFT, plat::ModShift);
+    in = compare("Backspace, Ctrl+A, Shift+Left");
+    CHECK(in.backspace && in.selectAll && in.left && in.shift && in.keyDown[OkayUI::KeyId_Left]);
+    key(SDLK_LEFT, plat::Key::Left, false, 0, 0);
+    key(SDLK_c, plat::Key::C, true, KMOD_LCTRL, plat::ModCtrl);
+    key(SDLK_RETURN, plat::Key::Return, true, 0, 0);
+    key(SDLK_KP_ENTER, plat::Key::KpEnter, true, 0, 0);
+    key(SDLK_ESCAPE, plat::Key::Escape, true, 0, 0);
+    key(SDLK_DELETE, plat::Key::Delete, true, 0, 0);
+    key(SDLK_HOME, plat::Key::Home, true, 0, 0);
+    key(SDLK_END, plat::Key::End, true, 0, 0);
+    key(SDLK_UP, plat::Key::Up, true, 0, 0);
+    key(SDLK_DOWN, plat::Key::Down, true, 0, 0);
+    key(SDLK_v, plat::Key::V, true, KMOD_LGUI, plat::ModGui);
+    key(SDLK_x, plat::Key::X, true, KMOD_RCTRL, plat::ModCtrl);
+    key(SDLK_F5, plat::Key::F5, true, 0, 0);
+    key(SDLK_7, plat::Key::N7, true, 0, 0);
+    in = compare("Ctrl+C, Enter, Escape, Delete, ... F5, 7");
+    CHECK(in.copy && in.enter && in.escape && in.del && in.home && in.end && in.up && in.down && in.paste && in.cut);
+    CHECK(!in.keyDown[OkayUI::KeyId_Left] && in.keyDown[OkayUI::KeyId_F5] && in.keyDown[OkayUI::KeyId_7]);
+    // the key table itself
+    CHECK(okayuihost::KeyIdOfPlatform(plat::Key::Tab) == OkayUI::KeyId_Tab);
+    CHECK(okayuihost::KeyIdOfPlatform(plat::Key::RShift) == OkayUI::KeyId_Shift);
+    CHECK(okayuihost::KeyIdOfPlatform(plat::Key::N0) == OkayUI::KeyId_0);
+    CHECK(okayuihost::KeyIdOfPlatform(plat::Key::Unknown) == OkayUI::KeyId_None);
+    CHECK(okayuihost::KeyIdOfPlatform(plat::Key::F12) == OkayUI::KeyId_F12);
+}
+
+// The glue tells the window where ImGui's text caret is while a text field has the keyboard (Platform_SetImeDataFn ->
+// Window::SetTextInputArea): the input method's candidate window opens there.
+void ImeCaret(plat::Backend& b, plat::Window& w, plat::Painter& p) {
+    RUN_SUITE(std::string("the IME caret on a ") + b.Name() + " window");
+    ImGuiContext* ctx = ImGui::CreateContext();
+    ImGui::GetIO().IniFilename = nullptr;
+    ImGui::GetIO().Fonts->AddFontDefault();
+    {
+        ImGuiPainterRenderer r(p);
+        ImGuiPlatformGlue g(b, w);
+        CHECK(ImGui::GetPlatformIO().Platform_SetImeDataFn != nullptr);
+        int x = 0, y = 0, h = 0;
+        CHECK(!g.LastImeArea(x, y, h));
+        static char buf[64] = "abc";
+        for (int f = 0; f < 4; ++f) {
+            g.NewFrame();
+            ImGui::NewFrame();
+            ImGui::SetNextWindowPos(ImVec2(24, 30));
+            ImGui::SetNextWindowSize(ImVec2(200, 80));
+            ImGui::Begin("ime", nullptr, ImGuiWindowFlags_NoDecoration);
+            if (f == 0) ImGui::SetKeyboardFocusHere();
+            ImGui::InputText("##text", buf, sizeof(buf));
+            ImGui::End();
+            ImGui::Render();
+            p.SetDrawColor(0, 0, 0, 255); p.Clear();
+            r.Render(ImGui::GetDrawData());
+            p.Present();
+        }
+        bool taken = false;
+        CHECK(g.LastImeArea(x, y, h, &taken));
+        std::printf("  caret at %d,%d, line height %d: %s\n", x, y, h, taken ? "taken by the window" : "not taken (no over-the-spot input method)");
+        CHECK(x >= 24 && x < 224 && y >= 30 && y < 110 && h >= 10 && h <= 30);
+        CHECK(ImGui::GetIO().WantTextInput);
+        if (b.Kind() == plat::BackendKind::Sdl2) CHECK(taken);
+    }
+    CHECK(ImGui::GetPlatformIO().Platform_SetImeDataFn == nullptr);
+    ImGui::DestroyContext(ctx);
+}
+
 int RunGl() {
     if (!std::getenv("DISPLAY")) { std::printf("SKIP: no $DISPLAY (run through tests/run_under_xvfb.sh)\n"); return 77; }
     int ran = 0;
@@ -362,6 +476,53 @@ int RunGl() {
         // GPU rasterisation keeps 8 bits of sub-pixel precision and blends in 8 bits: allow small differences on a few
         // edge pixels, nothing more.
         RunCases(*p, (std::string("opengl (") + b->Name() + " window)").c_str(), 6, 0.001, [&] { p->Present(); });
+        ImeCaret(*b, *w, *p);
+        {   // Two windows, two GL contexts (the launcher and its chat window). The second painter was made last, so its context
+            // is current: every call on the first one must make the first context current again, and the other way round.
+            RUN_SUITE(std::string("two GL painters on two ") + b->Name() + " windows");
+            plat::WindowDesc d2 = d;
+            d2.title = "imgui renderer test, second window";
+            std::unique_ptr<plat::Window> w2 = b->MakeWindow(d2);
+            CHECK(w2 != nullptr);
+            std::unique_ptr<plat::Painter> p2 = w2 ? plat::CreateGLPainter(*w2, *b, plat::PainterDesc(), &err) : nullptr;
+            CHECK(p2 != nullptr);
+            if (p2) {
+                for (int i = 0; i < 5; ++i) { plat::Event e; while (b->PollEvent(e)) {} b->DelayMs(10); }
+                RunCases(*p, (std::string("opengl first of two (") + b->Name() + ")").c_str(), 6, 0.001, [&] { p->Present(); });
+                RunCases(*p2, (std::string("opengl second of two (") + b->Name() + ")").c_str(), 6, 0.001, [&] { p2->Present(); });
+                // In turn: a texture on each, a clear on each, a textured quad on each, then read both back.
+                std::vector<std::uint8_t> red(16 * 16 * 4), blue(16 * 16 * 4);
+                for (int i = 0; i < 16 * 16; ++i) { red[i * 4] = 220; red[i * 4 + 3] = 255; blue[i * 4 + 2] = 220; blue[i * 4 + 3] = 255; }
+                plat::TextureDesc td; td.width = 16; td.height = 16;
+                okay::ui2d::Tex t1 = p->CreateTexture(td, red.data());
+                okay::ui2d::Tex t2 = p2->CreateTexture(td, blue.data());
+                CHECK(t1 && t2);
+                p->SetClipRect(nullptr); p2->SetClipRect(nullptr);
+                p->SetDrawColor(10, 200, 10, 255); p->Clear();
+                p2->SetDrawColor(200, 200, 10, 255); p2->Clear();
+                const okay::ui2d::Rect dst{8, 8, 32, 32};
+                p->Copy(t1, nullptr, &dst);
+                p2->Copy(t2, nullptr, &dst);
+                std::vector<std::uint8_t> g1, g2; int w1 = 0, h1 = 0, wv2 = 0, hv2 = 0;
+                CHECK(p2->ReadPixels(g2, wv2, hv2));
+                CHECK(p->ReadPixels(g1, w1, h1));
+                auto px = [](const std::vector<std::uint8_t>& v, int width, int x, int y) { return &v[((std::size_t)y * width + x) * 4]; };
+                if (w1 == kW && wv2 == kW && !g1.empty() && !g2.empty()) {
+                    const std::uint8_t* a0 = px(g1, w1, 2, 2); const std::uint8_t* a1 = px(g1, w1, 20, 20);
+                    const std::uint8_t* b0 = px(g2, wv2, 2, 2); const std::uint8_t* b1 = px(g2, wv2, 20, 20);
+                    std::printf("  first: clear %d,%d,%d quad %d,%d,%d   second: clear %d,%d,%d quad %d,%d,%d\n",
+                                a0[0], a0[1], a0[2], a1[0], a1[1], a1[2], b0[0], b0[1], b0[2], b1[0], b1[1], b1[2]);
+                    CHECK(a0[0] == 10 && a0[1] == 200 && a0[2] == 10);
+                    CHECK(a1[0] == 220 && a1[1] == 0 && a1[2] == 0);
+                    CHECK(b0[0] == 200 && b0[1] == 200 && b0[2] == 10);
+                    CHECK(b1[0] == 0 && b1[1] == 0 && b1[2] == 220);
+                }
+                p->Present(); p2->Present();
+                p->DestroyTexture(t1); p2->DestroyTexture(t2);
+            }
+            p2.reset();
+            w2.reset();
+        }
         p.reset();
         w.reset();
         ++ran;
@@ -375,6 +536,7 @@ int RunGl() {
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "--gl") == 0) return RunGl();
     KeyTable();
+    OkayUIHostFeeds();
     std::unique_ptr<plat::Painter> soft = OkayUI::soft::CreateBitmapPainter(kW, kH);
     CHECK(soft != nullptr);
     if (soft) RunCases(*soft, "software", 2, 0.0);

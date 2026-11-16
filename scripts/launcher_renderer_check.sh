@@ -4,7 +4,11 @@
 #      and the pixel difference between sdl and own;
 #   2. own only: a click into the Create page's search box and typing "abc" reach ImGui (the input log) and change the
 #      picture, and a click on "Play" in the sidebar opens the Play page;
-#   3. the median frame time over N frames (default 300) on the Create page, sdl and own, vsync off.
+#   3. the median frame time over N frames (default 300) on the Create page, sdl and own, vsync off;
+#   4. the chat in its own window (OKAY_CHAT_DEMO=1), sdl and own: the "OkaySpace Chat" window exists, draws (not one flat
+#      colour), the log names its renderer, screenshots of both and their pixel difference; with own also a click into
+#      the chat window reaches its ImGui, and the input method's caret position is handed to the window;
+#   5. the OkayUI preview (OKAY_UI_BACKEND=okayui, the What's New page) with sdl and own: screenshots and their difference.
 #
 #   scripts/launcher_renderer_check.sh <path to the built OkaySpace launcher> <output folder> [frames]
 #
@@ -38,7 +42,8 @@ start() {
     dir="$work/run-$name"; mkdir -p "$dir/home"
     cp "$exe" "$dir/OkaySpace"
     printf 'win_w=%s\nwin_h=%s\n' "$w" "$h" > "$dir/launcher.cfg"
-    ( cd "$dir" && exec env HOME="$dir/home" OKAY_UI_DEMO_TAB=0 OKAY_UPDATE_ON_LAUNCH=0 OKAY_ACCOUNT_SERVER=http://127.0.0.1:9 \
+    # TMPDIR: the single-instance lock lives in the temp folder; a launcher running elsewhere on the machine must not stop ours.
+    ( cd "$dir" && exec env HOME="$dir/home" TMPDIR="$dir" OKAY_UI_DEMO_TAB=0 OKAY_UPDATE_ON_LAUNCH=0 OKAY_ACCOUNT_SERVER=http://127.0.0.1:9 \
         HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9 \
         OKAY_LAUNCHER_RENDERER="$rend" OKAY_LAUNCHER_INPUT_LOG=1 "$@" "$dir/OkaySpace" > "$dir/log.txt" 2>&1 ) </dev/null >/dev/null 2>&1 &
     echo $! > "$dir/pid"
@@ -99,6 +104,68 @@ if [ -z "$wid" ]; then echo "FAIL: no window for the input check"; fail=1; else
     echo "input: pixels changed in the page title after clicking Play: $changed"
     [ "${changed%%.*}" -gt 50 ] 2>/dev/null || { echo "FAIL: clicking Play did not change the page"; fail=1; }
     stop input
+fi
+
+# ---- the input method's caret position (own): the click into the search box above gave ImGui a text field ----
+if [ -f "$work/run-input/log.txt" ]; then
+    if grep -q 'launcher-input: ime caret' "$work/run-input/log.txt"; then
+        echo "ime: $(grep -m1 'launcher-input: ime caret' "$work/run-input/log.txt" | sed 's/^launcher-input: //')"
+    else echo "FAIL: no IME caret position was handed to the window"; fail=1; fi
+fi
+
+# ---- the chat in its own window ----
+for rend in sdl own; do
+    dir="$work/run-chat-$rend"
+    wid=$(start "chat-$rend" "$rend" 1160 752 OKAY_CHAT_DEMO=1 OKAY_LAUNCHER_FLASH_LOG=1 OKAY_UI_DEMO_UPDATE=99.0.0)
+    if [ -z "$wid" ]; then echo "FAIL: no launcher window (chat, $rend)"; fail=1; continue; fi
+    cw=""; i=0
+    while [ $i -lt 50 ] && [ -z "$cw" ]; do sleep 0.2; cw=$(xdotool search --onlyvisible --name "OkaySpace Chat" 2>/dev/null | head -n1); i=$((i+1)); done
+    if [ -z "$cw" ]; then echo "FAIL: no chat window ($rend)"; cat "$dir/log.txt"; fail=1; stop "chat-$rend"; continue; fi
+    xdotool windowmove "$cw" 40 40 2>/dev/null
+    xdotool mousemove 1590 990
+    sleep 3
+    import -window "$cw" "$out/launcher-chat-$rend.png"
+    grep -m1 "launcher: chat window" "$dir/log.txt" || { echo "FAIL: the log does not name the chat window's renderer ($rend)"; fail=1; }
+    colours=$(convert "$out/launcher-chat-$rend.png" -format '%k' info:)
+    echo "chat window ($rend): $(xdotool getwindowgeometry "$cw" | sed -n 's/.*Geometry: //p'), $colours colours"
+    [ "${colours:-0}" -gt 50 ] 2>/dev/null || { echo "FAIL: the chat window ($rend) does not draw (only $colours colours)"; fail=1; }
+    if [ "$rend" = own ]; then
+        eval "$(xdotool getwindowgeometry --shell "$cw")"   # X, Y of the chat window
+        before=$(grep -c 'launcher-input: mouse 0 down' "$dir/log.txt")
+        xdotool mousemove $((X + 200)) $((Y + 200)) click 1
+        sleep 1
+        after=$(grep -c 'launcher-input: mouse 0 down' "$dir/log.txt")
+        if [ "$after" -gt "$before" ]; then echo "chat input: a click into the chat window reached its ImGui"
+        else echo "FAIL: a click into the chat window did not reach its ImGui"; fail=1; fi
+    fi
+    grep "launcher: flash" "$dir/log.txt" | head -n2   # the update hint flashes the launcher while it is not focused (informational)
+    stop "chat-$rend"
+    i=0; while [ $i -lt 50 ] && xdotool search --onlyvisible --name "OkaySpace Chat" >/dev/null 2>&1; do sleep 0.2; i=$((i+1)); done
+done
+a="$out/launcher-chat-sdl.png"; b="$out/launcher-chat-own.png"
+if [ -f "$a" ] && [ -f "$b" ]; then
+    total=$(convert "$a" -format '%[fx:w*h]' info:)
+    ae=$(compare -metric AE "$a" "$b" "$out/launcher-chat-diff.png" 2>&1 >/dev/null)
+    ae8=$(compare -metric AE -fuzz 3% "$a" "$b" null: 2>&1 >/dev/null)
+    echo "pixel difference chat sdl vs own ($total pixels): $ae differ at all, $ae8 differ by more than 3%"
+fi
+
+# ---- the OkayUI preview (What's New drawn by OkayUI) ----
+for rend in sdl own; do
+    wid=$(start "okayui-$rend" "$rend" 1160 752 OKAY_UI_BACKEND=okayui OKAY_UI_DEMO_TAB=12)
+    if [ -z "$wid" ]; then echo "FAIL: no window (okayui, $rend)"; fail=1; continue; fi
+    xdotool mousemove 1590 990
+    sleep 4
+    import -window "$wid" "$out/launcher-okayui-$rend.png"
+    grep -q "OkayUI frame was not drawn" "$work/run-okayui-$rend/log.txt" && { echo "FAIL: OkayUI frames refused ($rend)"; fail=1; }
+    stop "okayui-$rend"
+done
+a="$out/launcher-okayui-sdl.png"; b="$out/launcher-okayui-own.png"
+if [ -f "$a" ] && [ -f "$b" ]; then
+    total=$(convert "$a" -format '%[fx:w*h]' info:)
+    ae=$(compare -metric AE "$a" "$b" "$out/launcher-okayui-diff.png" 2>&1 >/dev/null)
+    ae8=$(compare -metric AE -fuzz 3% "$a" "$b" null: 2>&1 >/dev/null)
+    echo "pixel difference OkayUI page sdl vs own ($total pixels): $ae differ at all, $ae8 differ by more than 3%"
 fi
 
 # ---- frame time ----

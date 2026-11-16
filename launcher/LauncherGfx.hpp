@@ -30,6 +30,7 @@ const char* RendererName(RendererKind k);   // "sdl" / "own"
 
 struct WindowSpec {
     std::string title = "OkaySpace";
+    int x = okay::platform::kCentered, y = okay::platform::kCentered;   // screen position (kCentered = the middle)
     int width = 1280, height = 800;
     bool vsync = true;
 };
@@ -61,6 +62,9 @@ public:
     virtual void ProcessSdlEvent(const void* sdlEvent) { (void)sdlEvent; }
     /// own: the next okay::platform event, already given to ImGui. sdl: always false (main.cpp reads SDL's queue).
     virtual bool PollEvent(okay::platform::Event& e) { (void)e; return false; }
+    /// own: give ImGui one event that another Gfx's PollEvent took (the chat window's events arrive through the launcher's
+    /// poll: one queue for every window). Call with this Gfx's ImGui context current. sdl: does nothing (ProcessSdlEvent).
+    virtual bool FeedEvent(const okay::platform::Event& e) { (void)e; return false; }
     virtual void RenderImGui(ImDrawData* dd) = 0;
 
     // ---- the frame and textures (the same on both: the painter does them) -------------------------
@@ -79,8 +83,12 @@ public:
 };
 
 /// The sdl implementation (LauncherGfxSdl.cpp). Null (and `err`) when SDL cannot make the window or the renderer.
+/// Call it again for a second window (the chat's): each Gfx has its own window, renderer and ImGui backends (hook them up
+/// with that window's ImGui context current).
 std::unique_ptr<Gfx> CreateSdlGfx(const WindowSpec& spec, std::string* err = nullptr);
 /// The own implementation. Null (and `err`) when okay::platform has no backend, no window or no painter for it.
+/// A second call makes a second window with its own GL context and painter (textures are not shared between them: each
+/// painter uploads its own), from the same okay::platform backend, so its events come through the first one's PollEvent.
 std::unique_ptr<Gfx> CreateOwnGfx(const WindowSpec& spec, std::string* err = nullptr);
 
 /// OKAY_LAUNCHER_FRAME_STATS=N: the median and 95th percentile of N frame times, logged once. Fed by main.cpp.

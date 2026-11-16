@@ -116,7 +116,8 @@ std::unique_ptr<Painter> WrapSdl2Renderer(void* sdlRenderer);
 /// opengl: our own painter on `w`'s OpenGL context. Makes the context (GL 2.1 compatibility, no depth buffer) with
 /// Window::CreateGLContext and loads the GL entry points through `b` (the backend that made `w`). Null (and `err`)
 /// when the window cannot carry a GL context or a GL 1.1 entry point is missing. The painter owns the context:
-/// destroying it destroys the context. Own code, off by default.
+/// destroying it destroys the context. Several GL painters (one per window) can live on one thread: each call makes its own
+/// context current first when another painter's is (textures are not shared between them). Own code, off by default.
 std::unique_ptr<Painter> CreateGLPainter(Window& w, Backend& b, const PainterDesc& d = PainterDesc(), std::string* err = nullptr);
 /// Headless sdl2 painter: SDL's software renderer on an RGBA surface. For tests and tools that need the
 /// sdl2 implementation without a window. Null when SDL is not compiled in.

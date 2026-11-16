@@ -411,7 +411,7 @@ void Casts() {
         Call("steam_leaderboard", {Value{"robust_ok"}, Value{500.0f}});
         auto top = [](const char* b) { return Steam::Get().DownloadLeaderboardTop(b, 5); };
         CHECK(top("robust_big").size() == 1 && top("robust_big")[0].score == 2147483647);
-        CHECK(top("robust_low").size() == 1 && top("robust_low")[0].score <= 0);   // the simulation keeps the best, which starts at 0
+        CHECK(top("robust_low").size() == 1 && top("robust_low")[0].score == std::numeric_limits<std::int32_t>::min());
         CHECK(top("robust_nan").empty());
         CHECK(top("robust_ok").size() == 1 && top("robust_ok")[0].score == 500);
     }

@@ -74,8 +74,11 @@ public:
     // Leaderboards: keep the player's best per board, plus a few seeded rivals so
     // a Top-N download looks realistic in development.
     bool UploadLeaderboardScore(const std::string& board, std::int32_t score) override {
-        auto& best = m_leaderboards[board][UserName()];
-        if (score > best) best = score;
+        // Keep the best, but the first upload always counts: a missing entry is not a
+        // score of 0, so a first score below 0 (down to INT_MIN) is still recorded.
+        auto& rows = m_leaderboards[board];
+        auto [it, added] = rows.try_emplace(UserName(), score);
+        if (!added && score > it->second) it->second = score;
         OKAY_INFO("Steam(sim): leaderboard '", board, "' <- ", score);
         return true;
     }

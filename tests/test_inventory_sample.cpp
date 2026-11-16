@@ -40,12 +40,12 @@ namespace fs = std::filesystem;
 
 namespace {
 #ifdef OKAY_SAMPLE_SHOTS
-// The toast cards, drawn by the same UI pass as the game (ui2d::RenderSceneUI) on SDL's software renderer: a headless
-// picture, not a screenshot of the editor. The hotbar, the grid bag and the status line are drawn by the player and the
-// editor, not by this pass, so they are not in it. Returns how many pixels differ from the background (-1: no renderer).
+// The scene's UI pass (ui2d::RenderSceneUI: the toast cards, the hint text and the status line) on SDL's software renderer:
+// a headless picture at 1280 x 720, not a screenshot of the editor. The hotbar and the grid bag are drawn by the player and
+// the editor, not by this pass, so they are not in it. Returns how many pixels differ from the background (-1: no renderer).
 // With a path the picture is also written as a PNG.
-int RenderToasts(Scene& scene, const std::string& path) {
-    const int W = 1280, H = 360;
+int RenderUI(Scene& scene, const std::string& path) {
+    const int W = 1280, H = 720;
     SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, W, H, 32, SDL_PIXELFORMAT_ABGR8888);
     SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
     if (!ren) {
@@ -179,10 +179,15 @@ int main() {
         return false;
     };
     auto statusHas = [&](const std::string& what) { return status->text.find(what) != std::string::npos; };
-    // A headless picture of the toast cards (only when built with SDL): checks that cards are drawn, and writes
-    // docs/images/inventory/<name>.png when OKAY_WRITE_SHOTS is set. It lets 0.3 s pass first so the cards have slid in.
+    // A headless picture of the scene's UI (only when built with SDL): checks that it is drawn, and writes
+    // docs/images/inventory/<name>.png when OKAY_WRITE_SHOTS is set. One picture per run: the first call (cooldown_refused)
+    // unless OKAY_SHOT_ONLY names another, because a second render in the same process came out without any text (the text
+    // and shape caches of the painter belong to the first renderer). The test is run once for each picture to write them.
+    // It lets 0.3 s pass first so the cards have slid in.
     auto shot = [&](const char* name) {
 #ifdef OKAY_SAMPLE_SHOTS
+        const char* only = std::getenv("OKAY_SHOT_ONLY");
+        if (!(only && only[0] ? std::string(only) == name : std::string(name) == "cooldown_refused")) return;
         idle(0.3f);
         std::string path;
         if (const char* write = std::getenv("OKAY_WRITE_SHOTS")) {
@@ -193,7 +198,7 @@ int main() {
                 path = dir + "/" + name + ".png";
             }
         }
-        const int drawn = RenderToasts(s, path);
+        const int drawn = RenderUI(s, path);
         CHECK(drawn > 2000);                                               // at least one card (each is about 660 x 72 px)
         std::printf("  picture %s: %d pixels drawn%s%s\n", name, drawn, path.empty() ? "" : " -> ", path.c_str());
 #else

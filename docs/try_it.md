@@ -345,17 +345,17 @@ bag. **X** swings the sword (wears it by 1), **V** repairs it. **T** puts the pi
 first grid item back into the bag. (The chest on the right is **F**, the workbench on the left is **C**, as before.)
 
 **Cooldown.**
-1. Slot 1 (Healing Potion, 3) is picked at the start. Press **Q**: the count drops to 2, a green card "Used" appears at the
+1. Slot 1 (Healing Potion, 3) is picked at the start. Press **Q**: the count drops to 2, a card "Used" (with a **+** sign) appears at the
    top right and the line above the hotbar says `Potion: wait 4.x s`, counting down.
-2. Press **Q** again at once: a yellow card "Can't use it: Healing Potion is not ready: wait 4.x s." and the count stays 2.
+2. Press **Q** again at once: a card "Can't use it" (with a **!** sign) saying "Healing Potion is not ready: wait 4.x s." and the count stays 2.
    The Console shows the same sentence, `inventory: Healing Potion is not ready: wait 4.x s.`
 3. When the line says `Potion: ready`, press **Q**: the count is 1.
 
 **Durability.**
 1. Press **2** (Iron Sword). The line says `Sword: 4 / 4`.
-2. Press **X**: `Sword: 3 / 4`. Press **X** three more times: a red card "Broken: Iron Sword broke. Press V to repair it." and
+2. Press **X**: `Sword: 3 / 4`. Press **X** three more times: a card "Broken" (with an **x** sign) saying "Iron Sword broke. Press V to repair it." and
    the line says `Sword: BROKEN (V repairs it)`.
-3. Press **Q**: a yellow card "Iron Sword is broken: repair it first." Press **X**: "It is broken. Press V to repair it."
+3. Press **Q**: a card "Can't use it" saying "Iron Sword is broken: repair it first." Press **X**: "It is broken. Press V to repair it."
 4. Press **V**: "Repaired." and `Sword: 4 / 4`.
 
 **Grid bag.**
@@ -366,21 +366,49 @@ first grid item back into the bag. (The chest on the right is **F**, the workben
 4. Press **Y**: the first grid item comes back to the bag. Swing the sword with **X** before **T**, and its wear is still there
    after **Y**.
 
+**What it looks like.** These two pictures are headless renders made by the test `inventory_sample`, not screenshots of the
+editor: the scene's UI pass at 1280 x 720 (the hint text, the status line and the toast cards). The hotbar and the grid bag are
+drawn by the editor and the player, not by that pass, so they are not in the pictures. After the second **Q** of the cooldown
+steps (the card "Can't use it" over the card "Used"), and after **Q** on the broken sword:
+
+![The second use of the potion is refused: the card Can't use it above the card Used](images/inventory/cooldown_refused.png)
+
+![The broken sword: the card Can't use it (Iron Sword is broken), the card Broken and the card Used](images/inventory/broken.png)
+
+The cards are dark. The toast code also draws a colored bar and circle (green, yellow, red, blue by kind), but in this render the
+card's own background covers them, so the kind shows only as the sign (+, !, x, i). Whether the real window shows the colors is
+unverified.
+
+(Make them again with `OKAY_WRITE_SHOTS=1 ./tests/test_inventory_sample` and `OKAY_WRITE_SHOTS=1 OKAY_SHOT_ONLY=broken ./tests/test_inventory_sample`.)
+
 **Change the numbers.** **View > Editors & Tools > Items, Loot & Recipes**, pick **Healing Potion**, open **Custom Fields**: `cooldown` is
 5. Change it to 2, press **Save** (it writes the project's `items.okayitems`) and play again. **+ Known field...** on any
 item lists the fields the engine reads: `cooldown`, `maxDurability`, `breakAction`, `wearPerHit`, `wearPerStrike`,
 `wearPerShot`, each with a one-line explanation.
 
 **Visual script nodes.** Open a visual script, right-click for **Add Node**, topic **Objects**, group **Items**. The inventory
-functions are there as nodes whose title is the function name in words: VS_NODE_TITLES. Search the box for `grid`, `cooldown` or
-`wear` to find them. Each takes the arguments the text function takes (`docs/inventory.md`).
+functions are there as nodes whose title is the function name in words: **Inv to Grid**, **Inv From Grid**, **Inv Cooldown**,
+**Inv Durability**, **Inv Broken**, **Inv Wear** and **Inv Repair** (the new ones), and beside them **Inv Add**, **Inv Remove**,
+**Inv Count**, **Inv Has**, **Inv Move**, **Inv Transfer**, **Inv Set Slot**, **Inv Slot**, **Inv Selected** and **Item Def**.
+Search the box for `grid`, `cooldown` or `wear` to find them. Each takes the arguments the text function takes
+(`docs/inventory.md`). The classes typed scripts use (`Inventory`, `Equipment`, `Crafting`, `GridInventory`, `Items`) have
+Engine API nodes in the same group too: 17 are listed, and 12 that do the same job as a hand-written node (for example
+`Inventory.Add` next to **Inv Add**) are hidden by the menu's duplicate rule.
 
 **What is not there.** No durability bar or "broken" tint in the bag (an item's tooltip shows `Durability N` once it has been worn; the line above the hotbar is the live display). In the sample the **X**
 key stands in for fighting; a real melee swing, a shot or a hit wears an item through its fields `wearPerStrike`,
 `wearPerShot` and `wearPerHit`, with no script. Cooldowns and slot-to-grid moves are not networked. A visual script cannot
 listen for a refused use yet.
 
-**Status.** TRY_STATUS_PLACEHOLDER
+**Status.** Checked on Linux, headless (CTest, `-O0` build of the touched suites, all passing): `inventory_sample` (52 checks)
+loads the shipped scene and items file from disk, presses the keys of the steps above (Q, Q, X four times, Q, V, T, Y and the
+rest) and reads what the player would see: the toast texts, the status line, the hotbar counts and the grid bag. Also
+`inventory_refusals` (41), `item_cooldowns` (222), `item_durability` (109), `net_item_durability` (18), `inv_grid_script` (16),
+`unequip_weight` (21), `vs_inventory_palette` (82: where each node sits in Add Node) and the whole-menu tests
+`vs_palette_categories`, `vs_registry_effect` and `vs_script_coverage`. **Not verified:** how it looks and feels in the real
+editor and on Windows: the hotbar, the grid bag window and the card colors as drawn there, the **File > Examples** line
+(compiled, never clicked), the **+ Known field...** popup, the Add Node list on screen (checked as data), and the zip and
+the installer (the copy step was run on Linux only).
 
 ---
 

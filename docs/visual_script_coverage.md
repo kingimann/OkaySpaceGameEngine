@@ -34,7 +34,7 @@ Escape hatches: **Get Property**, **Set Property**, **Call Method** (`Type.Metho
 
 ## Builtin parity
 
-Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1440 builtins are nodes.
+Every text-script builtin whose name is a single token (letters, digits, `_`, `.`) is the node `Fn.<name>`. It runs that builtin on this object. Wire only the arguments it takes. 1445 builtins are nodes.
 
 | Builtin | Node |
 | --- | --- |
@@ -513,19 +513,24 @@ Every text-script builtin whose name is a single token (letters, digits, `_`, `.
 | `int.Parse` | `Fn.int.Parse` |
 | `interact` | `Fn.interact` |
 | `inv_add` | `Fn.inv_add` |
+| `inv_broken` | `Fn.inv_broken` |
 | `inv_capacity` | `Fn.inv_capacity` |
 | `inv_clear` | `Fn.inv_clear` |
+| `inv_cooldown` | `Fn.inv_cooldown` |
 | `inv_count` | `Fn.inv_count` |
+| `inv_durability` | `Fn.inv_durability` |
 | `inv_from_grid` | `Fn.inv_from_grid` |
 | `inv_has` | `Fn.inv_has` |
 | `inv_move` | `Fn.inv_move` |
 | `inv_remove` | `Fn.inv_remove` |
+| `inv_repair` | `Fn.inv_repair` |
 | `inv_select` | `Fn.inv_select` |
 | `inv_selected` | `Fn.inv_selected` |
 | `inv_set_slot` | `Fn.inv_set_slot` |
 | `inv_slot` | `Fn.inv_slot` |
 | `inv_to_grid` | `Fn.inv_to_grid` |
 | `inv_transfer` | `Fn.inv_transfer` |
+| `inv_wear` | `Fn.inv_wear` |
 | `inverse_lerp` | `Fn.inverse_lerp` |
 | `inverse_lerp_value` | `Fn.inverse_lerp_value` |
 | `invoke_after` | `Fn.invoke_after` |

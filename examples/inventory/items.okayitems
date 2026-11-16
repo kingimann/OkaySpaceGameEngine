@@ -1,0 +1,21 @@
+okayitems 1
+item "Potion"
+  name "Healing Potion"
+  description "Heals 25. After one is used, the next one has to wait 5 seconds (custom field cooldown)."
+  stack 10
+  weight 0.3
+  size 1 2
+  category "Consumable"
+  use "Heal" 25
+  custom "cooldown" "5"
+end
+item "Sword"
+  name "Iron Sword"
+  description "Wears down by 1 for every swing (key X). At 0 it is broken: using it is refused until it is repaired (key V)."
+  stack 1
+  weight 2.5
+  size 1 3
+  category "Weapon"
+  custom "maxDurability" "4"
+  custom "breakAction" "keep"
+end

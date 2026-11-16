@@ -1213,5 +1213,18 @@ int main() {
         CHECK(w.uvs.size() == w.vertices.size() && (int)w.triSlot.size() == w.TriangleCount());
         for (int t : w.triangles) CHECK(t >= 0 && t < (int)w.vertices.size());
     }
+    RUN_SUITE("edge snapping: skipped vertices and polygon diagonals");
+    {
+        // Moving vertex 2 of a quad must still let it snap to edges that do not touch it (here the edge 0-1).
+        Mesh q = Mesh::Quad(2.0f);                                       // corners 0..3; triangles (0,1,2) and (0,2,3)
+        SnapHit h = SnapToGeometry(q, Vec3{0.0f, -1.05f, 0.0f}, SnapTarget::Edge, 0.2f, {2});
+        CHECK(h.found && h.a == 0 && h.b == 1);
+        // The diagonal 0-2 is inside one polygon, not an edge the artist sees: with the polygon known it is not offered.
+        q.polyFace = {0, 0};
+        SnapHit d = SnapToGeometry(q, Vec3{0.02f, 0.0f, 0.0f}, SnapTarget::Edge, 0.3f);
+        CHECK(!d.found);
+        SnapHit b = SnapToGeometry(q, Vec3{0.0f, -0.95f, 0.0f}, SnapTarget::Edge, 0.3f);
+        CHECK(b.found && b.a == 0 && b.b == 1);                         // the border still snaps
+    }
     TEST_MAIN_RESULT();
 }

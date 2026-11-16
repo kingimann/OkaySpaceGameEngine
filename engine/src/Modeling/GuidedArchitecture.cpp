@@ -579,6 +579,10 @@ void GenerateWall(const Recipe& r, std::vector<GeneratedPart>& out) {
                 if (!hit) shapes::Append(panel, BoxAA({0.02f, y, -T / 2 - 0.03f}, {len + e0 + e1 - 0.02f, y + 0.12f, T / 2 + 0.03f}));
             }
         }
+        if (shapes::Detail() >= 2) {   // High: a cornice along the top; Ultra: and a second ledge under it
+            shapes::Append(panel, BoxAA({0.02f, height - 0.1f, -T / 2 - 0.03f}, {len + e0 + e1 - 0.02f, height - 0.0f, T / 2 + 0.03f}));
+            if (shapes::Detail() >= 3) shapes::Append(panel, BoxAA({0.03f, height - 0.2f, -T / 2 - 0.02f}, {len + e0 + e1 - 0.03f, height - 0.14f, T / 2 + 0.02f}));
+        }
         Place(panel, a - t * e0, t, n);
         out.push_back({wid, "wall", panel});
         if (Design(r, "coping", "coping/" + std::to_string(si)) == "slab") {
@@ -721,7 +725,7 @@ void GenerateStairs(const Recipe& r, std::vector<GeneratedPart>& out) {
             const float a0 = dth * (float)i, a1 = a0 + dth * 1.12f;
             const float top = rise * (float)(i + 1);
             std::vector<Vec2> prof;
-            const int seg = 3;
+            const int seg = shapes::Scale(3, 1);
             for (int k = 0; k <= seg; ++k) { const float a = a0 + (a1 - a0) * (float)k / seg; prof.push_back({rc * 0.6f * std::cos(a), rc * 0.6f * std::sin(a)}); }
             for (int k = seg; k >= 0; --k) { const float a = a0 + (a1 - a0) * (float)k / seg; prof.push_back({R * std::cos(a), R * std::sin(a)}); }
             // profile order: inner arc forward then outer arc back is clockwise; reverse it so it runs counter-clockwise
@@ -894,6 +898,10 @@ void GenerateBuilding(const Recipe& r, std::vector<GeneratedPart>& out) {
                 bool hit = false;
                 for (const Opening& h : holes) if (h.y1 > FH - 0.4f) hit = true;
                 if (!hit) shapes::Append(panel, BoxAA({0.02f, FH - 0.16f, -T / 2 - 0.03f}, {len - 0.02f, FH - 0.04f, T / 2 + 0.03f}));
+            }
+            if (shapes::Detail() >= 2 && f + 1 == floors) {   // cornice under the roof
+                shapes::Append(panel, BoxAA({0.02f, FH - 0.1f, -T / 2 - 0.03f}, {len - 0.02f, FH - 0.0f, T / 2 + 0.03f}));
+                if (shapes::Detail() >= 3) shapes::Append(panel, BoxAA({0.03f, FH - 0.2f, -T / 2 - 0.02f}, {len - 0.03f, FH - 0.14f, T / 2 + 0.02f}));
             }
             Place(panel, o, t, n);
             out.push_back({"wall/" + idSuffix + "/0", "wall", panel});

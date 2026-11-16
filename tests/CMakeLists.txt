@@ -2116,6 +2116,12 @@ add_test(NAME guided_modeling COMMAND test_guided)
 add_executable(test_guided_architecture test_guided_architecture.cpp)
 target_link_libraries(test_guided_architecture PRIVATE okay::engine)
 add_test(NAME guided_architecture COMMAND test_guided_architecture)
+add_executable(test_guided_vehicles test_guided_vehicles.cpp)
+target_link_libraries(test_guided_vehicles PRIVATE okay::engine)
+add_test(NAME guided_vehicles COMMAND test_guided_vehicles)
+add_executable(test_guided_detail test_guided_detail.cpp)
+target_link_libraries(test_guided_detail PRIVATE okay::engine)
+add_test(NAME guided_detail COMMAND test_guided_detail)
 
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)

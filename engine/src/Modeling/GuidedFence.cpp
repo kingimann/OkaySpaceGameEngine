@@ -89,8 +89,9 @@ std::vector<Vec2> PicketProfile(const std::string& d, float w, float h) {
     if (d == "rounded") {
         const float ph = std::min(0.5f * w, 0.4f * hd) / hd;
         std::vector<Vec2> p = {{0, 0}, {1, 0}};
-        for (int k = 0; k <= 6; ++k) {
-            const float a = kPi * (float)k / 6.0f;
+        const int steps = shapes::Scale(6, 2);
+        for (int k = 0; k <= steps; ++k) {
+            const float a = kPi * (float)k / (float)steps;
             p.push_back({0.5f + 0.5f * std::cos(a), (1 - ph) + ph * std::sin(a)});
         }
         return p;
@@ -443,6 +444,7 @@ Template MakeFence() {
 } // namespace
 
 void RegisterArchitectureTemplates();
+void RegisterVehicleTemplates();
 
 void RegisterBuiltinTemplates() {
     static bool done = false;
@@ -450,6 +452,7 @@ void RegisterBuiltinTemplates() {
     done = true;
     Registry::Instance().Register(MakeFence());
     RegisterArchitectureTemplates();
+    RegisterVehicleTemplates();
 }
 
 } // namespace okay::modeling::guided

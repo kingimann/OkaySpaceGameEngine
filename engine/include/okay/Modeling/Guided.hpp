@@ -212,9 +212,21 @@ private:
     std::vector<GuidedState> undo_, redo_;
 };
 
+/// Number of triangles a mesh turns into (a face with n corners makes n - 2).
+int TriangleCount(const PolyMesh& m);
+/// The core "Detail" setting every template gets: Low, Medium, High, Ultra (Medium when a recipe has none).
+extern const char* const kDetailParam;
+inline int DetailOf(const Recipe& r) { return (int)r.Param("detail", 1); }
+
 // ---- Shape helpers (also used by templates in other files) --------------------------------------------------
 
 namespace shapes {
+/// The detail level the parts being generated are built at: 0 Low, 1 Medium (the original shapes), 2 High, 3 Ultra.
+/// Set for the duration of Generate() from the recipe's "detail" setting; the shape helpers below follow it
+/// (fewer or more segments on curves, bevelled edges from High up). Templates can read it for extra detail parts.
+int Detail();
+/// `base` segments at Medium: half at Low, double at High, four times at Ultra (never below `minimum`).
+int Scale(int base, int minimum = 3);
 /// A box filling the frame: 6 quads, outward.
 PolyMesh Box(const Frame& f);
 /// A prism with `sides` corners along the frame's up axis, fitted to the frame (cx, cz radius = size/2).

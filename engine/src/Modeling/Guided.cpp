@@ -15,6 +15,14 @@ namespace okay::modeling::guided {
 // =====================================================================================================
 namespace shapes {
 
+static thread_local int g_detail = 1;
+int Detail() { return g_detail; }
+int Scale(int base, int minimum) {
+    const int mult4[4] = {1, 2, 4, 8};   // quarters: 0.5, 1, 2, 4
+    const int v = (base * mult4[std::min(std::max(g_detail, 0), 3)] + 1) / 2;
+    return std::max(minimum, v);
+}
+
 static bool RightHanded(const Vec3& a, const Vec3& b, const Vec3& c) { return Vec3::Dot(Vec3::Cross(a, b), c) >= 0.0f; }
 
 void Append(PolyMesh& dst, const PolyMesh& src) {
@@ -77,11 +85,23 @@ PolyMesh ExtrudeProfile(const Frame& f, const std::vector<Vec2>& profile) {
 }
 
 PolyMesh Box(const Frame& f) {
-    return ExtrudeProfile(f, {{0, 0}, {1, 0}, {1, 1}, {0, 1}});
+    if (g_detail < 2) return ExtrudeProfile(f, {{0, 0}, {1, 0}, {1, 1}, {0, 1}});
+    // High: the four long edges are chamfered; Ultra: rounded with three steps per corner.
+    const float c = std::min(0.03f, 0.3f * std::min(f.sx, f.sy));
+    const float ux = c / f.sx, uy = c / f.sy;
+    const int k = g_detail == 2 ? 1 : 3;
+    const float cxs[4] = {1 - ux, 1 - ux, ux, ux}, cys[4] = {uy, 1 - uy, 1 - uy, uy};
+    std::vector<Vec2> p;
+    for (int corner = 0; corner < 4; ++corner)
+        for (int i = 0; i <= k; ++i) {
+            const float a = (-90.0f + 90.0f * (float)corner + 90.0f * (float)i / (float)k) * 3.14159265f / 180.0f;
+            p.push_back({cxs[corner] + std::cos(a) * ux, cys[corner] + std::sin(a) * uy});
+        }
+    return ExtrudeProfile(f, p);
 }
 
 PolyMesh Prism(const Frame& f, int sides) {
-    sides = std::max(3, sides);
+    sides = Scale(sides, 3);
     std::vector<Vec2> p;
     for (int i = 0; i < sides; ++i) {
         const float a = 6.2831853f * (float)i / (float)sides;
@@ -91,7 +111,7 @@ PolyMesh Prism(const Frame& f, int sides) {
 }
 
 PolyMesh Pyramid(const Frame& f, int sides) {
-    sides = std::max(3, sides);
+    sides = sides > 4 ? Scale(sides, 4) : std::max(3, sides);
     PolyMesh m;
     for (int i = 0; i < sides; ++i) {
         const float a = 6.2831853f * (float)i / (float)sides;
@@ -107,8 +127,8 @@ PolyMesh Pyramid(const Frame& f, int sides) {
 }
 
 PolyMesh Ball(const Frame& f, int rings, int sectors) {
-    rings = std::max(2, rings);
-    sectors = std::max(3, sectors);
+    rings = Scale(rings, 2);
+    sectors = Scale(sectors, 4);
     PolyMesh m;
     const Vec3 c = f.origin + f.u * (0.5f * f.sy);
     m.verts.push_back(c + f.u * (0.5f * f.sy));   // top
@@ -367,7 +387,22 @@ bool Recipe::Parse(const std::string& text, Recipe& out, std::string* error) {
 // Registry
 // =====================================================================================================
 Registry& Registry::Instance() { static Registry r; return r; }
-void Registry::Register(const Template& t) {
+const char* const kDetailParam = "detail";
+int TriangleCount(const PolyMesh& m) {
+    int n = 0;
+    for (const PolyFace& f : m.faces) n += std::max(0, (int)f.verts.size() - 2);
+    return n;
+}
+void Registry::Register(const Template& in) {
+    Template t = in;
+    bool has = false;
+    for (const ParamDef& p : t.params) if (p.id == kDetailParam) has = true;
+    if (!has) {   // every template gets the shared Detail setting (Medium = the original shapes)
+        ParamDef p; p.id = kDetailParam; p.label = "Detail"; p.group = "Detail"; p.kind = ParamDef::Kind::Choice; p.def = 1; p.min = 0; p.max = 3;
+        p.choices = {"Low", "Medium", "High", "Ultra"};
+        p.tip = "Low: few flat blocky polygons. Medium: the standard shapes. High: rounder curves and bevelled edges. Ultra: finer still.";
+        t.params.push_back(p);
+    }
     for (Template& e : templates_) if (e.id == t.id) { e = t; return; }
     templates_.push_back(t);
 }
@@ -431,7 +466,10 @@ std::vector<GeneratedPart> Generate(const Recipe& in, std::string* error) {
     if (!t || !t->generate) { if (error) *error = "unknown template '" + in.templateId + "'"; return out; }
     const Recipe r = Normalize(*t, in);
     std::vector<GeneratedPart> all;
+    const int saved = shapes::g_detail;
+    shapes::g_detail = std::min(std::max((int)r.Param(kDetailParam, 1), 0), 3);
     t->generate(r, all);
+    shapes::g_detail = saved;
     for (GeneratedPart& p : all) {
         if (r.detached.count(p.id) || p.mesh.faces.empty()) continue;
         AutoUV(p.mesh);

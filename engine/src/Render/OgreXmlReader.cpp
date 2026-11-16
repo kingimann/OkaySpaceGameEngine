@@ -37,47 +37,51 @@ struct Geom {
     std::int64_t count = 0;
 };
 
-bool Dbl(const std::string* s, double& v) { return s && detail::rc::ParseNumber(*s, v); }
+// attribute `key` of element i as a number (false when it is missing or not a number)
+bool Num(const detail::xml::FlatDoc& d, int i, std::string_view key, double& v) {
+    std::string_view s;
+    return d.Attr(i, key, s) && detail::rc::ParseNumber(s.data(), s.data() + s.size(), v);
+}
 
 // One <geometry> / <sharedgeometry> element: the vertexcount attribute and the <vertexbuffer> children (position, normal and
 // the first texcoord set may be spread over several buffers; vertex k of every buffer is vertex k of the geometry).
-bool ReadGeometry(const detail::xml::Doc& d, int g, Geom& out, std::string* err, int& extraUv, int& colours, int& tangentsSeen) {
+bool ReadGeometry(const detail::xml::FlatDoc& d, int g, Geom& out, std::string* err, int& extraUv, int& colours, int& tangentsSeen) {
     double vc;
-    if (!Dbl(d.Attr(g, "vertexcount"), vc) || vc < 0 || vc > (double)kMaxVerts || vc != std::floor(vc))
+    if (!Num(d, g, "vertexcount", vc) || vc < 0 || vc > (double)kMaxVerts || vc != std::floor(vc))
         return Fail(err, "bad vertexcount '" + d.AttrOr(g, "vertexcount", "") + "'");
     out.count = (std::int64_t)vc;
     const std::size_t n = (std::size_t)vc;
     {   // the claimed count must be backed by <vertex> elements before anything is allocated from it
         std::size_t most = 0;
-        for (int b : d.Kids(g)) {
+        for (int b = d.Kid(g); b >= 0; b = d.Next(b)) {
             if (d.Name(b) != "vertexbuffer") continue;
             std::size_t k = 0;
-            for (int vi : d.Kids(b)) if (d.Name(vi) == "vertex") ++k;
+            for (int vi = d.Kid(b); vi >= 0; vi = d.Next(vi)) if (d.Name(vi) == "vertex") ++k;
             most = std::max(most, k);
         }
         if (most != n) return Fail(err, "the vertexcount " + std::to_string(n) + " does not match the " + std::to_string(most) + " <vertex> elements");
     }
     out.pos.assign(n, Vec3{0, 0, 0}); out.nrm.assign(n, Vec3{0, 0, 0}); out.uv.assign(n, Vec2{0, 0});
     out.hasPos.assign(n, 0); out.hasNrm.assign(n, 0); out.hasUv.assign(n, 0);
-    for (int b : d.Kids(g)) {
+    for (int b = d.Kid(g); b >= 0; b = d.Next(b)) {
         if (d.Name(b) != "vertexbuffer") continue;
         std::size_t k = 0;
-        for (int vi : d.Kids(b)) {
+        for (int vi = d.Kid(b); vi >= 0; vi = d.Next(vi)) {
             if (d.Name(vi) != "vertex") continue;
             if (k >= n) return Fail(err, "a vertexbuffer has more <vertex> elements than the vertexcount " + std::to_string(n));
             bool uvDone = false;
-            for (int e : d.Kids(vi)) {
-                const std::string& nm = d.Name(e);
+            for (int e = d.Kid(vi); e >= 0; e = d.Next(e)) {
+                const std::string_view nm = d.Name(e);
                 double a, bb, c;
                 if (nm == "position") {
-                    if (!Dbl(d.Attr(e, "x"), a) || !Dbl(d.Attr(e, "y"), bb) || !Dbl(d.Attr(e, "z"), c)) return Fail(err, "bad <position> in vertex " + std::to_string(k));
+                    if (!Num(d, e, "x", a) || !Num(d, e, "y", bb) || !Num(d, e, "z", c)) return Fail(err, "bad <position> in vertex " + std::to_string(k));
                     out.pos[k] = Vec3{(float)a, (float)bb, (float)c}; out.hasPos[k] = 1;
                 } else if (nm == "normal") {
-                    if (!Dbl(d.Attr(e, "x"), a) || !Dbl(d.Attr(e, "y"), bb) || !Dbl(d.Attr(e, "z"), c)) return Fail(err, "bad <normal> in vertex " + std::to_string(k));
+                    if (!Num(d, e, "x", a) || !Num(d, e, "y", bb) || !Num(d, e, "z", c)) return Fail(err, "bad <normal> in vertex " + std::to_string(k));
                     out.nrm[k] = Vec3{(float)a, (float)bb, (float)c}; out.hasNrm[k] = 1;
                 } else if (nm == "texcoord") {
                     if (uvDone) { ++extraUv; continue; }
-                    if (!Dbl(d.Attr(e, "u"), a) || !Dbl(d.Attr(e, "v"), bb)) return Fail(err, "bad <texcoord> in vertex " + std::to_string(k));
+                    if (!Num(d, e, "u", a) || !Num(d, e, "v", bb)) return Fail(err, "bad <texcoord> in vertex " + std::to_string(k));
                     out.uv[k] = Vec2{(float)a, (float)bb}; out.hasUv[k] = 1; uvDone = true;
                 } else if (nm == "colour_diffuse" || nm == "colour_specular") ++colours;
                 else if (nm == "tangent" || nm == "binormal") ++tangentsSeen;
@@ -475,10 +479,10 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
     bool converted = false;
     std::string why;
     if (!detail::txt::NormalizeEncoding(text, converted, why, kMaxFileBytes)) return Fail(err, why);
-    detail::xml::Doc doc;
+    detail::xml::FlatDoc doc;   // offsets into `text`, which lives to the end of this function
     std::string xerr;
-    if (!detail::xml::Parse(text, doc, xerr)) return Fail(err, xerr);
-    if (doc.Name(0) != "mesh") return Fail(err, "not an OGRE mesh (the root element is <" + doc.Name(0) + ">, not <mesh>)");
+    if (!detail::xml::ParseFlat(text, doc, xerr)) return Fail(err, xerr);
+    if (doc.Name(0) != "mesh") return Fail(err, "not an OGRE mesh (the root element is <" + std::string(doc.Name(0)) + ">, not <mesh>)");
 
     Build b(out);
     b.baseDir = baseDir;
@@ -500,13 +504,13 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
 
     {   // <submeshnames>: index -> name
         const int sn = doc.First(0, "submeshnames");
-        if (sn >= 0) for (int e : doc.Kids(sn)) {
+        if (sn >= 0) for (int e = doc.Kid(sn); e >= 0; e = doc.Next(e)) {
             double ix;
-            if (doc.Name(e) == "submeshname" && Dbl(doc.Attr(e, "index"), ix) && ix >= 0 && ix < 1e9 && b.names.size() < kMaxSubmeshes) b.names[(int)ix] = doc.AttrOr(e, "name", "");
+            if (doc.Name(e) == "submeshname" && Num(doc, e, "index", ix) && ix >= 0 && ix < 1e9 && b.names.size() < kMaxSubmeshes) b.names[(int)ix] = doc.AttrOr(e, "name", "");
         }
     }
     int idx = 0;
-    for (int s : doc.Kids(sm)) {
+    for (int s = doc.Kid(sm); s >= 0; s = doc.Next(s)) {
         if (doc.Name(s) != "submesh") continue;
         if ((std::size_t)idx >= kMaxSubmeshes) return Fail(err, "too many submeshes");
         const int myIdx = idx++;
@@ -527,22 +531,22 @@ static bool ReadOgreImpl(std::string text, const std::string& baseDir, ImportedM
         const int fi = doc.First(s, "faces");
         if (fi < 0) { ++b.noGeom; continue; }
         double fc;
-        if (!Dbl(doc.Attr(fi, "count"), fc) || fc < 0 || fc > (double)kMaxFaces || fc != std::floor(fc)) return Fail(err, "bad faces count '" + doc.AttrOr(fi, "count", "") + "'");
+        if (!Num(doc, fi, "count", fc) || fc < 0 || fc > (double)kMaxFaces || fc != std::floor(fc)) return Fail(err, "bad faces count '" + doc.AttrOr(fi, "count", "") + "'");
         std::vector<std::uint32_t> faceIdx;   // 3 per triangle
         std::size_t seen = 0;
         const bool strip = op == "triangle_strip", fan = op == "triangle_fan";
         std::vector<std::uint32_t> seq;   // strip and fan: the index sequence, the first face's indices then each later face's newest one
         auto toIdx = [](double v) { return (std::uint32_t)std::min(v, 4294967295.0); };
-        for (int f : doc.Kids(fi)) {
+        for (int f = doc.Kid(fi); f >= 0; f = doc.Next(f)) {
             if (doc.Name(f) != "face") continue;
             if (++seen > (std::size_t)fc) return Fail(err, "more <face> elements than the faces count " + std::to_string((std::int64_t)fc));
             double v[3] = {0, 0, 0};
             bool has[3] = {false, false, false};
             static const char* const names[3] = {"v1", "v2", "v3"};
             for (int k = 0; k < 3; ++k) {
-                const std::string* at = doc.Attr(f, names[k]);
-                if (!at) continue;
-                if (!Dbl(at, v[k]) || v[k] < 0 || v[k] != std::floor(v[k])) return Fail(err, "bad <face> in submesh " + std::to_string(myIdx));
+                std::string_view at;
+                if (!doc.Attr(f, names[k], at)) continue;
+                if (!detail::rc::ParseNumber(at.data(), at.data() + at.size(), v[k]) || v[k] < 0 || v[k] != std::floor(v[k])) return Fail(err, "bad <face> in submesh " + std::to_string(myIdx));
                 has[k] = true;
             }
             if (!strip && !fan) {

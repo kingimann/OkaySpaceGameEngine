@@ -590,7 +590,15 @@ inline SDL_Color toColor(const unsigned char c[4]) {
 
 // Append an axis-aligned rectangle (two triangles) in a flat color, to whichever
 // batch is active (main, or overlay when g_toOverlay is set).
+// Wholly outside the current clip rectangle of the main batch: nothing of it would show, so its geometry is not emitted (a long list in
+// a scrolling child, a section scrolled out of view). The overlay batch has no clip and is never culled.
+inline bool clippedAway(float x0, float y0, float x1, float y1) {
+    if (g_toOverlay || !g_curClipOn) return false;
+    const SDL_Rect& r = g_curClipRect;
+    return x1 <= (float)r.x || y1 <= (float)r.y || x0 >= (float)(r.x + r.w) || y0 >= (float)(r.y + r.h);
+}
 void quad(float x, float y, float w, float h, const unsigned char c[4]) {
+    if (clippedAway(x, y, x + w, y + h)) return;
     SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
@@ -766,6 +774,7 @@ void cornerFan(float cx, float cy, float r, int q, const unsigned char c[4]) {
 // A filled rounded rectangle (falls back to a plain quad when rad <= 0). Decomposed
 // into three bars + four quarter-circle corners so translucent fills never overlap.
 void rrect(float x, float y, float w, float h, float rad, const unsigned char c[4]) {
+    if (clippedAway(x, y, x + w, y + h)) return;
     if (rad <= 0.5f || w <= 0.0f || h <= 0.0f) { quad(x, y, w, h, c); return; }
     if (rad > w * 0.5f) rad = w * 0.5f;
     if (rad > h * 0.5f) rad = h * 0.5f;
@@ -826,6 +835,7 @@ void drawTextWith(okay::TtfFont* f, float x, float y, const char* str, float s, 
 // Draw a C string from the 8x8 bitmap font, each lit pixel a `s`x`s` quad.
 void drawText(float x, float y, const char* str, float s, const unsigned char c[4]) {
     if (!str || (g_cullRow && !g_toOverlay)) return;
+    { const float lh = fH() * s; if (clippedAway(x - lh, y - lh, 1e30f, y + 2.0f * lh)) return; }   // a line above, below or right of the clip
     if (g_ttf && (!g_toOverlay || g_novSpans < 30))
         if (okay::TtfFont* f = fontatlas::FallbackFont(str)) { drawTextWith(f, x, y, str, s, c); return; }
     if (g_ttf) {   // TrueType: one textured quad per glyph from the atlas (same texture as shapes)
@@ -2572,6 +2582,43 @@ void wrapLines(const char* text, float maxW, const unsigned char* col, float max
         if (first && imguiRows && maxRest > 0.0f) maxW = maxRest;
         first = false;
     };
+    if (imguiRows) {   // Dear ImGui's wrapping: the text's own spaces are kept, each word is measured once, a line breaks before the word
+                       // that does not fit, and the spaces at the break are dropped
+        const char* q = text;
+        while (*q) {
+            const char* r = q; const char* fitEnd = nullptr; float w = 0.0f;
+            while (*r && *r != '\n') {
+                const char* we = r;
+                while (*we == ' ') ++we;
+                while (*we && *we != ' ' && *we != '\n') ++we;
+                char piece[512]; int k = 0;
+                for (const char* c = r; c < we && k < 500; ++c) piece[k++] = *c;
+                piece[k] = 0;
+                const float add = labelW(piece);
+                if (fitEnd && w + add > maxW) break;
+                w += add; fitEnd = we; r = we;
+            }
+            const char* end = fitEnd ? fitEnd : r;
+            int k = 0;
+            for (const char* c = q; c < end && k < 500; ++c) line[k++] = *c;
+            line[k] = 0;
+            emit(line);
+            q = end;
+            while (*q == ' ') ++q;
+            if (*q == '\n') ++q;
+        }
+        return;
+    }
+    // A paragraph that fits on one line is one line (most calls): measured once.
+    if (!std::strchr(text, '\n') && labelW(text) <= maxW) {
+        int k = 0;
+        for (const char* q = text; *q && k < 500; ++q) line[k++] = *q;
+        if (k < 500 || !text[k]) {   // whole (a longer text goes through the loop below, which cuts it at 500 bytes a line)
+            line[k] = 0;
+            // the same words and single spaces the loop would keep: a run of spaces collapses there, so only take the shortcut without one
+            if (k > 0 && !std::strstr(text, "  ") && text[0] != ' ' && text[k - 1] != ' ') { emit(line); return; }
+        }
+    }
     while (*p) {
         const char* wordEnd = p;
         while (*wordEnd && *wordEnd != ' ' && *wordEnd != '\n') ++wordEnd;

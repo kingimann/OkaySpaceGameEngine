@@ -96,6 +96,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a far-away player still pops in | [16.3](16-networking.md#163-snapshots-and-sync-interest) Snapshots and sync, interest |
 | a feature exists in OkayUI but not in the scene UI (or the reverse) | [40.5](40-okayui-library.md#405-how-okayui-relates-to-scene-ui) How OkayUI relates to scene UI |
 | a feature missing on the web build (networking relay, encryption) | [18.2](18-build-export-release.md#182-web-and-mobile-export) Web and mobile export |
+| a fence changed height but one post did not | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a field does not show in the Inspector | [13.1](13-scripting.md#131-okayscript-vm) OkayScript VM |
 | a file you did not expect is (or is not) in the build | [18.6](18-build-export-release.md#186-desktop-game-export-build-game-and-the-export-check) Desktop game export (Build Game) and the export check |
 | a flashlight does not light the ground | [2.3](02-rendering-world.md#23-lighting-and-shadows) Lighting and shadows |
@@ -159,6 +160,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | a message with braces vanishes | [17.4](17-launcher-platform.md#174-chat-dms-groups-voice-notes-calls-polls-gifs-emoji) Chat: DMs, groups, voice notes, calls, polls, GIFs, emoji |
 | a minimap camera draws over the main view or replaces it | [2.10](02-rendering-world.md#210-cameras-and-the-camera-stack) Cameras and the camera stack |
 | a model faces backwards | [36.2](36-math-geometry.md#362-quaternions-and-matrices) Quaternions and matrices |
+| a model made here still edits like any mesh | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | a moderation action is refused | [17.9](17-launcher-platform.md#179-admin) Admin |
 | a modified pack fails its checksum | [39.10](39-security-anticheat.md#3910-data-packs-and-obfuscation) Data packs and obfuscation |
 | a modifier shows red text and is skipped | [3.3](03-modeling-import.md#33-modifiers) Modifiers |
@@ -1023,6 +1025,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the graph loses its layout | [5.1](05-animation-ik.md#51-animator-and-state-machines) Animator and state machines |
 | the ground has holes or cracks | [2.6](02-rendering-world.md#26-terrain-and-water) Terrain and water |
 | the guard patrols but never notices the player | [9.4](09-ai-navigation.md#94-behavior-trees) Behavior trees |
+| the Guided page asks what to do with parts you edited | [3.11](03-modeling-import.md#311-guided-creation-templates-parts-safe-regeneration) Guided creation (templates, parts, safe regeneration) |
 | the head or body jitters while walking | [5.13](05-animation-ik.md#513-player-animation-setup) Player animation setup |
 | the head or neck shows in the lens | [4.7](04-characters-cameras.md#47-first-person-camera-and-hands) First-person camera and hands |
 | the head shows inside the first-person lens | [4.1](04-characters-cameras.md#41-player-controller) Player Controller |

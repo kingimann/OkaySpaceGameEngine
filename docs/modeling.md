@@ -404,3 +404,20 @@ f 4 6 7 4 5 uv ...     # optional: per-corner UVs, color r g b a, mat k
   - A `.okaymesh` asset is written back to its file when you save.
   - An `.obj` stays untouched, and the edited geometry is saved in the scene instead.
   - Before this, editing an `.obj`-backed mesh and reopening the scene lost the edit.
+
+## Guided creation (the Guided page)
+
+The Modeling window has a **Guided** page (first in the list on the left). It helps you start something instead of modeling it from nothing, and it is part of the same modeler: what it makes is an ordinary mesh, so Edit Mesh, the modifiers, UVs, materials and the Project panel all work on it as before. Nothing about existing model files or workflows changes.
+
+How it works, in short (the full design with the reasons is in [guided_modeling_design.md](guided_modeling_design.md)):
+
+- **Pick, design, create.** Choose a category (Architecture, Vehicles, Characters, Environment, Props; a category with nothing in it says so), a thing (today: the **Fence**), a starting design (7 fence styles and any templates you saved) and press **Create**. You get a normal object with a mesh asset in `Assets/` and a small recipe file next to it (`Fence.okayguided`).
+- **Customise.** Select the object and open the Guided page: sliders for length, height, post spacing and size, rails, pickets or bars, an optional gate, a ground slope, a path of points, a design for each kind of part (posts, caps, rails, pickets, gate) and a colour for each. Changing a setting rebuilds the model.
+- **Parts.** Every generated piece has a name (`post/3`, `infill/0/5`). Select faces in Edit Mesh and the page shows which part they belong to; or open **Each part**, press **Select**, pick another design for just that part, or **Detach** it.
+- **Your hand work is safe.** The rule: rebuilding never overwrites something you changed without asking. Your own added geometry is always copied through untouched. A part you moved, reshaped, deleted or attached something to is "edited by you"; if a setting change would rebuild it, nothing happens and you are asked: **Keep my edits** (the part stops following the design), **Discard my edits** (that part is rebuilt) or **Convert to regular mesh** (forget the design, keep every face). A change that does not touch an edited part (a colour, another part's size) goes ahead without asking and leaves your edit alone.
+- **Convert and detach** are explicit buttons. **Undo guided step / Redo guided step** step through guided changes; the scene's Ctrl+Z also restores the mesh.
+- **Your own parts and templates.** Select faces and press **Save selection as part**: it becomes a design for a kind of part (it is stretched to fit that part's box). **Save as template** keeps all the settings as a starting design. Both are plain text files in `Assets/GuidedTemplates/` (`.okaypart`, `.okaytemplate`), versioned, and a recipe carries the parts it uses so the file works on another machine.
+
+Files: `.okayguided` (text, `okayguided 1`) holds the recipe: template and version, settings, design per kind of part, colours, path, detached part ids and embedded user parts. An editor that does not know the file simply never looks at it and opens the `.okaymesh` as usual; a recipe or template newer than the editor is reported and the model stays a regular mesh.
+
+New categories are added by registering a template (its settings, kinds of part and a generate function) in `engine/src/Modeling/Guided*.cpp`; the page, the files and the rebuild rules need no change. Tests: `guided_modeling` (`tests/test_guided.cpp`).

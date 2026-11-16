@@ -44,6 +44,7 @@
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
+#include "GuidedPanel.hpp"                    // Guided page of the Modeling window
 #include "okay/Modeling/PolyOps.hpp"         // edge-loop tools: loop cut, slide, bevel, knife...
 #include "okay/Modeling/UVUnwrap.hpp"        // seams, LSCM unwrap, island packing
 #include "okay/Render/SkyStars.hpp"    // deterministic skybox star field
@@ -27654,14 +27655,17 @@ void DrawModeling(EditorState& ed) {
         {"Generate",  "Procedural shapes, pipes",         true},
         {"Edit Mesh", "Select, move, sculpt, paint",      true},
         {"Import",    "Bring in a model file",            true},
+        {"Guided",    "Fences and more, from designs",    false},   // appended (scenes and OKAY_UI_MODELPAGE use these numbers); drawn first
     };
+    static const int kPageOrder[] = {7, 0, 1, 2, 3, 4, 5, 6};
     static int s_mdlPage = 0;
     if (const char* mp = std::getenv("OKAY_UI_MODELPAGE")) { static bool once = false; if (!once) { once = true; s_mdlPage = std::atoi(mp); } }
     GameObject* selGo = ed.selected();
     const bool haveMesh = selGo && (selGo->GetComponent<MeshRenderer>() || selGo->GetComponent<Terrain>());   // terrain: its sculpt tools
     ImGui::BeginChild("##mdlnav", ImVec2(196, 0), ImGuiChildFlags_Borders);
     ImGui::Dummy(ImVec2(0, 4));
-    for (int i = 0; i < (int)(sizeof(kPages) / sizeof(kPages[0])); ++i) {
+    for (int oi = 0; oi < (int)(sizeof(kPageOrder) / sizeof(kPageOrder[0])); ++oi) {
+        const int i = kPageOrder[oi];
         const MdlPage& pg = kPages[i];
         const bool usable = !pg.needsMesh || haveMesh;
         ImGui::PushID(i);
@@ -27685,7 +27689,57 @@ void DrawModeling(EditorState& ed) {
     ImGui::TextUnformatted(kPages[s_mdlPage].name);
     ImGui::TextDisabled("%s", kPages[s_mdlPage].desc);
     ImGui::Separator();
-    if (s_mdlPage == 0) {
+    if (s_mdlPage == 7) {
+        // Guided Creation: designs, parts and regeneration live in GuidedPanel.cpp; this lends it the edit-mode selection
+        // and the thumbnail renderer.
+        namespace gu = oked::guided_ui;
+        gu::Host host;
+        host.ed = &ed;
+        host.log = [](const std::string& m, int lv) { ConsoleLog(m, lv); };
+        host.leaveEditMode = [&](GameObject* g) { if (g_meshEdit && g_meshEditObj == g) SetMeshEditMode(ed, g, false); };
+        host.selectedFaces = [&](GameObject* g) {
+            std::vector<int> out;
+            MeshRenderer* m = g ? g->GetComponent<MeshRenderer>() : nullptr;
+            if (!m || !g_meshEdit || g_meshEditObj != g) return out;
+            EditPoly(m->mesh);   // makes sure mesh.polyFace is current
+            std::set<int> faces;
+            for (int t : g_meshSelFaces) if (t >= 0 && t < (int)m->mesh.polyFace.size()) faces.insert(m->mesh.polyFace[t]);
+            out.assign(faces.begin(), faces.end());
+            return out;
+        };
+        host.selectFaces = [&](GameObject* g, const std::vector<int>& faces) {
+            MeshRenderer* m = g ? g->GetComponent<MeshRenderer>() : nullptr;
+            if (!m) return;
+            if (!(g_meshEdit && g_meshEditObj == g)) SetMeshEditMode(ed, g, true);
+            EditPoly(m->mesh);
+            const std::set<int> want(faces.begin(), faces.end());
+            g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_meshSelFaces.clear();
+            g_meshSelMode = 1;
+            for (int t = 0; t < (int)m->mesh.polyFace.size(); ++t) if (want.count(m->mesh.polyFace[t])) g_meshSelFaces.push_back(t);
+        };
+        host.thumb = [](const std::string& key, const std::function<Mesh()>& build) -> void* {
+            static std::unordered_map<std::string, SDL_Texture*> cache;
+            auto it = cache.find(key);
+            if (it != cache.end()) return it->second;
+            static int s_frame = -1, s_made = 0;
+            if (s_frame != ImGui::GetFrameCount()) { s_frame = ImGui::GetFrameCount(); s_made = 0; }
+            if (s_made >= 2 || !g_sdlRenderer) return nullptr;   // a couple of pictures per frame, the rest fill in
+            ++s_made;
+            SDL_Texture* tex = nullptr;
+            {
+                okay::Scene sc;
+                GameObject* g = sc.CreateGameObject("guided thumb");
+                MeshRenderer* m = g->AddComponent<MeshRenderer>();
+                m->mesh = build();
+                m->color = okay::Color{1, 1, 1, 1};   // faces carry their colours
+                sc.Update(0.0f);
+                tex = RenderObjectThumb(sc, g);
+            }
+            cache[key] = tex;
+            return tex;
+        };
+        gu::DrawGuidedPage(host);
+    } else if (s_mdlPage == 0) {
 
     // --- Create a new object (drops it into the scene, selects it) ---
     // Organized Blender-style into an "Add" library: Primitives / Nature / Props /

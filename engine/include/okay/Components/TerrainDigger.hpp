@@ -10,6 +10,7 @@
 #include "okay/Components/AudioSource.hpp"
 #include "okay/Components/ParticleSystem.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Core/Game.hpp"
 #include <cmath>
 #include <algorithm>
@@ -60,7 +61,9 @@ public:
     bool AimAtTerrain(Terrain* terr, float& outLX, float& outLZ) const {
         if (!terr || !terr->gameObject) return false;
         Scene* s = GetScene();
-        Camera* cam = s ? s->FindObjectOfType<Camera>() : nullptr;   // main camera
+        // The scene's main camera (a minimap or security camera that comes first must not steer the brush).
+        Camera* cam = (s && s->mainCamera && s->mainCamera->gameObject && s->mainCamera->gameObject->transform)
+                          ? s->mainCamera : (s ? s->FindObjectOfType<Camera>() : nullptr);
         if (!cam || !cam->gameObject || !cam->gameObject->transform) return false;
         Transform* ct = cam->gameObject->transform;
         Vec3 ro = ct->Position();
@@ -85,7 +88,8 @@ public:
     }
 
     void Update(float dt) override {
-        if (Game::Paused()) { HideBrush(); DigSound(false); return; }   // no aim marker / sculpting while paused
+        // Pause, an open bag/chest/menu, typing, or a click on UI: no aim marker and no sculpting (as the Voxel Digger).
+        if (GameInputBlocked(GetScene())) { HideBrush(); DigSound(false); return; }
         Terrain* terr = FindTerrain();
         if (!terr) { HideBrush(); DigSound(false); return; }
 

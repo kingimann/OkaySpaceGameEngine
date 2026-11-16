@@ -716,12 +716,7 @@ std::vector<Spec> MakeSpecs() {
         {"Vehicle (2D)",               false, true,  "Car",    "VehicleController2D", mover({"Car", {'w'}, false, false, 1.0f})},
         {"Sandbox",                    true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player"), fixed(&CheckVoxelDig)})},
         {"Multiplayer",                false, true,  "Player", "ScriptComponent", fixed(&DriveMultiplayer)},
-        {"Coin Collector",             false, true,  "Player", "ScriptComponent", fixed(&DriveCoinCollector)},
-        {"Snake",                      false, true,  "Board",  "Tilemap", fixed(&DriveSnake)},
-        {"Brick Breaker",              false, true,  "Paddle", "ScriptComponent", fixed(&DriveBrickBreaker)},
         {"Main Menu",                  false, true,  "StartButton", "UIButton", fixed(&DriveMainMenu)},
-        {"Inventory",                  false, true,  "Player", "Inventory", fixed(&DriveInventory)},
-        {"Humanoid",                   true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {fixed(&DriveHumanoidWiring), look("Player")})},
     };
 }
 
@@ -753,6 +748,21 @@ std::vector<NotOffered> MakeNotOffered() {
          "the heightmap terrain sandbox (Templates::TerrainSandbox), replaced in the launcher by the voxel Sandbox; nothing calls "
          "this builder. The engine builder has its own tests (test_terrain, test_scene_cameras).",
          {"NewTerrainSandbox", true, false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {look("Player"), fixed(&CheckTerrainDig)})}},
+        {"NewCoinCollector", &EditorState::NewCoinCollector,
+         "removed from the New Project lists on the owner's request (2026-11-16); the scene and its builder stay, and projects made from it still open. The engine builder Templates::CoinCollector keeps its own tests.",
+         {"NewCoinCollector", false, true,  "Player", "ScriptComponent", fixed(&DriveCoinCollector)}},
+        {"NewSnake", &EditorState::NewSnake,
+         "removed from the New Project lists on the owner's request (2026-11-16); the scene and its builder stay, and projects made from it still open. The engine builder Templates::Snake keeps its own tests.",
+         {"NewSnake", false, true,  "Board",  "Tilemap", fixed(&DriveSnake)}},
+        {"NewBrickBreaker", &EditorState::NewBrickBreaker,
+         "removed from the New Project lists on the owner's request (2026-11-16); the scene and its builder stay, and projects made from it still open. The engine builder Templates::BrickBreaker keeps its own tests.",
+         {"NewBrickBreaker", false, true,  "Paddle", "ScriptComponent", fixed(&DriveBrickBreaker)}},
+        {"NewInventory", &EditorState::NewInventory,
+         "removed from the New Project lists on the owner's request (2026-11-16); the scene and its builder stay, and projects made from it still open. The engine builder Templates::Inventory keeps its own tests.",
+         {"NewInventory", false, true,  "Player", "Inventory", fixed(&DriveInventory)}},
+        {"NewHumanoid", &EditorState::NewHumanoid,
+         "removed from the New Project lists on the owner's request (2026-11-16); the scene and its builder stay, and projects made from it still open. The engine builder Templates::Humanoid keeps its own tests.",
+         {"NewHumanoid", true,  false, "Player", "PlayerController", mover({"Player", {'w'}, true, true, 1.0f}, {fixed(&DriveHumanoidWiring), look("Player")})}},
     };
 }
 
@@ -1024,8 +1034,8 @@ void CheckTable() {
     CHECK(oked::FindBuilder("3d scene") == nullptr);   // titles are matched exactly
     CHECK(oked::BuilderOrDefault("No Such Template", &known) == &EditorState::NewScene3D && !known);
     CHECK(oked::BuilderOrDefault("", &known) == &EditorState::NewScene3D && known);   // no --template: the quiet default
-    CHECK(oked::BuilderOrDefault("Snake", &known) == &EditorState::NewSnake && known);
-    CHECK(oked::BuilderOrDefault("Snake") == &EditorState::NewSnake);   // `known` is optional
+    CHECK(oked::BuilderOrDefault("Top-Down", &known) == &EditorState::NewTopDown && known);
+    CHECK(oked::BuilderOrDefault("Top-Down") == &EditorState::NewTopDown);   // `known` is optional
 }
 
 // ---- every builder is offered, or listed as not offered ------------------------------------------------------------------

@@ -41,8 +41,11 @@ bool LoadMeshAsset(const std::string& path, Mesh& out, std::string* texture, std
 }
 
 bool SaveMeshAsset(const std::string& path, const Mesh& mesh, std::string* error) {
-    if (mesh.vertices.empty() || mesh.triangles.empty()) { if (error) *error = "the mesh is empty"; return false; }
-    return PolyMesh::FromMesh(mesh).Save(path, error);
+    // Hidden faces are part of the model: the file gets them too.
+    Mesh whole = mesh;
+    if (whole.HasHidden()) whole.RevealHidden();
+    if (whole.vertices.empty() || whole.triangles.empty()) { if (error) *error = "the mesh is empty"; return false; }
+    return PolyMesh::FromMesh(whole).Save(path, error);
 }
 
 std::uint64_t GeometryHash(const Mesh& mesh) {
@@ -58,6 +61,21 @@ std::uint64_t GeometryHash(const Mesh& mesh) {
     if (!mesh.triangles.empty()) mix(mesh.triangles.data(), mesh.triangles.size() * sizeof(int));
     if (!mesh.uvs.empty()) mix(mesh.uvs.data(), mesh.uvs.size() * sizeof(Vec2));
     if (!mesh.triColors.empty()) mix(mesh.triColors.data(), mesh.triColors.size() * sizeof(Color));
+    // Material slots only when there are some, so meshes without slots keep the hash they had.
+    for (const EdgeCrease& c : mesh.bevelWeights) { const int ab[2] = {c.a, c.b}; mix(ab, sizeof ab); mix(&c.w, sizeof c.w); }
+    for (const EdgeCrease& c : mesh.creases) { const int ab[2] = {c.a, c.b}; mix(ab, sizeof ab); mix(&c.w, sizeof c.w); }
+    if (!mesh.vertexColors.empty()) mix(mesh.vertexColors.data(), mesh.vertexColors.size() * sizeof(Color));
+    if (!mesh.triSlot.empty()) mix(mesh.triSlot.data(), mesh.triSlot.size() * sizeof(int));
+    if (!mesh.slotColors.empty()) mix(mesh.slotColors.data(), mesh.slotColors.size() * sizeof(Color));
+    // Polygon grouping, per-corner UVs, UV seams and hidden faces are part of the model too: an edit that
+    // only changes one of them must still count as an edit (it is what makes leaving edit mode keep an undo step).
+    if (!mesh.polyFace.empty()) mix(mesh.polyFace.data(), mesh.polyFace.size() * sizeof(int));
+    if (!mesh.cornerUVs.empty()) mix(mesh.cornerUVs.data(), mesh.cornerUVs.size() * sizeof(Vec2));
+    for (const auto& sm : mesh.seams) { const int ab[2] = {sm.first, sm.second}; mix(ab, sizeof ab); }
+    if (!mesh.hiddenPos.empty()) mix(mesh.hiddenPos.data(), mesh.hiddenPos.size() * sizeof(Vec3));
+    if (!mesh.hiddenUV.empty()) mix(mesh.hiddenUV.data(), mesh.hiddenUV.size() * sizeof(Vec2));
+    if (!mesh.hiddenSlot.empty()) mix(mesh.hiddenSlot.data(), mesh.hiddenSlot.size() * sizeof(int));
+    if (!mesh.hiddenPoly.empty()) mix(mesh.hiddenPoly.data(), mesh.hiddenPoly.size() * sizeof(int));
     return h == 0 ? 1 : h;   // 0 means "not known" to callers
 }
 

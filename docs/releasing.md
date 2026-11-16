@@ -4,7 +4,7 @@ Launchers and editors look for updates in two places and use whichever has the
 newer version:
 
 1. **Supabase Storage**: the public `releases` bucket on the project in
-   `CMakeLists.txt` (`OKAY_DEFAULT_ACCOUNT_URL`). Checked first.
+   `config/public-account.json` (`url`; `docs/accounts.md`). Checked first.
 2. **GitHub Releases**: `releases/latest/download/<file>`. The fallback.
 
 So an update can ship without the GitHub workflow: build, then publish to
@@ -16,7 +16,7 @@ Supabase.
 # 1. Bump the version in CMakeLists.txt (project(... VERSION x.y.z)).
 # 2. Build the Windows files (MinGW cross-compile; splits the editor's debug info).
 scripts/build-windows-dist.sh
-# 3. Upload. Either key works; it is read from the environment only.
+# 3. Upload (SUPABASE_URL or OKAY_DEFAULT_ACCOUNT_URL override the project address, which is otherwise read from config/public-account.json). Either key works; it is read from the environment only.
 SUPABASE_ACCESS_TOKEN=sbp_...   scripts/publish-supabase.sh   # management token
 SUPABASE_SERVICE_KEY=eyJ...     scripts/publish-supabase.sh   # or the service_role key
 ```
@@ -46,6 +46,13 @@ Storage and download traffic count against the Supabase plan's quotas.
 
 Never commit either key. For a Claude cloud session, add `SUPABASE_ACCESS_TOKEN`
 in the environment's settings (Network secrets, or an environment variable).
+
+## Try a branch before it is released (test builds)
+
+To let the owner try a branch without a pull request or a release, start the **Test build (dev channel)** workflow (`gh workflow run dev-build.yml
+--ref main -f ref=<branch> -f note="<what to try>"`). It publishes to the `dev/` folder only, with its own script (`scripts/publish-supabase-dev.sh`),
+and never touches `VERSION.txt`, `versions.json` or the GitHub release. Everything about it, including the number it gets and how the owner switches it
+on, is in [release_channels.md](release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players).
 
 ## Publishing the official game
 

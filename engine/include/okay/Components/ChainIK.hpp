@@ -13,6 +13,7 @@
 // chain are moved to the solved positions instead (the old path). Lengths are
 // read from the pose every frame, so a rescale or a new model just works.
 // ---------------------------------------------------------------------------
+#include "okay/Core/Profiler.hpp"
 #include "okay/Scene/Component.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -89,6 +90,7 @@ public:
     // Animators lazily, which puts them late in the Update order).
     void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
+        OKAY_PROFILE("Anim.IK");
         m_restore.Restore();
         const int n = static_cast<int>(bones.size());
         const float w = weight * stateWeight * m_fade.Step(ikActive, fadeTime, dt);

@@ -20,6 +20,8 @@ add_test(NAME structure_version COMMAND test_structure_version)
 find_program(OKAY_PYTHON NAMES python3 python)
 if(OKAY_PYTHON)
     add_test(NAME versions_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/versions_index.py --self-test)
+    # scripts/dev_index.py maintains dev/versions.json, the list of test builds (the dev channel; docs/release_channels.md "Test builds").
+    add_test(NAME dev_index COMMAND ${OKAY_PYTHON} -I ${CMAKE_SOURCE_DIR}/scripts/dev_index.py --self-test)
     # The collaboration scripts (docs/collaboration.md): throw-away git repos only, no GitHub, no feature map.
     find_program(OKAY_GIT NAMES git)
     if(OKAY_GIT)
@@ -964,6 +966,17 @@ add_executable(test_fp_hand test_fp_hand.cpp)
 target_link_libraries(test_fp_hand PRIVATE okay::engine)
 add_test(NAME fp_hand COMMAND test_fp_hand)
 
+add_executable(test_fp_hand_normal test_fp_hand_normal.cpp)
+target_link_libraries(test_fp_hand_normal PRIVATE okay::engine)
+add_test(NAME fp_hand_normal COMMAND test_fp_hand_normal)
+
+# Headless pictures of the first-person hand (a tool, not a test). docs/try_it.md 7z.
+add_executable(fp_hand_shot fp_hand_shot.cpp)
+target_link_libraries(fp_hand_shot PRIVATE okay::engine)
+if(FP_SHOT_BEFORE)
+    target_compile_definitions(fp_hand_shot PRIVATE FPSHOT_BEFORE)
+endif()
+
 add_executable(test_run_feel test_run_feel.cpp)
 target_link_libraries(test_run_feel PRIVATE okay::engine)
 add_test(NAME run_feel COMMAND test_run_feel)
@@ -1127,6 +1140,62 @@ add_executable(test_voxel_dig test_voxel_dig.cpp)
 target_link_libraries(test_voxel_dig PRIVATE okay::engine)
 add_test(NAME voxel_dig COMMAND test_voxel_dig)
 
+# Voxel terrain edit path (docs/voxel_edit_perf.md): the surface after any edit equals a full rebuild, the faster marching-cubes
+# loop equals the original bit for bit, the running game draws the terrain in chunk objects that look like one big mesh, the
+# brushes and the local floater cleanup do what they always did, and bad brush numbers no longer write NaN into the field.
+add_executable(test_voxel_edit test_voxel_edit.cpp)
+target_link_libraries(test_voxel_edit PRIVATE okay::engine)
+add_test(NAME voxel_edit COMMAND test_voxel_edit)
+
+add_executable(test_voxel_materials test_voxel_materials.cpp)
+target_link_libraries(test_voxel_materials PRIVATE okay::engine)
+add_test(NAME voxel_materials COMMAND test_voxel_materials)
+
+add_executable(test_voxel_digger_real test_voxel_digger_real.cpp)
+target_link_libraries(test_voxel_digger_real PRIVATE okay::engine)
+add_test(NAME voxel_digger_real COMMAND test_voxel_digger_real)
+
+add_executable(test_voxel_more test_voxel_more.cpp)
+target_link_libraries(test_voxel_more PRIVATE okay::engine)
+target_compile_definitions(test_voxel_more PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+add_test(NAME voxel_more COMMAND test_voxel_more)
+
+add_executable(test_voxel_bughunt test_voxel_bughunt.cpp)
+target_link_libraries(test_voxel_bughunt PRIVATE okay::engine)
+add_test(NAME voxel_bughunt COMMAND test_voxel_bughunt)
+add_executable(test_voxel_chunks test_voxel_chunks.cpp)
+target_link_libraries(test_voxel_chunks PRIVATE okay::engine)
+add_test(NAME voxel_chunks COMMAND test_voxel_chunks)
+# The renderers' mesh-change hash (engine/include/okay/Render/MeshHash.hpp): every bit counts, and it is much faster.
+add_executable(test_mesh_hash test_mesh_hash.cpp)
+target_link_libraries(test_mesh_hash PRIVATE okay::engine)
+add_test(NAME mesh_hash COMMAND test_mesh_hash)
+# Terrain and Water rebuilt every vertex normal through a std::map weld (docs/terrain_audit.md): same normals, far faster.
+add_executable(test_terrain_water_speed test_terrain_water_speed.cpp)
+target_link_libraries(test_terrain_water_speed PRIVATE okay::engine)
+add_test(NAME terrain_water_speed COMMAND test_terrain_water_speed)
+# The shipped examples/voxel scenes open and dig (OKAY_WRITE_VOXEL_EXAMPLES=1 rewrites them from the Sandbox template).
+add_executable(test_voxel_examples test_voxel_examples.cpp)
+target_link_libraries(test_voxel_examples PRIVATE okay::engine)
+target_compile_definitions(test_voxel_examples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME voxel_examples COMMAND test_voxel_examples)
+# Bugs the terrain audit proved (docs/terrain_audit.md): the heightmap digger ignored open bags and the main camera, and a
+# World Streamer threw away a dug voxel cell when it unloaded it.
+add_executable(test_terrain_audit test_terrain_audit.cpp)
+target_link_libraries(test_terrain_audit PRIVATE okay::engine)
+add_test(NAME terrain_audit COMMAND test_terrain_audit)
+# Not a test: prints per-frame numbers for digging in a voxel terrain (docs/voxel_edit_perf.md). Built, never run by ctest.
+add_executable(bench_voxel_edit bench_voxel_edit.cpp)
+target_link_libraries(bench_voxel_edit PRIVATE okay::engine)
+add_executable(bench_voxel_real bench_voxel_real.cpp)
+target_link_libraries(bench_voxel_real PRIVATE okay::engine)
+add_executable(test_voxel_overlay_depth test_voxel_overlay_depth.cpp)
+target_link_libraries(test_voxel_overlay_depth PRIVATE okay::engine)
+add_test(NAME voxel_overlay_depth COMMAND test_voxel_overlay_depth)
+
+add_executable(bench_voxel_frame bench_voxel_frame.cpp)
+target_link_libraries(bench_voxel_frame PRIVATE okay::engine)
+
 add_executable(test_api_expand test_api_expand.cpp)
 target_link_libraries(test_api_expand PRIVATE okay::engine)
 add_test(NAME api_expand COMMAND test_api_expand)
@@ -1155,6 +1224,24 @@ add_test(NAME camera_cine COMMAND test_camera_cine)
 add_executable(test_player_fixes test_player_fixes.cpp)
 target_link_libraries(test_player_fixes PRIVATE okay::engine)
 add_test(NAME player_fixes COMMAND test_player_fixes)
+
+# The player deep audit (docs/player_audit.md): one check per proven bug, each failing with OKAY_OLD_PLAYER=1.
+add_executable(test_player_deep test_player_deep.cpp)
+target_link_libraries(test_player_deep PRIVATE okay::engine)
+add_test(NAME player_deep COMMAND test_player_deep)
+
+# The shipped obstacle course scene (examples/player): the file is what the code writes; a player walks its stations.
+add_executable(test_player_course test_player_course.cpp)
+target_link_libraries(test_player_course PRIVATE okay::engine)
+target_compile_definitions(test_player_course PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_course COMMAND test_player_course)
+add_executable(test_player_feel test_player_feel.cpp)
+target_link_libraries(test_player_feel PRIVATE okay::engine)
+add_test(NAME player_feel COMMAND test_player_feel)
+add_executable(test_player_feel_lab test_player_feel_lab.cpp)
+target_link_libraries(test_player_feel_lab PRIVATE okay::engine)
+target_compile_definitions(test_player_feel_lab PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_feel_lab COMMAND test_player_feel_lab)
 
 add_executable(test_terrain_ops test_terrain_ops.cpp)
 target_link_libraries(test_terrain_ops PRIVATE okay::engine)
@@ -1205,6 +1292,27 @@ add_test(NAME skinning COMMAND test_skinning)
 add_executable(test_physics_joints test_physics_joints.cpp)
 target_link_libraries(test_physics_joints PRIVATE okay::engine)
 add_test(NAME physics_joints COMMAND test_physics_joints)
+
+# Physics audit (docs/physics_plan.md): box contact points, the iterated solver on its own, the bugs the audit found
+# (both physics qualities), the Improved quality, and how its settings are saved.
+add_executable(test_physics_deep_manifold test_physics_deep_manifold.cpp)
+target_link_libraries(test_physics_deep_manifold PRIVATE okay::engine)
+add_test(NAME physics_deep_manifold COMMAND test_physics_deep_manifold)
+add_executable(test_physics_deep_solver test_physics_deep_solver.cpp)
+target_link_libraries(test_physics_deep_solver PRIVATE okay::engine)
+add_test(NAME physics_deep_solver COMMAND test_physics_deep_solver)
+add_executable(test_physics_deep_bugs test_physics_deep_bugs.cpp)
+target_link_libraries(test_physics_deep_bugs PRIVATE okay::engine)
+add_test(NAME physics_deep_bugs COMMAND test_physics_deep_bugs)
+add_executable(test_physics_deep_improved test_physics_deep_improved.cpp)
+target_link_libraries(test_physics_deep_improved PRIVATE okay::engine)
+add_test(NAME physics_deep_improved COMMAND test_physics_deep_improved)
+add_executable(test_physics_deep_save test_physics_deep_save.cpp)
+target_link_libraries(test_physics_deep_save PRIVATE okay::engine)
+add_test(NAME physics_deep_save COMMAND test_physics_deep_save)
+add_executable(test_physics_deep_more test_physics_deep_more.cpp)
+target_link_libraries(test_physics_deep_more PRIVATE okay::engine)
+add_test(NAME physics_deep_more COMMAND test_physics_deep_more)
 
 add_executable(test_math_extra test_math_extra.cpp)
 target_link_libraries(test_math_extra PRIVATE okay::engine)
@@ -1858,6 +1966,16 @@ target_link_libraries(test_update_signature PRIVATE okay::crypto)   # shared/Ant
 target_include_directories(test_update_signature PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_update_signature PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME update_signature COMMAND test_update_signature)
+
+# Test builds (the dev channel; shared/TestBuild.hpp, LoadDevIndex in launcher/VersionsManager.cpp, scripts/dev_index.py): the order of a four-number version, the
+# real list and VERSION.txt ignoring such versions, the dev list read from dev/ only and signed like the real one, ChooseTarget (what the update check installs),
+# the "Get test builds" setting (off by default, nothing written when off) and the same install rules. No window, no network; python3 is run when it is there.
+add_executable(test_dev_channel test_dev_channel.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_dev_channel PRIVATE cxx_std_17)
+target_include_directories(test_dev_channel PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_dev_channel PRIVATE okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed lists)
+target_compile_definitions(test_dev_channel PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME dev_channel COMMAND test_dev_channel)
 find_program(OKAY_BASH bash)
 find_program(OKAY_PYTHON3 python3)
 if(OKAY_PYTHON3 AND NOT WIN32)
@@ -1866,6 +1984,11 @@ if(OKAY_PYTHON3 AND NOT WIN32)
 endif()
 if(OKAY_BASH AND OKAY_PYTHON3 AND NOT WIN32)
     add_test(NAME sign_index_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_index.sh)
+    # The test builds' publisher (scripts/publish-supabase-dev.sh) against a fake storage server on loopback, and the real publisher's refusals.
+    add_test(NAME dev_publish_script COMMAND ${OKAY_BASH} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_publish.sh)
+    # .github/workflows/dev-build.yml read and its shell steps run offline (exit 77 = PyYAML missing: shown as skipped, never as passed).
+    add_test(NAME dev_workflow_lint COMMAND ${OKAY_PYTHON3} -I ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_dev_workflow.py)
+    set_tests_properties(dev_workflow_lint PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 add_test(NAME update_keys_ok COMMAND ${CMAKE_COMMAND} "-DKEYS=d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a" -P ${CMAKE_CURRENT_SOURCE_DIR}/anticheat_keys_check.cmake)
 
@@ -2093,6 +2216,42 @@ add_test(NAME edit_transform COMMAND test_edit_transform)
 add_executable(test_polymesh test_polymesh.cpp)
 target_link_libraries(test_polymesh PRIVATE okay::engine)
 add_test(NAME polymesh COMMAND test_polymesh)
+add_executable(test_guided test_guided.cpp)
+target_link_libraries(test_guided PRIVATE okay::engine)
+add_test(NAME guided_modeling COMMAND test_guided)
+add_executable(test_guided_architecture test_guided_architecture.cpp)
+target_link_libraries(test_guided_architecture PRIVATE okay::engine)
+add_test(NAME guided_architecture COMMAND test_guided_architecture)
+add_executable(test_guided_vehicles test_guided_vehicles.cpp)
+target_link_libraries(test_guided_vehicles PRIVATE okay::engine)
+add_test(NAME guided_vehicles COMMAND test_guided_vehicles)
+add_executable(test_guided_detail test_guided_detail.cpp)
+target_link_libraries(test_guided_detail PRIVATE okay::engine)
+add_test(NAME guided_detail COMMAND test_guided_detail)
+add_executable(test_guided_quality test_guided_quality.cpp)
+target_link_libraries(test_guided_quality PRIVATE okay::engine)
+add_test(NAME guided_quality COMMAND test_guided_quality)
+add_executable(test_guided_animation test_guided_animation.cpp)
+target_link_libraries(test_guided_animation PRIVATE okay::engine)
+add_test(NAME guided_animation COMMAND test_guided_animation)
+add_test(NAME guided_roundtrip COMMAND test_guided_quality)
+add_executable(test_guided_characters test_guided_characters.cpp)
+target_link_libraries(test_guided_characters PRIVATE okay::engine)
+add_test(NAME guided_characters COMMAND test_guided_characters)
+add_executable(test_guided_environment test_guided_environment.cpp)
+target_link_libraries(test_guided_environment PRIVATE okay::engine)
+add_test(NAME guided_environment COMMAND test_guided_environment)
+
+# Modeling "more": per-face material slots, dissolve fixes (docs/modeling_audit.md)
+add_executable(test_modeling_more test_modeling_more.cpp)
+target_link_libraries(test_modeling_more PRIVATE okay::engine)
+add_test(NAME modeling_more COMMAND test_modeling_more)
+add_executable(test_modeling_more_scene test_modeling_more_scene.cpp)
+target_link_libraries(test_modeling_more_scene PRIVATE okay::engine)
+add_test(NAME modeling_more_scene COMMAND test_modeling_more_scene)
+add_executable(test_modeling_fuzz test_modeling_fuzz.cpp)
+target_link_libraries(test_modeling_fuzz PRIVATE okay::engine)
+add_test(NAME modeling_fuzz COMMAND test_modeling_fuzz)
 
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)
@@ -2181,6 +2340,15 @@ if(SDL2_FOUND)
     target_link_libraries(test_ui_focus_render PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
     target_include_directories(test_ui_focus_render PRIVATE ${SDL2_INCLUDE_DIRS})
     add_test(NAME ui_focus_render COMMAND test_ui_focus_render)
+
+    # Pictures of the nameplate, the rich-text sign and the shipped sample scene (examples/ui_text), drawn headless
+    # through the same UI pass as the game. They are written to OKAY_SHOT_DIR (or argv[1]) and checked for what they show.
+    add_executable(test_ui_text_shots test_ui_text_shots.cpp)
+    target_link_libraries(test_ui_text_shots PRIVATE okay::engine ${OKAY_TEST_SDL_LIB})
+    target_include_directories(test_ui_text_shots PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_compile_definitions(test_ui_text_shots PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    target_compile_definitions(test_ui_text_shots PRIVATE OKAY_TEST_OUTPUT_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+    add_test(NAME ui_text_shots COMMAND test_ui_text_shots)
 else()
     message(WARNING "SDL2 not found: skipping the UI renderer golden-image test (ui_renderer_golden).")
 endif()
@@ -3662,6 +3830,20 @@ target_link_libraries(test_wav_ffmpeg_diff PRIVATE okay::engine)
 target_compile_definitions(test_wav_ffmpeg_diff PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME wav_ffmpeg_diff COMMAND test_wav_ffmpeg_diff)
 
+add_executable(test_ui_nameplate_bound test_ui_nameplate_bound.cpp)
+target_link_libraries(test_ui_nameplate_bound PRIVATE okay::engine)
+add_test(NAME ui_nameplate_bound COMMAND test_ui_nameplate_bound)
+
+add_executable(test_world_text_rich test_world_text_rich.cpp)
+target_link_libraries(test_world_text_rich PRIVATE okay::engine)
+add_test(NAME world_text_rich COMMAND test_world_text_rich)
+
+# The shipped sample scene (examples/ui_text): two characters with bound nameplates and a rich-text world sign
+add_executable(test_ui_text_example test_ui_text_example.cpp)
+target_link_libraries(test_ui_text_example PRIVATE okay::engine)
+target_compile_definitions(test_ui_text_example PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME ui_text_example COMMAND test_ui_text_example)
+
 # The editor's main menu bar and the Hierarchy menus as data (editor/MenuBarModel.hpp, editor/HierarchyContextModel.hpp; no ImGui, header-only):
 # the menu order, nothing listed twice, every greyed-out item says why, shortcuts that work, plural labels, and that every item of the old menus still has a home.
 # (They also read editor/*.cpp to check that every menu id has a handler there: OKAY_SOURCE_DIR.)
@@ -3673,3 +3855,17 @@ add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+
+# Walking must look like walking and running like running (docs/walk_vs_run.md). The second entry runs the same program with
+# OKAY_OLD_GAIT=1 and shows the old gait's walk was NOT clearly different from its run; the strips program draws the pictures.
+add_executable(test_walk_vs_run test_walk_vs_run.cpp)
+target_link_libraries(test_walk_vs_run PRIVATE okay::engine)
+add_test(NAME walk_vs_run COMMAND test_walk_vs_run)
+add_test(NAME walk_vs_run_old COMMAND ${CMAKE_COMMAND} -E env OKAY_OLD_GAIT=1 $<TARGET_FILE:test_walk_vs_run> --old)
+add_executable(walk_vs_run_strips walk_vs_run_strips.cpp)
+target_link_libraries(walk_vs_run_strips PRIVATE okay::engine)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
+add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
+add_executable(test_guided_perf test_guided_perf.cpp)
+target_link_libraries(test_guided_perf PRIVATE okay::engine)
+add_test(NAME guided_perf COMMAND test_guided_perf)

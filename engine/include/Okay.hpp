@@ -112,6 +112,8 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Physics3D.hpp"
+#include "okay/Physics/DebrisPool.hpp"
+#include "okay/Components/DebrisEmitter.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Physics/ColliderFit.hpp"
 
@@ -249,6 +251,7 @@
 #include "okay/Components/CharacterController3D.hpp"
 #include "okay/Components/FirstPersonController.hpp"
 #include "okay/Components/ThirdPersonController.hpp"
+#include "okay/Components/PlayerDebug.hpp"
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/PlayerController.hpp"
 #include "okay/Components/VehicleController.hpp"

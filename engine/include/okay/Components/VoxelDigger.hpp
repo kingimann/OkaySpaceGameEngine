@@ -4,16 +4,28 @@
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
+#include "okay/Components/VoxelDebris.hpp"
+#include "okay/Components/TextRenderer.hpp"
+#include "okay/Components/Inventory.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/AudioSource.hpp"
+#include "okay/Audio/AudioLoad.hpp"
+#include <memory>
 #include "okay/Components/ParticleSystem.hpp"
+#include "okay/Core/Profiler.hpp"
+#include "okay/Core/FrameOverlay.hpp"
+#include <chrono>
 #include "okay/Render/Mesh.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/GameInput.hpp"
 #include "okay/Core/Game.hpp"
 #include <cmath>
 #include <algorithm>
+#include <cstdio>
+#include <map>
+#include <string>
+#include <vector>
 
 namespace okay {
 
@@ -43,11 +55,106 @@ public:
     /// that you can't reach. 0 disables the cleanup.
     int   removeFloaters = 8;
 
+
+    // ---- Real-life digging (docs/terrain_water.md). All off by default: a digger from an older scene acts as before. ----
+    /// What happens to the ground a brush takes away. Vanish = today's behaviour.
+    enum class Collect { Vanish, Store, Debris, Both };
+    enum class Preset { Custom, Realistic, Arcade, Creative };
+    Collect collect = Collect::Vanish;
+    bool  needsMaterial = false;   ///< building takes the material from the store
+    bool  creative = false;        ///< unlimited store
+    int   addMaterial = 0;         ///< material id placed by the build button (when the terrain has materials)
+    float power = 1.0e9f;          ///< tool power: materials harder than this cannot be dug
+    float hardnessScale = 1.0f;    ///< > 1 makes everything slower to dig
+    VoxelTerrain::EditOptions::Shape shape = VoxelTerrain::EditOptions::Shape::Sphere;
+    float depthLimit = -1.0f;      ///< metres a stroke may go below where it started (-1 = unlimited)
+    float protectBelow = -1.0f;    ///< bedrock: nothing under this local height can be dug (-1 = off)
+    bool  snapToGrid = false;      ///< build on voxel centres
+    int   debrisMax = 48;          ///< pieces alive at once; more are put straight into the store
+    float debrisLife = 20.0f;      ///< seconds a piece lies about
+    bool  slump = false;           ///< loose ground slides to its angle of repose after a dig
+    int   slumpPasses = 1;         ///< slump passes per frame (each moves at most 40 voxels): more = an avalanche that runs farther
+    bool  collapse = false;        ///< pieces cut loose by a dig fall as debris instead of vanishing
+    char  pourKey = 0;             ///< key that pours fluid at the aim point when the terrain has `fluidOn` (0 = none)
+    int   pourCells = 30;          ///< cells of fluid per press
+    int   caveInSpan = 0;          ///< cave-in rule (0 = off): roof more than this many voxels from a support comes down (VoxelTerrain::CaveIn); needs a stroke to end
+    bool  giveItems = false;       ///< also hand `drop` items to the scene's Inventory when volume is stored
+    /// Tools from the inventory (OFF by default). On: the tool power is the best `tools` entry whose item the scene's Inventory holds
+    /// (`pickaxe:5` = an item called pickaxe digs materials up to hardness 5), or `bareHandsPower` with none. `power` is then ignored.
+    bool  toolsFromInventory = false;
+    std::string tools = "shovel:2,pickaxe:5,iron_pickaxe:7";
+    float bareHandsPower = 0.8f;
+    /// Building spends the material's `drop` items from the Inventory (`dropPerM3` items per cubic metre), and does nothing
+    /// without them. Dug ground arrives as the same items when `giveItems` is on, so a stack can be picked up and placed again.
+    bool  buildFromItems = false;
+    float CurrentPower() const {
+        if (!toolsFromInventory) return power;
+        Scene* sc = GetScene(); Inventory* inv = sc ? sc->FindObjectOfType<Inventory>() : nullptr;
+        float best = bareHandsPower;
+        if (!inv) return best;
+        std::size_t i = 0;
+        while (i < tools.size()) {
+            std::size_t e = tools.find(',', i); if (e == std::string::npos) e = tools.size();
+            const std::string one = tools.substr(i, e - i); i = e + 1;
+            const std::size_t c = one.find(':'); if (c == std::string::npos || c == 0) continue;
+            const float pw = (float)std::atof(one.c_str() + c + 1);
+            if (pw > best && inv->Has(one.substr(0, c))) best = pw;
+        }
+        return best;
+    }
+    std::string hudTarget;         ///< name of a Text object that lists the store
+    int  lastDigMaterial = -1;     ///< the material most of the last dig stroke took (-1 = none yet); also picks the dust colour and sound
+    std::vector<double> store;     ///< cubic metres per material id
+    double Stored(int id) const { return id >= 0 && id < (int)store.size() ? store[(std::size_t)id] : 0.0; }
+    double StoredByName(const std::string& n) const { VoxelTerrain* v = FindVoxel(); return v ? Stored(v->MaterialIndex(n)) : 0.0; }
+    void Deposit(int id, double vol) {
+        if (id < 0) id = 0;
+        if (store.size() <= (std::size_t)id) store.resize((std::size_t)id + 1, 0.0);
+        store[(std::size_t)id] += vol; hudDirty_ = true;
+        if (giveItems) if (VoxelTerrain* v = FindVoxel()) if (id < (int)v->materials.size() && !v->materials[(std::size_t)id].drop.empty())
+            if (Scene* sc = GetScene()) if (auto* inv = sc->FindObjectOfType<Inventory>()) {
+                const auto& m = v->materials[(std::size_t)id];
+                itemFrac_[id] += vol * m.dropPerM3;
+                const int whole = (int)itemFrac_[id];
+                if (whole > 0) { inv->AddPartial(m.drop, whole); itemFrac_[id] -= whole; }
+            }
+    }
+    /// Set the options together: realistic = collect into the store and as debris, hardness and tool power matter,
+    /// building needs material, ground slumps and collapses; arcade = ground vanishes but builds freely; creative =
+    /// everything unlimited.
+    void ApplyPreset(Preset p) {
+        collect = Collect::Vanish; needsMaterial = creative = slump = collapse = false; hardnessScale = 1.0f; power = 1.0e9f;
+        if (p == Preset::Realistic) { collect = Collect::Both; needsMaterial = true; slump = true; collapse = true; hardnessScale = 1.0f; power = 4.0f; }
+        else if (p == Preset::Creative) { creative = true; collect = Collect::Store; }
+        else if (p == Preset::Arcade) { collect = Collect::Vanish; }
+    }
+    /// Undo the last stroke (Ctrl+Z while playing does this).
+    bool UndoLastStroke() { VoxelTerrain* v = FindVoxel(); if (!v || !v->UndoStroke()) return false; v->Apply(); return true; }
+    bool UsesRealLife(const VoxelTerrain& v) const {
+        return v.UseMaterials() || collect != Collect::Vanish || needsMaterial || creative || power < 1.0e8f || toolsFromInventory || buildFromItems || hardnessScale != 1.0f ||
+               shape != VoxelTerrain::EditOptions::Shape::Sphere || depthLimit > 0.0f || protectBelow >= 0.0f || snapToGrid || slump || collapse || caveInSpan > 0;
+    }
+
     VoxelTerrain* FindVoxel() const {
         if (gameObject)
             if (auto* v = gameObject->GetComponent<VoxelTerrain>()) return v;
+        // Not on this object: remember which object had one, so a scene is not searched every frame.
+        if (voxOwner_)
+            if (GameObject* g = GameObject::FromInstanceId(voxOwner_))
+                if (auto* v = g->GetComponent<VoxelTerrain>()) return v;
         Scene* s = GetScene();
-        return s ? s->FindObjectOfType<VoxelTerrain>() : nullptr;
+        VoxelTerrain* v = s ? s->FindObjectOfType<VoxelTerrain>() : nullptr;
+        voxOwner_ = (v && v->gameObject) ? v->gameObject->InstanceId() : 0;
+        return v;
+    }
+
+    /// The camera the aim ray starts from: the scene's main camera when there is one, otherwise the first
+    /// camera found (the old rule, which could pick a minimap or security camera that came first).
+    Camera* AimCamera() const {
+        Scene* s = GetScene();
+        if (!s) return nullptr;
+        if (s->mainCamera && s->mainCamera->gameObject && s->mainCamera->gameObject->transform) return s->mainCamera;
+        return s->FindObjectOfType<Camera>();
     }
 
     /// March the camera aim ray and return the local-space point where it first
@@ -55,19 +162,18 @@ public:
     /// false if the ray never finds the surface within `range`.
     bool AimAtVoxel(VoxelTerrain* vox, Vec3& outLocal) const {
         if (!vox || !vox->gameObject || !vox->gameObject->transform) return false;
-        Scene* s = GetScene();
-        Camera* cam = s ? s->FindObjectOfType<Camera>() : nullptr;
+        Camera* cam = AimCamera();
         if (!cam || !cam->gameObject || !cam->gameObject->transform) return false;
         Transform* ct = cam->gameObject->transform;
         Vec3 ro = ct->Position();
         Vec3 rd = ct->Forward() * -1.0f;   // aim is -Forward (see BlockBuilder)
         { float m = std::sqrt(rd.x * rd.x + rd.y * rd.y + rd.z * rd.z); if (m > 1e-6f) rd = rd * (1.0f / m); }
-        Vec3 vp = vox->gameObject->transform->Position();
+        Transform* vt = vox->gameObject->transform;
         float step = vox->voxelSize * 0.4f; if (step < 0.05f) step = 0.05f;
         Vec3 prevLocal{0, 0, 0}; bool havePrev = false;
         for (float d = 0.0f; d <= range; d += step) {
             Vec3 p = ro + rd * d;
-            Vec3 local{p.x - vp.x, p.y - vp.y, p.z - vp.z};
+            const Vec3 local = vt->InverseTransformPoint(p);   // the terrain may be moved, turned or scaled
             if (vox->SampleDensity(local) > vox->iso) {     // hit solid
                 outLocal = (mode == Mode::Add && havePrev) ? prevLocal : local;
                 return true;
@@ -78,6 +184,10 @@ public:
     }
 
     void Update(float dt) override {
+        const auto digT0 = std::chrono::steady_clock::now();
+        struct Rep { std::chrono::steady_clock::time_point t0; ~Rep() {
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            VoxelOverlayStats& o = FrameOverlay::Voxel(); o.digMs = o.digMs * 0.9 + ms * 0.1; } } rep{digT0};
         // Pause, an open bag/chest/menu, typing, or a click on UI: no aim marker and no digging.
         if (GameInputBlocked(GetScene())) { HideBrush(); DigSound(false); return; }
         VoxelTerrain* vox = FindVoxel();
@@ -94,13 +204,19 @@ public:
         bool acting = (primary || secondary) && dt > 0.0f && aiming;
 
         if (acting) {
+            OKAY_PROFILE("Voxel.Edit");
             Mode m = mode;
             // The secondary button does the opposite carve/fill action; for Smooth it
             // stays a smooth (there's no "opposite" of smoothing).
             if (secondary && !primary && m != Mode::Smooth && m != Mode::Box) m = (mode == Mode::Add) ? Mode::Dig : Mode::Add;
-            float amt = strength * dt;
+            // A hitch (one very long frame) must not carve a crater: the brush counts at most a tenth of a second.
+            float amt = strength * std::min(dt, 0.1f);
             bool changed = false;
-            if      (m == Mode::Dig)    changed = vox->Dig(local, radius, amt);
+            if (!m_wasActing) { vox->BeginStroke(); strokeY_ = local.y; }
+            if ((m == Mode::Dig || m == Mode::Add) && UsesRealLife(*vox)) {
+                changed = RealEdit(*vox, local, amt, m == Mode::Dig);
+            }
+            else if (m == Mode::Dig)    changed = vox->Dig(local, radius, amt);
             else if (m == Mode::Add)    changed = vox->Add(local, radius, amt);
             else if (m == Mode::Box) {
                 Vec3 r{radius, radius, radius};
@@ -110,22 +226,33 @@ public:
             }
             else                        changed = vox->SmoothAt(local, radius, std::min(1.0f, amt));
             if (changed) {
+                if (slump) for (int pass = 0; pass < slumpPasses; ++pass) if (vox->Slump(40) == 0) break;   // bounded passes near the edit
                 vox->Apply();   // re-skin only when something actually moved
                 if (vox->gameObject && vox->gameObject->transform) {
-                    Vec3 vp = vox->gameObject->transform->Position();
-                    KickDebris({vp.x + local.x, vp.y + local.y, vp.z + local.z});
+                    KickDebris(vox->gameObject->transform->TransformPoint(local), lastDigMaterial);
                 }
             }
             DigSound(true);
         } else {
             if (m_wasActing) {
                 // Just released: sweep up any floating crumbs the dig left behind, then
-                // re-skin once. (Done on release, not every frame, so it stays cheap.)
-                if (removeFloaters > 1 && vox->RemoveFloaters(removeFloaters) > 0) vox->Apply();
+                // re-skin once. (Done on release, not every frame, so it stays cheap, and only
+                // around the cells this stroke touched.)
+                if (removeFloaters > 1) {
+                    OKAY_PROFILE("Voxel.Edit");
+                    const int cleared = VoxelTerrain::OldRemeshActive() ? vox->RemoveFloaters(removeFloaters)
+                                                                         : vox->RemoveFloatersEdited(removeFloaters);
+                    if (cleared > 0) vox->Apply();
+                }
+                if ((collapse && vox->UseMaterials()) || caveInSpan > 0) CollapsePieces(*vox);
+                vox->EndStroke();
             }
+            if (Input::GetKey(Input::KeyFromName("ctrl")) && Input::GetKeyDown('z')) UndoLastStroke();
+            if (pourKey && aiming && vox->fluidOn && Input::GetKeyDown(pourKey)) vox->PourFluid({local.x, local.y + vox->voxelSize * 1.5f, local.z}, pourCells);
             DigSound(false);
         }
         m_wasActing = acting;
+        RefreshHud();
     }
 
     void OnDestroy() override {
@@ -138,9 +265,128 @@ public:
     }
 
 private:
+    float strokeY_ = 0.0f;
+    bool hudDirty_ = true;
+    std::map<int, double> itemFrac_;
+    double buildFrac_ = 0.0;
+    std::map<std::string, std::shared_ptr<const AudioClip>> clipCache_;   // digSound files already loaded (or failed)
+
+    void RefreshHud() {
+        if (!hudDirty_ || hudTarget.empty()) return;
+        Scene* sc = GetScene(); VoxelTerrain* v = FindVoxel();
+        GameObject* g = sc ? sc->Find(hudTarget) : nullptr;
+        auto* t = g ? g->GetComponent<TextRenderer>() : nullptr;
+        if (!t || !v) return;
+        std::string txt;
+        for (std::size_t i = 0; i < store.size(); ++i) {
+            if (store[i] < 0.005) continue;
+            char buf[64]; std::snprintf(buf, sizeof(buf), "%s %.2f m3  ", i < v->materials.size() ? v->materials[i].name.c_str() : "?", store[i]);
+            txt += buf;
+        }
+        t->text = txt.empty() ? "Nothing collected" : txt;
+        hudDirty_ = false;
+    }
+
+    /// The Dig / Add brush with materials, hardness, shapes and conservation of volume.
+    bool RealEdit(VoxelTerrain& vox, const Vec3& local, float amt, bool dig) {
+        VoxelTerrain::EditOptions o;
+        o.shape = shape; o.hardnessScale = hardnessScale; o.power = CurrentPower(); o.snap = snapToGrid;
+        o.protectBelowY = protectBelow; if (depthLimit > 0.0f) { o.maxDepth = depthLimit; o.depthOriginY = strokeY_; }
+        o.addMaterial = vox.UseMaterials() ? addMaterial : -1;
+        if (dig) {
+            const auto r = vox.Edit(local, radius, amt, o);
+            if (!r.changed) return false;
+            { double best = 0; for (std::size_t id = 0; id < r.removedBy.size(); ++id) if (r.removedBy[id] > best) { best = r.removedBy[id]; lastDigMaterial = (int)id; } }
+            for (std::size_t id = 0; id < r.removedBy.size(); ++id) {
+                const double vol = r.removedBy[id];
+                if (vol <= 0.0) continue;
+                CollectVolume(vox, (int)id, vol, local);
+            }
+            return true;
+        }
+        // building: from the store when it is needed, an unlimited supply otherwise
+        const int mid = vox.UseMaterials() ? addMaterial : 0;
+        if (needsMaterial && !creative && Stored(mid) <= 1e-6) return false;
+        Inventory* binv = nullptr; const VoxelTerrain::VoxelMaterial* bm = nullptr;
+        if (buildFromItems && vox.UseMaterials() && mid < (int)vox.materials.size() && !vox.materials[(std::size_t)mid].drop.empty()) {
+            bm = &vox.materials[(std::size_t)mid];
+            Scene* sc = GetScene(); binv = sc ? sc->FindObjectOfType<Inventory>() : nullptr;
+            if (!binv || !binv->Has(bm->drop)) return false;               // nothing to build with
+        }
+        const auto r = vox.Edit(local, radius, -amt, o);
+        if (!r.changed) return false;
+        if (binv && bm) {
+            buildFrac_ += r.added * bm->dropPerM3;
+            const int whole = (int)buildFrac_;
+            if (whole > 0) { binv->Remove(bm->drop, std::min(whole, binv->Count(bm->drop))); buildFrac_ -= whole; }
+        }
+        if (needsMaterial && !creative) { store[(std::size_t)mid] = std::max(0.0, store[(std::size_t)mid] - r.added); hudDirty_ = true; }
+        return true;
+    }
+
+    void CollectVolume(VoxelTerrain& vox, int id, double vol, const Vec3& local) {
+        if (collect == Collect::Vanish) return;
+        Scene* sc = GetScene();
+        const bool debris = (collect == Collect::Debris || collect == Collect::Both) && sc && vox.gameObject && vox.gameObject->transform;
+        if (!debris) { Deposit(id, vol); return; }
+        Transform* tt = vox.gameObject->transform;
+        const int pieces = std::max(1, std::min(3, (int)std::ceil(vol / 0.08)));
+        for (int i = 0; i < pieces; ++i) {
+            const double pv = vol / pieces;
+            if (VoxelDebris::Live() >= debrisMax) { Deposit(id, pv); continue; }   // no more bodies: keep it safe in the store
+            SpawnDebris(vox, id, pv, tt->TransformPoint({local.x + 0.3f * (float)i, local.y + 0.6f, local.z}), nullptr, collect == Collect::Both);
+        }
+    }
+
+    GameObject* SpawnDebris(VoxelTerrain& vox, int id, double vol, const Vec3& world, const Mesh* mesh, bool toStore) {
+        Scene* sc = GetScene();
+        GameObject* g = sc->CreateGameObject("Voxel Debris");
+        g->transient = true;
+        g->transform->localPosition = world;
+        const Vec3 ts = vox.gameObject->transform->LossyScale();
+        const float us = std::cbrt(std::fabs(ts.x * ts.y * ts.z));          // the terrain's scale (uniform part)
+        g->transform->localRotation = vox.gameObject->transform->Rotation();
+        const float side = (float)std::cbrt(std::max(vol, 1e-6)) * us;
+        auto* mr = g->AddComponent<MeshRenderer>();
+        mr->mesh = mesh ? *mesh : Mesh::Cube();
+        if (!mesh) g->transform->localScale = {side, side, side};
+        else g->transform->localScale = {us, us, us};
+        mr->color = (vox.UseMaterials() && id < (int)vox.materials.size()) ? vox.materials[(std::size_t)id].color : vox.color;
+        auto* bc = g->AddComponent<BoxCollider3D>();
+        if (mesh) { Vec3 lo, hi; mesh->Bounds(lo, hi); bc->size = {std::max(0.1f, hi.x - lo.x), std::max(0.1f, hi.y - lo.y), std::max(0.1f, hi.z - lo.z)}; }
+        auto* rb = g->AddComponent<Rigidbody3D>();
+        const float dens = (vox.UseMaterials() && id < (int)vox.materials.size()) ? vox.materials[(std::size_t)id].density : 1500.0f;
+        rb->mass = std::max(0.05f, (float)(vol * dens * 0.01));
+        rb->bounciness = 0.15f;
+        auto* d = g->AddComponent<VoxelDebris>();
+        d->terrainId = vox.gameObject->InstanceId(); d->material = id; d->volume = vol; d->toStore = toStore; d->life = debrisLife;
+        const std::uint64_t me = gameObject ? gameObject->InstanceId() : 0;
+        d->onStore = [me](int m, double v) {
+            if (GameObject* og = GameObject::FromInstanceId(me)) if (auto* dg = og->GetComponent<VoxelDigger>()) dg->Deposit(m, v);
+        };
+        return g;
+    }
+
+    void CollapsePieces(VoxelTerrain& vox) {
+        std::vector<VoxelTerrain::Piece> pieces;
+        if (collapse && vox.UseMaterials()) pieces = vox.ExtractFloaters(6);
+        if (caveInSpan > 0) { auto more = vox.CaveIn(caveInSpan, 6); pieces.insert(pieces.end(), more.begin(), more.end()); }
+        if (pieces.empty()) return;
+        Scene* sc = GetScene();
+        Transform* tt = vox.gameObject->transform;
+        for (const auto& p : pieces) {
+            if (!sc || p.cells.size() < 8 || VoxelDebris::Live() >= debrisMax) { Deposit(p.material, p.volume); continue; }   // crumbs and overflow go to the store
+            const Mesh mesh = vox.PieceMesh(p);
+            const Vec3 c{(p.lo.x + p.hi.x) * 0.5f, (p.lo.y + p.hi.y) * 0.5f, (p.lo.z + p.hi.z) * 0.5f};
+            SpawnDebris(vox, p.material, p.volume, tt->TransformPoint(c), &mesh, false);
+        }
+        vox.Apply();
+    }
     GameObject* brush_ = nullptr;
     GameObject* debris_ = nullptr;
+    int  brushShapeShown_ = 0;   ///< which marker mesh the brush object has (a VoxelTerrain::EditOptions::Shape)
     bool m_wasActing = false;   ///< were we digging last frame? (to clean up crumbs on release)
+    mutable std::uint64_t voxOwner_ = 0;   ///< InstanceId of the object that holds the VoxelTerrain (when it is not this one)
     bool soundHeld_ = false;
     bool soundStarted_ = false;
 
@@ -149,12 +395,21 @@ private:
         if (!s || !vox.gameObject || !vox.gameObject->transform) return;
         GameObject* b = EnsureBrush(*s);
         if (!b || !b->transform) return;
-        Vec3 vp = vox.gameObject->transform->Position();
         b->active = true;
-        b->transform->localPosition = {vp.x + local.x, vp.y + local.y, vp.z + local.z};
+        b->transform->localPosition = vox.gameObject->transform->TransformPoint(local);
         float dscale = radius * 2.0f;   // sphere mesh has radius 0.5
-        b->transform->localScale = {dscale, dscale, dscale};
-        if (auto* mr = b->GetComponent<MeshRenderer>()) mr->color = brushColor;
+        // the marker follows the brush shape: a cube for Cube, a squashed disc for Plane, a tall can for Cylinder
+        float sx = dscale, sy = dscale, sz = dscale;
+        if (shape == VoxelTerrain::EditOptions::Shape::Plane) sy = dscale / 3.0f;
+        else if (shape == VoxelTerrain::EditOptions::Shape::Cylinder) sy = dscale;
+        b->transform->localScale = {sx, sy, sz};
+        if (auto* mr = b->GetComponent<MeshRenderer>()) {
+            mr->color = brushColor;
+            if (brushShapeShown_ != (int)shape) {
+                brushShapeShown_ = (int)shape;
+                mr->mesh = shape == VoxelTerrain::EditOptions::Shape::Cube ? Mesh::Cube() : (shape == VoxelTerrain::EditOptions::Shape::Cylinder ? Mesh::Cylinder(0.5f, 1.0f, 16) : Mesh::Sphere(0.5f, 8, 12));
+            }
+        }
     }
     void HideBrush() { if (brush_) brush_->active = false; }
 
@@ -173,7 +428,7 @@ private:
         return b;
     }
 
-    void KickDebris(const Vec3& world) {
+    void KickDebris(const Vec3& world, int mat = -1) {
         Scene* s = GetScene();
         if (!s) return;
         if (!debris_) {
@@ -201,6 +456,7 @@ private:
         debris_->transform->localPosition = world;
         if (auto* ps = debris_->GetComponent<ParticleSystem>()) {
             ps->shapeRadius = std::max(0.2f, radius * 0.3f);
+            if (mat >= 0) if (VoxelTerrain* vt = FindVoxel()) if (vt->UseMaterials() && mat < (int)vt->materials.size()) ps->startColor = vt->materials[(std::size_t)mat].particle;   // dust of the dug material
             ps->Emit(4);
         }
     }
@@ -210,6 +466,19 @@ private:
     void DigSound(bool acting) {
         AudioSource* au = gameObject ? gameObject->GetComponent<AudioSource>() : nullptr;
         if (!au) { soundHeld_ = false; return; }
+        if (acting && lastDigMaterial >= 0) {      // the dug material's own clip, loaded the first time it is used
+            if (VoxelTerrain* vt = FindVoxel()) if (vt->UseMaterials() && lastDigMaterial < (int)vt->materials.size()) {
+                const std::string& want = vt->materials[(std::size_t)lastDigMaterial].digSound;
+                if (!want.empty() && au->clipPath != want) {
+                    if (soundHeld_ && soundStarted_) au->Stop();
+                    auto it = clipCache_.find(want);
+                    if (it == clipCache_.end()) it = clipCache_.emplace(want, LoadAudioFile(want)).first;   // an empty pointer = tried, failed: not retried every frame
+                    au->clipPath = want;
+                    if (it->second) { au->clip = *it->second; soundHeld_ = false; }
+                    else { au->clip = AudioClip(); soundHeld_ = false; }
+                }
+            }
+        }
         if (acting) {
             if (!soundHeld_) {
                 soundStarted_ = !au->IsPlaying();

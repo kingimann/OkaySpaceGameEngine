@@ -78,6 +78,8 @@ float ScreenAngleDelta(float pivotX, float pivotY, float fromX, float fromY, flo
 struct EditTransformOptions {
     float softRadius = 0.0f;   ///< proportional editing radius (0 = off)
     bool  mirrorX = false;     ///< also move each vertex's partner across local x = 0, mirrored
+    bool  mirrorY = false;     ///< ... across local y = 0
+    bool  mirrorZ = false;     ///< ... across local z = 0 (with two or three on, the partners across each plane and across their combinations move too)
 };
 
 class EditTransformSession {
@@ -111,7 +113,7 @@ private:
     std::vector<int>   m_verts;    // every vertex this session moves
     std::vector<Vec3>  m_orig;     // its position at Begin
     std::vector<float> m_weight;   // 1 for the selection, falloff for soft-selected
-    std::vector<char>  m_mirror;   // moved as the mirrored partner of a selected vertex
+    std::vector<char>  m_mirror;   // 0 = moved itself; else a mask (1 = x, 2 = y, 4 = z) of the planes its partner is reflected across
     std::string        m_name;     // the mesh's primitive name and normals at Begin
     std::vector<Vec3>  m_normals;  // (Apply clears both; Cancel puts them back)
 };

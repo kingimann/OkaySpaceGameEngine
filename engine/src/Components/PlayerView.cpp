@@ -1,5 +1,7 @@
 #include "okay/Components/PlayerView.hpp"
 #include "okay/Components/PlayerController.hpp"
+#include "okay/Components/ControllerPresets.hpp"
+#include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/PlayerCamera.hpp"
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Character.hpp"
@@ -414,6 +416,20 @@ PlayerView* PlayerView::FindForScript(GameObject* self, bool create) {
 
 void PlayerView::Update(float dt) {
     if (!transform || Game::Paused()) return;
+    if (!OldPlayerPath() && !IsLocallyControlled(gameObject)) return;   // another player's avatar: not this peer's view or V key
+    if (presetHotkeys && !OldPlayerPath() && !Input::UICaptured()) {
+        for (int i = 0; i < ControllerPresets::Count; ++i) {
+            if (!Input::GetKeyDown((char)('1' + i))) continue;
+            if (ControllerPresets::ApplyTo(gameObject, i)) {
+                OKAY_INFO("Controller preset: ", ControllerPresets::Name(i), " (", ControllerPresets::About(i), ")");
+                // A text object called "PresetLabel" shows the pick on screen (the feel lab scene has one).
+                if (Scene* sc = gameObject->scene())
+                    if (GameObject* lab = sc->Find("PresetLabel"))
+                        if (auto* tr = lab->GetComponent<TextRenderer>())
+                            tr->text = std::string("PRESET: ") + ControllerPresets::Name(i) + "   (1 Classic  2 Modern  3 Arcade  4 Realistic  5 Shooter)";
+            }
+        }
+    }
     if (allowToggle && !Input::UICaptured()) {
         const bool key = toggleKey && Input::GetKeyDown(toggleKey);
         const bool pad = toggleGamepadButton >= 0 && Input::GetGamepadButtonDown(toggleGamepadButton);
@@ -690,6 +706,7 @@ void PlayerView::KeepLensClear(Camera* cam) const {
 
 void PlayerView::LateUpdate(float dt) {
     if (!Driving()) return;
+    if (!OldPlayerPath() && !IsLocallyControlled(gameObject)) return;
     // Place the lens first. The head is skipped once that lens is within a
     // head of the skull, which PlaceCamera has just done.
     PlaceCamera(dt);

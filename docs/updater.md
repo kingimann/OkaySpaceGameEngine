@@ -11,6 +11,8 @@ rule, self-check, rollback), `shared/AppRestart.hpp` (the detached helper), `lau
 `scripts/versions_index.py` and `scripts/publish-supabase.sh` (the publish side).
 Tests: `self_update`, `app_restart`, `launcher_versions`, `update_signature` (all in `tests/`; temp folders only, no network).
 Signing: `shared/UpdateSignature.hpp`, `scripts/sign_index.py`, [Signed releases](#signed-releases).
+Test builds (an opt-in feed for the owner): `shared/TestBuild.hpp`, `LoadDevIndex` in `launcher/VersionsManager.cpp`, `scripts/publish-supabase-dev.sh`,
+`scripts/dev_index.py`, [Test builds](#test-builds-the-dev-folder).
 
 ## The rules
 
@@ -81,7 +83,8 @@ Signing: `shared/UpdateSignature.hpp`, `scripts/sign_index.py`, [Signed releases
   (`launcher/VersionsManager.cpp`) but was not run against a fake server here.
 - `versions.json` is trusted as far as its bucket is **until a signing key exists**: see [Signed releases](#signed-releases).
 - The publish scripts cannot run the Windows binary, so "the published launcher reports the published version" is only checked on the
-  user's machine by the self-check, after download.
+  user's machine by the self-check, after download. (The test-build workflow does one more check the release job does not: it looks for the version
+  text inside the built launcher and editor before it publishes.)
 
 ## Signed releases
 
@@ -147,6 +150,34 @@ that carries the new public key (the full installer is the recovery path). If th
 Python tool against the C++ verifier), `tests/scripts/test_sign_index.sh` (RFC 8032 vector, tamper and wrong-key refusal, the seed is
 read from the environment only and never printed, the publish script's guards). CI runs them in the `ticket-and-script-tests` and
 `anticheat-crypto` jobs.
+
+## Test builds (the dev folder)
+
+An opt-in second feed for the owner: builds of a branch, published to `dev/` in the release bucket by `.github/workflows/dev-build.yml` and offered only
+when **Settings > Behavior > Get test builds** is on (off by default). What it is, who starts it and the files are in
+[release_channels.md](release_channels.md#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players). For the updater it means:
+
+1. **Same rules, same code.** A test build goes through `RunUpdateCheck`, `okayupdater::IndexProblem`, `Stage`, `CommitAll`, the self-check and the rollback
+   above. Its checksums come from `dev/versions.json` (same format, same signature rule: `LoadDevIndex` checks `dev/versions.json.sig` against the same
+   built-in keys). A test build with no checksum for a program is never offered, and the plan refuses it.
+2. **Separate lists, never mixed.** The number has four numbers (2.876.0.17, `shared/TestBuild.hpp`). The real reader (`ParseIndex`, `ParseVersionTxt`,
+   the launcher's `LooksLikeVersion`) skips any version with more than three numbers, and the test reader (`LoadDevIndex`) keeps only versions with exactly
+   four, so neither list can name the other's versions. With the setting off the launcher does not request anything under `dev/`.
+3. **Order.** A test build is newer than the release it was made on and older than every later release (`2.876.0 < 2.876.0.17 < 2.876.1`), so the normal
+   "installed < published" rule offers it to a launcher on its release and the next release replaces it.
+4. **Which one.** With the setting on, `okay::testbuild::ChooseTarget` takes the newer of the newest release and the newest installable test build; the
+   long-term-support channel never gets one. Nothing is installed that is not newer than what runs.
+5. **The way back.** **Go back to the stable version** (Settings, while a test build runs and the setting is off) installs the newest normal release over a
+   test build: the one deliberate downgrade. It is the same update with `target.goBack`; `EvaluateStartup` treats a downgrade strictly (only the exact
+   target, or something newer than where it started, is "confirmed"; the test build coming up again is "did not apply"), and the helper's
+   `--okay-selfcheck <version>` was already exact in both directions. Never while the editor is open.
+6. **Where it shows.** The update toast, notification, sidebar card and update window say "Test build of walk-vs-run (abc1234)" (from the signed list, cleaned);
+   the version carries "(test build)" in About, the What's New page (the Dear ImGui one; the OkayUI preview page shows the plain number), the Versions page and the editor's About and title bar. `okay_testbuild.txt` next to the
+   launcher records which test build was installed; it is a hint for About only, and counts only while its version is the running one.
+
+**Not verified:** the whole flow was never run on Windows or against the real release server (only the pure rules, the list reader, the publisher against a
+fake storage server, and a syntax-only compile of the launcher and editor). The restart, the self-check and the rollback of a real test build are the same
+code as for releases, but nobody has watched them do it for a four-number version.
 
 ## The start-up update screen
 

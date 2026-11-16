@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(OkaySpaceGameEngine
-    VERSION 2.877.0
+    VERSION 2.879.0
     DESCRIPTION "A modern C++ game engine"
     LANGUAGES C CXX)   # C enabled for vendored single-file C libs (ufbx)
 
@@ -128,26 +128,56 @@ if(OKAY_BUILD_TESTS)
     enable_testing()
 endif()
 
-# ---- Optional baked-in account server --------------------------------
-# Compile a default account server URL + API key into every binary so a shipped
-# build is online by default with no key file on disk. Intended to be injected
-# from a CI secret at configure time:
-#   cmake -DOKAY_DEFAULT_ACCOUNT_URL=https://xyz.supabase.co \
-#         -DOKAY_DEFAULT_ACCOUNT_KEY=sb_publishable_...
-# A Supabase publishable/anon key is safe to ship (protect data with RLS).
-# Defaults point at the OkaySpace project so every build is online out of the
-# box (accounts, Friends, Marketplace) even without CI secrets; override at
-# configure time (or via the ACCOUNT_SERVER_URL/ACCOUNT_API_KEY CI secrets) to
-# point a build at a different server.
-set(OKAY_DEFAULT_ACCOUNT_URL "https://tgthoueacrlanpojxoen.supabase.co"
-    CACHE STRING "Default account server URL compiled into builds")
-set(OKAY_DEFAULT_ACCOUNT_KEY "sb_publishable_VYrh0rGNcTNTJRe1CovsoA_sP9ia4yn"
-    CACHE STRING "Default account API key compiled into builds")
+# ---- Baked-in account server -----------------------------------------
+# The default account server URL + publishable API key are compiled into every binary so a shipped build is online by
+# default with no key file on disk. They live in ONE plain file, config/public-account.json (see config/README.md: the
+# publishable key is public by design; Supabase row-level security is what protects the data). Order, first one wins:
+#   1. cmake -DOKAY_DEFAULT_ACCOUNT_URL=... -DOKAY_DEFAULT_ACCOUNT_KEY=...
+#   2. the environment variables of the same names (CI sets them only from the optional repository variables)
+#   3. config/public-account.json
+# If none gives a value (file removed) the build still works, with no online features until a server is set through
+# OKAY_ACCOUNT_SERVER / OKAY_ACCOUNT_API_KEY or account_server.txt / account_apikey.txt. Values are never printed.
+set(OKAY_DEFAULT_ACCOUNT_URL "" CACHE STRING "Default account server URL compiled into builds (empty = from config/public-account.json)")
+set(OKAY_DEFAULT_ACCOUNT_KEY "" CACHE STRING "Default account API key compiled into builds (empty = from config/public-account.json)")
+set(_okay_acct_file "${CMAKE_CURRENT_SOURCE_DIR}/config/public-account.json")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_okay_acct_file}")
+set(_okay_acct_url "")
+set(_okay_acct_key "")
+if(EXISTS "${_okay_acct_file}")
+    file(READ "${_okay_acct_file}" _okay_acct_json)
+    if(_okay_acct_json MATCHES "\"url\"[ \t\r\n]*:[ \t\r\n]*\"([^\"]*)\"")
+        set(_okay_acct_url "${CMAKE_MATCH_1}")
+    endif()
+    if(_okay_acct_json MATCHES "\"key\"[ \t\r\n]*:[ \t\r\n]*\"([^\"]*)\"")
+        set(_okay_acct_key "${CMAKE_MATCH_1}")
+    endif()
+endif()
+set(_okay_acct_from "none")
+if(OKAY_DEFAULT_ACCOUNT_URL OR OKAY_DEFAULT_ACCOUNT_KEY)
+    set(_okay_acct_from "-D option")
+elseif(NOT "$ENV{OKAY_DEFAULT_ACCOUNT_URL}" STREQUAL "" OR NOT "$ENV{OKAY_DEFAULT_ACCOUNT_KEY}" STREQUAL "")
+    set(OKAY_DEFAULT_ACCOUNT_URL "$ENV{OKAY_DEFAULT_ACCOUNT_URL}")
+    set(OKAY_DEFAULT_ACCOUNT_KEY "$ENV{OKAY_DEFAULT_ACCOUNT_KEY}")
+    set(_okay_acct_from "environment")
+elseif(_okay_acct_url OR _okay_acct_key)
+    set(OKAY_DEFAULT_ACCOUNT_URL "${_okay_acct_url}")
+    set(OKAY_DEFAULT_ACCOUNT_KEY "${_okay_acct_key}")
+    set(_okay_acct_from "config/public-account.json")
+endif()
 if(OKAY_DEFAULT_ACCOUNT_URL)
     add_compile_definitions(OKAY_DEFAULT_ACCOUNT_URL="${OKAY_DEFAULT_ACCOUNT_URL}")
 endif()
 if(OKAY_DEFAULT_ACCOUNT_KEY)
     add_compile_definitions(OKAY_DEFAULT_ACCOUNT_KEY="${OKAY_DEFAULT_ACCOUNT_KEY}")
+endif()
+# Say what was set and where from (never a value).
+if(OKAY_DEFAULT_ACCOUNT_URL)
+    message(STATUS "Account server baked in: yes (from ${_okay_acct_from})")
+else()
+    message(STATUS "Account server baked in: NO (no default server; set OKAY_ACCOUNT_SERVER or account_server.txt at run time)")
+endif()
+if(OKAY_DEFAULT_ACCOUNT_URL AND NOT OKAY_DEFAULT_ACCOUNT_KEY)
+    message(STATUS "Account API key baked in: NO")
 endif()
 # Hosted password-reset page (supabase/auth-pages/reset-password, docs/password-reset.md).
 # Empty = not configured; the launcher then says so when it sends a reset email.

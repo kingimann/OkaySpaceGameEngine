@@ -1,6 +1,7 @@
 #include "okay/Render/GLRenderer.hpp"
 #include "okay/Render/Lighting.hpp"
 #include "okay/Render/Culling.hpp"
+#include "okay/Render/MeshHash.hpp"
 #include "okay/Render/Visibility.hpp"
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"   // GetCachedTexture: shares the texture cache
@@ -1526,24 +1527,28 @@ unsigned int GLRenderer::TextureFor(const std::string& name) {
 
 // ---- Per-mesh vertex-buffer cache -------------------------------------------
 // FNV-1a over raw bytes; `seed` chains multiple arrays into one hash.
+// (Was a byte-at-a-time FNV-1a loop, ~1.3 ns per byte; now okay::meshhash::Bytes, about 20 times faster. See MeshHash.hpp.)
 static std::uint64_t FnvBytes(const void* data, std::size_t nbytes,
                               std::uint64_t seed = 1469598103934665603ull) {
-    const unsigned char* p = (const unsigned char*)data;
-    std::uint64_t h = seed;
-    for (std::size_t i = 0; i < nbytes; ++i) { h ^= p[i]; h *= 1099511628211ull; }
-    return h;
+    return meshhash::Bytes(data, nbytes, seed);
 }
 // Cheap per-frame change sniff: sizes + <=2048 sampled vertices/indices. Catches
 // whole-mesh edits (skinning, inflate, import-over) instantly; a lone-vertex edit
 // is caught by the periodic full hash below.
 static std::uint64_t MeshSampleHash(const Mesh& m) {
-    std::size_t sizes[5] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
-                             m.uvs.size(), m.triColors.size() };
+    std::size_t sizes[7] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
+                             m.uvs.size(), m.triColors.size(), m.vertexColors.size(), m.triSlot.size() };
     std::uint64_t h = FnvBytes(sizes, sizeof(sizes));
+    { const std::size_t cn = m.vertexColors.size(), cstep = cn / 2048 + 1;     // a stroke of vertex paint shows at once
+      for (std::size_t i = 0; i < cn; i += cstep) h = FnvBytes(&m.vertexColors[i], sizeof(Color), h); }
     const std::size_t vn = m.vertices.size(), step = vn / 2048 + 1;
-    for (std::size_t i = 0; i < vn; i += step) h = FnvBytes(&m.vertices[i], sizeof(Vec3), h);
+    // A small mesh is sampled at every vertex: hash its array in one go (a chunk of a voxel terrain is such a mesh,
+    // and a scene can show hundreds of them every frame).
+    if (step == 1) { if (vn) h = FnvBytes(m.vertices.data(), vn * sizeof(Vec3), h); }
+    else for (std::size_t i = 0; i < vn; i += step) h = FnvBytes(&m.vertices[i], sizeof(Vec3), h);
     const std::size_t tn = m.triangles.size(), tstep = tn / 2048 + 1;
-    for (std::size_t i = 0; i < tn; i += tstep) h = FnvBytes(&m.triangles[i], sizeof(int), h);
+    if (tstep == 1) { if (tn) h = FnvBytes(m.triangles.data(), tn * sizeof(int), h); }
+    else for (std::size_t i = 0; i < tn; i += tstep) h = FnvBytes(&m.triangles[i], sizeof(int), h);
     return h;
 }
 // Exact content hash over every array the expanded buffer derives from.
@@ -1554,6 +1559,8 @@ static std::uint64_t MeshFullHash(const Mesh& m) {
     if (!m.uvs.empty())       h = FnvBytes(m.uvs.data(),       m.uvs.size()       * sizeof(Vec2),  h);
     if (!m.triangles.empty()) h = FnvBytes(m.triangles.data(), m.triangles.size() * sizeof(int),   h);
     if (!m.triColors.empty()) h = FnvBytes(m.triColors.data(), m.triColors.size() * sizeof(Color), h);
+    if (!m.vertexColors.empty()) h = FnvBytes(m.vertexColors.data(), m.vertexColors.size() * sizeof(Color), h);
+    if (!m.triSlot.empty()) h = FnvBytes(m.triSlot.data(), m.triSlot.size() * sizeof(int), h);
     return h;
 }
 
@@ -1561,15 +1568,31 @@ static std::uint64_t MeshFullHash(const Mesh& m) {
 // consumes: pos(3)+normal(3)+uv(2)+color(3)+tangent(3) = 14 floats per vertex.
 // Flat shading via the face normal when the mesh has none; box-projected UVs when
 // it has no UVs; per-triangle face colors honored (matches the software renderer).
-void GLRenderer::BuildExpandedVerts(const Mesh& mesh) {
+void GLRenderer::BuildExpandedVerts(const Mesh& mesh, bool groupBySlot) {
     const auto& V = mesh.vertices; const auto& T = mesh.triangles;
     const bool hasN = mesh.HasNormals();
     const bool hasUV = !mesh.uvs.empty() && mesh.uvs.size() == V.size();
     const bool faceCols = mesh.HasFaceColors();
+    const bool vcols = mesh.HasVertexColors();   // per-vertex colours blend smoothly across each face
     const int nv = (int)V.size();
     m_verts.resize(T.size() / 3 * 3 * 14);   // written through a raw pointer, trimmed at the end
     float* out = m_verts.data();
-    for (std::size_t i = 0; i + 2 < T.size(); i += 3) {
+    // Per-slot drawing: with material slots the triangles are written grouped by slot (a stable order), and the first vertex
+    // and count of each group are kept, so each slot can be drawn with its own picture. Skinned meshes keep their order.
+    m_slotRanges.clear();
+    std::vector<int> order;
+    const bool bySlot = groupBySlot && mesh.HasSlots();
+    if (bySlot) {
+        order = mesh.GroupBySlot().order;
+    }
+    const std::size_t triCount = T.size() / 3;
+    for (std::size_t oi = 0; oi < triCount; ++oi) {
+        const std::size_t i = (bySlot ? (std::size_t)order[oi] : oi) * 3;
+        if (bySlot) {
+            const int slot = mesh.triSlot[i / 3];
+            const int firstVert = (int)((out - m_verts.data()) / 14);
+            if (m_slotRanges.empty() || m_slotRanges.back()[0] != slot) m_slotRanges.push_back({slot, firstVert, 0});
+        }
         int a = T[i], b = T[i + 1], c = T[i + 2];
         if (a < 0 || b < 0 || c < 0 || a >= nv || b >= nv || c >= nv) continue; // skip bad tris
         // Face normal: used for flat shading AND for box-projecting UVs.
@@ -1603,11 +1626,16 @@ void GLRenderer::BuildExpandedVerts(const Mesh& mesh) {
             out[3] = n.x;   out[4] = n.y;   out[5] = n.z;
             out[6] = uu[k]; out[7] = vv[k];
             out[8] = cr;    out[9] = cg;    out[10] = cb;
+            if (vcols) { const Color& vc = mesh.vertexColors[idx[k]]; out[8] *= vc.r; out[9] *= vc.g; out[10] *= vc.b; }
             out[11] = tan.x; out[12] = tan.y; out[13] = tan.z;
             out += 14;
         }
     }
     m_verts.resize((std::size_t)(out - m_verts.data()));
+    if (bySlot) {                                         // close the ranges: each runs up to the start of the next
+        const int total = (int)(m_verts.size() / 14);
+        for (std::size_t r = 0; r < m_slotRanges.size(); ++r) m_slotRanges[r][2] = (r + 1 < m_slotRanges.size() ? m_slotRanges[r + 1][1] : total) - m_slotRanges[r][1];
+    }
 }
 
 // Return the (up-to-date) cached GPU buffer for a mesh, expanding + uploading only
@@ -1633,7 +1661,8 @@ GLRenderer::MeshVB* GLRenderer::EnsureMeshVB(const Mesh& mesh, std::uint64_t ver
         if (fh != e.fullHash) same = false; else e.fullHash = fh;
     }
     if (same) return e.vertCount > 0 ? &e : nullptr;
-    BuildExpandedVerts(mesh);
+    BuildExpandedVerts(mesh, version == 0);
+    e.slotRanges = m_slotRanges;
     e.vp  = mesh.vertices.data();  e.vn  = mesh.vertices.size();
     e.tp  = mesh.triangles.data(); e.tn  = mesh.triangles.size();
     e.np  = mesh.normals.data();   e.nn  = mesh.normals.size();
@@ -2109,15 +2138,17 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
         g.Uniform3f(m_uRimColor, mr->rimColor.r, mr->rimColor.g, mr->rimColor.b);
         g.Uniform3f(m_uGradTop, mr->gradientTop.r, mr->gradientTop.g, mr->gradientTop.b);
         g.Uniform3f(m_uGradBot, mr->gradientBottom.r, mr->gradientBottom.g, mr->gradientBottom.b);
-        if (tex) {
+        // The base picture: the object's own texture, or (below) a slot's own picture for that slot's triangles.
+        auto applyBaseTex = [&](unsigned int bt) {
+        if (bt) {
             g.ActiveTexture(GL_TEXTURE0);
-            g.BindTexture(GL_TEXTURE_2D, tex);
+            g.BindTexture(GL_TEXTURE_2D, bt);
             // Per-material filter: Pixel = crisp nearest (no up-close blur); Smooth =
             // trilinear. Set on the bound texture each draw so one cache serves both.
             // The picture's own import settings (Filter / Mipmaps) apply too: a Point picture is crisp
             // whatever the material says, and a picture without mipmaps must not ask for them.
             TextureSampling ts;
-            if (auto ti = m_texInfo.find(tex); ti != m_texInfo.end()) ts = ti->second;
+            if (auto ti = m_texInfo.find(bt); ti != m_texInfo.end()) ts = ti->second;
             const bool pixel = mr->texFilter == MeshRenderer::TexFilter::Pixel || ts.filter == TextureSampling::Point;
             const int minF = !ts.mipmaps ? (pixel ? GL_NEAREST : GL_LINEAR)
                            : pixel ? GL_NEAREST_MIPMAP_NEAREST
@@ -2132,6 +2163,8 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.Uniform1f(m_uUseTex, 0.0f);
             g.Uniform2f(m_uTiling, 1.0f, 1.0f);
         }
+        };
+        applyBaseTex(tex);
 
         // Normal/bump map on texture unit 1: perturbs the surface normal per fragment
         // so flat faces show sculpted detail under lighting, matching the software path.
@@ -2224,6 +2257,24 @@ const std::uint32_t* GLRenderer::RenderToPixels(const Scene& scene, const Mat4& 
             g.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             g.DepthMask(GL_FALSE);
         }
+        // Per-slot pictures: with material slots that have their own picture, draw one range per slot, each with its own texture.
+        bool slotDraw = false;
+        if (mvb && !mvb->slotRanges.empty() && !mr->slotTextures.empty())
+            for (const std::string& st : mr->slotTextures) if (!st.empty()) slotDraw = true;
+        if (slotDraw) {
+            unsigned int bound = tex;
+            for (const auto& rg : mvb->slotRanges) {
+                if (rg[2] <= 0) continue;
+                unsigned int want = tex;
+                if (rg[0] >= 0 && rg[0] < (int)mr->slotTextures.size() && !mr->slotTextures[rg[0]].empty()) {
+                    const unsigned int st = TextureFor(mr->slotTextures[rg[0]]);
+                    if (st) want = st;
+                }
+                if (want != bound) { applyBaseTex(want); bound = want; }
+                g.DrawArrays(GL_TRIANGLES, rg[1], rg[2]);
+            }
+            if (bound != tex) applyBaseTex(tex);              // leave the state as the next object expects it
+        } else
         g.DrawArrays(GL_TRIANGLES, 0, drawCount);
         if (transparent) {
             g.DepthMask(GL_TRUE);

@@ -1,0 +1,39 @@
+okayguided 1
+template bus 1
+param detail 1
+param groundClear 0.80000000000000004
+param height 3.6000000000000001
+param length 12.5
+param lightSize 0.22
+param rearAxles 2
+param wheelRadius 0.5
+param wheelWidth 0.29999999999999999
+param width 2.5
+param windows 6
+slot body coach
+slot bumper chrome
+slot door folding
+slot headlight slim
+slot mirror round
+slot roof vent
+slot taillight box
+slot wheel rim
+slot window clear
+color body 0.180000007 0.319999993 0.620000005 1
+color bumper 0.779999971 0.800000012 0.819999993 1
+color door 0.5 0.519999981 0.550000012 1
+color headlight 0.970000029 0.949999988 0.75 1
+color mirror 0.100000001 0.100000001 0.109999999 1
+color roof 0.920000017 0.920000017 0.899999976 1
+color taillight 0.800000012 0.0500000007 0.0500000007 1
+color wheel 0.100000001 0.100000001 0.109999999 1
+color window 0.550000012 0.75 0.819999993 1
+material body 0
+material bumper 4
+material door 12
+material headlight 2
+material mirror 5
+material roof 13
+material taillight 3
+material wheel 1
+material window 7

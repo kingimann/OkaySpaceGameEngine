@@ -2,7 +2,10 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Physics/PhysicsDebug.hpp"
+#include "okay/Physics/PhysicsQuality.hpp"
 #include <cstdint>
+#include <map>
+#include <memory>
 #include <set>
 #include <utility>
 #include <vector>
@@ -66,9 +69,25 @@ class Physics3D {
 public:
     static constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;
 
-    Physics3D() { for (int i = 0; i < 32; ++i) m_layerMask[i] = 0xFFFFFFFFu; }
+    Physics3D();          // (out of line: the solver memory is an incomplete type here)
+    ~Physics3D();
+    Physics3D(const Physics3D&) = delete;
+    Physics3D& operator=(const Physics3D&) = delete;
 
     Vec3 gravity{0.0f, -9.81f, 0.0f};
+
+    /// Classic (the original single-pass step, what old scenes use) or Improved (iterated contacts, stacks that stand, bodies
+    /// that sleep together, swept fast bodies, rolling resistance; see PhysicsQuality.hpp and docs/physics.md).
+    /// Saved in the scene file as `physicsquality`; a scene without the record is Classic.
+    PhysicsQuality quality = PhysicsQuality::Classic;
+    /// Improved: how many times the contact solver repeats per step (more = stiffer stacks, slower). 4 to 30.
+    int solverIterations = 10;
+    /// Improved: sweep every fast body (one that moves farther in a step than its own half-size) against the static
+    /// colliders so it cannot tunnel, not only those with Continuous Collision ticked.
+    bool autoContinuous = true;
+    /// What the last Step did.
+    const PhysicsStepStats& Stats() const { return m_stats; }
+    struct Solver;                      // (the Improved step's memory; defined in Physics3DImproved.inl)
 
     /// Advance the simulation for `scene` by `dt` seconds.
     void Step(Scene& scene, float dt);
@@ -160,7 +179,7 @@ public:
     Vec3 ResolveSphere(Scene& scene, Vec3 center, float radius,
                        GameObject* ignore = nullptr, int iterations = 4);
 
-    void Clear() { m_contacts.clear(); m_meshContacts.clear(); }
+    void Clear();   // forget every remembered contact (the scene is being cleared; Physics3DImproved.inl)
 
     /// The trigger overlap being reported, valid only inside an OnTrigger*3D
     /// callback (nullptr elsewhere) — lets scripts ask "where did it enter?".
@@ -176,17 +195,30 @@ public:
                         const RaycastHit3D& hit, float radius = 0.0f);
     const std::vector<PhysicsDebugRay3D>& DebugRays() const { return m_debugRays; }
     const std::vector<PhysicsDebugContact3D>& DebugContacts() const { return m_debugContacts; }
+    /// Bodies and joints of the last step (filled only while the debug view collects).
+    const std::vector<PhysicsDebugBody3D>& DebugBodies() const { return m_debugBodies; }
+    const std::vector<PhysicsDebugJoint3D>& DebugJoints() const { return m_debugJoints; }
 
 private:
     using Pair = std::pair<Collider3D*, Collider3D*>;
     std::set<Pair> m_contacts;          // contacts from the previous step
     std::set<Pair> m_meshContacts;      // solid contacts against a static triangle mesh (body, mesh)
+    struct RestStamp { Vec3 a, b; std::uint64_t step; };    // where the two objects were when the pair was last found resting, and in which step
+    std::map<Pair, RestStamp> m_restContacts;   // Classic: pairs a sleeping body rests against without overlapping (no callbacks); a lost one wakes it
+    std::uint64_t m_restStep = 0;
+    PhysicsStepStats m_stats;
+    std::unique_ptr<Solver> m_solver;   // the Improved contact solver's memory between steps (Physics3DImproved.inl)
     std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)
     std::vector<PhysicsDebugRay3D>     m_debugRays;      // this frame (debug view only)
     std::vector<PhysicsDebugContact3D> m_debugContacts;
+    std::vector<PhysicsDebugBody3D>    m_debugBodies;
+    std::vector<PhysicsDebugJoint3D>   m_debugJoints;
     /// Continuous collision for one fast body: sweep it along this step's motion
     /// and stop it at the first solid it would otherwise pass through.
     void SweepBody(Scene& scene, Rigidbody3D* rb, float dt);
+    /// The same for a given motion (the Improved step moves a body by its solved speed). `onlyStatics` tests the
+    /// colliders that are not dynamic bodies, found through a list kept for the step (automatic continuous collision).
+    void SweepBodyBy(Scene& scene, Rigidbody3D* rb, const Vec3& motion, bool onlyStatics);
     /// The colliders and terrains ray queries test, gathered once and reused
     /// until the scene's objects or components change (not per ray).
     struct QueryCache {

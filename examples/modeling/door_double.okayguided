@@ -1,0 +1,19 @@
+okayguided 1
+template door 1
+param detail 1
+param double 1
+param frameDepth 0.14999999999999999
+param frameWidth 0.080000000000000002
+param height 2.1000000000000001
+param leafThickness 0.044999999999999998
+param open 0
+param width 1.8
+slot frame architrave
+slot handle lever
+slot leaf panelled
+color frame 0.939999998 0.939999998 0.920000017 1
+color handle 0.349999994 0.349999994 0.379999995 1
+color leaf 0.550000012 0.379999995 0.219999999 1
+material frame 0
+material handle 2
+material leaf 1

@@ -1,0 +1,322 @@
+name: Test build (dev channel)
+run-name: Test build of ${{ inputs.ref || github.ref_name }}
+
+# A TEST BUILD: builds any branch, tag or commit for Windows and publishes it to the dev/ folder of the Supabase release bucket, so the owner can try
+# unmerged work in the launcher in about 15 to 30 minutes, without a pull request, a GitHub Release or a normal release. Docs:
+# docs/release_channels.md ("Test builds"), docs/try_it.md (7v).
+#
+# Start it (only from main; the coordinator does this when the owner asks):
+#   gh workflow run dev-build.yml --ref main -f ref=claude/walk-vs-run -f note="try the new run speed"
+# or Actions > "Test build (dev channel)" > Run workflow > Use workflow from: main, ref: the branch, note: one line.
+#
+# What it can NOT do, by construction (tests/scripts/test_dev_workflow.py checks every line of this list):
+#   * it makes no GitHub Release, no tag, no push (permissions: contents read), and builds no installer, no Linux server, no zip;
+#   * it never writes VERSION.txt, NOTES.txt, LTS.txt or versions.json: it calls scripts/publish-supabase-dev.sh, which writes only under dev/
+#     (never scripts/publish-supabase.sh), so "latest" and the LTS line are as they were. A normal player never reads dev/;
+#   * the build job never receives a secret's value (it only asks whether the publish key exists): it runs the branch's own build scripts. The key
+#     is only given to the publish job, which runs the scripts of THIS workflow's commit (a branch cannot change what publishes), and only a run
+#     started from the default branch gets that far;
+#   * it signs nothing with Authenticode (the sign secrets stay out of the build job).
+#
+# The number: <newest published release>.<run number>, for example 2.876.0.17 (shared/TestBuild.hpp). It is put into this checkout's
+# CMakeLists.txt only (never committed), so the launcher, editor and player carry it and the launcher's start-up self-check passes. A test build
+# sorts just above the release it is made on and below every later one, so the next release always replaces it. If a release comes out while the
+# build runs, the publish refuses (the number would be too old to be offered): start a new test build.
+#
+# The build steps below are a COPY of the first job of release.yml (same toolchain, same SDL2 and libsodium downloads with the same pins, same
+# own-crypto refusal, same build script, same trusted keys), because sharing them would mean editing release.yml. tests/scripts/test_dev_workflow.py
+# fails when the copied steps drift apart, so a change to one is a reminder to change the other. Two deliberate differences: the compiler cache is
+# only RESTORED (a test build never writes the release job's cache), and there is no signing, zip, installer or GitHub step.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          The branch, tag or commit to build (for example claude/walk-vs-run). Empty = the branch this run was started from.
+        type: string
+        required: false
+        default: ''
+      note:
+        description: >-
+          One line for the owner: what to try in this build. It is shown in the launcher (plain letters and digits, 140 characters).
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read          # nothing in this workflow writes to GitHub
+
+jobs:
+  windows-exe:
+    name: Cross-compile the test build (MinGW)
+    runs-on: ubuntu-latest
+    # A normal release takes about 11 minutes, a cold compiler cache about 30.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      ver: ${{ steps.number.outputs.ver }}
+      base: ${{ steps.number.outputs.base }}
+      branch: ${{ steps.who.outputs.branch }}
+      sha: ${{ steps.who.outputs.sha }}
+    env:
+      SDL2_VERSION: 2.30.9
+      # Compiler cache kept between builds (restored here, saved by release.yml only).
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPRESS: "1"
+      CCACHE_MAXSIZE: 2G
+      # The launcher's trusted keys: public keys, so repository variables (the same two release.yml builds in).
+      OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
+      OKAY_UPDATE_TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
+      # The account/update server comes from config/public-account.json; these optional repository variables override it (docs/accounts.md).
+      OKAY_DEFAULT_ACCOUNT_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+      OKAY_DEFAULT_ACCOUNT_KEY: ${{ vars.OKAY_DEFAULT_ACCOUNT_KEY }}
+      OKAY_REQUIRE_ACCOUNT: "1"
+    steps:
+      # Only the workflow of the default branch may publish: it is the reviewed one. A run started from another branch's copy stops here,
+      # before anything is built, with the words to use.
+      - name: Check this run was started from the default branch
+        env:
+          RUN_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$RUN_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+            msg="Start the test build from $DEFAULT_BRANCH (Run workflow > Use workflow from: $DEFAULT_BRANCH; the branch to build goes in the ref box). This run was started from $RUN_REF, and only the reviewed workflow on $DEFAULT_BRANCH may publish."
+            echo "::error title=Start this from $DEFAULT_BRANCH::$msg"
+            echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      # Fail now, not after 30 minutes of building: the publish job needs the key.
+      - name: Check the publish key exists
+        env:
+          HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+        run: |
+          if [ "$HAVE_KEY" != "true" ]; then
+            msg="This repository has no SUPABASE_SERVICE_KEY secret, so a test build cannot be published. Add the secret (Settings > Secrets and variables > Actions), then start the test build again."
+            echo "::error title=No publish key::$msg"
+            echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Record the branch and commit
+        id: who
+        env:
+          WANT_REF: ${{ inputs.ref || github.ref_name }}
+        run: |
+          BRANCH="${WANT_REF#refs/heads/}"
+          # (a plain name only: this goes into a job output and into the notes)
+          if ! [[ "$BRANCH" =~ ^[A-Za-z0-9._/+-]{1,80}$ ]] || [[ "$BRANCH" == *..* ]]; then
+            echo "::error title=Branch name not allowed::The ref must be a plain branch, tag or commit name (letters, digits and . _ / + - only, at most 80 characters)."
+            exit 1
+          fi
+          SHA="$(git rev-parse HEAD)"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Building $BRANCH at $SHA"
+
+      - name: Number this test build
+        id: number
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          fail() { echo "::error title=Cannot number the test build::$1"; echo "**$1**" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          if [ -f scripts/public-account.sh ]; then . scripts/public-account.sh; fi
+          URL="$(printf '%s' "${OKAY_DEFAULT_ACCOUNT_URL:-$(type okay_public_account >/dev/null 2>&1 && okay_public_account url)}" | grep -oE '^https://[a-z0-9]+\.supabase\.co' || true)"
+          [ -n "$URL" ] || fail "No update server address: config/public-account.json has no url and the repository variable OKAY_DEFAULT_ACCOUNT_URL is not set (or it is not an https://<project>.supabase.co address). See docs/accounts.md."
+          # The release published NOW is the base: a test build is numbered after it (read only; nothing is written to the server here).
+          BASE="$(curl -fsS --max-time 30 -H 'Cache-Control: no-cache' "$URL/storage/v1/object/public/releases/VERSION.txt?nocache=$(date +%s)" | head -n1 | tr -d '\r ' || true)"
+          [[ "$BASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Could not read the newest release (VERSION.txt on the update server said '$BASE'), so the test build cannot be numbered. Try again."
+          [[ "$RUN_NUMBER" =~ ^[1-9][0-9]*$ ]] || fail "The run number is not usable."
+          VER="$BASE.$RUN_NUMBER"
+          # Into THIS checkout only (never committed): CMake bakes the project version into the launcher, the editor and the player.
+          sed -i -E "0,/^([[:space:]]+VERSION[[:space:]]+)[0-9]+\.[0-9]+\.[0-9]+[[:space:]]*\$/s//\1${VER}/" CMakeLists.txt
+          grep -qE "^[[:space:]]+VERSION[[:space:]]+${VER//./\\.}[[:space:]]*\$" CMakeLists.txt || fail "CMakeLists.txt has no project VERSION line to put $VER into."
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "This is test build $VER (made on release $BASE)."
+
+      - name: Check the launcher's trusted anti-cheat keys
+        run: |
+          if [ -z "$OKAY_AC_TRUSTED_KEYS" ]; then
+            echo "::warning title=No trusted anti-cheat keys::OKAY_AC_TRUSTED_KEYS (repository variable) is empty: this launcher won't verify who signed the official game."
+            echo "**Warning:** no trusted anti-cheat keys (repository variable \`OKAY_AC_TRUSTED_KEYS\` is empty). The launcher's integrity checks on the official game are telemetry only in this release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # ---- the steps below are the first job of release.yml, word for word (tests/scripts/test_dev_workflow.py compares them) ----
+      - name: Note the runner image
+        run: echo "RUNNER_IMAGE=$ImageVersion" >> "$GITHUB_ENV"
+
+      - name: Restore downloaded apt packages
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/apt-cache
+          key: apt-mingw-${{ env.RUNNER_IMAGE }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: apt-mingw-${{ env.RUNNER_IMAGE }}-
+
+      - name: Install toolchain
+        timeout-minutes: 25
+        run: |
+          mkdir -p ~/apt-cache/partial
+          ls ~/apt-cache/*.deb 2>/dev/null | wc -l > ~/apt-debs-before
+          APT="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives=$HOME/apt-cache"
+          for i in 1 2 3; do
+            if timeout 240 sudo apt-get $APT update && \
+               timeout 600 sudo apt-get $APT install -y --no-install-recommends cmake ninja-build g++-mingw-w64-x86-64 binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev zip nsis ccache osslsigncode; then
+              exit 0
+            fi
+            echo "apt attempt $i failed or timed out; retrying"
+            sleep 10
+          done
+          exit 1
+
+      - name: Check for newly downloaded apt packages
+        id: apt-new
+        if: always()
+        run: |
+          [ -d ~/apt-cache ] || exit 0
+          # A timed-out install can leave apt-get still downloading.
+          sudo pkill -x apt-get || true
+          sudo chown -R "$USER" ~/apt-cache
+          rm -rf ~/apt-cache/partial ~/apt-cache/lock
+          if [ "$(ls ~/apt-cache/*.deb 2>/dev/null | wc -l)" -gt "$(cat ~/apt-debs-before 2>/dev/null || echo 0)" ]; then
+            echo "save=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save downloaded apt packages
+        if: always() && steps.apt-new.outputs.save == '1'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/apt-cache
+          key: apt-mingw-${{ env.RUNNER_IMAGE }}-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Fetch SDL2 (MinGW dev)
+        run: |
+          bash scripts/fetch-tarball.sh sdl2-mingw.tar.gz \
+            "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz" \
+            "https://www.libsdl.org/release/SDL2-devel-${SDL2_VERSION}-mingw.tar.gz"
+          mkdir -p sdl2-mingw
+          tar xzf sdl2-mingw.tar.gz -C sdl2-mingw --strip-components=1
+          echo "SDL2_MINGW_PREFIX=$PWD/sdl2-mingw/x86_64-w64-mingw32" >> "$GITHUB_ENV"
+
+      - name: Fetch libsodium (MinGW prebuilt)
+        # Statically linked into the exes for authenticated packet encryption. A release MUST have it: the download is pinned
+        # to a SHA-256 (scripts/libsodium-mingw.pin), the layout is checked, and the build passes -DOKAY_REQUIRE_SODIUM=ON
+        # (scripts/build-windows-dist.sh), so a missing or different libsodium fails the release instead of building without it
+        # (the code would fall back to our own, unreviewed okay::crypto; CLAUDE.md rule 18).
+        run: |
+          prefix="$(bash scripts/fetch-libsodium-mingw.sh "$PWD")"
+          echo "OKAY_SODIUM_MINGW_PREFIX=$prefix" >> "$GITHUB_ENV"
+
+      # The compiler cache of the release job: restored, never saved (a test build must not push the release job's cache out).
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .ccache
+          key: ccache-mingw-${{ github.sha }}
+          restore-keys: ccache-mingw-
+
+      - name: Refuse own crypto and the own-stack switch
+        run: |
+          scripts/check_release_own_stack.sh
+          test -n "$OKAY_SODIUM_MINGW_PREFIX" && test -s "$OKAY_SODIUM_MINGW_PREFIX/lib/libsodium.a"
+
+      - name: Build Windows distribution
+        # The account server + public key are baked into the build as the CMake
+        # defaults (see the top-level CMakeLists), pointing at the OkaySpace
+        # Supabase project. We intentionally do NOT override them from CI secrets
+        # anymore: a stale/empty secret used to silently misconfigure the build
+        # and break sign-in. To point a fork at a different server, change the
+        # CMake defaults instead.
+        run: |
+          ccache -z || true
+          scripts/build-windows-dist.sh
+          ccache -s || true
+
+      # The version is in the programs: CMake baked it in, and the build script wrote the release's three-number VERSION.txt, which is replaced here
+      # by the test version. (A launcher that is not the published version fails its start-up check and is rolled back, so say so now.)
+      - name: Check the programs carry the test version
+        env:
+          VER: ${{ steps.number.outputs.ver }}
+        run: |
+          printf '%s\n' "$VER" > build-win-dist/VERSION.txt
+          printf '%s\n' "$VER" > build-win-dist/Tools/VERSION.txt
+          for f in build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayEngine.exe; do
+            if ! LC_ALL=C grep -aqF -- "$VER" "$f"; then
+              echo "::error title=Wrong version::$f does not contain $VER, so it would fail its own start-up check after an update."
+              exit 1
+            fi
+          done
+          for f in build-win-dist/OkaySpace.exe build-win-dist/Tools/OkayEngine.exe build-win-dist/Tools/OkaySpacePlayer.exe; do
+            if [ "$(head -c2 "$f")" != "MZ" ]; then
+              echo "::error title=Not a Windows program::$f is not a Windows program."
+              exit 1
+            fi
+          done
+
+      - name: Collect the files for the publish job
+        env:
+          VER: ${{ steps.number.outputs.ver }}
+        run: |
+          mkdir -p dev-dist/Tools
+          cp build-win-dist/OkaySpace.exe dev-dist/
+          cp build-win-dist/Tools/OkayEngine.exe build-win-dist/Tools/OkaySpacePlayer.exe dev-dist/Tools/
+          printf '%s\n' "$VER" > dev-dist/VERSION.txt
+          ls -la dev-dist dev-dist/Tools
+
+      - name: Keep the files for the publish job
+        uses: actions/upload-artifact@v6
+        with:
+          name: dev-dist
+          path: dev-dist
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Say it did not work
+        if: failure()
+        run: |
+          echo "**The test build was not made.** Nothing was published. Read the red step above for why." >> "$GITHUB_STEP_SUMMARY"
+
+  # Publishing runs the scripts of THIS workflow's commit (the reviewed ones), never the branch that was built, and one publish at a time
+  # (they rewrite dev/versions.json). The key only exists here.
+  publish:
+    name: Publish the test build to the dev folder
+    needs: windows-exe
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: dev-build-publish
+      cancel-in-progress: false
+    env:
+      DEV_BRANCH: ${{ needs.windows-exe.outputs.branch }}
+      DEV_SHA: ${{ needs.windows-exe.outputs.sha }}
+      DEV_NOTE: ${{ inputs.note }}
+      DIST_DIR: dev-dist
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Fetch the files the build job collected
+        uses: actions/download-artifact@v6
+        with:
+          name: dev-dist
+          path: dev-dist
+
+      - name: Publish to the dev folder
+        env:
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+          # Optional: the private key that signs dev/versions.json (the same secret a signed release would use). Unset = published unsigned, with a warning.
+          OKAY_UPDATE_SIGNING_SEED: ${{ secrets.OKAY_UPDATE_SIGNING_SEED }}
+        run: bash scripts/publish-supabase-dev.sh
+
+      - name: Say it did not work
+        if: failure()
+        run: |
+          echo "**The test build was not published.** Read the red step above for why. If it says a version already exists or a newer release came out, start a new test build. Nothing about the normal releases was touched." >> "$GITHUB_STEP_SUMMARY"

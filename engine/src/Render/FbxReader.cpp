@@ -31,8 +31,9 @@ constexpr std::uint32_t kNone = 0xFFFFFFFFu;
 struct Linker {
     std::vector<Elem>& elems; Elem& root;
     void Link(std::uint32_t parent, std::uint32_t& lastChild, std::uint32_t child) {
-        if (lastChild == kNone) (parent == kNone ? root : elems[parent]).firstChild_ = child;
-        else elems[lastChild].nextSibling_ = child;
+        const std::uint64_t c1 = (std::uint64_t)child + 1;
+        if (lastChild == kNone) { Elem& p = parent == kNone ? root : elems[parent]; p.links_ = (p.links_ & 0xFFFFFFFFull) | (c1 << 32); }
+        else { Elem& l = elems[lastChild]; l.links_ = (l.links_ & ~0xFFFFFFFFull) | c1; }
         lastChild = child;
     }
 };
@@ -41,13 +42,15 @@ struct Linker {
 // before that the flat arrays may still move.
 void Fixup(Document& d) {
     Elem* const E = d.elems.data();
-    auto at = [&](std::uint32_t i) -> const Elem* { return i == kNone ? nullptr : E + i; };
+    auto at = [&](std::uint64_t i1) -> const Elem* { return i1 == 0 ? nullptr : E + (i1 - 1); };   // index + 1
     for (Elem& e : d.elems) {
-        e.props.p = e.props.n ? d.props.data() + e.propBegin_ : nullptr;
-        e.children.first = at(e.firstChild_);
-        e.next = at(e.nextSibling_);
+        const std::uint64_t l = e.links_;
+        e.props.p = e.props.n ? d.props.data() + e.props.begin_ : nullptr;
+        e.children.first = at(l >> 32);
+        e.next = at(l & 0xFFFFFFFFull);
     }
-    d.root.children.first = at(d.root.firstChild_);
+    d.root.children.first = at(d.root.links_ >> 32);
+    d.root.next = nullptr;
 }
 } // namespace
 
@@ -122,7 +125,7 @@ struct Reader {
                 }
                 arrayBytes += raw;
                 // Kept as the file stores it (no conversion): a view into the file, or into the inflated buffer.
-                out.arr.type = t; out.arr.count = cnt; out.arr.data = src;
+                out.SetArray(t, cnt, src);
                 out.type = 'a';
                 pos += clen;
                 return true;
@@ -158,7 +161,7 @@ struct Reader {
             if (!ReadProp(q, propEnd, doc->props.back())) return -1;
         }
         if (q != propEnd) { Fail("property list size mismatch"); return -1; }
-        doc->elems[idx].propBegin_ = (std::uint32_t)firstProp;
+        doc->elems[idx].props.begin_ = (std::uint32_t)firstProp;
         doc->elems[idx].props.n = (std::uint32_t)nProps;
         q = propEnd;
         std::uint32_t last = kNone;
@@ -384,7 +387,7 @@ struct Text {
         }
         vals.resize(nv);
         arrayBytes += vals.size() * 8;
-        out.arr.type = 'd'; out.arr.count = (std::uint32_t)vals.size(); out.arr.data = (const std::uint8_t*)vals.data();
+        out.SetArray('d', (std::uint32_t)vals.size(), (const std::uint8_t*)vals.data());
         doc->numbers.push_back(std::move(vals));   // the buffer stays where it is
         return true;
     }
@@ -415,7 +418,7 @@ struct Text {
             else if (!ReadNumberOrIdent(pr)) return false;
             if (++count > lim->maxArrayBytes / 8) return Fail("too many properties");
         }
-        doc->elems[idx].propBegin_ = (std::uint32_t)firstProp;
+        doc->elems[idx].props.begin_ = (std::uint32_t)firstProp;
         doc->elems[idx].props.n = (std::uint32_t)count;
         SkipSpace(true);
         if (Cur() == '{') {

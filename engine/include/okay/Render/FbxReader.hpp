@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <new>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,20 +80,27 @@ struct Array {
 
 struct Prop {
     char type = 0;                 ///< binary type letter: Y C I F D L S R, or 'a' = numeric array
-    union {
+    std::string_view s;            ///< S R (raw bytes for R); a view into the parsed bytes; empty for other types
+    union {                        ///< read the member the type says (or Num()): they share their bytes (40 bytes a property)
         std::int64_t i = 0;        ///< Y C I L
-        double d;                  ///< F D (shares the bytes of `i`: read the one the type says, or Num())
+        double d;                  ///< F D
+        Array arr;                 ///< 'a': numeric arrays (f d l i b c)
     };
-    std::string_view s;            ///< S R (raw bytes for R); a view into the parsed bytes
-    Array arr;                     ///< numeric arrays (f d l i b c)
     bool IsNumber() const { return type == 'Y' || type == 'C' || type == 'I' || type == 'L' || type == 'F' || type == 'D'; }
-    double Num() const { return (type == 'F' || type == 'D') ? d : (double)i; }
+    /// The number, or 0 for a string, raw or array property.
+    double Num() const { return (type == 'F' || type == 'D') ? d : IsNumber() ? (double)i : 0.0; }
+    /// Makes this an array property's storage (the union member `arr` becomes the one in use).
+    void SetArray(char elemType, std::uint32_t count, const std::uint8_t* data) {
+        Array a; a.type = elemType; a.count = count; a.data = data;
+        new (&arr) Array(a);
+    }
 };
 
 struct Elem;
 /// The properties of one element (a range of Document::props).
 struct PropList {
     const Prop* p = nullptr; std::uint32_t n = 0;
+    std::uint32_t begin_ = 0;      ///< while parsing: index of the first property in Document::props (fills padding)
     std::size_t size() const { return n; }
     bool empty() const { return n == 0; }
     const Prop& operator[](std::size_t k) const { return p[k]; }
@@ -119,9 +127,12 @@ struct Elem {
     std::string_view name;
     PropList props;
     ElemList children;
-    const Elem* next = nullptr;    ///< next sibling
-    // while parsing: indices into Document::elems / props (turned into the pointers above at the end)
-    std::uint32_t propBegin_ = 0, firstChild_ = 0xFFFFFFFFu, nextSibling_ = 0xFFFFFFFFu;
+    union {
+        const Elem* next = nullptr;    ///< next sibling
+        /// while parsing: (first child + 1) << 32 | (next sibling + 1), indices into Document::elems, 0 = none; turned
+        /// into `children.first` and `next` when the tree is complete (48 bytes an element instead of 64)
+        std::uint64_t links_;
+    };
     const Elem* Find(const char* n) const;
 };
 inline ElemList::It& ElemList::It::operator++() { e = e->next; return *this; }

@@ -870,6 +870,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | slow rebuilds after a one-line editor change | [15.10](15-editor.md#1510-splitting-editormaincpp-into-panel-files-45k-lines) Splitting `editor/main.cpp` into panel files (~45k lines) |
 | snags on stairs or sills | [4.2](04-characters-cameras.md#42-stances-and-movement) Stances and movement |
 | some letters show as boxes | [1.8](01-core-scene.md#18-localization) Localization |
+| sound keeps playing in the pause menu | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | sound plays from the start every time it should resume | [7.3](07-audio.md#73-audio-sources-and-music-player) Audio sources and music player |
 | sound stops when the window loses focus | [7.1](07-audio.md#71-mixer-and-audio-mixer) Mixer and Audio Mixer |
 | spawned bullets stutter (pooling) | [21.1](20-35-planned.md#211-reusable-objects) Reusable objects |

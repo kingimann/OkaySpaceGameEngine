@@ -214,7 +214,7 @@ EngineApi Build() {
             "Position in the world."));
         t.props.push_back(prop("localPosition", tVec,
             [](const Value& s, CallContext& c) { return Value{SelfTransform(s, c)->localPosition}; },
-            [](const Value& s, const Value& v, CallContext& c) { SelfTransform(s, c)->localPosition = V(v); },
+            [](const Value& s, const Value& v, CallContext& c) { SelfTransform(s, c)->SetLocalPosition(V(v)); },
             "Position relative to the parent."));
         t.props.push_back(prop("eulerAngles", tVec,
             [](const Value& s, CallContext& c) { return Value{SelfTransform(s, c)->Rotation().ToEuler()}; },
@@ -226,7 +226,7 @@ EngineApi Build() {
             "Rotation relative to the parent, in degrees."));
         t.props.push_back(prop("localScale", tVec,
             [](const Value& s, CallContext& c) { return Value{SelfTransform(s, c)->localScale}; },
-            [](const Value& s, const Value& v, CallContext& c) { SelfTransform(s, c)->localScale = V(v); },
+            [](const Value& s, const Value& v, CallContext& c) { SelfTransform(s, c)->SetLocalScale(V(v)); },
             "Scale relative to the parent."));
         t.props.push_back(ro("forward", tVec, [](const Value& s, CallContext& c) { return Value{SelfTransform(s, c)->Forward()}; },
             "The direction the object faces (its +Z), in the world."));
@@ -296,7 +296,7 @@ EngineApi Build() {
         r.find = [](GameObject* go) -> Component* { return go ? go->GetComponent<Rigidbody3D>() : nullptr; };
         r.props.push_back(prop("velocity", tVec,
             [](const Value& s, CallContext& c) { return Value{Body(s, c)->velocity}; },
-            [](const Value& s, const Value& v, CallContext& c) { Rigidbody3D* b = Body(s, c); b->velocity = V(v); b->WakeUp(); },
+            [](const Value& s, const Value& v, CallContext& c) { Rigidbody3D* b = Body(s, c); if (b->SetVelocity(V(v))) b->WakeUp(); },
             "Speed and direction in units per second."));
         r.props.push_back(prop("angularVelocity", tVec,
             [](const Value& s, CallContext& c) { return Value{Body(s, c)->angularVelocity}; },
@@ -310,7 +310,7 @@ EngineApi Build() {
             }, "How heavy the body is (more than 0)."));
         r.props.push_back(prop("gravityScale", tFloat,
             [](const Value& s, CallContext& c) { return Value{Body(s, c)->gravityScale}; },
-            [](const Value& s, const Value& v, CallContext& c) { Body(s, c)->gravityScale = F(v); },
+            [](const Value& s, const Value& v, CallContext& c) { Body(s, c)->SetGravityScale(F(v)); },
             "How strongly gravity pulls it: 1 normal, 0 none."));
         r.props.push_back(prop("drag", tFloat,
             [](const Value& s, CallContext& c) { return Value{Body(s, c)->drag}; },

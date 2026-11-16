@@ -55,20 +55,58 @@ public:
     /// Force this body awake (call after teleporting or externally moving it).
     void WakeUp() { sleeping = false; m_sleepTimer = 0.0f; }
 
+    // The velocity, force, impulse and gravity-scale calls below never store a NaN or infinite number (issue #888,
+    // finding 31), exactly as on Rigidbody3D: such a call changes nothing (the body is not woken either) and the
+    // first one on each body logs one warning that names the object. Finite values give what they gave before.
+    // (Writing the public `velocity` / `gravityScale` fields directly is not checked.)
+
+    /// velocity = v, unless v is NaN or infinite. True when stored. It does not wake the body (call WakeUp()).
+    bool SetVelocity(const Vec2& v) {
+        if (!AcceptFinite(v, "velocity")) return false;
+        velocity = v;
+        return true;
+    }
+    /// gravityScale = s, unless s is NaN or infinite. True when stored.
+    bool SetGravityScale(float s) {
+        if (!AcceptFinite(Vec2{s, 0.0f}, "gravity scale")) return false;
+        gravityScale = s;
+        return true;
+    }
+
     /// Apply a continuous force (integrated over the next step, scaled by mass).
-    void AddForce(const Vec2& force) { m_forceAccum += force; WakeUp(); }
+    void AddForce(const Vec2& force) {
+        const Vec2 f = m_forceAccum + force;
+        if (!AcceptFinite(f, "force")) return;
+        m_forceAccum = f;
+        WakeUp();
+    }
     /// Apply a force with an explicit ForceMode.
     void AddForce(const Vec2& force, ForceMode mode) {
         switch (mode) {
-            case ForceMode::Force:          m_forceAccum += force; break;
-            case ForceMode::Acceleration:   m_forceAccum += force * mass; break;
-            case ForceMode::Impulse:        velocity += force * InvMass(); break;
-            case ForceMode::VelocityChange: velocity += force; break;
+            case ForceMode::Force:
+            case ForceMode::Acceleration: {
+                const Vec2 f = m_forceAccum + (mode == ForceMode::Force ? force : force * mass);
+                if (!AcceptFinite(f, "force")) return;
+                m_forceAccum = f;
+                break;
+            }
+            case ForceMode::Impulse:
+            case ForceMode::VelocityChange: {
+                const Vec2 v = velocity + (mode == ForceMode::Impulse ? force * InvMass() : force);
+                if (!AcceptFinite(v, "velocity")) return;
+                velocity = v;
+                break;
+            }
         }
         WakeUp();
     }
     /// Apply an instantaneous change in momentum (immediate velocity change).
-    void AddImpulse(const Vec2& impulse) { velocity += impulse * InvMass(); WakeUp(); }
+    void AddImpulse(const Vec2& impulse) {
+        const Vec2 v = velocity + impulse * InvMass();
+        if (!AcceptFinite(v, "velocity")) return;
+        velocity = v;
+        WakeUp();
+    }
 
     /// Apply a torque about Z (continuous, integrated next step, scaled by inertia).
     void AddTorque(float torque) { m_torqueAccum += torque; WakeUp(); }
@@ -76,10 +114,13 @@ public:
     /// Apply a force at a world point, producing both linear force and a torque
     /// from the lever arm. Off-center hits spin the body.
     void AddForceAtPosition(const Vec2& force, const Vec2& point) {
-        m_forceAccum += force;
+        const Vec2 f = m_forceAccum + force;
         Vec3 c = transform ? transform->Position() : Vec3::Zero;
         Vec2 r{point.x - c.x, point.y - c.y};
-        m_torqueAccum += r.x * force.y - r.y * force.x;   // 2D cross product
+        const float t = m_torqueAccum + (r.x * force.y - r.y * force.x);   // 2D cross product
+        if (!AcceptFinite(f, "force") || !AcceptFinite(Vec2{t, 0.0f}, "torque")) return;
+        m_forceAccum = f;
+        m_torqueAccum = t;
         WakeUp();
     }
 
@@ -121,6 +162,10 @@ private:
     Vec2  m_forceAccum  = Vec2::Zero;
     float m_torqueAccum = 0.0f;
     float m_sleepTimer  = 0.0f;   // seconds spent under the sleep thresholds
+    bool  m_warnedNotFinite = false;
+    // True when both axes of `v` are finite. Otherwise logs the warning above (once per body, naming `what`)
+    // and answers false, so the caller keeps the old value. Physics2D.cpp; the check is okay::Finite.
+    bool AcceptFinite(const Vec2& v, const char* what);
     Vec2  ConsumeForce()  { Vec2 f = m_forceAccum; m_forceAccum = Vec2::Zero; return f; }
     float ConsumeTorque() { float t = m_torqueAccum; m_torqueAccum = 0.0f; return t; }
 };

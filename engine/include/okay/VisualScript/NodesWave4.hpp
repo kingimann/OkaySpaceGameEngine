@@ -201,6 +201,12 @@ struct TextFnNode : VsNode {
 // Smooth 2D gradient noise in about -1..1 (classic Perlin), for wobble, terrain,
 // flicker. in0 = x, in1 = y.
 inline float VsPerlin2(float x, float y) {
+    // NaN or Inf: no noise (0), and no undefined float -> int cast below (issue #888, finding 33). A finite value
+    // is clamped to the floats whose floor and floor + 1 fit an int (2147483520 is the largest float below 2^31);
+    // floats that large are whole numbers, so every input that worked before gives the same noise.
+    if (!std::isfinite(x) || !std::isfinite(y)) return 0.0f;
+    x = std::min(std::max(x, -2147483648.0f), 2147483520.0f);
+    y = std::min(std::max(y, -2147483648.0f), 2147483520.0f);
     auto hash = [](int i, int j) {
         unsigned h = (unsigned)i * 374761393u + (unsigned)j * 668265263u;
         h = (h ^ (h >> 13)) * 1274126177u;

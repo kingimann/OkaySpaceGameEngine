@@ -1,0 +1,38 @@
+okayscene 3
+name "NaN Guard"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "cfd75be7e9eb95fa02d87d0120c709d4"
+  active 1
+  parent -1
+  transform 0 2.2 8 0 0 0 1 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "NaN Cube"
+  guid "9776b715b1c0c85424be73ec087957f8"
+  active 1
+  parent -1
+  transform -2 0 0 0 0 0 1 1 1 1
+  mesh "Cube" 1 1 1 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  visualscript "node 1 OnStart
+entry OnStart 1
+node 2 Fn.sqrt
+default 2 0 -1
+exec 1 0 2
+node 3 SetPosition
+data 3 0 2 0
+exec 2 0 3
+node 4 OnUpdate
+entry OnUpdate 4
+node 5 Translate
+default 5 0 0.01
+default 5 1 0
+default 5 2 0
+exec 4 0 5
+"
+end

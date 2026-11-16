@@ -13,6 +13,7 @@
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
 #include <algorithm>
@@ -430,7 +431,7 @@ return out;
 case 57: {
 float n0 = In(0, g, ctx, VsValue{0.0f}).AsFloat(); (void)n0;
 VsValue out; (void)pin;
-int total = std::max(0, (int)std::floor(n0)); char b[32]; std::snprintf(b, sizeof b, "%02d:%02d", total / 60, total % 60); out = VsValue(std::string(b));
+int total = std::max(0, SafeInt(std::floor(n0))); char b[32]; std::snprintf(b, sizeof b, "%02d:%02d", total / 60, total % 60); out = VsValue(std::string(b));
 return out;
 }
 case 58: {
@@ -1037,7 +1038,7 @@ float n1 = In(1, g, ctx, VsValue{0.0f}).AsFloat(); (void)n1;
 float n2 = In(2, g, ctx, VsValue{0.0f}).AsFloat(); (void)n2;
 GameObject* o = GpPin(this, 3, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { rb->velocity = Vec3(n0, n1, n2); rb->WakeUp(); }
+if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { if (rb->SetVelocity(Vec3(n0, n1, n2))) rb->WakeUp(); }
 return flow;
 }
 case 20: {
@@ -1239,7 +1240,7 @@ case 71: {
 float n0 = In(0, g, ctx, VsValue{1.0f}).AsFloat(); (void)n0;
 GameObject* o = GpPin(this, 1, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) rb->gravityScale = n0;
+if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) rb->SetGravityScale(n0);
 return flow;
 }
 case 72: {
@@ -1275,7 +1276,7 @@ float n0 = In(0, g, ctx, VsValue{3.0f}).AsFloat(); (void)n0;
 float n1 = In(1, g, ctx, VsValue{0.2f}).AsFloat(); (void)n1;
 GameObject* o = GpPin(this, 2, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (o && o->transform) { if (!seen) { seen = true; mem = o->transform->localScale.x; } mem2 += ctx.deltaTime * n0; float k = mem * (1.0f + n1 * std::sin(mem2)); o->transform->localScale = Vec3(k, k, k); }
+if (o && o->transform) { if (!seen) { seen = true; mem = o->transform->localScale.x; } mem2 += ctx.deltaTime * n0; float k = mem * (1.0f + n1 * std::sin(mem2)); o->transform->SetLocalScale(Vec3(k, k, k)); }
 return flow;
 }
 case 78: {
@@ -1444,7 +1445,7 @@ case 117: {
 float n0 = In(0, g, ctx, VsValue{1.0f}).AsFloat(); (void)n0;
 GameObject* o = GpPin(this, 1, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (o && o->transform) o->transform->localScale = Vec3(n0, n0, n0);
+if (o && o->transform) o->transform->SetLocalScale(Vec3(n0, n0, n0));
 return flow;
 }
 case 118: {
@@ -1488,7 +1489,7 @@ case 123: {
 float n0 = In(0, g, ctx, VsValue{5.0f}).AsFloat(); (void)n0;
 GameObject* o = GpPin(this, 1, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { rb->velocity.y = n0; rb->WakeUp(); }
+if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { Vec3 v = rb->velocity; v.y = n0; if (rb->SetVelocity(v)) rb->WakeUp(); }
 return flow;
 }
 case 128: {
@@ -1503,7 +1504,7 @@ float n0 = In(0, g, ctx, VsValue{0.0f}).AsFloat(); (void)n0;
 float n1 = In(1, g, ctx, VsValue{0.0f}).AsFloat(); (void)n1;
 GameObject* o = GpPin(this, 2, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { rb->velocity.x = n0; rb->velocity.z = n1; rb->WakeUp(); }
+if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { Vec3 v = rb->velocity; v.x = n0; v.z = n1; if (rb->SetVelocity(v)) rb->WakeUp(); }
 return flow;
 }
 case 130: {
@@ -1835,14 +1836,14 @@ case 205: {
 float n0 = In(0, g, ctx, VsValue{0.5f}).AsFloat(); (void)n0;
 GameObject* o = GpPin(this, 1, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (o && o->transform) { Vec3 sc = o->transform->localScale; float d = n0 * ctx.deltaTime; o->transform->localScale = Vec3(std::max(0.01f, sc.x + d), std::max(0.01f, sc.y + d), std::max(0.01f, sc.z + d)); }
+if (o && o->transform) { Vec3 sc = o->transform->localScale; float d = n0 * ctx.deltaTime; o->transform->SetLocalScale(Vec3(std::max(0.01f, sc.x + d), std::max(0.01f, sc.y + d), std::max(0.01f, sc.z + d))); }
 return flow;
 }
 case 206: {
 float n0 = In(0, g, ctx, VsValue{1.0f}).AsFloat(); (void)n0;
 GameObject* o = GpPin(this, 1, g, ctx, false, "a target"); (void)o;
 int flow = 0; (void)flow;
-if (o && o->transform) o->transform->localScale = o->transform->localScale * std::max(0.01f, n0);
+if (o && o->transform) o->transform->SetLocalScale(o->transform->localScale * std::max(0.01f, n0));
 return flow;
 }
 case 207: {

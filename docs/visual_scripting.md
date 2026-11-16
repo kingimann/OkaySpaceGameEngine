@@ -572,6 +572,18 @@ Graphs never freeze the game and never fail silently:
   are dropped with an error.
 - **Missing objects.** A Target or Destroy aimed at a destroyed or unknown
   object, or a Spawn whose prefab file is missing, is reported and skipped.
+- **NaN and infinity.** A number that is not a number (NaN: the square root
+  of a negative, 0 divided by 0) or infinite never reaches a position, a size
+  or a Rigidbody velocity, force or gravity scale. The move is ignored, the
+  object stays where it was, and the Console gets one warning naming the
+  object (once per object, not every frame). Before, the object vanished for
+  good, because every later move added to NaN. Fn.* nodes are covered the
+  same way. Check Graph warns about `nan` or `inf` typed into a pin. Counts
+  and other whole numbers taken from a NaN or huge number (Add Item, Particle
+  Burst, Noise, Format Clock and others) no longer give undefined results: NaN
+  counts as 0 and a huge number as the largest whole number, and Particle
+  Burst never emits more than the system holds. Try it:
+  `examples/node_playground/nan_guard.okayscene` (see `docs/try_it.md`).
 
 While playing, the Visual Script editor outlines the node that failed in red
 and shows the message on the canvas. Each distinct error is logged once; the

@@ -8,6 +8,8 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Math/IKMath.hpp"
+#include "okay/Core/Log.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1284,6 +1286,18 @@ void Physics2D::RecordQueryRay(const Vec2& origin, const Vec2& direction, float 
     r.to = origin + dir * Mathf::Min(maxDistance, 1000.0f);   // "infinite" rays drawn 1 km long
     r.hit = hit.hit; r.point = hit.point; r.normal = hit.normal; r.radius = radius;
     m_debugRays.push_back(r);
+}
+
+// ---- Rigidbody2D: no NaN or Inf into velocity, force, impulse or gravity scale (issue #888, finding 31) ----------
+bool Rigidbody2D::AcceptFinite(const Vec2& v, const char* what) {
+    if (Finite(Vec3(v, 0.0f))) return true;
+    if (!m_warnedNotFinite) {   // once per body: a bad wire runs every frame, the Console should not flood
+        m_warnedNotFinite = true;
+        Log::Warning("'", gameObject ? gameObject->name : std::string("(no object)"), "': a ", what,
+                     " that is not a number (NaN or infinite) was ignored; the Rigidbody keeps its old value. Look for a "
+                     "divide by zero or the square root of a negative number feeding it. (Shown once per object.)");
+    }
+    return false;
 }
 
 } // namespace okay

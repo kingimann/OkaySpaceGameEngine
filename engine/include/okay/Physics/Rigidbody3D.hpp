@@ -80,20 +80,59 @@ public:
     /// Runtime: the parent this body was carried by last step. Not authored.
     ParentSample parentCarry;
 
+    // The velocity, force, impulse and gravity-scale calls below never store a NaN or infinite number (issue #888,
+    // finding 31): such a call changes nothing (the body is not woken either) and the first one on each body logs
+    // one warning that names the object. A NaN velocity would carry the position to NaN on the next step, and the
+    // object could never come back. Finite values give exactly what they gave before. (Writing the public
+    // `velocity` / `gravityScale` fields directly is not checked.)
+
+    /// velocity = v, unless v is NaN or infinite. True when stored. It does not wake the body (call WakeUp()).
+    bool SetVelocity(const Vec3& v) {
+        if (!AcceptFinite(v, "velocity")) return false;
+        velocity = v;
+        return true;
+    }
+    /// gravityScale = s, unless s is NaN or infinite. True when stored.
+    bool SetGravityScale(float s) {
+        if (!AcceptFinite(Vec3{s, 0.0f, 0.0f}, "gravity scale")) return false;
+        gravityScale = s;
+        return true;
+    }
+
     /// Apply a continuous force (integrated over the next step, scaled by mass).
-    void AddForce(const Vec3& force) { m_forceAccum = m_forceAccum + force; WakeUp(); }
+    void AddForce(const Vec3& force) {
+        const Vec3 f = m_forceAccum + force;
+        if (!AcceptFinite(f, "force")) return;
+        m_forceAccum = f;
+        WakeUp();
+    }
     /// Apply a force with an explicit ForceMode.
     void AddForce(const Vec3& force, ForceMode mode) {
         switch (mode) {
-            case ForceMode::Force:          m_forceAccum = m_forceAccum + force; break;
-            case ForceMode::Acceleration:   m_forceAccum = m_forceAccum + force * mass; break;
-            case ForceMode::Impulse:        velocity = velocity + force * InvMass(); break;
-            case ForceMode::VelocityChange: velocity = velocity + force; break;
+            case ForceMode::Force:
+            case ForceMode::Acceleration: {
+                const Vec3 f = m_forceAccum + (mode == ForceMode::Force ? force : force * mass);
+                if (!AcceptFinite(f, "force")) return;
+                m_forceAccum = f;
+                break;
+            }
+            case ForceMode::Impulse:
+            case ForceMode::VelocityChange: {
+                const Vec3 v = velocity + (mode == ForceMode::Impulse ? force * InvMass() : force);
+                if (!AcceptFinite(v, "velocity")) return;
+                velocity = v;
+                break;
+            }
         }
         WakeUp();
     }
     /// Apply an instantaneous change in momentum (immediate velocity change).
-    void AddImpulse(const Vec3& impulse) { velocity = velocity + impulse * InvMass(); WakeUp(); }
+    void AddImpulse(const Vec3& impulse) {
+        const Vec3 v = velocity + impulse * InvMass();
+        if (!AcceptFinite(v, "velocity")) return;
+        velocity = v;
+        WakeUp();
+    }
 
     /// Apply a torque (continuous, integrated next step, scaled by inverse inertia).
     void AddTorque(const Vec3& torque) { m_torqueAccum = m_torqueAccum + torque; WakeUp(); }
@@ -101,9 +140,12 @@ public:
     /// Apply a force at a world point, producing both linear force and a torque from
     /// the lever arm. Off-center hits spin the body.
     void AddForceAtPosition(const Vec3& force, const Vec3& point) {
-        m_forceAccum = m_forceAccum + force;
+        const Vec3 f = m_forceAccum + force;
         Vec3 c = transform ? transform->Position() : Vec3::Zero;
-        m_torqueAccum = m_torqueAccum + Vec3::Cross(point - c, force);
+        const Vec3 t = m_torqueAccum + Vec3::Cross(point - c, force);
+        if (!AcceptFinite(f, "force") || !AcceptFinite(t, "torque")) return;
+        m_forceAccum = f;
+        m_torqueAccum = t;
         WakeUp();
     }
 
@@ -147,6 +189,10 @@ private:
     Vec3  m_forceAccum  = Vec3::Zero;
     Vec3  m_torqueAccum = Vec3::Zero;
     float m_sleepTimer  = 0.0f;   // seconds spent under the sleep thresholds
+    bool  m_warnedNotFinite = false;
+    // True when every axis of `v` is finite. Otherwise logs the warning above (once per body, naming `what`)
+    // and answers false, so the caller keeps the old value. Physics3D.cpp; the check is okay::Finite.
+    bool AcceptFinite(const Vec3& v, const char* what);
     Vec3 ConsumeForce()  { Vec3 f = m_forceAccum; m_forceAccum = Vec3::Zero; return f; }
     Vec3 ConsumeTorque() { Vec3 t = m_torqueAccum; m_torqueAccum = Vec3::Zero; return t; }
 };

@@ -4,6 +4,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
 #include "okay/Net/NetworkManager.hpp"
 #include "okay/Components/NetworkObject.hpp"
@@ -397,10 +398,10 @@ struct TranslateNode : VsNode {
 struct SetPositionNode : VsNode {
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.transform)
-            ctx.transform->localPosition = {In(0, g, ctx).AsFloat(),
-                                            In(1, g, ctx).AsFloat(),
-                                            HasInput(2) ? In(2, g, ctx).AsFloat() : ctx.transform->localPosition.z};
+        if (ctx.transform)   // a NaN / Inf input is dropped with one warning (Transform::SetLocalPosition)
+            ctx.transform->SetLocalPosition({In(0, g, ctx).AsFloat(),
+                                             In(1, g, ctx).AsFloat(),
+                                             HasInput(2) ? In(2, g, ctx).AsFloat() : ctx.transform->localPosition.z});
         return 0;
     }
 };
@@ -446,10 +447,10 @@ struct AddVarNode : VsNode {
 struct SetScaleNode : VsNode {   // in0=x, in1=y, in2=z (defaults to 1)
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (ctx.transform)
-            ctx.transform->localScale = {In(0, g, ctx, 1.0f).AsFloat(),
-                                         In(1, g, ctx, 1.0f).AsFloat(),
-                                         In(2, g, ctx, 1.0f).AsFloat()};
+        if (ctx.transform)   // a NaN / Inf input is dropped with one warning (Transform::SetLocalScale)
+            ctx.transform->SetLocalScale({In(0, g, ctx, 1.0f).AsFloat(),
+                                          In(1, g, ctx, 1.0f).AsFloat(),
+                                          In(2, g, ctx, 1.0f).AsFloat()});
         return 0;
     }
 };
@@ -887,7 +888,7 @@ struct SteamLeaderboardNode : VsNode {
     std::string board;
     explicit SteamLeaderboardNode(std::string b) : board(std::move(b)) {}
     int ExecOutCount() const override { return 1; }
-    int Exec(NodeGraph& g, VsContext& ctx) override { okay::Steam::Get().UploadLeaderboardScore(board, (std::int32_t)In(0, g, ctx).AsFloat()); return 0; }
+    int Exec(NodeGraph& g, VsContext& ctx) override { okay::Steam::Get().UploadLeaderboardScore(board, SafeInt(In(0, g, ctx).AsFloat())); return 0; }   // NaN -> 0, Inf -> INT_MAX
 };
 
 // ---- Audio ------------------------------------------------------------
@@ -928,8 +929,9 @@ struct SetVelocityNode : VsNode {  // in0=x, in1=y, in2=z
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (!ctx.gameObject) return 0;
         float x = In(0, g, ctx).AsFloat(), y = In(1, g, ctx).AsFloat();
-        if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>()) rb->velocity = {x, y};
-        else if (auto* r3 = ctx.gameObject->GetComponent<Rigidbody3D>()) { r3->velocity = {x, y, In(2, g, ctx).AsFloat()}; r3->WakeUp(); }
+        // SetVelocity drops a NaN / Inf with one warning, so one bad number cannot carry the object away.
+        if (auto* rb = ctx.gameObject->GetComponent<Rigidbody2D>()) rb->SetVelocity({x, y});
+        else if (auto* r3 = ctx.gameObject->GetComponent<Rigidbody3D>()) { if (r3->SetVelocity({x, y, In(2, g, ctx).AsFloat()})) r3->WakeUp(); }
         return 0;
     }
 };

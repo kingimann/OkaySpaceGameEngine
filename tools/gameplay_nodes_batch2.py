@@ -94,7 +94,7 @@ def define(add, N, B, T, O, R):
         defaults=["3.14159", "2"], expect="3.14", etype="s")
     add("GlFormatClock", "Format Clock", "UI", "", "Basic", "Turns seconds into a clock reading like 02:05.",
         [N("Seconds")], [T("Text")],
-        "int total = std::max(0, (int)std::floor(n0)); char b[32]; std::snprintf(b, sizeof b, \"%02d:%02d\", total / 60, total % 60); out = VsValue(std::string(b));",
+        "int total = std::max(0, SafeInt(std::floor(n0))); char b[32]; std::snprintf(b, sizeof b, \"%02d:%02d\", total / 60, total % 60); out = VsValue(std::string(b));",
         defaults=["125"], expect="02:05", etype="s", demo="ui")
     add("GlFormatPercent", "Format Percent", "UI", "", "Basic", "Turns a 0 to 1 share into text like 75%.",
         [N("Portion")], [T("Text")],
@@ -152,7 +152,7 @@ def define(add, N, B, T, O, R):
         [N("Mass", "1.0f"), O()], [], "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) rb->mass = std::max(0.01f, n0);",
         reg="CAT_ACTION", exec_=True, defaults=["6", None], setup=rb, check="CHECK_NEAR(me->GetComponent<Rigidbody3D>()->mass, 6.0f, 0.001f);", demo="physics")
     add("GlSetGravityStrength", "Set Gravity Strength", *P, "Basic", "How much gravity pulls on the Rigidbody: 1 is normal, 0 floats, below 0 rises.",
-        [N("Strength", "1.0f"), O()], [], "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) rb->gravityScale = n0;",
+        [N("Strength", "1.0f"), O()], [], "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) rb->SetGravityScale(n0);",
         reg="CAT_ACTION", exec_=True, defaults=["0.2", None], setup=rb, check="CHECK_NEAR(me->GetComponent<Rigidbody3D>()->gravityScale, 0.2f, 0.001f);", demo="physics")
     add("GlSetBounciness", "Set Bounciness", *P, "Intermediate", "How much the Rigidbody bounces back: 0 stops dead, 1 keeps all its speed.",
         [N("Bounce", "0.5f"), O()], [], "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) rb->bounciness = std::min(std::max(n0, 0.0f), 1.0f);",
@@ -178,7 +178,7 @@ def define(add, N, B, T, O, R):
     add("GlPulseSize", "Pulse Size", *AN, "Intermediate", "Makes this object swell and shrink around the size it had. Speed is radians a second, Amount the share it grows.",
         [N("Speed", "3.0f"), N("Amount", "0.2f"), O()], [],
         "if (o && o->transform) { if (!seen) { seen = true; mem = o->transform->localScale.x; } mem2 += ctx.deltaTime * n0;"
-        " float k = mem * (1.0f + n1 * std::sin(mem2)); o->transform->localScale = Vec3(k, k, k); }",
+        " float k = mem * (1.0f + n1 * std::sin(mem2)); o->transform->SetLocalScale(Vec3(k, k, k)); }",
         reg="CAT_XFORM", exec_=True, defaults=["1.5707963", "0.2", None], update=True, dt=1.0,
         check="CHECK_NEAR(me->transform->localScale.x, 1.2f, 0.01f);", demo="animation")
     add("GlSwayTurn", "Sway Turn", *AN, "Intermediate", "Swings this object left and right around the way it faced. Speed is radians a second, Degrees how far.",

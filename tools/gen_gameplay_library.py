@@ -52,7 +52,7 @@ def movement():
         expect=True, etype="b")
     add("GlSetVelocity", "Set Velocity", *M, "Intermediate", "Gives a Rigidbody this exact speed on each axis, in units per second.",
         [N("Right"), N("Up"), N("Forward"), O()], [],
-        "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { rb->velocity = Vec3(n0, n1, n2); rb->WakeUp(); }",
+        "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { if (rb->SetVelocity(Vec3(n0, n1, n2))) rb->WakeUp(); }",
         reg="CAT_XFORM", exec_=True, defaults=["2", "0", "1", None], setup="me->AddComponent<Rigidbody3D>();",
         check="CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.x, 2.0f, 0.01f); CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.z, 1.0f, 0.01f);",
         demo="movement")
@@ -357,6 +357,7 @@ def main():
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Core/Prefs.hpp"
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Input/Input.hpp"
 #include <algorithm>

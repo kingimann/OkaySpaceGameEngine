@@ -57,7 +57,7 @@ def define(add, N, B, T, O, R):
         reg="CAT_XFORM", exec_=True, setup="me->transform->SetEulerAngles(Vec3(20, 70, 10));",
         check="CHECK_NEAR(me->transform->EulerAngles().y, 0.0f, 0.01f); CHECK_NEAR(me->transform->EulerAngles().x, 0.0f, 0.01f);")
     add("GlSetSizeEvenly", "Set Size Evenly", "Movement", "Size", "Basic", "Makes this object the same size in every direction.",
-        [N("Size", "1.0f"), O()], [], "if (o && o->transform) o->transform->localScale = Vec3(n0, n0, n0);",
+        [N("Size", "1.0f"), O()], [], "if (o && o->transform) o->transform->SetLocalScale(Vec3(n0, n0, n0));",
         reg="CAT_XFORM", exec_=True, defaults=["2.5", None], check="CHECK_NEAR(me->transform->localScale.y, 2.5f, 0.001f);")
     add("GlFlipSide", "Flip Side", "Movement", "Size", "Intermediate", "Mirrors this object left to right, like a character turning around in a side view.",
         [O()], [], "if (o && o->transform) { Vec3 s2 = o->transform->localScale; s2.x = -s2.x; o->transform->localScale = s2; }",
@@ -96,7 +96,7 @@ def define(add, N, B, T, O, R):
     P = ("Physics", "")
     rb = "me->AddComponent<Rigidbody3D>();"
     add("GlJump", "Jump", *P, "Basic", "Throws a Rigidbody upward at Strength units a second.",
-        [N("Strength", "5.0f"), O()], [], "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { rb->velocity.y = n0; rb->WakeUp(); }",
+        [N("Strength", "5.0f"), O()], [], "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { Vec3 v = rb->velocity; v.y = n0; if (rb->SetVelocity(v)) rb->WakeUp(); }",
         reg="CAT_XFORM", exec_=True, defaults=["6", None], setup=rb, check="CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.y, 6.0f, 0.001f);", demo="physics")
     add("GlIsFalling", "Is Falling", *P, "Basic", "True while a Rigidbody is moving downward.",
         [O()], [B("Result")], "Rigidbody3D* rb = GlBody(this, o, g, ctx); out = VsValue(rb && rb->velocity.y < -0.1f);",
@@ -117,7 +117,7 @@ def define(add, N, B, T, O, R):
         check="CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.Magnitude(), 5.0f, 0.01f);")
     add("GlSetFlatSpeed", "Set Flat Velocity", *P, "Intermediate", "Sets how a Rigidbody moves along the ground and leaves its up and down speed alone.",
         [N("Right"), N("Forward"), O()], [],
-        "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { rb->velocity.x = n0; rb->velocity.z = n1; rb->WakeUp(); }",
+        "if (Rigidbody3D* rb = GlBody(this, o, g, ctx)) { Vec3 v = rb->velocity; v.x = n0; v.z = n1; if (rb->SetVelocity(v)) rb->WakeUp(); }",
         reg="CAT_XFORM", exec_=True, defaults=["2", "3", None], setup=rb + " me->GetComponent<Rigidbody3D>()->velocity = Vec3(0, 7, 0);",
         check="CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.y, 7.0f, 0.001f); CHECK_NEAR(me->GetComponent<Rigidbody3D>()->velocity.z, 3.0f, 0.001f);")
 

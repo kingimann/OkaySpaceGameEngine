@@ -10,6 +10,7 @@
 #include "okay/Components/DialogueRunner.hpp"
 #include "okay/Components/QuestLog.hpp"
 #include "okay/Components/StoryState.hpp"
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include <string>
 
@@ -64,7 +65,7 @@ struct CompleteObjectiveNode : VsNode {   // arg: quest id; in0 = objective inde
     explicit CompleteObjectiveNode(std::string q) : id(std::move(q)) {}
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        if (QuestLog* q = QuestLog::Get(StorySceneOf(ctx), true)) q->CompleteObjective(id, (int)In(0, g, ctx, VsValue{0.0f}).AsFloat());
+        if (QuestLog* q = QuestLog::Get(StorySceneOf(ctx), true)) q->CompleteObjective(id, SafeInt(In(0, g, ctx, VsValue{0.0f}).AsFloat()));   // NaN / Inf: no UB cast
         return 0;
     }
 };

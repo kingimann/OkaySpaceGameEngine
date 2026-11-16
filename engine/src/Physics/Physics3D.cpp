@@ -7,6 +7,7 @@
 #include "okay/Core/Log.hpp"
 #include "okay/Components/Joint3D.hpp"
 #include "okay/Math/JointLimit.hpp"
+#include "okay/Math/IKMath.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
@@ -1896,6 +1897,18 @@ Vec3 Physics3D::ResolveSphere(Scene& scene, Vec3 c, float r, GameObject* ignore,
         if (!moved) break;
     }
     return c;
+}
+
+// ---- Rigidbody3D: no NaN or Inf into velocity, force, impulse or gravity scale (issue #888, finding 31) ----------
+bool Rigidbody3D::AcceptFinite(const Vec3& v, const char* what) {
+    if (Finite(v)) return true;
+    if (!m_warnedNotFinite) {   // once per body: a bad wire runs every frame, the Console should not flood
+        m_warnedNotFinite = true;
+        Log::Warning("'", gameObject ? gameObject->name : std::string("(no object)"), "': a ", what,
+                     " that is not a number (NaN or infinite) was ignored; the Rigidbody keeps its old value. Look for a "
+                     "divide by zero or the square root of a negative number feeding it. (Shown once per object.)");
+    }
+    return false;
 }
 
 } // namespace okay

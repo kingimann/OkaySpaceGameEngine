@@ -544,7 +544,7 @@ struct SpawnProjectileNode : VsNode {
         const float speed = In(0, g, ctx, VsValue{12.0f}).AsFloat();
         if (b->transform) b->transform->SetPosition(ctx.transform->Position() + ctx.transform->Forward() * 0.8f);
         const Vec3 vel = ctx.transform->Forward() * speed;
-        if (auto* r3 = b->GetComponent<Rigidbody3D>()) r3->velocity = vel;
+        if (auto* r3 = b->GetComponent<Rigidbody3D>()) r3->SetVelocity(vel);   // a NaN speed is dropped
         id = b->InstanceId();
         return 0;
     }

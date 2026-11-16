@@ -4,6 +4,7 @@
 #include "okay/Core/Random.hpp"
 #include "okay/Environment/Wind.hpp"
 #include "okay/Render/Color.hpp"
+#include <algorithm>
 #include <vector>
 #include <string>
 #include <cstdint>
@@ -540,8 +541,13 @@ public:
     }
     const std::vector<Particle>& Particles() const { return m_particles; }
 
-    /// Spawn a burst of `count` particles immediately.
-    void Emit(int count) { for (int i = 0; i < count; ++i) Emit(); }
+    /// Spawn a burst of `count` particles immediately. Each Emit() fills one free slot or does nothing, so the
+    /// loop stops at the pool size: a huge count (a script's 1e30, saturated to INT_MAX) cannot freeze the game,
+    /// and the result is the same as before for every count.
+    void Emit(int count) {
+        const int n = std::min(count, (int)m_particles.size());
+        for (int i = 0; i < n; ++i) Emit();
+    }
 
 private:
     void Emit() {

@@ -205,10 +205,10 @@ def define(add, N, B, T, O, R):
         check="CHECK_NEAR(me->transform->Position().x, 2.0f, 0.01f); CHECK_NEAR(me->transform->Position().z, 2.0f, 0.01f);", demo="movement")
     add("GlChangeSizeOverTime", "Change Size Over Time", "Movement", "Size", "Intermediate", "Grows this object (or shrinks it, with a negative number) by Per Second each second.",
         [N("Per Second", "0.5f"), O()], [],
-        "if (o && o->transform) { Vec3 sc = o->transform->localScale; float d = n0 * ctx.deltaTime; o->transform->localScale = Vec3(std::max(0.01f, sc.x + d), std::max(0.01f, sc.y + d), std::max(0.01f, sc.z + d)); }",
+        "if (o && o->transform) { Vec3 sc = o->transform->localScale; float d = n0 * ctx.deltaTime; o->transform->SetLocalScale(Vec3(std::max(0.01f, sc.x + d), std::max(0.01f, sc.y + d), std::max(0.01f, sc.z + d))); }",
         reg="CAT_XFORM", exec_=True, defaults=["1", None], update=True, dt=0.5, check="CHECK_NEAR(me->transform->localScale.x, 1.5f, 0.001f);")
     add("GlMultiplySize", "Multiply Size", "Movement", "Size", "Basic", "Makes this object Factor times bigger. 0.5 halves it, 2 doubles it.",
-        [N("Factor", "1.0f"), O()], [], "if (o && o->transform) o->transform->localScale = o->transform->localScale * std::max(0.01f, n0);",
+        [N("Factor", "1.0f"), O()], [], "if (o && o->transform) o->transform->SetLocalScale(o->transform->localScale * std::max(0.01f, n0));",
         reg="CAT_XFORM", exec_=True, defaults=["3", None], check="CHECK_NEAR(me->transform->localScale.z, 3.0f, 0.001f);")
     add("GlFaceAwayFrom", "Face Away From Object", "Movement", "Turn", "Basic", "Turns this object flat to look away from another object.",
         [R("Object"), O()], [],

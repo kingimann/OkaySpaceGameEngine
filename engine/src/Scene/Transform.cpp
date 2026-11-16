@@ -1,6 +1,7 @@
 #include "okay/Scene/Transform.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Scene.hpp"
+#include "okay/Core/Log.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -63,6 +64,8 @@ bool TryInvert(const Mat4& m, Mat4& out) {
 
 // Undo a scale axis by axis; an axis that is collapsed (0) has no way back and reads `whenCollapsed`.
 float Unscale(float v, float scale, float whenCollapsed) { return std::fabs(scale) > 1e-12f ? v / scale : whenCollapsed; }
+
+bool FiniteVec(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 } // namespace
 
 // Bring this one transform's own cache up to date; its parent's cache must be current.
@@ -183,9 +186,35 @@ Vec3 Transform::InverseTransformVector(const Vec3& world) const {
     return {Unscale(rel.x, sc.x, 0.0f), Unscale(rel.y, sc.y, 0.0f), Unscale(rel.z, sc.z, 0.0f)};
 }
 
+// ---- Setters that never store NaN or Inf (issue #888, finding 31) --------------------------------------------
+// One NaN reaching a position used to lose the object for good. The check is three isfinite calls on the value
+// that would be stored; a finite value is stored exactly as before, so nothing changes for finite input.
+
+void Transform::WarnNotFinite(const char* what) {
+    if (m_warnedNotFinite) return;   // once per object: a bad wire runs every frame, the Console should not flood
+    m_warnedNotFinite = true;
+    const std::string who = gameObject ? gameObject->name : std::string("(no object)");
+    Log::Warning("'", who, "': a ", what, " that is not a number (NaN or infinite) was ignored; the object keeps its "
+                 "old ", what, ". Look for a divide by zero or the square root of a negative number feeding it. "
+                 "(Shown once per object.)");
+}
+
+bool Transform::SetLocalPosition(const Vec3& pos) {
+    if (!FiniteVec(pos)) { WarnNotFinite("position"); return false; }
+    localPosition = pos;
+    return true;
+}
+
+bool Transform::SetLocalScale(const Vec3& scale) {
+    if (!FiniteVec(scale)) { WarnNotFinite("scale"); return false; }
+    localScale = scale;
+    return true;
+}
+
+void Transform::Translate(const Vec3& delta) { SetLocalPosition(localPosition + delta); }
+
 void Transform::SetPosition(const Vec3& worldPos) {
-    if (!m_parent) { localPosition = worldPos; return; }
-    localPosition = WorldToParentLocal(worldPos);
+    SetLocalPosition(m_parent ? WorldToParentLocal(worldPos) : worldPos);
 }
 
 void Transform::SetRotation(const Quat& worldRot) {
@@ -196,9 +225,11 @@ void Transform::SetRotation(const Quat& worldRot) {
 
 void Transform::SetLossyScale(const Vec3& worldScale) {
     const Vec3 ps = m_parent ? m_parent->LossyScale() : Vec3::One;
-    if (ps.x != 0) localScale.x = worldScale.x / ps.x;
-    if (ps.y != 0) localScale.y = worldScale.y / ps.y;
-    if (ps.z != 0) localScale.z = worldScale.z / ps.z;
+    Vec3 s = localScale;
+    if (ps.x != 0) s.x = worldScale.x / ps.x;
+    if (ps.y != 0) s.y = worldScale.y / ps.y;
+    if (ps.z != 0) s.z = worldScale.z / ps.z;
+    SetLocalScale(s);
 }
 
 void Transform::LookAt(const Vec3& worldTarget, const Vec3& worldUp) {
@@ -208,8 +239,6 @@ void Transform::LookAt(const Vec3& worldTarget, const Vec3& worldUp) {
 }
 
 namespace {
-bool FiniteVec(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
-
 // An up hint that is not parallel to `dir`: the hint itself, or a world axis when the direction runs along it.
 Vec3 UsableUp(const Vec3& dir, const Vec3& up) {
     const Vec3 d = dir.Normalized();
@@ -553,7 +582,7 @@ bool Transform::PlaceNextTo(Transform* anchor, bool after) {
 
 void Transform::Translate(const Vec3& delta, Space space) {
     switch (space) {
-        case Space::Local: localPosition += delta; break;
+        case Space::Local: Translate(delta); break;
         case Space::World: SetPosition(Position() + delta); break;
         case Space::Self:  SetPosition(Position() + Rotation() * delta); break;
     }

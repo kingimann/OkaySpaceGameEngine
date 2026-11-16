@@ -12,6 +12,7 @@
 #include "okay/Components/ItemPickup.hpp"
 #include "okay/Inventory/LootTable.hpp"
 #include "okay/Core/Random.hpp"
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include <algorithm>
@@ -21,6 +22,10 @@ namespace okay::vs {
 
 inline Inventory* VsInventory(VsContext& ctx) { return ItemPickup::InventoryOf(ctx.gameObject); }
 
+// The count inputs below go through SafeInt: a NaN count is 0, 1e30 or Inf the largest int, -Inf the smallest, where
+// a plain (int) cast would be undefined (issue #888, finding 33). A huge count does not loop per item: the bag adds
+// whole stacks and stops at its capacity, and crafting stops after 9999 runs.
+
 // Add Item: puts the node's item in the bag; Left is how many didn't fit (in0 = count, 1).
 struct InvAddNode : VsNode {
     std::string item;
@@ -29,7 +34,7 @@ struct InvAddNode : VsNode {
     int ExecOutCount() const override { return 1; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return left; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int n = (int)In(0, g, ctx, 1.0f).AsFloat();
+        const int n = SafeInt(In(0, g, ctx, 1.0f).AsFloat());
         Inventory* inv = VsInventory(ctx);
         left = (float)(inv ? inv->AddPartial(ItemDatabase::Get().Resolve(item), n) : n);
         return 0;
@@ -44,7 +49,7 @@ struct InvRemoveNode : VsNode {
     int ExecOutCount() const override { return 1; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return ok; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
-        const int n = (int)In(0, g, ctx, 1.0f).AsFloat();
+        const int n = SafeInt(In(0, g, ctx, 1.0f).AsFloat());
         const std::string id = ItemDatabase::Get().Resolve(item);
         Inventory* inv = VsInventory(ctx);
         ok = inv && n > 0 && inv->Count(id) >= n && inv->Remove(id, n);
@@ -58,7 +63,7 @@ struct InvHasNode : VsNode {
     explicit InvHasNode(std::string i) : item(std::move(i)) {}
     VsValue Eval(int, NodeGraph& g, VsContext& ctx) override {
         Inventory* inv = VsInventory(ctx);
-        return VsValue(inv && inv->Has(ItemDatabase::Get().Resolve(item), (int)In(0, g, ctx, 1.0f).AsFloat()));
+        return VsValue(inv && inv->Has(ItemDatabase::Get().Resolve(item), SafeInt(In(0, g, ctx, 1.0f).AsFloat())));
     }
 };
 
@@ -101,7 +106,7 @@ struct InvCraftNode : VsNode {
     VsValue Eval(int, NodeGraph&, VsContext&) override { return ok; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         auto* c = ctx.gameObject ? ctx.gameObject->GetComponent<Crafting>() : nullptr;
-        ok = c && c->Craft(ItemDatabase::Get().Resolve(item), std::max(1, (int)In(0, g, ctx, 1.0f).AsFloat()));
+        ok = c && c->Craft(ItemDatabase::Get().Resolve(item), std::max(1, SafeInt(In(0, g, ctx, 1.0f).AsFloat())));
         return 0;
     }
 };
@@ -142,7 +147,7 @@ struct InvSpawnPickupNode : VsNode {
     int Exec(NodeGraph& g, VsContext& ctx) override {
         Scene* sc = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
         const Vec3 p{In(1, g, ctx, 0.0f).AsFloat(), In(2, g, ctx, 0.0f).AsFloat(), In(3, g, ctx, 0.0f).AsFloat()};
-        const int n = std::max(1, (int)In(0, g, ctx, 1.0f).AsFloat());
+        const int n = std::max(1, SafeInt(In(0, g, ctx, 1.0f).AsFloat()));
         GameObject* pk = sc ? ItemPickup::Spawn(*sc, ItemDatabase::Get().Resolve(item), n, {}, p) : nullptr;
         name = pk ? pk->name : std::string();
         return 0;

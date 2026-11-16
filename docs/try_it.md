@@ -500,6 +500,34 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Visual Script: a NaN no longer makes an object vanish (bug fix, issue #888 findings 31 and 33)
+
+Before: one number that is not a number (NaN, for example the square root of -1) or infinite, wired into Set Position,
+Translate, Set Scale, Set Velocity, Add Force and about 70 other nodes, put the object at NaN. It disappeared and nothing
+could bring it back, because every later move added to NaN. Now the move is ignored, the object stays where it was, and
+the Console shows one warning that names the object (once per object, not every frame).
+
+1. Windows editor (`Tools\OkayEngine.exe`): **File > Open**, pick `examples\node_playground\nan_guard.okayscene`, press
+   **Play**.
+2. You should see the cube **NaN Cube** on the left, sliding slowly to the right (its On Update runs Translate). Its On Start
+   runs `Fn.sqrt` of -1 (NaN) into **Set Position** first. The Console shows one warning:
+   `'NaN Cube': a position that is not a number (NaN or infinite) was ignored; the object keeps its old position. ...`
+   Before the fix the cube was gone the moment Play started, with no message.
+3. The same by hand: select any cube, add a Visual Script, open it in the Visual Script editor. Add **On Start**, then
+   search the Add Node box for `sqrt` and add the script square root (`Fn.sqrt`, not the Math **Square Root** node, which
+   gives 0 for a negative number). Type `-1` into its input. Add **Set Position** and wire the square root's result into
+   **X**. Connect the flow: On Start, then the square root, then Set Position. Press **Play**: the cube stays where it was
+   and the Console warns once.
+4. **Check Graph**: type `nan` into a number box (for example Set Position's X). Check Graph now shows a warning on that
+   pin: "'nan' is not a finite number (it is NaN or infinite) ...".
+5. Counts from a bad number no longer give undefined results: a **Particle Burst** with count `1e30` emits at most what the
+   Particle System holds and does not freeze; **Add Item** with `nan` adds nothing; **Format Clock** of `nan` shows `00:00`.
+6. Test: `ctest -R vs_nan_writes` (Linux).
+
+**Status.** Tested headless on Linux (`test_vs_nan_writes` and the related suites; the casts also under UBSan). The editor
+steps (3 and 4) and anything on Windows were not run. Not covered yet: OkayScript scripts (`.okay` files) that write NaN into
+a position themselves (`set_pos(sqrt(-1), 0)` in a script, not a node); that half is a later change to the script VM.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

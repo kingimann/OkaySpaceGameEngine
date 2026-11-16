@@ -54,8 +54,9 @@ def math_curves():
     add("LbLogistic", "Logistic Curve", *P, [N("Value"), N("Steepness")], [N("Result")],
         "float s=n1; if(s<0.01f)s=0.01f; out=VsValue(1.f/(1.f+std::exp(-s*(n0-0.5f)*2.f)));",
         ["0.5", "1"], 0.5, help_="A soft step around 0.5. Steepness makes the step sharper.")
+    # A NaN Portion reads as 0: it passes both clamps, and (int)NaN is undefined (issue #888, finding 33).
     add("LbSampleCurve", "Sample Curve", *P, [N("Portion"), N("First"), N("Second"), N("Third"), N("Fourth")], [N("Result")],
-        "float t=n0; if(t<0)t=0; if(t>1)t=1; float x=t*3.f; int i=(int)x; if(i>2)i=2; float f=x-i;"
+        "float t=n0==n0?n0:0.f; if(t<0)t=0; if(t>1)t=1; float x=t*3.f; int i=(int)x; if(i>2)i=2; float f=x-i;"
         "float k[4]={n1,n2,n3,n4}; out=VsValue(k[i]+(k[i+1]-k[i])*f);",
         ["0", "2", "4", "6", "8"], 2.0, help_="Reads a four point curve. Portion 0 is the first point, 1 is the last.")
     add("LbSampleBezier", "Sample Bezier", *P, [N("Portion"), N("Start"), N("First"), N("Second"), N("End")], [N("Result")],
@@ -79,8 +80,12 @@ def math_curves():
     add("LbSineWave", "Sine Wave", *P, [N("Time"), N("Period")], [N("Result")],
         "float p=std::fabs(n1); if(p<1e-4f)p=1.f; out=VsValue(std::sin(n0/p*6.2831853f));",
         ["0", "1"], 0.0, help_="A sine from Time. Period is one full cycle. The result is -1 to 1.")
+    # NaN reads as 0, and At is clamped to the floats whose floor and floor + 1 fit an int (2147483520 is the
+    # largest float below 2^31), so the cast is defined for NaN, Inf and 1e30 (issue #888, finding 33). Floats
+    # that large are whole numbers, so every At that worked before gives the same result.
     add("LbSampleNoise", "Sample Noise", *P, [N("At")], [N("Result")],
-        "int i=(int)std::floor(n0); float f=n0-i; float u=f*f*(3.f-2.f*f);"
+        "float a=n0==n0?std::min(std::max(n0,-2147483648.f),2147483520.f):0.f;"
+        "int i=(int)std::floor(a); float f=a-i; float u=f*f*(3.f-2.f*f);"
         "auto h=[](int k){unsigned x=(unsigned)k*374761393u+668265263u; x=(x^(x>>13))*1274126177u; return (x&65535)/65535.f;};"
         "out=VsValue(h(i)+(h(i+1)-h(i))*u);",
         ["0"], None, help_="Smooth value noise. The same At always gives the same result.")

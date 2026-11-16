@@ -8,6 +8,7 @@
 #include "okay/Scene/GameObject.hpp"
 
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -1215,6 +1216,26 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
                 else if (!fs::exists(p, ec) && !fs::exists(fs::path(baseDir) / p, ec))
                     issues.push_back({0, kv.first, "prefab file '" + kv.second.arg + "' doesn't exist"});
             }
+
+    // 5b) "nan" or "inf" typed into a pin (issue #888, finding 31). The loader reads them as numbers, but a position,
+    //     size or speed that is not a finite number is refused when the graph runs, so the node would do nothing.
+    //     A quoted value is text, not a number, and is left alone.
+    {
+        std::istringstream again(text);
+        std::string row;
+        while (std::getline(again, row)) {
+            const auto t = Tokens(row);
+            if (t.size() != 4 || t[0] != "default" || t[3].empty() || t[3].front() == '"') continue;
+            try {
+                std::size_t used = 0;
+                const float f = std::stof(t[3], &used);
+                if (used == t[3].size() && !std::isfinite(f))
+                    issues.push_back({1, std::stoi(t[1]), "'" + t[3] + "' is not a finite number (it is NaN or infinite): "
+                                      "a position, size or speed given it is ignored. Type a normal number.",
+                                      std::stoi(t[2]), 0});
+            } catch (...) {}
+        }
+    }
     return issues;
 }
 

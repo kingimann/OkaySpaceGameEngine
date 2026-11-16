@@ -8,6 +8,7 @@
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/VisualScript/VsRefs.hpp"
 #include "okay/VisualScript/VsWhole.hpp"
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
@@ -671,7 +672,7 @@ struct ParticleBurstNode : VsNode {   // in0 = count (unwired: 20)
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr)
-            ps->Emit((int)In(0, g, ctx, VsValue{20.0f}).AsFloat());
+            ps->Emit(SafeInt(In(0, g, ctx, VsValue{20.0f}).AsFloat()));   // NaN -> 0; Emit stops at the pool size
         return 0;
     }
 };
@@ -921,8 +922,8 @@ struct Transform3Node : VsNode {
         if (op == Op::SetPosition || op == Op::MoveBy) v = In(0, g, ctx).AsVec3();
         else v = {In(0, g, ctx).AsFloat(), In(1, g, ctx).AsFloat(), In(2, g, ctx).AsFloat()};
         switch (op) {
-            case Op::SetPosition: ctx.transform->localPosition = v; break;
-            case Op::MoveBy:      ctx.transform->localPosition = ctx.transform->localPosition + v; break;
+            case Op::SetPosition: ctx.transform->SetLocalPosition(v); break;   // NaN / Inf: dropped, one warning
+            case Op::MoveBy:      ctx.transform->Translate(v); break;
             case Op::Rotate:      ctx.transform->Rotate(v); break;
             case Op::SetRotation: ctx.transform->localRotation = Quat::Euler(v); break;
         }

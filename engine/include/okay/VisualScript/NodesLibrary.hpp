@@ -93,7 +93,7 @@ float n2 = In(2, g, ctx).AsFloat();
 float n3 = In(3, g, ctx).AsFloat();
 float n4 = In(4, g, ctx).AsFloat();
 VsValue out;
-float t=n0; if(t<0)t=0; if(t>1)t=1; float x=t*3.f; int i=(int)x; if(i>2)i=2; float f=x-i;float k[4]={n1,n2,n3,n4}; out=VsValue(k[i]+(k[i+1]-k[i])*f);
+float t=n0==n0?n0:0.f; if(t<0)t=0; if(t>1)t=1; float x=t*3.f; int i=(int)x; if(i>2)i=2; float f=x-i;float k[4]={n1,n2,n3,n4}; out=VsValue(k[i]+(k[i+1]-k[i])*f);
 return out;
 }
 case 10: {
@@ -147,7 +147,7 @@ return out;
 case 16: {
 float n0 = In(0, g, ctx).AsFloat();
 VsValue out;
-int i=(int)std::floor(n0); float f=n0-i; float u=f*f*(3.f-2.f*f);auto h=[](int k){unsigned x=(unsigned)k*374761393u+668265263u; x=(x^(x>>13))*1274126177u; return (x&65535)/65535.f;};out=VsValue(h(i)+(h(i+1)-h(i))*u);
+float a=n0==n0?std::min(std::max(n0,-2147483648.f),2147483520.f):0.f;int i=(int)std::floor(a); float f=a-i; float u=f*f*(3.f-2.f*f);auto h=[](int k){unsigned x=(unsigned)k*374761393u+668265263u; x=(x^(x>>13))*1274126177u; return (x&65535)/65535.f;};out=VsValue(h(i)+(h(i+1)-h(i))*u);
 return out;
 }
 case 17: {

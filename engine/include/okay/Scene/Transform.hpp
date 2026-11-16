@@ -31,19 +31,29 @@ public:
     Quat Rotation() const;
     Vec3 LossyScale() const;
 
+    // A position or scale that is not a finite number (NaN or infinite: the square root of a negative, a divide
+    // by zero upstream, a typed "nan") is never stored by the setters below. The call does nothing, the object
+    // keeps its old value and the first such call on each object logs one warning that names it. Once a position
+    // was NaN, every later move would add to NaN and the object could never come back. Finite values are stored
+    // exactly as before. (Writing the public fields directly is not checked.)
+
     /// Place the object at a world position: the local position becomes what puts it there under the
     /// whole parent chain (a parent that is stretched on one axis and a child of it that is turned
     /// included). A parent with a collapsed axis (a scale of 0) cannot be undone on that axis; the
-    /// local value of that axis is then kept.
+    /// local value of that axis is then kept. A NaN or infinite result is dropped (see above).
     void SetPosition(const Vec3& worldPos);
     void SetRotation(const Quat& worldRot);
+    /// localPosition = pos, unless pos is NaN or infinite (then nothing changes, see above). True when stored.
+    bool SetLocalPosition(const Vec3& pos);
+    /// localScale = scale, unless scale is NaN or infinite (then nothing changes, see above). True when stored.
+    bool SetLocalScale(const Vec3& scale);
     /// Both at once (world space).
     void SetPositionAndRotation(const Vec3& worldPos, const Quat& worldRot) { SetRotation(worldRot); SetPosition(worldPos); }
-    /// Both at once in the parent's frame (the rotation is normalized).
-    void SetLocalPositionAndRotation(const Vec3& pos, const Quat& rot) { localPosition = pos; localRotation = rot.Normalized(); }
+    /// Both at once in the parent's frame (the rotation is normalized; a NaN or infinite position is dropped).
+    void SetLocalPositionAndRotation(const Vec3& pos, const Quat& rot) { SetLocalPosition(pos); localRotation = rot.Normalized(); }
     /// Set the world-space scale (per axis, as LossyScale() reads it): the local scale
     /// becomes the wanted scale divided by the parent's lossy scale. An axis whose parent
-    /// scale is zero is left alone. SetScale is the same call.
+    /// scale is zero is left alone. SetScale is the same call. A NaN or infinite result is dropped.
     void SetLossyScale(const Vec3& worldScale);
     void SetScale(const Vec3& worldScale) { SetLossyScale(worldScale); }
     /// Turn so Forward() points at `worldTarget`, with `worldUp` as the up hint. Does
@@ -73,8 +83,9 @@ public:
     void SetEulerAngles(const Vec3& degrees) { SetRotation(Quat::Euler(degrees)); }
     Vec3 LocalEulerAngles() const { return localRotation.ToEuler(); }
     void SetLocalEulerAngles(const Vec3& degrees) { localRotation = Quat::Euler(degrees).Normalized(); }
-    /// Move by `delta` in the parent's frame (localPosition += delta).
-    void Translate(const Vec3& delta) { localPosition += delta; }
+    /// Move by `delta` in the parent's frame (localPosition += delta). A move that would leave the position NaN or
+    /// infinite is dropped (see SetLocalPosition).
+    void Translate(const Vec3& delta);
     /// Move by `delta` in the given space. World and Self distances are world units (a
     /// scaled parent does not stretch them); Self moves along the object's own axes.
     void Translate(const Vec3& delta, Space space);
@@ -238,6 +249,10 @@ private:
     mutable const Transform* m_wParent = nullptr;
     mutable unsigned long long m_wParentStamp = 0, m_wStamp = 0;
     mutable bool m_wValid = false;
+
+    // A setter was handed a NaN or infinite value: log it, once per object (the first time only).
+    void WarnNotFinite(const char* what);
+    bool m_warnedNotFinite = false;
 };
 
 } // namespace okay

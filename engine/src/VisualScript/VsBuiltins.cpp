@@ -7,9 +7,14 @@
 #include "okay/Components/VisualScriptComponent.hpp"
 #include "okay/Scene/PropertyRegistry.hpp"
 #include "okay/Scene/GameObject.hpp"
+#include "okay/Core/Log.hpp"
+#include "okay/Math/IKMath.hpp"
+#include "okay/Physics/Rigidbody2D.hpp"
+#include "okay/Physics/Rigidbody3D.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace okay::vs {
 namespace {
@@ -63,9 +68,55 @@ void SendTo(GameObject* go, const std::string& message, const VsValue& arg) {
     if (auto* vs = go->GetComponent<VisualScriptComponent>()) vs->Send(message);
 }
 
+// What a script builtin can move on the object it runs on. Many builtins (set_pos, set_x, set_scale, pulse, bob,
+// keep_in_box, set_velocity, set_vx, jump ...) write these fields directly instead of going through the setters
+// that refuse NaN and Inf, so an Fn.* node fed a NaN (Fn.sqrt(-1) wired in, a typed "nan") would lose the object
+// for good (issue #888, finding 31). The node takes this snapshot before the call and puts back every value the
+// call left NaN or infinite. Values that were already not finite, or that the call left finite, are not touched.
+struct MotionSnapshot {
+    GameObject* go = nullptr;
+    Transform* t = nullptr;
+    Vec3 pos, scale;
+    Rigidbody3D* b3 = nullptr;
+    Vec3 v3;
+    float g3 = 0.0f;
+    Rigidbody2D* b2 = nullptr;
+    Vec2 v2;
+    float g2 = 0.0f;
+
+    static bool Fin(float f) { return std::isfinite(f); }
+    static bool Fin(const Vec3& v) { return Finite(v); }
+    static bool Fin(const Vec2& v) { return Finite(Vec3(v, 0.0f)); }
+    // Put `now` back to `before` when the call made it non-finite; true when it did.
+    template <class T> static bool Keep(T& now, const T& before) {
+        if (Fin(now) || !Fin(before)) return false;
+        now = before;
+        return true;
+    }
+
+    void Take(GameObject* g, Transform* tr) {
+        go = g;
+        t = tr;
+        if (t) { pos = t->localPosition; scale = t->localScale; }
+        b3 = go ? go->GetComponent<Rigidbody3D>() : nullptr;
+        if (b3) { v3 = b3->velocity; g3 = b3->gravityScale; }
+        b2 = go ? go->GetComponent<Rigidbody2D>() : nullptr;
+        if (b2) { v2 = b2->velocity; g2 = b2->gravityScale; }
+    }
+    // After the call. The bodies are looked up again first, so one the call removed is never read.
+    bool Restore() {
+        bool fixed = false;
+        if (t) { fixed |= Keep(t->localPosition, pos); fixed |= Keep(t->localScale, scale); }
+        if (b3 && go->GetComponent<Rigidbody3D>() == b3) { fixed |= Keep(b3->velocity, v3); fixed |= Keep(b3->gravityScale, g3); }
+        if (b2 && go->GetComponent<Rigidbody2D>() == b2) { fixed |= Keep(b2->velocity, v2); fixed |= Keep(b2->gravityScale, g2); }
+        return fixed;
+    }
+};
+
 struct BuiltinCallNode : VsNode {
     std::string name;
     VsValue last;
+    bool warnedNotFinite = false;   // the NaN warning below, once per node
     explicit BuiltinCallNode(std::string n) : name(std::move(n)) {}
     int ExecOutCount() const override { return 1; }
     VsValue Eval(int, NodeGraph&, VsContext&) override { return last; }
@@ -80,8 +131,17 @@ struct BuiltinCallNode : VsNode {
             if (HasInput(i) || (i < (int)hasDefault.size() && hasDefault[i]))
                 args.push_back(In(i, g, ctx));
         std::string err;
+        MotionSnapshot before;
+        before.Take(ctx.gameObject, ctx.transform);
         last = ScratchVm().CallBuiltin(name, std::move(args), &err);
         ScratchVm().Bind(nullptr);
+        if (before.Restore() && !warnedNotFinite) {
+            warnedNotFinite = true;
+            Log::Warning("'", ctx.gameObject ? ctx.gameObject->name : std::string("(no object)"), "': Fn.", name,
+                         " tried to store a value that is not a number (NaN or infinite); the object keeps its old "
+                         "position, scale and velocity. Look for a divide by zero or the square root of a negative number feeding "
+                         "it. (Shown once per node.)");
+        }
         if (!err.empty()) g.Error(this, ctx, name + ": " + err);
         return 0;
     }

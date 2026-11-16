@@ -1245,6 +1245,12 @@ int main(int argc, char** argv) {
         std::setvbuf(stdout, nullptr, _IONBF, 0);
         std::setvbuf(stderr, nullptr, _IONBF, 0);
     }
+    // `--server --cheat-sim`: a self-test of the anti-cheat. It needs no game, window or scene: a server and a
+    // cheating client on this machine, a report of what was caught, then exit. (Use --log FILE on Windows.)
+    if (dedicatedServer && serverOpts.cheatSim) {
+        okay::Scene cheatSimScene("CheatSim");
+        return okay::RunDedicatedServer(cheatSimScene, serverOpts);
+    }
     // `--join LINK` / `--connect HOST:PORT`: the launcher started us to join a
     // friend, an invite or a server from the browser (Steam's "+connect").
     std::string launchJoin;

@@ -219,7 +219,11 @@ void NetworkManager::InitServerState() {
         auto& recent = m_recentCheats[r.peer];   // for a kick's report
         if (recent.size() >= kRecentCheats) recent.erase(recent.begin());
         recent.push_back(r);
+        AcAudit("cheat", IdentOfPeer(r.peer), std::string("kind=") + CheatKindName(r.kind) + " peer=" + std::to_string(r.peer) + " " + r.detail);
         if (m_cheatHandler) m_cheatHandler(r);
+    };
+    anticheat.onDetectAudit = [this](const DetectResponse& r) {
+        AcAudit("detect", IdentOfPeer(r.peer), std::string("action=") + DetectActionName(r.action) + " peer=" + std::to_string(r.peer) + " risk=" + std::to_string((int)r.risk));
     };
     anticheat.rttOf = [this](std::uint32_t peer) {
         for (const auto& [ep, c] : m_clients) if (c.id == peer) return c.rtt;
@@ -2334,11 +2338,13 @@ void NetworkManager::Kick(std::uint32_t id, const std::string& reason) {
     if (m_mode != Mode::Server) return;
     for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
         if (it->second.id != id) continue;
+        const std::string ident = it->second.ident;
         net::Packet p(Kicked); p.Write(reason);
         SendDatagram(it->second.endpoint, p.Data(), p.Size());
         it->second.resumeToken = 0;   // a kicked player does not get its state back
         ReleaseClient(it);
         OKAY_INFO("net: kicked peer ", id, reason.empty() ? "" : (" (" + reason + ")"));
+        AcAudit("kicked", ident, "peer=" + std::to_string(id) + " reason=" + reason);
         return;
     }
 }
@@ -2580,6 +2586,42 @@ float NetworkManager::KickBanLeft(const std::string& ident) const {
     return it == m_kickBans.end() ? 0.0f : std::max(0.0f, it->second.until - m_serverTime);
 }
 
+void NetworkManager::AcFilesSync() {
+    const AntiCheatSettings& s = anticheat.settings;
+    if (!m_acFilesReady || s.banFile != m_banPath) {
+        m_banPath = s.banFile;
+        std::string err;
+        if (!m_banList.Load(m_banPath, &err)) OKAY_ERROR("anti-cheat: ", err, " (bans from this file are not enforced)");
+        else if (!m_banPath.empty()) OKAY_INFO("anti-cheat: ban list ", m_banPath, ": ", m_banList.Size(), " ban(s)",
+                                               m_banList.Skipped() ? (", " + std::to_string(m_banList.Skipped()) + " unreadable line(s) skipped") : std::string());
+    }
+    if (!m_acFilesReady || s.auditLog != m_auditPath) {
+        m_auditPath = s.auditLog;
+        m_audit.Open(m_auditPath);
+    }
+    m_acFilesReady = true;
+}
+
+void NetworkManager::AcAudit(const std::string& event, const std::string& ident, const std::string& detail) {
+    if (m_mode != Mode::Server || anticheat.settings.auditLog.empty()) return;
+    AcFilesSync();
+    m_audit.Write((std::int64_t)std::time(nullptr), event, ident, detail);
+}
+
+std::string NetworkManager::IdentOfPeer(std::uint32_t peer) const {
+    for (const auto& [ep, c] : m_clients) if (c.id == peer) return c.ident;
+    return std::string();
+}
+
+bool NetworkManager::BannedByList(const std::string& ident, std::string& why) {
+    if (m_mode != Mode::Server) return false;
+    AcFilesSync();
+    BanEntry e;
+    if (!m_banList.IsBanned(ident, (std::int64_t)std::time(nullptr), &e)) return false;
+    why = "banned from this server" + std::string(e.until ? " (until " + UtcTimeText(e.until) + ")" : "");
+    return true;
+}
+
 void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
     const int limit = anticheat.settings.kickAfterViolations;
     const bool detectKick = anticheat.DetectOn() && anticheat.detector.KickRequested(peer);
@@ -2611,6 +2653,30 @@ void NetworkManager::AntiCheatAfterRefusal(std::uint32_t peer) {
                 b.until = m_serverTime + std::min(3600.0f, 60.0f * float(1 << (b.strikes - 1)));
             }
             break;
+        }
+        // Escalation: kicks add up, and a ban request from the detection engine (or enough kicks)
+        // puts the identity on the ban list, so a rejoin after the cooldown is refused too.
+        {
+            const std::string ident = IdentOfPeer(peer);
+            if (!ident.empty()) {
+                if (m_acKickCounts.size() > 4096) m_acKickCounts.clear();   // can't grow without end
+                const int kicks = ++m_acKickCounts[ident];
+                const AntiCheatSettings& s = anticheat.settings;
+                const bool requested = s.banOnRequest && anticheat.DetectOn() && anticheat.detector.BanRequested(peer);
+                const bool tooMany = s.banAfterKicks > 0 && kicks >= s.banAfterKicks;
+                AcAudit("strike", ident, "reason=anti-cheat kicks=" + std::to_string(kicks) +
+                        (anticheat.DetectOn() ? " risk=" + std::to_string((int)anticheat.detector.Risk(peer)) : std::string()));
+                if ((requested || tooMany) && ident.size() > 2) {
+                    AcFilesSync();
+                    const std::string reason = requested ? "ban requested by the detection engine" : "kicked " + std::to_string(kicks) + (kicks == 1 ? " time" : " times") + " by the anti-cheat";
+                    if (m_banList.Add(ident, (std::int64_t)std::time(nullptr), s.banHours, reason)) {
+                        std::string err;
+                        if (!m_banList.Save(&err)) OKAY_ERROR("anti-cheat: ", err);
+                        AcAudit("ban", ident, "hours=" + std::to_string((int)s.banHours) + " reason=" + reason);
+                        OKAY_INFO("anti-cheat: banned peer ", peer, " (", reason, ")");
+                    }
+                }
+            }
         }
         Kick(peer, "anti-cheat");   // (parks and forgets its anti-cheat state too)
     }
@@ -2952,6 +3018,14 @@ void NetworkManager::ServerTick(float dt) {
     m_acClockMs += static_cast<double>(dt) * 1000.0;
     ++m_tickCount;
     if (anticheat.settings.enabled) anticheat.Tick(dt);
+    // The detection engine's kick / ban request for a player: acted on here too, once a tick. Before, only some
+    // message paths (inputs, RPCs, hit claims, SyncVars) noticed it, so a player who only sent positions (State
+    // packets) could reach the kick rung and stay in the game.
+    if (anticheat.DetectOn()) {
+        std::vector<std::uint32_t> due;
+        for (const auto& [ep, c] : m_clients) if (anticheat.detector.KickRequested(c.id)) due.push_back(c.id);
+        for (std::uint32_t id : due) AntiCheatAfterRefusal(id);
+    }
     // Rate limit: true if this client may send another custom message this second.
     auto rateOk = [this](Client& c, std::size_t bytes) {
         if (maxMessagesPerSecond > 0 && ++c.msgCount > maxMessagesPerSecond) return false;
@@ -2996,6 +3070,23 @@ void NetworkManager::ServerTick(float dt) {
         if (!sealed && anticheat.settings.enabled && anticheat.settings.requireEncryption &&
             type != Join && type != Query && type != PlayerQuery && m_clients.count(from))
             continue;
+        // The anti-cheat's packet ceiling: any packet type from a joined client counts (State, inputs, pings,
+        // acks and the rest have no limit of their own), so a flood of one cheap type can't eat the server's time.
+        if (anticheat.settings.enabled && anticheat.settings.maxPacketsPerSecond > 0 && type != Join && type != JoinHello &&
+            type != Query && type != PlayerQuery) {
+            if (auto pc = m_clients.find(from); pc != m_clients.end()) {
+                Client& c = pc->second;
+                if (++c.pktCount > anticheat.settings.maxPacketsPerSecond) {
+                    if (!c.pktReported) {
+                        c.pktReported = true;
+                        const std::uint32_t pid = c.id;
+                        anticheat.Report(pid, CheatKind::RpcFlood, "packet flood: over " + std::to_string(anticheat.settings.maxPacketsPerSecond) + " packets in a second");
+                        AntiCheatAfterRefusal(pid);
+                    }
+                    continue;   // dropped (the reference above may be gone if the peer was just kicked)
+                }
+            }
+        }
         // And in every mode: once a peer's session is keyed, it seals everything
         // (a plaintext Join or key hello is only a retry from before it knew).
         if (!sealed && type != Join && type != JoinHello && type != Query && type != PlayerQuery) {
@@ -3195,6 +3286,11 @@ void NetworkManager::ServerTick(float dt) {
                 // anonymous join the address (other signed-in players behind
                 // the same address aren't locked out).
                 if (!why && kickedRecently(userId.empty() ? addrIdent : "u:" + userId)) why = banWhy.c_str();
+                // On the server's ban list (a file an admin can read and edit).
+                if (!why && acOn) {
+                    const std::string who = userId.empty() ? addrIdent : "u:" + userId;
+                    if (BannedByList(who, banWhy)) { why = banWhy.c_str(); AcAudit("join_refused", who, "banned"); }
+                }
                 if (why) {
                     // A refusal is an attempt; a wrong password counts double
                     // (guessing it is what the limit is for).
@@ -3428,6 +3524,9 @@ void NetworkManager::ServerTick(float dt) {
                     anticheat.detector.OnInput(c.id, in.move.x, in.move.y, now);
                     anticheat.detector.OnAim(c.id, in.yaw, in.pitch, now);
                     if (in.Pressed(PlayerInput::Jump)) anticheat.detector.OnJump(c.id, now);
+                    // Every button press on the player's own tick clock: a macro presses at one steady gap.
+                    for (int bit = 0; bit < 31; ++bit)
+                        if ((in.pressed >> bit) & 1u) anticheat.detector.OnPress(c.id, bit, (double)tick / (double)std::max(rate, 1.0f), now);
                 }
                 c.inputs[seq] = {tick, in};
             }
@@ -3607,7 +3706,7 @@ void NetworkManager::ServerTick(float dt) {
     for (auto it = m_clients.begin(); it != m_clients.end();) {
         it->second.lastSeen += dt;
         it->second.stateAge += dt;
-        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.msgBytes = 0; it->second.hitClaims = 0; }
+        if ((it->second.msgTimer += dt) >= 1.0f) { it->second.msgTimer = 0.0f; it->second.msgCount = 0; it->second.msgBytes = 0; it->second.hitClaims = 0; it->second.pktCount = 0; it->second.pktReported = false; }
         if ((it->second.violationTimer += dt) >= 60.0f) { it->second.violationTimer = 0.0f; it->second.violations = 0; }
         if (it->second.lastSeen > kClientTimeout) {
             auto dead = it++;

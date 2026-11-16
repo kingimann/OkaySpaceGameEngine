@@ -4,7 +4,7 @@ What is not finished yet, so we can pick it off. Anything unfinished is hidden o
 
 Sources: the feature map (`docs/FEATURE_MAP.md`, rows marked Partial or Planned, with their Open notes) and the hand-written lists below.
 
-The feature map currently has **124** rows that are Partial or Planned.
+The feature map currently has **125** rows that are Partial or Planned.
 
 ## Audits
 
@@ -206,7 +206,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | ID | Feature | Status | Open |
 |---|---|---|---|
 | [19.4](feature_map/19-docs-tests-health.md#194-splitting-the-largest-files-editor-launcher-okayscript-vm-serializer) | Splitting the largest files (editor, launcher, OkayScript VM, serializer) | Planned | splitting `launcher/main.cpp` needs a plan per page (17.1 to 17.16 are the natural seams); `player/main.cpp` is 2,658 lines and... |
-| [19.5](feature_map/19-docs-tests-health.md#195-roadmap-and-pr-template) | Roadmap and PR template | Partial | the anti-cheat hardening list still shows items 5, 6, 8, 9, 10, 12, 13, 14 as open, although `git log` has #350, #360, #363... |
+| [19.5](feature_map/19-docs-tests-health.md#195-roadmap-and-pr-template) | Roadmap and PR template | Partial | the "Now" table is dated 2026-10-26; the hardening list is now ticked from the code (`docs/anticheat_hardening_status.md`)... |
 
 ### 20. Asset management (Critical)
 
@@ -367,6 +367,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 | [39.4](feature_map/39-security-anticheat.md#394-client-integrity-signed-manifest-and-launch-check) | Client integrity: signed manifest and launch check | Partial | set `OKAY_AC_TRUSTED_KEYS` so the check becomes a failure (planned in `release.yml`); hashing every file costs time on big games... |
 | [39.5](feature_map/39-security-anticheat.md#395-runtime-checks-and-the-clock-heartbeat) | Runtime checks and the clock heartbeat | Partial | no kernel driver, memory scanning or obfuscation (by design); older clients never answer the heartbeat, so turn `maxClockDrift`... |
 | [39.11](feature_map/39-security-anticheat.md#3911-account-backend-and-updater-hardening) | Account, backend and updater hardening | Partial | possible weaknesses: the local password hash is a hand-made chain of SHA-256 rather than a standard KDF, and its salt comes from... |
+| [39.13](feature_map/39-security-anticheat.md#3913-cheat-simulator-and-hardening-audit) | Cheat simulator and hardening audit | Partial | the `macro` step feeds the detector directly; packets are plain, so encryption is not exercised; never run on Windows or a real network; bans of anonymous players are by address; edits to the ban file are read at the next restart |
 
 ### 40. OkayUI standalone library
 

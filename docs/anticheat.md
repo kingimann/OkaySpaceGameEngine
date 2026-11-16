@@ -62,6 +62,13 @@ ticketAudience arena-1              # this server's id in tickets (required with
 ticketAnyAudience false             # also accept tickets for any server (aud "*")
 # Network hardening
 maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
+maxPacketsPerSecond 600             # packets of ANY type a joined client may send per second; 0 = unlimited
+# Bans and the audit log (a dedicated server with the anti-cheat on uses okay_bans.txt and okay_anticheat_audit.log)
+banFile okay_bans.txt               # the ban list; "" = bans last only until the server stops
+banAfterKicks 3                     # kicks of one identity before it is banned; 0 = kicks never become bans
+banHours 168                        # how long an automatic ban lasts; 0 = until an admin removes the line
+banOnRequest true                   # a detection-engine ban request is written to the ban file
+auditLog okay_anticheat_audit.log   # what the anti-cheat saw and did, no names or addresses; "" = off
 # Gameplay
 serverVar score                     # SyncVar key prefixes only the server may write (repeatable)
 clientVar player.                   # if any is set, the only SyncVar key prefixes clients may write (repeatable)
@@ -337,6 +344,74 @@ These hold whether or not the anti-cheat is on, unless a setting is named:
 
 This section adds the rest: every mode, and the Join itself.
 
+## Bans, the audit log and the packet ceiling
+
+Added 2026-11-16 (hardening follow-up, `docs/anticheat_hardening_status.md`). All of it needs `enabled true` and
+lives on the server; nothing here is sent to any outside service.
+
+- **The ban list file** (`banFile`). A kick used to be forgotten when the server stopped, and a detection-engine "ban
+  request" only kicked. Now:
+  1. When the engine asks for a ban (risk past `detect.banAt`, and `banOnRequest` is on), or one identity has been
+     kicked `banAfterKicks` times (3) in this run, the identity is added to the file for `banHours` (168 = a week; 0 =
+     until you remove the line).
+  2. At the join, a banned identity is refused with *"banned from this server (until ...)"*. It survives a restart,
+     because the server reads the file at its first join.
+  3. The file is plain text, one ban per line: `identity <tab> made (unix) <tab> ends (unix, 0 = never) <tab> reason`.
+     The identity is `u:<account id>` for a signed-in player or `a:<address number>` for an anonymous one. To ban by
+     hand, add a line; to lift a ban, delete its line and restart the server. Lines that can't be read are skipped (the
+     server says how many in its log); the file holds at most 10,000 bans.
+  4. With no `banFile`, bans last only until the server stops. A dedicated server with the anti-cheat on keeps
+     `okay_bans.txt` in its folder unless you name another file or pass `--no-ban-file`.
+  5. Limit: an anonymous player is known by its address, so a new address gets round an address ban (the same limit
+     the kick cooldown has). Sign-in-required servers (`--auth`, tickets) ban the account.
+- **The audit log** (`auditLog`). One line per event, appended to a text file on the server:
+  `2026-11-16T18:31:28Z cheat who=3fa9c21b07 kind=forged sync var peer=3 score`. Events: `cheat` (a refusal), `detect`
+  (the risk ladder moved), `strike` (an anti-cheat kick counted), `ban`, `kicked`, `join_refused`. A player appears only
+  as `who=`, ten letters of a salted one-way hash of its account or address, so you can follow one player through the
+  file but cannot read a name, an address or an account id from it. The salt is kept beside the log (`<log>.salt`), so
+  tags stay the same after a restart. The file moves to `<log>.1` at 4 MiB (one older file is kept). A dedicated server
+  with the anti-cheat on writes `okay_anticheat_audit.log` unless you name another file or pass `--no-audit-log`.
+- **The packet ceiling** (`maxPacketsPerSecond`, default 600, 0 = unlimited). Rate limits already existed for custom
+  messages, RPCs, SyncVars and hit claims, but a joined client could send unlimited State, input, ping, clock or ack
+  packets. Now every packet from a joined client counts. Past the ceiling the packets are dropped, and the flood is
+  reported once a second as an "rpc flood" (`packet flood: over N packets in a second`), which the normal rules turn
+  into a kick (`kickAfterViolations`). A normal client sends 30 to 150 packets a second; raise the number for a game
+  with a very high tick rate.
+- **Bot and macro check** (`input_regularity`, in the detection engine table). Needs `detect.enabled` and the
+  server-authoritative input path.
+
+## The cheat simulator
+
+To see all of this work without a cheater, run the simulator. It starts a server on your own machine (loopback; nothing
+goes on the network) with the anti-cheat on and points a "rogue client" at it. The rogue is raw packets, so it can do
+what a modified game would. Each cheat gets a fresh server and a normal client next to it:
+
+| Step | What the rogue does | What should happen |
+|---|---|---|
+| `speed` | moves 60 units a second where 8 is the limit | corrected, counted, kicked |
+| `teleport` | jumps 500 units at a time | corrected, flagged, kicked |
+| `garbage` | NaN, infinity, huge numbers, empty and oversized keys | refused, scored as malformed; the server stays up |
+| `servervar` | writes the server-only variable `score` | "forged sync var", kicked |
+| `flood` | 300 chat messages in a burst | "rpc flood", kicked |
+| `hitclaim` | claims hits with a weapon that doesn't exist | refused, no damage, logged once (not a violation: a game that hasn't listed its weapons yet must not get honest players kicked) |
+| `macro` | presses a button every 250 ms exactly (fed to the detector) | `input_regularity`; a human-like presser is left alone |
+| `ban` | speeds until banned, then the server restarts and the rogue rejoins | refused with "banned from this server" |
+
+It prints one line per step (CAUGHT or MISSED, and the normal client "untouched" or "HARMED"), then the ban list file and the
+audit log it wrote, and ends with `Result: N of 8 cheats caught`. The exit code is 0 when everything was caught and the
+normal client was left alone, 1 otherwise.
+
+```
+OkaySpacePlayer.exe --server --cheat-sim --log cheat_sim.txt        (Windows: open cheat_sim.txt afterwards)
+okay-player --server --cheat-sim                                    (Linux: prints to the terminal)
+OKAY_CHEAT_SIM=speed,flood OkaySpacePlayer.exe --server             (just these steps; or --cheat-sim-only speed,flood)
+```
+
+It uses the built-in rules (`enabled true`, `maxSyncSpeed 8`, `maxRpcsPerSecond 10`, `kickAfterViolations 4`,
+`serverVar score`, `weapon rifle`, `detect.enabled true`, `detect.maxSpeed 8`, `detect.kickAt 60`), or yours if you also
+pass `--anticheat FILE`. The simulator sends plain (not encrypted) packets, so it tests the server's rules, not the
+encryption. It is also run by the test `anticheat_hard`.
+
 ## Gameplay validation
 
 The engine doesn't network gameplay: games do damage, ammo and scores through
@@ -478,6 +553,7 @@ tests run in fake time. In a running server the time is the anti-cheat's own clo
 | `noclip` | the step between two samples crosses a static solid (a server linecast against colliders that are not dynamic bodies or networked objects) | scene colliders (wired automatically) |
 | `input_mismatch` | moving above `ghostSpeedFraction` x `maxSpeed` for `ghostWindow` seconds while the player's input has been idle (needs fresh input: `staleInputSeconds`) | input commands (authoritative movement) or `OnInput` |
 | `jump_rate` | more than `maxJumpsPerSecond` jump presses in a second | jump events |
+| `input_regularity` | a bot or macro: one button pressed 20 times in a row at gaps whose spread (standard deviation / mean) is under `regularityMaxCv` (4%), the average gap between `regularityMinGap` (0.08 s) and `regularityMaxGap` (3 s). The presses are timed on the player's own tick clock (the input's tick), so network jitter cannot hide a macro. A hand varies by 10% or more. Fire and Alt Fire are left out by default (`regularityButtons`) because a game with auto-fire presses them at one exact gap on purpose | input commands (authoritative movement) or `OnPress` |
 | `fire_rate` | a token bucket per weapon: refills at `shotsPerSecond x fireRateTolerance`, holds `fireBankSeconds` | `detect.weapon` |
 | `accuracy`, `headshot` | hit ratio over the last `accuracyWindow` shots (at least `accuracyMinShots`) above `maxAccuracy`; headshot ratio over the hits (at least `headshotMinHits`) above `maxHeadshotRatio` | shot events (headshot flag comes from game code) |
 | `aim_snap` | a view change of `aimSnapDegrees` at more than `aimSnapSpeed` deg/s in one sample, followed within `aimSnapShotWindow` by a hit, `aimSnapConfirm` times within `aimSnapWithin` s | aim samples (input commands or `OnAim`) |
@@ -527,6 +603,8 @@ detect.stepHeight 0.6               # also slopeLimit, groundEpsilon, hoverWindo
 detect.noclipMinStep 0.25           # also noclipMaxGap
 detect.ghostSpeedFraction 0.4       # also ghostWindow, staleInputSeconds
 detect.maxJumpsPerSecond 4
+detect.regularityPresses 20         # 0 = the bot / macro check is off; also regularityMaxCv 0.04, regularityMinGap, regularityMaxGap
+detect.regularityButtons 2147483599 # a bit mask of PlayerInput buttons (default: every button except Fire and Alt Fire); set 2147483647 to include them in a click-to-fire game
 # combat
 detect.weapon rifle 10 30 2 300     # name  shots/s  max damage  [head multiplier [max range]]
 detect.fireRateTolerance 1.2        # also fireBankSeconds

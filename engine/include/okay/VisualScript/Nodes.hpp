@@ -15,6 +15,7 @@
 #include "okay/Math/Vec2.hpp"
 #include "okay/Core/Time.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/SaveData.hpp"   // Save::IsSafeRelative: the Spawn node's path rule
 #include "okay/Input/Input.hpp"
 #include "okay/Input/Gestures.hpp"
 #include <cmath>
@@ -630,6 +631,10 @@ struct SpawnPrefabNode : VsNode {
         spawned = 0;
         if (ctx.gameObject && ctx.gameObject->scene()) {
             const std::string file = VsBareAsset(path);
+            if (!Save::IsSafeRelative(file)) {   // graphs are game content: stay in the game's folders
+                OKAY_ERROR("[visual script] Spawn: refusing '", file, "' (absolute paths and '..' aren't allowed)");
+                return 0;
+            }
             GameObject* g = SceneSerializer::InstantiateFromFile(*ctx.gameObject->scene(), file);
             if (!g) {
                 gr.Error(this, ctx, "couldn't spawn '" + file + "': the prefab file is missing or invalid");

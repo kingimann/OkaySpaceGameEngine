@@ -569,6 +569,15 @@ the default you passed) and the Console says why. In an exported game, saves
 and prefs go into the game's own save folder; files a game saved beside itself
 before that still load.
 
+The same rule covers prefabs a script spawns: `spawn`, `spawn3`, `shoot_at` and
+`spawn_wave`, the action-list ops `spawn`, `spawn3`, `spawn_at` and
+`spawn_wave`, and the visual-script **Spawn** node. `spawn("enemy.okayprefab", 0, 5)`
+and `spawn("prefabs/enemy.okayprefab", 0, 5)` work as before;
+`spawn("../other/enemy.okayprefab", 0, 0)` or `spawn("C:\\x.okayprefab", 0, 0)`
+creates nothing, returns false (0 for `spawn_wave`) and logs a
+`refusing ...` line in the Console. Before this, those calls loaded a prefab
+(and ran its scripts) from anywhere on disk.
+
 ### Rendering: post-processing, fog, weather, time of day
 
 The scene's look (the Lighting panel's Post-processing, Sky, Fog and Weather

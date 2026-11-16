@@ -1142,7 +1142,9 @@ void ActionList::Update(float dt) {
                 s.replace(p, find.size(), repl);
         }
         else if (op == "spawn3") {
-            if (scene) {
+            if (!Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a prefab stays inside the game
+                Log::Error("[actions] spawn3: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
+            else if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform)
                     g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
@@ -1428,7 +1430,9 @@ void ActionList::Update(float dt) {
                 for (auto& up : scene->Objects()) if (up && up->tag == tg) up->active = on; }
         }
         else if (op == "spawn") {
-            if (scene) {
+            if (!Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a prefab stays inside the game
+                Log::Error("[actions] spawn: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
+            else if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform) g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
             }
@@ -1735,7 +1739,9 @@ void ActionList::Update(float dt) {
                          Vars()[Str(it, 0)] = Num(it, (std::size_t)(1 + k)); }
         }
         else if (op == "spawn_at") {                   // spawn a prefab at a named object's position
-            if (scene) {
+            if (!Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a prefab stays inside the game
+                Log::Error("[actions] spawn_at: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
+            else if (scene) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform) if (GameObject* at = scene->Find(ObjName(it, 1)))
                     if (at->transform) g->transform->SetPosition(at->transform->Position());
@@ -1802,7 +1808,9 @@ void ActionList::Update(float dt) {
             }
         }
         else if (op == "spawn_wave") {                       // ring of prefabs around self
-            if (scene && t) {
+            if (!Save::IsSafeRelative(Str(it, 0)))   // action lists are game content: a prefab stays inside the game
+                Log::Error("[actions] spawn_wave: refusing '", Str(it, 0), "' (absolute paths and '..' aren't allowed)");
+            else if (scene && t) {
                 int count = (int)Num(it, 1); if (count < 1) count = 1;
                 float radius = it.args.size() > 2 ? Num(it, 2) : 3.0f;
                 Vec3 c = t->Position();

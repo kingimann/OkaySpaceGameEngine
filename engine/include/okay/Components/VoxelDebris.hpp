@@ -30,9 +30,11 @@ public:
     bool   finished = false;
     static int& Live() { static int n = 0; return n; }
 
-    void Start() override { ++Live(); counted_ = true; }
-    void OnDestroy() override { if (counted_) { --Live(); counted_ = false; } }
-    void ReleaseUnstarted() override {}
+    // Counted from the moment it is made (not at Start), so a cap on live pieces holds even inside one frame.
+    VoxelDebris() { ++Live(); counted_ = true; }
+    ~VoxelDebris() override { Uncount(); }
+    void OnDestroy() override { Uncount(); }
+    void ReleaseUnstarted() override { Uncount(); }
 
     void Update(float dt) override {
         if (finished || !gameObject || !gameObject->transform) return;
@@ -68,6 +70,7 @@ public:
     }
 
 private:
+    void Uncount() { if (counted_) { --Live(); counted_ = false; } }
     bool counted_ = false;
 };
 

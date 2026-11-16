@@ -17341,6 +17341,7 @@ void HandleShortcuts(EditorState& ed) {
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
         else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, false)) ConsoleLog("Undo (items, loot and recipes)"); }
         else if (WeaponEditorFocused() && WeaponEditorUndo(false)) ConsoleLog("Undo (weapons)");
+        else if (ed.isPlaying()) {}   // in Play, Ctrl+Z belongs to the game: the Voxel Digger takes back its last stroke
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else { const std::string un = ed.UndoName(); if (ed.Undo()) ConsoleLog("Undo " + un); }
     }
@@ -30107,6 +30108,46 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Clear##voxgen")) { v->Resize(v->nx, v->ny, v->nz); v->Apply(); ed.dirty = true; }
             ImGui::TextDisabled("Add a Voxel Digger to carve it live in Play.");
+            SectionHeader("Materials");
+            if (!v->UseMaterials()) {
+                ImGui::TextDisabled("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.");
+                if (ImGui::Button("Layered ground##voxmat")) { v->GenerateMaterials((unsigned)(ImGui::GetTime() * 1000.0)); v->Apply(); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns materials on and fills them by depth, slope and height: grass on top, dirt under it, sand on flat low ground, stone below, ore pockets.");
+                ImGui::SameLine();
+                if (ImGui::Button("All Dirt##voxmat")) { v->EnableMaterials(0); v->Apply(); ed.dirty = true; }
+            } else {
+                bool changed = false;
+                for (std::size_t mi = 0; mi < v->materials.size(); ++mi) {
+                    VoxelTerrain::VoxelMaterial& m = v->materials[mi];
+                    ImGui::PushID((int)mi);
+                    char nm[64]; std::strncpy(nm, m.name.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
+                    ImGui::SetNextItemWidth(90);
+                    if (ImGui::InputText("##mname", nm, sizeof(nm))) { m.name = nm; changed = true; }
+                    ImGui::SameLine();
+                    float mc[4] = {m.color.r, m.color.g, m.color.b, m.color.a};
+                    if (ImGui::ColorEdit4("##mcol", mc, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) { m.color = {mc[0], mc[1], mc[2], mc[3]}; changed = true; }
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragFloat("hard##mh", &m.hardness, 0.05f, 0.1f, 50.0f, "%.1f")) { changed = true; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hardness: how slowly it digs. A tool with less power than this cannot dig it at all.");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
+                    if (ImGui::DragFloat("kg/m3##md", &m.density, 10.0f, 1.0f, 30000.0f, "%.0f")) ed.dirty = true;
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("loose##ml", &m.loose)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Loose ground (sand, dirt, snow) slumps down to its angle of repose when you dig next to it.");
+                    char dr[64]; std::strncpy(dr, m.drop.c_str(), sizeof(dr) - 1); dr[sizeof(dr) - 1] = '\0';
+                    ImGui::SetNextItemWidth(90);
+                    if (ImGui::InputText("drop item##mdr", dr, sizeof(dr))) { m.drop = dr; ed.dirty = true; }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inventory item name handed out when this material is collected (Voxel Digger: Give Items). Empty = none.");
+                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+                    if (ImGui::DragFloat("per m3##mpm", &m.dropPerM3, 0.5f, 0.0f, 1000.0f, "%.1f")) ed.dirty = true;
+                    ImGui::PopID();
+                }
+                if (changed) { v->MaterialsChanged(); v->Apply(); ed.dirty = true; }
+                if (ImGui::SmallButton("Regenerate layers##voxmat")) { v->GenerateMaterials((unsigned)(ImGui::GetTime() * 1000.0)); v->Apply(); ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Materials off##voxmat")) { v->DisableMaterials(); v->Apply(); ed.dirty = true; }
+                ImGui::TextDisabled("Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
+            }
             {   // what the last surface build cost (also in View > Panels > Profiler: Voxel.Edit / Voxel.Mesh / Voxel.Upload)
                 const auto& st = v->lastStats;
                 if (v->UsesChunkObjects())
@@ -30140,6 +30181,57 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Reach##vdg");
             if (ImGui::Checkbox("Show brush marker##vdg", &vd->showBrush)) ed.dirty = true;
             oked::FieldTip("Show brush marker##vdg");
+            SectionHeader("Real life");
+            {
+                const char* presets[] = {"Pick a preset...", "Realistic", "Arcade", "Creative"};
+                int pi = 0;
+                if (ImGui::Combo("Preset##vdg", &pi, presets, 4) && pi > 0) { vd->ApplyPreset((VoxelDigger::Preset)pi); ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Realistic: dug ground becomes debris and a store, hard rock needs a strong tool, building uses what you collected, loose ground slumps and cut-off pieces fall.\nArcade: ground vanishes, building is free (the old behaviour).\nCreative: unlimited store.");
+                const char* cols[] = {"Vanish (old behaviour)", "Store (into the count)", "Debris (falls, lands back)", "Both (debris, pick up to store)"};
+                int ci = (int)vd->collect;
+                if (ImGui::Combo("Dug Ground##vdg", &ci, cols, 4)) { vd->collect = (VoxelDigger::Collect)ci; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What happens to the ground the brush takes away. Nothing is lost except in Vanish.");
+                if (ImGui::Checkbox("Building needs material##vdg", &vd->needsMaterial)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Creative (unlimited)##vdg", &vd->creative)) ed.dirty = true;
+                VoxelTerrain* tv = vd->FindVoxel();
+                if (tv && tv->UseMaterials()) {
+                    int am = std::max(0, std::min(vd->addMaterial, (int)tv->materials.size() - 1));
+                    if (ImGui::BeginCombo("Build Material##vdg", tv->materials[(std::size_t)am].name.c_str())) {
+                        for (std::size_t k = 0; k < tv->materials.size(); ++k)
+                            if (ImGui::Selectable(tv->materials[k].name.c_str(), (int)k == am)) { vd->addMaterial = (int)k; ed.dirty = true; }
+                        ImGui::EndCombo();
+                    }
+                }
+                if (ImGui::DragFloat("Tool Power##vdg", &vd->power, 0.1f, 0.0f, 1.0e9f, "%.1f", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Materials harder than this cannot be dug. 1e9 = everything.");
+                if (ImGui::DragFloat("Hardness Scale##vdg", &vd->hardnessScale, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplies every material's hardness: higher = slower digging.");
+                const char* shapes[] = {"Sphere", "Cube", "Cylinder", "Plane (flat disc)"};
+                int si = (int)vd->shape;
+                if (ImGui::Combo("Brush Shape##vdg", &si, shapes, 4)) { vd->shape = (VoxelTerrain::EditOptions::Shape)si; ed.dirty = true; }
+                if (ImGui::DragFloat("Depth Limit##vdg", &vd->depthLimit, 0.1f, -1.0f, 200.0f, "%.1f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Metres a stroke may go below where it started. -1 = no limit.");
+                if (ImGui::DragFloat("Bedrock Height##vdg", &vd->protectBelow, 0.1f, -1.0f, 500.0f, "%.1f")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nothing below this height (in the terrain's own space) can be dug. -1 = off.");
+                if (ImGui::Checkbox("Snap to grid##vdg", &vd->snapToGrid)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Slump loose ground##vdg", &vd->slump)) ed.dirty = true;
+                ImGui::SameLine();
+                if (ImGui::Checkbox("Collapse##vdg", &vd->collapse)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pieces a dig cuts loose fall as debris and land back in the ground.");
+                if (ImGui::SliderInt("Debris Limit##vdg", &vd->debrisMax, 0, 300)) ed.dirty = true;
+                if (ImGui::DragFloat("Debris Life (s)##vdg", &vd->debrisLife, 0.5f, 1.0f, 120.0f)) ed.dirty = true;
+                if (ImGui::Checkbox("Give inventory items##vdg", &vd->giveItems)) ed.dirty = true;
+                char hud[96]; std::strncpy(hud, vd->hudTarget.c_str(), sizeof(hud) - 1); hud[sizeof(hud) - 1] = '\0';
+                if (ImGui::InputText("Count Text Object##vdg", hud, sizeof(hud))) { vd->hudTarget = hud; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of a Text object that shows what has been collected, e.g. \"Dirt 3.20 m3\".");
+                if (tv && tv->UseMaterials()) {
+                    for (std::size_t k = 0; k < vd->store.size() && k < tv->materials.size(); ++k)
+                        if (vd->store[k] > 0.005) ImGui::TextDisabled("Store: %s %.2f m3", tv->materials[k].name.c_str(), vd->store[k]);
+                }
+                ImGui::TextDisabled("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.");
+            }
             if (ImGui::SmallButton("Remove##vdg")) toRemove = vd;
         }
     }

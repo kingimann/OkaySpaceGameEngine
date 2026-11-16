@@ -1128,6 +1128,8 @@ add_test(NAME terrain_audit COMMAND test_terrain_audit)
 # Not a test: prints per-frame numbers for digging in a voxel terrain (docs/voxel_edit_perf.md). Built, never run by ctest.
 add_executable(bench_voxel_edit bench_voxel_edit.cpp)
 target_link_libraries(bench_voxel_edit PRIVATE okay::engine)
+add_executable(bench_voxel_real bench_voxel_real.cpp)
+target_link_libraries(bench_voxel_real PRIVATE okay::engine)
 
 add_executable(test_api_expand test_api_expand.cpp)
 target_link_libraries(test_api_expand PRIVATE okay::engine)

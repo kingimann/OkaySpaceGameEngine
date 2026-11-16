@@ -37,10 +37,34 @@ void BuildBigWorld(Scene& s) {
     AddHelp(s, "Big world: 128 x 56 x 128 voxels. Hold LEFT mouse to dig, RIGHT mouse to build. F3 shows the frame rate. Start with OKAY_VOXEL_OLD_REMESH=1 to feel the old behaviour.", 74.0f);
 }
 
+// Real-life digging (docs/try_it.md 7t): the same hill with dirt, sand, stone and ore in layers, a digger that keeps what it
+// digs (debris you can pick up, a count on screen), building that spends it, loose ground that slumps and pieces that fall.
+void BuildRealistic(Scene& s) {
+    Templates::VoxelSandbox(s);
+    GameObject* g = s.Find("Terrain");
+    auto* v = g->GetComponent<VoxelTerrain>();
+    v->GenerateMaterials(2024u);
+    v->Apply();
+    auto* d = g->GetComponent<VoxelDigger>();
+    d->ApplyPreset(VoxelDigger::Preset::Realistic);
+    d->addMaterial = v->MaterialIndex("Dirt");
+    d->hudTarget = "Dig Count";
+    d->giveItems = false;
+    GameObject* c = s.CreateGameObject("Dig Count");
+    auto* t = c->AddComponent<TextRenderer>();
+    t->text = "Nothing collected";
+    t->screenSpace = true;
+    t->anchor = UIAnchor::TopLeft;
+    t->screenPos = {16, Templates::kHudTop + 104.0f}; t->size = {420, 28};
+    t->vcenter = false; t->pixelSize = 2.0f; t->outline = true;
+    AddHelp(s, "Real-life digging: hold LEFT mouse to dig - the ground falls as debris and the count below rises when you pick it up. RIGHT mouse builds with what you hold. Ctrl+Z takes back the last stroke. Stone is hard: dig it slowly.", 74.0f);
+}
+
 struct Example { const char* file; void (*build)(Scene&); int nx, ny, nz; };
 const Example kExamples[] = {
     {"voxel_sandbox.okayscene", &BuildSandbox, 72, 44, 72},
     {"voxel_big_world.okayscene", &BuildBigWorld, 128, 56, 128},
+    {"voxel_realistic.okayscene", &BuildRealistic, 72, 44, 72},
 };
 
 } // namespace
@@ -86,6 +110,15 @@ int main() {
         CHECK(s.Find("Player") != nullptr && s.Find("FPS Camera") != nullptr);
         CHECK(s.Find("Water") != nullptr);
         CHECK(s.Find("Voxel Perf Help") != nullptr);
+        if (std::string(e.file) == "voxel_realistic.okayscene") {
+            auto* vd = ground->GetComponent<VoxelDigger>();
+            CHECK(v->UseMaterials() && v->materials.size() == 7 && v->material.size() == v->density.size());
+            CHECK(vd && vd->collect == VoxelDigger::Collect::Both && vd->needsMaterial && vd->slump && vd->collapse && vd->hudTarget == "Dig Count");
+            CHECK(s.Find("Dig Count") && s.Find("Dig Count")->GetComponent<TextRenderer>());
+            int kinds = 0, seen[7] = {0};
+            for (std::size_t i = 0; i < v->material.size(); ++i) if (v->density[i] > v->iso && v->material[i] < 7 && !seen[v->material[i]]++) ++kinds;
+            CHECK(kinds >= 4);                                 // grass, dirt, stone and ore at least
+        }
         // the density really came through: solid ground and open air, and a surface to walk on
         int solid = 0, air = 0;
         for (float d : v->density) { if (d > v->iso) ++solid; else ++air; }

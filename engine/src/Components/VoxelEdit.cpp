@@ -81,7 +81,7 @@ void VoxelTerrain::GenerateMaterials(unsigned seed, const LayerRules& r) {
               clay = std::max(0, MaterialIndex("Clay")), stone = std::max(0, MaterialIndex("Stone")), ore = std::max(0, MaterialIndex("Ore")),
               snow = std::max(0, MaterialIndex("Snow"));
     const float sandBelow = r.sandBelow >= 0.0f ? r.sandBelow : SizeY() * 0.12f;
-    const float snowAbove = r.snowAbove >= 0.0f ? r.snowAbove : snowLevel;
+    const float snowAbove = r.snowAbove >= 0.0f ? r.snowAbove : SizeY() * 0.85f;
     for (int z = 0; z < nz; ++z)
         for (int x = 0; x < nx; ++x) {
             int top = -1;

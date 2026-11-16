@@ -39,6 +39,59 @@ Floaters walked the whole field on every release (now only around the cells the 
 brush with radius 0 or a NaN strength wrote NaN into the field (now ignored), and one very long frame no longer digs a crater
 (a stroke counts at most a tenth of a second per frame).
 
+### Real-life digging (materials, debris, building back)
+
+Everything here is OFF in an old scene: a digger saved before this change digs and builds exactly as before. Turn it on from the
+Inspector (Voxel Terrain card: **Materials**; Voxel Digger card: **Real life**) or from a script. Tests:
+`tests/test_voxel_materials.cpp`, `tests/test_voxel_digger_real.cpp`; costs: `tests/bench_voxel_real.cpp`.
+
+**Materials.** `VoxelTerrain::materials` is a table (name, colour, texture, hardness, density in kg/m3, loose, drop item, drop
+per m3, dig sound, particle) and `material` holds one byte per voxel. `DefaultMaterials()` gives Dirt 0, Grass 1, Sand 2, Clay 3,
+Stone 4, Ore 5, Snow 6. `GenerateMaterials(seed[, LayerRules])` fills it by depth, slope and height: grass on gentle top soil, dirt
+under it with clay lenses, sand low down, snow in the top 15 percent, bare stone on steep slopes, stone deeper with ore pockets.
+`EnableMaterials(id)` turns it on with every voxel the same material, `DisableMaterials()` turns it off. The marching-cubes
+surface takes its colour from the most solid corner's material. Scenes save the bytes in a `voxelmats` record and the table in
+`voxelmat` records; a scene without them loads as before.
+
+**Nothing disappears.** `Edit(centre, radius, amount, EditOptions)` is `Dig`/`Add` with options and returns the exact volume taken or
+added, per material (`removedBy`). A voxel counts the fraction of itself under the surface, so `SolidVolume()` changes by exactly
+`removed - added` (checked to 1e-6). What the digger does with it is **Dug Ground**:
+
+| Setting | What happens to the ground you dig |
+|---|---|
+| Vanish | It is gone (the old behaviour). |
+| Store | It goes into the digger's store at once (`VoxelDigger::store`, cubic metres per material). |
+| Debris | Small bodies fall; when one lies still (or its life runs out) its volume is built back into the ground where it lies. |
+| Both | Bodies fall; walking up to one (main camera within 2.2 m) puts it into the store. Left alone it goes back into the ground. |
+
+The debris limit (`debrisMax`, default 48) is strict: any more is put straight into the store. **Building needs material** takes
+the volume you add out of the store (nothing happens with an empty store); **Creative** makes the store unlimited. The count can
+be shown by a Text object (`hudTarget`), e.g. `Dirt 3.20 m3`; scripts read `store`, `Stored(id)` and `StoredByName("Dirt")`.
+`giveItems` also hands each material's `drop` item to the scene's Inventory.
+
+**Hardness and tools.** Digging a material is slowed by `hardness * hardnessScale`; a tool with `power` below the material's hardness
+cannot dig it (default tool power is unlimited). Stone (4) digs about four times slower than dirt (1): measured 3.8 m3 against 13.0 m3
+for the same two strokes.
+
+**Brush options** (`EditOptions` / the digger's fields): shape (Sphere, Cube, Cylinder, flat Plane disc), depth limit below where
+the stroke started, bedrock height (nothing below it can be dug), snap to the voxel grid. **Ctrl+Z** in Play (and
+`VoxelDigger::UndoLastStroke()`) takes back the last whole stroke, terrain and materials. In the editor, Ctrl+Z is left to the game
+while Playing.
+
+**Real-life collapse.** After a dig, **Slump** moves loose voxels (sand, dirt, clay, snow) down and sideways to their angle of repose;
+it only looks at the cells near the edit and moves at most 40 per frame, never the whole field (0.006 ms measured on a 655k voxel
+field). **Collapse**: on release, pieces cut loose from the ground are lifted out as rigid bodies with their own surface mesh,
+fall, land, and are built back into the ground (pieces under 8 voxels go to the store). `ExtractFloaters` and `PieceMesh` do this
+in code.
+
+**Presets** (`ApplyPreset`): Realistic = Both, building needs material, slump, collapse, tool power 4 (ore, 5, needs a better
+tool); Arcade = everything vanishes, building is free (the old behaviour); Creative = unlimited store.
+
+Costs (CPU only, Linux, `-O2` build, per `Scene::Update` while holding the mouse; `bench_voxel_real`): the old digger 0.4 to 0.6 ms
+median, the Realistic preset 1.0 to 1.3 ms, debris-heavy (150 live bodies, big brush) 4 to 8 ms, mostly physics. The frame that
+carries a collapse costs more (p95 5 ms). Limits: one body per piece uses a box collider (a piece lands on its bounding box), and
+the debris bodies assume the terrain object is at the origin with no rotation or scale.
+
 ## Water
 
 **GameObject > 3D Object > Water** builds an animated wave mesh with a reflective, semi-transparent material. It follows the global wind. Rigidbodies float according to `fluidDensity` and `linearDrag`.

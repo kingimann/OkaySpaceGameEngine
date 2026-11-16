@@ -56,6 +56,7 @@ release job or the installer build for this change.
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
+| 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
 
 ---
 
@@ -645,3 +646,34 @@ whole terrain every frame. Now only the chunks you touched are. Details and numb
 **Status.** Tests run on Linux (`ctest -R "voxel|mesh_hash|terrain_water_speed"`): 127 + 10 + 36 + 13 + 55 + 25 + 13 checks, 0
 failures. Software renderer pixels identical in both modes. CPU time per dig frame measured 3x to 16x lower; **no GPU, no Windows,
 no real editor window was available**, so the real frame rates and the Inspector and Profiler lines are unverified until you look.
+
+## 7t. Voxel terrain digs like real life
+
+**What it is.** Dug ground no longer disappears. The ground has materials (grass, dirt, clay, stone, ore, sand, snow) with their own
+colour and hardness. Digging drops debris that falls; walk up to it and it is counted ("Dirt 3.20 m3" on screen). Right mouse
+builds with what you hold. Pieces you cut loose fall. Ctrl+Z takes back the last stroke. All the options are in the Inspector.
+Details: `docs/terrain_water.md`, "Real-life digging".
+
+**Steps.**
+1. Start `Tools\OkayEngine.exe`. **File > Open...** and open `<install folder>\examples\voxel\voxel_realistic.okayscene`.
+2. Press **Play**. Click in the Game view, walk with WASD, look with the mouse.
+3. Hold **left mouse** on the ground. You should see the ground carve away and small blocks of it fall and bounce. Walk up to the
+   blocks: the text at the top-left changes from "Nothing collected" to something like "Dirt 3.20 m3 Grass 1.10 m3". Blocks you
+   do not pick up lie for a few seconds and then melt back into the ground where they are.
+4. Hold **left mouse** on a dark grey patch (stone): it digs much more slowly than dirt. Ore (yellow) is too hard for the
+   starting tool and does not dig at all (raise **Tool Power** on the Voxel Digger card to dig it).
+5. Hold **right mouse**: it builds ground back, using up the count. With nothing collected, nothing builds.
+6. Cut under a ledge or a thin column of ground from the side and release the button: the cut-off piece falls as one lump with its
+   own shape and settles back into the ground.
+7. Press **Ctrl+Z** after letting go of the mouse: the last stroke is taken back.
+8. Press Stop and select the **Terrain** object. The **Voxel Terrain** card has a **Materials** table (colour, hardness, drop...);
+   the **Voxel Digger** card has **Real life**: a Preset (Realistic, Arcade, Creative), Dug Ground, brush shape, depth limit, bedrock
+   height, debris limit and the count text. Pick **Arcade** and Play again: the ground vanishes as it did before.
+
+**Pictures** (software renders from the headless test machine, not the GPU renderer): `docs/images/voxel/1_layers_cut.png` (a cut
+through the layers), `2_dig_debris_falling.png` (a dig with falling debris), `3_after_release.png`.
+
+**Status.** Tests (`ctest -R "voxel_materials|voxel_digger_real|voxel_examples"`): 60 + 34 + 58 checks, 0 failures on Linux. Volume
+kept: a stroke of 63 m3 put back came to 63.1 m3 (restored to 0.0 percent), debris that landed returned the volume to within 0.05
+percent. **Unverified:** Windows, a real GPU, the editor's Inspector click path, the feel of the controls, and the sound and particle
+hooks per material (the table has the fields, the digger still plays the one dig sound).

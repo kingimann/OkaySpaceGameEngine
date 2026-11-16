@@ -152,6 +152,8 @@ public:
     static std::vector<VoxelMaterial> DefaultMaterials();
     /// Turn materials on: the default table if there is none, every solid voxel `fillId`.
     void EnableMaterials(int fillId = 0);
+    /// Call after editing the table by hand (colour, texture) so the surface is skinned again.
+    void MaterialsChanged() { ++matRev_; mcAllDirty_ = true; }
     void DisableMaterials() { material.clear(); mcAllDirty_ = true; }
     int  MaterialIndex(const std::string& name) const;
     int  MaterialAt(int x, int y, int z) const { return (UseMaterials() && InBounds(x, y, z)) ? (int)material[Index(x, y, z)] : 0; }
@@ -161,7 +163,7 @@ public:
         float topsoil = 0.6f, dirtDepth = 3.0f;       ///< metres of grass / dirt under the surface
         float stoneSlope = 0.65f;                     ///< steepness (0..1) above which the surface is stone
         float sandBelow = -1.0f;                      ///< local height under which the top is sand (-1 = 12% of the height)
-        float snowAbove = -1.0f;                      ///< local height over which the top is snow (-1 = snowLevel)
+        float snowAbove = -1.0f;                      ///< local height over which the top is snow (-1 = the top 15% of the field)
         float oreAmount = 0.06f, clayAmount = 0.08f;  ///< share of the stone / dirt that is ore / clay
     };
     void GenerateMaterials(unsigned seed, const LayerRules& rules);

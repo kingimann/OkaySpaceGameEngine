@@ -275,6 +275,10 @@ void SculptTorso(PolyMesh& m, const Dim& d, float off) {
 }
 PolyMesh TorsoShell(const Dim& d, float off, float y0, float y1, bool hemRoll = false, bool flare = false) {
     std::vector<Station> st = TorsoStations(d, off, y0, y1);
+    if (hemRoll) {   // a shirt hangs straight down from the hips: below them it keeps the hip width (it does not follow the body in toward the crotch)
+        const TRow hip = TorsoRow(d, kTorso[2]);
+        for (Station& q : st) if (q.c.y < d.hipY) { q.rb = std::max(q.rb, d.W * hip.w + off); q.ra = std::max(q.ra, d.Dd * hip.dp + off); }
+    }
     if (flare)   // a tunic hangs wider over the hips
         for (Station& q : st) {
             const float y = (q.c.y - d.hipY) / d.tl;
@@ -303,6 +307,8 @@ PolyMesh TorsoShell(const Dim& d, float off, float y0, float y1, bool hemRoll = 
 // ---- Limbs ---------------------------------------------------------------------------------------------------------
 struct LP { float t, ra, rb, cz; };   // along the limb 0..1, radius front-to-back and side to side (m), centre shift forward (m)
 const std::vector<LP> kUpperArm = {{0.0f, 0.052f, 0.050f, 0}, {0.2f, 0.053f, 0.051f, 0.001f}, {0.45f, 0.051f, 0.046f, 0.003f}, {0.75f, 0.042f, 0.039f, 0.001f}, {1.0f, 0.036f, 0.034f, 0}};
+// a sleeve: the upper arm's shape, a little fuller at the shoulder where it makes the rounded top
+const std::vector<LP> kSleeve = {{0.0f, 0.060f, 0.058f, 0}, {0.12f, 0.059f, 0.057f, 0.001f}, {0.3f, 0.054f, 0.051f, 0.002f}, {0.6f, 0.044f, 0.040f, 0.001f}, {1.0f, 0.036f, 0.034f, 0}};
 const std::vector<LP> kForearm = {{0.0f, 0.036f, 0.037f, 0}, {0.15f, 0.040f, 0.042f, 0}, {0.5f, 0.033f, 0.036f, 0}, {0.8f, 0.026f, 0.030f, 0}, {1.0f, 0.022f, 0.027f, 0}};
 const std::vector<LP> kThigh = {{0.0f, 0.090f, 0.090f, 0}, {0.16f, 0.096f, 0.094f, 0.002f}, {0.45f, 0.086f, 0.080f, 0.006f}, {0.75f, 0.064f, 0.058f, 0.004f}, {0.92f, 0.050f, 0.048f, 0.002f}, {1.0f, 0.048f, 0.046f, 0}};
 const std::vector<LP> kCalf = {{0.0f, 0.048f, 0.046f, 0}, {0.1f, 0.052f, 0.052f, -0.004f}, {0.27f, 0.064f, 0.058f, -0.012f}, {0.45f, 0.056f, 0.052f, -0.010f}, {0.75f, 0.036f, 0.036f, -0.003f}, {1.0f, 0.029f, 0.029f, 0}};
@@ -336,14 +342,13 @@ PolyMesh LimbTube(Vec3 a, Vec3 b, const std::vector<LP>& prof, float scale, floa
 }
 PolyMesh Ball(Vec3 c, float r, float ky = 1.0f) { return Elp(c, r, r * ky, r, 5, 10); }
 
-PolyMesh UpperArm(const Dim& d, int side, float off, float tmax, bool deltoid, float before = 0.0f, bool roundTop = false) {
+PolyMesh UpperArm(const Dim& d, int side, float off, float tmax, bool deltoid, float before = 0.0f, bool roundTop = false, bool sleeve = false) {
     const float sc = d.gk * d.limbK;
-    PolyMesh m = LimbTube(d.S[side], d.E[side], kUpperArm, sc, off, tmax, Sides(d, 12, 8), Rings(d, 8, 4), roundTop, false, before, 0.05f);
+    PolyMesh m = LimbTube(d.S[side], d.E[side], sleeve ? kSleeve : kUpperArm, sc, off, tmax, Sides(d, 12, 8), Rings(d, 8, 4), roundTop, false, before, 0.05f);
     const float s = side ? 1.0f : -1.0f;
     if (deltoid) {   // the deltoid cap over the shoulder joint, bigger with muscle
         const float k = sc * (1.0f + 0.2f * d.muscle);
-        if (off > 0.0f) shapes::Append(m, Elp(d.S[side] + Vec3{s * 0.004f, -0.024f, 0.0f}, 0.047f * k + off, 0.050f * k + off, 0.047f * k + off, 5, 11));   // a sleeve: a low, smooth shoulder that follows the arm, not a pad
-        else shapes::Append(m, Elp(d.S[side] + Vec3{s * 0.002f, -0.016f, 0.0f}, 0.048f * k + off, 0.056f * k + off, 0.048f * k + off, 5, 11));
+        shapes::Append(m, Elp(d.S[side] + Vec3{s * 0.002f, -0.016f, 0.0f}, 0.048f * k + off, 0.056f * k + off, 0.048f * k + off, 5, 11));
     }
     if (tmax >= 0.999f) shapes::Append(m, Ball(d.E[side], 0.034f * sc + off));
     return m;
@@ -374,7 +379,7 @@ HeadShape ShapeOfHead(const Dim& d) {
     HeadShape h;
     h.s = d.hs / 0.233f; h.yb = d.hb; h.design = d.headD;
     struct R { float y, cz, ra, rb; };
-    std::vector<R> rows = {{0.0f, 0.050f, 0.020f, 0.028f}, {0.012f, 0.046f, 0.034f, 0.040f}, {0.030f, 0.038f, 0.050f, 0.050f}, {0.055f, 0.024f, 0.071f, 0.059f}, {0.082f, 0.013f, 0.085f, 0.065f},
+    std::vector<R> rows = {{0.0f, 0.068f, 0.020f, 0.030f}, {0.012f, 0.063f, 0.034f, 0.042f}, {0.030f, 0.046f, 0.050f, 0.052f}, {0.055f, 0.024f, 0.071f, 0.059f}, {0.082f, 0.013f, 0.085f, 0.065f},
                            {0.112f, 0.007f, 0.091f, 0.071f}, {0.150f, 0.0f, 0.094f, 0.075f}, {0.176f, -0.003f, 0.092f, 0.073f}, {0.199f, -0.004f, 0.080f, 0.063f}, {0.2175f, -0.004f, 0.062f, 0.049f}, {0.2285f, -0.003f, 0.038f, 0.030f}, {0.2328f, -0.003f, 0.016f, 0.013f}};
     float wK = 1.0f, jawW = 1.0f, hK = 1.0f, chinZ = 1.0f, jawD = 1.0f;
     const std::string& g = h.design;
@@ -476,13 +481,13 @@ PolyMesh NoseMesh(const Dim& d, const HeadShape& h, const std::string& design) {
     else if (design == "flat") { wide = 1.25f; proj = 0.7f; }
     const float yb = h.yb + 0.085f * s;   // the base of the nose
     const float zf = FrontZ(h, 0, yb);
-    const float tipZ = zf + 0.019f * s * proj * sz;
+    const float tipZ = zf + 0.024f * s * proj * sz;
     const int rings = std::max(3, N(4, 3)), sec = std::max(6, N(8, 6));
-    shapes::Append(m, Elp({0, yb + 0.012f * s * len, tipZ - 0.006f * s}, 0.0092f * s * wide * sz, 0.0092f * s * sz, 0.0100f * s * sz, rings, sec));   // the tip
-    for (int sg = -1; sg <= 1; sg += 2) shapes::Append(m, Elp({sg * 0.0115f * s * wide * sz, yb + 0.004f * s, zf + 0.0075f * s * proj}, 0.0055f * s * sz, 0.0058f * s * sz, 0.0065f * s, 3, 6));   // the wings
+    shapes::Append(m, Elp({0, yb + 0.012f * s * len, tipZ - 0.006f * s}, 0.0115f * s * wide * sz, 0.0110f * s * sz, 0.0125f * s * sz, rings, sec));   // the tip
+    for (int sg = -1; sg <= 1; sg += 2) shapes::Append(m, Elp({sg * 0.0115f * s * wide * sz, yb + 0.004f * s, zf + 0.0075f * s * proj}, 0.0072f * s * sz, 0.0072f * s * sz, 0.0085f * s, 3, 6));   // the wings
     const float y0 = yb + 0.040f * s * len;   // the bridge: from between the eyes to the tip, a tapered tube
-    std::vector<Station> st = {{{0, y0, FrontZ(h, 0, y0) + 0.0005f * s}, 0.004f * s, 0.006f * s}, {{0, Lerp(y0, yb + 0.012f * s * len, 0.5f), Lerp(FrontZ(h, 0, y0), tipZ - 0.006f * s, 0.5f) + 0.002f * s}, 0.0068f * s * proj, 0.0075f * s * wide * sz},
-                               {{0, yb + 0.012f * s * len, tipZ - 0.007f * s}, 0.0085f * s * proj, 0.0085f * s * wide * sz}};
+    std::vector<Station> st = {{{0, y0, FrontZ(h, 0, y0) + 0.0005f * s}, 0.0055f * s, 0.0085f * s}, {{0, Lerp(y0, yb + 0.012f * s * len, 0.5f), Lerp(FrontZ(h, 0, y0), tipZ - 0.006f * s, 0.5f) + 0.002f * s}, 0.0092f * s * proj, 0.0100f * s * wide * sz},
+                               {{0, yb + 0.012f * s * len, tipZ - 0.007f * s}, 0.0105f * s * proj, 0.0105f * s * wide * sz}};
     shapes::Append(m, Loft(st, kFwd, std::max(5, N(6, 5)), false, false));
     return m;
 }
@@ -490,10 +495,10 @@ PolyMesh MouthMesh(const Dim& d, const HeadShape& h, const std::string& design) 
     PolyMesh m;
     const float s = h.s, my = h.yb + 0.056f * s;
     (void)d;
-    const float w = (design == "small" ? 0.017f : 0.022f) * s;
+    const float w = (design == "small" ? 0.019f : 0.025f) * s;
     const int rings = std::max(3, N(4, 3)), sec = std::max(6, N(10, 6));
-    shapes::Append(m, Elp({0, my + 0.005f * s, FrontZ(h, 0, my + 0.005f * s) - 0.002f * s}, w, 0.0050f * s, 0.0070f * s, rings, sec));          // the upper lip
-    shapes::Append(m, Elp({0, my - 0.0055f * s, FrontZ(h, 0, my - 0.0055f * s) - 0.0015f * s}, w * 0.88f, 0.0065f * s, 0.0078f * s, rings, sec));   // the lower lip
+    shapes::Append(m, Elp({0, my + 0.005f * s, FrontZ(h, 0, my + 0.005f * s) - 0.001f * s}, w, 0.0068f * s, 0.0090f * s, rings, sec));          // the upper lip
+    shapes::Append(m, Elp({0, my - 0.0055f * s, FrontZ(h, 0, my - 0.0055f * s) + 0.0f}, w * 0.9f, 0.0085f * s, 0.0100f * s, rings, sec));   // the lower lip
     if (design == "smile") for (int sg = -1; sg <= 1; sg += 2) shapes::Append(m, Elp({sg * (w + 0.0035f * s), my + 0.0085f * s, FrontZ(h, sg * w, my) - 0.002f * s}, 0.0045f * s, 0.0045f * s, 0.006f * s, 3, 6));
     return m;
 }
@@ -726,13 +731,13 @@ PolyMesh FootLocal(const std::string& design, float len, bool shoe, bool soleOnl
     const std::vector<R> rows = {{-0.066f, 0.042f, 0.036f, 0.026f}, {-0.040f, 0.052f, 0.050f, 0.036f}, {0.005f, 0.059f, 0.053f, 0.042f}, {0.058f, 0.046f, 0.040f, 0.046f}, {0.108f, 0.030f, 0.030f, 0.050f}, {0.158f, 0.021f, 0.021f, 0.048f}, {0.196f, 0.017f, 0.0165f, 0.040f}, {0.2145f, 0.0145f, 0.011f, 0.026f}};
     const float sk = shoe ? 1.07f : 1.0f;
     std::vector<Station> st;
-    for (const R& r : rows) st.push_back({{0, r.cy * u * (shoe ? 1.04f : 1.0f), r.z * u * (shoe ? 1.03f : 1.0f) * 0.9f}, r.ra * u * sk, r.rb * u * sk});
+    for (const R& r : rows) st.push_back({{0, r.cy * u * (shoe ? 1.04f : 1.0f) + (shoe ? 0.012f * u : 0.0f), r.z * u * (shoe ? 1.03f : 1.0f) * 0.9f}, r.ra * u * sk, r.rb * u * sk});
     PolyMesh m = soleOnly ? PolyMesh() : Loft(Resample(st, std::max(5, N(10, 5))), {0, 1, 0}, std::max(8, N(14, 8)), true, true);
     if (design == "round" && !soleOnly) for (Vec3& v : m.verts) if (v.z > 0.05f * u) v.x *= 1.12f;   // a rounder, wider toe box
     if (shoe) {
         // a thick sole that sticks out a little all round, a toe cap and a padded collar round the ankle opening
         std::vector<Station> sl;
-        for (const R& r : rows) sl.push_back({{0, 0.011f * u, r.z * u * 1.03f * 0.9f}, 0.011f * u, r.rb * u * sk * 1.10f});
+        for (const R& r : rows) sl.push_back({{0, 0.0125f * u, r.z * u * 1.03f * 0.9f * 1.03f}, 0.0125f * u, r.rb * u * sk * 1.14f});
         if (soleOnly) {   // the sole is a part of its own (its own colour)
             shapes::Append(m, Loft(Resample(sl, std::max(4, N(8, 4))), {0, 1, 0}, std::max(8, N(14, 8)), true, true));
         } else {
@@ -851,13 +856,14 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
     AddPart(o, "shirt/0", "shirt", [&](const std::string& dg) {
         const bool vest = dg == "vest" || dg == "tank";
         const bool tucked = dg == "tucked";
-        const float hem = tucked ? 0.12f : dg == "tunic" ? -0.22f : dg == "jacket" ? -0.11f : dg == "hoodie" ? -0.1f : dg == "longsleeve" ? -0.12f : dg == "tank" ? -0.13f : dg == "vest" ? -0.1f : -0.11f;
+        const float sleeveOff = 0.008f + slack * 0.5f;   // a sleeve is the arm plus a little cloth
+        const float hem = tucked ? 0.12f : dg == "tunic" ? -0.22f : dg == "jacket" ? -0.09f : dg == "hoodie" ? -0.09f : dg == "longsleeve" ? -0.04f : dg == "tank" ? -0.05f : dg == "vest" ? -0.04f : -0.03f;   // the hem is level, at the hips
         PolyMesh m = TorsoShell(d, tucked ? off - 0.008f : dg == "tunic" ? off + 0.004f : off, hem, 1.10f, true, dg == "tunic");
         const bool longSleeve = dg == "jacket" || dg == "longsleeve" || dg == "hoodie";
         if (!vest) for (int side = 0; side < 2; ++side) {
             Dim e = d; e.limbK = armK;
-            shapes::Append(m, UpperArm(e, side, off + 0.002f, longSleeve ? 1.0f : 0.5f, true, 0.0f, true));
-            if (longSleeve) shapes::Append(m, ForeArm(e, side, off, 0.97f));
+            shapes::Append(m, UpperArm(e, side, sleeveOff, longSleeve ? 1.0f : 0.55f, false, 0.10f, true, true));
+            if (longSleeve) shapes::Append(m, ForeArm(e, side, sleeveOff, 0.97f));
         }
         if (dg == "hoodie") shapes::Append(m, Elp({0, d.shoulderY + 0.03f, -d.Dd * 0.55f}, d.W * 0.45f, 0.075f, d.Dd * 0.4f, 4, 12));
         return m;
@@ -871,6 +877,7 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
         }
         const bool tuckedShirt = r.DesignFor("shirt", "shirt/0") == "tucked";
         PolyMesh m = TorsoShell(d, tuckedShirt ? off + 0.004f : offP, -0.125f, tuckedShirt ? 0.26f : 0.12f);
+        if (dg != "leggings") shapes::Append(m, TorsoShell(d, (tuckedShirt ? off + 0.004f : offP) + 0.012f, -0.12f, -0.035f));   // the waistband: a visible band just under the shirt's hem
         const float k = legK * (dg == "jeans" ? 1.1f : dg == "cargo" ? 1.16f : dg == "leggings" ? 0.97f : 1.0f);
         const float legOff = offP + 0.002f + (dg == "jeans" ? 0.006f : dg == "cargo" ? 0.012f : dg == "leggings" ? 0.0f : 0.004f);
         const float tmax = dg == "shorts" ? 0.78f : 1.0f;
@@ -918,6 +925,22 @@ void GenerateHumanOrganic(const Recipe& r, std::vector<GeneratedPart>& parts, co
             }
             return m;
         });
+    }
+    // a neutral head: nodded forward a few degrees about the top of the neck so the eyes look level (checked in tests/test_guided_human.cpp)
+    {
+        static const char* kHead[] = {"head", "face", "eyes", "eyewhite", "brows", "nose", "mouth", "ears", "hair", "hat", "glasses"};
+        const float a = 0.05f, ca = std::cos(a), sa = std::sin(a);
+        const Vec3 pv{0, hd.yb + 0.07f * hd.s, -0.012f};
+        for (GeneratedPart& p : parts) {
+            bool isHead = false;
+            for (const char* sl : kHead) if (p.slot == sl) isHead = true;
+            if (!isHead) continue;
+            for (Vec3& v : p.mesh.verts) {
+                const float y = v.y - pv.y, z = v.z - pv.z;
+                v.y = pv.y + y * ca - z * sa;
+                v.z = pv.z + y * sa + z * ca;
+            }
+        }
     }
 }
 

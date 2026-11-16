@@ -143,5 +143,26 @@ int main() {
             CHECK((int)ys.size() >= 8);   // many distinct heights: a limb cut into rings, so it bends smoothly
         }
     }
+
+    // ---- the head's posture: the Frankfurt plane (ear to the bottom of the eye) is level within 5 degrees, the nose tip is below the eye line,
+    // ---- the chin is not more than 2 cm behind the lower lip and the nose does not stick out more than 5 cm ----------------------------------
+    for (int lv = 0; lv < 4; ++lv)
+        for (const char* start : {"average", "woman", "man", "child", "elder"}) {
+            const std::vector<GeneratedPart> parts = Generate(Human(start, lv));
+            auto box = [&](const char* id) { return BoundsOf(parts, [&](const GeneratedPart& p) { return p.id == id; }); };
+            const Box ear = box("ears/0"), eye = box("eyewhite/0"), nose = box("nose/0"), mouth = box("mouth/0"), head = box("head/0");
+            CHECK(!ear.Empty() && !eye.Empty() && !nose.Empty() && !mouth.Empty() && !head.Empty());
+            if (ear.Empty() || eye.Empty() || nose.Empty() || mouth.Empty() || head.Empty()) continue;
+            const float earY = (ear.lo.y + ear.hi.y) * 0.5f, earZ = (ear.lo.z + ear.hi.z) * 0.5f;
+            const float eyeLowY = eye.lo.y, eyeZ = (eye.lo.z + eye.hi.z) * 0.5f;   // the lower rim of the eye
+            const float deg = std::atan2(eyeLowY - earY, eyeZ - earZ) * 57.29578f;
+            if (lv == 2) std::printf("  head posture %s: Frankfurt plane %.1f deg (0 = level, positive = face up)\n", start, deg);
+            CHECK(std::fabs(deg) < 5.0f);
+            CHECK(nose.lo.y < eye.lo.y);                                   // the tip of the nose is below the eye line
+            CHECK(nose.hi.z - eye.hi.z < 0.05f * (head.H() / 0.247f));     // a nose that does not stick out like a beak
+            float chinZ = -9, lowY = head.lo.y;
+            for (const GeneratedPart& p : parts) if (p.id == "head/0") for (const Vec3& v : p.mesh.verts) if (v.y < lowY + 0.03f * head.H() / 0.247f) chinZ = std::fmax(chinZ, v.z);
+            CHECK(chinZ > mouth.hi.z - 0.025f * (head.H() / 0.247f));      // the chin is not far behind the lips
+        }
     TEST_MAIN_RESULT();
 }

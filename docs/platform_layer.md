@@ -215,11 +215,41 @@ calling `DrawSplashStyled(SDL_Renderer*, ...)`, which wraps their renderer in th
 * Textures are sampled nearest or bilinear. No mip-maps and no anti-aliasing of triangle edges or rotated sprites, so rotated and minified images alias.
 * Rounding: alpha blending and modulation round to nearest, SDL's software renderer truncates: up to 1 level of difference per channel.
 * A rotated `Copy` samples each pixel centre (inverse mapping); SDL's renderers rotate differently at the edges.
-* Texture size is limited to 16384 x 16384. The software painter has no render targets.
+* Texture size is limited to 16384 x 16384. (Render targets: see the next section.)
+* A clip rectangle is kept in logical units and scaled when it is used; SDL fixes it in device pixels when it is set. The two agree when `SetScale` is called before `SetClipRect` (the order the apps use); with the opposite order the sdl2 painter's clip does not follow a later scale change (found by `okayui_painter_golden`, not changed).
 * OkayUI fallback fonts and `OkayUI::Image` work through the painter; a texture made by another painter is ignored.
 * Not fixed here: X11 shared memory (`XShm`; plain `XPutImage` is used), damage tracking (the whole frame is sent each frame),
   16-bit and indexed X visuals (`PresentPixels` returns false), a big-endian X server, HiDPI on the own backend, Win32 run time (only
   syntax-checked with MinGW).
+
+### Render targets and the golden scene (new, off by default like the rest of the painter)
+
+What existed: the painter interface, the sdl2 implementation, the software implementation (`OkayUI::soft::CreateBitmapPainter` is
+the headless reference renderer: no window, no GPU, no SDL) and `okayui_painter`, which draws the same calls on both and checks
+pixels worked out by hand. What the editor and launcher still need from `SDL_Renderer` (counted in `editor/` and `launcher/`):
+textures (done), `SDL_RenderReadPixels` (`ReadPixels`, done), `SDL_SetRenderTarget` (**missing**; the editor draws its graph
+screenshot and a viewport copy through one), `SDL_RenderGeometryRaw` with strides, `SDL_RenderFlush`, `SDL_GetRendererInfo` and
+`SDL_SaveBMP`. This change adds the missing one:
+
+* `TextureDesc::target`, `Painter::SetTarget(Tex)` and `GetTarget()`. While a target is current `OutputSize`, `Clear`, every draw
+  call and `ReadPixels` refer to it. A target starts unclipped at scale 1 every time it becomes current (SDL's renderer does the same); the
+  window's clip and logical scale are kept aside and come back with `SetTarget(null)`; the draw colour and blend mode are shared. A new target is transparent black. Copying a
+  texture into itself draws nothing (the software painter checks it; SDL leaves it undefined). Destroying the current target puts
+  drawing back on the window first.
+* Software: the target's pixels are swapped in as the frame buffer, so every drawing routine (fill rule, blending, sampling) is
+  the same code. The window's frame buffer waits aside and is what `Present` sends. sdl2: `SDL_TEXTUREACCESS_TARGET` and
+  `SDL_SetRenderTarget`; a new target is cleared to transparent black because SDL leaves it undefined.
+* `okayui_painter_golden`: the same hand-checked target tests on both painters (size while current, transparent start,
+  the window's clip and scale kept across a target, copy back with blending, two targets keeping their own pixels, destroy while current; unknown texture,
+  self-copy and `UpdateTexture` on the current target on the software painter only), then one 96 x 72 scene (blended and flat
+  rects, outline, lines, points, a clipped gradient triangle, a translucent triangle, a nearest and a colour-modulated texture copy,
+  a flipped sub-rectangle copy, a render target drawn into and copied twice) rendered by the software painter and compared with
+  the committed `okayui/tests/golden/painter_scene.png` (`OKAYUI_UPDATE_GOLDEN=1` rewrites it), plus pixels worked out by hand
+  from the calls. The sdl2 painter draws the same scene and is compared by the fraction of pixels more than 3 levels away.
+
+Written from the painter interface and the behaviour observed on SDL's software renderer (the first draft assumed per-target clip and scale; the sdl2 run showed SDL resets them, so the software painter was changed to match), not from any other
+project. Still missing for the editor and launcher: `RenderGeometryRaw` strides, flush, renderer info, BMP save, and (the real
+blocker) the editor and launcher windows themselves.
 
 ### Tests
 

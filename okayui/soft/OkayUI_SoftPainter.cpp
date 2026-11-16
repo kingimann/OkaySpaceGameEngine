@@ -22,7 +22,8 @@ namespace ui2d = okay::ui2d;
 
 constexpr int kMaxDim = 16384;
 
-// What belongs to a render target: its clip rectangle and logical scale (the draw colour and blend mode are shared).
+// The clip rectangle and logical scale of the window, kept aside while a render target is current. A render target
+// itself always starts unclipped at scale 1 when it becomes current (as SDL's renderer does).
 struct TargetState {
     bool clipOn = false;
     ui2d::Rect clip{0, 0, 0, 0};
@@ -31,7 +32,6 @@ struct TargetState {
 
 struct STex {
     int w = 0, h = 0;
-    TargetState state;   // used when this texture is a render target and not the current one
     std::vector<std::uint8_t> px;
     BlendMode blend = BlendMode::Blend;
     ScaleMode scale = ScaleMode::Nearest;
@@ -70,9 +70,9 @@ public:
         STex* t = tex ? T(tex) : nullptr;
         if (tex && !t) return false;
         if (t == m_target) return true;
-        if (m_target) { m_target->px = std::move(m_px); m_target->state = Save(); }
+        if (m_target) m_target->px = std::move(m_px);
         else { m_mainPx = std::move(m_px); m_mainW = m_w; m_mainH = m_h; m_mainState = Save(); }
-        if (t) { m_px = std::move(t->px); m_w = t->w; m_h = t->h; Load(t->state); }
+        if (t) { m_px = std::move(t->px); m_w = t->w; m_h = t->h; Load(TargetState()); }
         else { m_px = std::move(m_mainPx); m_w = m_mainW; m_h = m_mainH; Load(m_mainState); }
         m_target = t;
         if (!t) SyncSize();

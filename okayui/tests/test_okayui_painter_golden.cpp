@@ -62,33 +62,38 @@ void Targets(plat::Painter& p, const char* label, bool software) {
     CHECK(p.SetTarget(t));                                       // setting the current target again is fine and keeps the pixels
     CHECK(Is(Read(p), 2, 3, 200, 100, 50));
 
-    // The clip and the scale belong to the target.
-    ui2d::Rect clip{0, 0, 3, 3};
+    // The window's clip and scale are saved while a target is current; a target starts unclipped at scale 1 each time it
+    // becomes current (that is what SDL does, and the software painter follows it).
+    p.SetTarget(nullptr);
+    ui2d::Rect mclip{0, 0, 50, 40};
+    p.SetScale(2, 2);                                            // scale first: SDL keeps a clip in device pixels, so the order matters
+    p.SetClipRect(&mclip);
+    CHECK(p.SetTarget(t));
+    CHECK(!p.IsClipEnabled());
+    Col(p, 0, 255, 0);
+    ui2d::Rect clip{0, 0, 6, 6};
     p.SetClipRect(&clip);
-    p.SetScale(2, 2);
-    CHECK(p.IsClipEnabled());
+    ui2d::Rect big{0, 0, 20, 20};
+    p.FillRect(&big);                                            // scale 1 in the target: the clip cuts it to 6 x 6 pixels
+    a = Read(p);
+    CHECK(Is(a, 0, 0, 0, 255, 0) && Is(a, 5, 5, 0, 255, 0));    // inside the clip: green
+    CHECK(Is(a, 6, 6, 200, 100, 50) && Is(a, 6, 2, 0, 0, 0, 0)); // outside the clip: unchanged (orange from before, transparent)
     CHECK(p.SetTarget(nullptr));
     CHECK(p.GetTarget() == nullptr);
     p.OutputSize(&w, &h);
     CHECK(w == 64 && h == 48);                                   // back on the main surface
-    CHECK(!p.IsClipEnabled());                                   // the target's clip did not follow
+    CHECK(p.IsClipEnabled());                                    // the window's clip came back, not the target's
+    ui2d::Rect got{0, 0, 0, 0};
+    p.GetClipRect(&got);
+    CHECK(got.x == 0 && got.y == 0 && got.w == 50 && got.h == 40);
     Col(p, 255, 0, 0);
     ui2d::Rect q{1, 1, 3, 3};
-    p.FillRect(&q);                                              // scale 1 on the main surface: a 3 x 3 square at 1,1
+    p.FillRect(&q);                                              // window scale 2: a 6 x 6 square from device 2,2
     Img m = Read(p);
-    CHECK(Is(m, 1, 1, 255, 0, 0) && Is(m, 3, 3, 255, 0, 0) && Is(m, 4, 4, 10, 20, 30));
+    CHECK(Is(m, 2, 2, 255, 0, 0) && Is(m, 7, 7, 255, 0, 0) && Is(m, 8, 8, 10, 20, 30) && Is(m, 1, 1, 10, 20, 30));
     CHECK(Is(m, 10, 10, 10, 20, 30));                            // the target's fill did not leak onto the main surface
-    p.SetTarget(t);
-    CHECK(p.IsClipEnabled());                                    // its clip is back
-    Col(p, 0, 255, 0);
-    ui2d::Rect big{0, 0, 20, 20};
-    p.FillRect(&big);                                            // scale 2, clip 3 x 3 logical = 6 x 6 device pixels
-    a = Read(p);
-    CHECK(Is(a, 0, 0, 0, 255, 0) && Is(a, 5, 5, 0, 255, 0));    // inside the clip: green
-    CHECK(Is(a, 6, 6, 200, 100, 50) && Is(a, 6, 2, 0, 0, 0, 0)); // outside the clip: unchanged (orange from before, transparent)
     p.SetClipRect(nullptr);
     p.SetScale(1, 1);
-    p.SetTarget(nullptr);
 
     // A target copied onto the main surface, with the target's own blending.
     p.SetBlendMode(plat::BlendMode::Blend);

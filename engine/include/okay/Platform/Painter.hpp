@@ -69,9 +69,9 @@ public:
 
     // ---- render targets ---------------------------------------------------------------------
     /// Draw into `t` (made with TextureDesc::target) from now on; null = back to the window (or the bitmap). While a
-    /// target is set OutputSize, ReadPixels, Clear and every draw call refer to it. The clip rectangle and the logical
-    /// scale belong to the target (each starts without a clip and at scale 1, and is kept while another is current);
-    /// the draw colour and the blend mode are shared. Returns false (and changes nothing) for a texture that is not a
+    /// target is set OutputSize, ReadPixels, Clear and every draw call refer to it. A target starts without a clip
+    /// and at scale 1 every time it becomes current; the window's own clip and scale are kept and come back with
+    /// SetTarget(null). The draw colour and the blend mode are shared. Returns false (and changes nothing) for a texture that is not a
     /// target of this painter. Copying a texture into itself is not defined and draws nothing. Destroying the current
     /// target returns drawing to the window first.
     virtual bool SetTarget(ui2d::Tex t) = 0;

@@ -3716,3 +3716,8 @@ add_executable(test_hierarchy_context_model test_hierarchy_context_model.cpp)
 target_include_directories(test_hierarchy_context_model PRIVATE ${CMAKE_SOURCE_DIR}/editor)
 target_compile_definitions(test_hierarchy_context_model PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME hierarchy_context_model COMMAND test_hierarchy_context_model)
+
+# A VoxelTerrain's generated mesh colours are not saved (#888 finding 24).
+add_executable(test_voxel_no_meshcolors test_voxel_no_meshcolors.cpp)
+target_link_libraries(test_voxel_no_meshcolors PRIVATE okay::engine)
+add_test(NAME voxel_no_meshcolors COMMAND test_voxel_no_meshcolors)

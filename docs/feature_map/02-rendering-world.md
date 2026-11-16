@@ -123,7 +123,7 @@ Mostly on main and tested. Nothing is open: #574 added the optimization tools (L
 - **API:** `Terrain::RaiseAt`, `Terrain::Erode`, `VoxelTerrain::Dig`, `TerrainDigger`, `Water`, `WorldStreamer`, `Tilemap`, `TilemapCollider2D`
 - **Editor:** GameObject > 3D Object > Terrain, Voxel Terrain (caves), Water and GameObject > 2D Object > Tilemap; their Inspector sections and the Terrain sculpt tools (editor/main.cpp)
 - **Docs:** `docs/terrain_water.md`
-- **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
+- **Tests:** `terrain`, `terrain_ops`, `voxel`, `voxel_dig`, `voxel_no_meshcolors`, `worldstreamer`, `tilemap_collision`, `particles_tilemap`
 - **Status:** Works - read the headers of every component above; `terrain` also covers water, flashlight and the sandbox template
 - **Open:** vegetation and detail painting, procedural scatter and a proper sculpting UI are area 29; streaming is by prefab cell files baked by hand, not by the `Optimize/StreamingGrid` planner of #574 (area 27)
 - **Related:** 2.2, 2.4, 6.2, 27, 29, 1.6

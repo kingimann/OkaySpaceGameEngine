@@ -1045,6 +1045,23 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Voxel terrain saves are about half the size (bug fix, #888 finding 24)
+
+A scene with a Voxel Terrain used to save the terrain's generated mesh colours as well as its voxels. The terrain rebuilds
+those colours on load, so they only made the file bigger and slower to open.
+
+1. In the launcher, create a project from the **Sandbox** template (or open the editor and use the Sandbox template),
+   then **File > Save** the scene.
+2. Look at the size of the `.scene` file in the project's folder. It is now a bit under half of what it was: the test
+   measures the Sandbox scene at 327 KB instead of 733 KB. A terrain with many caves shrinks even more (a 64x36x64
+   terrain with caves went from 1.84 MB to 197 KB).
+3. Close and reopen the scene: the hills, caves and grass/rock/snow colours look exactly the same as before saving.
+4. An older scene saved before this fix still opens and looks the same. Save it again and it shrinks.
+
+**Status.** Tested headless (`test_voxel_no_meshcolors`, run on Linux): the default 64x36x64 terrain and the Sandbox
+template save without `meshcolors`, reload with the identical mesh and colours, and an old-style file still loads the
+same. The editor and the Windows release were not run.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

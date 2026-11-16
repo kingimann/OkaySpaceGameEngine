@@ -1437,6 +1437,10 @@ add_executable(test_anim_sm_realloc test_anim_sm_realloc.cpp)
 target_link_libraries(test_anim_sm_realloc PRIVATE okay::engine)
 add_test(NAME anim_sm_realloc COMMAND test_anim_sm_realloc)
 
+add_executable(test_anim_nan_speed test_anim_nan_speed.cpp)
+target_link_libraries(test_anim_nan_speed PRIVATE okay::engine)
+add_test(NAME anim_nan_speed COMMAND test_anim_nan_speed)
+
 add_executable(test_clip_graph test_clip_graph.cpp)
 target_link_libraries(test_clip_graph PRIVATE okay::engine)
 target_compile_definitions(test_clip_graph PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

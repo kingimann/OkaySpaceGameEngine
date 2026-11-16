@@ -244,6 +244,13 @@ s = anim_state()                    # current state name
 anim_goto("Dead")                   # force a state directly
 ```
 
+A parameter set to NaN or Inf (a speed worked out as 0/0 on a stopped body,
+say) is ignored: it keeps its last value and the Console warns once per
+parameter. A state speed or a match-speed rate that still comes out NaN or Inf
+plays at 1, and a clip clock that ever becomes NaN restarts at 0. Before this,
+one such frame left the bones at NaN for good and the state could not be left
+(#888 finding 38; `tests/test_anim_nan_speed.cpp`).
+
 A typical setup: `Idle -> Run` (speed > 2), `Run -> Idle` (speed < 1),
 `Idle/Run -> Attack` (trigger "attack", loop off), `Attack -> Idle`
 (On Clip End). The machine drives the Model Animator (or the Character), so

@@ -179,6 +179,7 @@ bool CharacterAnimBackend::BlendMany(float dt, const std::vector<int>& clips, co
     float next = p.phase + dt * m_speed / std::fmax(p.cycle, 1e-4f);
     if (!p.loop) p.phase = next >= 1.0f ? 1.0f : (next < 0.0f ? 0.0f : next);
     else p.phase = frac01(next);
+    if (!std::isfinite(p.phase)) p.phase = 0.0f;   // safety net: a NaN phase never recovers
     const float len = ClipLength(dom);
     if (m_speed > 0.0f && len > 0.0f && p.phase != prev) {   // the dominant clip's events over this frame's window
         if (p.phase < prev) { FireWindow(dom, prev * len, len); m_fromStart = true; FireWindow(dom, 0.0f, p.phase * len); }
@@ -247,6 +248,7 @@ void CharacterAnimBackend::Advance(float dt) {
         const float len = ClipLength(m_cur.clip);
         const float prev = m_cur.time;
         m_cur.time += dt * m_speed;
+        if (!std::isfinite(m_cur.time)) m_cur.time = 0.0f;   // safety net: a NaN clock never recovers
         m_cur.rate = m_speed;
         if (len > 0.0f) {
             if (m_loop) {

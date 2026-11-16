@@ -333,7 +333,19 @@ public:
     }
 
     // ---- Parameters (runtime; set from gameplay). Layers share the base's. ----
-    void SetFloat(const std::string& name, float v)  { Base()->m_floats[name] = v; }
+    /// A NaN or Inf is dropped (the parameter keeps its last finite value) with
+    /// one warning per parameter: one frame of 0/0 from gameplay used to leave
+    /// the clip clocks at NaN for good (#888 finding 38).
+    void SetFloat(const std::string& name, float v) {
+        AnimStateMachine* b = Base();
+        if (!std::isfinite(v)) {
+            if (b->m_nonFiniteWarned.insert(name).second)
+                OKAY_WARN("Animator: parameter \"", name, "\" was set to ", v,
+                          "; ignored, it keeps its last value (warned once)");
+            return;
+        }
+        b->m_floats[name] = v;
+    }
     void SetInt(const std::string& name, int v)      { Base()->m_floats[name] = (float)v; }
     void SetBool(const std::string& name, bool b)    { Base()->m_bools[name] = b; }
     void SetTrigger(const std::string& name)         { Base()->m_triggers[name] = true; }
@@ -524,7 +536,7 @@ public:
             idx.clear();
             for (const Motion& m : cur->motions) idx.push_back(MotionClip(ma, *cur, m.clip));
             const float prevPhase = ma->BlendPhase();
-            ma->SetSpeed(spd * MatchRate(*cur, m_bWeights));
+            ma->SetSpeed(FiniteRate(spd * MatchRate(*cur, m_bWeights)));
             ma->SetExternalDrive(ma->BlendMany(dt, idx, m_bWeights));
             float ph = ma->BlendPhase();
             m_normTime += (ph >= prevPhase) ? ph - prevPhase : ph + 1.0f - prevPhase;
@@ -538,7 +550,7 @@ public:
             int A = lo >= 0 ? MotionClip(ma, *cur, cur->motions[lo].clip) : -1;
             int B = hi >= 0 ? MotionClip(ma, *cur, cur->motions[hi].clip) : -1;
             const float prevPhase = ma->BlendPhase();
-            ma->SetSpeed(spd * MatchRate(*cur, m_bWeights));
+            ma->SetSpeed(FiniteRate(spd * MatchRate(*cur, m_bWeights)));
             ma->SetExternalDrive(ma->BlendClips(dt, A, B, w));
             float ph = ma->BlendPhase();
             m_normTime += (ph >= prevPhase) ? ph - prevPhase : ph + 1.0f - prevPhase;
@@ -559,6 +571,7 @@ public:
             float len = ma->ActiveClip() >= 0 ? ma->ClipLength(ma->ActiveClip()) : 0.0f;
             m_normTime += len > 1e-5f ? dt * std::fabs(spd) / len : 0.0f;
         }
+        if (!std::isfinite(m_normTime)) m_normTime = 0.0f;   // safety net: exit times compare against it
 
         ApplyIk(*cur, dt);
         EvaluateTransitions(dt, ma, cur);
@@ -590,9 +603,12 @@ private:
         if (!m_charBackend) m_charBackend = std::make_unique<CharacterAnimBackend>(gameObject);
         return m_charBackend.get();
     }
+    /// A playback rate that is NaN or Inf plays at 1 instead: it goes into the
+    /// clip clocks (t += dt * rate), and a NaN clock never recovers.
+    static float FiniteRate(float r) { return std::isfinite(r) ? r : 1.0f; }
     float StateSpeed(const State& st) const {
-        if (st.blendTree && st.matchSpeed) return st.speed;   // MatchRate reads speedParam
-        return st.speed * (st.speedParam.empty() ? 1.0f : GetFloat(st.speedParam));
+        if (st.blendTree && st.matchSpeed) return FiniteRate(st.speed);   // MatchRate reads speedParam
+        return FiniteRate(st.speed * (st.speedParam.empty() ? 1.0f : GetFloat(st.speedParam)));
     }
     /// A matchSpeed tree's playback rate for blend weights `w` (1 otherwise).
     float MatchRate(const State& st, const std::vector<float>& w) const {
@@ -602,14 +618,17 @@ private:
         if (!st.speedParam.empty()) want = std::fabs(GetFloat(st.speedParam));
         else {
             const float x = GetFloat(st.blendParam), y = two ? GetFloat(st.blendParamY) : 0.0f;
-            want = std::sqrt(x * x + y * y);
+            // x * x overflows to Inf from about 1.8e19; hypot does not. The
+            // plain sum stays for every other value, so those rates keep their bits.
+            const float sq = x * x + y * y;
+            want = std::isfinite(sq) ? std::sqrt(sq) : std::hypot(x, y);
         }
         float have = 0.0f;
         for (std::size_t i = 0; i < st.motions.size() && i < w.size(); ++i) {
             const float y = two ? st.motions[i].posY : 0.0f;
             have += w[i] * std::sqrt(st.motions[i].threshold * st.motions[i].threshold + y * y);
         }
-        return have > 1e-4f ? want / have : 1.0f;
+        return have > 1e-4f ? FiniteRate(want / have) : 1.0f;
     }
 
     /// Clip index for a slot. `name` wins; `fallbackClip` stands in when that
@@ -677,6 +696,7 @@ private:
             if (c < 0) return;
             float len = ma->ClipLength(c);
             if (advance) lp.time += dt * spd;
+            if (!std::isfinite(lp.time)) lp.time = 0.0f;   // safety net (see FiniteRate)
             float t = lp.time;
             if (len > 0.0f) t = st.loop ? std::fmod(std::fmod(t, len) + len, len) : std::fmin(std::fmax(t, 0.0f), len);
             ct.push_back({c, t}); w.push_back(1.0f);
@@ -699,8 +719,9 @@ private:
         }
         if (sum <= 0.0f) return;
         cycle /= sum;
-        const float rate = spd * MatchRate(st, bw);
+        const float rate = FiniteRate(spd * MatchRate(st, bw));
         if (advance) lp.phase = std::fmod(lp.phase + dt * rate / std::fmax(cycle, 1e-4f), 1.0f);
+        if (!std::isfinite(lp.phase)) lp.phase = 0.0f;   // safety net (see FiniteRate)
         for (std::size_t i = 0; i < st.motions.size(); ++i) {
             int c = MotionClip(ma, st, st.motions[i].clip);
             if (c < 0 || bw[i] <= 0.0f) continue;
@@ -1060,6 +1081,7 @@ private:
     float m_stateTime = 0.0f, m_normTime = 0.0f;
     int   m_bLo = -1, m_bHi = -1; float m_bW = 0.0f;
     std::unordered_map<std::string, float> m_floats;
+    std::unordered_set<std::string> m_nonFiniteWarned;   ///< parameters SetFloat already warned about
     std::unordered_map<std::string, bool>  m_bools;
     std::unordered_map<std::string, bool>  m_triggers;
     std::vector<float> m_bWeights;

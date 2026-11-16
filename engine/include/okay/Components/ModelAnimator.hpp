@@ -432,6 +432,9 @@ public:
                     if (clock < 0.0f) clock += len;
                 } else clock = std::fmin(std::fmax(clock, 0.0f), len);
             }
+            // Safety net: a NaN / Inf speed would leave the clock (and the bones)
+            // at NaN for good, since t += dt * speed never recovers.
+            if (!std::isfinite(clock)) clock = 0.0f;
             m_clock = clock;
             if (len > 0.0f) m_phase = m_clock / len;   // a hand-over to the smooth blend keeps the step
             ApplyPose(active, m_clock);
@@ -1821,6 +1824,7 @@ private:
     /// pose instead of sampling the first frame on the frame the clip finishes.
     float AdvanceBlendPhase(float prev, float step) {
         float next = prev + step;
+        if (!std::isfinite(next)) next = 0.0f;   // safety net: a NaN / Inf phase never recovers
         if (!loop) return next >= 1.0f ? 1.0f : (next < 0.0f ? 0.0f : next);
         next = std::fmod(next, 1.0f);
         if (next < 0.0f) next += 1.0f;

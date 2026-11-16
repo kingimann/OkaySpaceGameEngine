@@ -798,6 +798,26 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Animator: a NaN speed no longer breaks the character (bug fix, branch `claude2/anim-nan-speed`, not merged or released yet)
+
+Before: one frame with a speed parameter of NaN (for example `sqrt(-1)`, or 0/0 from gameplay) left the character's bones
+at NaN for good. The model vanished or exploded and never came back, even after the parameter was normal again.
+
+1. In the editor, make a new project from a player template (or add **GameObject > 3D > Character**). Every Character has
+   an Animator with the default graph; its Walk and Run states read the speed parameter `gaitSpeed`.
+2. Add a Script to the Character with:
+
+   ```c
+   update(dt) { if (key_down("n")) anim_set_float("gaitSpeed", sqrt(-1)) }
+   ```
+
+3. Press **Play**, walk around, and press **N** a few times while walking.
+4. Expect: the character keeps animating (no frozen, vanished or stretched body), and the Console shows once:
+   `Animator: parameter "gaitSpeed" was set to nan; ignored, it keeps its last value (warned once)`.
+
+**Status.** Tested headless only (`test_anim_nan_speed`, on Linux). The editor steps above were not run (no editor build
+here); they are unverified until you try them.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

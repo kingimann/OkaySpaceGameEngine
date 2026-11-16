@@ -353,6 +353,12 @@ add_executable(test_script_spawn_path_guard test_script_spawn_path_guard.cpp)
 target_link_libraries(test_script_spawn_path_guard PRIVATE okay::engine)
 add_test(NAME script_spawn_path_guard COMMAND test_script_spawn_path_guard)
 
+# The other script file loaders keep the same rule: OkayScript pool_get/pool_prewarm/pool_idle/ui_load_theme/bt_run/
+# net_spawn_owned, the ActionList net_spawn_owned op and the Visual Script NetSpawnOwned node refuse outside paths.
+add_executable(test_script_path_guard_rest test_script_path_guard_rest.cpp)
+target_link_libraries(test_script_path_guard_rest PRIVATE okay::engine)
+add_test(NAME script_path_guard_rest COMMAND test_script_path_guard_rest)
+
 add_executable(test_script_components test_script_components.cpp)
 target_link_libraries(test_script_components PRIVATE okay::engine)
 add_test(NAME script_components COMMAND test_script_components)

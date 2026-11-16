@@ -157,7 +157,7 @@ int main() {
         CHECK(AntiCheatSettings::Parse(s.ToText(), t, &err));
         CHECK(t.banFile == "bans.txt" && t.auditLog == "a.log" && t.banAfterKicks == 2 && t.banHours == 12.0f && !t.banOnRequest && t.maxPacketsPerSecond == 300);
         AntiCheatSettings d;
-        CHECK(d.banAfterKicks == 3 && d.banHours == 168.0f && d.banOnRequest && d.maxPacketsPerSecond == 600 && d.banFile.empty());
+        CHECK(d.banAfterKicks == 3 && d.banHours == 168.0f && d.banOnRequest && d.maxPacketsPerSecond == -1 && d.banFile.empty());
         CHECK(!AntiCheatSettings::Parse("banHours abc\n", s, &err));
         CHECK(!AntiCheatSettings::Parse("banAfterKicks -1\n", s, &err));
         CHECK(!AntiCheatSettings::Parse("maxPacketsPerSecond 1.5\n", s, &err));

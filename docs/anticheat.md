@@ -62,7 +62,7 @@ ticketAudience arena-1              # this server's id in tickets (required with
 ticketAnyAudience false             # also accept tickets for any server (aud "*")
 # Network hardening
 maxClockDrift 0.05                  # a client's game clock may run 5% off; 0 = no check
-maxPacketsPerSecond 600             # packets of ANY type a joined client may send per second; 0 = unlimited
+maxPacketsPerSecond 600             # packets of ANY type a joined client may send per second; 0 = unlimited; unset = 600 on a dedicated server, unlimited elsewhere
 # Bans and the audit log (a dedicated server with the anti-cheat on uses okay_bans.txt and okay_anticheat_audit.log)
 banFile okay_bans.txt               # the ban list; "" = bans last only until the server stops
 banAfterKicks 3                     # kicks of one identity before it is banned; 0 = kicks never become bans
@@ -371,7 +371,7 @@ lives on the server; nothing here is sent to any outside service.
   file but cannot read a name, an address or an account id from it. The salt is kept beside the log (`<log>.salt`), so
   tags stay the same after a restart. The file moves to `<log>.1` at 4 MiB (one older file is kept). A dedicated server
   with the anti-cheat on writes `okay_anticheat_audit.log` unless you name another file or pass `--no-audit-log`.
-- **The packet ceiling** (`maxPacketsPerSecond`, default 600, 0 = unlimited). Rate limits already existed for custom
+- **The packet ceiling** (`maxPacketsPerSecond`; unset = 600 on a dedicated server and unlimited elsewhere, 0 = unlimited). Rate limits already existed for custom
   messages, RPCs, SyncVars and hit claims, but a joined client could send unlimited State, input, ping, clock or ack
   packets. Now every packet from a joined client counts. Past the ceiling the packets are dropped, and the flood is
   reported once a second as an "rpc flood" (`packet flood: over N packets in a second`), which the normal rules turn

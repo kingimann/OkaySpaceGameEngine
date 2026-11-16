@@ -3072,15 +3072,16 @@ void NetworkManager::ServerTick(float dt) {
             continue;
         // The anti-cheat's packet ceiling: any packet type from a joined client counts (State, inputs, pings,
         // acks and the rest have no limit of their own), so a flood of one cheap type can't eat the server's time.
-        if (anticheat.settings.enabled && anticheat.settings.maxPacketsPerSecond > 0 && type != Join && type != JoinHello &&
+        const int pktCeiling = anticheat.settings.maxPacketsPerSecond < 0 ? (dedicated ? 600 : 0) : anticheat.settings.maxPacketsPerSecond;
+        if (anticheat.settings.enabled && pktCeiling > 0 && type != Join && type != JoinHello &&
             type != Query && type != PlayerQuery) {
             if (auto pc = m_clients.find(from); pc != m_clients.end()) {
                 Client& c = pc->second;
-                if (++c.pktCount > anticheat.settings.maxPacketsPerSecond) {
+                if (++c.pktCount > pktCeiling) {
                     if (!c.pktReported) {
                         c.pktReported = true;
                         const std::uint32_t pid = c.id;
-                        anticheat.Report(pid, CheatKind::RpcFlood, "packet flood: over " + std::to_string(anticheat.settings.maxPacketsPerSecond) + " packets in a second");
+                        anticheat.Report(pid, CheatKind::RpcFlood, "packet flood: over " + std::to_string(pktCeiling) + " packets in a second");
                         AntiCheatAfterRefusal(pid);
                     }
                     continue;   // dropped (the reference above may be gone if the peer was just kicked)

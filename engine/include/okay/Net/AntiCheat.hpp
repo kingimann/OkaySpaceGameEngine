@@ -118,10 +118,11 @@ struct AntiCheatSettings {
     /// slack allow for, however slow a client makes its pings look.
     float maxRewindRtt = 0.3f;
 
-    /// Packets of any type a joined client may send per second (0 = unlimited). Past it, packets are
+    /// Packets of any type a joined client may send per second (0 = unlimited; -1 = automatic: 600 on a
+    /// dedicated server, unlimited elsewhere, so a game that bursts many messages isn't cut off). Past it, packets are
     /// dropped and the flood is reported as an "rpc flood" once a second. Message types with a limit
     /// of their own (RPCs, SyncVars) keep it as well. A normal client sends 30 to 150 a second.
-    int   maxPacketsPerSecond = 600;
+    int   maxPacketsPerSecond = -1;
 
     // ---- Bans and the audit log (okay/Net/AntiCheatLog.hpp) ----
     /// A text file of banned identities. "" = no file: bans last only until the

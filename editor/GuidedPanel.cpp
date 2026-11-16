@@ -1,4 +1,5 @@
 #include "GuidedPanel.hpp"
+#include <chrono>
 #include "EditorWidgets.hpp"
 #include "imgui.h"
 #include "okay/Components/MeshRenderer.hpp"
@@ -45,6 +46,15 @@ struct State {
     gd::Recipe pending;                 // what the panel is editing
     std::uint64_t analysisKey = 0;
     gd::Analysis analysis;
+    double keyTime = -1;                // when the mesh was last fingerprinted (it is not hashed every frame)
+    // What the last change cost, shown in the panel (milliseconds).
+    struct Cost { double analyse = 0, build = 0, mesh = 0, save = 0, total = 0; int triangles = 0; bool fast = false; std::string what; } cost;
+    double previewMs = 0;               // the last drag preview
+    // A drag preview: the model follows the slider at Medium detail; the real mesh waits here until the slider is let go.
+    bool previewing = false;
+    okay::Mesh previewBackup;
+    MeshRenderer* previewMr = nullptr;
+    gd::PreviewThrottle throttle;
 
     std::map<std::string, gd::GuidedHistory> history;   // per model path
 
@@ -131,6 +141,24 @@ void LoadSelected(Host& h, MeshRenderer* mr) {
 
 void Invalidate() { S().loaded = false; S().analysisKey = 0; }
 
+double NowMs() { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+
+// Fingerprint of the mesh as drawn plus the recipe: what the cached analysis was made for.
+std::uint64_t KeyNow(MeshRenderer* mr, const gd::Recipe& r) {
+    return okay::modeling::GeometryHash(mr->mesh) * 31u + std::hash<std::string>()(r.Serialize());
+}
+
+// Put the real mesh back after a drag preview (the slider was let go without a change, or the change is about to be applied).
+void EndPreview(MeshRenderer* mr) {
+    State& s = S();
+    if (!s.previewing) return;
+    if (mr && mr == s.previewMr) mr->mesh = std::move(s.previewBackup);
+    s.previewBackup = okay::Mesh();
+    s.previewing = false;
+    s.previewMr = nullptr;
+    s.throttle.Reset();
+}
+
 bool SaveFiles(Host& h, MeshRenderer* mr, const gd::Recipe& r) {
     std::string err;
     if (!okay::modeling::SaveMeshAsset(mr->meshPath, mr->mesh, &err)) { Log(h, "Couldn't save the model file: " + err, 2); return false; }
@@ -176,11 +204,25 @@ bool CreateModel(Host& h, const gd::Recipe& recipe, const std::string& name) {
 }
 
 // Rebuild the model from `next`, keeping everything the user did by hand (see Guided.hpp). Returns true when the mesh changed.
+// A model nobody touched (the cached analysis says so for the mesh as it is now) is simply built again: no reading back of the
+// mesh, no matching of faces, no analysis afterwards. Every step is timed for the line the panel shows.
 bool Apply(Host& h, GameObject* go, MeshRenderer* mr, const gd::Recipe& next, const gd::RegenOptions& opt, const std::string& what) {
     State& s = S();
+    EndPreview(mr);   // the real mesh first: the preview must never be mistaken for the user's edits
     if (h.leaveEditMode) h.leaveEditMode(go);
-    const PolyMesh cur = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f});
-    gd::RegenResult r = gd::Regenerate(cur, s.stored, next, opt);
+    State::Cost c; c.what = what;
+    const double t0 = NowMs();
+    const bool fast = s.analysis.ok && gd::IsUntouched(s.analysis) && s.analysisKey != 0 && s.analysisKey == KeyNow(mr, s.stored);
+    PolyMesh cur;
+    gd::RegenResult r;
+    if (fast) {
+        r = gd::RegenerateUntouched(s.stored, next);
+        c.fast = true;
+    } else {
+        cur = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f});
+        r = gd::Regenerate(cur, s.stored, next, opt);
+    }
+    c.build = NowMs() - t0;
     if (r.needsDecision) {
         s.conflictOpen = true;
         s.conflict = r;
@@ -188,20 +230,33 @@ bool Apply(Host& h, GameObject* go, MeshRenderer* mr, const gd::Recipe& next, co
         return false;
     }
     if (!r.ok) { Log(h, what + ": " + r.message, 1); s.pending = s.stored; return false; }
-    gd::GuidedState before; before.mesh = cur; before.recipe = s.stored;
+    gd::GuidedState before;
+    before.recipe = s.stored;
+    if (fast) before.fromRecipe = true;   // an untouched model is its design: keep the recipe, not a copy of the mesh
+    else before.mesh = cur;
     s.history[s.path].Push(before);
-    h.ed->PushUndo();
+    h.ed->PushUndo();   // one undo step for the whole drag: a slider only gets here when it is let go
+    const double t1 = NowMs();
     SetMesh(mr, r.mesh, gd::DetailOf(r.recipe), r.recipe.templateId == "human" && (int)r.recipe.Param("style", 0) != 1);
-    if (!SaveFiles(h, mr, r.recipe)) return false;
-    s.stored = r.recipe; s.pending = r.recipe; s.analysisKey = 0;
+    c.mesh = NowMs() - t1;
+    c.triangles = mr->mesh.TriangleCount();
+    const double t2 = NowMs();
+    const bool saved = SaveFiles(h, mr, r.recipe);
+    c.save = NowMs() - t2;
+    if (!saved) return false;
+    s.stored = r.recipe; s.pending = r.recipe;
+    if (fast) { s.analysis = gd::UntouchedAnalysis(r.recipe); s.analysisKey = KeyNow(mr, s.stored); }   // still untouched: no need to analyse again
+    else s.analysisKey = 0;
+    c.total = NowMs() - t0;
+    s.cost = c;
     h.ed->dirty = true;
-    Log(h, what + ": " + r.message);
+    Log(h, what + ": " + r.message + " (" + std::to_string((int)(c.total + 0.5)) + " ms)");
     return true;
 }
 
 // ---- Parameter widgets ------------------------------------------------------------------------------------
 // Returns true when the user finished a change (released a slider, toggled, chose).
-bool ParamWidget(const gd::ParamDef& p, gd::Recipe& r) {
+bool ParamWidget(const gd::ParamDef& p, gd::Recipe& r, bool* dragged = nullptr) {
     ImGui::PushID(p.id.c_str());
     bool done = false;
     double& v = r.params[p.id];
@@ -209,13 +264,13 @@ bool ParamWidget(const gd::ParamDef& p, gd::Recipe& r) {
     switch (p.kind) {
         case gd::ParamDef::Kind::Float: {
             float f = (float)v;
-            if (ImGui::SliderFloat(p.label.c_str(), &f, (float)p.min, (float)p.max, "%.3f")) v = f;
+            if (ImGui::SliderFloat(p.label.c_str(), &f, (float)p.min, (float)p.max, "%.3f")) { v = f; if (dragged) *dragged = true; }
             done = ImGui::IsItemDeactivatedAfterEdit();
             break;
         }
         case gd::ParamDef::Kind::Int: {
             int i = (int)v;
-            if (ImGui::SliderInt(p.label.c_str(), &i, (int)p.min, (int)p.max)) v = i;
+            if (ImGui::SliderInt(p.label.c_str(), &i, (int)p.min, (int)p.max)) { v = i; if (dragged) *dragged = true; }
             done = ImGui::IsItemDeactivatedAfterEdit();
             break;
         }
@@ -246,14 +301,12 @@ int TrianglesFor(const gd::Recipe& base, float detail) {
     gd::Recipe r = base; r.params[gd::kDetailParam] = detail;
     return gd::TriangleCount(gd::Create(r));
 }
-bool DetailWidget(const gd::Template& t, gd::Recipe& pending, const gd::Recipe& stored) {
-    static std::string s_key;
-    static int s_tris = 0;
+bool DetailWidget(const gd::Template& t, gd::Recipe& pending, const gd::Recipe& stored, int trianglesNow) {
+    // (The triangle count used to be rebuilt from the recipe every time a setting changed, which built the whole model on every
+    // slider tick. The model on screen already has it, and a level that is about to be built is counted once, when chosen.)
     static float s_ask = -1.0f;   // a value waiting for the "this is big" answer
     static int s_askTris = 0;
     float cur = std::min(std::max((float)pending.Param(gd::kDetailParam, 1), 0.0f), 3.0f);
-    const std::string key = pending.Serialize();
-    if (key != s_key) { s_key = key; s_tris = TrianglesFor(pending, cur); }   // recount only when a setting changes
     bool done = false;
     auto choose = [&](float v) {
         const int n = TrianglesFor(pending, v);
@@ -270,7 +323,7 @@ bool DetailWidget(const gd::Template& t, gd::Recipe& pending, const gd::Recipe& 
         if (lv) ImGui::SameLine();
         if (ImGui::SmallButton((std::string(names[lv]) + "##detailpreset").c_str())) choose((float)lv);
     }
-    ImGui::TextDisabled("%d triangles now", s_tris);
+    ImGui::TextDisabled("%d triangles now", trianglesNow);
     if (ImGui::BeginPopupModal("Very detailed model##big", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("This detail level makes about %d triangles.", s_askTris);
         ImGui::TextWrapped("That can make the editor and the game slower. You can go back to a lower level at any time.");
@@ -510,24 +563,39 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
     // Undo / redo of guided steps (the scene's Ctrl+Z also restores the mesh).
     {
         gd::GuidedHistory& hist = s.history[s.path];
-        ImGui::BeginDisabled(!hist.CanUndo());
-        if (ImGui::Button("Undo guided step")) {
-            gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
+        auto step = [&](bool undo) {
+            EndPreview(mr);
+            gd::GuidedState cur; cur.recipe = s.stored;
+            const bool untouched = s.analysis.ok && gd::IsUntouched(s.analysis) && s.analysisKey != 0 && s.analysisKey == KeyNow(mr, s.stored);
+            if (untouched) cur.fromRecipe = true; else cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f});
             if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Undo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human" && (int)cur.recipe.Param("style", 0) != 1); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
-        }
+            if (!(undo ? hist.Undo(cur) : hist.Redo(cur))) return;
+            h.ed->PushUndo();
+            SetMesh(mr, gd::StateMesh(cur), gd::DetailOf(cur.recipe), cur.recipe.templateId == "human" && (int)cur.recipe.Param("style", 0) != 1);
+            s.stored = cur.recipe; s.pending = cur.recipe;
+            SaveFiles(h, mr, cur.recipe);
+            if (cur.fromRecipe) { s.analysis = gd::UntouchedAnalysis(cur.recipe); s.analysisKey = KeyNow(mr, s.stored); } else s.analysisKey = 0;
+            h.ed->dirty = true;
+        };
+        ImGui::BeginDisabled(!hist.CanUndo());
+        if (ImGui::Button("Undo guided step")) step(true);
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::BeginDisabled(!hist.CanRedo());
-        if (ImGui::Button("Redo guided step")) {
-            gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
-            if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Redo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human" && (int)cur.recipe.Param("style", 0) != 1); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
-        }
+        if (ImGui::Button("Redo guided step")) step(false);
         ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Convert to regular mesh")) s.confirmConvert = true;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Forget the design. The mesh stays exactly as it is; you edit it by hand from now on.");
+    }
+    {   // what the last change cost, so a slow model is visible, not a feeling
+        const State::Cost& c = s.cost;
+        if (c.total > 0)
+            ImGui::TextDisabled("Last change: %.0f ms (build %.0f, mesh %.0f, save %.0f)%s, %d triangles. %s", c.total, c.build, c.mesh, c.save,
+                                c.fast ? ", untouched model: no analysis" : "", c.triangles, c.what.c_str());
+        else ImGui::TextDisabled("Last change: none yet. %d triangles.", mr->mesh.TriangleCount());
+        if (s.previewMs > 0) { ImGui::SameLine(); ImGui::TextDisabled("Drag preview: %.1f ms.", s.previewMs); }
+        if (s.cost.analyse > 0 && ImGui::IsItemHovered()) ImGui::SetTooltip("Reading the mesh back and checking it against the design took %.0f ms (only when the mesh or settings changed).", s.cost.analyse);
     }
     if (s.confirmConvert) { ImGui::OpenPopup("Convert to regular mesh?##guided"); s.confirmConvert = false; }
     if (ImGui::BeginPopupModal("Convert to regular mesh?##guided", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -562,11 +630,21 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("An exact collider follows the model's triangles and stays up to date when the model is rebuilt.");
     }
-    // What is intact, edited, custom (cached until the mesh or recipe changes).
-    const std::uint64_t key = okay::modeling::GeometryHash(mr->mesh) * 31u + std::hash<std::string>()(s.stored.Serialize());
-    if (key != s.analysisKey) {
-        s.analysisKey = key;
-        s.analysis = gd::Analyze(PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}), s.stored);
+    // What is intact, edited, custom. Cached: the mesh is fingerprinted at most four times a second, never while a slider is
+    // held (an O(n) hash of a 100,000 triangle model every frame was part of the lag), and the analysis only runs when the
+    // fingerprint changed. After a rebuild of an untouched model it is known without running.
+    {
+        const double now = ImGui::GetTime();
+        if (s.analysisKey == 0 || (!ImGui::IsAnyItemActive() && now - s.keyTime > 0.25)) {
+            s.keyTime = now;
+            const std::uint64_t key = KeyNow(mr, s.stored);
+            if (key != s.analysisKey) {
+                const double t0 = NowMs();
+                s.analysisKey = key;
+                s.analysis = gd::Analyze(PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}), s.stored);
+                s.cost.analyse = NowMs() - t0;
+            }
+        }
     }
     if (s.analysis.ok) {
         const int ed2 = s.analysis.Count(gd::PartState::Edited), del = s.analysis.Count(gd::PartState::Deleted);
@@ -592,13 +670,13 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
     // Settings by group.
     std::vector<std::string> groups;
     for (const auto& p : t.params) if (std::find(groups.begin(), groups.end(), p.group) == groups.end()) groups.push_back(p.group);
-    bool commit = false;
+    bool commit = false, dragged = false;
     for (const std::string& g : groups) {
         if (!ImGui::CollapsingHeader((g + "##grp").c_str(), (g == "Size" || g == "Detail") ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
         for (const auto& p : t.params) {
             if (p.group != g) continue;
-            if (p.id == gd::kDetailParam) { if (DetailWidget(t, s.pending, s.stored)) commit = true; continue; }
-            if (ParamWidget(p, s.pending)) commit = true;
+            if (p.id == gd::kDetailParam) { if (DetailWidget(t, s.pending, s.stored, mr->mesh.TriangleCount())) commit = true; continue; }
+            if (ParamWidget(p, s.pending, &dragged)) commit = true;
         }
         if (g == "Size" && t.usesPath) {
             // The drawn path: a list of points the fence follows (height included, so it follows the ground).
@@ -630,7 +708,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
                     ImGui::PushID(i);
                     float xyz[3] = {s.pending.path[i].x, s.pending.path[i].y, s.pending.path[i].z};
                     ImGui::SetNextItemWidth(260);
-                    if (ImGui::DragFloat3("##pt", xyz, 0.05f)) s.pending.path[i] = {xyz[0], xyz[1], xyz[2]};
+                    if (ImGui::DragFloat3("##pt", xyz, 0.05f)) { s.pending.path[i] = {xyz[0], xyz[1], xyz[2]}; dragged = true; }
                     if (ImGui::IsItemDeactivatedAfterEdit()) commit = true;
                     ImGui::SameLine();
                     ImGui::BeginDisabled(s.pending.path.size() <= 2);
@@ -671,7 +749,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
             ImGui::SameLine();
             okay::Color& c = s.pending.colors[slot.id];
             float rgb[3] = {c.r, c.g, c.b};
-            if (ImGui::ColorEdit3("##col", rgb, ImGuiColorEditFlags_NoInputs)) c = okay::Color{rgb[0], rgb[1], rgb[2], 1};
+            if (ImGui::ColorEdit3("##col", rgb, ImGuiColorEditFlags_NoInputs)) { c = okay::Color{rgb[0], rgb[1], rgb[2], 1}; dragged = true; }
             if (ImGui::IsItemDeactivatedAfterEdit()) commit = true;
             ImGui::SameLine();
             ImGui::TextDisabled("material slot %d", s.pending.materials.count(slot.id) ? s.pending.materials.at(slot.id) : slot.defaultMaterial);
@@ -679,6 +757,26 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         }
     }
     if (commit) Apply(h, go, mr, s.pending, {}, "Updated " + go->name);
+    else if (dragged && !locked && s.analysis.ok && gd::IsUntouched(s.analysis)) {
+        // While a slider is held the model follows it at Medium detail, rebuilt at most as often as it can be afforded; nothing is
+        // saved and no undo step is made. Letting go rebuilds it at its real detail (one step). A model with hand edits waits for
+        // the release, since a preview cannot keep them.
+        const double now = ImGui::GetTime();
+        if (s.throttle.Ready(now)) {
+            if (!s.previewing) { s.previewBackup = mr->mesh; s.previewing = true; s.previewMr = mr; }
+            gd::Recipe pv = s.pending;
+            const float dv = gd::PreviewDetail((float)pv.Param(gd::kDetailParam, 1));
+            pv.params[gd::kDetailParam] = dv;
+            const double t0 = NowMs();
+            const PolyMesh pm = gd::Create(pv);
+            if (!pm.faces.empty()) SetMesh(mr, pm, dv, pv.templateId == "human" && (int)pv.Param("style", 0) != 1);
+            s.previewMs = NowMs() - t0;
+            s.throttle.Done(now, s.previewMs);
+        }
+    } else if (s.previewing && !ImGui::IsAnyItemActive()) {
+        EndPreview(mr);   // the slider was let go on the value it started from, or the model changed under it
+        s.pending = s.stored;
+    }
 
     // Variation: a repeatable random model inside this style, and the validator's verdict on the model.
     if (ImGui::CollapsingHeader("Variation and check##grp")) {

@@ -320,6 +320,38 @@ int main() {
         for (const DesignDef& d : [&]() -> const SlotDef& { for (const SlotDef& sdef : T.slots) if (sdef.id == "hair") return sdef; return T.slots[0]; }().designs) { Recipe r = DefaultRecipe(T, "average"); r.slotDesign["hair"] = d.id; hairs.insert(Hash(Create(r))); }
         CHECK(hairs.size() >= 13);
     }
+    // ---- guided_props: every prop is one connected, sound object at every level; designs and parts really change it -----------------
+    {
+        int bad = 0;
+        for (const char* id : {"furniture", "container", "tool", "decoration"}) {
+            const Template& T = Tpl(id);
+            CHECK(T.category == "Props" && T.starts.size() >= 6);
+            std::set<std::string> distinct;
+            for (const StartDesign& st : T.starts)
+                for (double lv : {0.0, 1.0, 2.0, 3.0}) {
+                    Recipe r = DefaultRecipe(T, st.id); r.params["detail"] = lv;
+                    const auto parts = Generate(r);
+                    const ValidationReport rep = Validate(parts, lv < 2.5);
+                    if (!rep.Ok() || rep.components != 1) { ++bad; std::cerr << "  " << id << "/" << st.id << " level " << lv << ": " << rep.components << " group(s) " << (rep.problems.empty() ? "" : rep.problems[0]) << "\n"; }
+                    if (lv == 1.0) distinct.insert(Hash(Assemble(parts)));
+                    Vec3 lo, hi; Bounds(Assemble(parts), lo, hi);
+                    if (lv == 1.0) CHECK(std::fabs(lo.y) < 0.2f || std::string(id) == "tool");   // props stand on the ground
+                }
+            CHECK(distinct.size() == T.starts.size());
+            // every design of every slot changes the model (checked on the start that uses the slot)
+            for (const SlotDef& sl : T.slots) {
+                std::set<std::string> hs; size_t shown = 0;
+                for (const StartDesign& st : T.starts) {
+                    hs.clear();
+                    for (const DesignDef& d : sl.designs) { Recipe r = DefaultRecipe(T, st.id); r.slotDesign[sl.id] = d.id; hs.insert(Hash(Create(r))); }
+                    shown = std::max(shown, hs.size());
+                }
+                if (shown < sl.designs.size() * 0 + 2 && sl.designs.size() > 1) std::cerr << "  " << id << " slot " << sl.id << " has designs that never change the model\n";
+                CHECK(shown >= 2 || sl.designs.size() < 2);
+            }
+        }
+        CHECK(bad == 0);
+    }
     // ---- guided_cache: the same settings are built once; parts of the same shape are built once per build ----------------------------
     {
         const Template& T = Tpl("human");

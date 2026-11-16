@@ -1,0 +1,23 @@
+okayguided 1
+template tree 1
+param crownSize 2
+param detail 1
+param height 4.2000000000000002
+param lean 0
+param seed 9
+param trunkRadius 0.20000000000000001
+slot branch none
+slot crown cluster
+slot fruit blossom
+slot roots none
+slot trunk forked
+color branch 0.379999995 0.25999999 0.159999996 1
+color crown 0.949999988 0.699999988 0.779999971 1
+color fruit 0.949999988 0.899999976 0.920000017 1
+color roots 0.379999995 0.25999999 0.159999996 1
+color trunk 0.379999995 0.25999999 0.159999996 1
+material branch 2
+material crown 1
+material fruit 4
+material roots 3
+material trunk 0

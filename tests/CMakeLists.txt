@@ -799,6 +799,23 @@ target_compile_definitions(test_example_scenes PRIVATE OKAY_TEST_OUTPUT_DIR="${C
 target_link_libraries(test_example_scenes PRIVATE okay::engine)
 add_test(NAME example_scenes COMMAND test_example_scenes)
 
+# Every project template is proven to work (docs/templates_check.md): the launcher's flow (CreateProject into a temp folder,
+# the version gate, reopen), one Main Camera, a stable save, the Problems model, 120 Play frames, and the family's own
+# interaction with simulated keys and mouse. Links the ImGui-free EditorState and the version gate, like test_example_scenes.
+add_executable(test_templates_work test_templates_work.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/editor/ProjectUpgrade.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
+target_include_directories(test_templates_work PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_templates_work PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}" OKAY_TEST_ENGINE_VERSION="${PROJECT_VERSION}")
+target_link_libraries(test_templates_work PRIVATE okay::engine)
+add_test(NAME templates_work COMMAND test_templates_work)
+
+# Every example scene in examples/ (from a copy) and every File > Examples entry loads, has no Problems error, shows
+# something to the camera and plays 60 frames; the Windows release carries the folders the menu needs.
+add_executable(test_examples_work test_examples_work.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp ${PROJECT_SOURCE_DIR}/editor/ExampleScenes.cpp)
+target_include_directories(test_examples_work PRIVATE ${PROJECT_SOURCE_DIR}/editor)
+target_compile_definitions(test_examples_work PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}" OKAY_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/examples")
+target_link_libraries(test_examples_work PRIVATE okay::engine)
+add_test(NAME examples_work COMMAND test_examples_work)
+
 add_executable(test_ui_layering test_ui_layering.cpp)
 target_link_libraries(test_ui_layering PRIVATE okay::engine)
 add_test(NAME ui_layering COMMAND test_ui_layering)

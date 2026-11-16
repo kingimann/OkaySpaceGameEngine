@@ -1,0 +1,27 @@
+okayguided 1
+template furniture 1
+param depth 0.90000000000000002
+param detail 1
+param height 0.84999999999999998
+param kind 3
+param shelves 3
+param thickness 0.070000000000000007
+param width 2
+slot arms flat
+slot back panel
+slot cushion puffy
+slot legs round
+slot storage none
+slot top plain
+color arms 0.620000005 0.200000003 0.200000003 1
+color back 0.620000005 0.200000003 0.200000003 1
+color cushion 0.620000005 0.200000003 0.200000003 1
+color legs 0.550000012 0.379999995 0.219999999 1
+color storage 0.300000012 0.200000003 0.119999997 1
+color top 0.620000005 0.200000003 0.200000003 1
+material arms 3
+material back 2
+material cushion 4
+material legs 0
+material storage 5
+material top 1

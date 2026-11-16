@@ -414,13 +414,18 @@ struct Mesh {
         }
         // Corners around each coincident-position vertex.
         std::vector<int> rep = CoincidentReps();
-        std::map<int, std::vector<std::pair<int, int>>> corners;   // rep -> (tri, slot)
+        // Indexed by representative vertex (visited in ascending order, as an ordered map would): no allocation per corner group.
+        std::vector<std::vector<std::pair<int, int>>> corners(vertices.size());   // rep -> (tri, slot)
         for (int t = 0; t < nt; ++t)
             for (int k = 0; k < 3; ++k)
                 corners[rep[triangles[t * 3 + k]]].push_back({t, k});
         Mesh out;
         out.triangles.assign(triangles.size(), 0);
-        for (auto& cv : corners) {
+        out.vertices.reserve(vertices.size() + vertices.size() / 4);
+        out.normals.reserve(vertices.size() + vertices.size() / 4);
+        for (auto& cvv : corners) {
+            if (cvv.empty()) continue;
+            struct { std::vector<std::pair<int, int>>& second; } cv{cvv};
             // Greedy smoothing groups at this vertex: a corner joins the first group
             // whose average normal is within the angle of its face's normal.
             std::vector<Vec3> gSum;
@@ -453,21 +458,25 @@ struct Mesh {
                 Vec3 n = gSum[g]; float m = n.Magnitude();
                 n = m > 1e-12f ? n * (1.0f / m) : Vec3{0, 1, 0};
                 // One output vertex per (group, uv) so texture seams keep their UVs.
-                std::map<std::pair<long, long>, int> byUV;
+                // (Corners are matched by exact position and exact UV: vertices a few thousandths apart share a smoothing group,
+                // but each keeps its own position, so thin features such as wiper blades are not squeezed flat.)
+                struct Made { float ux, uy; Vec3 p; int vi; };
+                std::vector<Made> made;
                 for (auto& tk : gMembers[g]) {
                     int src = triangles[tk.first * 3 + tk.second];
-                    std::pair<long, long> uk{0, 0};
-                    if (hasUV) uk = {std::lround(uvs[src].x * 4096.0f),
-                                     std::lround(uvs[src].y * 4096.0f)};
-                    auto it = byUV.find(uk);
-                    int vi;
-                    if (it == byUV.end()) {
+                    float ux = 0, uy = 0;
+                    if (hasUV) { ux = uvs[src].x; uy = uvs[src].y; }   // exact: a corner keeps the UV it had
+                    const Vec3& sp = vertices[src];
+                    int vi = -1;
+                    for (const Made& m : made)
+                        if (m.ux == ux && m.uy == uy && m.p.x == sp.x && m.p.y == sp.y && m.p.z == sp.z) { vi = m.vi; break; }
+                    if (vi < 0) {
                         vi = (int)out.vertices.size();
-                        out.vertices.push_back(vertices[src]);
+                        out.vertices.push_back(sp);
                         out.normals.push_back(n);
                         if (hasUV) out.uvs.push_back(uvs[src]);
-                        byUV[uk] = vi;
-                    } else vi = it->second;
+                        made.push_back({ux, uy, sp, vi});
+                    }
                     out.triangles[tk.first * 3 + tk.second] = vi;
                 }
             }
@@ -3963,17 +3972,18 @@ public:
     /// Representative index per coincident-vertex group, so selection ops flow
     /// across unwelded seams the same way Smooth() does.
     std::vector<int> CoincidentReps() const {
-        std::map<std::tuple<int, int, int>, int> grid;
+        // Hashed (not an ordered map): this runs on every smooth-shading pass and on every guided regenerate, on up to a few
+        // hundred thousand vertices. The representative is still the first vertex in each 1/4096 cell.
+        struct Cell { int x, y, z; bool operator==(const Cell& o) const { return x == o.x && y == o.y && z == o.z; } };
+        struct CellHash { std::size_t operator()(const Cell& c) const { return (std::size_t)((unsigned)c.x * 73856093u) ^ (std::size_t)((unsigned)c.y * 19349663u) ^ (std::size_t)((unsigned)c.z * 83492791u); } };
+        std::unordered_map<Cell, int, CellHash> grid;
+        grid.reserve(vertices.size() * 2 + 1);
         std::vector<int> rep(vertices.size());
-        auto key = [](const Vec3& v) {
-            return std::make_tuple((int)std::lround(v.x * 4096.0f),
-                                   (int)std::lround(v.y * 4096.0f),
-                                   (int)std::lround(v.z * 4096.0f));
-        };
         for (std::size_t i = 0; i < vertices.size(); ++i) {
-            auto k = key(vertices[i]);
+            const Vec3& v = vertices[i];
+            const Cell k{(int)std::lround(v.x * 4096.0f), (int)std::lround(v.y * 4096.0f), (int)std::lround(v.z * 4096.0f)};
             auto it = grid.find(k);
-            if (it == grid.end()) { grid[k] = (int)i; rep[i] = (int)i; }
+            if (it == grid.end()) { grid.emplace(k, (int)i); rep[i] = (int)i; }
             else rep[i] = it->second;
         }
         return rep;

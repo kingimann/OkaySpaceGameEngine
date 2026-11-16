@@ -1,0 +1,19 @@
+okayguided 1
+template road 1
+param detail 1
+param kerbHeight 0.14999999999999999
+param length 20
+param thickness 0.14999999999999999
+param width 4.5
+slot kerb none
+slot marking edges
+slot surface asphalt
+slot walk none
+color kerb 0.620000005 0.620000005 0.600000024 1
+color marking 0.920000017 0.899999976 0.800000012 1
+color surface 0.200000003 0.200000003 0.219999999 1
+color walk 0.699999988 0.680000007 0.639999986 1
+material kerb 2
+material marking 1
+material surface 0
+material walk 3

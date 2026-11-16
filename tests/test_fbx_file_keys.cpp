@@ -107,14 +107,14 @@ bool AuthoredTimes(const fbx::Document& doc, FileTimes& out) {
     for (const fbx::Elem& e : objs->children) {
         if (e.props.size() < 2) continue;
         const std::int64_t id = IdOf(e.props[0]);
-        byId[id] = {std::string(e.name), Clean(e.props[1].s), &e};
+        byId[id] = {std::string(e.name), Clean(e.props[1].s()), &e};
         if (e.name == "AnimationStack") stackIds.push_back(id);
     }
     struct Conn { std::int64_t child, parent; std::string prop; bool op; };
     std::vector<Conn> cs;
     for (const fbx::Elem& c : conns->children) {
         if (c.name != "C" || c.props.size() < 3) continue;
-        Conn k{IdOf(c.props[1]), IdOf(c.props[2]), c.props.size() > 3 ? std::string(c.props[3].s) : std::string(), c.props[0].s == "OP"};
+        Conn k{IdOf(c.props[1]), IdOf(c.props[2]), c.props.size() > 3 ? std::string(c.props[3].s()) : std::string(), c.props[0].s() == "OP"};
         cs.push_back(k);
     }
     auto cls = [&](std::int64_t id) -> const Obj* { auto it = byId.find(id); return it == byId.end() ? nullptr : &it->second; };

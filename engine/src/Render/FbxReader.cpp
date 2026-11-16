@@ -106,7 +106,7 @@ struct Reader {
                 std::uint32_t len; if (!need(4)) return Fail("short property");
                 std::memcpy(&len, p + pos, 4); pos += 4;
                 if (len > lim->maxStringBytes || !need(len)) return Fail("string runs past its record");
-                out.s = std::string_view((const char*)p + pos, len); pos += len;   // a view, not a copy
+                out.sv = std::string_view((const char*)p + pos, len); pos += len;   // a view, not a copy
                 return true;
             }
             case 'f': case 'd': case 'l': case 'i': case 'b': case 'c': {
@@ -326,7 +326,7 @@ struct Text {
         // A token that starts with a letter or '_' is an identifier whatever strtod would make of it ("inf", "nan"):
         // the rule below requires a digit, a sign or a point first.
         if (!(std::isdigit((unsigned char)t[0]) || t[0] == '-' || t[0] == '+' || t[0] == '.')) {
-            out.type = 'S'; out.s = std::string_view(t, len);
+            out.type = 'S'; out.sv = std::string_view(t, len);
             return true;
         }
         std::string tok(t, len);
@@ -336,7 +336,7 @@ struct Text {
             if (tok.find_first_of(".eE") == std::string::npos) {
                 out.type = 'L'; out.i = std::strtoll(tok.c_str(), nullptr, 10);
             } else { out.type = 'D'; out.d = d; }
-        } else { out.type = 'S'; out.s = std::string_view(t, len); }   // bare identifier (T, W, Y ...)
+        } else { out.type = 'S'; out.sv = std::string_view(t, len); }   // bare identifier (T, W, Y ...)
         return true;
     }
     bool ReadString(Prop& out) {
@@ -346,7 +346,7 @@ struct Text {
         pos = q ? (std::size_t)((const char*)q - s) : n;
         if (pos >= n) return Fail("unterminated string");
         if (pos - b > lim->maxStringBytes) return Fail("string too long");
-        out.type = 'S'; out.s = std::string_view(s + b, pos - b);
+        out.type = 'S'; out.sv = std::string_view(s + b, pos - b);
         ++pos;
         return true;
     }

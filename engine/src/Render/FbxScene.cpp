@@ -261,7 +261,7 @@ struct Props {
         if (!p70) return nullptr;
         const Elem* hit = nullptr;
         for (const Elem& p : p70->children) {
-            if (p.props.size() < 5 || p.name != "P" || p.props[0].type != 'S' || p.props[0].s != n) continue;
+            if (p.props.size() < 5 || p.name != "P" || p.props[0].type != 'S' || p.props[0].s() != n) continue;
             for (std::size_t i = 4; i < p.props.size(); ++i) if (p.props[i].IsNumber()) { hit = &p; break; }
         }
         return hit;
@@ -406,8 +406,8 @@ Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, con
     }
     if (!best) return L;
     std::string_view mp, ref;
-    if (const Elem* m = best->Find("MappingInformationType")) if (!m->props.empty()) mp = m->props[0].s;
-    if (const Elem* r = best->Find("ReferenceInformationType")) if (!r->props.empty()) ref = r->props[0].s;
+    if (const Elem* m = best->Find("MappingInformationType")) if (!m->props.empty()) mp = m->props[0].s();
+    if (const Elem* r = best->Find("ReferenceInformationType")) if (!r->props.empty()) ref = r->props[0].s();
     if (mp == "ByPolygonVertex") L.map = kByPolyVert;
     else if (mp == "ByVertice" || mp == "ByVertex" || mp == "ByControlPoint") L.map = kByVertex;
     else if (mp == "ByPolygon") L.map = kByPoly;
@@ -765,8 +765,8 @@ struct Builder {
             if (e.props.empty() || !e.props[0].IsNumber()) continue;
             Obj ob; ob.e = &e; ob.cls = e.name;
             const Id id = ToId(e.props[0].Num());
-            if (e.props.size() > 1 && e.props[1].type == 'S') ob.name = CleanName(e.props[1].s);
-            if (e.props.size() > 2 && e.props[2].type == 'S') ob.sub = e.props[2].s;
+            if (e.props.size() > 1 && e.props[1].type == 'S') ob.name = CleanName(e.props[1].s());
+            if (e.props.size() > 2 && e.props[2].type == 'S') ob.sub = e.props[2].s();
             LoadProps(e, ob.props);
             if (byId.count(id)) continue;   // duplicate id: first wins
             byId[id] = objs.size();
@@ -778,8 +778,8 @@ struct Builder {
             if (e.name != "C" || e.props.size() < 3 || e.props[0].type != 'S') continue;
             if (!e.props[1].IsNumber() || !e.props[2].IsNumber()) continue;
             Conn cn; cn.child = ToId(e.props[1].Num()); cn.parent = ToId(e.props[2].Num());
-            cn.propLink = e.props[0].s == "OP";
-            if (e.props.size() > 3 && e.props[3].type == 'S') cn.prop = e.props[3].s;
+            cn.propLink = e.props[0].s() == "OP";
+            if (e.props.size() > 3 && e.props[3].type == 'S') cn.prop = e.props[3].s();
             conns.push_back(std::move(cn));
         }
         // Group by parent and by child: count per id, give each id its range, then place the connections in order.
@@ -804,7 +804,7 @@ struct Builder {
         sc.settings.frontAxis = std::clamp(SafeInt(gp.Get("FrontAxis", 2)), 0, 2); sc.settings.frontSign = gp.Get("FrontAxisSign", 1) < 0 ? -1 : 1;
         sc.settings.coordAxis = std::clamp(SafeInt(gp.Get("CoordAxis", 0)), 0, 2); sc.settings.coordSign = gp.Get("CoordAxisSign", 1) < 0 ? -1 : 1;
         sc.settings.unitScaleFactor = gp.Get("UnitScaleFactor", 1.0);
-        if (const Elem* h = doc.root.Find("FBXHeaderExtension")) if (const Elem* cr = h->Find("Creator")) if (!cr->props.empty()) sc.creator = std::string(cr->props[0].s);
+        if (const Elem* h = doc.root.Find("FBXHeaderExtension")) if (const Elem* cr = h->Find("Creator")) if (!cr->props.empty()) sc.creator = std::string(cr->props[0].s());
         if (!opt.convertToYUpMeters) { sc.settings.appliedScale = 1.0; return; }
         const int ua = sc.settings.upAxis, fa = sc.settings.frontAxis, ca = sc.settings.coordAxis;
         const bool okAxes = ua >= 0 && ua < 3 && fa >= 0 && fa < 3 && ca >= 0 && ca < 3 && ua != fa && ua != ca && fa != ca;
@@ -823,18 +823,18 @@ struct Builder {
         for (const Obj& o : objs) {
             if (o.cls != "Texture") continue;
             Texture t; t.name = std::string(o.name);
-            if (const Elem* f = o.e->Find("FileName")) if (!f->props.empty()) t.fileName = std::string(f->props[0].s);
-            if (const Elem* f = o.e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = std::string(f->props[0].s);
+            if (const Elem* f = o.e->Find("FileName")) if (!f->props.empty()) t.fileName = std::string(f->props[0].s());
+            if (const Elem* f = o.e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = std::string(f->props[0].s());
             const Id id = ToId(o.e->props[0].Num());
             for (const Conn* c : ChildrenOf(id)) {   // children of the texture: Video
                 const Obj* v = Get(c->child);
                 if (!v || v->cls != "Video" || c->propLink) continue;
-                if (t.fileName.empty()) if (const Elem* f = v->e->Find("FileName")) if (!f->props.empty()) t.fileName = std::string(f->props[0].s);
-                if (t.relativeFileName.empty()) if (const Elem* f = v->e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = std::string(f->props[0].s);
+                if (t.fileName.empty()) if (const Elem* f = v->e->Find("FileName")) if (!f->props.empty()) t.fileName = std::string(f->props[0].s());
+                if (t.relativeFileName.empty()) if (const Elem* f = v->e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = std::string(f->props[0].s());
                 if (const Elem* ct = v->e->Find("Content")) if (!ct->props.empty()) {
                     const Prop& p = ct->props[0];
-                    if (p.type == 'R') t.content.assign(p.s.begin(), p.s.end());
-                    else if (p.type == 'S' && !p.s.empty()) Base64Decode(p.s, t.content);
+                    if (p.type == 'R') t.content.assign(p.s().begin(), p.s().end());
+                    else if (p.type == 'S' && !p.s().empty()) Base64Decode(p.s(), t.content);
                 }
             }
             // A Video that carries the picture while the one connected to the texture does not (some exporters write the pair
@@ -843,14 +843,14 @@ struct Builder {
                 for (const Obj& vo : objs) {
                     if (vo.cls != "Video") continue;
                     const Elem* ct = vo.e->Find("Content");
-                    if (!ct || ct->props.empty() || ct->props[0].s.empty()) continue;
+                    if (!ct || ct->props.empty() || ct->props[0].s().empty()) continue;
                     const Elem* vf = vo.e->Find("FileName"); const Elem* vr = vo.e->Find("RelativeFilename");
-                    const bool same = (vf && !vf->props.empty() && !t.fileName.empty() && vf->props[0].s == t.fileName) ||
-                                      (vr && !vr->props.empty() && !t.relativeFileName.empty() && vr->props[0].s == t.relativeFileName);
+                    const bool same = (vf && !vf->props.empty() && !t.fileName.empty() && vf->props[0].s() == t.fileName) ||
+                                      (vr && !vr->props.empty() && !t.relativeFileName.empty() && vr->props[0].s() == t.relativeFileName);
                     if (!same) continue;
                     const Prop& p = ct->props[0];
-                    if (p.type == 'R') t.content.assign(p.s.begin(), p.s.end());
-                    else if (p.type == 'S') Base64Decode(p.s, t.content);
+                    if (p.type == 'R') t.content.assign(p.s().begin(), p.s().end());
+                    else if (p.type == 'S') Base64Decode(p.s(), t.content);
                     if (!t.content.empty()) break;
                 }
             }
@@ -874,7 +874,7 @@ struct Builder {
                 m.hasRoughness = true; m.roughness = std::min(1.0, std::max(0.0, 1.0 - std::sqrt(sh) * 0.1));
             }
             std::string shadingModel;
-            if (const Elem* sm = o.e->Find("ShadingModel")) if (!sm->props.empty()) shadingModel = std::string(sm->props[0].s);
+            if (const Elem* sm = o.e->Find("ShadingModel")) if (!sm->props.empty()) shadingModel = std::string(sm->props[0].s());
             for (char& ch : shadingModel) ch = (char)std::tolower((unsigned char)ch);
             if (shadingModel == "lambert" || shadingModel == "phong") m.shaderSet = shadingModel;
             // PBR property sets written by modelling tools (ufbx's "shader types"): found by the tool's class id, and
@@ -1082,7 +1082,7 @@ struct Builder {
         const Elem* hit[kCount] = {};
         if (p.p70) for (const Elem& e : p.p70->children) {
             if (e.props.size() < 5 || e.name != "P" || e.props[0].type != 'S') continue;
-            const std::string_view n = e.props[0].s;
+            const std::string_view n = e.props[0].s();
             int which = -1;
             for (int k = 0; k < kCount; ++k) if (n == views[k]) { which = k; break; }
             if (which < 0) continue;
@@ -1435,6 +1435,10 @@ struct Animator : ClipSource {
             euler = std::max(euler, (hi - lo) / tol.maxEulerStep);
             rotMoves |= hi != lo;
         }
+        // When an angle turns too far, Subdivide looks at nothing else (it splits by `euler` alone and never reads
+        // `err`), so the error is not worked out. (The poses' quaternions and local poses it would have made are made
+        // when they are needed, with the same values.)
+        if (euler > 1.0) return;
         // Without offsets and pivots the local translation is the curves' translation times the unit scale (turned by
         // the axis matrix at a root) and the local scale is the curves' scale up to fixed signs, so the error of a
         // straight line is the exact deviation of a cubic. The scale needs the same sign at both ends and no zero in

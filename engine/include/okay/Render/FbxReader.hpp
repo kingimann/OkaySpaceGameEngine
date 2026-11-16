@@ -89,12 +89,14 @@ struct Prop {
     /// 'a': 1 + the index of the Document's own buffer that holds the array (Document::inflated for a binary file,
     /// Document::numbers for an ASCII one); 0 when the array is a view into the parsed bytes. (In the padding after `type`.)
     std::uint32_t own = 0;
-    std::string_view s;            ///< S R (raw bytes for R); a view into the parsed bytes; empty for other types
-    union {                        ///< read the member the type says (or Num()): they share their bytes (40 bytes a property)
+    union {                        ///< read the member the type says (or Num(), s()): they share their bytes (24 bytes a property)
         std::int64_t i = 0;        ///< Y C I L
         double d;                  ///< F D
         Array arr;                 ///< 'a': numeric arrays (f d l i b c)
+        std::string_view sv;       ///< S R: written by the readers; read it through s()
     };
+    /// S R (raw bytes for R): a view into the parsed bytes; empty for every other type.
+    std::string_view s() const { return (type == 'S' || type == 'R') ? sv : std::string_view(); }
     bool IsNumber() const { return type == 'Y' || type == 'C' || type == 'I' || type == 'L' || type == 'F' || type == 'D'; }
     /// The number, or 0 for a string, raw or array property.
     double Num() const { return (type == 'F' || type == 'D') ? d : IsNumber() ? (double)i : 0.0; }

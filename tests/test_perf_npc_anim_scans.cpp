@@ -145,6 +145,29 @@ double AnimScene(int characters, int bones, int level, bool churn) {
     return MsPerFrame(s, 20, spawnAndDestroy);
 }
 
+// NPCs whose target is found by name: `playerLast` puts the target after the whole level in scene order,
+// so a by-name search walks every object first (what NPCController::Target paid every frame per NPC).
+double TargetScene(int npcs, int level, bool playerLast) {
+    Scene s("npc_target_perf");
+    auto addPlayer = [&] { s.CreateGameObject("Player")->transform->localPosition = {-1000.0f, 0.0f, -1000.0f}; };
+    if (!playerLast) addPlayer();
+    // Level names as long as "Player" ("Pr0000" ...), like real props ("Rock01"), so each name test is a real compare.
+    for (int i = 0; i < level; ++i) {
+        char nm[16];
+        std::snprintf(nm, sizeof nm, "Pr%04d", i % 10000);
+        s.CreateGameObject(nm)->transform->localPosition = {500.0f + (float)(i % 100), 0.0f, 500.0f + (float)(i / 100)};
+    }
+    if (playerLast) addPlayer();
+    const int side = (int)std::ceil(std::sqrt((double)npcs));
+    for (int i = 0; i < npcs; ++i) {
+        const float x = (float)(i % side) * 2.0f, z = (float)(i / side) * 2.0f;
+        AddNpc(s, "Npc" + std::to_string(i), {x, 0, z}, {x + 30.0f, 0, z}, 0.0f);
+    }
+    s.Start();
+    s.Update(1.0f / 60.0f);
+    return MsPerFrame(s, 20);
+}
+
 }  // namespace
 
 int main() {
@@ -302,6 +325,123 @@ int main() {
         }
         // The node that appeared later is animated (it is not the identity it was created with).
         CHECK(std::fabs(late->transform->localRotation.x) > 1e-4f || std::fabs(late->transform->localRotation.w - 1.0f) > 1e-4f);
+    }
+
+    // ---- NPC target lookup: the same target as a by-name search every frame, through renames,
+    //      destroys, a target that goes missing, a new object with the name, and a changed targetName --
+    {
+        Scene s("target_golden");
+        s.physicsEnabled = false;
+        GameObject* a = s.CreateGameObject("Player");
+        a->transform->localPosition = {6.0f, 0.0f, 0.0f};
+        AddLevel(s, 40, false);
+        std::vector<NPCController*> npcs;
+        for (int i = 0; i < 6; ++i) {
+            NPCController* n = AddNpc(s, "Hunter" + std::to_string(i), {(float)i * 1.5f - 4.0f, 0, -3.0f},
+                                      {(float)i, 0, -8.0f}, 0.0f);
+            n->behavior = (int)(i % 2 ? NPCController::Behavior::Chase : NPCController::Behavior::Follow);
+            n->sightRange = 60.0f;
+            n->fieldOfView = 360.0f;
+            n->attackRange = 0.5f;
+            n->attackDamage = 0.0f;
+            n->turnSpeed = 360.0f;
+            npcs.push_back(n);
+        }
+        s.Start();
+        GameObject* b = nullptr;
+        GameObject* c = nullptr;
+        GameObject* lvl3 = s.Find("Level3");
+        for (int f = 0; f < 120; ++f) {
+            const float t = (float)f / 60.0f;
+            a->transform->localPosition = {6.0f * std::cos(t), 0.0f, 6.0f * std::sin(t)};
+            if (f == 15) { b = s.CreateGameObject("Player"); b->transform->localPosition = {-6.0f, 0, 4.0f}; }  // A still first
+            if (f == 30) a->name = "Gone";                       // the target renamed away: B now
+            if (f == 45) { s.Destroy(b); b = nullptr; }          // the target destroyed: none
+            if (f == 50) { lvl3->name = "Player"; lvl3->transform->localPosition = {0.0f, 0, -9.0f}; }   // renamed in
+            if (f == 65) { c = s.CreateGameObject("Player"); c->transform->localPosition = {0.0f, 0, 9.0f}; }  // Level3 still first
+            if (f == 75) npcs[0]->targetName = "Gone";           // one NPC follows A again
+            if (f == 90) lvl3->name = "Level3";                  // renamed away: C now
+            s.Update(1.0f / 60.0f);
+        }
+        std::vector<float> got;
+        std::uint64_t h = 1469598103934665603ull;
+        for (NPCController* n : npcs) {
+            const Vec3 p = n->transform->Position();
+            h = Fnv(Fnv(h, p.x), p.z);
+            got.push_back(p.x); got.push_back(p.z);
+        }
+        std::printf("  target golden hash %016llx\n", (unsigned long long)h);
+        // Recorded from the old code (Scene::Find every frame), before the target cache.
+        static const float golden[] = {
+            -2.540854f, -1.422561f,
+            -0.820224f, -1.522829f,
+            -0.391913f, -2.387288f,
+            0.495974f, -1.429344f,
+            1.664743f, -2.215282f,
+            1.722296f, -0.958107f,
+        };
+        const std::size_t n = sizeof(golden) / sizeof(golden[0]);
+        CHECK(got.size() == n);
+        int bad = 0;
+        for (std::size_t i = 0; i < std::min(n, got.size()); ++i)
+            if (std::fabs(got[i] - golden[i]) > 1e-3f) ++bad;
+        CHECK(bad == 0);
+        if (bad || got.size() != n) {
+            std::printf("  target positions now:\n");
+            for (std::size_t i = 0; i < got.size(); i += 2) std::printf("            %.6ff, %.6ff,\n", got[i], got[i + 1]);
+        }
+        (void)c;
+    }
+
+    // ---- NPC target lookup cost: the target last in a big level vs first ----------------------
+    {
+        const double first = TargetScene(600, 10000, false);
+        const double last  = TargetScene(600, 10000, true);
+        std::printf("  npc target by name, 600 NPCs + 10000 level objects: target first %.3f ms, target last %.3f ms "
+                    "per frame (x%.2f)\n", first, last, last / std::max(first, 1e-6));
+        CHECK(last < first * 3.0 + 0.05);
+    }
+
+    // ---- Legs Follow Travel never turns another character's hips ----------------------------------
+    //      The walker's rig has no "Hips"/"Spine" bones; another object in the scene does. The hip turn
+    //      must look only inside the walker's own model (it used to fall back to Scene::Find).
+    {
+        Scene s("hips_scope");
+        s.physicsEnabled = false;
+        GameObject* other = s.CreateGameObject("OtherCharacter");
+        GameObject* oHips = s.CreateGameObject("Hips");
+        oHips->transform->SetParent(other->transform, false);
+        GameObject* oSpine = s.CreateGameObject("Spine");
+        oSpine->transform->SetParent(oHips->transform, false);
+        const Quat hips0 = oHips->transform->localRotation, spine0 = oSpine->transform->localRotation;
+
+        GameObject* walker = s.CreateGameObject("Walker");
+        auto* ch = walker->AddComponent<Character>();
+        ch->Apply();
+        GameObject* model = s.CreateGameObject("Model");
+        model->transform->SetParent(walker->transform, false);
+        GameObject* pelvis = s.CreateGameObject("Pelvis");
+        pelvis->transform->SetParent(model->transform, false);
+        auto* ma = model->AddComponent<ModelAnimator>();
+        for (const char* name : {"Idle", "Walk"}) {
+            ModelAnimator::Clip c; c.name = name;
+            ModelAnimator::NodeClip nc; nc.node = "Pelvis";
+            nc.clip.AddKey("position.y", 0.0f, 0.0f);
+            nc.clip.AddKey("position.y", 1.0f, 0.0f);
+            c.nodes.push_back(nc);
+            ma->clips.push_back(c);
+        }
+        ma->idleClip = "Idle"; ma->walkClip = "Walk";
+        ma->legsFollowTravel = true;
+        ch->moveSpeed = 2.0f;
+        ch->moveAngle = 60.0f;
+        s.Start();
+        for (int i = 0; i < 30; ++i) s.Update(1.0f / 60.0f);
+        const float hipsTurn = Quat::Angle(hips0, oHips->transform->localRotation);
+        const float spineTurn = Quat::Angle(spine0, oSpine->transform->localRotation);
+        std::printf("  other character's hips turned %.3f deg, spine %.3f deg (must be 0)\n", hipsTurn, spineTurn);
+        CHECK(hipsTurn < 1e-3f);
+        CHECK(spineTurn < 1e-3f);
     }
 
     TEST_MAIN_RESULT();

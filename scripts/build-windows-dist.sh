@@ -151,9 +151,11 @@ fi
 
 # Example scenes and sample files to try in the editor (docs/try_it.md). A curated list: only folders whose
 # scenes are self-contained (every file a scene names sits beside it, and scenes find their files relative to
-# the scene file, so the folder works from any install path). About 0.5 MB. Left out on purpose: account-server
-# (a Python server), netdemo and physicsdemo (C++ sources), editor-plugins and visual_script (not scenes).
-EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls"
+# the scene file, so the folder works from any install path). About 1 MB. visual_script/playground is the folder
+# File > Examples > Visual Script Node Playground opens its scenes from (tests/test_examples_work.cpp checks that every
+# folder a File > Examples entry needs is listed here). Left out on purpose: account-server (a Python server), netdemo
+# and physicsdemo (C++ sources), editor-plugins, and the loose graphs in visual_script itself (not scenes).
+EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls visual_script/playground ui_text"
 for d in $EXAMPLE_DIRS; do
     [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
     mkdir -p "$OUT_DIR/examples/$d"
@@ -165,6 +167,7 @@ done
 # The texture the obj_texture_paths cubes name (the same starter file that ships in Assets/Textures).
 cp assets/textures/grid.png "$OUT_DIR/examples/obj_texture_paths/"
 [ -s "$OUT_DIR/examples/vehicle/vehicle_test.okayscene" ] || { echo "error: examples/vehicle/vehicle_test.okayscene did not make it into the distribution" >&2; exit 1; }
+[ -s "$OUT_DIR/examples/ui_text/ui_text.okayscene" ] || { echo "error: examples/ui_text/ui_text.okayscene did not make it into the distribution" >&2; exit 1; }
 
 # When built against the real Steamworks SDK, ship its redistributable DLL next to
 # every exe that initializes Steam (the launcher at top, the tools in Tools/).
@@ -189,7 +192,10 @@ Everything else lives in  Tools/:
 
 examples/ example scenes to try: in the editor use File > Open and pick
                         examples\vehicle\vehicle_test.okayscene, then press Play
-                        (get in the car with E). More in docs/try_it.md.
+                        (get in the car with E), or
+                        examples\ui_text\ui_text.okayscene (a nameplate over each of
+                        two characters and a sign with rich text; keys 1 2 3 H).
+                        More in docs/try_it.md.
 
 Each .exe needs SDL2.dll in its own folder — that's why one sits beside the
 launcher and a copy sits in Tools/. Don't separate an .exe from its SDL2.dll.

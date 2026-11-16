@@ -144,6 +144,7 @@ add_library(okay_engine
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
     src/Components/UIBarBind.cpp
+    src/Components/UIOwnerData.cpp
     src/Components/UIDamageNumbers.cpp
     src/Components/UIDialogueBox.cpp
     src/Components/UIThemeAsset.cpp

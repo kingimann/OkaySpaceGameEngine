@@ -86,11 +86,13 @@ public:
     bool  uppercase = false;
     /// Word-wrap the text to the box width (screen space). Long words overflow.
     bool  wrap = false;
-    /// Read [color=#rrggbb]...[/color], [b]...[/b] and [i]...[/i] in the text (screen space; see
-    /// okay/UI/RichText.hpp). The tags take no room: wrapping, alignment and the typing effect see the
-    /// plain text. Bold thickens the strokes (the font has no bold weight); italic slants every glyph.
-    /// Screen-space text only: 3D (world) text is drawn by the scene renderers, which do not read tags, so
-    /// the switch has no effect there (and the editor disables it).
+    /// Read [color=#rrggbb]...[/color], [b]...[/b], [i]...[/i] and [size=N]...[/size] (N a percent) in the
+    /// text (okay/UI/RichText.hpp). The tags take no room: wrapping, alignment and the typing effect see the
+    /// plain text at its own size. A line is as tall as the largest [size] on it (PixelHeight counts that), so a
+    /// big run pushes the lines below it down; its width is not measured (a centred line with a big run leans
+    /// right). Bold thickens the strokes (the font has no bold weight); italic slants every
+    /// glyph. Screen-space text and world text (screenSpace off: the player's 2D world-text pass through
+    /// ui2d::DrawWorldText, and the editor's 2D Scene view) both read them.
     bool  richText = false;
 
     /// Best Fit: auto-scale the text so it fills its `size` box — big
@@ -145,7 +147,7 @@ public:
     const std::string& DisplayText(std::string& scratch) const {
         thread_local std::string plainTags;   // the text without its tags (rich text only)
         const std::string* srcp = &text;
-        if (richText && screenSpace && RichTextHasTags(text)) { plainTags = ParseRichText(text).plain; srcp = &plainTags; }
+        if (richText && RichTextHasTags(text)) { plainTags = ParseRichText(text).plain; srcp = &plainTags; }
         const std::string& src = *srcp;
         int vis = EffectiveVisible();
         const std::size_t cutAt = vis >= 0 ? utf8::Offset(src, (std::size_t)vis) : src.size();   // whole characters
@@ -209,6 +211,16 @@ public:
         const std::string& s = DisplayText(scratch);
         int lines = 1;
         for (char c : s) if (c == '\n') ++lines;
+        if (richText && text.find("[size=") != std::string::npos) {
+            // A line is as tall as the largest [size] on it (okay/UI/RichText.hpp), so the block is taller than its
+            // line count says: centring and Best Fit see the real height.
+            const std::vector<float> sc = RichLineScales(s, ParseRichText(text).styles);
+            TtfFont* tf = Font();
+            const float adv = (tf ? tf->LineHeight((float)Font8x8::Height) : (float)Font8x8::Height + 1.0f) + lineSpacing;
+            float h = 0.0f;
+            for (std::size_t k = 0; k + 1 < sc.size(); ++k) h += RichLineAdvance(adv, lineSpacing, sc[k]);
+            return (int)std::ceil(h + (float)Font8x8::Height * (sc.empty() ? 1.0f : sc.back()));
+        }
         if (TtfFont* tf = Font()) {
             float lh = tf->LineHeight((float)Font8x8::Height) + lineSpacing;
             return (int)std::ceil((lines - 1) * lh + (float)Font8x8::Height);

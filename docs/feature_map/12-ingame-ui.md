@@ -50,9 +50,9 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `UIButton`, `UIPanel`, `TextRenderer`, `UIImage`, `UIRawImage`, `UIProgressBar`, `UIRadialProgress`, `UIRating`, `Crosshair`; script: `ui_set_text`, `ui_get_text`, `ui_clicked`, `ui_set_progress`, `ui_set_fill`, `ui_set_interactable`
 - **Editor:** GameObject > UI (and the UI view's + Add menu); Inspector headers UI Button, UI Panel, UI Image, UI Raw Image, Text, UI Progress Bar, UI Radial Progress, UI Rating, Crosshair
 - **Docs:** `docs/game_ui.md` (Images, Building blocks), `docs/engine_api.md`
-- **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `uishape`, `text`, `minimap`, `ui_renderer_golden`
+- **Tests:** `ui` (tests/test_ui.cpp), `ui_extra`, `uiwidgets`, `uishape`, `text`, `minimap`, `ui_renderer_golden`, `world_text_rich` (rich text on world text, `[size=N]`, line heights)
 - **Status:** Works - implemented per the headers; tests cover hit testing, serialization of every style field, nine-slice, fill, shapes, text options
-- **Open:** rich text exists (`TextRenderer::richText`, tags parsed by `UI/RichText.hpp`; see `docs/ui_runtime.md`) but works on screen-space text only: world (3D) text ignores the tags; no rating or progress "data source" beyond the Bar Bind (12.13)
+- **Open:** rich text (`TextRenderer::richText`, tags parsed by `UI/RichText.hpp`, including `[size=N]`; see `docs/ui_runtime.md`) works on screen-space and world text (`ui2d::DrawWorldText`, test `world_text_rich`); a line is as tall as its largest size, but a line's width is not measured with `[size]` (wrapping and centring ignore it); world text is drawn in flat (2D) scenes only; no rating or progress "data source" beyond the Bar Bind (12.13)
 - **Related:** 12.3, 12.7, 12.11, 2.9, 1.8
 - **Words:** button, panel, label, text, TextRenderer, image, UIImage, raw image, nine-slice, 9-slice, progress bar, health bar, radial, cooldown, rating, stars, crosshair, reticle, shape, rounded corners, pill, shadow, gradient
 - **Seen as:** a button does nothing on click; text is blurry or too small; an image shows a red box or "can't load"; a bar does not fill; corners are square when they should be round; text does not update when the language changes
@@ -133,9 +133,9 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `WorldUI`, `WorldSpaceUI`, `UIWorldCtx`, `GetUIScreenRect`
 - **Editor:** Create > UI > 3D UI (in-world); Inspector headers World UI (3D label), World Space UI (3D), Canvas > World Space
 - **Docs:** `docs/ui_world_space.md`
-- **Tests:** `worldcanvas`, `worldtoscreen`, `ui_renderer_options`
+- **Tests:** `worldcanvas`, `worldtoscreen`, `ui_renderer_options`, `ui_nameplate_bound` (what is drawn: card, pill, bar and texts at five sizes and two fonts), `ui_text_example` (the shipped sample), `ui_text_shots` (headless pictures)
 - **Status:** Works - implemented; `worldcanvas` checks widgets projecting through the camera context
-- **Open:** per `docs/ui_world_space.md`: steeply tilted panels draw as axis-aligned rects (approximate); the Scene view shows world labels but not full world canvases (use the Game view)
+- **Open:** per `docs/ui_world_space.md`: steeply tilted panels draw as axis-aligned rects (approximate); the Scene view shows world labels but not full world canvases (use the Game view); panels, progress bars and text scale with the projection and text honours its alignment (the other widget kinds in world space were not checked: they may still draw at design size)
 - **Related:** 12.1, 12.11, 4.8
 - **Words:** world space UI, 3D UI, nameplate, health bar over head, floating text, damage numbers, billboard, world canvas, in-world menu, terminal
 - **Seen as:** a nameplate does not follow its object; in-world text is mirrored or too big far away; a button in a world panel cannot be clicked; the panel does not show in the Scene view
@@ -270,6 +270,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **Parts:**
   - 12.13.1 Bar bind - `Components/UIBarBind` - progress bar or radial fill follows a visual-script variable or a Prefs value
   - 12.13.2 Text bind - `Components/UITextBind` - `format` with `{key}` placeholders filled each frame, `{score|0}` defaults
+  - 12.13.6 Owner keys - `Components/UIOwnerData` - `{owner.name}`, `{owner.level}`, `{owner.health}`, `owner.healthFrac`: text and bars read the character the UI is a child of (the nameplate uses them); no owner falls back to the global variable
   - 12.13.3 UI Animation - `Components/UIAnimation` - fade, slide, pop, drop intros, pulse/bob/sway/blink/glow loops, outro that can hide the object
   - 12.13.4 Script control by name - `Scripting/OkayScriptVM` - `ui_set_text`, `ui_set_progress`, `ui_show`, `ui_hide`, `ui_play`, `ui_clicked`, drop helpers, `tween_ui_move`, `tween_ui_size`
   - 12.13.5 Typed scripts and graph nodes - `Script/EngineApi` - UI component members reachable from the typed language and from Engine API nodes; the visual node Show/Hide UI
@@ -277,7 +278,7 @@ Area 40 (OkayUI) is a different, immediate-mode toolkit; read it first if the qu
 - **API:** `UIBarBind`, `UITextBind`, `UIAnimation::Play/PlayOut/Stop`, script `ui_*`, `tween_ui_*`
 - **Editor:** Inspector headers UI Text Bind, UI Bar Bind, UI Animation; the prebuilt HUD wires hp, score and loading variables
 - **Docs:** `docs/game_ui.md`, `docs/scripting_reference.md` (UI section), `docs/engine_api.md`
-- **Tests:** `ui_animation`, `ui` (bar bind, text bind), `uidocument` (binding), `ui_extra` (UI script API, tweens)
+- **Tests:** `ui_animation`, `ui` (bar bind, text bind), `uidocument` (binding), `ui_extra` (UI script API, tweens), `ui_nameplate_bound` (owner keys)
 - **Status:** Partial - bindings, animation and name-based script calls work; the generic script API from the UI plan (P3) is not there
 - **Open:** UI plan P3 not found: `ui_create`, `ui_destroy`, `ui_find`, generic `ui_get/ui_set(prop)`, events `on_hover_enter`, `on_hover_exit`, `on_value_changed`, two-way binding to SyncVars, list/array binding, visual nodes On Value Changed, Set Progress, Focus, Create Widget; a settings menu built purely from nodes
 - **Related:** 14.4, 13.7, 1.2, 12.4

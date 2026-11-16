@@ -174,7 +174,7 @@ int main() {
         CHECK(scene.Find("HUD")->GetComponent<TextRenderer>()->text == "Score: 1");
     }
 
-    // --- Main Menu: panel + title + Start button that loads the game on click ---
+    // --- Main Menu: panel + title + Start button that opens the game part and a Back button that returns ---
     {
         Scene scene("x");
         Templates::MainMenu(scene);
@@ -183,22 +183,35 @@ int main() {
         GameObject* start = scene.Find("StartButton");
         CHECK(start->GetComponent<UIButton>() != nullptr);
         CHECK(start->GetComponent<ScriptComponent>() != nullptr);
+        GameObject* game = scene.Find("Game");
+        CHECK(game != nullptr && !game->active);                       // the game part starts hidden
+        CHECK(scene.Find("BackButton") != nullptr);
 
-        // Provide the target scene, then "click" Start and verify it requests a load.
-        Scene game("Game");
-        game.CreateGameObject("Hero");
-        CHECK(SceneSerializer::SaveToFile(game, "game.okayscene"));
-
+        // "Click" Start: the menu hides and the game part shows. Nothing is loaded from a file (that file may not exist).
+        auto clickInside = [&](UIButton* b) {
+            for (float y = 4; y < 716; y += 4)
+                for (float x = 4; x < 1276; x += 4)
+                    if (b->Contains({x, y})) {
+                        Input::FeedMouse({x, y}, 0);
+                        Input::FeedMouse({x, y}, 1u << 0);
+                        scene.Update(0.016f);
+                        Input::FeedMouse({x, y}, 0);
+                        scene.Update(0.016f);
+                        return true;
+                    }
+            return false;
+        };
         scene.Start();
-        auto* b = start->GetComponent<UIButton>();
-        Input::FeedMouse({b->position.x + 5, b->position.y + 5}, 0);
-        Input::FeedMouse({b->position.x + 5, b->position.y + 5}, 1u << 0);
-        // Click -> on_click -> load_scene; the load is applied at the end of the
-        // same Update (deferred after iteration), so one step swaps the scene.
         scene.Update(0.016f);
-        CHECK(scene.Name() == "Game");
-        CHECK(scene.Find("Hero") != nullptr);
-        std::remove("game.okayscene");
+        CHECK(scene.Find("Panel")->ActiveInHierarchy());
+        CHECK(clickInside(start->GetComponent<UIButton>()));
+        CHECK(!scene.Find("Panel")->ActiveInHierarchy());
+        CHECK(game->ActiveInHierarchy());
+        CHECK(scene.LastLoadError().empty());
+        // ... and Back brings the menu again.
+        CHECK(clickInside(scene.Find("BackButton")->GetComponent<UIButton>()));
+        CHECK(scene.Find("Panel")->ActiveInHierarchy());
+        CHECK(!game->ActiveInHierarchy());
     }
 
     // --- Snake: a full game in OkayScript on one Tilemap object ---

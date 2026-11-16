@@ -11,6 +11,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -65,14 +66,15 @@ struct Reader {
     int dupBoneIds = 0;
     std::unordered_map<int, int> boneOfId;        // SMD bone id -> index in `bones`
 
-    static std::string StripComment(const std::string& s) {
+    static std::string_view StripComment(std::string_view s) {
         const std::size_t p = s.find("//");
-        return p == std::string::npos ? s : s.substr(0, p);
+        return p == std::string_view::npos ? s : s.substr(0, p);
     }
 
     bool Parse(const std::string& text) {
         Lines lines(text);
-        std::string raw;
+        std::string_view raw;      // views into the text: no copy per line
+        std::vector<std::string_view> tk;
         enum Sec { None, Nodes, Skeleton, Triangles, Skip } sec = None;
         int curTime = -1;
         bool haveTime = false;
@@ -82,13 +84,13 @@ struct Reader {
         bool sawVersion = false, sawAnything = false;
         while (lines.Next(raw)) {
             const std::size_t ln = lines.number;
-            const std::string line = StripComment(raw);
-            std::vector<std::string> tk = Split(line);
+            const std::string_view line = StripComment(raw);
+            SplitInto(line, tk);
             if (tk.empty()) continue;
-            const std::string kw = Lower(tk[0]);
+            const std::string kw = Lower(std::string(tk[0]));
             if (sec == None || (sec != Triangles && (kw == "end" || kw == "nodes" || kw == "skeleton" || kw == "triangles" || kw == "version" || kw == "vertexanimation") && tk.size() <= 2)) {
                 // section structure
-                if (kw == "version") { if (tk.size() >= 2) { long long v; if (!ToInt(tk[1], v) || v != 1) return Fail("unsupported version " + tk[1], ln); } sawVersion = true; sec = None; continue; }
+                if (kw == "version") { if (tk.size() >= 2) { long long v; if (!ToInt(tk[1], v) || v != 1) return Fail("unsupported version " + std::string(tk[1]), ln); } sawVersion = true; sec = None; continue; }
                 if (kw == "nodes") { sec = Nodes; sawAnything = true; continue; }
                 if (kw == "skeleton") { sec = Skeleton; haveTime = false; sawAnything = true; continue; }
                 if (kw == "triangles") { sec = Triangles; triState = 0; sawAnything = true; continue; }
@@ -139,7 +141,7 @@ struct Reader {
                 if (kw == "end" && triState == 0 && tk.size() == 1) { sec = None; continue; }
                 if (triState == 0) {
                     // the material is the whole line (it may contain spaces); quotes are not used here
-                    std::string m = line;
+                    std::string m(line);
                     while (!m.empty() && IsWs(m.back())) m.pop_back();
                     std::size_t a = 0; while (a < m.size() && IsWs(m[a])) ++a;
                     curMat = m.substr(a);

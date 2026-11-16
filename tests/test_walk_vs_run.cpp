@@ -16,6 +16,7 @@
 //   test_walk_vs_run          the natural gait (the default)
 //   test_walk_vs_run --old    run with OKAY_OLD_GAIT=1 in the environment (CTest does): the old gait is back, and the
 //                             walk is shown NOT to be clearly different from the run: the "before".
+//   --table                   also print the whole speed table (what docs/walk_vs_run.md quotes; slower)
 #include "test_framework.hpp"
 #include "walk_vs_run_measure.hpp"
 #include <cstdlib>
@@ -111,7 +112,11 @@ void CheckOld(bool animator, float walkSpeed, float runSpeed) {
 } // namespace
 
 int main(int argc, char** argv) {
-    const bool oldMode = argc > 1 && std::strcmp(argv[1], "--old") == 0;
+    bool oldMode = false, table = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--old") == 0) oldMode = true;
+        if (std::strcmp(argv[i], "--table") == 0) table = true;   // the full speed table docs/walk_vs_run.md quotes (slower)
+    }
     RUN_SUITE((oldMode ? "walk_vs_run (OKAY_OLD_GAIT=1: the old gait)" : "walk_vs_run"));
     if (oldMode) {
         CHECK(HumanoidMotion::OldGait());              // CTest sets OKAY_OLD_GAIT=1 for this run
@@ -123,8 +128,7 @@ int main(int argc, char** argv) {
         CHECK(Character::Locomotion().walkSpeed == 4.5f && Character::Locomotion().runSpeed == 8.0f);
         CheckOld(true, fp.walkSpeed, fp.runSpeed);
         CheckOld(false, fp.walkSpeed, fp.runSpeed);
-        PrintTable(true, fp.walkSpeed, fp.runSpeed);
-        PrintTable(false, fp.walkSpeed, fp.runSpeed);
+        if (table) { PrintTable(true, fp.walkSpeed, fp.runSpeed); PrintTable(false, fp.walkSpeed, fp.runSpeed); }
         TEST_MAIN_RESULT();
     }
     CHECK(!HumanoidMotion::OldGait());
@@ -149,8 +153,7 @@ int main(int argc, char** argv) {
     CheckPair("Third Person Shooter defaults", true, tps.walkSpeed, tps.runSpeed);
 
     // ---- The full table (it is what docs/walk_vs_run.md quotes) ------------------------------------------------------
-    PrintTable(true, fp.walkSpeed, fp.runSpeed);
-    PrintTable(false, fp.walkSpeed, fp.runSpeed);
+    if (table) { PrintTable(true, fp.walkSpeed, fp.runSpeed); PrintTable(false, fp.walkSpeed, fp.runSpeed); }
 
     // ---- The style follows the real speed, not the controller's settings ---------------------------------------------
     {

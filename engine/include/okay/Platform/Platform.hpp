@@ -92,7 +92,7 @@ enum class EventType {
     DropFile,          // text = the path
     GamepadAdded,      // deviceId = device index to pass to Backend::OpenGamepad
     GamepadRemoved,    // deviceId = Gamepad::InstanceId()
-    FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 only; own never fires them
+    FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window), pressure (0..1; 1 when the device has none)
 };
 
 struct Event {
@@ -111,6 +111,8 @@ struct Event {
     int width = 0, height = 0;
     int deviceId = 0;
     std::string text;
+    float pressure = 0.0f;                // Finger*: how hard (0..1); 1.0 when the touch device does not measure it
+    bool fromTouch = false;               // Mouse*: made from a touch (the first finger acts as the left button), not a real mouse
 };
 
 // ---- Display modes -------------------------------------------------------------
@@ -424,8 +426,9 @@ public:
     /// returns every event (SDL_PumpEvents).
     virtual void PumpEvents() {}
     /// How many touch screens / touch pads deliver finger events (FingerDown / FingerMotion / FingerUp) through this backend
-    /// (SDL_GetNumTouchDevices on sdl2). The own X11 and Win32 backends deliver no finger events (touch comes as the mouse there),
-    /// so they say 0 and a game's touch controls stay off.
+    /// (SDL_GetNumTouchDevices on sdl2; on own X11 the XInput 2.2 devices with a touch class, on own Win32 the touch digitizers).
+    /// 0 = no touch device, and a game's touch controls stay off. Backends read it again at most every two seconds, so it is
+    /// cheap to call every frame.
     virtual int TouchDeviceCount() { return 0; }
 
     /// Windows only: a function called with every window message (HWND, message, wParam, lParam) of this backend's windows,

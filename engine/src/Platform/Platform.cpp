@@ -324,4 +324,75 @@ void Log(const std::string& line) {
     std::fprintf(stderr, "INFO: %s\n", line.c_str());
 }
 
+// ---- touch ------------------------------------------------------------------------------------------------------------
+float NormalizedTouch(double pos, int extent) {
+    if (extent <= 0) return 0.0f;
+    const double f = pos / (double)extent;
+    return (float)(f < 0.0 ? 0.0 : f > 1.0 ? 1.0 : f);
+}
+
+void TouchTracker::ForgetWindow(uint32_t windowId) {
+    m_down.erase(std::remove_if(m_down.begin(), m_down.end(), [&](const Contact& c) { return c.windowId == windowId; }), m_down.end());
+    if (m_mouseHeld && std::none_of(m_down.begin(), m_down.end(), [&](const Contact& c) { return c.id == m_mouseFinger; }))
+        m_mouseHeld = false;
+}
+
+void TouchTracker::Feed(const TouchSample& s, std::vector<Event>& out) {
+    auto it = std::find_if(m_down.begin(), m_down.end(), [&](const Contact& c) { return c.id == s.id; });
+    const bool known = it != m_down.end();
+    TouchPhase phase = s.phase;
+    if (phase == TouchPhase::Begin && known) phase = TouchPhase::Move;   // a repeated Begin: the finger is already down
+    if (phase != TouchPhase::Begin && !known) return;                   // a contact that began before we listened
+    const uint32_t windowId = known ? it->windowId : s.windowId;
+
+    Event f;
+    f.timestampMs = s.timestampMs;
+    f.windowId = windowId;
+    f.type = phase == TouchPhase::Begin ? EventType::FingerDown : phase == TouchPhase::Move ? EventType::FingerMotion : EventType::FingerUp;
+    f.fingerId = s.id;
+    f.fx = NormalizedTouch(s.x, s.winW);
+    f.fy = NormalizedTouch(s.y, s.winH);
+    f.pressure = s.pressure < 0.0f ? 0.0f : s.pressure > 1.0f ? 1.0f : s.pressure;
+    out.push_back(f);
+
+    if (phase == TouchPhase::Begin) m_down.push_back(Contact{s.id, s.windowId});
+    else if (phase == TouchPhase::End || phase == TouchPhase::Cancel) m_down.erase(it);
+
+    if (!m_mouse) return;
+    const int px = (int)(s.x < 0.0 ? s.x - 0.5 : s.x + 0.5), py = (int)(s.y < 0.0 ? s.y - 0.5 : s.y + 0.5);
+    auto mouseEvent = [&](EventType t) {
+        Event m;
+        m.type = t; m.timestampMs = s.timestampMs; m.windowId = windowId; m.x = px; m.y = py; m.fromTouch = true;
+        return m;
+    };
+    auto moveTo = [&]() {
+        if (m_haveMouse && px == m_mx && py == m_my) return;
+        Event m = mouseEvent(EventType::MouseMove);
+        m.dx = m_haveMouse ? px - m_mx : 0; m.dy = m_haveMouse ? py - m_my : 0;
+        m_mx = px; m_my = py; m_haveMouse = true;
+        out.push_back(m);
+    };
+    if (phase == TouchPhase::Begin) {
+        if (m_mouseHeld) return;   // a second finger: touch only
+        m_mouseHeld = true; m_mouseFinger = s.id;
+        moveTo();
+        const int ddx = px - m_lastTapX, ddy = py - m_lastTapY;
+        const bool again = m_clicks > 0 && s.timestampMs - m_lastTapMs < 400u && ddx * ddx + ddy * ddy <= 24 * 24;
+        m_clicks = again ? m_clicks + 1 : 1;
+        m_lastTapMs = s.timestampMs; m_lastTapX = px; m_lastTapY = py;
+        Event d = mouseEvent(EventType::MouseButtonDown);
+        d.button = MouseLeft; d.clicks = m_clicks;
+        out.push_back(d);
+        return;
+    }
+    if (!m_mouseHeld || s.id != m_mouseFinger) return;
+    moveTo();
+    if (phase == TouchPhase::End || phase == TouchPhase::Cancel) {
+        m_mouseHeld = false;
+        Event u = mouseEvent(EventType::MouseButtonUp);
+        u.button = MouseLeft; u.clicks = m_clicks;
+        out.push_back(u);
+    }
+}
+
 } // namespace okay::platform

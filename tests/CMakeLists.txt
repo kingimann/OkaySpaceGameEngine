@@ -2942,6 +2942,22 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
     endforeach()
 endif()
 
+# Touch on our own backends (docs/platform_layer.md, "Touch"): the shared translation (TouchTracker) and the X11 backend's
+# XInput 2.2 part fed with event structs the test builds; then, under Xvfb, the server's XInput version, TouchDeviceCount
+# against the server's device list and the mouse still arriving with touch selected (Xvfb cannot make real touch events).
+add_executable(test_platform_touch test_platform_touch.cpp)
+target_link_libraries(test_platform_touch PRIVATE okay::platform ${CMAKE_DL_LIBS})
+target_include_directories(test_platform_touch PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+add_test(NAME platform_touch COMMAND test_platform_touch unit)
+if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME platform_touch_x11
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_touch> x11)
+    add_test(NAME platform_touch_x11_off
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_touch> x11)
+    set_tests_properties(platform_touch_x11 platform_touch_x11_off PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    set_tests_properties(platform_touch_x11_off PROPERTIES ENVIRONMENT "OKAY_X11_TOUCH=0")   # the switch that keeps touch as the mouse
+endif()
+
 # The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what
 # the X server holds. Own code, not ready, off by default; the test only checks it.
 if(NOT WIN32 AND NOT EMSCRIPTEN AND TARGET okay_ui_soft AND CMAKE_SYSTEM_NAME STREQUAL "Linux")

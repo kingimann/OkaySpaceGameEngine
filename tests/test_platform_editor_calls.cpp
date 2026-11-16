@@ -14,7 +14,7 @@
 //                                     * Backend::ShowErrorBox: a child process shows the box, the test finds the window by
 //                                       its title and closes it, once with Return and once with the window's close button
 //                                       (WM_DELETE_WINDOW); the box must return true each time;
-//                                     * TouchDeviceCount is 0 (our X11 code delivers no finger events).
+//                                     * TouchDeviceCount is 0 (Xvfb has no touch device; test_platform_touch covers touch).
 //
 // Exit code 77 = skipped (no display, backend not compiled in, no X11 headers). Written for this repository from the XDND
 // specification and the Xlib manual; no code from elsewhere.
@@ -380,7 +380,7 @@ int Own() {
         CHECK(w1 >= 320 && h1 > 60 && w1 == w2 && h1 == h2);
     }
 
-    RUN_SUITE("own X11: TouchDeviceCount");
+    RUN_SUITE("own X11: TouchDeviceCount (Xvfb has no touch device)");
     CHECK(b->TouchDeviceCount() == 0);
 
     win.reset();

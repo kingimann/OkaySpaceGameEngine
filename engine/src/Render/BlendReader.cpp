@@ -15,12 +15,14 @@
 #include "FileOpen.hpp"
 #include "okay/Render/ModelData.hpp"
 #include "okay/Core/ImageDecode.hpp"
+#include "BlendModifiers.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -519,15 +521,9 @@ Vec3 XformDir(const Mat4& m, const Vec3& v) { const Vec4 r = m * Vec4{v.x, v.y, 
 
 constexpr int OB_MESH = 1, OB_LAMP = 10, OB_CAMERA = 11, OB_ARMATURE = 25;
 
-struct MeshData {
-    std::vector<Vec3> pos;
-    std::vector<int> faceStart, faceCount, faceMat;
-    std::vector<char> faceSmooth;
-    std::vector<int> loopVert;
-    std::vector<Vec2> loopUv;                 // empty or one per loop
-    std::vector<std::uint32_t> dvStart;       // empty or pos.size()+1
-    std::vector<int> dvGroup;
-    std::vector<float> dvWeight;
+// The polygon mesh (positions, faces, loops, UVs, weights, creases) is blendmod::PolyMesh, so the modifiers
+// (BlendModifiers.cpp) work on it directly.
+struct MeshData : blendmod::PolyMesh {
     int colourLayers = 0;
     bool autoSmooth = false, customNormals = false, shapeKeys = false;
     int badFaces = 0;
@@ -594,6 +590,9 @@ struct Reader {
     double fps = 24.0;
     Ref scene;
 
+    std::map<std::string, int> skippedMods;   // "'Name' (Type)" -> objects
+    int cntModDisabled = 0, cntModCapped = 0, cntMirrorBisect = 0, cntMirrorNoObj = 0;
+    std::size_t subdivFaceBudget = 16000000;   // faces made by subdivision over the whole file
     int cntCurves = 0, cntLamps = 0, cntCameras = 0, cntOtherTypes = 0, cntModifiers = 0, cntConstraints = 0, cntDupli = 0;
     int cntShapeKeys = 0, cntVertexCol = 0, cntAutoSmooth = 0, cntBadFaces = 0, cntVertexParent = 0, cntBoneParent = 0;
     int cntPacked = 0, cntBadMesh = 0, cntNoBone = 0, cntMatMismatch = 0, cntIpo = 0, cntNla = 0, cntDrivers = 0;
@@ -1139,6 +1138,9 @@ struct Reader {
     void BuildParts();
     void BuildAnimation();
     void BuildPartsOf(ObjRec& o, int oi);
+    std::shared_ptr<MeshData> EvaluateModifiers(ObjRec& o, const std::shared_ptr<MeshData>& base, std::uint64_t meshAddr);
+    void ReadCreases(std::uint64_t meshAddr, MeshData& md);
+    std::vector<std::string> GroupNames(const ObjRec& o, const Ref& me);
     void Notes();
 };
 
@@ -1418,7 +1420,7 @@ void Reader::BuildNodes() {
             for (int guard = 0; a && guard < 1000; ++guard) {
                 Span s = f.At(a);
                 if (!s.p || s.st < 0) break;
-                if (f.structs[(std::size_t)s.st].name != "ArmatureModifierData") ++cntModifiers;
+                if (o.type != OB_MESH && f.structs[(std::size_t)s.st].name != "ArmatureModifierData") ++cntModifiers;
                 if (s.n < (std::size_t)f.ps) break;
                 a = f.PtrAt(s.p);
             }
@@ -1500,14 +1502,153 @@ void Reader::BuildParts() {
     out->clips.clear();
 }
 
+std::vector<std::string> Reader::GroupNames(const ObjRec& o, const Ref& me) {
+    std::vector<Ref> groups;
+    if (o.ob.Has("defbase")) o.ob.List("defbase", "bDeformGroup", groups, 100000);
+    if (groups.empty() && me && me.Has("vertex_group_names")) me.List("vertex_group_names", "bDeformGroup", groups, 100000);
+    std::vector<std::string> names;
+    names.reserve(groups.size());
+    for (const Ref& g : groups) names.push_back(g.Str("name", 64));
+    return names;
+}
+
+// Edge creases (0..1): MEdge.crease (a byte, up to 3.x), else the 4.x attributes ".edge_verts" + "crease_edge".
+void Reader::ReadCreases(std::uint64_t meshAddr, MeshData& md) {
+    Ref me = At(meshAddr, "Mesh");
+    if (!me) return;
+    const int ne = me.Has("totedge") ? me.Int("totedge") : me.Int("edges_num");
+    if (ne <= 0 || (std::size_t)ne > kMaxCorners) return;
+    const int nvert = (int)md.pos.size();
+    const std::vector<Ref> el = Layers(Cd(me, "edata", "edge_data"));
+    auto push = [&](std::uint32_t a, std::uint32_t b, float c) {
+        if (!(c > 0.0f) || a >= (std::uint32_t)nvert || b >= (std::uint32_t)nvert || a == b) return;
+        // stored as the 0..1 crease; EvaluateModifiers turns it into a sharpness for the level count
+        md.creases.push_back(blendmod::Crease{(int)a, (int)b, std::min(c, 1.0f)});
+    };
+    Span es; int stride = 0;
+    if (me.Ptr("medge")) es = f.At(me.Ptr("medge"));
+    else if (const Ref* l = FindLayerByType(el, 3)) es = LayerData(*l);   // CD_MEDGE
+    const int o1 = StructOffset("MEdge", "v1"), o2 = StructOffset("MEdge", "v2"), oc = StructOffset("MEdge", "crease");
+    stride = (int)StructSize("MEdge");
+    if (es.p && stride >= 9 && o1 >= 0 && o2 >= 0 && oc >= 0 && oc < stride) {
+        const std::size_t n = std::min((std::size_t)ne, es.n / (std::size_t)stride);
+        for (std::size_t i = 0; i < n; ++i) {
+            const u8* q = es.p + i * (std::size_t)stride;
+            if (q[oc]) push(f.U32(q + o1), f.U32(q + o2), (float)q[oc] / 255.0f);
+        }
+        return;
+    }
+    const Ref* ev = FindLayerByName(el, ".edge_verts");
+    const Ref* cr = FindLayerByName(el, "crease_edge");
+    if (!ev || !cr) return;
+    const Span vs = LayerData(*ev), cs = LayerData(*cr);
+    if (!vs.p || !cs.p) return;
+    const std::size_t n = std::min({(std::size_t)ne, vs.n / 8, cs.n / 4});
+    for (std::size_t i = 0; i < n; ++i) {
+        const float c = f.F32(cs.p + i * 4);
+        if (c > 0.0f && std::isfinite(c)) push(f.U32(vs.p + i * 8), f.U32(vs.p + i * 8 + 4), c);
+    }
+}
+
+// The mesh to draw for object o: the stored mesh, or (when it has Mirror / Subdivision Surface modifiers) a copy
+// with them applied in stack order. Settings are read by field name from the file's own struct layout.
+std::shared_ptr<MeshData> Reader::EvaluateModifiers(ObjRec& o, const std::shared_ptr<MeshData>& base, std::uint64_t meshAddr) {
+    if (!o.ob.Has("modifiers")) return base;
+    std::shared_ptr<MeshData> cur = base;
+    bool copied = false, creasesRead = false;
+    auto own = [&]() -> MeshData& {
+        if (!copied) { cur = std::make_shared<MeshData>(*base); cur->cornerN.clear(); cur->nDone = false; copied = true; }
+        return *cur;
+    };
+    std::uint64_t a = o.ob.Sub("modifiers").Ptr("first");
+    std::set<std::string> seenHere;
+    for (int guard = 0; a && guard < 1000; ++guard) {
+        Span sp = f.At(a);
+        if (!sp.p || sp.st < 0 || sp.n < (std::size_t)f.ps) break;
+        const StructInfo& si = f.structs[(std::size_t)sp.st];
+        Ref md; md.f = &f; md.p = sp.p; md.avail = sp.n; md.st = sp.st; md.addr = a;
+        a = f.PtrAt(sp.p);
+        if (sp.n < si.size) continue;
+        const Ref head = md.Sub("modifier");
+        const std::string type = si.name.size() > 12 && si.name.compare(si.name.size() - 12, 12, "ModifierData") == 0 ? si.name.substr(0, si.name.size() - 12) : si.name;
+        const std::string uname = head ? head.Str("name", 64) : std::string();
+        if (type == "Armature") continue;   // skinning: read as skin weights
+        if (type != "Mirror" && type != "Subsurf") {
+            const std::string key = "'" + uname + "' (" + type + ")";
+            if (seenHere.insert(key).second) ++skippedMods[key];
+            continue;
+        }
+        if (head && head.Has("mode") && !(head.Int("mode") & 1)) { ++cntModDisabled; continue; }   // eModifierMode_Realtime
+        if (type == "Mirror") {
+            blendmod::MirrorSettings ms;
+            const int flag = md.Int("flag");
+            const bool bits = (flag & (8 | 16 | 32)) != 0;
+            for (int k = 0; k < 3; ++k) ms.axis[k] = bits ? (flag & (8 << k)) != 0 : (k == std::max(0, std::min(2, md.Int("axis"))));
+            ms.merge = !(flag & 128);
+            ms.tolerance = (float)std::max(0.0, std::min(1e6, md.Num("tolerance", 0, 0.001)));
+            ms.flipU = (flag & 2) != 0; ms.flipV = (flag & 4) != 0;
+            for (int k = 0; k < 2; ++k) {
+                ms.flipOffset[k] = (float)std::max(-1e6, std::min(1e6, md.Num("uv_offset", (std::size_t)k)));
+                ms.copyOffset[k] = (float)std::max(-1e6, std::min(1e6, md.Num("uv_offset_copy", (std::size_t)k)));
+            }
+            if (flag & (256 | 512 | 1024)) ++cntMirrorBisect;
+            if (const std::uint64_t mob = md.Ptr("mirror_ob")) {
+                auto it = objByAddr.find(mob);
+                if (it != objByAddr.end() && objs[(std::size_t)it->second].placed && MatFinite(objs[(std::size_t)it->second].world)) {
+                    ms.toSpace = objs[(std::size_t)it->second].world.Inverse() * o.world;
+                    ms.fromSpace = ms.toSpace.Inverse();
+                    ms.useSpace = MatFinite(ms.toSpace) && MatFinite(ms.fromSpace);
+                } else ++cntMirrorNoObj;
+            }
+            MeshData& m = own();
+            if (flag & 64) {   // MOD_MIR_VGROUP: the copy's weights go to the other side's group
+                const std::vector<std::string> names = GroupNames(o, At(meshAddr, "Mesh"));
+                ms.groupFlip.assign(names.size(), -1);
+                for (std::size_t g = 0; g < names.size(); ++g) {
+                    const std::string other = blendmod::FlipSideName(names[g]);
+                    if (other.empty()) continue;
+                    for (std::size_t h = 0; h < names.size(); ++h) if (names[h] == other) { ms.groupFlip[g] = (int)h; break; }
+                }
+            }
+            blendmod::Mirror(m, ms);
+        } else {
+            // the higher of the viewport and render levels: what Assimp shows on the corpus (yxa_1: viewport 3 > render 2;
+            // HUMAN: render 2 > viewport 1), checked by triangle counts
+            int levels = std::max(md.Int("levels"), md.Int("renderLevels"));
+            levels = std::max(0, std::min(levels, 11));
+            if (levels == 0) continue;
+            blendmod::SubsurfSettings ss;
+            ss.levels = levels;
+            ss.simple = md.Int("subdivType") == 1;
+            const int flags = md.Int("flags");
+            ss.smoothUv = md.Has("uv_smooth") ? md.Int("uv_smooth") != 0 : (flags & 8) != 0;
+            ss.useCreases = f.version >= 290 ? (flags & 16) != 0 : true;
+            MeshData& m = own();
+            if (ss.useCreases && !creasesRead) {
+                creasesRead = true;
+                if (m.creases.empty()) ReadCreases(meshAddr, m);   // indices of the stored mesh (only valid before other modifiers)
+            }
+            // a crease of 1 is sharp at every level; a partial crease c is sharp for c * levels levels (our choice)
+            for (blendmod::Crease& c : m.creases) c.sharpness = c.sharpness >= 1.0f ? std::numeric_limits<float>::infinity() : c.sharpness * (float)levels;
+            const std::size_t before = m.faceStart.size();
+            const int done = blendmod::Subdivide(m, ss, std::min(subdivFaceBudget, kMaxFaces));
+            if (done < levels) ++cntModCapped;
+            const std::size_t made = m.faceStart.size() > before ? m.faceStart.size() - before : 0;
+            subdivFaceBudget = made < subdivFaceBudget ? subdivFaceBudget - made : 0;
+        }
+    }
+    return cur;
+}
+
 void Reader::BuildPartsOf(ObjRec& o, int oi) {
     (void)oi;
     ImportedModel& m = *out;
     const std::uint64_t meshAddr = o.ob.Ptr("data");
     if (!meshAddr) return;
     std::shared_ptr<MeshData> mdp = ReadMesh(meshAddr);
+    if (!mdp->ok) return;
+    mdp = EvaluateModifiers(o, mdp, meshAddr);
     MeshData& md = *mdp;
-    if (!md.ok) return;
     if (md.faceStart.empty()) { ++cntNoFaces; return; }
     Ref me = At(meshAddr, "Mesh");
     ComputeCornerNormals(md);
@@ -1787,7 +1928,18 @@ void Reader::Notes() {
     if (cntLamps) note(n(cntLamps) + " light object(s) not imported (kept as empty nodes)");
     if (cntCameras) note(n(cntCameras) + " camera object(s) not imported (kept as empty nodes)");
     if (cntOtherTypes) note(n(cntOtherTypes) + " object(s) of an unsupported type (curve, surface, text, metaball, lattice, grease pencil, volume, ...) kept as empty nodes");
-    if (cntModifiers) note(n(cntModifiers) + " modifier(s) not applied (subdivision, mirror, array, boolean, ...): meshes are shown as stored");
+    if (cntModifiers) note(n(cntModifiers) + " modifier(s) on objects that are not meshes (curves, text, ...): not applied");
+    {
+        std::size_t shown = 0;
+        for (const auto& kv : skippedMods) {
+            if (++shown > 32) { note(n((int)(skippedMods.size() - 32)) + " more kinds of modifier not applied"); break; }
+            note("modifier " + kv.first + " not applied (not supported) on " + n(kv.second) + " object(s)");
+        }
+    }
+    if (cntModDisabled) note(n(cntModDisabled) + " Mirror / Subdivision modifier(s) switched off for the viewport: not applied, like Blender's viewport");
+    if (cntModCapped) note(n(cntModCapped) + " Subdivision modifier(s) stopped at a lower level: the result would pass the face limit (16 M faces per file)");
+    if (cntMirrorBisect) note(n(cntMirrorBisect) + " Mirror modifier(s) with bisect set: the mesh is mirrored without cutting it at the mirror plane");
+    if (cntMirrorNoObj) note(n(cntMirrorNoObj) + " Mirror modifier(s) whose mirror object is not in the scene: mirrored in the object's own space");
     if (cntConstraints) note(n(cntConstraints) + " object(s) with constraints or a track-to target: not evaluated");
     if (cntBoneConstraints) note(n(cntBoneConstraints) + " pose bone(s) with constraints (IK, copy rotation, ...): not evaluated, the stored pose values are used");
     if (cntDupli) note(n(cntDupli) + " object(s) instance a group / collection: the instance is not expanded");

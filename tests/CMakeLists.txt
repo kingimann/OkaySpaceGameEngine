@@ -3393,6 +3393,7 @@ target_compile_definitions(test_blend_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_
 add_test(NAME blend_reader COMMAND test_blend_reader WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_executable(test_blend_hostile test_blend_hostile.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendReader.cpp
+    ${PROJECT_SOURCE_DIR}/engine/src/Render/BlendModifiers.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecode.cpp
     ${PROJECT_SOURCE_DIR}/engine/src/Core/ImageDecodeJpeg.cpp)
 target_include_directories(test_blend_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include ${PROJECT_SOURCE_DIR}/engine/src/Core)

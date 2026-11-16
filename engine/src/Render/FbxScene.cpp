@@ -137,13 +137,31 @@ Mat RotateLeft(int axis, double deg, const Mat& r, bool known = false) {   // kn
 /// far below the largest double, so a chain of the fast products above never meets an infinity on the way.
 inline bool Small(double v) { return std::fabs(v) < 1e100; }
 inline bool Small3(const double v[3]) { return Small(v[0]) && Small(v[1]) && Small(v[2]); }
+/// RotateLeft(axis, deg, r, true) written back into r: the same sums in the same order (each column of the result
+/// reads only the same column of r), without building the rotation matrix and a second matrix. The rotation's entries
+/// are RotAxis's: (p,p) = (q,q) = c; (p,q) = -s and (q,p) = s for X and Z, the other way round for Y.
+inline void RotateLeftInPlace(int axis, double deg, Mat& r) {
+    const double a = deg * kPi / 180.0, c = std::cos(a), s = std::sin(a);
+    const int p = axis == 0 ? 1 : 0, q = axis == 2 ? 1 : 2;
+    const double apq = axis == 1 ? s : -s, aqp = axis == 1 ? -s : s;
+    double* m = r.m;
+    for (int j = 0; j < 4; ++j) {
+        const double rp = m[p * 4 + j], rq = m[q * 4 + j];
+        double s0 = 0; s0 += m[axis * 4 + j]; m[axis * 4 + j] = s0;
+        double sp = 0; sp += c * rp; sp += apq * rq; m[p * 4 + j] = sp;
+        double sq = 0; sq += aqp * rp; sq += c * rq; m[q * 4 + j] = sq;
+    }
+}
 Mat Euler(const double d[3], int order) {
     static const int seq[6][3] = {{0,1,2},{0,2,1},{1,2,0},{1,0,2},{2,0,1},{2,1,0}};
     if (order < 0 || order > 5) order = 0;
     // With small finite angles every step is a rotation of finite numbers (no check needed per step).
-    const bool known = Small3(d);
     Mat r;
-    for (int k = 0; k < 3; ++k) r = RotateLeft(seq[order][k], d[seq[order][k]], r, known);
+    if (Small3(d)) {
+        for (int k = 0; k < 3; ++k) RotateLeftInPlace(seq[order][k], d[seq[order][k]], r);
+        return r;
+    }
+    for (int k = 0; k < 3; ++k) r = RotateLeft(seq[order][k], d[seq[order][k]], r, false);
     return r;
 }
 bool Invert(const Mat& a, Mat& out) {
@@ -320,16 +338,45 @@ struct Obj {
 };
 struct Conn { Id child, parent; std::string_view prop; bool propLink; };
 
-std::string Base64Decode(std::string_view in) {
-    static signed char tab[256]; static bool init = false;
-    if (!init) { std::memset(tab, -1, sizeof(tab)); const char* a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; for (int i = 0; i < 64; ++i) tab[(unsigned char)a[i]] = (signed char)i; init = true; }
-    std::string out; unsigned acc = 0; int bits = 0;
-    for (unsigned char c : in) {
-        if (tab[c] < 0) continue;
-        acc = (acc << 6) | (unsigned)tab[c]; bits += 6;
-        if (bits >= 8) { bits -= 8; out.push_back((char)((acc >> bits) & 0xFF)); }
+// Base64 to bytes (RFC 4648 alphabet), straight into `out`. Characters outside the alphabet ('=', line ends, anything)
+// are skipped and the bits of the rest are taken in order, 8 at a time; a tail of fewer than 8 bits is dropped. Four
+// alphabet characters in a row (the usual case) give their three bytes at once: the same bytes the bit-by-bit rule
+// gives, since a group starts with no bits left over.
+struct Base64Table {
+    signed char t[256];
+    Base64Table() : t{} {
+        for (int c = 0; c < 256; ++c) t[c] = -1;
+        const char* a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; ++i) t[(unsigned char)a[i]] = (signed char)i;
     }
-    return out;
+};
+void Base64Decode(std::string_view in, std::vector<std::uint8_t>& out) {
+    static const Base64Table kTab;
+    const signed char* tab = kTab.t;
+    const unsigned char* p = (const unsigned char*)in.data();
+    const std::size_t n = in.size();
+    out.resize(n / 4 * 3 + 3);   // the most it can produce (every character in the alphabet), trimmed at the end
+    std::uint8_t* o = out.data();
+    std::size_t w = 0;
+    unsigned acc = 0; int bits = 0;
+    std::size_t i = 0;
+    while (i < n) {
+        if (bits == 0) {
+            while (n - i >= 4) {
+                const int a = tab[p[i]], b = tab[p[i + 1]], c = tab[p[i + 2]], d = tab[p[i + 3]];
+                if ((a | b | c | d) < 0) break;
+                const std::uint32_t v = ((std::uint32_t)a << 18) | ((std::uint32_t)b << 12) | ((std::uint32_t)c << 6) | (std::uint32_t)d;
+                o[w] = (std::uint8_t)(v >> 16); o[w + 1] = (std::uint8_t)(v >> 8); o[w + 2] = (std::uint8_t)v;
+                w += 3; i += 4;
+            }
+            if (i >= n) break;
+        }
+        const int t = tab[p[i++]];
+        if (t < 0) continue;
+        acc = (acc << 6) | (unsigned)t; bits += 6;
+        if (bits >= 8) { bits -= 8; o[w++] = (std::uint8_t)((acc >> bits) & 0xFF); }
+    }
+    out.resize(w);
 }
 
 // ---------------------------------------------------------------------------
@@ -664,7 +711,7 @@ struct Builder {
                 if (const Elem* ct = v->e->Find("Content")) if (!ct->props.empty()) {
                     const Prop& p = ct->props[0];
                     if (p.type == 'R') t.content.assign(p.s.begin(), p.s.end());
-                    else if (p.type == 'S' && !p.s.empty()) { const std::string b = Base64Decode(p.s); t.content.assign(b.begin(), b.end()); }
+                    else if (p.type == 'S' && !p.s.empty()) Base64Decode(p.s, t.content);
                 }
             }
             // A Video that carries the picture while the one connected to the texture does not (some exporters write the pair
@@ -680,7 +727,7 @@ struct Builder {
                     if (!same) continue;
                     const Prop& p = ct->props[0];
                     if (p.type == 'R') t.content.assign(p.s.begin(), p.s.end());
-                    else if (p.type == 'S') { const std::string b = Base64Decode(p.s); t.content.assign(b.begin(), b.end()); }
+                    else if (p.type == 'S') Base64Decode(p.s, t.content);
                     if (!t.content.empty()) break;
                 }
             }

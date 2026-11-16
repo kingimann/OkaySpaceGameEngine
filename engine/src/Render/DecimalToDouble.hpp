@@ -35,6 +35,12 @@
 #include <intrin.h>
 #endif
 
+#if defined(_MSC_VER) && !defined(__clang__)
+#define OKAY_DECIMAL_INLINE __forceinline
+#else
+#define OKAY_DECIMAL_INLINE inline __attribute__((always_inline))
+#endif
+
 namespace okay {
 namespace detail {
 
@@ -136,7 +142,7 @@ struct DecimalParts {
 };
 
 // The double for the parts, or false when the caller must use strtod (rare: the approximation cannot decide).
-inline bool DecimalToDouble(const DecimalParts& d, double& out) {
+OKAY_DECIMAL_INLINE bool DecimalToDouble(const DecimalParts& d, double& out) {
     std::uint64_t bits;
     if (d.w == 0) {
         bits = 0;
@@ -206,7 +212,7 @@ inline std::uint64_t FirstDigitsValue(std::uint64_t w, int k) {
 // Reads a plain decimal at p: [+-] digits [. digits] [(e|E) [+-] digits], with at least one digit before the exponent.
 // Returns the end of what was read, or nullptr when there is no such number at p (an exponent letter must be followed
 // by digits). It does not look at what follows; the caller decides whether the token ends there.
-inline const char* ScanDecimal(const char* p, const char* end, DecimalParts& d) {
+OKAY_DECIMAL_INLINE const char* ScanDecimal(const char* p, const char* end, DecimalParts& d) {
     static const std::uint64_t kP10[9] = {1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000};
     const std::uint64_t kFits8 = 100000000000ull;          // 10^11: 8 more digits keep w below 10^19
     const std::uint64_t kFits1 = 1000000000000000000ull;   // 10^18: 1 more digit keeps w below 10^19

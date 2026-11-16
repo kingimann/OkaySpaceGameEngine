@@ -6,6 +6,7 @@
 //     of Euler, LocalMatrix and its short path LocalSimple) against the plain 4x4 products;
 //   - curve evaluation that remembers its last key segment, with flags and slopes per attribute set, against the plain
 //     search over one copy per key (the storage before);
+//   - Base64 four characters at a time against the bit-by-bit decoder;
 //   - the ASCII number fast path against FastDecimal and strtod, and ASCII arrays kept as int32 / float32 against the
 //     parsed doubles (test_fbx_exact_numbers.cpp).
 #include "test_framework.hpp"
@@ -20,6 +21,19 @@ long FbxExactArrayChecks(long& checks, long& packed);   // test_fbx_exact_number
 using namespace okay::fbx;
 
 namespace ref {   // the plain versions, as they were before the fast paths
+// Base64 as it was decoded before (bit by bit into a string), for the four-at-a-time decoder.
+std::string Base64Old(std::string_view in) {
+    signed char tab[256]; std::memset(tab, -1, sizeof(tab));
+    const char* a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for (int i = 0; i < 64; ++i) tab[(unsigned char)a[i]] = (signed char)i;
+    std::string out; unsigned acc = 0; int bits = 0;
+    for (unsigned char c : in) {
+        if (tab[c] < 0) continue;
+        acc = (acc << 6) | (unsigned)tab[c]; bits += 6;
+        if (bits >= 8) { bits -= 8; out.push_back((char)((acc >> bits) & 0xFF)); }
+    }
+    return out;
+}
 // The curve as it was stored before flags and slopes were kept per attribute set: one copy per key, plain search.
 struct OldCurve {
     std::vector<double> t, v; std::vector<int> flags; std::vector<double> sr, sl; bool hasSlopes = false;
@@ -162,6 +176,26 @@ int main() {
     }
     CHECK(cn == 600000); CHECK(cbad == 0);
 
+    RUN_SUITE("fbx exact: Base64 four characters at a time against bit by bit");
+    long b64bad = 0, b64n = 0;
+    {
+        const char* alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int it = 0; it < 20000; ++it) {
+            std::string in;
+            const int len = (int)(g() % 200);
+            for (int k = 0; k < len; ++k) {
+                const int kind = (int)(g() % 16);   // mostly the alphabet; line ends, padding, junk bytes now and then
+                in += kind == 0 ? '\n' : kind == 1 ? '=' : kind == 2 ? (char)(g() % 256) : alpha[g() % 64];
+            }
+            std::vector<std::uint8_t> got;
+            Base64Decode(in, got);
+            const std::string want = ref::Base64Old(in);
+            ++b64n;
+            if (got.size() != want.size() || (!got.empty() && std::memcmp(got.data(), want.data(), got.size()) != 0)) ++b64bad;
+        }
+    }
+    CHECK(b64n == 20000); CHECK(b64bad == 0);
+
     RUN_SUITE("fbx exact: ASCII numbers, one pass against FastDecimal");
     long nchecks = 0;
     const long nbad = FbxExactNumberChecks(nchecks);
@@ -173,6 +207,7 @@ int main() {
     std::printf("  %ld values in 3000 arrays (%ld stored as int32 or float32): %ld differ\n", achecks, apacked, abad);
     CHECK(abad == 0); CHECK(achecks > 50000); CHECK(apacked > 800);
 
+    std::printf("  base64: %ld of %ld strings differ\n", b64bad, b64n);
     std::printf("  matrices %ld differ, translate %ld, scale %ld, euler %ld, local %ld, simple %ld of %ld; curves %ld of %ld; numbers %ld of %ld\n",
                 mul, tr, scl, eul, loc, simple, simpleTried, cbad, cn, nbad, nchecks);
     TEST_MAIN_RESULT();

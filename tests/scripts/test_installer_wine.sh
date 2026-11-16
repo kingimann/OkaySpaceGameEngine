@@ -4,8 +4,9 @@
 # checks. Nothing here needs Windows, and nothing here proves what the dialogs look like (see docs/installer.md for what
 # was and was not seen).
 #
-# Needs: makensis, wine (64-bit is enough), a MinGW compiler (for tiny test programs), python3, iconv.
-# Exits 77 (ctest: skipped) when one of them is missing.
+# Needs: makensis and python3 (the build and file-list checks), and for the wine scenarios also wine (64-bit is enough), a MinGW compiler
+# (for tiny test programs), iconv and strings. Exits 77 (ctest: skipped) when makensis or python3 is missing, or, after the build and
+# file-list checks passed, when the wine scenarios cannot run. A failed check is always exit 1.
 #
 # This wine cannot run 32-bit programs, so the installer is built as a 64-bit installer for the test with
 # makensis "-XTarget amd64-unicode" (a command-line switch; the script itself is not changed and is not copied).
@@ -27,21 +28,28 @@ GEN="$REPO/scripts/gen-installer-filelist.py"
 
 skip() { echo "skipped: $1"; exit 77; }
 
-for t in makensis python3 iconv x86_64-w64-mingw32-gcc sha256sum strings; do
+for t in makensis python3 sha256sum; do
   command -v "$t" >/dev/null 2>&1 || skip "$t not found"
 done
 [ -f "$NSI" ] || { echo "installer script not found: $NSI"; exit 1; }
 
+# The wine scenarios need more; without it only the build and file-list checks run and the exit code is 77 at the end.
+WINE_OK=1; WHY_NOT=""
+no_wine() { WINE_OK=0; [ -z "$WHY_NOT" ] && WHY_NOT="$1"; }
+for t in iconv x86_64-w64-mingw32-gcc strings; do command -v "$t" >/dev/null 2>&1 || no_wine "$t not found"; done
+[ "${OKAY_INSTALLER_NO_WINE:-0}" = 1 ] && no_wine "OKAY_INSTALLER_NO_WINE=1"
 WINE="${OKAY_WINE:-}"
 if [ -z "$WINE" ]; then
   for c in wine64 wine /usr/lib/wine/wine64 /usr/lib/x86_64-linux-gnu/wine/wine64; do
     if command -v "$c" >/dev/null 2>&1; then WINE="$(command -v "$c")"; break; fi
   done
 fi
-[ -n "$WINE" ] || skip "wine not found"
-WINESERVER="$(dirname "$(readlink -f "$WINE")")/wineserver"
-[ -x "$WINESERVER" ] || WINESERVER="$(command -v wineserver 2>/dev/null || true)"
-[ -n "$WINESERVER" ] || skip "wineserver not found"
+WINESERVER=""
+if [ -n "$WINE" ]; then
+  WINESERVER="$(dirname "$(readlink -f "$WINE")")/wineserver"
+  [ -x "$WINESERVER" ] || WINESERVER="$(command -v wineserver 2>/dev/null || true)"
+fi
+[ -n "$WINE" ] && [ -n "$WINESERVER" ] || no_wine "wine not found"
 
 T="$(mktemp -d "${TMPDIR:-/tmp}/okay-installer-test.XXXXXX")" || skip "no scratch folder"
 OWN_PREFIX=1
@@ -94,22 +102,24 @@ snap() { (cd "$1" 2>/dev/null && find . -type f -print0 | LC_ALL=C sort -z | xar
 same_tree() { [ "$1" = "$2" ]; check $? "$3" "the folder changed"; }
 
 # ---- the scratch machine ----------------------------------------------------------------------------------------------
-echo "== setting up (wine prefix, test programs, installers)"
-if [ ! -d "$PFX/drive_c" ]; then
-  W wineboot --init >/dev/null 2>&1
+echo "== setting up (test programs, installers$([ "$WINE_OK" = 1 ] && echo ", wine prefix"))"
+LAD_W=""; ARP='HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\OkaySpace'; APPKEY='HKCU\Software\OkaySpace'
+if [ "$WINE_OK" = 1 ]; then
+  if [ ! -d "$PFX/drive_c" ]; then W wineboot --init >/dev/null 2>&1; "$WINESERVER" -w >/dev/null 2>&1; fi
+  LAD_W="$(W cmd /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r\n')"
+  APPD_W="$(W cmd /c "echo %APPDATA%" 2>/dev/null | tr -d '\r\n')"
+  TMPW_W="$(W cmd /c "echo %TEMP%" 2>/dev/null | tr -d '\r\n')"
+  case "$LAD_W" in C:\\*) ;; *) no_wine "this wine could not run a Windows program (got '$LAD_W')" ;; esac
 fi
-LAD_W="$(W cmd /c "echo %LOCALAPPDATA%" 2>/dev/null | tr -d '\r\n')"
-APPD_W="$(W cmd /c "echo %APPDATA%" 2>/dev/null | tr -d '\r\n')"
-TMPW_W="$(W cmd /c "echo %TEMP%" 2>/dev/null | tr -d '\r\n')"
-case "$LAD_W" in C:\\*) ;; *) skip "this wine could not run a Windows program (got '$LAD_W')" ;; esac
-LAD="$(up "$LAD_W")"; APPD="$(up "$APPD_W")"; TMPW="$(up "$TMPW_W")"
-SMDIR="$APPD/Microsoft/Windows/Start Menu/Programs"
-DESK="$(dirname "$(dirname "$LAD")")/Desktop"   # C:\users\<name>\Desktop
-INST_W="$LAD_W\\OkaySpace"; INST="$LAD/OkaySpace"
-ARP='HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\OkaySpace'
-APPKEY='HKCU\Software\OkaySpace'
+if [ "$WINE_OK" = 1 ]; then
+  LAD="$(up "$LAD_W")"; APPD="$(up "$APPD_W")"; TMPW="$(up "$TMPW_W")"
+  SMDIR="$APPD/Microsoft/Windows/Start Menu/Programs"
+  DESK="$(dirname "$(dirname "$LAD")")/Desktop"   # C:\users\<name>\Desktop
+  INST_W="$LAD_W\\OkaySpace"; INST="$LAD/OkaySpace"
+fi
 
-# Tiny Windows programs: one that writes a "ready" file and then sleeps (a program that is running).
+# Tiny Windows programs: one that writes a "ready" file and then sleeps (a program that is running). Without wine the build
+# checks only need files with the right names, so a placeholder will do.
 cat > "$T/sleeper.c" <<'EOF'
 #include <windows.h>
 #include <stdio.h>
@@ -119,7 +129,10 @@ int main(int argc, char** argv) {
     return 0;
 }
 EOF
-x86_64-w64-mingw32-gcc -O1 -s "$T/sleeper.c" -o "$T/sleeper.exe" 2>"$T/gcc.txt" || skip "cannot build the test program: $(head -1 "$T/gcc.txt")"
+if [ "$WINE_OK" = 1 ]; then
+  x86_64-w64-mingw32-gcc -O1 -s "$T/sleeper.c" -o "$T/sleeper.exe" 2>"$T/gcc.txt" || no_wine "cannot build the test program: $(head -1 "$T/gcc.txt")"
+fi
+[ -s "$T/sleeper.exe" ] || printf 'MZ placeholder program for the build checks' > "$T/sleeper.exe"
 
 # A distribution laid out like scripts/build-windows-dist.sh writes it.
 #   mkdist <folder> <version> <pad bytes per program> <extras: stale|new|many|none>
@@ -180,7 +193,7 @@ start_program() { # start_program <windows path>
   local ready="$T/ready.$RANDOM"; rm -f "$ready"
   W "$1" "$(wp "$ready")" >/dev/null 2>&1 &
   BGPIDS="$BGPIDS $!"
-  local i; for i in $(seq 1 60); do [ -f "$ready" ] && return 0; sleep 0.25; done
+  local i; for i in $(seq 1 160); do [ -f "$ready" ] && return 0; sleep 0.25; done   # up to 40 s: a loaded machine starts wine slowly
   return 1
 }
 reset() {
@@ -721,14 +734,15 @@ sc_tamper() {
   printf 'v' > "$LAD/victim_outside.txt"; printf 'v' > "$INST/../../victim_two_up.txt"
   printf 'p' > "$INST/Projects/MyGame/project.okayproj"; printf 'e' > "$INST/Versions/2.850.1/Tools/OkayEngine.exe"
   printf 'c' > "$INST/community/pack.zip"; printf 'n' > "$INST/notes.txt"; printf 'a' > "$INST/a.txt"
+  mkdir -p "$INST/Tools/Projects/EditorProj/Assets"; printf 'p' > "$INST/Tools/Projects/EditorProj/project.okayproj"
   { printf '..\\victim_outside.txt\r\n..\\..\\victim_two_up.txt\r\nProjects\\MyGame\\project.okayproj\r\nVersions\\2.850.1\\Tools\\OkayEngine.exe\r\n'
     printf 'community\\pack.zip\r\nC:\\victim_drive.txt\r\n/etc/passwd\r\n*.txt\r\n?.txt\r\nTools\\..\\..\\victim_outside.txt\r\n'
-    printf 'notes.txt\r\n'; } >> "$INST/installed-files.txt"
+    printf 'notes.txt\r\nTools\\Projects\\EditorProj\\project.okayproj\r\n'; } >> "$INST/installed-files.txt"
   printf 'v' > "$PFX/drive_c/victim_drive.txt"
-  local keep="$(cd "$INST" && sha256sum Projects/MyGame/project.okayproj Versions/2.850.1/Tools/OkayEngine.exe community/pack.zip a.txt) $(sha256sum "$LAD/victim_outside.txt" "$PFX/drive_c/victim_drive.txt")"
+  local keep="$(cd "$INST" && sha256sum Projects/MyGame/project.okayproj Versions/2.850.1/Tools/OkayEngine.exe community/pack.zip a.txt Tools/Projects/EditorProj/project.okayproj) $(sha256sum "$LAD/victim_outside.txt" "$PFX/drive_c/victim_drive.txt")"
   setup "$T/Setup-9.9.10.exe" /S
   expect_rc 0 "the update runs"
-  local after="$(cd "$INST" && sha256sum Projects/MyGame/project.okayproj Versions/2.850.1/Tools/OkayEngine.exe community/pack.zip a.txt) $(sha256sum "$LAD/victim_outside.txt" "$PFX/drive_c/victim_drive.txt")"
+  local after="$(cd "$INST" && sha256sum Projects/MyGame/project.okayproj Versions/2.850.1/Tools/OkayEngine.exe community/pack.zip a.txt Tools/Projects/EditorProj/project.okayproj) $(sha256sum "$LAD/victim_outside.txt" "$PFX/drive_c/victim_drive.txt")"
   [ "$keep" = "$after" ]; check $? "an update does not remove files outside the install folder, the person's projects, Versions or downloads, or by wildcard"
   no_file "$INST/Tools/old_tool.exe" "(a real dropped file is still removed)"
   uninstall_wait /S
@@ -799,13 +813,94 @@ sc_link() {
   # symbolic link to a folder with either RemoveDirectory or DeleteFile, so the links stay here and the log says so.)
 }
 
-SCENARIOS="generator fresh update older running nofolder fulldisk swapfail uninstall_keep uninstall_all uninstall_running oddfolders transition tamper recover dswitch link"
+# The build checks need no wine: the installer is built the way the release job builds it (the 32-bit target, no -X), and from a
+# list made beforehand with -DFILELIST.
+sc_build() {
+  echo "== S0 the installer builds the way the release job builds it"
+  local out="$T/Setup-release-style.exe" out2="$T/Setup-filelist.exe"
+  rm -f "$out" "$out2"
+  makensis -V1 -DVERSION=9.9.10 -DDISTDIR="$T/d2" -DOUTFILE="$out" "$NSI" >"$T/makensis.txt" 2>&1; check $? "makensis builds it (32-bit, as the release job does)" "$(head -3 "$T/makensis.txt" | tr '\n' ' ')"
+  [ "$(head -c2 "$out" 2>/dev/null)" = "MZ" ] && [ "$(stat -c %s "$out" 2>/dev/null || echo 0)" -gt 100000 ]; check $? "the result is a Windows program of a sensible size"
+  if [ -f "$GEN" ]; then
+    python3 -I "$GEN" "$T/d2" "$T/prebuilt.nsh" >/dev/null 2>&1
+    makensis -V1 -DVERSION=9.9.10 -DDISTDIR="$T/d2" -DFILELIST="$T/prebuilt.nsh" -DOUTFILE="$out2" "$NSI" >"$T/makensis2.txt" 2>&1; check $? "it also builds from a list made beforehand (-DFILELIST)" "$(head -3 "$T/makensis2.txt" | tr '\n' ' ')"
+    [ -s "$out2" ]; check $? "and writes the installer"
+  fi
+}
+
+sc_relative() {
+  echo "== S17 a folder that is not a full path, and an Uninstall.exe in the wrong folder"
+  reset
+  setup "$T/Setup-9.9.9.exe" /S "/D=relative\\folder"
+  expect_rc 11 "a folder without a drive letter is refused"
+  nothing_installed "$LAD/OkaySpace" "relative folder"
+  LOGTEXT="$(slog)"; log_has "not a full folder name" "the log says why"
+  # Uninstall.exe copied to another folder must not clean that folder.
+  reset
+  setup "$T/Setup-9.9.9.exe" /S
+  mkdir -p "$T/work/elsewhere"; cp "$INST/Uninstall.exe" "$T/work/elsewhere/Uninstall.exe"
+  printf 'mine' > "$T/work/elsewhere/README.txt"; printf 'mine' > "$T/work/elsewhere/VERSION.txt"; printf 'mine' > "$T/work/elsewhere/SDL2.dll"
+  W "$(wp "$T/work/elsewhere/Uninstall.exe")" /S "_?=$(wp "$T/work/elsewhere")" >"$T/out.txt" 2>&1; RC=$?
+  note_run "Uninstall.exe in the wrong folder"
+  expect_rc 17 "it refuses (not an OkaySpace folder)"
+  [ -f "$T/work/elsewhere/README.txt" ] && [ -f "$T/work/elsewhere/VERSION.txt" ] && [ -f "$T/work/elsewhere/SDL2.dll" ]
+  check $? "the files in that folder are untouched"
+  [ -n "$(regdump "$ARP")" ]; check $? "and the real install is still registered"
+}
+
+sc_unzipped() {
+  echo "== S18 Setup run from inside an unzipped copy (the audit's S3)"
+  reset
+  local z="$PFX/drive_c/OkaySpace-unzipped"; rm -rf "$z"; mkdir -p "$z"; cp -r "$T/d1"/. "$z"/; cp "$T/Setup-9.9.10.exe" "$z/Setup.exe"
+  setup "C:\\OkaySpace-unzipped\\Setup.exe" /S
+  expect_rc 0 "Setup updates the unzipped copy in place"
+  dist_installed "$T/d2" "$z" "the unzipped folder now holds the new release"
+  no_file "$INST/OkaySpace.exe" "no second copy was made in the default folder"
+  [ "$(regget "$(regdump "$ARP")" InstallLocation)" = 'C:\OkaySpace-unzipped' ]; check $? "Apps & features points at the unzipped folder"
+  no_leftovers "$z" "after updating the unzipped copy"
+  has_file "$z/Setup.exe" "Setup itself, which sits in that folder, is untouched"
+  INST_W='C:\OkaySpace-unzipped'; uninstall_wait /S; INST_W="$LAD_W\\OkaySpace"
+  no_file "$z/Uninstall.exe" "the uninstaller removes itself from the unzipped folder too"
+  [ -f "$z/Setup.exe" ]; check $? "(Setup.exe is not ours to remove: it is not in the list)"
+  rm -rf "$z"
+}
+
+sc_custom() {
+  echo "== S19 a folder of your own choice, with achievements in the default local folder"
+  reset
+  local dir_w='C:\Apps\OkaySpace' dir="$PFX/drive_c/Apps/OkaySpace"; rm -rf "$PFX/drive_c/Apps"
+  setup "$T/Setup-9.9.9.exe" /S "/D=$dir_w"
+  expect_rc 0 "install into C:\\Apps\\OkaySpace"
+  mkdir -p "$LAD/OkaySpace"; printf 'a' > "$LAD/OkaySpace/achievements.txt"; printf 'p' > "$LAD/OkaySpace/playtime.txt"
+  INST_W="$dir_w"; INST="$dir"
+  uninstall_wait /S
+  has_file "$LAD/OkaySpace/achievements.txt" "achievements in the default local folder are kept when the box is off"
+  LOGTEXT="$(ulog)"; log_has "achievements and play time" "the log says so"
+  no_file "$dir" "the chosen folder is gone"
+  INST_W="$LAD_W\\OkaySpace"; INST="$LAD/OkaySpace"
+  reset
+  setup "$T/Setup-9.9.9.exe" /S "/D=$dir_w"
+  mkdir -p "$LAD/OkaySpace"; printf 'a' > "$LAD/OkaySpace/achievements.txt"; printf 'p' > "$LAD/OkaySpace/playtime.txt"
+  INST_W="$dir_w"; INST="$dir"
+  uninstall_wait /S /REMOVEUSERDATA
+  no_file "$LAD/OkaySpace" "with the box ticked they are removed, and the empty folder with them"
+  INST_W="$LAD_W\\OkaySpace"; INST="$LAD/OkaySpace"
+  rm -rf "$PFX/drive_c/Apps"
+}
+
+SCENARIOS="build generator fresh update older running nofolder fulldisk swapfail uninstall_keep uninstall_all uninstall_running oddfolders transition tamper recover dswitch link relative unzipped custom"
+[ "$WINE_OK" = 1 ] || SCENARIOS="build generator"
 for s in $SCENARIOS; do
   if [ -n "${OKAY_INSTALLER_ONLY:-}" ]; then case " $OKAY_INSTALLER_ONLY " in *" $s "*) ;; *) continue ;; esac; fi
   "sc_$s"
 done
 
-stop_bg
+[ "$WINE_OK" = 1 ] && stop_bg
 echo
-if [ "$fail" = 0 ]; then echo "installer_wine: all $nchk checks passed"; else echo "installer_wine: $nfail of $nchk checks FAILED"; fi
-exit $fail
+if [ "$fail" != 0 ]; then echo "installer_wine: $nfail of $nchk checks FAILED"; exit 1; fi
+if [ "$WINE_OK" != 1 ]; then
+  echo "installer_wine: the $nchk build and file-list checks passed; the wine scenarios were SKIPPED ($WHY_NOT)"
+  exit 77
+fi
+echo "installer_wine: all $nchk checks passed"
+exit 0

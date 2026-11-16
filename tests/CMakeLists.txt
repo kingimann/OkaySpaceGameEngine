@@ -1940,6 +1940,11 @@ if(UNIX)
     # scripts/sign-windows.sh (Authenticode signing of the Windows programs) with a throwaway certificate; needs osslsigncode, openssl and MinGW.
     add_test(NAME sign_windows COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_sign_windows.sh)
     set_tests_properties(sign_windows PROPERTIES SKIP_RETURN_CODE 77)
+    # scripts/okayspace-installer.nsi (Setup and the uninstaller): built with makensis and, when wine and MinGW are there too, run silently
+    # under wine (fresh install, update, older Setup, running programs, bad folders, full disk, rollback, uninstall). Skipped (77) without
+    # makensis; without wine only the build and file-list checks run, and the result is still "skipped".
+    add_test(NAME installer_wine COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_installer_wine.sh)
+    set_tests_properties(installer_wine PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
     # docs/sql/member_moderation.sql (kick / ban / roles) on a LOCAL Postgres, same opt-in as above.
     add_test(NAME member_moderation_sql COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_member_moderation_sql.sh)
     set_tests_properties(member_moderation_sql PROPERTIES SKIP_RETURN_CODE 77)

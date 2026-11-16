@@ -195,6 +195,11 @@ Each .exe needs SDL2.dll in its own folder — that's why one sits beside the
 launcher and a copy sits in Tools/. Don't separate an .exe from its SDL2.dll.
 EOF
 
+# The installer (scripts/okayspace-installer.nsi) knows which files it installs, checks and removes from a list that
+# scripts/gen-installer-filelist.py makes from this folder when makensis runs. Check the folder now, so a missing program or a file
+# name the installer cannot carry stops the distribution build here and not later, in the installer build.
+python3 scripts/gen-installer-filelist.py "$OUT_DIR" --check
+
 echo
 echo "Built Windows distribution in $OUT_DIR/:"
 find "$OUT_DIR" -type f | sort

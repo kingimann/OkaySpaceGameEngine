@@ -1355,8 +1355,12 @@ build with tests on; the memory columns need glibc, elsewhere they print `-`):
 5. `bench_fbx_reader --digest <files>` prints one hash per file of everything our reader produced, and
    `bench_fbx_reader --import-digest <files>` one hash of the whole imported scene; run them before and after a change to
    the reader to show the output did not change (the lines must be identical).
-6. `build/tests/test_fbx_exact` (about a second) checks the reader's arithmetic shortcuts against the plain code; expect
-   `11 checks, 0 failures`.
+6. `build/tests/test_fbx_exact` (about a second) checks the reader's shortcuts against the plain code (matrices, curves,
+   Base64, ASCII numbers and arrays); expect `16 checks, 0 failures`.
+7. `build/tests/test_decimal_to_double` (about five seconds) checks our exact decimal-to-double conversion (used for every
+   ASCII FBX number) against the C library's `strtod` on 2 million inputs; expect `0 differ` on every line and
+   `11 checks, 0 failures`. `OKAY_DECIMAL_ITERS=100000000 build/tests/test_decimal_to_double` is the full run (about four
+   and a half minutes). Then `python3 scripts/gen_pow5_table.py --check` should print `Pow5Table.inc matches (651 entries)`.
 
 ## Team tooling (not part of the Windows release)
 

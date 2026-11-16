@@ -499,6 +499,11 @@ FunctionEnd
       StrCpy $R0 0
       Goto done
     ${EndIf}
+    StrCpy $R2 $R0 8
+    ${If} $R2 == "exports\"
+      StrCpy $R0 0
+      Goto done
+    ${EndIf}
     StrCpy $R2 $R0 15
     ${If} $R2 == "Tools\Projects\"
       StrCpy $R0 0
@@ -1831,7 +1836,7 @@ Function un.OptionsCreate
   ${If} $R0 == error
     Abort
   ${EndIf}
-  ${NSD_CreateLabel} 0 0 100% 82u "OkaySpace will be removed from:$\r$\n  $INSTDIR$\r$\n$\r$\nRemoved: the programs, the editors on the Versions page (a folder that holds a project stays), logs, temporary files, your sign-in on this computer, the shortcuts and the entry in Settings > Apps.$\r$\n$\r$\nKept, unless you tick the box below: your projects, downloads, settings, achievements, local accounts, the official game with its saves, and any file of yours that Setup did not install. The last page lists what was kept."
+  ${NSD_CreateLabel} 0 0 100% 82u "OkaySpace will be removed from:$\r$\n  $INSTDIR$\r$\n$\r$\nRemoved: the programs, the editors on the Versions page (a folder that holds a project stays), logs, temporary files, your sign-in on this computer, the shortcuts and the entry in Settings > Apps.$\r$\n$\r$\nKept, unless you tick the box below: your projects, downloads, settings, achievements, local accounts and account data exports, the official game with its saves, and any file of yours that Setup did not install. The last page lists what was kept."
   Pop $R0
   ${NSD_CreateCheckbox} 0 88u 100% 12u "Also remove my projects, settings and sign-in"
   Pop $UnCheck
@@ -2025,6 +2030,11 @@ Function un.KeepUserData
     Push "the official game and anything it saved"
     Call un.Kept
   ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\exports\*.*"
+    Push "$INSTDIR\exports"
+    Push "your account data exports"
+    Call un.Kept
+  ${EndIf}
 FunctionEnd
 
 ; Box ticked: remove the person's data too. Never anything outside the OkaySpace folders.
@@ -2038,6 +2048,8 @@ Function un.RemoveUserData
   StrCpy $R0 "$INSTDIR\downloads"
   Call un.SweepIfThere
   StrCpy $R0 "$INSTDIR\Games"
+  Call un.SweepIfThere
+  StrCpy $R0 "$INSTDIR\exports"
   Call un.SweepIfThere
   ; settings, state, local accounts, achievements, sign-in details
   Delete "$INSTDIR\launcher.cfg"
@@ -2073,7 +2085,7 @@ Function un.RemoveUserData
     Delete "$UnLocal\playtime.txt"
     Delete "$UnLocal\profile_showcase.txt"
   ${EndIf}
-  ${LogU} "Removed: projects, downloads, the official game, settings, local accounts and achievements (the box was ticked)"
+  ${LogU} "Removed: projects, downloads, the official game, account data exports, settings, local accounts and achievements (the box was ticked)"
 FunctionEnd
 
 Function un.SweepIfThere

@@ -34,7 +34,7 @@ was running; the `.old` files are put back first).
 |---|---|
 | Replaced | Every file in the installer's list: the programs, `SDL2.dll`, `README.txt`, `VERSION.txt`, `Tools\*`, `Assets\Textures\*`, `Assets\Fonts\*`, `examples\*`. This includes a shipped file the person edited (an example scene, `README.txt`). Keep your own work outside those folders. |
 | Removed | A file an earlier Setup installed that this release no longer ships (`installed-files.txt` lists what the last Setup installed). It works from the second update on: an install made by the old Setup has no such list. |
-| Kept | Projects, `Tools\Projects`, `Versions\`, `Games\`, `community`, `downloads`, settings, logs, sign-in, and any file Setup does not install. |
+| Kept | Projects, `Tools\Projects`, `Versions\`, `Games\`, `community`, `downloads`, `exports`, settings, logs, sign-in, and any file Setup does not install. |
 | Remembered | The Desktop shortcut is made on the first install only. A shortcut the person deleted does not come back (`HKCU\Software\OkaySpace\DesktopShortcut`). |
 
 ### Switches and exit codes
@@ -73,7 +73,7 @@ if any program of ours is running: the programs of the distribution, and any `.e
 | Editor versions in `Versions\` (and `.partial-*`, `.removing-*`) | removed, **except a folder that holds a project** (a `project.okayproj`, or an `Assets` folder) | removed, projects too |
 | Logs, state, update leftovers (`okay_update.log`, `okay_selfupdate.state`, `*.exe.old`, `.new`, `.failed`, crash logs), temp files `%TEMP%\okayspace_*` | removed | removed |
 | **Sign-in token** `%APPDATA%\OkaySpace\session.txt`, the game `ipc\` folder | removed | removed |
-| `Projects\`, `Tools\Projects\`, `community\`, `downloads\`, `Games\` (the official game and anything it saved) | kept | removed |
+| `Projects\`, `Tools\Projects\`, `community\`, `downloads\`, `exports\` (the account data the launcher can download for you), `Games\` (the official game and anything it saved) | kept | removed |
 | Settings (`launcher.cfg`, `okay_*.txt`, `imgui.ini`, ...), achievements, `account_*.txt` | kept | removed |
 | `%APPDATA%\OkaySpace\accounts.db` (local accounts), `servers.cfg` | kept | removed |
 | A file Setup did not install and the programs did not make (your own file in `examples\` or `Assets\`) | kept | kept |

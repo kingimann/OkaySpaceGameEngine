@@ -488,7 +488,7 @@ sc_swapfail() {
 # The audit's "after use" tree, made by hand with the names and places the programs use (docs/install_audit.md, file map).
 simulate_use() { # simulate_use  (expects an install in $INST)
   local I="$INST" A="$APPD/OkaySpace"
-  mkdir -p "$I/Tools/Projects/EditorProject/Assets" "$I/Projects/MyGame/Assets" "$I/community" "$I/downloads" \
+  mkdir -p "$I/Tools/Projects/EditorProject/Assets" "$I/Projects/MyGame/Assets" "$I/community" "$I/downloads" "$I/exports" \
            "$I/Games/Official/Data" "$I/Games/Official/.okayofficial" "$I/Games/Official/Saves" \
            "$I/Versions/2.850.1/Tools/Projects/InVersion/Assets" "$I/Versions/2.700.0/Tools" \
            "$I/Versions/.partial-2.860.0-1/Tools" "$I/Versions/.removing-2.600.0-1" "$I/examples/my_own_scene" "$A/ipc" "$TMPW/okayspace_media" "$TMPW/okayspace_official_1"
@@ -511,6 +511,7 @@ simulate_use() { # simulate_use  (expects an install in $INST)
   printf 'engine_version=2.870.0\n' > "$I/Projects/MyGame/project.okayproj"; printf 'scene' > "$I/Projects/MyGame/Assets/main.okayscene"
   printf 'engine_version=2.870.0\n' > "$I/Tools/Projects/EditorProject/project.okayproj"; printf 'scene' > "$I/Tools/Projects/EditorProject/Assets/e.okayscene"
   printf 'zip' > "$I/community/pack1.zip"; printf 'zip' > "$I/downloads/mod.zip"; printf 'part' > "$I/downloads/big.zip.part"
+  printf '{}' > "$I/exports/okayspace-data-2026-11-15T10-00-00Z.json"   # the launcher's "download my data" file (launcher/main.cpp AcctExportWorker)
   # the official game and a save it wrote beside itself (kept unless the box is ticked)
   printf 'MZ' > "$I/Games/Official/Game.exe"; printf 'cfg' > "$I/Games/Official/Data/game.okayconfig"
   printf '{}' > "$I/Games/Official/.okayofficial/manifest.json"; printf 'save' > "$I/Games/Official/Saves/slot1.sav"
@@ -547,6 +548,7 @@ EXPECT_KEPT_OFF='./Assets/Fonts/my_font.ttf
 ./downloads/big.zip.part
 ./downloads/mod.zip
 ./examples/my_own_scene/scene.okayscene
+./exports/okayspace-data-2026-11-15T10-00-00Z.json
 ./imgui.ini
 ./launcher.cfg
 ./news.cfg

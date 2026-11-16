@@ -132,7 +132,8 @@ inline void BuildCrowdExample(Scene& s) {
             float x = 0, z = 0;
             do { x = r.Range(-55.0f, 55.0f); z = r.Range(-55.0f, 55.0f); } while (x * x + z * z < 36.0f);
             const float h = r.Range(0.6f, 1.6f), w = r.Range(0.7f, 1.6f);
-            GameObject* rock = Box(s, "Rock", {x, h * 0.5f, z}, {w, h, w}, Quat::Euler(0, r.Range(0.0f, 90.0f), 0));
+            const std::string rockName = "Rock " + std::to_string(k + 1);   // unique names: the Problems panel warns about duplicates
+            GameObject* rock = Box(s, rockName.c_str(), {x, h * 0.5f, z}, {w, h, w}, Quat::Euler(0, r.Range(0.0f, 90.0f), 0));
             meshed(rock, Mesh::Cube(), Color{0.52f, 0.5f, 0.47f, 1.0f});
             rock->transform->SetParent(group->transform, true);
         }

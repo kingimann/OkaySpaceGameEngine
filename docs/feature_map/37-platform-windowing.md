@@ -36,8 +36,8 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
   - 37.2.1 Focus handling - `player/main.cpp` - `runInBackground`, `muteOnFocusLoss` (sets `AudioMixer::focusMuted`), focus loss releases a locked cursor until the next click
   - 37.2.2 Cursor lock and visibility - `Input/Cursor` - gameplay sets the wish, the player applies it with SDL relative mouse mode (see 8.4)
   - 37.2.3 Text input - `player/main.cpp`, `Input/Input` - `SDL_StartTextInput` and `Input::FeedText` carry real typed characters (see 8.1)
-  - 37.2.4 Clipboard - `Core/Clipboard`, `shared/SdlClipboard.hpp`, `player/main.cpp`, `editor/main.cpp` - `GetClipboardText` / `SetClipboardText`; the player and editor Play mode install an SDL clipboard (SDL directly, not `okay::platform`); tests use the memory clipboard; a focused input field copies, cuts and pastes with Ctrl or Command; `get_clipboard_text` / `set_clipboard_text` and the visual-script nodes Get Clipboard Text and Set Clipboard Text. The editor's own copy buttons still use Dear ImGui, and the node editors keep an internal clipboard for nodes
-- **Code:** `Core/Clipboard`, `shared/SdlClipboard.hpp`, `player/main.cpp`, `editor/main.cpp`, `Components/UIInputField`, `Input/Cursor`
+  - 37.2.4 Clipboard - `Core/Clipboard`, `shared/PlatformClipboard.hpp`, `player/main.cpp`, `editor/main.cpp` - `GetClipboardText` / `SetClipboardText`; the player and editor Play mode install the okay::platform clipboard; tests use the memory clipboard; a focused input field copies, cuts and pastes with Ctrl or Command; `get_clipboard_text` / `set_clipboard_text` and the visual-script nodes Get Clipboard Text and Set Clipboard Text. The editor's own copy buttons still use Dear ImGui, and the node editors keep an internal clipboard for nodes
+- **Code:** `Core/Clipboard`, `shared/PlatformClipboard.hpp`, `player/main.cpp`, `editor/main.cpp`, `Components/UIInputField`, `Input/Cursor`
 - **API:** `GetClipboardText`, `SetClipboardText`, `get_clipboard_text`, `set_clipboard_text`, `Cursor::Capture`, `AudioMixer::focusMuted`, `Input::TypedText`, Build Settings "run in background" and "mute when unfocused"
 - **Editor:** Build Settings; Play mode uses the same clipboard as a built game; Console panel Copy buttons
 - **Docs:** `docs/game_ui.md` (text fields), `docs/scripting_reference.md`, `docs/audio.md` (mute when unfocused), `docs/input.md`
@@ -181,3 +181,24 @@ online clients, which area 17 also describes. Nothing here is in an open PR.
 - **Words:** account, sign in, Supabase, friends, party, messages, chat, servers, channels, forums, Workshop, marketplace, profile, achievements, admin, PlayFab, leaderboard, offline mode
 - **Seen as:** cannot sign in; the friends list is empty; messages do not arrive; achievements are not shared with the launcher; an admin page is empty for a normal user
 - **Ask me like:** "add a sign-in button to my game"; "post a score to the PlayFab leaderboard"
+
+### 37.10 Own platform layer (`okay::platform`) and the SDL2 phase-out
+- **What:** Our own window, event, GL, audio, clipboard and controller layer with an sdl2 backend (default) and an own backend (Linux/X11, Win32), plus pure helpers for controller mapping files, the event queue, clipboard and drop data, and DPI maths. SDL2 stays; the apps still call it directly (editor and launcher almost entirely).
+- **Parts:**
+  - 37.10.1 Seam and backends - `Platform/Platform`, `engine/src/Platform/*` - `Backend`, `Window`, events, sdl2 and own backends
+  - 37.10.2 Controller mapping database - `engine/src/Platform/PadMapping.hpp`, `engine/src/Platform/PadMappingData.hpp` - mapping text parser, GUID match, raw-to-standard mapper, our own built-in table; used by the evdev pads
+  - 37.10.3 Event queue, clipboard and drop helpers - `engine/src/Platform/EventQueue.hpp`, `engine/src/Platform/Exchange.hpp` - bounded queue with merging, in-memory clipboard provider, URI-list parser, drop event builder
+  - 37.10.4 DPI and monitor maths - `engine/src/Platform/ScaleMath.hpp` - scale snapping, display for a rectangle, fit to work area
+  - 37.10.5 X11 and Win32 pieces - `engine/src/Platform/X11Logic.hpp`, `engine/src/Platform/Win32Exchange.hpp` - Xdnd receive, RandR and Xft.dpi, cursor glyphs, IME preedit, message box layout; CF_HDROP layouts and IME caret conversion
+- **Code:** `Platform/Platform`, `engine/src/Platform/PadMapping.hpp`, `engine/src/Platform/EventQueue.hpp`, `engine/src/Platform/Exchange.hpp`, `engine/src/Platform/ScaleMath.hpp`, `engine/src/Platform/X11Logic.hpp`, `engine/src/Platform/Win32Exchange.hpp`
+- **API:** `okay::platform::Backend`, `pad::MappingDb`, `EventQueue`, `ClipboardProvider`, `ParseUriList`, `scale::DisplayForRect`
+- **Editor:** none
+- **Docs:** `docs/own_platform_status.md`, `docs/platform_layer.md`
+- **Tests:** `platform_gaps`, `platform_x11`, `platform_x11_server`, `platform_win32_pure`, `platform_pure`, `platform`, `platform_seam`
+- **Status:** Partial - the helpers are wired into the own backends; tested on Linux (pure logic, ASan and UBSan clean) and on Xvfb; the own Win32 backend has only run under Wine; macOS has no backend
+- **Open:** X11 drop, RandR, preedit and message box never tried on a real desktop (file manager, window manager, input method); evdev table unverified on real pads; Win32 untested on real Windows and with a real IME; no global mouse position or exclusive video modes; no own Dear ImGui backend; editor and launcher still on SDL2 (`docs/own_platform_status.md` section 2)
+- **Related:** 37.1, 37.2, 8.4
+- **Words:** SDL2 removal, okay::platform, own backend, X11, Win32, gamepad mapping, SDL_GameControllerDB, event queue, drag and drop, IME, DPI, high DPI
+- **Seen as:** the editor needs SDL2 to start; dropped files do nothing on Linux; a controller is not recognised on Linux; text in an IME does not show while composing
+- **Ask me like:** "run the editor without SDL2"; "map my controller from a mapping file"
+

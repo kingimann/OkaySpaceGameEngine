@@ -87,6 +87,8 @@ enum class EventType {
     GamepadAdded,      // deviceId = device index to pass to Backend::OpenGamepad
     GamepadRemoved,    // deviceId = Gamepad::InstanceId()
     FingerDown, FingerMotion, FingerUp,   // touch: fingerId, fx, fy (0..1 of the window). sdl2 only; own never fires them
+    DropBegin, DropComplete,   // bracket a group of DropFile events (one drop of N files). Pure helper: Platform/Exchange.hpp
+    TextEditing,       // IME composition: text = the uncommitted text (UTF-8), editStart / editLength = the caret / selection in it. No backend fires it yet
 };
 
 struct Event {
@@ -104,6 +106,7 @@ struct Event {
     float fx = 0.0f, fy = 0.0f;
     int width = 0, height = 0;
     int deviceId = 0;
+    int editStart = 0, editLength = 0;   // TextEditing
     std::string text;
 };
 
@@ -161,8 +164,12 @@ public:
     virtual bool IsFullscreen() const { return false; }
     /// Window / task-bar icon from tightly packed RGBA8 pixels. False = not supported here.
     virtual bool SetIcon(const uint8_t* rgba, int w, int h) { (void)rgba; (void)w; (void)h; return false; }
+    /// Ask the user to look at this window (taskbar flash / urgency hint) until it gets the focus; false turns it off.
+    /// False return = not supported here.
+    virtual bool RequestAttention(bool on) { (void)on; return false; }
     /// Refresh rate (Hz) of the display the window is on; 0 = unknown.
     virtual int RefreshRateHz() const { return 0; }
+    virtual unsigned DisplayDpi() const { return 96; }   // dots per inch of the display the window is on (96 = 100% scaling)
     /// Show a finished software frame: tightly packed RGBA8 (alpha ignored), `w` x `h`, top row first, drawn at the
     /// window's top-left corner (X11 XPutImage, Win32 StretchDIBits). A frame that is not the window's size is cut
     /// or leaves the rest as it was. False when the window cannot take pixels (sdl2 windows draw through SDL_Renderer
@@ -230,6 +237,24 @@ public:
 };
 
 // ---- The backend ---------------------------------------------------------------
+// One monitor. Rectangles are in desktop pixels; `work*` excludes taskbars and docks.
+struct DisplayInfo {
+    int x = 0, y = 0, width = 0, height = 0;
+    int workX = 0, workY = 0, workWidth = 0, workHeight = 0;
+    unsigned dpi = 96;
+    int refreshHz = 0;       // 0 = unknown
+    bool primary = false;
+    std::string name;
+};
+
+/// One video mode a monitor offers (desktop pixels, refresh in Hz, 0 = unknown).
+struct DisplayModeInfo {
+    int width = 0, height = 0, refreshHz = 0;
+};
+
+/// System mouse cursor shapes (the set every OS has). Backends that cannot draw one return false from SetCursor.
+enum class CursorShape { Arrow, IBeam, Wait, Crosshair, Hand, SizeNS, SizeWE, SizeNWSE, SizeNESW, SizeAll, NotAllowed };
+
 struct InitFlags {
     bool video = true, audio = true, gamepad = true;
 };
@@ -268,6 +293,8 @@ public:
     virtual void WarpMouse(Window* w, int x, int y) = 0;
     /// Whether the cursor is visible (what ShowCursor last asked for; starts true).
     virtual bool IsCursorShown() { return true; }
+    /// Change the system cursor shape over this app's windows. False = not supported by this backend (nothing changed).
+    virtual bool SetCursor(CursorShape shape) { (void)shape; return false; }
     /// Mouse motion since the last call, and the button mask (MouseMask bits). Not
     /// supported by a backend that returns false from SupportsRelativeMouseState().
     virtual uint32_t RelativeMouseState(int* dx, int* dy) { if (dx) *dx = 0; if (dy) *dy = 0; return 0; }
@@ -289,6 +316,11 @@ public:
     // Process-level helpers the apps used to take from SDL directly.
     /// Per-monitor DPI awareness on Windows (a hint, call before the first window). False = nothing to do here.
     virtual bool SetPerMonitorDpiAware() { return false; }
+    virtual int DisplayCount() { return 0; }                                  // 0 = this backend cannot say
+    virtual bool GetDisplayInfo(int index, DisplayInfo& out) { (void)index; (void)out; return false; }
+    /// The modes monitor `index` lists (the current one first, then the others; duplicates possible,
+    /// the caller filters). The base version returns only the current mode from GetDisplayInfo.
+    virtual std::vector<DisplayModeInfo> DisplayModes(int index);
     /// A modal error box (title, text), parented to `parent` when given. False = no
     /// message box available (the text is written to the log instead).
     virtual bool ShowErrorBox(const std::string& title, const std::string& text, Window* parent = nullptr);
@@ -305,6 +337,13 @@ public:
     // Clipboard (UTF-8 text).
     virtual bool SetClipboardText(const std::string& text) = 0;
     virtual std::string GetClipboardText() = 0;
+    /// Clipboard by MIME type ("text/plain", "text/uri-list", "image/png", ...). The default knows only "text/plain"
+    /// (through the text functions). The own X11 backend offers any type it was given while it owns the clipboard.
+    /// Set replaces the whole clipboard by this one format. Get reads what the current owner offers (no INCR
+    /// transfers: a very large selection reads as not available).
+    virtual bool ClipboardPut(const std::string& mime, const std::vector<uint8_t>& data);
+    virtual bool ClipboardFetch(const std::string& mime, std::vector<uint8_t>& out);
+    virtual std::vector<std::string> ClipboardFormats();
 
     // Audio. deviceName null = the system default. Null return: see LastError().
     virtual std::unique_ptr<AudioDevice> OpenAudio(const AudioSpec& want, bool capture,

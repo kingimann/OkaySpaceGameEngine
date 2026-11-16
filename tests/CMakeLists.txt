@@ -2928,6 +2928,75 @@ if(NOT WIN32 AND NOT EMSCRIPTEN)
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_window> ${_okay_pb})
         set_tests_properties(platform_window_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endforeach()
+
+    # The editor / launcher / player pieces moved behind the seam (clipboard, monitor list, timer, cursor, text
+    # input, file drop; shared/PlatformClipboard.hpp, shared/PlatformDisplays.hpp), on each backend under Xvfb.
+    add_executable(test_platform_seam test_platform_seam.cpp)
+    target_link_libraries(test_platform_seam PRIVATE okay::engine okay::platform)
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_platform_seam PRIVATE SDL2::SDL2)   # the SDL-only monitor list this replaced, as the reference
+    endif()
+    target_include_directories(test_platform_seam PRIVATE ${CMAKE_SOURCE_DIR}/engine/src ${CMAKE_SOURCE_DIR}/shared)
+    foreach(_okay_pb sdl2 own)
+        add_test(NAME platform_seam_${_okay_pb}
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_seam> ${_okay_pb})
+        set_tests_properties(platform_seam_${_okay_pb} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endforeach()
+endif()
+
+# The pure logic of the own Windows / macOS backends (UTF-16, key tables, DPI math, click counting, raw mouse,
+# XInput mapping, hot-plug tracking, audio ring): no display and no OS, so it runs on every host.
+if(NOT EMSCRIPTEN)
+    add_executable(test_platform_pure test_platform_pure.cpp)
+    target_include_directories(test_platform_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_pure COMMAND test_platform_pure)
+endif()
+# Controller mapping database, event queue, clipboard / drop helpers and DPI maths: pure logic, runs on every host.
+if(NOT EMSCRIPTEN)
+    add_executable(test_platform_gaps test_platform_gaps.cpp)
+    target_include_directories(test_platform_gaps PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_gaps COMMAND test_platform_gaps)
+endif()
+# The pure logic of the own X11 backend (Xdnd, RandR / Xft.dpi, cursor glyphs, IM preedit, message box layout): no X server.
+if(NOT EMSCRIPTEN)
+    add_executable(test_platform_x11 test_platform_x11.cpp)
+    target_include_directories(test_platform_x11 PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_x11 COMMAND test_platform_x11)
+endif()
+# The own X11 backend's gaps (Xdnd receive, RandR monitors + Xft.dpi, cursor shapes, urgency hint, message box) against a
+# real X server under Xvfb, with our own Xdnd source written with plain Xlib. Skips (exit 77) without Xvfb / xdotool / libX11.
+if(NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_library(OKAY_TEST_X11_LIB X11)
+    find_path(OKAY_TEST_X11_INC X11/Xlib.h)
+    if(OKAY_TEST_X11_LIB AND OKAY_TEST_X11_INC)
+        add_executable(test_platform_x11_server test_platform_x11_server.cpp)
+        target_link_libraries(test_platform_x11_server PRIVATE okay::platform ${OKAY_TEST_X11_LIB})
+        find_library(OKAY_TEST_XRANDR_LIB Xrandr)
+        if(OKAY_TEST_XRANDR_LIB)
+            target_link_libraries(test_platform_x11_server PRIVATE ${OKAY_TEST_XRANDR_LIB})
+        else()
+            target_compile_definitions(test_platform_x11_server PRIVATE OKAY_TEST_NO_XRANDR)
+        endif()
+        target_include_directories(test_platform_x11_server PRIVATE ${CMAKE_SOURCE_DIR}/engine/src ${OKAY_TEST_X11_INC})
+        add_test(NAME platform_x11_server
+                 COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_platform_x11_server>)
+        set_tests_properties(platform_x11_server PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    endif()
+endif()
+# The pure byte layouts and conversions of the own Win32 clipboard / drag and drop / IME code: no OS, runs on every host.
+if(NOT EMSCRIPTEN)
+    add_executable(test_platform_win32_pure test_platform_win32_pure.cpp)
+    target_include_directories(test_platform_win32_pure PRIVATE ${CMAKE_SOURCE_DIR}/engine/include ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_win32_pure COMMAND test_platform_win32_pure)
+endif()
+# The own Win32 backend against the real Win32 API. Built only for Windows targets; a MinGW cross build runs it
+# through CMAKE_CROSSCOMPILING_EMULATOR (e.g. wine, headless under xvfb-run) when that is set.
+if(WIN32)
+    add_executable(test_platform_win32 test_platform_win32.cpp)
+    target_link_libraries(test_platform_win32 PRIVATE okay::platform)
+    target_include_directories(test_platform_win32 PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+    add_test(NAME platform_win32 COMMAND test_platform_win32)
+    set_tests_properties(platform_win32 PROPERTIES TIMEOUT 180)
 endif()
 
 # The software okay::platform::Painter (okayui/soft) on a real own-backend window under Xvfb: what it draws is what

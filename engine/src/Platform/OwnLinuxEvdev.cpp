@@ -3,8 +3,12 @@
 // BTN_GAMEPAD button and an ABS_X axis. Buttons and axes follow the layout the
 // Linux gamepad API documents (what xpad and the usual HID drivers report).
 #include "OwnLinux.hpp"
+#include "PadMappingData.hpp"
+#include <fstream>
+#include <sstream>
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <dirent.h>
@@ -51,6 +55,24 @@ bool LooksLikeGamepad(const std::string& path) {
     return ok;
 }
 
+std::mutex g_dbMu;
+pad::MappingDb& Db() {   // built-in table + $OKAY_PAD_MAPPINGS; callers hold g_dbMu
+    static pad::MappingDb db = [] {
+        pad::MappingDb d;
+        d.AddText(pad::BuiltinMappingText());
+        if (const char* f = std::getenv("OKAY_PAD_MAPPINGS")) {
+            std::ifstream in(f, std::ios::binary);
+            std::ostringstream ss;
+            char buf[4096];
+            size_t total = 0;
+            while (in && total < (1u << 20)) { in.read(buf, sizeof buf); const size_t n = (size_t)in.gcount(); ss.write(buf, (std::streamsize)n); total += n; }
+            d.AddText(ss.str());
+        }
+        return d;
+    }();
+    return db;
+}
+
 constexpr int kBtnSlots = 512;   // BTN_MISC (0x100) .. 0x2ff: pad buttons, triggers and the d-pad buttons
 class EvdevPad;
 std::mutex g_mu;
@@ -61,6 +83,11 @@ class EvdevPad final : public Gamepad {
 public:
     EvdevPad(int fd, const EvdevCaps& caps, std::string name, std::string path)
         : m_fd(fd), m_caps(caps), m_name(std::move(name)), m_path(std::move(path)) {
+        for (int c = 0; c < 64; ++c) { m_absPresent[c] = caps.abs[c].present; m_absMin[c] = caps.abs[c].min; m_absMax[c] = caps.abs[c].max; }
+        if (caps.vendor || caps.product) {
+            std::lock_guard<std::mutex> dk(g_dbMu);
+            if (const pad::Mapping* m = pad::FindForEvdev(Db(), caps.bus, caps.vendor, caps.product, caps.version)) { m_map = *m; m_mapped = true; }
+        }
         std::lock_guard<std::mutex> lk(g_mu);
         m_id = g_nextInstance++;
         g_open.push_back(this);
@@ -75,8 +102,16 @@ public:
     }
     int InstanceId() const override { return m_id; }
     const char* Name() const override { return m_name.c_str(); }
+    bool Mapped() const { return m_mapped; }
+    pad::PadState MappedState() const {
+        pad::EvdevView v;
+        v.keys = &m_caps.keys; v.btn = m_btn; v.abs = m_abs;
+        v.absPresent = m_absPresent; v.absMin = m_absMin; v.absMax = m_absMax;
+        return pad::Apply(m_map, pad::BuildEvdevRaw(v));
+    }
     int16_t Axis(GamepadAxis a) const override {
         const_cast<EvdevPad*>(this)->Pump();
+        if (m_mapped) return MappedState().axis[(int)a];
         auto norm = [&](int code, bool trigger) -> int16_t {
             const EvdevAbsRange& r = m_caps.abs[code];
             if (!r.present || r.max == r.min) return 0;
@@ -99,6 +134,7 @@ public:
     }
     bool Button(GamepadButton b) const override {
         const_cast<EvdevPad*>(this)->Pump();
+        if (m_mapped) return MappedState().button[(int)b];
         auto k = [&](int code) { return m_btn[code - BTN_MISC]; };
         switch (b) {
         case GamepadButton::A: return k(BTN_SOUTH);
@@ -178,6 +214,10 @@ private:
     bool m_gone = false, m_reported = false;
     int m_abs[64] = {};
     bool m_btn[kBtnSlots] = {};
+    bool m_absPresent[64] = {};
+    int m_absMin[64] = {}, m_absMax[64] = {};
+    pad::Mapping m_map;
+    bool m_mapped = false;
 };
 
 EvdevCaps ProbeCaps(int fd) {
@@ -188,7 +228,12 @@ EvdevCaps ProbeCaps(int fd) {
         struct input_absinfo ai;
         if (ioctl(fd, EVIOCGABS(a), &ai) >= 0 && ai.maximum != ai.minimum) { c.abs[a].present = true; c.abs[a].min = ai.minimum; c.abs[a].max = ai.maximum; }
     }
-    if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key)), key) >= 0) c.hasTriggerButtons = TestBit(key, BTN_TL2) && TestBit(key, BTN_TR2);
+    if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key)), key) >= 0) {
+        c.hasTriggerButtons = TestBit(key, BTN_TL2) && TestBit(key, BTN_TR2);
+        for (int k = BTN_MISC; k < BTN_MISC + kBtnSlots && k <= KEY_MAX; ++k) if (TestBit(key, k)) c.keys.push_back((uint16_t)k);
+    }
+    struct input_id id;
+    if (ioctl(fd, EVIOCGID, &id) >= 0) { c.bus = id.bustype; c.vendor = id.vendor; c.product = id.product; c.version = id.version; }
     if (ioctl(fd, EVIOCGBIT(EV_FF, sizeof(ff)), ff) >= 0) c.canRumble = TestBit(ff, FF_RUMBLE);
     return c;
 }
@@ -200,6 +245,15 @@ std::vector<std::string> GamepadNodes() {
 }
 
 } // namespace
+
+size_t EvdevAddMappings(const std::string& text) {
+    std::lock_guard<std::mutex> dk(g_dbMu);
+    return Db().AddText(text);
+}
+bool EvdevPadUsesMapping(const Gamepad* g) {
+    const EvdevPad* p = dynamic_cast<const EvdevPad*>(g);
+    return p && p->Mapped();
+}
 
 int EvdevGamepadCount() { return (int)GamepadNodes().size(); }
 std::string EvdevGamepadPath(int index) {

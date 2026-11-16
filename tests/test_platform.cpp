@@ -6,9 +6,11 @@
 #include "okay/Platform/Platform.hpp"
 #if defined(__linux__)
 #include "Platform/OwnLinux.hpp"
+#include "Platform/PadMappingData.hpp"
 #include <linux/input.h>
 #include <unistd.h>
 #endif
+#include <memory>
 #include <string>
 #include <unistd.h>
 #include <atomic>
@@ -200,6 +202,89 @@ void TestEvdevMapping() {
     EvdevPollHotplug(ev);   // reported once only
     for (const Event& e : ev) CHECK(!(e.type == EventType::GamepadRemoved && e.deviceId == pad->InstanceId()));
 }
+
+// A pad the table knows (by vendor / product) is read through its entry; one it does not know keeps the fixed layout.
+struct PipePad {
+    int w = -1;
+    std::unique_ptr<Gamepad> pad;
+};
+PipePad MakePipePad(okay::platform::own::EvdevCaps caps, const char* name) {
+    int fds[2];
+    CHECK(pipe(fds) == 0);
+    fcntl(fds[0], F_SETFL, O_NONBLOCK);
+    PipePad p;
+    p.w = fds[1];
+    p.pad = okay::platform::own::OpenEvdevFromFd(fds[0], caps, name);
+    return p;
+}
+
+void TestEvdevTable() {
+    using namespace okay::platform::own;
+    auto sticks = [](EvdevCaps& c, int lo, int hi, std::initializer_list<int> codes) { for (int a : codes) { c.abs[a].present = true; c.abs[a].min = lo; c.abs[a].max = hi; } };
+    // 1. Xbox 360 by xpad: matched, buttons and axes through the table.
+    {
+        EvdevCaps c; c.bus = 3; c.vendor = 0x045e; c.product = 0x028e; c.version = 0x0114;
+        sticks(c, -32768, 32767, {ABS_X, ABS_Y, ABS_RX, ABS_RY});
+        sticks(c, 0, 255, {ABS_Z, ABS_RZ});
+        c.abs[ABS_HAT0X] = {-1, 1, true}; c.abs[ABS_HAT0Y] = {-1, 1, true};
+        for (int k : {BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST, BTN_TL, BTN_TR, BTN_SELECT, BTN_START, BTN_MODE, BTN_THUMBL, BTN_THUMBR}) c.keys.push_back((uint16_t)k);
+        PipePad p = MakePipePad(c, "Xbox pad");
+        CHECK(EvdevPadUsesMapping(p.pad.get()));
+        WriteEv(p.w, EV_KEY, BTN_SOUTH, 1); WriteEv(p.w, EV_KEY, BTN_WEST, 1); WriteEv(p.w, EV_KEY, BTN_MODE, 1); WriteEv(p.w, EV_KEY, BTN_THUMBR, 1);
+        WriteEv(p.w, EV_ABS, ABS_Z, 255); WriteEv(p.w, EV_ABS, ABS_RX, 32767); WriteEv(p.w, EV_ABS, ABS_HAT0X, 1); WriteEv(p.w, EV_ABS, ABS_HAT0Y, -1);
+        CHECK(p.pad->Button(GamepadButton::A) && !p.pad->Button(GamepadButton::B));
+        CHECK(p.pad->Button(GamepadButton::Y));                 // BTN_WEST is the Xbox "Y"
+        CHECK(p.pad->Button(GamepadButton::Guide) && p.pad->Button(GamepadButton::RightStick));
+        CHECK(p.pad->Axis(GamepadAxis::TriggerLeft) == 32767);
+        CHECK(p.pad->Axis(GamepadAxis::RightX) == 32767);
+        CHECK(p.pad->Button(GamepadButton::DpadUp) && p.pad->Button(GamepadButton::DpadRight) && !p.pad->Button(GamepadButton::DpadDown));
+        close(p.w);
+    }
+    // 2. DualShock 4 (hid-sony): the right stick is on Z / RZ, the triggers on RX / RY. The table differs from the fixed layout.
+    {
+        EvdevCaps c; c.bus = 3; c.vendor = 0x054c; c.product = 0x09cc; c.version = 0x8111;
+        sticks(c, 0, 255, {ABS_X, ABS_Y, ABS_Z, ABS_RX, ABS_RY, ABS_RZ});
+        c.abs[ABS_HAT0X] = {-1, 1, true}; c.abs[ABS_HAT0Y] = {-1, 1, true};
+        for (int k : {BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST, BTN_TL, BTN_TR, BTN_TL2, BTN_TR2, BTN_SELECT, BTN_START, BTN_MODE, BTN_THUMBL, BTN_THUMBR}) c.keys.push_back((uint16_t)k);
+        PipePad p = MakePipePad(c, "DS4");
+        CHECK(EvdevPadUsesMapping(p.pad.get()));
+        WriteEv(p.w, EV_ABS, ABS_X, 128); WriteEv(p.w, EV_ABS, ABS_Y, 128);
+        WriteEv(p.w, EV_ABS, ABS_Z, 255);       // right stick X full right
+        WriteEv(p.w, EV_ABS, ABS_RZ, 0);        // right stick Y full up
+        WriteEv(p.w, EV_ABS, ABS_RX, 255);      // left trigger pulled
+        WriteEv(p.w, EV_ABS, ABS_RY, 0);
+        WriteEv(p.w, EV_KEY, BTN_START, 1); WriteEv(p.w, EV_KEY, BTN_THUMBL, 1);
+        CHECK(p.pad->Axis(GamepadAxis::RightX) == 32767);
+        CHECK(p.pad->Axis(GamepadAxis::RightY) == -32768);
+        CHECK(p.pad->Axis(GamepadAxis::TriggerLeft) == 32767 && p.pad->Axis(GamepadAxis::TriggerRight) == 0);
+        CHECK(std::abs(p.pad->Axis(GamepadAxis::LeftX)) <= 300);
+        CHECK(p.pad->Button(GamepadButton::Start) && p.pad->Button(GamepadButton::LeftStick));   // numbered after the L2/R2 buttons
+        close(p.w);
+        // The same wiring on a pad that is not in the table: fixed layout, ABS_Z is the left trigger.
+        c.vendor = 0x1234; c.product = 0x0001;
+        PipePad q = MakePipePad(c, "Unknown pad");
+        CHECK(!EvdevPadUsesMapping(q.pad.get()));
+        WriteEv(q.w, EV_ABS, ABS_Z, 255);
+        CHECK(q.pad->Axis(GamepadAxis::TriggerLeft) == 32767);
+        close(q.w);
+    }
+    // 3. Added mappings: a generic pad with BTN_TRIGGER / BTN_THUMB as raw buttons 0 and 1, matched by the exact GUID.
+    {
+        EvdevCaps c; c.bus = 3; c.vendor = 0x1234; c.product = 0x5678; c.version = 0x0110;
+        sticks(c, 0, 255, {ABS_X, ABS_Y});
+        c.keys = {0x120, 0x121, 0x122};
+        const std::string guid = okay::platform::pad::GuidToString(okay::platform::pad::MakeLinuxGuid(3, 0x1234, 0x5678, 0x0110));
+        CHECK(EvdevAddMappings("# ours\n" + guid + ",Test generic,a:b1,b:b0,x:b2,leftx:a0,lefty:a1~,platform:Linux,\nbroken line\n") == 1);
+        PipePad p = MakePipePad(c, "Generic");
+        CHECK(EvdevPadUsesMapping(p.pad.get()));
+        WriteEv(p.w, EV_KEY, 0x121, 1);                       // raw button 1
+        CHECK(p.pad->Button(GamepadButton::A) && !p.pad->Button(GamepadButton::B));
+        WriteEv(p.w, EV_ABS, ABS_X, 255); WriteEv(p.w, EV_ABS, ABS_Y, 255);
+        CHECK(p.pad->Axis(GamepadAxis::LeftX) == 32767);
+        CHECK(p.pad->Axis(GamepadAxis::LeftY) == -32768);     // inverted in the entry
+        close(p.w);
+    }
+}
 #endif
 
 // The process-level helpers the apps used to take from SDL directly.
@@ -325,7 +410,7 @@ int main(int argc, char** argv) {
     if (Default()) std::cout << "[default backend] " << Default()->Name() << " (OKAY_PLATFORM_BACKEND)\n";
     CHECK(Default() == Get(DefaultKind()));
 #if defined(__linux__)
-    if (IsCompiledIn(BackendKind::Own)) TestEvdevMapping();
+    if (IsCompiledIn(BackendKind::Own)) { TestEvdevMapping(); TestEvdevTable(); }
 #endif
 
     // A window size from a config file: zero, negative and absurd values are not sizes.

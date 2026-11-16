@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#include "PlatformText.hpp"
 #if defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
@@ -77,6 +78,23 @@ Backend* Default() {
 }
 
 // ---- Backend defaults (shared by both backends) ----------------------------------
+bool Backend::ClipboardPut(const std::string& mime, const std::vector<uint8_t>& data) {
+    if (mime != "text/plain") return false;
+    return SetClipboardText(std::string(data.begin(), data.end()));
+}
+bool Backend::ClipboardFetch(const std::string& mime, std::vector<uint8_t>& out) {
+    if (mime != "text/plain") return false;
+    const std::string t = GetClipboardText();
+    if (t.empty()) return false;
+    out.assign(t.begin(), t.end());
+    return true;
+}
+std::vector<std::string> Backend::ClipboardFormats() {
+    std::vector<std::string> v;
+    if (!GetClipboardText().empty()) v.push_back("text/plain");
+    return v;
+}
+
 Key Backend::KeyForChar(char c) {
     // US layout: the HID numbering puts a..z at 4.., 1..9 at 30.., 0 at 39.
     if (c >= 'a' && c <= 'z') return (Key)(4 + (c - 'a'));
@@ -90,6 +108,13 @@ Key Backend::KeyForChar(char c) {
 bool Backend::ShowErrorBox(const std::string& title, const std::string& text, Window*) {
     std::fprintf(stderr, "ERROR: %s: %s\n", title.c_str(), text.c_str());
     return false;
+}
+
+std::vector<DisplayModeInfo> Backend::DisplayModes(int index) {
+    std::vector<DisplayModeInfo> out;
+    DisplayInfo d;
+    if (GetDisplayInfo(index, d) && d.width > 0 && d.height > 0) out.push_back({d.width, d.height, d.refreshHz});
+    return out;
 }
 
 std::string Backend::BasePath() {
@@ -120,14 +145,22 @@ std::string Backend::BasePath() {
 std::string Backend::PrefPath(const std::string& org, const std::string& app) {
     if (org.empty() || app.empty()) return std::string();
 #if defined(_WIN32)
-    const char* base = std::getenv("APPDATA");
-    if (!base || !*base) return std::string();
-    std::string root = base;
+    // Wide APIs throughout: %APPDATA% and the folder names may hold non-ASCII characters, which the ANSI
+    // calls (getenv, CreateDirectoryA) would mangle.
+    wchar_t base[MAX_PATH * 2];
+    const DWORD n = GetEnvironmentVariableW(L"APPDATA", base, (DWORD)(sizeof(base) / sizeof(base[0])));
+    if (n == 0 || n >= sizeof(base) / sizeof(base[0])) return std::string();
+    std::wstring root(base, n);
     for (const std::string& part : {org, app}) {
-        root += "\\" + part;
-        CreateDirectoryA(root.c_str(), nullptr);
+        std::string clean = part;
+        for (char& c : clean) if (std::strchr("<>:\"/\\|?*", c) || (unsigned char)c < 0x20) c = '_';   // characters Windows forbids in a file name
+        const std::u16string u = text::Utf8ToUtf16(clean);
+        root += L"\\";
+        root.append(reinterpret_cast<const wchar_t*>(u.data()), u.size());
+        CreateDirectoryW(root.c_str(), nullptr);
     }
-    return root + "\\";
+    root += L"\\";
+    return text::Utf16ToUtf8(reinterpret_cast<const char16_t*>(root.data()), root.size());
 #else
     std::string root;
     const char* xdg = std::getenv("XDG_DATA_HOME");
@@ -153,11 +186,21 @@ std::string Backend::PrefPath(const std::string& org, const std::string& app) {
 std::vector<std::string> Backend::PreferredLocales() {
     std::vector<std::string> out;
 #if defined(_WIN32)
-    wchar_t name[LOCALE_NAME_MAX_LENGTH];
-    if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0) {
-        std::string s;
-        for (const wchar_t* c = name; *c; ++c) s += (*c < 128) ? (char)*c : '?';
-        if (!s.empty()) out.push_back(s);
+    // The user's UI language list (Settings > Language order), "en-US" style; the default locale as a fallback.
+    {
+        ULONG count = 0, size = 0;
+        if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, nullptr, &size) && size > 1) {
+            std::wstring buf((size_t)size, L'\0');
+            if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, &buf[0], &size)) {
+                for (const wchar_t* c = buf.c_str(); *c; c += wcslen(c) + 1)
+                    out.push_back(text::Utf16ToUtf8(reinterpret_cast<const char16_t*>(c), wcslen(c)));
+            }
+        }
+    }
+    if (out.empty()) {
+        wchar_t name[LOCALE_NAME_MAX_LENGTH];
+        if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0)
+            out.push_back(text::Utf16ToUtf8(reinterpret_cast<const char16_t*>(name), wcslen(name)));
     }
 #else
     // LANGUAGE is a colon list; else LC_ALL / LC_MESSAGES / LANG. "de_DE.UTF-8@euro" -> "de-DE".

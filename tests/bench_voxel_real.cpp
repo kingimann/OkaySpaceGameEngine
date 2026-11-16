@@ -85,6 +85,37 @@ int main(int argc, char** argv) {
         const Stats a = Pct(sl), b = Pct(ex);
         std::printf("== passes on a 160x64x160 field (655k voxels), per stroke frame\n  Slump(40): median %.3f ms, worst %.3f ms\n  ExtractFloaters(6): median %.3f ms, worst %.3f ms\n", a.med, a.worst, b.med, b.worst);
     }
+    // cave-in, budgeted generation, fluid and footprints
+    {
+        VoxelTerrain v; v.Resize(160, 64, 160); v.voxelSize = 1.0f; v.FillSlab(0.6f); v.EnableMaterials(4);
+        for (int z = 0; z < v.nz; ++z) for (int y = 10; y < 18; ++y) for (int x = 60; x < 100; ++x) v.Set(x, y, z, -3.0f);   // a wide tunnel
+        std::vector<double> t;
+        for (int i = 0; i < 20; ++i) {
+            v.Edit({(float)(i - 10), 14.0f, 0.0f}, 3.0f, 10.0f, VoxelTerrain::EditOptions{});
+            const double t0 = NowMs(); const auto p = v.CaveIn(4, 6); t.push_back(NowMs() - t0); (void)p;
+        }
+        Stats a = Pct(t);
+        std::printf("== CaveIn(4) after an edit on a 160x64x160 field: median %.3f ms, worst %.3f ms\n", a.med, a.worst);
+    }
+    {
+        VoxelTerrain v; v.Resize(256, 64, 256); v.voxelSize = 1.0f;
+        VoxelTerrain::LayerRules rules; rules.oreVeins = 40;
+        const double w0 = NowMs(); v.Generate(0.5f, 8.0f, 0.3f, 9u); v.GenerateMaterials(9u, rules); const double oneShot = NowMs() - w0;
+        VoxelTerrain b; b.Resize(256, 64, 256); b.voxelSize = 1.0f; b.BeginGenerate(0.5f, 8.0f, 0.3f, 9u, true, rules);
+        std::vector<double> t; int steps = 0;
+        for (;;) { const double t0 = NowMs(); const bool done = b.StepGenerate(2.0f); t.push_back(NowMs() - t0); ++steps; if (done) break; }
+        const Stats a = Pct(t);
+        std::printf("== generate 256x64x256 (4.2M voxels): one shot %.0f ms (one frame); budgeted 2 ms: %d steps, median %.2f ms, worst %.2f ms\n", oneShot, steps, a.med, a.worst);
+    }
+    {
+        VoxelTerrain v; v.Resize(96, 48, 96); v.voxelSize = 1.0f; v.FillSlab(0.4f);
+        v.Dig({0, 19.0f, 0}, 8.0f, 40.0f); v.fluidOn = true; v.fluidBudget = 600;
+        v.PourFluid({0, 24.0f, 0}, 4000);
+        std::vector<double> t; int moved = 0, n = 0;
+        while (n < 5000 && v.FluidActiveCells() > 0) { const double t0 = NowMs(); const int m = v.FluidStep(); t.push_back(NowMs() - t0); moved += m; ++n; }
+        const Stats a = Pct(t);
+        std::printf("== fluid, 4000 cells pouring into a pit, budget 600/step: %d steps to rest, median %.3f ms, worst %.3f ms per step\n", n, a.med, a.worst);
+    }
     // the world-edge catch (VoxelTerrain::catchFalling): one pass over every rigid body, done every sixth frame
     {
         Scene s("C"); s.physicsEnabled = false;

@@ -60,11 +60,39 @@ void BuildRealistic(Scene& s) {
     AddHelp(s, "Real-life digging: hold LEFT mouse to dig - the ground falls as debris and the count below rises when you pick it up. RIGHT mouse builds with what you hold. Ctrl+Z takes back the last stroke. Stone is hard: dig it slowly.", 74.0f);
 }
 
+// Tools and items (docs/try_it.md 7t): the digger's power comes from the items in the bag, dug ground arrives as stacks of items,
+// building spends them. The player starts with a shovel and a pickaxe; stone needs the pickaxe, ore needs a better tool.
+void BuildTools(Scene& s) {
+    Templates::VoxelSandbox(s);
+    GameObject* g = s.Find("Terrain");
+    auto* v = g->GetComponent<VoxelTerrain>();
+    VoxelTerrain::LayerRules rules; rules.oreVeins = 24;
+    v->GenerateMaterials(2024u, rules);
+    v->Apply();
+    auto* d = g->GetComponent<VoxelDigger>();
+    d->ApplyPreset(VoxelDigger::Preset::Arcade);
+    d->collect = VoxelDigger::Collect::Both;
+    d->toolsFromInventory = true; d->giveItems = true; d->buildFromItems = true;
+    d->addMaterial = v->MaterialIndex("Dirt");
+    d->hudTarget = "Dig Count";
+    GameObject* pl = s.Find("Player");
+    auto* inv = pl->AddComponent<Inventory>();
+    inv->AddPartial("shovel", 1); inv->AddPartial("pickaxe", 1);
+    GameObject* c = s.CreateGameObject("Dig Count");
+    auto* t = c->AddComponent<TextRenderer>();
+    t->text = "Nothing collected";
+    t->screenSpace = true; t->anchor = UIAnchor::TopLeft;
+    t->screenPos = {16, Templates::kHudTop + 104.0f}; t->size = {420, 28};
+    t->vcenter = false; t->pixelSize = 2.0f; t->outline = true;
+    AddHelp(s, "Tools: you hold a shovel (power 2) and a pickaxe (power 5). LEFT mouse digs: dirt and sand with either, stone needs the pickaxe, ore (yellow veins) needs a better tool. Walk onto the falling debris to pick it up as items; RIGHT mouse builds with dirt items and uses them up.", 74.0f);
+}
+
 struct Example { const char* file; void (*build)(Scene&); int nx, ny, nz; };
 const Example kExamples[] = {
     {"voxel_sandbox.okayscene", &BuildSandbox, 72, 44, 72},
     {"voxel_big_world.okayscene", &BuildBigWorld, 128, 56, 128},
     {"voxel_realistic.okayscene", &BuildRealistic, 72, 44, 72},
+    {"voxel_tools.okayscene", &BuildTools, 72, 44, 72},
 };
 
 } // namespace
@@ -110,6 +138,17 @@ int main() {
         CHECK(s.Find("Player") != nullptr && s.Find("FPS Camera") != nullptr);
         CHECK(s.Find("Water") != nullptr);
         CHECK(s.Find("Voxel Perf Help") != nullptr);
+        if (std::string(e.file) == "voxel_tools.okayscene") {
+            auto* vd = ground->GetComponent<VoxelDigger>();
+            auto* inv = s.Find("Player") ? s.Find("Player")->GetComponent<Inventory>() : nullptr;
+            CHECK(vd && vd->toolsFromInventory && vd->giveItems && vd->buildFromItems && vd->collect == VoxelDigger::Collect::Both);
+            CHECK(inv && inv->Count("shovel") == 1 && inv->Count("pickaxe") == 1);
+            CHECK(vd && vd->CurrentPower() >= 5.0f && vd->CurrentPower() < 6.0f);          // the pickaxe, not the shovel
+            CHECK(v->UseMaterials());
+            int ore = 0; const int oid = v->MaterialIndex("Ore");
+            for (std::size_t i = 0; i < v->material.size(); ++i) if (v->material[i] == oid && v->density[i] > v->iso) ++ore;
+            CHECK(ore > 100);
+        }
         if (std::string(e.file) == "voxel_realistic.okayscene") {
             auto* vd = ground->GetComponent<VoxelDigger>();
             CHECK(v->UseMaterials() && v->materials.size() == 7 && v->material.size() == v->density.size());

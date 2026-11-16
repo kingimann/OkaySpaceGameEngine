@@ -63,7 +63,7 @@ and a few probes ran against an `-O0` library, said where). No GPU, no Windows. 
 | World edge | a body past the side of the grid falls for ever | **BUG** (was a listed limit) | y = -106 m after 5 s | option `VoxelTerrain::catchFalling` puts it back on the ground, or calls `onFall`; off by default |
 | Debris cap | counted at the first frame of a piece, so a frame could go over the cap | **BUG** | peak 51 with a cap of 48 | counted when the piece is made |
 | Piece colliders | one box per piece | LIMIT | by reading | listed |
-| Foliage ray cost on voxel meshes | 1.1 ms per ray single, 0.32 ms chunked | LIMIT | measured earlier | listed |
+| Foliage ray cost on voxel meshes | 1.1 ms per ray single, 0.32 ms chunked | **SLOW** | measured earlier | the foliage brush asks an unturned voxel terrain's density field (`tests/test_voxel_more.cpp` times both) |
 | Network | dig edits are local only: in multiplayer each player's terrain would differ | LIMIT | by reading: `VoxelTerrain` has no replication, edits are not sent | listed (the host would have to own the field and send `Edit` calls) |
 
 ## Bug hunt (third pass, `tests/test_voxel_bughunt.cpp` and `tests/test_voxel_more.cpp`)

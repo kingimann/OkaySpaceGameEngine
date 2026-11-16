@@ -112,6 +112,27 @@ tool); Arcade = everything vanishes, building is free (the old behaviour); Creat
   plays it on its Audio Source.
 * A tool too weak for the ground no longer erodes the surface at all (it used to lower the air cells next to it).
 
+**Fourth pass.** All of these are off by default.
+* **Cave-in rule** (`VoxelDigger::caveInSpan`, `VoxelTerrain::CaveIn(span)`): a ceiling (ground with air right under it) farther than
+  `span` voxels sideways from a wall fails, with up to `span` voxels of ground above it. The failed ground falls as debris pieces when
+  you let go of the mouse. A tunnel wider than about twice the span brings its roof down; a narrow one holds. It looks only around the
+  edit plus `span + 2` and skips work boxes over 400000 cells; at most 6 pieces per release (the rest stay).
+* **Budgeted generation for big worlds** (`BeginGenerate` / `StepGenerate(budgetMs)` / `Generating()` / `GenerateProgress()`): the very
+  same world `Generate` + `GenerateMaterials` gives (tested bit for bit), filled one slice at a time within a time budget. In the running
+  game the terrain steps itself by `generateBudgetMs` (default 4 ms) and skins itself when done. The field is only partly filled meanwhile.
+* **Water and lava** (`fluidOn`, `PourFluid`, `fluidBudget`, `fluidRate`, `fluidMaxCells`, `fluidColor`, `fluidGlow`; the digger's `pourKey`
+  pours at the aim point): a binary cellular fluid. A cell falls, or slides down a diagonal, through open air, and rests on ground or other
+  fluid, so a pour fills a hole from the bottom and settles with a slope of at most 45 degrees (not a perfectly flat sheet; this is a limit).
+  Bounds: `fluidBudget` active cells looked at per step (600), `fluidRate` steps per second (20, at most 4 per frame), `fluidMaxCells`
+  (30000, more pouring is refused). Resting cells cost nothing; digging next to fluid wakes it; building ground over it removes that fluid.
+  Drawn as one transient child object "Voxel Fluid", rebuilt about 10 times a second only while it moves. The fluid is not saved (the
+  settings are). Fluid does not push or float rigid bodies and does not hurt anyone: it is only drawn and flows.
+* **Footprints and tracks** (`footprints`, `footprintTag` "Player", `footprintBodies`, `footprintStep`, `footprintRadius`, `footprintDepth`,
+  `footprintPower`): objects with the tag press a shallow dent into soft ground (power 2: dirt, grass, sand, snow, clay, not stone) every step
+  metres they travel on the ground. At most 64 objects are looked at, every third frame. Dents are not part of a dig stroke, so Ctrl+Z does not undo them.
+* **Foliage on voxel terrain**: `Foliage::SceneSurface` asks an unturned, evenly scaled voxel terrain's density field for the ground
+  instead of ray casting its whole mesh; other surfaces are still ray cast.
+
 Costs (CPU only, Linux, `-O2` build, per `Scene::Update` while holding the mouse; `bench_voxel_real`): the old digger 0.4 to 0.6 ms
 median, the Realistic preset 1.0 to 1.3 ms, debris-heavy (150 live bodies, big brush) 4 to 8 ms, mostly physics. The frame that
 carries a collapse costs more (p95 5 ms). Limits: one body per piece uses a box collider (a piece lands on its bounding box), and

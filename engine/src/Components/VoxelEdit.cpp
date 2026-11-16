@@ -5,8 +5,10 @@
 #include "okay/Components/MeshRenderer.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <unordered_set>
 
@@ -74,15 +76,57 @@ double VoxelTerrain::SolidVolume() const {
 }
 
 void VoxelTerrain::GenerateMaterials(unsigned seed, const LayerRules& r) {
+    BeginMaterialPass(r);
+    GenerateMaterialSlices(0, nz, seed, r);
+    FinishMaterials(seed, r);
+}
+
+void VoxelTerrain::BeginGenerate(float surfaceFrac, float amplitude, float caveAmount, unsigned seed, bool withMaterials, const LayerRules& rules) {
+    genSurface_ = surfaceFrac; genAmp_ = amplitude; genCaves_ = caveAmount; genSeed_ = seed; genMaterials_ = withMaterials; genRules_ = rules;
+    genZ_ = 0; genPhase_ = nz > 0 ? 1 : 0;
+    if (genPhase_ == 1) std::fill(density.begin(), density.end(), -Clamp());
+}
+
+float VoxelTerrain::GenerateProgress() const {
+    if (genPhase_ == 0) return 1.0f;
+    const float total = genMaterials_ ? 2.0f : 1.0f;
+    return ((genPhase_ == 2 ? 1.0f : 0.0f) + (float)genZ_ / (float)std::max(1, nz)) / total;
+}
+
+bool VoxelTerrain::StepGenerate(float budgetMs) {
+    using Clk = std::chrono::steady_clock;
+    const auto t0 = Clk::now();
+    while (genPhase_ != 0) {
+        const int to = std::min(nz, genZ_ + 1);
+        if (genPhase_ == 1) GenerateSlices(genZ_, to, genSurface_, genAmp_, genCaves_, genSeed_);
+        else GenerateMaterialSlices(genZ_, to, genSeed_, genRules_);
+        genZ_ = to;
+        if (genZ_ >= nz) {
+            if (genPhase_ == 1) {
+                SealFloor();
+                if (genMaterials_) { BeginMaterialPass(genRules_); genPhase_ = 2; genZ_ = 0; }
+                else genPhase_ = 0;
+            } else { FinishMaterials(genSeed_, genRules_); genPhase_ = 0; }
+            if (genPhase_ == 0) { mcAllDirty_ = true; floatersSwept_ = false; editAny_ = false; return true; }
+        }
+        if (std::chrono::duration<double, std::milli>(Clk::now() - t0).count() >= budgetMs) break;
+    }
+    return genPhase_ == 0;
+}
+
+void VoxelTerrain::BeginMaterialPass(const LayerRules&) {
     if (materials.empty()) materials = DefaultMaterials();
     const int stoneId = std::max(0, MaterialIndex("Stone"));
     material.assign(density.size(), (unsigned char)stoneId);
+}
+
+void VoxelTerrain::GenerateMaterialSlices(int zFrom, int zTo, unsigned seed, const LayerRules& r) {
     const int dirt = std::max(0, MaterialIndex("Dirt")), grass = std::max(0, MaterialIndex("Grass")), sand = std::max(0, MaterialIndex("Sand")),
               clay = std::max(0, MaterialIndex("Clay")), stone = std::max(0, MaterialIndex("Stone")), ore = std::max(0, MaterialIndex("Ore")),
               snow = std::max(0, MaterialIndex("Snow"));
     const float sandBelow = r.sandBelow >= 0.0f ? r.sandBelow : SizeY() * 0.12f;
     const float snowAbove = r.snowAbove >= 0.0f ? r.snowAbove : SizeY() * 0.85f;
-    for (int z = 0; z < nz; ++z)
+    for (int z = std::max(0, zFrom); z < std::min(nz, zTo); ++z)
         for (int x = 0; x < nx; ++x) {
             int top = -1;
             for (int y = ny - 1; y >= 0; --y) if (density[Index(x, y, z)] > iso) { top = y; break; }
@@ -106,6 +150,11 @@ void VoxelTerrain::GenerateMaterials(unsigned seed, const LayerRules& r) {
                 material[idx] = (unsigned char)id;
             }
         }
+}
+
+void VoxelTerrain::FinishMaterials(unsigned seed, const LayerRules& r) {
+    const int stone = std::max(0, MaterialIndex("Stone")), ore = std::max(0, MaterialIndex("Ore"));
+    (void)stone; (void)ore;
     // ore veins: random walks through the stone, deterministic for the seed
     if (r.oreVeins > 0 && nx > 2 && ny > 2 && nz > 2) {
         for (int k = 0; k < r.oreVeins && k < 500; ++k) {
@@ -289,6 +338,26 @@ int VoxelTerrain::Slump(int maxMoves) {
     return moved;
 }
 
+VoxelTerrain::Piece VoxelTerrain::BuildPiece(const std::vector<int>& comp) const {
+    Piece p; p.cells = comp;
+    p.dens.reserve(comp.size());
+    for (int idx : comp) p.dens.push_back(density[(std::size_t)idx]);
+    std::map<int, int> count;
+    p.lo = {1e30f, 1e30f, 1e30f}; p.hi = {-1e30f, -1e30f, -1e30f};
+    for (int idx : comp) {
+        const int cx = idx % nx, cy = (idx / nx) % ny, cz = idx / (nx * ny);
+        p.volume += Cover(density[(std::size_t)idx], voxelSize);
+        if (UseMaterials()) ++count[material[(std::size_t)idx]];
+        const Vec3 w = GridToLocal(cx, cy, cz);
+        p.lo = {std::min(p.lo.x, w.x), std::min(p.lo.y, w.y), std::min(p.lo.z, w.z)};
+        p.hi = {std::max(p.hi.x, w.x), std::max(p.hi.y, w.y), std::max(p.hi.z, w.z)};
+    }
+    p.volume *= (double)voxelSize * voxelSize * voxelSize;
+    int best = 0, bc = -1; for (auto& kv : count) if (kv.second > bc) { bc = kv.second; best = kv.first; }
+    p.material = best;
+    return p;
+}
+
 std::vector<VoxelTerrain::Piece> VoxelTerrain::ExtractFloaters(int maxPieces) {
     std::vector<Piece> out;
     if (!editAny_) return out;
@@ -328,22 +397,7 @@ std::vector<VoxelTerrain::Piece> VoxelTerrain::ExtractFloaters(int maxPieces) {
                     continue;
                 }
                 if ((int)out.size() >= maxPieces) continue;
-                Piece p; p.cells = comp;
-                p.dens.reserve(comp.size());
-                for (int idx : comp) p.dens.push_back(density[(std::size_t)idx]);
-                std::map<int, int> count;
-                p.lo = {1e30f, 1e30f, 1e30f}; p.hi = {-1e30f, -1e30f, -1e30f};
-                for (int idx : comp) {
-                    const int cx = idx % nx, cy = (idx / nx) % ny, cz = idx / (nx * ny);
-                    p.volume += Cover(density[(std::size_t)idx], voxelSize);
-                    if (UseMaterials()) ++count[material[(std::size_t)idx]];
-                    const Vec3 w = GridToLocal(cx, cy, cz);
-                    p.lo = {std::min(p.lo.x, w.x), std::min(p.lo.y, w.y), std::min(p.lo.z, w.z)};
-                    p.hi = {std::max(p.hi.x, w.x), std::max(p.hi.y, w.y), std::max(p.hi.z, w.z)};
-                }
-                p.volume *= (double)voxelSize * voxelSize * voxelSize;
-                int best = 0, bc = -1; for (auto& kv : count) if (kv.second > bc) { bc = kv.second; best = kv.first; }
-                p.material = best;
+                Piece p = BuildPiece(comp);
                 out.push_back(std::move(p));
             }
     const float air = iso - Clamp();
@@ -353,6 +407,83 @@ std::vector<VoxelTerrain::Piece> VoxelTerrain::ExtractFloaters(int maxPieces) {
             density[(std::size_t)idx] = air;
             TouchCell(idx % nx, (idx / nx) % ny, idx / (nx * ny));
         }
+    return out;
+}
+
+std::vector<VoxelTerrain::Piece> VoxelTerrain::CaveIn(int maxSpan, int maxPieces) {
+    std::vector<Piece> out;
+    if (!editAny_ || maxSpan <= 0 || maxPieces <= 0 || nx < 3 || ny < 3 || nz < 3) return out;
+    // Work box: the edited cells plus the reach of a roof. Cells on the box's side faces (and the floor rows) count as held up,
+    // because what lies beyond the box is not looked at. Bounded: a box over 400000 cells is skipped.
+    int lo[3], hi[3];
+    const int lim[3] = {nx - 1, ny - 1, nz - 1};
+    for (int a = 0; a < 3; ++a) { lo[a] = std::max(0, editMin_[a] - maxSpan - 2); hi[a] = std::min(lim[a], editMax_[a] + maxSpan + 2); }
+    const int bx = hi[0] - lo[0] + 1, by = hi[1] - lo[1] + 1, bz = hi[2] - lo[2] + 1;
+    if (bx <= 0 || by <= 0 || bz <= 0 || (long long)bx * by * bz > 400000) return out;
+    const int INF = 1 << 28;
+    std::vector<int> dist((std::size_t)bx * by * bz, INF);
+    auto at = [&](int x, int y, int z) { return (std::size_t)((z - lo[2]) * by + (y - lo[1])) * bx + (x - lo[0]); };
+    auto solid = [&](int x, int y, int z) { return density[(std::size_t)Index(x, y, z)] > iso; };
+    const int floorRows = std::max(1, floorLayers);
+    // A ceiling cell is solid with air under it. How far (sideways, along the same layer) is it from a wall, i.e. from a solid cell
+    // beside it that rests on ground? A roof held up only by distant walls fails.
+    auto ceiling = [&](int x, int y, int z) { return y >= floorRows && y > lo[1] && solid(x, y, z) && !solid(x, y - 1, z); };
+    std::deque<int> q;
+    const int h4[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    for (int z = lo[2]; z <= hi[2]; ++z) for (int y = lo[1] + 1; y <= hi[1]; ++y) for (int x = lo[0]; x <= hi[0]; ++x) {
+        if (!ceiling(x, y, z)) continue;
+        const bool side = (x == lo[0] && lo[0] > 0) || (x == hi[0] && hi[0] < lim[0]) || (z == lo[2] && lo[2] > 0) || (z == hi[2] && hi[2] < lim[2]);
+        const bool edgeOfWorld = x == 0 || z == 0 || x == lim[0] || z == lim[2];
+        bool wall = side || edgeOfWorld;
+        for (int i = 0; i < 4 && !wall; ++i) {
+            const int ax = x + h4[i][0], az = z + h4[i][1];
+            if (ax < lo[0] || ax > hi[0] || az < lo[2] || az > hi[2]) { wall = true; break; }
+            if (solid(ax, y, az) && solid(ax, y - 1, az)) wall = true;          // a neighbour that stands on something
+        }
+        if (wall) { dist[at(x, y, z)] = 0; q.push_back(Index(x, y, z)); }
+    }
+    while (!q.empty()) {
+        const int idx = q.front(); q.pop_front();
+        const int x = idx % nx, y = (idx / nx) % ny, z = idx / (nx * ny);
+        const int dcur = dist[at(x, y, z)];
+        for (int i = 0; i < 4; ++i) {
+            const int ax = x + h4[i][0], az = z + h4[i][1];
+            if (ax < lo[0] || ax > hi[0] || az < lo[2] || az > hi[2] || !ceiling(ax, y, az)) continue;
+            const std::size_t k = at(ax, y, az);
+            if (dist[k] <= dcur + 1) continue;
+            dist[k] = dcur + 1; q.push_back(Index(ax, y, az));
+        }
+    }
+    // a ceiling cell more than maxSpan from a wall fails, together with up to maxSpan cells of solid above it (a roof as thick as it is
+    // wide); group the failed cells into pieces
+    const int d6[6][3] = {{1,0,0},{-1,0,0},{0,0,1},{0,0,-1},{0,-1,0},{0,1,0}};
+    std::vector<char> bad((std::size_t)bx * by * bz, 0), seen(bad.size(), 0);
+    for (int z = lo[2]; z <= hi[2]; ++z) for (int y = lo[1] + 1; y <= hi[1]; ++y) for (int x = lo[0]; x <= hi[0]; ++x) {
+        if (!ceiling(x, y, z) || dist[at(x, y, z)] <= maxSpan) continue;
+        for (int t = 0; t <= maxSpan && y + t <= hi[1] && solid(x, y + t, z); ++t) bad[at(x, y + t, z)] = 1;
+    }
+    for (int z = lo[2]; z <= hi[2]; ++z) for (int y = lo[1]; y <= hi[1]; ++y) for (int x = lo[0]; x <= hi[0]; ++x) {
+        const std::size_t k0 = at(x, y, z);
+        if (!bad[k0] || seen[k0]) continue;
+        std::vector<int> comp, stack{Index(x, y, z)};
+        seen[k0] = 1;
+        while (!stack.empty()) {
+            const int idx = stack.back(); stack.pop_back();
+            comp.push_back(idx);
+            const int cx = idx % nx, cy = (idx / nx) % ny, cz = idx / (nx * ny);
+            for (int i = 0; i < 6; ++i) {
+                const int ax = cx + d6[i][0], ay = cy + d6[i][1], az = cz + d6[i][2];
+                if (ax < lo[0] || ax > hi[0] || ay < lo[1] || ay > hi[1] || az < lo[2] || az > hi[2]) continue;
+                const std::size_t k = at(ax, ay, az);
+                if (!bad[k] || seen[k]) continue;
+                seen[k] = 1; stack.push_back(Index(ax, ay, az));
+            }
+        }
+        if ((int)out.size() < maxPieces) out.push_back(BuildPiece(comp));
+    }
+    const float air = iso - Clamp();
+    for (const Piece& p : out)
+        for (int idx : p.cells) { LogStroke(idx); density[(std::size_t)idx] = air; TouchCell(idx % nx, (idx / nx) % ny, idx / (nx * ny)); }
     return out;
 }
 

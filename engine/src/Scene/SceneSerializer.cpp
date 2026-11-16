@@ -1405,6 +1405,9 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->textureTiling << " " << Quote(v->texture)
             << " " << v->EncodeDensity() << "\n";
         if (v->catchFalling) out << "  voxelcatch " << v->catchMargin << "\n";
+        if (v->footprints) out << "  voxelfoot " << Quote(v->footprintTag) << " " << (v->footprintBodies ? 1 : 0) << " " << v->footprintStep << " " << v->footprintRadius << " " << v->footprintDepth << " " << v->footprintPower << "\n";
+        if (v->fluidOn) out << "  voxelfluid " << v->fluidBudget << " " << v->fluidMaxCells << " " << v->fluidRate << " " << (v->fluidGlow ? 1 : 0) << " "
+                            << v->fluidColor.r << " " << v->fluidColor.g << " " << v->fluidColor.b << " " << v->fluidColor.a << "\n";
         // Materials (optional records after the terrain, so a build that does not know them keeps them as unknown records)
         if (v->UseMaterials()) {
             out << "  voxelmats " << v->materials.size() << " " << v->EncodeMaterials() << "\n";
@@ -1426,7 +1429,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
             << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
             << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << " " << vd->slumpPasses << " " << (vd->toolsFromInventory ? 1 : 0) << " " << (vd->buildFromItems ? 1 : 0)
-            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << "\n";
+            << " " << vd->bareHandsPower << " " << Quote(vd->tools) << " " << vd->caveInSpan << " " << (int)(unsigned char)vd->pourKey << " " << vd->pourCells << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -7478,7 +7481,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                             int tf = 0, bf = 0;
                             in >> vd->slumpPasses; vd->slumpPasses = std::max(1, std::min(64, vd->slumpPasses));
                             in >> std::ws;
-                            if (std::isdigit(in.peek())) { in >> tf >> bf >> vd->bareHandsPower; vd->tools = ReadQuoted(in); vd->toolsFromInventory = tf != 0; vd->buildFromItems = bf != 0; }
+                            if (std::isdigit(in.peek())) { in >> tf >> bf >> vd->bareHandsPower; vd->tools = ReadQuoted(in); vd->toolsFromInventory = tf != 0; vd->buildFromItems = bf != 0;
+                                in >> std::ws; if (std::isdigit(in.peek())) { in >> vd->caveInSpan; vd->caveInSpan = std::max(0, std::min(64, vd->caveInSpan));
+                                    in >> std::ws; if (std::isdigit(in.peek())) { int pk = 0; in >> pk >> vd->pourCells; vd->pourKey = (char)pk; vd->pourCells = std::max(1, std::min(2000, vd->pourCells)); } } }
                         }
                         vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
                         vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;
@@ -7487,6 +7492,21 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     }
                 } else if (field == "voxelcatch") {
                     if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) { v->catchFalling = true; in >> v->catchMargin; }
+                } else if (field == "voxelfoot") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        int fb = 0; v->footprints = true; v->footprintTag = ReadQuoted(in);
+                        in >> fb >> v->footprintStep >> v->footprintRadius >> v->footprintDepth >> v->footprintPower;
+                        v->footprintBodies = fb != 0;
+                        v->footprintStep = std::max(0.1f, v->footprintStep); v->footprintRadius = std::max(0.05f, std::min(5.0f, v->footprintRadius));
+                    }
+                } else if (field == "voxelfluid") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        int gl = 0; v->fluidOn = true;
+                        in >> v->fluidBudget >> v->fluidMaxCells >> v->fluidRate >> gl >> v->fluidColor.r >> v->fluidColor.g >> v->fluidColor.b >> v->fluidColor.a;
+                        v->fluidGlow = gl != 0;
+                        v->fluidBudget = std::max(1, std::min(100000, v->fluidBudget)); v->fluidMaxCells = std::max(0, std::min(2000000, v->fluidMaxCells));
+                        v->fluidRate = std::max(0.1f, std::min(120.0f, v->fluidRate));
+                    }
                 } else if (field == "voxelmats") {
                     if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
                         std::size_t n = 0; std::string blob; in >> n >> blob;

@@ -30274,6 +30274,32 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Catch bodies that fall out of the world##vox", &v->catchFalling)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that leaves the side of the grid and falls below it is put back on the ground (off = it falls for ever).");
             if (v->catchFalling && ImGui::DragFloat("Catch Depth##vox", &v->catchMargin, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Footprints and tracks##voxft", &v->footprints)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Player (tag below) leaves shallow dents in soft ground (dirt, grass, sand, snow) as it walks.");
+            if (v->footprints) {
+                char ft[64]; std::strncpy(ft, v->footprintTag.c_str(), sizeof(ft) - 1); ft[sizeof(ft) - 1] = '\0';
+                if (ImGui::InputText("Who (tag)##voxft", ft, sizeof(ft))) { v->footprintTag = ft; ed.dirty = true; }
+                if (ImGui::Checkbox("Also rigid bodies##voxft", &v->footprintBodies)) ed.dirty = true;
+                if (ImGui::DragFloat("Step (m)##voxft", &v->footprintStep, 0.05f, 0.1f, 5.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Print Size##voxft", &v->footprintRadius, 0.02f, 0.05f, 3.0f)) ed.dirty = true;
+                if (ImGui::DragFloat("Print Depth##voxft", &v->footprintDepth, 0.01f, 0.02f, 1.0f)) ed.dirty = true;
+            }
+            if (ImGui::Checkbox("Water / lava flow in holes##voxfl", &v->fluidOn)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pour water or lava with the digger's Pour Key: it falls into dug holes and fills them from the bottom. Bounded per frame; not saved with the ground.");
+            if (v->fluidOn) {
+                if (ImGui::DragInt("Fluid Cells / step##voxfl", &v->fluidBudget, 1.0f, 1, 5000)) ed.dirty = true;
+                if (ImGui::DragInt("Fluid Max Cells##voxfl", &v->fluidMaxCells, 100.0f, 0, 200000)) ed.dirty = true;
+                if (ImGui::DragFloat("Flow Speed (steps/s)##voxfl", &v->fluidRate, 0.5f, 0.1f, 60.0f)) ed.dirty = true;
+                float fc[4] = {v->fluidColor.r, v->fluidColor.g, v->fluidColor.b, v->fluidColor.a};
+                if (ImGui::ColorEdit4("Fluid Color##voxfl", fc)) { v->fluidColor = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
+                if (ImGui::Checkbox("Glow (lava)##voxfl", &v->fluidGlow)) ed.dirty = true;
+                if (ImGui::SmallButton("Lava preset##voxfl")) { v->fluidColor = Color::FromBytes(255, 110, 30, 255); v->fluidGlow = true; v->fluidRate = 5.0f; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Water preset##voxfl")) { v->fluidColor = Color::FromBytes(50, 120, 220, 170); v->fluidGlow = false; v->fluidRate = 20.0f; ed.dirty = true; }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Clear fluid##voxfl")) v->ClearFluid();
+                ImGui::TextDisabled("Fluid now: %d cells (%.1f m3).", v->FluidCells(), v->FluidVolume());
+            }
             {   // what the last surface build cost (also in View > Panels > Profiler: Voxel.Edit / Voxel.Mesh / Voxel.Upload)
                 const auto& st = v->lastStats;
                 if (v->UsesChunkObjects())
@@ -30343,6 +30369,11 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::Checkbox("Snap to grid##vdg", &vd->snapToGrid)) ed.dirty = true;
                 ImGui::SameLine();
                 if (ImGui::Checkbox("Slump loose ground##vdg", &vd->slump)) ed.dirty = true;
+                { int pk = (int)(unsigned char)vd->pourKey; char pkb[2] = {pk ? (char)pk : '\0', '\0'};
+                  if (ImGui::InputText("Pour Key##vdg", pkb, sizeof(pkb))) { vd->pourKey = pkb[0]; ed.dirty = true; }
+                  if (ImGui::IsItemHovered()) ImGui::SetTooltip("A key (e.g. f) that pours fluid at the aim point. The terrain needs Water / lava flow on."); }
+                if (ImGui::SliderInt("Cave-in Span##vdg", &vd->caveInSpan, 0, 24)) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = off. Otherwise roof that is more than this many voxels from a support comes down when you let go of the mouse: a tunnel wider than about twice this brings its ceiling down as debris.");
                 if (vd->slump && ImGui::SliderInt("Slump Passes##vdg", &vd->slumpPasses, 1, 32)) ed.dirty = true;
                 if (vd->slump && ImGui::IsItemHovered()) ImGui::SetTooltip("Passes per frame. 1 = a gentle local slide; more = an avalanche that runs farther down the slope (each pass moves at most 40 voxels).");
                 ImGui::SameLine();

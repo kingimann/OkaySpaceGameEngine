@@ -443,12 +443,12 @@ void VoxelTerrain::FillSlab(float frac) {
     editAny_ = false;
 }
 
-void VoxelTerrain::Generate(float surfaceFrac, float amplitude, float caveAmount, unsigned seed) {
+void VoxelTerrain::GenerateSlices(int zFrom, int zTo, float surfaceFrac, float amplitude, float caveAmount, unsigned seed) {
     if (caveAmount < 0) caveAmount = 0; if (caveAmount > 1) caveAmount = 1;
     const float baseY = SizeY() * surfaceFrac;
     const float fxz = 2.5f / std::max(1.0f, (float)(nx - 1));   // surface feature scale
     const float fc  = 3.5f / std::max(1.0f, (float)(nx - 1));   // cave feature scale
-    for (int z = 0; z < nz; ++z)
+    for (int z = std::max(0, zFrom); z < std::min(nz, zTo); ++z)
         for (int x = 0; x < nx; ++x) {
             float n = Fractal2((float)x * fxz, (float)z * fxz, 5, seed);   // [0,1]
             float surf = baseY + (n - 0.5f) * 2.0f * amplitude;
@@ -464,6 +464,10 @@ void VoxelTerrain::Generate(float surfaceFrac, float amplitude, float caveAmount
                 density[Index(x, y, z)] = ClampTo(d, Clamp());
             }
         }
+}
+
+void VoxelTerrain::Generate(float surfaceFrac, float amplitude, float caveAmount, unsigned seed) {
+    GenerateSlices(0, nz, surfaceFrac, amplitude, caveAmount, seed);
     SealFloor();
     mcAllDirty_ = true;
     floatersSwept_ = false;
@@ -490,6 +494,7 @@ void VoxelTerrain::TouchBox(int x0, int y0, int z0, int x1, int y1, int z1) {
         if (z1 > editMax_[2]) editMax_[2] = z1;
     }
     if (y0 < floorLayers) floorTouched_ = true;
+    if (fluidOn && !fluid_.empty()) WakeFluidBox(x0, y0, z0, x1, y1, z1);
     MarkCubes(x0 - 2, y0 - 2, z0 - 2, x1 + 1, y1 + 1, z1 + 1);
 }
 
@@ -1246,7 +1251,10 @@ int VoxelTerrain::CatchFallers() {
     return n;
 }
 
-void VoxelTerrain::Update(float) {
+void VoxelTerrain::Update(float dt) {
+    if (fluidOn || fluidObj_) UpdateFluid(dt);
+    if (footprints && ((++footTick_) % 3) == 0) UpdateFootprints();
+    if (genPhase_ != 0 && StepGenerate(generateBudgetMs)) Apply();
     if (catchFalling && ((++catchTick_) % 6) == 0) CatchFallers();
     if (!chunked_ || !gameObject) return;
     MeshRenderer* mr = gameObject->GetComponent<MeshRenderer>();
@@ -1254,7 +1262,7 @@ void VoxelTerrain::Update(float) {
     if (MaterialSig(*mr) != matSig_) SyncChunkMaterials(*mr);   // e.g. the Inspector changed the terrain's shader
 }
 
-void VoxelTerrain::OnDestroy() { DestroyChunkObjects(); }
+void VoxelTerrain::OnDestroy() { DestroyChunkObjects(); if (fluidObj_) { if (Scene* sc = gameObject ? gameObject->scene() : nullptr) sc->Destroy(fluidObj_); fluidObj_ = nullptr; } }
 void VoxelTerrain::ReleaseUnstarted() { DestroyChunkObjects(); }   // a terrain removed before it started (edit mode, tests)
 
 void VoxelTerrain::Apply() {

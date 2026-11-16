@@ -2,6 +2,7 @@
 #include <Okay.hpp>
 #include <cmath>
 #include <fstream>
+#include <chrono>
 #include <iostream>
 
 using namespace okay;
@@ -9,6 +10,7 @@ using namespace okay;
 // Follow-up to real-life digging: a terrain that is moved, turned and scaled, the world-edge catch, the dug material's dust
 // colour and sound (docs/terrain_water.md, "Real-life digging").
 namespace {
+bool AllFiniteField(const VoxelTerrain& v) { for (float f : v.density) if (!std::isfinite(f)) return false; return true; }
 struct World {
     Scene s{"MORE"};
     GameObject* tg = nullptr;
@@ -190,6 +192,180 @@ int main() {
         CHECK(none.first == 0 && some.first > 150);
         CHECK(some.second == again.second);                                  // same seed, same veins
         CHECK(some.second != other.second);
+    }
+
+    // --- cave-in rule ---------------------------------------------------------------------------------------------------------------------
+    {
+        auto tunnel = [](int halfWidth) {            // a roofed tunnel through a solid block, the roof 4 voxels thick
+            VoxelTerrain v; v.Resize(48, 36, 48); v.voxelSize = 1.0f; v.FillSlab(0.7f); v.EnableMaterials(4);
+            for (int z = 0; z < v.nz; ++z) for (int y = 6; y < 12; ++y) for (int x = 24 - halfWidth; x < 24 + halfWidth; ++x) v.Set(x, y, z, -3.0f);   // the cut
+            return v;
+        };
+        // a narrow tunnel holds, a wide one lets the roof go
+        VoxelTerrain narrow = tunnel(3), wide = tunnel(10);
+        const double vn = narrow.SolidVolume(), vw = wide.SolidVolume();
+        const auto pn = narrow.CaveIn(4, 6), pw = wide.CaveIn(4, 6);
+        double fallen = 0; for (const auto& p : pw) fallen += p.volume;
+        std::cout << "  cave-in span 4: narrow tunnel " << pn.size() << " pieces, wide tunnel " << pw.size() << " pieces carrying " << fallen << " m3\n";
+        CHECK(pn.empty());
+        CHECK(!pw.empty() && fallen > 50.0);
+        CHECK_NEAR(vw - wide.SolidVolume(), fallen, 1e-3);                      // what left the field is what the pieces carry
+        CHECK(vn == narrow.SolidVolume());
+        // off, and bounded: span 0 does nothing; a huge box is skipped
+        VoxelTerrain z = tunnel(10); CHECK(z.CaveIn(0, 6).empty());
+        // the digger: Cave-in Span saved
+        Scene s("CV"); s.physicsEnabled = false;
+        GameObject* g = s.CreateGameObject("Terrain");
+        auto* v = g->AddComponent<VoxelTerrain>(); v->Resize(12, 12, 12); v->FillSlab(0.5f);
+        auto* d = g->AddComponent<VoxelDigger>(); d->caveInSpan = 6;
+        Scene s2("CV2"); s2.physicsEnabled = false;
+        CHECK(SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s)));
+        CHECK(s2.Find("Terrain")->GetComponent<VoxelDigger>()->caveInSpan == 6);
+    }
+
+    // --- budgeted (chunk by chunk) generation gives the very same world --------------------------------------------------------------------
+    {
+        VoxelTerrain::LayerRules rules; rules.oreVeins = 10;
+        VoxelTerrain a; a.Resize(60, 40, 60); a.voxelSize = 1.0f; a.Generate(0.55f, 6.0f, 0.4f, 31u); a.GenerateMaterials(31u, rules);
+        VoxelTerrain b; b.Resize(60, 40, 60); b.voxelSize = 1.0f;
+        b.BeginGenerate(0.55f, 6.0f, 0.4f, 31u, true, rules);
+        CHECK(b.Generating());
+        int steps = 0; float last = -1.0f; bool mono = true;
+        while (!b.StepGenerate(0.0f)) { ++steps; const float p = b.GenerateProgress(); if (p < last) mono = false; last = p; if (steps > 1000) break; }
+        std::cout << "  budgeted generation: " << steps + 1 << " steps of at least one slice each\n";
+        CHECK(!b.Generating() && mono && steps >= 100);                      // 60 + 60 slices
+        CHECK(a.density == b.density && a.material == b.material);
+        VoxelTerrain c; c.Resize(60, 40, 60); c.voxelSize = 1.0f;
+        c.BeginGenerate(0.55f, 6.0f, 0.4f, 31u, true, rules);
+        CHECK(c.StepGenerate(1.0e6f) && c.density == a.density);              // a huge budget finishes in one call
+        // the running game steps it by itself and skins the terrain when it is done
+        Scene s("GEN"); s.physicsEnabled = false; s.runScripts = true;
+        GameObject* g = s.CreateGameObject("Terrain");
+        auto* v = g->AddComponent<VoxelTerrain>(); v->Resize(60, 40, 60); v->voxelSize = 1.0f; v->generateBudgetMs = 0.2f;
+        v->BeginGenerate(0.55f, 6.0f, 0.0f, 5u);
+        s.Update(1.0f / 60.0f);
+        const bool partial = v->Generating();
+        int frames = 1; while (v->Generating() && frames < 5000) { s.Update(1.0f / 60.0f); ++frames; }
+        std::cout << "  running game: generated over " << frames << " frames\n";
+        CHECK(partial || frames == 1);
+        CHECK(!v->Generating());
+        const Mesh drawn = [&] { GameObject* gg = g; std::size_t n = 0; for (auto* mr : gg->GetComponents<MeshRenderer>()) n += mr->mesh.vertices.size(); Mesh m; m.vertices.resize(n); return m; }();
+        CHECK(drawn.vertices.size() > 1000);
+    }
+
+    // --- water and lava in dug holes -------------------------------------------------------------------------------------------------------
+    {
+        VoxelTerrain v; v.Resize(36, 30, 36); v.voxelSize = 1.0f; v.FillSlab(0.5f);
+        v.Dig({0, 15.0f, 0}, 4.0f, 30.0f);                                    // a pit
+        v.Dig({0, 12.0f, 0}, 3.0f, 30.0f);
+        CHECK(v.PourFluid({0, 20.0f, 0}, 50) == 0);                            // off by default: nothing happens
+        v.fluidOn = true; v.fluidBudget = 40;
+        CHECK(v.PourFluid({0, 18.0f, 0}, 150) == 150);
+        int worstStep = 0, steps = 0;
+        while (steps < 4000 && v.FluidActiveCells() > 0) { const int m = v.FluidStep(); worstStep = std::max(worstStep, m); ++steps; }
+        std::cout << "  fluid: 150 cells came to rest after " << steps << " steps; worst step moved " << worstStep << " cells\n";
+        CHECK(worstStep <= 40);                                                // the per-step budget holds
+        CHECK(v.FluidCells() == 150);                                          // nothing is lost
+        bool rests = true, inGround = false, inPit = false;
+        for (int z = 0; z < v.nz; ++z) for (int y = 0; y < v.ny; ++y) for (int x = 0; x < v.nx; ++x) {
+            if (!v.FluidAt(x, y, z)) continue;
+            if (v.Get(x, y, z) > v.iso) inGround = true;
+            if (y > 0 && v.Get(x, y - 1, z) <= v.iso && !v.FluidAt(x, y - 1, z)) rests = false;   // every cell stands on ground or fluid
+            if (std::abs(x - 18) <= 5 && std::abs(z - 18) <= 5 && y < 15) inPit = true;
+        }
+        CHECK(rests && !inGround && inPit);
+        // digging beside it wakes it; building ground over it removes that fluid
+        v.Add({0, 11.0f, 0}, 3.5f, 30.0f);
+        for (int i = 0; i < 400 && v.FluidActiveCells() > 0; ++i) v.FluidStep();
+        std::cout << "  fluid after building over it: " << v.FluidCells() << " cells\n";
+        CHECK(v.FluidCells() < 150);
+        v.ClearFluid(); CHECK(v.FluidCells() == 0);
+        // in the running game: Update flows it and draws it as one child object that goes when the fluid does
+        Scene s("FL"); s.physicsEnabled = false; s.runScripts = true;
+        GameObject* g = s.CreateGameObject("Terrain");
+        auto* t = g->AddComponent<VoxelTerrain>(); t->Resize(36, 30, 36); t->voxelSize = 1.0f; t->FillSlab(0.5f); t->Dig({0, 15.0f, 0}, 4.0f, 30.0f);
+        t->fluidOn = true; t->fluidRate = 60.0f;
+        t->Apply(); s.Update(0.0f);
+        t->PourFluid({0, 18.0f, 0}, 80);
+        for (int i = 0; i < 120; ++i) s.Update(1.0f / 60.0f);
+        GameObject* fo = s.Find("Voxel Fluid");
+        CHECK(fo != nullptr && fo->GetComponent<MeshRenderer>() && fo->GetComponent<MeshRenderer>()->mesh.TriangleCount() > 20);
+        CHECK(t->FluidCells() == 80);
+        t->ClearFluid(); for (int i = 0; i < 20; ++i) s.Update(1.0f / 60.0f);
+        CHECK(s.Find("Voxel Fluid") == nullptr);
+        // fluid settings are saved; the fluid itself is not
+        t->fluidRate = 7.0f; t->fluidGlow = true;
+        Scene s2("FL2"); s2.physicsEnabled = false;
+        CHECK(SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s)));
+        auto* t2 = s2.Find("Terrain")->GetComponent<VoxelTerrain>();
+        CHECK(t2->fluidOn && t2->fluidRate == 7.0f && t2->fluidGlow && t2->FluidCells() == 0);
+    }
+
+    // --- footprints and tracks --------------------------------------------------------------------------------------------------------------
+    {
+        Scene s("FT"); s.physicsEnabled = false; s.runScripts = true;
+        GameObject* g = s.CreateGameObject("Terrain");
+        auto* t = g->AddComponent<VoxelTerrain>(); t->Resize(40, 30, 40); t->voxelSize = 1.0f; t->FillSlab(0.5f); t->GenerateMaterials(2u); t->Apply();
+        GameObject* pl = s.CreateGameObject("Player"); pl->tag = "Player";
+        float sy = 0; t->SurfaceY(0, 0, sy);
+        pl->transform->localPosition = {-10, sy + 0.1f, 0};
+        s.Update(1.0f / 60.0f);
+        const std::vector<float> d0 = t->density;
+        for (int i = 0; i < 60; ++i) s.Update(1.0f / 60.0f);
+        CHECK(t->density == d0 && t->footprintCount == 0);                    // off by default
+        t->footprints = true;
+        for (int i = 0; i < 6; ++i) s.Update(1.0f / 60.0f);
+        for (int i = 0; i < 100; ++i) {                                        // walk 12 m along the ground
+            pl->transform->localPosition = {-10.0f + i * 0.12f, 0.0f, 0.0f};
+            float y = 0; t->SurfaceY(pl->transform->localPosition.x, 0, y); pl->transform->localPosition = {-10.0f + i * 0.12f, y + 0.05f, 0.0f};
+            s.Update(1.0f / 60.0f);
+        }
+        std::cout << "  footprints: " << t->footprintCount << " dents along 12 m\n";
+        CHECK(t->footprintCount >= 10 && t->footprintCount <= 40);
+        CHECK(t->density != d0 && AllFiniteField(*t));
+        CHECK(!t->CanUndo());                                                   // not part of a stroke
+        // stone does not take a print
+        VoxelTerrain st; st.Resize(40, 30, 40); st.voxelSize = 1.0f; st.FillSlab(0.5f); st.EnableMaterials(4);
+        VoxelTerrain::EditOptions o; o.power = 2.0f;
+        CHECK(!st.Edit({0, 15.2f, 0}, 0.45f, 0.5f, o).changed);
+        Scene s2("FT2"); s2.physicsEnabled = false;
+        t->footprintTag = "Walker"; t->footprintStep = 1.5f;
+        CHECK(SceneSerializer::Deserialize(s2, SceneSerializer::Serialize(s)));
+        auto* t2 = s2.Find("Terrain")->GetComponent<VoxelTerrain>();
+        CHECK(t2->footprints && t2->footprintTag == "Walker" && t2->footprintStep == 1.5f);
+    }
+
+    // --- foliage on a voxel terrain asks the density field instead of ray casting every triangle -------------------------------------------------
+    {
+        auto build = [](Scene& s, float yawDeg) {
+            GameObject* g = s.CreateGameObject("Terrain");
+            g->transform->localRotation = Quat::AngleAxis(yawDeg, Vec3{0, 1, 0});
+            auto* v = g->AddComponent<VoxelTerrain>(); v->Resize(72, 44, 72); v->voxelSize = 1.5f; v->Generate(0.55f, 9.0f, 0.0f, 2024u); v->Apply();
+            GameObject* f = s.CreateGameObject("Foliage"); f->AddComponent<Foliage>();
+            return std::make_pair(v, f->GetComponent<Foliage>());
+        };
+        Scene sa("FA"), sb("FB"); sa.physicsEnabled = false; sb.physicsEnabled = false;
+        auto [va, fa] = build(sa, 0.0f);          // the fast path
+        auto [vb, fb] = build(sb, 0.05f);         // turned a hair: the ray cast path
+        auto fast = fa->SceneSurface(sa, 500.0f), slow = fb->SceneSurface(sb, 500.0f);
+        int ok = 0, n = 0; float worst = 0; float nyMin = 1;
+        using Clk = std::chrono::steady_clock;
+        double tf = 0, ts = 0;
+        for (int i = 0; i < 60; ++i) {
+            const float x = -40.0f + (i % 10) * 8.0f, z = -35.0f + (i / 10) * 12.0f;
+            Vec3 p1, n1, p2, n2;
+            auto t0 = Clk::now(); const bool a = fast(x, z, p1, n1); tf += std::chrono::duration<double, std::milli>(Clk::now() - t0).count();
+            t0 = Clk::now(); const bool b = slow(x, z, p2, n2); ts += std::chrono::duration<double, std::milli>(Clk::now() - t0).count();
+            if (a != b) continue;
+            ++n; if (!a) continue;
+            ++ok; worst = std::max(worst, std::fabs(p1.y - p2.y)); nyMin = std::min(nyMin, n1.y);
+            CHECK(std::fabs(n1.Magnitude() - 1.0f) < 1e-3f);
+        }
+        std::cout << "  foliage ground query: " << tf / 60 << " ms (density) against " << ts / 60 << " ms (ray cast), worst height difference " << worst << " m\n";
+        CHECK(ok > 40 && n >= ok);
+        CHECK(worst < 1.2f);                                           // within a voxel and a half (the mesh and the density sample differ a little)
+        CHECK(tf * 5.0 < ts);
+        CHECK(nyMin > -0.01f);
     }
 
     // --- the catch is saved --------------------------------------------------------------------------------------------------------

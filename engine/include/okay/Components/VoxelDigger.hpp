@@ -73,6 +73,9 @@ public:
     bool  slump = false;           ///< loose ground slides to its angle of repose after a dig
     int   slumpPasses = 1;         ///< slump passes per frame (each moves at most 40 voxels): more = an avalanche that runs farther
     bool  collapse = false;        ///< pieces cut loose by a dig fall as debris instead of vanishing
+    char  pourKey = 0;             ///< key that pours fluid at the aim point when the terrain has `fluidOn` (0 = none)
+    int   pourCells = 30;          ///< cells of fluid per press
+    int   caveInSpan = 0;          ///< cave-in rule (0 = off): roof more than this many voxels from a support comes down (VoxelTerrain::CaveIn); needs a stroke to end
     bool  giveItems = false;       ///< also hand `drop` items to the scene's Inventory when volume is stored
     /// Tools from the inventory (OFF by default). On: the tool power is the best `tools` entry whose item the scene's Inventory holds
     /// (`pickaxe:5` = an item called pickaxe digs materials up to hardness 5), or `bareHandsPower` with none. `power` is then ignored.
@@ -127,7 +130,7 @@ public:
     bool UndoLastStroke() { VoxelTerrain* v = FindVoxel(); if (!v || !v->UndoStroke()) return false; v->Apply(); return true; }
     bool UsesRealLife(const VoxelTerrain& v) const {
         return v.UseMaterials() || collect != Collect::Vanish || needsMaterial || creative || power < 1.0e8f || toolsFromInventory || buildFromItems || hardnessScale != 1.0f ||
-               shape != VoxelTerrain::EditOptions::Shape::Sphere || depthLimit > 0.0f || protectBelow >= 0.0f || snapToGrid || slump || collapse;
+               shape != VoxelTerrain::EditOptions::Shape::Sphere || depthLimit > 0.0f || protectBelow >= 0.0f || snapToGrid || slump || collapse || caveInSpan > 0;
     }
 
     VoxelTerrain* FindVoxel() const {
@@ -235,10 +238,11 @@ public:
                                                                          : vox->RemoveFloatersEdited(removeFloaters);
                     if (cleared > 0) vox->Apply();
                 }
-                if (collapse && vox->UseMaterials()) CollapsePieces(*vox);
+                if ((collapse && vox->UseMaterials()) || caveInSpan > 0) CollapsePieces(*vox);
                 vox->EndStroke();
             }
             if (Input::GetKey(Input::KeyFromName("ctrl")) && Input::GetKeyDown('z')) UndoLastStroke();
+            if (pourKey && aiming && vox->fluidOn && Input::GetKeyDown(pourKey)) vox->PourFluid({local.x, local.y + vox->voxelSize * 1.5f, local.z}, pourCells);
             DigSound(false);
         }
         m_wasActing = acting;
@@ -358,7 +362,9 @@ private:
     }
 
     void CollapsePieces(VoxelTerrain& vox) {
-        const auto pieces = vox.ExtractFloaters(6);
+        std::vector<VoxelTerrain::Piece> pieces;
+        if (collapse && vox.UseMaterials()) pieces = vox.ExtractFloaters(6);
+        if (caveInSpan > 0) { auto more = vox.CaveIn(caveInSpan, 6); pieces.insert(pieces.end(), more.begin(), more.end()); }
         if (pieces.empty()) return;
         Scene* sc = GetScene();
         Transform* tt = vox.gameObject->transform;

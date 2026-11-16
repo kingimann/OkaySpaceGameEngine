@@ -171,6 +171,47 @@ public:
     };
     void GenerateMaterials(unsigned seed, const LayerRules& rules);
     void GenerateMaterials(unsigned seed) { GenerateMaterials(seed, LayerRules{}); }
+    /// Budgeted generation for big worlds (OFF unless you call it; `Generate` still does everything at once). BeginGenerate starts
+    /// the same generation `Generate` (and, with `withMaterials`, `GenerateMaterials`) would do, but StepGenerate(budgetMs) fills a few
+    /// slices of the field per call and stops once the budget is spent (at least one slice per call), so a 256 x 64 x 256 world does
+    /// not freeze the game for a second. The result is bit for bit the one the one-shot calls give. While `Generating()` the running
+    /// game steps it every frame by `generateBudgetMs` and skins the terrain when it is done; the field is only partly filled until then.
+    void  BeginGenerate(float surfaceFrac, float amplitude, float caveAmount, unsigned seed, bool withMaterials, const LayerRules& rules);
+    void  BeginGenerate(float surfaceFrac, float amplitude, float caveAmount, unsigned seed, bool withMaterials = false) { BeginGenerate(surfaceFrac, amplitude, caveAmount, seed, withMaterials, LayerRules{}); }
+    bool  StepGenerate(float budgetMs);          ///< true when finished (and the surface is flagged to be built)
+    bool  Generating() const { return genPhase_ != 0; }
+    float GenerateProgress() const;              ///< 0..1
+    float generateBudgetMs = 4.0f;
+
+    /// Water or lava that flows into dug holes (OFF by default; not saved). A fluid cell falls, or slides down a diagonal, through open
+    /// air; it rests on the ground or on other fluid, so a pour fills a hole from the bottom and finds its own heap (a slope of up to 45
+    /// degrees, not a flat sheet). Bounded: at most `fluidBudget` active cells are looked at per step, `fluidRate` steps per second (4 at most
+    /// per frame), and `fluidMaxCells` cells in all (more pouring is refused). Resting cells cost nothing. Building ground over fluid removes
+    /// that fluid; digging next to fluid wakes it. It is drawn as one transient child object, rebuilt about ten times a second while it moves.
+    bool  fluidOn = false;
+    int   fluidBudget = 600;
+    int   fluidMaxCells = 30000;
+    float fluidRate = 20.0f;
+    Color fluidColor = Color::FromBytes(50, 120, 220, 170);   ///< water; lava: (255, 110, 30, 255) with fluidGlow on and fluidRate ~5
+    bool  fluidGlow = false;                                  ///< draw unlit (lava)
+    int   PourFluid(const Vec3& local, int cells);            ///< put up to `cells` cells of fluid around a point; returns how many fitted
+    int   FluidStep();                                        ///< one flow step (Update does it); returns how many cells moved
+    int   FluidCells() const;
+    int   FluidActiveCells() const;                           ///< cells still waiting to be looked at (0 = everything is at rest)
+    bool  FluidAt(int x, int y, int z) const;
+    void  ClearFluid();
+    void  UpdateFluid(float dt);
+    /// Footprints and tracks (OFF by default). Objects with the tag `footprintTag` (the player), and every rigid body when
+    /// `footprintBodies` is on, press a shallow dent into soft ground (materials the digger-free power `footprintPower` can dig, so dirt,
+    /// grass, sand, snow and clay but not stone) every `footprintStep` metres they travel while they are on the ground. Each dent is a
+    /// small bounded edit of radius `footprintRadius` and depth about `footprintDepth`. Not logged for undo.
+    bool  footprints = false;
+    std::string footprintTag = "Player";
+    bool  footprintBodies = false;
+    float footprintStep = 0.7f, footprintRadius = 0.45f, footprintDepth = 0.12f, footprintPower = 2.0f;
+    int   footprintCount = 0;                                  ///< dents pressed so far
+    void  UpdateFootprints();
+    double FluidVolume() const { return (double)FluidCells() * voxelSize * voxelSize * voxelSize; }
     /// Solid volume in cubic metres: every voxel counts the fraction of itself that lies under the surface.
     double SolidVolume() const;
 
@@ -210,6 +251,12 @@ public:
     /// Cut loose pieces out of the field (their cells become air) and return them. Starts from the edited cells, as
     /// RemoveFloatersEdited does; a piece touching the floor never is one.
     std::vector<Piece> ExtractFloaters(int maxPieces = 8);
+    /// Optional cave-in rule. A ceiling (solid ground with air right under it) that is more than `maxSpan` voxels sideways from a
+    /// wall (solid ground beside it that rests on something) fails, together with up to `maxSpan` voxels of ground above it. The failed
+    /// ground is cut out as pieces (like ExtractFloaters), so a tunnel or cave wider than about twice `maxSpan` brings its roof down.
+    /// Only looks around the edited cells plus `maxSpan + 2` and skips a work box over 400000 cells. At most `maxPieces` pieces are
+    /// returned; ground in further pieces stays.
+    std::vector<Piece> CaveIn(int maxSpan, int maxPieces = 6);
     /// The surface of one piece as a mesh in the terrain's local space.
     Mesh PieceMesh(const Piece& p) const;
 
@@ -327,6 +374,27 @@ private:
     struct StrokeCell { int idx; float density; unsigned char material; };
     std::vector<StrokeCell> strokeLog_;
     std::vector<unsigned char> strokeSeen_;
+    Piece BuildPiece(const std::vector<int>& comp) const;
+    std::vector<std::pair<std::uint64_t, Vec3>> footLast_;   // object id and where it last pressed a dent
+    unsigned footTick_ = 0;
+    std::vector<unsigned char> fluid_;
+    std::vector<int> fluidActive_;
+    int fluidCount_ = 0;
+    unsigned fluidRev_ = 0, fluidMeshRev_ = 0, fluidTick_ = 0;
+    float fluidAcc_ = 0.0f, fluidMeshTimer_ = 0.0f;
+    GameObject* fluidObj_ = nullptr;
+    void WakeFluidBox(int x0, int y0, int z0, int x1, int y1, int z1);
+    void RebuildFluidMesh();
+    void GenerateSlices(int zFrom, int zTo, float surfaceFrac, float amplitude, float caveAmount, unsigned seed);
+    void BeginMaterialPass(const LayerRules& r);
+    void GenerateMaterialSlices(int zFrom, int zTo, unsigned seed, const LayerRules& r);
+    void FinishMaterials(unsigned seed, const LayerRules& r);
+    int genPhase_ = 0;                  // 0 idle, 1 density slices, 2 material slices
+    int genZ_ = 0;
+    bool genMaterials_ = false;
+    float genSurface_ = 0.5f, genAmp_ = 6.0f, genCaves_ = 0.0f;
+    unsigned genSeed_ = 0;
+    LayerRules genRules_;
     unsigned catchTick_ = 0;
     unsigned matRev_ = 0;                            ///< changes when the material table does
     void LogStroke(int idx);

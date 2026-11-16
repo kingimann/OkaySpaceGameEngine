@@ -1047,3 +1047,20 @@ Tests: `ctest -R voxel_more`.
    loaded; the actual sound output is unverified.
 5. The brush marker now matches the brush shape (cube, flat disc, can).
 Tests: `ctest -R "voxel_more|voxel_bughunt"`.
+
+### 7t, fourth pass (switches, all off by default)
+
+**Tools scene.** Open `examples\voxel\voxel_tools.okayscene`, Play. The player holds a shovel and a pickaxe (the text on screen says what to
+try). Left mouse digs dirt and sand with either tool; stone needs the pickaxe (the shovel's power is 2, stone is 4); ore needs a better tool
+(`iron_pickaxe:7` in the digger's Tools list; give the player an item of that name to dig it). Walk onto falling debris: stacks of `dirt`, `stone`
+and so on arrive in the bag. Right mouse builds with dirt items and uses them up.
+
+1. **Cave-in.** Voxel Digger card, **Cave-in Span** to 4. Dig a wide tunnel (hold left mouse and sweep sideways under a hill), then let go: the roof
+   that is more than about 4 voxels from a wall comes down as debris. A narrow tunnel holds.
+2. **Big world generation.** In code or a script: `terrain.BeginGenerate(0.5, 8, 0.3, seed, true)`; the terrain fills itself a few milliseconds a
+   frame and shows up when done (`Generating()`, `GenerateProgress()`).
+3. **Water and lava.** Voxel Terrain card: tick **Water / lava flow in holes** (press **Lava preset** for lava). Voxel Digger card: type `f` in
+   **Pour Key**. Play, dig a pit, aim at it and press F: water (blue blocks) runs down and fills the pit from the bottom. Dig beside it and it flows out.
+4. **Footprints.** Voxel Terrain card: tick **Footprints and tracks**. Play and walk on dirt, grass or sand: a trail of small dents. Stone takes no print.
+5. The foliage brush now finds the ground on a voxel terrain fast (no visible change; `ctest -R voxel_more` times it).
+Tests: `ctest -R "voxel_more|voxel_bughunt|voxel_examples"`.

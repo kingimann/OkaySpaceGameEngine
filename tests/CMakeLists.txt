@@ -2542,6 +2542,12 @@ add_executable(test_scene_ids_prefabs test_scene_ids_prefabs.cpp)
 target_link_libraries(test_scene_ids_prefabs PRIVATE okay::engine)
 add_test(NAME scene_ids_prefabs COMMAND test_scene_ids_prefabs)
 
+# Prefab overrides and variant / nested records keyed by a stable name path, not a depth-first index (#888 finding 58):
+# Reapply, variants and nested prefabs after the prefab gains, loses or reorders objects; old index-keyed files.
+add_executable(test_prefab_override_stable test_prefab_override_stable.cpp)
+target_link_libraries(test_prefab_override_stable PRIVATE okay::engine)
+add_test(NAME prefab_override_stable COMMAND test_prefab_override_stable)
+
 # Scene serializer audit: key bindings in the one-token records, several components of one type, asset paths, number and text round trips
 add_executable(test_scene_serializer_audit test_scene_serializer_audit.cpp)
 target_link_libraries(test_scene_serializer_audit PRIVATE okay::engine)

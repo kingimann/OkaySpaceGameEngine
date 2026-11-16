@@ -10,6 +10,7 @@ _Last updated: 2026-11-13 17:55 UTC_
 
 | Version | What's in it |
 |---|---|
+| 2.879.0 | Guided modeling inside the existing modeler: Fences, Architecture, Vehicles and Characters with swappable parts, your own templates, a Low-to-Ultra Detail slider, randomise with a seed and a model check (#929, #934); modeler upgrades: material slots, Repair Mesh, vertex colours, creases and bevel weights, a quick toolbar and Ctrl+K palette, hide and drag-select, spin and path and curve tools, measuring and snapping, reference images (#932) |
 | 2.878.0 | Walk and run speeds and gait that read as walking and running (#928); voxel terrain without the dig frame-rate drop, plus real-life digging options (#927); Improved physics quality, slider joint, debug view, debris pool (#930); test builds channel (#926); every template and example tested (#919); nameplates and rich world text (#923) |
 | 2.876.0 | Editor menu bar cleaned up (one Examples submenu, Edit clipboard commands, GameObject categories, Help items, reasons on greyed items) and richer Hierarchy right-click menus (#917) |
 | 2.877.0 | Visual Script Add Node menu sorted into 14 foldable sections and 70 topics (#918); one shared inflate decoder instead of three (#913); Project panel right-click menus (#921); detailed crash reports (#920) |

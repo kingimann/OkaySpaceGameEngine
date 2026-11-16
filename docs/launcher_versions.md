@@ -230,4 +230,6 @@ Later, from the install audit ([install_audit.md](install_audit.md), findings 1 
 `ParseKeepFlag`, the named `KeepVersionArgs`), `launcher/VersionsManager.*` (`ScanFolderForProjects`, `CheckBeforeDelete`, `CountProjectsMadeWith`, the named
 `OpenWithArgs`, the guard in every delete), `launcher/VersionsUI.*` (the Remove window, `Host::projectVersions`), `launcher/main.cpp` (two small calls),
 `editor/ProjectUpgrade.*` and `editor/ProjectUpgradeUI.*` (the gate, the kept-copy window), `editor/main.cpp` (five small edits in the update code),
-`tests/test_versions_safety.cpp`, `tests/test_project_upgrade.cpp`.
+`tests/test_versions_safety.cpp`, `tests/test_project_upgrade.cpp`. All of it was written from the audit's findings and the repository's own interfaces (no outside code); the
+scan walks folders breadth first with `std::filesystem`, and the Windows reparse-point check follows the Win32 documentation (`FindFirstFileW`, the symlink and
+mount-point reparse tags).

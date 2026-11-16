@@ -8,6 +8,8 @@
 //      person's. The default folder for a new project is beside the editor exe, so for a kept editor it is Versions/<v>/Tools/Projects.
 //
 // Everything runs on temp folders; nothing needs a window, a network or the engine. Links are only made on non-Windows systems.
+// Written from docs/install_audit.md (findings 1 and 2, Appendix B) and the public interfaces of launcher/VersionsManager.hpp and
+// shared/ProjectVersion.hpp. No outside code or test was used.
 #include "test_framework.hpp"
 #include "VersionsManager.hpp"
 

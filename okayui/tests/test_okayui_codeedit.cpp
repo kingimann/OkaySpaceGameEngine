@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <iostream>
 
 using namespace okayuitest;
 namespace UI = OkayUI;
@@ -1455,6 +1456,71 @@ void ProportionalAndOverwriteTests() {
 }
 
 
+// The launcher look's glyph atlas: Roboto and JetBrains Mono at six sizes first; the first time code is drawn past the largest
+// (the script editor's code at 16 px x UI scale 0.7 to 2 x zoom 0.7 to 3, so up to 96 px) it grows, between two frames, to nine
+// code sizes. Checked: the sizes, the memory, that every scale and zoom then draws from a bake at least as large, that UI text
+// looks the same after the growth, and the growth path itself (height doubled until it fits, else the UI font alone).
+void AtlasTests() {
+    UI::UseLauncherLook(true);
+    auto say = [](const char* what, const UI::FontAtlasInfo& a) {
+        std::cout << "  " << what << ": " << a.width << " x " << a.height << ", glyphs in " << a.usedRows << " rows, " << a.grows
+                  << " doubling(s), " << a.uiSizes << " UI sizes (to " << a.largestUiPx << " px), " << a.codeSizes << " code sizes (to "
+                  << a.largestCodePx << " px), " << (double)a.bytes / (1024.0 * 1024.0) << " MB RGBA, built in " << a.buildMs << " ms\n";
+    };
+    auto upscaledPairs = [](float& worst) {
+        int n = 0; worst = 0.0f;
+        for (int u = 70; u <= 200; u += 5)
+            for (int z = 7; z <= 30; ++z) {
+                const float px = 16.0f * (float)u / 100.0f * (float)z / 10.0f, bake = UI::CodeFontBakedSizeFor(px);
+                if (bake < px - 0.5f) ++n;
+                worst = std::max(worst, px / bake);
+            }
+        return n;
+    };
+    const UI::FontAtlasInfo a = UI::GetFontAtlasInfo();
+    say("atlas at start", a);
+    CHECK(a.ok && a.codeSizes == 6 && a.uiSizes == 6 && a.largestCodePx == 46.0f);
+    CHECK(a.width == 1024 && a.height == 1024 && a.usedRows > 0 && a.usedRows <= a.height - 4);
+    CHECK(a.bytes == 1024ull * 1024ull * 4ull);
+    // UI text drawn before the growth, to compare with after
+    Sim sim(320, 120);
+    auto ui = [] { if (UI::Begin("A", 5, 5, 300, 100)) { UI::Text("Roboto 0123 Wgjy"); UI::PushCodeFont(); UI::Text("mono 0123 {}"); UI::PopCodeFont(); } UI::End(); };
+    sim.Frames(2, ui);
+    const Bitmap before = sim.Draw();
+    float worst = 0.0f;
+    const int upBefore = upscaledPairs(worst);   // (asking for 96 px code here is what asks the atlas to grow)
+    std::cout << "  before growing: " << upBefore << " of 648 UI scale x zoom pairs drawn larger than baked (up to x" << worst << ")\n";
+    CHECK(upBefore > 0);
+    CHECK(UI::GetFontAtlasInfo().height == 1024);                // not mid-frame: only at the next BeginFrame
+    sim.Frames(2, ui);
+    const UI::FontAtlasInfo g = UI::GetFontAtlasInfo();
+    say("atlas after growing", g);
+    CHECK(g.ok && g.codeSizes == 9 && g.largestCodePx == 96.0f && g.width == 1024 && g.height == 2048 && g.grows == 1);
+    CHECK(g.usedRows > a.usedRows && g.usedRows <= g.height - 4);
+    const int upAfter = upscaledPairs(worst);
+    std::cout << "  after growing: " << upAfter << " pairs drawn larger than baked (largest ratio " << worst << ")\n";
+    CHECK(upAfter == 0);
+    const Bitmap after = sim.Draw();
+    int diff = 0;
+    for (int y = 0; y < before.h; ++y) for (int x = 0; x < before.w; ++x) diff += PixelAt(before, x, y) != PixelAt(after, x, y);
+    CHECK(diff == 0);                                             // the UI and code text at 16 px look exactly the same
+    if (diff) std::cerr << "  pixels changed by the growth: " << diff << "\n";
+    sim.Frames(2, ui);
+    CHECK(UI::GetFontAtlasInfo().height == 2048);                 // grown once, stays
+    // the growth path on its own: start small, doubled until the code font fits
+    const UI::FontAtlasInfo s6 = UI::TestBuildFontAtlas(128, 4096, 6);
+    CHECK(s6.ok && s6.height == 1024 && s6.grows == 3 && s6.codeSizes == 6 && s6.usedRows == a.usedRows);
+    const UI::FontAtlasInfo s9 = UI::TestBuildFontAtlas(256, 4096, 9);
+    CHECK(s9.ok && s9.height == 2048 && s9.grows == 3 && s9.codeSizes == 9 && s9.usedRows == g.usedRows);
+    // no room for the code font: the UI font alone (the code font falls back to it)
+    const UI::FontAtlasInfo n = UI::TestBuildFontAtlas(1024, 1024, 9);
+    CHECK(n.ok && n.codeSizes == 0 && n.uiSizes == 6 && n.height == 1024);
+    // no room for anything: no atlas (the classic look's 8x8 font is used then)
+    CHECK(!UI::TestBuildFontAtlas(64, 64, 6).ok);
+    CHECK(UI::GetFontAtlasInfo().height == 2048 && UI::GetFontAtlasInfo().codeSizes == 9);   // the real atlas is untouched
+    UI::UseLauncherLook(false);
+}
+
 // Step 30: what ImGuiColorTextEdit does that ours did not (docs/own_ui_code_editor.md, step 30).
 void ParityTests() {
     {   // AltGr (Ctrl+Alt on Windows) types: { [ @ on many keyboards come with it. Ctrl alone does not type.
@@ -1598,6 +1664,7 @@ int main() {
     RowLookTests();
     CaptureTests();
     ParityTests();
+    AtlasTests();
     PerfTests();
     TEST_MAIN_RESULT();
 }

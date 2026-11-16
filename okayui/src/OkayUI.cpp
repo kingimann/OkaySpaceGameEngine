@@ -1057,6 +1057,10 @@ constexpr int kMaxHexSlots = 16;
 } // namespace
 
 void BeginFrame(const Input& in) {
+    if (g_ttf && fontatlas::Grow()) {   // code was drawn larger than the atlas had it: it now has every code size (taller, new UVs)
+        g_whiteU = g_ttf->whiteU; g_whiteV = g_ttf->whiteV;
+        if (g_atlasTex) { SDL_DestroyTexture(g_atlasTex); g_atlasTex = nullptr; }
+    }
     g_in       = in;
     g_pressed  =  in.mouseDown && !g_prevDown;
     g_released = !in.mouseDown &&  g_prevDown;
@@ -4925,6 +4929,29 @@ unsigned GetID(const char* label) { return (unsigned)hashLabel(label ? label : "
 
 bool IsItemHovered() {
     return g_lay.active && hit(g_lay.prevX, g_lay.prevY, g_lay.prevW, g_lay.prevH);
+}
+
+static FontAtlasInfo InfoOf(const fontatlas::Atlas& a) {
+    FontAtlasInfo i;
+    i.ok = a.ok; i.width = a.w; i.height = a.h; i.usedRows = a.usedRows; i.grows = a.grows;
+    i.uiSizes = a.nsizes; i.codeSizes = a.ncode;
+    i.largestUiPx = a.nsizes > 0 ? a.sizes[a.nsizes - 1].px : 0.0f;
+    i.largestCodePx = a.ncode > 0 ? a.code[a.ncode - 1].px : 0.0f;
+    i.buildMs = a.buildMs;
+    i.bytes = a.ok ? (unsigned long long)a.w * (unsigned long long)a.h * 4ull : 0ull;
+    return i;
+}
+FontAtlasInfo GetFontAtlasInfo() { return InfoOf(fontatlas::Get()); }
+float CodeFontBakedSizeFor(float pixelHeight) {
+    const fontatlas::Atlas& a = fontatlas::Get();
+    return a.ok ? a.PickCode(pixelHeight).px : 0.0f;
+}
+FontAtlasInfo TestBuildFontAtlas(int startHeight, int maxHeight, int codeSizes) {
+    static fontatlas::Atlas t;   // large (every glyph of every size): not on the stack
+    fontatlas::BuildInto(t, startHeight, maxHeight, codeSizes);
+    const FontAtlasInfo i = InfoOf(t);
+    fontatlas::Free(t);
+    return i;
 }
 
 bool WantsTextInput() { return g_focus != 0; }

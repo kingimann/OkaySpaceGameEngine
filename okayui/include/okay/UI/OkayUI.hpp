@@ -781,6 +781,27 @@ void PopCodeFont();
 /// True while PushCodeFont is in force and the code font could be baked (the launcher look).
 bool CodeFontActive();
 
+/// The launcher look's glyph atlas (Roboto for the UI, JetBrains Mono for code, one RGBA texture), for checks and the docs.
+/// It starts with both fonts at six sizes (13 to 46 px); the first time code is drawn larger than 46 px (the script editor's
+/// code at a large UI scale and zoom), it grows before the next frame to nine code sizes (to 96 px), doubling its height.
+struct FontAtlasInfo {
+    bool ok = false;
+    int width = 0, height = 0;   // texels
+    int usedRows = 0;            // rows the glyphs fill (the rest is free; the last 4 rows are the white patch)
+    int grows = 0;               // times the height was doubled so the code font fits
+    int uiSizes = 0, codeSizes = 0;   // baked sizes (codeSizes 0: the code font could not be baked; the UI font stands in)
+    float largestUiPx = 0.0f, largestCodePx = 0.0f;
+    double buildMs = 0.0;        // rasterising and packing, once, the first time the launcher look is used
+    unsigned long long bytes = 0;   // the RGBA copy kept in memory (the GPU texture is the same size again)
+};
+FontAtlasInfo GetFontAtlasInfo();
+/// The baked code-font size that text of `pixelHeight` is drawn from (the smallest at least as large, else the largest; the UI
+/// font's when the code font is missing). Text is only ever scaled down from it, unless pixelHeight is past the largest bake.
+float CodeFontBakedSizeFor(float pixelHeight);
+/// For tests: build a separate atlas with `codeSizes` of the code font's sizes (6 is the first atlas, 9 every size) starting
+/// `startHeight` rows high and doubling up to `maxHeight`; report it and free it.
+FontAtlasInfo TestBuildFontAtlas(int startHeight, int maxHeight, int codeSizes = 9);
+
 // ---- Drag and drop -------------------------------------------------------------
 // Lightweight int-payload drag & drop (e.g. reorder a list by dragging item indices).
 // Call DragSource right AFTER the widget that should be draggable, and DropTarget

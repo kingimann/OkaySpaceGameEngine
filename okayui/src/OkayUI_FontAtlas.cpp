@@ -6,6 +6,7 @@
 #include "JetBrainsMonoFontOwn.h"      // the code font, JetBrains Mono (OFL; docs/THIRD_PARTY.md)
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -27,12 +28,13 @@ int BuildCodepoints(int* out) {
 
 Atlas g_atlas;
 bool  g_built = false;
+bool  g_wantLargeCode = false, g_growFailed = false;   // code was asked for larger than the atlas has (Atlas::PickCode); Grow() acts on it
 
 // One face to bake: its glyphs (code point and glyph id, ascending code points) and the atlas sizes it gets.
 struct FaceBake {
     okay::ttf::Face face;
     int cps[256] = {}, ids[256] = {}, n = 0;
-    float scales[6] = {};
+    float scales[kCodeSizes] = {};
     std::vector<okay::ttf::BakedGlyph> baked;
     bool Prepare(const std::vector<unsigned char>& bytes, const float* sizes, int nsizes) {
         if (bytes.empty() || !face.Load(bytes.data(), bytes.size(), 0)) return false;
@@ -83,37 +85,56 @@ struct FaceBake {
     }
 };
 
-void Build() {
-    g_built = true;
+// The sizes baked. The UI font: the launcher look's text sizes. The code font: the same, then larger ones so the script editor's
+// biggest code (16 px x UI scale 2 x zoom 3 = 96 px) is still drawn from a bake at least as large.
+const float kUiPx[kUiSizes] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f};
+const float kCodePx[kCodeSizes] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f, 62.0f, 80.0f, 96.0f};
+
+void BuildAtlas(Atlas& a, int startH, int maxH, int codeSizes) {
+    codeSizes = std::min(std::max(codeSizes, 1), kCodeSizes);
+    const auto t0 = std::chrono::steady_clock::now();
     static std::vector<unsigned char> bytes;   // the Face reads the font in place: keep it alive
-    if (!okay::EmbeddedUIFontData(bytes)) return;
+    if (bytes.empty() && !okay::EmbeddedUIFontData(bytes)) return;
     static std::vector<unsigned char> codeBytes;
-    {
+    if (codeBytes.empty()) {
         std::vector<std::uint8_t> b;
         if (okf::DecodeLines(okf_data::kJetBrainsMonoOkf, okf_data::kJetBrainsMonoOkfLines, b)) codeBytes.assign(b.begin(), b.end());
     }
-    const float sizes[] = {13.0f, 16.0f, 20.0f, 26.0f, 34.0f, 46.0f};
-    const int nsizes = (int)(sizeof(sizes) / sizeof(sizes[0]));
     static FaceBake ui, code;   // static: a Face is large and keeps pointers into its bytes
-    if (!ui.Prepare(bytes, sizes, nsizes)) return;
-    const bool haveCode = code.Prepare(codeBytes, sizes, nsizes);
+    static bool prepared = false, uiOk = false, haveCode = false;
+    if (!prepared) {
+        prepared = true;
+        uiOk = ui.Prepare(bytes, kUiPx, kUiSizes);
+        haveCode = code.Prepare(codeBytes, kCodePx, kCodeSizes);
+    }
+    if (!uiOk) return;
 
     // The UI font is packed first, exactly as before the code font was added, so its glyphs keep their places; the code font
     // goes into the space left. When it does not fit, the atlas is made twice as tall (the UI font still packs the same way).
-    for (int H = 1024; H <= 2048; H *= 2) {
-        const int W = 1024, packH = H - 4;   // bottom rows: solid white patch
+    // If it still does not fit at maxH, the atlas keeps the UI font only and the code font falls back to it.
+    const int W = 1024;
+    int grows = 0;
+    for (int H = std::max(64, startH);; H *= 2, ++grows) {
+        const bool last = H * 2 > maxH;
+        const int packH = H - 4;   // bottom rows: solid white patch
         std::vector<unsigned char> alpha((std::size_t)W * H, 0);
         okay::ttf::ShelfPacker packer(W, packH, 1);
-        if (!ui.Pack(packer, alpha.data(), nsizes)) return;
-        const bool codeOk = haveCode && code.Pack(packer, alpha.data(), nsizes);
-        if (haveCode && !codeOk && H < 2048) continue;
+        if (!ui.Pack(packer, alpha.data(), kUiSizes)) { if (last) return; continue; }
+        const bool codeOk = haveCode && code.Pack(packer, alpha.data(), codeSizes);
+        if (haveCode && !codeOk && !last) continue;
+        if (!codeOk && haveCode) {   // the last try: repack the UI font alone (the code font's glyphs half-written above it)
+            std::fill(alpha.begin(), alpha.end(), (unsigned char)0);
+            packer = okay::ttf::ShelfPacker(W, packH, 1);
+            if (!ui.Pack(packer, alpha.data(), kUiSizes)) return;
+        }
         for (int y = H - 4; y < H; ++y) std::memset(alpha.data() + (std::size_t)y * W, 255, (std::size_t)W);
-        Atlas& a = g_atlas;
-        a.w = W; a.h = H; a.nsizes = nsizes;
+        a.w = W; a.h = H; a.nsizes = kUiSizes;
         a.whiteU = 2.5f / W; a.whiteV = (H - 2.0f) / H;
-        ui.Fill(a.sizes, sizes, nsizes, W, H);
+        ui.Fill(a.sizes, kUiPx, kUiSizes, W, H);
         a.ncode = 0;
-        if (codeOk) { code.Fill(a.code, sizes, nsizes, W, H); a.ncode = nsizes; }
+        if (codeOk) { code.Fill(a.code, kCodePx, codeSizes, W, H); a.ncode = codeSizes; }
+        a.usedRows = packer.Bottom();
+        a.grows = grows;
         a.rgba = (unsigned char*)std::malloc((size_t)W * H * 4);
         if (a.rgba) {
             for (int p = 0; p < W * H; ++p) {
@@ -121,8 +142,14 @@ void Build() {
             }
             a.ok = true;
         }
+        a.buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         return;
     }
+}
+
+void Build() {
+    g_built = true;
+    BuildAtlas(g_atlas, 1024, 4096, kBaseCodeSizes);
 }
 
 } // namespace
@@ -146,12 +173,39 @@ const Size& Atlas::Pick(float pixelHeight) const {
 const Size& Atlas::PickCode(float pixelHeight) const {
     if (ncode <= 0) return Pick(pixelHeight);
     for (int s = 0; s < ncode; ++s) if (code[s].px >= pixelHeight - 0.5f) return code[s];
+    if (ncode < kCodeSizes && this == &g_atlas) g_wantLargeCode = true;   // larger than baked: grow before the next frame
     return code[ncode - 1];
+}
+
+bool Grow() {
+    if (!g_wantLargeCode || g_growFailed) return false;
+    g_wantLargeCode = false;
+    if (!g_atlas.ok || g_atlas.ncode <= 0 || g_atlas.ncode >= kCodeSizes) return false;
+    static Atlas bigger;   // large: not on the stack
+    BuildAtlas(bigger, g_atlas.h, 4096, kCodeSizes);
+    if (!bigger.ok || bigger.ncode < kCodeSizes) { Free(bigger); g_growFailed = true; return false; }   // (not tried again)
+    std::free(g_atlas.rgba);
+    bigger.grows += g_atlas.grows;
+    g_atlas = bigger;          // (the copy takes over the pixels)
+    bigger.rgba = nullptr; bigger.ok = false;
+    return true;
 }
 
 const Atlas& Get() {
     if (!g_built) Build();
     return g_atlas;
+}
+
+void BuildInto(Atlas& out, int startH, int maxH, int codeSizes) {
+    Free(out);
+    out.grows = 0; out.ncode = 0;
+    BuildAtlas(out, startH, maxH, codeSizes);
+}
+
+void Free(Atlas& a) {
+    std::free(a.rgba);
+    a.rgba = nullptr;
+    a.ok = false;
 }
 
 okay::TtfFont* FallbackFont(const char* s, bool code) {

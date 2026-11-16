@@ -5282,9 +5282,15 @@ static std::string VoiceClock(int secs) {
 }
 static std::string VoiceMessageBody(int secs, const std::string& url) { return "[Voice] " + VoiceClock(secs) + " " + url; }
 
+// Audio through okay::platform's default backend, the one VoiceChat.hpp and the playback below open devices on: SDL's audio
+// subsystem on sdl2 (what SDL_InitSubSystem(SDL_INIT_AUDIO) did), ALSA (Linux) or waveOut / waveIn (Windows) on our own.
 static bool EnsureAudio() {
     static int state = 0;   // 0 untried, 1 ok, -1 unavailable
-    if (state == 0) state = SDL_InitSubSystem(SDL_INIT_AUDIO) == 0 ? 1 : -1;
+    if (state == 0) {
+        okay::platform::Backend* b = okay::platform::Default();
+        okay::platform::InitFlags f; f.video = false; f.audio = true; f.gamepad = false;
+        state = b && b->Init(f) ? 1 : -1;
+    }
     return state == 1;
 }
 
@@ -16718,18 +16724,14 @@ static void KeepWindowOnScreen(okay::platform::Window* w) {
     if (w->IsMinimized()) w->Restore();
     int x = 0, y = 0, ww = 0, wh = 0;
     w->GetPosition(x, y); w->GetSize(ww, wh);
-    for (int d = 0; d < SDL_GetNumVideoDisplays(); ++d) {
-        SDL_Rect b;
-        if (SDL_GetDisplayUsableBounds(d, &b) != 0) continue;
-        const int ix = std::min(x + ww, b.x + b.w) - std::max(x, b.x);
-        const int iy = std::min(y + wh, b.y + b.h) - std::max(y, b.y);
-        if (ix >= 160 && iy >= 80 && y >= b.y - 8 && y < b.y + b.h - 40) return;   // title bar visible
-    }
-    SDL_Rect b;
-    if (SDL_GetDisplayUsableBounds(0, &b) != 0) return;
-    ww = std::min(ww, b.w - 40); wh = std::min(wh, b.h - 40);
-    w->SetSize(ww, wh);
-    w->SetPosition(b.x + (b.w - ww) / 2, b.y + (b.h - wh) / 2);
+    // The displays from the backend that made this window (SDL's list on sdl2; RandR / Xinerama / the root window on our
+    // X11 backend, EnumDisplayMonitors on our Win32 one), the primary first. None known: leave the window where it is.
+    okay::platform::Backend* wb = okay::platform::Get(w->Kind());
+    const std::vector<okay::platform::DisplayInfo> displays = wb ? wb->Displays() : std::vector<okay::platform::DisplayInfo>();
+    if (displays.empty() || okay::platform::WindowReachable(displays, x, y, ww, wh)) return;   // title bar visible
+    const okay::platform::DisplayRect r = okay::platform::CenterOnDisplay(displays[0], ww, wh);
+    w->SetSize(r.w, r.h);
+    w->SetPosition(r.x, r.y);
 }
 static void ChatHostSaveGeometry() {
     if (!g_chatHost.pw || !g_chatHost.shown) return;
@@ -18190,12 +18192,42 @@ static const okayversionsui::Host& VersionsHost() {
     return h;
 }
 
+// SDL is started only by the paths that use it. With OKAY_LAUNCHER_RENDERER=own and OKAY_PLATFORM_BACKEND=own the launcher
+// makes no SDL call at all (scripts/launcher_no_sdl_check.sh proves it): its window, events, painter, displays and audio
+// all come from okay::platform's own backend. Every other combination starts SDL video here, as the launcher always did
+// (the sdl renderer needs it; with the own renderer on the sdl2 platform backend, that backend starts SDL itself).
+static bool g_sdlVideo = false;   // this file called SDL_Init(SDL_INIT_VIDEO)
+static bool StartSdlVideo() {
+    if (g_sdlVideo) return true;
+    SDL_SetMainReady();
+    // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE SDL video init so
+    // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched.
+    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return false;
+    g_sdlVideo = true;
+    return true;
+}
+// SDL_Quit when SDL was started: by StartSdlVideo, or by the sdl2 platform backend (the own renderer on it).
+static void QuitSdlIfStarted() {
+    okay::platform::Backend* b = okay::platform::Default();
+    if (g_sdlVideo || (b && b->Kind() == okay::platform::BackendKind::Sdl2)) SDL_Quit();
+}
+
 int main(int argc, char** argv) {
     if (int code = okay::restart::DispatchHelper(argc, argv); code >= 0) return code;
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
-    SDL_SetMainReady();
+    // No SDL at all when both switches say own (and our backend is compiled in). A failed own start still falls back to sdl.
+    const bool wantOwnRenderer =
+        okay::launchergfx::ParseRenderer(std::getenv("OKAY_LAUNCHER_RENDERER")) == okay::launchergfx::RendererKind::Own;
+    const bool noSdl = wantOwnRenderer && okay::platform::DefaultKind() == okay::platform::BackendKind::Own &&
+                       okay::platform::IsCompiledIn(okay::platform::BackendKind::Own);
+    if (noSdl) {
+        // Voice clips: our own WAV decoder unless OKAY_OWN_WAV says otherwise (the SDL one is SDL_LoadWAV).
+        okay::ownstack::SetIfUnset("OKAY_OWN_WAV", "1");
+        std::fprintf(stderr, "launcher: no SDL (own renderer, own platform backend)\n");
+    }
     {
         std::error_code ec;
         fs::path self = okay::restart::CurrentExecutable();
@@ -18203,11 +18235,12 @@ int main(int argc, char** argv) {
         if (!self.empty()) { g_exeDir = self.parent_path().string(); g_selfPath = self.string(); }
     }
 
-    // Windows 11 / high-DPI: declare per-monitor-DPI-aware BEFORE SDL video init so
-    // the launcher renders crisp at 125%/150% scaling instead of bitmap-stretched.
-    SDL_SetHint(SDL_HINT_WINDOWS_DPI_AWARENESS, "permonitorv2");
     okay::filedialog::SetContextGetter([]() -> void* { return ImGui::GetCurrentContext(); });   // the built-in file browser shows in the window (context) that asked
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) return 1;
+    if (noSdl) {
+        // Per-monitor DPI awareness before the first window: on Windows our backend calls SetProcessDpiAwarenessContext
+        // (PER_MONITOR_AWARE_V2, looked up in user32 at run time); elsewhere there is nothing to do.
+        if (okay::platform::Backend* b = okay::platform::Default()) b->SetPerMonitorDpiAware();
+    } else if (!StartSdlVideo()) return 1;
 
     // `--versions [<version>]` opens the Versions page (the editor's "Open launcher" button starts the launcher this way).
     okayversions::LauncherArgs launchArgs;
@@ -18221,7 +18254,7 @@ int main(int argc, char** argv) {
     // With --versions it also leaves a note for the running one to open that page.
     if (!AcquireSingleInstance()) {
         if (launchArgs.versions) okayversions::WriteHandoff(okayversions::HandoffFile(), launchArgs, (long long)std::time(nullptr));
-        SDL_Quit();
+        QuitSdlIfStarted();
         return 0;
     }
     // Only the instance that stays up removes the previous exe. A second launch
@@ -18260,11 +18293,14 @@ int main(int argc, char** argv) {
         spec.width = g_winW; spec.height = g_winH;
         if (const char* vs = std::getenv("OKAY_LAUNCHER_VSYNC")) spec.vsync = std::strcmp(vs, "0") != 0;   // frame-time measurements turn it off
         std::string err;
-        if (lg::ParseRenderer(std::getenv("OKAY_LAUNCHER_RENDERER")) == lg::RendererKind::Own) {
+        if (wantOwnRenderer) {
             g_gfx = lg::CreateOwnGfx(spec, &err);
             if (!g_gfx) std::fprintf(stderr, "launcher: the own renderer could not start (%s); using sdl\n", err.c_str());
         }
-        if (!g_gfx) g_gfx = lg::CreateSdlGfx(spec, &err);
+        if (!g_gfx) {
+            if (!StartSdlVideo()) { std::fprintf(stderr, "launcher: SDL video could not start either\n"); return 1; }   // (only reached by a failed own start)
+            g_gfx = lg::CreateSdlGfx(spec, &err);
+        }
         if (!g_gfx) { std::fprintf(stderr, "launcher: no window (%s)\n", err.c_str()); return 1; }
         std::fprintf(stderr, "launcher: renderer %s\n", g_gfx->Describe().c_str());   // once: which backend draws
     }
@@ -27254,6 +27290,6 @@ int main(int argc, char** argv) {
     g_slotPainter[0] = nullptr;
     g_launcherPw = nullptr;
     g_gfx.reset();           // the painter, then the window (sdl: SDL_DestroyRenderer, SDL_DestroyWindow)
-    SDL_Quit();
+    QuitSdlIfStarted();      // nothing with own + own: SDL was never started
     return 0;
 }

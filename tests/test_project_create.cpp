@@ -375,5 +375,21 @@ int main() {
         CHECK(CheckProjectVersion(" 1.0.0 ").empty());
     }
 
+    // ---- a template card opens the wizard; it never creates ---------------------------------------------------------
+    {
+        NewProjectWizard w;
+        const int n = (int)Templates().size();
+        CHECK(WizardOpenOnTemplate(w, 6, n) == WizardMove::Opened);
+        CHECK(w.open && !w.creating && w.step == 1 && w.selected == 6);   // Details step, nothing made yet
+        w.detailsOk = true;
+        CHECK(WizardBeginCreate(w) == WizardMove::None && !w.creating);   // Create exists only on the review step
+        WizardOpenOnTemplate(w, -1, n);
+        CHECK(w.selected == 6);                                           // unknown template keeps the choice
+        w.step = 2;
+        CHECK(WizardBeginCreate(w) == WizardMove::Create && w.creating);
+        CHECK(WizardOpenOnTemplate(w, 2, n) == WizardMove::None && w.creating && w.selected == 6 && w.step == 2);   // double click
+        CHECK(WizardBeginCreate(w) == WizardMove::None);                  // and Create cannot start twice
+    }
+
     TEST_MAIN_RESULT();
 }

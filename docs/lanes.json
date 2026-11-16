@@ -1,0 +1,219 @@
+{
+  "_comment": "Who owns which paths. Rules are checked top to bottom, the first match wins. owner is claude2, coordinator, shared (needs a handshake: one claim at a time, both lanes agree) or open (either lane may claim it). Read by scripts/collab_lib.py. Plain rules: docs/collaboration.md. Roles (owner, 2026-11-15): Claude 2 = bug fixes + third-party replacement; coordinator = unfinished features. A claim marked 'Kind: bug' with a Test-first line may touch any file (see docs/collaboration.md).",
+  "lanes": {
+    "claude2": "Claude 2 (branches claude2/*): bug fixes (any file, with a failing test and a claim marked Kind: bug) and our own replacements for third-party code: model and image readers, WAV and audio decoders, HTTP, crypto, the platform layer, okayui, the text editor, ufbx and Assimp replacements.",
+    "coordinator": "The coordinator session and its agents (branches claude/*): unfinished features (gameplay, in-game UI, editor, rendering, visual scripting, inventory, vehicles, launcher) and releases, CI and packaging, reviews."
+  },
+  "rules": [
+    {
+      "owner": "shared",
+      "why": "one big file many features write",
+      "globs": [
+        "engine/src/Scene/SceneSerializer.cpp",
+        "tests/CMakeLists.txt",
+        "engine/CMakeLists.txt",
+        "CMakeLists.txt",
+        "engine/src/Scripting/OkayScriptVM.cpp",
+        "examples/visual_script/playground/coverage.okayvs",
+        "CLAUDE.md",
+        "ROADMAP.md",
+        "docs/UNFINISHED.md",
+        "docs/unfinished_engine.md",
+        "docs/try_it.md",
+        "docs/FEATURE_MAP.md",
+        "docs/feature_map/**",
+        "README.md",
+        "docs/README.md",
+        "docs/own_code_roadmap.md",
+        "docs/provenance_audit.md",
+        "docs/THIRD_PARTY.md",
+        "docs/render_status.md",
+        "docs/model_corpus*",
+        "docs/model_import.md",
+        "docs/engine_api.md",
+        "docs/scripting.md",
+        "editor/VisualScriptNodeDocs.inc",
+        "editor/generated/**"
+      ]
+    },
+    {
+      "owner": "claude2",
+      "why": "bug fixes and third-party replacement (owner 2026-11-15)",
+      "globs": [
+        "engine/include/okay/Crypto/**",
+        "engine/src/Crypto/**",
+        "engine/include/okay/Platform/**",
+        "engine/src/Platform/**",
+        "engine/include/okay/Net/*Crypto*",
+        "engine/src/Net/*Crypto*",
+        "engine/include/okay/Net/SecureChannel*",
+        "engine/src/Net/SecureChannel*",
+        "engine/third_party/**",
+        "engine/include/okay/Render/*Reader*.hpp",
+        "engine/include/okay/Render/ModelImport.hpp",
+        "engine/include/okay/Render/ModelData.hpp",
+        "engine/include/okay/Render/Gltf.hpp",
+        "engine/src/Render/*Reader*.cpp",
+        "engine/src/Render/ModelImport*.cpp",
+        "engine/include/okay/Audio/*Wav*",
+        "engine/src/Audio/*Wav*",
+        "engine/src/Core/ImageDecode*",
+        "engine/src/Core/ImageWrite.cpp",
+        "engine/include/okay/Core/Inflate.hpp",
+        "engine/include/okay/Crypto/Sha256.hpp",
+        "shared/*Crypto*",
+        "shared/*Wav*",
+        "shared/Okf*",
+        "shared/*Sha*",
+        "shared/SecureChannel*",
+        "shared/*Own*",
+        "okayui/**",
+        "editor/ScriptEditorCodeEdit.*",
+        "editor/ScriptEditorWidget.hpp",
+        "editor/ScriptText.hpp",
+        "editor/vendor/**",
+        "docs/own_*.md",
+        "docs/crypto*.md",
+        "docs/sdl_*.md",
+        "docs/model_corpus*",
+        "tests/*reader*",
+        "tests/*crypto*",
+        "tests/*wav*",
+        "tests/*http*",
+        "tests/*sha256*",
+        "tests/*platform*",
+        "tests/*own_*",
+        "tests/*inflate*",
+        "tests/*png_hint*"
+      ]
+    },
+    {
+      "owner": "coordinator",
+      "why": "infrastructure and releases",
+      "globs": [
+        ".github/**",
+        "scripts/**",
+        "cmake/**",
+        "deploy/**",
+        "steam/**",
+        "supabase/**",
+        "relay/**",
+        "dist/**",
+        "tools/**",
+        "launcher/**",
+        "player/**",
+        "review/**",
+        "docs/review_log.md",
+        "docs/work_board.md",
+        "docs/WORK_BOARD.md",
+        "docs/collaboration.md",
+        "docs/lanes.json",
+        "docs/agent_brief_template.md",
+        "docs/build_pipeline.md",
+        "docs/launcher*.md",
+        "tests/*release*",
+        "tests/*versions*"
+      ]
+    },
+    {
+      "owner": "coordinator",
+      "why": "unfinished features (owner 2026-11-15)",
+      "globs": [
+        "engine/include/okay/Components/**",
+        "engine/src/Components/**",
+        "engine/include/okay/Combat/**",
+        "engine/src/Combat/**",
+        "engine/include/okay/Inventory/**",
+        "engine/src/Inventory/**",
+        "engine/include/okay/AI/**",
+        "engine/src/AI/**",
+        "engine/include/okay/Animation/**",
+        "engine/src/Animation/**",
+        "engine/include/okay/Physics/**",
+        "engine/src/Physics/**",
+        "engine/include/okay/UI/**",
+        "engine/src/UI/**",
+        "engine/include/okay/Input/**",
+        "engine/src/Input/**",
+        "engine/include/okay/Environment/**",
+        "engine/include/okay/VisualScript/**",
+        "engine/src/VisualScript/**",
+        "engine/include/okay/Scripting/**",
+        "engine/src/Scripting/**",
+        "engine/include/okay/Scene/**",
+        "engine/src/Scene/**",
+        "engine/include/okay/Render/**",
+        "engine/src/Render/**",
+        "engine/include/okay/Graphics/**",
+        "engine/src/Graphics/**",
+        "engine/include/okay/Audio/**",
+        "engine/src/Audio/**",
+        "engine/include/okay/Modeling/**",
+        "engine/src/Modeling/**",
+        "editor/**",
+        "examples/**",
+        "tests/**",
+        "docs/**",
+        "assets/**",
+        "shared/**",
+        "engine/include/okay/Net/**",
+        "engine/src/Net/**"
+      ]
+    },
+    {
+      "owner": "open",
+      "globs": [
+        "**"
+      ]
+    }
+  ],
+  "generated": [
+    {
+      "file": "docs/FEATURE_MAP.md",
+      "sources": [
+        "docs/feature_map/*.md"
+      ],
+      "regen": "python3 scripts/gen_feature_map.py"
+    },
+    {
+      "file": "docs/feature_map/_index_az.md",
+      "sources": [
+        "docs/feature_map/0*.md",
+        "docs/feature_map/[1-4]*.md"
+      ],
+      "regen": "python3 scripts/gen_feature_map.py"
+    },
+    {
+      "file": "docs/feature_map/_index_symptoms.md",
+      "sources": [
+        "docs/feature_map/0*.md",
+        "docs/feature_map/[1-4]*.md"
+      ],
+      "regen": "python3 scripts/gen_feature_map.py"
+    },
+    {
+      "file": "editor/VisualScriptNodeDocs.inc",
+      "sources": [
+        "editor/VisualScript*.hpp",
+        "engine/src/VisualScript/**",
+        "engine/include/okay/VisualScript/**"
+      ],
+      "regen": "python3 scripts/gen_vs_node_docs.py"
+    },
+    {
+      "file": "docs/WORK_BOARD.md",
+      "sources": [
+        "scripts/work_board.py"
+      ],
+      "regen": "generated by the work-board workflow"
+    }
+  ],
+  "windows_reachable_headers": [
+    "engine/include/**",
+    "shared/**",
+    "okayui/include/**",
+    "launcher/**",
+    "editor/**",
+    "player/**"
+  ]
+}

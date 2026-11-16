@@ -173,7 +173,7 @@ where the files live and how they are wired. Nobody is touching it now apart fro
   - 41.9.5 Stale copy - `dist/VERSION.txt` - says 2.412.0 and is not used by the build
 - **Code:** `CMakeLists.txt`, `dist/VERSION.txt`, `dist/CHANGELOG.txt`, `ROADMAP.md`
 - **API:** `project(... VERSION ...)`, `OKAY_ENGINE_VERSION`, `VERSION.txt`
-- **Editor:** Engine > Check for Updates...
+- **Editor:** Help > Check for Updates...
 - **Docs:** `docs/releasing.md`
 - **Tests:** none
 - **Status:** Works - the 2.849.0 diff (PR #573) and the open 2.852.0 PR (#588) touch exactly those three files (per the PR file lists)
@@ -221,3 +221,22 @@ where the files live and how they are wired. Nobody is touching it now apart fro
 - **Words:** own stack, dogfood, OKAY_OWN_STACK, startup line, stack line, own backends, third-party, own crypto test
 - **Seen as:** a line starting `[okay] stack:` in the log; the About popup lists the stack
 - **Ask me like:** "how do I run everything on our own code?"
+
+### 41.12 Collaboration tooling (lanes, claims, find-existing, collision check, branch lint)
+- **What:** The working agreement between Claude 2 and the coordinator, made automatic: a lanes table, one claim format on issue #422, a search for what already exists, a collision report over all open branches, cheap checks on every branch push, a "How to try it" check on PRs and a brief builder that pastes the current rules into every agent brief.
+- **Parts:**
+  - 41.12.1 Agreement and lanes - `docs/collaboration.md`, `docs/lanes.json`, `docs/agent_brief_template.md` - who owns which paths, the claim protocol, the readiness checklist, the weekly dedupe audit
+  - 41.12.2 Find existing - `scripts/find_existing.py` - ranked "Existing:" report (feature map, notes, code names, tests, examples, open branches, PRs, claims) to paste into a claim
+  - 41.12.3 Collision check - `scripts/collision_check.py` - file and line-range overlaps between branches, claims table, stale claims, out-of-lane edits, generated files edited by hand, duplicate test names; Markdown or JSON; also in `WORK_BOARD.md` via `scripts/work_board.py`
+  - 41.12.4 Branch lint - `.github/workflows/branch-lint.yml`, `scripts/branch_lint.py` - forbidden thread includes (rule 21a), secrets, docs changed, feature map, MinGW syntax check
+  - 41.12.5 Bug patterns - `scripts/bug_patterns.py` - warnings for the bug classes reviews keep finding
+  - 41.12.6 PR hygiene and briefs - `.github/workflows/pr-hygiene.yml`, `scripts/check_pr_body.py`, `scripts/make_brief.py`
+- **Code:** `scripts/collab_lib.py`, `scripts/find_existing.py`, `scripts/collision_check.py`, `scripts/branch_lint.py`, `scripts/bug_patterns.py`, `scripts/check_pr_body.py`, `scripts/make_brief.py`, `scripts/work_board.py`, `.github/workflows/branch-lint.yml`, `.github/workflows/pr-hygiene.yml`, `.github/workflows/work-board.yml`
+- **Docs:** `docs/collaboration.md`, `docs/agent_brief_template.md`, `docs/review_log.md`
+- **Tests:** `collab_scripts` (`scripts/tests/test_collab.py`: throw-away git repos, no GitHub)
+- **Status:** Works - the scripts and their tests were run on Linux against the real repo; the two new workflows have not run on GitHub yet
+- **Open:** heuristics can give false positives (see the "false positives" notes in `docs/collaboration.md`); the weekly dedupe audit and the answers to claims are by hand
+- **Related:** 41.1, 41.8
+- **Words:** collaboration, claim, lane, duplicate, collision, branch lint, find existing, brief, how to try it check
+- **Seen as:** `WORK_BOARD.md` on the `work-board` branch, a red "Branch lint" check on a pushed branch, a red "PR hygiene" check on a PR
+- **Ask me like:** "how do the two Claudes avoid doing the same work?"

@@ -15,7 +15,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 43.1.4 Drawing - `player/main.cpp`, `editor/main.cpp` - each non-empty cell is drawn as a coloured square chosen by id (`TileColor`); there is no tileset image
 - **Code:** `Components/Tilemap`, `Components/TilemapCollider2D`, `Scripting/OkayScriptVM`, `player/main.cpp`, `editor/main.cpp`
 - **API:** `Tilemap::Resize`, `SetTile`, `GetTile`, `CellToWorld`, `WorldToCell`; script `set_tile(x, y, id)`
-- **Editor:** GameObject > Create Tilemap (a 12-tile ground row), Add Component > Tilemap Collider 2D; no tile painting window or Inspector section (searched `editor/main.cpp`)
+- **Editor:** GameObject > 2D Object > Tilemap (a 12-tile ground row), Add Component > Tilemap Collider 2D; no tile painting window or Inspector section (searched `editor/main.cpp`)
 - **Docs:** `docs/scripting.md` (tile built-ins)
 - **Tests:** `tilemap_collision`, `script_tilemap`, `particles_tilemap`
 - **Status:** Basic - ids, collision and script editing work; tiles cannot be textured or painted in the editor.
@@ -160,7 +160,7 @@ Things that turned out to exist already (world streaming, crash reports, Steam a
   - 44.4.4 Checkpoint trigger (#572) - `Core/SaveFramework` - saves a checkpoint when the player comes near
 - **Code:** `Physics/Collider3D`, `Physics/Collider2D`, `Components/SurvivalZone`, `Components/Spawner`, `Components/LogicLinks`, `Components/Volume`
 - **API:** `Collider3D::isTrigger`, `OnTriggerEnter3D`, `SurvivalZone`, `Volume`
-- **Editor:** Collider Inspector "Trigger" box; GameObject > Volume (11.12.5)
+- **Editor:** Collider Inspector "Trigger" box; GameObject > Effects > Volume (11.12.5)
 - **Docs:** `docs/survival_kit.md`, `docs/volumes.md`
 - **Tests:** `physics_callback_removal`, `survival`, `volumes`
 - **Status:** Partial - 11.12 covers checkpoint, kill, force, fog and sound zones; the rest below is not built.

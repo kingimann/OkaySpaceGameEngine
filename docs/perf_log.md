@@ -79,7 +79,7 @@ The engine's own profiler (`OKAY_PROFILE`, `docs/core_logging_profiling.md`) now
 phases as `Render.*`, so the editor's Profiler panel shows them.
 
 **On Windows.** `bench_frame` is a developer tool built from source; it is not in the Windows release. What the release
-has: the example scenes `examples\perf\*.okayscene` and the editor's Profiler (`docs/try_it.md`, section 14).
+has: the example scenes `examples\perf\*.okayscene` and the editor's Profiler (`docs/try_it.md`, section 18).
 
 ## 2. What the numbers are, and are not
 
@@ -419,5 +419,5 @@ the single threaded parts (physics, scene update, visibility, shadow maps) and o
   and loaded and run headless by `bench_frame --scene-file`, not clicked open in the editor.
 * **Numbers on the owner's PC:** none. On a normal Windows PC the Direct3D renderer draws the viewport and the game, so
   changes 2 and 3 do not apply there (except to the thumbnails above); changes 1, 4 and 5 do, and the way to see them is
-  `docs/try_it.md` section 14.
+  `docs/try_it.md` section 18.
 * **Noise:** about 10 percent between batches (section 4.4); the timing batch was not run under the build lock.

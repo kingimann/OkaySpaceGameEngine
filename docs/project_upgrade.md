@@ -63,7 +63,7 @@ Answering is remembered for the session: once a project is upgraded, opened anyw
 
 ### Newer: open anyway or update
 
-An older editor may drop data it does not understand when it saves. **Update OkaySpace** opens the same window as Engine > Check for
+An older editor may drop data it does not understand when it saves. **Update OkaySpace** opens the same window as Help > Check for
 Updates (Download & Install; the editor reopens afterwards with the arguments it was started with). **Open anyway** first makes the same complete backup
 copy as an upgrade (`<Name> (backup v2.860.0)`), changes nothing in the project, and then opens it. Why before opening rather than "before
 the first save": the editor writes into the project in many places (new scripts, materials, settings, autosave), not only on Save, so

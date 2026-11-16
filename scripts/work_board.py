@@ -9,6 +9,7 @@ The agent list and the owner's open decisions are not on GitHub: they live in do
 and are only linked from here. Everything below the header is generated, never edit it by hand.
 """
 import argparse, datetime, json, os, sys, urllib.request
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 def api(path, repo):
     url = f"https://api.github.com/repos/{repo}{path}"
@@ -99,6 +100,18 @@ def main():
         out.append("")
     except Exception:
         pass
+    # Claims table and collision report (scripts/collision_check.py, docs/collaboration.md). Needs a full git history with the
+    # remote branches; when that is missing the board still gets written, with a one-line note instead.
+    try:
+        import collab_lib as L, collision_check as CC
+        comments = L.gh_pages("/issues/422/comments", repo, 10)
+        pr_list = L.gh_pages("/pulls?state=open", repo, 3)
+        merged = {p["head"]["sha"] for p in L.gh_pages("/pulls?state=closed&sort=updated&direction=desc", repo, 12) if p.get("merged_at") and p.get("head")}
+        root = L.repo_root(os.path.dirname(os.path.abspath(__file__)))
+        rep = CC.build_report(root, comments, pr_list, merged_heads=merged, use_disk_cache=False)
+        out += [CC.claims_markdown(rep).rstrip(), "", CC.to_markdown(rep, brief=True).rstrip(), ""]
+    except Exception as e:
+        out += ["## Claims and collisions", "", f"(not available this run: {type(e).__name__}: {str(e)[:120]})", ""]
     text = "\n".join(out) + "\n"
     if a.out == "-": sys.stdout.write(text)
     else: open(a.out, "w", encoding="utf-8").write(text)

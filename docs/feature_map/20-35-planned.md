@@ -423,7 +423,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 23.4.1 Console panel - `editor/ConsolePanel.*` - draws `ConsoleModel::Rows()`; error, warning, info toggles with counts, category dropdown, search, collapse of repeats, details pane, clear on play, pause on error, Open Script, Copy and Save to `console_log.txt`; tab badge shows error and warning counts
   - 23.4.2 Open script at the error line - `editor/ConsolePanel.*` - the details pane offers Open Script (line) for script errors
   - 23.4.3 Log core - `Core/Log` - levels, categories, `OKAY_LOG` string, rotating file sink, sink hook used by the Console
-  - 23.4.4 Console model (#574) - `Debug/ConsoleModel` - ring buffer with collapse, filters, source links to objects and assets, pause-on-error request; `Add` takes an explicit `ConsoleSource` (guid, component, node) and a `ConsoleSourceScope` stamps runtime lines
+  - 23.4.4 Console model (#574) - `Debug/ConsoleModel` - ring buffer with collapse (identical level + category + message merge anywhere in the log; a row keeps its first position, count and last time follow the newest), filters, source links to objects and assets, pause-on-error request; `Add` takes an explicit `ConsoleSource` (guid, component, node) and a `ConsoleSourceScope` stamps runtime lines
   - 23.4.5 Diagnostics - `Debug/Diagnostics`, `Debug/ProjectDiagnostics` - severity, stable code, message, how-to-fix hint, source (object guid or path, component, asset, script file and line, graph and node); dedupe, clear by source, clear by owner; new rows log through `Log` so the Console shows them
   - 23.4.6 Problems and build gate - `editor/ProblemsPanel.*` - the live list (15.11.8); Build stops on errors, lists warnings, and links to Problems
 - **Code:** `editor/ConsolePanel.*`, `editor/ProblemsPanel.*`, `Core/Log`, `Debug/ConsoleModel`, `Debug/Diagnostics`, `Debug/ProjectDiagnostics`
@@ -995,7 +995,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 29.2.7 Surface ray cast - `Render/SurfaceRaycast` - `RaycastSurfaces` finds the first mesh surface under a ray with no colliders needed (foliage, decals and the measuring tool use it)
 - **Code:** `Components/Foliage`, `Render/SurfaceRaycast`, `editor/LevelTools.*`, `Components/SplineMesh`, `Components/Terrain`, `Render/Mesh`
 - **API:** `Foliage::Paint`, `Erase`, `Rescale`, `ScatterOnTerrain`, `TerrainSurface`, `SceneSurface`, `EnsureBuilt`, `RaycastSurfaces`, `Terrain::SampleHeight`, `SlopeAt`, `SplineInstancer`, `Mesh::FromNameSeeded`
-- **Editor:** GameObject > Foliage Layer, Add Component > Foliage, Foliage Inspector (brush), Terrain Inspector > Scatter props, Spline tools
+- **Editor:** GameObject > Effects > Foliage Layer, Add Component > Foliage, Foliage Inspector (brush), Terrain Inspector > Scatter props, Spline tools
 - **Docs:** `docs/level_tools.md`, `docs/modeling.md`, `docs/splines.md`
 - **Tests:** `foliage`, `save_coverage`, `splines`, `mesh_variant_hash`, `terrain_ops`
 - **Status:** Works - the foliage layer, brush, scatter and checks are covered by the `foliage` suite and were driven with the mouse in the real editor; no grass or detail layer, no wind, no hardware instancing.
@@ -1018,7 +1018,7 @@ About 61 sub-areas. Work packages use S (a day or less), M (a few days), L (a we
   - 29.4.2 Cable - `Components/Cable` - a parabola with sag between this object (or a named one) and another, laid on a Line Renderer; follows its end objects in the editor and in Play; visual only
 - **Code:** `Components/Decal`, `Components/Cable`, `Render/SurfaceRaycast`, `editor/LevelTools.*`
 - **API:** `Decal::Project`, `Cable::Curve`, `Cable::Rebuild`, `Cable::Length`
-- **Editor:** GameObject > Decal Projector, GameObject > Cable, Add Component > Rendering, Inspector with a Project button
+- **Editor:** GameObject > Effects > Decal Projector, GameObject > Effects > Cable, Add Component > Rendering, Inspector with a Project button
 - **Docs:** `docs/level_tools.md`
 - **Tests:** `foliage`, `save_coverage`
 - **Status:** Works - both are covered by the `foliage` suite (geometry, save and load); the cable and decal were shown in the real editor.

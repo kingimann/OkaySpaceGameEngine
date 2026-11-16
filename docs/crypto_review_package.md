@@ -33,7 +33,7 @@ If you have one hour, do this in order. Everything named is in this repository; 
 | `engine/src/Crypto/ChaCha20.cpp` | 86 | ChaCha20, HChaCha20 |
 | `engine/src/Crypto/Poly1305.cpp` | 143 | Poly1305 (5 x 26-bit limbs, `uint32_t`) |
 | `engine/src/Crypto/Blake2b.cpp` | 114 | BLAKE2b |
-| `engine/src/Crypto/Sha256.cpp`, `Sha512.cpp` | 85, 99 | SHA-256, SHA-512 |
+| `engine/include/okay/Crypto/Sha256.hpp`, `engine/src/Crypto/Sha512.cpp` | 280, 99 | SHA-256, HMAC-SHA256, PBKDF2-HMAC-SHA256 (header-only; the one SHA-256 in the engine), SHA-512 |
 | `engine/src/Crypto/Fe25519.hpp` | 14 | Picks the field implementation at compile time |
 | `engine/src/Crypto/Fe25519_64.hpp` | 193 | Field arithmetic mod 2^255-19, five 51-bit limbs in `uint64_t`, 128-bit product (needs `__int128`; GCC and Clang, 64-bit) |
 | `engine/src/Crypto/Fe25519_16.hpp` | 149 | The same field as 16 limbs of 16 bits in `int64_t`: the portable fallback (MSVC, WebAssembly, 32-bit; `-DOKAY_CRYPTO_FE16` forces it) |

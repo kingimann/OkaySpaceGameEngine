@@ -2122,6 +2122,9 @@ add_test(NAME guided_vehicles COMMAND test_guided_vehicles)
 add_executable(test_guided_detail test_guided_detail.cpp)
 target_link_libraries(test_guided_detail PRIVATE okay::engine)
 add_test(NAME guided_detail COMMAND test_guided_detail)
+add_executable(test_guided_characters test_guided_characters.cpp)
+target_link_libraries(test_guided_characters PRIVATE okay::engine)
+add_test(NAME guided_characters COMMAND test_guided_characters)
 
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)

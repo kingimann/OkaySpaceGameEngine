@@ -602,6 +602,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Character Model panel (15.2, 15.2.6)
 - Character Model panel and Fix animations (3.7.5)
 - Character panel and creator (4.9.6)
+- Character templates (3.11.8)
 - Characters & cameras (4)
 - Characters in the GameObject menu (30.1.4)
 - chase (9.4, 9.5)

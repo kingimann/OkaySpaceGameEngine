@@ -1,6 +1,6 @@
 # Guided modeling: detail levels
 
-Every guided template (fence, architecture, vehicles) has a shared **Detail** setting: Low, Medium, High, Ultra. It is
+Every guided template (fence, architecture, vehicles, characters) has a shared **Detail** setting: Low, Medium, High, Ultra. It is
 stored in the recipe (`param detail 0..3`); a recipe without it (older files) is Medium, which is exactly the original shape.
 
 | Level | What changes |
@@ -92,3 +92,29 @@ box-only design (for example the picket fence) has the same triangle count at Lo
 | trailer | tanker | 540 | 1084 | 3572 | 9004 |
 | trailer | caravan | 232 | 368 | 1208 | 3040 |
 | trailer | utility | 196 | 284 | 620 | 1292 |
+| human | average | 436 | 896 | 2384 | 6800 |
+| human | athletic | 418 | 838 | 2226 | 6490 |
+| human | heavy | 392 | 756 | 1856 | 4776 |
+| human | child | 400 | 964 | 2884 | 9316 |
+| human | tall_slim | 544 | 1004 | 2620 | 7292 |
+| human | adventurer | 556 | 1144 | 3148 | 9316 |
+| human | hero | 416 | 756 | 1868 | 4860 |
+| human | casual | 512 | 1092 | 3160 | 9840 |
+| human | dress | 436 | 1012 | 2972 | 9484 |
+| robot | standard | 312 | 312 | 680 | 1416 |
+| robot | heavy_bot | 356 | 564 | 1236 | 2580 |
+| robot | scout | 412 | 784 | 1916 | 4900 |
+| robot | cyclops | 284 | 556 | 1444 | 3988 |
+| robot | android | 280 | 536 | 1372 | 3764 |
+| robot | rover | 384 | 536 | 1144 | 2360 |
+| creature | dog | 332 | 752 | 2064 | 6128 |
+| creature | horse | 272 | 660 | 2004 | 6612 |
+| creature | bear | 276 | 716 | 2228 | 7460 |
+| creature | stag | 368 | 848 | 2248 | 6488 |
+| creature | eagle | 222 | 482 | 1442 | 4802 |
+| creature | duck | 226 | 506 | 1490 | 4898 |
+| creature | dragon | 380 | 856 | 2264 | 6520 |
+| creature | wyvern | 368 | 836 | 2220 | 6428 |
+| creature | beetle | 312 | 792 | 2356 | 7644 |
+| creature | ant | 292 | 812 | 2532 | 8564 |
+| creature | spider | 316 | 876 | 2536 | 8016 |

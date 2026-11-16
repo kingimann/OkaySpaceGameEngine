@@ -33,8 +33,8 @@ Cars at High and Ultra now carry purposeful small parts instead of subdivided ar
 | building barn | 38924 | 52996 |
 | building shed | 25296 | 32412 |
 | building flat_block | 113080 | 113908 |
-| human average | 114976 | 119584 |
-| human hero | 120832 | 122944 |
+| human average | 114976 | 42126 |
+| human hero | 120832 | 43602 |
 | roof gable | 912 | 12680 |
 | roof hip | 912 | 23432 |
 
@@ -111,15 +111,19 @@ Cars at High and Ultra now carry purposeful small parts instead of subdivided ar
 | trailer | tanker | 540 | 1084 | 7604 | 30648 |
 | trailer | caravan | 232 | 368 | 2552 | 15184 |
 | trailer | utility | 196 | 284 | 1964 | 14584 |
-| human | average | 436 | 2756 | 11716 | 119584 |
-| human | athletic | 418 | 2770 | 12354 | 124270 |
-| human | heavy | 392 | 2628 | 11300 | 116512 |
-| human | child | 400 | 2788 | 12548 | 125200 |
-| human | tall_slim | 588 | 3312 | 13648 | 119662 |
-| human | adventurer | 556 | 3196 | 13032 | 129590 |
-| human | hero | 416 | 2892 | 12492 | 122944 |
-| human | casual | 556 | 3112 | 13052 | 121566 |
-| human | dress | 436 | 2636 | 11612 | 133104 |
+| human | average | 3156 | 8656 | 21356 | 42126 |
+| human | slim | 3340 | 9286 | 22940 | 45152 |
+| human | athletic | 2832 | 7656 | 19044 | 37758 |
+| human | heavy | 3056 | 8146 | 20084 | 39502 |
+| human | child | 2788 | 7602 | 18866 | 38214 |
+| human | elder | 3808 | 9860 | 24824 | 50954 |
+| human | tall_slim | 3590 | 9738 | 23878 | 46578 |
+| human | woman | 2864 | 7712 | 19142 | 38022 |
+| human | man | 3388 | 9344 | 22932 | 44946 |
+| human | adventurer | 4160 | 10598 | 26378 | 55828 |
+| human | hero | 3264 | 8008 | 19802 | 43602 |
+| human | casual | 4222 | 10810 | 26954 | 54794 |
+| human | dress | 3390 | 8444 | 21126 | 43998 |
 | robot | standard | 312 | 312 | 680 | 18432 |
 | robot | heavy_bot | 356 | 564 | 1476 | 34752 |
 | robot | scout | 412 | 784 | 1916 | 39856 |
@@ -229,3 +233,51 @@ cost 120 thousand triangles). Average adult, triangles (`tests/test_guided_human
 High 21.5 thousand, Ultra 44 thousand. Pictures: `docs/images/guided_modeling/human_views_average.png` (front, side and 3/4 at the four
 levels), `human_close_average.png` (head, hand, foot, shoulder at High), `human_all_detail0/1/2.png` (every start design),
 `human_views_average_before.png` (the old human, for comparison). All are headless software renders.
+
+### The newer templates (aircraft, boat, weapon, tower, lamp, tent), triangles
+
+| Template | Start design | Low | Medium | High | Ultra |
+|---|---|---|---|---|---|
+| aircraft | light_plane | 282 | 608 | 1872 | 9016 |
+| aircraft | biplane | 306 | 620 | 1700 | 12296 |
+| aircraft | jet_fighter | 236 | 512 | 1492 | 7768 |
+| aircraft | airliner | 404 | 748 | 1768 | 7432 |
+| aircraft | cargo_plane | 300 | 580 | 1440 | 8936 |
+| aircraft | glider | 224 | 500 | 1480 | 7576 |
+| boat | rowboat | 130 | 202 | 418 | 4992 |
+| boat | canoe | 118 | 190 | 390 | 4224 |
+| boat | speedboat | 126 | 210 | 418 | 4800 |
+| boat | sailboat | 130 | 222 | 486 | 9312 |
+| boat | tall_ship | 162 | 274 | 666 | 7776 |
+| boat | steamer | 134 | 278 | 766 | 8832 |
+| boat | raft | 64 | 184 | 760 | 8972 |
+| weapon | longsword | 106 | 294 | 1222 | 8488 |
+| weapon | saber | 90 | 258 | 1026 | 7660 |
+| weapon | dagger | 106 | 294 | 1222 | 8488 |
+| weapon | spear | 14 | 38 | 170 | 2304 |
+| weapon | bow | 56 | 212 | 908 | 3740 |
+| weapon | mace | 92 | 248 | 976 | 12444 |
+| weapon | pistol | 44 | 72 | 240 | 3648 |
+| weapon | rifle | 56 | 84 | 268 | 3264 |
+| weapon | kite_shield | 38 | 88 | 324 | 1984 |
+| weapon | round_shield | 50 | 100 | 336 | 1996 |
+| tower | castle_tower | 252 | 456 | 1392 | 15872 |
+| tower | round_keep | 164 | 398 | 1326 | 13562 |
+| tower | lighthouse | 164 | 524 | 2436 | 21176 |
+| tower | bell_tower | 110 | 134 | 374 | 8064 |
+| tower | water_tower | 168 | 258 | 810 | 4218 |
+| tower | watch_tower | 162 | 162 | 370 | 3200 |
+| tower | radio_mast | 60 | 152 | 496 | 2648 |
+| tower | octagon_tower | 136 | 176 | 432 | 9152 |
+| lamp | table_lamp | 86 | 324 | 1356 | 13388 |
+| lamp | floor_lamp | 40 | 204 | 884 | 12032 |
+| lamp | desk_lamp | 80 | 208 | 656 | 11520 |
+| lamp | globe_lamp | 68 | 284 | 1128 | 11920 |
+| lamp | hand_lantern | 46 | 162 | 666 | 9856 |
+| lamp | chandelier | 188 | 488 | 1736 | 6392 |
+| tent | a_frame | 40 | 52 | 108 | 2832 |
+| tent | dome_tent | 114 | 362 | 1390 | 10174 |
+| tent | tipi | 154 | 386 | 1446 | 12820 |
+| tent | yurt | 52 | 194 | 786 | 6138 |
+| tent | market_stall | 44 | 92 | 188 | 4800 |
+| tent | camp | 208 | 624 | 2504 | 14720 |

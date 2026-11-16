@@ -138,7 +138,7 @@ Tested: `test_okayui_script_adapter` (display-column conversion with tabs and tw
 
 Not done, said plainly:
 - The OkayUI path of the script editor was NOT run in a real window. Only the adapter and the host input are tested headless.
-- ~~The ImGui side of the editor still draws first and OkayUI draws last, on top: an ImGui autocomplete or tooltip popup that overlaps the code rectangle is hidden behind the OkayUI editor~~ (fixed in step 29: the code is drawn into the ImGui window's draw list). ImGui shortcuts (Ctrl+S, Ctrl+Z at the script level) are not blocked while the OkayUI editor has the keyboard; that needs a real window to settle.
+- ~~The ImGui side of the editor still draws first and OkayUI draws last, on top: an ImGui autocomplete or tooltip popup that overlaps the code rectangle is hidden behind the OkayUI editor~~ (fixed in step 29: the code is drawn into the ImGui window's draw list). ~~ImGui shortcuts (Ctrl+S, Ctrl+Z at the script level) are not blocked while the OkayUI editor has the keyboard~~ (step 30).
 - ~~The code font (`g_codeFont`) is the ImGui editor's; the OkayUI editor uses OkayUI's font~~ (fixed in step 29: the same JetBrains Mono). (Step 28 passes the palette, the language words and the zoom on; step 29 also `SetLeftMargin`.) `SetShowWhitespaces` and the language regexes only apply to the ImGui editor.
 - Error markers cover the whole line's text (the script editor gives a line, not a column range).
 
@@ -327,6 +327,131 @@ the classic 8x8 look (only with `OKAY_CLASSIC_UI`) is slower than the ImGui edit
 
 - **Never run in a real window, never on Windows.** Every picture above is from the headless harness (ImGui through SDL's software
   renderer; ours through the same renderer once hosted).
-- ImGui shortcuts are still not blocked while our editor has the keyboard (step 27).
-- Our own hover tooltip is drawn by OkayUI on top of everything (not moved into ImGui's layer).
+- ~~ImGui shortcuts are still not blocked while our editor has the keyboard (step 27).~~ (done in step 30)
+- ~~Our own hover tooltip is drawn by OkayUI on top of everything (not moved into ImGui's layer).~~ (done in step 30)
 - The pixel difference that is left (3.24 of 255) is mostly glyph edges from a different rasteriser; not chased further.
+
+
+## Step 30: the gaps left after step 29 (`claude2/okayui-codeedit-par2`)
+
+The owner's rule: "we only switch when it's faster and up to par". Step 29 left five gaps. The switch stays off
+(`OKAY_CODE_EDITOR` unset = the ImGui editor).
+
+### 1. The keyboard: our editor now takes it from Dear ImGui the way the ImGui editor does
+
+How the ImGui editor does it (read in `editor/vendor/TextEditor.cpp`, not copied): while its child window is focused it sets
+`io.WantCaptureKeyboard` and `io.WantTextInput` for the rest of the frame and empties ImGui's character queue. Its child window has no
+navigable items, so ImGui's keyboard navigation has nothing to move to. What the script editor lets through was checked in
+`editor/main.cpp`:
+
+| Shortcut | ImGui editor | Ours before | Ours now |
+|---|---|---|---|
+| Ctrl+P (Play / Stop) | works (runs before the text-field check in `HandleShortcuts`) | works | works |
+| Ctrl+S (save the script) | works (the script editor's own check: window focused) | works | works |
+| Ctrl+W, Ctrl+Shift+T (close / reopen a script tab) | work (checked before the code draws, when `WantTextInput` is still false) | **blocked** (our flag was already set from the frame before) | work (let through by name while the code has the keys) |
+| Scene shortcuts (Ctrl+Z on the scene, Delete, Ctrl+D, W/E/R...) | blocked (`OwnShortcutsWindowFocused`) | blocked | blocked |
+| Arrows, Space, Enter, Tab, Escape, Page Up/Down, Home/End | only the code | **also ImGui's keyboard navigation**: the arrows moved ImGui's nav cursor off the code to a button in the Script Editor window, and Space or Enter then pressed it | only the code: `okayimgui::ClaimKeyboardForCode` makes the code item those keys' owner (`ImGui::SetKeyOwner`), so ImGui's navigation (which reads only keys nobody owns) leaves them alone; the script editor's own checks (`ImGui::IsKeyPressed` with no owner: autocomplete, Ctrl+S) still see them |
+| Typed characters | taken out of ImGui's queue | left in the queue | taken out (`ClaimKeyboardForCode`) |
+| Keys while a popup, the find box or another window has focus | go there (the child is no longer focused) | **still typed into the code** (OkayUI keeps its focus until a click) | go there: the code has the keyboard only while its ImGui window is focused, and gets it back with the window's focus; the end-of-frame keyboard capture in `main.cpp` runs only while the code really has the keys |
+| The scene view's keys while typing with the pointer over the scene (W/E/R, V for vertex snap) | reach the scene (they run before the code sets `WantTextInput`) | blocked | blocked (ours is stricter here, on purpose: typing a `w` in code should not change the gizmo) |
+
+Tested in `test_okayui_codeedit_imgui` (`KeyboardClaimTests`): with the claim, four Down presses leave ImGui's nav cursor on the code
+and Space, Enter, Tab and Escape press nothing; Ctrl+S is still seen; `WantTextInput` and `WantCaptureKeyboard` are set; a typed
+character leaves ImGui's queue. Without the claim (the state before), the arrows walk the nav cursor to the button and Space presses
+it. The `main.cpp` lines (Ctrl+W, the capture at the end of the frame, `g_scriptCodeHasKeys`) are only syntax-checked.
+
+### 2. The font atlas: measured, and it now grows for large code
+
+| | Before | After |
+|---|---|---|
+| Atlas at start (every program in the launcher look) | 1024 x 1024 RGBA, 4 MB in memory (and the same again as a GPU texture), 554 of 1020 rows used, Roboto and JetBrains Mono at 13, 16, 20, 26, 34, 46 px, about 50 ms to build once | the same |
+| Code at 16 px x UI scale (0.7 to 2) x zoom (0.7 to 3): up to 96 px | 214 of 648 scale x zoom pairs drawn from a smaller bake, scaled up to 2.09x (blurry) | the first time code is asked for past 46 px, the atlas grows (between two frames, never in the middle of one) to nine code sizes (62, 80, 96 px added): 1024 x 2048, 8 MB, 1361 of 2044 rows used, about 70 ms once; then no pair is drawn larger than its bake (worst 1.03x, inside the half-pixel rounding) |
+| UI text after the growth | n/a | the same pixels (the UI font is packed first, so its glyphs keep their texels) |
+| Growth path | doubled once from 1024 to 2048 rows if the code font did not fit; never tested | tested: from 128 rows it doubles three times to the same atlas; capped below what the code font needs, the atlas keeps the UI font alone and the code font falls back to it; capped below the UI font, no atlas (the 8x8 font is used) |
+
+A program that never shows code past 46 px (the launcher, the player) keeps the 4 MB atlas. The SDL texture is made again after a
+growth; the GL, Direct3D 11 and software backends already re-upload when the size changes. New: `OkayUI::GetFontAtlasInfo`,
+`CodeFontBakedSizeFor`, `TestBuildFontAtlas` (`okayui/src/OkayUI_FontAtlas.cpp`, `OkayUI.cpp`). Tested in `test_okayui_codeedit`
+(`AtlasTests`).
+
+### 3. The hover help is an ImGui tooltip now
+
+`CodeEdit::SetHostDrawsTooltip(true)` stops OkayUI drawing it; `CodeEdit::Hover()` says what is under the pointer (an error, a
+warning or a word's help, its line and text) and `okayimgui::ShowCodeHover` draws it with `ImGui::BeginTooltip`, styled like the ImGui
+editor's ("Error at line N:" in red or "Warning at line N:" in amber, a separator, the message; a built-in's help as plain text), in the
+code font. It is an ImGui window in ImGui's own order, so it stacks with ImGui's popups the way the old one did. Tested
+(`TooltipLayerTests`): the tooltip's draw list comes after the code's and after the autocomplete popup's, and OkayUI's frame draws
+nothing for it; OkayUI's own tooltip, for contrast, is in OkayUI's frame. Screenshots: `codeedit-{imgui,own}-tip-{word,error}.png`
+(difference 3.46 and 4.23 of 255).
+
+### 4. The JetBrains Mono licence ships with the release
+
+`docs/THIRD_PARTY.md` already listed the font, its source and the OFL, and `assets/fonts/JetBrainsMono-OFL.txt` sits next to the other
+fonts. The dist script only copied it into `Assets/Fonts/`, silently (`|| true`). `scripts/build-windows-dist.sh` now also puts it in
+`licenses/` and `Tools/licenses/`, writes `THIRD_PARTY_NOTICES.txt` (top level and `Tools/`) naming the font, the three programs that
+carry it, the copyright line and the licence, adds a line to `README.txt`, and stops if a font licence file is missing. The zip and the
+NSIS installer take the whole folder. Checked with `bash -n` and by running the new block alone into a scratch folder; the full Windows
+build was not run. Not covered: the single `.exe` files the release uploads for the in-app updater.
+
+### 5. Behaviour differences found in `main.cpp`'s use of the widget and in the ImGui editor
+
+| Behaviour | ImGui editor | Ours before | Now |
+|---|---|---|---|
+| Typing with AltGr (Ctrl+Alt on Windows: `{ [ @ \` on German, French and other keyboards) | types | **dropped** (text was ignored with Ctrl held) | types |
+| Alt+Backspace | undo | deleted a character | undo |
+| Ctrl+wheel | zooms only (ImGui does not scroll with Ctrl) | zoomed and scrolled | zooms only |
+| Wheel step | 5 font heights down, 2 sideways, at most 2/3 of the view (an ImGui child window) | 3 rows / 3 characters | the same as ImGui (`CodeEdit::SetWheelStep`, set by the widget from the font size) |
+| Enter after `{` with the cursor before `}` (auto-pair on) | the widget copies the indent, then the script editor adds a level and pushes `}` down | **the block was opened twice** (ours did both, then the script editor did it again) | the script editor's way: the widget copies the indent only (`SetBracketIndent(false)`) |
+| Enter after `{` otherwise | copies the indent | copied the indent plus one level | copies the indent |
+| Typing `)` before a `)` (auto-pair on) | steps over it | **doubled it** (ours reads typed text from SDL, not from ImGui's queue the script editor empties) | steps over it (`DropTypedText`) |
+| Alt+1 (show / hide the scripts list) | does not type the 1 | typed it where SDL sends it | does not (`DropTypedText`) |
+| Drag after a double click / triple click | extends by words / lines | extended by characters | by words / lines |
+| The pointer over the code | the I-beam | the arrow (the editor never read OkayUI's cursor) | the I-beam (`okayimgui::CursorOf`, `SetImGuiCursor`) |
+| `SetUserTypes` every frame (the script editor does) | re-colours only when the set changes | **re-coloured from the top every frame**: 64 ms a frame on a 200,000-line script scrolled to the end | only on a change: 50 frames in 0.03 ms; the types also survive colouring off and on |
+| Tab / Shift+Tab on a selection | a tab character at each line start | four spaces (the file style the status bar shows) | unchanged on purpose |
+| Shift+Tab with no selection | types a tab | removes one level | unchanged on purpose |
+| Home | column 0 | first non-blank, then column 0 | unchanged on purpose |
+| Ctrl+Backspace / Ctrl+Delete, Ctrl+Shift+Z, Shift+click | nothing | delete a word, redo, extend the selection | unchanged on purpose |
+| Page Up / Down | a page minus four lines | a page | unchanged (small) |
+| Caret | blinks after 400 ms | shown at once | unchanged (step 29) |
+
+Tested in `test_okayui_codeedit` (`ParityTests`), `test_okayui_script_adapter` (user types) and `test_okayui_codeedit_imgui`
+(`CursorTests`). The fuzz test found one bug in the new drag code (an edit between the click and the drag left the clicked word past the
+end of the text); fixed and run with 12 seeds.
+
+### Speed after (`codeedit_bench bench 1000 10000 100000`, Release, this machine with a load of about 6)
+
+The hosted row now does every per-frame step `ScriptEditorWidget::Render` does (the keyboard claim, the wheel step, the cursor, the
+tooltip), and both editors get the calls `main.cpp` makes every frame (`SetColorizerEnable`, `SetUserTypes`). CodeEdit also keeps the
+colour tokens of the lines it draws from one frame to the next. Second of two runs (the first agrees; single numbers move by 0.01 to
+0.03 ms between runs on this busy machine):
+
+| Lines | Editor | SetText ms | first frame ms | idle frame ms (mean / p95) | typing frame ms (mean / p95) | scrolling frame ms (mean / p95) | memory MB |
+|---|---|---|---|---|---|---|---|
+| 1000 | ImGuiColorTextEdit | 0.67 | 0.95 | 0.068 / 0.143 | 0.595 / 1.532 | 0.062 / 0.063 | 0.5 |
+| 1000 | **ours hosted in the ImGui window (as in the editor)** | 0.12 | 0.17 | 0.034 / 0.048 | 0.036 / 0.050 | 0.032 / 0.041 | 0.2 |
+| 10000 | ImGuiColorTextEdit | 5.23 | 3.98 | 0.133 / 0.185 | 4.299 / 7.888 | 0.176 / 0.319 | 4.9 |
+| 10000 | **ours hosted** | 1.60 | 0.22 | 0.056 / 0.089 | 0.055 / 0.115 | 0.043 / 0.062 | 0.9 |
+| 100000 | ImGuiColorTextEdit | 62.56 | 35.93 | 0.124 / 0.154 | 45.976 / 77.575 | 0.117 / 0.140 | 47.9 |
+| 100000 | **ours hosted** | 9.84 | 0.29 | 0.034 / 0.047 | 0.117 / 0.169 | 0.040 / 0.057 | 7.3 |
+
+**Met** on every measure at every size in both of these runs. The closest is still scrolling at 1,000 lines, where wall time is within
+the noise of this busy machine: of eight full runs during this step, six had ours ahead (0.032 to 0.040 ms against 0.040 to 0.062) and
+two, taken while the load rose past 6, had ours behind on the mean (0.045 against 0.042, and 0.064 against 0.045). So it was also
+counted under callgrind, which does not depend on the load (`codeedit_bench idle hosted |
+imgui | hosted-scroll | imgui-scroll 1000 N`, the difference between 100 and 200 frames): ours 0.48 million instructions a frame idle
+and 0.48 scrolling (0.54 before the token cache), ImGuiColorTextEdit 0.82 and 0.85. Memory at 1,000 lines went from 0.1 to 0.2 MB (the
+token cache: 256 lines).
+
+### Tests
+
+`ctest -R okayui`: 27 of 27 pass. New or changed: `test_okayui_codeedit` (518 checks: `ParityTests`, `AtlasTests`),
+`test_okayui_codeedit_imgui` (34 checks: `TooltipLayerTests`, `CursorTests`, `KeyboardClaimTests`), `test_okayui_script_adapter`
+(116 checks: user types). `editor/main.cpp` passes a syntax-only compile with and without OkayUI.
+
+### Not done, said plainly
+
+- **Still never run in a real window, never on Windows.** Every check above is headless. The keyboard claim was tested against Dear
+  ImGui's real navigation code, but not with a real keyboard, an input method or AltGr on a real layout.
+- The single `.exe` files of a release (the in-app updater's downloads) carry no licence text beside them.
+- Ours and the old one still differ on purpose where ours does more (the table above).

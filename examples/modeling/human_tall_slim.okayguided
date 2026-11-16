@@ -12,6 +12,7 @@ param limbThickness 0.034000000000000002
 param neckLength 0.10000000000000001
 param shoulderWidth 0.40000000000000002
 param stance 5
+param style 0
 param torsoDepth 0.19
 slot arm piston
 slot backpack none
@@ -33,6 +34,7 @@ slot neck round
 slot nose straight
 slot pants trousers
 slot pelvis box
+slot scarf none
 slot shirt jacket
 slot shoulder none
 slot torso tapered
@@ -56,6 +58,7 @@ color neck 0.870000005 0.680000007 0.550000012 1
 color nose 0.870000005 0.680000007 0.550000012 1
 color pants 0.100000001 0.100000001 0.109999999 1
 color pelvis 0.870000005 0.680000007 0.550000012 1
+color scarf 0.75 0.150000006 0.150000006 1
 color shirt 0.100000001 0.100000001 0.109999999 1
 color shoulder 0.620000005 0.649999976 0.699999988 1
 color torso 0.870000005 0.680000007 0.550000012 1
@@ -79,6 +82,7 @@ material neck 0
 material nose 13
 material pants 4
 material pelvis 0
+material scarf 16
 material shirt 3
 material shoulder 10
 material torso 0

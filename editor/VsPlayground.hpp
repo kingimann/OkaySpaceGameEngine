@@ -3,6 +3,7 @@
 // The scenes live in examples/visual_script/playground. File > Examples and the
 // "Try it" button on a node's help both open one.
 #include "VisualScriptLevels.hpp"
+#include "ExamplesRoot.hpp"
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -154,6 +155,7 @@ inline std::string VsPlaygroundDir() {
     std::error_code ec;
     std::vector<fs::path> seeds;
     seeds.push_back(fs::current_path(ec));
+    if (!okay::editor::ExamplesExeDir().empty()) seeds.push_back(fs::path(okay::editor::ExamplesExeDir()));
 #if !defined(_WIN32)
     seeds.push_back(fs::read_symlink("/proc/self/exe", ec).parent_path());
 #endif

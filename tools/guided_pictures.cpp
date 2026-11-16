@@ -160,8 +160,10 @@ int main(int argc, char** argv) {
     RegisterBuiltinTemplates();
     const Template& T = *Registry::Instance().Find("fence");
 
-    if (argc > 3 && std::string(argv[3]) == "cars") {   // quick run: only the car silhouette and 3/4 sheets
-        const Template& C = *Registry::Instance().Find("car");
+    if (argc > 3 && (std::string(argv[3]) == "cars" || std::string(argv[3]) == "bikes")) {   // quick run: only the silhouette and 3/4 sheets
+        const bool bikes = std::string(argv[3]) == "bikes";
+        const std::string stem = bikes ? "motorcycles" : "cars";
+        const Template& C = *Registry::Instance().Find(bikes ? "motorcycle" : "car");
         const int cols = 3, tw = 440, th = 220;
         const int rows = ((int)C.starts.size() + cols - 1) / cols;
         Img side(cols * tw, rows * th), q3(cols * tw, rows * 280);
@@ -171,8 +173,42 @@ int main(int argc, char** argv) {
             Scene(side, m, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 0.0f);
             Scene(q3, m, (i % cols) * tw + 4, (i / cols) * 280 + 4, tw - 8, 272, 0.7f);
         }
-        Save(dir, "cars_side_views.png", side);
-        Save(dir, "cars_three_quarter.png", q3);
+        Save(dir, stem + "_side_views.png", side);
+        Save(dir, stem + "_three_quarter.png", q3);
+        return 0;
+    }
+    if (argc > 3 && std::string(argv[3]) == "chars") {   // quick run: the character styles and the hairstyles
+        const Template& C = *Registry::Instance().Find("human");
+        const char* names[4] = {"realistic", "stylised", "cartoon", "blocky"};
+        {
+            const int tw = 330, th = 480;
+            Img sheet(4 * tw, 2 * th);
+            sheet.Clear(40, 42, 48);
+            for (int st = 0; st < 4; ++st)
+                for (int row = 0; row < 2; ++row) {
+                    Recipe r = DefaultRecipe(C, "adventurer");
+                    r.params["style"] = st; r.params["detail"] = row == 0 ? 1.0 : 2.0;
+                    Scene(sheet, Create(r), st * tw + 4, row * th + 4, tw - 8, th - 8, 0.45f);
+                }
+            Save(dir, "characters_styles.png", sheet);
+        }
+        {
+            const SlotDef* hs = nullptr;
+            for (const SlotDef& sl : C.slots) if (sl.id == "hair") hs = &sl;
+            const int cols = 5, tw = 250, th = 250, n = (int)hs->designs.size(), rows = (n + cols - 1) / cols;
+            Img sheet(cols * tw, rows * th);
+            sheet.Clear(40, 42, 48);
+            for (int i = 0; i < n; ++i) {
+                Recipe r = DefaultRecipe(C, "average");
+                r.slotDesign["hair"] = hs->designs[(size_t)i].id; r.params["detail"] = 1.0;
+                PolyMesh head;
+                for (const GeneratedPart& gp : Generate(r))
+                    if (gp.id.rfind("head/", 0) == 0 || gp.id.rfind("hair/", 0) == 0 || gp.id.rfind("neck/", 0) == 0 || gp.id.rfind("eyes/", 0) == 0 || gp.id.rfind("nose/", 0) == 0 || gp.id.rfind("mouth/", 0) == 0 || gp.id.rfind("brows/", 0) == 0 || gp.id.rfind("ears/", 0) == 0 || gp.id.rfind("face/", 0) == 0) shapes::Append(head, gp.mesh);
+                Scene(sheet, head, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 2.3f);
+            }
+            Save(dir, "characters_hairstyles.png", sheet);
+        }
+        (void)names;
         return 0;
     }
     // 1. The design browser's thumbnails (what the Guided page shows), and one picture per style.

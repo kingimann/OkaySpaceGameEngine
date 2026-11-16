@@ -5,7 +5,8 @@
 namespace scripteditor {
 
 ScriptEditorCodeEdit::ScriptEditorCodeEdit() {
-    ed_.SetLanguage(OkayUI::OkayScriptLanguage());
+    lang_ = OkayUI::OkayScriptLanguage();
+    ed_.SetLanguage(lang_);
     ed_.SetTabSize(4);
     ed_.SetLineSpacing(1.55f);          // what the script editor sets on the ImGui editor
     seenVersion_ = ed_.Version();
@@ -66,8 +67,45 @@ void ScriptEditorCodeEdit::SetSelection(Coord start, Coord end) {
 void ScriptEditorCodeEdit::SetColorizerEnable(bool on) {
     if (on == colorize_) return;
     colorize_ = on;
-    if (on) ed_.SetLanguage(OkayUI::OkayScriptLanguage());
+    if (on) ed_.SetLanguage(lang_);
     else ed_.SetHighlighter(nullptr);
+}
+
+void ScriptEditorCodeEdit::SetLanguageWords(const std::unordered_set<std::string>& keywords, const std::unordered_set<std::string>& types,
+                                            const std::unordered_set<std::string>& known, std::unordered_map<std::string, std::string> info) {
+    OkayUI::CodeLanguage l = OkayUI::OkayScriptLanguage();   // keeps OkayScript's comment rules and $"..." strings
+    if (!keywords.empty()) l.keywords = keywords;
+    if (!types.empty()) l.types = types;
+    l.known.clear();
+    for (const std::string& k : known) if (!l.keywords.count(k) && !l.types.count(k)) l.known.insert(k);
+    lang_ = std::move(l);
+    if (colorize_) ed_.SetLanguage(lang_);
+    ed_.SetWordInfo(std::move(info));
+}
+
+void ScriptEditorCodeEdit::SetPalette(const std::uint32_t* c, int n) {
+    if (!c || n < 21) return;
+    // TextEditor::PaletteIndex order: Default, Keyword, Number, String, CharLiteral, Punctuation, Preprocessor, Identifier,
+    // KnownIdentifier, PreprocIdentifier, Comment, MultiLineComment, Background, Cursor, Selection, ErrorMarker, Breakpoint,
+    // LineNumber, CurrentLineFill, CurrentLineFillInactive, CurrentLineEdge, [TypeName, Function, Member]
+    OkayUI::CodePalette p = ed_.Palette();
+    using namespace OkayUI;
+    p.text[CodeColor_Default] = c[0];   p.text[CodeColor_Keyword] = c[1]; p.text[CodeColor_Number] = c[2];
+    p.text[CodeColor_String] = c[3];    p.text[CodeColor_Char] = c[4];    p.text[CodeColor_Punct] = c[5];
+    p.text[CodeColor_Preproc] = c[6];   p.text[CodeColor_Known] = c[8];   p.text[CodeColor_Comment] = c[10];
+    p.background = c[12];
+    p.caret = c[13];
+    p.selection = c[14];
+    p.selectionInactive = (c[14] & 0x00ffffffu) | (((c[14] >> 24) / 2u) << 24);
+    p.errorLine = c[15];
+    p.breakpoint = c[16] | 0xff000000u;      // the library washes the line with it; here it is a dot in the gutter, so opaque
+    p.lineNumber = c[17];
+    p.currentLine = c[18];
+    p.currentLineEdge = c[20];
+    if (n > 21) p.text[CodeColor_Type] = c[21];
+    if (n > 22) p.text[CodeColor_Function] = c[22];
+    if (n > 23) p.text[CodeColor_Member] = c[23];
+    ed_.SetPalette(p);
 }
 
 void ScriptEditorCodeEdit::SetUserTypes(const std::unordered_set<std::string>& types) {

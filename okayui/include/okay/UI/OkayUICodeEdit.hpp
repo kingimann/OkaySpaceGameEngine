@@ -10,13 +10,15 @@
 //
 // Columns are byte offsets into a line and always sit on UTF-8 character boundaries. The text is kept valid UTF-8
 // (invalid bytes become '?', "\r\n" and "\r" become "\n", other control characters are dropped). One character is one
-// cell wide; a tab advances to the next multiple of the tab size. The font should be monospaced.
+// cell wide; a tab advances to the next multiple of the tab size. With a proportional font (the launcher look's Roboto) every
+// character is drawn on its own, centred in a cell as wide as the font's wide characters, so the caret and selection still line up.
 #include "okay/UI/OkayUI.hpp"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -120,6 +122,9 @@ public:
     // ---- editing (all of them do nothing in read-only mode) ----
     /// Replace the selection (or insert at the caret) with `text`. "\r\n" becomes "\n". Returns false if nothing changed.
     bool InsertText(const char* text);
+    /// Typed text: like InsertText, except in overwrite mode (Insert key) with no selection it replaces as many characters
+    /// after the caret as it inserts (never past the end of the line).
+    bool TypeText(const char* text);
     bool Backspace(bool word = false);
     bool DeleteForward(bool word = false);
     /// Enter: split the line, keeping its indent (and one more level after '{', '(' or '[' ; "{|}" opens a blank line between).
@@ -156,6 +161,15 @@ public:
 
     // ---- options ----
     void SetReadOnly(bool ro) { readOnly_ = ro; }
+    /// Overwrite mode: typed characters replace the ones after the caret; the caret is drawn as a block. The Insert key toggles it.
+    void SetOverwrite(bool on) { overwrite_ = on; }
+    bool Overwrite() const { return overwrite_; }
+    /// Help shown as a tooltip while the pointer is over a word that has an entry (built-in signatures, type notes). Empty: none.
+    /// An error marker's message on the same line wins.
+    void SetWordInfo(std::unordered_map<std::string, std::string> info) { wordInfo_ = std::move(info); }
+    const std::string* WordInfo(const std::string& word) const { auto it = wordInfo_.find(word); return it == wordInfo_.end() ? nullptr : &it->second; }
+    /// The word under a screen point (for the last Draw), or "" when the point is not over a word's characters.
+    std::string WordAtScreen(float x, float y) const;
     /// false: Draw does not act on keys (the host's autocomplete popup owns them); the mouse still works.
     void SetHandleKeyboardInput(bool b) { handleKeys_ = b; }
     bool ReadOnly() const { return readOnly_; }
@@ -217,6 +231,8 @@ public:
     // Geometry of the last Draw (screen pixels), so callers and tests can find things on screen.
     float LineHeight() const { return lineH_; }
     float CharWidth() const { return charW_; }
+    /// False when the current font gives characters different widths (each is then drawn on its own, centred in its cell).
+    bool MonospaceFont() const { return mono_; }
     float GutterWidth() const { return gutterW_; }
     Rect ViewRect() const { return view_; }         // the text area: the item without the gutter and the scroll bars
     Rect ItemRect() const { return item_; }
@@ -278,6 +294,9 @@ private:
     std::vector<int> breakpoints_;
     std::function<void(int, bool)> onBreakpoint_; bool autoToggle_ = true;
 
+    bool overwrite_ = false;
+    std::unordered_map<std::string, std::string> wordInfo_;
+    bool mono_ = true; float glyphW_[128] = {}; float glyphKey_ = -1.0f;   // ASCII advances, cached while the font and scale stay the same
     bool readOnly_ = false, insertSpaces_ = true, autoIndent_ = true, showLineNumbers_ = true, showBreakpoints_ = true;
     int tabSize_ = 4;
     float lineSpacing_ = 1.2f;

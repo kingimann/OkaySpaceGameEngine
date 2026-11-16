@@ -4,7 +4,9 @@
 #include "OkayUITestKit.hpp"
 #include "okay/UI/OkayUICodeEdit.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 
 using namespace okayuitest;
@@ -1132,6 +1134,107 @@ void PerfTests() {
     CHECK(tUndo < 3000 * slack);
 }
 
+// A proportional font (the launcher look's Roboto): every glyph lands in its own cell, so the caret and selection line up.
+// Also overwrite mode's caret and the hover help on the bare widget.
+void ProportionalAndOverwriteTests() {
+    {
+        Rig r;
+        UI::UseLauncherLook(true);
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetText("iiiiWWWW\nmlmlmlml");
+        r.Frame();
+        CHECK(!r.ce.MonospaceFont());
+        CHECK(r.ce.CharWidth() >= UI::CalcTextSize("0").x);
+        const UI::DrawData data = UI::GetDrawData();
+        const UI::DrawData* dd = &data;
+        const auto* v = static_cast<const UI::DrawVertex*>(dd->vertices);
+        const float top = r.ce.PosToScreen(P(0, 0)).y, x0 = r.ce.PosToScreen(P(0, 0)).x, cw = r.ce.CharWidth();
+        for (int line = 0; line < 2; ++line) {
+            // the glyph quads of this line: textured triangles inside its row and right of the gutter
+            std::vector<float> centres;
+            const float y0 = top + line * r.ce.LineHeight(), y1 = y0 + r.ce.LineHeight();
+            for (int c = 0; c < dd->cmdCount; ++c) {
+                const UI::DrawCmd& cmd = dd->cmds[c];
+                if (!cmd.texture || cmd.texture != dd->atlasTexture) continue;
+                for (int i = cmd.idxOffset; i + 5 < cmd.idxOffset + cmd.idxCount; i += 6) {   // two triangles per glyph
+                    float mnx = 1e9f, mxx = -1e9f, mny = 1e9f, mxy = -1e9f;
+                    for (int k = 0; k < 6; ++k) {
+                        const UI::DrawVertex& q = v[dd->indices[i + k]];
+                        mnx = std::min(mnx, q.x); mxx = std::max(mxx, q.x); mny = std::min(mny, q.y); mxy = std::max(mxy, q.y);
+                    }
+                    const float cy = (mny + mxy) * 0.5f;
+                    if (cy >= y0 && cy < y1 && mnx >= x0 - 1.0f) centres.push_back((mnx + mxx) * 0.5f);
+                }
+            }
+            std::sort(centres.begin(), centres.end());
+            CHECK(centres.size() == 8);
+            bool inCells = centres.size() == 8;
+            for (size_t k = 0; k < centres.size() && k < 8; ++k)
+                if (!(centres[k] >= x0 + (float)k * cw && centres[k] < x0 + (float)(k + 1) * cw)) inCells = false;
+            CHECK(inCells);
+        }
+        UI::UseLauncherLook(false);
+        r.Frame();
+        CHECK(r.ce.MonospaceFont());                  // the classic 8x8 font
+        CHECK(r.ce.CharWidth() == UI::CalcTextSize("0").x);
+    }
+    {   // overwrite caret: a block one cell wide instead of the 2-pixel bar
+        Rig r;
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetText("abc");
+        r.Frame();                                    // the geometry the click needs
+        ClickPos(r, P(0, 1));
+        CHECK(r.ce.Focused() && At(r.ce, 0, 1));
+        r.Frame();
+        const Bitmap bar = r.sim.Draw();
+        r.ce.SetOverwrite(true);
+        r.Frame();
+        const Bitmap block = r.sim.Draw();
+        const int cx = (int)r.X(P(0, 1)), cy = (int)r.Y(P(0, 1));
+        // 4 pixels right of the caret's left edge: part of the block, not of the bar
+        const int fx = cx + (int)(r.ce.CharWidth() * 0.6f);
+        int changed = 0;
+        for (int y = cy - 3; y <= cy + 3; ++y) if (PixelAt(bar, fx, y) != PixelAt(block, fx, y)) ++changed;
+        CHECK(changed >= 5);
+        CHECK(r.ce.TypeText("X") && r.ce.Line(0) == "aXc");
+        r.ce.SetReadOnly(true);
+        CHECK(!r.ce.TypeText("Y") && r.ce.Line(0) == "aXc");
+    }
+    {   // hover help on the bare widget: no tooltip while dragging or over an error message's line
+        Rig r;
+        r.ce.SetHighlighter(nullptr);
+        r.ce.SetWordInfo({{"foo", "foo() does a thing"}});
+        r.ce.SetText("foo bar\nfoo");
+        r.Frame();
+        CHECK(r.ce.WordAtScreen(r.X(P(0, 1)) + 1.0f, r.Y(P(0, 1))) == "foo");
+        CHECK(r.ce.WordAtScreen(r.X(P(0, 5)) + 1.0f, r.Y(P(0, 5))) == "bar");
+        CHECK(r.ce.WordAtScreen(r.X(P(0, 3)) + 1.0f, r.Y(P(0, 3))) == "");
+        CHECK(r.ce.WordAtScreen(-5.0f, -5.0f) == "" && r.ce.WordAtScreen(NAN, NAN) == "");
+        auto tipPixels = [&](CodePos at) {
+            r.sim.Move(r.X(at) + 1.0f, r.Y(at)); r.Frame(); r.Frame();
+            const Bitmap a = r.sim.Draw();
+            r.sim.Move(r.X(P(0, 3)) + 1.0f, r.Y(P(0, 3))); r.Frame(); r.Frame();   // over the space: no tooltip
+            const Bitmap b = r.sim.Draw();
+            int d = 0;
+            for (int y = 0; y < (int)r.sim.H; ++y) for (int x = 0; x < (int)r.sim.W; ++x) if (PixelAt(a, x, y) != PixelAt(b, x, y)) ++d;
+            return d;
+        };
+        CHECK(tipPixels(P(0, 1)) > 100);              // "foo": a tooltip (plus the moved pointer's nothing)
+        CHECK(tipPixels(P(0, 5)) < 20);               // "bar": no help, no tooltip
+        UI::CodeMarker m; m.line = 1; m.message = "oops";
+        r.ce.SetMarkers({m});
+        // on line 1 the error message wins: same pixels whether or not the word has help
+        r.sim.Move(r.X(P(1, 1)) + 1.0f, r.Y(P(1, 1))); r.Frame(); r.Frame();
+        const Bitmap withHelp = r.sim.Draw();
+        r.ce.SetWordInfo({});
+        r.Frame(); r.Frame();
+        const Bitmap noHelp = r.sim.Draw();
+        int d = 0;
+        for (int y = 0; y < (int)r.sim.H; ++y) for (int x = 0; x < (int)r.sim.W; ++x) if (PixelAt(withHelp, x, y) != PixelAt(noHelp, x, y)) ++d;
+        CHECK(d == 0);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1152,6 +1255,7 @@ int main() {
     WidgetTests();
     ExtraTests();
     DrawTests();
+    ProportionalAndOverwriteTests();
     PerfTests();
     TEST_MAIN_RESULT();
 }

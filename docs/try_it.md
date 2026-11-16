@@ -59,6 +59,7 @@ release job or the installer build for this change.
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
+| 12b | Our own code editor in the Script Editor (off by default) | `OKAY_CODE_EDITOR=own`, then open any script | New; tested headless only, never run in a real window or on Windows (see 12b) |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 7f | Crash reports: a detailed report, sent for you, turned into a GitHub issue | `OKAY_TEST_CRASH_LATE=Test.Step` crashes the editor on purpose; launcher Settings > Crash reports | Local half new; the server half needs the owner's one-time setup (see 7f) |
@@ -1240,6 +1241,29 @@ the screens that have an OkayUI port change (in the editor, the Console panel to
 The About popup shows `ui=okayui` when it took effect. Whether the Windows release contains OkayUI is unverified: if not,
 the line stays `ui=imgui`. Nothing was run in a real window.
 
+### 12b. Our own code editor in the Script Editor (`OKAY_CODE_EDITOR=own`)
+
+The Script Editor draws its code with the vendored ImGuiColorTextEdit. `OKAY_CODE_EDITOR=own` swaps in our own
+`OkayUI::CodeEdit` for the code area only; the rest of the editor stays Dear ImGui. `OKAY_CODE_EDITOR=imgui` (or leaving it
+unset) keeps the old one.
+
+1. Open a Command Prompt, run `set OKAY_CODE_EDITOR=own`, then start `Tools\OkayEngine.exe` from that window.
+2. Open any project from a template (for example New Project > First Person) and double-click a script in the Project panel,
+   or use **Add Component > Script** on any object and open it.
+3. What to expect: the same colours as before (keywords orange, types teal, built-ins purple, strings green, comments grey),
+   line numbers, the caret and selection; typing, Enter with auto-indent, Tab and Shift+Tab, Ctrl+Z / Ctrl+Y, Ctrl+C / X / V,
+   Ctrl+A, the Insert key (a block caret: typing overwrites), Shift+Delete (cut), Ctrl+Insert / Shift+Insert (copy / paste),
+   the mouse wheel and the scroll bars, double click for a word, a click on the line numbers for a line. Break the script
+   (type `labl` where a name is expected) and a red mark appears on that line; hover it to read the message. Hover a
+   built-in such as `print` to see its signature. Ctrl+wheel zoom also zooms the code.
+4. How to tell it is on: `okay_log.txt` (next to the editor) has the line `Script editor code widget: own (OkayUI::CodeEdit, OKAY_CODE_EDITOR=own)`
+   the first time a script is opened. Without the variable the line says `imgui (default)`.
+
+Known differences, said plainly: the autocomplete popup and other ImGui popups that overlap the code are drawn under it (the
+code is drawn last, by OkayUI); the code uses OkayUI's font (the launcher look's Roboto, one character per cell), not the
+ImGui editor's code font. **Unverified**: this path has never been run in a real window or on Windows; only headless tests ran.
+If the Windows build has no OkayUI compiled in, the log line says so and the old editor is used.
+
 ### 13. Own cryptography
 
 Not switchable, by owner decision (2026-11-14, CLAUDE.md rule 18). libsodium is the only crypto in a release, the
@@ -1269,7 +1293,7 @@ Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run 
 | Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
 | Own platform layer | `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkaySpacePlayer.exe` | any exported game | `platform=own` | unverified on Windows; editor and launcher still use SDL windows |
 | OkayUI | `OKAY_UI_BACKEND=okayui` | none needed | About popup `ui=okayui` | unverified in the Windows build |
-| CodeEdit (script editor) | `OKAY_UI_BACKEND=okayui` and `OKAY_DEV=1` | any script | none | never run in a real window |
+| CodeEdit (script editor) | `OKAY_CODE_EDITOR=own` (or the OkayUI backend) | any script | `okay_log.txt`: `Script editor code widget: own (...)` | never run in a real window |
 | okay::crypto | none, on purpose | none | the line says `crypto=libsodium` | nothing to try |
 
 The gaps (no sample for 32 of the 35 reader switches, no way to tell that the 16 newest readers or WAV are on, no run-time switch for STL

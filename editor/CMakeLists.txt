@@ -132,3 +132,14 @@ endif()
 if(OKAY_BUILD_TESTS)
     add_test(NAME editor COMMAND okay-editor --selftest)
 endif()
+
+# codeedit_bench: the script editor's two code widgets (the vendored ImGuiColorTextEdit and our own OkayUI::CodeEdit) side by side,
+# headless: per-frame CPU time, SetText time, memory, and screenshots (docs/own_ui_code_editor.md, "ImGui and ours, measured").
+# A developer tool; not shipped, not a test (it only prints numbers).
+if(OKAY_BUILD_TESTS AND TARGET okay_ui_render)
+    add_executable(codeedit_bench tools/codeedit_bench.cpp vendor/TextEditor.cpp ScriptEditorCodeEdit.cpp)
+    target_link_libraries(codeedit_bench PRIVATE okay_imgui okay_ui_render)
+    target_include_directories(codeedit_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/vendor
+        ${CMAKE_SOURCE_DIR}/okayui/tests ${CMAKE_SOURCE_DIR}/okayui/soft)
+    set_target_properties(codeedit_bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()

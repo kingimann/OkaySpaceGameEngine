@@ -435,6 +435,37 @@ bool CodeEdit::InsertText(const char* text) {
     return replaceSelection(s, kind);
 }
 
+bool CodeEdit::TypeText(const char* text) {
+    if (readOnly_ || !text) return false;
+    if (overwrite_ && !HasSelection()) {
+        // replace one character after the caret for each character typed, stopping at the end of the line
+        const std::string t = sanitize(text);
+        const std::string& line = lines_[(size_t)caret_.line];
+        int to = caret_.col;
+        for (int i = 0; i < (int)t.size() && to < (int)line.size(); i = nextIdx(t, i)) {
+            if (t[(size_t)i] == '\n') break;
+            to = nextIdx(line, to);
+        }
+        if (to > caret_.col) anchor_ = CodePos{caret_.line, to};
+    }
+    return InsertText(text);
+}
+
+std::string CodeEdit::WordAtScreen(float x, float y) const {
+    if (!(x >= view_.x && x < view_.x + view_.w && y >= view_.y && y < view_.y + view_.h)) return std::string();
+    const float rowF = std::floor((y - view_.y + scrollY_) / lineH_);
+    if (!(rowF >= 0.0f && rowF < (float)lines_.size())) return std::string();
+    const int row = (int)rowF;
+    const float colF = std::floor((x - textLeft_ + scrollX_) / charW_);
+    if (!(colF >= 0.0f && colF < 1.0e7f)) return std::string();
+    const std::string& s = lines_[(size_t)row];
+    const int b = ColumnToByte(row, colF + 0.25f);
+    if (b >= (int)s.size() || ByteToColumn(row, b) != (int)colF || charClass(s, b) != 1) return std::string();
+    CodePos a, e;
+    if (!wordAt(CodePos{row, b}, a, e)) return std::string();
+    return s.substr((size_t)a.col, (size_t)(e.col - a.col));
+}
+
 bool CodeEdit::Backspace(bool word) {
     if (readOnly_) return false;
     if (HasSelection()) return replaceSelection("", Kind_Other);
@@ -985,7 +1016,7 @@ void CodeEdit::handleKeys(bool& changed) {
     if (in.text && in.text[0] && !ctrl) {
         std::string t = sanitize(in.text);
         t.erase(std::remove_if(t.begin(), t.end(), [](char c) { return c == '\n' || c == '\t'; }), t.end());
-        if (!t.empty()) { InsertText(t.c_str()); any = true; }
+        if (!t.empty()) { TypeText(t.c_str()); any = true; }
     }
     if (comp_.active) {   // composing: the input method owns Backspace, the arrows, Enter and Escape
         if (any) lastActivity_ = GetTime();
@@ -998,7 +1029,11 @@ void CodeEdit::handleKeys(bool& changed) {
     if (in.paste) { Paste(); any = true; }
     if (in.enter) { NewLine(); any = true; }
     if (in.backspace) { Backspace(ctrl); any = true; }
-    if (in.del) { DeleteForward(ctrl); any = true; }
+    if (in.del) { if (shift && !ctrl) Cut(); else DeleteForward(ctrl); any = true; }   // Shift+Delete: cut
+    if (IsKeyPressed(KeyId_Insert)) {   // Insert: overwrite mode; Ctrl+Insert: copy; Shift+Insert: paste
+        if (ctrl && !shift) Copy(); else if (shift && !ctrl) Paste(); else if (!ctrl && !shift) overwrite_ = !overwrite_;
+        any = true;
+    }
     if (in.left) { Move(ctrl ? CodeMove_WordLeft : CodeMove_Left, shift); any = true; }
     if (in.right) { Move(ctrl ? CodeMove_WordRight : CodeMove_Right, shift); any = true; }
     if (in.up) { Move(CodeMove_Up, shift); any = true; }
@@ -1079,6 +1114,20 @@ bool CodeEdit::Draw(const char* id, float w, float h) {
     lineH_ = std::floor(GetTextLineHeight() * lineSpacing_ + 0.5f);
     if (!(lineH_ >= 1.0f)) lineH_ = 1.0f;
     charW_ = CalcTextSize("0").x;
+    {   // a proportional font: one cell is as wide as the font's wide letters, and each character is drawn centred in its cell
+        const float wi = CalcTextSize("iiii").x, wm = CalcTextSize("MMMM").x;
+        mono_ = std::fabs(wi - wm) < 0.5f;
+        if (!mono_) {
+            const float key = charW_ * 1000.0f + GetTextLineHeight();
+            if (key != glyphKey_) {
+                glyphKey_ = key;
+                char g[2] = {0, 0};
+                for (int c = 0; c < 128; ++c) { g[0] = (char)c; glyphW_[c] = (c >= 32 && c < 127) ? CalcTextSize(g).x : 0.0f; }
+            }
+            charW_ = std::max(charW_, 0.85f * glyphW_[(int)'W']);
+            charW_ = std::floor(charW_ + 0.5f);
+        }
+    }
     if (!(charW_ >= 1.0f)) charW_ = 1.0f;
     InvisibleButton(id ? id : "codeedit", w, h);
     const int wid = (int)GetItemID();
@@ -1158,6 +1207,7 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
     auto xOf = [&](int col) { return textLeft_ + (float)col * charW_ - scrollX_; };
     std::vector<CodeToken> toks;
     std::string run;
+    bool markerTip = false;
     for (int l = first; l <= last; ++l) {
         const std::string& s = lines_[(size_t)l];
         const float y = rowY(l);
@@ -1207,7 +1257,24 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         auto flush = [&] {
             if (inRun) {
                 while (!run.empty() && run.back() == ' ') run.pop_back();
-                if (!run.empty()) dl.AddText(Vec2{xOf(runStart), y + dy}, runColor, run.c_str());
+                if (!run.empty()) {
+                    if (mono_) dl.AddText(Vec2{xOf(runStart), y + dy}, runColor, run.c_str());
+                    else {   // one character per cell, centred (a proportional font would drift off the cells otherwise)
+                        char g[8];
+                        int cell = 0;
+                        for (int i = 0; i < (int)run.size(); ++cell) {
+                            const int j = nextIdx(run, i);
+                            const unsigned char c0 = (unsigned char)run[(size_t)i];
+                            if (c0 != ' ') {
+                                const int n = std::min(j - i, 7);
+                                std::memcpy(g, run.data() + i, (size_t)n); g[n] = 0;
+                                const float gw = c0 < 128 ? glyphW_[c0] : CalcTextSize(g).x;
+                                dl.AddText(Vec2{xOf(runStart + cell) + std::floor((charW_ - gw) * 0.5f), y + dy}, runColor, g);
+                            }
+                            i = j;
+                        }
+                    }
+                }
                 run.clear(); inRun = false;
             }
         };
@@ -1258,7 +1325,12 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
             }
         }
         if (hovered && !in.blocked && in.mouseY >= y && in.mouseY < y + lineH_ && in.mouseX >= item.x && in.mouseX < vend.x)
-            for (const CodeMarker& m : markers_) if (m.line == l && !m.message.empty()) { SetTooltip("%s", m.message.c_str()); break; }
+            for (const CodeMarker& m : markers_) if (m.line == l && !m.message.empty()) { SetTooltip("%s", m.message.c_str()); markerTip = true; break; }
+    }
+    // help for the word under the pointer (built-in signatures): not while dragging, and not over an error marker's message
+    if (!markerTip && !wordInfo_.empty() && hovered && !in.blocked && !in.mouseDown && !dragging_) {
+        const std::string w = WordAtScreen(in.mouseX, in.mouseY);
+        if (!w.empty()) if (const std::string* info = WordInfo(w)) SetTooltip("%s", info->c_str());
     }
     // the caret (while composing: the caret inside the preedit) and where the host should put the candidate window
     imeCaret_ = imeComp_ = Rect{};
@@ -1269,7 +1341,10 @@ void CodeEdit::drawAll(const Rect& item, bool hovered) {
         if (cp.line >= first && cp.line <= last) {
             const double t = GetTime() - lastActivity_;
             const bool vis = !Style().caretBlink || t < 0.0 || std::fmod(t, 1.0) < 0.5;
-            if (vis) dl.AddRectFilled(Vec2{cxp, cyp + 1.0f}, Vec2{cxp + 2.0f, cyp + lineH_ - 1.0f}, pal_.caret);
+            if (vis) {
+                if (overwrite_ && !comp_.active) dl.AddRectFilled(Vec2{cxp, cyp + 1.0f}, Vec2{cxp + charW_, cyp + lineH_ - 1.0f}, ColorMulAlpha(pal_.caret, 0.55f));   // a block: overwrite mode
+                else dl.AddRectFilled(Vec2{cxp, cyp + 1.0f}, Vec2{cxp + 2.0f, cyp + lineH_ - 1.0f}, pal_.caret);
+            }
         }
         const float lx = std::min(std::max(cxp, view_.x), std::max(view_.x, vend.x - 2.0f));
         const float ly = std::min(std::max(cyp, view_.y), std::max(view_.y, vend.y - lineH_));

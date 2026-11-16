@@ -722,6 +722,7 @@ int main(int argc, char** argv) {
 #include "RobotoFont.h"     // embedded Roboto Medium (Apache 2.0) — the editor UI font
 #include "JetBrainsMonoFont.h" // embedded JetBrains Mono (OFL) — the code editor font
 #include "TextEditor.h"        // ImGuiColorTextEdit — the code-editor widget (editor/vendor)
+#include "CodeEditorChoice.hpp"   // OKAY_CODE_EDITOR=own|imgui: which code widget the script editor uses
 #include "ScriptEditorWidget.hpp" // the script editor's code widget: ImGuiColorTextEdit, or OkayUI::CodeEdit when the OkayUI backend is on
 #include "GameFiber.hpp"           // the game tick on its own stack (visual-script debugger)
 #include "okay/VisualScript/VsDebug.hpp"
@@ -2182,6 +2183,13 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+// The script editor's code widget (editor/CodeEditorChoice.hpp): OKAY_CODE_EDITOR=own picks our own OkayUI::CodeEdit.
+const codeeditorchoice::Choice g_codeEditorChoice = codeeditorchoice::Parse(std::getenv("OKAY_CODE_EDITOR"));
+#ifdef OKAY_HAVE_OKAYUI
+bool UseOwnCodeEditor() { return codeeditorchoice::UseOwn(g_codeEditorChoice, UseOkayUIBackend()); }
+#else
+bool UseOwnCodeEditor() { return false; }
+#endif
 
 #ifdef OKAY_HAVE_OKAYUI
 okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
@@ -15086,6 +15094,15 @@ static std::unordered_map<okay::ScriptComponent*, std::unique_ptr<ScriptEditorWi
 static ScriptEditorWidget& CodeEditorFor(okay::ScriptComponent* sc) {
     auto it = g_codeEditors.find(sc);
     if (it == g_codeEditors.end()) {
+        static bool logged = false;   // say once which code widget is in use (OKAY_CODE_EDITOR, docs/try_it.md)
+        if (!logged) {
+            logged = true;
+#ifdef OKAY_HAVE_OKAYUI
+            okay::Log::Info("Script editor code widget: ", codeeditorchoice::Describe(g_codeEditorChoice, UseOkayUIBackend()));
+#else
+            okay::Log::Info("Script editor code widget: ", codeeditorchoice::Describe(g_codeEditorChoice, false, false));
+#endif
+        }
         auto te = std::make_unique<ScriptEditorWidget>();
         te->SetLanguageDefinition(OkayScriptLangDef());
         te->SetPalette(OkayScriptPalette());
@@ -16838,6 +16855,7 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::SetKeyOwner(ImGuiKey_Tab, codeKeys);
         }
         if (g_codeFont) ImGui::PushFont(g_codeFont, kCodeFontDispPx * s_zoom);
+        te.SetZoom(s_zoom);
         te.Render("##code", ImVec2(showMap ? -(mmW + 6.0f) : 0.0f, av.y), true);
         if (g_codeFont) ImGui::PopFont();
         te.SetHandleKeyboardInputs(true);
@@ -50418,11 +50436,11 @@ int main(int argc, char** argv) {
                 // takes the full set of keys (the legacy path above only carries text and Backspace, for game ui_inputtext).
                 g_okayRegion.NextFrame();
                 const bool left = uin.mouseDown;
-                const bool owns = UseOkayUIBackend() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
+                const bool owns = HostsOkayUI() && g_okayRegion.Owns(uin.mouseX, uin.mouseY);
                 const bool blocked = io.WantCaptureMouse && !owns;
-                const bool keys = UseOkayUIBackend() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
+                const bool keys = HostsOkayUI() && OkayUI::WantsTextInput() && ImGui::GetActiveID() == 0;
                 const OkayUI::Input h = g_okayInput.Build(uin.mouseX, uin.mouseY, left, (mb & SDL_BUTTON(SDL_BUTTON_RIGHT)) != 0, blocked, keys);
-                if (UseOkayUIBackend()) {
+                if (HostsOkayUI()) {
                     uin.blocked = blocked; uin.mouseDown = h.mouseDown; uin.rightDown = h.rightDown; uin.wheel = h.wheel;   // (mouseDown also counts a click that came and went within one frame)
                     if (keys) uin = h;
                 }
@@ -51384,7 +51402,7 @@ int main(int argc, char** argv) {
 
         okay::filedialog::DrawBuiltin();   // the built-in file browser, when no system dialog is available
 #ifdef OKAY_HAVE_OKAYUI
-        if (UseOkayUIBackend() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
+        if (HostsOkayUI() && OkayUI::WantsTextInput()) {   // a hosted OkayUI field has the keyboard: ImGui and the shortcuts must stay out
             GImGui->PlatformImeData.WantTextInput = true;
             ImGui::SetNextFrameWantCaptureKeyboard(true);
             SDL_StartTextInput();

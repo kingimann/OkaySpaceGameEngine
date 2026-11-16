@@ -2,7 +2,7 @@
 
 Own code. Part of the "replace every third-party library" work (`docs/own_code_roadmap.md`, rows ImGuiColorTextEdit and Dear ImGui; toolkit background in `docs/own_ui_toolkit.md`, section 4.29).
 
-**Status: built and tested headless; wired into the script editor behind the developer-only OkayUI backend (step 27 below), never run in a real window.** OkayUI is off by default and the editor still draws its script editor with the vendored `editor/vendor/TextEditor.*` on Dear ImGui unless that developer switch is on. (This line used to say "Nothing was wired in"; step 27 below wired it through `ScriptEditorWidget`.) What blocks deleting the vendored widget: `docs/own_flip_proposal.md` section 4.
+**Status: built and tested headless; the script editor uses it when `OKAY_CODE_EDITOR=own` is set (step 28 below) or the developer-only OkayUI backend is on (step 27); never run in a real window.** The default stays the vendored ImGuiColorTextEdit. OkayUI is off by default and the editor still draws its script editor with the vendored `editor/vendor/TextEditor.*` on Dear ImGui unless that developer switch is on. (This line used to say "Nothing was wired in"; step 27 below wired it through `ScriptEditorWidget`.) What blocks deleting the vendored widget: `docs/own_flip_proposal.md` section 4.
 
 ## Where it is
 
@@ -139,3 +139,47 @@ Not done, said plainly:
 - The editor's own colours (`OkayScriptPalette`) and the code font (`g_codeFont`, zoom) are the ImGui editor's; the OkayUI editor uses `DefaultCodePalette()` and OkayUI's font at the editor's UI scale. `SetShowWhitespaces`, `SetLeftMargin` and the language regexes only apply to the ImGui editor.
 - Error markers cover the whole line's text (the script editor gives a line, not a column range).
 
+
+## Step 28: ready for an opt-in (`OKAY_CODE_EDITOR=own`)
+
+### The switch
+
+`editor/CodeEditorChoice.hpp` (pure, tested in `test_okayui_script_adapter`) reads `OKAY_CODE_EDITOR`:
+
+| Value | Code widget |
+|---|---|
+| unset (the default) | the ImGui editor, unless the developer-only OkayUI backend is on (then ours, as in step 27) |
+| `own` (also `okayui`, `okay`, `1`) | ours, even with the rest of the editor on Dear ImGui |
+| `imgui` (also `0`, `vendored`) | the ImGui editor, even with the OkayUI backend on |
+
+`main.cpp` defines `oked::UseOwnCodeEditor()`; `ScriptEditorWidget` asks it instead of `UseOkayUIBackend()`. The host's mouse and key
+routing to hosted OkayUI regions (`HostsOkayUI()` in `MainShared.hpp`) is now on when either the OkayUI backend or our code editor is on,
+so the code area gets the wheel, clicks and the full key set while it has the keyboard. The first script opened logs
+`Script editor code widget: ...` (which one, and why). A build without OkayUI always uses the ImGui editor.
+
+### HAVE and GAP, checked again against every call `editor/main.cpp` makes (before this step and after)
+
+From `grep -oE "te(->|\.)[A-Za-z]+\(" editor/main.cpp` (40 different calls) plus what ImGuiColorTextEdit does by itself (its key list,
+its hover tooltips). Everything in the table further up was HAVE already; these were the gaps found now.
+
+| Feature the script editor gets from ImGuiColorTextEdit | Before | After | How |
+|---|---|---|---|
+| The script editor's own palette (`SetPalette(OkayScriptPalette())`) | GAP: ours used its built-in copy, so a palette change would not follow | HAVE | `ScriptEditorWidget::SetPalette` maps all 24 `TextEditor::PaletteIndex` colours (`ScriptEditorCodeEdit::SetPalette`) |
+| The script editor's words (`SetLanguageDefinition(OkayScriptLangDef())`): its keyword list, type names, and every VM built-in as a known word | GAP: ours used `OkayScriptLanguage()`; the built-ins (`print`, `spawn`, ...) were not coloured | HAVE | `SetLanguageWords` from the definition's `mKeywords`, `mTypeNames`, `mIdentifiers`; kept when colouring is turned off and on |
+| Hover tooltip with a built-in's signature and doc (the library shows `mDeclaration`) | GAP ("the caller's", and the caller did not do it) | HAVE | `CodeEdit::SetWordInfo`, `WordAtScreen`; an error message on the line wins |
+| Insert key: overwrite mode with a block caret | GAP | HAVE | `CodeEdit::SetOverwrite`, `TypeText`; never overwrites past the end of the line; one undo step |
+| Ctrl+Insert copy, Shift+Insert paste, Shift+Delete cut | GAP | HAVE | `handleKeys` |
+| `SetReadOnly` (added to the widget on the `script-buffer-no-cut` branch) | adapter only | HAVE | `ScriptEditorWidget::SetReadOnly` forwards to both |
+| Zoom (Ctrl+wheel, View > Zoom) | GAP: ours stayed at the UI scale | HAVE | `ScriptEditorWidget::SetZoom(s_zoom)`, drawn with `PushTextScale(uiScale * zoom)` |
+| The launcher look's proportional font (Roboto): caret and selection drifted off the text | GAP | HAVE | each character drawn on its own, centred in a cell as wide as the font's wide letters (`MonospaceFont()` false); the 8x8 font still draws in runs |
+| Opt-in switch for people, not just developers | GAP (only the developer-only backend) | HAVE | `OKAY_CODE_EDITOR=own` |
+| Show whitespace, left margin, the language's regexes | n/a | n/a | the script editor turns whitespace off; the margin is the gutter; ours has its own tokenizer |
+| ImGui popups (autocomplete, hover help) drawn over the code | GAP | GAP | OkayUI draws after ImGui, so an ImGui popup over the code area is hidden under it. Needs the code drawn into ImGui's draw list or the popups moved to OkayUI; and a real window to check |
+| The ImGui editor's code font (`g_codeFont`) | GAP | GAP | ours uses OkayUI's font (needs a code-font choice in OkayUI) |
+
+Tests added: `test_okayui_codeedit` (proportional font: every glyph quad of `iiiiWWWW` and `mlmlmlml` lies in its cell; the 8x8 font is still
+monospaced; the overwrite block caret's pixels; `TypeText` in read-only; `WordAtScreen` on words, blanks, outside, NaN; the hover tooltip shows
+for a word with help, not for one without, and the error message wins) and `test_okayui_script_adapter` (the switch's parsing and decision;
+the palette mapping of all colours, alpha halving, short arrays ignored; the language words colour keywords, types and built-ins and survive
+colouring off and on; the tooltip in a drawn frame; overwrite through the API and through the Insert key; Ctrl+Insert, Shift+Insert,
+Shift+Delete).

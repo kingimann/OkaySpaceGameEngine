@@ -1,8 +1,9 @@
 #pragma once
 // ScriptEditorWidget: the script editor's code widget. It owns BOTH an ImGuiColorTextEdit (the default, the one people use)
 // and an OkayUI::CodeEdit behind the adapter (editor/ScriptEditorCodeEdit.hpp), and forwards every call the script editor
-// makes to the one that is active. The active one follows the UI backend: OkayUI only when the developer-only switch picked it
-// (oked::UseOkayUIBackend(), see docs/own_ui_toolkit.md section 5); otherwise this is the ImGui editor, exactly as before.
+// makes to the one that is active. The active one is OkayUI when oked::UseOwnCodeEditor() says so: OKAY_CODE_EDITOR=own, or
+// (unset) the developer-only OkayUI backend (docs/own_ui_toolkit.md section 5); otherwise this is the ImGui editor, exactly as
+// before. See editor/CodeEditorChoice.hpp.
 // When the backend changes while a script is open, the text, caret and selection move to the newly active editor.
 //
 // It speaks TextEditor's vocabulary (TextEditor::Coordinates, 1-based error markers and breakpoints, GetText ending in a
@@ -13,7 +14,9 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -33,8 +36,26 @@ public:
     scripteditor::ScriptEditorCodeEdit& okay() { return okay_; }
 
     // ---- one-time configuration (the ImGui editor's look; the OkayUI editor has its own palette) ----
-    void SetLanguageDefinition(const TextEditor::LanguageDefinition& d) { imgui_.SetLanguageDefinition(d); }
-    void SetPalette(const TextEditor::Palette& p) { imgui_.SetPalette(p); }
+    void SetLanguageDefinition(const TextEditor::LanguageDefinition& d) {
+        imgui_.SetLanguageDefinition(d);
+        // the same words for our own editor: keywords, type names, built-ins (with their hover help)
+        std::unordered_set<std::string> kw(d.mKeywords.begin(), d.mKeywords.end()), types(d.mTypeNames.begin(), d.mTypeNames.end()), known;
+        std::unordered_map<std::string, std::string> info;
+        for (const auto& id : d.mIdentifiers) {
+            if (!types.count(id.first)) known.insert(id.first);
+            if (!id.second.mDeclaration.empty()) info[id.first] = id.second.mDeclaration;
+        }
+        okay_.SetLanguageWords(kw, types, known, std::move(info));
+    }
+    void SetPalette(const TextEditor::Palette& p) {
+        imgui_.SetPalette(p);
+        std::uint32_t c[(int)TextEditor::PaletteIndex::Max];
+        for (int i = 0; i < (int)TextEditor::PaletteIndex::Max; ++i) c[i] = (std::uint32_t)p[(size_t)i];
+        okay_.SetPalette(c, (int)TextEditor::PaletteIndex::Max);
+    }
+    void SetReadOnly(bool on) { imgui_.SetReadOnly(on); okay_.SetReadOnly(on); }
+    /// The script editor's zoom (Ctrl+wheel); the ImGui editor gets it through the pushed code font, ours through the text scale.
+    void SetZoom(float z) { zoom_ = (z > 0.25f && z < 8.0f) ? z : 1.0f; }
     void SetShowWhitespaces(bool b) { imgui_.SetShowWhitespaces(b); }
     void SetTabSize(int n) { imgui_.SetTabSize(n); okay_.SetTabSize(n); }
     void SetLineSpacing(float s) { imgui_.SetLineSpacing(s); okay_.SetLineSpacing(s); }
@@ -95,7 +116,7 @@ public:
         ImGui::InvisibleButton(id, a);                          // the rectangle: an ImGui item, so ImGui does not scroll under it
         ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
         oked::OkayUIRegion().Offer(p.x, p.y, a.x, a.y, ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem));
-        OkayUI::PushTextScale(oked::g_uiScale);
+        OkayUI::PushTextScale(oked::g_uiScale * zoom_);
         OkayUI::BareNextWindow();
         if (OkayUI::Begin(id, p.x, p.y, a.x, a.y)) okay_.Edit().Draw("##codeedit", a.x, a.y);
         OkayUI::End();
@@ -107,7 +128,7 @@ public:
 private:
     bool Okay() {
 #ifdef OKAY_HAVE_OKAYUI
-        const bool want = oked::UseOkayUIBackend();
+        const bool want = oked::UseOwnCodeEditor();
 #else
         const bool want = false;
 #endif
@@ -140,4 +161,5 @@ private:
     scripteditor::ScriptEditorCodeEdit okay_;
     bool lastOkay_ = false;
     bool okayFocused_ = false;
+    float zoom_ = 1.0f;
 };

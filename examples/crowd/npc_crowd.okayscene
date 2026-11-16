@@ -1,0 +1,7066 @@
+okayscene 3
+name "NPC crowd stress"
+gravity 0 0
+gravity3 0 0 0
+gameobject 0 "Main Camera"
+  active 1
+  parent -1
+  transform 0 28 -30 0 0.38268343 0 0.92387953 1 1 1
+  camera 1 5 60 0.12 0.14 0.18 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Floor"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 60 1 60
+  mesh "Cube" 0.2 0.22 0.26 1 0 "" 0
+end
+gameobject 2 "Rock0"
+  active 1
+  parent -1
+  transform -28.00 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 3 "Rock1"
+  active 1
+  parent -1
+  transform -26.86 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 4 "Rock2"
+  active 1
+  parent -1
+  transform -25.71 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 5 "Rock3"
+  active 1
+  parent -1
+  transform -24.57 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 6 "Rock4"
+  active 1
+  parent -1
+  transform -23.43 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 7 "Rock5"
+  active 1
+  parent -1
+  transform -22.29 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 8 "Rock6"
+  active 1
+  parent -1
+  transform -21.14 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 9 "Rock7"
+  active 1
+  parent -1
+  transform -20.00 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 10 "Rock8"
+  active 1
+  parent -1
+  transform -18.86 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 11 "Rock9"
+  active 1
+  parent -1
+  transform -17.71 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 12 "Rock10"
+  active 1
+  parent -1
+  transform -16.57 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 13 "Rock11"
+  active 1
+  parent -1
+  transform -15.43 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 14 "Rock12"
+  active 1
+  parent -1
+  transform -14.29 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 15 "Rock13"
+  active 1
+  parent -1
+  transform -13.14 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 16 "Rock14"
+  active 1
+  parent -1
+  transform -12.00 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 17 "Rock15"
+  active 1
+  parent -1
+  transform -10.86 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 18 "Rock16"
+  active 1
+  parent -1
+  transform -9.71 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 19 "Rock17"
+  active 1
+  parent -1
+  transform -8.57 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 20 "Rock18"
+  active 1
+  parent -1
+  transform -7.43 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 21 "Rock19"
+  active 1
+  parent -1
+  transform -6.29 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 22 "Rock20"
+  active 1
+  parent -1
+  transform -5.14 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 23 "Rock21"
+  active 1
+  parent -1
+  transform -4.00 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 24 "Rock22"
+  active 1
+  parent -1
+  transform -2.86 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 25 "Rock23"
+  active 1
+  parent -1
+  transform -1.71 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 26 "Rock24"
+  active 1
+  parent -1
+  transform -0.57 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 27 "Rock25"
+  active 1
+  parent -1
+  transform 0.57 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 28 "Rock26"
+  active 1
+  parent -1
+  transform 1.71 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 29 "Rock27"
+  active 1
+  parent -1
+  transform 2.86 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 30 "Rock28"
+  active 1
+  parent -1
+  transform 4.00 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 31 "Rock29"
+  active 1
+  parent -1
+  transform 5.14 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 32 "Rock30"
+  active 1
+  parent -1
+  transform 6.29 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 33 "Rock31"
+  active 1
+  parent -1
+  transform 7.43 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 34 "Rock32"
+  active 1
+  parent -1
+  transform 8.57 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 35 "Rock33"
+  active 1
+  parent -1
+  transform 9.71 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 36 "Rock34"
+  active 1
+  parent -1
+  transform 10.86 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 37 "Rock35"
+  active 1
+  parent -1
+  transform 12.00 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 38 "Rock36"
+  active 1
+  parent -1
+  transform 13.14 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 39 "Rock37"
+  active 1
+  parent -1
+  transform 14.29 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 40 "Rock38"
+  active 1
+  parent -1
+  transform 15.43 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 41 "Rock39"
+  active 1
+  parent -1
+  transform 16.57 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 42 "Rock40"
+  active 1
+  parent -1
+  transform 17.71 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 43 "Rock41"
+  active 1
+  parent -1
+  transform 18.86 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 44 "Rock42"
+  active 1
+  parent -1
+  transform 20.00 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 45 "Rock43"
+  active 1
+  parent -1
+  transform 21.14 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 46 "Rock44"
+  active 1
+  parent -1
+  transform 22.29 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 47 "Rock45"
+  active 1
+  parent -1
+  transform 23.43 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 48 "Rock46"
+  active 1
+  parent -1
+  transform 24.57 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 49 "Rock47"
+  active 1
+  parent -1
+  transform 25.71 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 50 "Rock48"
+  active 1
+  parent -1
+  transform 26.86 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 51 "Rock49"
+  active 1
+  parent -1
+  transform 28.00 0.1 22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 52 "Rock50"
+  active 1
+  parent -1
+  transform -28.00 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 53 "Rock51"
+  active 1
+  parent -1
+  transform -26.86 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 54 "Rock52"
+  active 1
+  parent -1
+  transform -25.71 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 55 "Rock53"
+  active 1
+  parent -1
+  transform -24.57 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 56 "Rock54"
+  active 1
+  parent -1
+  transform -23.43 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 57 "Rock55"
+  active 1
+  parent -1
+  transform -22.29 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 58 "Rock56"
+  active 1
+  parent -1
+  transform -21.14 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 59 "Rock57"
+  active 1
+  parent -1
+  transform -20.00 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 60 "Rock58"
+  active 1
+  parent -1
+  transform -18.86 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 61 "Rock59"
+  active 1
+  parent -1
+  transform -17.71 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 62 "Rock60"
+  active 1
+  parent -1
+  transform -16.57 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 63 "Rock61"
+  active 1
+  parent -1
+  transform -15.43 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 64 "Rock62"
+  active 1
+  parent -1
+  transform -14.29 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 65 "Rock63"
+  active 1
+  parent -1
+  transform -13.14 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 66 "Rock64"
+  active 1
+  parent -1
+  transform -12.00 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 67 "Rock65"
+  active 1
+  parent -1
+  transform -10.86 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 68 "Rock66"
+  active 1
+  parent -1
+  transform -9.71 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 69 "Rock67"
+  active 1
+  parent -1
+  transform -8.57 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 70 "Rock68"
+  active 1
+  parent -1
+  transform -7.43 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 71 "Rock69"
+  active 1
+  parent -1
+  transform -6.29 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 72 "Rock70"
+  active 1
+  parent -1
+  transform -5.14 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 73 "Rock71"
+  active 1
+  parent -1
+  transform -4.00 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 74 "Rock72"
+  active 1
+  parent -1
+  transform -2.86 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 75 "Rock73"
+  active 1
+  parent -1
+  transform -1.71 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 76 "Rock74"
+  active 1
+  parent -1
+  transform -0.57 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 77 "Rock75"
+  active 1
+  parent -1
+  transform 0.57 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 78 "Rock76"
+  active 1
+  parent -1
+  transform 1.71 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 79 "Rock77"
+  active 1
+  parent -1
+  transform 2.86 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 80 "Rock78"
+  active 1
+  parent -1
+  transform 4.00 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 81 "Rock79"
+  active 1
+  parent -1
+  transform 5.14 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 82 "Rock80"
+  active 1
+  parent -1
+  transform 6.29 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 83 "Rock81"
+  active 1
+  parent -1
+  transform 7.43 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 84 "Rock82"
+  active 1
+  parent -1
+  transform 8.57 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 85 "Rock83"
+  active 1
+  parent -1
+  transform 9.71 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 86 "Rock84"
+  active 1
+  parent -1
+  transform 10.86 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 87 "Rock85"
+  active 1
+  parent -1
+  transform 12.00 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 88 "Rock86"
+  active 1
+  parent -1
+  transform 13.14 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 89 "Rock87"
+  active 1
+  parent -1
+  transform 14.29 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 90 "Rock88"
+  active 1
+  parent -1
+  transform 15.43 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 91 "Rock89"
+  active 1
+  parent -1
+  transform 16.57 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 92 "Rock90"
+  active 1
+  parent -1
+  transform 17.71 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 93 "Rock91"
+  active 1
+  parent -1
+  transform 18.86 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 94 "Rock92"
+  active 1
+  parent -1
+  transform 20.00 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 95 "Rock93"
+  active 1
+  parent -1
+  transform 21.14 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 96 "Rock94"
+  active 1
+  parent -1
+  transform 22.29 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 97 "Rock95"
+  active 1
+  parent -1
+  transform 23.43 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 98 "Rock96"
+  active 1
+  parent -1
+  transform 24.57 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 99 "Rock97"
+  active 1
+  parent -1
+  transform 25.71 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 100 "Rock98"
+  active 1
+  parent -1
+  transform 26.86 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 101 "Rock99"
+  active 1
+  parent -1
+  transform 28.00 0.1 22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 102 "Rock100"
+  active 1
+  parent -1
+  transform -28.00 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 103 "Rock101"
+  active 1
+  parent -1
+  transform -26.86 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 104 "Rock102"
+  active 1
+  parent -1
+  transform -25.71 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 105 "Rock103"
+  active 1
+  parent -1
+  transform -24.57 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 106 "Rock104"
+  active 1
+  parent -1
+  transform -23.43 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 107 "Rock105"
+  active 1
+  parent -1
+  transform -22.29 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 108 "Rock106"
+  active 1
+  parent -1
+  transform -21.14 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 109 "Rock107"
+  active 1
+  parent -1
+  transform -20.00 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 110 "Rock108"
+  active 1
+  parent -1
+  transform -18.86 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 111 "Rock109"
+  active 1
+  parent -1
+  transform -17.71 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 112 "Rock110"
+  active 1
+  parent -1
+  transform -16.57 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 113 "Rock111"
+  active 1
+  parent -1
+  transform -15.43 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 114 "Rock112"
+  active 1
+  parent -1
+  transform -14.29 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 115 "Rock113"
+  active 1
+  parent -1
+  transform -13.14 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 116 "Rock114"
+  active 1
+  parent -1
+  transform -12.00 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 117 "Rock115"
+  active 1
+  parent -1
+  transform -10.86 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 118 "Rock116"
+  active 1
+  parent -1
+  transform -9.71 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 119 "Rock117"
+  active 1
+  parent -1
+  transform -8.57 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 120 "Rock118"
+  active 1
+  parent -1
+  transform -7.43 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 121 "Rock119"
+  active 1
+  parent -1
+  transform -6.29 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 122 "Rock120"
+  active 1
+  parent -1
+  transform -5.14 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 123 "Rock121"
+  active 1
+  parent -1
+  transform -4.00 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 124 "Rock122"
+  active 1
+  parent -1
+  transform -2.86 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 125 "Rock123"
+  active 1
+  parent -1
+  transform -1.71 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 126 "Rock124"
+  active 1
+  parent -1
+  transform -0.57 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 127 "Rock125"
+  active 1
+  parent -1
+  transform 0.57 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 128 "Rock126"
+  active 1
+  parent -1
+  transform 1.71 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 129 "Rock127"
+  active 1
+  parent -1
+  transform 2.86 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 130 "Rock128"
+  active 1
+  parent -1
+  transform 4.00 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 131 "Rock129"
+  active 1
+  parent -1
+  transform 5.14 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 132 "Rock130"
+  active 1
+  parent -1
+  transform 6.29 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 133 "Rock131"
+  active 1
+  parent -1
+  transform 7.43 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 134 "Rock132"
+  active 1
+  parent -1
+  transform 8.57 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 135 "Rock133"
+  active 1
+  parent -1
+  transform 9.71 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 136 "Rock134"
+  active 1
+  parent -1
+  transform 10.86 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 137 "Rock135"
+  active 1
+  parent -1
+  transform 12.00 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 138 "Rock136"
+  active 1
+  parent -1
+  transform 13.14 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 139 "Rock137"
+  active 1
+  parent -1
+  transform 14.29 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 140 "Rock138"
+  active 1
+  parent -1
+  transform 15.43 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 141 "Rock139"
+  active 1
+  parent -1
+  transform 16.57 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 142 "Rock140"
+  active 1
+  parent -1
+  transform 17.71 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 143 "Rock141"
+  active 1
+  parent -1
+  transform 18.86 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 144 "Rock142"
+  active 1
+  parent -1
+  transform 20.00 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 145 "Rock143"
+  active 1
+  parent -1
+  transform 21.14 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 146 "Rock144"
+  active 1
+  parent -1
+  transform 22.29 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 147 "Rock145"
+  active 1
+  parent -1
+  transform 23.43 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 148 "Rock146"
+  active 1
+  parent -1
+  transform 24.57 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 149 "Rock147"
+  active 1
+  parent -1
+  transform 25.71 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 150 "Rock148"
+  active 1
+  parent -1
+  transform 26.86 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 151 "Rock149"
+  active 1
+  parent -1
+  transform 28.00 0.1 22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 152 "Rock150"
+  active 1
+  parent -1
+  transform -28.00 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 153 "Rock151"
+  active 1
+  parent -1
+  transform -26.86 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 154 "Rock152"
+  active 1
+  parent -1
+  transform -25.71 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 155 "Rock153"
+  active 1
+  parent -1
+  transform -24.57 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 156 "Rock154"
+  active 1
+  parent -1
+  transform -23.43 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 157 "Rock155"
+  active 1
+  parent -1
+  transform -22.29 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 158 "Rock156"
+  active 1
+  parent -1
+  transform -21.14 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 159 "Rock157"
+  active 1
+  parent -1
+  transform -20.00 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 160 "Rock158"
+  active 1
+  parent -1
+  transform -18.86 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 161 "Rock159"
+  active 1
+  parent -1
+  transform -17.71 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 162 "Rock160"
+  active 1
+  parent -1
+  transform -16.57 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 163 "Rock161"
+  active 1
+  parent -1
+  transform -15.43 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 164 "Rock162"
+  active 1
+  parent -1
+  transform -14.29 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 165 "Rock163"
+  active 1
+  parent -1
+  transform -13.14 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 166 "Rock164"
+  active 1
+  parent -1
+  transform -12.00 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 167 "Rock165"
+  active 1
+  parent -1
+  transform -10.86 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 168 "Rock166"
+  active 1
+  parent -1
+  transform -9.71 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 169 "Rock167"
+  active 1
+  parent -1
+  transform -8.57 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 170 "Rock168"
+  active 1
+  parent -1
+  transform -7.43 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 171 "Rock169"
+  active 1
+  parent -1
+  transform -6.29 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 172 "Rock170"
+  active 1
+  parent -1
+  transform -5.14 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 173 "Rock171"
+  active 1
+  parent -1
+  transform -4.00 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 174 "Rock172"
+  active 1
+  parent -1
+  transform -2.86 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 175 "Rock173"
+  active 1
+  parent -1
+  transform -1.71 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 176 "Rock174"
+  active 1
+  parent -1
+  transform -0.57 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 177 "Rock175"
+  active 1
+  parent -1
+  transform 0.57 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 178 "Rock176"
+  active 1
+  parent -1
+  transform 1.71 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 179 "Rock177"
+  active 1
+  parent -1
+  transform 2.86 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 180 "Rock178"
+  active 1
+  parent -1
+  transform 4.00 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 181 "Rock179"
+  active 1
+  parent -1
+  transform 5.14 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 182 "Rock180"
+  active 1
+  parent -1
+  transform 6.29 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 183 "Rock181"
+  active 1
+  parent -1
+  transform 7.43 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 184 "Rock182"
+  active 1
+  parent -1
+  transform 8.57 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 185 "Rock183"
+  active 1
+  parent -1
+  transform 9.71 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 186 "Rock184"
+  active 1
+  parent -1
+  transform 10.86 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 187 "Rock185"
+  active 1
+  parent -1
+  transform 12.00 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 188 "Rock186"
+  active 1
+  parent -1
+  transform 13.14 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 189 "Rock187"
+  active 1
+  parent -1
+  transform 14.29 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 190 "Rock188"
+  active 1
+  parent -1
+  transform 15.43 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 191 "Rock189"
+  active 1
+  parent -1
+  transform 16.57 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 192 "Rock190"
+  active 1
+  parent -1
+  transform 17.71 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 193 "Rock191"
+  active 1
+  parent -1
+  transform 18.86 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 194 "Rock192"
+  active 1
+  parent -1
+  transform 20.00 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 195 "Rock193"
+  active 1
+  parent -1
+  transform 21.14 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 196 "Rock194"
+  active 1
+  parent -1
+  transform 22.29 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 197 "Rock195"
+  active 1
+  parent -1
+  transform 23.43 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 198 "Rock196"
+  active 1
+  parent -1
+  transform 24.57 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 199 "Rock197"
+  active 1
+  parent -1
+  transform 25.71 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 200 "Rock198"
+  active 1
+  parent -1
+  transform 26.86 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 201 "Rock199"
+  active 1
+  parent -1
+  transform 28.00 0.1 22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 202 "Rock200"
+  active 1
+  parent -1
+  transform -28.00 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 203 "Rock201"
+  active 1
+  parent -1
+  transform -26.86 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 204 "Rock202"
+  active 1
+  parent -1
+  transform -25.71 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 205 "Rock203"
+  active 1
+  parent -1
+  transform -24.57 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 206 "Rock204"
+  active 1
+  parent -1
+  transform -23.43 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 207 "Rock205"
+  active 1
+  parent -1
+  transform -22.29 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 208 "Rock206"
+  active 1
+  parent -1
+  transform -21.14 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 209 "Rock207"
+  active 1
+  parent -1
+  transform -20.00 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 210 "Rock208"
+  active 1
+  parent -1
+  transform -18.86 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 211 "Rock209"
+  active 1
+  parent -1
+  transform -17.71 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 212 "Rock210"
+  active 1
+  parent -1
+  transform -16.57 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 213 "Rock211"
+  active 1
+  parent -1
+  transform -15.43 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 214 "Rock212"
+  active 1
+  parent -1
+  transform -14.29 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 215 "Rock213"
+  active 1
+  parent -1
+  transform -13.14 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 216 "Rock214"
+  active 1
+  parent -1
+  transform -12.00 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 217 "Rock215"
+  active 1
+  parent -1
+  transform -10.86 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 218 "Rock216"
+  active 1
+  parent -1
+  transform -9.71 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 219 "Rock217"
+  active 1
+  parent -1
+  transform -8.57 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 220 "Rock218"
+  active 1
+  parent -1
+  transform -7.43 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 221 "Rock219"
+  active 1
+  parent -1
+  transform -6.29 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 222 "Rock220"
+  active 1
+  parent -1
+  transform -5.14 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 223 "Rock221"
+  active 1
+  parent -1
+  transform -4.00 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 224 "Rock222"
+  active 1
+  parent -1
+  transform -2.86 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 225 "Rock223"
+  active 1
+  parent -1
+  transform -1.71 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 226 "Rock224"
+  active 1
+  parent -1
+  transform -0.57 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 227 "Rock225"
+  active 1
+  parent -1
+  transform 0.57 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 228 "Rock226"
+  active 1
+  parent -1
+  transform 1.71 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 229 "Rock227"
+  active 1
+  parent -1
+  transform 2.86 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 230 "Rock228"
+  active 1
+  parent -1
+  transform 4.00 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 231 "Rock229"
+  active 1
+  parent -1
+  transform 5.14 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 232 "Rock230"
+  active 1
+  parent -1
+  transform 6.29 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 233 "Rock231"
+  active 1
+  parent -1
+  transform 7.43 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 234 "Rock232"
+  active 1
+  parent -1
+  transform 8.57 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 235 "Rock233"
+  active 1
+  parent -1
+  transform 9.71 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 236 "Rock234"
+  active 1
+  parent -1
+  transform 10.86 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 237 "Rock235"
+  active 1
+  parent -1
+  transform 12.00 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 238 "Rock236"
+  active 1
+  parent -1
+  transform 13.14 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 239 "Rock237"
+  active 1
+  parent -1
+  transform 14.29 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 240 "Rock238"
+  active 1
+  parent -1
+  transform 15.43 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 241 "Rock239"
+  active 1
+  parent -1
+  transform 16.57 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 242 "Rock240"
+  active 1
+  parent -1
+  transform 17.71 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 243 "Rock241"
+  active 1
+  parent -1
+  transform 18.86 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 244 "Rock242"
+  active 1
+  parent -1
+  transform 20.00 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 245 "Rock243"
+  active 1
+  parent -1
+  transform 21.14 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 246 "Rock244"
+  active 1
+  parent -1
+  transform 22.29 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 247 "Rock245"
+  active 1
+  parent -1
+  transform 23.43 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 248 "Rock246"
+  active 1
+  parent -1
+  transform 24.57 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 249 "Rock247"
+  active 1
+  parent -1
+  transform 25.71 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 250 "Rock248"
+  active 1
+  parent -1
+  transform 26.86 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 251 "Rock249"
+  active 1
+  parent -1
+  transform 28.00 0.1 23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 252 "Rock250"
+  active 1
+  parent -1
+  transform -28.00 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 253 "Rock251"
+  active 1
+  parent -1
+  transform -26.86 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 254 "Rock252"
+  active 1
+  parent -1
+  transform -25.71 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 255 "Rock253"
+  active 1
+  parent -1
+  transform -24.57 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 256 "Rock254"
+  active 1
+  parent -1
+  transform -23.43 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 257 "Rock255"
+  active 1
+  parent -1
+  transform -22.29 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 258 "Rock256"
+  active 1
+  parent -1
+  transform -21.14 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 259 "Rock257"
+  active 1
+  parent -1
+  transform -20.00 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 260 "Rock258"
+  active 1
+  parent -1
+  transform -18.86 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 261 "Rock259"
+  active 1
+  parent -1
+  transform -17.71 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 262 "Rock260"
+  active 1
+  parent -1
+  transform -16.57 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 263 "Rock261"
+  active 1
+  parent -1
+  transform -15.43 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 264 "Rock262"
+  active 1
+  parent -1
+  transform -14.29 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 265 "Rock263"
+  active 1
+  parent -1
+  transform -13.14 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 266 "Rock264"
+  active 1
+  parent -1
+  transform -12.00 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 267 "Rock265"
+  active 1
+  parent -1
+  transform -10.86 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 268 "Rock266"
+  active 1
+  parent -1
+  transform -9.71 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 269 "Rock267"
+  active 1
+  parent -1
+  transform -8.57 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 270 "Rock268"
+  active 1
+  parent -1
+  transform -7.43 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 271 "Rock269"
+  active 1
+  parent -1
+  transform -6.29 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 272 "Rock270"
+  active 1
+  parent -1
+  transform -5.14 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 273 "Rock271"
+  active 1
+  parent -1
+  transform -4.00 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 274 "Rock272"
+  active 1
+  parent -1
+  transform -2.86 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 275 "Rock273"
+  active 1
+  parent -1
+  transform -1.71 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 276 "Rock274"
+  active 1
+  parent -1
+  transform -0.57 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 277 "Rock275"
+  active 1
+  parent -1
+  transform 0.57 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 278 "Rock276"
+  active 1
+  parent -1
+  transform 1.71 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 279 "Rock277"
+  active 1
+  parent -1
+  transform 2.86 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 280 "Rock278"
+  active 1
+  parent -1
+  transform 4.00 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 281 "Rock279"
+  active 1
+  parent -1
+  transform 5.14 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 282 "Rock280"
+  active 1
+  parent -1
+  transform 6.29 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 283 "Rock281"
+  active 1
+  parent -1
+  transform 7.43 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 284 "Rock282"
+  active 1
+  parent -1
+  transform 8.57 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 285 "Rock283"
+  active 1
+  parent -1
+  transform 9.71 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 286 "Rock284"
+  active 1
+  parent -1
+  transform 10.86 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 287 "Rock285"
+  active 1
+  parent -1
+  transform 12.00 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 288 "Rock286"
+  active 1
+  parent -1
+  transform 13.14 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 289 "Rock287"
+  active 1
+  parent -1
+  transform 14.29 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 290 "Rock288"
+  active 1
+  parent -1
+  transform 15.43 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 291 "Rock289"
+  active 1
+  parent -1
+  transform 16.57 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 292 "Rock290"
+  active 1
+  parent -1
+  transform 17.71 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 293 "Rock291"
+  active 1
+  parent -1
+  transform 18.86 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 294 "Rock292"
+  active 1
+  parent -1
+  transform 20.00 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 295 "Rock293"
+  active 1
+  parent -1
+  transform 21.14 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 296 "Rock294"
+  active 1
+  parent -1
+  transform 22.29 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 297 "Rock295"
+  active 1
+  parent -1
+  transform 23.43 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 298 "Rock296"
+  active 1
+  parent -1
+  transform 24.57 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 299 "Rock297"
+  active 1
+  parent -1
+  transform 25.71 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 300 "Rock298"
+  active 1
+  parent -1
+  transform 26.86 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 301 "Rock299"
+  active 1
+  parent -1
+  transform 28.00 0.1 23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 302 "Rock300"
+  active 1
+  parent -1
+  transform -28.00 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 303 "Rock301"
+  active 1
+  parent -1
+  transform -26.86 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 304 "Rock302"
+  active 1
+  parent -1
+  transform -25.71 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 305 "Rock303"
+  active 1
+  parent -1
+  transform -24.57 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 306 "Rock304"
+  active 1
+  parent -1
+  transform -23.43 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 307 "Rock305"
+  active 1
+  parent -1
+  transform -22.29 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 308 "Rock306"
+  active 1
+  parent -1
+  transform -21.14 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 309 "Rock307"
+  active 1
+  parent -1
+  transform -20.00 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 310 "Rock308"
+  active 1
+  parent -1
+  transform -18.86 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 311 "Rock309"
+  active 1
+  parent -1
+  transform -17.71 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 312 "Rock310"
+  active 1
+  parent -1
+  transform -16.57 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 313 "Rock311"
+  active 1
+  parent -1
+  transform -15.43 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 314 "Rock312"
+  active 1
+  parent -1
+  transform -14.29 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 315 "Rock313"
+  active 1
+  parent -1
+  transform -13.14 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 316 "Rock314"
+  active 1
+  parent -1
+  transform -12.00 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 317 "Rock315"
+  active 1
+  parent -1
+  transform -10.86 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 318 "Rock316"
+  active 1
+  parent -1
+  transform -9.71 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 319 "Rock317"
+  active 1
+  parent -1
+  transform -8.57 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 320 "Rock318"
+  active 1
+  parent -1
+  transform -7.43 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 321 "Rock319"
+  active 1
+  parent -1
+  transform -6.29 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 322 "Rock320"
+  active 1
+  parent -1
+  transform -5.14 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 323 "Rock321"
+  active 1
+  parent -1
+  transform -4.00 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 324 "Rock322"
+  active 1
+  parent -1
+  transform -2.86 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 325 "Rock323"
+  active 1
+  parent -1
+  transform -1.71 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 326 "Rock324"
+  active 1
+  parent -1
+  transform -0.57 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 327 "Rock325"
+  active 1
+  parent -1
+  transform 0.57 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 328 "Rock326"
+  active 1
+  parent -1
+  transform 1.71 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 329 "Rock327"
+  active 1
+  parent -1
+  transform 2.86 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 330 "Rock328"
+  active 1
+  parent -1
+  transform 4.00 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 331 "Rock329"
+  active 1
+  parent -1
+  transform 5.14 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 332 "Rock330"
+  active 1
+  parent -1
+  transform 6.29 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 333 "Rock331"
+  active 1
+  parent -1
+  transform 7.43 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 334 "Rock332"
+  active 1
+  parent -1
+  transform 8.57 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 335 "Rock333"
+  active 1
+  parent -1
+  transform 9.71 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 336 "Rock334"
+  active 1
+  parent -1
+  transform 10.86 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 337 "Rock335"
+  active 1
+  parent -1
+  transform 12.00 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 338 "Rock336"
+  active 1
+  parent -1
+  transform 13.14 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 339 "Rock337"
+  active 1
+  parent -1
+  transform 14.29 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 340 "Rock338"
+  active 1
+  parent -1
+  transform 15.43 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 341 "Rock339"
+  active 1
+  parent -1
+  transform 16.57 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 342 "Rock340"
+  active 1
+  parent -1
+  transform 17.71 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 343 "Rock341"
+  active 1
+  parent -1
+  transform 18.86 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 344 "Rock342"
+  active 1
+  parent -1
+  transform 20.00 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 345 "Rock343"
+  active 1
+  parent -1
+  transform 21.14 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 346 "Rock344"
+  active 1
+  parent -1
+  transform 22.29 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 347 "Rock345"
+  active 1
+  parent -1
+  transform 23.43 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 348 "Rock346"
+  active 1
+  parent -1
+  transform 24.57 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 349 "Rock347"
+  active 1
+  parent -1
+  transform 25.71 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 350 "Rock348"
+  active 1
+  parent -1
+  transform 26.86 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 351 "Rock349"
+  active 1
+  parent -1
+  transform 28.00 0.1 23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 352 "Rock350"
+  active 1
+  parent -1
+  transform -28.00 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 353 "Rock351"
+  active 1
+  parent -1
+  transform -26.86 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 354 "Rock352"
+  active 1
+  parent -1
+  transform -25.71 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 355 "Rock353"
+  active 1
+  parent -1
+  transform -24.57 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 356 "Rock354"
+  active 1
+  parent -1
+  transform -23.43 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 357 "Rock355"
+  active 1
+  parent -1
+  transform -22.29 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 358 "Rock356"
+  active 1
+  parent -1
+  transform -21.14 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 359 "Rock357"
+  active 1
+  parent -1
+  transform -20.00 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 360 "Rock358"
+  active 1
+  parent -1
+  transform -18.86 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 361 "Rock359"
+  active 1
+  parent -1
+  transform -17.71 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 362 "Rock360"
+  active 1
+  parent -1
+  transform -16.57 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 363 "Rock361"
+  active 1
+  parent -1
+  transform -15.43 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 364 "Rock362"
+  active 1
+  parent -1
+  transform -14.29 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 365 "Rock363"
+  active 1
+  parent -1
+  transform -13.14 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 366 "Rock364"
+  active 1
+  parent -1
+  transform -12.00 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 367 "Rock365"
+  active 1
+  parent -1
+  transform -10.86 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 368 "Rock366"
+  active 1
+  parent -1
+  transform -9.71 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 369 "Rock367"
+  active 1
+  parent -1
+  transform -8.57 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 370 "Rock368"
+  active 1
+  parent -1
+  transform -7.43 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 371 "Rock369"
+  active 1
+  parent -1
+  transform -6.29 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 372 "Rock370"
+  active 1
+  parent -1
+  transform -5.14 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 373 "Rock371"
+  active 1
+  parent -1
+  transform -4.00 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 374 "Rock372"
+  active 1
+  parent -1
+  transform -2.86 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 375 "Rock373"
+  active 1
+  parent -1
+  transform -1.71 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 376 "Rock374"
+  active 1
+  parent -1
+  transform -0.57 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 377 "Rock375"
+  active 1
+  parent -1
+  transform 0.57 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 378 "Rock376"
+  active 1
+  parent -1
+  transform 1.71 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 379 "Rock377"
+  active 1
+  parent -1
+  transform 2.86 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 380 "Rock378"
+  active 1
+  parent -1
+  transform 4.00 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 381 "Rock379"
+  active 1
+  parent -1
+  transform 5.14 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 382 "Rock380"
+  active 1
+  parent -1
+  transform 6.29 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 383 "Rock381"
+  active 1
+  parent -1
+  transform 7.43 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 384 "Rock382"
+  active 1
+  parent -1
+  transform 8.57 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 385 "Rock383"
+  active 1
+  parent -1
+  transform 9.71 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 386 "Rock384"
+  active 1
+  parent -1
+  transform 10.86 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 387 "Rock385"
+  active 1
+  parent -1
+  transform 12.00 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 388 "Rock386"
+  active 1
+  parent -1
+  transform 13.14 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 389 "Rock387"
+  active 1
+  parent -1
+  transform 14.29 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 390 "Rock388"
+  active 1
+  parent -1
+  transform 15.43 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 391 "Rock389"
+  active 1
+  parent -1
+  transform 16.57 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 392 "Rock390"
+  active 1
+  parent -1
+  transform 17.71 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 393 "Rock391"
+  active 1
+  parent -1
+  transform 18.86 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 394 "Rock392"
+  active 1
+  parent -1
+  transform 20.00 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 395 "Rock393"
+  active 1
+  parent -1
+  transform 21.14 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 396 "Rock394"
+  active 1
+  parent -1
+  transform 22.29 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 397 "Rock395"
+  active 1
+  parent -1
+  transform 23.43 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 398 "Rock396"
+  active 1
+  parent -1
+  transform 24.57 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 399 "Rock397"
+  active 1
+  parent -1
+  transform 25.71 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 400 "Rock398"
+  active 1
+  parent -1
+  transform 26.86 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 401 "Rock399"
+  active 1
+  parent -1
+  transform 28.00 0.1 24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 402 "Rock400"
+  active 1
+  parent -1
+  transform -28.00 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 403 "Rock401"
+  active 1
+  parent -1
+  transform -26.86 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 404 "Rock402"
+  active 1
+  parent -1
+  transform -25.71 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 405 "Rock403"
+  active 1
+  parent -1
+  transform -24.57 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 406 "Rock404"
+  active 1
+  parent -1
+  transform -23.43 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 407 "Rock405"
+  active 1
+  parent -1
+  transform -22.29 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 408 "Rock406"
+  active 1
+  parent -1
+  transform -21.14 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 409 "Rock407"
+  active 1
+  parent -1
+  transform -20.00 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 410 "Rock408"
+  active 1
+  parent -1
+  transform -18.86 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 411 "Rock409"
+  active 1
+  parent -1
+  transform -17.71 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 412 "Rock410"
+  active 1
+  parent -1
+  transform -16.57 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 413 "Rock411"
+  active 1
+  parent -1
+  transform -15.43 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 414 "Rock412"
+  active 1
+  parent -1
+  transform -14.29 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 415 "Rock413"
+  active 1
+  parent -1
+  transform -13.14 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 416 "Rock414"
+  active 1
+  parent -1
+  transform -12.00 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 417 "Rock415"
+  active 1
+  parent -1
+  transform -10.86 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 418 "Rock416"
+  active 1
+  parent -1
+  transform -9.71 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 419 "Rock417"
+  active 1
+  parent -1
+  transform -8.57 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 420 "Rock418"
+  active 1
+  parent -1
+  transform -7.43 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 421 "Rock419"
+  active 1
+  parent -1
+  transform -6.29 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 422 "Rock420"
+  active 1
+  parent -1
+  transform -5.14 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 423 "Rock421"
+  active 1
+  parent -1
+  transform -4.00 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 424 "Rock422"
+  active 1
+  parent -1
+  transform -2.86 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 425 "Rock423"
+  active 1
+  parent -1
+  transform -1.71 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 426 "Rock424"
+  active 1
+  parent -1
+  transform -0.57 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 427 "Rock425"
+  active 1
+  parent -1
+  transform 0.57 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 428 "Rock426"
+  active 1
+  parent -1
+  transform 1.71 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 429 "Rock427"
+  active 1
+  parent -1
+  transform 2.86 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 430 "Rock428"
+  active 1
+  parent -1
+  transform 4.00 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 431 "Rock429"
+  active 1
+  parent -1
+  transform 5.14 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 432 "Rock430"
+  active 1
+  parent -1
+  transform 6.29 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 433 "Rock431"
+  active 1
+  parent -1
+  transform 7.43 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 434 "Rock432"
+  active 1
+  parent -1
+  transform 8.57 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 435 "Rock433"
+  active 1
+  parent -1
+  transform 9.71 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 436 "Rock434"
+  active 1
+  parent -1
+  transform 10.86 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 437 "Rock435"
+  active 1
+  parent -1
+  transform 12.00 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 438 "Rock436"
+  active 1
+  parent -1
+  transform 13.14 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 439 "Rock437"
+  active 1
+  parent -1
+  transform 14.29 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 440 "Rock438"
+  active 1
+  parent -1
+  transform 15.43 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 441 "Rock439"
+  active 1
+  parent -1
+  transform 16.57 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 442 "Rock440"
+  active 1
+  parent -1
+  transform 17.71 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 443 "Rock441"
+  active 1
+  parent -1
+  transform 18.86 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 444 "Rock442"
+  active 1
+  parent -1
+  transform 20.00 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 445 "Rock443"
+  active 1
+  parent -1
+  transform 21.14 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 446 "Rock444"
+  active 1
+  parent -1
+  transform 22.29 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 447 "Rock445"
+  active 1
+  parent -1
+  transform 23.43 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 448 "Rock446"
+  active 1
+  parent -1
+  transform 24.57 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 449 "Rock447"
+  active 1
+  parent -1
+  transform 25.71 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 450 "Rock448"
+  active 1
+  parent -1
+  transform 26.86 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 451 "Rock449"
+  active 1
+  parent -1
+  transform 28.00 0.1 24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 452 "Rock450"
+  active 1
+  parent -1
+  transform -28.00 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 453 "Rock451"
+  active 1
+  parent -1
+  transform -26.86 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 454 "Rock452"
+  active 1
+  parent -1
+  transform -25.71 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 455 "Rock453"
+  active 1
+  parent -1
+  transform -24.57 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 456 "Rock454"
+  active 1
+  parent -1
+  transform -23.43 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 457 "Rock455"
+  active 1
+  parent -1
+  transform -22.29 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 458 "Rock456"
+  active 1
+  parent -1
+  transform -21.14 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 459 "Rock457"
+  active 1
+  parent -1
+  transform -20.00 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 460 "Rock458"
+  active 1
+  parent -1
+  transform -18.86 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 461 "Rock459"
+  active 1
+  parent -1
+  transform -17.71 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 462 "Rock460"
+  active 1
+  parent -1
+  transform -16.57 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 463 "Rock461"
+  active 1
+  parent -1
+  transform -15.43 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 464 "Rock462"
+  active 1
+  parent -1
+  transform -14.29 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 465 "Rock463"
+  active 1
+  parent -1
+  transform -13.14 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 466 "Rock464"
+  active 1
+  parent -1
+  transform -12.00 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 467 "Rock465"
+  active 1
+  parent -1
+  transform -10.86 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 468 "Rock466"
+  active 1
+  parent -1
+  transform -9.71 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 469 "Rock467"
+  active 1
+  parent -1
+  transform -8.57 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 470 "Rock468"
+  active 1
+  parent -1
+  transform -7.43 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 471 "Rock469"
+  active 1
+  parent -1
+  transform -6.29 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 472 "Rock470"
+  active 1
+  parent -1
+  transform -5.14 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 473 "Rock471"
+  active 1
+  parent -1
+  transform -4.00 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 474 "Rock472"
+  active 1
+  parent -1
+  transform -2.86 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 475 "Rock473"
+  active 1
+  parent -1
+  transform -1.71 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 476 "Rock474"
+  active 1
+  parent -1
+  transform -0.57 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 477 "Rock475"
+  active 1
+  parent -1
+  transform 0.57 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 478 "Rock476"
+  active 1
+  parent -1
+  transform 1.71 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 479 "Rock477"
+  active 1
+  parent -1
+  transform 2.86 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 480 "Rock478"
+  active 1
+  parent -1
+  transform 4.00 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 481 "Rock479"
+  active 1
+  parent -1
+  transform 5.14 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 482 "Rock480"
+  active 1
+  parent -1
+  transform 6.29 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 483 "Rock481"
+  active 1
+  parent -1
+  transform 7.43 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 484 "Rock482"
+  active 1
+  parent -1
+  transform 8.57 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 485 "Rock483"
+  active 1
+  parent -1
+  transform 9.71 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 486 "Rock484"
+  active 1
+  parent -1
+  transform 10.86 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 487 "Rock485"
+  active 1
+  parent -1
+  transform 12.00 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 488 "Rock486"
+  active 1
+  parent -1
+  transform 13.14 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 489 "Rock487"
+  active 1
+  parent -1
+  transform 14.29 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 490 "Rock488"
+  active 1
+  parent -1
+  transform 15.43 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 491 "Rock489"
+  active 1
+  parent -1
+  transform 16.57 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 492 "Rock490"
+  active 1
+  parent -1
+  transform 17.71 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 493 "Rock491"
+  active 1
+  parent -1
+  transform 18.86 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 494 "Rock492"
+  active 1
+  parent -1
+  transform 20.00 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 495 "Rock493"
+  active 1
+  parent -1
+  transform 21.14 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 496 "Rock494"
+  active 1
+  parent -1
+  transform 22.29 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 497 "Rock495"
+  active 1
+  parent -1
+  transform 23.43 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 498 "Rock496"
+  active 1
+  parent -1
+  transform 24.57 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 499 "Rock497"
+  active 1
+  parent -1
+  transform 25.71 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 500 "Rock498"
+  active 1
+  parent -1
+  transform 26.86 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 501 "Rock499"
+  active 1
+  parent -1
+  transform 28.00 0.1 24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 502 "Rock500"
+  active 1
+  parent -1
+  transform -28.00 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 503 "Rock501"
+  active 1
+  parent -1
+  transform -26.86 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 504 "Rock502"
+  active 1
+  parent -1
+  transform -25.71 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 505 "Rock503"
+  active 1
+  parent -1
+  transform -24.57 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 506 "Rock504"
+  active 1
+  parent -1
+  transform -23.43 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 507 "Rock505"
+  active 1
+  parent -1
+  transform -22.29 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 508 "Rock506"
+  active 1
+  parent -1
+  transform -21.14 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 509 "Rock507"
+  active 1
+  parent -1
+  transform -20.00 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 510 "Rock508"
+  active 1
+  parent -1
+  transform -18.86 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 511 "Rock509"
+  active 1
+  parent -1
+  transform -17.71 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 512 "Rock510"
+  active 1
+  parent -1
+  transform -16.57 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 513 "Rock511"
+  active 1
+  parent -1
+  transform -15.43 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 514 "Rock512"
+  active 1
+  parent -1
+  transform -14.29 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 515 "Rock513"
+  active 1
+  parent -1
+  transform -13.14 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 516 "Rock514"
+  active 1
+  parent -1
+  transform -12.00 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 517 "Rock515"
+  active 1
+  parent -1
+  transform -10.86 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 518 "Rock516"
+  active 1
+  parent -1
+  transform -9.71 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 519 "Rock517"
+  active 1
+  parent -1
+  transform -8.57 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 520 "Rock518"
+  active 1
+  parent -1
+  transform -7.43 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 521 "Rock519"
+  active 1
+  parent -1
+  transform -6.29 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 522 "Rock520"
+  active 1
+  parent -1
+  transform -5.14 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 523 "Rock521"
+  active 1
+  parent -1
+  transform -4.00 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 524 "Rock522"
+  active 1
+  parent -1
+  transform -2.86 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 525 "Rock523"
+  active 1
+  parent -1
+  transform -1.71 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 526 "Rock524"
+  active 1
+  parent -1
+  transform -0.57 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 527 "Rock525"
+  active 1
+  parent -1
+  transform 0.57 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 528 "Rock526"
+  active 1
+  parent -1
+  transform 1.71 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 529 "Rock527"
+  active 1
+  parent -1
+  transform 2.86 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 530 "Rock528"
+  active 1
+  parent -1
+  transform 4.00 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 531 "Rock529"
+  active 1
+  parent -1
+  transform 5.14 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 532 "Rock530"
+  active 1
+  parent -1
+  transform 6.29 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 533 "Rock531"
+  active 1
+  parent -1
+  transform 7.43 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 534 "Rock532"
+  active 1
+  parent -1
+  transform 8.57 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 535 "Rock533"
+  active 1
+  parent -1
+  transform 9.71 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 536 "Rock534"
+  active 1
+  parent -1
+  transform 10.86 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 537 "Rock535"
+  active 1
+  parent -1
+  transform 12.00 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 538 "Rock536"
+  active 1
+  parent -1
+  transform 13.14 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 539 "Rock537"
+  active 1
+  parent -1
+  transform 14.29 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 540 "Rock538"
+  active 1
+  parent -1
+  transform 15.43 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 541 "Rock539"
+  active 1
+  parent -1
+  transform 16.57 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 542 "Rock540"
+  active 1
+  parent -1
+  transform 17.71 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 543 "Rock541"
+  active 1
+  parent -1
+  transform 18.86 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 544 "Rock542"
+  active 1
+  parent -1
+  transform 20.00 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 545 "Rock543"
+  active 1
+  parent -1
+  transform 21.14 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 546 "Rock544"
+  active 1
+  parent -1
+  transform 22.29 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 547 "Rock545"
+  active 1
+  parent -1
+  transform 23.43 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 548 "Rock546"
+  active 1
+  parent -1
+  transform 24.57 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 549 "Rock547"
+  active 1
+  parent -1
+  transform 25.71 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 550 "Rock548"
+  active 1
+  parent -1
+  transform 26.86 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 551 "Rock549"
+  active 1
+  parent -1
+  transform 28.00 0.1 -22.00 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 552 "Rock550"
+  active 1
+  parent -1
+  transform -28.00 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 553 "Rock551"
+  active 1
+  parent -1
+  transform -26.86 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 554 "Rock552"
+  active 1
+  parent -1
+  transform -25.71 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 555 "Rock553"
+  active 1
+  parent -1
+  transform -24.57 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 556 "Rock554"
+  active 1
+  parent -1
+  transform -23.43 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 557 "Rock555"
+  active 1
+  parent -1
+  transform -22.29 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 558 "Rock556"
+  active 1
+  parent -1
+  transform -21.14 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 559 "Rock557"
+  active 1
+  parent -1
+  transform -20.00 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 560 "Rock558"
+  active 1
+  parent -1
+  transform -18.86 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 561 "Rock559"
+  active 1
+  parent -1
+  transform -17.71 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 562 "Rock560"
+  active 1
+  parent -1
+  transform -16.57 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 563 "Rock561"
+  active 1
+  parent -1
+  transform -15.43 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 564 "Rock562"
+  active 1
+  parent -1
+  transform -14.29 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 565 "Rock563"
+  active 1
+  parent -1
+  transform -13.14 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 566 "Rock564"
+  active 1
+  parent -1
+  transform -12.00 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 567 "Rock565"
+  active 1
+  parent -1
+  transform -10.86 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 568 "Rock566"
+  active 1
+  parent -1
+  transform -9.71 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 569 "Rock567"
+  active 1
+  parent -1
+  transform -8.57 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 570 "Rock568"
+  active 1
+  parent -1
+  transform -7.43 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 571 "Rock569"
+  active 1
+  parent -1
+  transform -6.29 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 572 "Rock570"
+  active 1
+  parent -1
+  transform -5.14 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 573 "Rock571"
+  active 1
+  parent -1
+  transform -4.00 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 574 "Rock572"
+  active 1
+  parent -1
+  transform -2.86 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 575 "Rock573"
+  active 1
+  parent -1
+  transform -1.71 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 576 "Rock574"
+  active 1
+  parent -1
+  transform -0.57 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 577 "Rock575"
+  active 1
+  parent -1
+  transform 0.57 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 578 "Rock576"
+  active 1
+  parent -1
+  transform 1.71 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 579 "Rock577"
+  active 1
+  parent -1
+  transform 2.86 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 580 "Rock578"
+  active 1
+  parent -1
+  transform 4.00 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 581 "Rock579"
+  active 1
+  parent -1
+  transform 5.14 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 582 "Rock580"
+  active 1
+  parent -1
+  transform 6.29 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 583 "Rock581"
+  active 1
+  parent -1
+  transform 7.43 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 584 "Rock582"
+  active 1
+  parent -1
+  transform 8.57 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 585 "Rock583"
+  active 1
+  parent -1
+  transform 9.71 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 586 "Rock584"
+  active 1
+  parent -1
+  transform 10.86 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 587 "Rock585"
+  active 1
+  parent -1
+  transform 12.00 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 588 "Rock586"
+  active 1
+  parent -1
+  transform 13.14 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 589 "Rock587"
+  active 1
+  parent -1
+  transform 14.29 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 590 "Rock588"
+  active 1
+  parent -1
+  transform 15.43 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 591 "Rock589"
+  active 1
+  parent -1
+  transform 16.57 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 592 "Rock590"
+  active 1
+  parent -1
+  transform 17.71 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 593 "Rock591"
+  active 1
+  parent -1
+  transform 18.86 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 594 "Rock592"
+  active 1
+  parent -1
+  transform 20.00 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 595 "Rock593"
+  active 1
+  parent -1
+  transform 21.14 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 596 "Rock594"
+  active 1
+  parent -1
+  transform 22.29 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 597 "Rock595"
+  active 1
+  parent -1
+  transform 23.43 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 598 "Rock596"
+  active 1
+  parent -1
+  transform 24.57 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 599 "Rock597"
+  active 1
+  parent -1
+  transform 25.71 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 600 "Rock598"
+  active 1
+  parent -1
+  transform 26.86 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 601 "Rock599"
+  active 1
+  parent -1
+  transform 28.00 0.1 -22.30 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 602 "Rock600"
+  active 1
+  parent -1
+  transform -28.00 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 603 "Rock601"
+  active 1
+  parent -1
+  transform -26.86 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 604 "Rock602"
+  active 1
+  parent -1
+  transform -25.71 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 605 "Rock603"
+  active 1
+  parent -1
+  transform -24.57 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 606 "Rock604"
+  active 1
+  parent -1
+  transform -23.43 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 607 "Rock605"
+  active 1
+  parent -1
+  transform -22.29 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 608 "Rock606"
+  active 1
+  parent -1
+  transform -21.14 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 609 "Rock607"
+  active 1
+  parent -1
+  transform -20.00 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 610 "Rock608"
+  active 1
+  parent -1
+  transform -18.86 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 611 "Rock609"
+  active 1
+  parent -1
+  transform -17.71 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 612 "Rock610"
+  active 1
+  parent -1
+  transform -16.57 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 613 "Rock611"
+  active 1
+  parent -1
+  transform -15.43 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 614 "Rock612"
+  active 1
+  parent -1
+  transform -14.29 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 615 "Rock613"
+  active 1
+  parent -1
+  transform -13.14 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 616 "Rock614"
+  active 1
+  parent -1
+  transform -12.00 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 617 "Rock615"
+  active 1
+  parent -1
+  transform -10.86 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 618 "Rock616"
+  active 1
+  parent -1
+  transform -9.71 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 619 "Rock617"
+  active 1
+  parent -1
+  transform -8.57 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 620 "Rock618"
+  active 1
+  parent -1
+  transform -7.43 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 621 "Rock619"
+  active 1
+  parent -1
+  transform -6.29 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 622 "Rock620"
+  active 1
+  parent -1
+  transform -5.14 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 623 "Rock621"
+  active 1
+  parent -1
+  transform -4.00 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 624 "Rock622"
+  active 1
+  parent -1
+  transform -2.86 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 625 "Rock623"
+  active 1
+  parent -1
+  transform -1.71 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 626 "Rock624"
+  active 1
+  parent -1
+  transform -0.57 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 627 "Rock625"
+  active 1
+  parent -1
+  transform 0.57 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 628 "Rock626"
+  active 1
+  parent -1
+  transform 1.71 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 629 "Rock627"
+  active 1
+  parent -1
+  transform 2.86 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 630 "Rock628"
+  active 1
+  parent -1
+  transform 4.00 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 631 "Rock629"
+  active 1
+  parent -1
+  transform 5.14 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 632 "Rock630"
+  active 1
+  parent -1
+  transform 6.29 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 633 "Rock631"
+  active 1
+  parent -1
+  transform 7.43 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 634 "Rock632"
+  active 1
+  parent -1
+  transform 8.57 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 635 "Rock633"
+  active 1
+  parent -1
+  transform 9.71 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 636 "Rock634"
+  active 1
+  parent -1
+  transform 10.86 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 637 "Rock635"
+  active 1
+  parent -1
+  transform 12.00 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 638 "Rock636"
+  active 1
+  parent -1
+  transform 13.14 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 639 "Rock637"
+  active 1
+  parent -1
+  transform 14.29 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 640 "Rock638"
+  active 1
+  parent -1
+  transform 15.43 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 641 "Rock639"
+  active 1
+  parent -1
+  transform 16.57 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 642 "Rock640"
+  active 1
+  parent -1
+  transform 17.71 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 643 "Rock641"
+  active 1
+  parent -1
+  transform 18.86 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 644 "Rock642"
+  active 1
+  parent -1
+  transform 20.00 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 645 "Rock643"
+  active 1
+  parent -1
+  transform 21.14 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 646 "Rock644"
+  active 1
+  parent -1
+  transform 22.29 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 647 "Rock645"
+  active 1
+  parent -1
+  transform 23.43 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 648 "Rock646"
+  active 1
+  parent -1
+  transform 24.57 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 649 "Rock647"
+  active 1
+  parent -1
+  transform 25.71 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 650 "Rock648"
+  active 1
+  parent -1
+  transform 26.86 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 651 "Rock649"
+  active 1
+  parent -1
+  transform 28.00 0.1 -22.60 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 652 "Rock650"
+  active 1
+  parent -1
+  transform -28.00 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 653 "Rock651"
+  active 1
+  parent -1
+  transform -26.86 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 654 "Rock652"
+  active 1
+  parent -1
+  transform -25.71 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 655 "Rock653"
+  active 1
+  parent -1
+  transform -24.57 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 656 "Rock654"
+  active 1
+  parent -1
+  transform -23.43 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 657 "Rock655"
+  active 1
+  parent -1
+  transform -22.29 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 658 "Rock656"
+  active 1
+  parent -1
+  transform -21.14 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 659 "Rock657"
+  active 1
+  parent -1
+  transform -20.00 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 660 "Rock658"
+  active 1
+  parent -1
+  transform -18.86 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 661 "Rock659"
+  active 1
+  parent -1
+  transform -17.71 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 662 "Rock660"
+  active 1
+  parent -1
+  transform -16.57 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 663 "Rock661"
+  active 1
+  parent -1
+  transform -15.43 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 664 "Rock662"
+  active 1
+  parent -1
+  transform -14.29 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 665 "Rock663"
+  active 1
+  parent -1
+  transform -13.14 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 666 "Rock664"
+  active 1
+  parent -1
+  transform -12.00 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 667 "Rock665"
+  active 1
+  parent -1
+  transform -10.86 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 668 "Rock666"
+  active 1
+  parent -1
+  transform -9.71 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 669 "Rock667"
+  active 1
+  parent -1
+  transform -8.57 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 670 "Rock668"
+  active 1
+  parent -1
+  transform -7.43 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 671 "Rock669"
+  active 1
+  parent -1
+  transform -6.29 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 672 "Rock670"
+  active 1
+  parent -1
+  transform -5.14 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 673 "Rock671"
+  active 1
+  parent -1
+  transform -4.00 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 674 "Rock672"
+  active 1
+  parent -1
+  transform -2.86 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 675 "Rock673"
+  active 1
+  parent -1
+  transform -1.71 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 676 "Rock674"
+  active 1
+  parent -1
+  transform -0.57 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 677 "Rock675"
+  active 1
+  parent -1
+  transform 0.57 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 678 "Rock676"
+  active 1
+  parent -1
+  transform 1.71 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 679 "Rock677"
+  active 1
+  parent -1
+  transform 2.86 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 680 "Rock678"
+  active 1
+  parent -1
+  transform 4.00 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 681 "Rock679"
+  active 1
+  parent -1
+  transform 5.14 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 682 "Rock680"
+  active 1
+  parent -1
+  transform 6.29 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 683 "Rock681"
+  active 1
+  parent -1
+  transform 7.43 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 684 "Rock682"
+  active 1
+  parent -1
+  transform 8.57 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 685 "Rock683"
+  active 1
+  parent -1
+  transform 9.71 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 686 "Rock684"
+  active 1
+  parent -1
+  transform 10.86 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 687 "Rock685"
+  active 1
+  parent -1
+  transform 12.00 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 688 "Rock686"
+  active 1
+  parent -1
+  transform 13.14 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 689 "Rock687"
+  active 1
+  parent -1
+  transform 14.29 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 690 "Rock688"
+  active 1
+  parent -1
+  transform 15.43 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 691 "Rock689"
+  active 1
+  parent -1
+  transform 16.57 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 692 "Rock690"
+  active 1
+  parent -1
+  transform 17.71 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 693 "Rock691"
+  active 1
+  parent -1
+  transform 18.86 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 694 "Rock692"
+  active 1
+  parent -1
+  transform 20.00 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 695 "Rock693"
+  active 1
+  parent -1
+  transform 21.14 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 696 "Rock694"
+  active 1
+  parent -1
+  transform 22.29 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 697 "Rock695"
+  active 1
+  parent -1
+  transform 23.43 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 698 "Rock696"
+  active 1
+  parent -1
+  transform 24.57 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 699 "Rock697"
+  active 1
+  parent -1
+  transform 25.71 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 700 "Rock698"
+  active 1
+  parent -1
+  transform 26.86 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 701 "Rock699"
+  active 1
+  parent -1
+  transform 28.00 0.1 -22.90 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 702 "Rock700"
+  active 1
+  parent -1
+  transform -28.00 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 703 "Rock701"
+  active 1
+  parent -1
+  transform -26.86 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 704 "Rock702"
+  active 1
+  parent -1
+  transform -25.71 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 705 "Rock703"
+  active 1
+  parent -1
+  transform -24.57 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 706 "Rock704"
+  active 1
+  parent -1
+  transform -23.43 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 707 "Rock705"
+  active 1
+  parent -1
+  transform -22.29 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 708 "Rock706"
+  active 1
+  parent -1
+  transform -21.14 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 709 "Rock707"
+  active 1
+  parent -1
+  transform -20.00 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 710 "Rock708"
+  active 1
+  parent -1
+  transform -18.86 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 711 "Rock709"
+  active 1
+  parent -1
+  transform -17.71 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 712 "Rock710"
+  active 1
+  parent -1
+  transform -16.57 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 713 "Rock711"
+  active 1
+  parent -1
+  transform -15.43 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 714 "Rock712"
+  active 1
+  parent -1
+  transform -14.29 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 715 "Rock713"
+  active 1
+  parent -1
+  transform -13.14 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 716 "Rock714"
+  active 1
+  parent -1
+  transform -12.00 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 717 "Rock715"
+  active 1
+  parent -1
+  transform -10.86 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 718 "Rock716"
+  active 1
+  parent -1
+  transform -9.71 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 719 "Rock717"
+  active 1
+  parent -1
+  transform -8.57 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 720 "Rock718"
+  active 1
+  parent -1
+  transform -7.43 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 721 "Rock719"
+  active 1
+  parent -1
+  transform -6.29 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 722 "Rock720"
+  active 1
+  parent -1
+  transform -5.14 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 723 "Rock721"
+  active 1
+  parent -1
+  transform -4.00 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 724 "Rock722"
+  active 1
+  parent -1
+  transform -2.86 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 725 "Rock723"
+  active 1
+  parent -1
+  transform -1.71 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 726 "Rock724"
+  active 1
+  parent -1
+  transform -0.57 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 727 "Rock725"
+  active 1
+  parent -1
+  transform 0.57 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 728 "Rock726"
+  active 1
+  parent -1
+  transform 1.71 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 729 "Rock727"
+  active 1
+  parent -1
+  transform 2.86 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 730 "Rock728"
+  active 1
+  parent -1
+  transform 4.00 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 731 "Rock729"
+  active 1
+  parent -1
+  transform 5.14 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 732 "Rock730"
+  active 1
+  parent -1
+  transform 6.29 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 733 "Rock731"
+  active 1
+  parent -1
+  transform 7.43 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 734 "Rock732"
+  active 1
+  parent -1
+  transform 8.57 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 735 "Rock733"
+  active 1
+  parent -1
+  transform 9.71 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 736 "Rock734"
+  active 1
+  parent -1
+  transform 10.86 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 737 "Rock735"
+  active 1
+  parent -1
+  transform 12.00 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 738 "Rock736"
+  active 1
+  parent -1
+  transform 13.14 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 739 "Rock737"
+  active 1
+  parent -1
+  transform 14.29 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 740 "Rock738"
+  active 1
+  parent -1
+  transform 15.43 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 741 "Rock739"
+  active 1
+  parent -1
+  transform 16.57 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 742 "Rock740"
+  active 1
+  parent -1
+  transform 17.71 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 743 "Rock741"
+  active 1
+  parent -1
+  transform 18.86 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 744 "Rock742"
+  active 1
+  parent -1
+  transform 20.00 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 745 "Rock743"
+  active 1
+  parent -1
+  transform 21.14 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 746 "Rock744"
+  active 1
+  parent -1
+  transform 22.29 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 747 "Rock745"
+  active 1
+  parent -1
+  transform 23.43 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 748 "Rock746"
+  active 1
+  parent -1
+  transform 24.57 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 749 "Rock747"
+  active 1
+  parent -1
+  transform 25.71 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 750 "Rock748"
+  active 1
+  parent -1
+  transform 26.86 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 751 "Rock749"
+  active 1
+  parent -1
+  transform 28.00 0.1 -23.20 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 752 "Rock750"
+  active 1
+  parent -1
+  transform -28.00 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 753 "Rock751"
+  active 1
+  parent -1
+  transform -26.86 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 754 "Rock752"
+  active 1
+  parent -1
+  transform -25.71 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 755 "Rock753"
+  active 1
+  parent -1
+  transform -24.57 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 756 "Rock754"
+  active 1
+  parent -1
+  transform -23.43 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 757 "Rock755"
+  active 1
+  parent -1
+  transform -22.29 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 758 "Rock756"
+  active 1
+  parent -1
+  transform -21.14 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 759 "Rock757"
+  active 1
+  parent -1
+  transform -20.00 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 760 "Rock758"
+  active 1
+  parent -1
+  transform -18.86 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 761 "Rock759"
+  active 1
+  parent -1
+  transform -17.71 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 762 "Rock760"
+  active 1
+  parent -1
+  transform -16.57 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 763 "Rock761"
+  active 1
+  parent -1
+  transform -15.43 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 764 "Rock762"
+  active 1
+  parent -1
+  transform -14.29 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 765 "Rock763"
+  active 1
+  parent -1
+  transform -13.14 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 766 "Rock764"
+  active 1
+  parent -1
+  transform -12.00 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 767 "Rock765"
+  active 1
+  parent -1
+  transform -10.86 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 768 "Rock766"
+  active 1
+  parent -1
+  transform -9.71 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 769 "Rock767"
+  active 1
+  parent -1
+  transform -8.57 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 770 "Rock768"
+  active 1
+  parent -1
+  transform -7.43 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 771 "Rock769"
+  active 1
+  parent -1
+  transform -6.29 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 772 "Rock770"
+  active 1
+  parent -1
+  transform -5.14 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 773 "Rock771"
+  active 1
+  parent -1
+  transform -4.00 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 774 "Rock772"
+  active 1
+  parent -1
+  transform -2.86 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 775 "Rock773"
+  active 1
+  parent -1
+  transform -1.71 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 776 "Rock774"
+  active 1
+  parent -1
+  transform -0.57 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 777 "Rock775"
+  active 1
+  parent -1
+  transform 0.57 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 778 "Rock776"
+  active 1
+  parent -1
+  transform 1.71 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 779 "Rock777"
+  active 1
+  parent -1
+  transform 2.86 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 780 "Rock778"
+  active 1
+  parent -1
+  transform 4.00 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 781 "Rock779"
+  active 1
+  parent -1
+  transform 5.14 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 782 "Rock780"
+  active 1
+  parent -1
+  transform 6.29 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 783 "Rock781"
+  active 1
+  parent -1
+  transform 7.43 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 784 "Rock782"
+  active 1
+  parent -1
+  transform 8.57 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 785 "Rock783"
+  active 1
+  parent -1
+  transform 9.71 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 786 "Rock784"
+  active 1
+  parent -1
+  transform 10.86 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 787 "Rock785"
+  active 1
+  parent -1
+  transform 12.00 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 788 "Rock786"
+  active 1
+  parent -1
+  transform 13.14 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 789 "Rock787"
+  active 1
+  parent -1
+  transform 14.29 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 790 "Rock788"
+  active 1
+  parent -1
+  transform 15.43 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 791 "Rock789"
+  active 1
+  parent -1
+  transform 16.57 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 792 "Rock790"
+  active 1
+  parent -1
+  transform 17.71 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 793 "Rock791"
+  active 1
+  parent -1
+  transform 18.86 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 794 "Rock792"
+  active 1
+  parent -1
+  transform 20.00 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 795 "Rock793"
+  active 1
+  parent -1
+  transform 21.14 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 796 "Rock794"
+  active 1
+  parent -1
+  transform 22.29 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 797 "Rock795"
+  active 1
+  parent -1
+  transform 23.43 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 798 "Rock796"
+  active 1
+  parent -1
+  transform 24.57 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 799 "Rock797"
+  active 1
+  parent -1
+  transform 25.71 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 800 "Rock798"
+  active 1
+  parent -1
+  transform 26.86 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 801 "Rock799"
+  active 1
+  parent -1
+  transform 28.00 0.1 -23.50 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 802 "Rock800"
+  active 1
+  parent -1
+  transform -28.00 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 803 "Rock801"
+  active 1
+  parent -1
+  transform -26.86 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 804 "Rock802"
+  active 1
+  parent -1
+  transform -25.71 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 805 "Rock803"
+  active 1
+  parent -1
+  transform -24.57 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 806 "Rock804"
+  active 1
+  parent -1
+  transform -23.43 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 807 "Rock805"
+  active 1
+  parent -1
+  transform -22.29 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 808 "Rock806"
+  active 1
+  parent -1
+  transform -21.14 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 809 "Rock807"
+  active 1
+  parent -1
+  transform -20.00 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 810 "Rock808"
+  active 1
+  parent -1
+  transform -18.86 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 811 "Rock809"
+  active 1
+  parent -1
+  transform -17.71 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 812 "Rock810"
+  active 1
+  parent -1
+  transform -16.57 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 813 "Rock811"
+  active 1
+  parent -1
+  transform -15.43 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 814 "Rock812"
+  active 1
+  parent -1
+  transform -14.29 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 815 "Rock813"
+  active 1
+  parent -1
+  transform -13.14 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 816 "Rock814"
+  active 1
+  parent -1
+  transform -12.00 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 817 "Rock815"
+  active 1
+  parent -1
+  transform -10.86 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 818 "Rock816"
+  active 1
+  parent -1
+  transform -9.71 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 819 "Rock817"
+  active 1
+  parent -1
+  transform -8.57 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 820 "Rock818"
+  active 1
+  parent -1
+  transform -7.43 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 821 "Rock819"
+  active 1
+  parent -1
+  transform -6.29 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 822 "Rock820"
+  active 1
+  parent -1
+  transform -5.14 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 823 "Rock821"
+  active 1
+  parent -1
+  transform -4.00 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 824 "Rock822"
+  active 1
+  parent -1
+  transform -2.86 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 825 "Rock823"
+  active 1
+  parent -1
+  transform -1.71 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 826 "Rock824"
+  active 1
+  parent -1
+  transform -0.57 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 827 "Rock825"
+  active 1
+  parent -1
+  transform 0.57 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 828 "Rock826"
+  active 1
+  parent -1
+  transform 1.71 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 829 "Rock827"
+  active 1
+  parent -1
+  transform 2.86 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 830 "Rock828"
+  active 1
+  parent -1
+  transform 4.00 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 831 "Rock829"
+  active 1
+  parent -1
+  transform 5.14 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 832 "Rock830"
+  active 1
+  parent -1
+  transform 6.29 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 833 "Rock831"
+  active 1
+  parent -1
+  transform 7.43 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 834 "Rock832"
+  active 1
+  parent -1
+  transform 8.57 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 835 "Rock833"
+  active 1
+  parent -1
+  transform 9.71 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 836 "Rock834"
+  active 1
+  parent -1
+  transform 10.86 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 837 "Rock835"
+  active 1
+  parent -1
+  transform 12.00 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 838 "Rock836"
+  active 1
+  parent -1
+  transform 13.14 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 839 "Rock837"
+  active 1
+  parent -1
+  transform 14.29 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 840 "Rock838"
+  active 1
+  parent -1
+  transform 15.43 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 841 "Rock839"
+  active 1
+  parent -1
+  transform 16.57 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 842 "Rock840"
+  active 1
+  parent -1
+  transform 17.71 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 843 "Rock841"
+  active 1
+  parent -1
+  transform 18.86 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 844 "Rock842"
+  active 1
+  parent -1
+  transform 20.00 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 845 "Rock843"
+  active 1
+  parent -1
+  transform 21.14 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 846 "Rock844"
+  active 1
+  parent -1
+  transform 22.29 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 847 "Rock845"
+  active 1
+  parent -1
+  transform 23.43 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 848 "Rock846"
+  active 1
+  parent -1
+  transform 24.57 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 849 "Rock847"
+  active 1
+  parent -1
+  transform 25.71 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 850 "Rock848"
+  active 1
+  parent -1
+  transform 26.86 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 851 "Rock849"
+  active 1
+  parent -1
+  transform 28.00 0.1 -23.80 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 852 "Rock850"
+  active 1
+  parent -1
+  transform -28.00 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 853 "Rock851"
+  active 1
+  parent -1
+  transform -26.86 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 854 "Rock852"
+  active 1
+  parent -1
+  transform -25.71 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 855 "Rock853"
+  active 1
+  parent -1
+  transform -24.57 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 856 "Rock854"
+  active 1
+  parent -1
+  transform -23.43 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 857 "Rock855"
+  active 1
+  parent -1
+  transform -22.29 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 858 "Rock856"
+  active 1
+  parent -1
+  transform -21.14 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 859 "Rock857"
+  active 1
+  parent -1
+  transform -20.00 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 860 "Rock858"
+  active 1
+  parent -1
+  transform -18.86 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 861 "Rock859"
+  active 1
+  parent -1
+  transform -17.71 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 862 "Rock860"
+  active 1
+  parent -1
+  transform -16.57 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 863 "Rock861"
+  active 1
+  parent -1
+  transform -15.43 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 864 "Rock862"
+  active 1
+  parent -1
+  transform -14.29 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 865 "Rock863"
+  active 1
+  parent -1
+  transform -13.14 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 866 "Rock864"
+  active 1
+  parent -1
+  transform -12.00 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 867 "Rock865"
+  active 1
+  parent -1
+  transform -10.86 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 868 "Rock866"
+  active 1
+  parent -1
+  transform -9.71 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 869 "Rock867"
+  active 1
+  parent -1
+  transform -8.57 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 870 "Rock868"
+  active 1
+  parent -1
+  transform -7.43 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 871 "Rock869"
+  active 1
+  parent -1
+  transform -6.29 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 872 "Rock870"
+  active 1
+  parent -1
+  transform -5.14 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 873 "Rock871"
+  active 1
+  parent -1
+  transform -4.00 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 874 "Rock872"
+  active 1
+  parent -1
+  transform -2.86 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 875 "Rock873"
+  active 1
+  parent -1
+  transform -1.71 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 876 "Rock874"
+  active 1
+  parent -1
+  transform -0.57 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 877 "Rock875"
+  active 1
+  parent -1
+  transform 0.57 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 878 "Rock876"
+  active 1
+  parent -1
+  transform 1.71 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 879 "Rock877"
+  active 1
+  parent -1
+  transform 2.86 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 880 "Rock878"
+  active 1
+  parent -1
+  transform 4.00 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 881 "Rock879"
+  active 1
+  parent -1
+  transform 5.14 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 882 "Rock880"
+  active 1
+  parent -1
+  transform 6.29 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 883 "Rock881"
+  active 1
+  parent -1
+  transform 7.43 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 884 "Rock882"
+  active 1
+  parent -1
+  transform 8.57 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 885 "Rock883"
+  active 1
+  parent -1
+  transform 9.71 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 886 "Rock884"
+  active 1
+  parent -1
+  transform 10.86 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 887 "Rock885"
+  active 1
+  parent -1
+  transform 12.00 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 888 "Rock886"
+  active 1
+  parent -1
+  transform 13.14 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 889 "Rock887"
+  active 1
+  parent -1
+  transform 14.29 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 890 "Rock888"
+  active 1
+  parent -1
+  transform 15.43 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 891 "Rock889"
+  active 1
+  parent -1
+  transform 16.57 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 892 "Rock890"
+  active 1
+  parent -1
+  transform 17.71 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 893 "Rock891"
+  active 1
+  parent -1
+  transform 18.86 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 894 "Rock892"
+  active 1
+  parent -1
+  transform 20.00 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 895 "Rock893"
+  active 1
+  parent -1
+  transform 21.14 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 896 "Rock894"
+  active 1
+  parent -1
+  transform 22.29 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 897 "Rock895"
+  active 1
+  parent -1
+  transform 23.43 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 898 "Rock896"
+  active 1
+  parent -1
+  transform 24.57 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 899 "Rock897"
+  active 1
+  parent -1
+  transform 25.71 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 900 "Rock898"
+  active 1
+  parent -1
+  transform 26.86 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 901 "Rock899"
+  active 1
+  parent -1
+  transform 28.00 0.1 -24.10 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 902 "Rock900"
+  active 1
+  parent -1
+  transform -28.00 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 903 "Rock901"
+  active 1
+  parent -1
+  transform -26.86 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 904 "Rock902"
+  active 1
+  parent -1
+  transform -25.71 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 905 "Rock903"
+  active 1
+  parent -1
+  transform -24.57 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 906 "Rock904"
+  active 1
+  parent -1
+  transform -23.43 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 907 "Rock905"
+  active 1
+  parent -1
+  transform -22.29 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 908 "Rock906"
+  active 1
+  parent -1
+  transform -21.14 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 909 "Rock907"
+  active 1
+  parent -1
+  transform -20.00 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 910 "Rock908"
+  active 1
+  parent -1
+  transform -18.86 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 911 "Rock909"
+  active 1
+  parent -1
+  transform -17.71 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 912 "Rock910"
+  active 1
+  parent -1
+  transform -16.57 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 913 "Rock911"
+  active 1
+  parent -1
+  transform -15.43 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 914 "Rock912"
+  active 1
+  parent -1
+  transform -14.29 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 915 "Rock913"
+  active 1
+  parent -1
+  transform -13.14 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 916 "Rock914"
+  active 1
+  parent -1
+  transform -12.00 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 917 "Rock915"
+  active 1
+  parent -1
+  transform -10.86 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 918 "Rock916"
+  active 1
+  parent -1
+  transform -9.71 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 919 "Rock917"
+  active 1
+  parent -1
+  transform -8.57 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 920 "Rock918"
+  active 1
+  parent -1
+  transform -7.43 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 921 "Rock919"
+  active 1
+  parent -1
+  transform -6.29 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 922 "Rock920"
+  active 1
+  parent -1
+  transform -5.14 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 923 "Rock921"
+  active 1
+  parent -1
+  transform -4.00 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 924 "Rock922"
+  active 1
+  parent -1
+  transform -2.86 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 925 "Rock923"
+  active 1
+  parent -1
+  transform -1.71 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 926 "Rock924"
+  active 1
+  parent -1
+  transform -0.57 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 927 "Rock925"
+  active 1
+  parent -1
+  transform 0.57 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 928 "Rock926"
+  active 1
+  parent -1
+  transform 1.71 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 929 "Rock927"
+  active 1
+  parent -1
+  transform 2.86 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 930 "Rock928"
+  active 1
+  parent -1
+  transform 4.00 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 931 "Rock929"
+  active 1
+  parent -1
+  transform 5.14 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 932 "Rock930"
+  active 1
+  parent -1
+  transform 6.29 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 933 "Rock931"
+  active 1
+  parent -1
+  transform 7.43 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 934 "Rock932"
+  active 1
+  parent -1
+  transform 8.57 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 935 "Rock933"
+  active 1
+  parent -1
+  transform 9.71 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 936 "Rock934"
+  active 1
+  parent -1
+  transform 10.86 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 937 "Rock935"
+  active 1
+  parent -1
+  transform 12.00 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 938 "Rock936"
+  active 1
+  parent -1
+  transform 13.14 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 939 "Rock937"
+  active 1
+  parent -1
+  transform 14.29 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 940 "Rock938"
+  active 1
+  parent -1
+  transform 15.43 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 941 "Rock939"
+  active 1
+  parent -1
+  transform 16.57 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 942 "Rock940"
+  active 1
+  parent -1
+  transform 17.71 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 943 "Rock941"
+  active 1
+  parent -1
+  transform 18.86 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 944 "Rock942"
+  active 1
+  parent -1
+  transform 20.00 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 945 "Rock943"
+  active 1
+  parent -1
+  transform 21.14 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 946 "Rock944"
+  active 1
+  parent -1
+  transform 22.29 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 947 "Rock945"
+  active 1
+  parent -1
+  transform 23.43 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 948 "Rock946"
+  active 1
+  parent -1
+  transform 24.57 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 949 "Rock947"
+  active 1
+  parent -1
+  transform 25.71 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 950 "Rock948"
+  active 1
+  parent -1
+  transform 26.86 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 951 "Rock949"
+  active 1
+  parent -1
+  transform 28.00 0.1 -24.40 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 952 "Rock950"
+  active 1
+  parent -1
+  transform -28.00 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 953 "Rock951"
+  active 1
+  parent -1
+  transform -26.86 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 954 "Rock952"
+  active 1
+  parent -1
+  transform -25.71 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 955 "Rock953"
+  active 1
+  parent -1
+  transform -24.57 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 956 "Rock954"
+  active 1
+  parent -1
+  transform -23.43 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 957 "Rock955"
+  active 1
+  parent -1
+  transform -22.29 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 958 "Rock956"
+  active 1
+  parent -1
+  transform -21.14 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 959 "Rock957"
+  active 1
+  parent -1
+  transform -20.00 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 960 "Rock958"
+  active 1
+  parent -1
+  transform -18.86 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 961 "Rock959"
+  active 1
+  parent -1
+  transform -17.71 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 962 "Rock960"
+  active 1
+  parent -1
+  transform -16.57 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 963 "Rock961"
+  active 1
+  parent -1
+  transform -15.43 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 964 "Rock962"
+  active 1
+  parent -1
+  transform -14.29 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 965 "Rock963"
+  active 1
+  parent -1
+  transform -13.14 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 966 "Rock964"
+  active 1
+  parent -1
+  transform -12.00 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 967 "Rock965"
+  active 1
+  parent -1
+  transform -10.86 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 968 "Rock966"
+  active 1
+  parent -1
+  transform -9.71 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 969 "Rock967"
+  active 1
+  parent -1
+  transform -8.57 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 970 "Rock968"
+  active 1
+  parent -1
+  transform -7.43 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 971 "Rock969"
+  active 1
+  parent -1
+  transform -6.29 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 972 "Rock970"
+  active 1
+  parent -1
+  transform -5.14 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 973 "Rock971"
+  active 1
+  parent -1
+  transform -4.00 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 974 "Rock972"
+  active 1
+  parent -1
+  transform -2.86 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 975 "Rock973"
+  active 1
+  parent -1
+  transform -1.71 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 976 "Rock974"
+  active 1
+  parent -1
+  transform -0.57 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 977 "Rock975"
+  active 1
+  parent -1
+  transform 0.57 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 978 "Rock976"
+  active 1
+  parent -1
+  transform 1.71 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 979 "Rock977"
+  active 1
+  parent -1
+  transform 2.86 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 980 "Rock978"
+  active 1
+  parent -1
+  transform 4.00 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 981 "Rock979"
+  active 1
+  parent -1
+  transform 5.14 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 982 "Rock980"
+  active 1
+  parent -1
+  transform 6.29 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 983 "Rock981"
+  active 1
+  parent -1
+  transform 7.43 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 984 "Rock982"
+  active 1
+  parent -1
+  transform 8.57 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 985 "Rock983"
+  active 1
+  parent -1
+  transform 9.71 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 986 "Rock984"
+  active 1
+  parent -1
+  transform 10.86 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 987 "Rock985"
+  active 1
+  parent -1
+  transform 12.00 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 988 "Rock986"
+  active 1
+  parent -1
+  transform 13.14 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 989 "Rock987"
+  active 1
+  parent -1
+  transform 14.29 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 990 "Rock988"
+  active 1
+  parent -1
+  transform 15.43 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 991 "Rock989"
+  active 1
+  parent -1
+  transform 16.57 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 992 "Rock990"
+  active 1
+  parent -1
+  transform 17.71 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 993 "Rock991"
+  active 1
+  parent -1
+  transform 18.86 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 994 "Rock992"
+  active 1
+  parent -1
+  transform 20.00 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 995 "Rock993"
+  active 1
+  parent -1
+  transform 21.14 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 996 "Rock994"
+  active 1
+  parent -1
+  transform 22.29 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 997 "Rock995"
+  active 1
+  parent -1
+  transform 23.43 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 998 "Rock996"
+  active 1
+  parent -1
+  transform 24.57 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 999 "Rock997"
+  active 1
+  parent -1
+  transform 25.71 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 1000 "Rock998"
+  active 1
+  parent -1
+  transform 26.86 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 1001 "Rock999"
+  active 1
+  parent -1
+  transform 28.00 0.1 -24.70 0 0 0 1 0.3 0.2 0.3
+  mesh "Cube" 0.45 0.42 0.4 1 0 "" 0
+end
+gameobject 1002 "Npc0"
+  active 1
+  parent -1
+  transform -5.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1003 "Npc1"
+  active 1
+  parent -1
+  transform -4.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1004 "Npc2"
+  active 1
+  parent -1
+  transform -3.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1005 "Npc3"
+  active 1
+  parent -1
+  transform -2.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1006 "Npc4"
+  active 1
+  parent -1
+  transform -1.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1007 "Npc5"
+  active 1
+  parent -1
+  transform -0.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1008 "Npc6"
+  active 1
+  parent -1
+  transform 0.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1009 "Npc7"
+  active 1
+  parent -1
+  transform 1.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1010 "Npc8"
+  active 1
+  parent -1
+  transform 2.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1011 "Npc9"
+  active 1
+  parent -1
+  transform 3.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1012 "Npc10"
+  active 1
+  parent -1
+  transform 4.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1013 "Npc11"
+  active 1
+  parent -1
+  transform 5.50 0.5 -5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1014 "Npc12"
+  active 1
+  parent -1
+  transform -5.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1015 "Npc13"
+  active 1
+  parent -1
+  transform -4.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1016 "Npc14"
+  active 1
+  parent -1
+  transform -3.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1017 "Npc15"
+  active 1
+  parent -1
+  transform -2.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1018 "Npc16"
+  active 1
+  parent -1
+  transform -1.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1019 "Npc17"
+  active 1
+  parent -1
+  transform -0.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1020 "Npc18"
+  active 1
+  parent -1
+  transform 0.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1021 "Npc19"
+  active 1
+  parent -1
+  transform 1.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1022 "Npc20"
+  active 1
+  parent -1
+  transform 2.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1023 "Npc21"
+  active 1
+  parent -1
+  transform 3.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1024 "Npc22"
+  active 1
+  parent -1
+  transform 4.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1025 "Npc23"
+  active 1
+  parent -1
+  transform 5.50 0.5 -4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1026 "Npc24"
+  active 1
+  parent -1
+  transform -5.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1027 "Npc25"
+  active 1
+  parent -1
+  transform -4.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1028 "Npc26"
+  active 1
+  parent -1
+  transform -3.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1029 "Npc27"
+  active 1
+  parent -1
+  transform -2.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1030 "Npc28"
+  active 1
+  parent -1
+  transform -1.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1031 "Npc29"
+  active 1
+  parent -1
+  transform -0.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1032 "Npc30"
+  active 1
+  parent -1
+  transform 0.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1033 "Npc31"
+  active 1
+  parent -1
+  transform 1.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1034 "Npc32"
+  active 1
+  parent -1
+  transform 2.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1035 "Npc33"
+  active 1
+  parent -1
+  transform 3.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1036 "Npc34"
+  active 1
+  parent -1
+  transform 4.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1037 "Npc35"
+  active 1
+  parent -1
+  transform 5.50 0.5 -3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1038 "Npc36"
+  active 1
+  parent -1
+  transform -5.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1039 "Npc37"
+  active 1
+  parent -1
+  transform -4.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1040 "Npc38"
+  active 1
+  parent -1
+  transform -3.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1041 "Npc39"
+  active 1
+  parent -1
+  transform -2.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1042 "Npc40"
+  active 1
+  parent -1
+  transform -1.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1043 "Npc41"
+  active 1
+  parent -1
+  transform -0.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1044 "Npc42"
+  active 1
+  parent -1
+  transform 0.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1045 "Npc43"
+  active 1
+  parent -1
+  transform 1.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1046 "Npc44"
+  active 1
+  parent -1
+  transform 2.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1047 "Npc45"
+  active 1
+  parent -1
+  transform 3.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1048 "Npc46"
+  active 1
+  parent -1
+  transform 4.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1049 "Npc47"
+  active 1
+  parent -1
+  transform 5.50 0.5 -2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1050 "Npc48"
+  active 1
+  parent -1
+  transform -5.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1051 "Npc49"
+  active 1
+  parent -1
+  transform -4.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1052 "Npc50"
+  active 1
+  parent -1
+  transform -3.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1053 "Npc51"
+  active 1
+  parent -1
+  transform -2.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1054 "Npc52"
+  active 1
+  parent -1
+  transform -1.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1055 "Npc53"
+  active 1
+  parent -1
+  transform -0.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1056 "Npc54"
+  active 1
+  parent -1
+  transform 0.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1057 "Npc55"
+  active 1
+  parent -1
+  transform 1.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1058 "Npc56"
+  active 1
+  parent -1
+  transform 2.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1059 "Npc57"
+  active 1
+  parent -1
+  transform 3.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1060 "Npc58"
+  active 1
+  parent -1
+  transform 4.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1061 "Npc59"
+  active 1
+  parent -1
+  transform 5.50 0.5 -1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1062 "Npc60"
+  active 1
+  parent -1
+  transform -5.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1063 "Npc61"
+  active 1
+  parent -1
+  transform -4.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1064 "Npc62"
+  active 1
+  parent -1
+  transform -3.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1065 "Npc63"
+  active 1
+  parent -1
+  transform -2.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1066 "Npc64"
+  active 1
+  parent -1
+  transform -1.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1067 "Npc65"
+  active 1
+  parent -1
+  transform -0.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1068 "Npc66"
+  active 1
+  parent -1
+  transform 0.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1069 "Npc67"
+  active 1
+  parent -1
+  transform 1.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1070 "Npc68"
+  active 1
+  parent -1
+  transform 2.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1071 "Npc69"
+  active 1
+  parent -1
+  transform 3.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1072 "Npc70"
+  active 1
+  parent -1
+  transform 4.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1073 "Npc71"
+  active 1
+  parent -1
+  transform 5.50 0.5 -0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1074 "Npc72"
+  active 1
+  parent -1
+  transform -5.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1075 "Npc73"
+  active 1
+  parent -1
+  transform -4.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1076 "Npc74"
+  active 1
+  parent -1
+  transform -3.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1077 "Npc75"
+  active 1
+  parent -1
+  transform -2.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1078 "Npc76"
+  active 1
+  parent -1
+  transform -1.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1079 "Npc77"
+  active 1
+  parent -1
+  transform -0.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1080 "Npc78"
+  active 1
+  parent -1
+  transform 0.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1081 "Npc79"
+  active 1
+  parent -1
+  transform 1.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1082 "Npc80"
+  active 1
+  parent -1
+  transform 2.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1083 "Npc81"
+  active 1
+  parent -1
+  transform 3.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1084 "Npc82"
+  active 1
+  parent -1
+  transform 4.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1085 "Npc83"
+  active 1
+  parent -1
+  transform 5.50 0.5 0.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1086 "Npc84"
+  active 1
+  parent -1
+  transform -5.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1087 "Npc85"
+  active 1
+  parent -1
+  transform -4.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1088 "Npc86"
+  active 1
+  parent -1
+  transform -3.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1089 "Npc87"
+  active 1
+  parent -1
+  transform -2.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1090 "Npc88"
+  active 1
+  parent -1
+  transform -1.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1091 "Npc89"
+  active 1
+  parent -1
+  transform -0.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1092 "Npc90"
+  active 1
+  parent -1
+  transform 0.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1093 "Npc91"
+  active 1
+  parent -1
+  transform 1.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1094 "Npc92"
+  active 1
+  parent -1
+  transform 2.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1095 "Npc93"
+  active 1
+  parent -1
+  transform 3.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1096 "Npc94"
+  active 1
+  parent -1
+  transform 4.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1097 "Npc95"
+  active 1
+  parent -1
+  transform 5.50 0.5 1.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1098 "Npc96"
+  active 1
+  parent -1
+  transform -5.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1099 "Npc97"
+  active 1
+  parent -1
+  transform -4.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1100 "Npc98"
+  active 1
+  parent -1
+  transform -3.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1101 "Npc99"
+  active 1
+  parent -1
+  transform -2.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1102 "Npc100"
+  active 1
+  parent -1
+  transform -1.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1103 "Npc101"
+  active 1
+  parent -1
+  transform -0.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1104 "Npc102"
+  active 1
+  parent -1
+  transform 0.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1105 "Npc103"
+  active 1
+  parent -1
+  transform 1.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1106 "Npc104"
+  active 1
+  parent -1
+  transform 2.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1107 "Npc105"
+  active 1
+  parent -1
+  transform 3.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1108 "Npc106"
+  active 1
+  parent -1
+  transform 4.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1109 "Npc107"
+  active 1
+  parent -1
+  transform 5.50 0.5 2.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1110 "Npc108"
+  active 1
+  parent -1
+  transform -5.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1111 "Npc109"
+  active 1
+  parent -1
+  transform -4.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1112 "Npc110"
+  active 1
+  parent -1
+  transform -3.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1113 "Npc111"
+  active 1
+  parent -1
+  transform -2.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1114 "Npc112"
+  active 1
+  parent -1
+  transform -1.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1115 "Npc113"
+  active 1
+  parent -1
+  transform -0.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1116 "Npc114"
+  active 1
+  parent -1
+  transform 0.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1117 "Npc115"
+  active 1
+  parent -1
+  transform 1.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1118 "Npc116"
+  active 1
+  parent -1
+  transform 2.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1119 "Npc117"
+  active 1
+  parent -1
+  transform 3.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1120 "Npc118"
+  active 1
+  parent -1
+  transform 4.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1121 "Npc119"
+  active 1
+  parent -1
+  transform 5.50 0.5 3.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1122 "Npc120"
+  active 1
+  parent -1
+  transform -5.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1123 "Npc121"
+  active 1
+  parent -1
+  transform -4.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1124 "Npc122"
+  active 1
+  parent -1
+  transform -3.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1125 "Npc123"
+  active 1
+  parent -1
+  transform -2.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1126 "Npc124"
+  active 1
+  parent -1
+  transform -1.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1127 "Npc125"
+  active 1
+  parent -1
+  transform -0.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1128 "Npc126"
+  active 1
+  parent -1
+  transform 0.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1129 "Npc127"
+  active 1
+  parent -1
+  transform 1.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1130 "Npc128"
+  active 1
+  parent -1
+  transform 2.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1131 "Npc129"
+  active 1
+  parent -1
+  transform 3.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1132 "Npc130"
+  active 1
+  parent -1
+  transform 4.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1133 "Npc131"
+  active 1
+  parent -1
+  transform 5.50 0.5 4.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1134 "Npc132"
+  active 1
+  parent -1
+  transform -5.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1135 "Npc133"
+  active 1
+  parent -1
+  transform -4.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1136 "Npc134"
+  active 1
+  parent -1
+  transform -3.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1137 "Npc135"
+  active 1
+  parent -1
+  transform -2.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1138 "Npc136"
+  active 1
+  parent -1
+  transform -1.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1139 "Npc137"
+  active 1
+  parent -1
+  transform -0.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1140 "Npc138"
+  active 1
+  parent -1
+  transform 0.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1141 "Npc139"
+  active 1
+  parent -1
+  transform 1.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1142 "Npc140"
+  active 1
+  parent -1
+  transform 2.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1143 "Npc141"
+  active 1
+  parent -1
+  transform 3.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1144 "Npc142"
+  active 1
+  parent -1
+  transform 4.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1145 "Npc143"
+  active 1
+  parent -1
+  transform 5.50 0.5 5.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1146 "Npc144"
+  active 1
+  parent -1
+  transform -5.50 0.5 6.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1147 "Npc145"
+  active 1
+  parent -1
+  transform -4.50 0.5 6.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1148 "Npc146"
+  active 1
+  parent -1
+  transform -3.50 0.5 6.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1149 "Npc147"
+  active 1
+  parent -1
+  transform -2.50 0.5 6.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1150 "Npc148"
+  active 1
+  parent -1
+  transform -1.50 0.5 6.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end
+gameobject 1151 "Npc149"
+  active 1
+  parent -1
+  transform -0.50 0.5 6.50 0 0 0 1 0.5 1 0.5
+  mesh "Capsule" 0.85 0.55 0.25 1 0 "" 0
+  npc 1 1.5 10 8 1.5 10 1 1 "nobody" 100 0 3.5 360 0 0.3 120 1 1.6 6 0 3 4 0 0 0 0 1 1 0 0 0 1.5 1 0 0 0 0.6
+end

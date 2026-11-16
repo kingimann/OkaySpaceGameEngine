@@ -561,8 +561,6 @@ public:
     void YawLowerBody(float dt) {
         if (!transform) return;
         UndoYaw();
-        Transform* hips = HipsT();
-        Transform* spine = SpineT();
         float target = 0.0f;
         float ang = 0.0f;
         Character* ch = nullptr;
@@ -587,7 +585,13 @@ public:
         m_hipYaw += step;
         if (target == 0.0f && std::fabs(m_hipYaw) < 0.5f) m_hipYaw = 0.0f;
         const float yaw = m_hipYaw;
-        if (yaw == 0.0f || !hips) return;
+        if (yaw == 0.0f) return;
+        // Looked up only when there is a turn to write (legsFollowTravel is off by default): a rig with
+        // no "Hips"/"Spine" names fell through to a whole-scene search for each of them on every spawn
+        // or destroy, in every animator, even with the feature off (Grok finding 106).
+        Transform* hips = HipsT();
+        Transform* spine = SpineT();
+        if (!hips) return;
         // World up, written in the hips' parent space. Parent-space up is not
         // vertical on a tilted armature, and yawing around it tips the pelvis.
         // local' = AngleAxis(θ, parent⁻¹ · worldUp) · local is a pure world yaw.
@@ -1491,6 +1495,24 @@ public:
     Transform* NodeT(const std::string& name) const {
         if (!gameObject || !gameObject->transform) return nullptr;
         Scene* sc = gameObject->scene();
+        RefreshNodeMap();
+        auto it = m_nodeMap.find(name);
+        if (it != m_nodeMap.end()) return it->second;
+        // Outside the model: fall back to the whole scene (cached, misses too).
+        auto ex = m_extMap.find(name);
+        if (ex != m_extMap.end()) return ex->second;
+        GameObject* g = sc ? sc->Find(name) : nullptr;
+        Transform* t = g ? g->transform : nullptr;
+        m_extMap.emplace(name, t);
+        return t;
+    }
+    /// Rebuild this model's bone-name map (and drop the bindings) when objects came or went. Only the
+    /// model's own subtree is walked. Bind used to call NodeT("") for this, and the empty name, never
+    /// in the map, then fell through to a whole-scene Scene::Find on every spawn or destroy, once per
+    /// animator (Grok finding 106).
+    void RefreshNodeMap() const {
+        if (!gameObject || !gameObject->transform) return;
+        Scene* sc = gameObject->scene();
         const std::uint64_t ver = sc ? sc->StructureVersion() : 0;
         if (ver != m_nodeVer || m_nodeMap.empty()) {
             m_nodeMap.clear(); m_extMap.clear(); m_bind.clear(); m_pairs.clear();
@@ -1504,15 +1526,6 @@ public:
                 for (auto it = ch.rbegin(); it != ch.rend(); ++it) stack.push_back(*it);
             }
         }
-        auto it = m_nodeMap.find(name);
-        if (it != m_nodeMap.end()) return it->second;
-        // Outside the model: fall back to the whole scene (cached, misses too).
-        auto ex = m_extMap.find(name);
-        if (ex != m_extMap.end()) return ex->second;
-        GameObject* g = sc ? sc->Find(name) : nullptr;
-        Transform* t = g ? g->transform : nullptr;
-        m_extMap.emplace(name, t);
-        return t;
     }
     /// Drop cached node bindings (after renaming bones or editing clip node lists).
     void InvalidateBindings() { m_nodeMap.clear(); m_bind.clear(); m_pairs.clear(); m_rootCache.clear(); }
@@ -1521,7 +1534,7 @@ public:
     const std::vector<Transform*>& Bind(int ci) const {
         static const std::vector<Transform*> none;
         if (ci < 0 || ci >= (int)clips.size()) return none;
-        NodeT(std::string());   // refresh the name map if the scene changed
+        RefreshNodeMap();   // objects came or went: rebuild the name map and drop the bindings
         if (m_bind.size() != clips.size()) m_bind.assign(clips.size(), {});
         auto& b = m_bind[ci];
         if (b.size() != clips[ci].nodes.size()) {

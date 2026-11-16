@@ -385,11 +385,42 @@ private:
         transform->localRotation = Quat::Slerp(transform->localRotation, want, t);
     }
 
+    /// Every NPCController in `s`, in the order FindObjectsOfType gives. Built once and shared by all
+    /// NPCs until an object or component is added or removed (Scene::StructureVersion / ComponentVersion),
+    /// so separation no longer walks the whole scene once per NPC per frame (Grok finding 102). Positions
+    /// are still read live in Steer, so the pushes are the same as before.
+    static const std::vector<NPCController*>& SceneNpcs(const Scene& s) {
+        struct Cache {
+            std::uint64_t uid = 0, structure = 0, components = 0;
+            std::size_t objects = 0;
+            std::vector<NPCController*> npcs;
+        };
+        thread_local std::vector<Cache> caches;   // a few scenes (additive loads, editor + play)
+        if (caches.capacity() < 8) caches.reserve(8);   // never reallocates: a returned list stays valid
+        Cache* c = nullptr;
+        for (Cache& k : caches) if (k.uid == s.Uid()) { c = &k; break; }
+        if (!c) {
+            if (caches.size() >= 8) caches.erase(caches.begin());
+            caches.push_back(Cache{});
+            c = &caches.back();
+            c->uid = s.Uid();
+            c->structure = s.StructureVersion() - 1;   // force the first build
+        }
+        if (c->structure != s.StructureVersion() || c->components != s.ComponentVersion() ||
+            c->objects != s.Objects().size()) {
+            c->structure = s.StructureVersion();
+            c->components = s.ComponentVersion();
+            c->objects = s.Objects().size();
+            c->npcs = s.FindObjectsOfType<NPCController>();
+        }
+        return c->npcs;
+    }
+
     Vec3 Steer(Vec3 dir, const Vec3& pos) const {
         Scene* s = gameObject ? gameObject->scene() : nullptr;
         if (!s) return dir;
         Vec3 push{0, 0, 0};
-        for (NPCController* o : s->FindObjectsOfType<NPCController>()) {
+        for (NPCController* o : SceneNpcs(*s)) {
             if (o == this || !o->transform) continue;
             Vec3 op = o->transform->Position();
             float dx = pos.x - op.x, dz = pos.z - op.z;

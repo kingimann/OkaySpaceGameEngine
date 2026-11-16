@@ -1237,6 +1237,13 @@ layer names save with the scene.
 - The Model Animator samples clips straight into cached bone bindings: no per-bone
   components, no clip copies when switching, and no name lookups per frame.
 - Skinned meshes only re-skin when a bone actually moved.
+- Spawning or destroying an object (a bullet, a pickup) makes each Model Animator rebuild only
+  its own bone-name map, not search the whole scene. It used to run whole-scene name searches in
+  every animator on every such frame (an empty-name "refresh" lookup, and the "Hips"/"Spine" names
+  of **Legs Follow Travel** even with that option off): 300 characters with a bullet spawned and
+  destroyed every frame cost about 14x a quiet frame, now about 1.2x. Still searched once per spawn
+  or destroy: a clip track for a node outside the model or missing from it, and, with Legs Follow
+  Travel on and turning, hips/spine names the rig does not have.
 
 - Skinning sums the weighted bone matrices once per vertex (3x4 affine) and runs
   after IK, once per frame.

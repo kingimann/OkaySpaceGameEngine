@@ -1262,6 +1262,29 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## NPC crowds and animated characters no longer slow down in big or busy scenes (Grok findings 102 and 106)
+
+**What it is.** Two whole-scene searches ran far too often. NPCs with a **Separation Radius** each searched every object in
+the scene every frame to find the other NPCs. And every spawn or destroy (a bullet, a pickup) made every Model Animator
+search the whole scene once. Both now use a list that is built once and shared, so results are the same and the cost no
+longer grows with the size of the level. Details: [npcs_and_crafting.md](npcs_and_crafting.md) (Separation Radius) and
+[animation.md](animation.md) (Performance).
+
+**Steps (NPC crowd).**
+1. Start `Tools\OkayEngine.exe`. **File > Open...** and open `<install folder>\examples\crowd\npc_crowd.okayscene`:
+   150 orange capsules (NPCs that wander and keep 1.5 m apart) in the middle, and 1,000 small grey rocks along two edges.
+2. Open **View > Panels > Profiler** (or watch the Game view's stats) and press **Play**.
+3. You should see the capsules spread apart and wander without bumping into each other, and the frame time stay low and
+   steady. With an older release the same scene spends many times longer in the NPC update.
+
+**Animated characters** cannot be tried this way on a release today: there is no shipped scene with hundreds of rigged
+characters and a gun firing. The headless test below rebuilds that case.
+
+**Test:** `ctest -R perf_npc_anim_scans`. It prints the frame times. On the Linux build machine: separation on vs off
+with 150 NPCs and 4,000 level objects went from x7.6-9.0 to x1.04-1.07, and 300 animated characters with one spawn and
+one destroy per frame went from x11.5-14.1 to x1.14-1.30 (60 ms to 5.6 ms per frame). It also checks that NPC positions and animated bone rotations are the same
+as the old code gave.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -25,6 +25,13 @@ health directly. NPCs also have **`health`/`maxHealth`** and `Damage()` — at 0
 broadcast `npc_died`, play a sibling AudioSource, and despawn, so the player can fight
 them.
 
+**Separation Radius** (`separationRadius`, 0 = off) makes an NPC steer away from other NPCs closer
+than that distance, for crowds, hordes and squads. The list of NPCs is built once and shared by every
+NPC until an object or component is added or removed, so a crowd in a big level no longer walks every
+object in the scene once per NPC per frame. The cost now grows with the number of NPCs, not the size
+of the level: 150 NPCs among 4,000 level objects went from about 8x the cost of separation off to
+about 1.1x. Try it: `examples/crowd/npc_crowd.okayscene` ([try_it.md](try_it.md)).
+
 ## Player attacks (Melee Attacker)
 
 *Add Component ▸ Gameplay ▸ Melee Attacker.* On attack input (`attackKey`, default F,

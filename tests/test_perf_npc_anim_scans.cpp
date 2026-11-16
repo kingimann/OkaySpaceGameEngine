@@ -3,9 +3,11 @@
 //  * Finding 102: every NPC with a Separation Radius looked for the other NPCs by walking every object
 //    and component in the scene, every frame. A crowd in a big level paid (NPCs x scene objects).
 //    Now the NPC list is built once per scene change and shared, so the per-NPC cost is the NPC count.
-//  * Finding 106: any spawn or destroy made every ModelAnimator do a full-scene Scene::Find("") (a
-//    "refresh" call with an empty name that can never match), so one bullet per frame cost
-//    (characters x scene objects). Now the refresh only rebuilds the character's own bone map.
+//  * Finding 106: any spawn or destroy made every ModelAnimator do whole-scene Scene::Find searches: a
+//    "refresh" call with an empty name that can never match, and the eight "Hips"/"Spine" names of
+//    Legs Follow Travel, looked up every frame even with that option off. So one bullet per frame cost
+//    (characters x scene objects). Now the refresh only rebuilds the character's own bone map, and the
+//    hips/spine are looked up only when there is a turn to write.
 //
 // The timings are reported, and checked only as RATIOS inside one run with a generous margin (the old
 // code was many times slower on these exact scenes), so a slow or busy CI machine does not fail them.

@@ -850,7 +850,7 @@ select it and Add Component > Mesh Collider 3D).
 
 ## Tips
 
-- **Meshy / Mixamo FBX**: animations import via Assimp. For the richest
+- **Meshy / Mixamo FBX**: animations import through the built-in FBX reader (ufbx; our own reader when `OKAY_OWN_FBX=1`). For the richest
   results (full skins + all takes) prefer the **GLB** export when available.
 - **Materials import too**: albedo, normal, specular/gloss and AO maps
   (external files or FBX-embedded), plus diffuse/emissive colors and

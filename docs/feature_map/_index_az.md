@@ -636,6 +636,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - choice (10.2)
 - choice buttons (10.4)
 - choose file (37.3)
+- Chooser (38.1.6)
 - Chrome trace (1.10, 23.1)
 - chunks (27.4, 45.1)
 - CI (18.3, 33.3, 41.8.1)
@@ -5222,6 +5223,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - VsApi (14.7)
 - VsValue (14.2)
 - vsync (1.15, 37.1)
+- Vulkan probe (38.1.7)
 
 **W**
 

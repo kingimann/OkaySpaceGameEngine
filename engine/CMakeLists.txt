@@ -67,6 +67,7 @@ add_library(okay_engine
     src/Render/GLRenderer.cpp
     src/Render/D3D11Renderer.cpp
     src/Render/D3D12Renderer.cpp
+    src/Render/VulkanProbe.cpp
     src/Scene/Component.cpp
     src/Scene/GameObject.cpp
     src/Scene/Transform.cpp

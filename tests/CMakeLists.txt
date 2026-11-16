@@ -478,6 +478,10 @@ add_executable(test_software_renderer test_software_renderer.cpp)
 target_link_libraries(test_software_renderer PRIVATE okay::engine)
 add_test(NAME software_renderer COMMAND test_software_renderer)
 
+add_executable(test_gpu_backend test_gpu_backend.cpp)
+target_link_libraries(test_gpu_backend PRIVATE okay::engine)
+add_test(NAME gpu_backend COMMAND test_gpu_backend)
+
 add_executable(test_script_maps test_script_maps.cpp)
 target_link_libraries(test_script_maps PRIVATE okay::engine)
 add_test(NAME script_maps COMMAND test_script_maps)

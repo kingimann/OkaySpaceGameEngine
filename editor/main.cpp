@@ -63,6 +63,7 @@
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
+#include "okay/Render/GpuBackend.hpp"    // shared backend contract + which-backend-first chooser
 #include "okay/Core/Profiler.hpp"
 #include "okay/Core/FrameOverlay.hpp"
 #include "okay/Render/OcclusionOverlay.hpp"        // CPU/GPU frame profiler
@@ -1160,8 +1161,18 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
     // After repeated GPU failures, rest on the software renderer briefly and then
     // RETRY — previously one bad spell disabled the GPU for the whole session,
     // silently leaving big scenes to the CPU rasterizer at 1 FPS.
-    static Uint32 s_gpuRetryAt = 0;
-    if (g_gpuRender && okay::platform::TicksMs32() >= s_gpuRetryAt) {
+    static okay::GpuFailureTracker s_gpuTrack;   // 3 failed frames in a row: rest 5 s, then retry
+    // Which GPU backends to try, best first: Direct3D 11 (Windows), then OpenGL. The editor never offers
+    // Direct3D 12. Software ends the list and is the fallback below (okay/Render/GpuBackendChooser.hpp).
+    okay::GpuChooserInput gIn;
+    gIn.gpuEnabled = g_gpuRender;
+    gIn.tryAllowed = s_gpuTrack.MayTry(okay::platform::TicksMs32());
+#if defined(_WIN32)
+    gIn.available[(int)okay::RenderBackend::Direct3D11] = g_d3dReady && g_d3dRenderer;
+#endif
+    gIn.available[(int)okay::RenderBackend::OpenGL] = g_glReady && g_glRenderer && g_glWindow && g_glCtx;
+    const okay::GpuBackendOrder gOrder = okay::ChooseGpuBackends(gIn);
+    if (g_gpuRender && gIn.tryAllowed) {
 #if defined(_WIN32)
         // Zero-copy: render straight into the SDL texture the panel shows.
         // (The small Animation preview, slot 3, keeps the read-back path: it renders
@@ -1186,7 +1197,11 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                 ConsoleLog("Direct viewport rendering failed; using the read-back path.", 1);
             }
         }
-        if (!px && g_d3dReady && g_d3dRenderer) {
+#endif
+        for (int oi = 0; oi < gOrder.GpuCount() && !px; ++oi) {
+        switch (gOrder.list[oi]) {
+#if defined(_WIN32)
+        case okay::RenderBackend::Direct3D11: {
             OKAY_BREADCRUMB("Render3D:d3d11");   // crash breadcrumb: which backend faulted
             // Scene / Game view / Camera Preview redraw every frame: pipeline their read-back
             // (show last frame's image, don't stall on the GPU). The Animation preview and
@@ -1196,9 +1211,10 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                                                0.0f, 0.0f, 0.0f, 0.0f, ignore);
             g_d3dRenderer->SetReadbackStream(-1);
             if (px) okay::FrameOverlay::RendererName() = "Direct3D 11 (GPU, read back)";
+            break;
         }
 #endif
-        if (!px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
+        case okay::RenderBackend::OpenGL: {
             OKAY_BREADCRUMB("Render3D:gl");
             SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
             SDL_Window*   prevWin = SDL_GL_GetCurrentWindow();
@@ -1207,15 +1223,13 @@ SDL_Texture* Render3DTexture(const Scene& scene, const Mat4& vp, const Vec3& eye
                                                   0.0f, 0.0f, 0.0f, 0.0f, ignore);
             SDL_GL_MakeCurrent(prevWin, prevCtx);
             if (px) okay::FrameOverlay::RendererName() = "OpenGL (GPU)";
+            break;
         }
-        static int s_gpuFails = 0;
-        if (!px) {
-            if (++s_gpuFails >= 3) {
-                s_gpuFails = 0;
-                s_gpuRetryAt = okay::platform::TicksMs32() + 5000;   // rest 5s on software, then retry
-                ConsoleLog("GPU renderer failing; using the software renderer briefly, will retry.", 1);
-            }
-        } else s_gpuFails = 0;
+        default: break;
+        }
+        }
+        if (s_gpuTrack.Record(px != nullptr, okay::platform::TicksMs32(), 3, 5000))   // rest 5s on software, then retry
+            ConsoleLog("GPU renderer failing; using the software renderer briefly, will retry.", 1);
     }
     // GPU renderers don't read back depth, so particle occlusion is off for them;
     // the software path (next) fills + validates the shared depth for occlusion.
@@ -1264,22 +1278,34 @@ const std::uint32_t* Render3DPassPixels(const Scene& scene, const okay::CameraPa
     okay::RenderCullingMask() = pass.cullingMask;
     okay::visibility::RenderViewFovY() = pass.fovY;
     const std::uint32_t* px = nullptr;
-    const bool tryGpu = g_gpuRender;
     const int rw = pass.w, rh = pass.h;
+    okay::GpuChooserInput gIn;   // same order as Render3DTexture; this path has no retry rest of its own
+    gIn.gpuEnabled = g_gpuRender;
 #if defined(_WIN32)
-    if (tryGpu && g_d3dReady && g_d3dRenderer) {
-        g_d3dRenderer->SetReadbackStream(-1);
-        px = g_d3dRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
-                                           pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
-    }
+    gIn.available[(int)okay::RenderBackend::Direct3D11] = g_d3dReady && g_d3dRenderer;
 #endif
-    if (tryGpu && !px && g_glReady && g_glRenderer && g_glWindow && g_glCtx) {
-        SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
-        SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
-        if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
-            px = g_glRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
-                                              pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
-        SDL_GL_MakeCurrent(prevWin, prevCtx);
+    gIn.available[(int)okay::RenderBackend::OpenGL] = g_glReady && g_glRenderer && g_glWindow && g_glCtx;
+    const okay::GpuBackendOrder gOrder = okay::ChooseGpuBackends(gIn);
+    for (int oi = 0; oi < gOrder.GpuCount() && !px; ++oi) {
+        switch (gOrder.list[oi]) {
+#if defined(_WIN32)
+        case okay::RenderBackend::Direct3D11:
+            g_d3dRenderer->SetReadbackStream(-1);
+            px = g_d3dRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
+                                               pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
+            break;
+#endif
+        case okay::RenderBackend::OpenGL: {
+            SDL_GLContext prevCtx = SDL_GL_GetCurrentContext();
+            SDL_Window* prevWin = SDL_GL_GetCurrentWindow();
+            if (SDL_GL_MakeCurrent(g_glWindow, g_glCtx) == 0)
+                px = g_glRenderer->RenderToPixels(scene, pass.vp, pass.eye, rw, rh, 4,
+                                                  pass.clearR, pass.clearG, pass.clearB, pass.clearA, pass.ignore);
+            SDL_GL_MakeCurrent(prevWin, prevCtx);
+            break;
+        }
+        default: break;
+        }
     }
     okay::SceneOcclusionDepth().valid = false;
     if (!px) {

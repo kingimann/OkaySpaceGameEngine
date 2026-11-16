@@ -10,17 +10,19 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **What:** How the engine talks to a renderer and how the editor and the player pick one for the machine they run on.
 - **Parts:**
   - 38.1.1 Interface - `Render/Renderer` - `IRenderer` with five calls, implemented only by the console renderer (see 2.1.1)
-  - 38.1.2 GPU contract - `Render/GLRenderer`, `Render/D3D11Renderer`, `Render/D3D12Renderer` - no common base class: each exposes `RenderToPixels(scene, viewProj, eye, w, h, samples, clear colour, ignore)` returning a w*h RGBA8 buffer owned by the renderer; the software equivalent is `RenderMeshesSS`
-  - 38.1.3 Editor choice - `editor/main.cpp` (`Render3DTexture`) - GPU on by default: Direct3D 11 on Windows, else OpenGL, else software; three failed frames put it on software for 5 seconds before retrying
+  - 38.1.2 GPU contract - `Render/GpuBackend` - `IGpuBackend` (id, name, capabilities, init, shutdown, render-to-pixels) and `GpuRendererAdapter<R>` so the three renderers satisfy it unchanged (the hosts still call the renderers directly); the renderers themselves have no common base class: each exposes `RenderToPixels(scene, viewProj, eye, w, h, samples, clear colour, ignore)` returning a w*h RGBA8 buffer owned by the renderer; the software equivalent is `RenderMeshesSS`
+  - 38.1.6 Chooser - `Render/GpuBackendChooser` - capability table per backend, `ChooseGpuBackends` (availability + prefs + requirements -> ordered list ending in software) and `GpuFailureTracker`; headless tested (`gpu_backend`)
+  - 38.1.7 Vulkan probe - `Render/VulkanProbe` - own minimal loader (vulkan-1.dll / libvulkan.so.1), lists devices; off by default (`OKAY_VULKAN_PROBE=1` with `okayplayer --gpu-probe`); renders nothing
+  - 38.1.3 Editor choice - `editor/main.cpp` (`Render3DTexture`) - via the chooser; GPU on by default: Direct3D 11 on Windows, else OpenGL, else software; three failed frames put it on software for 5 seconds before retrying
   - 38.1.4 Player choice - `player/main.cpp` - Direct3D 12 when opted in, then Direct3D 11, then OpenGL, then software; three failed frames switch to software for the rest of the run; `gpu=0` in the build config skips GPUs
   - 38.1.5 Quality presets - `Core/DisplaySettings` - Low/Medium/High (see 1.15)
-- **Code:** `Render/Renderer`, `editor/main.cpp`, `player/main.cpp`
-- **API:** `IRenderer`, `GLRenderer::RenderToPixels`, `D3D11Renderer::RenderToPixels`, `RenderMeshesSS`, Build Game "GPU renderer" and "Prefer Direct3D 12" options
+- **Code:** `Render/Renderer`, `Render/GpuBackend`, `Render/GpuBackendChooser`, `Render/VulkanProbe`, `editor/main.cpp`, `player/main.cpp`
+- **API:** `IRenderer`, `IGpuBackend`, `ChooseGpuBackends`, `RunVulkanProbe`, `GLRenderer::RenderToPixels`, `D3D11Renderer::RenderToPixels`, `RenderMeshesSS`, Build Game "GPU renderer" and "Prefer Direct3D 12" options
 - **Editor:** View > Rendering & Performance (a read-only "Renderer: <backend>" line and 3D Anti-aliasing 2x); Build Game > quality preset, GPU renderer and Prefer Direct3D 12
-- **Docs:** `docs/rendering.md`, `docs/lighting.md` (which renderers do what)
-- **Tests:** `software_renderer`
+- **Docs:** `docs/rendering.md`, `docs/lighting.md` (which renderers do what), `docs/render_backends.md`
+- **Tests:** `software_renderer`, `gpu_backend`
 - **Status:** Works - read both selection chains; but the backends cannot be unit tested headless (no GL or D3D context), so only the software path and the planning maths have tests
-- **Open:** no shared backend interface, so every feature is copied three times; no Vulkan or Metal backend; the editor retries the GPU after 5 seconds but the player gives up for the session after three failures; the editor never offers Direct3D 12
+- **Open:** the hosts still call the three renderers directly instead of through `IGpuBackend`, so every feature is still copied three times; no Vulkan rendering (only the off-by-default device probe) and no Metal backend; the editor retries the GPU after 5 seconds but the player gives up for the session after three failures; the editor never offers Direct3D 12
 - **Related:** 2.1, 38.2, 38.3, 38.4, 38.5, 38.10, 1.15
 - **Words:** renderer, backend, GPU, OpenGL, Direct3D, DirectX, D3D11, D3D12, software renderer, fallback, RenderToPixels, GPU renderer toggle
 - **Seen as:** the 3D view is black or very slow; the editor says "GPU renderer failing; using the software renderer briefly"; the game looks different on another machine

@@ -43,6 +43,8 @@
 #include "okay/Render/OcclusionOverlay.hpp"
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
+#include "okay/Render/GpuBackend.hpp"    // shared backend contract + which-backend-first chooser
+#include "okay/Render/VulkanProbe.hpp"   // Vulkan loader seam (probe only, off by default)
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
 #include "okay/UI/UIRenderer.hpp"       // the in-game UI pass (engine)
 #include "okay/UI/TooltipPlace.hpp"
@@ -1155,7 +1157,8 @@ int main(int argc, char** argv) {
                         "  --login NAME         sign this machine in (password from OKAY_LOGIN_PASSWORD or typed)\n"
                         "  --logout             sign out\n\n"
                         "Build:\n"
-                        "  --build-info         print which build this is (version, build number, engine, date) and exit\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
+                        "  --build-info         print which build this is (version, build number, engine, date) and exit\n"
+                        "  --gpu-probe          list the graphics backends and, with OKAY_VULKAN_PROBE=1, the Vulkan devices; writes gpu-probe.txt too\n\n%s", argv[0], argv[0], okay::DedicatedServerUsage());
             return 0;
         }
     // `--build-info`: what build this is (the build.json the editor wrote beside the game's data), then exit.
@@ -1174,6 +1177,20 @@ int main(int argc, char** argv) {
                         dataDir.c_str(), bm.settingsHash.c_str(), bm.layout.c_str(), bm.stripped ? "stripped" : "all", bm.assetCount, (unsigned long long)bm.totalBytes);
             return 0;
         }
+    // `--gpu-probe`: print the backend table and, only when OKAY_VULKAN_PROBE=1, ask the system's Vulkan
+    // loader for its devices (docs/render_backends.md). Nothing renders. Also written to gpu-probe.txt.
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--gpu-probe") {
+            std::string rep = "OkayEngine GPU backends (static capability table)\n";
+            for (int b = 0; b < okay::kRenderBackendCount; ++b)
+                rep += "  " + okay::GpuCapabilitiesText(static_cast<okay::RenderBackend>(b)) + "\n";
+            if (okay::VulkanProbeEnabled()) rep += okay::FormatVulkanProbe(okay::RunVulkanProbe());
+            else rep += "Vulkan probe is off. Set OKAY_VULKAN_PROBE=1 and run --gpu-probe again to list Vulkan devices.\n";
+            std::fputs(rep.c_str(), stdout);
+            std::fflush(stdout);
+            { std::ofstream pf("gpu-probe.txt", std::ios::binary); if (pf) pf << rep; }
+            return 0;
+        }
     // Which arguments take a value, so a positional scene path is found wherever it is
     // (`player --windowed scene.okayscene`, `player --log out.txt scene.okayscene`)
     // without mistaking a flag's value for it. Unknown flags are tolerated.
@@ -1185,7 +1202,7 @@ int main(int argc, char** argv) {
         pcl.Value(v, "VALUE");
     pcl.OptionalValue("find-match", "MODE");
     for (const char* f : {"server", "auth", "no-encryption", "report-kicks", "fixed-tick", "authoritative",
-                          "advertise", "logout", "help", "build-info"})
+                          "advertise", "logout", "help", "build-info", "gpu-probe"})
         pcl.Flag(f);
     pcl.AllowUnknown();
     pcl.Parse(argc, argv);   // a flag missing its value is reported by the code that reads it
@@ -1735,7 +1752,21 @@ int main(int argc, char** argv) {
 #endif
     // Reused scratch buffer for GPU downscale/readback (mirrors the editor's path).
     std::vector<std::uint32_t> mesh3DGpu;
-    int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
+    okay::GpuFailureTracker gpuTrack;   // self-heal: 3 failed frames in a row switch the GPU off for the run
+    // Which GPU backends to try this frame, best first (Software ends the list and is the fallback
+    // below). The order is the old if-chain: Direct3D 12 when opted in, Direct3D 11, then OpenGL.
+    auto gpuOrder = [&]() {
+        okay::GpuChooserInput in;
+        in.gpuEnabled = cfg.gpu;
+        in.allowD3D12 = cfg.d3d12;
+        in.tryAllowed = gpuTrack.MayTry(0);
+#if defined(_WIN32)
+        in.available[(int)okay::RenderBackend::Direct3D12] = d3d12Ready && d3d12Renderer;
+        in.available[(int)okay::RenderBackend::Direct3D11] = d3dReady && d3dRenderer;
+#endif
+        in.available[(int)okay::RenderBackend::OpenGL] = glReady && glRenderer && glWindow && glCtx;
+        return okay::ChooseGpuBackends(in);
+    };
 
     okay::platform::AudioSpec want, have;
     want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
@@ -2209,7 +2240,7 @@ int main(int argc, char** argv) {
         // full mesh re-upload. (D3D12 and the software fallback skin on the CPU.)
         {
             bool gpuSkin = false; int maxJoints = okay::SkinnedMesh::kMaxGpuJoints;
-            if (cfg.gpu && gpuFails < 3) {
+            if (cfg.gpu && gpuTrack.MayTry(0)) {
 #if defined(_WIN32)
                 if (d3d12Ready) gpuSkin = false;
                 else if (d3dReady && d3dRenderer) gpuSkin = d3dRenderer->SupportsGpuSkinning();
@@ -2400,20 +2431,28 @@ int main(int argc, char** argv) {
                         okay::RenderCullingMask() = p.cullingMask;
                         okay::visibility::RenderViewFovY() = p.fovY;
                         const std::uint32_t* got = nullptr;
-                        if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
+                        {
+                            const okay::GpuBackendOrder order = gpuOrder();
+                            for (int oi = 0; oi < order.GpuCount() && !got; ++oi) {
+                                switch (order.list[oi]) {
 #if defined(_WIN32)
-                            if (!got && d3d12Ready && d3d12Renderer)
-                                got = d3d12Renderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
-                                                                    p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
-                            if (!got && d3dReady && d3dRenderer)
-                                got = d3dRenderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
-                                                                  p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+                                case okay::RenderBackend::Direct3D12:
+                                    got = d3d12Renderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
+                                                                        p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+                                    break;
+                                case okay::RenderBackend::Direct3D11:
+                                    got = d3dRenderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
+                                                                      p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+                                    break;
 #endif
-                            if (!got && glReady && glRenderer && glWindow && glCtx) {
-                                if (glWindow->MakeCurrent()) {
-                                    got = glRenderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
-                                                                     p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
-                                    okay::platform::Default()->ReleaseCurrent();
+                                case okay::RenderBackend::OpenGL:
+                                    if (glWindow->MakeCurrent()) {
+                                        got = glRenderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
+                                                                         p.clearR, p.clearG, p.clearB, p.clearA, p.ignore);
+                                        okay::platform::Default()->ReleaseCurrent();
+                                    }
+                                    break;
+                                default: break;
                                 }
                             }
                         }
@@ -2438,28 +2477,32 @@ int main(int argc, char** argv) {
                 // offscreen target and reading back RGBA8. A self-heal counter disables
                 // the GPU path after repeated failures so the game is never stuck.
                 const char* rendererUsed = nullptr;   // which renderer drew this frame (shown in the F3 overlay)
-                if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
+                {
+                    const okay::GpuBackendOrder order = gpuOrder();
+                    for (int oi = 0; oi < order.GpuCount() && !px; ++oi) {
+                        switch (order.list[oi]) {
 #if defined(_WIN32)
-                    if (!px && d3d12Ready && d3d12Renderer) {
-                        px = d3d12Renderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
-                                                           0.0f, 0.0f, 0.0f, 0.0f, ignore);
-                        if (px) rendererUsed = "Direct3D 12 (GPU)";
-                    }
-                    if (!px && d3dReady && d3dRenderer) {
-                        px = d3dRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
-                                                         0.0f, 0.0f, 0.0f, 0.0f, ignore);
-                        if (px) rendererUsed = "Direct3D 11 (GPU)";
-                    }
+                        case okay::RenderBackend::Direct3D12:
+                            px = d3d12Renderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
+                                                               0.0f, 0.0f, 0.0f, 0.0f, ignore);
+                            break;
+                        case okay::RenderBackend::Direct3D11:
+                            px = d3dRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
+                                                             0.0f, 0.0f, 0.0f, 0.0f, ignore);
+                            break;
 #endif
-                    if (!px && glReady && glRenderer && glWindow && glCtx) {
-                        if (glWindow->MakeCurrent()) {
-                            px = glRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
-                                                            0.0f, 0.0f, 0.0f, 0.0f, ignore);
-                            okay::platform::Default()->ReleaseCurrent();
-                            if (px) rendererUsed = "OpenGL (GPU)";
+                        case okay::RenderBackend::OpenGL:
+                            if (glWindow->MakeCurrent()) {
+                                px = glRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
+                                                                0.0f, 0.0f, 0.0f, 0.0f, ignore);
+                                okay::platform::Default()->ReleaseCurrent();
+                            }
+                            break;
+                        default: break;
                         }
+                        if (px) rendererUsed = okay::GpuBackendLabel(order.list[oi]);
                     }
-                    if (!px) ++gpuFails; else gpuFails = 0;
+                    if (order.GpuCount() > 0) gpuTrack.Record(px != nullptr, 0);
                     (void)mesh3DGpu;
                 }
                 // Software fallback: native-resolution z-buffered raster (FXAA handles
@@ -2472,7 +2515,7 @@ int main(int argc, char** argv) {
                     px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, vw, vh,
                                         cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
                     rendererUsed = !cfg.gpu ? "SOFTWARE (CPU; GPU switched off in the config)"
-                                 : gpuFails >= 3 ? "SOFTWARE (CPU; the GPU renderer failed 3 times and is not retried)" : "SOFTWARE (CPU; no GPU renderer started)";
+                                 : gpuTrack.off ? "SOFTWARE (CPU; the GPU renderer failed 3 times and is not retried)" : "SOFTWARE (CPU; no GPU renderer started)";
                 }
                 if (rendererUsed) okay::FrameOverlay::RendererName() = rendererUsed;
                 if (px && cam && !cam->renderTarget.empty() && stackPlan.singleFullFrame)

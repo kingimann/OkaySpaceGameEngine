@@ -112,6 +112,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 ## Planned work from the to-do list
 
+- GPU renderer foundation, what is left ([render_backends.md](render_backends.md), issue #946 item 1): the shared contract (`IGpuBackend`), the backend chooser and an off-by-default Vulkan device probe (`okayplayer --gpu-probe`, `OKAY_VULKAN_PROBE=1`) are built. Still open: the player and editor call the three renderers directly instead of through `IGpuBackend`; no Vulkan rendering (logical device, swapchain, SPIR-V shaders, memory); no Metal; no user setting to force a backend; capability numbers are a static table, not probed; the player and editor changes were compiled on Linux only, never run on Windows or a GPU
 - Admin: create test servers without a game (not started: "test server" needs a definition from the owner; see unfinished_launcher.md)
 - Improve the editor Plugins menu
 - Editor menus, follow-ups from the 2026-11-15 clean-up ([editor_menus.md](editor_menus.md), section 5): Ctrl+X with several objects selected deletes them all but keeps only one on the clipboard (the menus refuse Cut for several, the key does not); Copy and the clipboard hold one object, not a selection; what a menu click does (`RunMenuAction`, `HierRowAction`) has no test, only the lists do; the Inspector and Project menus are separate branches

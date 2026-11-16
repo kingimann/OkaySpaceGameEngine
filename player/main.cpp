@@ -41,6 +41,7 @@
 #include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/OcclusionOverlay.hpp"
+#include "okay/Render/GpuFallback.hpp"
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
@@ -1735,7 +1736,7 @@ int main(int argc, char** argv) {
 #endif
     // Reused scratch buffer for GPU downscale/readback (mirrors the editor's path).
     std::vector<std::uint32_t> mesh3DGpu;
-    int gpuFails = 0;   // self-heal: after repeated GPU failures, fall back for good
+    okay::GpuFallback gpuFallback;   // self-heal: after repeated GPU failures, fall back to the CPU renderer and try the GPU again after a growing wait (okay/Render/GpuFallback.hpp)
 
     okay::platform::AudioSpec want, have;
     want.freq = 44100; want.format = okay::platform::SampleFormat::F32; want.channels = 2; want.frames = 1024;
@@ -2209,7 +2210,7 @@ int main(int argc, char** argv) {
         // full mesh re-upload. (D3D12 and the software fallback skin on the CPU.)
         {
             bool gpuSkin = false; int maxJoints = okay::SkinnedMesh::kMaxGpuJoints;
-            if (cfg.gpu && gpuFails < 3) {
+            if (cfg.gpu && !gpuFallback.InFallback()) {
 #if defined(_WIN32)
                 if (d3d12Ready) gpuSkin = false;
                 else if (d3dReady && d3dRenderer) gpuSkin = d3dRenderer->SupportsGpuSkinning();
@@ -2400,7 +2401,7 @@ int main(int argc, char** argv) {
                         okay::RenderCullingMask() = p.cullingMask;
                         okay::visibility::RenderViewFovY() = p.fovY;
                         const std::uint32_t* got = nullptr;
-                        if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
+                        if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFallback.Allowed(okay::FrameOverlay::NowSeconds())) {
 #if defined(_WIN32)
                             if (!got && d3d12Ready && d3d12Renderer)
                                 got = d3d12Renderer->RenderToPixels(scene, p.vp, p.eye, p.w, p.h, 4,
@@ -2438,7 +2439,7 @@ int main(int argc, char** argv) {
                 // offscreen target and reading back RGBA8. A self-heal counter disables
                 // the GPU path after repeated failures so the game is never stuck.
                 const char* rendererUsed = nullptr;   // which renderer drew this frame (shown in the F3 overlay)
-                if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
+                if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFallback.Allowed(okay::FrameOverlay::NowSeconds())) {
 #if defined(_WIN32)
                     if (!px && d3d12Ready && d3d12Renderer) {
                         px = d3d12Renderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
@@ -2459,7 +2460,22 @@ int main(int argc, char** argv) {
                             if (px) rendererUsed = "OpenGL (GPU)";
                         }
                     }
-                    if (!px) ++gpuFails; else gpuFails = 0;
+                    {   // test switch: OKAY_FAKE_GPU_FAIL=<seconds> makes the GPU renderer "fail" for that long after start, to see the fallback and the recovery
+                        static const double fakeFailSeconds = [] { const char* e = std::getenv("OKAY_FAKE_GPU_FAIL"); return e ? std::atof(e) : 0.0; }();
+                        static const double startS = okay::FrameOverlay::NowSeconds();
+                        if (px && fakeFailSeconds > 0.0 && okay::FrameOverlay::NowSeconds() - startS < fakeFailSeconds) px = nullptr;
+                    }
+                    {   // one report per attempt: three failures in a row put the game on the CPU renderer; it tries the GPU again after 2 s, 4 s, ... 60 s
+                        const double nowS = okay::FrameOverlay::NowSeconds();
+                        const okay::GpuFallback::Event ev = gpuFallback.Report(px != nullptr, nowS);
+                        if (ev == okay::GpuFallback::Event::FellBack)
+                            okay::Log::Warning("[render] the GPU renderer failed ", gpuFallback.TotalFailures(), " times in a row: using the software renderer (slow), will try the GPU again in ",
+                                               (int)gpuFallback.CurrentWaitSeconds(), " s");
+                        else if (ev == okay::GpuFallback::Event::Recovered)
+                            okay::Log::Info("[render] the GPU renderer works again: back on the GPU");
+                        else if (!px && gpuFallback.InFallback())
+                            okay::Log::Warning("[render] GPU retry failed: staying on the software renderer, next try in ", (int)gpuFallback.CurrentWaitSeconds(), " s");
+                    }
                     (void)mesh3DGpu;
                 }
                 // Software fallback: native-resolution z-buffered raster (FXAA handles
@@ -2471,8 +2487,13 @@ int main(int argc, char** argv) {
                 if (!px) {
                     px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, vw, vh,
                                         cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
-                    rendererUsed = !cfg.gpu ? "SOFTWARE (CPU; GPU switched off in the config)"
-                                 : gpuFails >= 3 ? "SOFTWARE (CPU; the GPU renderer failed 3 times and is not retried)" : "SOFTWARE (CPU; no GPU renderer started)";
+                    static std::string softwareWhy;
+                    if (!cfg.gpu) softwareWhy = "SOFTWARE (CPU; GPU switched off in the config)";
+                    else if (gpuFallback.InFallback())
+                        softwareWhy = "SOFTWARE (CPU; the GPU renderer failed " + std::to_string(gpuFallback.TotalFailures()) + " times, next try in " +
+                                      std::to_string((int)(gpuFallback.RetryInSeconds(okay::FrameOverlay::NowSeconds()) + 0.5)) + " s)";
+                    else softwareWhy = "SOFTWARE (CPU; no GPU renderer started)";
+                    rendererUsed = softwareWhy.c_str();
                 }
                 if (rendererUsed) okay::FrameOverlay::RendererName() = rendererUsed;
                 if (px && cam && !cam->renderTarget.empty() && stackPlan.singleFullFrame)

@@ -137,7 +137,18 @@ int main(int argc, char** argv) {
             }
             ShadowMapResolution() = 2048; ShadowCascades() = 3;
             const bool fog = s.renderSettings.fog; s.renderSettings.fog = false; timeIt("fog off", 960, 540); s.renderSettings.fog = fog;
-            if (auto* wg = s.Find("Water")) { wg->active = false; timeIt("water hidden", 960, 540); wg->active = true; }
+            if (auto* wg = s.Find("Water")) {
+                wg->active = false; timeIt("water hidden", 960, 540); wg->active = true;
+                if (auto* wm = wg->GetComponent<MeshRenderer>()) {
+                    const bool rs = wm->receiveShadows; const float rf = wm->reflectivity, sp = wm->specular; const bool cs = wm->castShadows;
+                    wm->receiveShadows = false; timeIt("water: no receive shadows", 960, 540); wm->receiveShadows = rs;
+                    wm->reflectivity = 0.0f; timeIt("water: no reflection", 960, 540); wm->reflectivity = rf;
+                    wm->specular = 0.0f; timeIt("water: no specular", 960, 540); wm->specular = sp;
+                    wm->castShadows = false; timeIt("water: no cast shadows", 960, 540); wm->castShadows = cs;
+                    wm->receiveShadows = false; wm->reflectivity = 0.0f; wm->specular = 0.0f; timeIt("water: all three off", 960, 540);
+                    wm->receiveShadows = rs; wm->reflectivity = rf; wm->specular = sp;
+                }
+            }
             if (auto* tg = s.Find("Terrain")) { tg->active = false; timeIt("terrain hidden", 960, 540); tg->active = true; }
         }
         for (Act a : {Act::Idle, Act::Walk, Act::Look, Act::Dig}) {

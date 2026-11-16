@@ -73,6 +73,7 @@ release job or the installer build for this change.
 | 7zg | Guided modeling: make a fence from designs, customise it, swap parts, keep editing by hand | Modeling window > **Guided** page; `examples\modeling\guided_fences.okayscene` | New in this change; the engine rules are tested on Linux, the editor page compiles but was **never opened in a real window** (unverified) |
 | 7s | Digging the voxel terrain no longer drops the frame rate | `examples\voxel\voxel_big_world.okayscene`, or New Project > Sandbox; `OKAY_VOXEL_OLD_REMESH=1` for the old behaviour | New in this change; CPU numbers measured, GPU and Windows unverified |
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
+| 7w | The player no longer stays on the slow software renderer after a GPU hiccup: it retries the GPU after 2 s, 4 s, ... 60 s | `Tools\OkaySpacePlayer.exe` on any scene, `OKAY_FAKE_GPU_FAIL=10`, F3 | New in this change; the logic is tested on Linux, the real GPU failure and recovery on Windows are unverified |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
@@ -1380,3 +1381,17 @@ frame once the digger's dust particle object existed. It now runs only while dus
 5. On a machine that falls back to the software renderer, shadows are now capped at 1024 texels (about four times cheaper). `set OKAY_SOFTWARE_SHADOW_CAP=4096` brings the old
    sharper shadows (and the old cost) back.
 Tests: `ctest -R "voxel_overlay_depth"`; numbers: `bench_voxel_frame`.
+
+## 7w. The player tries the GPU again after a failure
+
+**What it is.** If the GPU renderer failed three frames in a row, the player used to give up on it for the rest of the run and draw on the CPU (a few frames a
+second). Now it falls back, then tries the GPU again after 2 s, then 4 s, 8 s ... up to every 60 s, and goes back to the GPU as soon as one try works.
+
+**Steps (you can fake the failure).**
+1. Open a Command Prompt in the install folder and run `set OKAY_FAKE_GPU_FAIL=10`, then start `Tools\OkaySpacePlayer.exe` on any scene (for example the voxel Sandbox).
+2. Press **F3**. For the first ten seconds the `renderer:` line says `SOFTWARE (CPU; the GPU renderer failed 3 times, next try in N s)`, counting down, and the
+   game runs slowly. The player log (the player's log output) says `[render] the GPU renderer failed 3 times in a row: using the software renderer (slow), will try the GPU again in 2 s`, then
+   `GPU retry failed: staying on the software renderer, next try in 4 s` and so on.
+3. After ten seconds the next try works: the log says `[render] the GPU renderer works again: back on the GPU` and `renderer:` goes back to `Direct3D 11 (GPU)` (or OpenGL), and the frame rate returns.
+4. Without the variable nothing changes: a healthy GPU never falls back.
+Test: `ctest -R gpu_fallback` (224 checks: the waits 2, 4, 8 ... 60, recovery, reset).

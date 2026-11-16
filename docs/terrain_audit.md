@@ -87,6 +87,34 @@ Each row was tried with a test. "OK" means the test passed without a change.
 | Streaming of edited voxel cells | covered by the first audit (`editCount` keeps the cell) | - |
 | Dig edits over the network | LIMIT: not replicated | listed |
 
+## Whole-frame hunt: "low fps in the Sandbox, and it drops when I dig" (release 2.878.0)
+
+Measured headless with `tests/bench_voxel_frame.cpp` (Linux, `-O2`, CPU only; no GPU, no Windows window). The New Project > Sandbox template and
+`voxel_big_world.okayscene` are built exactly as the editor builds them and stepped with the running game's input.
+
+**What the scene is.** Sandbox: 10 objects, 18010 triangles (the terrain is 13102 of them, 75 chunks), so a real GPU has almost nothing to draw. Big world:
+43912 triangles, 256 chunks. A frame of the game's own update (`Scene::Update`: player, animator, physics against the density field, water,
+digger, terrain) costs 0.17 ms idle, 0.18 ms walking, 0.17 ms looking around and 0.45 ms (worst 5 ms, the first click that builds the chunk objects)
+while digging, on the Sandbox; 0.94 ms while digging in the big world. Taking parts away: no physics 0.15, no water 0.09, no player 0.10, no digger 0.15
+ms. Nothing in the update is slow. The dig click itself (field edit, remesh, hand-off) is 0.45 to 0.75 ms (`last rebuild` line of the bench).
+
+| Where | Finding | Verdict | Before | After |
+|---|---|---|---|---|
+| GPU hosts (player, editor): the half-resolution software depth pass for particles | `FillOcclusionDepth` is a **whole software render of the scene, with three 2048 x 2048 shadow cascades**. It ran every frame whenever ANY ParticleSystem existed, even with no live particle. The Voxel Digger creates its dust ParticleSystem on the first click and keeps it, so from the first dig on every frame paid for it | **BUG, the cause of the dig drop** | 213 to 249 ms per frame at 640 x 360 (Sandbox), 355 ms big world, from the first dig on | 10.5 ms at the 427 x 240 cap now used (Sandbox), 29 ms big world, and only while live particles, lines or trails exist (`SceneHasOverlayNeedingDepth`) |
+| The same pass: what it draws | it also ran FXAA, tone mapping, SSAO, bloom and grading on a picture nobody sees | SLOW | included above | switched off for that pass (the depth is the same to within edge pixels: test) |
+| Software renderer (a machine where the GPU renderer did not start or failed): shadows | three 2048 x 2048 cascades are cleared and drawn every frame | **SLOW** | 244 ms per 960 x 540 frame (4 fps); the shadow maps alone 160 to 256 ms | `SoftwareShadowCap` (default 1024 texels, `OKAY_SOFTWARE_SHADOW_CAP=4096` brings the old sharpness back; the GPU renderers are not affected): 114 to 125 ms; shadows off is 26 ms |
+| Player: when the GPU renderer fails 3 times in a row | the player never tries it again (`gpuFails >= 3`) and stays on the software renderer for the rest of the run | LIMIT | by reading | listed; the F3 panel now says which renderer is drawing |
+| Editor Game view: the same fallback | retries after 5 s | OK | - | - |
+| Per-frame work in VoxelTerrain / Digger / foliage / water / fluid / footprints when switched off | `Update` returns after a few flag tests; no scans, no allocation, no hashing | OK | 0.0002 ms (terrain) and 0.016 ms (digger) smoothed, shown in F3 | - |
+| Physics against the voxel field | samples the density, no collider is built or rebuilt on an edit | OK | - | - |
+| Undo record of a stroke | the stroke log keeps one entry per changed cell, not the field | OK | - | - |
+| Mesh upload on an edit (GL / D3D11) | only the chunks that changed get a new buffer; D3D12 (opt-in) still re-expands every visible mesh every frame | LIMIT (D3D12) | - | listed |
+| Draw calls and frustum culling of the one combined terrain mesh (before the first dig) | one draw call, not culled by chunk | LIMIT | 13102 triangles: trivial for a GPU | listed |
+
+**Not measured (no GPU, no Windows window here):** the real GPU time, the read-back of the finished frame that the player does every frame, driver upload
+costs, Direct3D 11 / OpenGL draw-call time, and whether the owner's machine runs on the software renderer at all. The F3 panel and the Game view stats
+now print the renderer in use, the voxel triangle and chunk counts and the terrain and digger cost per frame, so the owner can read where the time goes.
+
 ## What is not covered
 
 Physics core (another lane), the player controller (another lane), vegetation placement quality, heightmap terrain save size, Direct3D 12.

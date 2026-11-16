@@ -12,6 +12,7 @@
 #   * only the newest DEV_KEEP builds stay; old ones and leftovers of a half publish are deleted, only under dev/v<ver>/, and stay listed as gone;
 #   * the key and the signing seed never appear in any output, log or object;
 #   * scripts/publish-supabase.sh refuses CHANNEL=dev and a four-number version.
+export OKAY_DEFAULT_ACCOUNT_URL=https://abcdefghij.supabase.co   # (an override; without it the scripts read config/public-account.json)
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 # Whatever the machine that runs this has in its environment (a real key on the publisher's machine!) must never reach these scripts.

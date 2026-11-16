@@ -40,6 +40,7 @@
 #include "okay/Platform/Account/Account.hpp"
 #include "okay/Render/SkyStars.hpp"      // deterministic skybox star field
 #include "okay/Render/GLRenderer.hpp"    // optional GPU (OpenGL) 3D renderer
+#include "okay/Render/OcclusionOverlay.hpp"
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
 #include "okay/Render/D3D12Renderer.hpp" // optional GPU (Direct3D 12) 3D renderer (Windows, opt-in)
 #include "Splash.hpp"                   // branded boot loading frame (no black screen at launch)
@@ -2442,20 +2443,26 @@ int main(int argc, char** argv) {
                 // GPU path first: D3D11 (Windows) then OpenGL, each rendering to an
                 // offscreen target and reading back RGBA8. A self-heal counter disables
                 // the GPU path after repeated failures so the game is never stuck.
+                const char* rendererUsed = nullptr;   // which renderer drew this frame (shown in the F3 overlay)
                 if (cfg.gpu && (d3d12Ready || d3dReady || glReady) && gpuFails < 3) {
 #if defined(_WIN32)
-                    if (!px && d3d12Ready && d3d12Renderer)
+                    if (!px && d3d12Ready && d3d12Renderer) {
                         px = d3d12Renderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                            0.0f, 0.0f, 0.0f, 0.0f, ignore);
-                    if (!px && d3dReady && d3dRenderer)
+                        if (px) rendererUsed = "Direct3D 12 (GPU)";
+                    }
+                    if (!px && d3dReady && d3dRenderer) {
                         px = d3dRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                          0.0f, 0.0f, 0.0f, 0.0f, ignore);
+                        if (px) rendererUsed = "Direct3D 11 (GPU)";
+                    }
 #endif
                     if (!px && glReady && glRenderer && glWindow && glCtx) {
                         if (glWindow->MakeCurrent()) {
                             px = glRenderer->RenderToPixels(scene, vp, camPos, vw, vh, 4,
                                                             0.0f, 0.0f, 0.0f, 0.0f, ignore);
                             okay::platform::Default()->ReleaseCurrent();
+                            if (px) rendererUsed = "OpenGL (GPU)";
                         }
                     }
                     if (!px) ++gpuFails; else gpuFails = 0;
@@ -2467,9 +2474,13 @@ int main(int argc, char** argv) {
                 // GPU renderers don't read back depth, so particle occlusion is off for
                 // them; the software path (next line) fills + validates the depth buffer.
                 SceneOcclusionDepth().valid = false;
-                if (!px)
+                if (!px) {
                     px = RenderMeshesSS(mesh3D, mesh3DDown, scene, vp, camPos, vw, vh,
                                         cfg.antialias < 1 ? 1 : cfg.antialias, ignore);
+                    rendererUsed = !cfg.gpu ? "SOFTWARE (CPU; GPU switched off in the config)"
+                                 : gpuFails >= 3 ? "SOFTWARE (CPU; the GPU renderer failed 3 times and is not retried)" : "SOFTWARE (CPU; no GPU renderer started)";
+                }
+                if (rendererUsed) okay::FrameOverlay::RendererName() = rendererUsed;
                 if (px && cam && !cam->renderTarget.empty() && stackPlan.singleFullFrame)
                     okay::StoreCameraTarget(cam->renderTarget, px, vw, vh);
                 if (px) {
@@ -2502,13 +2513,12 @@ int main(int argc, char** argv) {
                 // HALF-resolution software depth pre-pass to fill the occlusion buffer so
                 // particles still hide behind geometry. Only pay it when particles exist.
                 if (!SceneOcclusionDepth().valid) {
-                    bool anyParticles = false;   // (or lines / trails: they hide behind geometry the same way)
-                    for (const auto& up : scene.Objects())
-                        if (up && up->active && (up->GetComponent<ParticleSystem>() || up->GetComponent<LineRenderer>() ||
-                                                 up->GetComponent<TrailRenderer>())) { anyParticles = true; break; }
+                    // (or lines / trails: they hide behind geometry the same way). A particle system with no live particle does
+                    // not count: the Voxel Digger's dust object exists from the first dig on and made every later frame pay for this pass.
+                    const bool anyParticles = okay::SceneHasOverlayNeedingDepth(scene);
                     if (anyParticles) {
                         static Raster occWork; static std::vector<std::uint32_t> occDown;
-                        int hw = w > 1 ? w / 2 : 1, hh = h > 1 ? h / 2 : 1;
+                        int hw = w > 1 ? std::min(w / 2, 427) : 1, hh = h > 1 ? std::max(1, hw * h / std::max(1, w)) : 1;   // half resolution, but never above 427 wide: a coarse depth test is enough for particles
                         FillOcclusionDepth(occWork, occDown, scene, vp, camPos, hw, hh, ignore);
                     }
                 }

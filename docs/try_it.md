@@ -1094,10 +1094,11 @@ Before this fix, loading a save gave the player full health and full survival me
 its whole wave again, and left a picked-up respawning coin hidden for good (issue #888, findings 59, 60 and 61).
 
 1. Open the editor (`Tools\OkayEngine.exe`, or Open from the launcher) with a new 3D scene.
-2. Make an object named `Player`. Add **Survival Stats**.
+2. Make a cube named `Player` at height 3. Add **Survival Stats**, a **Rigidbody 3D** and a **Box Collider 3D**.
 3. Make an object named `Enemy` (any cube). Make another object and add **Spawner**: Template Name `Enemy`,
    Interval `0.1`, Start Delay `0`, Max Alive `0`, Total To Spawn `3`.
-4. Make a cube named `Coin` and add **Collectible** with Respawn on and Respawn Delay `5`.
+4. Make a cube named `Coin` at height 0, right under the Player. Give its **Box Collider 3D** Is Trigger on and add
+   **Collectible** with Respawn on and Respawn Delay `5`.
 5. Add a **Script** (OkayScript) to `Player`:
    ```
    update(dt) {
@@ -1107,7 +1108,7 @@ its whole wave again, and left a picked-up respawning coin hidden for good (issu
    }
    ```
 6. Press **Play**. Three Enemy copies appear and stop. Press **H**: health drops to 30 (watch the Inspector, or a
-   `{health}` text). Drag the Player into the Coin (or let it fall onto it) so the coin disappears. Press **K** (save) at once.
+   `{health}` text). The Player falls through the Coin, which disappears. Press **K** (save) at once.
 7. Press **L** (load). You should see: health still 30 (not 100), still three Enemy copies (not six), and the coin still
    hidden, then back about 5 seconds after it was picked up.
 

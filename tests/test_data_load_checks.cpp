@@ -169,7 +169,7 @@ void MaterialFile() {
         CHECK(b.shader == MeshRenderer::Shader::Toon && b.toonBands == 5);
     }
     // Other awkward paths: Windows folders with spaces, a quote, a backslash, a lone "-".
-    for (const std::string p : {std::string("C:\\Users\\John Smith\\tex.png"), std::string("Art/say \"hi\".png"),
+    for (const std::string& p : {std::string("C:\\Users\\John Smith\\tex.png"), std::string("Art/say \"hi\".png"),
                                 std::string("Art\\plain.png"), std::string("-"), std::string("  lead.png"), std::string("tab\there.png")}) {
         Material x; x.texture = p;
         const Material b = Material::FromText(x.ToText());

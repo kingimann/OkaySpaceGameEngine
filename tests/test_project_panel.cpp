@@ -456,7 +456,7 @@ int main() {
         CHECK(countMetas(p.td.path) == 0);                                         // none of that wrote a meta
         const std::string tex = p.td.at("Scenes/Warrior.png");
         okay::ImportSettings s;
-        CHECK(b.GetImportSettings(tex, s) && s.kind == okay::AssetType::Texture && s.texture.maxSize == 2048);
+        CHECK(b.GetImportSettings(tex, s) && s.kind == okay::AssetType::Texture && s.texture.maxSize == 0);   // no limit, as a texture with no meta loads
         CHECK(b.SetImportSettings(tex, s) && countMetas(p.td.path) == 0);          // the defaults need no file
         s.texture.maxSize = 512;
         CHECK(b.SetImportSettings(tex, s) && countMetas(p.td.path) == 1);          // a real choice does

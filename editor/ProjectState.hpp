@@ -10,6 +10,7 @@
 // Every value is written so it reads back to the same number (shortest text that round trips); older
 // files, which wrote six digits, still load. Unknown lines are ignored, so a file written by a newer
 // editor loads in an older one.
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -19,6 +20,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "okay/Core/Log.hpp"
 #include "okay/Scene/ProjectLists.hpp"
 #include "../shared/ProjectCreate.hpp"
 
@@ -397,40 +399,89 @@ inline std::string WriteProjectSettings(const ProjectSettings& s, const std::str
 /// The text of project.okayproj for `s` with the tag list and layer names that are live now.
 inline std::string WriteProjectSettings(const ProjectSettings& s) { return WriteProjectSettings(s, okay::ProjectLists::Write()); }
 
+// The range each number in project.okayproj may take. A value outside it is pulled to the nearest end; a value
+// that is not a number at all (text, nan, inf) leaves the setting as it was (the default on a fresh load).
+constexpr int   kProjectMinSize = 16, kProjectMaxSize = 16384;   // default window / build size, pixels
+constexpr float kProjectMaxGravity = 1000.0f;                    // each gravity part, m/s^2, either sign
+constexpr float kProjectMinHz = 1.0f, kProjectMaxHz = 500.0f;    // physics steps per second
+
+/// Read exactly `n` finite floats, separated by spaces, from the start of `v`. False (and `out` untouched)
+/// when there are fewer, or any is nan or inf.
+inline bool ParseFiniteFloats(const std::string& v, float* out, int n) {
+    float tmp[4] = {};
+    const char* p = v.c_str();
+    for (int i = 0; i < n; ++i) {
+        char* end = nullptr;
+        const float x = std::strtof(p, &end);
+        if (end == p || !std::isfinite(x)) return false;
+        tmp[i] = x;
+        p = end;
+    }
+    for (int i = 0; i < n; ++i) out[i] = tmp[i];
+    return true;
+}
+/// Read one whole integer (spaces around it allowed). False for anything else.
+inline bool ParseWholeInt(const std::string& v, long long& out) {
+    const char* p = v.c_str();
+    while (*p == ' ' || *p == '\t') ++p;
+    char* end = nullptr;
+    errno = 0;
+    const long long x = std::strtoll(p, &end, 10);
+    if (end == p || errno == ERANGE) return false;
+    while (*end == ' ' || *end == '\t') ++end;
+    if (*end != '\0') return false;
+    out = x;
+    return true;
+}
+
 /// Apply one project.okayproj line. False for a key that is not a project setting (the tag and layer lines
-/// are ProjectLists' and are handled by the caller).
-inline bool ApplyProjectSettingLine(ProjectSettings& s, const std::string& k, const std::string& v) {
-    auto f3 = [&](float* dst) { float a = dst[0], b = dst[1], c = dst[2]; std::sscanf(v.c_str(), "%f %f %f", &a, &b, &c); dst[0] = a; dst[1] = b; dst[2] = c; };
+/// are ProjectLists' and are handled by the caller). A number that is not usable keeps the old value and one
+/// out of range is clamped; either way `warning`, when given, gets one line saying what happened.
+inline bool ApplyProjectSettingLine(ProjectSettings& s, const std::string& k, const std::string& v, std::string* warning = nullptr) {
+    auto warn = [&](const std::string& what) { if (warning) *warning = "project.okayproj: " + k + "=" + v + ": " + what; };
+    auto clampf = [](float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); };
+    // n floats, each pulled into [lo, hi]; the whole line is ignored if any part is not a finite number.
+    auto floats = [&](float* dst, int n, float lo, float hi) {
+        float t[4];
+        if (!ParseFiniteFloats(v, t, n)) { warn("not " + std::to_string(n) + " finite number(s), kept the old value"); return; }
+        bool clamped = false;
+        for (int i = 0; i < n; ++i) {
+            const float c = clampf(t[i], lo, hi);
+            if (c != t[i]) clamped = true;
+            dst[i] = c;
+        }
+        if (clamped) warn("out of range " + FloatText(lo) + ".." + FloatText(hi) + ", clamped");
+    };
+    auto size = [&](int& dst) {
+        long long x = 0;
+        if (!ParseWholeInt(v, x)) { warn("not a whole number, kept " + std::to_string(dst)); return; }
+        const long long c = x < kProjectMinSize ? kProjectMinSize : (x > kProjectMaxSize ? kProjectMaxSize : x);
+        if (c != x) warn("out of range " + std::to_string(kProjectMinSize) + ".." + std::to_string(kProjectMaxSize) + ", clamped to " + std::to_string(c));
+        dst = (int)c;
+    };
     if      (k == "company") { std::snprintf(s.company, sizeof(s.company), "%s", v.c_str()); }
     else if (k == "version") { std::snprintf(s.version, sizeof(s.version), "%s", v.c_str()); }
-    else if (k == "width")   s.defaultWidth = std::atoi(v.c_str());
-    else if (k == "height")  s.defaultHeight = std::atoi(v.c_str());
-    else if (k == "gravity2d") { float a = s.gravity2D[0], b = s.gravity2D[1]; std::sscanf(v.c_str(), "%f %f", &a, &b); s.gravity2D[0] = a; s.gravity2D[1] = b; }
-    else if (k == "gravity3d") f3(s.gravity3D);
-    else if (k == "physics_hz") {
-        char* end = nullptr;
-        float h = std::strtof(v.c_str(), &end);
-        if (end != v.c_str() && std::isfinite(h)) {
-            if (h < 1.0f) h = 1.0f;
-            if (h > 500.0f) h = 500.0f;
-            s.physicsHz = h;
-        }
-    }
+    else if (k == "width")   size(s.defaultWidth);
+    else if (k == "height")  size(s.defaultHeight);
+    else if (k == "gravity2d") floats(s.gravity2D, 2, -kProjectMaxGravity, kProjectMaxGravity);
+    else if (k == "gravity3d") floats(s.gravity3D, 3, -kProjectMaxGravity, kProjectMaxGravity);
+    else if (k == "physics_hz") floats(&s.physicsHz, 1, kProjectMinHz, kProjectMaxHz);
     else if (k == "physics_smooth") s.smoothPhysics = std::atoi(v.c_str()) != 0;
-    else if (k == "ambient") s.ambient = (float)std::atof(v.c_str());
+    else if (k == "ambient") floats(&s.ambient, 1, 0.0f, 1.0f);
     else if (k == "skybox")  s.skybox = std::atoi(v.c_str()) != 0;
     else if (k == "splash_logo") std::snprintf(s.splashLogo, sizeof(s.splashLogo), "%s", v.c_str());
     else if (k == "splash_bar") s.splashShowBar = std::atoi(v.c_str()) != 0;
     else if (k == "splash_accent_on") s.splashAccentOverride = std::atoi(v.c_str()) != 0;
-    else if (k == "splash_bg_top") f3(s.splashBgTop);
-    else if (k == "splash_bg_bot") f3(s.splashBgBot);
-    else if (k == "splash_accent") f3(s.splashAccent);
+    else if (k == "splash_bg_top") floats(s.splashBgTop, 3, 0.0f, 1.0f);
+    else if (k == "splash_bg_bot") floats(s.splashBgBot, 3, 0.0f, 1.0f);
+    else if (k == "splash_accent") floats(s.splashAccent, 3, 0.0f, 1.0f);
     else return false;
     return true;
 }
 
 /// Read project.okayproj text into `s` and the tag / layer lists. The lists start from their defaults.
-inline void ParseProjectSettings(ProjectSettings& s, const std::string& text) {
+/// Each number that was clamped or ignored gives one warning line: logged, and added to `warnings` when given.
+inline void ParseProjectSettings(ProjectSettings& s, const std::string& text, std::vector<std::string>* warnings = nullptr) {
     okay::ProjectLists::Reset();
     std::istringstream f(text);
     std::string line;
@@ -440,7 +491,12 @@ inline void ParseProjectSettings(ProjectSettings& s, const std::string& text) {
         if (eq == std::string::npos) continue;
         const std::string k = line.substr(0, eq), v = line.substr(eq + 1);
         if (okay::ProjectLists::ApplyLine(k, v)) continue;   // tag=, strict_tags=, layer_name_N=
-        ApplyProjectSettingLine(s, k, v);
+        std::string w;
+        ApplyProjectSettingLine(s, k, v, &w);
+        if (!w.empty()) {
+            okay::Log::Warning(w);
+            if (warnings) warnings->push_back(w);
+        }
     }
 }
 

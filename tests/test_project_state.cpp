@@ -196,7 +196,7 @@ int main() {
         ProjectSettings q;
         ParseProjectSettings(q, "company=Win Co\r\nfuture_setting=7\r\nthis is not a setting\r\nwidth=abc\r\nheight=480\r\nambient=0.5\r\n");
         CHECK(std::string(q.company) == "Win Co" && q.defaultHeight == 480 && q.ambient == 0.5f);
-        CHECK(q.defaultWidth == 0);   // atoi("abc"): what the editor always did
+        CHECK(q.defaultWidth == 1280);   // "abc" is not a number: the default is kept (it used to become 0)
         // A value longer than its box is cut, not overrun.
         ProjectSettings r;
         ParseProjectSettings(r, "company=" + std::string(500, 'x') + "\nversion=" + std::string(100, 'v') + "\n");

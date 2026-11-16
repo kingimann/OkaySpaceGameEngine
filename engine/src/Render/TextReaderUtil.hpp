@@ -122,7 +122,7 @@ struct Lines {
 // comment only when the caller asks for it (strip it first with StripComment).
 // SplitInto fills `r` and reuses its strings and room, so a reader that splits line after line into the same vector
 // does not allocate for every line.
-inline void SplitInto(const std::string& s, std::vector<std::string>& r) {
+inline void SplitInto(std::string_view s, std::vector<std::string>& r) {
     std::size_t n = 0;
     auto put = [&](std::size_t a, std::size_t len) {
         if (n < r.size()) r[n].assign(s, a, len); else r.emplace_back(s, a, len);

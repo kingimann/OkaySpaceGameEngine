@@ -139,13 +139,13 @@ std::string FixTexture(std::string t, const std::string& baseDir) {
 }
 
 // Cuts "//" comments (Sense8 files) and a whole-line '#' (classic NFF).
-std::string StripComment(const std::string& s, bool sense8) {
+std::string_view StripComment(std::string_view s, bool sense8) {   // a view into s
     const std::size_t a = s.find("//");
-    std::string r = a == std::string::npos ? s : s.substr(0, a);
+    std::string_view r = a == std::string_view::npos ? s : s.substr(0, a);
     if (!sense8) {
         std::size_t i = 0;
         while (i < r.size() && detail::txt::IsWs(r[i])) ++i;
-        if (i < r.size() && r[i] == '#') r.clear();
+        if (i < r.size() && r[i] == '#') r = std::string_view();
     }
     return r;
 }
@@ -167,8 +167,8 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
     {
         detail::txt::Lines peek(text);
         while (peek.Next(raw)) {
-            const std::string c = StripComment(raw, true);
-            const auto t = detail::txt::Split(c);
+            const std::string_view c = StripComment(raw, true);
+            const auto t = detail::txt::Split(std::string(c));
             if (t.empty()) continue;
             sense8 = t.size() == 1 && detail::txt::Lower(t[0]) == "nff";
             break;
@@ -197,7 +197,7 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
     };
     auto tokens = [&](std::vector<std::string>& t) -> bool {
         while (lines.Next(raw)) {
-            t = detail::txt::Split(StripComment(raw, sense8));
+            detail::txt::SplitInto(StripComment(raw, sense8), t);   // refills t, reusing its room
             if (!t.empty()) return true;
         }
         return false;
@@ -343,8 +343,8 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
                 if (t.size() < 2 || !detail::txt::ToInt(t[1], n) || n < 0 || n > kMaxPolyVerts) return Fail(err, "bad polygon vertex count on line " + std::to_string(lines.number));
                 const bool withN = k == "pp";
                 std::vector<Vec3> pts, nrm;
+                std::vector<std::string> vt;   // refilled line after line (SplitInto reuses its room)
                 for (long long i = 0; i < n; ++i) {
-                    std::vector<std::string> vt;
                     if (!tokens(vt)) return Fail(err, "the file ends after " + std::to_string(i) + " of " + std::to_string(n) + " polygon vertices");
                     double f[6];
                     for (std::size_t j = 0; j < 3; ++j) if (!numAt(vt, j, f[j])) return Fail(err, "bad polygon vertex on line " + std::to_string(lines.number));
@@ -412,8 +412,8 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
             std::vector<Vec2> uv;
             std::vector<char> hasUv;
             pos.reserve((std::size_t)std::min<long>(vcount, (long)(text.size() / 8 + 1)));
+            std::vector<std::string> vt;   // refilled line after line
             for (long i = 0; i < vcount; ++i) {
-                std::vector<std::string> vt;
                 if (!tokens(vt)) return Fail(err, "the file ends after " + std::to_string(i) + " of " + std::to_string(vcount) + " vertices");
                 double f[3];
                 for (std::size_t j = 0; j < 3; ++j) if (!numAt(vt, j, f[j])) return Fail(err, "bad vertex on line " + std::to_string(lines.number));
@@ -441,7 +441,7 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
                     std::string r2;
                     int idx = -1;
                     while (ml.Next(r2)) {
-                        const auto mtk = detail::txt::Split(StripComment(r2, true));
+                        const auto mtk = detail::txt::Split(std::string(StripComment(r2, true)));
                         if (mtk.empty()) continue;
                         const std::string mk = detail::txt::Lower(mtk[0]);
                         if (mk == "matdef") { table.push_back(Material{}); idx = (int)table.size() - 1; table.back().name = "mat" + std::to_string(idx); if (table.size() > 100000) break; continue; }
@@ -458,8 +458,8 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
                 } else ++noMtable;
             }
             std::map<std::pair<int, std::string>, std::size_t> groups;
+            std::vector<std::string> pt;   // refilled line after line
             for (long pi = 0; pi < pcount; ++pi) {
-                std::vector<std::string> pt;
                 if (!tokens(pt)) return Fail(err, "the file ends after " + std::to_string(pi) + " of " + std::to_string(pcount) + " polygons");
                 long long nv;
                 if (!detail::txt::ToInt(pt[0], nv) || nv < 0 || nv > kMaxPolyVerts || (std::size_t)nv + 1 > pt.size()) return Fail(err, "bad polygon on line " + std::to_string(lines.number));

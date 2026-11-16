@@ -71,7 +71,10 @@ release job or the installer build for this change.
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7zj | Guided vehicles (car, truck, bus, motorcycle, trailer, 6+ designs each) and a Detail level (Low to Ultra) on every guided model | Modeling > **Guided** > Vehicles; File > Examples > Guided modeling > `guided_vehicles`; `examples\modeling\guided_vehicles.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7zk | Guided characters (human, robot, creature) with swappable head, hair, clothes, hands, feet, hats, glasses, backpacks, capes and proportion sliders | Modeling > **Guided** > Characters; File > Examples > Guided modeling > `guided_characters`; `examples\modeling\guided_characters.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zl | Guided environment: trees (9 species), rocks and cliffs, roads (path-drawn), bridges, hedges, plants, street lamps | Modeling > **Guided** > Environment; File > Examples > Guided modeling > `guided_environment`; `examples\modeling\guided_environment.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
+| 7zm | Guided props: furniture, containers, tools, decorations (27 designs) | Modeling > **Guided** > Props; File > Examples > Guided modeling > `guided_props`; `examples\modeling\guided_props.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
+| 7zo | Guided: no more lag when you change a slider, style or Detail; a live drag preview; a "Last change" time line | Modeling > **Guided**, select a guided model (File > Examples > Guided modeling > `guided_vehicles`), drag any slider, press Ultra | New in this change; timings measured headless on Linux (`test_guided_perf`), the editor panel compiles but was **never opened in a real window** (unverified) |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
@@ -976,6 +979,10 @@ small rasteriser (the detail pictures show triangle edges), not editor screensho
 4. **Detail**: drag the **Detail** slider (0% blocky low poly to 100% finest) or press Low, Medium, High or Ultra. The model rebuilds when you let
    go, and "N triangles now" shows the cost. Above 250,000 triangles a window asks before it builds. High and Ultra are smooth shaded.
    Your own additions stay; a part you edited by hand is asked about first.
+4c. **Fine detail**: set Detail to High or Ultra on a car. Under **Parts and materials** the new **Fine fittings** (door handles, seams, window rubber,
+   wipers, grille bars, lamp lenses, mirror glass, plate, exhaust tips, underbody, brake discs, tyre ridges) appear and can be switched off. A building has
+   **Tiles and gutters** (rows of roof tiles, gutters, a down pipe); a human with a top has **Fine fittings** (buttons, placket, pockets). Ultra is about 100k
+   triangles for a car, 30k to 115k for a building and 115k to 125k for a human (table in docs/guided_detail.md).
 4a. **Car styles side by side**: File > Examples > Guided modeling > `guided_car_styles` (sedan, hatchback, coupe, SUV, pickup, sports, van at the
    same size; only the shape differs). Wheels sit in round arches on axles; the mirrors and bumpers are joined to the body.
 4b. Open **Variation and check**: it shows whether the model is one connected object with no bad faces. Under **Each part**, **Remove** takes a part off;
@@ -1023,6 +1030,39 @@ Humans from Medium up are organic (lofted body, separate face parts); robots and
 
 **Not done / unverified.** No facial expressions or finger joints; clothes are shells around the body, not cloth; the rig button and the page's Detail control were never clicked in a window; the rigged copy is a snapshot (it is not kept in step with later changes); only humans have a skeleton (robots and creatures do not).
 
+## 7zl. Guided environment: trees, rocks, roads, bridges, hedges, plants, lamps
+
+**What it is.** Seven environment templates on the Modeling window's **Guided** page, same rules as 7zg to 7zk: every one is a set of named parts that can be given another design, with a **Seed** setting for the random-looking shapes (the same seed always gives the same tree), the **Detail** level (Low to Ultra), Randomise within style, the model check and the save-as-template round trip.
+
+**Status.** Tested on Linux (`ctest -R "guided_environment|guided_detail|guided_quality"`): every start design of every template is sound at all four Detail levels; the road and hedge follow a path you draw; every setting at its limits; fuzz; swapping designs; your edits surviving. Picture: `docs/images/guided_modeling/environment_overview.png` (every start design, headless render by our own small rasteriser, not an editor screenshot). Rocks, plants and the street lamp parts are not always one connected piece by design (pebbles, flower beds).
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_environment** (55 models in rows: trees, rocks, roads, bridges, hedges, plants, lamps; 16 m apart). Click one in the Hierarchy and open Modeling > Guided.
+2. **Trees**: change **Crown** (round, clusters, pine, spruce, palm fronds, willow, bare), **Trunk**, **Height**, **Crown size**, **Lean** and **Seed**.
+3. **Roads and hedges**: with a road selected press **Draw in the Scene view** and click on the ground; the road, a bridge's approach or a hedge follows the points. Change **Surface** (asphalt, concrete slabs, dirt, gravel, cobblestones, paving, railway) and markings.
+4. **Rocks, plants, lamps**: change **Seed** for another rock; plants: **Count** and **Spread**; lamps: **Pole**, **Arm**, **Lamp**.
+5. **Randomise within style** (Variation and check) with a seed, **Detail** slider, **Save as template** work as for every guided model.
+
+**Not done / unverified.** No wind, no leaf cards or billboards (trees are solid low-poly meshes), no terrain placement; the page was never clicked in a real window.
+
+## 7zm. Guided props: furniture, containers, tools, decorations
+
+**What it is.** Four prop templates on the **Guided** page (category Props), same rules and the same Detail, Randomise, model check and template controls.
+
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_detail|guided"`): every start design of the four templates is one connected, sound object at all four Detail levels, every start is different, every slot has designs that change the model, 1000 random seeds per template without a failure. Picture: `docs/images/guided_modeling/props_overview.png` (headless render).
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_props** (27 props in rows, 3 m apart).
+2. **Furniture** (chair, table, round table, armchair, sofa, bed, bookshelf, desk, wardrobe): change **Kind**, **Width / Depth / Height**, **Legs** (square, round, turned, splayed, end panels), **Top**, **Back**, **Arms**, **Cushion**, **Storage**; **Shelves** for the bookshelf.
+3. **Containers**: change **Body** (crate, barrel, chest, bucket, jar, sack), **Lid**, **Bands**, **Handles**.
+4. **Tools**: change **Head** (hammer, axe, pickaxe, shovel, wrench, sword blade, hoe), **Handle**, **Hand guard**, **End**; **Length** and **Head size**.
+5. **Decorations**: change **Base**, **Shaft**, **Top** (sign, arrow, flag, orb, bust, lantern, bowl).
+6. **Each part** lets you swap or remove one leg, one cushion, one door; **Add back** returns it. Select a part, edit it in Edit Mesh, and rebuild: your edit is kept.
+
+**Not done / unverified.** Props are simple low-poly shapes (no fabric folds, no carved detail beyond Ultra smoothing); no interaction or physics setup; the page was never clicked in a real window.
+
 ## 7zn. Guided: randomise within a style, and the save-edit-reopen round trip
 
 **What it is.** On the **Guided** page, **Variation and check** has a **Seed** field, **How different** and **Randomise within style** (and **Next seed**).
@@ -1042,6 +1082,30 @@ clicked in a real window (unverified).
    ("edited by you", "faces of your own"). Open **My parts and templates**, name it and press **Save as template**: it shows with the starting designs.
 
 **Not done / unverified.** Randomise has compatibility rules only for cars so far.
+
+## 7zo. Guided: changing settings no longer lags
+
+**What it is.** The Guided page used to freeze for a moment (a second or more on a car or a person at Ultra) when you moved a slider, picked a design or
+changed Detail, and it cost a little on every frame just by being open. It is fixed: sliders show a cheap live preview while you drag, the real model is built
+once when you let go (one undo step), and a time line under the Undo buttons tells you what the last change cost. Numbers and causes: `docs/guided_perf.md`.
+
+**Status.** The engine side is tested on Linux (`ctest -R guided_perf`, about 1,240 checks, plus the existing guided tests). The panel changes
+(`editor/GuidedPanel.cpp`) compile but nobody has opened them in a real window yet (unverified). Nothing here ran on Windows.
+
+**Try it.**
+
+1. Open **File > Examples > Guided modeling > guided_vehicles**, click a car, open **View > Editors & Tools > Modeling** and press **Guided**.
+2. Under **Detail** press **Ultra** (about 100,000 triangles). Under the Undo buttons you now see a line like
+   `Last change: 300 ms (build 40, mesh 40, save 190) ... 107272 triangles`. That is the real cost of the change.
+3. Open **Size** and drag a slider such as **Length**. While you hold the mouse the car follows at Medium detail (the line shows `Drag preview: 1 ms`).
+   Let go: the car is rebuilt at Ultra once. **Undo guided step** goes back one step for the whole drag, not one per tick.
+4. Leave the panel open and do nothing: the editor should stay smooth (before, a big model cost several milliseconds every frame).
+5. Hand edits: in Edit Mesh move one wheel, go back to Guided and drag a slider. There is no preview for a model with hand edits (it cannot keep them); it is
+   rebuilt when you let go and keeps your edit. The time line then says it did the full check.
+6. Buses, trucks and buildings at Ultra no longer come apart (the windows used to float off the body); the tipper truck bed now sits on the chassis.
+
+**Not done / unverified.** The panel was not run in a window, so the preview feel and the real frame times are unverified. The cape of the Hero human still hangs
+a few centimetres off the back (a design choice); `guided_pictures` renders were not re-made.
 
 ## 16. Main menu bar (cleaned up)
 

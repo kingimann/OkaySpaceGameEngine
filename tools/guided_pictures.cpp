@@ -177,6 +177,19 @@ int main(int argc, char** argv) {
         Save(dir, stem + "_three_quarter.png", q3);
         return 0;
     }
+    if (argc > 3 && std::string(argv[3]) == "envprops") {   // quick run: one sheet per category with every start design
+        for (const char* cat : {"Environment", "Props"}) {
+            std::vector<std::pair<const Template*, size_t>> items;
+            for (const Template* tp : Registry::Instance().InCategory(cat)) for (size_t i = 0; i < tp->starts.size(); ++i) items.push_back({tp, i});
+            const int cols = 8, tw = 200, th = 190, rows = ((int)items.size() + cols - 1) / cols;
+            Img sheet(cols * tw, rows * th);
+            sheet.Clear(40, 42, 48);
+            for (int k = 0; k < (int)items.size(); ++k)
+                Scene(sheet, Create(DefaultRecipe(*items[(size_t)k].first, items[(size_t)k].first->starts[items[(size_t)k].second].id)), (k % cols) * tw + 3, (k / cols) * th + 3, tw - 6, th - 6, 0.6f);
+            Save(dir, std::string(std::string(cat) == "Props" ? "props" : "environment") + "_overview.png", sheet);
+        }
+        return 0;
+    }
     if (argc > 3 && std::string(argv[3]) == "chars") {   // quick run: the character styles and the hairstyles
         const Template& C = *Registry::Instance().Find("human");
         const char* names[4] = {"realistic", "stylised", "cartoon", "blocky"};
@@ -471,6 +484,37 @@ int main(int argc, char** argv) {
             cs += CameraRecord(cid++, 18.0, 5.0, 24.0);
             std::ofstream(ex + "/guided_car_styles.okayscene", std::ios::binary) << cs;
             std::printf("wrote the car styles example\n");
+        }
+
+        // Environment and prop examples: every start design of every template, a row per template, with a Main Camera in front.
+        for (const char* cat : {"Environment", "Props"}) {
+            const bool env = std::string(cat) == "Environment";
+            const double sp = env ? 16.0 : 3.0, rowSp = env ? 22.0 : 3.5;
+            std::string sc = scene.substr(0, scene.find("gameobject 1 ")) +
+                "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 40 -0.5 40 0 0 0 1 400 1 400\n"
+                "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+            sc.replace(sc.find("name \"Guided fences\""), 21, std::string("name \"Guided ") + (env ? "environment" : "props") + "\"");
+            int gid = 2, grow = 0, gtotal = 0, maxCols = 0;
+            for (const Template* tp : Registry::Instance().InCategory(cat)) {
+                const Template& A = *tp;
+                for (size_t i = 0; i < A.starts.size(); ++i) {
+                    const std::string base = A.id + "_" + A.starts[i].id;
+                    const Recipe r = DefaultRecipe(A, A.starts[i].id);
+                    Create(r).Save(ex + "/" + base + ".okaymesh");
+                    SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                    char tr[160];
+                    std::snprintf(tr, sizeof tr, "  transform %g 0 %g 0 0 0 1 1 1 1\n", (double)i * sp, (double)grow * rowSp);
+                    sc += "gameobject " + std::to_string(gid++) + " \"" + A.name + " " + A.starts[i].name + "\"\n  active 1\n  parent -1\n" + tr +
+                          "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                    ++gtotal;
+                    maxCols = std::max(maxCols, (int)i + 1);
+                }
+                ++grow;
+            }
+            const double width = std::max(1, maxCols - 1) * sp, depth = std::max(1, grow - 1) * rowSp;
+            sc += CameraRecord(gid++, width / 2, std::max(width, depth) * 0.45 + 2, depth + std::max(width, depth) * 1.1 + 6);
+            std::ofstream(ex + (env ? "/guided_environment.okayscene" : "/guided_props.okayscene"), std::ios::binary) << sc;
+            std::printf("wrote %d %s models\n", gtotal, cat);
         }
 
         // The character examples: every start design of human, robot and creature.

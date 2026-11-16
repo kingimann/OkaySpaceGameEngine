@@ -52,6 +52,7 @@ release job or the installer build for this change.
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
 | 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
+| 7g | Install, uninstall and Versions: see today's behaviour (audit, nothing changed) | Setup, Settings > Apps, `%LOCALAPPDATA%\OkaySpace`, the launcher's Versions page | Audit only: no program change in this branch. Windows steps unverified |
 | 7j | Nameplates bound to their characters, and a rich-text sign | `examples\ui_text\ui_text.okayscene` (File > Open..., then Play) | New in this change; real window unverified |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
@@ -64,6 +65,7 @@ release job or the installer build for this change.
 | 15 | One shared inflate (zlib/gzip) decoder: PNG, `.blend`, FBX, `.x`, `.zgl`, 3MF/AMF, HTTP gzip | open a PNG texture; `examples\own_readers\cube_gzip.blend`, `cube_compressed_arrays.fbx` | PNG always on; the readers need their switch; HTTP gzip is Linux only |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
+| 7n | Every own replacement in one table: the switch, the sample, how to tell it is on, and what is missing | section 7n below and `docs/own_flip_proposal.md` | Table is new. Read from the code and from CI logs, not run on Windows |
 | 7e | Every template and example scene is tested; the templates that were broken are fixed | New Project (each template), File > Examples, `ctest -R "templates_work\|examples_work"` | Tested on Linux, see "Every template is tested" below; no window opened |
 | 7h | Project panel right-click menus (asset, folder, tree, Favourites, empty space, Create) | Editor: **View > Panels > Project**, right-click | New in this change; unverified in the real window |
 | 7d | Visual script Add Node menu: 70 topics instead of 19 | Visual Script window, right-click the canvas or press Space | New in this change; the list and search are tested, the drawing is unverified |
@@ -260,6 +262,30 @@ the Details step and cannot start a second create. Unverified: the launcher scre
 compiled or run on this machine).
 
 ---
+
+## 7g. Install, uninstall and Versions: look at today's behaviour yourself (audit)
+
+Why: the install audit (`docs/install_audit.md`) found things it could only read in code or run on a Linux test machine. Nothing
+in the program changed in that branch. These steps let you see on Windows whether it is right. They use a **copy** of a project, never
+a real one, because two of the checks touch projects.
+
+1. **Where do my projects go?** Install with `OkaySpace-Setup.exe`. Open the launcher, **Create**, make a project. Paste
+   `%LOCALAPPDATA%\OkaySpace\Projects` into the Explorer address bar. The audit says your project is **there** (the Setup welcome
+   page says Documents; it is wrong).
+2. **What does uninstall leave?** In the launcher open **Versions** and install one older version. Then uninstall from
+   **Settings > Apps > Installed apps > OkaySpace**. Look again at `%LOCALAPPDATA%\OkaySpace` and `%APPDATA%\OkaySpace`. The
+   audit predicts these are left: `Versions\`, `Projects\`, `downloads\`, `community\`, the `.log` and `okay_*.txt` files, `imgui.ini`,
+   `achievements.txt`, and in `%APPDATA%\OkaySpace` the `session.txt`, `accounts.db` and `servers.cfg`. Please tell us if the list
+   differs (that is how the audit gets checked).
+3. **Uninstall with the launcher open.** Install again, leave the launcher open, uninstall. The audit predicts `OkaySpace.exe` stays
+   and the Apps list no longer shows the program.
+4. **Does an old editor update itself?** (Use a copy of a project.) Install an older version on the Versions page, right-click the
+   copy of a project > **Open with** that version. The audit predicts an **Engine Update** window; do **not** press Download & Install
+   unless you want to see the problem (the old editor is replaced by the newest one and reopens your project without asking).
+
+**Status.** Windows steps unverified. What was run: the installer under wine on Linux (install, update, uninstall, running programs,
+full disk, odd folders) and two small test programs against the real Versions and project-gate code. Details, results and the plan to
+fix each item are in `docs/install_audit.md`; the comparison with other launchers is `docs/install_comparison.md`.
 
 ## 7j. Nameplates that show their own character, and a sign with rich text
 
@@ -793,6 +819,36 @@ the line stays `ui=imgui`. Nothing was run in a real window.
 Not switchable, by owner decision (2026-11-14, CLAUDE.md rule 18). libsodium is the only crypto in a release, the
 environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup line must say `crypto=libsodium`.
 Nothing to try.
+
+### 7n. Every own replacement at a glance: how to try each, and what is missing
+
+This is the one table for everything that is built and switched off. It is the same table as section 5 of `docs/own_flip_proposal.md`,
+which also says how ready each item is, in what order they could become the default, and what blocks deleting the library each one replaces
+(CLAUDE.md rules 4a and 17). Set a switch the way the section "Switches that are off by default" says: an environment variable in the
+Command Prompt, then start the program from that window. The sure way to see which parts are ours is **Help > About OkaySpace** in the editor.
+
+Checked by reading the code and the CI logs on 2026-11-15. Nothing here was run on Windows.
+
+| Item | The switch | A sample that ships in the download | How you can tell it is on | Gap |
+|---|---|---|---|---|
+| FBX | `OKAY_OWN_FBX=1` | **none.** Use any `.fbx` you own | About popup: `readers=own(fbx,...)`, and the word `ufbx` goes away | no sample |
+| COLLADA | `OKAY_OWN_COLLADA=1` | `examples\own_readers\skinned_strip.dae` | `readers=own(dae)` | none |
+| 3DS | `OKAY_OWN_3DS=1` | `examples\own_readers\cube.3ds` | `readers=own(3ds)` | none |
+| OFF | `OKAY_OWN_OFF=1` | `examples\own_readers\cube.off` | `readers=own(off)` | none |
+| BVH, SMD, MD5, MS3D, ASE, Blender | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
+| 3MF, AMF, X3D, DXF, LWO, MD2, MD3, IRRMESH, B3D, X | `OKAY_OWN_<FMT>=1` | **none** | `readers=own(<fmt>)` | no sample |
+| AC3D, OGRE, XGL, IRR, NFF, TER, MDC, HMP, CSM, Q3D, RAW, IQM, COB, NDO, PMX, LWS | `OKAY_OWN_<FMT>=1` | **none** | **nothing**: they are not in the stack line and no log line says which reader ran | no sample and no way to tell |
+| STL and PLY first | build option `OKAY_PREFER_OWN_READERS` only | none | nothing | no run-time switch, no sample, no sign |
+| WAV | `OKAY_OWN_WAV=1` (`0` = old) | `examples\own_wav\own_wav_test.okayscene` with `mulaw_tone.wav` | you hear it: old = buzzy, own = a clean 440 Hz tone | no startup word, no log line |
+| Own HTTP | Linux builds only: `OKAY_OWN_HTTP=1` | none | `http=own` (Linux) | cannot be tried on the Windows download |
+| Own platform layer | `OKAY_PLATFORM_BACKEND=own`, then `Tools\OkaySpacePlayer.exe` | any exported game | `platform=own` | unverified on Windows; editor and launcher still use SDL windows |
+| OkayUI | `OKAY_UI_BACKEND=okayui` | none needed | About popup `ui=okayui` | unverified in the Windows build |
+| CodeEdit (script editor) | `OKAY_UI_BACKEND=okayui` and `OKAY_DEV=1` | any script | none | never run in a real window |
+| okay::crypto | none, on purpose | none | the line says `crypto=libsodium` | nothing to try |
+
+The gaps (no sample for 32 of the 35 reader switches, no way to tell that the 16 newest readers or WAV are on, no run-time switch for STL
+and PLY, no import log line) are "Step 0" of the proposal. Until they are closed, a PR that adds or changes one of these must say so
+at the top (rule 4a).
 
 ### 15. One shared inflate (zlib / gzip / DEFLATE) decoder
 

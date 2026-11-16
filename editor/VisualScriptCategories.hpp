@@ -1,7 +1,15 @@
 #pragma once
-// Where a node sits in the Add Node menu. Every node has one topic from
-// kPaletteCategories. A blank subcategory means it sits directly in that topic.
-// docs/visual_scripting_naming.md lists the topics for new nodes (including PR 601).
+// Where a node sits in the Add Node menu. Every node has one topic from kPaletteCategories. A blank
+// subcategory means it sits directly in that topic. docs/visual_scripting_naming.md has the rules for new nodes.
+//
+//   VisualScriptCategories.hpp     this file: the topics, the subcategories, the public lookups
+//   VisualScriptPlaceRules.hpp     the rules: which node goes in which topic (data, one row per node or family)
+//   VisualScriptLegacyPlaces.hpp   where nodes sat BEFORE the topics were split (search words only)
+//   VisualScriptPlace.hpp          VsPlace and two small "same job" tests
+#include "VisualScriptLegacyPlaces.hpp"
+#include "VisualScriptPlace.hpp"
+#include "VisualScriptPlaceRules.hpp"
+
 #include <cctype>
 #include <cstring>
 #include <string>
@@ -11,29 +19,99 @@ namespace okay::editor::vsed {
 struct VsPaletteCategory {
     const char* name;
     const char* blurb;
+    const char* section;   // the muted heading above this topic (and its neighbours) in the sidebar
 };
 
-// Common topics first. A node may also name a subcategory (Math / Vectors).
+// Common topics first. The order is the sidebar order, and topics of one section sit together.
+// Rules: at most kMaxDirectPerTopic nodes sit directly in a topic (the rest go into subcategories), and a subcategory
+// holds at most kMaxPerSubcategory. tests/test_vs_categories.cpp enforces both on every node the menu lists.
+inline constexpr int kMaxDirectPerTopic = 30;
+inline constexpr int kMaxPerSubcategory = 45;
 inline const VsPaletteCategory kPaletteCategories[] = {
-    {"Events",     "Where a script starts: the frame, a key, a collision, a message."},
-    {"Flow",       "Order, choices, loops, and waiting."},
-    {"Variables",  "Remember a number or a yes/no on this object, the scene, or the save."},
-    {"Math",       "Arithmetic, comparisons, vectors, and random numbers."},
-    {"Text",       "Words, sentences, and the current language."},
-    {"Lists & Maps","Several values kept under one name."},
-    {"Objects",    "Find, spawn, show, hide, and name things."},
-    {"Movement",   "Position, rotation, scale, and moving toward something."},
-    {"Physics",    "Forces, velocity, collisions, triggers, and raycasts."},
-    {"Animation",  "Clips, character actions, and inverse kinematics."},
-    {"Audio",      "Sound effects and music."},
-    {"Input",      "Keys, mouse, and the movement axes."},
-    {"Camera",     "Where the player is looking, shake, and zoom."},
-    {"UI",         "Text, buttons, and bars drawn on the screen."},
-    {"Scene",      "Loading scenes, weather, story, and navigation."},
-    {"Time",       "The clock, the frame, and game speed."},
-    {"Online",     "Hosting, joining, messages, and Steam."},
-    {"Debug",      "Messages for you while building, not for the player."},
-    {"Advanced",   "Behavior trees and asking an object for a component."},
+    // ---- Events: where a script starts. Every "On ..." node is in one of these five.
+    {"Game Events",     "Where a script starts: the frame, being switched on or off, a message, a changed value, a death.", "Events"},
+    {"Input Events",    "When a key, a mouse button, a touch or a controller action happens.", "Events"},
+    {"Collision & Trigger Events", "When things touch, enter an area or leave it, and what the touch was like.", "Events"},
+    {"Inventory & Quest Events",   "When an item is added or used, a quest moves on, or a conversation ends.", "Events"},
+    {"Network Events",  "When another player's message arrives, or the server catches a cheat.", "Events"},
+    // ---- Flow: the order things happen in.
+    {"Branches & Gates", "Choose a path, run things in order, let the flow through only some of the time, and keep state machines.", "Flow"},
+    {"Loops",           "Do something again and again, for each item, or until something changes.", "Flow"},
+    {"Waiting & Timers", "Wait, repeat on a timer, cooldowns, stopwatches, and delayed calls from a script.", "Flow"},
+    {"Functions & Calls", "Define your own function, call another graph or script, or run a list of steps.", "Flow"},
+    {"Time & Game Speed", "The clock, the frame time, slow motion and pausing the game.", "Flow"},
+    // ---- Variables, lists and saving: remember things.
+    {"Variables",       "Remember a number, a word or a yes/no on this object, the scene or the whole game.", "Variables, Lists & Saving"},
+    {"Saving & Loading", "Keep things between runs: save slots, saved values and checkpoints.", "Variables, Lists & Saving"},
+    {"Lists",           "Several values in order under one name: add, remove, sort, search, and array functions.", "Variables, Lists & Saving"},
+    {"Maps & Structs",  "Values you look up by a name, records with fields, and JSON text.", "Variables, Lists & Saving"},
+    // ---- Math
+    {"Numbers",         "Everyday math: arithmetic, rounding, limits, averages, percentages, bits, type checks and script math functions.", "Math"},
+    {"Blending & Easing", "Mix two values, remap a range, and smooth steps with curves, waves and springs.", "Math"},
+    {"Angles & Trigonometry", "Degrees and radians, sine and cosine, and the angle between two things.", "Math"},
+    {"Vectors",         "Points and directions: build, measure, add, scale, and the flat (ground) versions.", "Math"},
+    {"Comparisons & Logic", "Is it bigger, equal or between? And, or, not, picking a value, and comparing scores or number sets.", "Math"},
+    {"Random",          "Dice rolls, random picks, chances and noise.", "Math"},
+    // ---- Text
+    {"Text",            "Join, cut, search, clean up, format and compare words and sentences, and use the clipboard.", "Text"},
+    {"Language & Translation", "Show the game in the player's language and react when it changes.", "Text"},
+    // ---- Objects
+    {"Create & Destroy", "Make new objects, remove them, and keep spawners and pools of them.", "Objects"},
+    {"Find Objects",    "Find objects by name, tag or distance, and read their names and tags.", "Objects"},
+    {"Show & Hide",     "Switch objects on and off, and show or hide what they draw.", "Objects"},
+    {"Parents & Components", "Parents and children, and the parts (components) an object has.", "Objects"},
+    {"Messages & Signals", "Tell other objects that something happened.", "Objects"},
+    {"Color & Appearance", "Color, sprites, textures, materials and fading.", "Objects"},
+    {"Particles & Trails", "Particles, lines and trails.", "Objects"},
+    // ---- Movement & physics
+    {"Position",        "Where an object is, putting it somewhere else, and keeping it in bounds.", "Movement & Physics"},
+    {"Rotation & Scale", "Turn an object, face or look at something, and change its size.", "Movement & Physics"},
+    {"Move & Follow",   "Walk toward something, follow, chase, patrol, orbit, bob, spin, motion patterns and script functions.", "Movement & Physics"},
+    {"Tweens",          "Smoothly change a position, size, color or number over time.", "Movement & Physics"},
+    {"Paths & Splines", "Curves and paths an object can follow.", "Movement & Physics"},
+    {"Forces & Velocity", "Push things, set their speed, jump, and set up their physics body.", "Movement & Physics"},
+    {"Raycasts & Overlaps", "Shoot an invisible line or shape and see what it hits: ray results, overlaps and shape casts.", "Movement & Physics"},
+    {"Sight & Distance Checks", "Is the target close, in front, behind, to the left or in view?", "Movement & Physics"},
+    // ---- Gameplay
+    {"Health & Damage", "Health, damage, healing, armor, lives, respawning, regeneration and resources.", "Gameplay"},
+    {"Weapons & Shooting", "Projectiles, shooting, swinging, reloading and ammo.", "Gameplay"},
+    {"Inventory & Items", "Pick up, carry, equip, craft and use items: equipment, slots, loot and limits.", "Gameplay"},
+    {"Quests & Dialogue", "Quests and their objectives, conversations, and story flags.", "Gameplay"},
+    {"Score & Winning", "Score, experience and levels, winning, losing and restarting.", "Gameplay"},
+    {"Doors & Switches", "Doors, levers and wired logic signals.", "Gameplay"},
+    {"Build Mode",      "Let players place and remove objects, and save what they built.", "Gameplay"},
+    // ---- Characters and AI
+    {"Animation",       "Play and stop animation clips, and set animator parameters and blend shapes.", "Characters & AI"},
+    {"Character Actions", "Roll, vault, climb, sit, die, stand and crouch, and ragdoll.", "Characters & AI"},
+    {"Inverse Kinematics", "Make hands reach, feet plant and heads look at things (IK).", "Characters & AI"},
+    {"Navigation",      "Walk to a point around obstacles, on a mesh or on a grid.", "Characters & AI"},
+    {"Behavior Trees",  "Run a behavior tree, read and set its blackboard, and build outcomes.", "Characters & AI"},
+    // ---- Sound, camera and screen
+    {"Sound Effects",   "Play, stop and shape sounds on an object.", "Sound, Camera & Screen"},
+    {"Music & Volume",  "Music tracks, the volume of each group, muting and ducking.", "Sound, Camera & Screen"},
+    {"Camera",          "Where the player is looking: follow, switch, zoom, tilt and shake.", "Sound, Camera & Screen"},
+    {"Screen Text",     "Words and numbers drawn on the screen.", "Sound, Camera & Screen"},
+    {"Buttons & Inputs", "Buttons, sliders, toggles, dropdowns, text fields and pickers.", "Sound, Camera & Screen"},
+    {"Bars & Layout",   "Progress bars, tabs and pages, scroll areas and grids, layout helpers and themes.", "Sound, Camera & Screen"},
+    {"Popups & Dialogs", "Toasts, tooltips, modals and bottom sheets.", "Sound, Camera & Screen"},
+    // ---- Scenes and the environment
+    {"Scenes & Levels", "Load, restart and quit scenes, and read which scene is open.", "Scenes & Environment"},
+    {"Lighting & Sky",  "Ambient light, background color and the lights in a scene.", "Scenes & Environment"},
+    {"Weather & Fog",   "Weather, wind and fog.", "Scenes & Environment"},
+    {"Post Effects",    "Full-screen looks: bloom, exposure, color grade and the like.", "Scenes & Environment"},
+    {"Window & Display", "Screen size, display modes, refresh rate and the game window.", "Scenes & Environment"},
+    {"Cutscenes",       "Play a cutscene (a sequence) and build one from tweens.", "Scenes & Environment"},
+    // ---- Input
+    {"Keyboard",        "Is a key held, pressed or released.", "Input"},
+    {"Mouse & Touch",   "The mouse position and buttons, the cursor, taps and swipes.", "Input"},
+    {"Gamepad & Controls", "Movement axes, the gamepad, named actions and rebinding keys.", "Input"},
+    // ---- Online
+    {"Multiplayer",     "Host or join, browse servers, matchmaking, messages, synced objects, players and matches.", "Online"},
+    {"Steam",           "Steam achievements, stats, lobbies, friends, cloud files and the workshop.", "Online"},
+    {"Server Security", "Anti-cheat: validate what clients send, rate limits, kicks and budgets.", "Online"},
+    {"Accounts & Online Saves", "Log in, cloud saves, leaderboards and PlayFab.", "Online"},
+    // ---- Debugging
+    {"Debug",           "Messages for you while building, not for the player.", "Debugging"},
 };
 
 inline int VsPaletteCategoryCount() { return (int)(sizeof kPaletteCategories / sizeof kPaletteCategories[0]); }
@@ -45,500 +123,240 @@ inline int VsPaletteCategoryIndex(const char* name) {
     return -1;
 }
 
-// Vague buckets that must not appear as a category or a subcategory.
+// The sidebar groups topics under a muted heading. Returns the section index (0 for the first heading), or -1.
+inline int VsPaletteSectionIndex(int categoryIndex) {
+    if (categoryIndex < 0 || categoryIndex >= VsPaletteCategoryCount()) return -1;
+    int section = -1;
+    const char* last = nullptr;
+    for (int i = 0; i <= categoryIndex; ++i) {
+        if (!last || std::strcmp(last, kPaletteCategories[i].section) != 0) { ++section; last = kPaletteCategories[i].section; }
+    }
+    return section;
+}
+
+// A subcategory: a smaller heading inside one topic. Order here is the order in the sidebar and in the list.
+// Names are unique across all topics, and none is also a topic name.
+struct VsPaletteSub {
+    const char* category;
+    const char* name;
+    const char* blurb;
+};
+inline const VsPaletteSub kPaletteSubs[] = {
+    // Flow
+    {"Branches & Gates", "State Machines", "Keep one state at a time and react when it changes."},
+    {"Waiting & Timers", "Delayed Calls", "Call something later, or every few seconds, from a script."},
+    {"Time & Game Speed", "Clock", "What time it is, and how long the last frame took."},
+    {"Time & Game Speed", "Game Speed", "Slow motion, fast forward and hit stops."},
+    {"Time & Game Speed", "Pausing", "Pause the game and ask who paused it."},
+    {"Time & Game Speed", "Time Math", "Turn time into portions, beats and blinks."},
+    // Data
+    {"Variables", "Change a Variable", "Add to, multiply, clamp, round or randomize a variable in place."},
+    {"Variables", "Check a Variable", "Is a variable equal, above, below, even or near something?"},
+    {"Variables", "Shared Variables", "Variables the whole scene or the whole game can read."},
+    {"Saving & Loading", "Saved Values", "Named values kept between runs."},
+    {"Saving & Loading", "Save Slots", "Whole-game saves: save, load, continue and delete a slot."},
+    {"Saving & Loading", "Save Files", "Read, write and check save files and their dates."},
+    {"Lists", "Sorting & Searching", "Sort, reverse, shuffle, find, filter and join lists."},
+    {"Lists", "Array Functions", "The same list jobs written as text-script function calls."},
+    // Math
+    {"Numbers", "Rounding & Snapping", "Round down, round up, snap to a step, keep the fraction."},
+    {"Numbers", "Limits & Wrapping", "Clamp, wrap, ping-pong and keep a number inside a range."},
+    {"Numbers", "More Arithmetic", "Squares, cubes, logs, differences, reciprocals and picking the larger."},
+    {"Numbers", "Averages & Percentages", "Averages, running totals, peaks, percentages and spreads."},
+    {"Numbers", "Bits", "Bit operations on whole numbers."},
+    {"Numbers", "Types & Checks", "Is it a number, a word, a list? Is it finite?"},
+    {"Numbers", "Script Math Functions", "The same jobs written as text-script function calls, like Mathf.Abs, min or pow."},
+    {"Blending & Easing", "Easing & Curves", "Ease in and out, curves, waves and noise."},
+    {"Blending & Easing", "Smoothing & Springs", "Move a value toward a target smoothly, with damping and springs."},
+    {"Angles & Trigonometry", "Angle Helpers", "Shortest angle, wrap, snap, blend and direction from an angle."},
+    {"Vectors", "Directions & Axes", "Forward, right, up, zero and one."},
+    {"Vectors", "Flat Vectors", "Vector math that ignores height: ground distance, sideways offsets, reflections."},
+    {"Vectors", "Script Vector Functions", "The same jobs written as text-script function calls, like Vector3.Dot or dist."},
+    {"Comparisons & Logic", "True & False Logic", "And, or, not, and picking one of several values."},
+    {"Comparisons & Logic", "Scores & Number Sets", "Compare scores, and ask about a whole set of numbers."},
+    // Text
+    {"Text", "Search & Replace", "Does it contain, start or end with something? Find and replace."},
+    {"Text", "Pieces & Words", "Cut a text into pieces, words and letters, and measure it."},
+    {"Text", "Clean Up & Padding", "Trim, pad, change the case, reverse and repeat."},
+    {"Text", "Compare & Check", "Is it blank, the same, or longer?"},
+    {"Text", "Numbers & Text", "Turn numbers into text and text into numbers."},
+    {"Text", "Clipboard", "Copy text to the clipboard and paste it back."},
+    // Objects
+    {"Create & Destroy", "Spawners & Pools", "Spawn on a timer, keep a pool of objects to reuse, and spawn waves."},
+    {"Find Objects", "Names & Tags", "Read and change the name and the tag of an object."},
+    {"Parents & Components", "Components & Properties", "Add or get a component, and read or set one of its properties by name."},
+    {"Color & Appearance", "Sprites & Textures", "Sprite images, textures, flipping and tiles."},
+    {"Color & Appearance", "Materials & Meshes", "Meshes, emissive glow, shading and texture tiling."},
+    // Movement & physics
+    {"Position", "Read a Position", "Where is it? The x, y and z of this object or another one."},
+    {"Position", "Stay in Bounds", "Keep an object inside a box, wrap it around, snap it to a grid or limit its height."},
+    {"Rotation & Scale", "Facing & Looking", "Face a direction or an object, and look at a point."},
+    {"Rotation & Scale", "Scale", "Read and change the size of an object."},
+    {"Move & Follow", "Motion Patterns", "Back and forth, in a circle, a hop, a shake, bob and spin."},
+    {"Move & Follow", "Script Movement Functions", "The same jobs written as text-script function calls, like move to, chase or wasd move."},
+    {"Tweens", "Start a Tween", "Begin moving, turning, scaling or fading something over time."},
+    {"Tweens", "Control Tweens", "Pause, play, restart, rewind or kill tweens."},
+    {"Tweens", "Tween Options", "Easing, loops, relative values, speed and other settings."},
+    {"Tweens", "Tween Events", "Run something when a tween starts, updates or ends."},
+    {"Tweens", "Tween Sequences", "Chain tweens one after another, or run them together."},
+    {"Forces & Velocity", "Speed & Jumping", "Set or read the speed, jump, fall and stop."},
+    {"Forces & Velocity", "Body Settings", "Mass, gravity, drag, bounce, friction and what the body may do."},
+    {"Raycasts & Overlaps", "Ray Results", "What the last ray hit: the point, the distance, the surface direction."},
+    {"Raycasts & Overlaps", "Overlaps & Shape Casts", "Is anything inside a box, circle or capsule? Sweep a shape along a line."},
+    // Gameplay
+    {"Health & Damage", "Health Values", "Read and set health, ask if it is low or full, heal to full, kill."},
+    {"Health & Damage", "Armor & Lives", "Armor, damage resistance, lives, respawning and reviving."},
+    {"Health & Damage", "Resources & Buffs", "Damage and healing over time, regeneration, spending a resource, timed buffs."},
+    {"Inventory & Items", "Inventory Slots", "Slots: add, remove, move, count, select and name items."},
+    {"Inventory & Items", "Equipment", "Put items on and take them off."},
+    {"Inventory & Items", "Crafting & Loot", "Craft recipes, roll loot and drop pickups."},
+    {"Inventory & Items", "Carry Limits", "How much can be carried, stacked and how it slows you."},
+    {"Inventory & Items", "Pick Up & Drop", "Pick up, hold, throw and drop things."},
+    {"Quests & Dialogue", "Quests", "Start, advance, complete and fail quests and their objectives."},
+    {"Quests & Dialogue", "Dialogue", "Start a conversation, read the line, offer choices and end it."},
+    {"Quests & Dialogue", "Story Flags", "Yes/no flags and values that remember the story so far."},
+    // Characters & AI
+    {"Animation", "Animator Parameters", "Set and read the numbers, switches and triggers of an animator."},
+    {"Animation", "Blend Shapes & Trees", "Blend shapes (face morphs) and blend trees."},
+    {"Character Actions", "Stances & Ragdoll", "Stand, crouch, go prone, and let the body go limp."},
+    {"Navigation", "Grid Paths", "Walk across a tile grid with costs and obstacles."},
+    // Sound, camera and screen
+    {"Camera", "Follow & Switch", "Pick the camera, make it follow something and move it."},
+    {"Camera", "Zoom & Shake", "Zoom, field of view, tilt and shake."},
+    {"Screen Text", "Text Style & Format", "Color, size, opacity, number formats and typing out."},
+    {"Screen Text", "Numbers in Text", "Show a number, the health or the session time in a text."},
+    {"Screen Text", "Script Text Widgets", "Text drawn from a script each frame: text, heading, caption, badge."},
+    {"Buttons & Inputs", "Sliders & Toggles", "Sliders, checkboxes, switches and radio buttons."},
+    {"Buttons & Inputs", "Dropdowns & Text Fields", "Dropdown lists and text boxes."},
+    {"Buttons & Inputs", "Pickers & Search", "Color, date, time and file pickers, and search bars."},
+    {"Bars & Layout", "Progress Bars", "Progress bars, radial bars, spinners and loading skeletons."},
+    {"Bars & Layout", "Tabs & Pages", "Tabs, pages, accordions and breadcrumbs."},
+    {"Bars & Layout", "Scroll Areas & Grids", "Scroll views and slot grids."},
+    {"Bars & Layout", "Layout Helpers", "Begin and end a panel or card, put things on one line, separators and list rows."},
+    {"Bars & Layout", "Themes", "Apply a theme or a style to the screen."},
+    {"Popups & Dialogs", "Toasts & Tooltips", "Small messages and hover tips."},
+    {"Popups & Dialogs", "Modals & Sheets", "Modal windows with a title and buttons, and bottom sheets."},
+    // Input
+    {"Mouse & Touch", "Touch & Gestures", "Touch screens, swipes, pinches and twists."},
+    {"Gamepad & Controls", "Named Actions", "Define an action, read its value, rebind its key and rumble the pad."},
+    // Online
+    {"Multiplayer", "Hosting & Joining", "Host, join, leave and ask who is the server."},
+    {"Multiplayer", "Server Browser", "List servers and join one."},
+    {"Multiplayer", "Matchmaking & Relay", "Find a match, queue, and play through a relay."},
+    {"Multiplayer", "Messages & RPC", "Send messages and call functions on other players."},
+    {"Multiplayer", "Synced Objects & Variables", "Objects and values that every player sees."},
+    {"Multiplayer", "Players & Matches", "Who is connected, who is ready, start and end a match, scores."},
+    {"Steam", "Achievements & Stats", "Unlock achievements and read or change stats."},
+    {"Steam", "Lobbies & Friends", "Create or join a lobby, invite friends, show presence."},
+    {"Steam", "Cloud & Workshop", "Steam cloud files and Workshop items."},
+    {"Accounts & Online Saves", "Accounts", "Register, log in and read the signed-in user."},
+    {"Accounts & Online Saves", "Cloud Saves", "Save and load data on the server."},
+    {"Accounts & Online Saves", "Leaderboards & PlayFab", "Submit scores, read the top list, and PlayFab stats."},
+};
+inline int VsPaletteSubCount() { return (int)(sizeof kPaletteSubs / sizeof kPaletteSubs[0]); }
+
+inline int VsPaletteSubIndex(const char* category, const char* sub) {
+    if (!category || !sub || !sub[0]) return -1;
+    for (int i = 0; i < VsPaletteSubCount(); ++i)
+        if (std::strcmp(kPaletteSubs[i].category, category) == 0 && std::strcmp(kPaletteSubs[i].name, sub) == 0) return i;
+    return -1;
+}
+
+// The hover text of a subcategory, by its (unique) name. Null when there is none.
+inline const char* VsPaletteSubBlurb(const char* sub) {
+    if (!sub || !sub[0]) return nullptr;
+    for (int i = 0; i < VsPaletteSubCount(); ++i)
+        if (std::strcmp(kPaletteSubs[i].name, sub) == 0) return kPaletteSubs[i].blurb;
+    return nullptr;
+}
+
+// Vague buckets that must not appear as a topic, a subcategory or a section.
 inline bool VsCatchAllCategory(const char* name) {
     if (!name || !name[0]) return false;
     static const char* k[] = {
         "Do something", "Check something", "Do", "Check", "Actions", "Data", "Engine API",
         "Misc", "Other", "General", "Basic", "Look", "World", "Stuff", "Various", "Uncategorized",
+        "Advanced", "Extra", "Extras", "More", "Utilities", "Utility", "Helpers", "Tools and more",
+        "Miscellaneous", "Everything else", "Rest", "Remaining",
     };
     for (const char* s : k) if (std::strcmp(name, s) == 0) return true;
     return false;
 }
 
-struct VsPlace {
-    const char* category = nullptr;
-    const char* subcategory = "";   // never null
-    bool browse = true;             // false: still found by search, not listed while browsing
-};
-
-inline VsPlace VsAt(const char* category, const char* sub = "") {
-    VsPlace p; p.category = category; p.subcategory = sub ? sub : ""; return p;
-}
-
-inline bool VsIs(const char* type, const char* a) { return std::strcmp(type, a) == 0; }
-inline bool VsPre(const char* type, const char* p) { return std::strncmp(type, p, std::strlen(p)) == 0; }
-
 // Lower ranks sort first. An empty subcategory is the common part of a topic and always comes first.
+// A subcategory name is unique across topics, so the name alone gives its place in kPaletteSubs.
 inline int VsSubOrder(const char* sub) {
     if (!sub || !sub[0]) return -1;
-    static const char* k[] = {
-        "Keys", "Mouse", "Axes",
-        "Collisions", "Queries",
-        "Loops", "Timing", "Functions",
-        "Compare", "Change", "Shared", "Saved", "Story",
-        "Random", "Vectors", "Angles", "Curves",
-        "Lists", "Maps", "Structs", "Color",
-        "Items", "Appearance", "Lines", "Survival",
-        "Turn", "Size", "Tweens",
-        "Character", "IK", "Cutscenes",
-        "Buttons", "Bars", "Fields", "Layout", "Popups", "Theme",
-        "Controls",
-        "Language",
-        "Navigation", "Building", "Atmosphere",
-        "Steam", "PlayFab",
-        "Behavior",
-    };
-    for (int i = 0; i < (int)(sizeof k / sizeof k[0]); ++i)
-        if (std::strcmp(sub, k[i]) == 0) return i;
+    for (int i = 0; i < VsPaletteSubCount(); ++i)
+        if (std::strcmp(kPaletteSubs[i].name, sub) == 0) return i;
     return 1000;
 }
 
-// A text-script builtin (Fn.print). Always a real topic; the long tail is Advanced.
-inline bool VsTokenIs(const std::string& low, const char* tok) {
-    const std::string t = tok;
-    for (std::size_t p = 0; (p = low.find(t, p)) != std::string::npos; p += 1) {
-        const bool left = p == 0 || low[p - 1] == '_' || low[p - 1] == '.';
-        const std::size_t end = p + t.size();
-        const bool right = end == low.size() || low[end] == '_' || low[end] == '.';
-        if (left && right) return true;
-    }
-    return false;
+// ------------------------------------------------------------------------------------------------------------
+// Where a node goes. The three kinds of palette row each have a lookup; all of them are a table of rules first
+// (VisualScriptPlaceRules.hpp) and, for a name the rules do not mention, the OLD place translated to a new one.
+
+inline VsPlace VsPlaceForBuiltin(const char* name);   // a text-script function (Fn.print), without the "Fn."
+
+// Hand-written nodes, library nodes (Lb...), gameplay-library nodes (Gl...) and text-script builtins (Fn....).
+// A type no rule covers comes back with a null category.
+inline VsPlace VsPlaceForNode(const char* type) {
+    if (!type || !type[0]) return {};
+    if (VsPre(type, "Fn.")) return VsPlaceForBuiltin(type + 3);
+    if (const VsRule* r = VsFindRule(kNodeRules, VsRuleCount(kNodeRules), type)) return VsAt(r->category, r->sub);
+    return VsTranslateLegacy(VsLegacyPlaceForNode(type));
 }
 
 inline VsPlace VsPlaceForBuiltin(const char* name) {
-    std::string low = name ? name : "";
-    for (char& c : low) c = (char)std::tolower((unsigned char)c);
-    auto has = [&](const char* t) { return VsTokenIs(low, t); };
-    if (has("clipboard")) return VsAt("Text");   // get_clipboard_text, set_clipboard_text
-    if (has("print") || has("log") || has("warn") || has("assert") || has("debug") || has("trace"))
-        return VsAt("Debug");
-    if (low.rfind("game_", 0) == 0 && (has("save") || has("load") || has("slot") || has("continue") || has("autosave")))
-        return VsAt("Variables", "Saved");   // game_save, game_load, game_continue ... (save slots)
-    if (has("sound") || has("music") || has("audio") || has("sfx")) return VsAt("Audio");
-    if (has("anim") || has("clip") || has("ik")) return VsAt("Animation");
-    if (has("camera") || has("fov") || has("shake")) return VsAt("Camera");
-    if (has("ui") || has("button") || has("slider") || has("toast") || has("tooltip") || has("font"))
-        return VsAt("UI");
-    if (has("key") || has("mouse") || has("gamepad") || has("joystick") || has("axis") || has("input") ||
-        has("gesture") || has("swipe") || has("pinch") || has("twist") || has("touch"))
-        return VsAt("Input");
-    if (has("raycast") || has("overlap") || has("cast") || has("explosion") || has("rigid") ||
-        has("force") || has("impulse") || has("velocity") || has("physics") || has("gravity"))
-        return VsAt("Physics");
-    if (has("net") || has("steam") || has("rpc") || has("lobby")) return VsAt("Online");
-    if (has("wait") || has("delay") || has("timescale") || has("pause") || has("timer") || has("cooldown"))
-        return VsAt("Time");
-    if (has("tween")) return VsAt("Movement", "Tweens");
-    if (has("move") || has("teleport") || has("translate") || has("rotate") || has("position") ||
-        has("lookat") || has("look"))
-        return VsAt("Movement");
-    if (has("spawn") || has("destroy") || has("instantiate") || has("prefab") || has("find") ||
-        has("tag") || has("object"))
-        return VsAt("Objects");
-    if (has("scene") || has("quest") || has("dialogue") || has("weather") || has("fog") || has("nav"))
-        return VsAt("Scene");
-    if (has("save") || has("prefs") || has("checkpoint")) return VsAt("Variables", "Saved");
-    if (has("var") || has("global")) return VsAt("Variables");
-    if (has("list") || has("array") || has("map") || has("dict")) return VsAt("Lists & Maps", "Lists");
-    if (has("str") || has("string") || has("format") || has("concat") || has("text")) return VsAt("Text");
-    if (has("random") || has("abs") || has("sin") || has("cos") || has("tan") || has("lerp") ||
-        has("clamp") || has("sqrt") || has("pow") || has("min") || has("max") || has("vec") || has("math"))
-        return VsAt("Math");
-    return VsAt("Advanced");
+    if (!name || !name[0]) return {};
+    if (const VsRule* r = VsFindRule(kBuiltinRules, VsRuleCount(kBuiltinRules), name)) return VsAt(r->category, r->sub);
+    return VsTranslateLegacy(VsLegacyPlaceForBuiltin(name));
 }
 
-// Gameplay nodes, escape hatches, and flow nodes added on the logic-runtime branch.
-inline VsPlace VsPlaceForNewNode(const char* type) {
-    if (VsIs(type, "TweenPosition") || VsIs(type, "TweenRotation") || VsIs(type, "TweenScale") ||
-        VsIs(type, "TweenColor"))
-        return VsAt("Movement", "Tweens");
-    if (VsIs(type, "RotateTowards") || VsIs(type, "OrbitAround") || VsIs(type, "FollowPath") ||
-        VsIs(type, "Bob") || VsIs(type, "Spin") || VsIs(type, "Knockback") || VsIs(type, "SmoothFollow") ||
-        VsIs(type, "Patrol") || VsIs(type, "Chase") || VsIs(type, "Flee") || VsIs(type, "Wander"))
-        return VsAt("Movement");
-    if (VsIs(type, "CrossfadeClip") || VsIs(type, "StopAnimation") || VsIs(type, "WaitAnimEnd"))
-        return VsAt("Animation");
-    if (VsIs(type, "PickUp") || VsIs(type, "Drop") || VsIs(type, "Collect")) return VsAt("Objects", "Items");
-    if (VsIs(type, "DoorOpen") || VsIs(type, "DoorClose") || VsIs(type, "Lever") ||
-        VsIs(type, "Damage") || VsIs(type, "Heal") || VsIs(type, "IsDead") || VsIs(type, "Respawn") ||
-        VsIs(type, "SpawnProjectile") || VsIs(type, "Shoot") || VsIs(type, "Ammo") ||
-        VsIs(type, "SpawnEvery") || VsIs(type, "DestroyAfter") || VsIs(type, "PoolGet") ||
-        VsIs(type, "PoolRelease") || VsIs(type, "FindByTag") || VsIs(type, "SendMessage") ||
-        VsIs(type, "Broadcast"))
-        return VsAt("Objects");
-    if (VsIs(type, "OnTagEnter") || VsIs(type, "OnTagStay") || VsIs(type, "OnTagExit") ||
-        VsIs(type, "Proximity"))
-        return VsAt("Physics", "Collisions");
-    if (VsIs(type, "CanSee")) return VsAt("Physics", "Queries");
-    if (VsIs(type, "OnInteract") || VsIs(type, "OnDeath") || VsIs(type, "OnHealthChanged"))
-        return VsAt("Events");
-    if (VsIs(type, "OnAction") || VsIs(type, "OnActionUp") || VsIs(type, "OnActionHeld"))
-        return VsAt("Input", "Controls");
-    if (VsIs(type, "OnTap") || VsIs(type, "OnDoubleTap") || VsIs(type, "OnLongPress") ||
-        VsIs(type, "OnSwipe") || VsIs(type, "OnPinch") || VsIs(type, "OnRotate") ||
-        VsIs(type, "GestureSwipeDirection") || VsIs(type, "GesturePinchScale") || VsIs(type, "GestureTwist"))
-        return VsAt("Input");
-    if (VsIs(type, "GetMoveAxis")) return VsAt("Input", "Axes");
-    if (VsIs(type, "ScoreAdd") || VsIs(type, "ScoreSet") || VsIs(type, "ScoreGet")) return VsAt("Variables");
-    if (VsIs(type, "CheckpointSave") || VsIs(type, "CheckpointLoad")) return VsAt("Variables", "Saved");
-    if (VsIs(type, "Countdown")) return VsAt("Flow", "Timing");
-    if (VsIs(type, "SwitchString") || VsIs(type, "SwitchCases") || VsIs(type, "LatchGate"))
-        return VsAt("Flow");
-    if (VsIs(type, "ForEachMap")) return VsAt("Flow", "Loops");
-    if (VsIs(type, "RunGraph")) return VsAt("Flow", "Functions");
-    if (VsIs(type, "Win") || VsIs(type, "Lose") || VsIs(type, "RestartScene")) return VsAt("Scene");
-    if (VsIs(type, "SetProgress")) return VsAt("UI", "Bars");
-    if (VsIs(type, "ShowFloatingText") || VsIs(type, "FadeScreen")) return VsAt("UI");
-    if (VsIs(type, "SetCameraTarget") || VsIs(type, "Zoom") || VsIs(type, "SwitchCamera"))
-        return VsAt("Camera");
-    if (VsIs(type, "PlaySoundAt") || VsIs(type, "StopSound")) return VsAt("Audio");
-    if (VsIs(type, "RandomPick") || VsIs(type, "RandomPoint")) return VsAt("Math", "Random");
-    if (VsIs(type, "ShuffleList") || VsIs(type, "ListMin") || VsIs(type, "ListMax"))
-        return VsAt("Lists & Maps", "Lists");
-    if (VsPre(type, "Map") || VsIs(type, "NewMap")) return VsAt("Lists & Maps", "Maps");
-    if (VsIs(type, "StructNew") || VsIs(type, "StructGet") || VsIs(type, "StructSet")) return VsAt("Lists & Maps", "Structs");
-    if (VsIs(type, "MakeColor") || VsIs(type, "SplitColor")) return VsAt("Math", "Color");
-    if (VsIs(type, "IsValid")) return VsAt("Math", "Compare");
-    if (VsIs(type, "NotAnd") || VsIs(type, "NotOr") || VsIs(type, "AllTrue") || VsIs(type, "AnyTrue") ||
-        VsIs(type, "IsEven") || VsIs(type, "IsOdd") || VsIs(type, "PickByIndex") || VsIs(type, "FirstValid") ||
-        VsIs(type, "IsInState"))
-        return VsAt("Math", "Compare");
-    if (VsIs(type, "DoWhile") || VsIs(type, "ForStep") || VsIs(type, "StepThrough") || VsIs(type, "CountUntil"))
-        return VsAt("Flow", "Loops");
-    if (VsIs(type, "WaitUntil") || VsIs(type, "WaitWhile") || VsIs(type, "WaitSteady") || VsIs(type, "WaitLimit"))
-        return VsAt("Flow", "Timing");
-    if (VsIs(type, "BranchInOrder") || VsIs(type, "BecameTrue") || VsIs(type, "BecameFalse") ||
-        VsIs(type, "WeightedBranch") || VsIs(type, "SetState") || VsIs(type, "GetState") ||
-        VsIs(type, "WhenStateBecomes") || VsIs(type, "WhenStateLeaves"))
-        return VsAt("Flow");
-    if (VsIs(type, "HeldLong") || VsIs(type, "HappenedNear") || VsIs(type, "EveryWhile") ||
-        VsIs(type, "BlendTime") || VsIs(type, "Stopwatch") || VsIs(type, "WaitBetween"))
-        return VsAt("Flow", "Timing");
-    if (VsIs(type, "EaseToward")) return VsAt("Math", "Curves");
-    if (VsIs(type, "IsSlightly") || VsIs(type, "IsMostly") || VsIs(type, "IsVery") || VsIs(type, "PickBest"))
-        return VsAt("Math", "Compare");
-    if (VsIs(type, "ShuffleBag") || VsIs(type, "ChanceEachSecond")) return VsAt("Math", "Random");
-    if (VsIs(type, "TryFirst") || VsIs(type, "AllSucceed") || VsIs(type, "FlipOutcome") ||
-        VsIs(type, "AlwaysSucceed") || VsIs(type, "RepeatUntilFail") || VsIs(type, "SucceedNow") ||
-        VsIs(type, "FailNow") || VsIs(type, "CheckOutcome"))
-        return VsAt("Advanced", "Behavior");
-    if (VsIs(type, "InCone") || VsIs(type, "LineOfSight") || VsIs(type, "CountNearby") ||
-        VsIs(type, "NearestObject") || VsIs(type, "FarthestObject"))
-        return VsAt("Physics", "Queries");
-    if (VsIs(type, "InsideArea") || VsIs(type, "SortByDistance")) return VsAt("Scene");
-    if (VsIs(type, "WhenChanged") || VsIs(type, "DoUnless")) return VsAt("Flow");
-    if (VsIs(type, "RememberValue") || VsIs(type, "RecallValue")) return VsAt("Variables", "Saved");
-    if (VsIs(type, "HealthEmpty") || VsIs(type, "HealthFull") || VsIs(type, "AddBuff"))
-        return VsAt("Objects", "Survival");
-    if (VsIs(type, "AdvanceObjective")) return VsAt("Scene", "Story");
-    if (VsIs(type, "AssertThis") || VsIs(type, "LogOnce") || VsIs(type, "DrawDebugLine"))
-        return VsAt("Debug");
-    if (VsIs(type, "GetProperty") || VsIs(type, "SetProperty") || VsIs(type, "CallMethod") ||
-        VsIs(type, "GetComponent") || VsIs(type, "AddComponent") || VsIs(type, "RunSnippet") ||
-        VsIs(type, "CallScript"))
-        return VsAt("Advanced");
-    return {};
-}
-
-// Hand-written nodes (no '.' in the type). Unknown types come back with a null category.
-inline VsPlace VsPlaceForNode(const char* type) {
-    if (!type || !type[0]) return {};
-    if (VsPre(type, "Lb")) {
-#include "generated/library_place.inc"
-    }
-    if (VsPre(type, "Gl") && type[2] >= 'A' && type[2] <= 'Z') {   // the gameplay library (GlGetHealth ...)
-#include "generated/gplib_place.inc"
-    }
-    if (VsPre(type, "Fn.")) return VsPlaceForBuiltin(type + 3);
-    // Events that belong with the thing they listen to.
-    if (VsPre(type, "OnKey")) return VsAt("Input", "Keys");
-    if (VsPre(type, "OnMouse") || VsIs(type, "OnClick")) return VsAt("Input", "Mouse");
-    if (VsPre(type, "OnCollision") || VsPre(type, "OnTrigger")) return VsAt("Physics", "Collisions");
-    if (VsIs(type, "OnFixedUpdate")) return VsAt("Physics");
-    if (VsIs(type, "OnAnimEvent") || VsIs(type, "OnSequenceEvent")) return VsAt("Animation");
-    if (VsPre(type, "OnDialogue") || VsPre(type, "OnQuest") || VsIs(type, "OnObjectiveCompleted")) return VsAt("Scene", "Story");
-    if (VsPre(type, "OnVar") || VsPre(type, "OnSceneVar") || VsPre(type, "OnGlobalVar")) return VsAt("Variables");
-    if (VsIs(type, "OnTimer")) return VsAt("Time");
-    if (VsPre(type, "OnItem") || VsIs(type, "OnEquip") || VsIs(type, "OnCraft") || VsIs(type, "OnInventoryFull")) return VsAt("Objects", "Items");
-    if (VsIs(type, "OnCheatDetected") || VsPre(type, "OnValidate") || VsIs(type, "OnNetRpc")) return VsAt("Online");
-    if (VsIs(type, "OnLanguageChanged")) return VsAt("Text", "Language");
-    if (VsIs(type, "OnObjectPlaced") || VsIs(type, "OnObjectRemoved") || VsIs(type, "OnLogicSignal")) return VsAt("Scene");
-    if (VsIs(type, "OnStart") || VsIs(type, "OnUpdate") || VsIs(type, "OnLateUpdate") || VsIs(type, "OnEnable") ||
-        VsIs(type, "OnDisable") || VsIs(type, "OnDestroy") || VsIs(type, "OnEvent")) return VsAt("Events");
-    // Flow
-    if (VsIs(type, "Timer") || VsIs(type, "Wait") || VsIs(type, "Delay") || VsIs(type, "Cooldown") || VsIs(type, "EveryN"))
-        return VsAt("Flow", "Timing");
-    if (VsIs(type, "ForLoop") || VsIs(type, "Repeat") || VsIs(type, "While") || VsIs(type, "ForEach") ||
-        VsIs(type, "Break") || VsIs(type, "Continue")) return VsAt("Flow", "Loops");
-    if (VsIs(type, "FunctionStart") || VsIs(type, "Return") || VsIs(type, "CallFunction")) return VsAt("Flow", "Functions");
-    if (VsIs(type, "Branch") || VsIs(type, "Sequence") || VsIs(type, "Once") || VsIs(type, "FlipFlop") ||
-        VsIs(type, "Gate") || VsIs(type, "DoN") || VsIs(type, "SwitchInt") || VsIs(type, "ChanceBranch") ||
-        VsIs(type, "Counter") || VsIs(type, "Action") || VsIs(type, "Actions") ||
-        VsIs(type, "Condition")) return VsAt("Flow");
-    // Variables
-    if (VsIs(type, "SaveValue") || VsIs(type, "LoadValue")) return VsAt("Variables", "Saved");
-    if (VsIs(type, "GetSceneVar") || VsIs(type, "SetSceneVar") || VsIs(type, "AddSceneVar") ||
-        VsIs(type, "GetGlobalVar") || VsIs(type, "SetGlobalVar") || VsIs(type, "AddGlobalVar")) return VsAt("Variables", "Shared");
-    if (VsIs(type, "SetStoryVar") || VsIs(type, "GetStoryVar")) return VsAt("Variables", "Story");
-    if (VsIs(type, "GetVar") || VsIs(type, "SetVar") || VsIs(type, "AddVar") || VsIs(type, "Toggle") ||
-        VsIs(type, "SetObjectVar") || VsIs(type, "GetObjectVar") || VsIs(type, "SetLocal") || VsIs(type, "GetLocal") ||
-        VsIs(type, "HasVar") || VsIs(type, "Const")) return VsAt("Variables");
-    // Math
-    if (VsIs(type, "Sin") || VsIs(type, "Cos") || VsIs(type, "Tan") || VsIs(type, "Asin") || VsIs(type, "Acos") ||
-        VsIs(type, "Atan2") || VsIs(type, "Deg2Rad") || VsIs(type, "Rad2Deg") || VsIs(type, "DeltaAngle"))
-        return VsAt("Math", "Angles");
-    if (VsIs(type, "EaseIn") || VsIs(type, "EaseOut") || VsIs(type, "EaseInOut") || VsIs(type, "SmoothStep") ||
-        VsIs(type, "EaseCurve") || VsIs(type, "SpringStep"))
-        return VsAt("Math", "Curves");
-    if (VsIs(type, "TweenMove") || VsIs(type, "TweenMoveSpeed") || VsIs(type, "TweenKillTag") ||
-        VsIs(type, "TweenPauseTag") || VsIs(type, "TweenPlayTag"))
-        return VsAt("Movement", "Tweens");
-    if (VsPre(type, "Vec") || VsIs(type, "MakeVec3") || VsIs(type, "ForwardVector") || VsIs(type, "RightVector") ||
-        VsIs(type, "UpVector") || VsIs(type, "Distance2D")) return VsAt("Math", "Vectors");
-    if (VsIs(type, "Random") || VsIs(type, "RandomRange") || VsIs(type, "RandomInt") || VsIs(type, "Chance") ||
-        VsIs(type, "Noise")) return VsAt("Math", "Random");
-    if (VsIs(type, "Compare") || VsIs(type, "And") || VsIs(type, "Or") || VsIs(type, "Not") || VsIs(type, "Xor") ||
-        VsIs(type, "Equals") || VsIs(type, "NotEquals") || VsIs(type, "Approx") || VsIs(type, "Between") ||
-        VsIs(type, "Select")) return VsAt("Math", "Compare");
-    if (VsIs(type, "Add") || VsIs(type, "Sub") || VsIs(type, "Mul") || VsIs(type, "Div") || VsIs(type, "Min") ||
-        VsIs(type, "Max") || VsIs(type, "Mod") || VsIs(type, "Pow") || VsIs(type, "Abs") || VsIs(type, "Neg") ||
-        VsIs(type, "Sqrt") || VsIs(type, "Floor") ||
-        VsIs(type, "Round") || VsIs(type, "Ceil") || VsIs(type, "Sign") || VsIs(type, "Clamp") || VsIs(type, "Lerp") ||
-        VsIs(type, "Exp") || VsIs(type, "Log") || VsIs(type, "InverseLerp") || VsIs(type, "Remap") ||
-        VsIs(type, "PingPong") || VsIs(type, "Repeat01") || VsIs(type, "MoveTowardsValue") ||
-        VsIs(type, "Frac") || VsIs(type, "OneMinus") || VsIs(type, "Saturate") ||
-        VsIs(type, "Snap") || VsIs(type, "Wrap") || VsIs(type, "Average")) return VsAt("Math");
-    // Text
-    if (VsIs(type, "Localize") || VsIs(type, "GetLanguage") || VsIs(type, "SetLanguage")) return VsAt("Text", "Language");
-    if (VsIs(type, "Concat") || VsIs(type, "ToString") || VsIs(type, "ToFixed") || VsIs(type, "TextLength") ||
-        VsIs(type, "Upper") || VsIs(type, "Lower") || VsIs(type, "Contains") || VsIs(type, "Format") ||
-        VsIs(type, "Substring") || VsIs(type, "Replace") || VsIs(type, "ToNumber") || VsIs(type, "StartsWith") ||
-        VsIs(type, "EndsWith") || VsIs(type, "Trim") || VsIs(type, "IndexOf")) return VsAt("Text");
-    // Lists
-    if (VsIs(type, "NewList") || VsPre(type, "List")) return VsAt("Lists & Maps", "Lists");
-    // Time
-    if (VsIs(type, "Time") || VsIs(type, "DeltaTime") || VsIs(type, "TimeScale") || VsIs(type, "FrameCount") ||
-        VsIs(type, "SetTimeScale")) return VsAt("Time");
-    // Input
-    if (VsPre(type, "Key")) return VsAt("Input", "Keys");
-    if (VsPre(type, "Mouse") || VsIs(type, "ShowCursor")) return VsAt("Input", "Mouse");
-    if (VsPre(type, "Axis")) return VsAt("Input", "Axes");
-    // Physics
-    if (VsIs(type, "ContactPoint") || VsIs(type, "ContactNormal") || VsIs(type, "ImpactSpeed")) return VsAt("Physics", "Collisions");
-    if (VsPre(type, "Raycast") || VsPre(type, "Overlap") || VsIs(type, "SphereCast3D") ||
-        VsIs(type, "BoxCast2D") || VsIs(type, "CapsuleCast2D"))
-        return VsAt("Physics", "Queries");
-    if (VsPre(type, "Vel") || VsIs(type, "AddForce") || VsIs(type, "AddImpulse") || VsIs(type, "SetVelocity") ||
-        VsIs(type, "AddExplosionForce"))
-        return VsAt("Physics");
-    // Animation
-    if (VsPre(type, "Ik")) return VsAt("Animation", "IK");
-    if (VsIs(type, "Die") || VsIs(type, "Revive") || VsIs(type, "Dive") || VsIs(type, "Sit") || VsIs(type, "StandUp") ||
-        VsIs(type, "Interact") || VsIs(type, "HitReact") || VsIs(type, "Roll") || VsIs(type, "Dodge") ||
-        VsIs(type, "Vault") || VsIs(type, "Mantle") || VsIs(type, "LedgeGrab") || VsIs(type, "ClimbUp") ||
-        VsIs(type, "LetGo") || VsIs(type, "Shimmy") || VsIs(type, "IsInAction") || VsIs(type, "IsSitting") ||
-        VsIs(type, "IsHanging") || VsIs(type, "SeatPrompt")) return VsAt("Animation", "Character");
-    if (VsPre(type, "Anim") || VsIs(type, "PlayClip") || VsIs(type, "PlayAction") ||
-        VsIs(type, "SetBlendShape") || VsIs(type, "GetBlendShape") || VsIs(type, "AnimEventName")) return VsAt("Animation");
-    // Audio
-    if (VsIs(type, "PlaySound") || VsPre(type, "Music")) return VsAt("Audio");
-    // Camera
-    if (VsIs(type, "CameraShake") || VsIs(type, "SetFov") || VsIs(type, "CameraFollow")) return VsAt("Camera");
-    // UI
-    if (VsIs(type, "SetText") || VsIs(type, "ShowUI") || VsIs(type, "HideUI")) return VsAt("UI");
-    // Debug
-    if (VsIs(type, "Print") || VsIs(type, "LogWarn") || VsIs(type, "LogError")) return VsAt("Debug");
-    // Online
-    if (VsPre(type, "Net") || VsPre(type, "SyncVar") || VsPre(type, "Steam") || VsIs(type, "RejectRpc") ||
-        VsIs(type, "RejectHit") || VsIs(type, "ServerBudget")) return VsAt("Online");
-    // Scene
-    if (VsIs(type, "SetWeather") || VsIs(type, "SetFog") || VsIs(type, "SetPostEffect")) return VsAt("Scene", "Atmosphere");
-    if (VsIs(type, "LoadScene") || VsIs(type, "PauseGame") || VsIs(type, "QuitGame")) return VsAt("Scene");
-    if (VsPre(type, "Nav") || VsIs(type, "NavArrived")) return VsAt("Scene", "Navigation");
-    if (VsPre(type, "Grid")) return VsAt("Scene", "Navigation");
-    if (VsIs(type, "PlaySequence") || VsIs(type, "StopSequence") || VsIs(type, "StartDialogue") ||
-        VsIs(type, "StartQuest") || VsIs(type, "CompleteObjective") || VsIs(type, "QuestState") ||
-        VsIs(type, "EventValue") || VsIs(type, "EventName")) return VsAt("Scene", "Story");
-    if (VsPre(type, "EnterBuild") || VsPre(type, "ExitBuild") || VsIs(type, "SetBuildPalette") ||
-        VsIs(type, "SaveCreation") || VsIs(type, "LoadCreation") || VsIs(type, "InBuildMode")) return VsAt("Scene", "Building");
-    if (VsPre(type, "Bt")) return VsAt("Advanced", "Behavior");
-    // Objects and items
-    if (VsIs(type, "HasItem") || VsIs(type, "ItemCount") || VsIs(type, "AddItem") || VsIs(type, "RemoveItem") ||
-        VsIs(type, "EquipItem") || VsIs(type, "CraftItem") || VsIs(type, "LootRoll") || VsIs(type, "SpawnPickup"))
-        return VsAt("Objects", "Items");
-    if (VsIs(type, "SwingWeapon") || VsIs(type, "FireWeapon") || VsIs(type, "ReloadWeapon") ||
-        VsIs(type, "WeaponAmmo") || VsIs(type, "SetWeapon"))
-        return VsAt("Objects", "Combat");
-    if (VsIs(type, "Spawn") || VsIs(type, "Destroy") || VsIs(type, "SetActive") || VsIs(type, "SetVisible") ||
-        VsIs(type, "SetColor") || VsPre(type, "Particle") || VsIs(type, "SetLinePoints") || VsIs(type, "ClearTrail") ||
-        VsIs(type, "GetSplinePoint") || VsIs(type, "SplineLength") || VsIs(type, "ObjectExists") ||
-        VsIs(type, "ObjectPosition") || VsIs(type, "DistanceTo") || VsIs(type, "SelfName") || VsIs(type, "Self") ||
-        VsIs(type, "Other") || VsIs(type, "OtherName") || VsIs(type, "OtherTag") || VsIs(type, "FindObject") ||
-        VsIs(type, "GetName") || VsIs(type, "GetTag") || VsIs(type, "FindWithTag") || VsIs(type, "CountWithTag") ||
-        VsIs(type, "NearestWithTag") || VsIs(type, "AllWithTag") || VsIs(type, "SendEvent") || VsIs(type, "BroadcastEvent"))
-        return VsAt("Objects");
-    // Movement (the rest of the transform nodes)
-    if (VsIs(type, "GetRotation") || VsIs(type, "SetRotation") || VsIs(type, "SetRotation3") ||
-        VsIs(type, "Rotate") || VsIs(type, "Rotate3") || VsIs(type, "LookAt")) return VsAt("Movement", "Turn");
-    if (VsIs(type, "GetScale") || VsIs(type, "SetScale")) return VsAt("Movement", "Size");
-    if (VsIs(type, "GetX") || VsIs(type, "GetY") || VsIs(type, "GetZ") || VsIs(type, "GetPosition") ||
-        VsIs(type, "SetPosition") || VsIs(type, "SetPositionVec") || VsIs(type, "Translate") ||
-        VsIs(type, "MoveBy") || VsIs(type, "MoveTowards") || VsIs(type, "Teleport")) return VsAt("Movement");
-    if (VsPlace extra = VsPlaceForNewNode(type); extra.category) return extra;
-    return {};
-}
-
-// Engine API nodes, by the script type they belong to.
-inline VsPlace VsUiPlace(const char* apiType) {
-    if (VsIs(apiType, "UIButton")) return VsAt("UI", "Buttons");
-    if (VsIs(apiType, "UISlider") || VsIs(apiType, "UIProgressBar") || VsIs(apiType, "UIRadialProgress")) return VsAt("UI", "Bars");
-    if (VsIs(apiType, "UIInputField") || VsIs(apiType, "UIDropdown")) return VsAt("UI", "Fields");
-    if (VsIs(apiType, "UIScrollView") || VsIs(apiType, "UITabs") || VsIs(apiType, "UISlotGrid")) return VsAt("UI", "Layout");
-    if (VsIs(apiType, "UITooltip") || VsIs(apiType, "UIToast") || VsIs(apiType, "UIModal")) return VsAt("UI", "Popups");
-    if (VsIs(apiType, "UITheme") || VsIs(apiType, "UIColorPicker")) return VsAt("UI", "Theme");
-    return VsAt("UI");
-}
-
+// An engine-API node: `apiType` is the script type (Transform), `member` the property or method (Translate).
 inline VsPlace VsPlaceForApi(const char* apiType, const char* member) {
     if (!apiType) return {};
     if (!member) member = "";
-    if (VsIs(apiType, "GameObject")) return VsAt("Objects");
-    if (VsIs(apiType, "Transform")) {
-        if (VsIs(member, "eulerAngles") || VsIs(member, "localEulerAngles") || VsIs(member, "Rotate") ||
-            VsIs(member, "LookAt") || VsIs(member, "forward") || VsIs(member, "right") || VsIs(member, "up"))
-            return VsAt("Movement", "Turn");
-        if (VsIs(member, "localScale")) return VsAt("Movement", "Size");
-        return VsAt("Movement");
-    }
-    if (VsIs(apiType, "Vector3")) return VsAt("Math", "Vectors");
-    if (VsIs(apiType, "Mathf")) return VsAt("Math");
-    if (VsIs(apiType, "Rigidbody")) {
-        if (VsIs(member, "Raycast") || VsPre(member, "Overlap") || VsPre(member, "Sweep")) return VsAt("Physics", "Queries");
-        return VsAt("Physics");
-    }
-    if (VsIs(apiType, "Input")) {
-        if (VsPre(member, "GetKey")) return VsAt("Input", "Keys");
-        if (VsPre(member, "GetMouse") || VsIs(member, "mousePosition")) return VsAt("Input", "Mouse");
-        if (VsIs(member, "GetAxis") || VsIs(member, "GetActionVector")) return VsAt("Input", "Axes");
-        return VsAt("Input", "Controls");
-    }
-    if (VsIs(apiType, "PlayerController")) return VsAt("Input");
-    if (VsIs(apiType, "PlayerView")) return VsAt("Camera");
-    if (VsPre(apiType, "UI") || VsIs(apiType, "Crosshair")) return VsUiPlace(apiType);
-    if (VsIs(apiType, "Time")) return VsAt("Time");
-    if (VsIs(apiType, "Debug")) return VsAt("Debug");
-    if (VsIs(apiType, "Audio")) return VsAt("Audio");
-    if (VsIs(apiType, "SaveGame")) return VsAt("Variables", "Saved");
-    if (VsIs(apiType, "Localization")) return VsAt("Text", "Language");
-    if (VsIs(apiType, "Sequence")) return VsAt("Animation", "Cutscenes");
-    if (VsIs(apiType, "PostProcess") || VsIs(apiType, "Fog") || VsIs(apiType, "Weather")) return VsAt("Scene", "Atmosphere");
-    if (VsIs(apiType, "NavMeshAgent")) return VsAt("Scene", "Navigation");
-    if (VsIs(apiType, "GridPathAgent2D") || VsIs(apiType, "GridCostLayer") || VsIs(apiType, "GridObstacle2D"))
-        return VsAt("Scene", "Navigation");
-    if (VsIs(apiType, "Dialogue") || VsIs(apiType, "Story") || VsIs(apiType, "Quest")) return VsAt("Scene", "Story");
-    if (VsIs(apiType, "BehaviorTree")) return VsAt("Advanced", "Behavior");
-    if (VsIs(apiType, "Animator")) return VsAt("Animation");
-    if (VsIs(apiType, "IK")) return VsAt("Animation", "IK");
-    if (VsIs(apiType, "Spline") || VsIs(apiType, "SplineFollower") || VsIs(apiType, "LineRenderer") ||
-        VsIs(apiType, "TrailRenderer")) return VsAt("Objects", "Lines");
-    return {};   // a new API type needs a line above, or the category test fails
-}
-
-// True when this script member is the same job as a hand-written node (Abs, Translate, GetPosition).
-inline bool VsApiDuplicatesHandNode(const char* member, const char* handType) {
-    if (!member || !handType || !member[0] || !handType[0]) return false;
-    std::string m, h;
-    for (const char* s = member; *s; ++s) m += (char)std::tolower((unsigned char)*s);
-    for (const char* s = handType; *s; ++s) h += (char)std::tolower((unsigned char)*s);
-    return h == m || h == "get" + m || h == "set" + m;
-}
-
-// True when this Actions step is the same job as a hand-written node (Wait, Play Sound, Set Position).
-// It stays searchable by its old label, and it is not a second row while browsing.
-inline bool VsStepSameAsNode(const char* op) {
-    if (!op) return false;
-    static const char* k[] = {
-        "wait", "play_sound", "set_pos", "look_at", "move", "move_toward", "spawn", "spawn3", "spawn_at",
-        "destroy", "set_var", "add_var", "toggle_var", "log", "load_scene", "camera_shake", "set_timescale",
-        "pause", "quit", "set_text", "play_clip", "play_anim", "play_action", "set_color", "velocity",
-        "velocity3", "impulse", "impulse3", "force3", "set_visible", "set_active", "set_rotation",
-        "set_rotation3", "rotate", "set_scale", "die", "revive", "dive", "sit", "stand_up", "interact",
-        "hit_react", "roll", "dodge", "vault", "mantle", "ledge_grab", "climb_up", "let_go", "shimmy",
-    };
-    for (const char* s : k) if (std::strcmp(op, s) == 0) return true;
-    return false;
+    const std::string key = std::string(apiType) + "." + member;
+    if (const VsRule* r = VsFindRule(kApiRules, VsRuleCount(kApiRules), key.c_str())) return VsAt(r->category, r->sub);
+    return VsTranslateLegacy(VsLegacyPlaceForApi(apiType, member));
 }
 
 // One Actions step (the old Do / Check lists). `group` is the old bucket in main.cpp.
 inline VsPlace VsPlaceForStep(const char* op, const char* group) {
     if (!op) op = "";
     if (!group) group = "";
-    auto finish = [&](VsPlace p) {
-        if (p.category && VsStepSameAsNode(op)) p.browse = false;
-        return p;
-    };
-    if (VsIs(op, "log")) return finish(VsAt("Debug"));
-    if (VsIs(op, "play_sound")) return finish(VsAt("Audio"));
-    if (VsIs(op, "play_anim") || VsIs(op, "play_clip") || VsIs(op, "play_action")) return finish(VsAt("Animation"));
-    if (VsIs(op, "set_anim") || VsIs(op, "stop_clip") || VsIs(op, "play_layer") || VsIs(op, "stop_layer") || VsIs(op, "clip_speed"))
-        return finish(VsAt("Animation"));
-    if (VsPre(op, "set_text") || VsIs(op, "set_bar") || VsIs(op, "str_set_text")) return finish(VsAt("UI"));
-    if (VsIs(op, "set_sprite") || VsIs(op, "set_color") || VsIs(op, "set_color_var") || VsIs(op, "emit") ||
-        VsIs(op, "fade") || VsIs(op, "flash") || VsIs(op, "tween_color"))
-        return finish(VsAt("Objects", "Appearance"));
-    if (VsIs(op, "always") || VsIs(op, "chance")) return finish(VsAt("Flow"));
-    if (VsIs(op, "is_active") || VsIs(op, "has_tag")) return finish(VsAt("Objects"));
-    if (VsIs(op, "cooldown")) return finish(VsAt("Flow", "Timing"));
-    if (VsPre(op, "raycast")) return finish(VsAt("Physics", "Queries"));
-    if (VsIs(op, "is_moving")) return finish(VsAt("Physics"));
-    if (VsPre(op, "set_cam") || VsPre(op, "cam_") || VsPre(op, "camera_")) return finish(VsAt("Camera"));
-    if (VsIs(op, "set_timescale") || VsIs(op, "pause") || VsIs(op, "resume") || VsIs(op, "toggle_pause")) return finish(VsAt("Time"));
-    if (VsIs(op, "set_bg") || VsIs(op, "set_light") || VsIs(op, "set_ambient")) return finish(VsAt("Scene", "Atmosphere"));
-    if (VsPre(op, "key")) return finish(VsAt("Input", "Keys"));
-    if (VsPre(op, "mouse")) return finish(VsAt("Input", "Mouse"));
-    if (VsIs(op, "has_item")) return finish(VsAt("Objects", "Items"));
-    if (VsPre(op, "var_") || VsIs(op, "vars_cmp")) return finish(VsAt("Variables", "Compare"));
-    if (VsPre(op, "prefs_") || VsIs(op, "get_prefs")) return finish(VsAt("Variables", "Saved"));
-    if (VsIs(op, "mul_var") || VsIs(op, "div_var") || VsIs(op, "rand_var") || VsIs(op, "clamp_var") ||
-        VsIs(op, "lerp_var") || VsIs(op, "floor_var") || VsIs(op, "round_var") || VsIs(op, "abs_var") ||
-        VsIs(op, "negate_var") || VsIs(op, "sign_var") || VsIs(op, "sqrt_var") || VsIs(op, "pow_var") ||
-        VsIs(op, "min_var") || VsIs(op, "max_var") || VsIs(op, "mod_var") || VsIs(op, "swap_var") ||
-        VsIs(op, "clamp01_var") || VsIs(op, "round_to_var") || VsIs(op, "percent_var") || VsIs(op, "approach_var") ||
-        VsIs(op, "wrap_var") || VsIs(op, "map_range_var") || VsIs(op, "dice_var") || VsIs(op, "random_sign_var") ||
-        VsIs(op, "pick_var") || VsIs(op, "tween_var"))
-        return finish(VsAt("Variables", "Change"));
-    if (VsIs(op, "str_eq") || VsIs(op, "str_neq") || VsIs(op, "str_contains") || VsIs(op, "str_empty") ||
-        VsIs(op, "str_starts") || VsIs(op, "str_ends"))
-        return finish(VsAt("Text"));
-    if (VsIs(group, "Variables")) return finish(VsAt("Variables"));
-    if (VsIs(op, "wait") || VsIs(op, "wait_until")) return finish(VsAt("Flow", "Timing"));
-    if (VsIs(op, "repeat") || VsIs(op, "end_repeat") || VsIs(op, "while") || VsIs(op, "end_while") ||
-        VsIs(op, "for_each") || VsIs(op, "end_for") || VsIs(op, "for_each_tag") || VsIs(op, "end_for_tag") ||
-        VsIs(op, "break") || VsIs(op, "continue"))
-        return finish(VsAt("Flow", "Loops"));
-    if (VsIs(op, "gosub") || VsIs(op, "return_sub") || VsIs(op, "call")) return finish(VsAt("Flow", "Functions"));
-    if (VsIs(group, "Flow")) return finish(VsAt("Flow"));
-    if (VsIs(op, "achievement") || VsIs(group, "Game")) return finish(VsAt("Online"));
-    if (VsIs(group, "Character") || VsIs(group, "Jump") || VsIs(group, "Walk") || VsIs(group, "Hang") ||
-        VsIs(group, "Point") || VsIs(group, "Think") || VsIs(group, "Wave Both"))
-        return finish(VsAt("Animation", "Character"));
-    if (VsIs(group, "Juice")) return finish(VsAt("Movement", "Tweens"));
-    if (VsIs(group, "Move")) return finish(VsAt("Movement"));
-    if (VsIs(group, "Steam")) return finish(VsAt("Online", "Steam"));
-    if (VsIs(group, "PlayFab")) return finish(VsAt("Online", "PlayFab"));
-    if (VsIs(group, "Multiplayer")) return finish(VsAt("Online"));
-    if (VsIs(group, "Text")) return finish(VsAt("Text"));
-    if (VsIs(group, "Survival")) return finish(VsAt("Objects", "Survival"));
-    if (VsIs(group, "Object") || VsIs(group, "World")) return finish(VsAt("Objects"));
-    if (VsIs(group, "Scene") || VsIs(group, "Scenes")) return finish(VsAt("Scene"));
-    if (VsIs(group, "Arrays")) return finish(VsAt("Lists & Maps", "Lists"));
-    if (VsIs(group, "Maps")) return finish(VsAt("Lists & Maps", "Maps"));
-    if (VsIs(group, "Input")) return finish(VsAt("Input"));
-    if (VsIs(group, "Physics")) return finish(VsAt("Physics"));
-    if (VsIs(group, "Save")) return finish(VsAt("Variables", "Saved"));
-    if (VsIs(group, "Basic") || VsIs(group, "Look")) return {};   // those ops are handled above
-    return {};
+    VsPlace p;
+    if (const VsRule* r = VsFindRule(kStepRules, VsRuleCount(kStepRules), op)) p = VsAt(r->category, r->sub);
+    else p = VsTranslateLegacy(VsLegacyPlaceForStep(op, group));
+    if (p.category && VsStepSameAsNode(op)) p.browse = false;
+    return p;
 }
+
+// ------------------------------------------------------------------------------------------------------------
+// People who remember where a node used to be can still search for the old topic: the old place becomes search words.
+// Empty when the node did not move (the topic words are searched anyway).
+inline std::string VsMovedFromWords(const VsPlace& was, const VsPlace& now) {
+    if (!was.category || !now.category) return "";
+    const bool sameTopic = std::strcmp(was.category, now.category) == 0;
+    const bool sameSub = std::strcmp(was.subcategory, now.subcategory) == 0;
+    if (sameTopic && sameSub) return "";
+    std::string s = was.category;
+    if (was.subcategory[0]) { s += ' '; s += was.subcategory; }
+    return s;
+}
+
+// The name a favourite or a recently used node is remembered under in okay_vsnodes.txt ("fav n:OnKey").
+// It is built from the node's type (or an Actions step's short name) and never from its topic, so moving a node to
+// another topic cannot lose anyone's favourites. tests/test_vs_categories.cpp checks this.
+inline std::string VsPaletteNodeKey(const char* type) { return std::string("n:") + (type ? type : ""); }
+inline std::string VsPaletteStepKey(bool condition, const char* op) {
+    return std::string(condition ? "c:" : "a:") + (op ? op : "");
+}
+
+// The old place of a palette row, for VsMovedFromWords.
+inline VsPlace VsOldPlaceForNode(const char* type) { return VsLegacyPlaceForNode(type); }
+inline VsPlace VsOldPlaceForApi(const char* apiType, const char* member) { return VsLegacyPlaceForApi(apiType, member); }
+inline VsPlace VsOldPlaceForStep(const char* op, const char* group) { return VsLegacyPlaceForStep(op, group); }
 
 } // namespace okay::editor::vsed

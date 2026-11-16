@@ -281,7 +281,8 @@ inline std::string VsNodeDocsMarkdown(const std::vector<std::string>& orderedTyp
     o << "# Visual scripting nodes\n\n";
     o << "What every node in the Visual Script palette does, which pins it has, and what it needs.\n";
     o << "Generated from the same table the editor shows in the node search and on node tooltips.\n";
-    o << "Hand-written nodes: `editor/VisualScriptNodeDocs.inc`. Engine API nodes: the binding table in `VisualScript/VsApi`.\n\n";
+    o << "Hand-written nodes: `editor/VisualScriptNodeDocs.inc`. Engine API nodes: the binding table in `VisualScript/VsApi`.\n";
+    o << "Where each node sits in the Add Node menu: [visual_scripting_topics.md](visual_scripting_topics.md).\n\n";
     std::string lastGroup;
     for (const std::string& type : orderedTypes) {
         const VsNodeDoc* d = VsNodeDocFor(type);

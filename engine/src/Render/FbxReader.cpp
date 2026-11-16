@@ -27,7 +27,9 @@ const Elem* Elem::Find(const char* n) const {
 // behaviour they always had: the Adler-32 and bytes after the stream are not checked (Options::Lenient).
 bool Inflate(const std::uint8_t* data, std::size_t n, std::vector<std::uint8_t>& out, std::size_t maxOut) {
     std::string why;
-    return okay::inflate::Zlib(data, n, out, okay::inflate::Options::Lenient(maxOut), why);
+    // The caller knows the exact decoded size (the array header says it) and passes it as the cap: allocate it once
+    // instead of growing the buffer by doubling (fewer copies, and no zero-filled slack).
+    return okay::inflate::Zlib(data, n, out, okay::inflate::Options::Lenient(maxOut, maxOut), why);
 }
 
 // ============================================================================

@@ -13,6 +13,7 @@
 #include "okay/Render/LwoReader.hpp"
 #include "okay/Core/Log.hpp"
 #include <cstdlib>
+#include <cstring>
 #include "okay/Core/ImportSidecar.hpp"
 #include "okay/Render/Gltf.hpp"
 #include "okay/Scene/Scene.hpp"
@@ -1691,14 +1692,34 @@ Mesh BuildOwnPart(const fbx::Mesh& mesh, const fbx::Part& part, bool skinned,
         verts.push_back(fv);
     }
     if (verts.empty()) return out;
-    std::unordered_map<std::string, uint32_t> seen;
-    seen.reserve(verts.size());
+    // Equal vertices (byte for byte) share one index, numbered in first-occurrence order. An open-addressing table of
+    // indices into `verts` (power-of-two size, at least twice the corner count, linear probing): no allocation per
+    // corner, unlike a map keyed by a copy of the bytes, and the same result.
     std::vector<uint32_t> indices(verts.size());
     std::vector<uint32_t> unique;
-    for (std::size_t i = 0; i < verts.size(); ++i) {
-        auto ins = seen.emplace(std::string((const char*)&verts[i], sizeof(FbxVert)), (uint32_t)unique.size());
-        if (ins.second) unique.push_back((uint32_t)i);
-        indices[i] = ins.first->second;
+    {
+        std::size_t cap = 16;
+        while (cap < verts.size() * 2) cap <<= 1;
+        const uint32_t kEmpty = 0xFFFFFFFFu;
+        std::vector<uint32_t> table(cap, kEmpty);   // holds positions in `unique`
+        for (std::size_t i = 0; i < verts.size(); ++i) {
+            const unsigned char* b = (const unsigned char*)&verts[i];
+            static_assert(sizeof(FbxVert) % 4 == 0, "FbxVert is hashed 4 bytes at a time");
+            std::uint64_t h = 0x9E3779B97F4A7C15ull;   // multiply-xor over 32-bit words, then a final mix
+            for (std::size_t k = 0; k < sizeof(FbxVert); k += 4) {
+                std::uint32_t w; std::memcpy(&w, b + k, 4);
+                h = (h ^ w) * 0xFF51AFD7ED558CCDull;
+                h ^= h >> 32;
+            }
+            h ^= h >> 29;
+            std::size_t slot = (std::size_t)h & (cap - 1);
+            for (;;) {
+                const uint32_t u = table[slot];
+                if (u == kEmpty) { table[slot] = (uint32_t)unique.size(); indices[i] = (uint32_t)unique.size(); unique.push_back((uint32_t)i); break; }
+                if (std::memcmp(&verts[unique[u]], b, sizeof(FbxVert)) == 0) { indices[i] = u; break; }
+                slot = (slot + 1) & (cap - 1);
+            }
+        }
     }
     const bool hasN = mesh.hasNormals, hasUV = mesh.hasUV;
     for (uint32_t u : unique) {

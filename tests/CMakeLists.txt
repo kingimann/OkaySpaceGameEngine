@@ -3225,6 +3225,12 @@ add_executable(test_fbx_hostile test_fbx_hostile.cpp
 target_include_directories(test_fbx_hostile PRIVATE ${PROJECT_SOURCE_DIR}/engine/include)
 target_compile_definitions(test_fbx_hostile PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME fbx_hostile COMMAND test_fbx_hostile)
+# Not a test: speed and peak heap of our FBX reader against ufbx (docs/own_fbx_reader.md, "Speed and memory").
+# Built, never run by ctest. Synthetic large inputs: python3 scripts/gen_fbx_bench.py <dir>.
+add_executable(bench_fbx_reader bench_fbx_reader.cpp)
+target_link_libraries(bench_fbx_reader PRIVATE okay::engine)
+target_include_directories(bench_fbx_reader PRIVATE ${PROJECT_SOURCE_DIR}/engine/third_party/ufbx)
+target_compile_definitions(bench_fbx_reader PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # The editor's layout maths (editor/EditorLayoutMath.hpp, UI-library free): overlay anchoring, label placement and crowd fading, Inspector density, toolbar planning, maximize bookkeeping, view preferences.
 add_executable(test_editor_layout test_editor_layout.cpp)

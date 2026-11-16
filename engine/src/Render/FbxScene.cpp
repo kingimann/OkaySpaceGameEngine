@@ -704,23 +704,41 @@ struct Builder {
         if (lm.Ok()) lm.indexed = false;          // material ids are the values themselves
         m.hasUV = lu.Ok(); m.hasColors = lc.Ok(); m.hasNormals = true;   // missing normals are generated (flat, per polygon)
 
-        std::map<int, Part> parts;
-        std::vector<std::array<double, 3>> pts;
-        std::vector<int> tris;
+        // First pass: the material slot of every usable polygon and how many corners each slot will get, so each part's
+        // corner list is allocated once at its final size (growing it by doubling held up to three times the corners
+        // in memory at the moment of a reallocation). A polygon of n corners gives n - 2 triangles (Triangulate).
+        std::vector<int> slotOf(faces.size(), -1);   // -1 = polygon skipped
+        std::map<int, std::size_t> cornersOfSlot;
         for (std::size_t fi = 0; fi < faces.size(); ++fi) {
             const Face& f = faces[fi];
             if (f.count < 3) continue;
             bool bad = false;
-            pts.clear();
-            for (std::size_t k = 0; k < f.count; ++k) {
-                const std::int32_t c = cpOf[f.start + k];
-                if (c < 0) { bad = true; break; }
-                pts.push_back({P[(std::size_t)c * 3], P[(std::size_t)c * 3 + 1], P[(std::size_t)c * 3 + 2]});
-            }
+            for (std::size_t k = 0; k < f.count && !bad; ++k) bad = cpOf[f.start + k] < 0;
             if (bad) continue;
             int slot = 0;
             double mv;
             if (lm.Ok() && Fetch(lm, f.start, fi, (std::size_t)cpOf[f.start], edgeOfCorner, &mv) && mv >= 0 && mv < 1e6) slot = (int)mv;
+            slotOf[fi] = slot;
+            cornersOfSlot[slot] += (f.count - 2) * 3;
+        }
+        {   // the same budget the loop below enforces polygon by polygon, checked before anything is allocated
+            std::size_t total = 0;
+            for (const auto& kv : cornersOfSlot) total += kv.second;
+            if (total > opt.limits.maxCorners - std::min(cornersBuilt, opt.limits.maxCorners)) return Fail("mesh too large");
+        }
+        std::map<int, Part> parts;
+        for (const auto& kv : cornersOfSlot) parts[kv.first].corners.reserve(kv.second);
+        std::vector<std::array<double, 3>> pts;
+        std::vector<int> tris;
+        for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+            const Face& f = faces[fi];
+            const int slot = slotOf[fi];
+            if (slot < 0) continue;
+            pts.clear();
+            for (std::size_t k = 0; k < f.count; ++k) {
+                const std::int32_t c = cpOf[f.start + k];
+                pts.push_back({P[(std::size_t)c * 3], P[(std::size_t)c * 3 + 1], P[(std::size_t)c * 3 + 2]});
+            }
             double fn[3] = {0, 0, 0};   // polygon (Newell) normal, used when the file has none
             if (!ln.Ok()) for (std::size_t k = 0; k < pts.size(); ++k) {
                 const auto& pa = pts[k]; const auto& pb = pts[(k + 1) % pts.size()];
@@ -1073,7 +1091,19 @@ bool LoadMemory(const std::uint8_t* data, std::size_t size, Scene& out, std::str
 bool LoadFile(const std::string& path, Scene& out, std::string* err, const BuildOptions& opt) {
     std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) { if (err) *err = "cannot open " + path; return false; }
-    std::vector<std::uint8_t> buf((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    // One read of the whole file at its size (a byte-by-byte stream iterator grew the buffer by doubling, slowly).
+    std::vector<std::uint8_t> buf;
+    f.seekg(0, std::ios::end);
+    const std::streamoff size = f.tellg();
+    f.seekg(0, std::ios::beg);
+    if (size > 0) {
+        buf.resize((std::size_t)size);
+        f.read((char*)buf.data(), (std::streamsize)size);
+        buf.resize((std::size_t)f.gcount());
+    } else {   // size unknown (not a regular file): fall back to reading until the end
+        f.clear(); f.seekg(0, std::ios::beg);
+        buf.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
     return LoadMemory(buf.data(), buf.size(), out, err, opt);
 }
 

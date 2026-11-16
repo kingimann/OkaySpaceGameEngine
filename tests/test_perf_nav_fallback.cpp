@@ -51,10 +51,10 @@ std::vector<Vec3> Search(Scene& s, const Vec3& a, const Vec3& b, bool indexOn, G
     return p;
 }
 
-struct FrameStats { double avg = 0, worst = 0, worstAfterFirst = 0; int maxSearchesAfterFirst = 0, firstFrameSearches = 0; std::uint64_t searches = 0; };
+struct AgentRunStats { double avg = 0, worst = 0, worstAfterFirst = 0; int maxSearchesAfterFirst = 0, firstFrameSearches = 0; std::uint64_t searches = 0; };
 
 // `count` NavMeshAgents in a block near the origin, all sent to (60, 0, 0) on the same frame; `frames` frames of 1/60 s.
-FrameStats RunAgents(int count, int rocks, int frames) {
+AgentRunStats RunAgents(int count, int rocks, int frames) {
     Scene s("agents");
     navperf::BuildRockField(s, rocks, false);
     std::vector<NavMeshAgent*> agents;
@@ -65,7 +65,7 @@ FrameStats RunAgents(int count, int rocks, int frames) {
     }
     s.Update(1.0f / 60.0f);
     for (auto* a : agents) a->SetDestination({60, 0, 0});
-    FrameStats st;
+    AgentRunStats st;
     double total = 0;
     for (int f = 0; f < frames; ++f) {
         const std::uint64_t before = Navigation::SearchCount();
@@ -166,22 +166,28 @@ int main() {
     // ---- 3. Replans spread over frames --------------------------------------------------------------------
     {
         CHECK(Navigation::ReplanBudget() == 4);   // the default (no OKAY_NAV_REPLAN_BUDGET in the test run)
-        // The old behaviour, without the index cost: no budget. The agents' timers end together.
+        // The old timing (index on, so it is quick): no budget and no stagger. The agents' timers end together.
         Navigation::SetReplanBudget(0);
-        FrameStats burst = RunAgents(50, 300, 90);
-        // Now: at most 4 timer replans a frame.
+        Navigation::SetStaggerEnabled(false);
+        AgentRunStats burst = RunAgents(50, 300, 90);
+        // The budget alone: at most 4 timer replans a frame.
         Navigation::SetReplanBudget(4);
-        FrameStats spread = RunAgents(50, 300, 90);
-        std::printf("  50 agents, 300 rocks: first frame %d searches; most in one later frame: %d with no budget, %d with a budget of 4\n",
-                    spread.firstFrameSearches, burst.maxSearchesAfterFirst, spread.maxSearchesAfterFirst);
+        AgentRunStats budgetOnly = RunAgents(50, 300, 90);
+        // Both (the default): the stagger spreads the phases, the budget caps any frame.
+        Navigation::SetStaggerEnabled(true);
+        AgentRunStats spread = RunAgents(50, 300, 90);
+        std::printf("  50 agents, 300 rocks: first frame %d searches; most in one later frame: %d old timing, %d budget only, %d budget + stagger\n",
+                    spread.firstFrameSearches, burst.maxSearchesAfterFirst, budgetOnly.maxSearchesAfterFirst, spread.maxSearchesAfterFirst);
         CHECK(spread.firstFrameSearches == 50);   // every agent plans at once when it gets a destination
-        CHECK(burst.maxSearchesAfterFirst > 8);
-        CHECK(spread.maxSearchesAfterFirst <= 8);   // the budget, plus the odd must-plan (an agent wedged on a rock)
+        CHECK(burst.maxSearchesAfterFirst >= 40);   // the old way: (nearly) all 50 replan on one frame
+        CHECK(budgetOnly.maxSearchesAfterFirst <= 8);   // the budget, plus the odd must-plan (an agent wedged on a rock)
+        CHECK(spread.maxSearchesAfterFirst <= 8);
         CHECK(spread.searches >= 50 + 50 * 2);      // and every agent still replans (90 frames = 1.5 s, 0.5 s timer)
+        CHECK(budgetOnly.searches >= 50 + 50 * 2);
 
         // The timing of Finding 107's shape: 50 agents, 1,000 rocks, open goal, 120 frames.
-        FrameStats now50 = RunAgents(50, 1000, 120);
-        FrameStats now20 = RunAgents(20, 1000, 120);
+        AgentRunStats now50 = RunAgents(50, 1000, 120);
+        AgentRunStats now20 = RunAgents(20, 1000, 120);
         std::printf("  50 agents, 1,000 rocks: frame avg %.2f ms, worst %.2f ms (first frame, 50 plans), worst later %.2f ms\n",
                     now50.avg, now50.worst, now50.worstAfterFirst);
         std::printf("  20 agents, 1,000 rocks: frame avg %.2f ms, worst %.2f ms, worst later %.2f ms\n",
@@ -189,9 +195,11 @@ int main() {
         CHECK(now50.worstAfterFirst < 1000.0);   // was seconds-long freezes every half second
         if (const char* full = std::getenv("OKAY_NAV_PERF_FULL"); full && full[0] == '1') {
             Navigation::SetReplanBudget(0);
+            Navigation::SetStaggerEnabled(false);
             NavProbeIndex::SetEnabled(false);
-            FrameStats old20 = RunAgents(20, 1000, 120);
+            AgentRunStats old20 = RunAgents(20, 1000, 120);
             NavProbeIndex::SetEnabled(true);
+            Navigation::SetStaggerEnabled(true);
             Navigation::SetReplanBudget(4);
             std::printf("  OLD (index off, no budget) 20 agents, 1,000 rocks: frame avg %.2f ms, worst %.2f ms\n", old20.avg, old20.worst);
         }

@@ -62,8 +62,12 @@ public:
     static int ReplanBudget();
     static void SetReplanBudget(int perFrame);
     /// A fixed value in [0, 1) for an object (from its instance id), used to give agents that got a
-    /// destination together different replan timer phases.
+    /// destination together different replan timer phases (1 when the stagger is off).
     static float StaggerPhase(const GameObject* go);
+    /// Turn the stagger off (StaggerPhase then gives 1: every agent waits the full interval, the old
+    /// timing). On by default; OKAY_NAV_REPLAN_STAGGER=0 turns it off. For comparisons and tests.
+    static void SetStaggerEnabled(bool on);
+    static bool StaggerEnabled();
     /// Path searches run so far by FindPath / FindPathForAgent (all scenes): for tests and profiling.
     static std::uint64_t SearchCount();
     /// Every NavMeshLink in the scene (cached with the agents).

@@ -80,7 +80,20 @@ bool Navigation::TakeReplanSlot(Scene& scene) {
     return true;
 }
 
+int g_stagger = -1;   // -1 = read OKAY_NAV_REPLAN_STAGGER once
+
+bool Navigation::StaggerEnabled() {
+    if (g_stagger < 0) {
+        const char* e = std::getenv("OKAY_NAV_REPLAN_STAGGER");
+        g_stagger = (e && e[0] == '0') ? 0 : 1;
+    }
+    return g_stagger == 1;
+}
+
+void Navigation::SetStaggerEnabled(bool on) { g_stagger = on ? 1 : 0; }
+
 float Navigation::StaggerPhase(const GameObject* go) {
+    if (!StaggerEnabled()) return 1.0f;
     if (!go) return 0.0f;
     // Mix the id's bits (an integer hash of the "multiply, shift, xor" kind) so neighbouring ids spread out.
     std::uint64_t x = go->InstanceId() + 0x9E3779B97F4A7C15ull;

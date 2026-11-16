@@ -161,8 +161,8 @@ inline void BuildCrowdExample(Scene& s) {
     light->transform->localRotation = Quat::Euler(50, -30, 0);
     light->AddComponent<Light>();
     GameObject* cam = s.CreateGameObject("Main Camera");
-    cam->transform->localPosition = {0, 45, -55};
-    cam->transform->localRotation = Quat::Euler(40, 0, 0);
+    cam->transform->localPosition = {0, 45, 55};   // the engine camera looks down -Z
+    cam->transform->localRotation = Quat::Euler(-40, 0, 0);   // tilted down at the field
     cam->AddComponent<Camera>()->main = true;
 }
 

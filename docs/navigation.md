@@ -263,16 +263,23 @@ Two changes fix it. Neither changes a path in a scene that is standing still.
   old behaviour). The others keep their current path and try again next frame. A plan an agent cannot move
   without (no path yet, a new or moved goal, stuck, a carved hole changed) never waits. The first timer
   after such a plan is also shortened by a fixed amount per agent (`Navigation::StaggerPhase`, from its
-  instance id), so agents sent off together drift apart.
+  instance id), so agents sent off together drift apart (`Navigation::SetStaggerEnabled`, or
+  `OKAY_NAV_REPLAN_STAGGER=0` to turn it off).
 
 Measured (`tests/test_perf_nav_fallback.cpp`, Linux Release build, one core; a 400 m floor with 1,000
 one-metre rocks; the "before" numbers are from main before the change):
 
 | | Before | After |
 |---|---|---|
-| One search, open goal 60 m away | 75 ms | see the test output in the PR |
-| One search, goal walled off (full 4,096 cells) | 457 ms | see the test output in the PR |
-| 20 agents, 120 frames: average / worst frame | 43 ms / 1,354 ms | see the test output in the PR |
+| One search, open goal 60 m away | 61-75 ms | 0.42 ms |
+| One search, goal walled off (full 4,096 cells) | 384-457 ms | 2.2 ms |
+| 20 agents, 120 frames: average / worst frame | 43-64 ms / 1,354-1,979 ms | 1.0 ms / 13.5 ms (3.8 ms after the first frame) |
+| 50 agents, 120 frames: average / worst frame | not run (minutes) | 1.5 ms / 29 ms (3.0 ms after the first frame) |
+| Most path searches in one frame after the first (50 agents) | 50 | 4 |
+
+(The first number of each "before" range is the old code run inside the new test with the index, the budget and
+the stagger turned off; the second is the run on main before the change. The first frame of a group still plans
+for every agent.)
 
 The same test checks the paths against values recorded before the change (10 queries in a scene with
 rocks, rotated slabs, a sphere, a capsule, a trigger, a step and a wall), compares 40 more queries with the

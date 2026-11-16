@@ -1275,10 +1275,10 @@ at most 4 timer replans run per frame, and the Hierarchy draws only the rows you
 2. Open **View > Panels > Stats** (and **View > Panels > Profiler** if you like), then press **Play**.
 3. You should see the followers stream after the ball and walk around the rocks, with no pauses. The frame time should stay
    steady instead of spiking every half second.
-4. To see the old behaviour for comparison: close the editor, set the environment variables `OKAY_NAV_PROBE_INDEX=0` and
-   `OKAY_NAV_REPLAN_BUDGET=0` (for example in a Command Prompt: `set OKAY_NAV_PROBE_INDEX=0` and
-   `set OKAY_NAV_REPLAN_BUDGET=0`, then start `OkayEngine.exe` from that window), and repeat steps 1 to 3. The game should
-   now hitch. `OKAY_NAV_REPLAN_BUDGET=8` allows 8 timer replans per frame instead of 4.
+4. To see the old behaviour for comparison: close the editor, set the environment variables `OKAY_NAV_PROBE_INDEX=0`,
+   `OKAY_NAV_REPLAN_BUDGET=0` and `OKAY_NAV_REPLAN_STAGGER=0` (for example in a Command Prompt: `set OKAY_NAV_PROBE_INDEX=0` and
+   `set OKAY_NAV_REPLAN_BUDGET=0` and `set OKAY_NAV_REPLAN_STAGGER=0`, then start `OkayEngine.exe` from that window), and
+   repeat steps 1 to 3. The game should now hitch. `OKAY_NAV_REPLAN_BUDGET=8` allows 8 timer replans per frame instead of 4.
 5. Hierarchy: with the scene open (not playing), scroll the Hierarchy up and down, click rows, Shift+click a range, use the
    Up/Down arrows, open and close groups with the arrows and with right-click **Expand / Collapse All Below**, double-click a
    row to rename it, drag a rock onto another group, and type `rock` in the search box. Everything should work as before. In

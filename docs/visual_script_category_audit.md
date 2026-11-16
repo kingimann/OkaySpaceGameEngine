@@ -37,20 +37,20 @@ name and description): they show the size of the problem, not a verdict on each 
 
 ### Numbers at a glance
 
-There are 3171 palette rows (358 api, 1438 builtin, 60 check, 241 gameplay, 224 library, 592 node, 258 step). 2620 are listed in the menu;
-2600 of those also show while you click through a topic. All the counts below are those 2600 rows.
+There are 3207 palette rows (387 api, 1445 builtin, 60 check, 241 gameplay, 224 library, 592 node, 258 step). 2641 are listed in the menu;
+2621 of those also show while you click through a topic. All the counts below are those 2621 rows.
 
 | | Before | After |
 |---|---:|---:|
 | Topics | 19 | 70 |
 | Subcategories | 52 | 99 |
 | Sections (headings in the sidebar) | 0 | 14 |
-| Most nodes directly in one topic | 515 (Advanced) | 29 (Mouse & Touch) |
-| Largest single bucket (topic or subcategory) | 515 | 37 |
+| Most nodes directly in one topic | 518 (Advanced) | 29 (Mouse & Touch) |
+| Largest single bucket (topic or subcategory) | 518 | 37 |
 | Topics holding more than 30 nodes directly | 14 | 0 |
-| Rows whose name sounds like another topic (heuristic) | 258 | 39 |
-| Rows in a subcategory their topic's description never mentions | 626 | 0 |
-| Rows that changed place | | 2533 of 2600 |
+| Rows whose name sounds like another topic (heuristic) | 259 | 41 |
+| Rows in a subcategory their topic's description never mentions | 643 | 0 |
+| Rows that changed place | | 2554 of 2621 |
 
 ### Before: the old 19 topics
 
@@ -62,7 +62,7 @@ There are 3171 palette rows (358 api, 1438 builtin, 60 check, 241 gameplay, 224 
 | Math | 293 | 116 | Compare (51), Vectors (48), Curves (43), Angles (17), Random (9), Progression (7), Color (2) |
 | Text | 89 | 83 | Language (6) |
 | Lists & Maps | 53 | 0 | Lists (35), Maps (15), Structs (3) |
-| Objects | 219 | 92 | Survival (57), Items (41), Lines (16), Groups (5), Combat (5), Appearance (3) |
+| Objects | 236 | 92 | Items (58), Survival (57), Lines (16), Groups (5), Combat (5), Appearance (3) |
 | Movement | 180 | 85 | Tweens (65), Turn (22), Size (8) |
 | Physics | 119 | 67 | Queries (38), Collisions (14) |
 | Animation | 96 | 63 | Character (19), IK (6), Procedural (4), Cutscenes (4) |
@@ -71,16 +71,16 @@ There are 3171 palette rows (358 api, 1438 builtin, 60 check, 241 gameplay, 224 
 | Camera | 30 | 30 |  |
 | UI | 209 | 157 | Popups (16), Bars (12), Layout (8), Fields (7), Theme (5), Buttons (4) |
 | Scene | 128 | 34 | Story (41), Navigation (26), Atmosphere (12), Dialogue (9), Building (6) |
-| Time | 52 | 52 |  |
+| Time | 53 | 53 |  |
 | Online | 211 | 194 | Steam (11), PlayFab (6) |
 | Debug | 17 | 17 |  |
-| Advanced | 533 | 515 | Behavior (18) |
+| Advanced | 536 | 518 | Behavior (18) |
 
 The 15 biggest buckets:
 
 | Nodes | Bucket |
 |---:|---|
-| 515 | Advanced |
+| 518 | Advanced |
 | 194 | Online |
 | 157 | UI |
 | 116 | Math |
@@ -91,14 +91,14 @@ The 15 biggest buckets:
 | 67 | Physics |
 | 65 | Movement / Tweens |
 | 63 | Animation |
+| 58 | Objects / Items |
 | 57 | Objects / Survival |
 | 54 | Input |
-| 52 | Time |
-| 51 | Math / Compare |
+| 53 | Time |
 
 Nodes whose name or description sounds like another topic than the one they sat in (a heuristic: whole words in the id and the title):
 
-258 rows. The biggest groups:
+259 rows. The biggest groups:
 
 | Rows | Sat in | The name talks about | Examples |
 |---:|---|---|---|
@@ -110,21 +110,21 @@ Nodes whose name or description sounds like another topic than the one they sat 
 | 11 | Objects | spline | Get Point On Spline, Spline Length, Get Point Count, Is Closed, Set Closed ... |
 | 11 | Math | animation | Blend Unclamped, Blend Clamped, Blend Angles, Inverse Blend, Color Blend Between ... |
 | 11 | Advanced | animation | Mathf Inverse Blend Between, Mathf Blend Between Angle, Vector Blend Between Unclamped, Blend, Blend Param ... |
+| 11 | Advanced | navigation | Grid Add, Grid Block, Grid Clear, Grid Fits, Grid Set Cell Cost ... |
 | 11 | Animation | ik | Inverse Kinematics Clear Target, Inverse Kinematics Enable, Inverse Kinematics Foot, Inverse Kinematics Hand, Inverse Kinematics Look ... |
-| 9 | Advanced | navigation | Grid Add, Grid Block, Grid Clear, Grid Fits, Grid Set Cell Cost ... |
 | 8 | Objects | weapons | Spawn Projectile, Shoot, Use Ammo, Swing Weapon, Fire Weapon ... |
-| 7 | Advanced | inventory | Can Craft, Drop Item, Inv Set Slot, Inv Slot, Item Def ... |
+| 7 | Advanced | tween | Ease Back, Ease Bounce, Ease Curve, Ease Elastic, Ease in Cubic ... |
 
-626 rows sit in 35 subcategories that the one-line description of their topic does not mention:
+643 rows sit in 35 subcategories that the one-line description of their topic does not mention:
 
 | Rows | Subcategory |
 |---:|---|
 | 70 | Variables / Saved |
 | 65 | Movement / Tweens |
+| 58 | Objects / Items |
 | 57 | Objects / Survival |
 | 51 | Math / Compare |
 | 43 | Math / Curves |
-| 41 | Objects / Items |
 | 38 | Physics / Queries |
 | 24 | Variables / Change |
 | 23 | Flow / Timing |
@@ -135,7 +135,7 @@ Nodes whose name or description sounds like another topic than the one they sat 
 | 15 | Input / Controls |
 | | and 21 more |
 
-110 groups of rows have the same name, or the same job under another name, and sit in different places:
+111 groups of rows have the same name, or the same job under another name, and sit in different places:
 
 | Name | The rows | Where |
 |---|---|---|
@@ -197,7 +197,7 @@ Nodes whose name or description sounds like another topic than the one they sat 
 | Sight & Distance Checks | 28 | 28 |  |
 | Health & Damage | 60 | 18 | Resources & Buffs (15), Health Values (15), Armor & Lives (12) |
 | Weapons & Shooting | 20 | 20 |  |
-| Inventory & Items | 61 | 21 | Inventory Slots (13), Pick Up & Drop (10), Carry Limits (10), Crafting & Loot (4), Equipment (3) |
+| Inventory & Items | 82 | 21 | Inventory Slots (33), Pick Up & Drop (10), Carry Limits (10), Crafting & Loot (5), Equipment (3) |
 | Quests & Dialogue | 53 | 0 | Quests (28), Dialogue (15), Story Flags (10) |
 | Score & Winning | 13 | 13 |  |
 | Doors & Switches | 6 | 6 |  |
@@ -234,6 +234,7 @@ The 15 biggest buckets now:
 | Nodes | Bucket |
 |---:|---|
 | 37 | Blending & Easing / Easing & Curves |
+| 33 | Inventory & Items / Inventory Slots |
 | 29 | Mouse & Touch |
 | 29 | Bars & Layout / Tabs & Pages |
 | 28 | Sight & Distance Checks |
@@ -247,11 +248,10 @@ The 15 biggest buckets now:
 | 26 | Forces & Velocity / Speed & Jumping |
 | 26 | Multiplayer / Players & Matches |
 | 26 | Saving & Loading / Save Slots |
-| 25 | Waiting & Timers |
 
 Same heuristic, new places:
 
-39 rows. The biggest groups:
+41 rows. The biggest groups:
 
 | Rows | Sat in | The name talks about | Examples |
 |---:|---|---|---|
@@ -261,16 +261,16 @@ Same heuristic, new places:
 | 2 | Buttons & Inputs | tween | Set Ease, Set Button Ease |
 | 2 | Color & Appearance | animation | Color Blend Between, Blend Between Color |
 | 2 | Vectors | animation | Vector Blend Between, Vector Blend Between Unclamped |
+| 2 | Inventory & Items | navigation | Inv From Grid, Inv to Grid |
 | 1 | Branches & Gates | cutscene | Sequence |
 | 1 | Game Events | animation | On Animation Marker |
 | 1 | Game Events | health | On Health Changed |
 | 1 | Random | inventory | Pick Random Item |
 | 1 | Waiting & Timers | animation | Blend Over Time |
-| 1 | Vectors | navigation | Grid Cell |
 
 0 rows sit in 0 subcategories that the one-line description of their topic does not mention.
 
-32 groups of rows have the same name, or the same job under another name, and sit in different places:
+33 groups of rows have the same name, or the same job under another name, and sit in different places:
 
 | Name | The rows | Where |
 |---|---|---|
@@ -291,13 +291,13 @@ Same heuristic, new places:
 
 ### Every node that moved
 
-2533 of 2600 rows changed place; 67 kept the same topic name and subcategory (for example Debug).
+2554 of 2621 rows changed place; 67 kept the same topic name and subcategory (for example Debug).
 
 #### By old place
 
 | Old place | Rows | Went to (rows) |
 |---|---:|---|
-| Advanced | 515 | Window & Display (18), Waiting & Timers / Delayed Calls (16), Build Mode (15), Move & Follow / Script Movement Functions (15), Accounts & Online Saves / Accounts (14), Color & Appearance / Sprites & Textures (13), Inventory & Items / Inventory Slots (12), Raycasts & Overlaps / Ray Results (12), and 95 more |
+| Advanced | 518 | Window & Display (18), Inventory & Items / Inventory Slots (18), Waiting & Timers / Delayed Calls (16), Build Mode (15), Move & Follow / Script Movement Functions (15), Accounts & Online Saves / Accounts (14), Color & Appearance / Sprites & Textures (13), Raycasts & Overlaps / Ray Results (12), and 93 more |
 | Online | 194 | Multiplayer / Players & Matches (26), Multiplayer / Messages & RPC (23), Multiplayer / Hosting & Joining (22), Steam / Achievements & Stats (21), Multiplayer / Synced Objects & Variables (19), Multiplayer / Matchmaking & Relay (18), Server Security (17), Steam / Lobbies & Friends (15), and 4 more |
 | UI | 157 | Bars & Layout / Tabs & Pages (21), Bars & Layout / Layout Helpers (21), Buttons & Inputs / Pickers & Search (15), Buttons & Inputs / Sliders & Toggles (15), Screen Text / Script Text Widgets (15), Buttons & Inputs (13), Screen Text (11), Screen Text / Text Style & Format (10), and 9 more |
 | Math | 116 | Numbers / Limits & Wrapping (21), Numbers (15), Numbers / More Arithmetic (14), Numbers / Averages & Percentages (11), Numbers / Rounding & Snapping (10), Blending & Easing (10), Numbers / Script Math Functions (10), Vectors / Script Vector Functions (8), and 7 more |
@@ -307,13 +307,13 @@ Same heuristic, new places:
 | Variables / Saved | 70 | Saving & Loading / Save Slots (25), Saving & Loading / Save Files (17), Saving & Loading / Saved Values (14), Saving & Loading (12), Build Mode (1), Accounts & Online Saves / Cloud Saves (1) |
 | Physics | 67 | Forces & Velocity / Body Settings (27), Forces & Velocity / Speed & Jumping (21), Forces & Velocity (9), Raycasts & Overlaps (5), Raycasts & Overlaps / Ray Results (2), Game Events (1), Rotation & Scale / Facing & Looking (1), Raycasts & Overlaps / Overlaps & Shape Casts (1) |
 | Movement / Tweens | 65 | Tweens / Control Tweens (20), Tweens / Start a Tween (18), Tweens / Tween Options (13), Tweens (9), Tweens / Tween Events (5) |
+| Objects / Items | 58 | Inventory & Items (18), Inventory & Items / Inventory Slots (13), Inventory & Items / Carry Limits (10), Inventory & Quest Events (6), Inventory & Items / Crafting & Loot (5), Inventory & Items / Pick Up & Drop (3), Inventory & Items / Equipment (3) |
 | Objects / Survival | 57 | Health & Damage / Resources & Buffs (15), Health & Damage (14), Health & Damage / Health Values (14), Health & Damage / Armor & Lives (11), Inventory & Items (3) |
 | Input | 54 | Gamepad & Controls (15), Mouse & Touch (12), Keyboard (9), Input Events (7), Mouse & Touch / Touch & Gestures (6), Buttons & Inputs / Dropdowns & Text Fields (3), Camera / Follow & Switch (1), Move & Follow / Script Movement Functions (1) |
-| Time | 52 | Time & Game Speed / Clock (15), Time & Game Speed / Time Math (13), Time & Game Speed / Game Speed (11), Time & Game Speed / Pausing (6), Tweens / Control Tweens (4), Game Events (1), Waiting & Timers (1), Tweens / Tween Options (1) |
+| Time | 53 | Time & Game Speed / Clock (15), Time & Game Speed / Time Math (13), Time & Game Speed / Game Speed (11), Time & Game Speed / Pausing (6), Tweens / Control Tweens (4), Game Events (1), Inventory & Items / Inventory Slots (1), Waiting & Timers (1), and 1 more |
 | Math / Compare | 51 | Comparisons & Logic (24), Comparisons & Logic / True & False Logic (15), Comparisons & Logic / Scores & Number Sets (11), Branches & Gates / State Machines (1) |
 | Math / Vectors | 48 | Vectors (20), Vectors / Flat Vectors (20), Vectors / Directions & Axes (8) |
 | Math / Curves | 43 | Blending & Easing / Easing & Curves (28), Blending & Easing (8), Blending & Easing / Smoothing & Springs (7) |
-| Objects / Items | 41 | Inventory & Items (18), Inventory & Items / Carry Limits (10), Inventory & Quest Events (6), Inventory & Items / Pick Up & Drop (3), Inventory & Items / Crafting & Loot (3), Inventory & Items / Equipment (1) |
 | Scene / Story | 41 | Quests & Dialogue / Quests (25), Inventory & Quest Events (7), Quests & Dialogue / Story Flags (3), Messages & Signals (2), Cutscenes (2), Quests & Dialogue / Dialogue (2) |
 | Audio | 38 | Music & Volume (20), Sound Effects (18) |
 | Animation | 38 | Animation / Animator Parameters (23), Inverse Kinematics (11), Game Events (2), Animation / Blend Shapes & Trees (2) |
@@ -2390,35 +2390,56 @@ stores (a builtin starts with `Fn.`), or the step's short name.
 
 | Node | Kind | Id | Was |
 |---|---|---|---|
+| Field | api | `Items.Field/2` | Objects / Items |
+| Fits | api | `GridInventory.Fits/1` | Objects / Items |
+| Get Capacity | api | `Inventory.capacity` | Objects / Items |
+| Get Total Weight | api | `Inventory.totalWeight` | Objects / Items |
 | Inv Add | builtin | `Fn.inv_add` | Advanced |
+| Inv Broken | builtin | `Fn.inv_broken` | Advanced |
 | Inv Capacity | builtin | `Fn.inv_capacity` | Advanced |
 | Inv Clear | builtin | `Fn.inv_clear` | Advanced |
+| Inv Cooldown | builtin | `Fn.inv_cooldown` | Time |
 | Inv Count | builtin | `Fn.inv_count` | Advanced |
+| Inv Durability | builtin | `Fn.inv_durability` | Advanced |
+| Inv From Grid | builtin | `Fn.inv_from_grid` | Advanced |
 | Inv Has | builtin | `Fn.inv_has` | Advanced |
 | Inv Move | builtin | `Fn.inv_move` | Movement |
 | Inv Remove | builtin | `Fn.inv_remove` | Advanced |
+| Inv Repair | builtin | `Fn.inv_repair` | Advanced |
 | Inv Select | builtin | `Fn.inv_select` | Advanced |
 | Inv Selected | builtin | `Fn.inv_selected` | Advanced |
 | Inv Set Slot | builtin | `Fn.inv_set_slot` | Advanced |
 | Inv Slot | builtin | `Fn.inv_slot` | Advanced |
+| Inv to Grid | builtin | `Fn.inv_to_grid` | Advanced |
 | Inv Transfer | builtin | `Fn.inv_transfer` | Advanced |
+| Inv Wear | builtin | `Fn.inv_wear` | Advanced |
+| Is Full | api | `Inventory.isFull` | Objects / Items |
 | Item Def | builtin | `Fn.item_def` | Advanced |
+| Move Item Between Slots | api | `Inventory.Move/3` | Objects / Items |
+| Remove | api | `Inventory.Remove/2` | Objects / Items |
+| Set Capacity | api | `Inventory.capacity=` | Objects / Items |
+| Set Item Slot | api | `Inventory.SetSlot/3` | Objects / Items |
+| Slot Count | api | `Inventory.SlotCount/1` | Objects / Items |
+| Slot Item | api | `Inventory.SlotItem/1` | Objects / Items |
+| Transfer to | api | `Inventory.TransferTo/3` | Objects / Items |
+| Use | api | `Inventory.Use/1` | Objects / Items |
 
 ##### Inventory & Items / Equipment
 
 | Node | Kind | Id | Was |
 |---|---|---|---|
 | Equip | node | `EquipItem` | Objects / Items |
-| Equipped | builtin | `Fn.equipped` | Advanced |
-| Unequip | builtin | `Fn.unequip` | Advanced |
+| Equipped | api | `Equipment.Equipped/1` | Objects / Items |
+| Unequip | api | `Equipment.Unequip/1` | Objects / Items |
 
 ##### Inventory & Items / Crafting & Loot
 
 | Node | Kind | Id | Was |
 |---|---|---|---|
-| Can Craft | builtin | `Fn.can_craft` | Advanced |
+| Can Craft | api | `Crafting.CanCraft/1` | Objects / Items |
 | Craft | node | `CraftItem` | Objects / Items |
 | Loot Roll | node | `LootRoll` | Objects / Items |
+| Roll Loot | api | `Items.RollLoot/2` | Objects / Items |
 | Spawn Pickup | node | `SpawnPickup` | Objects / Items |
 
 ##### Inventory & Items / Carry Limits

@@ -52,7 +52,7 @@ Intermediate.
 | [Sight & Distance Checks](#sight--distance-checks) | 28 | Is the target close, in front, behind, to the left or in view? |
 | [Health & Damage](#health--damage) | 60 | Health, damage, healing, armor, lives, respawning, regeneration and resources. |
 | [Weapons & Shooting](#weapons--shooting) | 20 | Projectiles, shooting, swinging, reloading and ammo. |
-| [Inventory & Items](#inventory--items) | 61 | Pick up, carry, equip, craft and use items: equipment, slots, loot and limits. |
+| [Inventory & Items](#inventory--items) | 82 | Pick up, carry, equip, craft and use items: equipment, slots, loot and limits. |
 | [Quests & Dialogue](#quests--dialogue) | 53 | Quests and their objectives, conversations, and story flags. |
 | [Score & Winning](#score--winning) | 13 | Score, experience and levels, winning, losing and restarting. |
 | [Doors & Switches](#doors--switches) | 6 | Doors, levers and wired logic signals. |
@@ -2117,7 +2117,7 @@ Projectiles, shooting, swinging, reloading and ammo. (20 nodes)
 
 ### Inventory & Items
 
-Pick up, carry, equip, craft and use items: equipment, slots, loot and limits. (61 nodes)
+Pick up, carry, equip, craft and use items: equipment, slots, loot and limits. (82 nodes)
 
 - Count All Items (Basic) - `GlCountAllItems`
 - Count Item (Basic) - `GlCountItem`
@@ -2145,35 +2145,56 @@ Pick up, carry, equip, craft and use items: equipment, slots, loot and limits. (
 
 Slots: add, remove, move, count, select and name items.
 
+- Field - `Items.Field/2`
+- Fits - `GridInventory.Fits/1`
+- Get Capacity - `Inventory.capacity`
+- Get Total Weight - `Inventory.totalWeight`
 - Inv Add - `Fn.inv_add`
+- Inv Broken - `Fn.inv_broken`
 - Inv Capacity - `Fn.inv_capacity`
 - Inv Clear - `Fn.inv_clear`
+- Inv Cooldown - `Fn.inv_cooldown`
 - Inv Count - `Fn.inv_count`
+- Inv Durability - `Fn.inv_durability`
+- Inv From Grid - `Fn.inv_from_grid`
 - Inv Has - `Fn.inv_has`
 - Inv Move - `Fn.inv_move`
 - Inv Remove - `Fn.inv_remove`
+- Inv Repair - `Fn.inv_repair`
 - Inv Select - `Fn.inv_select`
 - Inv Selected - `Fn.inv_selected`
 - Inv Set Slot - `Fn.inv_set_slot`
 - Inv Slot - `Fn.inv_slot`
+- Inv to Grid - `Fn.inv_to_grid`
 - Inv Transfer - `Fn.inv_transfer`
+- Inv Wear - `Fn.inv_wear`
+- Is Full - `Inventory.isFull`
 - Item Def - `Fn.item_def`
+- Move Item Between Slots - `Inventory.Move/3`
+- Remove - `Inventory.Remove/2`
+- Set Capacity - `Inventory.capacity=`
+- Set Item Slot - `Inventory.SetSlot/3`
+- Slot Count - `Inventory.SlotCount/1`
+- Slot Item - `Inventory.SlotItem/1`
+- Transfer to - `Inventory.TransferTo/3`
+- Use - `Inventory.Use/1`
 
 #### Inventory & Items: Equipment
 
 Put items on and take them off.
 
 - Equip - `EquipItem`
-- Equipped - `Fn.equipped`
-- Unequip - `Fn.unequip`
+- Equipped - `Equipment.Equipped/1`
+- Unequip - `Equipment.Unequip/1`
 
 #### Inventory & Items: Crafting & Loot
 
 Craft recipes, roll loot and drop pickups.
 
-- Can Craft - `Fn.can_craft`
+- Can Craft - `Crafting.CanCraft/1`
 - Craft - `CraftItem`
 - Loot Roll - `LootRoll`
+- Roll Loot - `Items.RollLoot/2`
 - Spawn Pickup - `SpawnPickup`
 
 #### Inventory & Items: Carry Limits

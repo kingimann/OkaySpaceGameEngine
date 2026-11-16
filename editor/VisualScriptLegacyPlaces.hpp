@@ -387,6 +387,10 @@ inline VsPlace VsLegacyPlaceForApi(const char* apiType, const char* member) {
     if (VsIs(apiType, "IK")) return VsAt("Animation", "IK");
     if (VsIs(apiType, "Spline") || VsIs(apiType, "SplineFollower") || VsIs(apiType, "LineRenderer") ||
         VsIs(apiType, "TrailRenderer")) return VsAt("Objects", "Lines");
+    // The typed-script item classes (engine/src/Script/ApiInventory.cpp) came after the split's frozen table; their old place
+    // is where the old menu kept the other item nodes (Add Item, Has Item), so searching "Objects" or "Items" finds them.
+    if (VsIs(apiType, "Inventory") || VsIs(apiType, "Equipment") || VsIs(apiType, "Crafting") ||
+        VsIs(apiType, "GridInventory") || VsIs(apiType, "Items")) return VsAt("Objects", "Items");
     return {};   // a new API type needs a line above, or the category test fails
 }
 

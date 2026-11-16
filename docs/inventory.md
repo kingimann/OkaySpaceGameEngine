@@ -71,7 +71,7 @@ What was added on top, so that every one of these can be tried (CLAUDE.md rule 4
 * **The visual-script nodes are easy to find.** The `Fn.inv_*` and `Fn.item_def` nodes sit under Add Node > Inventory & Items > Inventory Slots
   (the 70-topic menu, #918; the rule `inv_*` in `editor/VisualScriptPlaceRules.hpp` already covers the new ones). Before the menu rewrite a keyword rule
   scattered them: most in Advanced, `inv_move` in Movement, `inv_cooldown` in Time. The Engine API nodes of the typed-script classes (`Inventory`, `Equipment`,
-  `Crafting`, `GridInventory`, `Items`) had no place at all, so the menu tests would fail once they were merged; they now have rows in `kApiRules` in the same
+  `Crafting`, `GridInventory`, `Items`) had no place at all, so the menu tests would fail once they were merged; they now have rows in `kApiRules` (and an old-style place in `editor/VisualScriptLegacyPlaces.hpp`, which the category test also requires) in the same
   topic (`Inventory.*` and `GridInventory.*` and `Items.*` in Inventory Slots, `Equipment.*` in Equipment, `Crafting.*` in Crafting & Loot, `Inventory.Drop` in
   Pick Up & Drop). Test `vs_inventory_palette` lists them.
 

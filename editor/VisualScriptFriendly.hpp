@@ -133,6 +133,24 @@ inline void VsDropLead(std::vector<std::string>& words, const char* lead) {
 }
 
 // A few members read better than the generic split. Titles already follow the page.
+// A few members of the typed-script item classes (engine/src/Script/ApiInventory.cpp) would get a title another node already
+// has, and the palette hides a text-script function whose title an earlier row has (see VsPaletteHidesAsDuplicate): with the
+// plain titles Move, Add, Set Slot and Name, the functions move, add_xp, set_slot and mm_name went missing from the menu.
+// These members get a title of their own, keyed on the API type as well as the member.
+inline const char* VsSpecialTypedTitle(const std::string& apiType, const std::string& member, bool setter) {
+    struct Spec { const char* apiType; const char* member; bool setter; const char* title; };
+    static const Spec k[] = {
+        {"Inventory", "Add", false, "Add Items"},
+        {"Inventory", "Move", false, "Move Item Between Slots"},
+        {"Inventory", "SetSlot", false, "Set Item Slot"},
+        {"GridInventory", "Add", false, "Add Item to Grid"},
+        {"Items", "Name", false, "Get Item Name"},
+    };
+    for (const Spec& s : k)
+        if (s.setter == setter && apiType == s.apiType && member == s.member) return s.title;
+    return nullptr;
+}
+
 inline const char* VsSpecialMemberTitle(const std::string& member, bool setter) {
     struct Spec { const char* member; bool setter; const char* title; };
     static const Spec k[] = {
@@ -188,6 +206,7 @@ inline std::string VsFriendlyApiTitleString(const okay::vs::VsApiEntry& e) {
     const bool isMethod = e.type.find('/') != std::string::npos;
     const bool prop = !isMethod && !setter;
     const bool boolOut = e.outs.size() == 1 && e.outs[0].type == okay::vs::PinType::Bool;
+    if (const char* typed = VsSpecialTypedTitle(e.apiType, e.member, setter)) return typed;
     if (const char* special = VsSpecialMemberTitle(e.member, setter)) return special;
 
     std::vector<std::string> words = VsWordsOf(e.member);

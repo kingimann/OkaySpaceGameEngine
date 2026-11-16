@@ -9,7 +9,7 @@ gameobject 0 "Main Camera"
   guid "88eed524d3c40be05816c11632c33f9e"
   active 1
   parent -1
-  transform 0 7 -11 0.27958766 0 0 0.9601202 1 1 1
+  transform 0 7 -11 0.01143803 0.96366525 0.26357096 -0.04181958 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Instructions"

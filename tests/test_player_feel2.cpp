@@ -78,24 +78,26 @@ int main() {
 
     // ---- Landing: the knee bend follows the impact. Drop from 0.6 m, 2.5 m and 9 m while holding W. ----
     {
-        float dip[3]; const float heights[3] = {0.6f, 2.5f, 9.0f};
+        float dip[3], footLow[3]; const float heights[3] = {0.6f, 2.5f, 9.0f};
         for (int i = 0; i < 3; ++i) {
             Rig r; r.Spawn(Mode::Third, {0, heights[i], 0});
             float stand = 0;
             for (int k = 0; k < 600 && !r.rb->velocity.y; ++k) r.Frame({});     // let it start falling
-            float lowest = 1e9f; bool landed = false; int after = 0;
+            float lowest = 1e9f, lowestFoot = 1e9f; bool landed = false; int after = 0;
             for (int k = 0; k < 600 && after < 40; ++k) {
                 r.Frame({'w'});
                 const bool g = r.p->GetComponent<ThirdPersonController>()->IsGrounded();
-                if (g) { if (!landed) { landed = true; } ++after; lowest = std::min(lowest, r.Top()); stand = std::max(stand, r.Top()); }
+                if (g) { if (!landed) { landed = true; } ++after; lowest = std::min(lowest, r.Top()); stand = std::max(stand, r.Top()); for (const Vec3& v : r.mr->mesh.vertices) lowestFoot = std::min(lowestFoot, r.p->transform->TransformPoint(v).y - r.Pos().y); }
             }
-            dip[i] = stand - lowest;
+            dip[i] = stand - lowest; footLow[i] = lowestFoot;
             std::printf("[player_feel2] landing from %.1f m: body top drops %.3f m during recovery (impact %.1f m/s)\n", heights[i], dip[i], r.p->GetComponent<ThirdPersonController>()->debugState().lastLandSpeed);
             CHECK(landed);
         }
         CHECK(dip[2] > dip[0] + 0.05f);      // player_feel2_landing_scales: a hard landing bends the knees clearly more than a step down
         CHECK(dip[2] > dip[1] * 1.15f);
         CHECK(dip[0] > 0.005f);              // a light landing still shows
+        CHECK(dip[2] > 0.25f);               // player_feel2_landing_pose_visible: a hard landing on the move is a clear crouch (0.38 m)
+        for (int i = 0; i < 3; ++i) { std::printf("[player_feel2] landing from %.1f m: lowest body vertex %.3f m from the floor line\n", heights[i], footLow[i]); CHECK(footLow[i] > -0.06f); }
     }
 
     // ---- Stopping: while slowing from a run, the planted foot does not skate. ----
@@ -113,9 +115,11 @@ int main() {
             if (g > 0.4f) for (float x : s) ratio.push_back(x / g);
         }
         std::printf("[player_feel2] stopping: planted feet slid %.3f m in total while the body moved %.3f m; speed ratio median %.2f (%zu samples)\n", footPath, bodyPath, Median(ratio), ratio.size());
-        // OPEN GAP (docs/UNFINISHED.md): in the last frames of a stop the planted feet slide back to the idle pose.
-        // Measured, not yet fixed: the assertion only guards against it getting worse than today.
-        CHECK(footPath < 1.0f && std::isfinite(footPath));
+        // TARGET NOT MET (open gap): the feet should travel no more than the body (+10 cm): footPath <= bodyPath + 0.1.
+        // Stopping with feet spread needs a stop step (the feet converge to the idle pose by sliding); today they slide
+        // 0.63 m for 0.35 m of body travel. The check below only guards against it getting worse.
+        std::printf("[player_feel2] stop target footPath <= bodyPath + 0.1: %s\n", footPath <= bodyPath + 0.1f ? "met" : "NOT MET");
+        CHECK(footPath < 0.7f);
     }
 
     // ---- Turning in place: a 120 degree turn of a standing player does not skate the feet. ----
@@ -137,25 +141,55 @@ int main() {
         CHECK(Median(slip) < 0.25f);   // player_feel2_turn_no_skate
     }
 
-    // ---- Crouch and prone: the body height changes smoothly, no frame jumps more than 12 cm. ----
+    // ---- Crouch, prone, stand: the visible body follows the collider, and no frame pops. ----
     {
         Rig r; r.Spawn(Mode::Third);
+        auto* box = r.p->GetComponent<BoxCollider3D>();
         r.Frames(1.0, {});
-        float prev = r.Top(), worst = 0, low = prev;
-        const std::vector<std::vector<char>> script = {{Input::KeyCtrl}, {}, {}, {Input::KeyCtrl}, {}, {}, {}};
-        for (int phase = 0; phase < 7; ++phase) {
-            for (int i = 0; i < (phase == 0 || phase == 3 ? 1 : 30); ++i) {
-                r.Frame(script[phase]);
-                if (phase == 2 && i == 29) std::printf("[player_feel2] crouched: anim %d stance level %.2f body top %.2f, collider height %.2f\n", r.ch->anim, r.ch->StanceLevel(), r.Top(), r.p->GetComponent<BoxCollider3D>()->size.y);
-                const float t = r.Top(); worst = std::max(worst, std::fabs(t - prev)); prev = t; low = std::min(low, t);
+        const float stand = r.Top();
+        float prev = stand, worst = 0;
+        auto run = [&](const std::vector<char>& k, int frames) { for (int i = 0; i < frames; ++i) { r.Frame(k); const float t = r.Top(); worst = std::max(worst, std::fabs(t - prev)); prev = t; } };
+        run({Input::KeyCtrl}, 1); run({}, 60);
+        const float crouchTop = r.Top(), crouchBox = box->size.y;
+        std::printf("[player_feel2] crouched: body top %.2f m (stand %.2f), collider %.2f m, anim %d\n", crouchTop, stand, crouchBox, r.ch->anim);
+        CHECK(std::fabs(crouchTop - crouchBox) < 0.15f);   // player_feel2_crouch_matches_collider
+        run({'w'}, 90);                                    // crouch-walk
+        const float cwTop = r.Top();
+        std::printf("[player_feel2] crouch-walking: body top %.2f m, collider %.2f m, anim %d\n", cwTop, box->size.y, r.ch->anim);
+        CHECK(std::fabs(cwTop - box->size.y) < 0.25f);
+        run({}, 30);
+        run({Input::KeyCtrl}, 1); run({}, 60);             // stand up
+        CHECK(std::fabs(r.Top() - stand) < 0.05f);
+        run({'z'}, 1); run({}, 90);                        // prone
+        const float proneTop = r.Top(), proneBox = box->size.y;
+        std::printf("[player_feel2] prone: body top %.2f m, collider %.2f m, anim %d\n", proneTop, proneBox, r.ch->anim);
+        CHECK(std::fabs(proneTop - proneBox) < 0.25f);     // player_feel2_prone_matches_collider
+        run({'z'}, 1); run({}, 90);                        // stand from prone
+        std::printf("[player_feel2] stance changes: biggest body-top change in one frame %.3f m; standing again %.2f m\n", worst, r.Top());
+        CHECK(std::fabs(r.Top() - stand) < 0.05f);
+        CHECK(worst < 0.10f);                              // player_feel2_stance_no_pop
+    }
+
+    // ---- A visible landing pose: a hard landing standing still bends the knees and lowers the body clearly, and the
+    // feet stay on the floor (they used to sink with the hips). ----
+    {
+        float dip[2], lowFoot[2]; const float heights[2] = {1.0f, 9.0f};
+        for (int i = 0; i < 2; ++i) {
+            Rig r; r.Spawn(Mode::Third, {0, heights[i], 0});
+            float stand = 0, lowest = 1e9f, lowestY = 1e9f; int after = 0;
+            for (int k = 0; k < 600 && after < 50; ++k) {
+                r.Frame({});
+                if (r.p->GetComponent<ThirdPersonController>()->IsGrounded()) {
+                    if (after == 0) std::printf("[player_feel2]   touchdown: impact %.1f m/s, landImpact %.2f, anim %d\n", r.p->GetComponent<ThirdPersonController>()->debugState().lastLandSpeed, r.ch->LandImpact(), r.ch->anim);
+                    if (i == 1 && after < 24) { float lo = 1e9f; for (const Vec3& v : r.mr->mesh.vertices) lo = std::min(lo, r.p->transform->TransformPoint(v).y); std::printf("[player_feel2]   f%02d top %.3f lowest %.3f landImpact %.2f\n", after, r.Top(), lo - r.Pos().y, r.ch->LandImpact()); }
+                    ++after; stand = std::max(stand, r.Top()); lowest = std::min(lowest, r.Top());
+                    for (const Vec3& v : r.mr->mesh.vertices) lowestY = std::min(lowestY, r.p->transform->TransformPoint(v).y);
+                }
             }
+            dip[i] = stand - lowest; lowFoot[i] = lowestY - r.Pos().y;
+            std::printf("[player_feel2] standing landing from %.0f m: body drops %.3f m, lowest vertex %.3f m below the floor line\n", heights[i], dip[i], -lowFoot[i]);
         }
-        std::printf("[player_feel2] crouch pose: anim %d stance level %.2f\n", r.ch->anim, r.ch->StanceLevel());
-        std::printf("[player_feel2] crouch and stand: body top %.2f -> low %.2f m, biggest change in one frame %.3f m\n", 0.0f + prev, low, worst);
-        // OPEN GAP: the crouch pose lowers the visible body only about 0.2 m while the collider drops 0.63 m, so the head
-        // stands well above a low ceiling the body is crawling under. Measured, not fixed (needs a deeper knee bend in HumanoidMotion).
-        CHECK(low < 1.8f);       // it dips at least a little
-        CHECK(worst < 0.12f);    // player_feel2_stance_smooth
+        // The standing landing (idle) is hips-only and sinks the feet at depth: open gap, printed above, not asserted.
     }
 
     // ---- Third-person camera through a walk that changes speed: same path at 30 / 60 / 144 / 240 fps. ----

@@ -14,6 +14,8 @@ namespace HumanoidMotion {
 // toward the ribs and spreads the RIGHT arm out. Leg: hip joint 0.92 above the
 // soles, knee 0.55, ankle 0.12.
 namespace {
+constexpr float kLandDrop = 0.34f;     // hips drop at the deepest point of a landing recovery (x landK, 1 = a hard landing)
+constexpr float kCrouchDrop = 0.60f;   // crouch: hips down this far (rig metres), so the visible body follows the collider
 constexpr float kThigh = 0.37f, kShin = 0.43f, kHipToAnkle = 0.80f, kAnkleH = 0.12f;
 constexpr float kToeAhead = 0.20f, kHeelBehind = 0.10f;   // the foot: toe tip ahead of the ankle, heel behind it
 constexpr float kPi = 3.14159265f, kRad2Deg = 57.2957795f;
@@ -96,7 +98,7 @@ Gait GaitForOld(int state, float v) {
         float stride = v / g.freq;
         g.beta = stride > 1e-4f ? clampf(0.66f / stride, 0.5f, 0.62f) : 0.62f;
         g.reach = stride * g.beta;
-        g.baseDrop = 0.17f;
+        g.baseDrop = kCrouchDrop;
         g.lift = clampf(0.05f + 0.025f * v, 0.05f, 0.12f);
         g.sag = 0.0f;
     } else if (g.run) {
@@ -303,24 +305,24 @@ void GaitPoseFor(std::vector<Vec3>& r, const Gait& g, float ph, float hipY, cons
     // and the head stays level.
     float lean = g.crouch ? 28.0f : (g.run ? clampf(2.0f + 1.2f * v, 2.0f, 12.0f) : clampf(1.0f + 0.8f * v, 1.0f, 5.0f));
     r[B_HIPS]  = {0.0f, twist * sl - in.lowerYaw, 0.0f};
-    r[B_TORSO] = {lean + 9.0f * in.landK, -1.8f * twist * sl + in.lowerYaw, 0.0f};
+    r[B_TORSO] = {lean + 15.0f * in.landK, -1.8f * twist * sl + in.lowerYaw, 0.0f};
     r[B_HEAD]  = {-0.65f * lean, 0.8f * twist * sl, 0.0f};
 }
 
 void GaitPose(std::vector<Vec3>& r, int state, const Inputs& in) {
     const float ph = in.phase, v = SpeedFor(state, in.speed);
-    if (state == 17) { Gait g = GaitFor(17, v); GaitPoseFor(r, g, ph, GaitHipYFor(g, ph) - 0.12f * in.landK, in); return; }
+    if (state == 17) { Gait g = GaitFor(17, v); GaitPoseFor(r, g, ph, GaitHipYFor(g, ph) - kLandDrop * in.landK, in); return; }
     const float w = in.runW;
     if (w <= 0.0f || w >= 1.0f) {
         Gait g = GaitFor(w >= 1.0f ? 3 : 2, v);
-        GaitPoseFor(r, g, ph, GaitHipYFor(g, ph) - 0.12f * in.landK, in);
+        GaitPoseFor(r, g, ph, GaitHipYFor(g, ph) - kLandDrop * in.landK, in);
         return;
     }
     // Mid-switch: both styles at the same phase, blended.
     std::vector<Vec3> a(r.size(), Vec3{0, 0, 0}), b(r.size(), Vec3{0, 0, 0});
     Gait ga = GaitFor(2, v), gb = GaitFor(3, v);
-    GaitPoseFor(a, ga, ph, GaitHipYFor(ga, ph) - 0.12f * in.landK, in);
-    GaitPoseFor(b, gb, ph, GaitHipYFor(gb, ph) - 0.12f * in.landK, in);
+    GaitPoseFor(a, ga, ph, GaitHipYFor(ga, ph) - kLandDrop * in.landK, in);
+    GaitPoseFor(b, gb, ph, GaitHipYFor(gb, ph) - kLandDrop * in.landK, in);
     for (std::size_t i = 0; i < r.size(); ++i) r[i] = a[i] + (b[i] - a[i]) * w;
 }
 } // namespace
@@ -365,7 +367,7 @@ float CycleFreq(int state, float speed, float runW) {
 
 float AbsorbLanding(std::vector<Vec3>& r, float landK) {
     if (landK <= 0.0f || (int)r.size() < B_COUNT) return 0.0f;
-    const float drop = 0.12f * landK;
+    const float drop = kLandDrop * landK;
     // Where each ankle is (LegIK run backwards), then the same ankle from hips that much lower.
     auto resolve = [&](Vec3& thigh, Vec3& shin, Vec3& foot) {
         const float a = kThigh, b = kShin, d2r = kPi / 180.0f;
@@ -381,8 +383,8 @@ float AbsorbLanding(std::vector<Vec3>& r, float landK) {
     };
     resolve(r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
     resolve(r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);
-    r[B_TORSO].x  += 9.0f * landK;
-    r[B_LUPARM].z -= 10.0f * landK;   r[B_RUPARM].z += 10.0f * landK;   // out, not into the ribs
+    r[B_TORSO].x  += 15.0f * landK;
+    r[B_LUPARM].z -= 16.0f * landK;   r[B_RUPARM].z += 16.0f * landK;   // out, not into the ribs
     return -drop;
 }
 
@@ -417,11 +419,11 @@ float HipY(int state, const Inputs& in) {
     // Walk / run / crouch-walk: the hips ride the stride (lower while a planted
     // foot is far ahead or behind, a small rise in a running flight) so the legs
     // reach the ground instead of the feet floating.
-    if (state == 2 || state == 3 || state == 17) return GaitHipY(state, in) - 0.12f * in.landK;
-    if (state == 6) return -0.17f;   // crouch: hips down, knees bent
+    if (state == 2 || state == 3 || state == 17) return GaitHipY(state, in) - kLandDrop * in.landK;
+    if (state == 6) return -kCrouchDrop;   // crouch: hips down, knees bent
     if (state == 7) return -0.78f;   // prone: lay the body on the ground
     // Landing recovery: the flexed knees momentarily lower the whole body.
-    if (in.landK > 0.0f && state == 1) return -0.12f * in.landK;
+    if (in.landK > 0.0f && state == 1) return -0.12f * in.landK;   // standing landing: unchanged (hips only; see docs/UNFINISHED.md)
     return 0.0f;
 }
 
@@ -481,10 +483,10 @@ void Pose(int state, float t, const Inputs& in, std::vector<Vec3>& out) {
         r[B_HEAD]   = {-14, 0, 0};     // looking up at the hands
     } else if (state == 6) {                // crouch: hips back and down, knees forward over the toes, chest low
         float s = std::sin(t * 2.2f);      // breathing
-        const float down = kHipToAnkle - 0.17f;
+        const float down = kHipToAnkle - kCrouchDrop;
         LegIK( 0.12f, down, 0.03f, 0.0f, r[B_LTHIGH], r[B_LSHIN], r[B_LFOOT]);
         LegIK( 0.04f, down, -0.03f, 0.0f, r[B_RTHIGH], r[B_RSHIN], r[B_RFOOT]);   // one foot a little behind
-        r[B_TORSO]  = {28 + 1.5f * s, 0, 0};
+        r[B_TORSO]  = {38 + 1.5f * s, 0, 0};
         r[B_HEAD]   = {-20, 0, 0};                           // eyes forward, not at the floor
         r[B_LUPARM] = {-20, 0, -12}; r[B_RUPARM] = {-20, 0, 12};   // hands in front, outside the knees
         r[B_LFORE]  = {-32, 0, 0};   r[B_RFORE]  = {-32, 0, 0};

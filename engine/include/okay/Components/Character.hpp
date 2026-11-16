@@ -149,6 +149,7 @@ public:
         const float k = impactSpeed / ref;                       // 1 = a hard landing
         m_landImpact = k < 0.3f ? 0.3f : (k > 1.7f ? 1.7f : k);
         if (m_landImpact < 0.55f) m_landImpact = 0.3f + (m_landImpact - 0.3f) * 0.4f + 0.12f;   // keep a visible light dip
+        m_landT = 0.0f;   // the dip starts at the real touchdown (the controller sees it a few frames after the feet arrive)
     }
     float LandImpact() const { return m_landImpact; }
     /// True while a turn-in-place foot step is playing.

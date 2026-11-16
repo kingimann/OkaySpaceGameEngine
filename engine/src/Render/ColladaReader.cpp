@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <memory>
 #include <string>
@@ -48,17 +49,22 @@ struct XNode {
     std::string name;                                        // without a namespace prefix
     std::vector<std::pair<std::string, std::string>> attrs;
     std::vector<int> kids;
-    // The element's text. Most text (every big number array) is one piece with no entity in it: then it is a view into
-    // the file's own bytes (`tp`, `tl`), not a copy. Text in several pieces or with an entity is decoded into `own`.
-    std::string own;
-    const char* tp = nullptr;
-    std::size_t tl = 0;
-    bool owned = false;
-    std::string_view Text() const { return owned ? std::string_view(own) : std::string_view(tp, tl); }
+    // The element's text, as pieces of the file (Xml::pieces, a linked list from `first`): most text (every big number
+    // array) is one piece without an entity and is read in place, never copied. Text in several pieces (the whitespace
+    // between child elements) or with an entity is joined only when asked for (`cache`, into Xml::joined).
+    int first = -1, last = -1;
+    mutable int cache = -1;
 };
+
+struct TextPiece { std::size_t a, b; int next; bool decode; };   // s[a, b); decode: has an entity to decode
+
+void AppendDecoded(std::string& dst, const std::string& s, std::size_t a, std::size_t b);
 
 struct Xml {
     std::vector<XNode> n;
+    std::vector<TextPiece> pieces;
+    const std::string* src = nullptr;                // the text parsed (pieces point into it)
+    mutable std::deque<std::string> joined;           // a deque: the views handed out stay valid
 
     std::string Attr(int i, const char* key) const {
         if (i < 0) return std::string();
@@ -91,7 +97,22 @@ struct Xml {
         }
         return -1;
     }
-    std::string_view Text(int i) const { return n[(std::size_t)i].Text(); }
+    std::string_view Text(int i) const {
+        const XNode& nd = n[(std::size_t)i];
+        if (nd.first < 0) return std::string_view();
+        const TextPiece& f = pieces[(std::size_t)nd.first];
+        if (f.next < 0 && !f.decode) return std::string_view(src->data() + f.a, f.b - f.a);
+        if (nd.cache < 0) {
+            std::string t;
+            for (int k = nd.first; k >= 0; k = pieces[(std::size_t)k].next) {
+                const TextPiece& pc = pieces[(std::size_t)k];
+                if (pc.decode) AppendDecoded(t, *src, pc.a, pc.b); else t.append(*src, pc.a, pc.b - pc.a);
+            }
+            joined.push_back(std::move(t));
+            nd.cache = (int)joined.size() - 1;
+        }
+        return joined[(std::size_t)nd.cache];
+    }
 };
 
 inline bool HasAmp(const std::string& s, std::size_t a, std::size_t b) {
@@ -136,17 +157,21 @@ void AppendDecoded(std::string& dst, const std::string& s, std::size_t a, std::s
     }
 }
 
-std::string StripPrefix(const std::string& s) {
-    std::size_t c = s.find(':');
-    return c == std::string::npos ? s : s.substr(c + 1);
+// s[b, e) without a namespace prefix (what follows the first ':').
+inline std::string_view Unprefixed(const std::string& s, std::size_t b, std::size_t e) {
+    const void* c = e > b ? std::memchr(s.data() + b, ':', e - b) : nullptr;
+    if (c) b = (std::size_t)((const char*)c - s.data()) + 1;
+    return std::string_view(s.data() + b, e - b);
 }
 
-// Add the piece s[a, b) to a node's text: a view when it is the first piece and has no entity, else decoded into `own`.
-void AddText(XNode& nd, const std::string& s, std::size_t a, std::size_t b, bool decode) {
+// Add the piece s[a, b) to a node's text. `decode`: entities are decoded (not in CDATA).
+void AddText(Xml& x, int node, const std::string& s, std::size_t a, std::size_t b, bool decode) {
     if (a >= b) return;
-    if (!nd.owned && nd.tl == 0 && (!decode || !HasAmp(s, a, b))) { nd.tp = s.data() + a; nd.tl = b - a; return; }
-    if (!nd.owned) { nd.own.assign(nd.tp, nd.tl); nd.owned = true; }
-    if (decode) AppendDecoded(nd.own, s, a, b); else nd.own.append(s, a, b - a);
+    const int k = (int)x.pieces.size();
+    x.pieces.push_back(TextPiece{a, b, -1, decode && HasAmp(s, a, b)});
+    XNode& nd = x.n[(std::size_t)node];
+    if (nd.first < 0) nd.first = k; else x.pieces[(std::size_t)nd.last].next = k;
+    nd.last = k;
 }
 
 bool ParseXml(const std::string& s, Xml& x, std::string& err) {
@@ -154,33 +179,36 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
     const std::size_t n = s.size();
     std::vector<int> stack;
     bool haveRoot = false;
+    x.src = &s;
+    {   // room for every element: count the '<' that open one (not '</', '<!' or '<?')
+        std::size_t starts = 0;
+        for (const char* c = s.data(), *e = c + n; (c = (const char*)std::memchr(c, '<', (std::size_t)(e - c))) != nullptr; ++c)
+            if (c + 1 < e && c[1] != '/' && c[1] != '!' && c[1] != '?') ++starts;
+        x.n.reserve(std::min(starts, kMaxXmlNodes));
+    }
     if (n >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF) p = 3;
     auto fail = [&](const char* m) { err = m; return false; };
     while (p < n) {
         if (s[p] != '<') {
-            std::size_t e = s.find('<', p);
-            if (e == std::string::npos) e = n;
-            if (!stack.empty()) AddText(x.n[(std::size_t)stack.back()], s, p, e, true);
+            const void* lt = std::memchr(s.data() + p, '<', n - p);
+            const std::size_t e = lt ? (std::size_t)((const char*)lt - s.data()) : n;
+            if (!stack.empty()) AddText(x, stack.back(), s, p, e, true);
             p = e;
             continue;
         }
-        if (s.compare(p, 4, "<!--") == 0) {
-            std::size_t e = s.find("-->", p + 4);
-            if (e == std::string::npos) return fail("XML: unterminated comment");
-            p = e + 3; continue;
-        }
-        if (s.compare(p, 9, "<![CDATA[") == 0) {
-            std::size_t e = s.find("]]>", p + 9);
-            if (e == std::string::npos) return fail("XML: unterminated CDATA");
-            if (!stack.empty()) AddText(x.n[(std::size_t)stack.back()], s, p + 9, e, false);
-            p = e + 3; continue;
-        }
-        if (s.compare(p, 2, "<?") == 0) {
-            std::size_t e = s.find("?>", p + 2);
-            if (e == std::string::npos) return fail("XML: unterminated declaration");
-            p = e + 2; continue;
-        }
-        if (s.compare(p, 2, "<!") == 0) {
+        const char next = p + 1 < n ? s[p + 1] : '\0';
+        if (next == '!') {
+            if (s.compare(p, 4, "<!--") == 0) {
+                std::size_t e = s.find("-->", p + 4);
+                if (e == std::string::npos) return fail("XML: unterminated comment");
+                p = e + 3; continue;
+            }
+            if (s.compare(p, 9, "<![CDATA[") == 0) {
+                std::size_t e = s.find("]]>", p + 9);
+                if (e == std::string::npos) return fail("XML: unterminated CDATA");
+                if (!stack.empty()) AddText(x, stack.back(), s, p + 9, e, false);
+                p = e + 3; continue;
+            }
             int depth = 0;
             std::size_t q = p + 2;
             for (; q < n; ++q) {
@@ -191,10 +219,15 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
             if (q >= n) return fail("XML: unterminated DOCTYPE");
             p = q + 1; continue;
         }
-        if (s.compare(p, 2, "</") == 0) {
+        if (next == '?') {
+            std::size_t e = s.find("?>", p + 2);
+            if (e == std::string::npos) return fail("XML: unterminated declaration");
+            p = e + 2; continue;
+        }
+        if (next == '/') {
             std::size_t q = p + 2, b = q;
             while (q < n && !IsWs(s[q]) && s[q] != '>') ++q;
-            std::string nm = StripPrefix(s.substr(b, q - b));
+            const std::string_view nm = Unprefixed(s, b, q);
             while (q < n && IsWs(s[q])) ++q;
             if (q >= n || s[q] != '>') return fail("XML: malformed end tag");
             if (stack.empty() || x.n[(std::size_t)stack.back()].name != nm) return fail("XML: mismatched end tag");
@@ -208,8 +241,10 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
         if (x.n.size() >= kMaxXmlNodes) return fail("XML: too many elements");
         if ((int)stack.size() >= kMaxXmlDepth) return fail("XML: nesting too deep");
         if (stack.empty() && haveRoot) return fail("XML: more than one root element");
-        XNode node;
-        node.name = StripPrefix(s.substr(b, q - b));
+        const int idx = (int)x.n.size();
+        x.n.emplace_back();
+        XNode& node = x.n.back();
+        node.name.assign(Unprefixed(s, b, q));
         bool selfClose = false;
         for (;;) {
             while (q < n && IsWs(s[q])) ++q;
@@ -222,22 +257,21 @@ bool ParseXml(const std::string& s, Xml& x, std::string& err) {
             std::size_t ab = q;
             while (q < n && !IsWs(s[q]) && s[q] != '=' && s[q] != '>' && s[q] != '/') ++q;
             if (q == ab) return fail("XML: malformed attribute");
-            std::string an = s.substr(ab, q - ab);
+            const std::size_t ae = q;
             while (q < n && IsWs(s[q])) ++q;
             if (q >= n || s[q] != '=') return fail("XML: attribute without a value");
             ++q;
             while (q < n && IsWs(s[q])) ++q;
             if (q >= n || (s[q] != '"' && s[q] != '\'')) return fail("XML: attribute value not quoted");
             const char quote = s[q++];
-            std::size_t ve = s.find(quote, q);
-            if (ve == std::string::npos) return fail("XML: unterminated attribute value");
-            std::string av;
-            AppendDecoded(av, s, q, ve);
-            node.attrs.emplace_back(StripPrefix(an), std::move(av));
+            const void* qe = std::memchr(s.data() + q, quote, n - q);
+            if (!qe) return fail("XML: unterminated attribute value");
+            const std::size_t ve = (std::size_t)((const char*)qe - s.data());
+            node.attrs.emplace_back();
+            node.attrs.back().first.assign(Unprefixed(s, ab, ae));
+            AppendDecoded(node.attrs.back().second, s, q, ve);
             q = ve + 1;
         }
-        const int idx = (int)x.n.size();
-        x.n.push_back(std::move(node));
         if (!stack.empty()) x.n[(std::size_t)stack.back()].kids.push_back(idx);
         else haveRoot = true;
         if (!selfClose) stack.push_back(idx);

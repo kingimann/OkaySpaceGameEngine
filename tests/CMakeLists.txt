@@ -3523,6 +3523,22 @@ endif()
 add_test(NAME wav_playback COMMAND test_wav_playback WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 add_test(NAME wav_seam_wiring COMMAND ${CMAKE_COMMAND} -DSOURCE_ROOT=${PROJECT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/check_wav_seam_wiring.cmake)
 
+# The launcher off SDL for WAV reading and window calls (stage A): launcher/VoiceClipLoad.hpp (our decoder) against SDL_LoadWAV plus
+# the launcher's old conversion on every WAV in the repository and a few edge files, every truncation of a small file, and
+# okay::platform::WrapSdl2Window against the SDL window calls the launcher used to make (SDL's dummy video driver, headless).
+if(SDL2_FOUND)
+    add_executable(test_launcher_wav_window test_launcher_wav_window.cpp)
+    target_link_libraries(test_launcher_wav_window PRIVATE okay::engine)
+    target_include_directories(test_launcher_wav_window PRIVATE ${SDL2_INCLUDE_DIRS} ${PROJECT_SOURCE_DIR}/launcher)
+    target_compile_definitions(test_launcher_wav_window PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    if(TARGET SDL2::SDL2)
+        target_link_libraries(test_launcher_wav_window PRIVATE SDL2::SDL2)
+    else()
+        target_link_libraries(test_launcher_wav_window PRIVATE ${SDL2_LIBRARIES})
+    endif()
+    add_test(NAME launcher_wav_window COMMAND test_launcher_wav_window)
+endif()
+
 add_test(NAME own_reader_wiring COMMAND ${CMAKE_COMMAND}
     -DROOT_CMAKE=${PROJECT_SOURCE_DIR}/CMakeLists.txt
     -DENGINE_CMAKE=${PROJECT_SOURCE_DIR}/engine/CMakeLists.txt

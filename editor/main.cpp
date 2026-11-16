@@ -3202,8 +3202,6 @@ float g_terrainHmLow  = 0.0f;         // heightmap import: black -> this world Y
 float g_terrainHmHigh = 25.0f;        // heightmap import: white -> this world Y
 float g_voxSurface = 0.5f;            // voxel generate: surface height fraction
 float g_voxAmp     = 6.0f;            // voxel generate: relief amplitude
-VoxelTerrain::LayerRules g_voxRules;      // voxel material layers: the sliders on the Voxel Terrain card
-int   g_voxSeed    = 2024;            // voxel generate: seed (the same seed gives the same ground)
 float g_voxCaves   = 0.0f;            // voxel generate: cave amount (0..1; 0 = solid)
 int   g_scatterProp = 0;       // 0 Tree,1 Pine,2 Rock,3 Bush
 int   g_scatterCount = 80;     // how many props to scatter per pass
@@ -17503,7 +17501,6 @@ void HandleShortcuts(EditorState& ed) {
         else if (LocalizationFocused() && LocalizationUndo(false)) ConsoleLog("Undo (string table)");
         else if (ContentEditorsFocused()) { if (ContentEditorsUndo(ed, false)) ConsoleLog("Undo (items, loot and recipes)"); }
         else if (WeaponEditorFocused() && WeaponEditorUndo(false)) ConsoleLog("Undo (weapons)");
-        else if (ed.isPlaying()) {}   // in Play, Ctrl+Z belongs to the game: the Voxel Digger takes back its last stroke
         else if (MeshUndo(false)) { ConsoleLog("Undo (mesh edit)"); ed.dirty = true; }
         else { const std::string un = ed.UndoName(); if (ed.Undo()) ConsoleLog("Undo " + un); }
     }
@@ -27028,6 +27025,28 @@ static bool PlayerPartHeader(GameObject* go, const char* label, okay::Component*
     return open;
 }
 
+// The hint under Walk Speed (shown when the walk is really a jog) and the "Use natural walk and run speeds" button
+// (docs/walk_vs_run.md). Older projects keep the speeds they saved; this is how a person opts in, with Ctrl+Z to undo.
+static void WalkSpeedHintLine(float walkSpeed) {
+    const std::string hint = okay::NaturalGait::WalkSpeedHint(walkSpeed);
+    if (hint.empty()) return;
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
+    ImGui::TextWrapped("%s", hint.c_str());
+    ImGui::PopStyleColor();
+}
+static bool NaturalSpeedsButton(const char* id) {
+    char label[96];
+    std::snprintf(label, sizeof(label), "Use natural walk and run speeds##%s", id);
+    const bool hit = ImGui::SmallButton(label);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", okay::NaturalGait::ButtonTooltip());
+    if (okay::NaturalGait::Old()) {   // OKAY_OLD_GAIT is set: say so where the speeds are, so it cannot be missed
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.75f, 0.35f, 1.0f));
+        ImGui::TextWrapped("The OLD walk and run is on (OKAY_OLD_GAIT is set), so new players start at 4.5 and 8. Close the editor and start it without that variable for the natural walk and run.");
+        ImGui::PopStyleColor();
+    }
+    return hit;
+}
+
 // A public field discovered in a script: its name, declared type, default value,
 // and any attributes (Header/Tooltip/Range). Used to show
 // serialized fields in the Script inspector.
@@ -30267,13 +30286,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fraction of the height the ground surface sits at.");
             ImGui::DragFloat("Relief##vox", &g_voxAmp, 0.2f, 0.0f, 40.0f);
             ImGui::SliderFloat("Caves##vox", &g_voxCaves, 0.0f, 1.0f);
-            ImGui::InputInt("Seed##vox", &g_voxSeed);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The same seed makes the same ground (and the same material layers). Random picks a new one.");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Random##voxseed")) g_voxSeed = (int)(ImGui::GetTime() * 1000.0) & 0x7fffffff;
             if (ImGui::Button("Generate##voxgen")) {
-                v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)g_voxSeed);
-                if (v->UseMaterials()) v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules);
+                v->Generate(g_voxSurface, g_voxAmp, g_voxCaves, (unsigned)(ImGui::GetTime() * 1000.0));
                 v->Apply(); ed.dirty = true;
             }
             ImGui::SameLine();
@@ -30281,90 +30295,6 @@ void DrawInspector(EditorState& ed) {
             ImGui::SameLine();
             if (ImGui::Button("Clear##voxgen")) { v->Resize(v->nx, v->ny, v->nz); v->Apply(); ed.dirty = true; }
             ImGui::TextDisabled("Add a Voxel Digger to carve it live in Play.");
-            SectionHeader("Materials");
-            ImGui::DragFloat("Topsoil (m)##voxlay", &g_voxRules.topsoil, 0.05f, 0.0f, 10.0f);
-            ImGui::DragFloat("Dirt Depth (m)##voxlay", &g_voxRules.dirtDepth, 0.1f, 0.0f, 40.0f);
-            ImGui::SliderFloat("Rock Slope##voxlay", &g_voxRules.stoneSlope, 0.1f, 1.0f);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepness above which the surface is bare stone.");
-            ImGui::SliderFloat("Ore Pockets##voxlay", &g_voxRules.oreAmount, 0.0f, 0.5f);
-            ImGui::SliderInt("Ore Veins##voxlay", &g_voxRules.oreVeins, 0, 80);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Long winding veins of ore through the stone. Press Layered ground / Regenerate layers to apply.");
-            if (!v->UseMaterials()) {
-                ImGui::TextDisabled("Off: every voxel is the same ground. Turn materials on for dirt, sand, stone and ore with their own colour, hardness and drops.");
-                if (ImGui::Button("Layered ground##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Turns materials on and fills them by depth, slope and height: grass on top, dirt under it, sand on flat low ground, stone below, ore pockets.");
-                ImGui::SameLine();
-                if (ImGui::Button("All Dirt##voxmat")) { v->EnableMaterials(0); v->Apply(); ed.dirty = true; }
-            } else {
-                bool changed = false;
-                for (std::size_t mi = 0; mi < v->materials.size(); ++mi) {
-                    VoxelTerrain::VoxelMaterial& m = v->materials[mi];
-                    ImGui::PushID((int)mi);
-                    char nm[64]; std::strncpy(nm, m.name.c_str(), sizeof(nm) - 1); nm[sizeof(nm) - 1] = '\0';
-                    ImGui::SetNextItemWidth(90);
-                    if (ImGui::InputText("##mname", nm, sizeof(nm))) { m.name = nm; changed = true; }
-                    ImGui::SameLine();
-                    float mc[4] = {m.color.r, m.color.g, m.color.b, m.color.a};
-                    if (ImGui::ColorEdit4("##mcol", mc, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) { m.color = {mc[0], mc[1], mc[2], mc[3]}; changed = true; }
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
-                    if (ImGui::DragFloat("hard##mh", &m.hardness, 0.05f, 0.1f, 50.0f, "%.1f")) { changed = true; ed.dirty = true; }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hardness: how slowly it digs. A tool with less power than this cannot dig it at all.");
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(70);
-                    if (ImGui::DragFloat("kg/m3##md", &m.density, 10.0f, 1.0f, 30000.0f, "%.0f")) ed.dirty = true;
-                    ImGui::SameLine();
-                    if (ImGui::Checkbox("loose##ml", &m.loose)) ed.dirty = true;
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Loose ground (sand, dirt, snow) slumps down to its angle of repose when you dig next to it.");
-                    char dr[64]; std::strncpy(dr, m.drop.c_str(), sizeof(dr) - 1); dr[sizeof(dr) - 1] = '\0';
-                    ImGui::SetNextItemWidth(90);
-                    if (ImGui::InputText("drop item##mdr", dr, sizeof(dr))) { m.drop = dr; ed.dirty = true; }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Inventory item name handed out when this material is collected (Voxel Digger: Give Items). Empty = none.");
-                    ImGui::SameLine(); ImGui::SetNextItemWidth(60);
-                    if (ImGui::DragFloat("per m3##mpm", &m.dropPerM3, 0.5f, 0.0f, 1000.0f, "%.1f")) ed.dirty = true;
-                    ImGui::PopID();
-                }
-                if (changed) { v->MaterialsChanged(); v->Apply(); ed.dirty = true; }
-                if (ImGui::SmallButton("Regenerate layers##voxmat")) { v->GenerateMaterials((unsigned)g_voxSeed, g_voxRules); v->Apply(); ed.dirty = true; }
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Materials off##voxmat")) { v->DisableMaterials(); v->Apply(); ed.dirty = true; }
-                ImGui::TextDisabled("Ground volume: %.0f m3. Dug ground keeps its material; built ground uses the digger's Build Material.", v->SolidVolume());
-            }
-            if (ImGui::Checkbox("Catch bodies that fall out of the world##vox", &v->catchFalling)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that leaves the side of the grid and falls below it is put back on the ground (off = it falls for ever).");
-            if (v->catchFalling && ImGui::DragFloat("Catch Depth##vox", &v->catchMargin, 0.1f, 0.0f, 100.0f)) ed.dirty = true;
-            if (ImGui::Checkbox("Footprints and tracks##voxft", &v->footprints)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("The Player (tag below) leaves shallow dents in soft ground (dirt, grass, sand, snow) as it walks.");
-            if (v->footprints) {
-                char ft[64]; std::strncpy(ft, v->footprintTag.c_str(), sizeof(ft) - 1); ft[sizeof(ft) - 1] = '\0';
-                if (ImGui::InputText("Who (tag)##voxft", ft, sizeof(ft))) { v->footprintTag = ft; ed.dirty = true; }
-                if (ImGui::Checkbox("Also rigid bodies##voxft", &v->footprintBodies)) ed.dirty = true;
-                if (ImGui::DragFloat("Step (m)##voxft", &v->footprintStep, 0.05f, 0.1f, 5.0f)) ed.dirty = true;
-                if (ImGui::DragFloat("Print Size##voxft", &v->footprintRadius, 0.02f, 0.05f, 3.0f)) ed.dirty = true;
-                if (ImGui::DragFloat("Print Depth##voxft", &v->footprintDepth, 0.01f, 0.02f, 1.0f)) ed.dirty = true;
-            }
-            if (ImGui::Checkbox("Water / lava flow in holes##voxfl", &v->fluidOn)) ed.dirty = true;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pour water or lava with the digger's Pour Key: it falls into dug holes and fills them from the bottom. Bounded per frame; not saved with the ground.");
-            if (v->fluidOn) {
-                if (ImGui::DragInt("Fluid Cells / step##voxfl", &v->fluidBudget, 1.0f, 1, 5000)) ed.dirty = true;
-                if (ImGui::DragInt("Fluid Max Cells##voxfl", &v->fluidMaxCells, 100.0f, 0, 200000)) ed.dirty = true;
-                if (ImGui::DragFloat("Flow Speed (steps/s)##voxfl", &v->fluidRate, 0.5f, 0.1f, 60.0f)) ed.dirty = true;
-                float fc[4] = {v->fluidColor.r, v->fluidColor.g, v->fluidColor.b, v->fluidColor.a};
-                if (ImGui::ColorEdit4("Fluid Color##voxfl", fc)) { v->fluidColor = {fc[0], fc[1], fc[2], fc[3]}; ed.dirty = true; }
-                if (ImGui::Checkbox("Glow (lava)##voxfl", &v->fluidGlow)) ed.dirty = true;
-                if (ImGui::SmallButton("Lava preset##voxfl")) { v->fluidColor = Color::FromBytes(255, 110, 30, 255); v->fluidGlow = true; v->fluidRate = 5.0f; ed.dirty = true; }
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Water preset##voxfl")) { v->fluidColor = Color::FromBytes(50, 120, 220, 170); v->fluidGlow = false; v->fluidRate = 20.0f; ed.dirty = true; }
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Clear fluid##voxfl")) v->ClearFluid();
-                ImGui::TextDisabled("Fluid now: %d cells (%.1f m3).", v->FluidCells(), v->FluidVolume());
-            }
-            {   // what the last surface build cost (also in View > Panels > Profiler: Voxel.Edit / Voxel.Mesh / Voxel.Upload)
-                const auto& st = v->lastStats;
-                if (v->UsesChunkObjects())
-                    ImGui::TextDisabled("Drawn as %d chunk objects. Last build: %d of %d chunks, %.2f ms.", v->ChunkObjectCount(), st.chunksRemeshed, st.chunksTotal, st.totalMs);
-                else
-                    ImGui::TextDisabled("Drawn as one mesh. Last build: %d of %d chunks, %.2f ms.", st.chunksRemeshed, st.chunksTotal, st.totalMs);
-                if (VoxelTerrain::OldRemeshActive()) ImGui::TextDisabled("OKAY_VOXEL_OLD_REMESH is set: the previous (slower) edit path is in use.");
-            }
             if (ImGui::SmallButton("Remove##vox")) toRemove = v;
         }
     }
@@ -30390,74 +30320,6 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Reach##vdg");
             if (ImGui::Checkbox("Show brush marker##vdg", &vd->showBrush)) ed.dirty = true;
             oked::FieldTip("Show brush marker##vdg");
-            SectionHeader("Real life");
-            {
-                const char* presets[] = {"Pick a preset...", "Realistic", "Arcade", "Creative"};
-                int pi = 0;
-                if (ImGui::Combo("Preset##vdg", &pi, presets, 4) && pi > 0) { vd->ApplyPreset((VoxelDigger::Preset)pi); ed.dirty = true; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Realistic: dug ground becomes debris and a store, hard rock needs a strong tool, building uses what you collected, loose ground slumps and cut-off pieces fall.\nArcade: ground vanishes, building is free (the old behaviour).\nCreative: unlimited store.");
-                const char* cols[] = {"Vanish (old behaviour)", "Store (into the count)", "Debris (falls, lands back)", "Both (debris, pick up to store)"};
-                int ci = (int)vd->collect;
-                if (ImGui::Combo("Dug Ground##vdg", &ci, cols, 4)) { vd->collect = (VoxelDigger::Collect)ci; ed.dirty = true; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("What happens to the ground the brush takes away. Nothing is lost except in Vanish.");
-                if (ImGui::Checkbox("Building needs material##vdg", &vd->needsMaterial)) ed.dirty = true;
-                ImGui::SameLine();
-                if (ImGui::Checkbox("Creative (unlimited)##vdg", &vd->creative)) ed.dirty = true;
-                VoxelTerrain* tv = vd->FindVoxel();
-                if (tv && tv->UseMaterials()) {
-                    int am = std::max(0, std::min(vd->addMaterial, (int)tv->materials.size() - 1));
-                    if (ImGui::BeginCombo("Build Material##vdg", tv->materials[(std::size_t)am].name.c_str())) {
-                        for (std::size_t k = 0; k < tv->materials.size(); ++k)
-                            if (ImGui::Selectable(tv->materials[k].name.c_str(), (int)k == am)) { vd->addMaterial = (int)k; ed.dirty = true; }
-                        ImGui::EndCombo();
-                    }
-                }
-                if (ImGui::DragFloat("Tool Power##vdg", &vd->power, 0.1f, 0.0f, 1.0e9f, "%.1f", ImGuiSliderFlags_Logarithmic)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Materials harder than this cannot be dug. 1e9 = everything.");
-                if (ImGui::DragFloat("Hardness Scale##vdg", &vd->hardnessScale, 0.05f, 0.1f, 20.0f)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Multiplies every material's hardness: higher = slower digging.");
-                const char* shapes[] = {"Sphere", "Cube", "Cylinder", "Plane (flat disc)"};
-                int si = (int)vd->shape;
-                if (ImGui::Combo("Brush Shape##vdg", &si, shapes, 4)) { vd->shape = (VoxelTerrain::EditOptions::Shape)si; ed.dirty = true; }
-                if (ImGui::DragFloat("Depth Limit##vdg", &vd->depthLimit, 0.1f, -1.0f, 200.0f, "%.1f")) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Metres a stroke may go below where it started. -1 = no limit.");
-                if (ImGui::DragFloat("Bedrock Height##vdg", &vd->protectBelow, 0.1f, -1.0f, 500.0f, "%.1f")) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nothing below this height (in the terrain's own space) can be dug. -1 = off.");
-                if (ImGui::Checkbox("Snap to grid##vdg", &vd->snapToGrid)) ed.dirty = true;
-                ImGui::SameLine();
-                if (ImGui::Checkbox("Slump loose ground##vdg", &vd->slump)) ed.dirty = true;
-                { int pk = (int)(unsigned char)vd->pourKey; char pkb[2] = {pk ? (char)pk : '\0', '\0'};
-                  if (ImGui::InputText("Pour Key##vdg", pkb, sizeof(pkb))) { vd->pourKey = pkb[0]; ed.dirty = true; }
-                  if (ImGui::IsItemHovered()) ImGui::SetTooltip("A key (e.g. f) that pours fluid at the aim point. The terrain needs Water / lava flow on."); }
-                if (ImGui::SliderInt("Cave-in Span##vdg", &vd->caveInSpan, 0, 24)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = off. Otherwise roof that is more than this many voxels from a support comes down when you let go of the mouse: a tunnel wider than about twice this brings its ceiling down as debris.");
-                if (vd->slump && ImGui::SliderInt("Slump Passes##vdg", &vd->slumpPasses, 1, 32)) ed.dirty = true;
-                if (vd->slump && ImGui::IsItemHovered()) ImGui::SetTooltip("Passes per frame. 1 = a gentle local slide; more = an avalanche that runs farther down the slope (each pass moves at most 40 voxels).");
-                ImGui::SameLine();
-                if (ImGui::Checkbox("Collapse##vdg", &vd->collapse)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pieces a dig cuts loose fall as debris and land back in the ground.");
-                if (ImGui::SliderInt("Debris Limit##vdg", &vd->debrisMax, 0, 300)) ed.dirty = true;
-                if (ImGui::DragFloat("Debris Life (s)##vdg", &vd->debrisLife, 0.5f, 1.0f, 120.0f)) ed.dirty = true;
-                if (ImGui::Checkbox("Give inventory items##vdg", &vd->giveItems)) ed.dirty = true;
-                if (ImGui::Checkbox("Tools from inventory##vdg", &vd->toolsFromInventory)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dig power comes from the items the scene's Inventory holds (see Tools). Without one you dig with bare hands: soft ground only.");
-                if (vd->toolsFromInventory) {
-                    char tl[160]; std::strncpy(tl, vd->tools.c_str(), sizeof(tl) - 1); tl[sizeof(tl) - 1] = '\0';
-                    if (ImGui::InputText("Tools##vdg", tl, sizeof(tl))) { vd->tools = tl; ed.dirty = true; }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("item:power list, e.g. shovel:2,pickaxe:5. A tool digs materials whose hardness is up to its power.");
-                    if (ImGui::DragFloat("Bare Hands Power##vdg", &vd->bareHandsPower, 0.05f, 0.0f, 20.0f)) ed.dirty = true;
-                }
-                if (ImGui::Checkbox("Build from items##vdg", &vd->buildFromItems)) ed.dirty = true;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Building spends the Build Material's drop items from the Inventory (per m3 as set in the Materials table).");
-                char hud[96]; std::strncpy(hud, vd->hudTarget.c_str(), sizeof(hud) - 1); hud[sizeof(hud) - 1] = '\0';
-                if (ImGui::InputText("Count Text Object##vdg", hud, sizeof(hud))) { vd->hudTarget = hud; ed.dirty = true; }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of a Text object that shows what has been collected, e.g. \"Dirt 3.20 m3\".");
-                if (tv && tv->UseMaterials()) {
-                    for (std::size_t k = 0; k < vd->store.size() && k < tv->materials.size(); ++k)
-                        if (vd->store[k] > 0.005) ImGui::TextDisabled("Store: %s %.2f m3", tv->materials[k].name.c_str(), vd->store[k]);
-                }
-                ImGui::TextDisabled("In Play: hold the mouse to dig, right mouse builds, Ctrl+Z takes back the last stroke.");
-            }
             if (ImGui::SmallButton("Remove##vdg")) toRemove = vd;
         }
     }
@@ -35845,8 +35707,8 @@ void DrawInspector(EditorState& ed) {
                     ed.PushUndo();
                     FirstPersonController& F = *fp;
                     switch (which) {
-                        case 0:   // Tactical: weighty mil-sim movement
-                            F.walkSpeed = 3.2f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
+                        case 0:   // Tactical: weighty mil-sim movement (a real walk, a quick run)
+                            F.walkSpeed = 2.0f; F.runSpeed = 5.5f; F.jumpForce = 4.5f;
                             F.walkAcceleration = 22.0f; F.acceleration = 30.0f; F.steerRate = 90.0f;
                             F.deceleration = 35.0f; F.airControl = 0.15f;
                             F.coyoteTime = 0.05f; F.jumpBufferTime = 0.08f;
@@ -35878,6 +35740,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##fp");
             if (ImGui::DragFloat("Run Speed##fp", &fp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##fp");
+            WalkSpeedHintLine(fp->walkSpeed);
+            if (!owned && NaturalSpeedsButton("fp")) {
+                ed.PushUndo("Natural walk and run speeds");
+                okay::NaturalGait::UseNaturalSpeeds(fp->walkSpeed, fp->runSpeed, fp->crouchSpeed, fp->proneSpeed, okay::NaturalGait::kRunSpeed);
+                ed.dirty = true;
+            }
             if (ImGui::DragFloat("Jump Force##fp", &fp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##fp");
             if (ImGui::DragFloat("Walk Accel##fp", &fp->walkAcceleration, 1.0f, 1.0f, 300.0f)) ed.dirty = true;
@@ -36066,8 +35934,8 @@ void DrawInspector(EditorState& ed) {
                     ed.PushUndo();
                     ThirdPersonController& T = *tp;
                     switch (which) {
-                        case 0:   // Grounded: weighty adventure movement
-                            T.walkSpeed = 3.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
+                        case 0:   // Grounded: weighty adventure movement (a real walk, a quick run)
+                            T.walkSpeed = 2.0f; T.runSpeed = 5.5f; T.jumpForce = 5.0f;
                             T.walkAcceleration = 22.0f; T.acceleration = 30.0f; T.steerRate = 90.0f; T.turnSpeed = 10.0f;
                             T.deceleration = 35.0f; T.airControl = 0.2f;
                             T.coyoteTime = 0.08f;
@@ -36099,6 +35967,12 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##tp");
             if (ImGui::DragFloat("Run Speed##tp", &tp->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##tp");
+            WalkSpeedHintLine(tp->walkSpeed);
+            if (!owned && NaturalSpeedsButton("tp")) {
+                ed.PushUndo("Natural walk and run speeds");
+                okay::NaturalGait::UseNaturalSpeeds(tp->walkSpeed, tp->runSpeed, tp->crouchSpeed, tp->proneSpeed, okay::NaturalGait::kRunSpeed);
+                ed.dirty = true;
+            }
             if (ImGui::DragFloat("Jump Force##tp", &tp->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##tp");
             if (ImGui::DragFloat("Turn Rate##tp", &tp->turnSpeed, 0.1f, 0.0f, 40.0f)) ed.dirty = true;
@@ -36349,6 +36223,14 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Which views the player has.\nBoth: a key switches between them and the camera blends.\n"
                                   "One view only: no toggle, and the other view's settings are dropped.");
+            if (NaturalSpeedsButton("pc")) {
+                ed.PushUndo("Natural walk and run speeds");
+                if (auto* f = pc->first())
+                    okay::NaturalGait::UseNaturalSpeeds(f->walkSpeed, f->runSpeed, f->crouchSpeed, f->proneSpeed, okay::NaturalGait::kRunSpeed);
+                if (auto* t = pc->third())
+                    okay::NaturalGait::UseNaturalSpeeds(t->walkSpeed, t->runSpeed, t->crouchSpeed, t->proneSpeed, okay::NaturalGait::kRunSpeed);
+                ed.dirty = true;
+            }
             CharacterModelTools(ed, go, "pc");
             if (pc->viewMode() != PlayerController::ViewMode::Both)
                 ImGui::TextDisabled("%s only. Pick Both to let the player switch.",
@@ -37000,6 +36882,13 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Walk Speed##tps");
             if (ImGui::DragFloat("Run Speed##tps", &ts->runSpeed, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Run Speed##tps");
+            WalkSpeedHintLine(ts->walkSpeed);
+            if (NaturalSpeedsButton("tps")) {
+                ed.PushUndo("Natural walk and run speeds");
+                okay::NaturalGait::UseNaturalSpeeds(ts->walkSpeed, ts->runSpeed, ts->stanceControl.crouchSpeed, ts->stanceControl.proneSpeed,
+                                                    okay::NaturalGait::kShooterRunSpeed);
+                ed.dirty = true;
+            }
             if (ImGui::DragFloat("Jump Force##tps", &ts->jumpForce, 0.1f, 0.0f, 50.0f)) ed.dirty = true;
             oked::FieldTip("Jump Force##tps");
             if (ImGui::DragInt("Max Jumps##tps", &ts->maxJumps, 0.1f, 1, 5)) ed.dirty = true;

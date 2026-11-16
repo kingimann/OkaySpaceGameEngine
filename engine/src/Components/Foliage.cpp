@@ -1,5 +1,4 @@
 #include "okay/Components/Foliage.hpp"
-#include "okay/Components/VoxelTerrain.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Components/Terrain.hpp"
 #include "okay/Components/Character.hpp"
@@ -241,47 +240,14 @@ Foliage::Surface Foliage::TerrainSurface(const Terrain& t) {
 Foliage::Surface Foliage::SceneSurface(Scene& scene, float castFromY) const {
     Scene* sp = &scene;
     const GameObject* self = gameObject;
-    // Voxel terrains answer from their density field (a few samples) instead of a ray against every triangle of their mesh, which costs
-    // about a millisecond per ray on a Sandbox-sized terrain. Only terrains that are not turned and are scaled the same on every axis
-    // take this path; anything else is still ray cast.
-    std::vector<VoxelTerrain*> fast;
-    for (VoxelTerrain* v : scene.FindObjectsOfType<VoxelTerrain>()) {
-        if (!v->gameObject || !v->gameObject->transform || (self && v->gameObject->IsSelfOrDescendantOf(self))) continue;
-        const Transform* t = v->gameObject->transform;
-        const Quat q = t->Rotation(); const Vec3 sc = t->LossyScale();
-        if (std::fabs(q.x) > 1e-4f || std::fabs(q.y) > 1e-4f || std::fabs(q.z) > 1e-4f) continue;
-        if (std::fabs(sc.x - sc.y) > 1e-4f || std::fabs(sc.y - sc.z) > 1e-4f || !(sc.x > 0.0f)) continue;
-        fast.push_back(v);
-    }
-    return [sp, self, castFromY, fast](float wx, float wz, Vec3& pos, Vec3& normal) {
-        bool have = false; float bestY = -1e30f; Vec3 bestN{0, 1, 0};
-        for (VoxelTerrain* v : fast) {
-            const Transform* t = v->gameObject->transform;
-            const Vec3 l = t->InverseTransformPoint({wx, castFromY, wz});
-            float sy = 0.0f;
-            if (!v->SurfaceY(l.x, l.z, sy)) continue;
-            const Vec3 w = t->TransformPoint({l.x, sy, l.z});
-            if (w.y > castFromY || w.y <= bestY) continue;
-            const float e = std::max(0.25f, v->voxelSize * 0.5f);
-            const Vec3 g{v->SampleDensity({l.x + e, sy, l.z}) - v->SampleDensity({l.x - e, sy, l.z}),
-                         v->SampleDensity({l.x, sy + e, l.z}) - v->SampleDensity({l.x, sy - e, l.z}),
-                         v->SampleDensity({l.x, sy, l.z + e}) - v->SampleDensity({l.x, sy, l.z - e})};
-            const float m = g.Magnitude();
-            bestN = m > 1e-6f ? Vec3{-g.x / m, -g.y / m, -g.z / m} : Vec3{0, 1, 0};    // density grows into the ground: the normal points out
-            bestY = w.y; have = true;
-            pos = w; normal = bestN;
-        }
+    return [sp, self, castFromY](float wx, float wz, Vec3& pos, Vec3& normal) {
         SurfaceHit hit;
-        auto skip = [self, &fast](const GameObject& g) {
-            if (self && (g.IsSelfOrDescendantOf(self) || g.GetComponent<Foliage>() != nullptr)) return true;
-            for (VoxelTerrain* v : fast) if (g.IsSelfOrDescendantOf(v->gameObject)) return true;
-            return false;
+        auto skip = [self](const GameObject& g) {
+            return self && (g.IsSelfOrDescendantOf(self) || g.GetComponent<Foliage>() != nullptr);
         };
-        if (RaycastSurfaces(*sp, {wx, castFromY, wz}, {0, -1, 0}, 100000.0f, hit, skip) && (!have || hit.position.y > bestY)) {
-            pos = hit.position; normal = hit.normal;
-            return true;
-        }
-        return have;
+        if (!RaycastSurfaces(*sp, {wx, castFromY, wz}, {0, -1, 0}, 100000.0f, hit, skip)) return false;
+        pos = hit.position; normal = hit.normal;
+        return true;
     };
 }
 

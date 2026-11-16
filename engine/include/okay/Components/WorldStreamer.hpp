@@ -6,7 +6,6 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Core/SafeCast.hpp"
 #include "okay/Scene/SceneSerializer.hpp"
-#include "okay/Components/VoxelTerrain.hpp"
 #include <cstdint>
 #include <map>
 #include <vector>
@@ -135,16 +134,6 @@ private:
             int dx = std::abs(it->first.first - cx);
             int dz = std::abs(it->first.second - cz);
             if (std::max(dx, dz) > unloadRadius) {
-                // A cell whose voxel terrain was dug or built on stays: unloading it would throw the player's work away
-                // (the cell file is the authored one and is never written back).
-                if (it->second) {
-                    GameObject* root = GameObject::FromInstanceId(it->second);
-                    bool edited = false;
-                    if (root)
-                        for (VoxelTerrain* vt : root->GetComponentsInChildren<VoxelTerrain>(true))
-                            if (vt && vt->editCount > 0) { edited = true; break; }
-                    if (edited) { ++it; continue; }
-                }
                 DestroyCell(*s, it->second);
                 it = m_loaded.erase(it);
             } else {

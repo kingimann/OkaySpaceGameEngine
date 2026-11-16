@@ -6,7 +6,6 @@
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Render/Mesh.hpp"
-#include "okay/Render/MeshNormals.hpp"
 #include "okay/Render/Color.hpp"
 #include "okay/Environment/Wind.hpp"
 #include <algorithm>
@@ -177,9 +176,7 @@ private:
                 m.triangles.push_back(i00); m.triangles.push_back(i01); m.triangles.push_back(i10);
                 m.triangles.push_back(i10); m.triangles.push_back(i01); m.triangles.push_back(i11);
             }
-        // Smooth, rolling swell. Grid vertices never share a position, so skip the welding walk (same normals, much faster).
-        if (meshnormals::GridCellsAreDistinct(size / (float)std::max(1, resolution))) meshnormals::SmoothNoWeld(m);
-        else m.ComputeSmoothNormals();
+        m.ComputeSmoothNormals();   // smooth, rolling swell
         mr->mesh = std::move(m);
     }
 

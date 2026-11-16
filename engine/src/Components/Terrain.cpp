@@ -1,5 +1,4 @@
 #include "okay/Components/Terrain.hpp"
-#include "okay/Render/MeshNormals.hpp"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Core/Random.hpp"
@@ -679,10 +678,7 @@ Mesh Terrain::BuildMesh() const {
                 m.triColors.push_back(faceColor(i10, i01, i11));
             }
         }
-    // Smooth (Gouraud) shading for rolling hills. The vertices of a grid never share a position, so the welding step of
-    // ComputeSmoothNormals (a std::map walk per vertex, more than half of this function) is skipped: same normals.
-    if (meshnormals::GridCellsAreDistinct(cell)) meshnormals::SmoothNoWeld(m);
-    else m.ComputeSmoothNormals();
+    m.ComputeSmoothNormals();   // smooth (Gouraud) shading for rolling hills
     return m;
 }
 

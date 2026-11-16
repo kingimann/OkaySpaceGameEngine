@@ -5,7 +5,6 @@
 
 #include "okay/Render/D3D11Renderer.hpp"
 #include "okay/Render/Culling.hpp"
-#include "okay/Render/MeshHash.hpp"
 #include "okay/Render/Visibility.hpp"
 #include "okay/Components/LODGroup.hpp"
 #include "okay/Render/Lighting.hpp"
@@ -1076,23 +1075,21 @@ bool D3D11Renderer::Impl::EnsureDepthTarget(DepthTarget& t, int w, int h) {
 }
 
 // ---- Per-mesh vertex-buffer cache (mirrors GLRenderer.cpp) -------------------
-// (Was a byte-at-a-time FNV-1a loop, ~1.3 ns per byte; now okay::meshhash::Bytes, about 20 times faster. See MeshHash.hpp.)
 static std::uint64_t FnvBytes(const void* data, std::size_t nbytes,
                               std::uint64_t seed = 1469598103934665603ull) {
-    return meshhash::Bytes(data, nbytes, seed);
+    const unsigned char* pB = (const unsigned char*)data;
+    std::uint64_t h = seed;
+    for (std::size_t i = 0; i < nbytes; ++i) { h ^= pB[i]; h *= 1099511628211ull; }
+    return h;
 }
 static std::uint64_t MeshSampleHash(const Mesh& m) {
     std::size_t sizes[5] = { m.vertices.size(), m.triangles.size(), m.normals.size(),
                              m.uvs.size(), m.triColors.size() };
     std::uint64_t h = FnvBytes(sizes, sizeof(sizes));
     const std::size_t vn = m.vertices.size(), step = vn / 2048 + 1;
-    // A small mesh is sampled at every vertex: hash its array in one go (a chunk of a voxel terrain is such a mesh,
-    // and a scene can show hundreds of them every frame).
-    if (step == 1) { if (vn) h = FnvBytes(m.vertices.data(), vn * sizeof(Vec3), h); }
-    else for (std::size_t i = 0; i < vn; i += step) h = FnvBytes(&m.vertices[i], sizeof(Vec3), h);
+    for (std::size_t i = 0; i < vn; i += step) h = FnvBytes(&m.vertices[i], sizeof(Vec3), h);
     const std::size_t tn = m.triangles.size(), tstep = tn / 2048 + 1;
-    if (tstep == 1) { if (tn) h = FnvBytes(m.triangles.data(), tn * sizeof(int), h); }
-    else for (std::size_t i = 0; i < tn; i += tstep) h = FnvBytes(&m.triangles[i], sizeof(int), h);
+    for (std::size_t i = 0; i < tn; i += tstep) h = FnvBytes(&m.triangles[i], sizeof(int), h);
     return h;
 }
 static std::uint64_t MeshFullHash(const Mesh& m) {

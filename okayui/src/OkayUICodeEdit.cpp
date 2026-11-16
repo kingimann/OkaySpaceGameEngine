@@ -1,5 +1,6 @@
 // OkayUI::CodeEdit: see include/okay/UI/OkayUICodeEdit.hpp and docs/own_ui_code_editor.md.
 #include "okay/UI/OkayUICodeEdit.hpp"
+#include "okay/Core/TextFind.hpp"   // the shared Find / Replace matcher (same one the editor's find bar uses)
 
 #include <algorithm>
 #include <climits>
@@ -739,20 +740,15 @@ void CodeEdit::LineTokens(int i, std::vector<CodeToken>& out) {
 // ================================================================================================
 // Find
 // ================================================================================================
-static inline char lower(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
-
+// Every match test goes through okay::textfind::MatchAt, the one matcher shared with the editor's find bar
+// (issue #888 finding 70), so FindNext/FindPrev, FindCount, the highlight, ReplaceCurrent and ReplaceAll agree.
 bool CodeEdit::findIn(int line, int from, int& start) const {
     const std::string& s = lines_[(size_t)line];
-    const int n = (int)find_.size(), len = (int)s.size();
-    if (n == 0 || from < 0) from = from < 0 ? 0 : from;
-    for (int i = from; i + n <= len; ++i) {
-        if (isCont((unsigned char)s[(size_t)i])) continue;
-        int k = 0;
-        if (findCase_) while (k < n && s[(size_t)(i + k)] == find_[(size_t)k]) ++k;
-        else while (k < n && lower(s[(size_t)(i + k)]) == lower(find_[(size_t)k])) ++k;
-        if (k == n) { start = i; return true; }
-    }
-    return false;
+    if (from < 0) from = 0;
+    const std::size_t p = okay::textfind::FindFrom(s, find_, (std::size_t)from, findCase_);
+    if (p == std::string::npos) return false;
+    start = (int)p;
+    return true;
 }
 
 // The last match on the line that starts before `limit`.
@@ -813,9 +809,7 @@ int CodeEdit::FindCount() const {
 bool CodeEdit::ReplaceCurrent(const std::string& with) {
     if (readOnly_ || find_.empty() || !HasSelection()) return false;
     const std::string sel = SelectedText();
-    bool eq = sel.size() == find_.size();
-    for (size_t i = 0; eq && i < sel.size(); ++i) eq = findCase_ ? sel[i] == find_[i] : lower(sel[i]) == lower(find_[i]);
-    if (!eq) return false;
+    if (sel.size() != find_.size() || !okay::textfind::MatchAt(sel, 0, find_, findCase_)) return false;
     replaceSelection(sanitize(with.c_str()), Kind_Other);
     FindNext();
     return true;

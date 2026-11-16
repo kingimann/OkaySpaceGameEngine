@@ -1,58 +1,89 @@
 #pragma once
-// TEMPORARY: a straight copy of the script editor's current Find / Replace logic (editor/main.cpp), so the new test can
-// show the bug before it is fixed. Replaced by the real matcher in the next step.
-#include <cctype>
+// okay::textfind: the one text matcher behind a code editor's Find bar. Find, the "k of M" counter, the match
+// highlight, Next / Previous, Replace and Replace All all ask this, so they always agree on what a match is
+// (issue #888 finding 70: Find used to ignore case while Replace matched case exactly).
+//
+//   - Match case off (the default): ASCII letters A-Z and a-z compare equal; every other byte compares exactly.
+//     UTF-8 text is safe: multi-byte characters only ever match themselves.
+//   - A match never starts on a UTF-8 continuation byte (the middle of a character).
+//   - Matches never overlap and are found left to right ("aaaa" holds two "aa").
+//   - An empty needle matches nothing.
+//
+// Pure functions over std::string, no UI. Written for this engine from the plain description above.
 #include <cstddef>
 #include <string>
 #include <vector>
 
 namespace okay::textfind {
 
-inline bool MatchAt(const std::string& t, std::size_t i, const std::string& n, bool) {
-    if (i + n.size() > t.size()) return false;
-    for (std::size_t k = 0; k < n.size(); ++k) if (std::tolower((unsigned char)t[i + k]) != std::tolower((unsigned char)n[k])) return false;
+inline char FoldAscii(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c; }
+inline bool IsUtf8Continuation(char c) { return ((unsigned char)c & 0xC0u) == 0x80u; }
+
+/// True when `needle` matches `text` starting at byte `pos`.
+inline bool MatchAt(const std::string& text, std::size_t pos, const std::string& needle, bool matchCase) {
+    const std::size_t n = needle.size();
+    if (n == 0 || pos > text.size() || text.size() - pos < n) return false;
+    if (IsUtf8Continuation(text[pos])) return false;
+    if (matchCase) return text.compare(pos, n, needle) == 0;
+    for (std::size_t k = 0; k < n; ++k)
+        if (FoldAscii(text[pos + k]) != FoldAscii(needle[k])) return false;
     return true;
 }
 
+/// The first match at or after byte `from`; std::string::npos when there is none.
+inline std::size_t FindFrom(const std::string& text, const std::string& needle, std::size_t from, bool matchCase) {
+    if (needle.empty() || needle.size() > text.size()) return std::string::npos;
+    for (std::size_t i = from; i + needle.size() <= text.size(); ++i)
+        if (MatchAt(text, i, needle, matchCase)) return i;
+    return std::string::npos;
+}
+
+/// Every match, left to right, not overlapping.
 inline std::vector<std::size_t> FindAll(const std::string& text, const std::string& needle, bool matchCase = false) {
-    (void)matchCase;
     std::vector<std::size_t> at;
-    if (needle.empty()) return at;
-    std::string hay = text, n = needle;
-    for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
-    for (auto& c : n) c = (char)std::tolower((unsigned char)c);
-    for (std::size_t p = hay.find(n); p != std::string::npos; p = hay.find(n, p + n.size())) at.push_back(p);
+    for (std::size_t p = FindFrom(text, needle, 0, matchCase); p != std::string::npos;
+         p = FindFrom(text, needle, p + needle.size(), matchCase))
+        at.push_back(p);
     return at;
 }
 
-inline int CurrentIndex(const std::vector<std::size_t>& at, std::size_t cursor) {
-    if (at.empty()) return -1;
-    int cur = 0;
-    for (std::size_t p : at) if (p < cursor) ++cur;
-    if (cur >= (int)at.size()) cur = (int)at.size() - 1;
-    return cur;
+/// The index of the "current" match for a cursor: the first match that starts at or after `cursor`, or the last match
+/// when the cursor is past them all; -1 when there are none. The "k of M" counter shows this index + 1, and
+/// ReplaceCurrent changes exactly this match.
+inline int CurrentIndex(const std::vector<std::size_t>& matches, std::size_t cursor) {
+    if (matches.empty()) return -1;
+    for (std::size_t i = 0; i < matches.size(); ++i)
+        if (matches[i] >= cursor) return (int)i;
+    return (int)matches.size() - 1;
 }
 
-inline long long ReplaceCurrent(std::string& text, std::size_t cursor, const std::string& from, const std::string& to,
+/// Replace the current match (see CurrentIndex) with `with`. Returns where it was, or -1 when nothing matched.
+inline long long ReplaceCurrent(std::string& text, std::size_t cursor, const std::string& needle, const std::string& with,
                                 bool matchCase = false) {
-    (void)matchCase;
-    if (from.empty()) return -1;
-    std::size_t start = cursor > text.size() ? 0 : cursor;
-    std::size_t p = text.find(from, start);
-    if (p == std::string::npos) p = text.find(from);
-    if (p == std::string::npos) return -1;
-    text.replace(p, from.size(), to);
+    const std::vector<std::size_t> at = FindAll(text, needle, matchCase);
+    const int i = CurrentIndex(at, cursor);
+    if (i < 0) return -1;
+    const std::size_t p = at[(std::size_t)i];
+    text.replace(p, needle.size(), with);
     return (long long)p;
 }
 
-inline std::size_t ReplaceAll(std::string& text, const std::string& from, const std::string& to, bool matchCase = false) {
-    (void)matchCase;
-    std::size_t n = 0;
-    for (std::size_t p = text.find(from); p != std::string::npos && !from.empty(); p = text.find(from, p + to.size())) {
-        text.replace(p, from.size(), to);
-        ++n;
+/// Replace every match (the same ones FindAll returns) with `with`. Text that `with` brings in is never matched again.
+/// Returns how many were replaced.
+inline std::size_t ReplaceAll(std::string& text, const std::string& needle, const std::string& with, bool matchCase = false) {
+    const std::vector<std::size_t> at = FindAll(text, needle, matchCase);
+    if (at.empty()) return 0;
+    std::string out;
+    out.reserve(text.size() + at.size() * with.size());
+    std::size_t last = 0;
+    for (std::size_t p : at) {
+        out.append(text, last, p - last);
+        out += with;
+        last = p + needle.size();
     }
-    return n;
+    out.append(text, last, std::string::npos);
+    text.swap(out);
+    return at.size();
 }
 
 } // namespace okay::textfind

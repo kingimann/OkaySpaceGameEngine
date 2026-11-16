@@ -1088,6 +1088,35 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Script editor Find & Replace: one matcher, Match case box; Console keeps errors during log spam (bug fixes)
+
+Issue #888 findings 70 and 73. Branch `claude2/script-find-console-cap` (not merged or released yet).
+
+**Find & Replace (finding 70).** Before: Find ignored case, but Replace and Replace All matched case exactly, and Replace
+could change a different word from the highlighted one.
+
+1. Open the editor, open any script in the **Script Editor** (or make a new one) and type the line `Coin coin COIN coin`.
+2. Press **Ctrl+F**. Type `coin` in Find. The count reads "... of 4" and all four words are tinted.
+3. Press **Enter** until the bar shows **1 of 4** (the word `Coin` is selected). Type `gem` in Replace and click
+   **Replace**. Expect `gem coin COIN coin`: the highlighted word changed. Ctrl+Z to undo.
+4. Click **Replace All**. Expect `gem gem gem gem`, and the Console says `Replaced 4 occurrences`. Ctrl+Z to undo.
+5. Tick **Match case** (next to the count). The count reads "... of 2", only the two lower-case `coin` words are tinted, and
+   Replace All now changes exactly those two (`Coin gem COIN gem`, "Replaced 2 occurrences").
+
+**Console keeps errors (finding 73).** Before: one `print` per frame pushed every earlier error out of the Console in
+about 33 seconds at 60 frames per second, and the red error badge went back to nothing.
+
+1. Make a scene with two scripts: one that logs an error once (`log_error("first error")` in `start`), and
+   one that calls `print("tick")` in `update`.
+2. Press **Play** and wait at least a minute (more than 2000 prints).
+3. Expect: the first error is still in the Console, the Errors pill and the tab badge still count it, filtering on
+   Errors shows it, and Collapse shows the prints as one row with a growing count. The Console still holds at most 2000
+   lines in total (the oldest prints are the ones that go).
+
+**Status.** Logic tested headless on Linux (`test_find_replace_console`, plus `test_debug_console` and
+`test_okayui_codeedit`). The editor's `main.cpp` changes passed a syntax-only compile; the editor was not built or run,
+so the Match case box and the steps above are unverified until you look. Nothing tried on Windows.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

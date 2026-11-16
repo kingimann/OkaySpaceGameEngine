@@ -537,6 +537,21 @@ void FindTests() {
     e.Undo(); CHECK(e.GetText() == "a a");
     e.SetReadOnly(true);
     CHECK(e.ReplaceAll("z") == 0 && !e.ReplaceCurrent("z"));
+    e.SetReadOnly(false);
+    // Issue #888 finding 70: Find, the count, Replace and Replace All use one matcher and one Match case setting.
+    e.SetText("Coin coin COIN");
+    e.SetFind("coin");
+    CHECK(e.FindCount() == 3);
+    CHECK(e.FindNext() && e.SelectedText() == "Coin");
+    CHECK(e.ReplaceCurrent("gem") && e.GetText() == "gem coin COIN" && e.SelectedText() == "coin");
+    e.Undo();
+    CHECK(e.ReplaceAll("gem") == 3 && e.GetText() == "gem gem gem");
+    e.SetText("Coin coin COIN");
+    e.SetFind("coin", true);
+    CHECK(e.FindCount() == 1);
+    e.SetCaret(P(0, 0));
+    CHECK(e.FindNext() && e.Anchor() == P(0, 5));
+    CHECK(e.ReplaceAll("gem") == 1 && e.GetText() == "Coin gem COIN");
 }
 
 void HighlightTests() {

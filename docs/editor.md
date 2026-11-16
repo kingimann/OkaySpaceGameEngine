@@ -91,6 +91,12 @@ Recent additions (v2.12–2.14):
   save (amber) or added past the file's end (green) — they clear on save.
   **Find in Files** (Ctrl+Shift+F, or via the command palette) searches every
   project script at once; click a result to open that file at that line.
+  The Find bar has **Replace**, **Replace All** and a **Match case** box (off by
+  default: `Coin`, `coin` and `COIN` all match). Find, the "k of M" count, the
+  yellow highlight, Replace and Replace All all use one matcher
+  (`engine/include/okay/Core/TextFind.hpp`), so they always agree: **Replace**
+  changes exactly the match the count names, and Replace All changes every
+  match the count counted. The OkayUI code editor uses the same matcher.
   Prefer your own editor? **Open in IDE** launches the script in VS Code / your
   OS default, and with **Live Sync** on (enabled automatically when you open it)
   every save out there reloads in-engine — so you can code entirely outside
@@ -595,7 +601,11 @@ unchanged.
   one due, the busiest tags and owners, the oldest). The text is refreshed four
   times a second; the choices are remembered.
 - **Console**: the tab badge shows live error/warning counts; **Error Pause**
-  pauses Play the moment a new error is logged.
+  pauses Play the moment a new error is logged. The Console keeps the last 2000
+  lines, but when it is full it drops the oldest line of the *least important*
+  level first (Trace, then Info, then Warning, then Error). A script that
+  `print`s every frame therefore only pushes out older prints: earlier errors
+  and warnings stay, and so do their counts and the badge.
 - **Play tint**: the editor chrome darkens subtly while the game runs.
 - **Mouse in Play mode**: games that lock the cursor (FPS / TPS controllers)
   grab the mouse when you press Play. **Esc** shows the cursor again, even

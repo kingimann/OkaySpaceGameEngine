@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <unordered_map>
 
 namespace okay {
@@ -145,8 +146,12 @@ static bool SplitCategoryPrefix(const std::string& msg, std::string& category, s
 
 struct ConsoleModel::Impl {
     SpinLock lock;
-    std::vector<ConsoleEntry> ring;
-    std::size_t head = 0;
+    // One queue per level (Trace, Info, Warning, Error), each oldest first. Together they hold at most `cap` entries.
+    // When full, the oldest entry of the LEAST important level that has any goes first, so a flood of Info lines
+    // only ever pushes out older Info lines and cannot evict errors or warnings (issue #888 finding 73).
+    static constexpr int kLevels = 4;
+    std::deque<ConsoleEntry> byLevel[kLevels];
+    std::size_t total = 0;
     std::size_t cap = 2000;
     std::uint64_t nextSeq = 0;
     std::uint64_t frame = 0;
@@ -164,8 +169,37 @@ struct ConsoleModel::Impl {
         if (clock) return clock();
         return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     }
-    std::size_t SizeLocked() const { return ring.size(); }
-    const ConsoleEntry& At(std::size_t i) const { return ring[(head + i) % ring.size()]; }
+    std::size_t SizeLocked() const { return total; }
+    static int LevelIndex(Log::Level l) {
+        const int i = static_cast<int>(l);
+        return i < 0 ? 0 : (i >= kLevels ? kLevels - 1 : i);
+    }
+    // Drop one entry: the oldest of the lowest level that has any. Caller holds the lock.
+    void EvictOne() {
+        for (int lv = 0; lv < kLevels; ++lv) {
+            if (byLevel[lv].empty()) continue;
+            byLevel[lv].pop_front();
+            --total;
+            return;
+        }
+    }
+    void ClearLocked() {
+        for (auto& q : byLevel) q.clear();
+        total = 0;
+    }
+    // Visit every stored entry oldest first (by seq), merging the per-level queues. Caller holds the lock.
+    template <class F> void ForEachOrdered(F&& f) const {
+        std::size_t idx[kLevels] = {0, 0, 0, 0};
+        for (;;) {
+            int best = -1;
+            for (int lv = 0; lv < kLevels; ++lv) {
+                if (idx[lv] >= byLevel[lv].size()) continue;
+                if (best < 0 || byLevel[lv][idx[lv]].seq < byLevel[best][idx[best]].seq) best = lv;
+            }
+            if (best < 0) return;
+            f(byLevel[best][idx[best]++]);
+        }
+    }
 
     static void MergeSource(ConsoleSource& src, const ConsoleSource& extra) {
         if (extra.kind != ConsoleSource::Kind::None && src.kind == ConsoleSource::Kind::None)
@@ -196,8 +230,11 @@ struct ConsoleModel::Impl {
         e.timeSec = NowLocked();
         e.frame = frame;
         e.source = std::move(src);
-        if (ring.size() < cap) ring.push_back(std::move(e));
-        else if (cap > 0) { ring[head] = std::move(e); head = (head + 1) % ring.size(); }
+        if (cap > 0) {
+            while (total >= cap) EvictOne();
+            byLevel[LevelIndex(level)].push_back(std::move(e));
+            ++total;
+        }
         if (level == Log::Level::Error && pauseOnError.load(std::memory_order_relaxed))
             pauseRequested.store(true, std::memory_order_release);
     }
@@ -235,23 +272,22 @@ struct ConsoleModel::Impl {
     std::vector<ConsoleRow> BuildRows(const ConsoleFilter& f, bool collapseRuns) const {   // caller holds the lock
         std::vector<ConsoleRow> rows;
         std::unordered_map<std::string, std::size_t> byKey;
-        for (std::size_t i = 0; i < ring.size(); ++i) {
-            const ConsoleEntry& e = At(i);
-            if (!Passes(e, f)) continue;
+        ForEachOrdered([&](const ConsoleEntry& e) {
+            if (!Passes(e, f)) return;
             if (collapseRuns) {
                 auto ins = byKey.emplace(RowKey(e), rows.size());
                 if (!ins.second) {
                     ConsoleRow& r = rows[ins.first->second];
                     ++r.repeat;
                     r.lastSeq = e.seq; r.lastFrame = e.frame; r.lastTimeSec = e.timeSec;
-                    continue;
+                    return;
                 }
             }
             ConsoleRow r;
             r.entry = e;
             r.lastSeq = e.seq; r.lastFrame = e.frame; r.lastTimeSec = e.timeSec;
             rows.push_back(std::move(r));
-        }
+        });
         return rows;
     }
 };
@@ -348,37 +384,28 @@ bool ConsoleModel::ConsumePauseRequest() { return m_impl->pauseRequested.exchang
 
 void ConsoleModel::Clear() {
     SpinGuard g(m_impl->lock);
-    m_impl->ring.clear();
-    m_impl->head = 0;
+    m_impl->ClearLocked();
     m_impl->pauseRequested.store(false, std::memory_order_release);
 }
 
 void ConsoleModel::SetCapacity(std::size_t capacity) {
     SpinGuard g(m_impl->lock);
     Impl& d = *m_impl;
-    std::vector<ConsoleEntry> fresh;
-    std::size_t keep = d.ring.size() < capacity ? d.ring.size() : capacity;
-    fresh.reserve(keep);
-    for (std::size_t i = d.ring.size() - keep; i < d.ring.size(); ++i) fresh.push_back(std::move(d.ring[(d.head + i) % d.ring.size()]));
-    d.ring = std::move(fresh);
-    d.head = 0;
     d.cap = capacity;
+    while (d.total > d.cap) d.EvictOne();       // same order as when full: least important, oldest first
 }
 
-std::size_t ConsoleModel::Size() const { SpinGuard g(m_impl->lock); return m_impl->ring.size(); }
+std::size_t ConsoleModel::Size() const { SpinGuard g(m_impl->lock); return m_impl->total; }
 std::uint64_t ConsoleModel::TotalReceived() const { SpinGuard g(m_impl->lock); return m_impl->nextSeq; }
 
 ConsoleCounts ConsoleModel::Counts() const {
     SpinGuard g(m_impl->lock);
     ConsoleCounts c;
-    for (const ConsoleEntry& e : m_impl->ring) {
-        switch (e.level) {
-            case Log::Level::Trace:   ++c.trace; break;
-            case Log::Level::Info:    ++c.info; break;
-            case Log::Level::Warning: ++c.warning; break;
-            case Log::Level::Error:   ++c.error; break;
-        }
-    }
+    const Impl& d = *m_impl;
+    c.trace   = d.byLevel[Impl::LevelIndex(Log::Level::Trace)].size();
+    c.info    = d.byLevel[Impl::LevelIndex(Log::Level::Info)].size();
+    c.warning = d.byLevel[Impl::LevelIndex(Log::Level::Warning)].size();
+    c.error   = d.byLevel[Impl::LevelIndex(Log::Level::Error)].size();
     return c;
 }
 
@@ -400,8 +427,8 @@ std::vector<ConsoleRow> ConsoleModel::Rows(const ConsoleFilter& f, bool collapse
 std::vector<ConsoleEntry> ConsoleModel::Entries() const {
     SpinGuard g(m_impl->lock);
     std::vector<ConsoleEntry> out;
-    out.reserve(m_impl->ring.size());
-    for (std::size_t i = 0; i < m_impl->ring.size(); ++i) out.push_back(m_impl->At(i));
+    out.reserve(m_impl->total);
+    m_impl->ForEachOrdered([&](const ConsoleEntry& e) { out.push_back(e); });
     return out;
 }
 

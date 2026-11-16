@@ -1,5 +1,5 @@
 #pragma once
-// Error console data model (feature map 23.4): a ring buffer over the Log with
+// Error console data model (feature map 23.4): a bounded store over the Log with
 // repeat collapsing (identical level + category + message, anywhere in the log), filters (level, category, text), search, pause, an error-pause
 // request flag, a link back to the source object or asset parsed from the message,
 // and a copy-all text export. No UI here: a console window reads Rows() each frame.
@@ -16,6 +16,10 @@
 // a leading `[tag]` in the message (see ParseCategoryPrefix) or from Add() when the
 // caller knows it. Source links come from message conventions, see ParseConsoleSource.
 // Thread safe: Log may call in from any thread while the UI reads.
+//
+// Capacity: at most `capacity` entries are stored. When full, the oldest entry of the least important level that has
+// any is dropped (Trace, then Info, then Warning, then Error), so a script printing every frame cannot push an earlier
+// error or warning out of the console (issue #888 finding 73). Views are still oldest first, in arrival order.
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -90,7 +94,7 @@ struct ConsoleFilter {
 };
 
 struct ConsoleCounts {
-    std::size_t trace = 0, info = 0, warning = 0, error = 0;   // entries currently stored
+    std::size_t trace = 0, info = 0, warning = 0, error = 0;   // entries currently stored (errors and warnings outlive Info floods)
 };
 
 class ConsoleModel {
@@ -141,11 +145,13 @@ public:
     /// True once per request; the host then pauses play mode.
     bool ConsumePauseRequest();
     void Clear();
+    /// At most this many entries are stored (0 stores nothing). Shrinking drops entries in the same order as a full
+    /// console does: the oldest of the least important level first.
     void SetCapacity(std::size_t capacity);
 
     // ---- counts -----------------------------------------------------------
     std::size_t Size() const;
-    std::uint64_t TotalReceived() const;            // ever stored, including those pushed out of the ring
+    std::uint64_t TotalReceived() const;            // ever stored, including those pushed out since
     ConsoleCounts Counts() const;
 
     // ---- view -------------------------------------------------------------

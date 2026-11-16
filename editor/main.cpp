@@ -31,6 +31,7 @@
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
 #include "okay/Core/Utf8.hpp"
+#include "okay/Core/TextFind.hpp"   // the one Find / Replace matcher of the script editor (issue #888 finding 70)
 #include "okay/Core/BuildPipeline.hpp"   // the build pipeline: layout, dependency walk, manifest, report, zip
 #include "okay/Core/BuildInfo.hpp"
 #include "okay/Core/Clock.hpp"        // ClockSet: the channels the Tween Animation inspector offers
@@ -15069,6 +15070,7 @@ void DrawScriptEditor(EditorState& ed) {
         static bool s_showFind = false; // Rider-style: the find bar is hidden until Ctrl+F
         static int  s_findCursor = -1;  // search position — advances on each Enter/F3 even
                                         // while the editor is unfocused (its caret is frozen)
+        static bool s_findCase = false; // "Match case" in the find bar (off = A and a are the same letter)
         const bool runClicked = s_tbRun; s_tbRun = false;
         if (runClicked) {           // compile + test-run in a sandbox
             bool ok = sc->LoadSource(buf.data(), &s_error);
@@ -15755,16 +15757,13 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::IsKeyPressed(ImGuiKey_F, false)) {
             g_showFindInFiles = true; g_fifFocus = true;
         }
-        // All case-insensitive match positions (shared by jump, the n/m indicator,
-        // and the highlight pass below).
+        // Every match position. okay::textfind is the ONE matcher: the jump, the "k of M"
+        // counter, the highlight pass below, Replace and Replace All all use it with the
+        // same "Match case" setting, so they always agree (issue #888 finding 70).
         auto findMatches = [&]() {
             std::vector<int> at;
             if (!s_find[0]) return at;
-            std::string hay = buf.data(), needle = s_find;
-            for (auto& c : hay) c = (char)std::tolower((unsigned char)c);
-            for (auto& c : needle) c = (char)std::tolower((unsigned char)c);
-            for (std::size_t p = hay.find(needle); p != std::string::npos; p = hay.find(needle, p + needle.size()))
-                at.push_back((int)p);
+            for (std::size_t p : okay::textfind::FindAll(buf.data(), s_find, s_findCase)) at.push_back((int)p);
             return at;
         };
         auto jumpMatch = [&](bool fwd) {
@@ -15815,11 +15814,14 @@ void DrawScriptEditor(EditorState& ed) {
                 else if (at.empty())     ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.5f, 1.0f), "No matches");
                 else {
                     int ref = s_findCursor >= 0 ? s_findCursor : caret.pos;
-                    int cur = 0; for (int p : at) if (p < ref) ++cur;
-                    if (cur >= (int)at.size()) cur = (int)at.size() - 1;
+                    std::vector<std::size_t> pos(at.begin(), at.end());
+                    int cur = okay::textfind::CurrentIndex(pos, (std::size_t)(ref < 0 ? 0 : ref));
                     ImGui::TextDisabled("%d of %d", cur + 1, (int)at.size());
                 }
             }
+            ImGui::SameLine();
+            ImGui::Checkbox("Match case", &s_findCase);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: Coin, coin and COIN all match. On: only the exact letters match.\nFind, the count, Replace and Replace All all follow this.");
             ImGui::SameLine();
             if (ImGui::Button("Previous")) jumpMatch(false);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Find previous (Shift+F3 / Shift+Enter)");
@@ -15836,24 +15838,20 @@ void DrawScriptEditor(EditorState& ed) {
             ImGui::InputTextWithHint("##replace", "Replacement", s_replace, sizeof(s_replace));
             ImGui::SameLine();
             if (ImGui::Button("Replace") && s_find[0]) {
-                std::string text = buf.data(), from = s_find, to = s_replace;
-                std::size_t start = s_findCursor >= 0 ? (std::size_t)s_findCursor : 0;
-                if (start > text.size()) start = 0;
-                std::size_t p = text.find(from, start);
-                if (p == std::string::npos) p = text.find(from);
-                if (p != std::string::npos) {
-                    text.replace(p, from.size(), to);
+                // Replace exactly the match the "k of M" counter shows as current.
+                std::string text = buf.data();
+                int ref = s_findCursor >= 0 ? s_findCursor : caret.pos;
+                long long p = okay::textfind::ReplaceCurrent(text, (std::size_t)(ref < 0 ? 0 : ref), s_find, s_replace, s_findCase);
+                if (p >= 0) {
                     caret.replaceAll = text;
-                    s_findCursor = (int)(p + to.size());
+                    s_findCursor = (int)(p + (long long)std::strlen(s_replace));
                 }
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Replace the next match");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Replace the current match (the one the counter shows)");
             ImGui::SameLine();
             if (ImGui::Button("Replace All") && s_find[0]) {
-                std::string text = buf.data(), from = s_find, to = s_replace;
-                int n = 0;
-                for (std::size_t p = text.find(from); p != std::string::npos && !from.empty();
-                     p = text.find(from, p + to.size())) { text.replace(p, from.size(), to); ++n; }
+                std::string text = buf.data();
+                int n = (int)okay::textfind::ReplaceAll(text, s_find, s_replace, s_findCase);
                 if (n > 0) caret.replaceAll = text;
                 ConsoleLog("Replaced " + std::to_string(n) + " occurrence" + (n == 1 ? "" : "s"));
             }
@@ -16527,17 +16525,17 @@ void DrawScriptEditor(EditorState& ed) {
             // Highlight every find match while the bar is open (translucent tint over
             // the glyphs; the current selection is drawn by the widget itself).
             if (s_showFind && s_find[0]) {
-                std::string needle = s_find;
-                std::size_t nlen = needle.size();
-                auto lower = [](char c2) { return (char)std::tolower((unsigned char)c2); };
+                // The same matches the counter counts (okay::textfind, same Match case setting).
+                const std::size_t nlen = std::strlen(s_find);
                 const char* t = buf.data();
+                const std::vector<std::size_t> hits = okay::textfind::FindAll(t, s_find, s_findCase);
+                std::size_t hi = 0;
                 int ln = 0, col = 0;
-                for (int i = 0; t[i]; ) {
+                for (int i = 0; t[i] && hi < hits.size(); ) {
                     if (t[i] == '\n') { ++ln; col = 0; ++i; continue; }
-                    bool match = true;
-                    for (std::size_t k = 0; k < nlen; ++k)
-                        if (!t[i + k] || lower(t[i + k]) != lower(needle[k])) { match = false; break; }
+                    const bool match = (std::size_t)i == hits[hi];
                     if (match) {
+                        ++hi;
                         ImVec2 a(textX + col * chW, corg.y + ln * rowH);
                         fdl->AddRectFilled(a, ImVec2(a.x + nlen * chW, a.y + rowH), IM_COL32(180, 160, 60, 55));
                         fdl->AddRect(a, ImVec2(a.x + nlen * chW, a.y + rowH), IM_COL32(200, 180, 80, 120));

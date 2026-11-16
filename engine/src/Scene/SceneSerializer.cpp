@@ -1404,6 +1404,15 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << v->snowColor.r << " " << v->snowColor.g << " " << v->snowColor.b
             << " " << v->textureTiling << " " << Quote(v->texture)
             << " " << v->EncodeDensity() << "\n";
+        // Materials (optional records after the terrain, so a build that does not know them keeps them as unknown records)
+        if (v->UseMaterials()) {
+            out << "  voxelmats " << v->materials.size() << " " << v->EncodeMaterials() << "\n";
+            for (const auto& m : v->materials)
+                out << "  voxelmat " << Quote(m.name) << " " << m.color.r << " " << m.color.g << " " << m.color.b << " " << m.color.a
+                    << " " << m.hardness << " " << m.density << " " << (m.loose ? 1 : 0) << " " << Quote(m.drop) << " " << m.dropPerM3
+                    << " " << Quote(m.texture) << " " << Quote(m.digSound)
+                    << " " << m.particle.r << " " << m.particle.g << " " << m.particle.b << "\n";
+        }
     }
     for (auto* vd : go->GetComponents<VoxelDigger>()) {
         out << "  voxeldigger " << (int)vd->mode << " " << vd->button
@@ -1411,7 +1420,11 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             << " " << vd->range << " " << (vd->showBrush ? 1 : 0)
             << " " << vd->brushColor.r << " " << vd->brushColor.g
             << " " << vd->brushColor.b << " " << vd->brushColor.a
-            << " " << vd->addButton << "\n";
+            << " " << vd->addButton
+            << " " << (int)vd->collect << " " << (vd->needsMaterial ? 1 : 0) << " " << (vd->creative ? 1 : 0) << " " << vd->addMaterial
+            << " " << vd->power << " " << vd->hardnessScale << " " << (int)vd->shape << " " << vd->depthLimit << " " << vd->protectBelow
+            << " " << (vd->snapToGrid ? 1 : 0) << " " << vd->debrisMax << " " << vd->debrisLife << " " << (vd->slump ? 1 : 0)
+            << " " << (vd->collapse ? 1 : 0) << " " << (vd->giveItems ? 1 : 0) << " " << Quote(vd->hudTarget) << "\n";
     }
     for (auto* pm : go->GetComponents<PauseMenu>()) {
         out << "  pausemenu " << (int)(unsigned char)pm->toggleKey
@@ -7452,6 +7465,37 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     vd->button = btn; vd->key = (char)k; vd->showBrush = (sb != 0);
                     in >> std::ws;
                     if (std::isdigit(in.peek()) || in.peek() == '-') in >> vd->addButton;
+                    in >> std::ws;
+                    if (std::isdigit(in.peek()) || in.peek() == '-') {   // real-life options (optional: older scenes end above)
+                        int col = 0, nm = 0, cr = 0, shp = 0, sn = 0, sl = 0, co = 0, gi = 0;
+                        in >> col >> nm >> cr >> vd->addMaterial >> vd->power >> vd->hardnessScale >> shp >> vd->depthLimit >> vd->protectBelow
+                           >> sn >> vd->debrisMax >> vd->debrisLife >> sl >> co >> gi;
+                        vd->hudTarget = ReadQuoted(in);
+                        vd->collect = (VoxelDigger::Collect)std::max(0, std::min(3, col));
+                        vd->needsMaterial = nm != 0; vd->creative = cr != 0; vd->snapToGrid = sn != 0;
+                        vd->shape = (VoxelTerrain::EditOptions::Shape)std::max(0, std::min(3, shp));
+                        vd->slump = sl != 0; vd->collapse = co != 0; vd->giveItems = gi != 0;
+                    }
+                } else if (field == "voxelmats") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        std::size_t n = 0; std::string blob; in >> n >> blob;
+                        v->DecodeMaterials(blob); v->matCountExpected_ = n;
+                    }
+                } else if (field == "voxelmat") {
+                    if (auto* v = LastOf(go->GetComponents<VoxelTerrain>())) {
+                        if (v->materials.size() >= 255) { /* ignore the rest */ }
+                        else {
+                            VoxelTerrain::VoxelMaterial m; int lo = 0;
+                            m.name = ReadQuoted(in);
+                            in >> m.color.r >> m.color.g >> m.color.b >> m.color.a >> m.hardness >> m.density >> lo;
+                            m.loose = lo != 0; m.drop = ReadQuoted(in); in >> m.dropPerM3;
+                            m.texture = ReadQuoted(in); m.digSound = ReadQuoted(in);
+                            in >> m.particle.r >> m.particle.g >> m.particle.b;
+                            if (v->materials.empty() || !v->loadedMaterialTable_) { v->materials.clear(); v->loadedMaterialTable_ = true; }
+                            v->materials.push_back(m);
+                            if (v->materials.size() == v->matCountExpected_) v->Apply();   // the table is complete: colour the surface by material
+                        }
+                    }
                 } else if (field == "pausemenu") {
                     auto* pm = go->AddComponent<PauseMenu>();
                     int tk = 27, sr = 1, sq = 1;

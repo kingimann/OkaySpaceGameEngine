@@ -129,6 +129,94 @@ public:
     /// it doesn't see cave floors beneath an overhang.)
     bool  SurfaceY(float lx, float lz, float& outY) const;
 
+    // ---- Materials and real-life digging (docs/terrain_water.md, "Materials") --------------------------------
+    /// What a kind of ground is made of. A terrain with materials keeps one byte per voxel naming its entry here.
+    struct VoxelMaterial {
+        std::string name = "Dirt";
+        Color  color = Color::FromBytes(112, 86, 60);
+        std::string texture;          ///< optional picture (not drawn yet; kept for scenes and scripts)
+        float  hardness = 1.0f;       ///< how long it takes to dig (1 = dirt; stone 4). A tool needs `power` >= this
+        float  density = 1500.0f;     ///< kilograms per cubic metre (a debris piece weighs volume x density)
+        bool   loose = false;         ///< sand and dirt slump to an angle of repose after a dig
+        std::string drop;             ///< inventory item a cubic metre turns into ("" = none)
+        float  dropPerM3 = 10.0f;     ///< how many of that item one cubic metre gives
+        std::string digSound;         ///< clip played while digging it (a script or the digger's AudioSource can use it)
+        Color  particle = Color::FromBytes(130, 104, 78);   ///< colour of the dust and debris
+    };
+    std::vector<VoxelMaterial> materials;       ///< the table (empty until EnableMaterials)
+    std::size_t matCountExpected_ = 0;          ///< (scene loader)
+    bool loadedMaterialTable_ = false;          ///< (scene loader: the first `voxelmat` record replaces the default table)
+    std::vector<unsigned char> material;        ///< one id per voxel, same order as `density`; empty = materials off
+    bool UseMaterials() const { return !material.empty() && !materials.empty(); }
+    /// dirt, grass, sand, clay, stone, ore, snow (ids 0..6)
+    static std::vector<VoxelMaterial> DefaultMaterials();
+    /// Turn materials on: the default table if there is none, every solid voxel `fillId`.
+    void EnableMaterials(int fillId = 0);
+    void DisableMaterials() { material.clear(); mcAllDirty_ = true; }
+    int  MaterialIndex(const std::string& name) const;
+    int  MaterialAt(int x, int y, int z) const { return (UseMaterials() && InBounds(x, y, z)) ? (int)material[Index(x, y, z)] : 0; }
+    /// How the world generator layers the ground: grass on gentle top soil, dirt below it, clay lenses, stone deeper
+    /// with ore pockets, sand low down, snow high up, bare stone on steep slopes.
+    struct LayerRules {
+        float topsoil = 0.6f, dirtDepth = 3.0f;       ///< metres of grass / dirt under the surface
+        float stoneSlope = 0.65f;                     ///< steepness (0..1) above which the surface is stone
+        float sandBelow = -1.0f;                      ///< local height under which the top is sand (-1 = 12% of the height)
+        float snowAbove = -1.0f;                      ///< local height over which the top is snow (-1 = snowLevel)
+        float oreAmount = 0.06f, clayAmount = 0.08f;  ///< share of the stone / dirt that is ore / clay
+    };
+    void GenerateMaterials(unsigned seed, const LayerRules& rules);
+    void GenerateMaterials(unsigned seed) { GenerateMaterials(seed, LayerRules{}); }
+    /// Solid volume in cubic metres: every voxel counts the fraction of itself that lies under the surface.
+    double SolidVolume() const;
+
+    /// Options for Edit (the brush with all its extras). The defaults make Edit act exactly like Dig / Add.
+    struct EditOptions {
+        enum class Shape { Sphere, Cube, Cylinder, Plane };
+        Shape shape = Shape::Sphere;
+        float hardnessScale = 1.0f;     ///< > 1 digs everything slower
+        float power = 1.0e9f;           ///< tool power: a material with `hardness` above this cannot be dug
+        int   addMaterial = -1;         ///< material given to voxels that become solid (-1 = leave them)
+        float protectBelowY = -1.0f;    ///< local height under which nothing can be dug (bedrock); -1 = off
+        float maxDepth = -1.0f;         ///< do not dig deeper than this under `depthOriginY`; -1 = off
+        float depthOriginY = 0.0f;
+        bool  snap = false;             ///< centre the brush on the nearest voxel
+    };
+    struct EditResult {
+        bool changed = false;
+        double removed = 0.0, added = 0.0;            ///< cubic metres taken out / put in
+        std::vector<double> removedBy;                ///< removed volume per material id (index 0 when materials are off)
+    };
+    EditResult Edit(const Vec3& local, float radius, float amount, const EditOptions& opts);
+    /// Put `volume` cubic metres of `materialId` back around a point (steps until it is in). Returns what went in.
+    double AddVolume(const Vec3& local, double volume, int materialId, float radius = 1.2f);
+
+    /// Loose materials (sand, dirt) near the last edits slide down to an angle of repose: at most `maxMoves` voxels move
+    /// per call, only inside the edit box, no volume is lost. Returns how many moved.
+    int Slump(int maxMoves);
+
+    /// A solid piece that has no way to the ground (smaller than `minVoxels` is a crumb; every piece counts here).
+    struct Piece {
+        std::vector<int> cells;       ///< grid indices
+        std::vector<float> dens;      ///< the density each cell had (the field itself is air there once the piece is cut out)
+        double volume = 0.0;
+        int material = 0;             ///< the most common material
+        Vec3 lo{0, 0, 0}, hi{0, 0, 0};///< local box
+    };
+    /// Cut loose pieces out of the field (their cells become air) and return them. Starts from the edited cells, as
+    /// RemoveFloatersEdited does; a piece touching the floor never is one.
+    std::vector<Piece> ExtractFloaters(int maxPieces = 8);
+    /// The surface of one piece as a mesh in the terrain's local space.
+    Mesh PieceMesh(const Piece& p) const;
+
+    /// One stroke can be undone as a whole. BeginStroke starts recording (and forgets the previous stroke).
+    void BeginStroke();
+    void EndStroke() { strokeOpen_ = false; }
+    bool UndoStroke();
+    bool CanUndo() const { return !strokeLog_.empty(); }
+
+    std::string EncodeMaterials() const;
+    bool DecodeMaterials(const std::string& b64);
+
     // ---- Rendering -----------------------------------------------------
     /// Marching-cubes mesh of the iso surface (smooth, with gradient normals).
     Mesh BuildMesh() const;
@@ -221,6 +309,12 @@ private:
     bool editAny_ = false;
     int  editMin_[3] = {0, 0, 0}, editMax_[3] = {-1, -1, -1};
     bool floatersSwept_ = false;
+    bool strokeOpen_ = false;
+    struct StrokeCell { int idx; float density; unsigned char material; };
+    std::vector<StrokeCell> strokeLog_;
+    std::vector<unsigned char> strokeSeen_;
+    unsigned matRev_ = 0;                            ///< changes when the material table does
+    void LogStroke(int idx);
 
     /// A density write at this cell changes every cube whose corner OR normal sampling reads it: a vertex
     /// normal is a central difference half a cell either side, which reaches two cells below and one above.

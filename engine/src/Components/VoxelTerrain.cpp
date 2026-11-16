@@ -817,6 +817,7 @@ void VoxelTerrain::AppendCubes(Mesh& m, int x0, int y0, int z0, int x1, int y1, 
     const float* dens = density.data();
     const std::ptrdiff_t sy = nx, sz = (std::ptrdiff_t)nx * ny;
     const int gnx = nx, gny = ny, gnz = nz;
+    const bool useMat = UseMaterials();
 
     // Trilinear density at a local-space point: SampleDensity's arithmetic exactly.
     auto sample = [&](float lx, float ly, float lz) -> float {
@@ -914,7 +915,14 @@ void VoxelTerrain::AppendCubes(Mesh& m, int x0, int y0, int z0, int x1, int y1, 
                     m.uvs.push_back({b.x * 0.25f, b.z * 0.25f});
                     m.uvs.push_back({c.x * 0.25f, c.z * 0.25f});
                     m.triangles.push_back(base); m.triangles.push_back(base + 1); m.triangles.push_back(base + 2);
-                    if (autoColor) {
+                    if (useMat) {
+                        // the face takes the colour of the most solid corner of its cube
+                        const std::ptrdiff_t offs[8] = {0, 1, sy + 1, sy, sz, sz + 1, sz + sy + 1, sz + sy};
+                        int bi = 0; for (int i = 1; i < 8; ++i) if (val[i] > val[bi]) bi = i;
+                        const std::size_t mi = (std::size_t)((p - dens) + offs[bi]);
+                        const unsigned char id = material[mi];
+                        m.triColors.push_back(id < materials.size() ? materials[id].color : color);
+                    } else if (autoColor) {
                         Vec3 ctr{(a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3, (a.z + b.z + c.z) / 3};
                         Vec3 fn{(na.x + nb.x + nc.x) / 3, (na.y + nb.y + nc.y) / 3, (na.z + nb.z + nc.z) / 3};
                         m.triColors.push_back(faceColor(ctr, fn));
@@ -1044,6 +1052,8 @@ unsigned VoxelTerrain::MeshStamp() const {
     mix(rockColor.r); mix(rockColor.g); mix(rockColor.b);
     mix(snowColor.r); mix(snowColor.g); mix(snowColor.b);
     h ^= autoColor ? 1u : 0u;
+    h = h * 16777619u ^ matRev_;
+    h ^= UseMaterials() ? 2u : 0u;
     return h;
 }
 
@@ -1292,7 +1302,7 @@ void VoxelTerrain::Apply() {
                     if (hint) {
                         fresh.vertices.reserve(hint + hint / 4); fresh.normals.reserve(hint + hint / 4);
                         fresh.uvs.reserve(hint + hint / 4); fresh.triangles.reserve(hint + hint / 4);
-                        if (autoColor) fresh.triColors.reserve((hint + hint / 4) / 3);
+                        if (autoColor || UseMaterials()) fresh.triColors.reserve((hint + hint / 4) / 3);
                     }
                     if (oldPath) AppendCubesReference(fresh, cx * kChunk, cy * kChunk, cz * kChunk, x1, y1, z1);
                     else         AppendCubes(fresh, cx * kChunk, cy * kChunk, cz * kChunk, x1, y1, z1);

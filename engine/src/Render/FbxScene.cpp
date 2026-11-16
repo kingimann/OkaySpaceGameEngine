@@ -105,7 +105,7 @@ void Decompose(const Mat& a, double t[3], double q[4], double s[3]) {
 }
 
 /// FBX stores a matrix as 16 doubles, column by column.
-Mat FromFbx16(const std::vector<double>& a) {
+Mat FromFbx16(const Array& a) {
     Mat r;
     if (a.size() < 16) return r;
     for (int c = 0; c < 4; ++c) for (int rr = 0; rr < 4; ++rr) r.m[rr * 4 + c] = a[(std::size_t)c * 4 + rr];
@@ -141,36 +141,41 @@ typedef std::int64_t Id;
 // Numbers from a file are doubles; ids go through the saturating cast in okay/Core/SafeCast.hpp (as do the other integer fields).
 inline Id ToId(double v) { return (Id)SafeInt64(v); }
 
+// An object's Properties70, read on demand: each lookup scans the P records (no map is built per object). The
+// rules are the ones the old per-object map followed: the LAST record with a name and at least one number wins, and
+// the numbers are the numeric properties from index 4 on, in order.
 struct Props {
-    std::unordered_map<std::string, std::vector<double>> num;
-    std::unordered_map<std::string, std::string> str;
-    bool Has(const char* n) const { return num.count(n) != 0; }
-    double Get(const char* n, double def) const { auto it = num.find(n); return it == num.end() || it->second.empty() ? def : it->second[0]; }
-    void Vec3(const char* n, double out[3], double def) const {
-        auto it = num.find(n);
-        for (int i = 0; i < 3; ++i) out[i] = (it != num.end() && it->second.size() > (std::size_t)i) ? it->second[(std::size_t)i] : def;
+    const Elem* p70 = nullptr;
+    const Elem* FindP(std::string_view n) const {
+        if (!p70) return nullptr;
+        const Elem* hit = nullptr;
+        for (const Elem& p : p70->children) {
+            if (p.props.size() < 5 || p.name != "P" || p.props[0].type != 'S' || p.props[0].s != n) continue;
+            for (std::size_t i = 4; i < p.props.size(); ++i) if (p.props[i].IsNumber()) { hit = &p; break; }
+        }
+        return hit;
+    }
+    /// The first `k` numbers of the record (fewer if it has fewer); returns how many were found.
+    static int Numbers(const Elem* p, double* out, int k) {
+        int got = 0;
+        if (p) for (std::size_t i = 4; i < p->props.size() && got < k; ++i) if (p->props[i].IsNumber()) out[got++] = p->props[i].Num();
+        return got;
+    }
+    bool Has(std::string_view n) const { return FindP(n) != nullptr; }
+    double Get(std::string_view n, double def) const { double v; return Numbers(FindP(n), &v, 1) == 1 ? v : def; }
+    void Vec3(std::string_view n, double out[3], double def) const {
+        double v[3]; const int got = Numbers(FindP(n), v, 3);
+        for (int i = 0; i < 3; ++i) out[i] = i < got ? v[i] : def;
     }
 };
-void LoadProps(const Elem& e, Props& out) {
-    const Elem* t = e.Find("Properties70");
-    if (!t) return;
-    for (const Elem& p : t->children) {
-        if (p.name != "P" || p.props.empty() || p.props[0].type != 'S') continue;
-        std::vector<double> v;
-        for (std::size_t i = 4; i < p.props.size(); ++i) {
-            if (p.props[i].IsNumber()) v.push_back(p.props[i].Num());
-            else if (i == 4 && p.props[i].type == 'S') out.str[p.props[0].s] = p.props[i].s;
-        }
-        if (!v.empty()) out.num[p.props[0].s] = std::move(v);
-    }
-}
+void LoadProps(const Elem& e, Props& out) { out.p70 = e.Find("Properties70"); }
 
-std::string CleanName(const std::string& raw, const std::string& /*cls*/) {
+std::string_view CleanName(std::string_view raw) {
     // Binary files: "Name\0\1Class". ASCII files: "Class::Name".
     const std::size_t z = raw.find('\0');
-    if (z != std::string::npos) return raw.substr(0, z);
+    if (z != std::string_view::npos) return raw.substr(0, z);
     const std::size_t c = raw.find("::");
-    if (c != std::string::npos && c > 0 && c <= 24) {
+    if (c != std::string_view::npos && c > 0 && c <= 24) {
         bool word = true;
         for (std::size_t i = 0; i < c; ++i) { const char ch = raw[i]; if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'))) word = false; }
         if (word) return raw.substr(c + 2);
@@ -219,12 +224,12 @@ const PbrSet kPbrSets[] = {
 
 struct Obj {
     const Elem* e = nullptr;
-    std::string cls, name, sub;
+    std::string_view cls, name, sub;
     Props props;
 };
-struct Conn { Id child, parent; std::string prop; bool propLink; };
+struct Conn { Id child, parent; std::string_view prop; bool propLink; };
 
-std::string Base64Decode(const std::string& in) {
+std::string Base64Decode(std::string_view in) {
     static signed char tab[256]; static bool init = false;
     if (!init) { std::memset(tab, -1, sizeof(tab)); const char* a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; for (int i = 0; i < 64; ++i) tab[(unsigned char)a[i]] = (signed char)i; init = true; }
     std::string out; unsigned acc = 0; int bits = 0;
@@ -242,10 +247,10 @@ std::string Base64Decode(const std::string& in) {
 enum Mapping { kByPolyVert, kByVertex, kByPoly, kAllSame, kByEdge, kNoMap };
 struct Layer {
     Mapping map = kNoMap; bool indexed = false; int dim = 1;
-    const std::vector<double>* vals = nullptr; const std::vector<double>* idx = nullptr;
+    const Array* vals = nullptr; const Array* idx = nullptr;
     bool Ok() const { return map != kNoMap && vals; }
 };
-const std::vector<double>* ArrayOf(const Elem& e, const char* name) {
+const Array* ArrayOf(const Elem& e, const char* name) {
     const Elem* c = e.Find(name);
     return (c && !c->props.empty() && c->props[0].type == 'a') ? &c->props[0].arr : nullptr;
 }
@@ -258,7 +263,7 @@ Layer LoadLayer(const Elem& geo, const char* layerName, const char* valName, con
         if (!best || k < bestIdx) { best = &c; bestIdx = k; }
     }
     if (!best) return L;
-    std::string mp, ref;
+    std::string_view mp, ref;
     if (const Elem* m = best->Find("MappingInformationType")) if (!m->props.empty()) mp = m->props[0].s;
     if (const Elem* r = best->Find("ReferenceInformationType")) if (!r->props.empty()) ref = r->props[0].s;
     if (mp == "ByPolygonVertex") L.map = kByPolyVert;
@@ -391,7 +396,7 @@ struct Curve {
 struct CurveNode {
     int layer = -1;
     Id target = 0;
-    std::string prop;
+    std::string_view prop;
     double def[3] = {0, 0, 0};
     const Curve* curve[3] = {nullptr, nullptr, nullptr};
 };
@@ -417,7 +422,7 @@ struct Builder {
             if (e.props.empty() || !e.props[0].IsNumber()) continue;
             Obj ob; ob.e = &e; ob.cls = e.name;
             const Id id = ToId(e.props[0].Num());
-            if (e.props.size() > 1 && e.props[1].type == 'S') ob.name = CleanName(e.props[1].s, e.name);
+            if (e.props.size() > 1 && e.props[1].type == 'S') ob.name = CleanName(e.props[1].s);
             if (e.props.size() > 2 && e.props[2].type == 'S') ob.sub = e.props[2].s;
             LoadProps(e, ob.props);
             if (byId.count(id)) continue;   // duplicate id: first wins
@@ -446,7 +451,7 @@ struct Builder {
         sc.settings.frontAxis = std::clamp(SafeInt(gp.Get("FrontAxis", 2)), 0, 2); sc.settings.frontSign = gp.Get("FrontAxisSign", 1) < 0 ? -1 : 1;
         sc.settings.coordAxis = std::clamp(SafeInt(gp.Get("CoordAxis", 0)), 0, 2); sc.settings.coordSign = gp.Get("CoordAxisSign", 1) < 0 ? -1 : 1;
         sc.settings.unitScaleFactor = gp.Get("UnitScaleFactor", 1.0);
-        if (const Elem* h = doc.root.Find("FBXHeaderExtension")) if (const Elem* cr = h->Find("Creator")) if (!cr->props.empty()) sc.creator = cr->props[0].s;
+        if (const Elem* h = doc.root.Find("FBXHeaderExtension")) if (const Elem* cr = h->Find("Creator")) if (!cr->props.empty()) sc.creator = std::string(cr->props[0].s);
         if (!opt.convertToYUpMeters) { sc.settings.appliedScale = 1.0; return; }
         const int ua = sc.settings.upAxis, fa = sc.settings.frontAxis, ca = sc.settings.coordAxis;
         const bool okAxes = ua >= 0 && ua < 3 && fa >= 0 && fa < 3 && ca >= 0 && ca < 3 && ua != fa && ua != ca && fa != ca;
@@ -464,16 +469,16 @@ struct Builder {
     void Textures() {
         for (const Obj& o : objs) {
             if (o.cls != "Texture") continue;
-            Texture t; t.name = o.name;
-            if (const Elem* f = o.e->Find("FileName")) if (!f->props.empty()) t.fileName = f->props[0].s;
-            if (const Elem* f = o.e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = f->props[0].s;
+            Texture t; t.name = std::string(o.name);
+            if (const Elem* f = o.e->Find("FileName")) if (!f->props.empty()) t.fileName = std::string(f->props[0].s);
+            if (const Elem* f = o.e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = std::string(f->props[0].s);
             const Id id = ToId(o.e->props[0].Num());
             auto pit = parentsOf.find(id);   // Video -> Texture
             for (const Conn* c : childrenOf[id]) {   // children of the texture: Video
                 const Obj* v = Get(c->child);
                 if (!v || v->cls != "Video" || c->propLink) continue;
-                if (t.fileName.empty()) if (const Elem* f = v->e->Find("FileName")) if (!f->props.empty()) t.fileName = f->props[0].s;
-                if (t.relativeFileName.empty()) if (const Elem* f = v->e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = f->props[0].s;
+                if (t.fileName.empty()) if (const Elem* f = v->e->Find("FileName")) if (!f->props.empty()) t.fileName = std::string(f->props[0].s);
+                if (t.relativeFileName.empty()) if (const Elem* f = v->e->Find("RelativeFilename")) if (!f->props.empty()) t.relativeFileName = std::string(f->props[0].s);
                 if (const Elem* ct = v->e->Find("Content")) if (!ct->props.empty()) {
                     const Prop& p = ct->props[0];
                     if (p.type == 'R') t.content.assign(p.s.begin(), p.s.end());
@@ -505,7 +510,7 @@ struct Builder {
     void Materials() {
         for (const Obj& o : objs) {
             if (o.cls != "Material") continue;
-            Material m; m.name = o.name;
+            Material m; m.name = std::string(o.name);
             const Props& p = o.props;
             const char* dn = p.Has("DiffuseColor") ? "DiffuseColor" : (p.Has("Diffuse") ? "Diffuse" : nullptr);
             if (dn) { m.hasDiffuse = true; p.Vec3(dn, m.diffuse, 0.8); }
@@ -518,7 +523,7 @@ struct Builder {
                 m.hasRoughness = true; m.roughness = std::min(1.0, std::max(0.0, 1.0 - std::sqrt(sh) * 0.1));
             }
             std::string shadingModel;
-            if (const Elem* sm = o.e->Find("ShadingModel")) if (!sm->props.empty()) shadingModel = sm->props[0].s;
+            if (const Elem* sm = o.e->Find("ShadingModel")) if (!sm->props.empty()) shadingModel = std::string(sm->props[0].s);
             for (char& ch : shadingModel) ch = (char)std::tolower((unsigned char)ch);
             if (shadingModel == "lambert" || shadingModel == "phong") m.shaderSet = shadingModel;
             // PBR property sets written by modelling tools (ufbx's "shader types"): found by the tool's class id, and
@@ -548,9 +553,9 @@ struct Builder {
                 }
             }
             const Id id = ToId(o.e->props[0].Num());
-            auto squash = [](const std::string& x) { std::string o; for (char ch : x) if (ch != '_') o += (char)std::tolower((unsigned char)ch); return o; };
+            auto squash = [](std::string_view x) { std::string o; for (char ch : x) if (ch != '_') o += (char)std::tolower((unsigned char)ch); return o; };
             // the slot's own name, or "<name>_map" (what 3ds Max connects textures to: "base_color_map" for the value "basecolor")
-            auto isOneOf = [&](const std::string& prop, const char* const* names, const std::string& pre) {
+            auto isOneOf = [&](std::string_view prop, const char* const* names, const std::string& pre) {
                 if (!names) return false;
                 const std::string want = squash(prop);
                 for (; *names; ++names) { const std::string n = squash(pre + *names); if (want == n || want == n + "map") return true; }
@@ -645,7 +650,7 @@ struct Builder {
             const Id id = order[i];
             SceneNode& n = sc.nodes[i];
             const Obj& o = objs[byId[id]];
-            n.name = o.name;
+            n.name = std::string(o.name);
             Id par = parentOf[id];
             n.parent = par == 0 ? -1 : nodeOfModel[par];
             if (n.parent >= (int)i) n.parent = -1;           // (cycle promoted) keep parents before children
@@ -672,9 +677,9 @@ struct Builder {
     // ---- meshes -------------------------------------------------------------
     bool BuildMesh(const Obj& geo, std::size_t modelNode, Mesh& m) {
         const Elem& g = *geo.e;
-        m.name = geo.name;
-        const std::vector<double>* verts = ArrayOf(g, "Vertices");
-        const std::vector<double>* pvi = ArrayOf(g, "PolygonVertexIndex");
+        m.name = std::string(geo.name);
+        const Array* verts = ArrayOf(g, "Vertices");
+        const Array* pvi = ArrayOf(g, "PolygonVertexIndex");
         if (!verts || !pvi) return true;   // an empty mesh: nothing to emit
         const std::size_t ncp = verts->size() / 3;
         m.controlPoints = (std::uint32_t)std::min<std::size_t>(ncp, 0xFFFFFFFFu);
@@ -698,7 +703,7 @@ struct Builder {
             if (start < pvi->size()) faces.push_back({start, pvi->size() - start});   // unterminated last polygon
         }
         std::vector<int> edgeOfCorner;
-        if (const std::vector<double>* ed = ArrayOf(g, "Edges")) {
+        if (const Array* ed = ArrayOf(g, "Edges")) {
             edgeOfCorner.assign(pvi->size(), -1);
             for (std::size_t e = 0; e < ed->size(); ++e) { const double v = (*ed)[e]; if (v >= 0 && v < (double)pvi->size()) edgeOfCorner[(std::size_t)v] = (int)e; }
         }
@@ -809,10 +814,10 @@ struct Builder {
                     // `Transform` is the mesh node's matrix relative to the bone at bind time (what exporters
                     // such as Blender write; TransformLink, the bone's world bind matrix, is not needed).
                     Mat transform;
-                    if (const std::vector<double>* a = ArrayOf(*cl->e, "Transform")) transform = FromFbx16(*a);
+                    if (const Array* a = ArrayOf(*cl->e, "Transform")) transform = FromFbx16(*a);
                     cluster.geometryToBone = conv.Scaled(Mul(transform, g2n));
-                    const std::vector<double>* ix = ArrayOf(*cl->e, "Indexes");
-                    const std::vector<double>* wt = ArrayOf(*cl->e, "Weights");
+                    const Array* ix = ArrayOf(*cl->e, "Indexes");
+                    const Array* wt = ArrayOf(*cl->e, "Weights");
                     if (ix && wt) for (std::size_t k = 0; k < std::min(ix->size(), wt->size()); ++k) {
                         const double v = (*ix)[k];
                         if (v >= 0 && v < (double)ncp && std::isfinite((*wt)[k])) m.skinWeights[(std::size_t)v].push_back({ci, (float)(*wt)[k]});
@@ -826,13 +831,13 @@ struct Builder {
                 for (const Conn* cc : childrenOf[ToId(d->e->props[0].Num())]) {
                     const Obj* ch = Get(cc->child);
                     if (!ch || ch->cls != "Deformer" || ch->sub != "BlendShapeChannel" || cc->propLink) continue;
-                    BlendChannel bc; bc.name = ch->name; bc.weight = ch->props.Get("DeformPercent", 0.0) * 0.01;
+                    BlendChannel bc; bc.name = std::string(ch->name); bc.weight = ch->props.Get("DeformPercent", 0.0) * 0.01;
                     const Obj* shape = nullptr;
                     for (const Conn* sc2 : childrenOf[ToId(ch->e->props[0].Num())]) { const Obj* s = Get(sc2->child); if (s && s->cls == "Geometry" && !sc2->propLink) shape = s; }   // last = full weight
                     if (shape) {
-                        const std::vector<double>* ix = ArrayOf(*shape->e, "Indexes");
-                        const std::vector<double>* dv = ArrayOf(*shape->e, "Vertices");
-                        const std::vector<double>* dnm = ArrayOf(*shape->e, "Normals");
+                        const Array* ix = ArrayOf(*shape->e, "Indexes");
+                        const Array* dv = ArrayOf(*shape->e, "Vertices");
+                        const Array* dnm = ArrayOf(*shape->e, "Normals");
                         if (ix && dv) {
                             const std::size_t cnt = std::min(ix->size(), dv->size() / 3);
                             const bool hasN = dnm && dnm->size() >= cnt * 3 && cnt > 0;
@@ -878,7 +883,7 @@ struct Builder {
     }
 
     // ---- animation ----------------------------------------------------------
-    struct Layr { Id id; std::string name; double weight = 100; int blendMode = 0; };
+    struct Layr { Id id; std::string_view name; double weight = 100; int blendMode = 0; };
     std::vector<Curve> curveStore;
 
     bool Animation() {
@@ -901,24 +906,25 @@ struct Builder {
         for (const Obj& o : objs) {
             if (o.cls != "AnimationCurve") continue;
             Curve c;
-            const std::vector<double>* kt = ArrayOf(*o.e, "KeyTime");
-            const std::vector<double>* kv = ArrayOf(*o.e, "KeyValueFloat");
+            const Array* kt = ArrayOf(*o.e, "KeyTime");
+            const Array* kv = ArrayOf(*o.e, "KeyValueFloat");
             if (!kv) kv = ArrayOf(*o.e, "KeyValueDouble");
             if (!kt || !kv) continue;
             const std::size_t n = std::min(kt->size(), kv->size());
             if (n > opt.limits.maxAnimKeys - totalKeys) return Fail("too many animation keys");
             totalKeys += n;
-            const std::vector<double>* fl = ArrayOf(*o.e, "KeyAttrFlags");
-            const std::vector<double>* da = ArrayOf(*o.e, "KeyAttrDataFloat");
-            std::vector<double> daBits;
+            const Array* fl = ArrayOf(*o.e, "KeyAttrFlags");
+            const Array* da = ArrayOf(*o.e, "KeyAttrDataFloat");
+            std::vector<double> daBits; Array daBitsArr;
             if (da && !doc.binary && doc.version >= 7200) {
                 // ASCII files from 7.2 on print this array as integers: the 32-bit patterns of the floats (slopes,
                 // and packed weights/velocities). Binary files carry real floats; see the same rule in ufbx.
                 daBits.reserve(da->size());
-                for (double d : *da) { const std::uint32_t u = (d > -4.3e9 && d < 4.3e9) ? (std::uint32_t)(std::int64_t)d : 0u; float f; std::memcpy(&f, &u, 4); daBits.push_back((double)f); }
-                da = &daBits;
+                for (std::size_t k = 0; k < da->size(); ++k) { const double d = (*da)[k]; const std::uint32_t u = (d > -4.3e9 && d < 4.3e9) ? (std::uint32_t)(std::int64_t)d : 0u; float f; std::memcpy(&f, &u, 4); daBits.push_back((double)f); }
+                daBitsArr.type = 'd'; daBitsArr.count = (std::uint32_t)daBits.size(); daBitsArr.data = (const std::uint8_t*)daBits.data();
+                da = &daBitsArr;
             }
-            const std::vector<double>* rc = ArrayOf(*o.e, "KeyAttrRefCount");
+            const Array* rc = ArrayOf(*o.e, "KeyAttrRefCount");
             std::vector<std::size_t> seg(n, 0);
             if (rc) { std::size_t s = 0, left = rc->empty() ? n : (std::size_t)std::max(0.0, (*rc)[0]); for (std::size_t i = 0; i < n; ++i) { while (left == 0 && s + 1 < rc->size()) { ++s; left = (std::size_t)std::max(0.0, (*rc)[s]); } seg[i] = s; if (left) --left; } }
             double prev = -1e300;
@@ -999,7 +1005,7 @@ struct Builder {
                 const double a = st.props.Get("LocalStart", 0.0) / kKTimePerSec, b = st.props.Get("LocalStop", 0.0) / kKTimePerSec;
                 if (std::isfinite(a) && std::isfinite(b) && b > a) { t0 = a; t1 = b; }
             }
-            Clip clip; clip.name = st.name;
+            Clip clip; clip.name = std::string(st.name);
             const double dur = t1 - t0;
             std::size_t samples = SafeSize(std::max(1.0, std::ceil(dur * opt.bakeRate)));   // a hostile LocalStop makes dur huge: saturate, then the limits below apply
             if (samples >= opt.limits.maxBakedSamples) samples = opt.limits.maxBakedSamples - 1;   // (not samples + 1 > max: that wraps for a saturated count)

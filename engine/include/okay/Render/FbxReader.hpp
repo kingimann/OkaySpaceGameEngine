@@ -19,7 +19,9 @@
 // ---------------------------------------------------------------------------
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace okay {
@@ -46,29 +48,97 @@ struct Limits {
 };
 
 // ---- Layer 1: the element tree -------------------------------------------
+//
+// The tree does not copy the file: names, strings, raw blobs and uncompressed binary arrays are views into the
+// bytes given to Parse(), so those bytes must stay alive (and unchanged) as long as the Document is used.
+// LoadMemory / LoadFile keep them alive while they build the Scene. Only zlib arrays (inflated) and ASCII arrays
+// (parsed numbers) are stored in the Document itself. Every element and property sits in two flat arrays of the
+// Document (one allocation each, grown by doubling), not in a vector per element.
+
+/// A numeric array as the file stores it: little-endian elements of one type, read on demand (no conversion to
+/// double up front, so a float array stays 4 bytes per number).
+struct Array {
+    char type = 0;                 ///< 'd' f64, 'f' f32, 'l' i64, 'i' i32, 'b' bool (byte != 0), 'c' u8
+    std::uint32_t count = 0;
+    const std::uint8_t* data = nullptr;   ///< count elements, unaligned
+    std::size_t size() const { return count; }
+    bool empty() const { return count == 0; }
+    /// Element k as a double (exactly what the reader used to store: (double)value, bool as 0 / 1).
+    double operator[](std::size_t k) const {
+        const std::uint8_t* q = data;
+        switch (type) {
+            case 'd': { double v; std::memcpy(&v, q + k * 8, 8); return v; }
+            case 'f': { float v; std::memcpy(&v, q + k * 4, 4); return (double)v; }
+            case 'i': { std::int32_t v; std::memcpy(&v, q + k * 4, 4); return (double)v; }
+            case 'l': { std::int64_t v; std::memcpy(&v, q + k * 8, 8); return (double)v; }
+            case 'b': return q[k] != 0 ? 1.0 : 0.0;
+            default:  return (double)q[k];   // 'c'
+        }
+    }
+};
 
 struct Prop {
     char type = 0;                 ///< binary type letter: Y C I F D L S R, or 'a' = numeric array
     std::int64_t i = 0;            ///< Y C I L
     double d = 0;                  ///< F D
-    std::string s;                 ///< S R (raw bytes for R)
-    std::vector<double> arr;       ///< every numeric array (f d l i b), as doubles
+    std::string_view s;            ///< S R (raw bytes for R); a view into the parsed bytes
+    Array arr;                     ///< numeric arrays (f d l i b c)
     bool IsNumber() const { return type == 'Y' || type == 'C' || type == 'I' || type == 'L' || type == 'F' || type == 'D'; }
     double Num() const { return (type == 'F' || type == 'D') ? d : (double)i; }
 };
 
+struct Elem;
+/// The properties of one element (a range of Document::props).
+struct PropList {
+    const Prop* p = nullptr; std::uint32_t n = 0;
+    std::size_t size() const { return n; }
+    bool empty() const { return n == 0; }
+    const Prop& operator[](std::size_t k) const { return p[k]; }
+    const Prop* begin() const { return p; }
+    const Prop* end() const { return p + n; }
+};
+/// The children of one element, linked first child -> next sibling.
+struct ElemList {
+    const Elem* first = nullptr;
+    struct It {
+        const Elem* e;
+        const Elem& operator*() const { return *e; }
+        const Elem* operator->() const { return e; }
+        It& operator++();
+        bool operator==(const It& o) const { return e == o.e; }
+        bool operator!=(const It& o) const { return e != o.e; }
+    };
+    It begin() const { return {first}; }
+    It end() const { return {nullptr}; }
+    bool empty() const { return first == nullptr; }
+};
+
 struct Elem {
-    std::string name;
-    std::vector<Prop> props;
-    std::vector<Elem> children;
+    std::string_view name;
+    PropList props;
+    ElemList children;
+    const Elem* next = nullptr;    ///< next sibling
+    // while parsing: indices into Document::elems / props (turned into the pointers above at the end)
+    std::uint32_t propBegin_ = 0, firstChild_ = 0xFFFFFFFFu, nextSibling_ = 0xFFFFFFFFu;
     const Elem* Find(const char* n) const;
 };
+inline ElemList::It& ElemList::It::operator++() { e = e->next; return *this; }
 
 struct Document {
     std::uint32_t version = 0;     ///< 7400, 7500, ... (0 for ASCII files without a header)
     bool binary = false;
     Elem root;                     ///< unnamed; its children are the top-level sections
     std::size_t elementCount = 0;
+    // storage (the pointers in the tree point into these)
+    std::vector<Elem> elems;
+    std::vector<Prop> props;
+    std::vector<std::vector<std::uint8_t>> inflated;   ///< decoded zlib arrays
+    std::vector<std::vector<double>> numbers;          ///< ASCII arrays
+    Document() = default;
+    Document(Document&&) = default;
+    Document& operator=(Document&&) = default;
+    Document(const Document&) = delete;
+    Document& operator=(const Document&) = delete;
 };
 
 bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std::string* err, const Limits& lim = Limits());

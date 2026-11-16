@@ -18,9 +18,37 @@ namespace okay {
 namespace fbx {
 
 const Elem* Elem::Find(const char* n) const {
-    for (const Elem& c : children) if (c.name == n) return &c;
+    const std::string_view key(n);
+    for (const Elem& c : children) if (c.name == key) return &c;
     return nullptr;
 }
+
+namespace {
+constexpr std::uint32_t kNone = 0xFFFFFFFFu;
+
+// Appends element `child` to the children of `parent` (parent == kNone: the root), keeping file order.
+struct Linker {
+    std::vector<Elem>& elems; Elem& root;
+    void Link(std::uint32_t parent, std::uint32_t& lastChild, std::uint32_t child) {
+        if (lastChild == kNone) (parent == kNone ? root : elems[parent]).firstChild_ = child;
+        else elems[lastChild].nextSibling_ = child;
+        lastChild = child;
+    }
+};
+
+// Turns the indices recorded while parsing into the pointers of the public tree. Run once, after the last element:
+// before that the flat arrays may still move.
+void Fixup(Document& d) {
+    Elem* const E = d.elems.data();
+    auto at = [&](std::uint32_t i) -> const Elem* { return i == kNone ? nullptr : E + i; };
+    for (Elem& e : d.elems) {
+        e.props.p = e.props.n ? d.props.data() + e.propBegin_ : nullptr;
+        e.children.first = at(e.firstChild_);
+        e.next = at(e.nextSibling_);
+    }
+    d.root.children.first = at(d.root.firstChild_);
+}
+} // namespace
 
 // ============================================================================
 // Inflate (RFC 1950 wrapper around RFC 1951 deflate)
@@ -38,38 +66,6 @@ bool Inflate(const std::uint8_t* data, std::size_t n, std::vector<std::uint8_t>&
 // Binary FBX
 // ============================================================================
 namespace {
-
-// Reads element k of a little-endian array of T stored at an unaligned address, as a double.
-template <class T> struct LoadIter {
-    using iterator_category = std::random_access_iterator_tag;
-    using value_type = double; using difference_type = std::ptrdiff_t; using pointer = const double*; using reference = double;
-    const std::uint8_t* p;
-    double operator*() const {
-        if constexpr (std::is_same_v<T, bool>) return *p != 0 ? 1.0 : 0.0;
-        else { T x; std::memcpy(&x, p, sizeof(T)); return (double)x; }
-    }
-    static constexpr std::size_t kSize = std::is_same_v<T, bool> ? 1 : sizeof(T);
-    LoadIter& operator++() { p += kSize; return *this; }
-    LoadIter operator++(int) { LoadIter r = *this; p += kSize; return r; }
-    LoadIter& operator--() { p -= kSize; return *this; }
-    LoadIter operator--(int) { LoadIter r = *this; p -= kSize; return r; }
-    LoadIter& operator-=(difference_type n) { p -= n * (difference_type)kSize; return *this; }
-    LoadIter operator-(difference_type n) const { LoadIter r = *this; r -= n; return r; }
-    LoadIter& operator+=(difference_type n) { p += n * (difference_type)kSize; return *this; }
-    LoadIter operator+(difference_type n) const { LoadIter r = *this; r += n; return r; }
-    difference_type operator-(const LoadIter& o) const { return (p - o.p) / (difference_type)kSize; }
-    double operator[](difference_type n) const { return *(*this + n); }
-    bool operator==(const LoadIter& o) const { return p == o.p; }
-    bool operator!=(const LoadIter& o) const { return p != o.p; }
-    bool operator<(const LoadIter& o) const { return p < o.p; }
-    bool operator>(const LoadIter& o) const { return p > o.p; }
-    bool operator<=(const LoadIter& o) const { return p <= o.p; }
-    bool operator>=(const LoadIter& o) const { return p >= o.p; }
-};
-template <class T> void Fill(std::vector<double>& out, const std::uint8_t* src, std::uint32_t cnt) {
-    const LoadIter<T> b{src};
-    out.assign(b, b + (std::ptrdiff_t)cnt);
-}
 
 struct Reader {
     const std::uint8_t* p; std::size_t n; const Limits* lim; Document* doc;
@@ -99,7 +95,7 @@ struct Reader {
                 std::uint32_t len; if (!need(4)) return Fail("short property");
                 std::memcpy(&len, p + pos, 4); pos += 4;
                 if (len > lim->maxStringBytes || !need(len)) return Fail("string runs past its record");
-                out.s.assign((const char*)p + pos, len); pos += len;
+                out.s = std::string_view((const char*)p + pos, len); pos += len;   // a view, not a copy
                 return true;
             }
             case 'f': case 'd': case 'l': case 'i': case 'b': case 'c': {
@@ -113,26 +109,19 @@ struct Reader {
                 if (raw > lim->maxArrayBytes || arrayBytes + raw > lim->maxArrayBytes) return Fail("arrays exceed the size limit");
                 if (!need(clen)) return Fail("array data runs past its record");
                 const std::uint8_t* src = p + pos;
-                std::vector<std::uint8_t> tmp;
                 if (enc == 0) {
                     if (clen != raw) return Fail("array length mismatch");
                 } else if (enc == 1) {
+                    std::vector<std::uint8_t> tmp;
                     if (!Inflate(src, clen, tmp, raw) || tmp.size() != raw) return Fail("bad compressed array");
-                    src = tmp.data();
+                    src = tmp.data();   // the vector's buffer does not move when the vector itself is moved below
+                    doc->inflated.push_back(std::move(tmp));
                 } else {
                     return Fail("unknown array encoding");
                 }
                 arrayBytes += raw;
-                // One allocation at the final size, each element converted as it is constructed (no zero-filled
-                // array that is then overwritten).
-                switch (t) {
-                    case 'd': Fill<double>(out.arr, src, cnt); break;
-                    case 'f': Fill<float>(out.arr, src, cnt); break;
-                    case 'l': Fill<std::int64_t>(out.arr, src, cnt); break;
-                    case 'i': Fill<std::int32_t>(out.arr, src, cnt); break;
-                    case 'c': Fill<std::uint8_t>(out.arr, src, cnt); break;   // byte array (written by newer SDKs, e.g. thumbnails)
-                    default:  Fill<bool>(out.arr, src, cnt); break;           // 'b': any non-zero byte is true
-                }
+                // Kept as the file stores it (no conversion): a view into the file, or into the inflated buffer.
+                out.arr.type = t; out.arr.count = cnt; out.arr.data = src;
                 out.type = 'a';
                 pos += clen;
                 return true;
@@ -141,8 +130,9 @@ struct Reader {
         }
     }
 
-    // Reads one record at `pos`. Returns 1 = element read, 0 = null terminator, -1 = error.
-    int ReadElem(std::size_t& pos, std::size_t parentEnd, Elem& e, std::size_t depth) {
+    // Reads one record at `pos` into a new element of doc->elems (its index in `idx`).
+    // Returns 1 = element read, 0 = null terminator, -1 = error.
+    int ReadElem(std::size_t& pos, std::size_t parentEnd, std::size_t depth, std::uint32_t& idx) {
         if (depth > lim->maxDepth) { Fail("element nesting too deep"); return -1; }
         const bool wide = version >= 7500;
         const std::size_t hdr = wide ? 25 : 13;
@@ -155,24 +145,29 @@ struct Reader {
         if (endOff > parentEnd || endOff < pos + hdr + nameLen) { Fail("record end offset out of range"); return -1; }
         if (++doc->elementCount > lim->maxElements) { Fail("too many elements"); return -1; }
         std::size_t q = pos + hdr;
-        e.name.assign((const char*)p + q, nameLen); q += nameLen;
+        idx = (std::uint32_t)doc->elems.size();
+        doc->elems.emplace_back();
+        doc->elems[idx].name = std::string_view((const char*)p + q, nameLen); q += nameLen;
         if (propLen > endOff - q) { Fail("property list longer than the record"); return -1; }
         if (nProps > propLen) { Fail("more properties than bytes"); return -1; }   // each property takes at least 1 byte
         const std::size_t propEnd = q + (std::size_t)propLen;
-        e.props.reserve((std::size_t)nProps);
+        const std::size_t firstProp = doc->props.size();
         for (std::uint64_t k = 0; k < nProps; ++k) {
-            Prop pr;
-            if (!ReadProp(q, propEnd, pr)) return -1;
-            e.props.push_back(std::move(pr));
+            doc->props.emplace_back();
+            if (!ReadProp(q, propEnd, doc->props.back())) return -1;
         }
         if (q != propEnd) { Fail("property list size mismatch"); return -1; }
+        doc->elems[idx].propBegin_ = (std::uint32_t)firstProp;
+        doc->elems[idx].props.n = (std::uint32_t)nProps;
         q = propEnd;
+        std::uint32_t last = kNone;
+        Linker link{doc->elems, doc->root};
         while (q < endOff) {
-            Elem c;
-            const int r = ReadElem(q, (std::size_t)endOff, c, depth + 1);
+            std::uint32_t c = kNone;
+            const int r = ReadElem(q, (std::size_t)endOff, depth + 1, c);
             if (r < 0) return -1;
             if (r == 0) break;
-            e.children.push_back(std::move(c));
+            link.Link(idx, last, c);
         }
         pos = (std::size_t)endOff;
         return 1;
@@ -192,14 +187,19 @@ bool ParseBinary(const std::uint8_t* data, std::size_t size, Document& out, std:
     out.binary = true;
     if (r.version < 7100 || r.version > 9999) return fail("unsupported FBX version " + std::to_string(r.version));
     std::size_t pos = 27;
+    std::uint32_t last = kNone;
+    Linker link{out.elems, out.root};
+    bool ok = true;
     while (pos < size) {
         // The file ends with a null record then a footer; stop at the null record.
-        Elem e;
-        const int rc = r.ReadElem(pos, size, e, 1);
-        if (rc < 0) return fail(r.err);
+        std::uint32_t idx = kNone;
+        const int rc = r.ReadElem(pos, size, 1, idx);
+        if (rc < 0) { ok = false; break; }
         if (rc == 0) break;
-        out.root.children.push_back(std::move(e));
+        link.Link(kNone, last, idx);
     }
+    Fixup(out);
+    if (!ok) return fail(r.err);
     return true;
 }
 
@@ -253,6 +253,88 @@ bool FastDecimal(const char* p, std::size_t n, double& out) {
     return true;
 }
 
+// The same conversion as FastDecimal, but it finds the end of the token itself (the first character that cannot
+// be part of a token), so an array value is read in one pass instead of a scan for its end and then a parse.
+// Returns the end of the token, or nullptr when FastDecimal would not take it (the caller then uses the general
+// path, which gives the same result as before for everything).
+inline bool IdentChar(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '|' || c == '-' || c == '.' || c == '+';
+}
+struct IdentTable {
+    bool t[256];
+    IdentTable() : t{} { for (int c = 0; c < 256; ++c) t[c] = IdentChar((unsigned char)c); }
+};
+const IdentTable kIdent;
+
+// Eight ASCII bytes at once (SWAR: plain 64-bit integer arithmetic). EightDigits tells whether all eight are '0'..'9'
+// (each byte is checked to be >= '0' by a subtraction and <= '9' by an addition whose high bit would show otherwise);
+// EightValue turns them into their value, first character most significant, by combining neighbours in three
+// multiply-and-shift steps (pairs, then fours, then the eight). Worked out here; FastDecimalScan was checked against
+// FastDecimal + strtod on millions of random tokens, and the digest of every ASCII file is unchanged.
+inline std::uint64_t Load8(const char* p) { std::uint64_t w; std::memcpy(&w, p, 8); return w; }   // little endian
+inline bool EightDigits(std::uint64_t w) {
+    return (((w - 0x3030303030303030ull) | (w + 0x4646464646464646ull)) & 0x8080808080808080ull) == 0;
+}
+inline std::uint64_t EightValue(std::uint64_t w) {
+    w -= 0x3030303030303030ull;                                    // bytes 0..9
+    w = ((w * (10 * 256 + 1)) >> 8) & 0x00FF00FF00FF00FFull;        // 4 numbers 0..99
+    w = ((w * (100 * 65536 + 1)) >> 16) & 0x0000FFFF0000FFFFull;    // 2 numbers 0..9999
+    return (w * (10000ull * 4294967296ull + 1)) >> 32;             // 0..99999999
+}
+
+const char* FastDecimalScan(const char* p, const char* end, double& out) {
+    static const double kPow10[23] = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15,
+                                      1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
+    // m holds the value of all digits so far (integer and fraction digits joined). FastDecimal refuses more than 15
+    // significant digits; m >= 10^15 is the same test (m has exactly as many digits as there are significant ones),
+    // and m never grows past 10^15 * 10 + 9 because the test runs after every digit.
+    const std::uint64_t kMax = 1000000000000000ull;
+    bool neg = false;
+    if (p < end && (*p == '+' || *p == '-')) { neg = *p == '-'; ++p; }
+    std::uint64_t m = 0; int scale = 0; bool any = false;
+    while (end - p >= 8 && EightDigits(Load8(p))) {
+        if (m >= 10000000ull) return nullptr;
+        m = m * 100000000ull + EightValue(Load8(p)); any = true; p += 8;
+        if (m >= kMax) return nullptr;
+    }
+    while (p < end && (unsigned)(*p - '0') < 10u) {
+        any = true;
+        m = m * 10 + (std::uint64_t)(*p - '0'); ++p;
+        if (m >= kMax) return nullptr;
+    }
+    if (p < end && *p == '.') {
+        ++p;
+        while (end - p >= 8 && EightDigits(Load8(p))) {
+            if (m >= 10000000ull) return nullptr;
+            m = m * 100000000ull + EightValue(Load8(p)); any = true; p += 8; scale -= 8;
+            if (m >= kMax) return nullptr;
+        }
+        while (p < end && (unsigned)(*p - '0') < 10u) {
+            any = true;
+            m = m * 10 + (std::uint64_t)(*p - '0'); ++p; --scale;
+            if (m >= kMax) return nullptr;
+        }
+    }
+    if (!any) return nullptr;
+    if (p < end && (*p == 'e' || *p == 'E')) {
+        ++p;
+        bool eneg = false;
+        if (p < end && (*p == '+' || *p == '-')) { eneg = *p == '-'; ++p; }
+        if (p >= end || (unsigned)(*p - '0') >= 10u) return nullptr;
+        int e = 0;
+        while (p < end && (unsigned)(*p - '0') < 10u) { if (e > 10000) return nullptr; e = e * 10 + (*p - '0'); ++p; }
+        scale += eneg ? -e : e;
+    }
+    if (p < end && kIdent.t[(unsigned char)*p]) return nullptr;   // the token goes on: not a plain decimal
+    double v = (double)m;
+    if (m != 0) {
+        if (scale < -22 || scale > 22) return nullptr;
+        v = scale < 0 ? v / kPow10[-scale] : v * kPow10[scale];
+    }
+    out = neg ? -v : v;
+    return p;
+}
+
 struct Text {
     const char* s; std::size_t n, pos = 0; const Limits* lim; Document* doc; std::string err;
     std::size_t arrayBytes = 0;
@@ -268,29 +350,47 @@ struct Text {
             else return;
         }
     }
-    static bool IsIdent(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '|' || c == '-' || c == '.' || c == '+'; }
+    static bool IsIdent(char c) { return kIdent.t[(unsigned char)c]; }
 
     bool ReadNumberOrIdent(Prop& out) {
         const std::size_t b = pos;
         while (pos < n && IsIdent(s[pos])) ++pos;
         if (pos == b) return Fail("unexpected character in ASCII FBX");
-        std::string tok(s + b, pos - b);
+        const char* t = s + b; const std::size_t len = pos - b;
+        // Fast paths, with the same result as the general rule below: a plain integer of up to 18 digits (what strtoll
+        // returns), and a plain decimal with a point or an exponent that FastDecimal converts exactly (what strtod
+        // returns).
+        {
+            std::size_t i = 0; bool neg = false;
+            if (t[0] == '+' || t[0] == '-') { neg = t[0] == '-'; i = 1; }
+            if (i < len && len - i <= 18) {
+                std::int64_t v = 0; std::size_t k = i;
+                while (k < len && t[k] >= '0' && t[k] <= '9') { v = v * 10 + (t[k] - '0'); ++k; }
+                if (k == len) { out.type = 'L'; out.i = neg ? -v : v; return true; }
+            }
+            bool pointOrExp = false;
+            for (std::size_t k = 0; k < len; ++k) if (t[k] == '.' || t[k] == 'e' || t[k] == 'E') { pointOrExp = true; break; }
+            double d;
+            if (pointOrExp && FastDecimal(t, len, d)) { out.type = 'D'; out.d = d; return true; }
+        }
+        std::string tok(t, len);
         char* end = nullptr;
         const double d = detail::StrToD(tok.c_str(), &end);
         if (end && *end == '\0' && !tok.empty() && (std::isdigit((unsigned char)tok[0]) || tok[0] == '-' || tok[0] == '+' || tok[0] == '.')) {
             if (tok.find_first_of(".eE") == std::string::npos) {
                 out.type = 'L'; out.i = std::strtoll(tok.c_str(), nullptr, 10);
             } else { out.type = 'D'; out.d = d; }
-        } else { out.type = 'S'; out.s = tok; }   // bare identifier (T, W, Y ...)
+        } else { out.type = 'S'; out.s = std::string_view(t, len); }   // bare identifier (T, W, Y ...)
         return true;
     }
     bool ReadString(Prop& out) {
         ++pos;   // opening quote
         const std::size_t b = pos;
-        while (pos < n && s[pos] != '"') ++pos;
+        const void* q = pos < n ? std::memchr(s + pos, '"', n - pos) : nullptr;
+        pos = q ? (std::size_t)((const char*)q - s) : n;
         if (pos >= n) return Fail("unterminated string");
         if (pos - b > lim->maxStringBytes) return Fail("string too long");
-        out.type = 'S'; out.s.assign(s + b, pos - b);
+        out.type = 'S'; out.s = std::string_view(s + b, pos - b);
         ++pos;
         return true;
     }
@@ -307,37 +407,56 @@ struct Text {
         ++pos;
         if (cnt * 8 > lim->maxArrayBytes || arrayBytes + cnt * 8 > lim->maxArrayBytes) return Fail("arrays exceed the size limit");
         out.type = 'a';
-        out.arr.reserve(cnt < (1u << 20) ? cnt : (1u << 20));
+        std::vector<double> vals;
+        vals.reserve(cnt < (1u << 20) ? cnt : (1u << 20));
+        const std::size_t cap = std::min<std::size_t>(lim->maxArrayBytes / 8, 0xFFFFFFFEu);
         for (;;) {
-            SkipSpace(true);
+            // spaces, line ends and commas between values (comments too, as SkipSpace does)
+            while (pos < n) {
+                const char c = s[pos];
+                if (c == ' ' || c == ',' || c == '\n' || c == '\r' || c == '\t') ++pos;
+                else if (c == ';') { while (pos < n && s[pos] != '\n') ++pos; }
+                else break;
+            }
             if (Cur() == '}') { ++pos; break; }
             if (Eof()) return Fail("unterminated array block");
-            if (Cur() == ',') { ++pos; continue; }
+            double d;
+            if (const char* e = FastDecimalScan(s + pos, s + n, d)) {   // the usual case: one pass over the number
+                pos = (std::size_t)(e - s);
+                vals.push_back(d);
+                if (vals.size() > cap) return Fail("arrays exceed the size limit");
+                continue;
+            }
             const std::size_t b = pos;
             while (pos < n && (IsIdent(s[pos]))) ++pos;
             if (pos == b) return Fail("bad value in array block");
-            double d;
             if (!FastDecimal(s + b, pos - b, d)) {
                 const std::string tok(s + b, pos - b);
                 char* end = nullptr;
                 d = detail::StrToD(tok.c_str(), &end);
                 if (!end || *end) return Fail("bad number in array block");
             }
-            out.arr.push_back(d);
-            if (out.arr.size() > lim->maxArrayBytes / 8) return Fail("arrays exceed the size limit");
+            vals.push_back(d);
+            if (vals.size() > cap) return Fail("arrays exceed the size limit");
         }
-        arrayBytes += out.arr.size() * 8;
+        arrayBytes += vals.size() * 8;
+        out.arr.type = 'd'; out.arr.count = (std::uint32_t)vals.size(); out.arr.data = (const std::uint8_t*)vals.data();
+        doc->numbers.push_back(std::move(vals));   // the buffer stays where it is
         return true;
     }
 
-    bool ReadElem(Elem& e, std::size_t depth) {
+    bool ReadElem(std::uint32_t& idx, std::size_t depth) {
         if (depth > lim->maxDepth) return Fail("element nesting too deep");
         if (++doc->elementCount > lim->maxElements) return Fail("too many elements");
         const std::size_t b = pos;
         while (pos < n && IsIdent(s[pos])) ++pos;
         if (pos == b || Cur() != ':') return Fail("expected 'Name:' in ASCII FBX");
-        e.name.assign(s + b, pos - b);
+        idx = (std::uint32_t)doc->elems.size();
+        doc->elems.emplace_back();
+        doc->elems[idx].name = std::string_view(s + b, pos - b);
         ++pos;
+        const std::size_t firstProp = doc->props.size();
+        std::size_t count = 0;
         for (;;) {
             SkipSpace(false);
             const char c = Cur();
@@ -345,23 +464,27 @@ struct Text {
             if (c == '{') break;
             if (c == '}') break;
             if (c == ',') { ++pos; SkipSpace(true); continue; }   // a comma continues onto the next line
-            Prop pr;
+            doc->props.emplace_back();
+            Prop& pr = doc->props.back();
             if (c == '"') { if (!ReadString(pr)) return false; }
             else if (c == '*') { if (!ReadArrayBlock(pr)) return false; }
             else if (!ReadNumberOrIdent(pr)) return false;
-            e.props.push_back(std::move(pr));
-            if (e.props.size() > lim->maxArrayBytes / 8) return Fail("too many properties");
+            if (++count > lim->maxArrayBytes / 8) return Fail("too many properties");
         }
+        doc->elems[idx].propBegin_ = (std::uint32_t)firstProp;
+        doc->elems[idx].props.n = (std::uint32_t)count;
         SkipSpace(true);
         if (Cur() == '{') {
             ++pos;
+            std::uint32_t last = kNone;
+            Linker link{doc->elems, doc->root};
             for (;;) {
                 SkipSpace(true);
                 if (Eof()) return Fail("unterminated '{' block");
                 if (Cur() == '}') { ++pos; break; }
-                Elem c;
+                std::uint32_t c = kNone;
                 if (!ReadElem(c, depth + 1)) return false;
-                e.children.push_back(std::move(c));
+                link.Link(idx, last, c);
             }
         }
         return true;
@@ -387,13 +510,18 @@ bool ParseAscii(const std::uint8_t* data, std::size_t size, Document& out, std::
         if (std::sscanf(hdr, "%d.%d", &a, &b) == 2 && a >= 0 && a <= 99999 && b >= 0 && b <= 9999)
             out.version = (std::uint32_t)(a * 1000 + b * 100);
     }
+    std::uint32_t last = kNone;
+    Linker link{out.elems, out.root};
+    bool ok = true;
     for (;;) {
         t.SkipSpace(true);
         if (t.Eof()) break;
-        Elem e;
-        if (!t.ReadElem(e, 1)) return fail(t.err);
-        out.root.children.push_back(std::move(e));
+        std::uint32_t idx = kNone;
+        if (!t.ReadElem(idx, 1)) { ok = false; break; }
+        link.Link(kNone, last, idx);
     }
+    Fixup(out);
+    if (!ok) return fail(t.err);
     return true;
 }
 

@@ -68,6 +68,9 @@ enum Mod : uint32_t { ModShift = 1, ModCtrl = 2, ModAlt = 4, ModGui = 8, ModCaps
 /// The pointer shapes an app can ask for (Backend::SetSystemCursor): the OS's own cursors, no images of ours.
 enum class SystemCursor { Arrow, TextInput, Hand, ResizeAll, ResizeNS, ResizeEW, ResizeNESW, ResizeNWSE, NotAllowed, Wait };
 
+/// How Window::Flash asks for attention: stop asking, flash once, or keep asking until the window has the focus.
+enum class FlashMode { Cancel, Briefly, UntilFocused };
+
 enum MouseButton : int { MouseLeft = 1, MouseMiddle = 2, MouseRight = 3, MouseX1 = 4, MouseX2 = 5 };
 /// Bit for a MouseButton in the mask returned by Backend::MouseState.
 constexpr uint32_t MouseMask(int button) { return 1u << (button - 1); }
@@ -192,6 +195,17 @@ public:
     virtual bool HasMouseFocus() const { return false; }
     /// Give this window the keyboard focus. False = refused (a hidden window cannot take it) or not supported here.
     virtual bool SetInputFocus() { return false; }
+
+    // ---- Attention and the input method (the launcher asked SDL_FlashWindow and SDL_SetTextInputRect) ----
+    /// Ask for the user's attention without taking the focus: the task-bar button flashes (Win32 FlashWindowEx), the
+    /// window manager marks the window urgent (X11 urgency hint; Briefly clears it again after about a second, UntilFocused
+    /// when the window gets the focus). False = not supported here.
+    virtual bool Flash(FlashMode m) { (void)m; return false; }
+    /// Where the text being typed is, in window pixels (the caret's top-left corner and the line's size): the input method's
+    /// composition and candidate windows open there (Win32 ImmSetCompositionWindow / ImmSetCandidateWindow, X11 the XIM
+    /// spot location when the input method draws next to the caret). False = not supported here, or the input method of
+    /// this window does not place its windows.
+    virtual bool SetTextInputArea(int x, int y, int w, int h) { (void)x; (void)y; (void)w; (void)h; return false; }
 };
 
 /// A non-owning Window over an SDL_Window* that the app made itself with SDL_CreateWindow, so the Window methods (and the state
@@ -357,6 +371,13 @@ public:
     /// Read the OS events that are waiting without taking one: window state and focus are current afterwards, and PollEvent still
     /// returns every event (SDL_PumpEvents).
     virtual void PumpEvents() {}
+
+    /// Windows only: a function called with every window message (HWND, message, wParam, lParam) of this backend's windows,
+    /// before the backend handles it (SDL_SetWindowsMessageHook): the launcher reads its tray icon's clicks and the message a
+    /// second launcher sends this way. The own backend calls it from its window procedure, so it sees sent and posted
+    /// messages; the sdl2 backend hands it to SDL. Null removes it. False = not supported here (every other platform).
+    using NativeMessageHook = void (*)(void* user, void* hwnd, unsigned int msg, uint64_t wParam, int64_t lParam);
+    virtual bool SetNativeMessageHook(NativeMessageHook hook, void* user) { (void)hook; (void)user; return false; }
 };
 
 // ---- Free functions on the default backend ------------------------------------

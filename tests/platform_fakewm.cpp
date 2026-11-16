@@ -13,6 +13,7 @@
 #define OKAY_FAKEWM_XLIB 1
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
+#include <X11/Xutil.h>
 #include <dlfcn.h>
 #if __has_include(<SDL.h>) && __has_include(<SDL_syswm.h>)
 #include <SDL.h>
@@ -35,6 +36,8 @@ struct Conn {
     Atom (*intern)(Display*, const char*, int) = nullptr;
     int (*change)(Display*, ::Window, Atom, Atom, int, int, const unsigned char*, int) = nullptr;
     int (*sync)(Display*, int) = nullptr;
+    XWMHints* (*getHints)(Display*, ::Window) = nullptr;
+    int (*xfree)(void*) = nullptr;
     Conn() {
         lib = dlopen("libX11.so.6", RTLD_NOW);
         if (!lib) return;
@@ -43,6 +46,8 @@ struct Conn {
         intern = reinterpret_cast<decltype(intern)>(dlsym(lib, "XInternAtom"));
         change = reinterpret_cast<decltype(change)>(dlsym(lib, "XChangeProperty"));
         sync = reinterpret_cast<decltype(sync)>(dlsym(lib, "XSync"));
+        getHints = reinterpret_cast<decltype(getHints)>(dlsym(lib, "XGetWMHints"));
+        xfree = reinterpret_cast<decltype(xfree)>(dlsym(lib, "XFree"));
         if (open && close && intern && change && sync) dpy = open(nullptr);
     }
     ~Conn() { if (dpy) close(dpy); }
@@ -90,6 +95,22 @@ bool SetWmState(unsigned long win, long state) {
 #else
     (void)win; (void)state;
     return false;
+#endif
+}
+
+int UrgencyHint(unsigned long win) {
+#ifdef OKAY_FAKEWM_XLIB
+    Conn& c = C();
+    if (!c.dpy || !win || !c.getHints || !c.xfree) return -1;
+    c.sync(c.dpy, False);
+    XWMHints* h = c.getHints(c.dpy, (::Window)win);
+    if (!h) return 0;   // no WM_HINTS at all: not urgent
+    const int urgent = (h->flags & XUrgencyHint) ? 1 : 0;
+    c.xfree(h);
+    return urgent;
+#else
+    (void)win;
+    return -1;
 #endif
 }
 

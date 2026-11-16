@@ -368,6 +368,53 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    // ---- Flash: the X11 urgency hint (the task bar's "wants attention"), set while another window has the focus -------
+    // Window::Flash is what the launcher asked SDL_FlashWindow before: UntilFocused stays until the window gets the focus or
+    // Cancel, Briefly clears itself after about a second. Read back from the X server (WM_HINTS) by tests/platform_fakewm.cpp.
+    {
+        RUN_SUITE("platform_state: Flash (urgency hint)");
+        WindowDesc df = d;
+        df.title = "Okay State Focus"; df.x = 520; df.y = 80;
+        auto other = b->MakeWindow(df);
+        CHECK(other != nullptr);
+        const unsigned long ax = XIdOf(*a, kind);
+        if (other && ax && fakewm::Available()) {
+            other->Raise();
+            other->SetInputFocus();
+            Pump(*b, 250);
+            CHECK(!a->IsFocused());
+            CHECK(fakewm::UrgencyHint(ax) == 0);
+            CHECK(a->Flash(FlashMode::UntilFocused));
+            Pump(*b, 100);
+            CHECK(fakewm::UrgencyHint(ax) == 1);
+            CHECK(a->Flash(FlashMode::Cancel));
+            Pump(*b, 100);
+            CHECK(fakewm::UrgencyHint(ax) == 0);
+            CHECK(a->Flash(FlashMode::Briefly));
+            Pump(*b, 100);
+            CHECK(fakewm::UrgencyHint(ax) == 1);
+            Pump(*b, 1400);   // "briefly": gone again after about a second (the backend clears it while reading events)
+            CHECK(fakewm::UrgencyHint(ax) == 0);
+            CHECK(a->Flash(FlashMode::UntilFocused));
+            Pump(*b, 100);
+            CHECK(fakewm::UrgencyHint(ax) == 1);
+            a->SetInputFocus();   // the user comes to the window: the hint goes
+            Pump(*b, 300);
+            if (a->IsFocused()) CHECK(fakewm::UrgencyHint(ax) == 0);
+            else std::cout << "  (the window did not get the focus; the clear-on-focus case is not checked)\n";
+            std::cout << "  urgency hint set, cleared by Cancel, by time (Briefly) and by focus\n";
+        } else std::cout << "  (no X window id or no Xlib for the check; skipped)\n";
+        other.reset();
+        Pump(*b, 100);
+        // The input method's caret rectangle: accepted on sdl2 (SDL_SetTextInputRect keeps it); on the own backend only
+        // when the input method draws over the spot (Xvfb has no input method server, so this is reported, not required).
+        const bool imeTaken = a->SetTextInputArea(40, 50, 1, 18);
+        std::cout << "  SetTextInputArea: " << (imeTaken ? "taken" : "not taken (no over-the-spot input method)") << "\n";
+        if (kind == BackendKind::Sdl2) CHECK(imeTaken);
+        // The window-message hook is Windows only.
+        CHECK(!b->SetNativeMessageHook(nullptr, nullptr));
+    }
+
     // ---- the first window is still usable after all of that ---------------------------------------------------
     CHECK(a->IsVisible());
     a.reset();

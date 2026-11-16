@@ -15,6 +15,7 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <xinput.h>
+#include <imm.h>      // COMPOSITIONFORM, CANDIDATEFORM (imm32.dll is loaded at run time, not linked)
 #include <cstring>
 #include <deque>
 #include <map>
@@ -77,6 +78,33 @@ uint32_t CurrentMods() {
 
 class WinBackend;
 WinBackend* g_backend = nullptr;   // the window procedure has no user pointer before WM_NCCREATE
+
+// The input method's window placement (imm32.dll), loaded on first use so nothing extra is linked. Written from the Win32
+// documentation of ImmGetContext, ImmSetCompositionWindow, ImmSetCandidateWindow and ImmReleaseContext.
+struct ImmApi {
+    typedef HIMC (WINAPI *GetContextFn)(HWND);
+    typedef BOOL (WINAPI *ReleaseContextFn)(HWND, HIMC);
+    typedef BOOL (WINAPI *SetCompositionWindowFn)(HIMC, LPCOMPOSITIONFORM);
+    typedef BOOL (WINAPI *SetCandidateWindowFn)(HIMC, LPCANDIDATEFORM);
+    GetContextFn getContext = nullptr;
+    ReleaseContextFn releaseContext = nullptr;
+    SetCompositionWindowFn setComposition = nullptr;
+    SetCandidateWindowFn setCandidate = nullptr;
+    bool tried = false;
+    bool Load() {
+        if (tried) return getContext != nullptr;
+        tried = true;
+        HMODULE m = LoadLibraryA("imm32.dll");
+        if (!m) return false;
+        getContext = (GetContextFn)(void*)GetProcAddress(m, "ImmGetContext");
+        releaseContext = (ReleaseContextFn)(void*)GetProcAddress(m, "ImmReleaseContext");
+        setComposition = (SetCompositionWindowFn)(void*)GetProcAddress(m, "ImmSetCompositionWindow");
+        setCandidate = (SetCandidateWindowFn)(void*)GetProcAddress(m, "ImmSetCandidateWindow");
+        if (!getContext || !releaseContext || !setComposition || !setCandidate) { getContext = nullptr; return false; }
+        return true;
+    }
+};
+ImmApi g_imm;
 
 class WinWindow final : public Window {
 public:
@@ -195,6 +223,41 @@ public:
         SetForegroundWindow(m_hwnd);
         SetFocus(m_hwnd);                 // its return value is the PREVIOUS focus window (NULL is not a failure): ask who has it now
         return GetFocus() == m_hwnd;
+    }
+    bool Flash(FlashMode m) override {
+        // FLASHWINFO: FLASHW_ALL flashes the caption and the task-bar button; FLASHW_TIMERNOFG keeps flashing until the
+        // window comes to the foreground; FLASHW_STOP puts it back. FlashWindowEx returns the window's state before the
+        // call, not success, so there is nothing to report but "asked".
+        FLASHWINFO fi;
+        ZeroMemory(&fi, sizeof(fi));
+        fi.cbSize = sizeof(fi);
+        fi.hwnd = m_hwnd;
+        if (m == FlashMode::Cancel) fi.dwFlags = FLASHW_STOP;
+        else if (m == FlashMode::Briefly) { fi.dwFlags = FLASHW_ALL; fi.uCount = 1; }
+        else fi.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+        FlashWindowEx(&fi);
+        return true;
+    }
+    bool SetTextInputArea(int x, int y, int w, int h) override {
+        if (!g_imm.Load()) return false;
+        HIMC c = g_imm.getContext(m_hwnd);
+        if (!c) return false;   // no input method on this window (e.g. an English keyboard without one)
+        // The composition string starts at the caret (client coordinates); the candidate list must not cover the line
+        // being typed, so it gets the caret as its position and the line as the rectangle to stay out of.
+        COMPOSITIONFORM cf;
+        ZeroMemory(&cf, sizeof(cf));
+        cf.dwStyle = CFS_FORCE_POSITION;
+        cf.ptCurrentPos.x = x; cf.ptCurrentPos.y = y;
+        CANDIDATEFORM cand;
+        ZeroMemory(&cand, sizeof(cand));
+        cand.dwIndex = 0;
+        cand.dwStyle = CFS_EXCLUDE;
+        cand.ptCurrentPos.x = x; cand.ptCurrentPos.y = y;
+        cand.rcArea.left = x; cand.rcArea.top = y; cand.rcArea.right = x + (w > 0 ? w : 1); cand.rcArea.bottom = y + (h > 0 ? h : 1);
+        const BOOL ok1 = g_imm.setComposition(c, &cf);
+        const BOOL ok2 = g_imm.setCandidate(c, &cand);
+        g_imm.releaseContext(m_hwnd, c);
+        return ok1 && ok2;
     }
 };
 
@@ -367,6 +430,7 @@ public:
         return MessageBoxW(parent ? (HWND)parent->NativeHandle() : nullptr, Wide(text).c_str(), Wide(title).c_str(),
                            MB_OK | MB_ICONERROR) != 0;
     }
+    bool SetNativeMessageHook(NativeMessageHook hook, void* user) override { m_hook = hook; m_hookUser = user; return true; }
     void ShowCursor(bool show) override { if (show != m_cursorShown) { m_cursorShown = show; ::ShowCursor(show ? TRUE : FALSE); } }
     bool SetSystemCursor(SystemCursor c) override {
         static const LPCTSTR kIds[] = {IDC_ARROW, IDC_IBEAM, IDC_HAND, IDC_SIZEALL, IDC_SIZENS, IDC_SIZEWE, IDC_SIZENESW,
@@ -440,6 +504,7 @@ public:
     static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         WinBackend* b = g_backend;
         if (!b) return DefWindowProcW(h, m, wp, lp);
+        if (b->m_hook) b->m_hook(b->m_hookUser, h, m, (uint64_t)wp, (int64_t)lp);   // SetNativeMessageHook: sent and posted messages
         auto it = b->m_wins.find(h);
         WinWindow* win = it == b->m_wins.end() ? nullptr : it->second;
         if (!win) return DefWindowProcW(h, m, wp, lp);   // messages during creation
@@ -554,6 +619,8 @@ public:
     std::deque<Event> m_pending;
     bool m_text = false, m_relative = false, m_cursorShown = true, m_inited = false;
     HCURSOR m_shape = nullptr;   // SetSystemCursor (null = the class cursor, the arrow)
+    NativeMessageHook m_hook = nullptr;   // SetNativeMessageHook
+    void* m_hookUser = nullptr;
     int m_lastX = 0, m_lastY = 0;
     int m_relAccX = 0, m_relAccY = 0;
     std::string m_err;

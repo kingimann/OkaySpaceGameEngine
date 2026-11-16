@@ -101,6 +101,9 @@ namespace {
     F(void, XUnsetICFocus, (XIC)) \
     F(int, Xutf8LookupString, (XIC, XKeyPressedEvent*, char*, int, KeySym*, Status*)) \
     F(Status, XIconifyWindow, (Display*, ::Window, int)) \
+    F(XWMHints*, XAllocWMHints, (void)) \
+    F(XWMHints*, XGetWMHints, (Display*, ::Window)) \
+    F(int, XSetWMHints, (Display*, ::Window, XWMHints*)) \
     F(int, XRefreshKeyboardMapping, (XMappingEvent*))
 
 #define OKAY_GLX_FUNCS(F) \
@@ -117,6 +120,9 @@ namespace {
 struct XTable {
     void* lib = nullptr;
     XIC (*XCreateIC_)(XIM, ...) = nullptr;   // varargs: declared by hand
+    char* (*XSetICValues_)(XIC, ...) = nullptr;
+    char* (*XGetIMValues_)(XIM, ...) = nullptr;
+    XVaNestedList (*XVaCreateNestedList_)(int, ...) = nullptr;
 #define OKAY_DECL(ret, name, args) ret (*name) args = nullptr;
     OKAY_XLIB_FUNCS(OKAY_DECL)
 #undef OKAY_DECL
@@ -139,6 +145,10 @@ bool LoadX(XTable& t, std::string& err) {
 #undef OKAY_LOAD
     t.XCreateIC_ = reinterpret_cast<XIC (*)(XIM, ...)>(dlsym(t.lib, "XCreateIC"));
     if (!t.XCreateIC_) { err = "libX11 lacks XCreateIC"; return false; }
+    // Optional (the IME spot location): without them the input method keeps its own window placement.
+    t.XSetICValues_ = reinterpret_cast<char* (*)(XIC, ...)>(dlsym(t.lib, "XSetICValues"));
+    t.XGetIMValues_ = reinterpret_cast<char* (*)(XIM, ...)>(dlsym(t.lib, "XGetIMValues"));
+    t.XVaCreateNestedList_ = reinterpret_cast<XVaNestedList (*)(int, ...)>(dlsym(t.lib, "XVaCreateNestedList"));
     return true;
 }
 
@@ -234,6 +244,9 @@ public:
     bool SetInputFocus() override;
     bool IsFullscreen() const override { return m_fullscreen; }
     bool SetIcon(const uint8_t* rgba, int w, int h) override;
+    bool Flash(FlashMode m) override;
+    bool SetTextInputArea(int x, int y, int w, int h) override;
+    void SetUrgent(bool on);
     bool PresentPixels(const uint8_t* rgba, int w, int h) override;
     bool CreateGLContext(const GLAttributes& a) override;
     void DestroyGLContext() override;
@@ -255,6 +268,9 @@ public:
     int m_minW = 0, m_minH = 0;
     int m_w = 0, m_h = 0;      // last size seen in ConfigureNotify (or requested)
     XIC m_ic = nullptr;
+    bool m_icSpot = false;            // the input context draws its preedit at a spot we give (XIMPreeditPosition)
+    bool m_urgent = false;            // the urgency hint is set (Flash)
+    uint64_t m_urgentUntil = 0;       // Flash(Briefly): when to clear it (ms, NowMs), 0 = until focused
     GC m_gc = nullptr;                // PresentPixels: made on first use
     std::vector<uint8_t> m_present;   // PresentPixels: the frame in the server's pixel layout
 };
@@ -294,6 +310,21 @@ public:
         if (m_x.XSupportsLocale()) {
             m_x.XSetLocaleModifiers("");
             m_im = m_x.XOpenIM(m_dpy, nullptr, nullptr, nullptr);
+        }
+        // Over-the-spot input (XIMPreeditPosition): the input method draws the text being composed, and its candidate list,
+        // at a spot the program gives (SetTextInputArea). Used when the input method offers it; otherwise, or with
+        // OKAY_X11_IME_SPOT=0, the root-window style (XIMPreeditNothing), where the input method places its own window.
+        // From the Xlib manual, chapter 13 (input methods: XGetIMValues XNQueryInputStyle, XNSpotLocation).
+        if (m_im && m_x.XGetIMValues_ && m_x.XSetICValues_ && m_x.XVaCreateNestedList_) {
+            const char* env = std::getenv("OKAY_X11_IME_SPOT");
+            if (!(env && std::strcmp(env, "0") == 0)) {
+                XIMStyles* styles = nullptr;
+                if (!m_x.XGetIMValues_(m_im, XNQueryInputStyle, &styles, (void*)nullptr) && styles) {
+                    for (unsigned short i = 0; i < styles->count_styles; ++i)
+                        if (styles->supported_styles[i] == (XIMPreeditPosition | XIMStatusNothing)) m_imSpot = true;
+                    m_x.XFree(styles);
+                }
+            }
         }
         return true;
     }
@@ -355,7 +386,17 @@ public:
             Atom a = m_x.XInternAtom(m_dpy, "_MOTIF_WM_HINTS", False);
             m_x.XChangeProperty(m_dpy, w, a, a, 32, PropModeReplace, (const unsigned char*)&mwm, 5);
         }
-        if (m_im) {
+        if (m_im && m_imSpot) {   // over the spot, starting at the top-left corner until the program says where the caret is
+            XPoint spot; spot.x = 0; spot.y = 0;
+            XVaNestedList pre = m_x.XVaCreateNestedList_(0, XNSpotLocation, &spot, (void*)nullptr);
+            if (pre) {
+                win->m_ic = m_x.XCreateIC_(m_im, XNInputStyle, XIMPreeditPosition | XIMStatusNothing,
+                                           XNClientWindow, w, XNFocusWindow, w, XNPreeditAttributes, pre, (void*)nullptr);
+                m_x.XFree(pre);
+            }
+            win->m_icSpot = win->m_ic != nullptr;
+        }
+        if (m_im && !win->m_ic) {
             win->m_ic = m_x.XCreateIC_(m_im, XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
                                        XNClientWindow, w, XNFocusWindow, w, (void*)nullptr);
         }
@@ -374,7 +415,15 @@ public:
     void Unregister(::Window w) { m_wins.erase(w); if (m_focus == w) m_focus = 0; }
 
     // ---- events ---------------------------------------------------------------------
+    // Flash(Briefly): the urgency hints whose second is over.
+    void ExpireUrgency() {
+        const uint64_t now = NowMs();
+        for (auto& kv : m_wins)
+            if (kv.second->m_urgent && kv.second->m_urgentUntil && now >= kv.second->m_urgentUntil) kv.second->SetUrgent(false);
+    }
+
     bool PollEvent(Event& out) override {
+        ExpireUrgency();
         for (;;) {
             if (!m_pending.empty()) { out = std::move(m_pending.front()); m_pending.pop_front(); return true; }
             if (!m_x.XPending(m_dpy)) return false;
@@ -386,6 +435,7 @@ public:
     }
 
     void PumpEvents() override {
+        ExpireUrgency();
         while (m_x.XPending(m_dpy)) {
             XEvent ev;
             m_x.XNextEvent(m_dpy, &ev);
@@ -420,6 +470,7 @@ public:
             if (win && ev.xfocus.mode != NotifyGrab && ev.xfocus.mode != NotifyUngrab) {
                 win->m_focused = true; m_focus = win->m_win;
                 if (win->m_ic) m_x.XSetICFocus(win->m_ic);
+                if (win->m_urgent) win->SetUrgent(false);   // Flash: the window has the user's attention now
                 e.type = EventType::WindowFocusGained; m_pending.push_back(e);
             }
             break;
@@ -765,6 +816,7 @@ public:
     int m_screen = 0;
     ::Window m_root = 0;
     XIM m_im = nullptr;
+    bool m_imSpot = false;   // the input method offers over-the-spot input (XIMPreeditPosition | XIMStatusNothing)
     Atom m_aMaxH = 0, m_aMaxV = 0, m_aNetIcon = 0;
     Atom m_aDelete = 0, m_aProtocols = 0, m_aNetState = 0, m_aNetFull = 0, m_aNetName = 0, m_aUtf8 = 0,
          m_aClipboard = 0, m_aTargets = 0, m_aProp = 0, m_aTextPlain = 0;
@@ -859,6 +911,37 @@ bool X11Win::SetIcon(const uint8_t* rgba, int w, int h) {
                        (const unsigned char*)data.data(), (int)data.size());
     XF.XFlush(XD);
     return true;
+}
+// Flash: the ICCCM urgency hint (WM_HINTS flags bit XUrgencyHint, section 4.1.2.4): the window manager or task bar marks
+// the window until the hint is cleared. Kept in the window's existing WM_HINTS so the input and icon hints stay as they are.
+void X11Win::SetUrgent(bool on) {
+    XWMHints* h = XF.XGetWMHints(XD, m_win);
+    if (!h) h = XF.XAllocWMHints();
+    if (!h) return;
+    if (on) h->flags |= XUrgencyHint; else h->flags &= ~XUrgencyHint;
+    XF.XSetWMHints(XD, m_win, h);
+    XF.XFree(h);
+    XF.XFlush(XD);
+    m_urgent = on;
+    if (!on) m_urgentUntil = 0;
+}
+bool X11Win::Flash(FlashMode m) {
+    if (m == FlashMode::Cancel) { SetUrgent(false); return true; }
+    if (m_focused) return true;   // it has the focus: nothing to ask for (what Windows does too)
+    SetUrgent(true);
+    m_urgentUntil = m == FlashMode::Briefly ? NowMs() + 1000 : 0;
+    return true;
+}
+bool X11Win::SetTextInputArea(int x, int y, int w, int h) {
+    (void)w;
+    if (!m_ic || !m_icSpot) return false;   // root-window style: the input method places its own window
+    // XNSpotLocation is the baseline start of the text being composed: the bottom of the caret's line.
+    XPoint spot; spot.x = (short)x; spot.y = (short)(y + (h > 0 ? h : 0));
+    XVaNestedList pre = XF.XVaCreateNestedList_(0, XNSpotLocation, &spot, (void*)nullptr);
+    if (!pre) return false;
+    const char* bad = XF.XSetICValues_(m_ic, XNPreeditAttributes, pre, (void*)nullptr);
+    XF.XFree(pre);
+    return bad == nullptr;
 }
 bool X11Win::PresentPixels(const uint8_t* rgba, int w, int h) {
     if (!rgba || w <= 0 || h <= 0) return false;

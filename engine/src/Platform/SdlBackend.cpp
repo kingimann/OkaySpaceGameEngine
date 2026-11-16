@@ -65,6 +65,19 @@ public:
         SDL_FreeSurface(surf);
         return true;
     }
+    bool Flash(FlashMode m) override {
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+        const SDL_FlashOperation op = m == FlashMode::Cancel ? SDL_FLASH_CANCEL : m == FlashMode::Briefly ? SDL_FLASH_BRIEFLY : SDL_FLASH_UNTIL_FOCUSED;
+        return SDL_FlashWindow(m_win, op) == 0;
+#else
+        (void)m; return false;
+#endif
+    }
+    bool SetTextInputArea(int x, int y, int w, int h) override {
+        SDL_Rect r{x, y, w, h};   // SDL keeps one rectangle, for the window that has the keyboard
+        SDL_SetTextInputRect(&r);
+        return true;
+    }
     int RefreshRateHz() const override {
         SDL_DisplayMode dm;
         return (SDL_GetWindowDisplayMode(m_win, &dm) == 0 && dm.refresh_rate > 0) ? dm.refresh_rate : 0;
@@ -154,6 +167,14 @@ public:
         m_started = 0;
     }
     std::string LastError() const override { return SDL_GetError(); }
+    bool SetNativeMessageHook(NativeMessageHook hook, void* user) override {
+#if defined(_WIN32)
+        SDL_SetWindowsMessageHook(reinterpret_cast<SDL_WindowsMessageHook>(hook), user);   // same arguments, cdecl on both sides
+        return true;
+#else
+        (void)hook; (void)user; return false;
+#endif
+    }
 
     uint64_t TicksMs() override {
 #if SDL_VERSION_ATLEAST(2, 0, 18)

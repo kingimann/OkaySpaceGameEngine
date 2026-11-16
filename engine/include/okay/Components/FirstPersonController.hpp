@@ -928,6 +928,8 @@ private:
     float m_climbOutCool = 0.0f;
     void HardLandEvent(float impact) {
         m_dbg.lastLandSpeed = impact;
+        if (!OldPlayerPath() && gameObject)   // the body's landing recovery follows how hard it was
+            if (Character* ch = gameObject->GetComponent<Character>()) ch->NoteLanding(impact, hardLandSpeed);
         if (OldPlayerPath() || hardLandSpeed <= 0.0f || impact < hardLandSpeed) return;
         ++m_dbg.hardLandings;
         if (onHardLand) onHardLand(impact);

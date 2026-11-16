@@ -1,5 +1,6 @@
 #include "okay/Core/Profiler.hpp"
 #include "okay/Components/Character.hpp"
+#include "okay/Components/PlayerPerf.hpp"
 #include "okay/Components/NetworkSync.hpp"
 #include "okay/Animation/HumanoidMotion.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
@@ -1034,9 +1035,10 @@ void Character::Update(float dt) {
     TickFeel(dt);
     NoteStateChange();
     if (m_landT >= 0.0f) {
-        m_landT += dt / 0.28f;                       // ~0.28s dip-and-spring
-        if (m_landT >= 1.0f) { m_landT = -1.0f; m_landK = 0.0f; }
-        else m_landK = std::sin(3.14159265f * m_landT);
+        const float li = OldPlayerPath() ? 1.0f : m_landImpact;
+        m_landT += dt / (0.28f + 0.10f * (li - 1.0f > 0.0f ? li - 1.0f : 0.0f) / 0.7f);   // ~0.28s dip-and-spring, a hard one lasts up to 0.38 s
+        if (m_landT >= 1.0f) { m_landT = -1.0f; m_landK = 0.0f; m_landImpact = 1.0f; }
+        else m_landK = std::sin(3.14159265f * m_landT) * li;
     }
     SyncStateClips();
     // Advance any in-progress crossfade (covers every render path below).

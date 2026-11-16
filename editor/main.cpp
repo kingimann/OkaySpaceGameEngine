@@ -1618,6 +1618,29 @@ static SDL_Texture* GetPrimitiveThumb(const char* name) {
 // One click for an imported humanoid: Foot IK (feet on the ground, bending the leg
 // bones, tilting to slopes, pelvis drop, foot locking) and Full Body IK with hand
 // targets you can move (or parent to a weapon / door handle) and switch on.
+// Gamepad stick tuning for the Inspector: edits the live Input::GamepadSettings(0) (dead zone, outer zone, response
+// curve of both sticks). It lasts for this editor session only: it is not saved with the scene and not shipped.
+static void DrawGamepadTuning() {
+    if (!ImGui::TreeNode("Gamepad sticks (this session only)")) return;
+    Input::PadSettings& cfg = Input::GamepadSettings(0);
+    auto stick = [](const char* name, Input::StickSettings& st) {
+        ImGui::PushID(name);
+        ImGui::TextUnformatted(name);
+        ImGui::DragFloat("Dead zone", &st.deadZone, 0.005f, 0.0f, 0.95f, "%.2f");
+        ImGui::DragFloat("Outer zone", &st.outerZone, 0.005f, 0.3f, 1.0f, "%.2f");
+        ImGui::DragFloat("Curve", &st.curve, 0.02f, 0.3f, 4.0f, "%.2f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = linear, 2 = finer aim near the centre.");
+        bool radial = st.shape == Input::StickSettings::Shape::Radial;
+        if (ImGui::Checkbox("Round dead zone", &radial)) st.shape = radial ? Input::StickSettings::Shape::Radial : Input::StickSettings::Shape::Axial;
+        ImGui::PopID();
+    };
+    stick("Left stick (move)", cfg.left);
+    stick("Right stick (look)", cfg.right);
+    if (ImGui::Button("Reset sticks")) cfg = Input::PadSettings{};
+    ImGui::TextDisabled("Not saved with the scene. Lasts until the editor closes.");
+    ImGui::TreePop();
+}
+
 static void SetupHumanoidIK(EditorState& ed, GameObject* root) {
     if (!root) return;
     ed.PushUndo();
@@ -36899,6 +36922,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::EndCombo();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Classic / Modern / Arcade / Realistic / Shooter. Sets the whole feel block (speed, acceleration, stopping, air control, jump timing, head bob / camera follow). Edit any value after.");
+                DrawGamepadTuning();
                 if (ImGui::DragFloat("Stick Look Ramp##fp", &fp->stickLookRamp, 0.05f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad camera acceleration: seconds the right stick takes from 45% to full look speed at full throw. 0 = constant speed.");
             }
@@ -37142,6 +37166,7 @@ void DrawInspector(EditorState& ed) {
                     ImGui::EndCombo();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Classic / Modern / Arcade / Realistic / Shooter. Sets the whole feel block (speed, acceleration, stopping, air control, jump timing, head bob / camera follow). Edit any value after.");
+                DrawGamepadTuning();
                 if (ImGui::DragFloat("Stick Look Ramp##tp", &tp->stickLookRamp, 0.05f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad camera acceleration: seconds the right stick takes from 45% to full look speed at full throw. 0 = constant speed.");
             }

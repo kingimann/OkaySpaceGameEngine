@@ -141,6 +141,16 @@ public:
     float StanceLevel() const { return m_stanceLevel; }
     /// 0..1 weight of the takeoff crouch (peaks in the middle of jumpCrouchTime).
     float JumpCrouchWeight() const { return m_jumpCrouchW; }
+    /// A controller reports a touchdown: how fast it hit (m/s) and the speed it counts as a hard landing (0 = none).
+    /// The landing recovery (knee bend and spring) is deeper and longer the harder it was: a 2 m/s step down is a
+    /// light dip (about a third), a hard landing bends the knees up to 1.7 times the old fixed dip and takes longer.
+    void NoteLanding(float impactSpeed, float hardSpeed) {
+        const float ref = hardSpeed > 0.0f ? hardSpeed : 12.0f;
+        const float k = impactSpeed / ref;                       // 1 = a hard landing
+        m_landImpact = k < 0.3f ? 0.3f : (k > 1.7f ? 1.7f : k);
+        if (m_landImpact < 0.55f) m_landImpact = 0.3f + (m_landImpact - 0.3f) * 0.4f + 0.12f;   // keep a visible light dip
+    }
+    float LandImpact() const { return m_landImpact; }
     /// True while a turn-in-place foot step is playing.
     bool  TurnStepping() const { return m_stepT >= 0.0f; }
     /// Which leg is stepping (0 left, 1 right).
@@ -748,6 +758,7 @@ private:
     bool  m_haveMotionLean = false;
     void  TickFeel(float dt);
     void  UpdateMotionLean(float dt);
+    float m_landImpact = 1.0f;     // how hard the last touchdown was, 0.3 light .. 1.7 hard (NoteLanding)
     float m_landK = 0.0f;          // landing knee-bend envelope 0..1 (sin arc)
     float m_punchT = -1.0f;        // punch progress 0..1 (<0 = not punching)
     Mesh m_fpArm;                  // first-person arm-only mesh (rebuilt each frame)

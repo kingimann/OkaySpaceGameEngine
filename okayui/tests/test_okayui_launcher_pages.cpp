@@ -167,6 +167,162 @@ int main() {
         CHECK(opened >= 1 && opened < 100);
     }
 
+    // ---- the gaps closed so the three pages can look like the launcher's Dear ImGui pages (section 8.6) ----
+    {   // FramePadding: a frame row is the text height plus twice y; a text field starts its text x in
+        float plain = 0.0f, padded = 0.0f;
+        UI::Rect field;
+        char buf[32] = "";
+        auto rig = MakeRig(400, 200, [&] {
+            UI::BareNextWindow();
+            if (UI::Begin("fp", 0, 0, 400, 200)) {
+                plain = UI::GetFrameHeight();
+                UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{30.0f, 7.0f});
+                padded = UI::GetFrameHeight();
+                UI::InputTextWithHint("##f", "hint", buf, (int)sizeof(buf));
+                field = UI::GetItemRect();
+                UI::PopStyleVar();
+                UI::PushStyleVar(UI::StyleVar_FramePadding, UI::Vec2{std::nanf(""), -4.0f});   // junk: ignored
+                CHECK(std::fabs(UI::GetFrameHeight() - plain) < 0.01f);
+                UI::PopStyleVar();
+            }
+            UI::End();
+        });
+        rig.Frames(2);
+        CHECK(std::fabs(padded - (UI::GetTextLineHeight() + 14.0f)) < 0.01f && std::fabs(plain - padded) > 0.5f);
+        CHECK(std::fabs(field.h - padded) < 0.01f);
+        rig.Click(field.x + 5.0f, field.y + field.h * 0.5f);   // the field still takes focus and typing
+        rig.sim.Type("ok"); rig.Frame();
+        CHECK(std::strcmp(buf, "ok") == 0);
+        const Bitmap& bm = rig.sim.Draw(0, 0, 0);
+        // the caret and text start 30 px in: nothing but the field's fill in the first 25 px of its middle row
+        const unsigned fill = PixelAt(bm, (int)field.x + 12, (int)(field.y + field.h * 0.5f));
+        CHECK(CountNot(bm, (int)field.x + 4, (int)field.y + 6, (int)field.x + 25, (int)(field.y + field.h) - 6, fill) == 0);
+        CHECK(CountNot(bm, (int)field.x + 28, (int)field.y + 6, (int)field.x + 50, (int)(field.y + field.h) - 6, fill) > 0);
+    }
+    {   // ChildPadding and ScrollbarSize: no padding, the full width until the content overflows, then a thin scrollbar's width less
+        UI::Rect first; float availNarrow = 0.0f, availWide = 0.0f; int rows = 3;
+        auto rig = MakeRig(400, 300, [&] {
+            UI::BareNextWindow();
+            if (UI::Begin("cp", 0, 0, 400, 300)) {
+                UI::SetCursorScreenPos(UI::Vec2{20.0f, 30.0f});
+                UI::PushStyleVar(UI::StyleVar_ChildPadding, 0.0f);
+                UI::PushStyleVar(UI::StyleVar_ScrollbarSize, 6.0f);
+                UI::BeginChild("##c", 300.0f, 200.0f, false);
+                const float a = UI::GetContentRegionAvail().x;
+                for (int i = 0; i < rows; ++i) { UI::PushID(i); UI::Button("row", UI::Vec2{0.0f, 40.0f}); if (i == 0) first = UI::GetItemRect(); UI::PopID(); }
+                (rows > 6 ? availNarrow : availWide) = a;
+                UI::EndChild();
+                UI::PopStyleVar(2);
+            }
+            UI::End();
+        });
+        rig.Frames(2);
+        CHECK(std::fabs(first.x - 20.0f) < 0.01f && std::fabs(first.y - 30.0f) < 0.01f && std::fabs(availWide - 300.0f) < 0.01f);
+        rows = 20; rig.Frames(2);
+        CHECK(std::fabs(availNarrow - 294.0f) < 0.01f);
+        const Bitmap& bm = rig.sim.Draw(0, 0, 0);
+        CHECK(CountNot(bm, 314, 31, 320, 60, Rgba(0, 0, 0)) > 0);     // the thumb, inside the 6 px bar
+        CHECK(CountNot(bm, 320, 31, 330, 229, Rgba(0, 0, 0)) == 0);   // and nothing right of it
+    }
+    {   // tooltips follow the theme: offset, padding, corner and fill; the default is unchanged
+        UI::Rect item; bool custom = false;
+        auto rig = MakeRig(500, 300, [&] {
+            UI::Theme& t = UI::Style();
+            if (custom) { t.tooltipOffsetX = 25.0f; t.tooltipOffsetY = 10.0f; t.tooltipPadX = 14.0f; t.tooltipPadY = 12.0f; t.tooltipRounding = 0.0f;
+                          t.tooltipBg[0] = 200; t.tooltipBg[1] = 10; t.tooltipBg[2] = 10; t.tooltipBg[3] = 255; }
+            UI::BareNextWindow();
+            if (UI::Begin("tt", 0, 0, 500, 300)) {
+                UI::SetCursorScreenPos(UI::Vec2{50.0f, 50.0f});
+                UI::InvisibleButton("##it", 100.0f, 40.0f);
+                item = UI::GetItemRect();
+                if (UI::IsItemHovered()) UI::SetTooltip("%s", "tip");
+            }
+            UI::End();
+        });
+        rig.sim.Move(100.0f, 70.0f); rig.Frames(2);
+        const unsigned dflt = PixelAt(rig.sim.Draw(0, 0, 0), 100 + 14 + 3, 70 + 14 + 3);   // the default box: 14 px right and below
+        CHECK(dflt != Rgba(0, 0, 0));
+        custom = true; rig.Frames(2);
+        const Bitmap& bm = rig.sim.Draw(0, 0, 0);
+        CHECK(PixelAt(bm, 100 + 25 + 2, 70 + 10 + 2) == Rgba(200, 10, 10));        // the red box starts 25 px right, 10 px below
+        CHECK(PixelAt(bm, 100 + 25 - 2, 70 + 10 + 4) == Rgba(0, 0, 0));
+        CHECK(PixelAt(bm, 100 + 25 + 8, 70 + 10 + 8) == Rgba(200, 10, 10));        // 14 x 12 padding: no text this close to the edge
+    }
+    {   // a polygon with one colour per point is blended across it
+        auto rig = MakeRig(200, 200, [&] {
+            const UI::DrawList& dl = UI::GetForegroundDrawList();
+            const UI::Vec2 p[4] = {UI::Vec2{20, 20}, UI::Vec2{180, 20}, UI::Vec2{180, 180}, UI::Vec2{20, 180}};
+            const UI::Color32 c[4] = {UI::RGBA(255, 0, 0, 255), UI::RGBA(255, 0, 0, 255), UI::RGBA(0, 0, 255, 255), UI::RGBA(0, 0, 255, 255)};
+            dl.AddConvexPolyFilledMultiColor(p, c, 4);
+            dl.AddConvexPolyFilledMultiColor(p, c, 2);         // too few points: nothing
+            dl.AddConvexPolyFilledMultiColor(nullptr, c, 4);   // nothing
+        });
+        rig.Frames(1);
+        const Bitmap& bm = rig.sim.Draw(0, 0, 0);
+        const unsigned top = PixelAt(bm, 100, 22), mid = PixelAt(bm, 100, 100), bot = PixelAt(bm, 100, 178);
+        CHECK((top >> 24) > 240 && ((top >> 8) & 255) < 15);
+        CHECK((bot >> 24) < 15 && ((bot >> 8) & 255) > 240);
+        CHECK((mid >> 24) > 100 && (mid >> 24) < 155 && ((mid >> 8) & 255) > 100 && ((mid >> 8) & 255) < 155);
+    }
+    {   // SetInputBlocked: a frame that starts blocked and is unblocked before the widget runs takes the press (the launcher's
+        // hosted screens unblock as they are offered, so a click in the same frame as the move onto them is not lost)
+        int clicks = 0; bool unblock = true;
+        auto rig = MakeRig(300, 200, [&] {
+            if (unblock) UI::SetInputBlocked(false);
+            UI::BareNextWindow();
+            if (UI::Begin("ib", 0, 0, 300, 200)) {
+                UI::SetCursorScreenPos(UI::Vec2{50.0f, 50.0f});
+                if (UI::InvisibleButton("##b", 100.0f, 40.0f)) ++clicks;
+            }
+            UI::End();
+        });
+        rig.Frames(1);
+        rig.sim.Move(100.0f, 70.0f); rig.sim.Down(); rig.sim.blocked = true; rig.Frame();   // moved and pressed in one frame, blocked at its start
+        rig.sim.Up(); rig.sim.blocked = false; rig.Frame();
+        CHECK(clicks == 1);
+        unblock = false;
+        rig.sim.Move(10.0f, 10.0f); rig.Frame();
+        rig.sim.Move(100.0f, 70.0f); rig.sim.Down(); rig.sim.blocked = true; rig.Frame();   // without it the press is lost
+        rig.sim.Up(); rig.sim.blocked = false; rig.Frame();
+        CHECK(clicks == 1);
+        UI::SetInputBlocked(true); CHECK(UI::IsInputBlocked()); UI::SetInputBlocked(false); CHECK(!UI::IsInputBlocked());
+    }
+    {   // a window begun inside a PushTextScale does not keep that scale into the next frame (it used to grow every frame)
+        float first = 0.0f, later = 0.0f; int n = 0;
+        auto rig = MakeRig(300, 200, [&] {
+            UI::PushTextScale(1.5f);
+            UI::BareNextWindow();
+            if (UI::Begin("ts", 0, 0, 300, 200)) (n++ == 0 ? first : later) = UI::GetTextLineHeight();
+            UI::End();
+            UI::PopTextScale();
+        });
+        rig.Frames(10);
+        CHECK(first > 0.0f && std::fabs(first - later) < 0.01f);
+    }
+    {   // the combo box drawn as the launcher's (Theme::comboArrowBox) still opens and picks
+        int cur = 0; UI::Rect box;
+        auto rig = MakeRig(400, 300, [&] {
+            UI::Style().comboArrowBox = true;
+            UI::BareNextWindow();
+            if (UI::Begin("cb", 0, 0, 400, 300)) {
+                static const char* items[3] = {"One", "Two", "Three"};
+                UI::SetNextItemWidth(150.0f);
+                UI::Combo("##cb", items, 3, &cur);
+                box = UI::GetItemRect();
+            }
+            UI::End();
+            UI::Style().comboArrowBox = false;
+        });
+        rig.Frames(1);
+        const Bitmap& bm = rig.sim.Draw(0, 0, 0);
+        const unsigned arrowBox = PixelAt(bm, (int)(box.x + box.w - 3.0f), (int)(box.y + 4.0f)), field = PixelAt(bm, (int)(box.x + box.w * 0.5f), (int)(box.y + 4.0f));
+        CHECK(arrowBox != field && arrowBox != Rgba(0, 0, 0));                         // a different square at the right end
+        CHECK(PixelAt(bm, (int)(box.x + box.w - box.h * 0.5f), (int)(box.y + box.h * 0.5f)) == ThemeRgba(UI::Style().text));   // its arrow
+        rig.Click(box); rig.Frames(1);
+        rig.Click(CX(box), box.y + box.h + box.h * 2.5f); rig.Frames(1);   // the third row of the list under the box
+        CHECK(cur == 2);
+    }
+
     // ================= Downloads =================
     {   // helpers, as the Dear ImGui page words and computes them
         CHECK(S::HumanBytes(0) == "--" && S::HumanBytes(-5) == "--" && S::HumanBytes(512) == "512 B");

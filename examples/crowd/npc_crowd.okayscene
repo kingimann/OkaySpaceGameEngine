@@ -5,7 +5,7 @@ gravity3 0 0 0
 gameobject 0 "Main Camera"
   active 1
   parent -1
-  transform 0 28 -30 0 0.38268343 0 0.92387953 1 1 1
+  transform 0 20 -40 0 0.97298861 0.2308533 0 1 1 1
   camera 1 5 60 0.12 0.14 0.18 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Floor"

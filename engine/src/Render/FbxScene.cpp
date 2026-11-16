@@ -1503,9 +1503,11 @@ struct Builder {
         }
         if (times.back() != t1) { times.push_back(t1); jump.push_back(0); }
     }
-    /// The time just before a jump at `at` that still rounds to its own float clip time: 1e-5 s, or 2^-20 of the
-    /// clip time when that is more (8 float steps).
-    static double BeforeJump(double at, double t0) { return at - std::max(1e-5, std::fabs(at - t0) * 9.5367431640625e-7); }
+    /// The time of the key just before a jump at `at`: 2e-4 s earlier, or 2^-17 of the clip time when that is more (64
+    /// float steps). The engine's clips merge keys less than 1e-4 s apart (AnimationClip::AddKeys), so the pair must be
+    /// further apart than that, also after the times are rounded to float.
+    static double BeforeJump(double at, double t0) { return at - JumpGap(at - t0); }
+    static double JumpGap(double clipTime) { return std::max(2e-4, std::fabs(clipTime) * 7.62939453125e-6); }
 
     bool BakeNodeFileKeys(std::vector<NodeCN>& list, const std::vector<Layr>& layers, int node, double t0, double t1, NodeAnim& na) {
         std::vector<const Curve*> cs;

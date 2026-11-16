@@ -31,6 +31,25 @@ static std::vector<std::uint8_t> Hex(const char* h) {
 }
 static bool Near(double a, double b, double eps = 1e-5) { return std::fabs(a - b) <= eps; }
 
+// A baked track played at time t as the engine plays it: linear between the two keys around t (a key at t exactly is
+// returned as it is); for rotations the second key's sign is matched to the first and the blend normalised. The clips
+// of our reader have keys at the file's own key times plus the ones it adds (docs/own_fbx_reader.md, "Animation keys"),
+// so a check at a time needs this rather than a sample index.
+template <class K> static K KeyAt(const std::vector<K>& keys, double t) {
+    std::size_t i = 0;
+    while (i + 1 < keys.size() && keys[i + 1].time <= t) ++i;
+    if (keys[i].time == t || i + 1 >= keys.size() || t <= keys[i].time) return keys[i];
+    const K& a = keys[i]; const K& b = keys[i + 1];
+    const double u = (t - a.time) / (b.time - a.time);
+    const int n = (int)(sizeof(a.v) / sizeof(a.v[0]));
+    double sg = 1;
+    if (n == 4) { double d = 0; for (int k = 0; k < 4; ++k) d += a.v[k] * b.v[k]; if (d < 0) sg = -1; }
+    K r; r.time = t; double l = 0;
+    for (int k = 0; k < n; ++k) { r.v[k] = a.v[k] + (sg * b.v[k] - a.v[k]) * u; l += r.v[k] * r.v[k]; }
+    if (n == 4 && l > 0) for (int k = 0; k < 4; ++k) r.v[k] /= std::sqrt(l);
+    return r;
+}
+
 static double TriArea(const fbx::Corner* a) {
     const double ux = a[1].p[0] - a[0].p[0], uy = a[1].p[1] - a[0].p[1], uz = a[1].p[2] - a[0].p[2];
     const double vx = a[2].p[0] - a[0].p[0], vy = a[2].p[1] - a[0].p[1], vz = a[2].p[2] - a[0].p[2];
@@ -195,23 +214,33 @@ static void DirectTests() {
         CHECK(c.name == "Take 001" && Near(c.duration, 2.0));
         CHECK(c.nodes.size() == 3 && c.blends.size() == 1);
         for (const fbx::NodeAnim& na : c.nodes) {
-            CHECK(na.translation.size() == 61 && na.rotation.size() == 61 && na.scale.size() == 61);
+            // keys at the file's key times (0, 0.5, 1, 1.5, 2 s at most here) plus the added ones: far fewer than the
+            // 61 samples of the 30 Hz bake, the same count on every channel, from 0 to the end of the take
+            CHECK(!na.translation.empty() && na.translation.size() == na.rotation.size() && na.translation.size() == na.scale.size());
+            // (Bone1's cubic bends more than 30 samples a second can follow within 0.05 degrees: it gets more keys)
+            if (r.nodes[(std::size_t)na.node].name != "Bone1") CHECK(na.translation.size() < 61);
+            if (na.translation.empty()) continue;
+            CHECK(na.translation.front().time == 0.0 && Near(na.translation.back().time, 2.0, 1e-12));
             const std::string& nm = r.nodes[(std::size_t)na.node].name;
             if (nm == "Bone1") {   // PreRotation 10 deg + animated Z rotation 45 deg at t = 0.5 -> 55 deg about Z
-                const fbx::Key4& k = na.rotation[15];
-                CHECK(Near(k.time, 0.5, 1e-9));
+                bool keyed = false; for (const fbx::Key4& k : na.rotation) keyed |= k.time == 0.5;   // a file key time
+                CHECK(keyed);
+                const fbx::Key4 k = KeyAt(na.rotation, 0.5);
                 CHECK(Near(std::fabs(k.v[2]), std::sin(27.5 * 3.14159265358979 / 180.0), 1e-6) && Near(std::fabs(k.v[3]), std::cos(27.5 * 3.14159265358979 / 180.0), 1e-6));
                 const fbx::Key4& k0 = na.rotation[0];   // t = 0: pre-rotation only
                 CHECK(Near(std::fabs(k0.v[2]), std::sin(5.0 * 3.14159265358979 / 180.0), 1e-6));
-            } else if (nm == "Bone2") {   // linear 1.0 -> 1.5 over 2 s
-                CHECK(Near(na.translation[30].v[1], 0.0125, 1e-8) && Near(na.translation[60].v[1], 0.015, 1e-8));
-            } else if (nm == "Bone0") {   // constant steps: 1,1,2
-                CHECK(Near(na.scale[20].v[0], 1.0, 1e-9) && Near(na.scale[60].v[0], 2.0, 1e-9));
+            } else if (nm == "Bone2") {   // linear 1.0 -> 1.5 over 2 s: two keys, played linearly
+                CHECK(na.translation.size() == 2);
+                CHECK(Near(KeyAt(na.translation, 1.0).v[1], 0.0125, 1e-8) && Near(KeyAt(na.translation, 2.0).v[1], 0.015, 1e-8));
+            } else if (nm == "Bone0") {   // constant steps: 1,1,2 (the jump at 2 s gets a key just before it)
+                CHECK(Near(KeyAt(na.scale, 20.0 / 30.0).v[0], 1.0, 1e-9) && Near(KeyAt(na.scale, 2.0).v[0], 2.0, 1e-9));
+                CHECK(na.scale.size() >= 3 && Near(na.scale[na.scale.size() - 2].v[0], 1.0, 1e-9) && na.scale[na.scale.size() - 2].time > 1.999 && na.scale[na.scale.size() - 2].time < 2.0 - 1e-4);
             }
         }
-        if (c.blends.size() == 1) {
+        if (c.blends.size() == 1) {   // linear 0 -> 100 over 2 s: its two keys
             CHECK(c.blends[0].mesh == 0 && c.blends[0].channel == 0);
-            CHECK(Near(c.blends[0].percent[30].v[0], 50.0, 1e-5) && Near(c.blends[0].percent[60].v[0], 100.0, 1e-5));
+            CHECK(c.blends[0].percent.size() == 2);
+            CHECK(Near(KeyAt(c.blends[0].percent, 1.0).v[0], 50.0, 1e-5) && Near(KeyAt(c.blends[0].percent, 2.0).v[0], 100.0, 1e-5));
         }
     }
 
@@ -361,16 +390,26 @@ static void HermiteTests() {
     const double hand[2][4] = {{0.9, 2.5, 4.9, 8.1}, {5.1, 7.5, 9.1, 9.9}};
     for (int ci = 0; ci < 3; ++ci) {
         { std::ofstream f(file, std::ios::binary); const std::string t = HermiteFbx(cases[ci].a, cases[ci].b); f.write(t.data(), (std::streamsize)t.size()); }
-        fbx::Scene r; std::string err;
-        CHECK(fbx::LoadFile(file.string(), r, &err));
+        // mode 0 checks the curve evaluation itself: the 30 Hz bake samples at exactly these times. Mode 2 is the clip
+        // our reader makes by default (keys at the file's times plus added ones), played between its keys.
+        fbx::Scene r, rk; std::string err;
+        fbx::BuildOptions bake30; bake30.fileKeys = false;
+        CHECK(fbx::LoadFile(file.string(), r, &err, bake30));
         CHECK(r.clips.size() == 1 && r.clips[0].nodes.size() == 1);
-        for (int mode = 0; mode < 2; ++mode) {   // 0 = our reader (baked at 30 Hz), 1 = ufbx through the importer
+        CHECK(fbx::LoadFile(file.string(), rk, &err));
+        CHECK(rk.clips.size() == 1 && rk.clips[0].nodes.size() == 1);
+        for (int mode = 0; mode < 3; ++mode) {   // 0 = our reader (baked at 30 Hz), 1 = ufbx through the importer, 2 = our reader's file keys
             std::vector<double> got;
             if (mode == 0) {
                 if (r.clips.size() != 1 || r.clips[0].nodes.size() != 1) continue;
                 const auto& tr = r.clips[0].nodes[0].translation;
                 CHECK(tr.size() == 31);
                 for (double u : us) got.push_back(tr[(std::size_t)std::lround(u * 30)].v[0] * 100.0);
+            } else if (mode == 2) {
+                if (rk.clips.size() != 1 || rk.clips[0].nodes.size() != 1) continue;
+                const auto& tr = rk.clips[0].nodes[0].translation;
+                CHECK(tr.size() >= 2);   // (a steep cubic: more keys than 30 a second where the 30 Hz bake missed the tolerance)
+                for (double u : us) got.push_back(KeyAt(tr, u).v[0] * 100.0);
             } else {
                 fbx::SetOwnReaderEnabled(false);
                 Scene sc("hermite"); bool ok = false;
@@ -383,8 +422,10 @@ static void HermiteTests() {
             }
             for (std::size_t i = 0; i < 4; ++i) {
                 const double ref = HermiteRef(0, 10, cases[ci].a, cases[ci].b, 1.0, us[i]);
-                const double tol = mode ? 0.05 : 2e-4;   // ufbx bakes on its own sample grid, so its 30 Hz keys are a piecewise-linear cut of the same curve
-                if (!Near(got[i], ref, tol)) std::cerr << "  (" << (mode ? "ufbx" : "own") << " a=" << cases[ci].a << " b=" << cases[ci].b << " u=" << us[i] << ") got " << got[i] << " expected " << ref << "\n";
+                // ufbx bakes on its own sample grid, so its 30 Hz keys are a piecewise-linear cut of the same curve; our
+                // file keys are within the reader's stated tolerance (1e-5 m + 1e-4 x 0.1 m = 2e-3 cm here)
+                const double tol = mode == 1 ? 0.05 : mode == 2 ? 2e-3 : 2e-4;
+                if (!Near(got[i], ref, tol)) std::cerr << "  (" << (mode == 1 ? "ufbx" : mode == 2 ? "own keys" : "own") << " a=" << cases[ci].a << " b=" << cases[ci].b << " u=" << us[i] << ") got " << got[i] << " expected " << ref << "\n";
                 CHECK(Near(got[i], ref, tol));
                 if (ci < 2) CHECK(Near(ref, hand[ci][i], 1e-9));   // the reference itself against the hand-computed values
             }

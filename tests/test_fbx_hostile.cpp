@@ -331,8 +331,13 @@ static void AnimationBudgets() {
     // aggregate bake budget: every stack alone is within the per-clip cap, together they are not
     {
         fbx::BuildOptions o = Tight(); o.limits.maxBakedSamples = 20000; o.limits.maxTotalBakedSamples = 100000; o.limits.maxAnimStacks = 1000;
-        fbx::Scene s; CHECK(LoadText(AnimText(3, 1, 2, 1000.0), o, &err, &s) && s.clips.size() == 3);   // 3 x 20000 samples: inside 100000
+        // The budget is charged at the fixed-rate sample count whichever way keys are made (BuildOptions::fileKeys).
+        // At 30 Hz the clip is capped at maxBakedSamples; with the file's own keys this one has a few keys.
+        fbx::BuildOptions o30 = o; o30.fileKeys = false;
+        fbx::Scene s; CHECK(LoadText(AnimText(3, 1, 2, 1000.0), o30, &err, &s) && s.clips.size() == 3);   // 3 x 20000 samples: inside 100000
         CHECK(s.clips.size() == 3 && s.clips[0].nodes.size() == 1 && s.clips[0].nodes[0].translation.size() == 20000);
+        fbx::Scene sk; CHECK(LoadText(AnimText(3, 1, 2, 1000.0), o, &err, &sk) && sk.clips.size() == 3);
+        CHECK(sk.clips.size() == 3 && sk.clips[0].nodes.size() == 1 && sk.clips[0].nodes[0].translation.size() >= 2 && sk.clips[0].nodes[0].translation.size() < 20000);
         err.clear(); CHECK(!LoadText(AnimText(50, 1, 2, 1000.0), o, &err)); CHECK(err.find("bake budget") != std::string::npos);
         // with the shipped limits: 128 takes of a long clip would be 128 x 20000 evaluations = 2.6M (inside 4M), so it loads...
         fbx::Scene big; CHECK(LoadText(AnimText((int)def.limits.maxAnimStacks, 1, 2, 1000.0), def, &err, &big) && big.clips.size() == def.limits.maxAnimStacks);

@@ -74,6 +74,9 @@ double PlayBlend(const std::vector<fbx::Key3>& keys, double t, double* segLen) {
     *segLen = j == i ? 0.0 : t1 - t0;
     return keys[i].v[0] + (keys[j].v[0] - keys[i].v[0]) * u;
 }
+// The gap the reader leaves between the key just before a jump and the jump (its BeforeJump): inside it the truth has
+// already jumped while playback ramps, so those samples are not compared.
+double JumpGap(double clipTime) { return std::max(2e-4, std::fabs(clipTime) * 7.62939453125e-6); }
 double AngleDeg(const double a[4], const double b[4]) {
     double d = 0, na = 0, nb = 0;
     for (int k = 0; k < 4; ++k) { d += a[k] * b[k]; na += a[k] * a[k]; nb += b[k] * b[k]; }
@@ -232,7 +235,7 @@ void CheckFile(const std::string& path, Totals& tot, bool verbose) {
                 const double oldRatio = std::max(oT / tolT, std::max(oR / tolR, oS / tolS));
                 // inside the short gap before a jump the truth may already have jumped: not compared
                 const std::size_t si = SegmentAt(a.translation, t);
-                const bool atJump = pn.segLen > 0 && pn.segLen < 1e-3 && t > a.translation[si].time;
+                const bool atJump = pn.segLen > 0 && pn.segLen <= JumpGap(t) * 1.01 && t > a.translation[si].time;
                 if (atJump) continue;
                 oldWorst = std::max(oldWorst, oldRatio);
                 fileOldR = std::max(fileOldR, oR); tot.worstOldR = std::max(tot.worstOldR, oR);
@@ -273,7 +276,7 @@ void CheckFile(const std::string& path, Totals& tot, bool verbose) {
             for (const fbx::Key3& k : r.percent) {
                 double seg = 0;
                 const double v = PlayBlend(a.percent, k.time, &seg);
-                if (seg > 0 && seg < 1e-3) continue;
+                if (seg > 0 && seg <= JumpGap(k.time) * 1.01) continue;
                 ++tot.samples;
                 if (seg > 0 && seg <= 2 * tol.minGap * (1 + 1e-6)) { ++tot.denseSamples; continue; }
                 const double e = std::fabs(v - k.v[0]);

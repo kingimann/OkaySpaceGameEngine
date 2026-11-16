@@ -576,6 +576,13 @@ Graphs never freeze the game and never fail silently:
   are dropped with an error.
 - **Missing objects.** A Target or Destroy aimed at a destroyed or unknown
   object, or a Spawn whose prefab file is missing, is reported and skipped.
+- **Files outside the game.** Nodes that read or write a file take a name or
+  a relative path inside the game's folders: Spawn, Spawn Every Few Seconds,
+  Take From Pool, Spawn Projectile, Net Spawn Owned, Run Tree, Run Another
+  Graph, Load Scene, Save Creation and Load Creation. An absolute path
+  (`/x`, `C:\x`) or one with `..` loads or writes nothing and the Console
+  shows a `refusing '<path>'` line (for most nodes
+  `[visual script] <node>: refusing ...`).
 
 While playing, the Visual Script editor outlines the node that failed in red
 and shows the message on the canvas. Each distinct error is logged once; the

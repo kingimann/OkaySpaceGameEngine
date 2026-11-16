@@ -1102,7 +1102,13 @@ absolute paths, drive letters and `..`, like `spawn` does.
    and `false`, then `true` with a bullet in the scene. Try `ui_load_theme("../x.okaytheme")` or
    `bt_run("/tmp/x.okaybt")` the same way: each gives a `refusing` line and 0.
 
-**Status.** Tested headless on Linux (`test_script_path_guard_rest`). Not tried on Windows or in the editor.
+Visual scripts too (branch `claude2/vs-path-guard`): give a **Take From Pool**, **Spawn Every Few Seconds**,
+**Spawn Projectile**, **Run Tree**, **Save Creation** or **Load Creation** node the path `C:\x.okayprefab` (or
+`../x.okaybt`, `/tmp/x`) and press **Play**: the Console shows `[visual script] <node>: refusing '...'` and nothing is
+spawned, loaded or written; `prefabs/bullet.okayprefab` still spawns.
+
+**Status.** Tested headless on Linux (`test_script_path_guard_rest`, `test_vs_path_guard`). Not tried on Windows or in
+the editor.
 
 ## Team tooling (not part of the Windows release)
 

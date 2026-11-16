@@ -588,6 +588,14 @@ line; `pool_get("prefabs/bullet.okayprefab", 0, 0)` or
 `ui_load_theme("themes/Forest.okaytheme")` work as before. (`load_clips` takes
 clip text, not a file name, so it has nothing to refuse.)
 
+Visual-script graphs follow the same rule in every node that reads or writes a
+file: **Spawn Every Few Seconds**, **Take From Pool** and **Spawn Projectile**
+(prefabs), **Run Tree** (a `.okaybt`), **Save Creation** and **Load Creation**,
+as well as **Spawn**, **NetSpawnOwned**, **Load Scene** and **Run Another
+Graph**, which already did. An outside path does nothing and the Console shows a
+`refusing` line, for the newly guarded nodes `[visual script] <node>: refusing
+'<path>' (absolute paths and '..' aren't allowed)`.
+
 ### Rendering: post-processing, fog, weather, time of day
 
 The scene's look (the Lighting panel's Post-processing, Sky, Fog and Weather

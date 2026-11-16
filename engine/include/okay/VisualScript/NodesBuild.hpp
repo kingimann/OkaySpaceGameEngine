@@ -6,6 +6,8 @@
 // ---------------------------------------------------------------------------
 #include "okay/VisualScript/NodeGraph.hpp"
 #include "okay/Components/BuildMode.hpp"
+#include "okay/Core/Log.hpp"
+#include "okay/Core/SaveData.hpp"   // Save::IsSafeRelative: creation names stay inside the game
 #include "okay/Scene/Scene.hpp"
 #include "okay/Scene/GameObject.hpp"
 #include <string>
@@ -81,6 +83,7 @@ struct BuildCreationNode : VsNode {
         ok = false;
         Scene* s = ctx.gameObject ? ctx.gameObject->scene() : nullptr;
         if (!s) return 0;
+        if (!name.empty() && !Save::IsSafeRelative(name)) { OKAY_ERROR("[visual script] ", load ? "Load" : "Save", " Creation: refusing '", name, "' (absolute paths and '..' aren't allowed)"); return 0; }   // graphs are game content: stay in the game's folders
         if (BuildMode* m = VsBuildMode(ctx)) ok = load ? m->LoadCreation(name) : m->SaveCreation(name);
         else ok = load ? BuildCreation::Load(*s, BuildMode::CreationPath(name))
                        : BuildCreation::Save(*s, BuildMode::CreationPath(name));

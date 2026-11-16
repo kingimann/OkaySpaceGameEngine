@@ -541,6 +541,7 @@ struct BtRunNode : VsNode {   // arg = the .okaybt file ("" = start the current 
         auto* r = ctx.gameObject->GetComponent<BehaviorTreeRunner>();
         if (!r) r = ctx.gameObject->AddComponent<BehaviorTreeRunner>();
         if (!tree.empty()) {
+            if (!Save::IsSafeRelative(tree)) { OKAY_ERROR("[visual script] Run Tree: refusing '", tree, "' (absolute paths and '..' aren't allowed)"); return 0; }   // graphs are game content: stay in the game's folders
             std::string err;
             if (!r->LoadTree(tree, &err)) { Log::Warning("Run Tree: ", err); return 0; }
         }

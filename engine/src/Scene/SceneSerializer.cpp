@@ -224,6 +224,7 @@ namespace okay {
 // The folder of the scene file being loaded (LoadFromFile), so mesh files it
 // points at can be found next to it in an exported game.
 static thread_local std::string g_loadingSceneDir;
+static std::string g_textSceneDir;   // SetTextSceneDir: the same for a scene read from text
 
 namespace detail {
 std::uint64_t ComponentRulesGeneration();        // GameObject.cpp
@@ -6391,6 +6392,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         in >> std::ws;
                         if (in.peek() == '"') c->weaponFile = ReadQuoted(in);
                     }
+                    c->sceneDir = g_loadingSceneDir;   // weapons.okayweapon is looked for next to the scene too
                 } else if (field == "gun") {
                     auto* g = go->AddComponent<RangedWeapon>();
                     KvIn k(in);
@@ -6400,6 +6402,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.b("auto", g->autoReload); k.key("fireKey", g->fireKey); k.i("fireBtn", g->fireButton);
                     k.key("reloadKey", g->reloadKey); k.f("muz", g->muzzleHeight); k.f("speed", g->projectileSpeed);
                     k.str("weapon", g->weapon); k.str("file", g->weaponFile); k.str("proj", g->projectile);
+                    g->sceneDir = g_loadingSceneDir;   // weapons.okayweapon is looked for next to the scene too
                 } else if (field == "spawner") {
                     auto* c = go->AddComponent<Spawner>();
                     c->templateName = ReadQuoted(in);
@@ -8650,6 +8653,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     k.f("speed", sp->timeScale);
                     k.key("skip", sp->skipKey);
                     k.b("lock", sp->lockPlayer);
+                    sp->sceneDir = g_loadingSceneDir;   // the .okayseq is looked for next to the scene too
                 } else if (field == "loc") {
                     // Localized text: string-table keys for the components read above.
                     // `i` absent means the first instance (every file written before per-instance keys).
@@ -8810,6 +8814,7 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         k.str(kk.c_str(), key); k.str(vk.c_str(), val);
                         if (!key.empty()) bt->overrides.emplace_back(key, val);
                     }
+                    bt->sceneDir = g_loadingSceneDir;   // the .okaybt files are looked for next to the scene too
                 } else if (field == "spline") {
                     auto* sp = go->AddComponent<Spline>();
                     KvIn k(in);
@@ -9093,7 +9098,16 @@ static bool ParseInto(Scene& scene, const std::string& text, bool clear,
 
 bool SceneSerializer::Deserialize(Scene& scene, const std::string& text, std::string* error,
                                   std::vector<std::string>* warnings) {
-    return ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
+    const std::string prevDir = g_loadingSceneDir;
+    if (prevDir.empty()) g_loadingSceneDir = g_textSceneDir;   // LoadFromFile's own folder wins
+    const bool ok = ParseInto(scene, text, /*clear=*/true, /*firstNew=*/nullptr, error, warnings);
+    g_loadingSceneDir = prevDir;
+    return ok;
+}
+
+void SceneSerializer::SetTextSceneDir(const std::string& dir) {
+    g_textSceneDir = dir;
+    if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') g_textSceneDir += '/';
 }
 
 SceneLoadJob::~SceneLoadJob() = default;

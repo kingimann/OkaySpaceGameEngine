@@ -120,7 +120,7 @@ bool BehaviorTreeRunner::LoadTree(const std::string& path, std::string* error) {
     if (!path.empty()) treePath = path;
     if (treePath.empty()) { m_error = "no tree file"; if (error) *error = m_error; return false; }
     std::string err;
-    std::shared_ptr<const BehaviorTree> t = BehaviorTree::Load(treePath, &err);
+    std::shared_ptr<const BehaviorTree> t = BehaviorTree::Load(treePath, &err, sceneDir);
     if (!t) {
         m_error = err;
         if (error) *error = err;
@@ -158,7 +158,7 @@ BehaviorTreeRunner::SubFrame* BehaviorTreeRunner::FindFrame(std::map<int, std::u
 }
 
 const BehaviorTreeRunner::NodeState* BehaviorTreeRunner::StateFor(const std::string& treePath, int nodeId) const {
-    const std::string want = treePath.empty() ? m_activePath : BehaviorTree::ResolvePath(treePath);
+    const std::string want = treePath.empty() ? m_activePath : ResolveTreePath(treePath);
     const std::string root = TreeIdentity();
     if (want.empty() || want == root || want == m_activePath) return State(nodeId);
     const SubFrame* frame = FindFrame(m_children, want);
@@ -169,7 +169,7 @@ const BehaviorTreeRunner::NodeState* BehaviorTreeRunner::StateFor(const std::str
 
 std::vector<int> BehaviorTreeRunner::ActivePathFor(const std::string& treePath) const {
     std::vector<int> out;
-    const std::string want = treePath.empty() ? m_activePath : BehaviorTree::ResolvePath(treePath);
+    const std::string want = treePath.empty() ? m_activePath : ResolveTreePath(treePath);
     const BehaviorTree* tree = nullptr;
     const std::vector<Rt>* rt = nullptr;
     const std::string root = TreeIdentity();
@@ -189,7 +189,7 @@ std::vector<int> BehaviorTreeRunner::ActivePathFor(const std::string& treePath) 
 }
 
 Blackboard* BehaviorTreeRunner::BoardFor(const std::string& treePath) {
-    const std::string want = treePath.empty() ? m_activePath : BehaviorTree::ResolvePath(treePath);
+    const std::string want = treePath.empty() ? m_activePath : ResolveTreePath(treePath);
     const std::string root = TreeIdentity();
     if (want.empty() || want == root || want == m_activePath) return &blackboard;
     if (SubFrame* frame = FindFrame(m_children, want)) return &frame->board;
@@ -215,7 +215,7 @@ void BehaviorTreeRunner::ReleaseBreak() {
 }
 
 std::string BehaviorTreeRunner::TreeIdentity() const {
-    if (!treePath.empty()) return BehaviorTree::ResolvePath(treePath);
+    if (!treePath.empty()) return ResolveTreePath(treePath);
     return PointerId(m_tree.get());
 }
 
@@ -366,7 +366,7 @@ void BehaviorTreeRunner::Update(float dt) {
             m_acc = 0.0f;
             m_activePath = TreeIdentity();
             m_runStack.clear();
-            if (!treePath.empty()) m_runStack.push_back(BehaviorTree::ResolvePath(treePath));
+            if (!treePath.empty()) m_runStack.push_back(ResolveTreePath(treePath));
             if (m_tree) m_runStack.push_back(PointerId(m_tree.get()));
             const int r = Index(m_tree->root);
             if (r >= 0) {
@@ -1036,7 +1036,7 @@ BtStatus BehaviorTreeRunner::TickTask(int idx, float dt, bool first) {
             if (!au) return BtStatus::Failure;
             if (first) {
                 if (const std::string clip = n.Str("clip"); !clip.empty() && clip != au->clipPath) {
-                    if (auto loaded = LoadAudioFile(BehaviorTree::ResolvePath(clip))) { au->clip = *loaded; au->clipPath = clip; }
+                    if (auto loaded = LoadAudioFile(ResolveTreePath(clip))) { au->clip = *loaded; au->clipPath = clip; }
                     else Log::Warning("[bt] Play Sound: cannot load '", clip, "'");
                 }
                 if (n.Flag("oneShot")) au->PlayOneShot(); else au->Play();
@@ -1080,7 +1080,7 @@ BtStatus BehaviorTreeRunner::TickSubtree(int idx, float dt, bool first) {
         return BtStatus::Failure;
     };
     if (spec.empty()) return fail("Run Sub-Tree names no tree");
-    const std::string path = BehaviorTree::ResolvePath(spec);
+    const std::string path = ResolveTreePath(spec);
     if (m_runStack.size() >= 64) return fail("Run Sub-Tree refused: the tree is nested too deep");
     std::unique_ptr<SubFrame> child;
     if (auto it = m_children.find(nodeId); it != m_children.end()) {
@@ -1096,7 +1096,7 @@ BtStatus BehaviorTreeRunner::TickSubtree(int idx, float dt, bool first) {
             });
         }
         std::string err;
-        std::shared_ptr<const BehaviorTree> tree = BehaviorTree::Load(spec, &err);
+        std::shared_ptr<const BehaviorTree> tree = BehaviorTree::Load(spec, &err, sceneDir);
         if (!tree || tree->root < 0 || tree->IndexOf(tree->root) < 0)
             return fail(err.empty() ? "Run Sub-Tree cannot read '" + spec + "'" : err);
         const std::string pointer = PointerId(tree.get());

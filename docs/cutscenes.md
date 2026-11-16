@@ -11,6 +11,10 @@ a **Sequence Player** component. Scripts can start one with `play_sequence("Intr
 ease in, the screen fades up from a dark blue, the hero walks, the camera bumps
 as `glance.okayseq` swings the door, then the picture fades out. Escape skips it.
 
+**Where the file is looked for.** A relative Sequence path is tried as written, then under the project folder,
+and then (since #888 finding 28) in the folder of the scene that was loaded, so `path="intro.okayseq"` still
+works after the `cutscene` folder is copied into a project's `Assets` folder. The project folder still wins.
+
 ## The Sequence Player component
 
 Add Component → Gameplay → **Sequence Player (cutscene)**.

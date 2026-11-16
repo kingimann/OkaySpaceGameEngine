@@ -12,6 +12,8 @@
 
 namespace okay {
 
+struct WeaponDefinition;
+
 /// A melee swing for the player. With no weapon chosen it still works the old
 /// way: `Swing()` hurts whoever is inside `range` and `arc` at once. A weapon
 /// definition (see WeaponBook) replaces those numbers and makes the swing take
@@ -48,6 +50,14 @@ public:
     /// Empty means: use the numbers above, or the weapon tied to the held item.
     std::string weapon;
     std::string weaponFile;
+    /// Folder of the scene file this was loaded from (set by the scene loader):
+    /// with no `weaponFile`, a weapon missing from the project book is looked
+    /// for in a `weapons.okayweapon` there.
+    std::string sceneDir;
+    /// The weapon definition in use: `weapon` (from `weaponFile`, the project
+    /// book, then the scene folder's book), else the held item's. Null when the
+    /// numbers above are used.
+    const WeaponDefinition* ChosenWeapon() const;
 
     bool Ready() const { return m_timer <= 0.0f && !m_swinging; }
     bool Swinging() const { return m_swinging; }

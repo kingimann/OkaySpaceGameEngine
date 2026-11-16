@@ -2213,6 +2213,13 @@ add_executable(test_behavior_tree test_behavior_tree.cpp)
 target_link_libraries(test_behavior_tree PRIVATE okay::engine)
 add_test(NAME behavior_tree COMMAND test_behavior_tree)
 
+# Asset files named next to a scene (#888 finding 28): a cutscene, behaviour trees and weapons in the
+# scene's own folder are found when the example is copied into a project's Assets folder
+add_executable(test_scene_relative_assets test_scene_relative_assets.cpp)
+target_link_libraries(test_scene_relative_assets PRIVATE okay::engine)
+target_compile_definitions(test_scene_relative_assets PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME scene_relative_assets COMMAND test_scene_relative_assets)
+
 # Splines, spline meshes / instancers / followers, line and trail renderers: evaluation, records, scripts
 add_executable(test_splines test_splines.cpp)
 target_link_libraries(test_splines PRIVATE okay::engine)

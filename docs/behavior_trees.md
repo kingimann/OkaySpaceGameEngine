@@ -88,7 +88,7 @@ values; writing an existing key keeps its declared type.
 
 | Setting | Meaning |
 |---|---|
-| Tree | The `.okaybt` file, relative to the project folder. Runners sharing a file share one loaded copy. |
+| Tree | The `.okaybt` file, relative to the project folder (then `Assets/`, then the folder of the scene that was loaded: the scene folder is only a fallback). Sub-trees are looked for the same way. Runners sharing a file share one loaded copy. |
 | Tick Rate | Ticks per second (0 = every frame). Movement keeps going between ticks. |
 | Run On Start | Start the tree when the scene starts (scripts can `bt_run` / `bt_stop` it). |
 | Debug Log | Logs every node that finishes and every run of the tree. |
@@ -130,7 +130,8 @@ already running. The Issues tab reports the same loop when it can see it from
 the files.
 
 `examples/behavior_trees/subtree_demo.okayscene` is a scene of this. Open that
-folder as the project (so the `.okaybt` files sit next to the scene). The red
+folder as the project, or copy the folder into a project's `Assets` folder (the
+`.okaybt` files are found next to the scene either way). The red
 cube's tree runs `greet.okaybt`, which turns the cube toward the player and
 writes `greeted`. The other cubes show a sub-tree that succeeds, one that
 fails over to the next branch, one that keeps running, and one that refuses

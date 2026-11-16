@@ -91,6 +91,11 @@ public:
     /// serialized text. Returns false on a parse error, with details in `error`.
     static bool Deserialize(Scene& scene, const std::string& text, std::string* error = nullptr,
                             std::vector<std::string>* warnings = nullptr);
+    /// The folder Deserialize treats as the scene's own folder (files named next
+    /// to the scene are looked for there, as LoadFromFile does with the file's
+    /// folder). The editor sets the open scene's folder, so Stop and Undo, which
+    /// rebuild the scene from text, still find them. Empty (the default) = none.
+    static void SetTextSceneDir(const std::string& dir);
     /// Load a scene from a file.
     static bool LoadFromFile(Scene& scene, const std::string& path, std::string* error = nullptr,
                              std::vector<std::string>* warnings = nullptr);

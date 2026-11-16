@@ -655,25 +655,33 @@ std::string BtFormatKeyMap(const std::vector<BtKeyLink>& links) {
 namespace {
 
 // True when `path` (or a tree it runs) runs `target` again. `seen` holds resolved paths.
-bool RefersToTree(const std::string& path, const std::string& target, std::vector<std::string>& seen, int depth) {
+bool RefersToTree(const std::string& path, const std::string& target, std::vector<std::string>& seen, int depth,
+                  const std::string& nearDir) {
     if (path.empty() || target.empty() || depth > 8) return false;
-    const std::string full = BehaviorTree::ResolvePath(path);
+    const std::string full = BehaviorTree::ResolvePath(path, nearDir);
     if (full == target) return true;
     for (const std::string& s : seen) if (s == full) return false;
     seen.push_back(full);
-    std::shared_ptr<const BehaviorTree> sub = BehaviorTree::Load(path);
+    std::shared_ptr<const BehaviorTree> sub = BehaviorTree::Load(path, nullptr, nearDir);
     if (!sub) return false;
     for (const BtNode& n : sub->nodes) {
         if (n.type != BtNodeType::RunSubtree) continue;
-        if (RefersToTree(n.Str("tree"), target, seen, depth + 1)) return true;
+        if (RefersToTree(n.Str("tree"), target, seen, depth + 1, nearDir)) return true;
     }
     return false;
+}
+
+// The folder of a tree file: its sub-trees are also looked for there.
+std::string FolderOf(const std::string& file) {
+    if (file.empty()) return std::string();
+    return std::filesystem::path(file).parent_path().string();
 }
 
 } // namespace
 
 std::vector<BehaviorTree::Issue> BehaviorTree::Validate(const Scene* scene, const std::string& selfPath) const {
     std::vector<Issue> out;
+    const std::string selfDir = FolderOf(selfPath.empty() ? std::string() : ResolvePath(selfPath));
     auto add = [&](int node, int sev, std::string text) { out.push_back({node, sev, std::move(text)}); };
     if (root < 0 || !Find(root)) { add(-1, 2, "The tree has no root node"); }
     // Which nodes the root reaches (the rest never run).
@@ -755,14 +763,14 @@ std::vector<BehaviorTree::Issue> BehaviorTree::Validate(const Scene* scene, cons
                     if (v.empty()) add(n.id, 2, label + " names no tree");
                     else {
                         std::string err;
-                        const std::shared_ptr<const BehaviorTree> sub = Load(v, &err);
-                        const std::string full = ResolvePath(v);
+                        const std::shared_ptr<const BehaviorTree> sub = Load(v, &err, selfDir);
+                        const std::string full = ResolvePath(v, selfDir);
                         const std::string self = selfPath.empty() ? std::string() : ResolvePath(selfPath);
                         if (!sub) add(n.id, 2, label + ": cannot read '" + v + "'" + (err.empty() ? std::string() : " (" + err + ")"));
                         else if (!self.empty() && full == self) add(n.id, 2, label + " runs this same tree");
                         else if (!self.empty()) {
                             std::vector<std::string> seen;
-                            if (RefersToTree(v, self, seen, 0))
+                            if (RefersToTree(v, self, seen, 0, selfDir))
                                 add(n.id, 2, label + ": '" + v + "' runs this tree again");
                         }
                     }
@@ -777,7 +785,7 @@ std::vector<BehaviorTree::Issue> BehaviorTree::Validate(const Scene* scene, cons
                     continue;
                 }
                 if (!Key(link.parent)) add(n.id, 1, label + ": mapped key '" + link.parent + "' is not on this tree");
-                if (const std::shared_ptr<const BehaviorTree> sub = Load(n.Str("tree")); sub) {
+                if (const std::shared_ptr<const BehaviorTree> sub = Load(n.Str("tree"), nullptr, selfDir); sub) {
                     bool found = false;
                     for (const auto& k : sub->keys) if (k.name == link.child) found = true;
                     if (!found) add(n.id, 1, label + ": the sub-tree has no key '" + link.child + "'");
@@ -1079,20 +1087,29 @@ std::unordered_map<std::string, std::shared_ptr<const BehaviorTree>>& Cache() {
 
 void BehaviorTree::SetAssetBaseDir(const std::string& dir) { BaseDir() = dir; }
 const std::string& BehaviorTree::AssetBaseDir() { return BaseDir(); }
-std::string BehaviorTree::ResolvePath(const std::string& path) {
+std::string BehaviorTree::ResolvePath(const std::string& path, const std::string& nearDir) {
     namespace fs = std::filesystem;
     std::error_code ec;
     if (path.empty()) return path;
     const fs::path p(path);
-    if (p.is_absolute() || BaseDir().empty() || fs::exists(p, ec)) return path;
-    const fs::path under = fs::path(BaseDir()) / p;
-    if (fs::exists(under, ec)) return under.string();
-    const fs::path assets = fs::path(BaseDir()) / "Assets" / p;
-    if (fs::exists(assets, ec)) return assets.string();
-    return under.string();
+    if (p.is_absolute() || fs::exists(p, ec)) return path;
+    const bool hasBase = !BaseDir().empty();
+    const fs::path under = hasBase ? fs::path(BaseDir()) / p : p;
+    if (hasBase) {
+        if (fs::exists(under, ec)) return under.string();
+        const fs::path assets = fs::path(BaseDir()) / "Assets" / p;
+        if (fs::exists(assets, ec)) return assets.string();
+    }
+    // A fallback only: the folder the caller is in (a runner's scene folder).
+    if (!nearDir.empty()) {
+        const fs::path dir(nearDir);
+        if (fs::exists(dir / p, ec)) return (dir / p).string();
+        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).string();
+    }
+    return hasBase ? under.string() : path;
 }
-std::shared_ptr<const BehaviorTree> BehaviorTree::Load(const std::string& path, std::string* error) {
-    const std::string full = ResolvePath(path);
+std::shared_ptr<const BehaviorTree> BehaviorTree::Load(const std::string& path, std::string* error, const std::string& nearDir) {
+    const std::string full = ResolvePath(path, nearDir);
     {
         std::lock_guard<std::mutex> lock(CacheMutex());
         auto it = Cache().find(full);

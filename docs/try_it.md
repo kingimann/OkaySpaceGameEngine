@@ -422,6 +422,30 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Example folders copied into a project (#888 finding 28, branch `claude2/grok-28-scene-relative-paths`, not merged or released yet)
+
+Before this fix, the cutscene, the behaviour trees and the weapons of these examples were only found when the example
+folder itself was opened as the project. Now the folder of the scene is searched too (after the project folder, which
+still wins).
+
+1. Make or open a project from the launcher. In Explorer, copy `examples\cutscene` from the install folder into the
+   project's `Assets\` folder, so you have `Assets\cutscene\intro.okayscene`.
+2. In the editor, File > Open `Assets\cutscene\intro.okayscene` and press **Play**. The cutscene runs: bars ease in, the
+   hero walks, the door swings, the picture fades out. Before the fix nothing played and the Console said it could not
+   open `intro.okayseq`. Press Stop and Play again: it plays again.
+3. Do the same with `examples\behavior_trees`: open `Assets\behavior_trees\subtree_demo.okayscene` and press Play. The
+   red cube turns toward the player and the other cubes run their sub-trees. No "cannot read" line in the Console. The
+   Behavior Tree Runner inspector no longer shows "Cannot read GuardBrain.okaybt" in red.
+4. Do the same with `examples\weapons`: open `Assets\weapons\arena.okayscene`, press Play, and swing with F next to
+   the dummy. The swing takes 0.8 seconds and does 12 damage (the practice sword from `weapons.okayweapon`), not an
+   instant 15. The Melee Attacker inspector no longer says "No weapon named \"sword\" is in the list."
+
+**Status.** Engine logic tested headless on Linux (`test_scene_relative_assets`, 82 checks; before the fix the copied
+case failed 24 of 71). The editor changes (`EditorState.cpp`, `BehaviorTreeWindow.cpp`, `WeaponEditor.cpp`) were only
+syntax-checked, the two one-argument changes in `editor/main.cpp` were not compiled, the editor was not run, and nothing
+was tried on Windows. Not checked: Build Game / export. The scene's own file list (`CollectAssetPaths`) still reads a runner's
+sub-trees without the scene folder, so in the copied case the sub-trees of a tree may be left out of an exported game.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

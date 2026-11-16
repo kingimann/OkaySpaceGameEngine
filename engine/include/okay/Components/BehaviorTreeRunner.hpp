@@ -41,6 +41,10 @@ public:
     int ExecutionOrder() const override { return -20; }
 
     std::string treePath;        ///< the .okaybt file (project-relative, see SetAssetBaseDir)
+    /// Folder of the scene file this runner was loaded from (set by the scene
+    /// loader). A tree or sub-tree the project folder does not hold is looked
+    /// for there too (BehaviorTree::ResolvePath's `nearDir`).
+    std::string sceneDir;
     float tickRate = 0.0f;       ///< ticks per second (0 = every frame)
     bool  runOnStart = true;     ///< start the tree when the scene starts
     bool  debug = false;         ///< log every node that finishes
@@ -107,6 +111,8 @@ public:
     const Blackboard& ActiveBoard() const;
     /// Resolved path of the tree this runner started (empty when it was built in code).
     const std::string& RootTreePath() const { return m_activePath; }
+    /// `path` resolved the way this runner reads it (the project folder, then its scene's folder).
+    std::string ResolveTreePath(const std::string& path) const { return BehaviorTree::ResolvePath(path, sceneDir); }
 
     /// Set while a breakpoint is holding Play. The node is on the active path.
     bool IsBreakPaused() const;

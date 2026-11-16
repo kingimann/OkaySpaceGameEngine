@@ -124,6 +124,10 @@ private:
 /// The weapon `id` in `file` (empty file = the project book). A file with one
 /// weapon and an empty id means that weapon.
 const WeaponDefinition* FindWeapon(const std::string& id, const std::string& file);
+/// The same, and then (a fallback only, when `file` is empty and the project
+/// book has no `id`) the `weapons.okayweapon` in `sceneDir`, the folder of the
+/// scene the component was loaded from. That file is read once and kept.
+const WeaponDefinition* FindWeapon(const std::string& id, const std::string& file, const std::string& sceneDir);
 
 /// The weapon tied to whatever this character is holding in the main hand:
 /// the item's custom "weapon" field, or the weapon whose item id matches.

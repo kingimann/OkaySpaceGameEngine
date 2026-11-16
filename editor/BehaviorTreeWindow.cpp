@@ -1728,7 +1728,7 @@ void DrawBehaviorTreeWindow(EditorState& ed) {
     // The selected object's runner opens its tree (when nothing unsaved is being edited).
     if (GameObject* go = ed.selected()) {
         if (auto* r = go->GetComponent<BehaviorTreeRunner>(); r && !r->treePath.empty()) {
-            const std::string full = BehaviorTree::ResolvePath(r->treePath);
+            const std::string full = r->ResolveTreePath(r->treePath);
             static std::string s_lastAuto;
             if (full != d.path && s_lastAuto != full && !d.dirty && std::filesystem::exists(full)) {
                 s_lastAuto = full;
@@ -1840,7 +1840,7 @@ void DrawBehaviorTreeInspector(EditorState& ed, GameObject* go, Component* comp,
     }
     if (ImGui::SmallButton("Open in Behavior Tree window##btr")) {
         if (r->treePath.empty()) { g_showBehaviorTree = true; }
-        else OpenBehaviorTreeFile(ed, BehaviorTree::ResolvePath(r->treePath));
+        else OpenBehaviorTreeFile(ed, r->ResolveTreePath(r->treePath));
         U().liveObj = go->name;
     }
     ImGui::SameLine();
@@ -1871,7 +1871,7 @@ void DrawBehaviorTreeInspector(EditorState& ed, GameObject* go, Component* comp,
     // Blackboard overrides.
     ImGui::TextDisabled("Blackboard overrides");
     Tip("Values that replace the tree's defaults on this NPC.");
-    std::shared_ptr<const BehaviorTree> tree = r->treePath.empty() ? nullptr : BehaviorTree::Load(r->treePath);
+    std::shared_ptr<const BehaviorTree> tree = r->treePath.empty() ? nullptr : BehaviorTree::Load(r->treePath, nullptr, r->sceneDir);
     int removeAt = -1;
     for (std::size_t i = 0; i < r->overrides.size(); ++i) {
         ImGui::PushID((int)i);

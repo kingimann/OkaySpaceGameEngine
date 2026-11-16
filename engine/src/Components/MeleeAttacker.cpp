@@ -43,7 +43,7 @@ bool CanBeHurt(const GameObject* g) {
 }
 
 const WeaponDefinition* Chosen(const MeleeAttacker& m) {
-    const WeaponDefinition* w = FindWeapon(m.weapon, m.weaponFile);
+    const WeaponDefinition* w = FindWeapon(m.weapon, m.weaponFile, m.sceneDir);
     if (!w && m.weapon.empty() && m.weaponFile.empty()) w = WeaponForHolder(m.gameObject);
     if (w && w->kind != WeaponKind::Melee) return nullptr;
     return w;
@@ -106,6 +106,8 @@ bool Inside(const MeleeAttacker& m, const MeleeTune& t, const Vec3& target) {
 }
 
 } // namespace
+
+const WeaponDefinition* MeleeAttacker::ChosenWeapon() const { return Chosen(*this); }
 
 void MeleeAttacker::Swing() {
     if (!gameObject || !transform || m_swinging) return;

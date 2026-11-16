@@ -10,6 +10,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -281,6 +282,15 @@ const WeaponDefinition* FindWeapon(const std::string& id, const std::string& fil
     }
     if (!id.empty()) return WeaponBook::Get().Find(id);
     return nullptr;
+}
+
+const WeaponDefinition* FindWeapon(const std::string& id, const std::string& file, const std::string& sceneDir) {
+    if (const WeaponDefinition* w = FindWeapon(id, file)) return w;
+    if (id.empty() || !file.empty() || sceneDir.empty()) return nullptr;
+    // Cached keeps the book (an empty one when the file is missing), so this
+    // reads the disk once per scene folder, not every frame.
+    const std::string near = (std::filesystem::path(sceneDir) / "weapons.okayweapon").string();
+    return WeaponBook::Cached(near).Find(id);
 }
 
 const WeaponDefinition* WeaponForHolder(GameObject* go) {

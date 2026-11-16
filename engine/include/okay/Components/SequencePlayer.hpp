@@ -15,6 +15,10 @@ namespace okay {
 class SequencePlayer : public Behaviour {
 public:
     std::string sequencePath;      ///< the .okayseq file, project-relative ("Assets/Intro.okayseq")
+    /// Folder of the scene file this player was loaded from (set by the scene
+    /// loader). A relative `sequencePath` the project folder does not hold is
+    /// looked for there too, so a scene copied with its .okayseq still plays it.
+    std::string sceneDir;
     bool  playOnStart = false;
     bool  loop = false;            ///< wrap at the loop markers (the sequence's own loop flag also counts)
     float timeScale = 1.0f;        ///< playback rate (the game's time scale applies on top)
@@ -66,7 +70,10 @@ public:
     /// Read `sequencePath`. False (with `error`) when the file can't be read or parsed.
     bool Load(std::string* error = nullptr);
     /// `sequencePath` made absolute under the project folder when it is relative
-    /// (the same folder a Character's clips file resolves against).
+    /// (the same folder a Character's clips file resolves against). Order: the
+    /// path as written when that file exists, then the project folder, then
+    /// `sceneDir` (the path, then its file name); with none found, the project
+    /// folder answer as before.
     std::string ResolvedPath() const;
 
     // ---- Stepping (Update does this; tests and the editor may call it directly) ----

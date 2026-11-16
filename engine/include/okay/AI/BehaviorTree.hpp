@@ -264,13 +264,19 @@ public:
 
     /// Shared copies for runners: one load per file, dropped by Forget (the editor
     /// saved it) so the next runner reads the new file.
-    static std::shared_ptr<const BehaviorTree> Load(const std::string& path, std::string* error = nullptr);
+    /// `nearDir` is a fallback folder for a relative path (see ResolvePath).
+    static std::shared_ptr<const BehaviorTree> Load(const std::string& path, std::string* error = nullptr,
+                                                    const std::string& nearDir = std::string());
     static void Forget(const std::string& path);
     /// The project folder a relative tree path is looked for in (the editor and
     /// the player set it); ResolvePath applies it.
     static void SetAssetBaseDir(const std::string& dir);
     static const std::string& AssetBaseDir();
-    static std::string ResolvePath(const std::string& path);
+    /// A relative `path`: as written when that file exists, else under the
+    /// project folder, else under its Assets folder, else (a fallback only) in
+    /// `nearDir` (the path, then its file name; a runner passes its scene's
+    /// folder). With none found, the project folder answer.
+    static std::string ResolvePath(const std::string& path, const std::string& nearDir = std::string());
 };
 
 } // namespace okay

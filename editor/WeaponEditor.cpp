@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -95,10 +96,18 @@ void OpenWeaponFile(const std::string& path) {
     if (!okay::WeaponBook::Get().Weapons().empty()) g_sel = okay::WeaponBook::Get().Weapons().front().id;
 }
 
-bool WeaponReferenceField(const char* label, std::string& weaponId, std::string& weaponFile, bool guns) {
+bool WeaponReferenceField(const char* label, std::string& weaponId, std::string& weaponFile, bool guns,
+                          const std::string& sceneDir) {
     bool changed = false;
     okay::WeaponBook& book = okay::WeaponBook::Get();
     const okay::WeaponBook* fileBook = weaponFile.empty() ? nullptr : &okay::WeaponBook::Cached(weaponFile);
+    // No file of its own: the weapons.okayweapon next to the scene is the fallback (FindWeapon does the same).
+    if (!fileBook && !sceneDir.empty()) {
+        const std::filesystem::path near = std::filesystem::path(sceneDir) / "weapons.okayweapon";
+        std::error_code ec;
+        const bool isProjectList = !book.Path().empty() && std::filesystem::equivalent(near, book.Path(), ec);
+        if (!isProjectList) fileBook = &okay::WeaponBook::Cached(near.string());   // not listed twice when it is the project's own
+    }
     std::string shown = weaponId.empty() ? std::string("(none)") : weaponId;
     if (const okay::WeaponDefinition* w = book.Find(weaponId)) shown = w->DisplayName();
     else if (fileBook) if (const okay::WeaponDefinition* w = fileBook->Find(weaponId)) shown = w->DisplayName();

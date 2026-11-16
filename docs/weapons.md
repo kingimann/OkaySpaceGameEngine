@@ -46,6 +46,8 @@ The top-down shooter copies a gun's damage, fire rate, range, magazine, reload, 
 
 `examples/weapons/arena.okayscene` is a fighter with the practice sword, a dummy in front of them, and a pistol. `examples/weapons/weapons.okayweapon` is the list those names point at. The sword's hit window opens at 0.25 seconds, so a swing does not connect before then, and it misses anything outside the arc.
 
+A fighter or gun that names a weapon but no file looks in the project list first. When the project list has no such weapon, it also looks in a `weapons.okayweapon` next to the scene that was loaded (read once, then kept). So the arena still finds its sword and pistol after the `weapons` folder is copied into a project's `Assets` folder.
+
 ## File
 
 ```

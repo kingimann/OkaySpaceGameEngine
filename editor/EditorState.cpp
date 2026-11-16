@@ -138,6 +138,7 @@ bool EditorState::ApplySceneText(const std::string& text, const SelectionRef& se
     okay::filedialog::CancelBuiltin();   // every object is rebuilt; a queued dialog may hold one of its pointers (#732)
     const SelectionRef want = sel.valid ? sel : CaptureSelection();
     StopNetwork();
+    SceneSerializer::SetTextSceneDir(m_path.empty() ? std::string() : std::filesystem::path(m_path).parent_path().string());   // files next to the scene
     if (!SceneSerializer::Deserialize(m_scene, text)) return false;   // all or nothing: the scene is as it was
     Select(nullptr);   // Deserialize freed every object; clear m_multi too (no dangling ptrs)
     GameObject* prim = nullptr;
@@ -1174,6 +1175,7 @@ void EditorState::Stop() {
     m_net = nullptr;
     Matchmaker::Shared().Cancel();   // a search started in play mode ends with it
     m_scene.runScripts = false;
+    SceneSerializer::SetTextSceneDir(m_path.empty() ? std::string() : std::filesystem::path(m_path).parent_path().string());   // files next to the scene
     SceneSerializer::Deserialize(m_scene, m_snapshot); // restore edit state
     for (const auto& up : m_scene.Objects())
         if (auto* ma = up->GetComponent<ModelAnimator>())

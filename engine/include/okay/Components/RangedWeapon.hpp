@@ -31,6 +31,10 @@ public:
     std::string projectile;        ///< prefab path; empty spawns a plain projectile
     std::string weapon;
     std::string weaponFile;
+    /// Folder of the scene file this was loaded from (set by the scene loader):
+    /// with no `weaponFile`, a weapon missing from the project book is looked
+    /// for in a `weapons.okayweapon` there.
+    std::string sceneDir;
 
     bool IsReloading() const { return m_reloading; }
     int ShotsFired() const { return m_shots; }

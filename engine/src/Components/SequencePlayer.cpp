@@ -39,8 +39,16 @@ std::string SequencePlayer::ResolvedPath() const {
     std::error_code ec;
     const fs::path p(sequencePath);
     const std::string& base = Character::AssetBaseDir();
-    if (sequencePath.empty() || p.is_absolute() || base.empty() || fs::exists(p, ec)) return sequencePath;
-    return (fs::path(base) / p).string();
+    if (sequencePath.empty() || p.is_absolute() || fs::exists(p, ec)) return sequencePath;
+    const std::string inProject = base.empty() ? sequencePath : (fs::path(base) / p).string();
+    if (!base.empty() && fs::exists(inProject, ec)) return inProject;
+    // A fallback only: the folder of the scene this player came from.
+    if (!sceneDir.empty()) {
+        const fs::path dir(sceneDir);
+        if (fs::exists(dir / p, ec)) return (dir / p).string();
+        if (fs::exists(dir / p.filename(), ec)) return (dir / p.filename()).string();
+    }
+    return inProject;
 }
 
 bool SequencePlayer::Load(std::string* error) {

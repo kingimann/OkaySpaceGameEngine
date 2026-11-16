@@ -35345,7 +35345,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* c = dynamic_cast<MeleeAttacker*>(curComp)) {
         if (CompHeader("Melee Attacker", c, &toRemove)) {
             ImGui::TextDisabled("Swings on the attack key. A hit lands on health, survival health, stats or an NPC inside the arc, and only while the hit window is open.");
-            if (WeaponReferenceField("Weapon##melee", c->weapon, c->weaponFile, false)) ed.dirty = true;
+            if (WeaponReferenceField("Weapon##melee", c->weapon, c->weaponFile, false, c->sceneDir)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A melee weapon from the list. Empty uses the numbers below, or the weapon tied to the held item.");
             if (!c->weapon.empty() || !c->weaponFile.empty())
                 ImGui::TextDisabled("The weapon replaces these numbers while it is set.");
@@ -35379,7 +35379,7 @@ void DrawInspector(EditorState& ed) {
     if (auto* gun = dynamic_cast<RangedWeapon*>(curComp)) {
         if (CompHeader("Ranged Weapon", gun, &toRemove)) {
             ImGui::TextDisabled("Fires on a rate, spends the rounds in the gun, and reloads from the spare rounds.");
-            if (WeaponReferenceField("Weapon##gun", gun->weapon, gun->weaponFile, true)) ed.dirty = true;
+            if (WeaponReferenceField("Weapon##gun", gun->weapon, gun->weaponFile, true, gun->sceneDir)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("A gun from the list. Empty uses the numbers below, or the weapon tied to the held item.");
             if (!gun->weapon.empty() || !gun->weaponFile.empty())
                 ImGui::TextDisabled("The weapon replaces these numbers while it is set.");

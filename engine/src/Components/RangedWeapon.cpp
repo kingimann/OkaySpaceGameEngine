@@ -28,7 +28,7 @@ RangedWeapon::Tune RangedWeapon::Current() const {
     t.reserve = reserve;
     t.hitscan = hitscan;
     t.projectile = projectile;
-    const WeaponDefinition* w = FindWeapon(weapon, weaponFile);
+    const WeaponDefinition* w = FindWeapon(weapon, weaponFile, sceneDir);
     if (!w && weapon.empty() && weaponFile.empty()) w = WeaponForHolder(gameObject);
     if (w && w->kind == WeaponKind::Gun) {
         t.damage = w->damage;

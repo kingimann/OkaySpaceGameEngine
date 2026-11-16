@@ -33,30 +33,35 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
   - 6.2.2 Rigidbody3D - `Physics/Rigidbody3D` - body type, mass, drag, gravity scale, friction, terminal fall speed, axis freeze, spin, sleeping, continuous collision, ground signals (`groundedOnTerrain`, `groundNormal`)
   - 6.2.3 3D collider shapes - `Physics/Collider3D` - box, sphere, capsule, cylinder and mesh colliders; the mesh collider is exact per-triangle static geometry (see 6.2.5)
   - 6.2.5 Mesh collider - `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact` - `MeshCollider3D` collides against the MeshRenderer's triangles through a BVH, placed by the world matrix (rotation and non-uniform scale); rays, sphere / capsule / box overlaps and casts, `ResolveSphere`, trigger overlaps and Rigidbody3D contact (sphere, capsule, box bodies; restitution, friction, spin); rebuilt when the mesh changes; a dynamic Rigidbody3D on the same object collides as the convex hull of the mesh (GJK/EPA), and bodies landing on a solid mesh raise OnCollisionEnter3D / Stay / Exit
+  - 6.2.6 Improved solver - `Physics/Physics3DImproved.inl`, `Physics/ContactSolver`, `Physics/BoxManifold`, `Physics/PhysicsQuality` - the scene's Physics quality (Classic = the old single-pass step, Improved = iterated contacts with warm starting, box face contacts, group sleeping, swept fast bodies, rolling resistance, real inertia, compound bodies); saved as `physicsquality`; 3D only (the 2D step has no Improved solver yet)
+  - 6.2.7 Physics materials - `Physics/PhysicsMaterial`, `Physics/Collider3D`, `Physics/Collider2D` - per-collider friction and bounciness (-1 = use the Rigidbody's) with a combine rule (Default, Average, Minimum, Multiply, Maximum); saved as `physmat3d` / `physmat2d`
+  - 6.2.8 Debris - `Physics/DebrisPool`, `Components/DebrisEmitter` - capped, pooled, self-expiring small rigid chunks for digging and breaking games; `DebrisEmitter` is the Add Component version that throws bursts
   - 6.2.4 Fit to object - `Physics/ColliderFit` - `FitColliders` sizes colliders to the SpriteRenderer or MeshRenderer bounds; `autoFit` refits each frame
-- **Code:** `Physics/Physics3D`, `Physics/Rigidbody3D`, `Physics/Collider3D`, `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact`, `Physics/ColliderFit`, `editor/main.cpp` (Add Component and Inspector sections)
+- **Code:** `Physics/Physics3D`, `Physics/Physics3DImproved.inl`, `Physics/ContactSolver`, `Physics/BoxManifold`, `Physics/PhysicsMaterial`, `Physics/PhysicsQuality`, `Physics/DebrisPool`, `Components/DebrisEmitter`, `Physics/Rigidbody3D`, `Physics/Collider3D`, `Physics/MeshCollider3D`, `Physics/TriMesh`, `Physics/ConvexContact`, `Physics/ColliderFit`, `editor/main.cpp` (Add Component and Inspector sections)
 - **API:** `Rigidbody3D`, `BoxCollider3D`, `SphereCollider3D`, `CapsuleCollider3D`, `CylinderCollider3D`, `MeshCollider3D`, `FitColliders`, `scene.physics3D()`, `OnCollisionEnter3D`, `OnTriggerEnter3D`, `Collision3D`
-- **Editor:** Add Component > Physics 3D rows, collider inspectors with a Fit to Object button, Mesh Collider inspector (triangle and BVH counts, convex-hull line when the body is dynamic, Rebuild), Scene view collider gizmos (the mesh collider draws its triangle edges, or the hull while the body is dynamic)
-- **Docs:** -
-- **Tests:** `physics3d`, `meshcollider3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`
+- **Editor:** Add Component > Physics 3D rows (and DebrisEmitter), Project Settings > Physics > Physics quality (Classic / Improved, solver iterations, catch fast bodies), a Physics Material section on every collider, Rolling Resistance and Use Child Colliders on the Rigidbody 3D, collider inspectors with a Fit to Object button, Mesh Collider inspector (triangle and BVH counts, convex-hull line when the body is dynamic, Rebuild), Scene view collider gizmos (the mesh collider draws its triangle edges, or the hull while the body is dynamic)
+- **Docs:** `docs/physics.md`, `docs/physics_plan.md`, `docs/try_it.md` (7u)
+- **Tests:** `physics3d`, `meshcollider3d`, `angular3d`, `collider_fit`, `physics_nan`, `physics_callback_removal`, `physics_dispatch_removal`, `physics_deep_manifold`, `physics_deep_solver`, `physics_deep_bugs`, `physics_deep_improved`, `physics_deep_save`, `physics_deep_more`
 - **Status:** Works - Physics3D::Step, Rigidbody3D and the collider headers read; sleeping, terrain follow and spin covered by the tests above
-- **Open:** the header says bodies must be top-level (un-parented) Transforms; the navmesh bake still treats a MeshCollider3D as its bounds box; no dedicated physics doc
+- **Open:** the header says bodies must be top-level (un-parented) Transforms; the navmesh bake still treats a MeshCollider3D as its bounds box; Improved is 3D only and off for old scenes; a dense sleeping pile still costs the contact test each step
 - **Related:** 6.1, 6.3, 6.4, 6.5, 6.8, 2.6, 4.1
 - **Words:** Rigidbody, Rigidbody3D, BoxCollider3D, SphereCollider3D, CapsuleCollider3D, CylinderCollider3D, MeshCollider3D, collider fit, autoFit, Fit to Object, SAT, gravity, terrain collision, sleeping, kinematic, triangle mesh, BVH, concave collider, static mesh, convex hull, ConvexContact
 - **Seen as:** objects fall through a thin floor; a box stands on its corner or never settles; a collider is bigger or smaller than the mesh; a character sinks into terrain; a parented object does not collide
 - **Ask me like:** "the collider does not match my model"; "make this crate stop sliding on the ramp"
 
 ### 6.3 Joints
-- **What:** Positional constraints between a body and a world point or another body: rigid rod, spring, weld and hinge, with optional breaking.
+- **What:** Positional constraints between a body and a world point or another body: rigid rod, spring, weld, hinge and (3D) slider, with optional breaking.
 - **Parts:**
   - 6.3.1 Distance, spring and pin - `Components/Joint2D`, `Components/Joint3D` - rod, damped spring and weld solved by impulse plus position correction after contacts
   - 6.3.2 Hinge - `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit` - pins a point and lets the body spin; motor in both; angle limits in both (degrees from the start pose; the 3D stop uses `ClampHingeRotation`)
+  - 6.3.4 Slider - `Components/Joint3D` - Mode Slider (prismatic): moves along an axis only, cannot turn, optional limits in metres and a motor in m/s (3D only)
+  - 6.3.5 Joint passes and partner cache - `Physics/Physics3D`, `Scene/NearestLookup` - Improved quality repeats the constraint joints with the contact solver; a joint remembers its named partner until the scene's objects change
   - 6.3.3 Breakable joints - `Components/Joint2D`, `Components/Joint3D` - `breakable` and `breakForce` snap the joint when stretched, `broken` stops it
 - **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
 - **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`, `useLimits`, `minAngle`, `maxAngle`
-- **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge)"; inspectors for all four modes, with Use Limits / Min Angle / Max Angle on a hinge
-- **Docs:** -
-- **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`
+- **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge/slider)"; inspectors for all five 3D modes, with Use Limits / Min Angle / Max Angle on a hinge
+- **Docs:** `docs/physics.md`
+- **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`, `physics_deep_more`
 - **Status:** Works - joint solver pass in Physics3D::Step and the two headers read; distance, spring, pin and hinge covered by the tests above
 - **Open:** Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
 - **Related:** 6.1, 6.2, 5.8

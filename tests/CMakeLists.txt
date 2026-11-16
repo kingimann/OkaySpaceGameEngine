@@ -1742,6 +1742,15 @@ target_include_directories(test_launcher_versions PRIVATE ${PROJECT_SOURCE_DIR}/
 target_link_libraries(test_launcher_versions PRIVATE Threads::Threads okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
 add_test(NAME launcher_versions COMMAND test_launcher_versions)
 
+# The two data-loss findings of docs/install_audit.md: a kept editor (an older version the launcher keeps in Versions/<v>/Tools) never updates itself and a bare
+# --keep-version is trusted only by a kept copy (shared/ProjectVersion.hpp); Remove, the prune and every other delete of a version folder refuse when a project
+# of the person's is inside (launcher/VersionsManager.cpp). Temp folders only: no SDL, ImGui, engine link or network. The editor's gate is in test_project_upgrade.
+add_executable(test_versions_safety test_versions_safety.cpp ${PROJECT_SOURCE_DIR}/launcher/VersionsManager.cpp)
+target_compile_features(test_versions_safety PRIVATE cxx_std_17)
+target_include_directories(test_versions_safety PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared ${PROJECT_SOURCE_DIR}/engine/include)
+target_link_libraries(test_versions_safety PRIVATE okay::crypto)   # okay::crypto: shared/AntiCheatCrypto.hpp (signed versions.json)
+add_test(NAME versions_safety COMMAND test_versions_safety)
+
 # The same download through our own HTTP client (docs/own_http_readiness.md): only with -DOKAY_OWN_HTTP=ON, loopback server, no network.
 if(OKAY_OWN_HTTP AND UNIX AND NOT APPLE)
     add_executable(test_launcher_download_own test_launcher_download_own.cpp

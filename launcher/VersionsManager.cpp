@@ -625,6 +625,13 @@ int CleanStale(const fs::path& launcherDir) {
     return removed;
 }
 
+// ---- never delete a folder that holds the person's work (STUBS: test first, they still say "nothing is in the way") ------------
+
+FolderScan ScanFolderForProjects(const fs::path& dir, const ScanLimits& limits) { (void)dir; (void)limits; return {}; }
+DeleteCheck CheckBeforeDelete(const fs::path& dir, const ScanLimits& limits) { (void)dir; (void)limits; return {}; }
+int CountProjectsMadeWith(const std::vector<std::string>& projectVersions, const std::string& version) { (void)projectVersions; (void)version; return 0; }
+std::string ProjectsMadeWithSentence(int count, const std::string& version) { (void)count; (void)version; return {}; }
+
 Result Remove(const fs::path& launcherDir, const std::string& versionIn, const RemoveGuards& g, const IO& io) {
     Result r;
     auto done = [&](Outcome o, const std::string& m) { r.outcome = o; r.message = m; return r; };
@@ -772,6 +779,7 @@ PruneResult Prune(const fs::path& launcherDir, int keepPrevious, const std::stri
     for (const std::string& v : PlanPrune(ListInstalled(launcherDir), keepPrevious, ltsVersion, keep)) {
         const Result r = Remove(launcherDir, v, guards, io);
         (r.ok() ? pr.removed : pr.failed).push_back(v);
+        if (!r.ok()) pr.notRemoved.push_back({v, r.message});
     }
     return pr;
 }
@@ -878,9 +886,9 @@ std::vector<EditorChoice> OpenWithChoices(const std::string& projectVersion, con
     return out;
 }
 
-std::vector<std::string> OpenWithArgs(unsigned long launcherPid, const std::string& scene) {
+std::vector<std::string> OpenWithArgs(unsigned long launcherPid, const std::string& scene, const std::string& version) {
     std::vector<std::string> args{"--launcher", std::to_string(launcherPid)};
-    for (std::string& a : okayver::KeepVersionArgs(scene)) args.push_back(std::move(a));
+    for (std::string& a : okayver::KeepVersionArgs(scene, version)) args.push_back(std::move(a));
     return args;
 }
 

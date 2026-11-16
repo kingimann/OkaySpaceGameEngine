@@ -165,6 +165,7 @@ struct GateEnv {
     std::function<std::vector<std::string>(const std::string& projectDir)> outputDirs;   ///< Build Settings output folders
     FailHook fail;                                                ///< tests only
     std::function<std::uintmax_t(const fs::path&, std::error_code&)> availableSpace;   ///< tests only
+    bool keptCopy = false;                                        ///< this editor runs from a kept copy (<launcher dir>/Versions/<v>/Tools): the only one that trusts a bare --keep-version
 };
 
 /// An editor of another version to start in place of this one (the "Keep" choice).
@@ -198,9 +199,10 @@ public:
     void MarkCleared(const std::string& root);
     bool IsCleared(const std::string& root) const;
     /// `--keep-version`: the person chose this editor's version for the project that `scene` belongs to. `forVersion` is
-    /// the version the flag was given for ("" = the version of whoever reads it); a flag for another version is ignored.
-    /// An older or unversioned project is then opened without a question, for the rest of the session; a newer one still asks.
-    void NoteKeepRequest(const std::string& scene, const std::string& forVersion = {});
+    /// the version the flag names ("" = a bare flag, which only a kept copy trusts: okayver::HonoursKeepFlag); a flag for another
+    /// version is ignored. An older or unversioned project is then opened without a question, for the rest of the session; a newer one
+    /// still asks. True when the request was honoured.
+    bool NoteKeepRequest(const std::string& scene, const std::string& forVersion = {});
     bool IsKept(const std::string& root) const;
     /// The safety net under EditorState::Load: may this scene be opened now? Same-version and development projects, and
     /// ones already answered, yes (and are remembered); everything else no, with the reason.

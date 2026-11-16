@@ -818,12 +818,13 @@ void ProjectGate::MarkCleared(const std::string& root) { if (!root.empty()) { cl
 bool ProjectGate::IsCleared(const std::string& root) const { return !root.empty() && cleared_.count(RootKey(root)) != 0; }
 bool ProjectGate::IsKept(const std::string& root) const { return !root.empty() && kept_.count(RootKey(root)) != 0; }
 
-void ProjectGate::NoteKeepRequest(const std::string& scene, const std::string& forVersion) {
+bool ProjectGate::NoteKeepRequest(const std::string& scene, const std::string& forVersion) {
     const std::string root = ProjectRootForScene(scene);
-    if (root.empty()) return;
-    if (!forVersion.empty() && okayver::CompareVersions(forVersion, env_.running) != 0) return;   // meant for another version's editor
+    if (root.empty()) return false;
+    if (!forVersion.empty() && okayver::CompareVersions(forVersion, env_.running) != 0) return false;   // meant for another version's editor
     kept_.insert(RootKey(root));
     ++revision_;
+    return true;
 }
 
 bool ProjectGate::MayLoad(const std::string& scene, std::string* why) {

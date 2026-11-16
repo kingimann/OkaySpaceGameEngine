@@ -13,6 +13,8 @@
 //   SetStampInText / FindStampInText                 the same on the text, for callers that write the file whole
 //   KeepUnknownLines                                 lines of an existing file a writer does not know, to carry over
 //   Versions folder helpers                          where the launcher keeps editors of other versions
+//   IsKeptCopyDir / KeptCopyVersion                  does an editor run from a kept copy (<launcher dir>/Versions/<v>/Tools)?
+//   ParseKeepFlag / HonoursKeepFlag                  `--keep-version[=<ver>]`: who may trust it (a bare flag only a kept copy)
 //
 // The stamp is the engine version that LAST WROTE the project: `engine_version=2.855.0`, one line in
 // project.okayproj. Editors that do not know the key ignore it (every reader of that file skips unknown lines), so
@@ -421,8 +423,48 @@ inline std::vector<std::string> InstalledVersions(const fs::path& launcherDir) {
     std::sort(out.begin(), out.end(), [](const std::string& a, const std::string& b) { return CompareVersions(a, b) > 0; });
     return out;
 }
+// ---- the keep flag, and editors that run from a kept copy -----------------------------------------------------------------
+//
+// STUB (test first): these have the old behaviour, so tests/test_versions_safety.cpp fails until the real code replaces them.
+
+/// True when `arg` is the keep flag (`--keep-version` or `--keep-version=<text>`). `forVersion` gets the text after '=' ("" for the bare flag).
+inline bool ParseKeepFlag(const std::string& arg, std::string* forVersion = nullptr) {
+    const std::string flag = KeepVersionFlag();
+    if (arg == flag) { if (forVersion) forVersion->clear(); return true; }
+    if (arg.size() > flag.size() && arg.compare(0, flag.size(), flag) == 0 && arg[flag.size()] == '=') {
+        if (forVersion) *forVersion = arg.substr(flag.size() + 1);
+        return true;
+    }
+    return false;
+}
+
+/// Does an editor honour the keep flag? (old rule: a bare flag is trusted by every editor.)
+inline bool HonoursKeepFlag(std::string_view forVersion, std::string_view runningVersion, bool runningIsKeptCopy) {
+    (void)runningIsKeptCopy;
+    return TrimSpace(forVersion).empty() || CompareVersions(forVersion, runningVersion) == 0;
+}
+
+constexpr bool kFoldPathCase =
+#if defined(_WIN32)
+    true;
+#else
+    false;
+#endif
+
+/// The version of the kept copy an editor runs from ("" when it is not a kept copy). (old behaviour: nothing is.)
+inline std::string KeptCopyVersion(std::string_view exeDir, bool foldCase = kFoldPathCase) { (void)exeDir; (void)foldCase; return {}; }
+inline bool IsKeptCopyDir(std::string_view exeDir, bool foldCase = kFoldPathCase) { return !KeptCopyVersion(exeDir, foldCase).empty(); }
+/// The one plain line a kept copy shows where the update window would be.
+inline std::string KeptCopyNotice(const std::string& version) {
+    const std::string v = NormalizeVersion(version);
+    return "This is a kept copy" + (v.empty() ? std::string() : " of v" + v) + ". Update OkaySpace from the launcher.";
+}
+
 /// The command line (after the program) that opens `scene` and says the version was chosen on purpose:
-/// `--open "<scene>" --keep-version`. The launcher adds `--launcher <pid>` itself.
-inline std::vector<std::string> KeepVersionArgs(const std::string& scene) { return {"--open", scene, KeepVersionFlag()}; }
+/// `--open "<scene>" --keep-version`. The launcher adds `--launcher <pid>` itself. (old behaviour: `version` is ignored.)
+inline std::vector<std::string> KeepVersionArgs(const std::string& scene, const std::string& version = {}) {
+    (void)version;
+    return {"--open", scene, KeepVersionFlag()};
+}
 
 }  // namespace okayver

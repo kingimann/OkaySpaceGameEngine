@@ -840,7 +840,7 @@ int main() {
             CHECK(g.TakeQuitRequest() && !g.TakeQuitRequest());
             const auto launch = g.TakeLaunch();
             CHECK(launch && launch->exe == exe.string() && launch->workDir == exe.parent_path().string());
-            CHECK(launch && launch->args == (std::vector<std::string>{"--open", sceneOf(p), "--keep-version", "--launcher", "4242"}));
+            CHECK(launch && launch->args == (std::vector<std::string>{"--open", sceneOf(p), "--keep-version=2.850.0", "--launcher", "4242"}));   // the flag names the version: only that editor trusts it
             CHECK(!g.TakeLaunch());
             CHECK(okayver::ReadProjectVersion(p.root.string()) == "2.850.0");        // the project was not touched
         }
@@ -880,7 +880,7 @@ int main() {
             g.Answer(Choice::Keep);
             const auto launch = g.TakeLaunch();
             CHECK(launch && launch->exe == okayver::InstalledEditorPath(launcher, "2.850.2").string());
-            CHECK(launch && launch->args == (std::vector<std::string>{"--open", sceneOf(p), "--keep-version"}));
+            CHECK(launch && launch->args == (std::vector<std::string>{"--open", sceneOf(p), "--keep-version=2.850.2"}));
             CHECK(okayver::ReadProjectVersion(p.root.string()) == "2.850.0");
         }
         // Newer: Cancel, Update, or Open anyway (a backup first, the project as it is)
@@ -941,16 +941,23 @@ int main() {
             for (int i = 0; i < 100000 && g.Busy(); ++i) g.Tick(std::chrono::milliseconds(0));
             CHECK(!g.Busy() && no == 1 && go == 0 && Snap(p.root) == before && BackupCount(p) == 0 && NoPartial(p.base));
         }
-        // --keep-version: skips the question for an older or unversioned project (for this version's editor only); a newer one still asks
+        // --keep-version: skips the question for an older or unversioned project (for the version it names, or a bare flag for a kept copy only); a newer one still asks
         {
             TempDir td; Proj p(td.path); stamp(p, "2.850.0");
-            ProjectGate g(env);
-            g.NoteKeepRequest(sceneOf(p), "2.850.0");                                // the flag was meant for another version's editor
+            ProjectGate g(env);                                                      // a current editor, 2.855.0 (not a kept copy)
+            CHECK(!g.NoteKeepRequest(sceneOf(p), "2.850.0"));                        // the flag was meant for another version's editor
             int go = 0;
             g.Open(sceneOf(p), [&] { ++go; });
             CHECK(go == 0 && g.prompt().kind == PromptKind::Older && !g.IsKept(p.root.string()));
             g.Answer(Choice::Cancel);
-            g.NoteKeepRequest(sceneOf(p));                                           // a bare flag: this editor's own version
+            CHECK(!g.NoteKeepRequest(sceneOf(p)));                                   // a BARE flag: a current editor does not trust it (audit finding 1)
+            CHECK(!g.IsKept(p.root.string()));
+            std::string whyNot;
+            CHECK(!g.MayLoad(sceneOf(p), &whyNot) && Has(whyNot, "v2.850.0"));       // no silent open either
+            g.Open(sceneOf(p), [&] { ++go; });
+            CHECK(go == 0 && g.prompt().kind == PromptKind::Older);                  // it asks, as it always did
+            g.Answer(Choice::Cancel);
+            CHECK(g.NoteKeepRequest(sceneOf(p), "2.855.0"));                         // a flag that names this very version: honored
             CHECK(g.IsKept(p.root.string()));
             std::string why;
             CHECK(g.MayLoad(sceneOf(p), &why));
@@ -961,16 +968,50 @@ int main() {
 
             TempDir t2; Proj q(t2.path);                                             // no stamp
             ProjectGate g2(env);
-            g2.NoteKeepRequest(sceneOf(q), "2.855.0");                               // given for this version: honored
+            CHECK(g2.NoteKeepRequest(sceneOf(q), "2.855.0"));                        // given for this version: honored
             g2.Open(sceneOf(q), [&] { ++go; });
             CHECK(go == 3 && !g2.Busy());
 
             TempDir t3; Proj r(t3.path); stamp(r, "2.860.0");                        // newer: the data-loss question is always asked
             ProjectGate g3(env);
-            g3.NoteKeepRequest(sceneOf(r));
+            CHECK(g3.NoteKeepRequest(sceneOf(r), "2.855.0"));                        // (honored, and still not a reason to skip this question)
             g3.Open(sceneOf(r), [&] { ++go; });
             CHECK(go == 3 && g3.prompt().kind == PromptKind::Newer);
-            g3.NoteKeepRequest((t3.path / "loose.okayscene").string());              // a scene that is in no project: ignored
+            CHECK(!g3.NoteKeepRequest((t3.path / "loose.okayscene").string(), "2.855.0"));   // a scene that is in no project: ignored
+        }
+        // a kept copy (an older editor the launcher keeps in Versions/<v>/Tools) trusts the bare flag as well as the one that names it
+        {
+            TempDir td; Proj p(td.path); stamp(p, "2.850.0");
+            GateEnv ke = env; ke.running = "2.851.0"; ke.keptCopy = true;
+            ProjectGate g(ke);
+            CHECK(!g.NoteKeepRequest(sceneOf(p), "2.850.0"));                        // named for another version: ignored by a kept copy too
+            CHECK(!g.IsKept(p.root.string()));
+            CHECK(g.NoteKeepRequest(sceneOf(p)));                                    // bare: honored
+            CHECK(g.IsKept(p.root.string()));
+            int go = 0;
+            g.Open(sceneOf(p), [&] { ++go; });
+            CHECK(go == 1 && !g.Busy());
+            TempDir t2; Proj q(t2.path); stamp(q, "2.850.0");
+            ProjectGate g2(ke);
+            CHECK(g2.NoteKeepRequest(sceneOf(q), "2.851.0") && g2.IsKept(q.root.string()));   // named, exactly this version
+            TempDir t3; Proj r(t3.path); stamp(r, "2.860.0");                        // a newer project still asks, kept copy or not
+            ProjectGate g3(ke);
+            CHECK(g3.NoteKeepRequest(sceneOf(r)));
+            g3.Open(sceneOf(r), [&] { ++go; });
+            CHECK(go == 1 && g3.prompt().kind == PromptKind::Newer);
+        }
+        // The audit's scratch program for finding 1 (repro_gate): a project stamped 2.850.0 and an editor 2.860.0, three ways to be started.
+        {
+            TempDir td; Proj p(td.path); stamp(p, "2.850.0");
+            GateEnv ne = env; ne.running = "2.860.0";
+            std::string why;
+            { ProjectGate g(ne); CHECK(!g.MayLoad(sceneOf(p), &why)); }                                                                      // 1. no flag: it asks
+            { ProjectGate g(ne); g.NoteKeepRequest(sceneOf(p), ""); CHECK(!g.MayLoad(sceneOf(p), &why) && !g.IsKept(p.root.string())); }   // 2. a bare flag: it still asks (it was "may open silently = YES")
+            { ProjectGate g(ne); g.NoteKeepRequest(sceneOf(p), "2.850.1"); CHECK(!g.MayLoad(sceneOf(p), &why)); }                           // 3. a flag that names the old version: it asks
+            // the old kept editor that updated itself and restarted with its arguments is exactly case 3 (and case 2 from an old launcher)
+            { ProjectGate g(ne); g.NoteKeepRequest(sceneOf(p), "2.850.1"); int go = 0; g.Open(sceneOf(p), [&] { ++go; }); CHECK(go == 0 && g.prompt().kind == PromptKind::Older); }
+            // and the answer is still the safe one: nothing in the project changed while it was asked
+            CHECK(okayver::ReadProjectVersion(p.root.string()) == "2.850.0");
         }
         // File > Project Upgrade...: the person asks for it on an open project, so there is no question, only the work and the result
         {

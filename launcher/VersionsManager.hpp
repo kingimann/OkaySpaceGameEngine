@@ -162,12 +162,20 @@ struct Progress {
     std::uint64_t fileBytes = 0, fileTotal = 0;      ///< this file (total 0 = unknown)
     std::uint64_t doneBytes = 0, totalBytes = 0;     ///< all files so far
 };
+/// How hard Remove (and every other delete of a version folder) looks for the person's projects before it deletes anything.
+struct ScanLimits {
+    int maxDepth = 12;                   ///< folders below the one being checked; a deeper folder is not looked into, so it can't be proven free of projects
+    std::uint32_t maxEntries = 20000;    ///< files and folders looked at; a real version folder has about ten
+    std::size_t maxReported = 8;         ///< project folders listed (the scan stops there: the answer is already no)
+};
+
 struct IO {
     DownloadFn download;
     std::function<bool()> cancelled;                                   ///< polled between and during downloads
     std::function<void(const Progress&)> progress;
     std::function<std::uintmax_t(const fs::path&, std::error_code&)> availableSpace;   ///< default: fs::space
     std::function<bool(const std::string& step)> fail;                 ///< tests only: true = this step fails (as a full disk would)
+    ScanLimits scan;                                                   ///< the project look before a folder is deleted (tests make it small)
 };
 struct InstallOptions {
     bool markKept = false;               ///< install.txt says "kept" (used by KeepCurrent) rather than "installed"
@@ -178,7 +186,7 @@ const char* OutcomeName(Outcome o);
 struct Result {
     Outcome outcome = Outcome::Failed;
     std::string message;                 ///< plain words for the person (and the toast)
-    fs::path path;                       ///< Versions/<v> when installed
+    fs::path path;                       ///< Versions/<v> when installed; when a delete was refused because of what is inside: the folder to show the person
     bool ok() const { return outcome == Outcome::Installed || outcome == Outcome::AlreadyInstalled || outcome == Outcome::Removed; }
 };
 
@@ -202,8 +210,43 @@ std::vector<Installed> ListInstalled(const fs::path& launcherDir);
 std::uint64_t DiskUsage(const fs::path& launcherDir);
 /// The sum of every file under `dir` (0 when it is not there); stops counting after 200000 entries.
 std::uint64_t DirectorySize(const fs::path& dir);
-/// Remove scratch folders (.partial-*, .removing-*) left by a crash or a failed delete. Returns how many were removed.
+/// Remove scratch folders (.partial-*, .removing-*) left by a crash or a failed delete. Returns how many were removed. A scratch folder that
+/// holds a project of the person's (an older launcher renamed it before a delete failed) is left where it is.
 int CleanStale(const fs::path& launcherDir);
+
+// ---- never delete a folder that holds the person's work --------------------------------------------------------------------
+//
+// The editor's default folder for a new project is beside its exe, so a project made in a kept editor lands in
+// Versions/<v>/Tools/Projects. Every delete of a version folder looks first. Pure: nothing is written, links are never followed.
+
+/// What one look through a folder found.
+struct FolderScan {
+    std::vector<fs::path> projects;      ///< folders that hold the person's work, shallowest first (at most ScanLimits::maxReported)
+    bool moreProjects = false;           ///< more were left out
+    fs::path link;                       ///< the first link to another folder met ("" = none); it is not followed
+    bool unchecked = false;              ///< some of it was not looked at: too many entries, too deep, or a folder that could not be read
+    std::string uncheckedWhy;            ///< plain words for `unchecked`
+    std::uint64_t entries = 0;           ///< files and folders looked at
+};
+/// Look through `dir` (breadth first, within `limits`) for the person's work: a project.okayproj file, a scene (.okayscene), or any file inside
+/// an Assets folder. A .okay folder alone, an empty Assets folder and the editor's own files are not. Links are never followed.
+FolderScan ScanFolderForProjects(const fs::path& dir, const ScanLimits& limits = {});
+
+/// Whether `dir` may be deleted, and if not why, in plain words.
+struct DeleteCheck {
+    enum Kind { Clear, HoldsProject, HasLink, Unchecked } kind = Clear;
+    std::string message;                 ///< "" when Clear. HoldsProject: "This version folder has a project of yours: <path>. Move it out first."
+    fs::path folder;                     ///< what an "Open folder" button should show (the folder that holds the project; the link's folder; `dir` itself)
+    std::vector<fs::path> projects;
+    bool ok() const { return kind == Clear; }
+};
+DeleteCheck CheckBeforeDelete(const fs::path& dir, const ScanLimits& limits = {});
+
+/// How many of the person's projects (their `engine_version` stamps, "" = none recorded) were made with the release line of `version`
+/// (2.850.0 and 2.850.1 both count for v2.850.x).
+int CountProjectsMadeWith(const std::vector<std::string>& projectVersions, const std::string& version);
+/// "3 of your projects were made with v2.850.x. You can open them with that version again after you install it." (the Remove window's line)
+std::string ProjectsMadeWithSentence(int count, const std::string& version);
 
 struct RemoveGuards {
     std::string running;                 ///< the version of the editor/launcher in use (the one in Tools/): never removed
@@ -236,6 +279,7 @@ std::vector<std::string> PlanPrune(const std::vector<Installed>& installed, int 
                                    const std::vector<std::string>& keep);
 struct PruneResult {
     std::vector<std::string> removed, failed;
+    std::vector<std::pair<std::string, std::string>> notRemoved;   ///< every version that stayed, with the plain reason (a project in its folder, an editor open, ...)
 };
 PruneResult Prune(const fs::path& launcherDir, int keepPrevious, const std::string& ltsVersion, const RemoveGuards& guards, const IO& io = {});
 /// Delete a version that KeepCurrent just made, without the guards (the update it was made for failed, so the copy only
@@ -294,8 +338,10 @@ struct EditorChoice {
 /// a plain Open starts (`currentVersion`) is not repeated.
 std::vector<EditorChoice> OpenWithChoices(const std::string& projectVersion, const std::vector<std::string>& installed,
                                           const std::string& currentVersion);
-/// The arguments (after the program) that open `scene` with a kept editor: --launcher <pid> --open <scene> --keep-version.
-std::vector<std::string> OpenWithArgs(unsigned long launcherPid, const std::string& scene);
+/// The arguments (after the program) that open `scene` with the kept editor of `version`: --launcher <pid> --open <scene> --keep-version=<version>.
+/// The flag names the version, so only an editor of exactly that version trusts it (a newer editor that an old kept one turned itself into asks its
+/// question as usual). With no version it is the bare flag, which only a kept copy trusts.
+std::vector<std::string> OpenWithArgs(unsigned long launcherPid, const std::string& scene, const std::string& version = {});
 /// One argument as a command line wants it (spaces, quotes, `$`, unicode survive): the Windows form (MSVCRT rules, double
 /// quotes) and the POSIX form (single quotes). QuoteArg is the one of the platform being built for.
 std::string QuoteArgWindows(const std::string& arg);

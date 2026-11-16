@@ -11,14 +11,17 @@ agree with this script's reading of the format. They do NOT prove agreement with
 4.x file: no such file was available when they were written. The real-file evidence for the reader is
 in docs/own_blend_reader.md (Assimp's test directory: Blender 2.41 to 2.93 files).
 
-Deterministic: running it twice gives the same bytes. Run from the repository root:
-    python3 scripts/gen_blend_fixtures.py
+Deterministic: running it twice gives the same bytes, on any Python 3 (see mmul and gzip_fixed for the two things
+that once made it drift). Run from the repository root:
+    python3 scripts/gen_blend_fixtures.py            # rewrites the fixtures
+    python3 scripts/gen_blend_fixtures.py --check    # writes nothing, exit 1 when a committed fixture differs (ctest blend_fixtures_check)
 The expected values are checked in tests/test_blend_reader.cpp.
 """
-import gzip
+import zlib
 import math
 import os
 import struct
+import sys
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "data", "models")
 
@@ -274,7 +277,13 @@ def mmul(a, b):
     r = [0.0] * 16
     for c in range(4):
         for row in range(4):
-            r[c * 4 + row] = sum(a[k * 4 + row] * b[c * 4 + k] for k in range(4))
+            # plain left-to-right additions, on purpose: Python 3.12+ made sum() of floats compensated (Neumaier), which
+            # changed the last bits of child_m (-1.2e-16 instead of 0.0) and so the committed blend_attr_* fixtures,
+            # which were written with an older Python. A loop of + gives the same bits on every Python version.
+            acc = 0.0
+            for k in range(4):
+                acc = acc + a[k * 4 + row] * b[c * 4 + k]
+            r[c * 4 + row] = acc
     return r
 
 
@@ -535,8 +544,21 @@ def build_mods(ps=8, le=True):
     return b
 
 
+def gzip_fixed(data):
+    """gzip with a fixed header: no time stamp, 'max compression' flag 2, OS byte 3 (Unix). gzip.compress() is not used
+    because Python 3.13 writes OS byte 255 there, while the committed fixture (written with an older Python) has 3. The
+    deflate body is zlib's level 9 output; a different zlib could still change it (--check would say so)."""
+    co = zlib.compressobj(9, zlib.DEFLATED, -15)
+    body = co.compress(data) + co.flush()
+    return b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\x03" + body + struct.pack("<II", zlib.crc32(data) & 0xffffffff, len(data) & 0xffffffff)
+
+
 def main():
-    os.makedirs(OUT, exist_ok=True)
+    check = "--check" in sys.argv[1:]
+    out = OUT
+    for i, a in enumerate(sys.argv[1:]):
+        if a == "--out" and i + 2 < len(sys.argv):
+            out = sys.argv[i + 2]
     files = {
         "blend_attr_41.blend": build_attr("41", 8, True).bytes(),
         "blend_attr_36.blend": build_attr("36", 8, True).bytes(),
@@ -544,12 +566,46 @@ def main():
         "blend_skin_anim.blend": build_skin(8, True).bytes(),
         "blend_modifiers.blend": build_mods(8, True).bytes(),
     }
-    files["blend_attr_41_gz.blend"] = gzip.compress(files["blend_attr_41.blend"], 9, mtime=0)
+    files["blend_attr_41_gz.blend"] = gzip_fixed(files["blend_attr_41.blend"])
+    if check:
+        # --check: write nothing; fail when a committed fixture is not exactly what this script writes
+        bad = 0
+        for name, data in files.items():
+            path = os.path.join(out, name)
+            try:
+                with open(path, "rb") as fh:
+                    have = fh.read()
+            except OSError as e:
+                print("MISSING", name, e)
+                bad += 1
+                continue
+            if have != data and name.endswith("_gz.blend") and have[:10] == data[:10]:
+                # another zlib (zlib-ng, a newer release) may pick other deflate blocks for the same bytes; the fixture is
+                # still right when its header matches and it inflates to exactly what this script writes
+                try:
+                    inner = zlib.decompress(have[10:-8], -15)
+                except zlib.error:
+                    inner = None
+                if inner == files[name.replace("_gz.blend", ".blend")] and have[-8:] == data[-8:]:
+                    print("same content", name, "(deflate bytes differ: another zlib)")
+                    continue
+            if have != data:
+                first = next((i for i in range(min(len(have), len(data))) if have[i] != data[i]), min(len(have), len(data)))
+                print("DRIFT", name, "file", len(have), "bytes, script", len(data), "bytes, first difference at byte", first)
+                bad += 1
+            else:
+                print("same", name, len(data), "bytes")
+        if bad:
+            print(bad, "fixture(s) differ from scripts/gen_blend_fixtures.py; run it without --check to rewrite them")
+            return 1
+        return 0
+    os.makedirs(out, exist_ok=True)
     for name, data in files.items():
-        with open(os.path.join(OUT, name), "wb") as fh:
+        with open(os.path.join(out, name), "wb") as fh:
             fh.write(data)
         print("wrote", name, len(data), "bytes")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

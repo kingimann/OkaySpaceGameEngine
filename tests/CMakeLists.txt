@@ -3412,6 +3412,10 @@ target_include_directories(test_blend_modifiers PRIVATE ${PROJECT_SOURCE_DIR}/en
 target_compile_definitions(test_blend_modifiers PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME blend_modifiers COMMAND test_blend_modifiers WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set_tests_properties(blend_modifiers PROPERTIES TIMEOUT 600)
+# The committed synthetic .blend fixtures must be exactly what scripts/gen_blend_fixtures.py writes (fails on drift).
+if(OKAY_PYTHON)
+    add_test(NAME blend_fixtures_check COMMAND ${OKAY_PYTHON} -I ${PROJECT_SOURCE_DIR}/scripts/gen_blend_fixtures.py --check)
+endif()
 # Batch B own readers (3MF / AMF / X3D / DXF / LWO): one test per reader on SYNTHETIC fixtures built in memory, and one
 # standalone hostile-input + mutation-fuzz test for all of them (no engine library: reader sources and the engine's
 # inflate only, so it can also be built by hand under -fsanitize=address,undefined,float-cast-overflow;

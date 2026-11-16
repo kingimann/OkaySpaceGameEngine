@@ -386,6 +386,8 @@ Older scenes and `.okaymesh` files have none and load unchanged. All four
 renderers (OpenGL, Direct3D 11, Direct3D 12, software) already draw per-face
 colours, so slots show everywhere without renderer changes.
 
+Changing a slot's colour repaints that slot's faces (it replaces hand-painted colour on them); a face you paint after assigning it keeps its paint through the other tools.
+
 **What slots are not (yet):** a slot is a colour, not a full material. Per-slot
 textures, shaders and separate draw calls per slot (real renderer submeshes)
 are not built; they are listed in `docs/UNFINISHED.md`. A few older

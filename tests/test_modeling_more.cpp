@@ -86,6 +86,12 @@ int main() {
         int hist[3] = {0, 0, 0};
         for (const auto& f : cc.faces) hist[f.material % 3]++;
         CHECK(hist[0] == 8 && hist[1] == 8 && hist[2] == 8);
+        // A face with its own colour (paint) keeps it; the slot colour fills the rest.
+        PolyMesh painted = pm;
+        painted.faces[0].hasColor = true; painted.faces[0].color = Color{0, 0, 0, 1};
+        const Mesh pout = painted.ToMesh();
+        CHECK(pout.triColors[0].r == 0 && pout.triColors[0].g == 0 && pout.triColors[0].b == 0);
+        CHECK(pout.triColors[pout.TriangleCount() - 1].r + pout.triColors[pout.TriangleCount() - 1].g + pout.triColors[pout.TriangleCount() - 1].b > 0);
         // A mesh with no slots stays without slots.
         CHECK(!base.ToMesh().HasSlots());
     }

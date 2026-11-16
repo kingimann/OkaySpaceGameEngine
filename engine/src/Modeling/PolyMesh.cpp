@@ -424,7 +424,7 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
             }
             if (anyColor) {
                 Color c = f.hasColor ? f.color : Color{1, 1, 1, 1};
-                if (!slotColors.empty() && f.material >= 0 && f.material < (int)slotColors.size()) c = slotColors[f.material];
+                if (!f.hasColor && !slotColors.empty() && f.material >= 0 && f.material < (int)slotColors.size()) c = slotColors[f.material];   // a face's own colour (paint) wins
                 m.triColors.push_back(c);
             }
             m.polyFace.push_back(fi);

@@ -182,7 +182,8 @@ public:
     // read its events (Backend::PollEvent or Backend::PumpEvents), as with SDL.
     /// True while the window is minimised (iconified).
     virtual bool IsMinimized() const { return false; }
-    /// False after Hide() and for a window created hidden; true after Show(). A minimised window still counts as visible.
+    /// False after Hide() and for a window created hidden; true after Show(). What a window that a window manager has minimised
+    /// reports is not promised: the own backends say visible, SDL on X11 sets its HIDDEN flag as well (ask IsMinimized()).
     virtual bool IsVisible() const { return true; }
     /// True while the mouse pointer is over this window.
     virtual bool HasMouseFocus() const { return false; }
@@ -343,7 +344,9 @@ public:
     /// Whether relative mouse mode is on: what SetRelativeMouse last set successfully (SDL_GetRelativeMouseMode).
     virtual bool IsRelativeMouse() { return false; }
     /// The pointer position on the whole desktop (not relative to a window; either pointer may be null) and the MouseMask
-    /// bits of the buttons held (SDL_GetGlobalMouseState).
+    /// bits of the buttons held (SDL_GetGlobalMouseState). The own backends ask the OS. The sdl2 backend answers with SDL's call,
+    /// which under X11 follows the pointer only while SDL sees it (over SDL's windows) and only after events were read
+    /// (PollEvent or PumpEvents): measured under Xvfb.
     virtual uint32_t GlobalMouseState(int* x, int* y) { if (x) *x = 0; if (y) *y = 0; return 0; }
     /// Read the OS events that are waiting without taking one: window state and focus are current afterwards, and PollEvent still
     /// returns every event (SDL_PumpEvents).

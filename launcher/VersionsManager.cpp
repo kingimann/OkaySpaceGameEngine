@@ -127,6 +127,12 @@ void SetExecutable(const fs::path& p) {
     fs::permissions(p, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
 }
 
+/// A path as text for a message. (On Windows a name outside the system code page can make the conversion throw; the delete checks must never do that:
+/// they refuse instead.)
+std::string PathText(const fs::path& p) {
+    try { return p.string(); } catch (...) { return "(a folder whose name can't be shown here)"; }
+}
+
 /// A folder that is really a link to another one: a symbolic link (also a loop, or one that can't be told), and on Windows a junction or a
 /// directory symbolic link. Never walked into and never deleted through, because deleting could reach what it points at.
 bool IsDirectoryLink(const fs::path& p, const fs::file_status& st) {
@@ -670,12 +676,13 @@ int CleanStale(const fs::path& launcherDir) {
 
 // ---- never delete a folder that holds the person's work --------------------------------------------------------------------
 
-FolderScan ScanFolderForProjects(const fs::path& dir, const ScanLimits& limits) {
-    FolderScan out;
+namespace {
+/// The walk of ScanFolderForProjects: breadth first, so the shallowest projects are found first and the limits cut off the deepest part.
+void ScanInto(FolderScan& out, const fs::path& dir, const ScanLimits& limits) {
     std::error_code ec;
     const fs::file_status top = fs::symlink_status(dir, ec);
-    if (top.type() == fs::file_type::not_found) return out;                    // nothing there: nothing to lose
-    if (!ec && IsDirectoryLink(dir, top)) { out.link = dir; return out; }      // the folder itself is a link: not walked into
+    if (top.type() == fs::file_type::not_found) return;                        // nothing there: nothing to lose
+    if (!ec && IsDirectoryLink(dir, top)) { out.link = dir; return; }          // the folder itself is a link: not walked into
     struct Item { fs::path path; int depth; fs::path assetsRoot; };           // assetsRoot: the folder that holds the nearest Assets folder above, "" = none
     std::deque<Item> queue;
     queue.push_back({dir, 0, {}});
@@ -705,7 +712,7 @@ FolderScan ScanFolderForProjects(const fs::path& dir, const ScanLimits& limits) 
             const fs::directory_entry& e = *it;
             std::error_code e1;
             const fs::file_status st = e.symlink_status(e1);
-            if (e1) { unchecked("a folder could not be read (" + e.path().string() + ")"); continue; }
+            if (e1) { unchecked("a folder could not be read (" + PathText(e.path()) + ")"); continue; }
             const std::string name = Lower(e.path().filename().string());
             if (IsDirectoryLink(e.path(), st)) { if (out.link.empty()) out.link = e.path(); continue; }
             if (fs::is_directory(st)) {
@@ -717,13 +724,24 @@ FolderScan ScanFolderForProjects(const fs::path& dir, const ScanLimits& limits) 
                 else if (endsWith(name, ".okayscene")) hasScene = true;
             }
         }
-        if (lec && !stop) unchecked("a folder could not be read (" + item.path.string() + ")");
+        if (lec && !stop) unchecked("a folder could not be read (" + PathText(item.path) + ")");
         if (hasProjectFile) addProject(item.path);                                       // the project's own file
         if (hasScene) addProject(item.assetsRoot.empty() ? item.path : item.assetsRoot);    // a scene, in a project or loose
         if (hasFile && !item.assetsRoot.empty()) addProject(item.assetsRoot);             // anything at all inside an Assets folder
         if (out.moreProjects) stop = true;                                                // the answer is already no, and the list is full
         std::sort(children.begin(), children.end(), [](const Item& a, const Item& b) { return a.path < b.path; });   // the same order on every file system
         for (Item& c : children) queue.push_back(std::move(c));
+    }
+}
+}  // namespace
+
+FolderScan ScanFolderForProjects(const fs::path& dir, const ScanLimits& limits) {
+    FolderScan out;
+    try {
+        ScanInto(out, dir, limits);
+    } catch (const std::exception&) {                                                    // a name that can't be converted, or no memory: not proven free of projects
+        out.unchecked = true;
+        if (out.uncheckedWhy.empty()) out.uncheckedWhy = "a file name in it could not be read";
     }
     return out;
 }
@@ -735,7 +753,7 @@ DeleteCheck CheckBeforeDelete(const fs::path& dir, const ScanLimits& limits) {
         c.kind = DeleteCheck::HoldsProject;
         c.projects = s.projects;
         c.folder = s.projects.front().parent_path().empty() ? dir : s.projects.front().parent_path();
-        c.message = "This version folder has a project of yours: " + s.projects.front().string() + ". Move it out first.";
+        c.message = "This version folder has a project of yours: " + PathText(s.projects.front()) + ". Move it out first.";
         const std::size_t more = s.projects.size() - 1;
         if (s.moreProjects) c.message += " There are others in it too.";
         else if (more == 1) c.message += " 1 more project is in it too.";
@@ -745,7 +763,7 @@ DeleteCheck CheckBeforeDelete(const fs::path& dir, const ScanLimits& limits) {
     if (!s.link.empty()) {
         c.kind = DeleteCheck::HasLink;
         c.folder = s.link.parent_path().empty() ? dir : s.link.parent_path();
-        c.message = "This version folder has a link to another folder: " + s.link.string() +
+        c.message = "This version folder has a link to another folder: " + PathText(s.link) +
                     ". Removing it could delete what the link points to. Delete the link yourself first.";
         return c;
     }

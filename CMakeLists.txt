@@ -64,6 +64,8 @@ option(OKAY_OWN_OGRE     "Read .mesh.xml (OGRE XML meshes) with our own OGRE rea
 option(OKAY_OWN_XGL      "Read .xgl / .zgl (XGL scenes) with our own XGL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_XGL=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_IRR      "Read .irr (Irrlicht scenes) with our own IRR reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IRR=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_NFF      "Read .nff / .enff (Neutral File Format) with our own NFF reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NFF=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_OPENGEX  "Read .ogex (Open Game Engine Exchange) with our own OpenGEX reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_OPENGEX=0/1 and SetImportBackend override)" OFF)
+option(OKAY_OWN_MDL      "Read .mdl (Quake 1 and Half-Life 1 models) with our own MDL reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_MDL=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_IQM      "Read .iqm (Inter-Quake Models) with our own IQM reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_IQM=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_COB      "Read .cob (Caligari trueSpace) with our own COB reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_COB=0/1 and SetImportBackend override)" OFF)
 option(OKAY_OWN_NDO      "Read .ndo (Nendo; the reader is a header-only seam and refuses every file) with our own NDO reader by default (Assimp, when built, stays the fallback; run-time env OKAY_OWN_NDO=0/1 and SetImportBackend override)" OFF)

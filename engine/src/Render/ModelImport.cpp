@@ -98,7 +98,7 @@ std::string ImportableExtensions() {
         return out;
     }();
     std::string res = list;
-    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
+    for (const char* opt : {".dae", ".3ds", ".bvh", ".off", ".smd", ".md5mesh", ".md5anim", ".ms3d", ".ase", ".3mf", ".amf", ".x3d", ".dxf", ".lwo", ".blend", ".md2", ".md3", ".irrmesh", ".b3d", ".x", ".ac", ".acc", ".ac3d", ".mesh.xml", ".xgl", ".zgl", ".irr", ".nff", ".enff", ".ogex", ".mdl", ".ter", ".mdc", ".hmp", ".csm", ".q3o", ".q3s", ".raw", ".iqm", ".cob", ".pmx", ".lws", ".mot"})   // not ".ndo": that reader is a seam and refuses every file, so it must not be advertised
         if ((" " + res + " ").find(std::string(" ") + opt + " ") == std::string::npos && EffectiveImportBackend(opt) == ImportBackend::Own)
             res += std::string(" ") + opt;
     return res;
@@ -590,6 +590,18 @@ constexpr bool kOwnLwsDefault = true;
 constexpr bool kOwnLwsDefault = false;
 #endif
 
+#ifdef OKAY_OWN_OPENGEX_DEFAULT
+constexpr bool kOwnOpengexDefault = true;
+#else
+constexpr bool kOwnOpengexDefault = false;
+#endif
+
+#ifdef OKAY_OWN_MDL_DEFAULT
+constexpr bool kOwnMdlDefault = true;
+#else
+constexpr bool kOwnMdlDefault = false;
+#endif
+
 #ifdef OKAY_OWN_BLEND_DEFAULT
 constexpr bool kOwnBlendDefault = true;
 #else
@@ -635,12 +647,12 @@ constexpr OptInFormat kOptIn[] = {
     {"OKAY_OWN_IQM",     "IQM",     kOwnIqmDefault},       // 34
     {"OKAY_OWN_COB",     "COB",     kOwnCobDefault},       // 35
     {"OKAY_OWN_NDO",     "NDO",     kOwnNdoDefault},       // 36
-    {"", "", false},                                       // 37 (reader e4: OpenGEX, not on main yet; reserved, never reached)
-    {"", "", false},                                       // 38 (reader e4: MDL, not on main yet; reserved, never reached)
+    {"OKAY_OWN_OPENGEX", "OpenGEX", kOwnOpengexDefault},   // 37
+    {"OKAY_OWN_MDL",     "MDL",     kOwnMdlDefault},       // 38
     {"OKAY_OWN_PMX",     "PMX",     kOwnPmxDefault},       // 39
     {"OKAY_OWN_LWS",     "LWS",     kOwnLwsDefault},       // 40 (.lws and .mot)
 };
-constexpr int kOwnSlots = 41;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are reserved for reader e4 (OpenGEX, MDL), 39 and 40 are PMX and LWS/MOT (batch E5); raise this (and add rows above) when a reader needs a slot beyond 40
+constexpr int kOwnSlots = 41;   // slots 22 to 26 are batch D, 27 is Terragen's, 28 to 30 are MDC, HMP, CSM, 31 and 33 are Q3D and RAW (32 is kept for SIB), 34 to 36 are IQM, COB, NDO (batch E3), 37 and 38 are OpenGEX and MDL (batch E4), 39 and 40 are PMX and LWS/MOT (batch E5); raise this (and add rows above) when a reader needs a slot beyond 40
 
 // 0 = .obj, 1 = .stl, 2 = .ply, 3 = .dae, 4 = .3ds, 5 = .bvh, 6 = .off; -1 = no own reader.
 int OwnSlot(const std::string& ext) {
@@ -681,6 +693,8 @@ int OwnSlot(const std::string& ext) {
     if (e == ".iqm") return 34;
     if (e == ".cob") return 35;
     if (e == ".ndo") return 36;
+    if (e == ".ogex") return 37;
+    if (e == ".mdl") return 38;
     if (e == ".pmx") return 39;
     if (e == ".lws" || e == ".mot") return 40;
     return -1;
@@ -858,9 +872,11 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
                   : s == 34 ? ReadIqmFile(path, out, &e1)
                   : s == 35 ? ReadCobFile(path, out, &e1)
                   : s == 36 ? ReadNdoFile(path, out, &e1)
+                  : s == 37 ? ReadOgexFile(path, out, &e1)
+                  : s == 38 ? ReadMdlFile(path, out, &e1)
                   : s == 39 ? ReadPmxFile(path, out, &e1)
                   : s == 40 ? ReadLwsFile(path, out, &e1, &irrLoader)
-                  : (e1 = "no reader is wired to this slot", false); }, e1);   // slots 27 (Terragen) to 31 (Q3D), 33 (RAW) and 34 to 36 (IQM, COB, NDO), 39 (PMX) and 40 (LWS) are wired above; 37 and 38 are reserved for reader e4
+                  : (e1 = "no reader is wired to this slot", false); }, e1);   // slots 27 (Terragen) to 31 (Q3D), 33 (RAW), 34 to 36 (IQM, COB, NDO), 37 (OpenGEX), 38 (MDL), 39 (PMX) and 40 (LWS) are wired above; slot 32 is the empty one kept for SIB
         if (!good) out = ImportedModel{};   // a reader that threw may have left half a model
         if (good && flatten && ((s >= 6 && s <= 10) || s >= 17)) FlattenImportedModel(out);   // batch A (OFF..ASE) and batch C (slot 17 and up) have no flatten switch of their own; batch B and the Blender reader flatten themselves
         if (good) {

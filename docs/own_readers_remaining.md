@@ -24,7 +24,8 @@ below were made by counting those files by extension; where I could not check so
 | Importers batch E adds (Q3D and RAW, written from public format descriptions, unverified against real files; SIB was not written, see row 9) | 2 (**35** of the 45 switched on, with Terragen and MDC, HMP, CSM) |
 | Importers batch E3 adds (IQM, COB; **Nendo is a seam only, no geometry**) | 2 (**37** of the 45 switched on, hand-derived: 35 from main plus 2; Nendo not counted) |
 | Importers batch E5 adds (LWS / MOT, PMX), off by default, **no real file to check them against** | 2 (**39** of the 45 switched on, hand-derived: 37 from main plus 2) |
-| Switched on in our build and still **without an own reader** | **6** (rows 2, 3, 9, 15, 16, 17 below, with Nendo's row 16 still open) plus OGRE's half; hand-derived (45 minus 39), not computed |
+| Importers batch E4 adds (**OpenGEX**, whole; **MDL**, Quake 1 and Half-Life 1 only, not 3D GameStudio), off by default, **no real file run through them** | 1 and a half (**40 and a half** of the 45 switched on, hand-derived: 39 from main plus 1.5) |
+| Switched on in our build and still **without an own reader** | **4 and a half** (rows 9, 15, 16, 17 below, with Nendo's row 16 still open, plus the 3D GameStudio half of row 3); hand-derived (45 minus 40.5), not computed |
 | Not switched on and without an own reader | 6 |
 
 "Covered" means an own reader exists, is off by default, passes its tests and was compared with Assimp on the real files of the
@@ -45,8 +46,8 @@ none were invented.
 | # | Format (extensions) | What it is | How common | How hard | Real files in the tree | Switched on in our build |
 |---|---|---|---|---|---|---|
 | 1 | **Ogre, the rest** (`.mesh`, `.skeleton`, `.skeleton.xml`) | OGRE3D: the binary mesh, and the skeleton in both forms with bones, bind pose and animations (the XML mesh geometry and materials are done, batch D) | medium-high | binary `.mesh`: medium; skeleton: medium (needs the skin and clip path of the other skinned readers) | 6 (`fish`, `ninja`, `razor` as `.mesh` and the skeletons as binary and XML) | yes |
-| 2 | **OpenGEX** (`.ogex`) | Open Game Engine Exchange: text (OpenDDL), meshes, skins, animation, materials | low-medium (growing) | medium | 6 | yes |
-| 3 | **MDL** (`.mdl`): Quake 1, Half-Life 1, 3D GameStudio MDL3/4/5/7 | four unrelated binary formats under one extension | medium (HL1 models are common) | Quake 1: easy; HL1: medium (bones, embedded textures); 3DGS: medium to hard (7 has skins and animation) | 43 (HL1, MDL3, MDL5, MDL7, alpha tests) | yes |
+| 2 | ~~**OpenGEX** (`.ogex`)~~ **done (batch E4, off by default, `OKAY_OWN_OPENGEX`, `docs/own_ogex_reader.md`)** | Open Game Engine Exchange: text (OpenDDL), meshes, skins, animation, materials | low-medium (growing) | medium | 6 | yes. Unverified against real files: written from the specification, tested on hand-written files; the 6 files of Assimp's tree have not been run through it |
+| 3 | **MDL** (`.mdl`): Quake 1, Half-Life 1 **done (batch E4, off by default, `OKAY_OWN_MDL`, `docs/own_mdl_reader.md`)**; **3D GameStudio MDL3/4/5/7 not done** | four unrelated binary formats under one extension | medium (HL1 models are common) | Quake 1: easy; HL1: medium (bones, embedded textures); 3DGS: medium to hard (7 has skins and animation) | 43 (HL1, MDL3, MDL5, MDL7, alpha tests) | yes. Quake 1 and Half-Life 1 are unverified against real files (none were run); embedded texture pictures are not extracted; the GameStudio files are refused with a message (Assimp still reads them when built) |
 | 4 | ~~**IQM** (`.iqm`)~~ **DONE in batch E3, off by default** (`docs/own_iqm_reader.md`): skeleton, skin and animation; read on the real `mrfixit.iqm` (numbers match its header); not compared with Assimp's output | low-medium | done | 1 (`mrfixit.iqm`, skinned and animated) | yes |
 | 5 | ~~**COB** (`.cob`)~~ **DONE in batch E3, off by default** (`docs/own_cob_reader.md`): binary and ASCII, objects, materials, textures; all 8 real files read and the two encodings agree; **no animation, bones or lights**; not compared with Assimp's output | low (old) | done (geometry only) | 8 (dwarf, molecule, spider: binary and ASCII) | yes |
 | 6 | ~~**LWS / MOT** (`.lws` `.mot`)~~ **done, batch E5, off by default** (`docs/own_lws_reader.md`) | LightWave **scene** (objects by reference, cameras, lights, motion curves) | low-medium | medium (our LWO reader covers the objects it names) | 15 (envelopes, pre/post behaviours) **not in this repository: unverified against real files** | yes |
@@ -68,7 +69,7 @@ none were invented.
 | 22 | **Assbin** (`.assbin`) | Assimp's own dump of its scene | none outside Assimp | not worth a reader; it can simply go | 0 in the tree | no |
 | 23 | **Cinema 4D** (`.c4d`) | Maxon's format; Assimp's importer needs the non-free Maxon SDK and is off in every normal build | medium | the format is proprietary and undocumented: writing our own means reverse engineering | 0 in the tree | no (and not buildable without the SDK) |
 
-Rows 1 to 17 (rows 6 and 7 are done, see their pages) are what was left of the 45 importers our Windows build switches on (row 1 is the half of OGRE; glTF 1.0 is row 17); rows 18 to 23 are not switched
+Rows 1 to 17 (rows 2, 6 and 7 are done and rows 1 and 3 are partly done, see their pages) are what was left of the 45 importers our Windows build switches on (row 1 is the half of OGRE; glTF 1.0 is row 17); rows 18 to 23 are not switched
 on, so removing Assimp does not remove anything a user has today for them.
 
 ## Proposed order for the next readers
@@ -78,8 +79,8 @@ Order of what to write next, by (how likely a user meets it) x (how small it is)
 Done in batch D: AC3D, XGL / ZGL, the Irrlicht scene and NFF (all four with real files compared), and the XML half of OGRE. After an outside review the batch has per-file budgets (triangles, vertices, subdivided corners), exception-to-refusal at the import seam, OGRE strips and fans read as strips and fans, and scene files that may only name files inside their own folder (`tests/test_batchd_budget.cpp`).
 
 1. **Ogre, the rest**: `.skeleton.xml` (bones, bind pose, animations, vertex weights) on the XML reader, then the binary `.mesh` and `.skeleton`: many real game assets.
-2. **MDL**, in this order: Quake 1, then Half-Life 1, then 3D GameStudio 3/5/7 (43 real files).
-3. **OpenGEX**: one real file or a handful; a few days. (IQM and COB are done, batch E3; **LWS / MOT** and **PMX** are written, batch E5, off by default, unverified on real files: the next step for them is a comparison on Assimp's `test/models` files, especially the radians and bank-first assumptions in the LWS reader.)
+2. **MDL**: Quake 1 and Half-Life 1 are done (batch E4, off by default, unverified against the 43 real files, which have not been run through it); **3D GameStudio 3/5/7 is left** (it needs a documented layout; none was written from memory).
+3. **OpenGEX** is done (batch E4, off by default, unverified against real files; the 6 real files of Assimp's tree are the next check). IQM and COB are done (batch E3); **LWS / MOT** and **PMX** are written (batch E5, off by default, unverified on real files: the next step for them is a comparison on Assimp's `test/models` files, especially the radians and bank-first assumptions in the LWS reader).
 4. The tiny ones in one batch: **Q3D, SIB, RAW, Unreal** (Terragen is done: `docs/own_terragen_reader.md`; CSM, MDC and HMP are done, batch E: off by default, written from format descriptions and sample files only, with no importer source read and Assimp not run on them).
 5. **Quake III BSP** and **glTF 1.0**: medium; glTF 1.0 is the one with the largest real-file count (7) after MDL.
 6. **Nendo**: last, and only from a published description, because no file exists to check it against; honest status "unverified".

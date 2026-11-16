@@ -65,6 +65,7 @@ release job or the installer build for this change.
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
+| 7z | First-person arm: looks normal to you and to others; presets to compare | Editor: File > Examples or open `examples\fp_hand\fp_hand_test.okayscene`, Play; select Player > First Person Hands > Preset | New in this change; headless renders only, nothing run on Windows or a GPU |
 | 7zg | Guided modeling: make a fence from designs, customise it, swap parts, keep editing by hand | Modeling window > **Guided** page; `examples\modeling\guided_fences.okayscene` | New in this change; the engine rules are tested on Linux, the editor page compiles but was **never opened in a real window** (unverified) |
 | 7zh | Modeling: material slots, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, modifier cost and Copy, material library, Add to scene | `examples\modeling_tools\material_slots.okayscene` and `spin_path_curve.okayscene` (File > Open...), then the Modeling window | New in this change; real window and GPU renderers unverified |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
@@ -770,6 +771,29 @@ is written, in order, the real release files are byte for byte unchanged, and ev
 `dev_workflow_lint` (the workflow read and its shell steps run offline). The launcher and editor files were compiled with `g++ -fsyntax-only` and
 the MinGW win32 compiler; they were not built or run. **Never run:** the workflow on GitHub, a write to the real Supabase storage, anything on Windows,
 and every screen above (no screenshot: the launcher was not built here). The wording in step 3 to 7 is what the code says; tell us what you actually see.
+
+## 7z. First-person arm: normal for you and for everyone else
+
+**What it is.** Your own arm in first person (the player in the First Person starter). Before: no arm unless you held
+something, then a floating skin block, and a left click did nothing. Now: a hand and forearm in your shirt colour, always in
+view at the lower right, a left click swings it, and other players see the whole body. Before and after pictures:
+`docs/images/fp_hand/before/` and `docs/images/fp_hand/after/` (headless renders: left your camera, middle a camera in
+front of the player, right a camera at the side). Details: [fp_hand.md](fp_hand.md).
+
+**How to try it (Windows release).**
+
+1. Open the editor, open `examples\fp_hand\fp_hand_test.okayscene` (the `examples` folder next to the program) and press Play.
+2. Look at the lower right of your view: you should see a hand with a forearm in a green sleeve coming up from the bottom edge. Click
+   the left mouse button: the arm swings.
+3. Walk up to a block (red cube, blue block, green box), press **E** to hold it. It sits in the hand. The green box is two-handed.
+4. The small picture at the top right is a second camera looking back at you: you should see a whole person with two arms, the
+   held block in the hand and the arm swinging when you click. No floating hand there.
+5. Stop. Select **Player**, in the Inspector find **First Person Hands**, open **Preset** and pick Both arms (looks like Normal except for two-handed items, see fp_hand.md), Right hand
+   only, Minimal (just the hand block) or **Old look**; press Play each time. **Use normal first-person arms** brings the normal look back (Ctrl+Z also undoes it).
+   **Open Preview** shows both views live as you change a preset.
+
+**Unverified.** Everything above is checked only by the tests (`ctest -R fp_hand`) and headless software renders on Linux.
+The editor window code compiles but was not run; no Windows, GPU, or real multiplayer session was tried; how it feels in a real game is unknown.
 
 ## 7zg. Guided modeling: a fence from designs, then your own edits
 

@@ -126,6 +126,14 @@ struct Theme {
     // edge that fades to alpha 0, so curves and slanted edges are smooth instead of stair-stepped. Plain axis-aligned
     // rectangles are not affected. Off by default (the classic look and its golden images); the launcher pages turn it on.
     bool  antiAliased = false;
+    // Popups (BeginPopup, BeginPopupContextItem) and combo lists the Dear ImGui way when imguiPopups is on: a popup is as wide
+    // as its widest item plus popupPadX on each side (measured the frame before; a combo's list is as wide as the combo and
+    // padded by the frame padding), popupPadY above and below, corners popupRounding, a one-pixel Col_Border edge and the
+    // Col_PopupBg fill; items in it are popupGapY apart, and a Selectable in it is one text line tall with its highlight
+    // reaching half the gaps around it and to the popup's padding (Col_HeaderHovered under the mouse, Col_Header for a combo's
+    // current item). Off: the classic popup (6 px padding, 160 px wide, full-row Selectables).
+    bool  imguiPopups = false;
+    float popupPadX = 14.0f, popupPadY = 12.0f, popupRounding = 8.0f, popupGapX = 9.0f, popupGapY = 8.0f;
     // Colours beyond the eight fields above (the Col_* ids from Col_TextDisabled up), kept by PushStyleColor / SetStyleColor:
     // colors[id] holds the value and bit `id` of colorSet says it is in force. A bit that is clear means "follow the base fields".
     unsigned char      colors[64][4] = {};

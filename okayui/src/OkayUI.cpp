@@ -388,7 +388,7 @@ TableState g_tbl;
 int g_sortSpecsFor = 0; TableSortSpecs* g_sortSpecsOut = nullptr;   // the specs struct TableGetSortSpecs handed out (EndTable reads specsDirty back from it)
 
 // Popup body layout context (uses LayoutState, so defined after it).
-struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; };
+struct PopupCtx { LayoutState lay; int id; float x, y, w; float* hSlot; float* wSlot; float padX, padY; bool im; };
 PopupCtx g_popupStack[4];
 int      g_popupTop = 0;
 extern int g_textScaleTop;   // defined with the text-scale stack below (reset here in BeginFrame)
@@ -3677,7 +3677,7 @@ static bool Combo_ed(const char* label, const char* const* items, int count, int
     else if (insideBox && g_pressed) g_active = id;
 
     const char* cur = (*current >= 0 && *current < count) ? items[*current] : "";
-    if (g_theme.comboArrowBox) comboFace(x, y, boxW, h, insideBox, cur);
+    if (g_theme.comboArrowBox) comboFace(x, y, boxW, h, insideBox || *open, cur);   // the arrow button lit while the list is open
     else {
         quad(x, y, boxW, h, g_theme.border);
         if (boxW > 2*b && h > 2*b) quad(x + b, y + b, boxW - 2*b, h - 2*b, insideBox ? g_theme.bgHover : g_theme.bg);
@@ -3688,7 +3688,33 @@ static bool Combo_ed(const char* label, const char* const* items, int count, int
     if (lw > 0.0f) drawText(x + boxW + 8.0f, y + (h - textH()) * 0.5f, vis.b, s, g_theme.text);
 
     bool changed = false;
-    if (*open) {
+    if (*open && g_theme.imguiPopups) {
+        // The Dear ImGui list: right under the box and as wide as it, padded by the frame padding across and popupPadY down,
+        // one text line per item popupGapY apart, the current item in Col_Header and the one under the mouse in Col_HeaderHovered.
+        const float padX = g_framePadX >= 0.0f ? g_framePadX : 10.0f, padY = g_theme.popupPadY;
+        const float gx = g_theme.popupGapX * 0.5f, gy = g_theme.popupGapY * 0.5f, th = textH(), pitch = th + g_theme.popupGapY;
+        const float listY = y + h, listH = padY * 2.0f + (float)count * th + (float)(count - 1) * g_theme.popupGapY;
+        const float rd = std::max(0.0f, g_theme.popupRounding);
+        registerOverlay(x, listY, boxW, listH, true);
+        g_toOverlay = true;
+        rrect(x, listY, boxW, listH, rd, pick(Col_Border, g_theme.border));
+        rrect(x + 1.0f, listY + 1.0f, boxW - 2.0f, listH - 2.0f, rd > 1.0f ? rd - 1.0f : 0.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
+        for (int k = 0; k < count; ++k) {
+            const float ty = listY + padY + (float)k * pitch;
+            const float hx0 = x + padX - gx, hy0 = ty - gy, hw = boxW - 2.0f * padX + 2.0f * gx, hh = th + 2.0f * gy;
+            const int iid = id ^ (int)(0x9e3779b9u * (unsigned)(k + 1));
+            const bool ih = hitOverlay(hx0, hy0, hw, hh);
+            if (ih) g_hot = iid;
+            if (g_active == iid) { if (g_released) { if (ih) { *current = k; changed = true; *open = false; } g_active = 0; } }
+            else if (ih && g_pressed) g_active = iid;
+            if (ih) quad(hx0, hy0, hw, hh, pick(g_active == iid ? Col_HeaderActive : Col_HeaderHovered, g_theme.bgHover));
+            else if (k == *current) quad(hx0, hy0, hw, hh, pick(Col_Header, g_theme.track));
+            drawText(x + padX, ty, items[k], s, g_theme.text);
+        }
+        g_toOverlay = false;
+        const bool inList = pointIn(g_in.mouseX, g_in.mouseY, x, listY, boxW, listH);
+        if (g_pressed && !insideBox && !inList) *open = false;
+    } else if (*open) {
         const float listY = y + h;
         registerOverlay(x, listY, boxW, (float)count * h, true);   // takes the mouse from widgets below
         g_toOverlay = true;   // the dropdown list draws on top of later widgets
@@ -4311,6 +4337,30 @@ static bool selectableImpl(const char* label, bool selected, unsigned flags, Vec
     const int id = hashLabel(label);
     const bool disabled = (flags & Selectable_Disabled) != 0;
     const float s = g_theme.textScale;
+    if (g_popupTop > 0 && g_popupStack[g_popupTop - 1].im && !g_tbl.active) {
+        // In a Dear-ImGui-style popup: one text line, placed at its text width (so the popup can fit its widest item), the
+        // highlight reaching half the gaps around it and across to the popup's padding.
+        const float h = (size.y > 0.0f && std::isfinite(size.y)) ? size.y : textH();
+        const float nat = (size.x > 0.0f && std::isfinite(size.x)) ? size.x : labelW(label);
+        float x, y; place(nat, h, x, y);
+        const float gx = g_lay.spacingX * 0.5f, gy = g_lay.spacingY * 0.5f;
+        const float hx0 = x - gx, hx1 = std::max(x + nat, g_lay.ox + g_lay.contentW) + gx, hy0 = y - gy, hy1 = y + h + gy;
+        const bool inside = !disabled && hit(hx0, hy0, hx1 - hx0, hy1 - hy0);
+        g_lastId = id; if (inside) g_hot = id;
+        bool clicked = false;
+        const bool dblOnly = (flags & Selectable_DoubleClickOnly) != 0;
+        if (g_active == id) { if (g_released) { if (inside && !dblOnly) clicked = true; g_active = 0; } }
+        else if (inside && g_pressed) { g_active = id; if (dblOnly && g_dblClick) clicked = true; }
+        if (inside && g_active == id) quad(hx0, hy0, hx1 - hx0, hy1 - hy0, pick(Col_HeaderActive, g_theme.bgDown));
+        else if (inside) quad(hx0, hy0, hx1 - hx0, hy1 - hy0, pick(Col_HeaderHovered, g_theme.bgHover));
+        else if (selected) quad(hx0, hy0, hx1 - hx0, hy1 - hy0, pick(Col_Header, g_theme.track));
+        drawText(x, y + (h - textH()) * 0.5f, label, s, disabled ? pick(Col_TextDisabled, g_theme.textDim) : g_theme.text);
+        if (clicked) {
+            if (p_sel) *p_sel = !*p_sel;
+            if (flags & Selectable_ClosePopup) CloseCurrentPopup();
+        }
+        return clicked;
+    }
     const float h = (size.y > 0.0f && std::isfinite(size.y)) ? size.y : rowH();
     float w = (size.x > 0.0f && std::isfinite(size.x)) ? size.x : fullW();
     float x, y; place(w, h, x, y);
@@ -4366,20 +4416,29 @@ static bool beginPopupBody(int id) {
     if (g_popupTop >= 4) return false;
     PopupSlot* p = popupSlot(id, false);
     if (!p || !p->open) return false;
-    const float w = p->w > 0.0f ? p->w : 160.0f, pad = 6.0f;
+    const bool im = g_theme.imguiPopups;
+    const float padX = im ? g_theme.popupPadX : 6.0f, padY = im ? g_theme.popupPadY : 6.0f;
+    float* wSlot = im ? floatState(id ^ 0x5151, 0.0f) : nullptr;   // imguiPopups: last frame's widest item
+    const float w = p->w > 0.0f ? p->w : (im && *wSlot > 0.0f ? *wSlot + 2.0f * padX : 160.0f);
     float* hSlot = floatState(id ^ 0x9090, rowH() * 3.0f);
     float px = p->x, py = p->y;
     // Frame (overlay so it sits above everything). Height is last frame's content.
-    registerOverlay(px, py, w, *hSlot + pad * 2.0f, true);
+    registerOverlay(px, py, w, *hSlot + padY * 2.0f, true);
     g_toOverlay = true;
-    panelColored(px, py, w, *hSlot + pad * 2.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
+    if (im) {   // a one-pixel edge in the border colour around the popup colour
+        const float rd = std::max(0.0f, g_theme.popupRounding), hh = *hSlot + padY * 2.0f;
+        rrect(px, py, w, hh, rd, pick(Col_Border, g_theme.border));
+        rrect(px + 1.0f, py + 1.0f, w - 2.0f, hh - 2.0f, rd > 1.0f ? rd - 1.0f : 0.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
+    } else panelColored(px, py, w, *hSlot + padY * 2.0f, pick(Col_PopupBg, pick(Col_WindowBg, g_theme.panel)));
     // Save parent layout; set up the popup's inner layout.
     PopupCtx& c = g_popupStack[g_popupTop++];
-    c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot;
+    c.lay = g_lay; c.id = id; c.x = px; c.y = py; c.w = w; c.hSlot = hSlot; c.wSlot = wSlot; c.padX = padX; c.padY = padY; c.im = im;
     g_lay.active = true;
-    g_lay.ox = px + pad; g_lay.oy = py + pad;
+    g_lay.ox = px + padX; g_lay.oy = py + padY;
     g_lay.cx = g_lay.ox; g_lay.cy = g_lay.oy;
-    g_lay.contentW = w - 2.0f * pad;
+    g_lay.contentW = w - 2.0f * padX;
+    g_lay.maxRight = g_lay.ox;
+    if (im) { g_lay.spacingX = g_theme.popupGapX; g_lay.spacingY = g_theme.popupGapY; }
     g_lay.indent = 0.0f; g_lay.seed = id;
     g_lay.pendingSameLine = false;
     g_lay.prevX = g_lay.ox; g_lay.prevY = g_lay.oy; g_lay.prevW = 0.0f; g_lay.prevH = 0.0f;
@@ -4389,12 +4448,14 @@ static bool beginPopupBody(int id) {
 void EndPopup() {
     if (g_popupTop <= 0) return;
     PopupCtx& c = g_popupStack[--g_popupTop];
-    *c.hSlot = g_lay.cy - (c.y + 6.0f);   // measured content height for next frame
+    // Measured content for next frame: the height (without the gap after the last item when imguiPopups), and the widest item.
+    *c.hSlot = c.im ? std::max(0.0f, g_lay.cy - g_lay.spacingY - (c.y + c.padY)) : g_lay.cy - (c.y + 6.0f);
+    if (c.wSlot) *c.wSlot = std::max(0.0f, g_lay.maxRight - (c.x + c.padX));
     g_toOverlay = false;
     // Dismiss on a left-click outside the popup box (but not the click that opened it).
     PopupSlot* p = popupSlot(c.id, false);
     if (p && p->open && !p->modal && g_pressed && g_openPopupThisFrame != c.id) {
-        const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + 12.0f);
+        const bool inside = pointIn(g_in.mouseX, g_in.mouseY, c.x, c.y, c.w, *c.hSlot + 2.0f * c.padY);
         if (!inside) p->open = false;
     }
     g_lay = c.lay;   // restore parent layout

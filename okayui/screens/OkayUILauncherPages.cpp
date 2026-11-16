@@ -84,25 +84,32 @@ public:
         };
         UI::PushStyleColor(UI::Col_FrameBgHovered, mix(0.05f));
         UI::PushStyleColor(UI::Col_FrameBgActive, mix(0.09f));
+        // Its popups (the sort list, the right-click menu): Dear ImGui's padding (14 x 12), 8 px corners, a hairline edge, the
+        // Slate popup colour, rows 8 px apart, hover and current-item colours (measured from the Dear ImGui page).
+        m_pop = t.imguiPopups; t.imguiPopups = true;
+        UI::PushStyleColor(UI::Col_PopupBg, Rgb(35, 39, 48, 251));
+        UI::PushStyleColor(UI::Col_Border, Rgb(255, 255, 255, 19));
+        UI::PushStyleColor(UI::Col_Header, Rgb(53, 68, 95));
+        UI::PushStyleColor(UI::Col_HeaderHovered, Rgb(65, 70, 84));
         const float base = UI::GetTextLineHeight();   // 16 px times the UI scale
         UI::PushTextScale(std::max(1.0f, std::round(base * 17.0f / 16.0f)) / std::max(1.0f, base));
         UI::PushStyleVar(UI::StyleVar_FramePadding, V(kFrameX, kFrameY));
     }
     ~LauncherLook() {
-        UI::PopStyleColor(2);
+        UI::PopStyleColor(6);
         UI::PopStyleVar(1);
         UI::PopTextScale();
         UI::Theme& t = UI::Style();
         t.tooltipOffsetX = m_tipOffX; t.tooltipOffsetY = m_tipOffY; t.tooltipPadX = m_tipPadX; t.tooltipPadY = m_tipPadY;
         t.tooltipLineGap = m_tipGap; t.tooltipRounding = m_tipRound; std::memcpy(t.tooltipBg, m_tipBg, 4); t.comboArrowBox = m_combo;
-        t.ascentRoundsUp = m_ascent; t.snapAdvances = m_snap; t.antiAliased = m_aa;
+        t.ascentRoundsUp = m_ascent; t.snapAdvances = m_snap; t.antiAliased = m_aa; t.imguiPopups = m_pop;
     }
     LauncherLook(const LauncherLook&) = delete;
     LauncherLook& operator=(const LauncherLook&) = delete;
 private:
     float m_tipOffX, m_tipOffY, m_tipPadX, m_tipPadY, m_tipGap, m_tipRound;
     unsigned char m_tipBg[4];
-    bool m_combo, m_ascent, m_snap, m_aa;
+    bool m_combo, m_ascent, m_snap, m_aa, m_pop;
 };
 
 // A child region the way the launcher's children are: no padding inside, a thin 8 px (or `bar`) scrollbar that takes room only

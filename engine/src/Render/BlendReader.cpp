@@ -567,7 +567,7 @@ struct Hash3 {
     std::size_t operator()(const std::array<std::uint32_t, 6>& k) const {
         std::size_t h = 1469598103934665603ull;
         for (std::uint32_t v : k) { h ^= v; h *= 1099511628211ull; }
-        return (std::size_t)h;
+        return (std::size_t)(h ^ (h >> 31));
     }
 };
 
@@ -1712,8 +1712,24 @@ void Reader::BuildPartsOf(ObjRec& o, int oi) {
         part.material = kv.first >= 0 ? slotMat[(std::size_t)kv.first] : -1;
         part.node = o.node;
         const bool hasUv = !md.loopUv.empty();
-        std::unordered_map<std::array<std::uint32_t, 6>, int, Hash3> weld;
+        // weld table: open addressing over output vertex ids; a slot's key is read back from the vertex itself
+        // (source vertex, normal bits, UV bits), so the table is 4 bytes a slot and makes no allocation per vertex
+        std::size_t corners = 0;
+        for (int fi : kv.second) corners += (std::size_t)md.faceCount[(std::size_t)fi];
+        std::size_t cap = 64;
+        while (cap < corners + corners / 2 && cap < ((std::size_t)1 << 24)) cap <<= 1;
+        std::vector<int> table(cap, -1);
+        std::size_t used = 0;
         std::vector<int> srcVert;
+        srcVert.reserve(std::min<std::size_t>(corners, 1u << 22));
+        part.mesh.vertices.reserve(srcVert.capacity()); part.mesh.normals.reserve(srcVert.capacity());
+        if (hasUv) part.mesh.uvs.reserve(srcVert.capacity());
+        part.mesh.triangles.reserve(std::min<std::size_t>((corners > 2 * kv.second.size() ? corners - 2 * kv.second.size() : 0) * 3, (std::size_t)1 << 24));
+        auto keyOf = [&](int id) {
+            const Vec3& n = part.mesh.normals[(std::size_t)id];
+            return std::array<std::uint32_t, 6>{(std::uint32_t)srcVert[(std::size_t)id], FBits(n.x), FBits(n.y), FBits(n.z),
+                                                hasUv ? FBits(part.mesh.uvs[(std::size_t)id].x) : 0u, hasUv ? FBits(part.mesh.uvs[(std::size_t)id].y) : 0u};
+        };
         for (int fi : kv.second) {
             const int n = md.faceCount[(std::size_t)fi], s = md.faceStart[(std::size_t)fi];
             TriangulatePoly(md.pos, &md.loopVert[(std::size_t)s], n, tri, cntNgonFan, clipBudget);
@@ -1726,16 +1742,26 @@ void Reader::BuildPartsOf(ObjRec& o, int oi) {
                     const Vec3& nn = md.cornerN[lp];
                     const Vec2 uv = hasUv ? Vec2{md.loopUv[lp].x, 1.0f - md.loopUv[lp].y} : Vec2{0, 0};
                     const std::array<std::uint32_t, 6> key{(std::uint32_t)vi, FBits(nn.x), FBits(nn.y), FBits(nn.z), hasUv ? FBits(uv.x) : 0u, hasUv ? FBits(uv.y) : 0u};
-                    auto it = weld.find(key);
-                    if (it == weld.end()) {
+                    std::size_t slot = Hash3{}(key) & (cap - 1);
+                    while (table[slot] >= 0 && keyOf(table[slot]) != key) slot = (slot + 1) & (cap - 1);
+                    if (table[slot] < 0) {
                         if (++outVerts > kMaxOutVerts) { ++cntTruncList; return; }
                         ids[c] = (int)part.mesh.vertices.size();
                         part.mesh.vertices.push_back(md.pos[(std::size_t)vi]);
                         part.mesh.normals.push_back(nn);
                         if (hasUv) part.mesh.uvs.push_back(uv);
                         srcVert.push_back(vi);
-                        weld.emplace(key, ids[c]);
-                    } else ids[c] = it->second;
+                        table[slot] = ids[c];
+                        if (++used * 4 > cap * 3) {   // very large parts start at 16 M slots: grow and re-insert
+                            cap <<= 1;
+                            table.assign(cap, -1);
+                            for (int id = 0; id < (int)srcVert.size(); ++id) {
+                                std::size_t sl = Hash3{}(keyOf(id)) & (cap - 1);
+                                while (table[sl] >= 0) sl = (sl + 1) & (cap - 1);
+                                table[sl] = id;
+                            }
+                        }
+                    } else ids[c] = table[slot];
                 }
                 if (ids[0] == ids[1] || ids[1] == ids[2] || ids[0] == ids[2]) continue;   // collapsed triangle
                 part.mesh.triangles.push_back(ids[0]); part.mesh.triangles.push_back(ids[1]); part.mesh.triangles.push_back(ids[2]);

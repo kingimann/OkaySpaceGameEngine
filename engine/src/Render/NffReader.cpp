@@ -246,8 +246,8 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
                 p.name = k;
                 std::vector<V3> v;
                 std::vector<std::vector<int>> faces;
+                std::vector<std::array<int, 3>> tr;   // a sphere's triangles (then `faces` stays empty)
                 if (k == "s") {
-                    std::vector<std::array<int, 3>> tr;
                     Icosahedron(v, tr);
                     // subdivide `tess` times; vertices are shared by the edge midpoint cache
                     for (int lvl = 0; lvl < tess; ++lvl) {
@@ -270,26 +270,31 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
                         }
                         tr.swap(nt);
                     }
-                    for (const auto& f : tr) faces.push_back({f[0], f[1], f[2]});
                     p.explicitNormals = true;
                 } else {
                     Solid(k, v, faces);
                 }
+                p.soup.pos.reserve(v.size());
                 for (const V3& q : v) p.soup.pos.push_back(Vec3{(float)(a[0] + q.x * a[3]), (float)(a[1] + q.y * ry), (float)(a[2] + q.z * rz)});
-                for (const auto& f : faces) {
-                    std::vector<Vec3> poly;
-                    for (int ix : f) poly.push_back(p.soup.pos[(std::size_t)ix]);
-                    std::vector<std::array<int, 3>> tri;
-                    detail::TriangulatePolygon(poly, tri);
-                    for (const auto& tt : tri) for (int c = 0; c < 3; ++c) {
-                        const int vi = f[(std::size_t)tt[(std::size_t)c]];
-                        p.soup.ci.push_back((std::uint32_t)vi);
-                        if (p.explicitNormals) {   // normal of an ellipsoid: the unit direction divided by the radii
-                            const V3& q = v[(std::size_t)vi];
-                            const double nx = q.x / a[3], ny = q.y / ry, nz = q.z / rz, l = std::sqrt(nx * nx + ny * ny + nz * nz);
-                            p.soup.cnrm.push_back(Vec3{(float)(nx / l), (float)(ny / l), (float)(nz / l)});
-                        }
+                auto corner = [&](int vi) {
+                    p.soup.ci.push_back((std::uint32_t)vi);
+                    if (p.explicitNormals) {   // normal of an ellipsoid: the unit direction divided by the radii
+                        const V3& q = v[(std::size_t)vi];
+                        const double nx = q.x / a[3], ny = q.y / ry, nz = q.z / rz, l = std::sqrt(nx * nx + ny * ny + nz * nz);
+                        p.soup.cnrm.push_back(Vec3{(float)(nx / l), (float)(ny / l), (float)(nz / l)});
                     }
+                };
+                // a triangle triangulates to itself (TriangulatePolygon gives {0, 1, 2} for three corners)
+                p.soup.ci.reserve(tr.size() * 3);
+                if (p.explicitNormals) p.soup.cnrm.reserve(tr.size() * 3);
+                for (const auto& f : tr) { corner(f[0]); corner(f[1]); corner(f[2]); }
+                std::vector<Vec3> poly;
+                std::vector<std::array<int, 3>> tri;
+                for (const auto& f : faces) {
+                    poly.clear();
+                    for (int ix : f) poly.push_back(p.soup.pos[(std::size_t)ix]);
+                    detail::TriangulatePolygon(poly, tri);
+                    for (const auto& tt : tri) for (int c = 0; c < 3; ++c) corner(f[(std::size_t)tt[(std::size_t)c]]);
                 }
                 outVerts += p.soup.ci.size();
                 if (outVerts > kMaxOutVerts) return Fail(err, "too many vertices");

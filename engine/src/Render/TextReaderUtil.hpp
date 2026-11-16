@@ -5,6 +5,7 @@
 // installed. Nothing here reads past the buffer it is given.
 #include "FileOpen.hpp"
 #include "NumParse.hpp"
+#include "WeldMap.hpp"
 #include <charconv>
 #include <clocale>
 #include <cmath>
@@ -255,39 +256,7 @@ struct LineScan {
     bool Index(long long& v) { std::string_view t; if (!Tok(t)) return false; if (!t.empty() && t.back() == ':') t.remove_suffix(1); return ToInt(t, v); }
 };
 
-// A vertex weld: a corner key of N 32-bit words (floats as their bits, compared bit for bit) -> the vertex made for it.
-// Open addressing in one array: no allocation per vertex and no string per key (the readers used an unordered_map keyed
-// by the key's bytes as a std::string; the vertices and their order do not depend on the lookup).
-template <int N>
-struct WeldMap {
-    struct E { std::uint32_t k[N]; int v; };
-    std::vector<E> t;
-    std::size_t n = 0;
-    static std::size_t Hash(const std::uint32_t* k) {
-        std::uint64_t h = 0x9E3779B97F4A7C15ull;
-        for (int i = 0; i < N; ++i) { h = (h ^ k[i]) * 0xBF58476D1CE4E5B9ull; h ^= h >> 31; }
-        return (std::size_t)h;
-    }
-    // The vertex of `k`, or `fresh` (stored for it) when the key is new; `added` says which.
-    int Get(const std::uint32_t* k, int fresh, bool& added) {
-        if ((n + 1) * 2 > t.size()) Grow();
-        const std::size_t mask = t.size() - 1;
-        for (std::size_t i = Hash(k) & mask;; i = (i + 1) & mask) {
-            E& e = t[i];
-            if (e.v < 0) { std::memcpy(e.k, k, sizeof e.k); e.v = fresh; ++n; added = true; return fresh; }
-            if (std::memcmp(e.k, k, sizeof e.k) == 0) { added = false; return e.v; }
-        }
-    }
-    void Grow() {
-        std::vector<E> old;
-        old.swap(t);
-        E empty{};
-        empty.v = -1;
-        t.assign(old.size() < 32 ? 64 : old.size() * 2, empty);
-        const std::size_t mask = t.size() - 1;
-        for (const E& e : old) if (e.v >= 0) for (std::size_t i = Hash(e.k) & mask;; i = (i + 1) & mask) if (t[i].v < 0) { t[i] = e; break; }
-    }
-};
+using detail::WeldMap;   // WeldMap.hpp
 
 // Lists bones so that every parent comes before its children. `par[i]` is the parent index or -1; a parent loop is cut at
 // the bone that closes it (that bone becomes a root). `order` gets every index once. Returns the number of loops cut.

@@ -6,6 +6,7 @@
 //   * 3x4 / 4x4 transform helpers in double precision, and the Z-up -> Y-up root of the model
 #include "FileOpen.hpp"
 #include "NumParse.hpp"
+#include "WeldMap.hpp"
 #include "okay/Render/ModelData.hpp"
 #include <algorithm>
 #include <array>
@@ -222,19 +223,9 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
             }
         }
     }
-    struct Key {
-        std::uint32_t w[7];
-        bool operator==(const Key& o) const { return std::memcmp(w, o.w, sizeof(w)) == 0; }
-    };
-    struct KeyHash {
-        std::size_t operator()(const Key& k) const {
-            std::uint64_t h = 0x9E3779B97F4A7C15ull;
-            for (std::uint32_t v : k.w) { h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2); h *= 0xC2B2AE3D27D4EB4Full; }
-            return (std::size_t)(h ^ (h >> 29));
-        }
-    };
-    std::unordered_map<Key, int, KeyHash> map;
-    map.reserve(np);
+    struct Key { std::uint32_t w[7]; };   // position index, normal cluster, uv, explicit normal: compared bit for bit
+    WeldMap<7> map;
+    map.Reserve(np);
     auto bits = [](float f) { std::uint32_t u; std::memcpy(&u, &f, 4); return u; };
     for (std::size_t t = 0; t < nt; ++t) {
         if (!keep[t]) continue;
@@ -245,11 +236,11 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
             key.w[1] = haveN ? 0u : (std::uint32_t)cluster[c];
             key.w[2] = haveUv ? bits(s.cuv[c].x) : 0u; key.w[3] = haveUv ? bits(s.cuv[c].y) : 0u;
             key.w[4] = haveN ? bits(s.cnrm[c].x) : 0u; key.w[5] = haveN ? bits(s.cnrm[c].y) : 0u; key.w[6] = haveN ? bits(s.cnrm[c].z) : 0u;
-            auto it = map.find(key);
-            if (it == map.end()) {
+            bool added = false;
+            const int got = map.Get(key.w, (int)out.vertices.size(), added);
+            if (added) {
                 if (out.vertices.size() >= maxOutVerts) return false;
-                const int idx = (int)out.vertices.size();
-                map.emplace(key, idx);
+                const int idx = got;
                 out.vertices.push_back(s.pos[s.ci[c]]);
                 Vec3 n = haveN ? s.cnrm[c] : csum[cbase[s.ci[c]] + cluster[c]];
                 const double l = std::sqrt((double)n.x * n.x + (double)n.y * n.y + (double)n.z * n.z);
@@ -257,7 +248,7 @@ inline bool BuildMesh(const Soup& s, double creaseDeg, Mesh& out, BuildStats* st
                 out.normals.push_back(n);
                 if (haveUv) out.uvs.push_back(s.cuv[c]);
                 out.triangles.push_back(idx);
-            } else out.triangles.push_back(it->second);
+            } else out.triangles.push_back(got);
         }
     }
     return true;

@@ -1112,6 +1112,11 @@ add_executable(test_voxel_examples test_voxel_examples.cpp)
 target_link_libraries(test_voxel_examples PRIVATE okay::engine)
 target_compile_definitions(test_voxel_examples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME voxel_examples COMMAND test_voxel_examples)
+# Bugs the terrain audit proved (docs/terrain_audit.md): the heightmap digger ignored open bags and the main camera, and a
+# World Streamer threw away a dug voxel cell when it unloaded it.
+add_executable(test_terrain_audit test_terrain_audit.cpp)
+target_link_libraries(test_terrain_audit PRIVATE okay::engine)
+add_test(NAME terrain_audit COMMAND test_terrain_audit)
 # Not a test: prints per-frame numbers for digging in a voxel terrain (docs/voxel_edit_perf.md). Built, never run by ctest.
 add_executable(bench_voxel_edit bench_voxel_edit.cpp)
 target_link_libraries(bench_voxel_edit PRIVATE okay::engine)

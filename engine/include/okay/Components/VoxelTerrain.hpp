@@ -175,6 +175,8 @@ public:
         bool        chunked = false;       ///< the surface is drawn by chunk objects
     };
     MeshStats lastStats;
+    /// How many edits changed the field since it was created or loaded (a World Streamer keeps a cell that was dug).
+    std::uint32_t editCount = 0;
     /// How many renderer objects currently draw the surface (0 while it is one combined mesh).
     int  ChunkObjectCount() const;
     bool UsesChunkObjects() const { return chunked_; }

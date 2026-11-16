@@ -475,6 +475,7 @@ void VoxelTerrain::Generate(float surfaceFrac, float amplitude, float caveAmount
 // code only marked k-1 .. k, so the cubes just outside an edit kept normals from before it.
 void VoxelTerrain::TouchBox(int x0, int y0, int z0, int x1, int y1, int z1) {
     if (x0 > x1 || y0 > y1 || z0 > z1) return;
+    ++editCount;
     if (!editAny_) {
         editMin_[0] = x0; editMin_[1] = y0; editMin_[2] = z0;
         editMax_[0] = x1; editMax_[1] = y1; editMax_[2] = z1;

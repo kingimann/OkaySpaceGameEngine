@@ -445,6 +445,33 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Visual Script: `Fn.` node inputs named from the docs (branch `claude2/vs-fn-pin-docs`, not merged or released yet)
+
+**What it is.** 1,407 of the 1,438 `Fn.<builtin>` nodes said only "Calls the text-script function..." and their inputs
+were First, Second, Third, so you could not tell what goes where. Now, for the 1,053 builtins the scripting docs
+describe, the inputs carry the argument names in words, and the tooltip says what the builtin does, what each input is
+and what comes out. Found by a tester (#888, finding 34, part C).
+
+**Steps.**
+1. Open the editor, select any object, add a **Visual Script** and open the graph.
+2. Right-click the canvas (or press the Add Node key) and search for `raycast`. Hover **Raycast** (`Fn.raycast`) in the
+   list. The tooltip says "Runs the text-script function raycast. 2D ray; returns the name of the object hit", lists the
+   inputs Origin Across, Origin Height, Direction Across, Direction Height, Distance Limit (optional), and under gives
+   "Result (Any): the name of the object hit".
+3. Add it. On the canvas its inputs read Origin Across, Origin Height, Direction Across, Direction Height,
+   Distance Limit, Sixth, Seventh.
+4. Hover the node title: the description shows `raycast(ox, oy, dx, dy [, maxDist])` and ends with
+   "Gives back: the name of the object hit ("" = miss)". Hover an input: it says which argument it is (`ox` ...) and
+   whether it is optional.
+5. Try `Fn.distance` (First Across, First Height, Second Across, Second Height) or `Fn.spawn` (Saved Object, Across,
+   Height). A builtin the docs do not describe still shows First, Second... and the old text.
+6. Open a graph saved before this change that uses `Fn.` nodes: it loads and runs the same, because inputs are saved by
+   number, not by name.
+
+**Status.** Tested headless: `test_vs_fn_pin_docs` (names, tooltips, Add Node brief, the saved-graph round trip and the
+generator's `--check`). `editor/main.cpp` was only syntax-checked, not built or run (no SDL here), so the menu and canvas
+are unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

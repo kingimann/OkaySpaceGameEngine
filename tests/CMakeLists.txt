@@ -1596,6 +1596,11 @@ add_executable(test_vs_fn_arity test_vs_fn_arity.cpp)   # Fn.<builtin> nodes hav
 target_link_libraries(test_vs_fn_arity PRIVATE okay::engine)
 target_compile_definitions(test_vs_fn_arity PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME vs_fn_arity COMMAND test_vs_fn_arity)
+add_executable(test_vs_fn_pin_docs test_vs_fn_pin_docs.cpp)   # Fn.<builtin> inputs named and described from the docs (#888 finding 34 C)
+target_include_directories(test_vs_fn_pin_docs PRIVATE ${CMAKE_SOURCE_DIR}/editor ${OKAY_VS_IMGUI_INCLUDE})
+target_link_libraries(test_vs_fn_pin_docs PRIVATE okay::engine)
+target_compile_definitions(test_vs_fn_pin_docs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME vs_fn_pin_docs COMMAND test_vs_fn_pin_docs)
 
 add_executable(test_ui_animation test_ui_animation.cpp)
 target_link_libraries(test_ui_animation PRIVATE okay::engine)

@@ -6,7 +6,9 @@
 // docs/visual_script_clarity_audit.md is the audit this comes from.
 // Included by VisualScriptEditor.hpp, after the node table (Registry, VsDef) it reads.
 #include "okay/VisualScript/VsTypes.hpp"
+#include "okay/VisualScript/VsBuiltins.hpp"
 
+#include <cctype>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -188,8 +190,14 @@ inline VsNodeBrief VsNodeBriefFor(const VsDef& d) {
     const bool event = !d.execIn && !d.execOut.empty();
     const bool builtin = std::strncmp(d.type, "Fn.", 3) == 0;
     // Does
+    const okay::vs::BuiltinDoc* fnDoc = builtin ? okay::vs::BuiltinDocFor(d.type + 3) : nullptr;
     if (builtin) {
         b.does = std::string("Runs the text-script function ") + (d.type + 3) + ".";
+        if (fnDoc && fnDoc->summary[0]) {   // what the docs say it does (VsBuiltinDocs.gen.hpp)
+            std::string what = VsFirstSentence(fnDoc->summary);
+            if (!what.empty()) what[0] = (char)std::toupper((unsigned char)what[0]);
+            b.does += " " + what;
+        }
     } else if (doc && !doc->description.empty()) {
         std::string text = doc->description;
         const std::string echo = std::string(d.title ? d.title : "") + ". ";   // "Wait Seconds. Pauses..." names itself first
@@ -230,7 +238,8 @@ inline VsNodeBrief VsNodeBriefFor(const VsDef& d) {
     std::vector<std::string> give;
     for (int i = 0; i < (int)d.dataOut.size(); ++i)
         if (d.dataOut[i] && d.dataOut[i][0])
-            give.push_back(std::string(d.dataOut[i]) + " (" + okay::vs::PinTypeName(okay::vs::OutputType(d.type, i, "")) + ")");
+            give.push_back(std::string(d.dataOut[i]) + " (" + okay::vs::PinTypeName(okay::vs::OutputType(d.type, i, "")) + ")" +
+                           (fnDoc && fnDoc->returns[0] ? std::string(": ") + fnDoc->returns : std::string()));
     std::vector<std::string> flows;
     for (const char* e : d.execOut) if (e && e[0]) flows.push_back(e);
     if (!flows.empty()) {

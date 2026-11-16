@@ -749,8 +749,8 @@ not translated, and each node's tooltip gives the line of script.
 ## Text-script function nodes (`Fn.<builtin>`)
 
 Every text-script builtin is also a node named `Fn.<builtin>` (search for the builtin's
-name). The node has one input per argument the builtin reads, named First, Second,
-Third and so on, and never fewer than four. Most builtins read four or fewer, so most
+name). The node has one input per argument the builtin reads, named from the docs (see
+below) or else First, Second, Third and so on, and never fewer than four. Most builtins read four or fewer, so most
 nodes have four inputs. The ones that read more have more: `Fn.dist3` has six (two
 points), `Fn.remap` five, `Fn.raycast3` nine (origin, direction, distance, layers,
 ignore triggers), and `Fn.capsule_cast3` has the most, thirteen. The full list with
@@ -761,6 +761,31 @@ Inputs after that are not passed, so a builtin that changes what it does by the 
 of arguments (for example `nav_path_length` with three or six) behaves as in a text
 script. An empty input before that last one is passed as nothing (0 or empty text), so
 every input keeps its place.
+
+### Input names and tooltips from the docs
+
+When the scripting docs name a builtin's arguments, its node's inputs carry those names in
+plain words, and the tooltip (in the Add Node menu and on the canvas) says what the builtin
+does, what goes in each input and what it gives back. For example **Fn.raycast** has the
+inputs Origin Across, Origin Height, Direction Across, Direction Height and Distance Limit
+(the text script's `raycast(ox, oy, dx, dy [, maxDist])`), and its tooltip ends with
+"Gives back: the name of the object hit". Each input's tooltip line gives the argument's
+own name (`ox`) and says when it is optional. Inputs past the documented arguments, and
+every input of a builtin the docs do not cover, keep the names First, Second, Third...
+
+The names come from `tools/gen_fn_pin_docs.py`, which reads, in this order,
+`docs/scripting_reference.md` and `docs/scripting.md` (the tables of `name(args) | what it
+does`), the editor's **Help > Scripting Reference** list, comments in `OkayScriptVM.cpp`
+and the Script Editor's signature hints, and writes
+`engine/include/okay/VisualScript/VsBuiltinDocs.gen.hpp`. A builtin made as an alias
+(`Physics2D.Raycast`) uses the entry of the builtin it stands for. A signature with example
+values instead of names, or with more arguments than the node has inputs, is skipped. On
+2026-11-16 it covers 1,053 of the 1,438 `Fn.` nodes. To give another builtin names, add
+its row to a table in `docs/scripting_reference.md` and run
+`python3 tools/gen_fn_pin_docs.py` (`--check` tells whether the header is up to date,
+`--stats` prints the coverage of each source); `test_vs_fn_pin_docs` fails if the
+coverage drops. Graphs save inputs by number, not by name, so renaming an input never
+changes a saved graph.
 
 Before this change (bug #888, finding 22) every `Fn.` node had four inputs, so a
 builtin that needs five or more arguments got too few and gave 0 or nothing back. A

@@ -125,12 +125,14 @@ inline bool IsApiNode(const std::string& t) { return okay::vs::VsApiFind(t) != n
 
 // One node per text-script builtin, plus the escape hatches. Pointers stay valid:
 // BuiltinNodes() keeps its strings for the process lifetime. A builtin that reads more
-// than four arguments (dist3, raycast3, remap...) gets one input per argument.
+// than four arguments (dist3, raycast3, remap...) gets one input per argument. An input is
+// named after the builtin's argument when the docs name it (VsBuiltinDocs.gen.hpp), else
+// First, Second ...; graphs save pins by index, so only the label changes.
 inline std::vector<VsDef> VsWithBuiltinDefs(std::vector<VsDef> defs) {
     for (const okay::vs::BuiltinNodeInfo& n : okay::vs::BuiltinNodes()) {
         std::vector<const char*> args;
         const int pins = okay::vs::BuiltinPinCount(n.builtin);
-        for (int i = 0; i < pins; ++i) args.push_back(okay::vs::BuiltinPinName(i));
+        for (int i = 0; i < pins; ++i) args.push_back(okay::vs::BuiltinPinName(n.builtin, i));   // "Origin Across" ... from the docs
         VsDef d{n.type.c_str(), VsFriendlyBuiltinTitle(n.builtin), CAT_SCRIPT, true, {""},
                 std::move(args), {"Result"}, 0, nullptr};
         defs.push_back(std::move(d));

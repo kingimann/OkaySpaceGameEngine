@@ -1,4 +1,5 @@
 #include "okay/VisualScript/VsBuiltins.hpp"
+#include "okay/VisualScript/VsBuiltinDocs.gen.hpp"
 #include "okay/VisualScript/VsApi.hpp"
 #include "okay/VisualScript/Nodes.hpp"
 #include "okay/Scripting/OkayScriptVM.hpp"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <unordered_map>
 
 namespace okay::vs {
@@ -321,6 +323,22 @@ const char* BuiltinPinName(int pin) {
     static const char* const names[kBuiltinMaxPins] = {"First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh",
                                                        "Eighth", "Ninth", "Tenth", "Eleventh", "Twelfth", "Thirteenth"};
     return pin >= 0 && pin < kBuiltinMaxPins ? names[pin] : "";
+}
+
+const BuiltinDoc* BuiltinDocsBegin() { return gen::kFnDocs; }
+const BuiltinDoc* BuiltinDocsEnd() { return gen::kFnDocs + gen::kFnDocCount; }
+
+const BuiltinDoc* BuiltinDocFor(const std::string& builtin) {
+    const BuiltinDoc* end = BuiltinDocsEnd();
+    const BuiltinDoc* it = std::lower_bound(BuiltinDocsBegin(), end, builtin,
+        [](const BuiltinDoc& d, const std::string& n) { return std::strcmp(d.name, n.c_str()) < 0; });
+    return it != end && builtin == it->name ? it : nullptr;
+}
+
+const char* BuiltinPinName(const std::string& builtin, int pin) {
+    const BuiltinDoc* d = BuiltinDocFor(builtin);
+    if (d && pin >= 0 && pin < d->pinCount && d->labels[pin] && d->labels[pin][0]) return d->labels[pin];
+    return BuiltinPinName(pin);
 }
 
 const NodeSignature& BuiltinSignatureFor(const std::string& type) {

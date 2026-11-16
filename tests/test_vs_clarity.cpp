@@ -79,7 +79,7 @@ int main() {
         CHECK(Has(sp.gives, "Object (Object)"));
         const VsNodeBrief fn = VsNodeBriefFor(*Find("Fn.print"));
         CHECK(Has(fn.does, "text-script function print"));
-        CHECK(Has(fn.needs, "First (optional)"));
+        CHECK(Has(fn.needs, (std::string(okay::vs::BuiltinPinName("print", 0)) + " (optional)").c_str()));   // "Value": named from the docs
         const VsNodeBrief rb = VsNodeBriefFor(*Find("AddForce"));
         CHECK(Has(rb.needs, "Rigidbody3D/Rigidbody2D"));
     }

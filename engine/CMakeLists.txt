@@ -58,6 +58,7 @@ add_library(okay_engine
     src/Input/Input.cpp
     src/Input/InputRecorder.cpp
     src/Input/InputDebug.cpp
+    src/Input/Haptics.cpp
     src/Input/InputActions.cpp
     src/Input/GameInput.cpp
     src/Input/GestureRecognizer.cpp

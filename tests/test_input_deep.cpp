@@ -8,6 +8,7 @@
 #include "okay/Input/InputActions.hpp"
 #include "okay/Input/InputRecorder.hpp"
 #include "okay/Input/InputDebug.hpp"
+#include "okay/Input/Haptics.hpp"
 #include "okay/Input/PlatformKeys.hpp"
 #include "okay/Input/RemapModel.hpp"
 #include "okay/Core/AccessibilitySettings.hpp"
@@ -599,6 +600,41 @@ int main() {
         for (const auto& l : InputDebug::Snapshot()) if (l.rfind("Action Move:", 0) == 0) sawMove = true;
         CHECK(sawMove);
         InputDebug::Enable(false); InputDebug::Clear();
+    }
+
+    // ============================ UPGRADE: rumble patterns ============================
+    Block("upgrade_haptic_patterns");
+    {
+        Reset();
+        InputHaptics::SetStrength(1.0f);
+        CHECK(!InputHaptics::Play("nonsense") && !InputHaptics::Playing(0));
+        CHECK(InputHaptics::Pattern("Heartbeat").size() == 4 && InputHaptics::Pattern("ramp").size() == 10);
+        float lo = 0, hi = 0, sec = 0;
+        CHECK(InputHaptics::Play("pulse", 1) && InputHaptics::Playing(1) && !InputHaptics::Playing(0));
+        CHECK(Input::TakeRumble(lo, hi, sec, 1) && lo > 0.5f && sec > 0.07f && sec < 0.09f);      // the first buzz starts at once
+        std::vector<float> lows;
+        for (int i = 0; i < 30; ++i) {
+            InputActions::Tick(0.04f);
+            if (Input::TakeRumble(lo, hi, sec, 1)) lows.push_back(lo);
+        }
+        CHECK(lows.size() >= 4);                                           // quiet, buzz, quiet, buzz, then the stop request
+        CHECK(lows[0] == 0.0f && lows[1] > 0.5f);                          // gaps alternate with buzzes
+        CHECK(!InputHaptics::Playing(1));                                  // it ends by itself
+        // a long frame does not stretch or skip the steps: one big tick still walks through them in order
+        InputHaptics::Play("heartbeat", 0);
+        Input::TakeRumble(lo, hi, sec, 0);
+        InputActions::Tick(0.25f);
+        CHECK(InputHaptics::Playing(0));
+        InputActions::Tick(2.0f);
+        CHECK(!InputHaptics::Playing(0));
+        // the player's vibration setting
+        InputHaptics::SetStrength(0.5f);
+        InputHaptics::Play("buzz", 0);
+        CHECK(Input::TakeRumble(lo, hi, sec, 0) && std::fabs(hi - 0.5f) < 1e-5f);
+        InputHaptics::SetStrength(0.0f);
+        InputHaptics::Play("buzz", 0); CHECK(Input::TakeRumble(lo, hi, sec, 0) && hi == 0.0f && lo == 0.0f);
+        InputHaptics::Stop(0); InputHaptics::SetStrength(1.0f);
+        CHECK(!InputHaptics::Playing(0) && !InputHaptics::Play("tap", 9));
     }
 
     // ============================ SPEED: same results as the old path ============================

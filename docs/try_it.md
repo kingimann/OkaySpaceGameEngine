@@ -248,6 +248,7 @@ and a set of features was added. One example scene has a station for each, with 
    conflict and Interact gets Space, so nothing is left unbound), 8 or 9 (one-handed presets), 7 (everything back to normal).
    These are saved for the player, so press 7 when you are done.
 7. Station **F, Two players**: with two controllers, press A on the second one. "P2 jump" turns true and "P1 jump" stays false.
+   Press H (heartbeat) or J (pulse) and the first or second controller shakes; press 0 to switch rumble off and on.
 8. Station **G, Record / replay**: press 1, move around and press keys for a few seconds, press 2, then 3. The same input plays
    back and the real keyboard is ignored until it ends.
 9. The editor **Window > Input** panel shows the same things in a window: keys held, mouse, controllers, the last events, record
@@ -259,7 +260,7 @@ and a set of features was added. One example scene has a station for each, with 
 lookup and evaluation order go back to the old (slower) version. Results are the same (a test checks 600 random frames against
 it). The bug fixes and new features stay.
 
-**Status.** Headless tests only: `input_deep` (192 checks) and `input_playground` (the scene's scripts run and show the right words).
+**Status.** Headless tests only: `input_deep` (207 checks), `input_bench` and `input_playground` (the scene's scripts run and show the right words).
 A picture of the scene was rendered with the software painter (`docs/images/input-playground.png`), not a real window.
 Unverified: a real keyboard layout, a real controller, the Input panel in the real editor (its code compiles but was not run),
 fast-tap forwarding in a real window, and the Windows build.

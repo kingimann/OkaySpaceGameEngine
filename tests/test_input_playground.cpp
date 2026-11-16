@@ -184,6 +184,18 @@ int main() {
     CHECK(Has(TextOf(scene, "F Players"), "P1 jump false") && Has(TextOf(scene, "F Players"), "P2 jump true"));
     CHECK(Has(TextOf(scene, "F Players"), "P2 jump true move 0.0,1.0"));
     Input::FeedGamepadRaw(1, {}, {}, 0, 0, 0, false);
+    {   // H shakes controller 1 in a heartbeat; 0 switches rumble off
+        float lo = 0, hi = 0, sec = 0;
+        Step(scene, {'h'});
+        CHECK(Input::TakeRumble(lo, hi, sec, 0) && lo > 0.5f);
+        CHECK(Has(TextOf(scene, "F Players"), "Rumble strength 1"));
+        InputHaptics::Stop(0);
+        Step(scene, {'0'}); Step(scene, {});
+        CHECK(Has(TextOf(scene, "F Players"), "Rumble strength 0"));
+        Step(scene, {'0'}); Step(scene, {});
+        CHECK(Has(TextOf(scene, "F Players"), "Rumble strength 1"));
+        InputHaptics::Stop(0);
+    }
 
     // G: record then replay
     Step(scene, {'1'}); Step(scene, {});

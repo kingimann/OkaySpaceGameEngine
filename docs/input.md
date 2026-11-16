@@ -328,6 +328,11 @@ in `RemapModel.hpp`, the data side of a Controls screen); it now understands cho
 `SaveProfile("Player 2")` / `LoadProfile` keep named sets in Prefs. `ApplyPreset("left")` and `("right")` put every action
 on one half of the keyboard (one-handed play); `Reset()` undoes them.
 
+### Rumble patterns
+`InputHaptics::Play("heartbeat", player)` plays a short list of rumble steps (tap, buzz, pulse, heartbeat, ramp, ramp down) on a
+controller, or `Play(steps, player)` with your own `{heavy, light, seconds}` steps. `InputHaptics::SetStrength(0.5)` scales every
+pattern (0 = vibration off) and is kept for the player (`input.haptics`). OkayScript: `haptic("heartbeat", 0)`, `haptic_strength(0.5)`.
+
 ### Pictures that follow the device
 `Input::LastDevice()` says whether the player last used the keyboard, mouse, a controller or touch. `Input::GamepadFamily(p)`
 is Xbox, PlayStation or Switch (set from the controller's name when it is plugged in). `binding.Label(family)` prints

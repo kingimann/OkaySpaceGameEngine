@@ -113,7 +113,7 @@ bool InputRecorder::StartPlayback(const std::string& text) {
     std::uint64_t seed = 0; std::string note;
     while (std::getline(in, line)) {
         if (line.rfind("seed ", 0) == 0) { seed = std::strtoull(line.c_str() + 5, nullptr, 10); continue; }
-        if (line.rfind("note ", 0) == 0) { note = line.substr(5); continue; }
+        if (line.rfind("note ", 0) == 0) { note.assign(line, 5, std::string::npos); continue; }
         if (line.rfind("f ", 0) != 0) continue;
         Frame f;
         const std::size_t bar = line.find('|');

@@ -3,6 +3,7 @@
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputRecorder.hpp"
 #include "okay/Input/InputDebug.hpp"
+#include "okay/Input/Haptics.hpp"
 #include "okay/Core/Prefs.hpp"
 #include <algorithm>
 #include <cctype>
@@ -495,6 +496,7 @@ void InputActions::Tick(float dt) {
     EnsureDefaults();
     g_dt = dt > 0.0f ? dt : 0.0f;
     g_now += g_dt;
+    InputHaptics::Update(g_dt);
     InputRecorder::BeginFrame(g_dt);   // playback puts the recorded frame over what the runtime fed
     auto& actions = Actions();
     const bool legacy = g_legacy;
@@ -806,14 +808,14 @@ bool InputActions::ImportBindings(const std::string& text) {
     bool any = false;
     while (pos != std::string::npos && pos + 1 < text.size()) {
         const std::size_t end = text.find('\n', pos + 1);
-        const std::string line = text.substr(pos + 1, end == std::string::npos ? std::string::npos : end - pos - 1);
+        const std::string line(text, pos + 1, end == std::string::npos ? std::string::npos : end - pos - 1);
         pos = end;
         const std::size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         Action* a = Find(line.substr(0, eq));
         if (!a) continue;
         std::vector<InputBinding> list;
-        const std::string v = line.substr(eq + 1);
+        const std::string v(line, eq + 1);
         std::size_t start = 0;
         for (std::size_t i = 0; i <= v.size(); ++i)
             if (i == v.size() || v[i] == ';') {

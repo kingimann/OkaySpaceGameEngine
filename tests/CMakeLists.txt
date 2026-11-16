@@ -2217,6 +2217,11 @@ add_executable(test_input_deep test_input_deep.cpp)
 target_link_libraries(test_input_deep PRIVATE okay::engine)
 add_test(NAME input_deep COMMAND test_input_deep)
 
+# Per-frame input cost: 100 actions, 4 controllers (prints microseconds and allocations per frame; checks 0 allocations)
+add_executable(test_input_bench test_input_bench.cpp)
+target_link_libraries(test_input_bench PRIVATE okay::engine)
+add_test(NAME input_bench COMMAND test_input_bench)
+
 # The shipped examples/input/input_playground.okayscene run headless: every station's script, with a software-rendered picture
 add_executable(test_input_playground test_input_playground.cpp)
 target_link_libraries(test_input_playground PRIVATE okay::engine)

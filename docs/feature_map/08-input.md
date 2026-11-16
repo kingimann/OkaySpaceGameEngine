@@ -130,14 +130,15 @@ dead zones, up to four controllers; in 2.849.0) and #574 (remap model for a Cont
   - 8.7.6 Pictures and device - `Input/Input` - `LastDevice`, `GamepadFamily`, `GamepadButtonLabel`, `FamilyFromName`; `InputBinding::Label(family)`
   - 8.7.7 Recording - `Input/InputRecorder` - `StartRecording`, `StartPlayback`, `Text`; plain versioned text with a seed and a note
   - 8.7.8 Debugger - `Input/InputDebug`, `editor/InputDebugger.hpp` - the live state and the last events; Window > Input in the editor
-  - 8.7.9 Speed - `Input/InputActions` - hash lookup, no per-frame allocation, fixed key arrays; `OKAY_OLD_INPUT=1` for the old evaluation
-- **Code:** `Input/Input`, `Input/InputActions`, `Input/InputRecorder`, `Input/InputDebug`, `Input/PlatformKeys`, `engine/src/Input/*.cpp`, `editor/InputDebugger.hpp`, `player/main.cpp`, `editor/main.cpp`, `examples/input/input_playground.okayscene`
-- **API:** `Input::FeedKeyTap`, `Input::SetTextFocused`, `InputActions::SetResponse`, `InputActions::Buffered`, `InputActions::Consume`, `InputActions::SetPerPlayer`, `InputRecorder::StartRecording`, `InputDebug::Enable`, script `action_buffered`, `action_consume`, `action_double_tap`, `action_hold`, `set_response`, `action_label`, `input_device`, `input_record`
+  - 8.7.9 Rumble patterns - `Input/Haptics` - `InputHaptics::Play("heartbeat", player)`, `SetStrength`; steps become `Input::Rumble` requests
+  - 8.7.10 Speed - `Input/InputActions` - hash lookup, no per-frame allocation, fixed key arrays; `OKAY_OLD_INPUT=1` for the old evaluation
+- **Code:** `Input/Input`, `Input/InputActions`, `Input/InputRecorder`, `Input/InputDebug`, `Input/Haptics`, `Input/PlatformKeys`, `engine/src/Input/*.cpp`, `editor/InputDebugger.hpp`, `player/main.cpp`, `editor/main.cpp`, `examples/input/input_playground.okayscene`
+- **API:** `Input::FeedKeyTap`, `Input::SetTextFocused`, `InputActions::SetResponse`, `InputActions::Buffered`, `InputActions::Consume`, `InputActions::SetPerPlayer`, `InputRecorder::StartRecording`, `InputDebug::Enable`, `InputHaptics::Play`, script `action_buffered`, `action_consume`, `action_double_tap`, `action_hold`, `set_response`, `action_label`, `input_device`, `input_record`
 - **Editor:** Window > Input (live keys, mouse, controllers, actions, last events, record and replay, response curves); `examples/input/input_playground.okayscene`
 - **Docs:** `docs/input.md`, `docs/input_audit.md`, `docs/try_it.md` row 7x
-- **Tests:** `input_deep`, `input_playground`, `input_actions`, `input_keys_gamepad`
-- **Status:** Works headless - 192 checks in `input_deep`, the shipped scene run by `input_playground`; not run in a real window, with a real controller or on a real keyboard layout
-- **Open:** AZERTY physical positions (ZQSD) are not an option; no haptic patterns; no gyro; recording does not yet tie frames to the scene file and the game's random seed (46.1); the Input panel was syntax-checked but not run; the old "pressed between polls" loss is fixed only where the host forwards key events (player and editor Play)
+- **Tests:** `input_deep`, `input_playground`, `input_bench`, `input_actions`, `input_keys_gamepad`
+- **Status:** Works headless - 207 checks in `input_deep`, the shipped scene run by `input_playground`; not run in a real window, with a real controller or on a real keyboard layout
+- **Open:** AZERTY physical positions (ZQSD) are not an option; the vibration strength is not on a Settings screen; no gyro; recording does not yet tie frames to the scene file and the game's random seed (46.1); the Input panel was syntax-checked but not run; the old "pressed between polls" loss is fixed only where the host forwards key events (player and editor Play)
 - **Related:** 8.1, 8.2, 8.3, 8.6, 32.4, 46.1
 - **Words:** input buffer, jump buffer, coyote, double tap, hold to confirm, chord, combo, Ctrl+Z, mouse wheel binding, dead zone, response curve, sensitivity, invert Y, local multiplayer, two players, controller glyphs, PlayStation buttons, record input, replay input, input debugger, one-handed, typing moves the player
 - **Seen as:** a very quick tap is lost; typing in a text field also moves the player; W A S D dead on a Russian keyboard; Ctrl+Z also crouches; a rebound Move stops working; jump pressed just before landing is ignored

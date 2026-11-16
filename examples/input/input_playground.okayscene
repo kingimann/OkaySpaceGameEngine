@@ -6,14 +6,14 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "89248d7c942096ff2a07280b33912530"
+  guid "5a9a698855539a4e706a56ffd874973d"
   active 1
   parent -1
   transform 0 8 -14 0 0 0 1 1 1 1
   camera 1 5 52 0.07 0.08 0.12 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Setup"
-  guid "d42f32d1b24e6ee863bac90ac22d3cf2"
+  guid "44087c7e241852f74e702abee740ea12"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -32,7 +32,7 @@ gameobject 1 "Setup"
   comporder "TextRenderer" "ScriptComponent"
 end
 gameobject 2 "Title"
-  guid "888ef0dbb05f9b2b916062495bc45c00"
+  guid "cf01ccfd8eb1c7fa1947abb77448c4e2"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -43,7 +43,7 @@ gameobject 2 "Title"
   comporder "TextRenderer" "ScriptComponent"
 end
 gameobject 3 "A Devices"
-  guid "cf66b97340fcfa4161fff7691c11abd1"
+  guid "0884ced8be227e5c900b3c61fddaf084"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -58,7 +58,7 @@ gameobject 3 "A Devices"
   comporder "TextRenderer" "ScriptComponent"
 end
 gameobject 4 "B Timing"
-  guid "027f589be7d38e6c2bf7c1b2c82637c6"
+  guid "cf03e9fa40d83aa7a9271875888811f5"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -80,7 +80,7 @@ gameobject 4 "B Timing"
   comporder "TextRenderer" "ScriptComponent"
 end
 gameobject 5 "C Chords"
-  guid "4c362df2b0ce759a8a91231406947ace"
+  guid "04d4fd8f736b005059b8454a9ac65e59"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -94,7 +94,7 @@ gameobject 5 "C Chords"
   comporder "TextRenderer" "ScriptComponent"
 end
 gameobject 6 "D Curve"
-  guid "dd7eef8ca9c0eb11e17e5a933a0a5d78"
+  guid "e1e1807a53b09deda4ff57a5490dbf64"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -123,7 +123,7 @@ gameobject 6 "D Curve"
   comporder "TextRenderer" "ScriptComponent"
 end
 gameobject 7 "E Rebind"
-  guid "9dc5e716e6e7d558a610d749ce2943b3"
+  guid "8960d58f5b5849fa93232d157f8fa522"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -143,21 +143,24 @@ gameobject 7 "E Rebind"
   comporder "TextRenderer" "ScriptComponent"
 end
 gameobject 8 "F Players"
-  guid "62cc3673dc8728ff2d2ab58ca05f8087"
+  guid "ce1e98e42774da0ad7a661fdfb9505ab"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
   script "okayscript" "function update(dt) {
-  var s = \"F. TWO PLAYERS   player 1 = first controller, player 2 = second\\n\";
+  if (key_down(\"h\")) { haptic(\"heartbeat\", 0); }
+  if (key_down(\"j\")) { haptic(\"pulse\", 1); }
+  if (key_down(\"0\")) { if (haptic_strength() > 0) { haptic_strength(0); } else { haptic_strength(1); } }
+  var s = \"F. TWO PLAYERS   player 1 = first controller, player 2 = second   (H and J shake pad 1 and 2)\\n\";
   s = s + \"P1 jump \" + action(\"jump\", 0) + \" move \" + to_fixed(action_x(\"move\", 0), 1) + \",\" + to_fixed(action_y(\"move\", 0), 1) + \"   connected \" + gamepad_connected(0) + \"\\n\";
-  s = s + \"P2 jump \" + action(\"jump\", 1) + \" move \" + to_fixed(action_x(\"move\", 1), 1) + \",\" + to_fixed(action_y(\"move\", 1), 1) + \"   connected \" + gamepad_connected(1);
+  s = s + \"P2 jump \" + action(\"jump\", 1) + \" move \" + to_fixed(action_x(\"move\", 1), 1) + \",\" + to_fixed(action_y(\"move\", 1), 1) + \"   connected \" + gamepad_connected(1) + \"\\nRumble strength \" + haptic_strength() + \"  (press 0 to switch rumble off or on)\";
   set_text(s);
 }" "" 0
-  text "" 1 1 1 1 1.5 1 24 453.75 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  text "" 1 1 1 1 1.5 1 24 460.5 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
   comporder "TextRenderer" "ScriptComponent"
 end
 gameobject 9 "G Record"
-  guid "ef8504a97604acd3fbd0eec90992e1ca"
+  guid "860ab4fda4a34c2e101b7f1954737bba"
   active 1
   parent -1
   transform 0 0 0 0 0 0 1 1 1 1
@@ -170,6 +173,6 @@ gameobject 9 "G Record"
   s = s + \"While it replays, the keys you press are ignored.\";
   set_text(s);
 }" "" 0
-  text "" 1 1 1 1 1.5 1 24 508.25 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  text "" 1 1 1 1 1.5 1 24 521.75 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
   comporder "TextRenderer" "ScriptComponent"
 end

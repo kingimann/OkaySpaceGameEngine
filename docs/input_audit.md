@@ -42,7 +42,7 @@ feed, Tick, then scene update; read from `player/main.cpp`, not measured with a 
 | 10 | Per frame work: 100 actions, 4 controllers, a context: about 294 allocations and 19.9 microseconds a frame; every `InputActions::Get("Name")` lowercased and scanned the whole list (2.1 microseconds) | cost | `upgrade_fast_path_matches_legacy` (same results as the old path) | **fixed**, numbers below |
 | 11 | W A S D typed for a controller by the runtime made the "last device" look like the keyboard | gap found while building glyphs | `upgrade_glyphs_follow_active_device` | handled |
 | 12 | AZERTY: the key **labelled** W is "W" (bottom left on AZERTY), not the key in the W position (Z). That is what `KeyForChar` does on purpose | limitation | none (needs a real layout) | open: an option to read physical positions (ZQSD) is not built. Row in `docs/UNFINISHED.md` |
-| 13 | Gamepad rumble keeps one pending request per controller; a new one replaces the old; there are no patterns | limitation | - | open |
+| 13 | Gamepad rumble had no patterns (a game had to time `Input::Rumble` calls itself) and no player setting | gap | `upgrade_haptic_patterns` | **built**: `InputHaptics` (tap, buzz, pulse, heartbeat, ramp, ramp down) and a vibration strength setting; one pending request per controller is still how the runtime plays them |
 | 14 | No gyro or touch-pad input in the platform layer | limitation | - | open |
 
 ## Cases checked and found ok
@@ -79,11 +79,22 @@ All in `tests/test_input_deep.cpp` as `audit_*` cases.
 
 ## Frame-rate numbers
 
-Measured with `scripts`-free micro benchmark (the same program compiled against `origin/main` and against this
-branch): 101 actions (11 built in plus 89 added with three bindings each), 4 controllers fed, one context pushed,
+Measured with a small benchmark (`tests/test_input_bench.cpp` on this branch; the same program was also compiled against `origin/main` for the "before" column): 101 actions (11 built in plus 89 added with three bindings each), 4 controllers fed, one context pushed,
 `-O2`, a busy shared machine (so treat the absolute numbers as rough; the ratio is what matters).
 
-@@NUMBERS@@
+| Per frame (feed keys, mouse, 4 controllers, `Tick`, 4 reads) | before (`origin/main`) | after | after with `OKAY_OLD_INPUT=1` |
+|---|---|---|---|
+| With a context pushed | 14.2 to 20.9 microseconds, 294 allocations | 4.4 microseconds, 0 allocations | 10.5 microseconds, 0 allocations |
+| No context (the usual case) | 14.0 to 14.8 microseconds, 292 allocations | 2.7 to 3.0 microseconds, 0 allocations | 9.4 microseconds, 0 allocations |
+| `InputActions::Get("Action77")` (lookup by name) | 2104 nanoseconds | 38 nanoseconds | about 2100 to 3600 nanoseconds |
+| `Input::GetKey('e')` | 2.9 nanoseconds | 1.3 nanoseconds | the same |
+
+(Three runs each; the "before" spread is the machine being busy. 5000 frames per run after 200 warm-up frames.)
+Where the time went before: the held-key table was a hash map copied on every `FeedKeys` (many small allocations),
+every action lookup lower-cased the name and every action's name, and with a context pushed each binding built a
+temporary list of the inputs it listens to. After: a fixed table, a name index, and no temporary lists. Note that
+`OKAY_OLD_INPUT=1` brings back the old lookup and evaluation order but not the old key table, so it is not a
+byte-for-byte copy of the old speed.
 
 `OKAY_OLD_INPUT=1` (or `InputActions::SetLegacy(true)`) brings back the old lookup and the old evaluation order
 for A/B. The test `upgrade_fast_path_matches_legacy` runs 600 random frames (keys, mouse, 4 controllers, chords,
@@ -92,7 +103,7 @@ contexts, per-player actions) through both and requires every action value, vect
 ## What was built from these findings
 
 See `docs/input.md` ("The input upgrade"): chords, wheel bindings, per-action dead zone / curve / sensitivity /
-invert (saved), jump buffering and consume, double tap, hold to confirm, per-player actions, rebind profiles and presets, controller picture names by device family (Xbox, PlayStation, Switch), the
+invert (saved), jump buffering and consume, double tap, hold to confirm, rumble patterns, per-player actions, rebind profiles and presets, controller picture names by device family (Xbox, PlayStation, Switch), the
 last-used device, input recording and replay, and the Input panel in the editor.
 
 ## What was written from what

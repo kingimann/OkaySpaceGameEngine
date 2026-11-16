@@ -121,6 +121,7 @@
 #include "okay/Core/Localization.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputRecorder.hpp"
+#include "okay/Input/Haptics.hpp"
 #include "okay/Input/RemapModel.hpp"
 #include "okay/Input/InputActions.hpp"
 #include "okay/Core/SaveGame.hpp"
@@ -3915,6 +3916,10 @@ struct OkayScriptVM::Impl {
             return Value{a.size() < 2 ? 0.0f : InputActions::ShapeValue(a[1].AsFloat(), InputActions::GetResponse(a[0].AsString()))};
         };
         b["mouse_wheel"] = [](std::vector<Value>&) { return Value{Input::MouseWheel()}; };
+        // haptic("heartbeat", 0): a rumble pattern (tap, buzz, pulse, heartbeat, ramp, "ramp down") on a controller;
+        // haptic_strength(0.5) scales every pattern (0 = vibration off), kept for the player.
+        b["haptic"] = [](std::vector<Value>& a) { return Value{!a.empty() && InputHaptics::Play(a[0].AsString(), a.size() > 1 ? SafeInt(a[1].AsFloat()) : 0)}; };
+        b["haptic_strength"] = [](std::vector<Value>& a) { if (!a.empty()) InputHaptics::SetStrength(a[0].AsFloat()); return Value{InputHaptics::Strength()}; };
         b["gamepad_count"] = [](std::vector<Value>&) { return Value{(float)Input::GamepadCount()}; };
         b["gamepad_connected"] = [](std::vector<Value>& a) { return Value{Input::GamepadConnected(a.empty() ? 0 : SafeInt(a[0].AsFloat()))}; };
         b["set_per_player"] = [](std::vector<Value>& a) { if (!a.empty()) InputActions::SetPerPlayer(a[0].AsString(), a.size() < 2 || a[1].AsFloat() != 0.0f); return Value{}; };

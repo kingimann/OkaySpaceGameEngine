@@ -85,7 +85,7 @@ bool BanList::Load(const std::string& path, std::string* error) {
             cols.push_back(line.substr(start, tab - start));
             start = tab + 1;
         }
-        cols.push_back(line.substr(start));
+        cols.emplace_back(line, start);   // the rest of the line (at most kMaxLineBytes)
         BanEntry e;
         // ident <tab> when <tab> until <tab> reason   (reason may be missing)
         if (cols.size() < 3 || !ValidIdent(cols[0]) || !ParseI64(cols[1], e.when) || !ParseI64(cols[2], e.until)) { ++m_skipped; continue; }

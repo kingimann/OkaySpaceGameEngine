@@ -1009,6 +1009,10 @@ struct Reader {
             part.mesh = ps.mesh;
             part.node = nodeIdx;
             auto b = bind.find(ps.materialSymbol);
+            // A primitive without a `material` attribute (optional in COLLADA 1.4.1 and 1.5: "if not specified then the
+            // lighting and shading results are application defined") takes the instance's material when the
+            // <bind_material> binds exactly one; with several there is no way to tell which, so it has none.
+            if (b == bind.end() && ps.materialSymbol.empty() && bind.size() == 1) b = bind.begin();
             part.material = MaterialIndex(b != bind.end() ? b->second : ps.materialSymbol);
             if (flatten) Bake(part.mesh, world, false);
             else if (skin) {

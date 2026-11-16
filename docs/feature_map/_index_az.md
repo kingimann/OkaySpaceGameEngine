@@ -4040,6 +4040,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Sculpt brush (3.8.1)
 - Sculpt brushes (29.1.2)
 - SDK (24.1, 24.4)
+- SDL inventory and removal plan (17.17.7)
 - SDL painter (12.11, 12.11.3)
 - SDL playback (8.6.2)
 - SDL texture (38.10)

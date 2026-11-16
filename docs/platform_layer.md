@@ -6,9 +6,6 @@ seam now, what is not, and what was and was not tested.
 
 Header: `engine/include/okay/Platform/Platform.hpp`. Sources: `engine/src/Platform/`. CMake: `cmake/OkayPlatform.cmake`.
 
-Current counts, file by file, and what covers each SDL use: `docs/sdl_inventory.md` (generated). The ordered plan to get the editor and
-launcher off SDL2: `docs/sdl_removal_plan.md`.
-
 ## Choosing a backend
 
 | | |
@@ -267,6 +264,86 @@ again with the OkayUI test panels and toasts (`OKAY_TESTUI=1 OKAY_DEV=1`) and wi
   typing in a non-ASCII layout, the editor and launcher splash screens (their call sites compile through the wrapper but the
   apps were not built or run), the web build, and long sessions (memory growth of the frame buffer was not measured).
 
+## Stage 4: window state, focus and pointer questions, and a bridge for windows the apps make themselves
+
+`docs/sdl_inventory.md` (generated from the source by `scripts/sdl_inventory.py`) counts what the launcher, editor and player still ask SDL directly, and
+`docs/sdl_removal_plan.md` is the plan built on it. This stage adds the smallest of the functions the seam was missing and the one structural blocker the
+inventory found: **the apps keep a raw `SDL_Window*`, and every `Window` method needs a `Window` object, which only `Backend::MakeWindow` makes.** So no
+`Window` method could be called on the launcher's or the editor's windows at all (60 call sites wait for that). `WrapSdl2Window` is the bridge.
+
+Written from the OS documentation (the Xlib manual, the ICCCM and EWMH property names, the Win32 documentation) and from what the apps ask. No SDL source and
+no other project's code was read or followed (CLAUDE.md rule 19a). Nothing is switched on by default: the sdl2 backend answers with the SDL call the app made
+before, and the own backends are still opt-in.
+
+| API (`Platform.hpp`) | The app asked | sdl2 | own Linux (X11) | own Windows (Win32, compile-checked only) |
+|---|---|---|---|---|
+| `WrapSdl2Window(void*)` | (no SDL word) | a non-owning `Window` over an `SDL_Window*`; destroying it never destroys the SDL window; a GL context made through it is its own | n/a | n/a |
+| `Window::IsMinimized()` | `SDL_GetWindowFlags & SDL_WINDOW_MINIMIZED` (launcher, 6 sites) | the flag | the window manager's word, read from the server when asked: ICCCM `WM_STATE` = IconicState, or EWMH `_NET_WM_STATE_HIDDEN`. With no window manager (Xvfb) nothing minimises a window | `IsIconic` |
+| `Window::IsVisible()` | `... & SDL_WINDOW_HIDDEN` (launcher) | no HIDDEN flag. Under X11 SDL also sets HIDDEN on a window the window manager minimised (seen with the test's fake window manager), so a minimised window reports not visible there | tracked: false after `Hide()` or when created hidden, true after `Show()` or `Restore()`; a minimised window stays visible | `IsWindowVisible` (a minimised window keeps `WS_VISIBLE`) |
+| `Window::HasMouseFocus()` | `... & SDL_WINDOW_MOUSE_FOCUS` (launcher) | the flag | `EnterNotify` / `LeaveNotify` (current once events are read) | the window under the cursor (`WindowFromPoint`) |
+| `Window::SetInputFocus()` | `SDL_SetWindowInputFocus` (editor, 2) | same call; true on success | `XSetInputFocus`; false when the server refuses (the window is not mapped) | `SetForegroundWindow` + `SetFocus`; true when the window has the focus afterwards |
+| `Backend::KeyboardFocusWindowId()` | `SDL_GetKeyboardFocus` (launcher 1, editor 1) | the window's id, 0 for none | `FocusIn` / `FocusOut` (already tracked) | `GetFocus` if it is one of ours |
+| `Backend::MouseFocusWindowId()` | `SDL_GetMouseFocus` (editor) | same | `EnterNotify` / `LeaveNotify` | `WindowFromPoint` + its root window |
+| `Backend::IsRelativeMouse()` | `SDL_GetRelativeMouseMode` (editor, 2) | same | what `SetRelativeMouse` last set | same |
+| `Backend::GlobalMouseState(x, y)` | `SDL_GetGlobalMouseState` (launcher) | same call. Measured under Xvfb: it follows the pointer only over SDL's windows and only after events were read (position and buttons were stale until `SDL_PumpEvents`) | `XQueryPointer` on the root window: live, anywhere on the desktop | `GetCursorPos`; buttons by `GetAsyncKeyState`, swapped when the user swapped the mouse buttons |
+| `Backend::PumpEvents()` | `SDL_PumpEvents` (launcher, editor) | same | reads what the server sent into the queue (`PollEvent` still returns every event) | the message loop of `PollEvent`, without taking an event |
+
+What each answer needs: the window manager's and the pointer's answers (`IsMinimized`, `HasMouseFocus`, both focus ids, and on sdl2 `GlobalMouseState`) are current once the app has read its
+events (`PollEvent` or `PumpEvents`), as with SDL. `Raise()` does not promise the keyboard focus on sdl2 (measured: after another window took and lost it, SDL did not give it back); `SetInputFocus()` does.
+
+### Call sites moved (launcher only; `editor/main.cpp` is edited by other agents and was not touched)
+
+Five sites in `launcher/main.cpp`, each with the behaviour of the default sdl2 backend: the chat window's "is it focused" and "is it minimised" asks (through a `WrapSdl2Window` view kept
+in `ChatWindowHost::pw`), the "does any of our windows have the keyboard focus" ask that marks a conversation as being looked at, the event pump while the start-up sign-in check runs, and the pointer
+position on the whole desktop when a file is dropped on the chat panel. The launcher's windows are SDL windows, so these asks go to the **sdl2** backend explicitly (`SdlSeam()`), whatever
+`OKAY_PLATFORM_BACKEND` says (the own backend does not know SDL's windows). The inventory counts this change as -5 SDL calls in the launcher (743 to 738 calls; the numbers in `docs/sdl_inventory.md`
+are pinned to the commit before this change).
+
+### Tests
+
+`test_platform_state` (ctest `platform_state_sdl2`, `platform_state_own`; Xvfb and xdotool, skipped without them): hide, show, created hidden; the pointer moved in and out by xdotool for
+`HasMouseFocus` and `MouseFocusWindowId`; `PumpEvents` alone makes the pointer state current and loses no event; `GlobalMouseState` against xdotool positions and buttons;
+`KeyboardFocusWindowId`, `SetInputFocus` between two windows, a hidden window refused; `IsRelativeMouse` through `SetRelativeMouse`; `IsMinimized` with the test playing the window manager
+(`tests/platform_fakewm.cpp` sets `_NET_WM_STATE_HIDDEN` and `WM_STATE` through dlopen'd libX11, because Xvfb has no window manager); on sdl2, a raw `SDL_CreateWindow` window wrapped with `WrapSdl2Window`
+and compared with `SDL_GetWindowFlags` in every state, and the wrapper's destruction leaving the window alive. The test was written first and failed (see below), then the code was written.
+
+### What was verified (stage 4)
+
+Where: Ubuntu 24.04, g++ 13.3.0, SDL 2.30.0 (`libsdl2-2.0-0 2.30.0+dfsg-1ubuntu3.1`), Xvfb 1024x768x24 **with no window manager**, xdotool 3.20160805.1. One
+compile at a time (a Release tree for the runs, an `-O1` tree for the sanitizers). Nothing here ran on Windows or on a real desktop.
+
+| What was run | Result |
+|---|---|
+| Tests first: `d38725ff` holds the test and the new functions as do-nothing defaults | `test_platform_state` fails on purpose: sdl2 **20 of 57** checks, own **19 of 57** |
+| First run with the code (`29efc1a9`) | own 57 checks, **0 failures**; sdl2 **5 of 77 failed** (see below: all five are what SDL does on X11, not the new code) |
+| After the test and comment fixes (`02fa0a34`): `ctest -R platform_state` | `platform_state_sdl2` **76 checks, 0 failures**; `platform_state_own` **58 checks, 0 failures**. Three more runs of each, the same: no flakiness seen |
+| The whole platform set in the same tree: `ctest -R '^(platform\|platform_default_env_.*\|platform_window_.*\|platform_state_.*)$'` (the five older tests and the two new ones; `platform_painter_window` and `platform_gamepad` were not built in this small tree) | 7 of 7 passed |
+| ASan + UBSan (`-fsanitize=address,undefined -fno-sanitize-recover=undefined`, `-O1`) on `test_platform_state` | Both backends: no ASan or UBSan error, 76 / 0 and 58 / 0 with `ASAN_OPTIONS=detect_leaks=0`. With leak detection on, own is clean; sdl2 reports one leak of 1032 bytes made inside libdbus, called from `SDL_Init` (SDL's own start-up; no function of ours is on that stack) |
+| MinGW `x86_64-w64-mingw32-g++-win32` (GCC 13, the "win32" thread model the Windows build uses), `-std=c++17 -fsyntax-only -Wall -Wextra -Wpedantic -DOKAY_PLATFORM_HAVE_OWN` | `OwnWin32.cpp` and `Platform.cpp`: no warning, no error. Syntax only: nothing was linked, **none of the Win32 code ran** |
+| `launcher/main.cpp` with `g++ -std=c++17 -fsyntax-only` and the launcher's include paths, before and after the five conversions | No error either way (about 6 s each). A control with a made-up function name at a converted line did fail, so the check does reach the converted lines. **The launcher was not built, linked or run** |
+| `python3 scripts/tests/test_sdl_inventory.py` (ctest `sdl_inventory_script`) | 12 tests, OK |
+
+The five sdl2 failures of the first run, and what SDL 2.30.0 really does (found with a small probe program against SDL under Xvfb; the test now expects exactly this):
+* `SDL_GetGlobalMouseState` gives the old position and button state until events have been read (`SDL_PumpEvents`), and it does not follow the pointer outside SDL's own windows
+  (2 checks: the button mask while a button is held, the position over bare desktop). The own backends ask the X server directly and are exact.
+* `SDL_RaiseWindow` alone does not give the keyboard focus back to a window after another window took it and lost it; `SDL_SetWindowInputFocus` does (2 checks: the focus id, `IsFocused()`).
+  The test now calls `SetInputFocus()` first, which is what the editor calls.
+* SDL on X11 also sets `SDL_WINDOW_HIDDEN` on a window the window manager minimised, so on sdl2 a minimised window is not "visible" (1 check). The own backends keep it visible;
+  `IsVisible()` of a minimised window is therefore not promised (see the header comment).
+
+**CI caveat.** No CI job installs xdotool (the "Build & test (Ubuntu)" job installs neither Xvfb nor xdotool; the "own-stack" job installs Xvfb only, and it picks up every `test_platform*` target by name,
+so it builds this test too). So `platform_state_*`, like the older `platform_window_*`, reports "skipped" (exit 77) in CI. The numbers above are from a run by hand on a machine that has both.
+Adding `xvfb xdotool` to the "Build & test (Ubuntu)" job's `apt-get install` line in `.github/workflows/ci.yml` would make CI run them; that was not done here.
+
+### Known differences and what is not done
+
+* The own X11 `IsMinimized()` reads the window manager's properties; a window manager that sets neither `WM_STATE` nor `_NET_WM_STATE_HIDDEN` on a minimised window is not noticed.
+  A window hidden by another client (not by `Hide()`) is not noticed by `IsVisible()` either (it tracks what the app asked, as `SDL_WINDOW_HIDDEN` does).
+* The own X11 `PumpEvents()` does not poll game-pad hot-plug (that is done in `PollEvent`).
+* Not written (still GAPs in the inventory): the monitor list and DPI, the flash request, cursor shapes, IME composition events, drop begin and complete, the current GL window and context, `SDL_GetWindowWMInfo`
+  for the tray icon, exclusive video modes, render targets. `claude/platform-gaps2` has versions of some of them (see the inventory, section 4).
+* `WrapSdl2Window` is transitional: it goes away when the launcher and editor create their windows with `Backend::MakeWindow` (step 6 of `docs/sdl_removal_plan.md`).
+
 ## Not behind the seam yet (stage 1 list; see stage 2 above for what changed)
 
 The window, event loop and GL context of the editor, launcher and player still call SDL directly. Moving them needs more than
@@ -321,6 +398,7 @@ MinGW cross-compiler, so nothing was written rather than writing code that was n
 | `platform` | registry, key numbering vs SDL scancodes, timers (both backends), `BasePath` (equals the executable's directory), `PrefPath` (created, writable, under `$XDG_DATA_HOME`), `PreferredLocales` (own parsing of `$LANGUAGE` / `$LC_ALL` is exact), error box / DPI on own report "not supported", the US `KeyForChar` table, audio devices on both backends (queue, clear, pause, callback, capture; SDL dummy driver / ALSA `null` device), controllers enumeration, own evdev mapping fed through a pipe | nothing; audio parts print `SKIP` when no device can be opened |
 | `platform_window_sdl2`, `platform_window_own` | create / resize / title, GL clear colour read back with `glReadPixels` (and for `own`, the window's pixels read back from the X server with `XGetImage`), keyboard, modifiers, text input (incl. a non-ASCII character), mouse buttons / wheel / motion, relative mouse, clipboard (incl. a second X client reading ours and vice versa). Stage 2 added: `KeyForChar` on the US and the German layout (z and y swap places), `ModState`, `AppendExtendedKeys` (F-keys, Tab, navigation, left/right modifiers) with keys held through xdotool, `RelativeMouseState` sums (12,7 then 0,0 then -5,3), `IsCursorShown`, fullscreen at creation and toggled, maximised, `SetIcon` (valid and invalid), refresh rate, base path; on sdl2 also touch events and flipped / normal wheel events pushed as SDL would | Xvfb, `xdotool` (XTEST input). Skipped (exit 77) when either is missing |
 | `platform_default_env_sdl2`, `platform_default_env_own` | `OKAY_PLATFORM_BACKEND` in the environment overrides the build's default backend (`test_platform --print-default`) | nothing |
+| `platform_state_sdl2`, `platform_state_own` | stage 4: window state (`IsMinimized`, `IsVisible`, `HasMouseFocus`, `SetInputFocus`), focus and pointer queries (`KeyboardFocusWindowId`, `MouseFocusWindowId`, `IsRelativeMouse`, `GlobalMouseState`, `PumpEvents`), and on sdl2 `WrapSdl2Window` compared with `SDL_GetWindowFlags`; the test plays the window manager (`tests/platform_fakewm.cpp`) | Xvfb, `xdotool`. Skipped (exit 77) when either is missing |
 
 Also `platform_gamepad`: the controller -> `Input` bridge (`PlatformGamepad.hpp`) driven by a fake `Gamepad`.
 

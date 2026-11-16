@@ -21,6 +21,7 @@ this page is the current count, file by file, taken straight from the source.
   apart and are not part of "what the apps still call".
 * "Used by" is by `#include` and CMake: a program's `.cpp` files (the ones its `CMakeLists.txt` names) plus `engine/src` and `okayui/src`,
   followed through `#include`. It over-approximates a little (one header name can resolve to more than one file).
+* **Cross-check.** A plain `git grep -o -E '\b(SDL_\w+|SDLK_\w+|ImGui_ImplSDL\w+)[ \t]*\('` over the same commit (so comments and strings are counted too) gives launcher 743, editor 231, player 5, shared 29, okayui 45; the calls in the tables above for the same directories are launcher 743, editor 229, player 5, shared 25, okayui 44. The difference is the comments and strings.
 * Not counted: Dear ImGui's own SDL backend source (it is fetched at configure time, not in this repository), SDL's own headers, the
   committed binaries `dist/SDL2.dll` and `dist/*.exe`, and anything reached only through a macro.
 
@@ -80,6 +81,30 @@ Reading the numbers:
 | threads, mutexes, atomics (rule 21a) | 613 / 744 | - | - | - | - | - | - | - |
 | Dear ImGui SDL backends | 14 / 16 | 17 / 21 | - | - | - | - | - | - |
 | misc (integer typedefs, math, memory, bool, includes) | 2 / 194 | 6 / 42 | 0 / 110 | 2 / 14 | - | 24 / 30 | 2 / 44 | 5 / 24 |
+
+### 2b. Coverage by family
+
+Call sites in the programs and their shared code (not tests, not the sdl2 backend) by what `okay::platform` has for them: **HAVE** a function exists and the
+apps still call SDL, **PARTIAL** part of it is covered, **GAP** no function yet, **OTHER** not a platform-layer job. The capabilities behind each number are in section 3.
+
+| family | HAVE | PARTIAL | GAP | OTHER | SDL words | verdict |
+|---|---:|---:|---:|---:|---:|---|
+| video / window | 63 | 0 | 32 | 0 | 162 | GAPs: see section 4a |
+| events (loop, quit, window events, drops) | 3 | 0 | 4 | 0 | 34 | GAPs: see section 4a |
+| keyboard, text input, IME | 8 | 0 | 0 | 0 | 119 | all covered |
+| mouse, cursor, touch | 17 | 2 | 3 | 0 | 52 | GAPs: see section 4a |
+| gamepad / joystick | 0 | 0 | 0 | 0 | 2 | all covered |
+| audio device | 0 | 0 | 0 | 0 | 5 | all covered |
+| timers | 5 | 0 | 0 | 0 | 5 | all covered |
+| clipboard | 4 | 0 | 0 | 0 | 4 | all covered |
+| GL context | 14 | 0 | 8 | 0 | 33 | GAPs: see section 4a |
+| SDL_Renderer 2D drawing, textures, surfaces | 152 | 0 | 12 | 0 | 598 | GAPs: see section 4a |
+| file / IO (WAV, BMP) | 0 | 0 | 1 | 11 | 23 | GAPs: see section 4a |
+| message boxes | 0 | 1 | 0 | 0 | 2 | GAPs: see section 4a |
+| platform info and runtime (init, paths, locale, hints, version, log) | 22 | 0 | 0 | 6 | 55 | covered; the rest goes away with SDL |
+| threads, mutexes, atomics (rule 21a) | 0 | 0 | 0 | 613 | 744 | not platform work |
+| Dear ImGui SDL backends | 0 | 0 | 0 | 31 | 37 | not platform work |
+| misc (integer typedefs, math, memory, bool, includes) | 0 | 0 | 0 | 34 | 390 | not platform work |
 
 ## 3. Every capability, with its coverage
 

@@ -537,7 +537,7 @@ def md_escape(s):
     return s.replace("|", "\\|")
 
 
-def render(ref, sha, infos, build_files, comment_only, commit_date):
+def render(ref, sha, infos, build_files, comment_only, commit_date, raw):
     groups = collections.defaultdict(list)
     for p, fi in infos.items():
         groups[group_of(p)].append(fi)
@@ -610,6 +610,10 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
     w("  apart and are not part of \"what the apps still call\".")
     w("* \"Used by\" is by `#include` and CMake: a program's `.cpp` files (the ones its `CMakeLists.txt` names) plus `engine/src` and `okayui/src`,")
     w("  followed through `#include`. It over-approximates a little (one header name can resolve to more than one file).")
+    mine = {d: sum(fi.calls for p, fi in infos.items() if p.split("/")[0] == d and "/tests/" not in p) for d in raw}
+    w("* **Cross-check.** A plain `git grep -o -E '\\b(SDL_\\w+|SDLK_\\w+|ImGui_ImplSDL\\w+)[ \\t]*\\('` over the same commit (so comments and strings are counted too) gives "
+      + ", ".join("%s %d" % (d, raw[d]) for d in raw) + "; the calls in the tables above for the same directories are "
+      + ", ".join("%s %d" % (d, mine[d]) for d in raw) + ". The difference is the comments and strings.")
     w("* Not counted: Dear ImGui's own SDL backend source (it is fetched at configure time, not in this repository), SDL's own headers, the")
     w("  committed binaries `dist/SDL2.dll` and `dist/*.exe`, and anything reached only through a macro.")
     w("")
@@ -676,6 +680,30 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
       " `SDL_Rect`, `SDL_Color` and `SDL_Vertex` (the player moved onto the seam in stages 2 and 3)." % (pc_, pr_, ptyr, prty))
     w("")
 
+    def cap_stats(cid):
+        """(calls, refs, who, per-program (calls, refs)) for one capability over the programs' code and shared code."""
+        if cid == "win.adopt":
+            ids = ADOPT_CAPS
+        else:
+            ids = (cid,)
+        per = {prog: (sum(prog_sum(prog, cap=i)[0] for i in ids), sum(prog_sum(prog, cap=i)[1] for i in ids))
+               for prog in ("launcher", "editor", "player")}
+        calls = refs = 0
+        for p, fi in infos.items():
+            g = group_of(p)
+            if g in ("tests", "seam") or g.startswith("other:"):
+                continue
+            for (c2, k), v in fi.counts.items():
+                if c2 in ids:
+                    refs += v
+                    if k == "call":
+                        calls += v
+        who = "".join(x[0].upper() for x in ("launcher", "editor", "player") if per[x][1] > 0)
+        return calls, refs, who, per
+
+    def lep(per):
+        return "%d / %d / %d" % (per["launcher"][0], per["editor"][0], per["player"][0])
+
     # ---------------- families
     w("## 2. Kinds of API (families) against the directories")
     w("")
@@ -693,6 +721,34 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
         if tot:
             rows.append(row)
     w(table(hdr, rows))
+    w("")
+    w("### 2b. Coverage by family")
+    w("")
+    w("Call sites in the programs and their shared code (not tests, not the sdl2 backend) by what `okay::platform` has for them: **HAVE** a function exists and the")
+    w("apps still call SDL, **PARTIAL** part of it is covered, **GAP** no function yet, **OTHER** not a platform-layer job. The capabilities behind each number are in section 3.")
+    w("")
+    fam_rows = []
+    for fam, label in FAMILIES:
+        cnt = collections.OrderedDict((k, 0) for k in ("HAVE", "PARTIAL", "GAP", "OTHER"))
+        refs_total = 0
+        for cid, f2, status, desc, cover, rx in CAPS:
+            if f2 != fam or cid == "win.adopt":
+                continue
+            calls_c, refs_c, who_c, per_c = cap_stats(cid)
+            cnt[status] += calls_c
+            refs_total += refs_c
+        if refs_total == 0:
+            continue
+        if cnt["GAP"] or cnt["PARTIAL"]:
+            verdict = "GAPs: see section 4a"
+        elif cnt["OTHER"] and not cnt["HAVE"]:
+            verdict = "not platform work"
+        elif cnt["OTHER"]:
+            verdict = "covered; the rest goes away with SDL"
+        else:
+            verdict = "all covered"
+        fam_rows.append([label] + [cnt[k] for k in cnt] + [refs_total, verdict])
+    w(table(["family", "HAVE", "PARTIAL", "GAP", "OTHER", "SDL words", "verdict"], fam_rows, "lrrrrrl"))
     w("")
 
     # ---------------- capabilities
@@ -745,30 +801,6 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
     w("")
 
     # ---------------- ranking
-    def cap_stats(cid):
-        """(calls, refs, who, per-program (calls, refs)) for one capability over the programs' code and shared code."""
-        if cid == "win.adopt":
-            ids = ADOPT_CAPS
-        else:
-            ids = (cid,)
-        per = {prog: (sum(prog_sum(prog, cap=i)[0] for i in ids), sum(prog_sum(prog, cap=i)[1] for i in ids))
-               for prog in ("launcher", "editor", "player")}
-        calls = refs = 0
-        for p, fi in infos.items():
-            g = group_of(p)
-            if g in ("tests", "seam") or g.startswith("other:"):
-                continue
-            for (c2, k), v in fi.counts.items():
-                if c2 in ids:
-                    refs += v
-                    if k == "call":
-                        calls += v
-        who = "".join(x[0].upper() for x in ("launcher", "editor", "player") if per[x][1] > 0)
-        return calls, refs, who, per
-
-    def lep(per):
-        return "%d / %d / %d" % (per["launcher"][0], per["editor"][0], per["player"][0])
-
     by_status = collections.OrderedDict((k, [0, 0]) for k in ("HAVE", "PARTIAL", "GAP", "OTHER"))
     by_status_cap = collections.defaultdict(list)
     for cid, fam, status, desc, cover, rx in CAPS:
@@ -904,6 +936,16 @@ def render(ref, sha, infos, build_files, comment_only, commit_date):
     return "\n".join(L) + "\n"
 
 
+def raw_call_counts(ref):
+    """Plain `git grep` count of call-like SDL words per directory (comments and strings included): a cross-check."""
+    res = {}
+    for d in ("launcher", "editor", "player", "shared", "okayui"):
+        out = git("grep", "-h", "-o", "-E", r"\b(SDL_[A-Za-z0-9_]+|SDLK_[A-Za-z0-9_]+|ImGui_ImplSDL[A-Za-z0-9_]+)[ \t]*\(", ref, "--", d,
+                  ":!*/tests/*", check=False).decode()
+        res[d] = len([l for l in out.split("\n") if l and not l.split("(")[0].strip().endswith(tuple(NOT_SDL))])
+    return res
+
+
 def build_file_counts(ref):
     out = git("grep", "-c", "-i", "-E", r"sdl", ref, "--", "CMakeLists.txt", "*CMakeLists.txt", "*.cmake", ".github", "scripts", "deploy",
               "steam", "tools", "relay", "sandbox", "examples", check=False).decode()
@@ -933,7 +975,8 @@ def main():
     infos = {p: fi for p, fi in scanned.items() if fi.refs > 0}
     comment_only = sorted(p for p, fi in scanned.items() if fi.refs == 0)
     build_reach(sha, infos)
-    page = render(args.ref, sha, infos, build_file_counts(sha), comment_only, git("show", "-s", "--format=%cs", sha).decode().strip())
+    page = render(args.ref, sha, infos, build_file_counts(sha), comment_only, git("show", "-s", "--format=%cs", sha).decode().strip(),
+                  raw_call_counts(sha))
     if args.check:
         with open(args.check, encoding="utf-8") as f:
             have = f.read()

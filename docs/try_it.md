@@ -44,10 +44,11 @@ release job or the installer build for this change.
 | 6 | OBJ texture path hardening | `examples\obj_texture_paths` | Shipped; refusal is silent |
 | 7 | Turn interpolation | New Project > Third Person, Project Settings > Physics | Shipped |
 | 7b | Templates page cards open New Project, never create a project | Launcher > Templates, click a card | New in this change; launcher UI unverified |
+| 7q | SDL2 inventory and small platform additions | `docs/sdl_inventory.md` (read it); the launcher's chat window (five call sites moved) | Not in a release yet. The new own-backend code ran on Linux (Xvfb) only, the Win32 part **never ran**. Launcher: syntax-checked, **not built or run** |
 | 8 | Own model readers (off by default) | `OKAY_OWN_STACK=1` or `OKAY_OWN_<FMT>=1`, `examples\own_readers` | Switch works on a release; see the table |
 | 9 | Own WAV decoder (off by default) | `OKAY_OWN_WAV=1`, `examples\own_wav` | Switch works; no log line |
 | 10 | Own HTTP client (off by default) | none | **Cannot be tried on Windows** |
-| 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
+| 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own`, player only, `examples\node_playground\flow.okayscene` | Seen running on Linux (Xvfb) only; **never run on Windows**; the editor and launcher cannot use it yet |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
 
@@ -236,6 +237,36 @@ compiled or run on this machine).
 
 ---
 
+## 7q. SDL2 inventory and small platform additions
+
+**What it is.** (1) A page that counts every SDL call still in the launcher, editor, player and shared code, file by file: `docs/sdl_inventory.md` (made by
+`python3 scripts/sdl_inventory.py`), and the plan for getting rid of SDL2: `docs/sdl_removal_plan.md`. These are documents in the repository, not part of the release zip.
+(2) Nine small functions and one bridge added to `okay::platform` (window state, focus and pointer questions, and `WrapSdl2Window`; listed in `docs/platform_layer.md`, "Stage 4").
+(3) **Five call sites in the launcher now ask `okay::platform` instead of SDL. Nothing should look different.** This change is not in a release yet: the steps below are for the
+release that contains it.
+
+**What can and cannot be tried on Windows.** There is no switch for this: it is the default (sdl2) backend, so there is nothing to turn on. Only the sdl2 answers of the new
+functions are reachable, through the launcher's five call sites. The own-backend versions (X11 on Linux, Win32 on Windows) are run only by the test program `test_platform_state`, on Linux, under a
+virtual screen; no shipped program calls them, and **the Win32 versions have never run**. The editor was not changed.
+
+**Steps (Windows, the release you run).**
+1. Read `docs/sdl_inventory.md`, section 1 (the headline numbers) and section 4 (the ranking), then `docs/sdl_removal_plan.md` (what happens next, in order).
+2. Start `OkaySpace.exe` and sign in. Open a chat (the default is its own window; if yours opens inside the launcher, turn on the setting **Open chat in its own window**). Minimise the chat window and
+   restore it from the taskbar: it must come back drawn normally (not blank, not frozen). While it is minimised the launcher does not draw it (that is the "is it minimised" question).
+3. The launcher counts the open conversation as "being looked at" while one of its windows has the keyboard focus (the other person then sees you are in the chat, and your unread dot clears).
+   This needs a second account that sends you a message: with the chat focused the dot clears; while another program has the focus new messages stay unread until you come back.
+4. Click the pop-in icon at the top of the chat list (its tooltip says "Put chat back inside the launcher"), open a conversation, then drag one small file from Explorer onto the chat panel inside the launcher window: a toast
+   "Sending <file name>" should appear and the file goes to that conversation (**it really sends it**, so use a harmless file and a test account; the limit is 25 MB). Dropping the file anywhere else on
+   the launcher works as before. (This is the pointer position on the whole desktop.)
+5. One more site (the launcher keeps the window alive while it checks an expiring sign-in at start) is hard to trigger by hand; it is only syntax-checked.
+
+**What was checked.** On Linux, Xvfb with no window manager, SDL 2.30.0: `test_platform_state` (ctest `platform_state_sdl2`, `platform_state_own`) 76 checks and 58 checks, 0 failures, three more runs of each the
+same, also under ASan and UBSan; the five older platform tests plus the two new ones: 7 of 7 passed; `scripts/tests/test_sdl_inventory.py`: 12 tests. The test was written first and failed
+(20 of 57 on sdl2, 19 of 57 on own) before the code. MinGW compiled `OwnWin32.cpp` and `Platform.cpp` (syntax only, no warnings). `launcher/main.cpp` was syntax-checked before and after the five changes and
+**not built or run**, so the five call sites are unverified in the real program. CI does not run `platform_state_*` (no xdotool there; it reports skipped). Details: `docs/platform_layer.md`, "What was verified (stage 4)".
+
+---
+
 ## Switches that are off by default (own code)
 
 CLAUDE.md rule 17 and `docs/own_stack_rollout.md`: our own code exists beside the third-party library, off by default,
@@ -324,12 +355,50 @@ its test programs (`own_http`, `own_http_net`).
 
 ### 11. Own platform layer (window, input, audio device)
 
-`OKAY_PLATFORM_BACKEND=own` selects it, and `OKAY_OWN_STACK=1` sets it on Linux only (not on Windows, on purpose). The
-Win32 version has only ever run under wine, never on real Windows, and the editor and launcher still open their windows
-through SDL2 anyway, so only the seam parts (timers, audio, gamepads, voice) would change. If you want to try the player:
-`set OKAY_PLATFORM_BACKEND=own` then `Tools\OkaySpacePlayer.exe` on an exported game. The startup line says
-`platform=own` when it took effect; if this release was not built with the own backend it stays `platform=sdl2`.
-**Unverified, not ready**, expect problems. Never ship with it.
+**What it is.** `okay::platform` is the layer between our programs and the operating system: windows, keyboard, mouse, sound, game pads, timers.
+Today it uses SDL2 (the default). We are writing our own version (X11 on Linux, Win32 on Windows). It is **off by default** and not ready.
+**The honest summary: only the player can run on it. It has been seen running on Linux, under a virtual screen. It has never run on real Windows.**
+The editor and the launcher cannot use it yet (see the end of this section).
+
+**Step A: check that the switch took effect (no window opens).** In a Command Prompt, in the folder that holds `OkaySpace.exe`:
+1. `set OKAY_PRINT_STACK_AND_EXIT=1`
+2. `Tools\OkaySpacePlayer.exe`. It prints one line and exits. It starts `[okay] stack: platform=sdl2 ...`. That is the normal setup.
+3. `set OKAY_PLATFORM_BACKEND=own` and run it again. The line now says `platform=own`. If it still says `platform=sdl2`, this release was built
+   without the own backend.
+4. `set OKAY_PRINT_STACK_AND_EXIT=` (empty) to turn the print-and-exit off again. Closing the window forgets all the variables.
+(The same line is written at the top of every program's log. The code that makes it is `shared/OwnStack.hpp`, checked by the `own_stack` test; it was not run on Windows.)
+
+**Step B: run the player on it (Windows: unverified, please try it and tell us what you see).**
+1. `set OKAY_PLATFORM_BACKEND=own`
+2. `Tools\OkaySpacePlayer.exe examples\node_playground\flow.okayscene 2> player_log.txt` (the `examples` folder is next to `OkaySpace.exe`).
+3. What you should see: a window with the node playground scene, as without the variable. Click in it, press keys, **F3** (performance panel), **F11**
+   (fullscreen and back), **Esc** (quit).
+4. `type player_log.txt` should contain `[okay] stack: platform=own ...` and `INFO: 2D painter: software`. "software" is our own painter that draws with
+   the processor. It is slower than the SDL one and a few pixels differ at the edges of text and rounded shapes.
+5. For comparison, clear the variable (`set OKAY_PLATFORM_BACKEND=`) and run step 2 again.
+Expect **no sound** on Windows: the Windows own backend has no audio device yet. If the window stays black, never appears, or the player exits at once,
+that is the useful result: send us `player_log.txt`.
+
+**What works on the own backend, and what does not** (from `docs/platform_layer.md`; the Linux items were run under Xvfb with xdotool, not on a real desktop):
+
+| Works (Linux, own backend) | Does not work or not written |
+|---|---|
+| window, resize, fullscreen (needs a window manager), window icon | file drag and drop onto the window (Linux), touch, IME composition, high-DPI scaling, Wayland without XWayland |
+| keyboard, mouse, mouse look, typed text, the clipboard between programs | a message box on Linux (the text goes to the log), monitor and resolution lists in Settings (still asked of SDL) |
+| 3D through GLX, 2D through the software painter | any sound on Windows; a real GPU for the 2D painter |
+| sound through ALSA, game pads through the kernel (evdev) | everything above on Windows: written and compile-checked, never run there |
+
+**Linux (what was actually run).** With a built player (`-DOKAY_BUILD_PLAYER=ON`):
+```
+Xvfb :99 -screen 0 1024x768x24 &
+DISPLAY=:99 OKAY_PLATFORM_BACKEND=own build/bin/okay-player examples/node_playground/flow.okayscene
+```
+The log shows `platform=own` and `2D painter: software`; the scene runs; **Esc** exits with code 0. This was verified in the stage 3 work
+(`docs/platform_layer.md`, "What was verified"); it was not re-run for this page. The tests: `ctest -R platform` (needs Xvfb and xdotool for the window ones).
+
+**The editor and the launcher cannot be tried on the own backend yet.** They create their windows and draw through SDL directly, so `platform=own`
+there changes only timers, sound and game pads. On Windows that would **break voice chat and sounds** (no audio device in our Win32 backend), so
+do not set it for them. `docs/sdl_inventory.md` lists every SDL call that is left, file by file; `docs/sdl_removal_plan.md` says in which order they go.
 
 ### 12. OkayUI
 

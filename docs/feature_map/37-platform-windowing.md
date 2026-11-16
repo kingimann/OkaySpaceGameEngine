@@ -1,9 +1,12 @@
 # 37. Platform & windowing
 
-How the engine meets the operating system. `engine/include/okay/Platform/*` is NOT a windowing layer: it holds the online-service
-clients (accounts, friends, chat, Steam, PlayFab) and two OS helpers (`NativeHttp`, `GameIpc`). The window, DPI, focus, file dialog
-and web shims live in the host programs (`player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, SDL2) plus `Core/DisplaySettings`,
-`Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. No engine window, DPI or thread API exists. Games copy and paste text through `Core/Clipboard` (SDL in the player and editor Play mode, a memory clipboard in tests). 37.9 maps the
+How the engine meets the operating system. Most of `engine/include/okay/Platform/*` is NOT a windowing layer: it holds the online-service
+clients (accounts, friends, chat, Steam, PlayFab) and two OS helpers (`NativeHttp`, `GameIpc`). The two files `Platform/Platform.hpp` and
+`Platform/Painter.hpp` ARE one: the `okay::platform` seam over SDL2 and our own backends (area 17.17, `docs/platform_layer.md`; what still calls SDL
+directly, file by file: `docs/sdl_inventory.md`). The player's window goes through it; the editor and launcher still create theirs with SDL, so the
+window, DPI, focus, file dialog and web shims below mostly live in the host programs (`player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, SDL2)
+plus `Core/DisplaySettings`, `Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. There is no public thread API (a private shim,
+`engine/src/Core/CoreThreads.hpp`, serves the engine). Games copy and paste text through `Core/Clipboard` (SDL in the player and editor Play mode, a memory clipboard in tests). 37.9 maps the
 online clients, which area 17 also describes. Nothing here is in an open PR.
 
 ## 37. Platform & windowing

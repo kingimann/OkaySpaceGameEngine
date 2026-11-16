@@ -3,7 +3,8 @@
 Goal (CLAUDE.md rules 17 and 19): write the replacement ourselves, keep it off by default, and flip a default only with the
 owner's written approval. Never delete SDL2 before our own version is finished and has run on real Windows.
 This page is the ordered list of work, with a plain-words size for each step and what to test on real Windows.
-The numbers come from `docs/sdl_inventory.md` (commit `05feef3b`, regenerate it with `python3 scripts/sdl_inventory.py`).
+The numbers come from `docs/sdl_inventory.md` (commit `05feef3b`, regenerate it with `python3 scripts/sdl_inventory.py`). The table below counts each program's own directory;
+the inventory's section 1 also shows what each program reaches in `shared/`, `engine/` and `okayui/` (launcher 793 calls, editor 295, player 68).
 Design and audit history of the seam: `docs/platform_layer.md`. Roadmap row: `docs/own_code_roadmap.md` (SDL2).
 
 All sizes are **judgement, not measurements**. "Small" = an afternoon of agent work. "Medium" = a day or two. "Large" = several days.
@@ -14,8 +15,8 @@ All sizes are **judgement, not measurements**. "Small" = an afternoon of agent w
 | | SDL calls left (`calls / words`) | what they are |
 |---|---|---|
 | player | 5 / 221 | almost only data types (`SDL_Rect`, `SDL_Color`, `Uint8`); the window, input, GL, audio and 2D drawing already go through `okay::platform` |
-| launcher | 743 / 1,199 in its own files | **613 are threads, mutexes and atomics (83%)**; 57 `SDL_Renderer` drawing; 14 Dear ImGui SDL backends; about 60 window, input and other platform calls |
-| editor | 229 / 556 | 126 `SDL_Renderer` drawing, 22 GL context, 25 window, 17 mouse, 17 Dear ImGui SDL backends, the rest small |
+| launcher | 743 / 1,199 in its own files | **613 are threads, mutexes and atomics (83%)**; 38 `SDL_Renderer` drawing; 14 Dear ImGui SDL backends; 78 window, input, audio-format and other small calls |
+| editor | 229 / 556 | 107 `SDL_Renderer` drawing, 22 GL context, 27 window, 17 mouse, 17 Dear ImGui SDL backends, the rest small |
 | engine library | 0 | outside the SDL backend files (`SdlBackend.cpp`, `SdlPainter.cpp`, `UIPainterSDL.hpp`) there is **no SDL word in code** |
 
 Three different things keep SDL2 in the two programs, and they need three different kinds of work:
@@ -76,7 +77,7 @@ flashes the taskbar, dropping a file on the chat window sends it, window positio
 
 ### Step 4. Drawing: our own renderer backend for Dear ImGui, and the apps' `SDL_Renderer` calls onto `okay::platform::Painter`
 
-**What.** Launcher 57 and editor 126 `SDL_Renderer` calls, plus `ImGui_ImplSDLRenderer2_*` (launcher 7, editor 9).
+**What.** `SDL_Renderer` calls: launcher 38 and editor 107 in their own files (57 and 126 with the shared and OkayUI code they use), plus `ImGui_ImplSDLRenderer2_*` (launcher 7, editor 9).
 **How.**
 * Move the apps' own `SDL_Renderer` calls onto `Painter` (it can wrap their renderer: `WrapSdl2Renderer`). The inventory lists what `Painter` lacks: render targets (editor 3),
   raw geometry (1), flush (2), reading the draw colour (1), the Direct3D 11 device behind the renderer (1, the editor's interop), the renderer-driver choice (4).
@@ -130,12 +131,15 @@ SDL2, the CMake `find_package(SDL2)`, the CI and release downloads, `dist/SDL2.d
 * Cheap mechanical work for any idle agent (no seam needed): the 23 `SDL_sinf` / `SDL_cosf` / `SDL_sqrtf` / `SDL_floorf` calls in `okayui/src/OkayUI.cpp` become `<cmath>`; the
   `Uint8` / `Sint16` typedefs (333 words) become `<cstdint>` names; `SDL_free` / `SDL_strdup` / `SDL_zero` become libc; the SDL version checks go. (`okayui/` and the editor are edited by other agents: coordinate first.)
 
-## Step 0: what the branch `claude/sdl-inventory` adds (in progress)
+## Step 0: what the branch `claude/sdl-inventory` added
 
-Planned and being built with tests first; this section is filled in with the final list and results when the code is done.
-
-* The inventory and its generator (`docs/sdl_inventory.md`, `scripts/sdl_inventory.py`).
-* `okay::platform::WrapSdl2Window` (the bridge for step 3) and five small seam functions that the launcher or editor use and that were missing: window state queries
-  (`IsMinimized`, `IsVisible`, `HasMouseFocus`), focus queries (`KeyboardFocusWindowId`, `MouseFocusWindowId`, `Window::SetInputFocus`), `IsRelativeMouse`,
-  `GlobalMouseState` and `PumpEvents`. Each on the sdl2 backend, the own X11 backend and the Win32 backend (Win32 compile-checked only).
-* A handful of launcher call sites moved onto them, only where the behaviour with the default SDL backend is identical.
+* **The inventory and its generator**: `docs/sdl_inventory.md`, `scripts/sdl_inventory.py` (reads a git ref, strips comments and strings, sorts every SDL word into a capability, prints
+  the page; `--check` compares with the checked-in page; not run by CI), with a unit test of its counting rules (`scripts/tests/test_sdl_inventory.py`, ctest `sdl_inventory_script`).
+* **`okay::platform::WrapSdl2Window`** (the bridge for step 3, the structural blocker the inventory found) **and nine small functions** the launcher or editor use and the seam lacked:
+  `Window::IsMinimized`, `IsVisible`, `HasMouseFocus`, `SetInputFocus`; `Backend::KeyboardFocusWindowId`, `MouseFocusWindowId`, `IsRelativeMouse`, `GlobalMouseState`, `PumpEvents`. Each on the
+  sdl2 backend, the own X11 backend and the Win32 backend (Win32 compile-checked only, never run). The table, the tests and what was run are in `docs/platform_layer.md`, "Stage 4".
+* **Five launcher call sites moved** onto them (`launcher/main.cpp`, chat window and start-up code, outside the Templates, Create and Projects code; `editor/main.cpp` untouched), each with the
+  behaviour of the default sdl2 backend. In the inventory's terms that is 5 fewer SDL calls in the launcher (743 to 738).
+* **Not done on purpose**: the monitor list (`win.displays`, 11 call sites), the flash request, cursor shapes and IME events exist on the unmerged branch `claude/platform-gaps2` (step 1), so they
+  were not written twice; the current GL window and context (`gl.cur`, 8 editor call sites) needs a design of its own and the editor's `main.cpp` is being edited by others.
+* **What the owner can try**: nothing visible changes. `docs/try_it.md` sections 11 (the own backend, player only) and 7q (this change).

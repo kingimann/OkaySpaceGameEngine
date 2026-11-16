@@ -479,7 +479,7 @@ Details for every sub-area and numbered part: [docs/feature_map/17-launcher-plat
 | [17.14](feature_map/17-launcher-platform.md#1714-official-game-install-update-publish) | Official game: install, update, publish | Works | The one official OkaySpace game shown first on the Play page: install, play, auto-update, uninstall. Admins publish new versions from the launcher... | keep `publish-official-game.sh` rules in step with `CheckPublish` by hand (the script header says so); the release workflow does... |
 | [17.15](feature_map/17-launcher-platform.md#1715-multiplayer-page-and-game-link) | Multiplayer page and game link | Works | The launcher's Steam-style multiplayer layer: what a running game reports (presence, invite requests), joining a friend or server by starting the... | none recorded; invites need the friends and chat tables (17.3, 17.4) |
 | [17.16](feature_map/17-launcher-platform.md#1716-crash-reports-launcher-side) | Crash reports (launcher side) | Works | The launcher's Settings > Crash reports page that reads what the editor wrote when it closed unexpectedly (the latest report and a history), in one... | none |
-| [17.17](feature_map/17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) | Platform layer (`okay::platform`) and the own backend | Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the player's window is moved (checked against the unchanged player under Xvfb), the editor's and launcher's are not. The player runs on the own backend with the software painter (Xvfb, screenshots compared with the sdl2 run; differences listed in `docs/platform_layer.md`); that path is off by default and not ready | The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and... | editor and launcher windows, events and GL still use SDL, and they draw through `SDL_Renderer` / ImGui's SDL backends, which need... |
+| [17.17](feature_map/17-launcher-platform.md#1717-platform-layer-okayplatform-and-the-own-backend) | Platform layer (`okay::platform`) and the own backend | Works on Linux for the pieces behind the seam (tested under Xvfb on both backends); Windows backend compiles only; the player's window is moved (checked against the unchanged player under Xvfb), the editor's and launcher's are not (the launcher's chat window state, focus, global pointer and event pump questions go through the seam since stage 4, five call sites, never run in the real program). The player runs on the own backend with the software painter (Xvfb, screenshots compared with the sdl2 run; differences listed in `docs/platform_layer.md`); that path is off by default and not ready | The seam between the engine and the windowing / OS library, with SDL2 as the default backend and our own backend beside it (Linux: X11/GLX, ALSA and... | editor and launcher windows, events and GL still use SDL, and they draw through `SDL_Renderer` / ImGui's SDL backends, which need... |
 
 ## 18. Build, export & release
 
@@ -796,10 +796,13 @@ Details for every sub-area and numbered part: [docs/feature_map/36-math-geometry
 
 ## 37. Platform & windowing
 
-How the engine meets the operating system. `engine/include/okay/Platform/*` is NOT a windowing layer: it holds the online-service
-clients (accounts, friends, chat, Steam, PlayFab) and two OS helpers (`NativeHttp`, `GameIpc`). The window, DPI, focus, file dialog
-and web shims live in the host programs (`player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, SDL2) plus `Core/DisplaySettings`,
-`Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. No engine window, DPI or thread API exists. Games copy and paste text through `Core/Clipboard` (SDL in the player and editor Play mode, a memory clipboard in tests). 37.9 maps the
+How the engine meets the operating system. Most of `engine/include/okay/Platform/*` is NOT a windowing layer: it holds the online-service
+clients (accounts, friends, chat, Steam, PlayFab) and two OS helpers (`NativeHttp`, `GameIpc`). The two files `Platform/Platform.hpp` and
+`Platform/Painter.hpp` ARE one: the `okay::platform` seam over SDL2 and our own backends (area 17.17, `docs/platform_layer.md`; what still calls SDL
+directly, file by file: `docs/sdl_inventory.md`). The player's window goes through it; the editor and launcher still create theirs with SDL, so the
+window, DPI, focus, file dialog and web shims below mostly live in the host programs (`player/main.cpp`, `editor/main.cpp`, `launcher/main.cpp`, SDL2)
+plus `Core/DisplaySettings`, `Core/Application`, `Input/Cursor` and `Graphics/TtfFont`. There is no public thread API (a private shim,
+`engine/src/Core/CoreThreads.hpp`, serves the engine). Games copy and paste text through `Core/Clipboard` (SDL in the player and editor Play mode, a memory clipboard in tests). 37.9 maps the
 online clients, which area 17 also describes. Nothing here is in an open PR.
 
 Details for every sub-area and numbered part: [docs/feature_map/37-platform-windowing.md](feature_map/37-platform-windowing.md).

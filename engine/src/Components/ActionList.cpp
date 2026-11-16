@@ -1143,7 +1143,7 @@ void ActionList::Update(float dt) {
                 s.replace(p, find.size(), repl);
         }
         else if (op == "spawn3") {
-            if (scene && ScriptPathOk(Str(it, 0), "spawn3")) {
+            if (scene && ScriptAssetPathOk(Str(it, 0), "spawn3")) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform)
                     g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
@@ -1429,7 +1429,7 @@ void ActionList::Update(float dt) {
                 for (auto& up : scene->Objects()) if (up && up->tag == tg) up->active = on; }
         }
         else if (op == "spawn") {
-            if (scene && ScriptPathOk(Str(it, 0), "spawn")) {
+            if (scene && ScriptAssetPathOk(Str(it, 0), "spawn")) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform) g->transform->localPosition = {Num(it, 1), Num(it, 2), Num(it, 3)};
             }
@@ -1731,7 +1731,7 @@ void ActionList::Update(float dt) {
                          Vars()[Str(it, 0)] = Num(it, (std::size_t)(1 + k)); }
         }
         else if (op == "spawn_at") {                   // spawn a prefab at a named object's position
-            if (scene && ScriptPathOk(Str(it, 0), "spawn_at")) {
+            if (scene && ScriptAssetPathOk(Str(it, 0), "spawn_at")) {
                 GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                 if (g && g->transform) if (GameObject* at = scene->Find(ObjName(it, 1)))
                     if (at->transform) g->transform->SetPosition(at->transform->Position());
@@ -1803,7 +1803,7 @@ void ActionList::Update(float dt) {
                 float radius = it.args.size() > 2 ? Num(it, 2) : 3.0f;
                 Vec3 c = t->Position();
                 for (int i = 0; i < count; ++i) {
-                    if (!ScriptPathOk(Str(it, 0), "spawn_wave")) break;
+                    if (!ScriptAssetPathOk(Str(it, 0), "spawn_wave")) break;
                     GameObject* g = SceneSerializer::InstantiateFromFile(*scene, Str(it, 0), nullptr);
                     if (!g || !g->transform) continue;
                     float ang = (6.2831853f * i) / count;

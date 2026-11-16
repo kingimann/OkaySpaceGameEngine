@@ -82,6 +82,22 @@ int main() {
         }
     }
 
+    // ---- reading a prefab by absolute path: inside the game, save or temp folder only ----
+    {
+        const std::string inTemp = (root / "game" / "p.okayprefab").generic_string();
+        CHECK(ScriptAssetPathOk(inTemp, "t"));
+        CHECK(ScriptAssetPathOk("p.okayprefab", "t"));
+        CHECK(!ScriptAssetPathOk("/etc/passwd", "t"));
+        CHECK(!ScriptAssetPathOk("/proc/self/environ", "t"));
+        CHECK(!ScriptAssetPathOk((root / "game" / ".." / ".." / "etc" / "passwd").generic_string(), "t"));
+        CHECK(!ScriptAssetPathOk("//server/share/p.okayprefab", "t"));
+        CHECK(!ScriptAssetPathOk("\\\\?\\C:\\x", "t"));
+        CHECK(!ScriptAssetPathOk(inTemp + ":stream", "t"));
+        CHECK(!ScriptAssetPathOk((root / "game" / "NUL").generic_string(), "t"));
+        CHECK(!ScriptAssetPathOk("C:/Windows/x.okayprefab", "t"));       // a drive path means nothing on this system
+        CHECK(!ScriptAssetPathOk("../x.okayprefab", "t"));
+    }
+
     // ---- prefs_save / prefs_load ----
     CHECK(!Run(R"(var r = prefs_save("../x");)", "r").AsBool());
     CHECK(!fs::exists(root / "x"));

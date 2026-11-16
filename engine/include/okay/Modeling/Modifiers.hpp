@@ -41,6 +41,7 @@ struct MeshModifier {
     float width = 0.05f;
     int   segments = 2;
     float angle = 30.0f;
+    bool  useBevelWeights = false;   ///< bevel only the edges with a bevel weight (width x weight) instead of every sharp edge
     // Boolean against another object's mesh (by name), voxel based.
     std::string target;
     int   boolOp = 1;             ///< 0 union, 1 subtract, 2 intersect

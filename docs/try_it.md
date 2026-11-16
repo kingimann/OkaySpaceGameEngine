@@ -679,6 +679,8 @@ how the sidebar looks and feels in the real editor window (font, dot colours, sc
 
 ## 7zh. Modeling: material slots and Repair Mesh
 
+New (branch modeling-more-2): open the Modeling window. Import page > "Reference images": choose a PNG, pick Front; a picture plane appears in the Scene view. Generate page > "Bezier curve": add 4 points, press Pipe; a tube mesh appears. Edit Mesh: select the top edges of a cube, Ctrl+K "bevel weight" > Set Bevel Weight, add a Bevel modifier and tick "Use edge weights"; only the top edges round. You should see exactly that. Unverified: all of it in the real window and on a GPU.
+
 **What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
 recolours every face in it at once. Slots are saved in the scene and in `.okaymesh` files. There is also a **Repair Mesh** button
 that cleans up a broken or imported mesh in one click. Slots are colours only for now: per-slot pictures (textures) and shaders are

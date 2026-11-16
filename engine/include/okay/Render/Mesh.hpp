@@ -50,6 +50,7 @@ struct Mesh {
     std::vector<std::pair<int, int>> seams;  // UV seam edges (vertex index pairs): unwrapping
                                   // cuts the surface open along them. A pair that isn't an
                                   // edge of the mesh is ignored.
+    std::vector<EdgeCrease> bevelWeights; // per-edge bevel weights (0..1, scaling the Bevel modifier's width when it is set to use weights)
     std::vector<EdgeCrease> creases; // subdivision creases (vertex pairs + sharpness); the Subdivision modifier keeps those edges sharp.
                                   // A pair that isn't an edge of the mesh is ignored.
     std::vector<Color> vertexColors; // optional per-vertex colours (parallel to vertices); the renderers blend them smoothly
@@ -74,6 +75,14 @@ struct Mesh {
 
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
     bool HasFaceColors() const { return (int)triColors.size() == TriangleCount() && !triColors.empty(); }
+    /// Set (w > 0, at most 1) or clear (w <= 0) the bevel weight of the edge between vertices a and b.
+    void SetBevelWeight(int a, int b, float w) {
+        if (a == b || a < 0 || b < 0 || !std::isfinite(w)) return;
+        if (a > b) std::swap(a, b);
+        for (std::size_t i = 0; i < bevelWeights.size(); ++i)
+            if (bevelWeights[i].a == a && bevelWeights[i].b == b) { if (w > 0.0f) bevelWeights[i].w = std::min(w, 1.0f); else bevelWeights.erase(bevelWeights.begin() + i); return; }
+        if (w > 0.0f) bevelWeights.push_back({a, b, std::min(w, 1.0f)});
+    }
     /// Set (w > 0) or clear (w <= 0) the subdivision crease on the edge between vertices a and b.
     void SetCrease(int a, int b, float w) {
         if (a == b || a < 0 || b < 0 || !std::isfinite(w)) return;
@@ -2465,9 +2474,9 @@ public:
             if (std::find(sm.begin(), sm.end(), std::make_pair(a, b)) == sm.end()) sm.push_back({a, b});
         }
         seams = std::move(sm);
-        {   // creases follow their vertices the same way (two that land on the same edge keep the sharper one)
+        for (std::vector<EdgeCrease>* list : {&creases, &bevelWeights}) {   // creases and bevel weights follow their vertices the same way
             std::vector<EdgeCrease> cr;
-            for (const EdgeCrease& c : creases) {
+            for (const EdgeCrease& c : *list) {
                 if (c.a < 0 || c.b < 0 || c.a >= (int)remap.size() || c.b >= (int)remap.size()) continue;
                 int a = remap[c.a], b = remap[c.b];
                 if (a == b) continue;
@@ -2476,7 +2485,7 @@ public:
                 for (EdgeCrease& e : cr) if (e.a == a && e.b == b) { e.w = std::max(e.w, c.w); merged = true; break; }
                 if (!merged) cr.push_back({a, b, c.w});
             }
-            creases = std::move(cr);
+            *list = std::move(cr);
         }
         vertices = std::move(unique);
         triangles = std::move(tris);

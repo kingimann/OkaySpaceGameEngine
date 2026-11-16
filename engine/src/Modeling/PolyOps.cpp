@@ -1076,14 +1076,14 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
         if (a >= 0 && b >= 0 && a != b) seams.push_back(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
     }
     pm.seams = std::move(seams);
-    {
+    for (std::vector<EdgeCrease>* list : {&pm.creases, &pm.bevelWeights}) {
         std::vector<EdgeCrease> cr;
-        for (const EdgeCrease& c : pm.creases) {
+        for (const EdgeCrease& c : *list) {
             if (c.a < 0 || c.b < 0 || c.a >= (int)remap.size() || c.b >= (int)remap.size()) continue;
             const int a = remap[c.a], b = remap[c.b];
             if (a >= 0 && b >= 0 && a != b) cr.push_back({std::min(a, b), std::max(a, b), c.w});
         }
-        pm.creases = std::move(cr);
+        *list = std::move(cr);
     }
     return remap;
 }

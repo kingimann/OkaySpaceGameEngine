@@ -27,8 +27,41 @@ const double kKTimePerSec = 46186158000.0;
 // ---------------------------------------------------------------------------
 // small matrix helpers (double, row-major, column vectors)
 // ---------------------------------------------------------------------------
+/// The matrix is affine (last row exactly 0 0 0 1) and its other twelve numbers are finite.
+inline bool AffineFinite(const Mat& a) {
+    if (a.m[12] != 0 || a.m[13] != 0 || a.m[14] != 0 || a.m[15] != 1) return false;
+    // x - x is +0 for a finite x and NaN for an infinite or NaN one; the sum of the twelve is then 0 or NaN
+    const double* m = a.m;
+    const double z = (((m[0] - m[0]) + (m[1] - m[1])) + ((m[2] - m[2]) + (m[3] - m[3]))) +
+                     (((m[4] - m[4]) + (m[5] - m[5])) + ((m[6] - m[6]) + (m[7] - m[7]))) +
+                     (((m[8] - m[8]) + (m[9] - m[9])) + ((m[10] - m[10]) + (m[11] - m[11])));
+    return z == 0;
+}
+/// The product of two affine matrices with finite entries, without the checks (see Mul).
+inline Mat Mul34(const Mat& a, const Mat& b) {
+    Mat r;
+    for (int i = 0; i < 3; ++i) {
+        const double* ai = a.m + i * 4;
+        for (int j = 0; j < 3; ++j) {
+            double s = 0;
+            s += ai[0] * b.m[j]; s += ai[1] * b.m[4 + j]; s += ai[2] * b.m[8 + j];   // + ai[3] * 0
+            r.m[i * 4 + j] = s;
+        }
+        double s = 0;
+        s += ai[0] * b.m[3]; s += ai[1] * b.m[7]; s += ai[2] * b.m[11]; s += ai[3] * b.m[15];
+        r.m[i * 4 + 3] = s;
+    }
+    return r;   // r.m[12..15] are already 0 0 0 1
+}
 Mat Mul(const Mat& a, const Mat& b) {
     Mat r;
+    if (AffineFinite(a) && AffineFinite(b)) {
+        // The same sums as the general loop below, in the same order, minus the terms that are exactly zero. Why that
+        // is exact: a sum that starts at +0 and adds products in round-to-nearest is never -0, and adding a zero
+        // (of either sign) to a number that is not -0 leaves it unchanged; with finite entries every product with a
+        // zero factor is a zero. The last row of a product of two affine matrices is 0 0 0 1 exactly.
+        return Mul34(a, b);
+    }
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 4; ++j) {
             double s = 0;
@@ -39,6 +72,17 @@ Mat Mul(const Mat& a, const Mat& b) {
 }
 Mat Translate(double x, double y, double z) { Mat r; r.m[3] = x; r.m[7] = y; r.m[11] = z; return r; }
 Mat ScaleM(double x, double y, double z) { Mat r; r.m[0] = x; r.m[5] = y; r.m[10] = z; return r; }
+inline bool Finite3(double x, double y, double z) {   // all three finite
+    std::uint64_t u[3]; std::memcpy(u, &x, 8); std::memcpy(u + 1, &y, 8); std::memcpy(u + 2, &z, 8);
+    const std::uint64_t e = 0x7FF0000000000000ull;
+    return (u[0] & e) != e && (u[1] & e) != e && (u[2] & e) != e;
+}
+Mat Mul(const Mat& a, const Mat& b);
+/// Mul(m, Translate(x, y, z)), computed with only the terms that are not exactly zero (exact for the reason given in
+/// Mul; it needs m affine and finite and the offset finite, else it is the general product).
+inline Mat MulTranslate(const Mat& m, double x, double y, double z);
+/// Mul(m, ScaleM(x, y, z)) the same way.
+inline Mat MulScale(const Mat& m, double x, double y, double z);
 Mat RotAxis(int axis, double deg) {
     const double a = deg * kPi / 180.0, c = std::cos(a), s = std::sin(a);
     Mat r;
@@ -47,12 +91,59 @@ Mat RotAxis(int axis, double deg) {
     else                { r.m[0] = c; r.m[1] = -s; r.m[4] = s; r.m[5] = c; }
     return r;
 }
+inline Mat MulTranslate(const Mat& m, double x, double y, double z) {
+    if (!AffineFinite(m) || !Finite3(x, y, z)) return Mul(m, Translate(x, y, z));
+    Mat r;
+    for (int i = 0; i < 3; ++i) {
+        const double* a = m.m + i * 4;
+        for (int j = 0; j < 3; ++j) { double s = 0; s += a[j]; r.m[i * 4 + j] = s; }   // 0 + a * 1, the zero terms dropped
+        double s = 0; s += a[0] * x; s += a[1] * y; s += a[2] * z; s += a[3];        // a[3] * 1 is a[3]
+        r.m[i * 4 + 3] = s;
+    }
+    return r;
+}
+inline Mat MulScale(const Mat& m, double x, double y, double z) {
+    if (!AffineFinite(m) || !Finite3(x, y, z)) return Mul(m, ScaleM(x, y, z));
+    Mat r;
+    const double sc[3] = {x, y, z};
+    for (int i = 0; i < 3; ++i) {
+        const double* a = m.m + i * 4;
+        for (int j = 0; j < 3; ++j) { double s = 0; s += a[j] * sc[j]; r.m[i * 4 + j] = s; }
+        double s = 0; s += a[3]; r.m[i * 4 + 3] = s;
+    }
+    return r;
+}
+
 /// FBX rotation orders: 0 XYZ 1 XZY 2 YZX 3 YXZ 4 ZXY 5 ZYX (the first letter is applied first).
+/// Mul(RotAxis(axis, deg), r) with the structure of the rotation used: the row of the axis is r's row (0 + r), the two
+/// other rows are c and s combinations of r's rows, in the order the general product adds them (exact for the reason
+/// given in Mul: r and the rotation affine and finite, so the dropped products are all zeros). Otherwise the general
+/// product.
+Mat RotateLeft(int axis, double deg, const Mat& r, bool known = false) {   // known: r is affine and finite
+    const Mat A = RotAxis(axis, deg);
+    if (!known && (!AffineFinite(r) || !AffineFinite(A))) return Mul(A, r);   // (NaN results must come out bit for bit too)
+    const double* a = A.m;
+    // the two rows that change: (p, q) = (1, 2) for X, (0, 2) for Y, (0, 1) for Z
+    const int p = axis == 0 ? 1 : 0, q = axis == 2 ? 1 : 2;
+    Mat out;
+    for (int j = 0; j < 4; ++j) {
+        double s0 = 0; s0 += r.m[axis * 4 + j]; out.m[axis * 4 + j] = s0;
+        double sp = 0; sp += a[p * 4 + p] * r.m[p * 4 + j]; sp += a[p * 4 + q] * r.m[q * 4 + j]; out.m[p * 4 + j] = sp;
+        double sq = 0; sq += a[q * 4 + p] * r.m[p * 4 + j]; sq += a[q * 4 + q] * r.m[q * 4 + j]; out.m[q * 4 + j] = sq;
+    }
+    return out;
+}
+/// |v| < 1e100 (false for NaN and infinities). Products and sums of a few such numbers and of sines and cosines stay
+/// far below the largest double, so a chain of the fast products above never meets an infinity on the way.
+inline bool Small(double v) { return std::fabs(v) < 1e100; }
+inline bool Small3(const double v[3]) { return Small(v[0]) && Small(v[1]) && Small(v[2]); }
 Mat Euler(const double d[3], int order) {
     static const int seq[6][3] = {{0,1,2},{0,2,1},{1,2,0},{1,0,2},{2,0,1},{2,1,0}};
     if (order < 0 || order > 5) order = 0;
+    // With small finite angles every step is a rotation of finite numbers (no check needed per step).
+    const bool known = Small3(d);
     Mat r;
-    for (int k = 0; k < 3; ++k) r = Mul(RotAxis(seq[order][k], d[seq[order][k]]), r);
+    for (int k = 0; k < 3; ++k) r = RotateLeft(seq[order][k], d[seq[order][k]], r, known);
     return r;
 }
 bool Invert(const Mat& a, Mat& out) {
@@ -374,13 +465,23 @@ struct Curve {
     std::vector<double> sr, sl;         // per key: right slope, next-left slope (value/sec) from the file
     bool hasSlopes = false;             // the file carried KeyAttrDataFloat (slopes of auto keys are in it too)
     bool Empty() const { return t.empty(); }
-    double Eval(double time) const {
+    double Eval(double time) const { std::size_t h = (std::size_t)-1; return Eval(time, h); }
+    /// `hint` remembers the key segment of the last call: samples taken in increasing time move forward from it
+    /// instead of searching all keys. The segment is the same either way (the last key at or before `time`).
+    double Eval(double time, std::size_t& hint) const {
         const std::size_t n = t.size();
         if (n == 0) return 0;
         if (time <= t[0] || n == 1) return v[0];
         if (time >= t[n - 1]) return v[n - 1];
-        std::size_t lo = 0, hi = n - 1;
-        while (hi - lo > 1) { const std::size_t mid = (lo + hi) / 2; if (t[mid] <= time) lo = mid; else hi = mid; }
+        std::size_t lo, hi;
+        if (hint < n - 1 && t[hint] <= time) {   // t[n - 1] > time, so this stops before the last key
+            lo = hint;
+            while (t[lo + 1] <= time) ++lo;
+        } else {
+            lo = 0; hi = n - 1;
+            while (hi - lo > 1) { const std::size_t mid = (lo + hi) / 2; if (t[mid] <= time) lo = mid; else hi = mid; }
+        }
+        hint = lo; hi = lo + 1;
         const double dt = t[hi] - t[lo];
         if (dt <= 0) return v[lo];
         const int f = flags[lo];
@@ -598,19 +699,63 @@ struct Builder {
 
     /// Pre-rotation and inverse post-rotation, which animation never changes: computed once per node when a clip is
     /// baked (the same values LocalMatrix would compute every sample).
-    struct FixedRot { Mat pre, postInv; };
-    static FixedRot FixedRotations(const XProps& x) { return {Euler(x.pre, 0), InvertOrIdentity(Euler(x.post, 0))}; }
+    struct FixedRot { Mat pre, postInv; bool preIsIdentity, postIsIdentity; bool simple = false; };
+    static bool IsIdentity(const Mat& a) {   // by value: -0 counts as 0 (only the value takes part in a product)
+        static const double id[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        for (int i = 0; i < 16; ++i) if (!(a.m[i] == id[i])) return false;
+        return true;
+    }
+    static FixedRot FixedRotations(const XProps& x) {
+        FixedRot f{Euler(x.pre, 0), InvertOrIdentity(Euler(x.post, 0)), false, false};
+        f.preIsIdentity = IsIdentity(f.pre); f.postIsIdentity = IsIdentity(f.postInv);
+        // LocalSimple applies: no offsets or pivots (by value), and fixed rotations that are affine with small entries
+        auto zero3 = [](const double v[3]) { return v[0] == 0 && v[1] == 0 && v[2] == 0; };
+        auto smallAffine = [](const Mat& a) {
+            if (a.m[12] != 0 || a.m[13] != 0 || a.m[14] != 0 || a.m[15] != 1) return false;
+            for (int i = 0; i < 12; ++i) if (!Small(a.m[i])) return false;
+            return true;
+        };
+        f.simple = zero3(x.roff) && zero3(x.rp) && zero3(x.soff) && zero3(x.sp) && smallAffine(f.pre) && smallAffine(f.postInv);
+        return f;
+    }
+    /// Mul(m, identity): every entry is 0 + m (the other products are zeros when m is finite), else the general product.
+    static Mat MulIdentity(const Mat& m, const Mat& id) {
+        if (!AffineFinite(m)) return Mul(m, id);
+        Mat r;
+        for (int i = 0; i < 12; ++i) { double s = 0; s += m.m[i]; r.m[i] = s; }
+        return r;
+    }
     static Mat LocalMatrix(const XProps& x) { const FixedRot f = FixedRotations(x); return LocalMatrix(x, f); }
-    static Mat LocalMatrix(const XProps& x, const FixedRot& fixed) {
-        const Mat T = Translate(x.t[0], x.t[1], x.t[2]), Roff = Translate(x.roff[0], x.roff[1], x.roff[2]);
-        const Mat Rp = Translate(x.rp[0], x.rp[1], x.rp[2]), RpI = Translate(-x.rp[0], -x.rp[1], -x.rp[2]);
-        const Mat& Rpre = fixed.pre; const Mat R = Euler(x.r, x.order); const Mat& RpostI = fixed.postInv;
-        const Mat Soff = Translate(x.soff[0], x.soff[1], x.soff[2]);
-        const Mat Sp = Translate(x.sp[0], x.sp[1], x.sp[2]), SpI = Translate(-x.sp[0], -x.sp[1], -x.sp[2]);
-        const Mat S = ScaleM(x.s[0], x.s[1], x.s[2]);
-                Mat m = T;
-        m = Mul(m, Roff); m = Mul(m, Rp); m = Mul(m, Rpre); m = Mul(m, R); m = Mul(m, RpostI); m = Mul(m, RpI);
-        m = Mul(m, Soff); m = Mul(m, Sp); m = Mul(m, S); m = Mul(m, SpI);
+    static Mat LocalMatrix(const XProps& x, const FixedRot& fixed) { return LocalMatrix(x, fixed, Euler(x.r, x.order)); }
+    /// LocalMatrix for a node without offsets and pivots, with small finite t, r and s: the same numbers. Dropped are
+    /// the products by the zero offsets (each is 0 + m, which changes nothing here: every entry that follows is again
+    /// a sum that starts at +0 and only meets m through products and sums, so a -0 in m cannot show), the products by
+    /// identity fixed rotations (the same), and all the per-step checks (nothing can overflow, see Small).
+    static Mat LocalSimple(const XProps& x, const FixedRot& f, const Mat& R) {
+        Mat m = Translate(x.t[0], x.t[1], x.t[2]);
+        if (!f.preIsIdentity) m = Mul34(m, f.pre);
+        m = Mul34(m, R);
+        if (!f.postIsIdentity) m = Mul34(m, f.postInv);
+        Mat r;
+        const double sc[3] = {x.s[0], x.s[1], x.s[2]};
+        for (int i = 0; i < 3; ++i) {   // MulScale
+            const double* a = m.m + i * 4;
+            for (int j = 0; j < 3; ++j) { double s = 0; s += a[j] * sc[j]; r.m[i * 4 + j] = s; }
+            double s = 0; s += a[3]; r.m[i * 4 + 3] = s;
+        }
+        return r;
+    }
+    /// T * Roff * Rp * Rpre * R * Rpost^-1 * Rp^-1 * Soff * Sp * S * Sp^-1, multiplied left to right (R given).
+    static Mat LocalMatrix(const XProps& x, const FixedRot& fixed, const Mat& R) {
+        Mat m = Translate(x.t[0], x.t[1], x.t[2]);
+        m = MulTranslate(m, x.roff[0], x.roff[1], x.roff[2]); m = MulTranslate(m, x.rp[0], x.rp[1], x.rp[2]);
+        m = fixed.preIsIdentity ? MulIdentity(m, fixed.pre) : Mul(m, fixed.pre);
+        m = Mul(m, R);
+        m = fixed.postIsIdentity ? MulIdentity(m, fixed.postInv) : Mul(m, fixed.postInv);
+        m = MulTranslate(m, -x.rp[0], -x.rp[1], -x.rp[2]);
+        m = MulTranslate(m, x.soff[0], x.soff[1], x.soff[2]); m = MulTranslate(m, x.sp[0], x.sp[1], x.sp[2]);
+        m = MulScale(m, x.s[0], x.s[1], x.s[2]);
+        m = MulTranslate(m, -x.sp[0], -x.sp[1], -x.sp[2]);
         return m;
     }
 
@@ -1052,7 +1197,7 @@ struct Builder {
                 Layr ly; ly.id = c->child; ly.name = l->name; ly.weight = l->props.Get("Weight", 100.0); ly.blendMode = SafeInt(l->props.Get("BlendMode", 0.0));
                 layers.push_back(ly);
             }
-            struct NodeCN { int layer; int which; const CurveNode* cn; };      // which: 0 T, 1 R, 2 S
+            struct NodeCN { int layer; int which; const CurveNode* cn; std::size_t hint[3]; };   // which: 0 T, 1 R, 2 S
             std::map<int, std::vector<NodeCN>> perNode;                       // node index -> curve nodes (ordered)
             struct BlendCN { int layer; Id target; const CurveNode* cn; };
             std::vector<BlendCN> blendCns;
@@ -1067,7 +1212,7 @@ struct Builder {
                     if (nm != nodeOfModel.end()) {
                         int which = cn.prop == "Lcl Translation" ? 0 : cn.prop == "Lcl Rotation" ? 1 : cn.prop == "Lcl Scaling" ? 2 : -1;
                         if (which < 0) continue;
-                        perNode[nm->second].push_back({(int)li, which, &cn}); span(cn);
+                        perNode[nm->second].push_back({(int)li, which, &cn, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}}); span(cn);
                     } else if (cn.prop == "DeformPercent" && chanOfObj.count(cn.target)) { blendCns.push_back({(int)li, cn.target, &cn}); span(cn); }
                 }
             if (perNode.empty() && blendCns.empty()) continue;
@@ -1093,13 +1238,13 @@ struct Builder {
             std::vector<double> times;
             for (std::size_t k = 0; k <= samples; ++k) times.push_back(dur > 0 ? dur * (double)k / (double)samples : 0.0);
             if (dur <= 0) times.assign(1, 0.0);
-            auto evalVec = [&](const std::vector<NodeCN>& list, int which, const double base[3], double time, double out[3]) {
+            auto evalVec = [&](std::vector<NodeCN>& list, int which, const double base[3], double time, double out[3]) {
                 for (int k = 0; k < 3; ++k) out[k] = base[k];
                 bool first = true;
-                for (const NodeCN& n : list) {
+                for (NodeCN& n : list) {
                     if (n.which != which) continue;
                     double lv[3];
-                    for (int k = 0; k < 3; ++k) lv[k] = n.cn->curve[k] ? n.cn->curve[k]->Eval(time + t0) : n.cn->def[k];
+                    for (int k = 0; k < 3; ++k) lv[k] = n.cn->curve[k] ? n.cn->curve[k]->Eval(time + t0, n.hint[k]) : n.cn->def[k];
                     const Layr& ly = layers[(std::size_t)n.layer];
                     const double w = std::max(0.0, ly.weight) * 0.01;
                     if (first) { for (int k = 0; k < 3; ++k) out[k] = lv[k]; first = false; }
@@ -1112,11 +1257,23 @@ struct Builder {
                 const XProps base = xp[(std::size_t)kv.first];
                 const FixedRot fixed = FixedRotations(base);   // samples change only t, r and s
                 na.translation.reserve(times.size()); na.rotation.reserve(times.size()); na.scale.reserve(times.size());
+                // A sample whose translation, rotation and scaling are the same (bit for bit) as the previous sample's has
+                // the same result: it is copied. The rotation matrix alone is reused the same way.
+                XProps x = base;
+                double prevT[3], prevR[3], prevS[3], tr[3], q[4], s[3];
+                bool havePrev = false, haveR = false;
+                Mat R;
+                const bool isRoot = sc.nodes[(std::size_t)kv.first].parent < 0;
                 for (double t : times) {
-                    XProps x = base;
                     evalVec(kv.second, 0, base.t, t, x.t); evalVec(kv.second, 1, base.r, t, x.r); evalVec(kv.second, 2, base.s, t, x.s);
-                    const Mat local = conv.Local(LocalMatrix(x, fixed), sc.nodes[(std::size_t)kv.first].parent < 0);
-                    double tr[3], q[4], s[3]; Decompose(local, tr, q, s);
+                    const bool sameR = haveR && std::memcmp(prevR, x.r, sizeof(prevR)) == 0;
+                    if (!(havePrev && sameR && std::memcmp(prevT, x.t, sizeof(prevT)) == 0 && std::memcmp(prevS, x.s, sizeof(prevS)) == 0)) {
+                        if (!sameR) { R = Euler(x.r, x.order); std::memcpy(prevR, x.r, sizeof(prevR)); haveR = true; }
+                        const bool simple = fixed.simple && Small3(x.t) && Small3(x.r) && Small3(x.s);
+                        const Mat local = conv.Local(simple ? LocalSimple(x, fixed, R) : LocalMatrix(x, fixed, R), isRoot);
+                        Decompose(local, tr, q, s);
+                        std::memcpy(prevT, x.t, sizeof(prevT)); std::memcpy(prevS, x.s, sizeof(prevS)); havePrev = true;
+                    }
                     Key3 kt; kt.time = t; for (int k = 0; k < 3; ++k) kt.v[k] = tr[k];
                     Key4 kq; kq.time = t; for (int k = 0; k < 4; ++k) kq.v[k] = q[k];
                     Key3 ks; ks.time = t; for (int k = 0; k < 3; ++k) ks.v[k] = s[k];
@@ -1126,9 +1283,10 @@ struct Builder {
             }
             for (const BlendCN& b : blendCns) {
                 BlendAnim ba; ba.mesh = chanOfObj[b.target].first; ba.channel = chanOfObj[b.target].second;
+                std::size_t blendHint = (std::size_t)-1;
                 for (double t : times) {
                     Key3 k; k.time = t; k.v[1] = k.v[2] = 0;
-                    k.v[0] = b.cn->curve[0] ? b.cn->curve[0]->Eval(t + t0) : b.cn->def[0];
+                    k.v[0] = b.cn->curve[0] ? b.cn->curve[0]->Eval(t + t0, blendHint) : b.cn->def[0];
                     ba.percent.push_back(k);
                 }
                 clip.blends.push_back(std::move(ba));

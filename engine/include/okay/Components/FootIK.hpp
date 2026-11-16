@@ -1,4 +1,5 @@
 #pragma once
+#include "okay/Core/Profiler.hpp"
 #include "okay/Animation/HumanoidBones.hpp"
 // ---------------------------------------------------------------------------
 // FootIK — plant a biped's feet on the ground. Each frame it raycasts down
@@ -184,6 +185,7 @@ public:
     // Update let those Animators clobber the correction the same frame.
     void Update(float) override { m_restore.Restore(); }   // before the animator blends (see IKRestore.hpp)
     void LateUpdate(float dt) override {
+        OKAY_PROFILE("Anim.IK");
         if (m_lockHold > 0.0f) m_lockHold = std::max(0.0f, m_lockHold - dt);
         m_restore.Restore();   // last frame's corrections off before anything reads the pose
         m_leg[0].planted = m_leg[1].planted = false;

@@ -1229,6 +1229,24 @@ add_executable(test_player_fixes test_player_fixes.cpp)
 target_link_libraries(test_player_fixes PRIVATE okay::engine)
 add_test(NAME player_fixes COMMAND test_player_fixes)
 
+# The player deep audit (docs/player_audit.md): one check per proven bug, each failing with OKAY_OLD_PLAYER=1.
+add_executable(test_player_deep test_player_deep.cpp)
+target_link_libraries(test_player_deep PRIVATE okay::engine)
+add_test(NAME player_deep COMMAND test_player_deep)
+
+# The shipped obstacle course scene (examples/player): the file is what the code writes; a player walks its stations.
+add_executable(test_player_course test_player_course.cpp)
+target_link_libraries(test_player_course PRIVATE okay::engine)
+target_compile_definitions(test_player_course PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_course COMMAND test_player_course)
+add_executable(test_player_feel test_player_feel.cpp)
+target_link_libraries(test_player_feel PRIVATE okay::engine)
+add_test(NAME player_feel COMMAND test_player_feel)
+add_executable(test_player_feel_lab test_player_feel_lab.cpp)
+target_link_libraries(test_player_feel_lab PRIVATE okay::engine)
+target_compile_definitions(test_player_feel_lab PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME player_feel_lab COMMAND test_player_feel_lab)
+
 add_executable(test_terrain_ops test_terrain_ops.cpp)
 target_link_libraries(test_terrain_ops PRIVATE okay::engine)
 add_test(NAME terrain_ops COMMAND test_terrain_ops)

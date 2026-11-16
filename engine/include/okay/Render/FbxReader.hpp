@@ -157,6 +157,8 @@ template <class T> struct UninitAllocator : std::allocator<T> {
 /// Bytes that are written in full right after they are made room for (decoded zlib arrays): a resize does not zero
 /// them first (zero filling a 16 MB array cost about a tenth of reading the file it came from).
 using ByteBuffer = std::vector<std::uint8_t, UninitAllocator<std::uint8_t>>;
+/// The same for the numbers of an ASCII array (each is written before it is read).
+using NumberBuffer = std::vector<double, UninitAllocator<double>>;
 
 struct Document {
     std::uint32_t version = 0;     ///< 7400, 7500, ... (0 for ASCII files without a header)
@@ -167,7 +169,7 @@ struct Document {
     std::vector<Elem> elems;
     std::vector<Prop> props;
     std::vector<ByteBuffer> inflated;                  ///< decoded zlib arrays
-    std::vector<std::vector<double>> numbers;          ///< ASCII arrays (doubles, or int32 / float32 values packed in)
+    std::vector<NumberBuffer> numbers;                 ///< ASCII arrays (doubles, or int32 / float32 values packed in)
     Document() = default;
     Document(Document&&) = default;
     Document& operator=(Document&&) = default;

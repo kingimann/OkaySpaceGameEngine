@@ -318,14 +318,17 @@ inline bool RunBlock(BitReader& br, const Decoder& lit, const Decoder& dist, Out
             const size_t outSafe = out.v.size() - (258 + 8);
             const uint32_t litMask = lit.mask, distMask = dist.mask;
             size_t size = out.size;
-            auto save = [&] { br.pos = pos; br.buf = buf; br.cnt = cnt; out.size = size; };
+            // Here the bits of `buf` above `cnt` are not kept zero: a refill ORs in all 8 loaded bytes, and the ones above
+            // the new `cnt` are the stream's next bits, which the following refill ORs in again at the same place (the
+            // same bits, so nothing changes). save() clears them, so BitReader's rule (zero above cnt) holds outside.
+            auto save = [&] { br.pos = pos; br.buf = buf & ((uint64_t(1) << cnt) - 1); br.cnt = cnt; out.size = size; };
             auto load = [&] { pos = br.pos; buf = br.buf; cnt = br.cnt; };
             while (pos <= inSafe && size <= outSafe) {
-                if (cnt < 48) {   // whole bytes above `cnt` (the same refill as BitReader::Refill, 8 bytes are there)
+                if (cnt < 48) {   // whole bytes above `cnt` (the bytes BitReader::Refill would take; 8 bytes are there)
                     uint64_t w; std::memcpy(&w, src + pos, 8);
-                    const int take = (63 - cnt) >> 3;
-                    buf |= (w & ((uint64_t(1) << (take * 8)) - 1)) << cnt;
-                    pos += size_t(take); cnt += take * 8;
+                    buf |= w << cnt;
+                    pos += size_t((63 - cnt) >> 3);
+                    cnt |= 56;   // cnt + 8 * ((63 - cnt) / 8) for cnt < 64: 56 + (cnt & 7)
                 }
                 int sym;
                 if (const uint16_t e = lit.quick[buf & litMask]) { const int l = e & 15; buf >>= l; cnt -= l; sym = e >> 4; }

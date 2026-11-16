@@ -359,7 +359,7 @@ struct Text {
         out.type = 'a';
         // Written through an index into a vector sized from the declared count (capped: a file can lie), grown by
         // doubling if the file has more values than it declared, trimmed at the end.
-        std::vector<double> vals(cnt < (1u << 20) ? cnt : (1u << 20));
+        NumberBuffer vals(cnt < (1u << 20) ? cnt : (1u << 20));   // (not zero-filled: every value is written before it is read)
         std::size_t nv = 0;
         const std::size_t cap = std::min<std::size_t>(lim->maxArrayBytes / 8, 0xFFFFFFFEu);
         for (;;) {
@@ -413,7 +413,8 @@ struct Text {
         }
         char type = 'd';
         if (nv && (allInt || allFloat)) {
-            std::vector<double> packed((nv * 4 + 7) / 8);   // 4 bytes a value, in a buffer of doubles (the storage type)
+            NumberBuffer packed((nv * 4 + 7) / 8);   // 4 bytes a value, in a buffer of doubles (the storage type)
+            if (nv & 1) packed.back() = 0;            // (the 4 bytes after an odd count: never read, set anyway)
             std::uint8_t* q = (std::uint8_t*)packed.data();
             if (allInt) { type = 'i'; for (std::size_t k = 0; k < nv; ++k) { const std::int32_t x = (std::int32_t)vals[k]; std::memcpy(q + k * 4, &x, 4); } }
             else { type = 'f'; for (std::size_t k = 0; k < nv; ++k) { const float x = (float)vals[k]; std::memcpy(q + k * 4, &x, 4); } }

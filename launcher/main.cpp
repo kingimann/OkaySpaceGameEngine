@@ -4773,7 +4773,7 @@ namespace uitiming {
 static const bool kOn = std::getenv("OKAY_UI_TIMING") != nullptr;
 static double NowUs() { return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 static std::map<std::string, double> g_frame;   // "screen|backend" -> this frame's build time
-struct Acc { std::vector<double> build, total, imguiRender, okayRender; };
+struct Acc { std::vector<double> build, total, imguiRender, okayRender, imguiIdx, okayIdx; };
 static std::map<std::string, Acc> g_acc;
 struct Scope {
     std::string key; double t0 = 0.0;
@@ -4781,19 +4781,21 @@ struct Scope {
     ~Scope() { if (kOn) g_frame[key] += NowUs() - t0; }
 };
 static double Median(std::vector<double> v) { std::sort(v.begin(), v.end()); return v.empty() ? 0.0 : v[v.size() / 2]; }
-static void FrameDone(double imguiRenderUs, double okayRenderUs) {
+// imguiIdx / okayIdx: the frame's triangle indices drawn by each backend (the renderer's work grows with them).
+static void FrameDone(double imguiRenderUs, double okayRenderUs, int imguiIdx, int okayIdx) {
     if (!kOn) return;
     for (const auto& kv : g_frame) {
         Acc& a = g_acc[kv.first];
         a.build.push_back(kv.second); a.total.push_back(kv.second + imguiRenderUs + okayRenderUs);
         a.imguiRender.push_back(imguiRenderUs); a.okayRender.push_back(okayRenderUs);
+        a.imguiIdx.push_back(imguiIdx); a.okayIdx.push_back(okayIdx);
         if (a.build.size() >= 300) {
             const std::size_t bar = kv.first.find('|');
-            char line[320];
+            char line[400];
             std::snprintf(line, sizeof(line), "okayui-timing: %s on %s: build %.0f us, build + render %.0f us (median of 300 frames; "
-                          "render: Dear ImGui %.0f us, OkayUI %.0f us)",
+                          "render: Dear ImGui %.0f us, OkayUI %.0f us; indices: Dear ImGui %.0f, OkayUI %.0f)",
                           kv.first.substr(0, bar).c_str(), kv.first.substr(bar + 1).c_str(), Median(a.build), Median(a.total),
-                          Median(a.imguiRender), Median(a.okayRender));
+                          Median(a.imguiRender), Median(a.okayRender), Median(a.imguiIdx), Median(a.okayIdx));
             std::printf("%s\n", line); std::fflush(stdout);
             Toast(line, 0);
             a = Acc();
@@ -27372,7 +27374,13 @@ int main(int argc, char** argv) {
 #ifdef OKAY_HAVE_OKAYUI
         if (okayFrame) OkayUI::EndFrame(renderer);   // on top of everything ImGui drew, through the same renderer
 #endif
-        if (uitiming::kOn) uitiming::FrameDone(uiRenderT1 - uiRenderT0, uitiming::NowUs() - uiRenderT1);
+        if (uitiming::kOn) {
+            int okayIdx = 0;
+#ifdef OKAY_HAVE_OKAYUI
+            if (okayFrame) okayIdx = OkayUI::GetDrawData().indexCount;
+#endif
+            uitiming::FrameDone(uiRenderT1 - uiRenderT0, uitiming::NowUs() - uiRenderT1, ImGui::GetDrawData() ? ImGui::GetDrawData()->TotalIdxCount : 0, okayIdx);
+        }
         SDL_RenderPresent(renderer);
         ChatHostFrame(account);
 

@@ -605,6 +605,7 @@ inline SDL_Color toColor(const unsigned char c[4]) {
     return sc;
 }
 
+inline bool onPixel(float v) { return std::fabs(v - std::floor(v + 0.5f)) < 0.01f; }   // within 0.01 of a whole pixel
 inline bool aaOn() { return g_theme.antiAliased; }   // Theme::antiAliased (the anti-aliased shapes are further down)
 
 // Append an axis-aligned rectangle (two triangles) in a flat color, to whichever
@@ -908,16 +909,109 @@ void triAA(float ax, float ay, float bx, float by, float cx, float cy, const uns
 }
 // A straight line, anti-aliased: a two-point stroke whose normal is worked out once.
 void lineAA(float x0, float y0, float x1, float y1, float th, const unsigned char c[4]) {
+    // A horizontal or vertical line whose sides fall on pixel edges covers whole pixels: the fringe would add nothing.
+    if (y0 == y1 && x0 != x1 && onPixel(y0 - th * 0.5f) && onPixel(th)) { quad(std::min(x0, x1), y0 - th * 0.5f, std::fabs(x1 - x0), th, c); return; }
+    if (x0 == x1 && y0 != y1 && onPixel(x0 - th * 0.5f) && onPixel(th)) { quad(x0 - th * 0.5f, std::min(y0, y1), th, std::fabs(y1 - y0), c); return; }
     const float dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy;
     if (l2 <= 0.0001f) { quad(x0 - th * 0.5f, y0 - th * 0.5f, th, th, c); return; }
     const float l = 1.0f / std::sqrt(l2);
     const Vec2 p[2] = { Vec2{x0, y0}, Vec2{x1, y1} }, mu[2] = { Vec2{-dy * l, dx * l}, Vec2{-dy * l, dx * l} };
     aaStroke(p, mu, 2, false, th, c);
 }
+// Baked discs (fontatlas::Atlas::discCx): a filled circle, or a rounded corner, as one textured quad. The disc of whole radius
+// T (r <= T < r + 1) is drawn scaled by r / T, so its edge ramp is between half a pixel and one pixel wide, as the fringe's.
+// 0 when there is no disc for `r` (no atlas, too small, or larger than the largest baked).
+inline int discFor(float r) {
+    if (!g_ttf || !(r >= 1.5f)) return 0;
+    const int T = (int)std::ceil(r - 0.001f);
+    return T >= 2 && T <= g_ttf->discMax ? T : 0;
+}
+// The part [x0, x1] x [y0, y1] (screen pixels) of the circle of radius r centred on (cx, cy), from disc T.
+// `ring`: from the one-pixel ring of radius T instead (Atlas::ringCx).
+void discQuad(int T, float cx, float cy, float r, float x0, float y0, float x1, float y1, const SDL_Color& sc, bool ring = false) {
+    AaOut o;
+    if (!aaReserve(o, 4, 6)) return;
+    SDL_Vertex* V = o.V; int* I = o.I; int& nv = *o.nv; int& ni = *o.ni;
+    const float k = (float)T / r, iw = 1.0f / (float)g_ttf->w, ih = 1.0f / (float)g_ttf->h;
+    const float ox = ring ? g_ttf->ringCx[T] : g_ttf->discCx[T], oy = ring ? g_ttf->ringCy[T] : g_ttf->discCy[T];
+    const float u0 = (ox + (x0 - cx) * k) * iw, u1 = (ox + (x1 - cx) * k) * iw;
+    const float v0 = (oy + (y0 - cy) * k) * ih, v1 = (oy + (y1 - cy) * k) * ih;
+    const int b = nv;
+    SDL_Vertex v; v.color = sc;
+    v.position.x = x0; v.position.y = y0; v.tex_coord.x = u0; v.tex_coord.y = v0; V[nv++] = v;
+    v.position.x = x1; v.position.y = y0; v.tex_coord.x = u1; v.tex_coord.y = v0; V[nv++] = v;
+    v.position.x = x1; v.position.y = y1; v.tex_coord.x = u1; v.tex_coord.y = v1; V[nv++] = v;
+    v.position.x = x0; v.position.y = y1; v.tex_coord.x = u0; v.tex_coord.y = v1; V[nv++] = v;
+    aaQuadIdx(I, ni, b, b + 1, b + 2, b + 3);
+}
+// A filled rounded rectangle from a baked disc: four corner quads (each reaching one pixel outside, where the edge fades) and
+// up to three plain bands between them, which do not overlap: 42 indices instead of the fan and fringe's 100 to 200. A side
+// that is not on a pixel edge gets a one-pixel fringe quad of its own (alpha 1 half a pixel inside, 0 half a pixel outside) and
+// its band stops half a pixel short, so up to 66 indices. False (nothing drawn) when there is no disc for the radius.
+void fringeQuad(float x0, float y0, float x1, float y1, const SDL_Color& sc, bool vertical, bool fadeToHigh) {
+    AaOut o;
+    if (!aaReserve(o, 4, 6)) return;
+    SDL_Vertex* V = o.V; int* I = o.I; int& nv = *o.nv; int& ni = *o.ni;
+    SDL_Color in = sc, out = sc; out.a = 0;
+    // vertical: the fade runs along x (a left or right side); fadeToHigh: alpha 0 at the higher coordinate.
+    const SDL_Color c00 = fadeToHigh ? in : out, c11 = fadeToHigh ? out : in;
+    const int b = nv;
+    SDL_Vertex v; v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    v.position.x = x0; v.position.y = y0; v.color = c00;                     V[nv++] = v;
+    v.position.x = x1; v.position.y = y0; v.color = vertical ? c11 : c00;    V[nv++] = v;
+    v.position.x = x1; v.position.y = y1; v.color = c11;                     V[nv++] = v;
+    v.position.x = x0; v.position.y = y1; v.color = vertical ? c00 : c11;    V[nv++] = v;
+    aaQuadIdx(I, ni, b, b + 1, b + 2, b + 3);
+}
+bool rrectDisc(float x, float y, float w, float h, float rad, const unsigned char c[4]) {
+    const int T = discFor(rad);
+    if (!T) return false;
+    const SDL_Color sc = toColor(c);
+    const float xr = x + w, yb = y + h;
+    const bool hx = onPixel(x) && onPixel(xr), hy = onPixel(y) && onPixel(yb);   // hard (on pixel edges) left/right, top/bottom
+    const float ex = hx ? 0.0f : 0.5f, ey = hy ? 0.0f : 0.5f;
+    discQuad(T, x + rad, y + rad, rad, x - 1.0f, y - 1.0f, x + rad, y + rad, sc);
+    discQuad(T, xr - rad, y + rad, rad, xr - rad, y - 1.0f, xr + 1.0f, y + rad, sc);
+    discQuad(T, xr - rad, yb - rad, rad, xr - rad, yb - rad, xr + 1.0f, yb + 1.0f, sc);
+    discQuad(T, x + rad, yb - rad, rad, x - 1.0f, yb - rad, x + rad, yb + 1.0f, sc);
+    if (w - 2.0f * rad > 0.001f) {
+        quad(x + rad, y + ey, w - 2.0f * rad, rad - ey, c); quad(x + rad, yb - rad, w - 2.0f * rad, rad - ey, c);
+        if (!hy) { fringeQuad(x + rad, y - 0.5f, xr - rad, y + 0.5f, sc, false, false); fringeQuad(x + rad, yb - 0.5f, xr - rad, yb + 0.5f, sc, false, true); }
+    }
+    if (h - 2.0f * rad > 0.001f) {
+        quad(x + ex, y + rad, w - 2.0f * ex, h - 2.0f * rad, c);
+        if (!hx) { fringeQuad(x - 0.5f, y + rad, x + 0.5f, yb - rad, sc, true, false); fringeQuad(xr - 0.5f, y + rad, xr + 0.5f, yb - rad, sc, true, true); }
+    }
+    return true;
+}
+
+// A one-pixel rounded outline drawn inside the box [x, x + w] x [y, y + h] on whole pixels with a whole-pixel radius: four corner
+// quads from the baked ring and four one-pixel edge bars (48 indices instead of a stroke's 190). False when it does not apply.
+bool rectOutlineRing(float x, float y, float w, float h, float rad, const unsigned char c[4]) {
+    if (!g_ttf || !onPixel(x) || !onPixel(y) || !onPixel(x + w) || !onPixel(y + h) || !onPixel(rad)) return false;
+    const int T = (int)std::floor(rad + 0.5f);
+    if (T < 2 || T > g_ttf->ringMax || w < 2.0f * T || h < 2.0f * T) return false;
+    const float r = (float)T, xr = x + w, yb = y + h;
+    const SDL_Color sc = toColor(c);
+    discQuad(T, x + r, y + r, r, x - 1.0f, y - 1.0f, x + r, y + r, sc, true);
+    discQuad(T, xr - r, y + r, r, xr - r, y - 1.0f, xr + 1.0f, y + r, sc, true);
+    discQuad(T, xr - r, yb - r, r, xr - r, yb - r, xr + 1.0f, yb + 1.0f, sc, true);
+    discQuad(T, x + r, yb - r, r, x - 1.0f, yb - r, x + r, yb + 1.0f, sc, true);
+    if (w > 2.0f * r) { quad(x + r, y, w - 2.0f * r, 1.0f, c); quad(x + r, yb - 1.0f, w - 2.0f * r, 1.0f, c); }
+    if (h > 2.0f * r) { quad(x, y + r, 1.0f, h - 2.0f * r, c); quad(xr - 1.0f, y + r, 1.0f, h - 2.0f * r, c); }
+    return true;
+}
+
 // A filled circle, anti-aliased: the rim from the unit-circle table, which is also each rim point's normal.
 void fillCircleAA(float cx, float cy, float radius, const unsigned char c[4], int segments) {
     if (segments < 3) segments = 3;
     if (segments > 128) segments = 128;
+    // Enough segments that the polygon is within 0.3 px of the circle: the baked disc draws the same circle in one quad.
+    if (const int T = discFor(radius))
+        if (segments >= 12 && radius * (1.0f - std::cos(3.14159265f / (float)segments)) <= 0.3f) {
+            discQuad(T, cx, cy, radius, cx - radius - 1.0f, cy - radius - 1.0f, cx + radius + 1.0f, cy + radius + 1.0f, toColor(c));
+            return;
+        }
     const float* u = unitCircle(segments);
     Vec2 p[128], nrm[128];
     for (int i = 0; i < segments; ++i) {
@@ -950,6 +1044,7 @@ struct AaCorners {
 const AaCorners& aaCorners() { static const AaCorners T; return T; }
 // A filled rounded rectangle, anti-aliased: 4 * (steps + 1) rim points from the corner table, which also gives their normals.
 void rrectAA(float x, float y, float w, float h, float rad, const unsigned char c[4]) {
+    if (rrectDisc(x, y, w, h, rad, c)) return;
     const AaCorners& T = aaCorners();
     const int q = T.Steps(rad);
     const float cx[4] = { x + rad, x + w - rad, x + w - rad, x + rad }, cy[4] = { y + rad, y + rad, y + h - rad, y + h - rad };
@@ -1899,6 +1994,7 @@ void mergeOverlay() {
 }
 // End-of-frame interaction bookkeeping, shared by every backend.
 void finalizeFrame() {
+
     if (g_released) g_active = 0;                    // clear if the active item wasn't drawn
     if (g_pressed && !g_focusClaimed) { if (g_focus != 0) { g_lostFocusId = g_focus; g_lostFocusEdited = (g_editedId == g_focus); } g_focus = 0; }   // click on empty space drops keyboard focus
     // A floating chip follows the cursor while dragging (drawn in the overlay so it's
@@ -2659,27 +2755,30 @@ void EndChild() {
         const float sbx = c.rx + c.rw - c.sbw;
         if (!g_look || colorIsSet(Col_ScrollbarBg)) quad(sbx, c.ry, c.sbw, c.rh, pick(Col_ScrollbarBg, g_theme.track));
         float frac = viewH / contentH; if (frac > 1.0f) frac = 1.0f;
-        float thumbH = frac * c.rh; if (thumbH < 16.0f) thumbH = 16.0f;
+        // The thumb moves along the track. With the Dear ImGui look (imguiBar) the track is the bar inset by `in` at both ends
+        // and the thumb is drawn at its full length on it; otherwise the track is the whole bar.
+        const float in = c.imguiBar ? std::min(3.0f, std::max(0.0f, std::floor((c.sbw - 2.0f) * 0.5f))) : 0.0f;
+        const float trackY = c.ry + in, trackH = std::max(0.0f, c.rh - 2.0f * in);
+        float thumbH = frac * trackH; if (thumbH < 16.0f) thumbH = 16.0f; if (c.imguiBar && thumbH > trackH) thumbH = trackH;
         float t = maxScroll > 0.0f ? (*c.scroll / maxScroll) : 0.0f;
-        float thumbY = c.ry + t * (c.rh - thumbH);
+        float thumbY = trackY + t * (trackH - thumbH);
         // Drag the thumb.
         const int sbId = (int)((unsigned)c.lay.seed ^ 0x5cb0u ^ (unsigned)clampPx(sbx * 7.0f, 0)) & 0x7fffffff;
         const bool overThumb = hit(sbx, thumbY, c.sbw, thumbH);
         if (overThumb) g_hot = sbId;
         if (g_active == sbId) {
             if (!g_in.mouseDown) g_active = 0;
-            else if (c.rh - thumbH > 0.0f) *c.scroll += g_mouseDY * (maxScroll / (c.rh - thumbH));
+            else if (trackH - thumbH > 0.0f) *c.scroll += g_mouseDY * (maxScroll / (trackH - thumbH));
         } else if (overThumb && g_pressed) { g_active = sbId; g_focusClaimed = true; }
         if (*c.scroll < 0.0f) *c.scroll = 0.0f;
         if (*c.scroll > maxScroll) *c.scroll = maxScroll;
         if (c.imguiBar) {   // Dear ImGui's look: a faint thumb inset in the bar on every side (up to 3 px), brighter when hovered
-            const float in = std::min(3.0f, std::max(0.0f, std::floor((c.sbw - 2.0f) * 0.5f)));
             unsigned char tmp[4];
             const unsigned char white[4] = {255, 255, 255, 255};
             const unsigned char* tc = g_active == sbId ? pick(Col_ScrollbarGrabActive, g_theme.accent)
                                     : overThumb ? pick(Col_ScrollbarGrabHovered, withAlpha(white, 0.24f, tmp)) : pick(Col_ScrollbarGrab, withAlpha(white, 0.12f, tmp));
             const float tw = c.sbw - 2.0f * in;
-            if (tw > 0.0f && thumbH > 2.0f * in) rrect(sbx + in, thumbY + in, tw, thumbH - 2.0f * in, tw * 0.5f, tc);
+            if (tw > 0.0f && thumbH > 0.0f) rrect(sbx + in, thumbY, tw, thumbH, tw * 0.5f, tc);
         } else scrollbarThumb(sbx, c.ry, c.rh, thumbY, thumbH, g_active == sbId, overThumb, false);
     }
 
@@ -5540,6 +5639,7 @@ void DrawList::AddRect(Vec2 mn, Vec2 mx, Color32 col, float rounding, float th) 
         quad(mx.x - th, mn.y + th, th, h - 2.0f * th, c);
         return;
     }
+    if (aaOn() && std::fabs(th - 1.0f) < 0.001f && rectOutlineRing(mn.x, mn.y, w, h, rounding, c)) return;
     if (aaOn()) {   // the stroke's centre line inset by half its thickness, its points and normals from the corner table
         const float x0 = mn.x + th * 0.5f, y0 = mn.y + th * 0.5f, x1 = mx.x - th * 0.5f, y1 = mx.y - th * 0.5f;
         float r = rounding - th * 0.5f;

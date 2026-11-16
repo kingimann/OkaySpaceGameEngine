@@ -75,11 +75,21 @@ public:
         t.ascentRoundsUp = true;   // its text sits where the launcher's sits (the ascent rounded up)
         t.snapAdvances = true;     // and steps by whole pixels, as the launcher's font does
         t.antiAliased = true;      // its shapes have smooth (anti-aliased) edges, as the launcher's do
+        // Its text fields and combo boxes brighten by 5% towards white under the mouse and 9% while typing (the Slate theme's
+        // FrameBgHovered and FrameBgActive).
+        auto mix = [](float k) {   // the launcher's field colour (0.16, 0.18, 0.23) mixed towards white by k
+            const float f[3] = {0.16f, 0.18f, 0.23f};
+            int o[3]; for (int i = 0; i < 3; ++i) o[i] = (int)((f[i] + (1.0f - f[i]) * k) * 255.0f + 0.5f);
+            return Rgb(o[0], o[1], o[2]);
+        };
+        UI::PushStyleColor(UI::Col_FrameBgHovered, mix(0.05f));
+        UI::PushStyleColor(UI::Col_FrameBgActive, mix(0.09f));
         const float base = UI::GetTextLineHeight();   // 16 px times the UI scale
         UI::PushTextScale(std::max(1.0f, std::round(base * 17.0f / 16.0f)) / std::max(1.0f, base));
         UI::PushStyleVar(UI::StyleVar_FramePadding, V(kFrameX, kFrameY));
     }
     ~LauncherLook() {
+        UI::PopStyleColor(2);
         UI::PopStyleVar(1);
         UI::PopTextScale();
         UI::Theme& t = UI::Style();
@@ -160,23 +170,6 @@ bool FlatButton(const char* id, const char* label, float x, float y, float w, fl
     if (cut) dl.PopClipRect();
     if (hov) UI::SetMouseCursor(UI::MouseCursor_Hand);
     return clicked;
-}
-
-// A 1 px rounded outline drawn cheaply (it is on every download row every frame): the four straight sides as bars and each
-// corner as three short chords of its quarter circle.
-void HairlineBox(const UI::DrawList& dl, UI::Vec2 mn, UI::Vec2 mx, UI::Color32 col, float r) {
-    r = std::min(r, std::min(mx.x - mn.x, mx.y - mn.y) * 0.5f);
-    dl.AddRectFilled(V(mn.x + r, mn.y), V(mx.x - r, mn.y + 1.0f), col);
-    dl.AddRectFilled(V(mn.x + r, mx.y - 1.0f), V(mx.x - r, mx.y), col);
-    dl.AddRectFilled(V(mn.x, mn.y + r), V(mn.x + 1.0f, mx.y - r), col);
-    dl.AddRectFilled(V(mx.x - 1.0f, mn.y + r), V(mx.x, mx.y - r), col);
-    const float rr = r - 0.5f;
-    static const float k[4][2] = {{1.0f, 0.0f}, {0.8660254f, 0.5f}, {0.5f, 0.8660254f}, {0.0f, 1.0f}};   // cos, sin of 0, 30, 60, 90 degrees
-    const UI::Vec2 c[4] = {V(mn.x + r, mn.y + r), V(mx.x - r, mn.y + r), V(mx.x - r, mx.y - r), V(mn.x + r, mx.y - r)};
-    const float sx[4] = {-1, 1, 1, -1}, sy[4] = {-1, -1, 1, 1};
-    for (int q = 0; q < 4; ++q)
-        for (int i = 0; i < 3; ++i)
-            dl.AddLine(V(c[q].x + sx[q] * k[i][0] * rr, c[q].y + sy[q] * k[i][1] * rr), V(c[q].x + sx[q] * k[i + 1][0] * rr, c[q].y + sy[q] * k[i + 1][1] * rr), col, 1.0f);
 }
 
 // One line of text centred in `width` from x.
@@ -436,7 +429,7 @@ DownloadsResult DrawDownloads(const DownloadsModel& m, float x, float y, float w
             const UI::Vec2 rp = V(o.x, ly);
             res.rows[i] = UI::Rect{rp.x, rp.y, cw, rowH};
             const bool hov = UI::IsMouseHoveringRect(rp, V(rp.x + cw, rp.y + rowH));
-            HairlineBox(dl, rp, V(rp.x + cw, rp.y + rowH), CBorder(), 8.0f);
+            dl.AddRect(rp, V(rp.x + cw, rp.y + rowH), CBorder(), 8.0f, 1.0f);   // one pixel, anti-aliased (a baked ring at the corners)
             if (hov) dl.AddRect(rp, V(rp.x + cw, rp.y + rowH), Col(th.accent), 7.0f, 2.0f);
             const float ix = rp.x + padX, inW = cw - 2.0f * padX;
             float iy = rp.y + padY;

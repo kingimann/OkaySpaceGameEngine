@@ -36,6 +36,18 @@ struct Atlas {
     float whiteU = 0, whiteV = 0;    // a fully opaque texel
     int   nsizes = 0;
     Size  sizes[12];
+    // Anti-aliased discs (Theme::antiAliased): for each whole radius T from 2 to discMax, a white disc of radius T whose alpha
+    // falls from 1 to 0 across its edge (1 half a texel inside, 0 half a texel outside, as the shapes' fringe does), centred
+    // at texel corner (discCx[T], discCy[T]) with kDiscPad clear texels around it. A circle or a rounded corner of radius r
+    // (T - 1 < r <= T) is then one textured quad instead of a fan and a fringe. discMax 0: none baked (no room).
+    static constexpr int kDiscMaxR = 48, kDiscPad = 3;
+    int   discMax = 0;
+    float discCx[kDiscMaxR + 1] = {}, discCy[kDiscMaxR + 1] = {};
+    // The same for one-pixel rings: for each whole radius T up to ringMax, a circle line one pixel wide whose centre runs at
+    // radius T - 0.5 (alpha 1 there, falling to 0 one pixel either side): the corner of a one-pixel rounded outline drawn inside
+    // its box. ringMax 0: none baked.
+    int   ringMax = 0;
+    float ringCx[kDiscMaxR + 1] = {}, ringCy[kDiscMaxR + 1] = {};
     /// The baked size to draw `pixelHeight` text with (the smallest that's >= it,
     /// else the largest).
     const Size& Pick(float pixelHeight) const;

@@ -36,8 +36,8 @@ static fbx::BuildOptions Tight() {   // tiny limits: a hostile file may not make
     return o;
 }
 static bool Load(const Bytes& b, const fbx::BuildOptions& o = Tight(), std::string* err = nullptr) {
-    fbx::Scene s;   // the reader, then the import's triangulation of its polygons (BuildParts)
-    return fbx::LoadMemory(b.data(), b.size(), s, err, o) && fbx::BuildParts(s, err, o.limits);
+    fbx::Scene s;   // the reader, then the import steps: the triangulation of its polygons and the clips' keys
+    return fbx::LoadMemory(b.data(), b.size(), s, err, o) && fbx::BuildParts(s, err, o.limits) && fbx::BuildClips(s, err);
 }
 
 static Bytes Header(std::uint32_t version = 7400) {
@@ -303,7 +303,8 @@ static std::string AnimText(int stacks, int layers, int keys, double spanSec, in
 }
 static bool LoadText(const std::string& t, const fbx::BuildOptions& o, std::string* err, fbx::Scene* out = nullptr) {
     fbx::Scene s;
-    const bool ok = fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), out ? *out : s, err, o) && fbx::BuildParts(out ? *out : s, err, o.limits);
+    fbx::Scene& r = out ? *out : s;   // the reader, then the import steps (triangles, the clips' keys)
+    const bool ok = fbx::LoadMemory((const std::uint8_t*)t.data(), t.size(), r, err, o) && fbx::BuildParts(r, err, o.limits) && fbx::BuildClips(r, err);
     return ok;
 }
 

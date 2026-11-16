@@ -6,15 +6,17 @@
 // OKAY_OWN_FBX=ON (makes it the build default) or at run time with the
 // environment variable OKAY_OWN_FBX=1 / okay::fbx::SetOwnReaderEnabled(true).
 //
-// Two layers:
+// Two layers, and two import steps:
 //   1. Parse()  - bytes -> a plain element tree (Document). No scene knowledge.
 //   2. Build()  - Document -> Scene: nodes with transforms, meshes as the
 //                 file's polygons (positions, polygon index lists and the
 //                 per-corner layers), skins, blend shapes, materials, textures
-//                 and animation clips. Already converted to right-handed Y-up,
-//                 meters (like ModelImport asks ufbx for).
-//   3. BuildParts() - the import step: a mesh's polygons -> triangles split per
-//                 material, with equal corners shared (Mesh::parts).
+//                 and the animation curves (the clips planned, not keyed).
+//                 Already converted to right-handed Y-up, meters (like
+//                 ModelImport asks ufbx for).
+//   3. The import steps: BuildParts() turns a mesh's polygons into triangles
+//                 split per material, with equal corners shared (Mesh::parts);
+//                 BuildClips() makes the clips' keys from the curves.
 //
 // Pure standard C++ (no engine headers, no <mutex>/<thread>), so it also
 // builds standalone for the hostile-input fuzz tests. What is NOT handled yet
@@ -319,6 +321,9 @@ struct Clip {
     std::vector<BlendAnim> blends;
 };
 
+/// What the clips' keys are made from, kept by the reader until BuildClips (an internal type of FbxScene.cpp).
+struct ClipSource { virtual ~ClipSource() = default; };
+
 struct Settings {
     int upAxis = 1, upSign = 1, frontAxis = 2, frontSign = 1, coordAxis = 0, coordSign = 1;
     double unitScaleFactor = 1.0;  ///< FBX UnitScaleFactor (1 = centimeter)
@@ -331,7 +336,9 @@ struct Scene {
     std::vector<Mesh> meshes;
     std::vector<Material> materials;
     std::vector<Texture> textures;
-    std::vector<Clip> clips;
+    std::vector<Clip> clips;           ///< name, duration and start from the reader; nodes and blends after BuildClips
+    /// The reader's animation curves and clip plans until BuildClips makes the keys (then empty). Shared by copies.
+    std::shared_ptr<ClipSource> clipSource;
     Settings settings;
     std::string creator;
 };
@@ -377,7 +384,13 @@ bool Build(const Document& doc, Scene& out, std::string* err, const BuildOptions
 bool BuildParts(Mesh& m, std::string* err = nullptr, const Limits& lim = Limits(), bool releasePolygons = false);
 /// BuildParts for every mesh of the scene.
 bool BuildParts(Scene& s, std::string* err = nullptr, const Limits& lim = Limits(), bool releasePolygons = false);
-/// Parse + Build. The meshes come back as polygons (Mesh::polygons); call BuildParts for triangles.
+/// The import step that makes the clips' keys (Clip::nodes and Clip::blends) from the curves the reader kept: keys at
+/// the file's own key times plus the ones BuildOptions::keyTolerance needs, or the fixed-rate bake (BuildOptions as
+/// given to the reader). Does nothing when there is nothing left to make. Returns false (err set) when the file goes
+/// past Limits::maxTotalBakedSamples while the keys are made.
+bool BuildClips(Scene& s, std::string* err = nullptr);
+/// Parse + Build. The meshes come back as polygons (Mesh::polygons): call BuildParts for triangles; the clips come back
+/// without keys: call BuildClips.
 bool LoadMemory(const std::uint8_t* data, std::size_t size, Scene& out, std::string* err, const BuildOptions& opt = BuildOptions());
 bool LoadFile(const std::string& path, Scene& out, std::string* err, const BuildOptions& opt = BuildOptions());
 

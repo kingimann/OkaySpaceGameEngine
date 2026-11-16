@@ -1817,8 +1817,9 @@ static Mesh ImportFbxMergedOwn(const std::string& path, bool* ok, std::string* o
 
 static GameObject* ImportFbxSceneGraphOwn(Scene& scene, const std::string& path, bool* ok, std::string* err) {
     fbx::Scene sc;
-    // The reader gives polygons; the import triangulates them (each mesh's polygon arrays freed once it has its parts).
-    if (!fbx::LoadFile(path, sc, err) || !fbx::BuildParts(sc, err, fbx::Limits(), true)) { if (ok) *ok = false; return nullptr; }
+    // The reader gives polygons and animation curves; the import triangulates the polygons (each mesh's polygon arrays
+    // freed once it has its parts) and makes the clips' keys.
+    if (!fbx::LoadFile(path, sc, err) || !fbx::BuildParts(sc, err, fbx::Limits(), true) || !fbx::BuildClips(sc, err)) { if (ok) *ok = false; return nullptr; }
     GameObject* root = scene.CreateGameObject(BaseName(path));
     std::vector<GameObject*> goOf(sc.nodes.size(), nullptr);
     std::unordered_map<std::string, int> nameUse;

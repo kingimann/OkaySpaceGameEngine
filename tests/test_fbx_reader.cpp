@@ -61,8 +61,11 @@ static double MeshArea(const fbx::Mesh& m) {
     for (const fbx::Part& p : m.parts) { const std::vector<fbx::Corner> cs = p.ExpandCorners(); for (std::size_t i = 0; i + 2 < cs.size(); i += 3) s += TriArea(&cs[i]); }
     return s;
 }
-/// The reader, then the import's triangulation of the meshes' polygons (fbx::BuildParts): what the checks on parts need.
-static bool LoadParts(const std::string& path, fbx::Scene& s, std::string* err) { return fbx::LoadFile(path, s, err) && fbx::BuildParts(s, err); }
+/// The reader, then the import steps: the triangulation of the meshes' polygons (fbx::BuildParts) and the clips' keys
+/// (fbx::BuildClips), which the checks on parts and keys need.
+static bool LoadBuilt(const std::string& path, fbx::Scene& s, std::string* err, const fbx::BuildOptions& o = fbx::BuildOptions()) {
+    return fbx::LoadFile(path, s, err, o) && fbx::BuildParts(s, err) && fbx::BuildClips(s, err);
+}
 static const fbx::SceneNode* FindNode(const fbx::Scene& s, const char* n) {
     for (const auto& x : s.nodes) if (x.name == n) return &x;
     return nullptr;
@@ -102,8 +105,8 @@ static void DirectTests() {
     RUN_SUITE("fbx scene: cube (Z up, cm), binary vs ascii");
     fbx::Scene b, a;
     std::string err;
-    CHECK(LoadParts(Fx("cube_zup_cm_bin.fbx"), b, &err));
-    CHECK(LoadParts(Fx("cube_zup_cm_ascii.fbx"), a, &err));
+    CHECK(LoadBuilt(Fx("cube_zup_cm_bin.fbx"), b, &err));
+    CHECK(LoadBuilt(Fx("cube_zup_cm_ascii.fbx"), a, &err));
     CHECK(b.nodes.size() == 1 && a.nodes.size() == 1);
     if (b.nodes.size() == 1 && a.nodes.size() == 1) {
         const fbx::SceneNode& n = b.nodes[0];
@@ -155,7 +158,7 @@ static void DirectTests() {
 
     RUN_SUITE("fbx scene: n-gons, ear clipping, per-polygon materials");
     fbx::Scene g;
-    CHECK(LoadParts(Fx("ngon_bin.fbx"), g, &err));
+    CHECK(LoadBuilt(Fx("ngon_bin.fbx"), g, &err));
     if (!g.meshes.empty()) {
         const fbx::Mesh& m = g.meshes[0];
         // L hexagon (area 3) + pentagon + triangle (0.5)
@@ -178,7 +181,7 @@ static void DirectTests() {
 
     RUN_SUITE("fbx scene: generated normals, hierarchy, bad polygons");
     fbx::Scene pl;
-    CHECK(LoadParts(Fx("plain_bin.fbx"), pl, &err));
+    CHECK(LoadBuilt(Fx("plain_bin.fbx"), pl, &err));
     CHECK(pl.nodes.size() == 2 && pl.roots.size() == 1);
     if (pl.nodes.size() == 2) {
         CHECK(pl.nodes[0].name == "Parent" && pl.nodes[1].name == "Pyr" && pl.nodes[1].parent == 0);
@@ -194,7 +197,7 @@ static void DirectTests() {
     RUN_SUITE("fbx scene: rig (skin, blend shape, animation)");
     for (const char* name : {"rig_bin75.fbx", "rig_ascii.fbx"}) {
         fbx::Scene r;
-        CHECK(fbx::LoadFile(Fx(name), r, &err));
+        CHECK(LoadBuilt(Fx(name), r, &err));
         CHECK(r.nodes.size() == 4);
         const fbx::SceneNode* tube = FindNode(r, "Tube");
         CHECK(tube && tube->mesh == 0);
@@ -283,14 +286,14 @@ static void DirectTests() {
     RUN_SUITE("fbx scene: bridge polygon, takes with their own time span, byte-array property");
     {
         fbx::Scene br;
-        CHECK(LoadParts(Fx("bridge_bin.fbx"), br, &err));
+        CHECK(LoadBuilt(Fx("bridge_bin.fbx"), br, &err));
         if (!br.meshes.empty()) CHECK(Near(MeshArea(br.meshes[0]), 12.0 * 0.0001, 1e-9));   // centimetres to metres: x 0.01 on both axes
     }
     {
         // three takes over one set of curves (x: 0 at t=0, 10 at t=1, 0 at t=2): "first" plays [0, 1],
         // "second" [1, 2], "whole" has no span of its own. The header holds a 'c' (byte array) thumbnail.
         fbx::Scene tk;
-        CHECK(fbx::LoadFile(Fx("takes_bin.fbx"), tk, &err));
+        CHECK(LoadBuilt(Fx("takes_bin.fbx"), tk, &err));
         CHECK(tk.clips.size() == 3);
         if (tk.clips.size() == 3) {
             const double want[3] = {1.0, 1.0, 2.0};
@@ -396,9 +399,9 @@ static void HermiteTests() {
         // our reader makes by default (keys at the file's times plus added ones), played between its keys.
         fbx::Scene r, rk; std::string err;
         fbx::BuildOptions bake30; bake30.fileKeys = false;
-        CHECK(fbx::LoadFile(file.string(), r, &err, bake30));
+        CHECK(LoadBuilt(file.string(), r, &err, bake30));
         CHECK(r.clips.size() == 1 && r.clips[0].nodes.size() == 1);
-        CHECK(fbx::LoadFile(file.string(), rk, &err));
+        CHECK(LoadBuilt(file.string(), rk, &err));
         CHECK(rk.clips.size() == 1 && rk.clips[0].nodes.size() == 1);
         for (int mode = 0; mode < 3; ++mode) {   // 0 = our reader (baked at 30 Hz), 1 = ufbx through the importer, 2 = our reader's file keys
             std::vector<double> got;

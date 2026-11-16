@@ -170,14 +170,15 @@ void CheckFile(const std::string& path, Totals& tot, bool verbose) {
     const std::vector<std::uint8_t> bytes = ReadAll(path);
     fbx::Scene now, truth, old;
     fbx::BuildOptions on; on.fileKeys = true;
-    if (!fbx::LoadMemory(bytes.data(), bytes.size(), now, &err, on)) return;   // files our reader rejects are another test's
+    // (the reader, then the import step that makes the clips' keys: fbx::BuildClips)
+    if (!fbx::LoadMemory(bytes.data(), bytes.size(), now, &err, on) || !fbx::BuildClips(now, &err)) return;   // files our reader rejects are another test's
     ++tot.files;
     if (now.clips.empty()) return;
     fbx::BuildOptions ref; ref.fileKeys = false; ref.bakeRate = 240.0;
     ref.limits.maxBakedSamples = std::size_t(1) << 24; ref.limits.maxTotalBakedSamples = std::size_t(1) << 28;
     fbx::BuildOptions o30; o30.fileKeys = false;
-    CHECK(fbx::LoadMemory(bytes.data(), bytes.size(), truth, &err, ref));
-    CHECK(fbx::LoadMemory(bytes.data(), bytes.size(), old, &err, o30));
+    CHECK(fbx::LoadMemory(bytes.data(), bytes.size(), truth, &err, ref) && fbx::BuildClips(truth, &err));
+    CHECK(fbx::LoadMemory(bytes.data(), bytes.size(), old, &err, o30) && fbx::BuildClips(old, &err));
     CHECK(truth.clips.size() == now.clips.size() && old.clips.size() == now.clips.size());
     if (truth.clips.size() != now.clips.size() || old.clips.size() != now.clips.size()) return;
     ++tot.animated;

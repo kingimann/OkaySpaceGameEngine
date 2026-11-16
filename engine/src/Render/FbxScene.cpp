@@ -1280,7 +1280,43 @@ struct Builder {
         return true;
     }
 
-    // ---- animation ----------------------------------------------------------
+    bool Animation();   // reads the curves and plans the clips (defined after Animator, below)
+
+
+    bool Run() {
+        if (!Index()) return false;
+        Settings();
+        Textures(); Materials();
+        if (!Nodes()) return false;
+        for (std::size_t i = 0; i < sc.nodes.size(); ++i) {
+            SetLocal(i, LocalMatrix(xp[i]));
+            SceneNode& n = sc.nodes[i];
+            n.world = n.parent >= 0 ? Mul(sc.nodes[(std::size_t)n.parent].world, n.local) : n.local;
+            const XProps& x = xp[i];
+            const Mat g = Mul(Translate(x.gt[0], x.gt[1], x.gt[2]), Mul(Euler(x.gr, 0), ScaleM(x.gs[0], x.gs[1], x.gs[2])));
+            n.geometryToNode = conv.Scaled(g);
+            n.geometryToWorld = Mul(n.world, n.geometryToNode);
+        }
+        if (!Meshes()) return false;
+        // Skin clusters refer to bones by node index; blend channel ids were recorded during Meshes().
+        return Animation();
+    }
+};
+
+// ---------------------------------------------------------------------------
+// clip keys (the import step: BuildClips). The reader (Builder::Animation) reads the curves and plans the clips; the
+// keys are made here, from what the Animator kept, when the import asks for them.
+// ---------------------------------------------------------------------------
+struct Animator : ClipSource {
+    using XProps = Builder::XProps; using FixedRot = Builder::FixedRot;
+    static FixedRot FixedRotations(const XProps& x) { return Builder::FixedRotations(x); }
+    static Mat LocalMatrix(const XProps& x, const FixedRot& f, const Mat& R) { return Builder::LocalMatrix(x, f, R); }
+    static Mat LocalSimple(const XProps& x, const FixedRot& f, const Mat& R) { return Builder::LocalSimple(x, f, R); }
+    BuildOptions opt; Conv conv; std::string err;
+    std::vector<XProps> xp;          // per node: its transform properties
+    std::vector<char> isRoot;        // per node: hangs off the scene root
+    std::vector<CurveNode> cns;      // (curve pointers into curveStore: neither vector changes after the reader)
+    bool Fail(const std::string& m) { if (err.empty()) err = m; return false; }
     struct Layr { Id id; std::string_view name; double weight = 100; int blendMode = 0; };
     std::vector<Curve> curveStore;
     /// A curve node driving one node's T, R or S in one layer; `hint` and `hintP` remember the key segments of the
@@ -1468,7 +1504,7 @@ struct Builder {
         KeyTimes(cs, t0, t1, times, jump);
         NodeBake nb;
         nb.list = &list; nb.layers = &layers; nb.x = xp[(std::size_t)node]; nb.fixed = FixedRotations(nb.x);
-        nb.isRoot = sc.nodes[(std::size_t)node].parent < 0; nb.t0 = t0; nb.cost = std::max<std::size_t>(1, list.size()); nb.out = &na;
+        nb.isRoot = isRoot[(std::size_t)node] != 0; nb.t0 = t0; nb.cost = std::max<std::size_t>(1, list.size()); nb.out = &na;
         if ((double)times.size() * (double)nb.cost > (double)(4 * opt.limits.maxTotalBakedSamples - std::min(fileKeyEvals, 4 * opt.limits.maxTotalBakedSamples)))
             return Fail("animation bake budget exceeded");
         std::vector<KeyPose> poses(times.size());
@@ -1550,170 +1586,38 @@ struct Builder {
         return true;
     }
 
-    bool Animation() {
-        // Budgets first: every count below is checked before anything proportional to it is allocated.
-        {
-            std::size_t stacks = 0, layers = 0, curves = 0, curveNodes = 0;
-            for (const Obj& o : objs) {
-                if (o.cls == "AnimationStack") ++stacks;
-                else if (o.cls == "AnimationLayer") ++layers;
-                else if (o.cls == "AnimationCurve") ++curves;
-                else if (o.cls == "AnimationCurveNode") ++curveNodes;
-            }
-            if (stacks > opt.limits.maxAnimStacks) return Fail("too many animation stacks");
-            if (layers > opt.limits.maxAnimLayers) return Fail("too many animation layers");
-            if (curves > opt.limits.maxAnimCurves || curveNodes > opt.limits.maxAnimCurves) return Fail("too many animation curves");
-        }
-        std::size_t totalKeys = 0, totalBaked = 0;
-        // curves
-        IdMap<int> curveOf;
-        for (const Obj& o : objs) {
-            if (o.cls != "AnimationCurve") continue;
-            Curve c;
-            const Array* kt = ArrayOf(*o.e, "KeyTime");
-            const Array* kv = ArrayOf(*o.e, "KeyValueFloat");
-            if (!kv) kv = ArrayOf(*o.e, "KeyValueDouble");
-            if (!kt || !kv) continue;
-            const std::size_t n = std::min(kt->size(), kv->size());
-            if (n > opt.limits.maxAnimKeys - totalKeys) return Fail("too many animation keys");
-            totalKeys += n;
-            const Array* fl = ArrayOf(*o.e, "KeyAttrFlags");
-            const Array* da = ArrayOf(*o.e, "KeyAttrDataFloat");
-            std::vector<double> daBits; Array daBitsArr;
-            if (da && !doc.binary && doc.version >= 7200) {
-                // ASCII files from 7.2 on print this array as integers: the 32-bit patterns of the floats (slopes,
-                // and packed weights/velocities). Binary files carry real floats; see the same rule in ufbx.
-                daBits.reserve(da->size());
-                for (std::size_t k = 0; k < da->size(); ++k) { const double d = (*da)[k]; const std::uint32_t u = (d > -4.3e9 && d < 4.3e9) ? (std::uint32_t)(std::int64_t)d : 0u; float f; std::memcpy(&f, &u, 4); daBits.push_back((double)f); }
-                daBitsArr.type = 'd'; daBitsArr.count = (std::uint32_t)daBits.size(); daBitsArr.data = (const std::uint8_t*)daBits.data();
-                da = &daBitsArr;
-            }
-            const Array* rc = ArrayOf(*o.e, "KeyAttrRefCount");
-            // Attribute set of each key: KeyAttrRefCount says how many keys in a row use each set (all use set 0
-            // without it). Walked along with the keys below, the same rule as one index per key computed first.
-            const std::size_t nsets = (rc && !rc->empty()) ? rc->size() : 1;
-            std::size_t sCur = 0, left = (rc && !rc->empty()) ? (std::size_t)std::max(0.0, (*rc)[0]) : n;
-            auto nextSet = [&]() -> std::size_t {
-                if (!rc) return 0;
-                while (left == 0 && sCur + 1 < rc->size()) { ++sCur; left = (std::size_t)std::max(0.0, (*rc)[sCur]); }
-                const std::size_t sg = sCur;
-                if (left) --left;
-                return sg;
-            };
-            c.t.reserve(n); c.v.reserve(n);
-            if (nsets > 1) c.set.reserve(n);
-            double prev = -1e300;
-            bool otherSet = false;
-            std::size_t maxSet = 0;   // the tables below cover the sets the kept keys use (never more than the keys)
-            for (std::size_t i = 0; i < n; ++i) {
-                const std::size_t sg = nextSet();
-                const double t = (*kt)[i] / kKTimePerSec;
-                if (!std::isfinite(t) || !std::isfinite((*kv)[i]) || t < prev) continue;   // keep keys sorted and finite
-                prev = t;
-                c.t.push_back(t); c.v.push_back((*kv)[i]);
-                if (nsets > 1) { c.set.push_back((std::uint32_t)sg); otherSet |= sg != 0; maxSet = std::max(maxSet, sg); }
-                if (da && (sg * 4 + 1) < da->size()) c.hasSlopes = true;   // without the array every slope is 0
-            }
-            if (!otherSet) std::vector<std::uint32_t>().swap(c.set);   // every key uses set 0
-            // per set: the flags (0x8, cubic, without KeyAttrFlags) and the slopes (0 where the file has none)
-            const std::size_t usedSets = c.set.empty() ? 1 : maxSet + 1;
-            c.setFlags.resize(usedSets);
-            for (std::size_t sg = 0; sg < usedSets; ++sg)
-                c.setFlags[sg] = (fl && !fl->empty()) ? SafeInt((*fl)[std::min(sg, fl->size() - 1)]) : 0x8;
-            if (c.hasSlopes) {
-                c.setR.assign(usedSets, 0.0); c.setL.assign(usedSets, 0.0);
-                for (std::size_t sg = 0; sg < usedSets; ++sg)
-                    if ((sg * 4 + 1) < da->size()) { c.setR[sg] = (*da)[sg * 4]; c.setL[sg] = (*da)[sg * 4 + 1]; }
-            }
-            curveOf[ToId(o.e->props[0].Num())] = (int)curveStore.size();
-            curveStore.push_back(std::move(c));
-        }
-        // curve nodes
-        std::vector<CurveNode> cns; IdMap<std::size_t> cnOf;
-        for (const Obj& o : objs) {
-            if (o.cls != "AnimationCurveNode") continue;
-            CurveNode cn;
-            const Id id = ToId(o.e->props[0].Num());
-            o.props.Vec3("d|X", cn.def, 0);
-            if (o.props.Has("d|DeformPercent")) cn.def[0] = o.props.Get("d|DeformPercent", 0);
-            for (const Conn* c : ChildrenOf(id)) {   // curves feeding it
-                if (!c->propLink) continue;
-                const Obj* cv = Get(c->child);
-                if (!cv || cv->cls != "AnimationCurve") continue;
-                const int* it = curveOf.find(c->child);
-                if (!it || curveStore[(std::size_t)*it].Empty()) continue;
-                const int comp = (c->prop == "d|X" || c->prop == "d|DeformPercent") ? 0 : c->prop == "d|Y" ? 1 : c->prop == "d|Z" ? 2 : -1;
-                if (comp >= 0) cn.curve[comp] = &curveStore[(std::size_t)*it];
-            }
-            for (int k = 1; k < 3; ++k) { const char* nm = k == 1 ? "d|Y" : "d|Z"; cn.def[k] = o.props.Get(nm, 0); }
-            for (const Conn* c : ParentsOf(id)) {    // what it drives
-                if (!c->propLink) continue;
-                cn.target = c->parent; cn.prop = c->prop; break;
-            }
-            cnOf[id] = cns.size();
-            cns.push_back(cn);
-        }
-        // stacks -> layers -> curve nodes
-        for (const Obj& st : objs) {
-            if (st.cls != "AnimationStack") continue;
-            const Id sid = ToId(st.e->props[0].Num());
-            std::vector<Layr> layers;
-            for (const Conn* c : ChildrenOf(sid)) {
-                const Obj* l = Get(c->child);
-                if (!l || l->cls != "AnimationLayer" || c->propLink) continue;
-                Layr ly; ly.id = c->child; ly.name = l->name; ly.weight = l->props.Get("Weight", 100.0); ly.blendMode = SafeInt(l->props.Get("BlendMode", 0.0));
-                layers.push_back(ly);
-            }
-            std::map<int, std::vector<NodeCN>> perNode;                       // node index -> curve nodes (ordered)
-            struct BlendCN { int layer; Id target; const CurveNode* cn; };
-            std::vector<BlendCN> blendCns;
-            double t0 = 1e300, t1 = -1e300;
-            auto span = [&](const CurveNode& cn) { for (int k = 0; k < 3; ++k) if (cn.curve[k] && !cn.curve[k]->Empty()) { t0 = std::min(t0, cn.curve[k]->t.front()); t1 = std::max(t1, cn.curve[k]->t.back()); } };
-            for (std::size_t li = 0; li < layers.size(); ++li)
-                for (const Conn* c : ChildrenOf(layers[li].id)) {
-                    const std::size_t* it = cnOf.find(c->child);
-                    if (!it || c->propLink) continue;
-                    const CurveNode& cn = cns[*it];
-                    const int* nm = nodeOfModel.find(cn.target);
-                    if (nm) {
-                        int which = cn.prop == "Lcl Translation" ? 0 : cn.prop == "Lcl Rotation" ? 1 : cn.prop == "Lcl Scaling" ? 2 : -1;
-                        if (which < 0) continue;
-                        perNode[*nm].push_back({(int)li, which, &cn, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}}); span(cn);
-                    } else if (cn.prop == "DeformPercent" && chanOfObj.count(cn.target)) { blendCns.push_back({(int)li, cn.target, &cn}); span(cn); }
-                }
-            if (perNode.empty() && blendCns.empty()) continue;
-            if (t1 < t0) continue;
-            // A take has its own time span (LocalStart / LocalStop): several takes can share one timeline
-            // and their curves, so the span, not the keys, says which part of the curves a take plays.
-            if (st.props.Has("LocalStop")) {
-                const double a = st.props.Get("LocalStart", 0.0) / kKTimePerSec, b = st.props.Get("LocalStop", 0.0) / kKTimePerSec;
-                if (std::isfinite(a) && std::isfinite(b) && b > a) { t0 = a; t1 = b; }
-            }
-            Clip clip; clip.name = std::string(st.name);
-            const double dur = t1 - t0;
-            std::size_t samples = SafeSize(std::max(1.0, std::ceil(dur * opt.bakeRate)));   // a hostile LocalStop makes dur huge: saturate, then the limits below apply
-            if (samples >= opt.limits.maxBakedSamples) samples = opt.limits.maxBakedSamples - 1;   // (not samples + 1 > max: that wraps for a saturated count)
-            {   // whole-file budget: this clip costs (sample count) x (curve nodes it evaluates)
-                std::size_t entries = blendCns.size();
-                for (const auto& kv : perNode) entries += kv.second.size();
-                const std::size_t ts = dur > 0 ? samples + 1 : 1;
-                if (entries && ts > (opt.limits.maxTotalBakedSamples - totalBaked) / entries) return Fail("animation bake budget exceeded");
-                totalBaked += ts * entries;
-            }
-            clip.duration = dur;
-            clip.start = t0;
+    /// One take: what its keys are made from.
+    struct Plan {
+        std::size_t clip = 0;        // index in Scene::clips
+        std::vector<Layr> layers;
+        std::map<int, std::vector<NodeCN>> perNode;   // node index -> curve nodes (ordered)
+        struct Blend { int mesh, channel; const CurveNode* cn; };
+        std::vector<Blend> blends;
+        double t0 = 0, t1 = 0, dur = 0; std::size_t samples = 0;
+    };
+    std::vector<Plan> plans;
+    /// Makes the keys of every planned clip into `sc.clips` (the import step; BuildClips).
+    bool Bake(Scene& sc) {
+        fileKeyEvals = 0; err.clear();
+        for (Plan& pl : plans) {
+            if (pl.clip >= sc.clips.size()) return Fail("clip missing");
+            Clip& clip = sc.clips[pl.clip];
+            clip.nodes.clear(); clip.blends.clear();
+            const double t0 = pl.t0, t1 = pl.t1, dur = pl.dur;
+            const std::size_t samples = pl.samples;
+            std::vector<Layr>& layers = pl.layers;
+            std::map<int, std::vector<NodeCN>>& perNode = pl.perNode;
             if (opt.fileKeys) {
                 for (auto& kv : perNode) {
                     NodeAnim na; na.node = kv.first;
                     if (!BakeNodeFileKeys(kv.second, layers, kv.first, t0, t1, na)) return false;
                     clip.nodes.push_back(std::move(na));
                 }
-                for (const BlendCN& b : blendCns) {
-                    BlendAnim ba; ba.mesh = chanOfObj[b.target].first; ba.channel = chanOfObj[b.target].second;
+                for (const Plan::Blend& b : pl.blends) {
+                    BlendAnim ba; ba.mesh = b.mesh; ba.channel = b.channel;
                     if (!BakeBlendFileKeys(*b.cn, t0, t1, ba)) return false;
                     clip.blends.push_back(std::move(ba));
                 }
-                sc.clips.push_back(std::move(clip));
                 continue;
             }
             std::vector<double> times;
@@ -1744,14 +1648,14 @@ struct Builder {
                 double prevT[3], prevR[3], prevS[3], tr[3], q[4], s[3];
                 bool havePrev = false, haveR = false;
                 Mat R;
-                const bool isRoot = sc.nodes[(std::size_t)kv.first].parent < 0;
+                const bool isRootNode = isRoot[(std::size_t)kv.first] != 0;
                 for (double t : times) {
                     evalVec(kv.second, 0, base.t, t, x.t); evalVec(kv.second, 1, base.r, t, x.r); evalVec(kv.second, 2, base.s, t, x.s);
                     const bool sameR = haveR && std::memcmp(prevR, x.r, sizeof(prevR)) == 0;
                     if (!(havePrev && sameR && std::memcmp(prevT, x.t, sizeof(prevT)) == 0 && std::memcmp(prevS, x.s, sizeof(prevS)) == 0)) {
                         if (!sameR) { R = Euler(x.r, x.order); std::memcpy(prevR, x.r, sizeof(prevR)); haveR = true; }
                         const bool simple = fixed.simple && Small3(x.t) && Small3(x.r) && Small3(x.s);
-                        const Mat local = conv.Local(simple ? LocalSimple(x, fixed, R) : LocalMatrix(x, fixed, R), isRoot);
+                        const Mat local = conv.Local(simple ? LocalSimple(x, fixed, R) : LocalMatrix(x, fixed, R), isRootNode);
                         Decompose(local, tr, q, s);
                         std::memcpy(prevT, x.t, sizeof(prevT)); std::memcpy(prevS, x.s, sizeof(prevS)); havePrev = true;
                     }
@@ -1762,8 +1666,8 @@ struct Builder {
                 }
                 clip.nodes.push_back(std::move(na));
             }
-            for (const BlendCN& b : blendCns) {
-                BlendAnim ba; ba.mesh = chanOfObj[b.target].first; ba.channel = chanOfObj[b.target].second;
+            for (const Plan::Blend& b : pl.blends) {
+                BlendAnim ba; ba.mesh = b.mesh; ba.channel = b.channel;
                 std::size_t blendHint = (std::size_t)-1;
                 for (double t : times) {
                     Key3 k; k.time = t; k.v[1] = k.v[2] = 0;
@@ -1772,30 +1676,186 @@ struct Builder {
                 }
                 clip.blends.push_back(std::move(ba));
             }
-            sc.clips.push_back(std::move(clip));
         }
         return true;
     }
-
-    bool Run() {
-        if (!Index()) return false;
-        Settings();
-        Textures(); Materials();
-        if (!Nodes()) return false;
-        for (std::size_t i = 0; i < sc.nodes.size(); ++i) {
-            SetLocal(i, LocalMatrix(xp[i]));
-            SceneNode& n = sc.nodes[i];
-            n.world = n.parent >= 0 ? Mul(sc.nodes[(std::size_t)n.parent].world, n.local) : n.local;
-            const XProps& x = xp[i];
-            const Mat g = Mul(Translate(x.gt[0], x.gt[1], x.gt[2]), Mul(Euler(x.gr, 0), ScaleM(x.gs[0], x.gs[1], x.gs[2])));
-            n.geometryToNode = conv.Scaled(g);
-            n.geometryToWorld = Mul(n.world, n.geometryToNode);
-        }
-        if (!Meshes()) return false;
-        // Skin clusters refer to bones by node index; blend channel ids were recorded during Meshes().
-        return Animation();
-    }
 };
+
+bool Builder::Animation() {
+    using Layr = Animator::Layr; using NodeCN = Animator::NodeCN;
+    // Budgets first: every count below is checked before anything proportional to it is allocated.
+    {
+        std::size_t stacks = 0, layers = 0, curves = 0, curveNodes = 0;
+        for (const Obj& o : objs) {
+            if (o.cls == "AnimationStack") ++stacks;
+            else if (o.cls == "AnimationLayer") ++layers;
+            else if (o.cls == "AnimationCurve") ++curves;
+            else if (o.cls == "AnimationCurveNode") ++curveNodes;
+        }
+        if (stacks > opt.limits.maxAnimStacks) return Fail("too many animation stacks");
+        if (layers > opt.limits.maxAnimLayers) return Fail("too many animation layers");
+        if (curves > opt.limits.maxAnimCurves || curveNodes > opt.limits.maxAnimCurves) return Fail("too many animation curves");
+    }
+    std::size_t totalKeys = 0, totalBaked = 0;
+    // The clips' keys are made later, by BuildClips (the import step): what they need is kept in `job`.
+    auto job = std::make_shared<Animator>();
+    std::vector<Curve>& curveStore = job->curveStore;
+    // curves
+    IdMap<int> curveOf;
+    for (const Obj& o : objs) {
+        if (o.cls != "AnimationCurve") continue;
+        Curve c;
+        const Array* kt = ArrayOf(*o.e, "KeyTime");
+        const Array* kv = ArrayOf(*o.e, "KeyValueFloat");
+        if (!kv) kv = ArrayOf(*o.e, "KeyValueDouble");
+        if (!kt || !kv) continue;
+        const std::size_t n = std::min(kt->size(), kv->size());
+        if (n > opt.limits.maxAnimKeys - totalKeys) return Fail("too many animation keys");
+        totalKeys += n;
+        const Array* fl = ArrayOf(*o.e, "KeyAttrFlags");
+        const Array* da = ArrayOf(*o.e, "KeyAttrDataFloat");
+        std::vector<double> daBits; Array daBitsArr;
+        if (da && !doc.binary && doc.version >= 7200) {
+            // ASCII files from 7.2 on print this array as integers: the 32-bit patterns of the floats (slopes,
+            // and packed weights/velocities). Binary files carry real floats; see the same rule in ufbx.
+            daBits.reserve(da->size());
+            for (std::size_t k = 0; k < da->size(); ++k) { const double d = (*da)[k]; const std::uint32_t u = (d > -4.3e9 && d < 4.3e9) ? (std::uint32_t)(std::int64_t)d : 0u; float f; std::memcpy(&f, &u, 4); daBits.push_back((double)f); }
+            daBitsArr.type = 'd'; daBitsArr.count = (std::uint32_t)daBits.size(); daBitsArr.data = (const std::uint8_t*)daBits.data();
+            da = &daBitsArr;
+        }
+        const Array* rc = ArrayOf(*o.e, "KeyAttrRefCount");
+        // Attribute set of each key: KeyAttrRefCount says how many keys in a row use each set (all use set 0
+        // without it). Walked along with the keys below, the same rule as one index per key computed first.
+        const std::size_t nsets = (rc && !rc->empty()) ? rc->size() : 1;
+        std::size_t sCur = 0, left = (rc && !rc->empty()) ? (std::size_t)std::max(0.0, (*rc)[0]) : n;
+        auto nextSet = [&]() -> std::size_t {
+            if (!rc) return 0;
+            while (left == 0 && sCur + 1 < rc->size()) { ++sCur; left = (std::size_t)std::max(0.0, (*rc)[sCur]); }
+            const std::size_t sg = sCur;
+            if (left) --left;
+            return sg;
+        };
+        c.t.reserve(n); c.v.reserve(n);
+        if (nsets > 1) c.set.reserve(n);
+        double prev = -1e300;
+        bool otherSet = false;
+        std::size_t maxSet = 0;   // the tables below cover the sets the kept keys use (never more than the keys)
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t sg = nextSet();
+            const double t = (*kt)[i] / kKTimePerSec;
+            if (!std::isfinite(t) || !std::isfinite((*kv)[i]) || t < prev) continue;   // keep keys sorted and finite
+            prev = t;
+            c.t.push_back(t); c.v.push_back((*kv)[i]);
+            if (nsets > 1) { c.set.push_back((std::uint32_t)sg); otherSet |= sg != 0; maxSet = std::max(maxSet, sg); }
+            if (da && (sg * 4 + 1) < da->size()) c.hasSlopes = true;   // without the array every slope is 0
+        }
+        if (!otherSet) std::vector<std::uint32_t>().swap(c.set);   // every key uses set 0
+        // per set: the flags (0x8, cubic, without KeyAttrFlags) and the slopes (0 where the file has none)
+        const std::size_t usedSets = c.set.empty() ? 1 : maxSet + 1;
+        c.setFlags.resize(usedSets);
+        for (std::size_t sg = 0; sg < usedSets; ++sg)
+            c.setFlags[sg] = (fl && !fl->empty()) ? SafeInt((*fl)[std::min(sg, fl->size() - 1)]) : 0x8;
+        if (c.hasSlopes) {
+            c.setR.assign(usedSets, 0.0); c.setL.assign(usedSets, 0.0);
+            for (std::size_t sg = 0; sg < usedSets; ++sg)
+                if ((sg * 4 + 1) < da->size()) { c.setR[sg] = (*da)[sg * 4]; c.setL[sg] = (*da)[sg * 4 + 1]; }
+        }
+        curveOf[ToId(o.e->props[0].Num())] = (int)curveStore.size();
+        curveStore.push_back(std::move(c));
+    }
+    // curve nodes
+    std::vector<CurveNode>& cns = job->cns; IdMap<std::size_t> cnOf;
+    for (const Obj& o : objs) {
+        if (o.cls != "AnimationCurveNode") continue;
+        CurveNode cn;
+        const Id id = ToId(o.e->props[0].Num());
+        o.props.Vec3("d|X", cn.def, 0);
+        if (o.props.Has("d|DeformPercent")) cn.def[0] = o.props.Get("d|DeformPercent", 0);
+        for (const Conn* c : ChildrenOf(id)) {   // curves feeding it
+            if (!c->propLink) continue;
+            const Obj* cv = Get(c->child);
+            if (!cv || cv->cls != "AnimationCurve") continue;
+            const int* it = curveOf.find(c->child);
+            if (!it || curveStore[(std::size_t)*it].Empty()) continue;
+            const int comp = (c->prop == "d|X" || c->prop == "d|DeformPercent") ? 0 : c->prop == "d|Y" ? 1 : c->prop == "d|Z" ? 2 : -1;
+            if (comp >= 0) cn.curve[comp] = &curveStore[(std::size_t)*it];
+        }
+        for (int k = 1; k < 3; ++k) { const char* nm = k == 1 ? "d|Y" : "d|Z"; cn.def[k] = o.props.Get(nm, 0); }
+        for (const Conn* c : ParentsOf(id)) {    // what it drives
+            if (!c->propLink) continue;
+            cn.target = c->parent; cn.prop = c->prop; break;
+        }
+        cnOf[id] = cns.size();
+        cns.push_back(cn);
+    }
+    // stacks -> layers -> curve nodes
+    for (const Obj& st : objs) {
+        if (st.cls != "AnimationStack") continue;
+        const Id sid = ToId(st.e->props[0].Num());
+        std::vector<Layr> layers;
+        for (const Conn* c : ChildrenOf(sid)) {
+            const Obj* l = Get(c->child);
+            if (!l || l->cls != "AnimationLayer" || c->propLink) continue;
+            Layr ly; ly.id = c->child; ly.name = l->name; ly.weight = l->props.Get("Weight", 100.0); ly.blendMode = SafeInt(l->props.Get("BlendMode", 0.0));
+            layers.push_back(ly);
+        }
+        std::map<int, std::vector<NodeCN>> perNode;                       // node index -> curve nodes (ordered)
+        struct BlendCN { int layer; Id target; const CurveNode* cn; };
+        std::vector<BlendCN> blendCns;
+        double t0 = 1e300, t1 = -1e300;
+        auto span = [&](const CurveNode& cn) { for (int k = 0; k < 3; ++k) if (cn.curve[k] && !cn.curve[k]->Empty()) { t0 = std::min(t0, cn.curve[k]->t.front()); t1 = std::max(t1, cn.curve[k]->t.back()); } };
+        for (std::size_t li = 0; li < layers.size(); ++li)
+            for (const Conn* c : ChildrenOf(layers[li].id)) {
+                const std::size_t* it = cnOf.find(c->child);
+                if (!it || c->propLink) continue;
+                const CurveNode& cn = cns[*it];
+                const int* nm = nodeOfModel.find(cn.target);
+                if (nm) {
+                    int which = cn.prop == "Lcl Translation" ? 0 : cn.prop == "Lcl Rotation" ? 1 : cn.prop == "Lcl Scaling" ? 2 : -1;
+                    if (which < 0) continue;
+                    perNode[*nm].push_back({(int)li, which, &cn, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}, {(std::size_t)-1, (std::size_t)-1, (std::size_t)-1}}); span(cn);
+                } else if (cn.prop == "DeformPercent" && chanOfObj.count(cn.target)) { blendCns.push_back({(int)li, cn.target, &cn}); span(cn); }
+            }
+        if (perNode.empty() && blendCns.empty()) continue;
+        if (t1 < t0) continue;
+        // A take has its own time span (LocalStart / LocalStop): several takes can share one timeline
+        // and their curves, so the span, not the keys, says which part of the curves a take plays.
+        if (st.props.Has("LocalStop")) {
+            const double a = st.props.Get("LocalStart", 0.0) / kKTimePerSec, b = st.props.Get("LocalStop", 0.0) / kKTimePerSec;
+            if (std::isfinite(a) && std::isfinite(b) && b > a) { t0 = a; t1 = b; }
+        }
+        Clip clip; clip.name = std::string(st.name);
+        const double dur = t1 - t0;
+        std::size_t samples = SafeSize(std::max(1.0, std::ceil(dur * opt.bakeRate)));   // a hostile LocalStop makes dur huge: saturate, then the limits below apply
+        if (samples >= opt.limits.maxBakedSamples) samples = opt.limits.maxBakedSamples - 1;   // (not samples + 1 > max: that wraps for a saturated count)
+        {   // whole-file budget: this clip costs (sample count) x (curve nodes it evaluates)
+            std::size_t entries = blendCns.size();
+            for (const auto& kv : perNode) entries += kv.second.size();
+            const std::size_t ts = dur > 0 ? samples + 1 : 1;
+            if (entries && ts > (opt.limits.maxTotalBakedSamples - totalBaked) / entries) return Fail("animation bake budget exceeded");
+            totalBaked += ts * entries;
+        }
+        clip.duration = dur;
+        clip.start = t0;
+        Animator::Plan plan;
+        plan.clip = sc.clips.size(); plan.t0 = t0; plan.t1 = t1; plan.dur = dur; plan.samples = samples;
+        for (Layr& ly : layers) ly.name = {};   // (a view into the file: not kept)
+        plan.layers = std::move(layers); plan.perNode = std::move(perNode);
+        for (const BlendCN& b : blendCns) plan.blends.push_back({chanOfObj[b.target].first, chanOfObj[b.target].second, b.cn});
+        job->plans.push_back(std::move(plan));
+        sc.clips.push_back(std::move(clip));
+    }
+    if (!job->plans.empty()) {
+        for (CurveNode& cn : cns) cn.prop = {};   // (views into the file: not kept)
+        job->opt = opt; job->conv = conv;
+        job->isRoot.resize(sc.nodes.size());
+        for (std::size_t i = 0; i < sc.nodes.size(); ++i) job->isRoot[i] = sc.nodes[i].parent < 0 ? 1 : 0;
+        job->xp = std::move(xp);   // (the last step of the build: nothing reads xp after this)
+        sc.clipSource = std::move(job);
+    }
+    return true;
+}
+
 
 // ---------------------------------------------------------------------------
 // the import step: polygons -> parts (BuildParts)
@@ -1995,6 +2055,15 @@ bool BuildParts(Mesh& m, std::string* err, const Limits& lim, bool releasePolygo
     }
     if (releasePolygons) m.polygons = Polygons();
     return true;
+}
+
+bool BuildClips(Scene& s, std::string* err) {
+    if (!s.clipSource) return true;
+    Animator& job = static_cast<Animator&>(*s.clipSource);
+    const bool ok = job.Bake(s);
+    if (!ok && err) *err = job.err.empty() ? "FBX clip build failed" : job.err;
+    s.clipSource.reset();
+    return ok;
 }
 
 bool BuildParts(Scene& s, std::string* err, const Limits& lim, bool releasePolygons) {

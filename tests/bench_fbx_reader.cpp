@@ -291,7 +291,8 @@ int main(int argc, char** argv) {
     if (digest || partsDigest) {   // one line per file: name, then the hash of our reader's whole result (or the error)
         for (const std::string& path : files) {
             fbx::Scene sc; std::string e;
-            if (fbx::LoadFile(path, sc, &e) && (!partsDigest || fbx::BuildParts(sc, &e)))
+            // (the clips' keys are made from the curves the reader kept: BuildClips)
+            if (fbx::LoadFile(path, sc, &e) && (!partsDigest || fbx::BuildParts(sc, &e)) && fbx::BuildClips(sc, &e))
                 std::printf("%s %016llx\n", fs::path(path).filename().string().c_str(), (unsigned long long)Digest(sc, !partsDigest));
             else std::printf("%s error: %s\n", fs::path(path).filename().string().c_str(), e.c_str());
         }

@@ -230,7 +230,7 @@ int main(int argc, char** argv) {
     }
     if (argc >= 3 && std::string(argv[1]) == "--fbxdump") {   // what our FBX reader found, before the importer builds anything
         fbx::Scene sc; std::string e;
-        if (!fbx::LoadFile(argv[2], sc, &e)) { std::cout << "FAIL " << e << "\n"; return 0; }
+        if (!fbx::LoadFile(argv[2], sc, &e) || !fbx::BuildClips(sc, &e)) { std::cout << "FAIL " << e << "\n"; return 0; }
         std::cout << "creator '" << sc.creator << "' nodes " << sc.nodes.size() << " meshes " << sc.meshes.size() << " materials " << sc.materials.size()
                   << " textures " << sc.textures.size() << " clips " << sc.clips.size() << " unit " << sc.settings.unitScaleFactor << " up " << sc.settings.upAxis << "\n";
         for (const auto& c : sc.clips) {

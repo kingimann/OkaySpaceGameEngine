@@ -2231,6 +2231,35 @@ static bool LayerMaskField(const char* label, std::uint32_t& mask, const char* t
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
     return changed;
 }
+// Per-collider physics material (2D or 3D): this collider's own friction and bounciness (or the Rigidbody's), and how each
+// mixes with what it touches. Returns true when something changed.
+template <class Col>
+static bool PhysicsMaterialFields(Col* c, const char* id) {
+    bool changed = false;
+    const std::string sid = id;
+    if (!ImGui::TreeNode(("Physics Material##pm" + sid).c_str())) return false;
+    const char* modes[] = {"Default", "Average", "Minimum", "Multiply", "Maximum"};
+    bool ownF = c->friction >= 0.0f;
+    if (ImGui::Checkbox(("Own Friction##pm" + sid).c_str(), &ownF)) { c->friction = ownF ? 0.5f : -1.0f; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: use the Rigidbody's friction, as before. On: this collider has its own (0 is ice, 1 is rubber).");
+    if (ownF) {
+        if (ImGui::DragFloat(("Friction##pm" + sid).c_str(), &c->friction, 0.01f, 0.0f, 10.0f)) changed = true;
+        int fm = (int)c->frictionCombine;
+        if (ImGui::Combo(("Friction Mix##pm" + sid).c_str(), &fm, modes, 5)) { c->frictionCombine = (okay::CombineMode)fm; changed = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this friction mixes with the one it touches. Default is the geometric mean.");
+    }
+    bool ownB = c->bounciness >= 0.0f;
+    if (ImGui::Checkbox(("Own Bounciness##pm" + sid).c_str(), &ownB)) { c->bounciness = ownB ? 0.3f : -1.0f; changed = true; }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: use the Rigidbody's bounciness. On: this collider has its own (0 dead, 1 never loses height).");
+    if (ownB) {
+        if (ImGui::DragFloat(("Bounciness##pm" + sid).c_str(), &c->bounciness, 0.01f, 0.0f, 1.0f)) changed = true;
+        int bm = (int)c->bounceCombine;
+        if (ImGui::Combo(("Bounce Mix##pm" + sid).c_str(), &bm, modes, 5)) { c->bounceCombine = (okay::CombineMode)bm; changed = true; }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How this bounciness mixes with the one it touches. Default is the larger of the two.");
+    }
+    ImGui::TreePop();
+    return changed;
+}
 // Trigger filter fields for a trigger collider (2D or 3D): only react to objects
 // with a tag and/or on some collider layers. Returns true when something changed.
 template <class Col>
@@ -19357,6 +19386,34 @@ void DrawProjectSettings(EditorState& ed) {
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Draw each body part way between its last two physics steps,\n"
                                   "so motion stays smooth when the frame rate and the step rate differ.");
+            ImGui::Separator();
+            ImGui::TextDisabled("Physics quality of the open scene (saved with the scene)");
+            {
+                auto& p3 = ed.scene().physics3D();
+                int q = (int)p3.quality;
+                const char* qn[] = {"Classic (the original step: old scenes)", "Improved (stacks stand, bodies sleep, fast bodies stop)"};
+                ImGui::SetNextItemWidth(330);
+                if (ImGui::Combo("Quality##psq", &q, qn, 2)) {
+                    p3.quality = q == 1 ? okay::PhysicsQuality::Improved : okay::PhysicsQuality::Classic;
+                    ed.scene().physics().quality = p3.quality;
+                    ed.dirty = true;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Classic plays old scenes exactly as they always played.\n"
+                                      "Improved solves contacts several times a step and remembers them, so crates stack and stay put,\n"
+                                      "resting bodies sleep together, fast bodies cannot pass through thin walls and balls roll to a stop.\n"
+                                      "New scenes start Improved. The setting is part of the scene file.");
+                if (p3.quality == okay::PhysicsQuality::Improved) {
+                    int it = p3.solverIterations;
+                    ImGui::SetNextItemWidth(160);
+                    if (ImGui::SliderInt("Solver iterations##psq", &it, 4, 30)) {
+                        p3.solverIterations = it; ed.scene().physics().solverIterations = it; ed.dirty = true;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How many times the contact solver repeats each step. 10 is enough for towers up to about 6 crates;\nraise it for taller stacks (costs time).");
+                    if (ImGui::Checkbox("Catch fast bodies automatically##psq", &p3.autoContinuous)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A body that moves farther in one step than its own size is checked along its path against walls and floors,\nso a bullet cannot pass through a thin wall without ticking Continuous Collision.");
+                }
+            }
             if (ImGui::Button("Apply to current scene##phys")) {
                 ed.scene().physics().gravity = {g_project.gravity2D[0], g_project.gravity2D[1]};
                 ed.scene().physics3D().gravity = {g_project.gravity3D[0], g_project.gravity3D[1], g_project.gravity3D[2]};
@@ -32026,6 +32083,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::Checkbox("Continuous Collision", &rb->continuousCollision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+            ImGui::DragFloat("Rolling Resistance##rb", &rb->rollingResistance, 0.005f, 0.0f, 1.0f, "%.3f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
             if (ImGui::SmallButton("Remove##rb")) toRemove = rb;
         }
     if (auto* bc = dynamic_cast<BoxCollider2D*>(curComp)) {
@@ -32039,6 +32098,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc", &bc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(bc, "bc")) ed.dirty = true;
             if (TriggerFilterFields(bc, "bc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##bc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -32057,6 +32117,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cc", &cc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cc", &cc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cc, "cc")) ed.dirty = true;
             if (TriggerFilterFields(cc, "cc")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cc")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -32081,6 +32142,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap2", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap2", &cap->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cap, "cap2")) ed.dirty = true;
             if (TriggerFilterFields(cap, "cap2")) ed.dirty = true;
             if (go->GetComponent<SpriteRenderer>() && ImGui::SmallButton("Fit to Object##cap2")) { FitColliders(go); ed.dirty = true; }
             ImGui::SameLine();
@@ -32099,6 +32161,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##ec2", &ec->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##ec2", &ec->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(ec, "ec2")) ed.dirty = true;
             if (TriggerFilterFields(ec, "ec2")) ed.dirty = true;
             if (ImGui::Checkbox("One-Way##ec2", &ec->oneWay)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Only blocks bodies from the normal side — jump up through it, land on top.");
@@ -32134,6 +32197,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##pc2", &pc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##pc2", &pc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(pc, "pc2")) ed.dirty = true;
             if (TriggerFilterFields(pc, "pc2")) ed.dirty = true;
             ImGui::Separator();
             ImGui::Text("Vertices (%d)", (int)pc->points.size());
@@ -32179,6 +32243,10 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("On = body rests (no CPU/jitter) once still, waking on impact or force. Off = always simulated.");
             if (ImGui::Checkbox("Continuous Collision##rb3", &rb->continuousCollision)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("For fast objects (bullets, thrown balls): checks the whole path each\nframe so they hit thin walls instead of passing through. Costs a little\nextra while the object moves fast.");
+            ImGui::DragFloat("Rolling Resistance##rb3", &rb->rollingResistance, 0.005f, 0.0f, 1.0f, "%.3f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How quickly a rolling ball or wheel slows down (Improved physics quality).\n0 rolls on; 0.03 stops a ball rolling at 5 m/s in about 15 seconds.");
+            if (ImGui::Checkbox("Use Child Colliders##rb3", &rb->compoundChildren)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Improved physics quality: colliders on child objects (that have no Rigidbody of their own) are part of this body.\nUse it for a table made of a top and four legs, or an L-shaped crate. Mass and balance are worked out for the whole shape.");
             if (go->transform && go->transform->Parent())
                 ImGui::TextWrapped("This body follows its parent. Moving or turning the parent carries it, and gravity still pulls straight down. Unparent it and it keeps the speed the parent was giving it.");
             else
@@ -32188,8 +32256,8 @@ void DrawInspector(EditorState& ed) {
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
         if (CompHeader("Joint 3D", jt, &toRemove)) {
             ImGui::TextDisabled("Constrains this body to an anchor or another body.");
-            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)"};
-            ImGui::Combo("Mode##jt", &jt->mode, modes, 4);
+            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
+            ImGui::Combo("Mode##jt", &jt->mode, modes, 5);
             char cb[48]; std::strncpy(cb, jt->connectedBody.c_str(), sizeof(cb) - 1); cb[sizeof(cb) - 1] = '\0';
             if (ImGui::InputText("Connected Body##jt", cb, sizeof(cb))) { jt->connectedBody = cb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of another object with a Rigidbody3D. Leave blank to anchor to a fixed world point below.");
@@ -32198,7 +32266,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat3("Anchor##jt", a, 0.1f)) { jt->anchor = {a[0], a[1], a[2]}; ed.dirty = true; }
                 oked::FieldTip("Anchor##jt");
             }
-            if (jt->mode != (int)Joint3D::Mode::Pin && jt->mode != (int)Joint3D::Mode::Hinge) {
+            if (jt->mode != (int)Joint3D::Mode::Pin && jt->mode != (int)Joint3D::Mode::Hinge && jt->mode != (int)Joint3D::Mode::Slider) {
                 ImGui::Checkbox("Auto distance##jt", &jt->autoConfigure);
                 if (!jt->autoConfigure) ImGui::DragFloat("Distance##jt", &jt->distance, 0.05f, 0.0f, 1000.0f);
             }
@@ -32224,6 +32292,23 @@ void DrawInspector(EditorState& ed) {
                     oked::FieldTip("Min Angle##jt");
                     if (ImGui::DragFloat("Max Angle##jt", &jt->maxAngle, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
                     oked::FieldTip("Max Angle##jt");
+                }
+            }
+            if (jt->mode == (int)Joint3D::Mode::Slider) {
+                ImGui::TextDisabled("Slides along the axis only and cannot turn (a drawer, a lift, a piston).");
+                float ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
+                if (ImGui::DragFloat3("Axis##jtsl", ax, 0.05f)) { jt->axis = {ax[0], ax[1], ax[2]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The direction it slides in (world space, taken when Play starts).");
+                if (ImGui::Checkbox("Use Limits##jtsl", &jt->useLimits)) ed.dirty = true;
+                if (jt->useLimits) {
+                    if (ImGui::DragFloat("Min Travel (m)##jtsl", &jt->minAngle, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                    if (ImGui::DragFloat("Max Travel (m)##jtsl", &jt->maxAngle, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far it may slide from where it starts, in metres.");
+                }
+                if (ImGui::Checkbox("Use Motor##jtsl", &jt->useMotor)) ed.dirty = true;
+                if (jt->useMotor) {
+                    ImGui::DragFloat("Motor Speed (m/s)##jtsl", &jt->motorSpeed, 0.05f);
+                    ImGui::DragFloat("Max Motor Force##jtsl", &jt->maxMotorTorque, 1.0f, 0.0f, 100000.0f);
                 }
             }
             ImGui::Checkbox("Breakable##jt", &jt->breakable);
@@ -33013,6 +33098,7 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::Checkbox("Trigger##mc3", &mcol->isTrigger)) ed.dirty = true;
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##mc3", &mcol->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(mcol, "mc3")) ed.dirty = true;
             if (TriggerFilterFields(mcol, "mc3")) ed.dirty = true;
             if (!mcol->HasTriangles()) {
                 // Only the no-mesh fallback box uses a size.
@@ -33037,6 +33123,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##bc3", &bc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##bc3", &bc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(bc, "bc3")) ed.dirty = true;
             if (TriggerFilterFields(bc, "bc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##bc3")) {
                 FitBox(go, bc); ed.dirty = true;
@@ -33066,6 +33153,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##sc3", &sc->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##sc3", &sc->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(sc, "sc3")) ed.dirty = true;
             if (TriggerFilterFields(sc, "sc3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##sc3")) {
                 FitSphere(go, sc); ed.dirty = true;
@@ -33088,6 +33176,7 @@ void DrawInspector(EditorState& ed) {
             ImGui::Checkbox("Trigger##cap3", &cap->isTrigger);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(80); ImGui::DragInt("Layer##cap3", &cap->layer, 0.1f, 0, 31);
+            if (PhysicsMaterialFields(cap, "cap3")) ed.dirty = true;
             if (TriggerFilterFields(cap, "cap3")) ed.dirty = true;
             if (go->GetComponent<MeshRenderer>() && ImGui::SmallButton("Fit to mesh##cap3")) {
                 FitCapsule(go, cap); ed.dirty = true;
@@ -40353,7 +40442,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 3D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
@@ -43713,7 +43802,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Physics debug view (Scene AND Game view, so you can watch it while playing):
     // every 3D collider by its true shape (green solid, blue trigger, grey asleep),
-    // this frame's contacts (red dot + normal) and the rays scripts cast (green to
+    // joints (orange line, red when broken), this frame's contacts (red dot + normal) and the rays scripts cast (green to
     // the hit with a white normal, yellow on a miss). Off = nothing is drawn and the
     // physics records nothing.
     if (g_physDebug) {
@@ -43777,6 +43866,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
             line(ct.point, ct.point + ct.normal * 0.5f, kc, 2.0f);
             ImVec2 sp; if (toScreen(C(ct.point), sp)) dl->AddCircleFilled(sp, 3.5f, kc);
+        }
+        for (const PhysicsDebugJoint3D& jt : ed.scene().physics3D().DebugJoints()) {   // joints: orange line between what they hold, red when broken
+            const ImU32 jc = jt.broken ? IM_COL32(255, 60, 60, 255) : IM_COL32(255, 160, 40, 255);
+            line(jt.a, jt.b, jc, 2.0f);
+            ImVec2 sa, sb; if (toScreen(C(jt.a), sa)) dl->AddCircleFilled(sa, 3.0f, jc); if (toScreen(C(jt.b), sb)) dl->AddCircleFilled(sb, 3.0f, jc);
         }
         for (const PhysicsDebugRay3D& r : ed.scene().physics3D().DebugRays()) {
             if (r.hit) {

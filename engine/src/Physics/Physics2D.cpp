@@ -311,6 +311,8 @@ bool TriggerAccepts(const Collider2D* trig, const Collider2D* other) {
 
 } // namespace
 
+#include "Physics2DImproved.inl"   // the Improved step (iterated contacts, sleeping groups)
+
 void Physics2D::Step(Scene& scene, float dt) {
     if (dt <= 0.0f) return;
 
@@ -549,7 +551,7 @@ void Physics2D::Step(Scene& scene, float dt) {
         Transform* ta = j->transform;
         Rigidbody2D* rbB = nullptr; Transform* tb = nullptr;
         if (!j->connectedBody.empty())
-            if (GameObject* g = FindNearest(scene, j->connectedBody, j->gameObject)) { tb = g->transform; rbB = g->GetComponent<Rigidbody2D>(); }
+            if (GameObject* g = CachedPartner(scene, j)) { tb = g->transform; rbB = g->GetComponent<Rigidbody2D>(); }
         Vec3 pa3 = ta->Position();
         Vec2 pa{pa3.x, pa3.y};
         Vec2 pb = j->anchor;

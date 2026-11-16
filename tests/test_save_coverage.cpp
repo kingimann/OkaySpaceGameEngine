@@ -50,7 +50,7 @@ using namespace okay;
     X(PlayerController) X(PlayerView) X(PoisonStat) X(PolygonCollider2D) X(PoseCapture) \
     X(ProceduralObjectHolding) X(Projectile3D) X(QuestLog) X(QuestTrigger) X(RadiationStat) X(Ragdoll) X(RangedWeapon) \
     X(Rigidbody2D) X(Rigidbody3D) X(RootMotion) X(SanityStat) X(SaveConfig) X(Saveable) X(ScriptComponent) X(Seat) \
-    X(SequencePlayer) X(SettingsScreen) X(SkinnedMesh) X(SleepStat) X(Spawner) X(SphereCollider3D) X(Spinner) \
+    X(SequencePlayer) X(SettingsScreen) X(SkinnedMesh) X(SleepStat) X(Spawner) X(DebrisEmitter) X(SphereCollider3D) X(Spinner) \
     X(Spline) X(SplineFollower) X(SplineInstancer) X(SplineMesh) X(SpriteAnimator) X(SpriteRenderer) \
     X(StaminaStat) X(StatComponent) X(Stats) X(StatusEffectStat) X(SteamManager) X(StoryState) \
     X(StructureBuilder) X(SurvivalSave) X(SurvivalStats) X(SurvivalZone) X(SyncVar) X(Teleporter) \

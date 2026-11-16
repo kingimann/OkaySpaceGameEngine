@@ -7,6 +7,7 @@
 #include "okay/Audio/WavDecoder.hpp"
 #include "okay/Audio/WavPlayback.hpp"
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace okay {
@@ -24,7 +25,7 @@ inline bool LoadWavForSdl(const std::string& path, SDL_AudioSpec& spec, std::vec
         spec.freq = c.sampleRate;
         spec.channels = static_cast<Uint8>(c.channels);
         spec.format = c.format == PlaybackFormat::F32 ? AUDIO_F32SYS : AUDIO_S16SYS;
-        samples.assign(c.bytes.begin(), c.bytes.end());
+        samples = std::move(c.bytes);   // no copy: the clip's buffer becomes the caller's
         return true;
     }
     Uint8* buf = nullptr; Uint32 len = 0; SDL_AudioSpec s{};

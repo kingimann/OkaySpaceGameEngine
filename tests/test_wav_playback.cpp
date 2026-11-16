@@ -113,6 +113,87 @@ static void TestErrors() {
     CHECK(!wav::LoadForPlayback(kPath, c, &err));
 }
 
+// LoadForPlayback reads files over 64 KiB in two buffers and decodes PCM 16/24/32 and float in place. Whatever the
+// chunk layout, its result must equal DecodeForPlayback on the same bytes (one buffer, never in place), and the 16-bit
+// result must equal ToS16 of the float decode.
+static Bytes Chunk(const char* tag, const Bytes& body) {
+    Bytes b; Tag(b, tag); P32(b, std::uint32_t(body.size())); b.insert(b.end(), body.begin(), body.end());
+    if (body.size() & 1) b.push_back(0);
+    return b;
+}
+static Bytes Fmt(unsigned tag, unsigned ch, std::uint32_t rate, unsigned align, unsigned bits, const Bytes& extra = {}) {
+    Bytes f; P16(f, tag); P16(f, ch); P32(f, rate); P32(f, rate * align); P16(f, align); P16(f, bits);
+    if (!extra.empty()) { P16(f, unsigned(extra.size())); f.insert(f.end(), extra.begin(), extra.end()); }
+    return f;
+}
+static Bytes Riff(const std::vector<Bytes>& chunks) {
+    Bytes b; Tag(b, "RIFF"); P32(b, 0); Tag(b, "WAVE");
+    for (const Bytes& c : chunks) b.insert(b.end(), c.begin(), c.end());
+    const std::uint32_t n = std::uint32_t(b.size() - 8); std::memcpy(&b[4], &n, 4);
+    return b;
+}
+static Bytes Noise(std::size_t n, std::uint32_t seed) {
+    Bytes d(n);
+    for (auto& x : d) { seed = seed * 1664525u + 1013904223u; x = (unsigned char)(seed >> 24); }
+    return d;
+}
+static void SameAsOneBuffer(const Bytes& w, bool expectOk) {
+    Put(w);
+    wav::PlaybackClip a, b; std::string ea, eb;
+    const bool oka = wav::LoadForPlayback(kPath, a, &ea);
+    const bool okb = wav::DecodeForPlayback(w.data(), w.size(), b, &eb);
+    CHECK(oka == expectOk && okb == expectOk);
+    CHECK(ea == eb);
+    CHECK(a.format == b.format && a.channels == b.channels && a.sampleRate == b.sampleRate && a.bytes == b.bytes);
+    if (expectOk && a.format == wav::PlaybackFormat::S16) {
+        wav::WavAudio f; CHECK(wav::DecodeWav(w.data(), w.size(), f));
+        const std::vector<std::int16_t> s = wav::ToS16(f);
+        CHECK(s.size() * 2 == a.bytes.size() && std::memcmp(s.data(), a.bytes.data(), a.bytes.size()) == 0);
+    }
+}
+static void TestLargeFiles() {
+    const Bytes pcm = Noise(300000, 1);
+    // plain, with chunks before and after the data, with fmt after data, and with a data chunk past the first 64 KiB
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(1, 2, 44100, 4, 16)), Chunk("data", pcm)}), true);
+    SameAsOneBuffer(Riff({Chunk("LIST", Noise(301, 2)), Chunk("fmt ", Fmt(1, 2, 44100, 4, 16)), Chunk("data", pcm),
+                          Chunk("junk", Noise(77, 3))}), true);
+    SameAsOneBuffer(Riff({Chunk("data", pcm), Chunk("fmt ", Fmt(1, 2, 44100, 4, 16))}), true);
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(1, 2, 44100, 4, 16)), Chunk("LIST", Noise(70000, 4)), Chunk("data", pcm)}), true);
+    // odd sizes: half a frame at the end, a data size past the end of the file, an odd block align with padding
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(1, 2, 44100, 4, 16)), Chunk("data", Noise(300003, 5))}), true);
+    { Bytes w = Riff({Chunk("fmt ", Fmt(1, 2, 44100, 4, 16)), Chunk("data", pcm)}); w.resize(w.size() - 1001); SameAsOneBuffer(w, true); }
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(1, 2, 44100, 6, 16)), Chunk("data", pcm)}), true);
+    // every in-place width: 24 bit (all byte patterns appear), 32 bit, float32 (with NaN and infinity), float64
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(1, 2, 48000, 6, 24)), Chunk("data", Noise(600000, 6))}), true);
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(1, 1, 48000, 4, 32)), Chunk("data", Noise(400000, 7))}), true);
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(3, 2, 48000, 8, 32)), Chunk("data", Noise(400000, 8))}), true);
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(3, 2, 48000, 16, 64)), Chunk("data", Noise(400000, 9))}), true);
+    // widening formats (not in place): 8 bit, A-law, MS ADPCM with the standard table, IMA ADPCM
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(1, 2, 22050, 2, 8)), Chunk("data", Noise(200000, 10))}), true);
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(6, 1, 8000, 1, 8, Bytes{})), Chunk("data", Noise(200000, 11))}), true);
+    {
+        Bytes d = Noise(256 * 400, 12);
+        for (std::size_t b = 0; b < d.size(); b += 256) d[b] = d[b] % 7;   // a valid predictor index in every block
+        Bytes ex; P16(ex, 500); P16(ex, 0);
+        SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(2, 1, 22050, 256, 4, ex)), Chunk("data", d)}), true);
+        d[256 * 300] = 9;   // a bad predictor index in block 300: refused, by both, with the same message
+        SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(2, 1, 22050, 256, 4, ex)), Chunk("data", d)}), false);
+    }
+    {
+        Bytes d = Noise(1024 * 200, 13);
+        Bytes ex; P16(ex, 2041);
+        SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(0x11, 2, 44100, 1024, 4, ex)), Chunk("data", d)}), true);
+    }
+    // the header read in two steps (data chunk after the first 512 bytes), small files, 8-bit with fmt after data
+    SameAsOneBuffer(Riff({Chunk("LIST", Noise(1000, 14)), Chunk("fmt ", Fmt(1, 1, 8000, 1, 8)), Chunk("data", Noise(5000, 15))}), true);
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(7, 2, 8000, 2, 8)), Chunk("data", Noise(3001, 16)), Chunk("junk", Noise(9, 17))}), true);
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(1, 1, 8000, 2, 16)), Chunk("data", Noise(300, 18))}), true);
+    SameAsOneBuffer(Riff({Chunk("data", Noise(200000, 19)), Chunk("fmt ", Fmt(1, 2, 22050, 2, 8))}), true);
+    // refused large files: unknown tag, no fmt chunk
+    SameAsOneBuffer(Riff({Chunk("fmt ", Fmt(0x55, 2, 44100, 4, 16)), Chunk("data", pcm)}), false);
+    SameAsOneBuffer(Riff({Chunk("data", pcm)}), false);
+}
+
 #ifdef OKAY_TEST_HAVE_SDL
 // Own switch on versus off through the launcher's seam: PCM16 mono and stereo must be identical, and errors must fail
 // on both sides without a crash.
@@ -149,6 +230,7 @@ static void TestSdlSeam() {
 int main() {
     TestOwnPath();
     TestErrors();
+    TestLargeFiles();
 #ifdef OKAY_TEST_HAVE_SDL
     TestSdlSeam();
 #endif

@@ -1103,12 +1103,14 @@ void CodeEdit::handleMouse(const Rect& item, int wid, bool hovered) {
     else if (dragging_ && clicks_ == 1) {
         moveCaret(ScreenToPos(mx, my), true);
     } else if (dragging_ && clicks_ == 2) {   // after a double click a drag selects whole words
+        clickA_ = Clamp(clickA_); clickB_ = Clamp(clickB_);   // (the text may have changed since the click)
         const CodePos p = ScreenToPos(mx, my);
         CodePos a = p, b = p;
         if (!wordAt(p, a, b)) a = b = p;
         if (p < clickA_) { anchor_ = clickB_; caret_ = a; } else { anchor_ = clickA_; caret_ = b < clickB_ ? clickB_ : b; }
         desiredCol_ = -1; reveal_ = true;
     } else if (dragging_ && clicks_ >= 3) {   // after a triple click, whole lines
+        clickA_ = Clamp(clickA_); clickB_ = Clamp(clickB_);
         const int l = ScreenToPos(mx, my).line;
         const CodePos lineEnd = l + 1 < (int)lines_.size() ? CodePos{l + 1, 0} : CodePos{l, (int)lines_[(size_t)l].size()};
         if (l < clickA_.line) { anchor_ = clickB_; caret_ = CodePos{l, 0}; } else { anchor_ = clickA_; caret_ = l > clickA_.line ? lineEnd : clickB_; }

@@ -23,6 +23,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -241,19 +242,35 @@ struct HostedRig {
     float x = kEdX, y = kEdY, w = kEdW, h = kEdH;
     HostedRig(int W, int H) : im(W, H), sim((float)W, (float)H) { okayuitest::Reset(); OkayUI::UseLauncherLook(true); }
     ~HostedRig() { OkayUI::UseLauncherLook(false); }
-    // The same steps as ScriptEditorWidget::Render's OkayUI branch (at 100 % UI scale and zoom).
+    // The same steps as ScriptEditorWidget::Render's OkayUI branch (at 100 % UI scale and zoom), step 30's included: the keyboard
+    // claim, the wheel step, the cursor, the hover help as an ImGui tooltip.
     void Host(scripteditor::ScriptEditorCodeEdit& se) {
         ImVec2 a = ImGui::GetContentRegionAvail();
         a.x = std::max(a.x, 8.0f); a.y = std::max(a.y, 8.0f);
         const ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::InvisibleButton("##code", a);
+        const ImGuiID item = ImGui::GetItemID();
+        ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+        const bool hostFocused = ImGui::IsWindowFocused();
+        if (!hostFocused) se.SetHandleKeyboardInputs(false);
+        se.Edit().SetHostDrawsTooltip(true);
+        {
+            const float fs = ImGui::GetFontSize();
+            se.Edit().SetWheelStep(std::floor(std::min(5.0f * fs, a.y * 0.67f)), std::floor(std::min(2.0f * fs, a.x * 0.67f)));
+        }
         okayimgui::StyleLikeImGuiChild(se.Edit(), ImGui::GetStyle());
         OkayUI::PushTextScale(1.0f);
-        okayimgui::DrawOkayUIHere("##code", p, a, [&] { se.Edit().Draw("##codeedit", a.x, a.y); }, okayimgui::SdlRendererTextures(im.ren), geo);
+        OkayUI::MouseCursor cursor = OkayUI::MouseCursor_Arrow;
+        okayimgui::DrawOkayUIHere("##code", p, a, [&] { cursor = okayimgui::CursorOf([&] { se.Edit().Draw("##codeedit", a.x, a.y); }); },
+                                  okayimgui::SdlRendererTextures(im.ren), geo);
+        okayimgui::SetImGuiCursor(cursor);
         OkayUI::PopTextScale();
         const ImGuiStyle& st = ImGui::GetStyle();
         ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + a.x, p.y + a.y), ImGui::GetColorU32(ImGuiCol_Border), st.ChildRounding, 0,
                                             st.ChildBorderSize > 0.0f ? st.ChildBorderSize : 1.0f);
+        if (!hostFocused) se.SetHandleKeyboardInputs(true);
+        if (se.Edit().Focused() && hostFocused) okayimgui::ClaimKeyboardForCode(item);
+        okayimgui::ShowCodeHover(se.Edit().Hover());
     }
     double Frame(scripteditor::ScriptEditorCodeEdit& se, bool present = false) {
         ImGui_ImplSDLRenderer2_NewFrame();

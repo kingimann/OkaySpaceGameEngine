@@ -100,12 +100,18 @@ public:
     /// instance when the prefab file changes. Only the instance ROOT carries it.
     std::string prefabSource;
     /// One field of a prefab instance that differs from its source prefab (see
-    /// docs/prefabs.md). `object` is the depth-first index of the object inside the
-    /// prefab (0 = the instance root); `line` is the whole serialized record, e.g.
-    /// `sprite 64 1 1 1 1 1 1`. Re-applying the prefab keeps these. Data only.
+    /// docs/prefabs.md and "Object numbering" in docs/prefab_system.md). `path` names the
+    /// object inside the prefab by its stable name path ("." = the root, "Head",
+    /// "Body/Head", "Wheel[1]" = the second sibling called Wheel), which survives objects
+    /// being added, removed or reordered in the prefab. `object` is the depth-first index
+    /// of that object when it was last resolved (0 = the root); when `path` is empty (an
+    /// old index-keyed record) the index alone names the object. `line` is the whole
+    /// serialized record, e.g. `sprite 64 1 1 1 1 1 1`. Re-applying the prefab keeps
+    /// these. Data only.
     struct PrefabOverride {
         int object = 0;
         std::string line;
+        std::string path;
     };
     /// The overrides this instance remembers (instance ROOT only, with prefabSource).
     std::vector<PrefabOverride> prefabOverrides;

@@ -339,6 +339,12 @@ std::string Quote(const std::string& s) {
     return out;
 }
 
+// How an `override` record names its object: the quoted stable path, or (an old record that
+// could not be given one) its index.
+std::string PrefabOverrideTarget(const GameObject::PrefabOverride& ov) {
+    return ov.path.empty() ? std::to_string(ov.object) : Quote(ov.path);
+}
+
 // Read a quoted token from a stream (assumes leading quote already trimmed by >>).
 std::string ReadQuoted(std::istream& in) {
     std::string tok;
@@ -4073,7 +4079,7 @@ std::string SceneSerializer::Serialize(const Scene& scene) {
         if (go->uiDrawOrder != 0) out << "  uiorder " << go->uiDrawOrder << "\n";
         if (!go->sourceScene.empty()) out << "  srcscene " << Quote(go->sourceScene) << "\n";
         if (!go->prefabSource.empty()) out << "  prefab " << Quote(go->prefabSource) << "\n";
-        for (const auto& ov : go->prefabOverrides) out << "  override " << ov.object << " " << Quote(ov.line) << "\n";
+        for (const auto& ov : go->prefabOverrides) out << "  override " << PrefabOverrideTarget(ov) << " " << Quote(ov.line) << "\n";
         int parent = -1;
         if (t->Parent()) { auto pit = indexOf.find(t->Parent()->gameObject); if (pit != indexOf.end()) parent = pit->second; }
         out << "  parent " << parent << "\n";
@@ -9033,8 +9039,19 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     std::istringstream ls(rest);
                     while (ls >> std::ws && ls.peek() == '"') compOrder.push_back(ReadQuoted(ls));
                 } else if (field == "override") {
-                    GameObject::PrefabOverride ov; in >> ov.object; ov.line = ReadQuoted(in);
-                    if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);
+                    // `override "<path>" "<line>"` (the object's stable path in the prefab), or the old
+                    // `override <index> "<line>"`, which is given a path after the load (UpgradeLegacyOverrides).
+                    GameObject::PrefabOverride ov;
+                    in >> std::ws;
+                    if (in.peek() == '"') {
+                        ov.object = -1;
+                        ov.path = PrefabTools::CanonicalObjectPath(ReadQuoted(in));
+                        ov.line = ReadQuoted(in);
+                        if (in && !ov.path.empty() && !ov.line.empty()) go->prefabOverrides.push_back(ov);
+                    } else {
+                        in >> ov.object; ov.line = ReadQuoted(in);
+                        if (in && ov.object >= 0 && !ov.line.empty()) go->prefabOverrides.push_back(ov);
+                    }
                 } else if (auto reg = ComponentSerializerRegistry::Find(field)) {
                     // A component that registered itself (no branch in this chain).
                     std::string rest; std::getline(in, rest);
@@ -9171,6 +9188,12 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
     // Make each loaded UIFrame the source of truth for its widget's fields now, so
     // a script that writes those fields in its Start moves the frame.
     for (auto& [idx, go] : byIndex) { (void)idx; if (go->GetComponent<UIFrame>()) GetUIRect(go); }
+    // Old index-keyed prefab overrides are given the stable path of their object, once, so the
+    // next save writes them in the new form (docs/prefab_system.md, "Object numbering").
+    for (auto& [idx, go] : byIndex) {
+        (void)idx;
+        if (!go->prefabSource.empty() && !go->prefabOverrides.empty()) PrefabTools::UpgradeLegacyOverrides(*go, &S.warnings);
+    }
     if (warnings) warnings->insert(warnings->end(), S.warnings.begin(), S.warnings.end());
     return true;
 }
@@ -9368,7 +9391,7 @@ std::string SceneSerializer::SerializeObject(const GameObject& root) {
             if (it != localIndex.end()) pIdx = it->second;
         }
         if (!go->prefabSource.empty()) out << "  prefab " << Quote(go->prefabSource) << "\n";
-        for (const auto& ov : go->prefabOverrides) out << "  override " << ov.object << " " << Quote(ov.line) << "\n";
+        for (const auto& ov : go->prefabOverrides) out << "  override " << PrefabOverrideTarget(ov) << " " << Quote(ov.line) << "\n";
         out << "  parent " << pIdx << "\n";
         WriteComponents(out, go);
         out << "end\n";
@@ -10040,20 +10063,60 @@ bool ReadFileText(const std::string& path, std::string& text, std::string* error
     return true;
 }
 
+// The stable path of each object of a split document, in its order (PrefabTools::ObjectPaths).
+std::vector<std::string> TextObjectPaths(const std::vector<TextObject>& objs) {
+    std::vector<std::string> names;
+    std::vector<int> headerIdx, parentHdr;
+    for (const auto& o : objs) {
+        std::istringstream h(o.header);
+        std::string kw; int idx = -1;
+        h >> kw >> idx;
+        names.push_back(ReadQuoted(h));
+        headerIdx.push_back(idx);
+        int par = -1;
+        for (const auto& l : o.lines)
+            if (FirstToken(l) == "parent") { std::istringstream ls(l); std::string k; ls >> k >> par; break; }
+        parentHdr.push_back(par);
+    }
+    std::unordered_map<int, int> pos;
+    for (std::size_t i = 0; i < headerIdx.size(); ++i) pos.emplace(headerIdx[i], (int)i);
+    std::vector<int> parents;
+    for (int ph : parentHdr) { auto it = pos.find(ph); parents.push_back(ph < 0 || it == pos.end() ? -1 : it->second); }
+    return PrefabTools::ObjectPaths(names, parents);
+}
+
 // The prefab text with each override's record swapped in (or added, when the
-// prefab has no such record). Overrides that name an object the prefab no longer
-// has are dropped.
+// prefab has no such record). An override names its object by its path (or, an old
+// record, by its index); one whose object the prefab no longer has is dropped, with a
+// warning. `targets` gets the object each override resolved to (-1: dropped) and `paths`
+// the path of every object of the prefab.
 std::string SpliceOverrides(const std::string& prefabText, const std::vector<GameObject::PrefabOverride>& overrides,
-                            std::vector<std::string>* warnings) {
+                            std::vector<std::string>* warnings, std::vector<int>* targets = nullptr,
+                            std::vector<std::string>* paths = nullptr) {
     std::string preamble;
     std::vector<TextObject> objs;
     SplitObjects(prefabText, preamble, objs);
+    const std::vector<std::string> objPaths = TextObjectPaths(objs);
+    std::unordered_map<std::string, int> byPath;
+    for (std::size_t i = 0; i < objPaths.size(); ++i) if (!objPaths[i].empty()) byPath.emplace(objPaths[i], (int)i);
+    std::vector<int> target;
     for (const auto& ov : overrides) {
-        if (ov.object < 0 || (std::size_t)ov.object >= objs.size()) {
-            if (warnings) warnings->push_back("prefab override for object " + std::to_string(ov.object) + " dropped: the prefab no longer has it");
+        if (ov.path.empty()) { target.push_back(ov.object); continue; }
+        auto it = byPath.find(PrefabTools::CanonicalObjectPath(ov.path));
+        target.push_back(it == byPath.end() ? -1 : it->second);
+    }
+    if (targets) *targets = target;
+    if (paths) *paths = objPaths;
+    for (std::size_t oi = 0; oi < overrides.size(); ++oi) {
+        const auto& ov = overrides[oi];
+        const int t = target[oi];
+        if (t < 0 || (std::size_t)t >= objs.size()) {
+            const std::string what = ov.path.empty() ? "object " + std::to_string(ov.object) : "object '" + ov.path + "'";
+            if (warnings) warnings->push_back("prefab override for " + what + " dropped: the prefab no longer has it");
+            if (targets) (*targets)[oi] = -1;
             continue;
         }
-        TextObject& o = objs[(std::size_t)ov.object];
+        TextObject& o = objs[(std::size_t)t];
         const std::string want = "  " + ov.line;
         std::unordered_map<std::string, int> seen;
         std::string ovSeen;
@@ -10061,10 +10124,8 @@ std::string SpliceOverrides(const std::string& prefabText, const std::vector<Gam
         // Which occurrence of its record name does this override mean? Overrides are
         // captured in record order, so count the earlier overrides of the same name.
         int occ = 0;
-        for (const auto& prev : overrides) {
-            if (&prev == &ov) break;
-            if (prev.object == ov.object && FirstToken(prev.line) == ovKeyTok) ++occ;
-        }
+        for (std::size_t pj = 0; pj < oi; ++pj)
+            if (target[pj] == t && FirstToken(overrides[pj].line) == ovKeyTok) ++occ;
         bool replaced = false;
         if (ovKeyTok != "compoff") {
             int n = 0;
@@ -10108,6 +10169,7 @@ bool SceneSerializer::CapturePrefabOverrides(GameObject& instanceRoot, std::stri
     SplitObjects(SerializeObject(instanceRoot), iPre, iObjs);
 
     std::vector<GameObject::PrefabOverride> found;
+    const std::vector<std::string> pPaths = TextObjectPaths(pObjs);
     const std::size_t n = std::min(pObjs.size(), iObjs.size());
     for (std::size_t i = 0; i < n; ++i) {
         std::unordered_map<std::string, std::string> base;   // key -> prefab line
@@ -10123,7 +10185,7 @@ bool SceneSerializer::CapturePrefabOverrides(GameObject& instanceRoot, std::stri
             auto b = base.find(RecordKey(l, seen));
             if (b == base.end() || b->second != l) {
                 std::size_t at = l.find_first_not_of(' ');
-                found.push_back({(int)i, l.substr(at == std::string::npos ? 0 : at)});
+                found.push_back({(int)i, l.substr(at == std::string::npos ? 0 : at), pPaths[i]});
             }
         }
     }
@@ -10137,12 +10199,23 @@ GameObject* SceneSerializer::InstantiatePrefab(Scene& scene, const std::string& 
     std::string fileText;
     if (!ReadFileText(path, fileText, error)) return nullptr;
     if (PrefabTools::UsesPrefabStructure(fileText)) return PrefabTools::Instantiate(scene, path, overrides, error, warnings);   // nested prefabs / variant
-    std::vector<std::string> own;
-    const std::string text = SpliceOverrides(fileText, overrides, &own);
+    std::vector<std::string> own, paths;
+    std::vector<int> targets;
+    const std::string text = SpliceOverrides(fileText, overrides, &own, &targets, &paths);
     GameObject* root = nullptr;
     if (!ParseInto(scene, text, /*clear=*/false, &root, error, warnings)) return nullptr;
     if (warnings) warnings->insert(warnings->end(), own.begin(), own.end());
-    if (root) { root->prefabSource = path; root->prefabOverrides = overrides; }
+    if (root) {
+        root->prefabSource = path;
+        root->prefabOverrides = overrides;
+        // an old index-only override that resolved keeps the path of the object it hit
+        for (std::size_t i = 0; i < root->prefabOverrides.size() && i < targets.size(); ++i) {
+            auto& ov = root->prefabOverrides[i];
+            if (targets[i] < 0 || (std::size_t)targets[i] >= paths.size()) continue;
+            ov.object = targets[i];
+            if (ov.path.empty()) ov.path = paths[(std::size_t)targets[i]];
+        }
+    }
     return root;
 }
 

@@ -157,33 +157,154 @@ std::string Capitalized(std::string s) {
     return s;
 }
 
+// ---- Stable object paths -----------------------------------------------------------
+//
+// Records that name an object of a prefab (override, unset, remove, under, and an
+// instance's stored overrides) name it by its path of names below the prefab root, so a
+// prefab that gains, loses or reorders objects does not move them onto another object
+// (issue #888, finding 58). Written from the format this file defines; see
+// docs/prefab_system.md, "Object numbering".
+
+std::string EscapeSegment(const std::string& name) {
+    if (name.empty()) return "\\e";
+    if (name == ".") return "\\.";
+    std::string out;
+    for (char c : name) {
+        if (c == '\\' || c == '/' || c == '[' || c == ']') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+// "Body/Wheel[1]" -> {("Body",0), ("Wheel",1)}; "." -> {} (the root). False when malformed.
+bool SplitPath(const std::string& path, std::vector<std::pair<std::string, int>>& segs) {
+    segs.clear();
+    if (path.empty()) return false;
+    if (path == ".") return true;
+    std::size_t i = 0;
+    if (path.compare(0, 2, "./") == 0) i = 2;
+    while (i < path.size()) {
+        while (i < path.size() && path[i] == '/') ++i;   // runs of '/' count as one
+        if (i >= path.size()) break;
+        std::string name;
+        bool empty = false, any = false;
+        int nth = 0;
+        while (i < path.size() && path[i] != '/') {
+            const char c = path[i];
+            if (c == '\\') {
+                if (i + 1 >= path.size()) return false;
+                const char e = path[i + 1];
+                if (e == 'e') empty = true;
+                else name += e;
+                any = true;
+                i += 2;
+            } else if (c == '[') {
+                const std::size_t close = path.find(']', i);
+                if (close == std::string::npos || close == i + 1 || close - i > 10) return false;
+                for (std::size_t k = i + 1; k < close; ++k) if (!std::isdigit((unsigned char)path[k])) return false;
+                nth = std::atoi(path.substr(i + 1, close - i - 1).c_str());
+                i = close + 1;
+                if (i < path.size() && path[i] != '/') return false;
+            } else if (c == ']') return false;
+            else { name += c; any = true; ++i; }
+        }
+        if (!any || (empty && !name.empty())) return false;
+        segs.push_back({name, nth});
+    }
+    return !segs.empty();
+}
+
+std::string JoinPath(const std::vector<std::pair<std::string, int>>& segs) {
+    if (segs.empty()) return ".";
+    std::string out;
+    for (const auto& s : segs) {
+        if (!out.empty()) out += '/';
+        out += EscapeSegment(s.first);
+        if (s.second > 0) out += "[" + std::to_string(s.second) + "]";
+    }
+    return out;
+}
+
+// The paths of a list of objects and a lookup from path to index.
+struct PathIndex {
+    std::vector<std::string> paths;
+    std::unordered_map<std::string, int> at;
+    PathIndex() = default;
+    PathIndex(const std::vector<std::string>& names, const std::vector<int>& parents) {
+        paths = PrefabTools::ObjectPaths(names, parents);
+        for (std::size_t i = 0; i < paths.size(); ++i) if (!paths[i].empty()) at.emplace(paths[i], (int)i);
+    }
+    template <class T> static PathIndex Of(const std::vector<T>& objs) {
+        std::vector<std::string> n;
+        std::vector<int> p;
+        for (const auto& o : objs) { n.push_back(o.name); p.push_back(o.parent); }
+        return PathIndex(n, p);
+    }
+    int Find(const std::string& path) const {
+        auto it = at.find(path);
+        if (it != at.end()) return it->second;
+        const std::string c = PrefabTools::CanonicalObjectPath(path);
+        if (c.empty() || c == path) return -1;
+        it = at.find(c);
+        return it == at.end() ? -1 : it->second;
+    }
+    // A record's target: its path when it has one, else its index.
+    int Resolve(int object, const std::string& path) const { return path.empty() ? object : Find(path); }
+    std::string PathOf(int i) const { return i >= 0 && (std::size_t)i < paths.size() ? paths[(std::size_t)i] : std::string(); }
+};
+
+// How a record names its target in messages.
+std::string TargetLabel(int object, const std::string& path) {
+    return path.empty() ? "object " + std::to_string(object) : "object '" + path + "'";
+}
+
+// How a record names its target in a file: the quoted path, or the bare index of an old record.
+std::string TargetText(int object, const std::string& path) { return path.empty() ? std::to_string(object) : Quote(path); }
+
+// A target at `p`: a quoted path (new form) or a bare index (old form).
+bool ReadTarget(const std::string& t, std::size_t& p, int& object, std::string& path) {
+    SkipSpaces(t, p);
+    path.clear();
+    if (p < t.size() && t[p] == '"') {
+        std::string raw;
+        if (!ReadQuoted(t, p, raw)) return false;
+        path = PrefabTools::CanonicalObjectPath(raw);
+        object = -1;
+        return !path.empty();
+    }
+    return ReadInt(t, p, object) && object >= 0;
+}
+
 // ---- Delta: overrides, unsets and removals ------------------------------------------
 
-struct Unset { int object = 0; std::string record; int occurrence = 0; };
+struct Unset { int object = 0; std::string record; int occurrence = 0; std::string path; };
+struct ObjRef { int object = -1; std::string path; };
 
 struct Delta {
     std::vector<Override> overrides;
     std::vector<Unset> unsets;
-    std::vector<int> removes;
+    std::vector<ObjRef> removes;
     bool Empty() const { return overrides.empty() && unsets.empty() && removes.empty(); }
 };
 
-// One delta record: `override <i> "<line>"`, `unset <i> "<record>" [n]`, `remove <i>`.
+// One delta record: `override <t> "<line>"`, `unset <t> "<record>" [n]`, `remove <t>`, where
+// <t> is a quoted object path ("Body/Head") or, in files from before paths, an index.
 // 0 = not a delta line, 1 = parsed, -1 = malformed.
 int ParseDeltaLine(const std::string& t, Delta& d) {
     const std::string tok = FirstToken(t);
     if (tok != "override" && tok != "unset" && tok != "remove") return 0;
     std::size_t p = tok.size() + (t.find(tok));
     int obj = 0;
-    if (!ReadInt(t, p, obj) || obj < 0) return -1;
-    if (tok == "remove") { d.removes.push_back(obj); return 1; }
+    std::string path;
+    if (!ReadTarget(t, p, obj, path)) return -1;
+    if (tok == "remove") { d.removes.push_back({obj, path}); return 1; }
     std::string text;
     SkipSpaces(t, p);
     if (p >= t.size() || t[p] != '"' || !ReadQuoted(t, p, text) || text.empty()) return -1;   // the line must be quoted
-    if (tok == "override") { d.overrides.push_back({obj, Trim(text)}); return 1; }
+    if (tok == "override") { d.overrides.push_back({obj, Trim(text), path}); return 1; }
     int occ = 0;
     if (!ReadInt(t, p, occ) || occ < 0) occ = 0;
-    d.unsets.push_back({obj, text, occ});
+    d.unsets.push_back({obj, text, occ, path});
     return 1;
 }
 
@@ -271,7 +392,8 @@ struct ObjSem {
     int parent = -1;                      // header index of the parent
     bool hasNested = false;
     std::string nested;                   // nestedprefab "<file>"
-    int under = -1;                       // attach point (variant / placeholder children)
+    int under = -1;                       // attach point (variant / placeholder children): old index form
+    std::string underPath;                // attach point: path form
     Delta delta;                          // a placeholder's override / unset / remove records
     std::vector<std::string> content;     // the object's own records, trimmed
     std::vector<std::string> problems;    // malformed lines
@@ -290,7 +412,12 @@ ObjSem Interpret(const RawObj& o) {
             if (ReadQuoted(t, p, path) && !path.empty()) { s.hasNested = true; s.nested = path; }
             else s.problems.push_back("malformed nestedprefab record");
         }
-        else if (tok == "under") { int v = -1; if (ReadInt(t, p, v)) s.under = v; }
+        else if (tok == "under") {
+            int v = -1;
+            std::string path;
+            if (ReadTarget(t, p, v, path)) { s.under = path.empty() ? v : -1; s.underPath = path; }
+            else s.problems.push_back("malformed under record");
+        }
         else if (tok == "override" || tok == "unset" || tok == "remove") {
             if (ParseDeltaLine(t, s.delta) < 0) s.problems.push_back("malformed " + tok + " record");
         }
@@ -308,6 +435,7 @@ struct Prov {
     int a = -1;   // Own: position in the file's objects. Base: object index in the base.
                   // Nested: position of the nestedprefab object in the file's objects.
     int b = -1;   // Nested: object index inside the nested prefab.
+    std::string path;   // Base / Nested: the path of that object in the base / nested prefab
 };
 
 struct RObj {
@@ -316,12 +444,15 @@ struct RObj {
     int parent = -1;
     std::string link;                 // root of a nested instance: the file it is an instance of
     Prov prov;
-    int attach = -1;                  // scratch: attach point while composing
+    int attach = -1;                  // scratch: attach point while composing (old index form)
+    std::string attachPath;           // scratch: attach point, path form
 };
 
 struct RDoc {
     int version = 3;
     std::vector<RObj> objs;           // depth-first, objs[0] is the root
+    std::shared_ptr<const RDoc> base;                   // a variant: its resolved base
+    std::vector<std::shared_ptr<const RDoc>> nestedOf;  // per file object: the nested prefab it stands for
 };
 
 struct Diag {
@@ -409,16 +540,20 @@ bool Normalize(std::vector<RObj>& objs, Diag& diag, const std::string& file) {
     return true;
 }
 
-// Apply a delta to a resolved object list. All indices in the delta mean the list as it
-// is on entry. Returns old index -> new index (-1 for removed objects).
+// Apply a delta to a resolved object list. All targets in the delta (paths, or the
+// indices of old records) mean the list as it is on entry. Returns old index -> new index
+// (-1 for removed objects). `overrideTargets` gets, per override, the index it resolved to
+// (-1 when it was dropped).
 std::vector<int> ApplyDelta(std::vector<RObj>& objs, const Delta& d, Diag& diag, const std::string& file,
-                            const std::string& what) {
+                            const std::string& what, std::vector<int>* overrideTargets = nullptr) {
     const std::size_t n = objs.size();
+    const PathIndex pidx = PathIndex::Of(objs);
     std::vector<char> drop(n, 0);
-    for (int r : d.removes) {
-        if (r == 0) { diag.Warn(file, "remove 0 ignored: the root object cannot be removed"); continue; }
+    for (const ObjRef& rr : d.removes) {
+        const int r = pidx.Resolve(rr.object, rr.path);
+        if (r == 0) { diag.Warn(file, (rr.path.empty() ? "remove 0" : "remove of the root") + std::string(" ignored: the root object cannot be removed")); continue; }
         if (r < 0 || (std::size_t)r >= n) {
-            diag.Warn(file, "remove of object " + std::to_string(r) + " dropped: " + what + " no longer has it");
+            diag.Warn(file, "remove of " + TargetLabel(rr.object, rr.path) + " dropped: " + what + " no longer has it");
             continue;
         }
         drop[(std::size_t)r] = 1;
@@ -437,38 +572,49 @@ std::vector<int> ApplyDelta(std::vector<RObj>& objs, const Delta& d, Diag& diag,
         }
     }
     for (const auto& u : d.unsets) {
-        if (u.object < 0 || (std::size_t)u.object >= n) {
-            diag.Warn(file, "unset of object " + std::to_string(u.object) + " dropped: " + what + " no longer has it");
+        const int obj = pidx.Resolve(u.object, u.path);
+        if (obj < 0 || (std::size_t)obj >= n) {
+            diag.Warn(file, "unset of " + TargetLabel(u.object, u.path) + " dropped: " + what + " no longer has it");
             continue;
         }
-        if (gone[(std::size_t)u.object]) continue;
+        if (gone[(std::size_t)obj]) continue;
         int k = 0;
-        auto& lines = objs[(std::size_t)u.object].lines;
+        bool done = false;
+        auto& lines = objs[(std::size_t)obj].lines;
         for (std::size_t i = 0; i < lines.size(); ++i)
-            if (FirstToken(lines[i]) == u.record && k++ == u.occurrence) { lines.erase(lines.begin() + (std::ptrdiff_t)i); break; }
+            if (FirstToken(lines[i]) == u.record && k++ == u.occurrence) { lines.erase(lines.begin() + (std::ptrdiff_t)i); done = true; break; }
+        if (!done)
+            diag.Warn(file, "unset of '" + u.record + "' on " + TargetLabel(u.object, u.path) + " ('" + objs[(std::size_t)obj].name +
+                            "') did nothing: it has no such record");
     }
+    std::vector<int> target(d.overrides.size(), -1);
+    for (std::size_t oi = 0; oi < d.overrides.size(); ++oi) target[oi] = pidx.Resolve(d.overrides[oi].object, d.overrides[oi].path);
+    if (overrideTargets) overrideTargets->assign(d.overrides.size(), -1);
     for (std::size_t oi = 0; oi < d.overrides.size(); ++oi) {
         const Override& ov = d.overrides[oi];
         const std::string line = Trim(ov.line);
         const std::string tok = FirstToken(line);
-        if (ov.object < 0 || (std::size_t)ov.object >= n) {
-            diag.Warn(file, "prefab override for object " + std::to_string(ov.object) + " dropped: " + what + " no longer has it");
+        const int obj = target[oi];
+        const std::string label = TargetLabel(ov.object, ov.path);
+        if (obj < 0 || (std::size_t)obj >= n) {
+            diag.Warn(file, "prefab override for " + label + " dropped: " + what + " no longer has it");
             continue;
         }
         if (line.find('\n') != std::string::npos || line.find('\r') != std::string::npos || IsStructuralToken(tok)) {
-            diag.Warn(file, "override for object " + std::to_string(ov.object) + " ignored: '" + tok + "' cannot be overridden");
+            diag.Warn(file, "override for " + label + " ignored: '" + tok + "' cannot be overridden");
             continue;
         }
-        if (gone[(std::size_t)ov.object]) {
-            diag.Warn(file, "override for object " + std::to_string(ov.object) + " ignored: the same file removes it");
+        if (gone[(std::size_t)obj]) {
+            diag.Warn(file, "override for " + label + " ignored: the same file removes it");
             continue;
         }
+        if (overrideTargets) (*overrideTargets)[oi] = obj;
         // Overrides are written in record order, so the Nth override of a name on an object
         // means the Nth record of that name.
         int occ = 0;
         for (std::size_t pj = 0; pj < oi; ++pj)
-            if (d.overrides[pj].object == ov.object && FirstToken(Trim(d.overrides[pj].line)) == tok) ++occ;
-        auto& lines = objs[(std::size_t)ov.object].lines;
+            if (target[pj] == obj && FirstToken(Trim(d.overrides[pj].line)) == tok) ++occ;
+        auto& lines = objs[(std::size_t)obj].lines;
         bool replaced = false;
         if (tok == "compoff") {
             for (const auto& l : lines) if (l == line) { replaced = true; break; }
@@ -534,7 +680,8 @@ Status ResolveFile(Ctx& ctx, const std::string& path, std::shared_ptr<const RDoc
 // overrides applied. `out` is a forest in file order (sub-trees of nested prefabs sit
 // right after their root); roots carry `attach` when the file names one.
 Status ExpandOwn(Ctx& ctx, const RawDoc& raw, const std::vector<ObjSem>& sem, const std::string& file,
-                 std::vector<RObj>& out, int& version, std::string& why) {
+                 std::vector<RObj>& out, int& version, std::string& why,
+                 std::vector<std::shared_ptr<const RDoc>>* subsOut = nullptr) {
     const std::size_t n = raw.objs.size();
     std::unordered_map<int, int> byIdx;
     for (std::size_t k = 0; k < n; ++k) byIdx[raw.objs[k].idx] = (int)k;
@@ -580,27 +727,33 @@ Status ExpandOwn(Ctx& ctx, const RawDoc& raw, const std::vector<ObjSem>& sem, co
     // 3. Emit objects in file order, a nested prefab's whole tree right after its root.
     std::vector<int> outIdxOf(n, -1), subStart(n, -1);
     std::vector<std::vector<int>> subMap(n);
+    std::vector<PathIndex> subIdx(n);   // paths of each nested prefab's objects, before this file's changes
+    if (subsOut) subsOut->assign(n, nullptr);
     for (std::size_t k = 0; k < n; ++k) {
         if (skip[k]) continue;
         if (!sem[k].hasNested) {
             RObj o;
             o.name = raw.objs[k].name;
             o.lines = sem[k].content;
-            o.prov = {Prov::Own, (int)k, -1};
+            o.prov = {Prov::Own, (int)k, -1, std::string()};
             o.attach = sem[k].under;
+            o.attachPath = sem[k].underPath;
             outIdxOf[k] = (int)out.size();
             out.push_back(std::move(o));
             continue;
         }
+        if (subsOut) (*subsOut)[k] = sub[k];
+        subIdx[k] = PathIndex::Of(sub[k]->objs);
         std::vector<RObj> e = sub[k]->objs;
-        for (std::size_t j = 0; j < e.size(); ++j) e[j].prov = {Prov::Nested, (int)k, (int)j};
+        for (std::size_t j = 0; j < e.size(); ++j) e[j].prov = {Prov::Nested, (int)k, (int)j, subIdx[k].PathOf((int)j)};
         Delta d = sem[k].delta;
-        for (const auto& l : sem[k].content) d.overrides.push_back({0, l});   // its own records edit the nested root
+        for (const auto& l : sem[k].content) d.overrides.push_back({0, l, "."});   // its own records edit the nested root
         const std::string what = "the nested prefab '" + BaseName(subPath[k]) + "'";
         const std::vector<int> m = ApplyDelta(e, d, ctx.diag, file, what);
         e[0].name = raw.objs[k].name;
         e[0].link = subPath[k];
         e[0].attach = sem[k].under;
+        e[0].attachPath = sem[k].underPath;
         if (out.size() + e.size() > kMaxObjects) {
             ctx.fatal = "prefab expands to more than " + std::to_string(kMaxObjects) + " objects (at '" + BaseName(file) + "')";
             return Status::Fatal;
@@ -625,10 +778,11 @@ Status ExpandOwn(Ctx& ctx, const RawDoc& raw, const std::vector<ObjSem>& sem, co
         if (sem[(std::size_t)p].hasNested) {
             // A child listed under a nested prefab object goes under one of the nested
             // prefab's objects: the root unless `under` says another.
-            const int j = sem[k].under >= 0 ? sem[k].under : 0;
-            const int mj = (std::size_t)j < subMap[(std::size_t)p].size() ? subMap[(std::size_t)p][(std::size_t)j] : -1;
+            const int j = !sem[k].underPath.empty() ? subIdx[(std::size_t)p].Find(sem[k].underPath)
+                                                    : (sem[k].under >= 0 ? sem[k].under : 0);
+            const int mj = j >= 0 && (std::size_t)j < subMap[(std::size_t)p].size() ? subMap[(std::size_t)p][(std::size_t)j] : -1;
             if (mj < 0) {
-                ctx.diag.Warn(file, "object '" + raw.objs[k].name + "' dropped: object " + std::to_string(j) + " of the nested prefab '" +
+                ctx.diag.Warn(file, "object '" + raw.objs[k].name + "' dropped: " + TargetLabel(j, sem[k].underPath) + " of the nested prefab '" +
                                     BaseName(subPath[(std::size_t)p]) + "' no longer exists");
                 dropped[(std::size_t)outIdxOf[k]] = 1;
                 anyDropped = true;
@@ -636,9 +790,11 @@ Status ExpandOwn(Ctx& ctx, const RawDoc& raw, const std::vector<ObjSem>& sem, co
             }
             o.parent = subStart[(std::size_t)p] + mj;
             o.attach = -1;
+            o.attachPath.clear();
         } else {
             o.parent = outIdxOf[(std::size_t)p];
             o.attach = -1;
+            o.attachPath.clear();
         }
     }
     if (anyDropped) RemoveSubtrees(out, dropped);
@@ -668,13 +824,13 @@ Status BuildDoc(Ctx& ctx, const RawDoc& raw, const std::string& file, RDoc& doc,
     int version = raw.version;
     std::vector<RObj> own;
     {
-        const Status s = ExpandOwn(ctx, raw, sem, file, own, version, why);
+        const Status s = ExpandOwn(ctx, raw, sem, file, own, version, why, &doc.nestedOf);
         if (s != Status::Ok) return s;
     }
     if (!isVariant) {
         if (own.empty()) { why = "the prefab has no objects"; return Status::Failed; }
         if (!Normalize(own, ctx.diag, file)) { why = "the parent links of its objects form a loop"; return Status::Failed; }
-        for (auto& o : own) o.attach = -1;
+        for (auto& o : own) { o.attach = -1; o.attachPath.clear(); }
         doc.version = version;
         doc.objs = std::move(own);
         return Status::Ok;
@@ -687,8 +843,10 @@ Status BuildDoc(Ctx& ctx, const RawDoc& raw, const std::string& file, RDoc& doc,
     const Status bs = ResolveFile(ctx, ref, base, why2);
     if (bs == Status::Fatal) return Status::Fatal;
     if (bs == Status::Failed) { why = "its base prefab '" + baseRef + "' cannot be used: " + why2; return Status::Failed; }
+    doc.base = base;
+    const PathIndex baseIdx = PathIndex::Of(base->objs);
     std::vector<RObj> objs = base->objs;
-    for (std::size_t i = 0; i < objs.size(); ++i) objs[i].prov = {Prov::Base, (int)i, -1};
+    for (std::size_t i = 0; i < objs.size(); ++i) objs[i].prov = {Prov::Base, (int)i, -1, baseIdx.PathOf((int)i)};
     version = std::min(version, base->version);
     const std::vector<int> map = ApplyDelta(objs, top, ctx.diag, file, "the base prefab '" + BaseName(ref) + "'");
     if (objs.size() + own.size() > kMaxObjects) {
@@ -702,16 +860,17 @@ Status BuildDoc(Ctx& ctx, const RawDoc& raw, const std::string& file, RDoc& doc,
         RObj o = std::move(own[i]);
         if (o.parent >= 0) o.parent += off;
         else {
-            const int u = o.attach >= 0 ? o.attach : 0;
-            const int target = (std::size_t)u < map.size() ? map[(std::size_t)u] : -1;
+            const int u = !o.attachPath.empty() ? baseIdx.Find(o.attachPath) : (o.attach >= 0 ? o.attach : 0);
+            const int target = u >= 0 && (std::size_t)u < map.size() ? map[(std::size_t)u] : -1;
             if (target < 0) {
-                ctx.diag.Warn(file, "added object '" + o.name + "' dropped: object " + std::to_string(u) + " of the base prefab no longer exists");
+                ctx.diag.Warn(file, "added object '" + o.name + "' dropped: " + TargetLabel(u, o.attachPath) + " of the base prefab no longer exists");
                 dropped[(std::size_t)off + i] = 1;
                 anyDropped = true;
             }
             o.parent = target;
         }
         o.attach = -1;
+        o.attachPath.clear();
         objs.push_back(std::move(o));
     }
     if (anyDropped) RemoveSubtrees(objs, dropped);
@@ -881,6 +1040,7 @@ std::vector<int> MatchTrees(const std::vector<std::string>& aName, const std::ve
 struct Baseline {
     std::shared_ptr<const RDoc> doc;
     std::vector<std::vector<std::string>> canon;   // per object: its records in the serializer's own form
+    std::vector<std::string> paths;                // per object: its stable path
 };
 
 // The prefab file's objects loaded into a scratch scene and written back, so both sides
@@ -894,6 +1054,7 @@ Status MakeBaseline(Ctx& ctx, const std::string& path, std::shared_ptr<const Bas
     if (s != Status::Ok) return s;
     auto b = std::make_shared<Baseline>();
     b->doc = doc;
+    b->paths = PathIndex::Of(doc->objs).paths;
     b->canon.resize(doc->objs.size());
     {
         Scene scratch("prefab");
@@ -1149,7 +1310,7 @@ bool ComputeDiff(Ctx& ctx, const GameObject& root, DiffData& dd, std::string& er
             }
             dd.recOverride.push_back((int)dd.overrides.size());
             dd.recUnset.push_back(-1);
-            dd.overrides.push_back({(int)d, ln});
+            dd.overrides.push_back({(int)d, ln, B.paths[d]});
             dd.pub.records.push_back(std::move(rd));
         }
         for (const auto& k : baseKeys) {
@@ -1161,7 +1322,7 @@ bool ComputeDiff(Ctx& ctx, const GameObject& root, DiffData& dd, std::string& er
             rd.prefabLine = pr.first;
             dd.recOverride.push_back(-1);
             dd.recUnset.push_back((int)dd.removedRecords.size());
-            dd.removedRecords.push_back({(int)d, rd.record, pr.second});
+            dd.removedRecords.push_back({(int)d, rd.record, pr.second, B.paths[d]});
             dd.pub.records.push_back(std::move(rd));
         }
     }
@@ -1245,15 +1406,27 @@ GameObject* BuildInstance(Scene& scene, Ctx& ctx, const std::string& path, const
     std::vector<RObj> objs = doc->objs;
     Delta d;
     d.overrides = mods.overrides;
-    d.removes = mods.removedObjects;
+    for (int r : mods.removedObjects) d.removes.push_back({r, std::string()});
     d.unsets = mods.unsets;
-    ApplyDelta(objs, d, ctx.diag, path, "the prefab");
+    std::vector<int> targets;
+    ApplyDelta(objs, d, ctx.diag, path, "the prefab", &targets);
+    // The stored overrides keep their paths; an old index-only one that resolved gets the
+    // path of the object it hit, so it is written in the new form from now on.
+    std::vector<Override> stored = mods.overrides;
+    {
+        const PathIndex pidx = PathIndex::Of(doc->objs);
+        for (std::size_t i = 0; i < stored.size() && i < targets.size(); ++i) {
+            if (targets[i] < 0) continue;
+            stored[i].object = targets[i];
+            if (stored[i].path.empty()) stored[i].path = pidx.PathOf(targets[i]);
+        }
+    }
     std::string err;
     std::vector<std::string> parseWarn;
     GameObject* root = SceneSerializer::InstantiateFromText(scene, Render(doc->version, objs), &err, &parseWarn);
     if (!root) { if (error) *error = err.empty() ? "cannot load " + path : err; return nullptr; }
     root->prefabSource = path;
-    root->prefabOverrides = mods.overrides;
+    root->prefabOverrides = std::move(stored);
     LinkNested(ctx, *root, objs);
     if (warnings) warnings->insert(warnings->end(), parseWarn.begin(), parseWarn.end());
     MoveWarnings(ctx, warnings);
@@ -1363,16 +1536,18 @@ std::string IndentOf(const std::string& l) {
 // (the file's top-level lines for a variant, a nested prefab object's lines otherwise).
 // `baseOcc[k]` is the prefab's own k-th record of that name, used to fill earlier
 // occurrences so the new entry lands on the right one.
-void SetOverrideEntry(std::vector<std::string>& lines, const std::string& indent, int object, const std::string& rec,
-                      int occ, const std::string& newLine, const std::vector<std::string>& baseOcc) {
+void SetOverrideEntry(std::vector<std::string>& lines, const std::string& indent, int object, const std::string& path,
+                      const std::string& rec, int occ, const std::string& newLine, const std::vector<std::string>& baseOcc) {
     std::vector<std::size_t> at;   // positions of the entries for this object and record name
     for (std::size_t i = 0; i < lines.size(); ++i) {
         Delta d;
-        if (ParseDeltaLine(Trim(lines[i]), d) == 1 && !d.overrides.empty() && d.overrides[0].object == object &&
-            FirstToken(d.overrides[0].line) == rec)
-            at.push_back(i);
+        if (ParseDeltaLine(Trim(lines[i]), d) != 1 || d.overrides.empty() || FirstToken(d.overrides[0].line) != rec) continue;
+        const Override& e = d.overrides[0];
+        // an entry names this object by its path, or (an old entry) by its index
+        if (e.path.empty() ? e.object == object : e.path == path) at.push_back(i);
     }
-    const std::string entry = indent + "override " + std::to_string(object) + " " + Quote(newLine);
+    const std::string target = TargetText(object, path);
+    const std::string entry = indent + "override " + target + " " + Quote(newLine);
     if (rec == "compoff") {
         for (std::size_t i : at) { Delta d; ParseDeltaLine(Trim(lines[i]), d); if (d.overrides[0].line == newLine) return; }
         lines.push_back(entry);
@@ -1382,7 +1557,7 @@ void SetOverrideEntry(std::vector<std::string>& lines, const std::string& indent
     while ((int)at.size() < occ) {
         const std::size_t k = at.size();
         const std::string fill = k < baseOcc.size() ? baseOcc[k] : newLine;
-        lines.push_back(indent + "override " + std::to_string(object) + " " + Quote(fill));
+        lines.push_back(indent + "override " + target + " " + Quote(fill));
         at.push_back(lines.size() - 1);
     }
     if ((int)at.size() > occ) lines[at[(std::size_t)occ]] = entry;
@@ -1410,6 +1585,7 @@ bool EditSource(RawDoc& raw, const Baseline& base, const PrefabRecordDiff& rd, c
     }
     if (pv.kind == Prov::Base || pv.kind == Prov::Nested) {
         const int target = pv.kind == Prov::Base ? pv.a : pv.b;
+        const std::string& tpath = pv.path;
         std::vector<std::string>* lines = pv.kind == Prov::Base ? &raw.head : nullptr;
         if (pv.kind == Prov::Nested) {
             if (pv.a < 0 || (std::size_t)pv.a >= raw.objs.size()) { err = "internal: object has no place in the file"; return false; }
@@ -1417,9 +1593,9 @@ bool EditSource(RawDoc& raw, const Baseline& base, const PrefabRecordDiff& rd, c
         }
         const std::string indent = pv.kind == Prov::Base ? "" : "  ";
         if (removing) {
-            lines->push_back(indent + "unset " + std::to_string(target) + " " + Quote(rd.record) + " " + std::to_string(rd.occurrence));
+            lines->push_back(indent + "unset " + TargetText(target, tpath) + " " + Quote(rd.record) + " " + std::to_string(rd.occurrence));
         } else {
-            SetOverrideEntry(*lines, indent, target, rd.record,
+            SetOverrideEntry(*lines, indent, target, tpath, rd.record,
                              rd.kind == PrefabRecordDiff::Kind::Added ? (int)baseOcc.size() : rd.occurrence, newLine, baseOcc);
         }
         return true;
@@ -1438,6 +1614,57 @@ bool ReadEditable(const std::string& path, std::string& text, std::string& err) 
     if (DataPack::IsPacked(raw)) { err = path + " is packed (read-only); unpack it before applying changes"; return false; }
     text = raw;
     return true;
+}
+
+// Rewrite one old index-keyed record (`override 2 ...`, `unset 2 ...`, `remove 2`,
+// `under 2`) in the path form, using `idx`, the objects the index counts. Other lines and
+// records already in the path form are left as they are. True when the line changed.
+bool UpgradeTargetLine(std::string& line, const PathIndex& idx) {
+    const std::string t = Trim(line);
+    const std::string tok = FirstToken(t);
+    if (tok != "override" && tok != "unset" && tok != "remove" && tok != "under") return false;
+    std::size_t p = tok.size();
+    SkipSpaces(t, p);
+    if (p >= t.size() || !std::isdigit((unsigned char)t[p])) return false;
+    int obj = -1;
+    if (!ReadInt(t, p, obj)) return false;
+    const std::string path = idx.PathOf(obj);
+    if (path.empty()) return false;   // an index the prefab no longer has: left for the warning at load
+    line = IndentOf(line) + tok + " " + Quote(path) + t.substr(p);
+    return true;
+}
+
+// Rewrite the old index-keyed records of a prefab file in the path form (the file's next
+// save after this change): the variant records against the base, a nested prefab
+// object's records against that nested prefab, and `under` against what it attaches to.
+void UpgradeRawTargets(RawDoc& raw, const RDoc& doc) {
+    if (doc.base) {
+        const PathIndex bi = PathIndex::Of(doc.base->objs);
+        for (auto* part : {&raw.head, &raw.tail})
+            for (auto& l : *part) if (FirstToken(l) != "under") UpgradeTargetLine(l, bi);
+    }
+    std::unordered_map<int, std::size_t> byIdx;
+    for (std::size_t k = 0; k < raw.objs.size(); ++k) byIdx[raw.objs[k].idx] = k;
+    std::vector<PathIndex> nested(raw.objs.size());
+    std::vector<char> has(raw.objs.size(), 0);
+    for (std::size_t k = 0; k < raw.objs.size() && k < doc.nestedOf.size(); ++k)
+        if (doc.nestedOf[k]) { nested[k] = PathIndex::Of(doc.nestedOf[k]->objs); has[k] = 1; }
+    std::unique_ptr<PathIndex> baseIdx;
+    if (doc.base) baseIdx = std::make_unique<PathIndex>(PathIndex::Of(doc.base->objs));
+    for (std::size_t k = 0; k < raw.objs.size(); ++k) {
+        const ObjSem sem = Interpret(raw.objs[k]);
+        // what `under` counts in: the nested prefab of the parent placeholder, or a variant's base
+        const PathIndex* underIn = nullptr;
+        if (sem.parent >= 0) {
+            auto it = byIdx.find(sem.parent);
+            if (it != byIdx.end() && has[it->second]) underIn = &nested[it->second];
+        } else if (baseIdx) underIn = baseIdx.get();
+        for (auto& l : raw.objs[k].lines) {
+            const std::string tok = FirstToken(Trim(l));
+            if (tok == "under") { if (underIn) UpgradeTargetLine(l, *underIn); }
+            else if (has[k]) UpgradeTargetLine(l, nested[k]);
+        }
+    }
 }
 
 // Check the text would still resolve as a prefab at `path`, then write it atomically.
@@ -1581,6 +1808,90 @@ std::vector<GameObject*> PrefabTools::NestedInstances(const GameObject& root, bo
 
 std::vector<Override> PrefabTools::OverridesOf(const GameObject& root) { return root.prefabOverrides; }
 
+// ---- PrefabTools: stable object paths ------------------------------------------------------------------
+
+std::vector<std::string> PrefabTools::ObjectPaths(const std::vector<std::string>& names, const std::vector<int>& parents) {
+    const std::size_t n = std::min(names.size(), parents.size());
+    std::vector<std::string> out(n);
+    if (n == 0) return out;
+    std::vector<std::vector<int>> kids(n);
+    for (std::size_t i = 1; i < n; ++i)
+        if (parents[i] >= 0 && (std::size_t)parents[i] < n && (std::size_t)parents[i] != i) kids[(std::size_t)parents[i]].push_back((int)i);
+    out[0] = ".";
+    std::vector<char> seen(n, 0);
+    seen[0] = 1;
+    std::deque<int> q{0};
+    while (!q.empty()) {
+        const int x = q.front(); q.pop_front();
+        std::unordered_map<std::string, int> count;
+        for (int c : kids[(std::size_t)x]) {
+            if (seen[(std::size_t)c]) continue;   // a parent loop: no path
+            seen[(std::size_t)c] = 1;
+            const int nth = count[names[(std::size_t)c]]++;
+            std::string seg = EscapeSegment(names[(std::size_t)c]);
+            if (nth > 0) seg += "[" + std::to_string(nth) + "]";
+            out[(std::size_t)c] = x == 0 ? seg : out[(std::size_t)x] + "/" + seg;
+            q.push_back(c);
+        }
+    }
+    return out;
+}
+
+std::string PrefabTools::CanonicalObjectPath(const std::string& path) {
+    std::vector<std::pair<std::string, int>> segs;
+    if (!SplitPath(path, segs)) return path == "." ? "." : std::string();
+    return JoinPath(segs);
+}
+
+int PrefabTools::UpgradeLegacyOverrides(GameObject& instanceRoot, std::vector<std::string>* warnings) {
+    bool any = false;
+    for (const auto& ov : instanceRoot.prefabOverrides) if (ov.path.empty()) { any = true; break; }
+    if (!any || instanceRoot.prefabSource.empty()) return 0;
+    Ctx ctx;
+    std::shared_ptr<const RDoc> doc;
+    std::string why;
+    if (ResolveFile(ctx, instanceRoot.prefabSource, doc, why) != Status::Ok || !doc || doc->objs.empty()) return 0;
+    // A plain prefab's old index is the object's place in the file; a nested or variant
+    // one's is its depth-first place in the expanded prefab.
+    bool plain = true;
+    for (const auto& o : doc->objs) if (o.prov.kind != Prov::Own) { plain = false; break; }
+    std::unordered_map<int, int> fileToDoc;
+    if (plain) for (std::size_t i = 0; i < doc->objs.size(); ++i) fileToDoc[doc->objs[i].prov.a] = (int)i;
+    const PathIndex pidx = PathIndex::Of(doc->objs);
+    std::vector<LiveObj> live;
+    const bool haveLive = ExtractLive(instanceRoot, live);
+    const PathIndex lidx = haveLive ? PathIndex::Of(live) : PathIndex();
+    int done = 0;
+    for (auto& ov : instanceRoot.prefabOverrides) {
+        if (!ov.path.empty() || ov.object < 0) continue;
+        int d = ov.object;
+        if (plain) { auto it = fileToDoc.find(ov.object); d = it == fileToDoc.end() ? -1 : it->second; }
+        if (d < 0 || (std::size_t)d >= doc->objs.size()) continue;   // dropped with a warning when the prefab is applied
+        const std::string path = pidx.PathOf(d);
+        if (path.empty()) continue;
+        // Does it look right? The instance saved with the override should have that object
+        // at that place, and the overridden kind of record on it.
+        std::string doubt;
+        if (haveLive) {
+            const std::string livePath = lidx.PathOf(ov.object);
+            const int l = lidx.Find(path);
+            const std::string tok = FirstToken(Trim(ov.line));
+            bool hasRec = false;
+            if (l >= 0) for (const auto& ln : live[(std::size_t)l].lines) if (FirstToken(ln) == tok) { hasRec = true; break; }
+            if (!livePath.empty() && livePath != path) doubt = "the instance's object " + std::to_string(ov.object) + " is '" + livePath + "'";
+            else if (l >= 0 && tok != "compoff" && !hasRec) doubt = "the instance's '" + path + "' has no '" + tok + "' record";
+        }
+        if (!doubt.empty() && warnings)
+            warnings->push_back("old prefab override for object " + std::to_string(ov.object) + " of '" + instanceRoot.name + "' now names '" +
+                                path + "' in " + BaseName(instanceRoot.prefabSource) + ", but " + doubt +
+                                "; check it (the prefab may have changed since this was saved)");
+        ov.object = d;
+        ov.path = path;
+        ++done;
+    }
+    return done;
+}
+
 int PrefabTools::Unpack(GameObject& go, bool completely) {
     GameObject* target = PrefabRoot(go);
     if (!target) return 0;
@@ -1706,6 +2017,7 @@ bool ApplyRecords(GameObject& root, const std::string& recordFilter, int object,
         }
         if (!EditSource(raw, *dd.base, *r, newLine, err)) return false;
     }
+    UpgradeRawTargets(raw, *dd.base->doc);   // old index-keyed records are written in the path form
     if (!CommitFile(path, RawToText(raw), err)) return false;
     RefreshLinks(root);
     return true;
@@ -1732,10 +2044,11 @@ bool PrefabTools::ApplyAllToSource(GameObject& instanceRoot, std::string* error)
 namespace {
 
 // One object block of a document being written.
-void WriteBlock(std::string& out, int idx, const std::string& name, const std::vector<std::string>& lines, int parent, int under) {
+void WriteBlock(std::string& out, int idx, const std::string& name, const std::vector<std::string>& lines, int parent,
+                const std::string& underPath) {
     out += "gameobject " + std::to_string(idx) + " " + Quote(name) + "\n";
     for (const auto& l : lines) out += "  " + l + "\n";
-    if (under >= 0) out += "  under " + std::to_string(under) + "\n";
+    if (!underPath.empty()) out += "  under " + Quote(underPath) + "\n";
     out += "  parent " + std::to_string(parent) + "\nend\n";
 }
 
@@ -1751,10 +2064,12 @@ std::vector<std::string> ContentLines(const LiveObj& o) {
 
 // Delta records for a nested instance or variant, from a diff.
 void WriteDelta(std::vector<std::string>& lines, const std::string& indent, const DiffData& dd) {
-    for (const auto& o : dd.overrides) lines.push_back(indent + "override " + std::to_string(o.object) + " " + Quote(o.line));
+    const auto& paths = dd.base->paths;
+    auto at = [&](int i) { return TargetText(i, i >= 0 && (std::size_t)i < paths.size() ? paths[(std::size_t)i] : std::string()); };
+    for (const auto& o : dd.overrides) lines.push_back(indent + "override " + at(o.object) + " " + Quote(o.line));
     for (const auto& u : dd.removedRecords)
-        lines.push_back(indent + "unset " + std::to_string(u.object) + " " + Quote(u.record) + " " + std::to_string(u.occurrence));
-    for (int r : dd.removedObjects) lines.push_back(indent + "remove " + std::to_string(r));
+        lines.push_back(indent + "unset " + at(u.object) + " " + Quote(u.record) + " " + std::to_string(u.occurrence));
+    for (int r : dd.removedObjects) lines.push_back(indent + "remove " + at(r));
 }
 
 } // namespace
@@ -1813,14 +2128,18 @@ bool PrefabTools::SavePrefab(const GameObject& root, const std::string& path, st
     for (int i : order) {
         if (outIdx[(std::size_t)i] < 0) continue;
         const LiveObj& o = live[(std::size_t)i];
-        int parent = -1, under = -1;
+        int parent = -1;
+        std::string under;
         if (i != 0 && o.parent >= 0) {
             const int p = o.parent;
             if (nestedPart[(std::size_t)p] && !isHolder[(std::size_t)p]) {
                 // added inside a nested prefab: child of the placeholder, attached at the
-                // nested object it was under
-                parent = outIdx[(std::size_t)holderOf[(std::size_t)p]];
-                under = docIdxOf[(std::size_t)p] > 0 ? docIdxOf[(std::size_t)p] : -1;
+                // nested object it was under (by its path in that prefab)
+                const int h = holderOf[(std::size_t)p];
+                parent = outIdx[(std::size_t)h];
+                const int di = docIdxOf[(std::size_t)p];
+                const auto& hp = holderDiff[(std::size_t)h].base->paths;
+                if (di > 0 && (std::size_t)di < hp.size()) under = hp[(std::size_t)di];
             } else parent = outIdx[(std::size_t)p];
         }
         std::vector<std::string> lines;
@@ -1870,8 +2189,10 @@ bool PrefabTools::SaveVariant(const GameObject& instanceRoot, const std::string&
         for (int x : sub) idxOf[x] = next++;
         for (int x : sub) {
             const bool top = x == (int)i;
+            const int at = top ? dd.liveToDoc[(std::size_t)p] : -1;   // the base object it hangs under (0: the root)
             WriteBlock(text, idxOf[x], dd.live[(std::size_t)x].name, ContentLines(dd.live[(std::size_t)x]),
-                       top ? -1 : idxOf[dd.live[(std::size_t)x].parent], top ? dd.liveToDoc[(std::size_t)p] : -1);
+                       top ? -1 : idxOf[dd.live[(std::size_t)x].parent],
+                       at >= 0 && (std::size_t)at < dd.base->paths.size() ? dd.base->paths[(std::size_t)at] : std::string());
         }
     }
     if (!CommitFile(variantPath, text, err)) return fail(err);
@@ -1942,11 +2263,14 @@ PrefabReport PrefabTools::ValidateInstance(const GameObject& instanceRoot) {
         const Status s = ResolveFile(ctx, g->prefabSource, doc, why);
         if (s != Status::Ok) { ctx.diag.Error(g->prefabSource, ErrorFor(ctx, why)); ctx.fatal.clear(); continue; }
         rep.files.push_back(g->prefabSource);
-        for (const auto& ov : g->prefabOverrides)
-            if (ov.object < 0 || (std::size_t)ov.object >= doc->objs.size())
-                ctx.diag.Warn(g->prefabSource, "override for object " + std::to_string(ov.object) + " of '" + g->name +
+        const PathIndex pidx = PathIndex::Of(doc->objs);
+        for (const auto& ov : g->prefabOverrides) {
+            const int t = pidx.Resolve(ov.object, ov.path);
+            if (t < 0 || (std::size_t)t >= doc->objs.size())
+                ctx.diag.Warn(g->prefabSource, "override for " + TargetLabel(ov.object, ov.path) + " of '" + g->name +
                                                "' names an object the prefab no longer has (it has " +
                                                std::to_string(doc->objs.size()) + ")");
+        }
     }
     rep.issues = ctx.diag.issues;
     return rep;

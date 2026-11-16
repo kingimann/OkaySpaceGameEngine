@@ -427,7 +427,7 @@ static void TestNestedApplyRevert() {
     // Apply through the outer instance: the car file stores it on the nested object, the wheel file is untouched.
     CHECK(PrefabTools::ApplyToSource(*r, 4, "sprite", "", 0, &err));
     const std::string carText = Read(car);
-    CHECK(Contains(carText, "override 1 \"sprite"));
+    CHECK(Contains(carText, "override \"Hub\" \"sprite"));
     CHECK(Read(wheel) == wheelBytes);
     CHECK(PrefabTools::Diff(*r, d, &err) && d.Empty());
     {

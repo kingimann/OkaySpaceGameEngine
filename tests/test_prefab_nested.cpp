@@ -553,7 +553,7 @@ static void TestNestedDeltasAndPaths() {
     // Saving the instance writes the removal and the unset back, and loads the same.
     CHECK(PrefabTools::SavePrefab(*car, f.P("car2.okayprefab"), &err));
     const std::string saved = Read(f.P("car2.okayprefab"));
-    CHECK(Contains(saved, "remove 1") && Contains(saved, "unset 0 \"sprite\" 0"));
+    CHECK(Contains(saved, "remove \"Hub\"") && Contains(saved, "unset \".\" \"sprite\" 0"));
     Scene u("u");
     GameObject* c2 = SceneSerializer::InstantiateFromFile(u, f.P("car2.okayprefab"), &err, &warn);
     CHECK(c2 && Child(Child(c2, "Wheel L"), "Hub") == nullptr && Child(Child(c2, "Wheel R"), "Hub") != nullptr);

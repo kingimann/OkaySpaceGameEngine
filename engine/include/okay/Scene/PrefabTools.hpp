@@ -142,6 +142,27 @@ public:
     /// The overrides stored on an instance root.
     static std::vector<GameObject::PrefabOverride> OverridesOf(const GameObject& root);
 
+    // ---- Stable object paths (docs/prefab_system.md, "Object numbering") -------------
+
+    /// The stable name path of every object of a list: "." for the root (the object with
+    /// no parent at index 0), then the names from the root's child down, joined by '/'.
+    /// A sibling that shares its name with an earlier sibling gets "[n]" (n counts the
+    /// earlier same-name siblings, so the first one has none). '\', '/', '[' and ']'
+    /// inside a name are escaped with '\'; a name that is empty or exactly "." is written
+    /// "\e" / "\.". `parents` index into the same list; children are in list order.
+    static std::vector<std::string> ObjectPaths(const std::vector<std::string>& names, const std::vector<int>& parents);
+    /// `path` in the form ObjectPaths writes ("Wheel[0]" becomes "Wheel", a leading or
+    /// trailing '/' is dropped); empty when it is malformed.
+    static std::string CanonicalObjectPath(const std::string& path);
+    /// Give the old index-keyed overrides of an instance root (an empty `path`) the path
+    /// of the object that index names in the current prefab, so they are written in the
+    /// new form on the next save. The version of the prefab they were made from is not
+    /// known, so the current one is used; a one-line warning ("old prefab override ...")
+    /// is added when the target looks wrong (the instance's own object at that index has
+    /// another path, or no record of that kind). An index past the end, or a prefab that
+    /// cannot be read, leaves the override as it is. Returns how many were given a path.
+    static int UpgradeLegacyOverrides(GameObject& instanceRoot, std::vector<std::string>* warnings = nullptr);
+
     // ---- Differences, apply, revert -----------------------------------------------
 
     /// How the instance differs from its prefab file, per record and per field, plus

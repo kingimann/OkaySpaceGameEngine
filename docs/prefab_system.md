@@ -23,17 +23,73 @@ callers need no change. Plain prefab files take the old path unchanged.
 
 ## Object numbering
 
-An override names an object by its **depth-first index in the fully expanded prefab**: 0 is
-the root, then each object followed by all its children. For a nested prefab, "expanded" means
-the nested objects are in place, so a car holding two wheels (each Wheel + Hub) is
-`0 Car, 1 Wheel L, 2 Hub, 3 Wheel R, 4 Hub`. Three places hold overrides and each counts in
-its own space:
+An override, and every `override`, `unset`, `remove` and `under` record, names its object by
+its **path of names in the fully expanded prefab**, below the root:
 
-| Where | Index means |
+| Object | Path |
+|---|---|
+| the root | `.` |
+| a child of the root called Head | `Head` |
+| Eye under Head | `Head/Eye` |
+| the second of two siblings both called Wheel | `Wheel[1]` (the first is just `Wheel`) |
+
+A `\`, `/`, `[` or `]` inside a name is written with a `\` in front; an empty name is `\e` and a
+name that is exactly `.` is `\.`. In a file the path is a quoted string, so
+`override "Head/Eye" "tag \"eye\""` and `under "Head"`. `PrefabTools::ObjectPaths` makes the paths of
+an object list and `PrefabTools::CanonicalObjectPath` puts a written one in that form (`Wheel[0]`
+becomes `Wheel`).
+
+"Expanded" means nested prefabs are in place, so a car holding two wheels (each Wheel + Hub)
+has `.`, `Wheel L`, `Wheel L/Hub`, `Wheel R`, `Wheel R/Hub`. Three places name objects and each
+counts in its own space:
+
+| Where | The path is in |
 |---|---|
 | `GameObject::prefabOverrides` of an instance root | the expanded prefab of the file it was instantiated from |
-| `override` records inside a `nestedprefab` object | the nested prefab's own expanded objects (not the outer file's) |
+| records inside a `nestedprefab` object (and `under` on objects listed under it) | the nested prefab's own expanded objects (not the outer file's) |
 | `override` / `remove` / `unset` / `under` in a variant file | the expanded **base** prefab, before the variant's own removals and additions |
+
+**Why paths and not ids or indices.** Until this change a record named its object by its
+depth-first index (0 the root, then each object followed by its children). Adding, removing or
+reordering one object in the prefab then moved every later change onto another object: a
+Handle's position landed on the Frame, a variant's `remove` deleted the newly added Shield
+instead of the Arm (issue #888, finding 58). Prefab files carry no object ids (rule 1 of
+"Object ids" below: every instance gets fresh ids, and a file written by `SavePrefab` has none),
+and hand-written and older prefab files never had them, so a path of names is the stable key
+every prefab file already has. It survives objects being added, removed and reordered anywhere
+else in the prefab.
+
+**What a path does not survive.** Renaming the object, or one of the objects above it, in the
+prefab. The record then names an object the prefab no longer has, so it is dropped with a
+warning (`prefab override for object 'Handle' dropped: the prefab no longer has it`); it is never
+applied to another object. The same happens when the object is deleted from the prefab. Two
+siblings with one name are told apart by their order (`Wheel[1]`), so moving one of them past
+the other swaps which one the record means. Re-capture the instance (or save the variant again)
+after renaming parts of a prefab.
+
+**Old files (index-keyed records).** Records written before this change (`override 2 "..."`,
+`unset 2 ...`, `remove 1`, `under 2`) still load and mean the index, counted in the current
+prefab: the version they were made from is not recorded anywhere, so it cannot be used. They
+are turned into paths once:
+
+- In a scene, when it loads: each old override of an instance root gets the path of the object
+  its index names in the current prefab (`PrefabTools::UpgradeLegacyOverrides`). For a plain
+  prefab file the index is the object's place in the file, for a nested or variant one its
+  depth-first place in the expanded prefab, as before. If the instance in the scene does not
+  match (its own object at that index has another path, or the overridden object has no record
+  of that kind) the load adds one warning, `old prefab override for object 2 of 'Door' now names
+  'Frame' in door.okayprefab, but the instance's object 2 is 'Handle'; check it ...`. The next save
+  writes the path form. An index past the end of the prefab, or a prefab that cannot be read,
+  keeps the old record, and it is dropped with the old warning when the prefab is applied.
+- In-memory overrides made from an index (`InstantiatePrefab(scene, path, {{2, line}})`) get
+  the path of the object they hit when the instance is built.
+- In a variant or a prefab with nested prefabs: the next write of that file by `ApplyToSource` /
+  `ApplyAllToSource` rewrites all its old records in the path form (by the base or nested prefab
+  as it is then); `SavePrefab` and `SaveVariant` always write paths.
+
+**Older builds reading new files.** An older build reads `override "Head" ...` as a malformed
+record: a scene's override is skipped, a prefab's `override`, `unset` and `remove` are ignored
+with a warning, and `under "Head"` attaches at the root. Nothing else of the file changes.
 
 A prefab file whose objects are not in depth-first order is put in that order when it is
 expanded. A second top-level object is moved under the first, with a warning.
@@ -51,14 +107,14 @@ gameobject 0 "Car"
 end
 gameobject 1 "Wheel L"
   nestedprefab "prefabs/wheel.okayprefab"
-  override 0 "transform -1 0 0 0 0 0 1 1 1 1"
-  override 1 "tag \"rim\""
-  remove 3
-  unset 0 "sprite" 0
+  override "." "transform -1 0 0 0 0 0 1 1 1 1"
+  override "Rim" "tag \"rim\""
+  remove "Rim/Bolt"
+  unset "." "sprite" 0
   parent 0
 end
 gameobject 2 "Spoke"
-  under 1
+  under "Rim"
   transform 0 0.5 0 0 0 0 1 1 1 1
   parent 1
 end
@@ -66,14 +122,16 @@ end
 
 - `nestedprefab "<file>"`: the object stands for the whole nested prefab. Its name is the
   nested root's name; the nested prefab's own objects are not copied into this file.
-- `override <i> "<record>"`: replace (or add) a record of nested object `i`, as in a scene.
-  Any other record written on the object (a `transform`, an `active`) is an override of the
-  nested root.
-- `remove <i>`: leave out nested object `i` and everything under it (not the root).
-- `unset <i> "<record>" [n]`: delete the n-th record of that name from nested object `i`
+- `override "<path>" "<record>"`: replace (or add) a record of the nested object at that path
+  (see "Object numbering"), as in a scene. Any other record written on the object (a
+  `transform`, an `active`) is an override of the nested root.
+- `remove "<path>"`: leave out that nested object and everything under it (not the root).
+- `unset "<path>" "<record>" [n]`: delete the n-th record of that name from that nested object
   (for example a component the nested prefab has and this one does not want).
 - An object listed with `parent` pointing at the `nestedprefab` object is added **inside**
-  the nested prefab: under its root, or under nested object `i` with `under <i>`.
+  the nested prefab: under its root, or under the nested object at a path with `under "<path>"`.
+- Files from before paths write a depth-first index instead of `"<path>"` (`override 1 ...`);
+  they still load (see "Object numbering").
 - A path that does not exist as written is tried again next to the file that names it.
 
 Instantiating the outer prefab instantiates every nested one and applies these records to it.
@@ -111,28 +169,29 @@ variant works (a chain, cycle checked, counted against the same depth limit).
 ```
 okayscene 3
 variant "prefabs/robot.okayprefab"
-override 0 "sprite 82 1 0 0 1 1 1"
-override 2 "tag \"head\""
-unset 2 "boxcollider2d" 0
-remove 1
+override "." "sprite 82 1 0 0 1 1 1"
+override "Head" "tag \"head\""
+unset "Head" "boxcollider2d" 0
+remove "Arm"
 gameobject 0 "Antenna"
-  under 2
+  under "Head"
   transform 0 1 0 0 0 0 1 1 1 1
   parent -1
 end
 ```
 
 - `variant "<base>"`: the base prefab (plain, nested or itself a variant).
-- `override`, `unset`, `remove`: as for nested prefabs, with indices in the expanded base.
-  All indices mean the base as it was before this file's own removals and additions.
-  The root cannot be removed.
+- `override`, `unset`, `remove`: as for nested prefabs, with paths in the expanded base.
+  All paths mean the base as it was before this file's own removals and additions, so adding
+  a Shield to the base does not move `remove "Arm"` onto it. The root cannot be removed.
 - `gameobject` blocks are the variant's **added objects**. A top-level one (`parent -1`) is
-  attached as the last child of base object `under <i>` (the root when there is no `under`).
+  attached as the last child of the base object `under "<path>"` (the root when there is no `under`).
   Others use `parent` between themselves as usual. An added object may itself be a
   `nestedprefab`.
-- Records for objects the base no longer has (an `override 9` when the base shrank), and
-  added objects whose attach point is gone, are dropped with a warning; the instance is still
-  built. The validator lists them.
+- Records for objects the base no longer has (an `override "Arm"` when the base lost or renamed
+  its Arm), and added objects whose attach point is gone, are dropped with a warning; the instance
+  is still built. The validator lists them. An `unset` whose object has no such record does
+  nothing and says so in a warning.
 
 **Compatibility.** The text is ordinary scene text plus records an older loader does not know.
 An older build skips `variant`, `override`, `unset` and `remove` at the top level and `under`
@@ -220,8 +279,9 @@ The rule:
 
 1. Every instantiation gives every object a **new** id. Two instances of one prefab never
    share an id, and an id in the prefab file (there should be none) is ignored.
-2. Overrides hold object **indices**, never ids. The same override list works for any number of
-   instances, and survives a re-apply.
+2. Overrides hold object **paths** (see "Object numbering"), never ids. The same override list
+   works for any number of instances, and survives a re-apply and a prefab that gained, lost or
+   reordered objects.
 3. Re-apply, revert and apply keep each object's id: the new object takes the id of the old
    object it matches (by position and name). An object that is new to the prefab gets a fresh
    id; an object the prefab dropped loses its id. The root keeps its id even if it was
@@ -263,8 +323,9 @@ has (warnings, the file still loads). Messages name the file and the object, for
 - Names of child objects are not overrides: a re-apply gives children the prefab's names (the
   root keeps its name), a revert or apply keeps the names they have.
 - Instance and object tracking is by position and name; a prefab that reorders or renames
-  many objects at once can pair the wrong ones. Run the validator and re-capture after big
-  prefab edits.
+  many objects at once can pair the wrong ones. Overrides and variant records follow objects by
+  their path, so a reorder is fine but a rename drops them (with a warning). Run the validator
+  and re-capture after big prefab edits.
 - `PrefabTools::Reapply` (used for nested and variant files) keeps the objects added under
   the instance and brings back lost ones; the wave 1 `ReapplyPrefab` path, which plain files
   still take, drops added objects (see prefabs.md). Revert and apply keep both added and lost

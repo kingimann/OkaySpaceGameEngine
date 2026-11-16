@@ -321,10 +321,11 @@ static void TestVariantAuthoring() {
     CHECK(PrefabTools::SaveVariant(*inst, f.P("gunner.okayprefab"), &err));
     const std::string text = Read(f.P("gunner.okayprefab"));
     CHECK(Contains(text, "variant ") && Contains(text, "robot.okayprefab"));
-    CHECK(Contains(text, "remove 1"));
-    CHECK(Contains(text, "override 0") && Contains(text, "override 2"));
-    CHECK(Contains(text, "unset 2 \"boxcollider2d\" 0"));
-    CHECK(Contains(text, "gameobject 0 \"Gun\"") && Contains(text, "under 2") && Contains(text, "gameobject 1 \"Barrel\""));
+    // Objects are named by their path in the base (docs/prefab_system.md, "Object numbering").
+    CHECK(Contains(text, "remove \"Arm\""));
+    CHECK(Contains(text, "override \".\"") && Contains(text, "override \"Head\""));
+    CHECK(Contains(text, "unset \"Head\" \"boxcollider2d\" 0"));
+    CHECK(Contains(text, "gameobject 0 \"Gun\"") && Contains(text, "under \"Head\"") && Contains(text, "gameobject 1 \"Barrel\""));
     CHECK(!fs::exists(f.P("gunner.okayprefab.tmp")));
 
     Scene t("t");
@@ -390,7 +391,8 @@ static void TestVariantApplyAndReapply() {
     // Apply the root's position: the base owns the root, so it becomes an override of the variant.
     CHECK(PrefabTools::ApplyToSource(*v, 0, "transform", "position.x", 0, &err));
     vt = Read(f.P("v1.okayprefab"));
-    CHECK(Contains(vt, "override 0 \"transform 2 0 0 0 0 0 1 1 1 1\""));
+    CHECK(Contains(vt, "override \".\" \"transform 2 0 0 0 0 0 1 1 1 1\""));   // the old index records are rewritten as paths
+    CHECK(!Contains(vt, "override 0 ") && !Contains(vt, "override 2 ") && !Contains(vt, "remove 1") && Contains(vt, "under \"Head\""));
     CHECK(Read(f.base) == baseBytes);
     // Apply a record of an object the variant itself adds: edited in place in that object.
     CHECK(PrefabTools::ApplyToSource(*v, 2, "sprite", "", 0, &err));
@@ -411,7 +413,7 @@ static void TestVariantApplyAndReapply() {
     Child(v, "Head")->RemoveComponent<BoxCollider2D>();
     CHECK(PrefabTools::Diff(*v, d, &err) && d.Find(1, "boxcollider2d") && d.Find(1, "boxcollider2d")->kind == PrefabRecordDiff::Kind::Removed);
     CHECK(PrefabTools::ApplyToSource(*v, 1, "boxcollider2d", "", 0, &err));
-    CHECK(Contains(Read(f.P("v1.okayprefab")), "unset 2 \"boxcollider2d\" 0"));   // the variant file counts the base's objects (Head is 2 there)
+    CHECK(Contains(Read(f.P("v1.okayprefab")), "unset \"Head\" \"boxcollider2d\" 0"));   // named by its path in the base
     GameObject* nc = SceneSerializer::InstantiateFromFile(t, f.P("v1.okayprefab"));
     CHECK(nc && Child(nc, "Head")->GetComponent<BoxCollider2D>() == nullptr);
     CHECK(Read(f.base) == baseBytes);

@@ -9,14 +9,19 @@ file in `GameObject::prefabSource` (instance root only).
 An instance can differ from its prefab. Those differences are kept as data in
 `GameObject::prefabOverrides`: a list of `{ object, line }`.
 
-- `object` is the depth-first index of the object inside the prefab (0 is the root).
+- `path` names the object inside the prefab by its path of names below the root: `.` is the
+  root, `Head` a child, `Head/Eye` a grandchild, `Wheel[1]` the second sibling called Wheel. It
+  stays right when the prefab gains, loses or reorders other objects; renaming the object in the
+  prefab drops the override with a warning. `object` is its depth-first index (0 is the root)
+  when last resolved; old files have only the index (see "Object numbering" in
+  [prefab_system.md](prefab_system.md) for how they are read and rewritten).
 - `line` is one whole serialized record, for example `sprite 64 1 0 0 1 1 1` or
   `tag "limb"`. An override replaces the prefab's record of the same name (the Nth
   one of that name, for objects that hold several colliders or scripts). If the
   prefab has no such record the line is added, which is how an added component or a
   disabled one (`compoff`) is kept.
 
-They are saved with the scene as `override <object> "<line>"` records on the root, and
+They are saved with the scene as `override "<path>" "<line>"` records on the root, and
 `Instantiate` (duplicate, paste) copies them.
 
 ```cpp
@@ -46,7 +51,8 @@ such files to `PrefabTools` themselves; plain prefab files work as described on 
 - A component or child the instance lost is not tracked; reapplying brings it back.
 - Objects added under an instance that are not in the prefab are not carried over by
   `ReapplyPrefab`.
-- An override naming an object the prefab no longer has is dropped, with a warning.
+- An override naming an object the prefab no longer has (deleted or renamed) is dropped, with a
+  warning. It is never moved onto another object.
 - The editor shows overrides per property and applies or reverts them through `PrefabTools`
   (see "In the editor" in [prefab_system.md](prefab_system.md)). "Open" on an instance enters prefab mode
   ([prefab_mode.md](prefab_mode.md)).

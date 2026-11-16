@@ -1088,6 +1088,32 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Prefab changes stay on the right part when the prefab changes (bug fix, branch `claude2/prefab-override-by-guid`, not merged or released yet)
+
+Before: a change made on one part of a placed prefab (or in a prefab variant, or on a prefab inside another prefab) was
+stored by the part's number. Adding a part at the top of the prefab moved every change onto the wrong part, with no
+warning. Now each change names its part by its name path (`Handle`, `Body/Head`), so it stays put.
+
+1. Open the editor (`Tools\OkayEngine.exe`). Make an empty object **Door** with two children **Frame** and **Handle**.
+   Drag Door into the Project panel to make `Door.okayprefab`, and drag the prefab into the scene once more.
+2. On the new instance, select **Handle** and move it (for example X = 5). The Inspector marks the position as changed.
+3. Right-click the prefab > **Open** (prefab mode). Add a child **Glass** to Door and drag it to the top, above Frame.
+   Press **Save**, then **Back**.
+4. Expected: the instance now has Glass, Frame, Handle; **Handle** is still at X = 5 and Frame and Glass are at 0.
+   (Before the fix Frame jumped to X = 5 and Handle went back.)
+5. Variants: right-click the prefab > **Create Variant**, open the variant, delete **Frame** and save. Open the base prefab
+   again, add a part at the top, save. Drag the variant into the scene: Frame is still the part that is gone, and the
+   new part is there.
+6. Save the scene and open the `.okayscene` file in a text editor: the change reads `override "Handle" "transform 5 ..."`.
+
+Renaming a part in the prefab drops changes that named it, with a warning in the Console (`... dropped: the prefab no
+longer has it`); they are never moved onto another part. Old scenes and prefabs (with numbers) still open; a scene is
+rewritten with names the next time it is saved, and a warning `old prefab override ... check it` is shown when the
+prefab seems to have changed since the scene was saved. Details: [prefab_system.md](prefab_system.md), "Object numbering".
+
+**Status.** Tested headless (`test_prefab_override_stable` and the prefab suites, on Linux). The editor steps above
+were not run (no editor build here); they are unverified until you try them.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

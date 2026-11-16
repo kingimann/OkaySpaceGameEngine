@@ -282,6 +282,8 @@ add_library(okay_engine
     src/Modeling/PolyOps.cpp
     src/Modeling/Modifiers.cpp
     src/Modeling/UVUnwrap.cpp
+    src/Modeling/Guided.cpp
+    src/Modeling/GuidedFence.cpp
     src/Components/LODGroup.cpp
     src/Render/Visibility.cpp
     src/Render/SurfaceRaycast.cpp

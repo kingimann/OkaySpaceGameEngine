@@ -2093,6 +2093,9 @@ add_test(NAME edit_transform COMMAND test_edit_transform)
 add_executable(test_polymesh test_polymesh.cpp)
 target_link_libraries(test_polymesh PRIVATE okay::engine)
 add_test(NAME polymesh COMMAND test_polymesh)
+add_executable(test_guided test_guided.cpp)
+target_link_libraries(test_guided PRIVATE okay::engine)
+add_test(NAME guided_modeling COMMAND test_guided)
 
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)

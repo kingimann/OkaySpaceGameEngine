@@ -336,5 +336,41 @@ int main() {
         CHECK(NoErrors("other.GetComponent"));
     }
 
+    // ---- The shipped example scene, run through real physics ----
+    {
+        g_errs.clear();
+        Scene s("Example");
+        std::string err;
+        const std::string path = std::string(OKAY_SOURCE_DIR) + "/examples/physics/script_object_refs.okayscene";
+        CHECK(SceneSerializer::LoadFromFile(s, path, &err));
+        if (!err.empty()) std::printf("  example load: %s\n", err.c_str());
+        std::vector<GameObject*> enemies;
+        GameObject* spinner = nullptr;
+        for (const auto& up : s.Objects()) {
+            if (up && up->name == "Enemy") enemies.push_back(up.get());
+            if (up && up->name == "Spinner") spinner = up.get();
+        }
+        CHECK(enemies.size() == 3);
+        s.Start();
+        for (int i = 0; i < 240; ++i) s.Update(1.0f / 60.0f);   // 4 seconds: the ball falls about 3 m
+        if (enemies.size() == 3) {
+            const bool a0 = GameObject::FromInstanceId(enemies[0]->InstanceId()) != nullptr;
+            const bool a1 = GameObject::FromInstanceId(enemies[1]->InstanceId()) != nullptr;
+            const bool a2 = GameObject::FromInstanceId(enemies[2]->InstanceId()) != nullptr;
+            std::printf("  example: enemies alive at x=-3/0/3: %d %d %d\n", a0, a1, a2);
+            CHECK(a0); CHECK(a1); CHECK(!a2);   // the ball lands on the one at x = 3
+        }
+        CHECK(spinner != nullptr);
+        if (spinner) {
+            auto* rb = spinner->GetComponent<Rigidbody3D>();
+            CHECK(rb && std::fabs(rb->angularVelocity.y) > 1.0f);
+            CHECK(rb && rb->gravityScale == 0.0f);
+            auto* sc = spinner->GetComponent<ScriptComponent>();
+            CHECK(sc && !sc->VM()->GetGlobal("hiddenFound").AsBool());
+            CHECK(sc && sc->VM()->GetGlobal("hiddenFoundAny").AsBool());
+        }
+        CHECK(NoErrors("example scene"));
+    }
+
     TEST_MAIN_RESULT();
 }

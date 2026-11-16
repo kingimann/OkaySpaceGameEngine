@@ -1559,6 +1559,7 @@ add_test(NAME okayscript_csharp COMMAND test_okayscript_csharp)
 # name, the 3D Rigidbody API, Find skipping inactive objects, other.GetComponent<T>() on the other object.
 add_executable(test_okayscript_object_refs test_okayscript_object_refs.cpp)
 target_link_libraries(test_okayscript_object_refs PRIVATE okay::engine)
+target_compile_definitions(test_okayscript_object_refs PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 add_test(NAME okayscript_object_refs COMMAND test_okayscript_object_refs)
 
 # Built-in animations on imported rigs: humanoid bone matching (Mixamo / UE / Rigify).

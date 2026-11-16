@@ -1824,7 +1824,7 @@ bool Download(const std::string& url, const fs::path& outPath) {
 #if defined(OKAY_OWN_HTTP_ACTIVE)
     if (okay::http::NativeAvailable()) {   // own client first (opt-in); an unclear answer falls through to curl below
         okay::http::OwnDownloadSpec sp;
-        sp.userAgent = "OkaySpace-Updater"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"};
+        sp.userAgent = "OkaySpace-Updater"; sp.headers = {"Cache-Control: no-cache", "Pragma: no-cache"}; sp.retries = 2;   // a drop resumes with Range
         const okay::http::OwnDownloadResult r = okay::http::OwnDownload(u, out, sp);
         if (r.outcome == okay::http::OwnOutcome::Ok) return true;
         if (r.outcome != okay::http::OwnOutcome::NotHandled) return false;   // a clear refusal (404, full disk): curl -f would fail the same way

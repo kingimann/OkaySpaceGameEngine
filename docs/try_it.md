@@ -1475,3 +1475,15 @@ The editor window code compiles but was not run; no Windows, GPU, or real multip
 2. Click **File > Examples > Visual Script Node Playground**, **Node Playground** or **Guided modeling** and pick any entry.
 3. You should see the example scene open, with a line in the Console. Press Play (or open Modeling > Guided).
 4. If the examples folder is missing, or a scene fails to open, a popup now says so instead of doing nothing.
+
+## Repository hygiene: no keys and no built programs in git (owner steps)
+
+What changes for you:
+
+1. **GitHub: add two repository variables** (Settings > Secrets and variables > Actions > Variables tab): `OKAY_DEFAULT_ACCOUNT_URL` and `OKAY_DEFAULT_ACCOUNT_KEY`. Without them a release or test build now stops at its build step with a message naming these two (it will not ship offline), and the reset-password page says "not set up yet". Do this before the next release.
+2. **Supabase: rotate the old key** (Project Settings > API, create a new publishable key, disable the old one), then put the new one in the variable above. The old key is still in git history; the history was not rewritten.
+3. Try it: run a release or "Test build" as usual; open the launcher; sign in works as before. Check the build log line "Account server baked in: yes" (the key is never printed). To see the empty case, build locally without the variables: the launcher prints `[account] No account server is set in this build` on its console and starts without online features.
+4. `dist/` no longer holds programs. Use the installer, the zip or the launcher from a release, or build with `scripts/build-windows-dist.sh` (output `build-win-dist/`).
+5. New check: a branch that adds an `.exe`/`.dll`/`.so`/archive or a big binary file fails "No built programs or big binary files in git" (`python3 scripts/branch_lint.py binaries`).
+
+**Verified here:** the tests below, on Linux. **Unverified:** no release, dev build or Pages run happened (the workflows were read and checked as YAML only); nothing was run on Windows.

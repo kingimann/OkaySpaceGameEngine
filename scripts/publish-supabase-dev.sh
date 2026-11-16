@@ -66,9 +66,10 @@ DIST_DIR="${DIST_DIR:-build-win-dist}"
 BUCKET="${BUCKET:-releases}"
 KEEP="${DEV_KEEP:-3}"
 [[ "$KEEP" =~ ^[0-9]+$ ]] && [ "$KEEP" -ge 1 ] && [ "$KEEP" -le 10 ] || die "DEV_KEEP must be a number from 1 to 10 (got '$KEEP')"
-SUPABASE_URL="${SUPABASE_URL:-$(grep -m1 '^set(OKAY_DEFAULT_ACCOUNT_URL' CMakeLists.txt | grep -oE 'https://[a-z0-9]+\.supabase\.co')}"
+# The project URL is not stored in the repository: pass SUPABASE_URL, or set OKAY_DEFAULT_ACCOUNT_URL (the same value the build bakes in).
+SUPABASE_URL="${SUPABASE_URL:-${OKAY_DEFAULT_ACCOUNT_URL:-}}"
 SUPABASE_URL="${SUPABASE_URL%/}"
-[ -n "$SUPABASE_URL" ] || die "no SUPABASE_URL and none in CMakeLists.txt"
+[ -n "$SUPABASE_URL" ] || die "no SUPABASE_URL (or OKAY_DEFAULT_ACCOUNT_URL) is set"
 REF="$(printf '%s' "$SUPABASE_URL" | sed -E 's#https://([a-z0-9]+)\.supabase\.co#\1#')"
 MAX_MB="${MAX_MB:-100}"
 MAX_BYTES=$((MAX_MB * 1024 * 1024))

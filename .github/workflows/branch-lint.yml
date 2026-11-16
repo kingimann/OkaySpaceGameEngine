@@ -32,6 +32,10 @@ jobs:
         if: always()
         run: python3 scripts/branch_lint.py secrets --base origin/main --head HEAD
 
+      - name: "No built programs or big binary files in git (fatal)"
+        if: always()
+        run: python3 scripts/branch_lint.py binaries --base origin/main --head HEAD
+
       - name: "Claims: do not push into another lane's open claim (fatal)"
         if: always()
         env:

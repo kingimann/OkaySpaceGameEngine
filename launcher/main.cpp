@@ -18304,6 +18304,9 @@ int main(int argc, char** argv) {
     // would otherwise knock the launcher offline — only an http(s) URL counts.
     if (serverUrl.rfind("http", 0) != 0) serverUrl = OKAY_DEFAULT_ACCOUNT_URL;
     if (apiKey.empty())                  apiKey    = OKAY_DEFAULT_ACCOUNT_KEY;
+    if (serverUrl.empty())
+        std::fprintf(stderr, "[account] No account server is set in this build, so online features (sign-in, friends, marketplace, updates) are off. "
+                             "Put the server address in account_server.txt next to the launcher or set OKAY_ACCOUNT_SERVER (and OKAY_ACCOUNT_API_KEY).\n");
     // Where the emailed reset link should land (docs/password-reset.md). Empty = none set up.
     std::string resetUrl = fromEnvOrFile("OKAY_PASSWORD_RESET_URL", "password_reset_url.txt");
 #ifdef OKAY_DEFAULT_PASSWORD_RESET_URL

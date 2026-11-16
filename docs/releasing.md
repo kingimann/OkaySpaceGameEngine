@@ -4,7 +4,7 @@ Launchers and editors look for updates in two places and use whichever has the
 newer version:
 
 1. **Supabase Storage**: the public `releases` bucket on the project in
-   `CMakeLists.txt` (`OKAY_DEFAULT_ACCOUNT_URL`). Checked first.
+   repository variable `OKAY_DEFAULT_ACCOUNT_URL` (not stored in the code; `docs/accounts.md`). Checked first.
 2. **GitHub Releases**: `releases/latest/download/<file>`. The fallback.
 
 So an update can ship without the GitHub workflow: build, then publish to
@@ -16,7 +16,7 @@ Supabase.
 # 1. Bump the version in CMakeLists.txt (project(... VERSION x.y.z)).
 # 2. Build the Windows files (MinGW cross-compile; splits the editor's debug info).
 scripts/build-windows-dist.sh
-# 3. Upload. Either key works; it is read from the environment only.
+# 3. Upload (SUPABASE_URL, or OKAY_DEFAULT_ACCOUNT_URL, must be set: the project address is no longer in the repository). Either key works; it is read from the environment only.
 SUPABASE_ACCESS_TOKEN=sbp_...   scripts/publish-supabase.sh   # management token
 SUPABASE_SERVICE_KEY=eyJ...     scripts/publish-supabase.sh   # or the service_role key
 ```

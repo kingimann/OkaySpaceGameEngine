@@ -11,9 +11,11 @@ types a new password. This repo provides that page; **nothing is hosted or chang
 
 ## Owner steps (once)
 
-1. **Fill in two values** near the top of the script in `index.html`:
-   `OKAY_RESET_CONFIG = { supabaseUrl: "https://<ref>.supabase.co", anonKey: "<publishable key>" }`.
-   Both are public values (the same ones the launcher ships). Never use a service-role key. Until they are filled in,
+1. **Fill in two values.** The page source holds none (`OKAY_RESET_CONFIG = { supabaseUrl: "", anonKey: "" }`). When this
+   repository publishes the page (`.github/workflows/pages.yml`) it fills them in from the repository variable
+   `OKAY_DEFAULT_ACCOUNT_URL` and the secret `OKAY_DEFAULT_ACCOUNT_KEY` (docs/accounts.md). If you host the file yourself, edit
+   the two values in your copy: `{ supabaseUrl: "https://<ref>.supabase.co", anonKey: "<publishable key>" }`.
+   Both are public values (the same ones the launcher ships), but they are kept out of the repository. Never use a service-role key. Until they are filled in,
    the page shows "This page is not set up yet" and does nothing else.
 2. **Host the file over HTTPS** (this repository publishes it for you: `.github/workflows/pages.yml` puts only `supabase/auth-pages` on GitHub Pages at `https://<owner>.github.io/<repo>/reset-password/` once Settings > Pages > Source is set to "GitHub Actions"). Any static host also works: at any static host (GitHub Pages, Netlify, Cloudflare Pages, a bucket with website
    hosting, or your own web server), for example `https://example.com/reset-password/`. Serve it as-is; the page carries

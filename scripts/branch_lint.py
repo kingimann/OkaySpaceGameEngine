@@ -4,6 +4,7 @@
   python3 scripts/branch_lint.py includes [--base origin/main] [--head HEAD | --rev <commit>]
   python3 scripts/branch_lint.py secrets  ...
   python3 scripts/branch_lint.py docs     ...
+  python3 scripts/branch_lint.py binaries ...      (no built programs or big binary files in git)
   python3 scripts/branch_lint.py all      ...      (includes + secrets + docs)
   python3 scripts/branch_lint.py mingw    ...      -fsyntax-only with the MinGW win32 compiler on the changed engine/ files
 
@@ -13,6 +14,12 @@ includes: CLAUDE.md rule 21a. The Windows programs are cross-compiled with MinGW
           macro is only a warning). Use debugutil::SpinLock (engine/include/okay/Debug/DebugUtil.hpp), atomics, or the
           existing wrappers. Tests/ may use <thread>. Add `lint-allow: win32-thread` on the line to silence it.
 secrets:  private keys, sk-/ghp_/github_pat_/AKIA tokens, and long hex/base64 strings next to key/token/secret/password.
+binaries: fails when a branch ADDS or CHANGES a built program or library (.exe .dll .so .dylib .a .lib .pdb .o .msi .dmg .appimage)
+          or an archive (.zip .7z .rar .tar .gz .tgz .xz .bz2), or any other binary file over 200 KB, unless its extension
+          is an asset type that is legitimately binary (fonts, png/jpg/gif/webp, audio, video, ico, .okaymesh/.okayscene
+          examples, wycheproof/test fixtures under tests/). Programs are built by CI and the release workflow, never
+          committed (the owner's rule, 2026-11-16). `lint-allow` cannot silence it: add an extension to ASSET_EXT in this file
+          (and say why in the PR) if a new asset type is really needed. Everything under docs/images/ is allowed.
 docs:     warns when engine/ editor/ launcher/ code changed and no docs/*.md changed (CLAUDE.md rule 5).
 mingw:    compiles each changed header and source under engine/ with the MinGW cross compiler (MINGW_CXX, default
           x86_64-w64-mingw32-g++-win32, else x86_64-w64-mingw32-g++). Files that include SDL, imgui, GL, X11, sodium, curl
@@ -153,6 +160,39 @@ def check_mingw(root, base, head, rev=None, workers=4):
     return findings
 
 
+PROGRAM_EXT = (".exe", ".dll", ".so", ".dylib", ".a", ".lib", ".pdb", ".o", ".msi", ".dmg", ".appimage", ".apk", ".ipa", ".wasm", ".zip", ".7z", ".rar",
+               ".tar", ".gz", ".tgz", ".xz", ".bz2", ".jar")
+ASSET_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".tga", ".ttf", ".otf", ".woff", ".woff2", ".wav", ".ogg", ".mp3", ".flac", ".mp4", ".webm",
+             ".okaymesh", ".okayscene", ".okaypack", ".okayanim", ".pdf")
+BIG_BINARY_BYTES = 200 * 1024
+ALLOW_PATH_PREFIXES = ("docs/images/",)
+
+
+def check_binaries(root, base, head, rev=None):
+    """Added or changed files that are programs/archives (any size) or binary files over 200 KB with a non-asset extension."""
+    args = ["diff", "--numstat", "--no-renames", "--diff-filter=AM"] + ([f"{rev}^", rev] if rev else [f"{base}...{head}"])
+    findings = []
+    for line in L.git(root, *args).splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        path, is_bin = parts[2], parts[0] == "-" and parts[1] == "-"
+        if path.startswith(ALLOW_PATH_PREFIXES):
+            continue
+        ext = os.path.splitext(path)[1].lower()
+        if ext in PROGRAM_EXT:
+            findings.append({"sev": "error", "file": path, "line": 1, "text": "", "msg": f"a built program, library or archive ({ext}) must not be committed. CI and the release workflow build it; add the path to .gitignore."})
+            continue
+        if is_bin and ext not in ASSET_EXT:
+            try:
+                size = int(L.git(root, "cat-file", "-s", f"{rev or head}:{path}").strip())
+            except (ValueError, OSError, RuntimeError):
+                size = BIG_BINARY_BYTES + 1
+            if size > BIG_BINARY_BYTES:
+                findings.append({"sev": "error", "file": path, "line": 1, "text": "", "msg": f"a binary file of {size // 1024} KB with the extension '{ext or '(none)'}' is not an allowed asset type. Do not commit built files; if it is a real asset, add its extension to ASSET_EXT in scripts/branch_lint.py and say why."})
+    return findings
+
+
 def emit(findings, label):
     err = 0
     for f in findings:
@@ -164,7 +204,7 @@ def emit(findings, label):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("check", choices=["includes", "secrets", "docs", "mingw", "all"])
+    ap.add_argument("check", choices=["includes", "secrets", "docs", "binaries", "mingw", "all"])
     ap.add_argument("--root", default=".")
     ap.add_argument("--base", default="origin/main")
     ap.add_argument("--head", default="HEAD")
@@ -178,6 +218,9 @@ def main():
     if a.check in ("secrets", "all"):
         f = check_secrets(root, a.base, a.head, a.rev); err += emit(f, "secret")
         print(f"secrets: {len(f)} finding(s)", file=sys.stderr)
+    if a.check in ("binaries", "all"):
+        f = check_binaries(root, a.base, a.head, a.rev); err += emit(f, "binary-file")
+        print(f"binaries: {len(f)} finding(s)", file=sys.stderr)
     if a.check in ("docs", "all"):
         f = check_docs(root, a.base, a.head, a.rev); emit(f, "docs")
         print(f"docs: {len(f)} finding(s)", file=sys.stderr)

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # scripts/publish-supabase.sh stops before any network use when the build is
 # missing, and says why (it used to exit 1 with no message under set -e).
+export OKAY_DEFAULT_ACCOUNT_URL=https://abcdefghij.supabase.co   # not stored in the repository any more
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
@@ -21,6 +22,13 @@ out="$(env -u SUPABASE_SERVICE_KEY -u SUPABASE_ACCESS_TOKEN DIST_DIR="$T/dist" b
 case "$out" in
     *"missing $T/dist/OkaySpace.exe"*) ;;
     *) echo "FAIL: missing exe not reported (output: '$out')"; fail=1 ;;
+esac
+# No server address anywhere (it is not stored in the repository): refuse, name the variable, never fall back to a hard-coded project.
+out="$(env -u SUPABASE_URL -u OKAY_DEFAULT_ACCOUNT_URL -u SUPABASE_SERVICE_KEY -u SUPABASE_ACCESS_TOKEN DIST_DIR="$T/dist" bash "$REPO/scripts/publish-supabase.sh" 2>&1)"; code=$?
+[ "$code" -ne 0 ] || { echo "FAIL: ran without a server address"; fail=1; }
+case "$out" in
+    *"no SUPABASE_URL (or OKAY_DEFAULT_ACCOUNT_URL)"*) ;;
+    *) echo "FAIL: missing address not reported (output: '$out')"; fail=1 ;;
 esac
 [ "$fail" = 0 ] && echo "publish_supabase_checks: ok"
 exit "$fail"

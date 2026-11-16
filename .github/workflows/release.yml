@@ -45,6 +45,12 @@ jobs:
       OKAY_AC_TRUSTED_KEYS: ${{ vars.OKAY_AC_TRUSTED_KEYS }}
       # The updater's trusted signing keys (public; docs/updater.md "Signed releases"). Empty = unsigned feeds still accepted.
       OKAY_UPDATE_TRUSTED_KEYS: ${{ vars.OKAY_UPDATE_TRUSTED_KEYS }}
+      # The account/update server baked into the programs. Not stored in the repository: the address is a repository
+      # variable and the (public, publishable) key a repository secret (docs/accounts.md). GitHub masks the secret in logs.
+      # OKAY_REQUIRE_ACCOUNT=1 makes build-windows-dist.sh stop if either is missing, so a release never ships offline.
+      OKAY_DEFAULT_ACCOUNT_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+      OKAY_DEFAULT_ACCOUNT_KEY: ${{ vars.OKAY_DEFAULT_ACCOUNT_KEY }}
+      OKAY_REQUIRE_ACCOUNT: "1"
     steps:
       - uses: actions/checkout@v6
 
@@ -245,6 +251,7 @@ jobs:
       - name: Publish to Supabase
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
           CHANNEL: ${{ inputs.channel || 'latest' }}
         if: env.SUPABASE_PUBLISH == 'true'
         run: scripts/publish-supabase.sh
@@ -314,6 +321,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VER: ${{ needs.windows-exe.outputs.ver }}
       HAVE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY != '' }}
+      SUPABASE_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
       CHANNEL: ${{ inputs.channel || 'latest' }}
     steps:
       - name: Check the checksums are published, then mark the release latest
@@ -324,7 +332,7 @@ jobs:
             echo "**$msg**" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          B=https://tgthoueacrlanpojxoen.supabase.co/storage/v1/object/public/releases
+          B="${SUPABASE_URL%/}/storage/v1/object/public/releases"
           # The checksum list must really contain this version with a checksum for each program, not just exist.
           for i in 1 2 3 4 5 6; do
             if curl -fsS "$B/versions.json" | python3 -c "

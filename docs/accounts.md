@@ -53,6 +53,23 @@ hosted auth backend — nothing to run yourself).
                -DOKAY_DEFAULT_ACCOUNT_KEY=YOUR-ANON-PUBLIC-KEY
      ```
 
+### Where the server address and key come from (nothing is in the code)
+
+The project address and the publishable (anon) key are **not stored in the repository**. They are filled in when the
+programs are built:
+
+| Where | How |
+|---|---|
+| GitHub (releases, test builds, the reset page) | **Settings > Secrets and variables > Actions > Variables**: add the repository variables `OKAY_DEFAULT_ACCOUNT_URL` (for example `https://<project>.supabase.co`) and `OKAY_DEFAULT_ACCOUNT_KEY` (the publishable key). `release.yml`, `dev-build.yml` and `pages.yml` read them. They are variables, not secrets, because the key is public by design (it ends up inside every program); the build masks it in logs. |
+| A local build | `cmake -DOKAY_DEFAULT_ACCOUNT_URL=... -DOKAY_DEFAULT_ACCOUNT_KEY=...`, or export the same two environment variables before `scripts/build-windows-dist.sh` |
+| Publishing by hand | `scripts/publish-supabase.sh` needs `SUPABASE_URL` (or `OKAY_DEFAULT_ACCOUNT_URL`) in the environment |
+
+A release or test build in CI **stops with a clear error** if either variable is missing, so nothing ships offline by
+mistake. A build with neither (a normal developer build, and every unit test) works: it has no online features until
+`OKAY_ACCOUNT_SERVER` / `OKAY_ACCOUNT_API_KEY` or `account_server.txt` / `account_apikey.txt` give it a server, and the
+launcher prints a line saying so on startup. The key that used to be in `CMakeLists.txt` is still in git history: rotate
+it in the Supabase dashboard (Project Settings > API) and put the new one in the variable.
+
 With Supabase the identifier is the player's **email**. The anon key is meant to
 be public (it's safe to ship); real protection comes from Supabase's Row Level
 Security on your tables. The client uses Supabase's `auth/v1` REST API

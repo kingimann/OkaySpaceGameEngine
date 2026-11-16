@@ -28,8 +28,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # The project URL and publishable key are not stored in the page source: they are filled in here, from the repository
+      # variables OKAY_DEFAULT_ACCOUNT_URL and OKAY_DEFAULT_ACCOUNT_KEY, into a copy that is published. Never echoed.
+      # Not set = the page says "not set up yet" (it does not break the deploy).
+      - name: Fill in the project settings (into a copy)
+        env:
+          OKAY_URL: ${{ vars.OKAY_DEFAULT_ACCOUNT_URL }}
+          OKAY_KEY: ${{ vars.OKAY_DEFAULT_ACCOUNT_KEY }}
+        run: |
+          rm -rf pages-out && cp -r supabase/auth-pages pages-out
+          python3 - <<'PY'
+          import json, os
+          p = "pages-out/reset-password/index.html"
+          s = open(p, encoding="utf-8").read()
+          old = 'supabaseUrl: "", anonKey: ""'
+          assert old in s
+          url, key = os.environ.get("OKAY_URL", "").strip(), os.environ.get("OKAY_KEY", "").strip()
+          if url and key:
+              s = s.replace(old, "supabaseUrl: %s, anonKey: %s" % (json.dumps(url), json.dumps(key)))
+              open(p, "w", encoding="utf-8").write(s)
+              print("project settings filled in")
+          else:
+              print("project settings NOT set: the page will say it is not set up yet")
+          PY
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: supabase/auth-pages
+          path: pages-out
       - id: deployment
         uses: actions/deploy-pages@v4

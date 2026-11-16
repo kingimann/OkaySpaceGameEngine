@@ -3,6 +3,7 @@
 # Checks: RFC 8032 vector, sign/verify round trip, tamper and wrong-key refusal, the seed is never printed, a missing or malformed seed
 # is a clear error that does not echo the value, the seed is read from the environment only, and the publish script refuses to run
 # under `set -x` with a seed in scope.
+export OKAY_DEFAULT_ACCOUNT_URL=https://abcdefghij.supabase.co   # not stored in the repository any more
 set -uo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT

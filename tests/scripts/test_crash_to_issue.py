@@ -723,9 +723,12 @@ class Main(unittest.TestCase):
         new = c.Supabase("https://abc.supabase.co", "sb_secret_abcdefghijklmnop").h   # lint-allow: secret (made up)
         self.assertEqual(sorted(new), ["apikey"])   # a non-JWT key is never sent as a bearer token
 
-    def test_default_url_comes_from_cmake(self):
-        url = c.default_supabase_url(ROOT)
+    def test_default_url_comes_from_the_environment_not_cmake(self):
+        url = c.default_supabase_url(ROOT, {"OKAY_DEFAULT_ACCOUNT_URL": "https://abc123.supabase.co"})
         self.assertTrue(c.check_supabase_url(url), url)
+        self.assertEqual(c.default_supabase_url(ROOT, {}), "")
+        with open(os.path.join(ROOT, "CMakeLists.txt"), encoding="utf-8") as f:
+            self.assertIsNone(re.search(r"https://[a-z0-9]{12,}\.supabase\.co", f.read()))
 
     def test_mask_hides_secrets(self):
         c._SECRETS[:] = ["supersecretvalue123"]

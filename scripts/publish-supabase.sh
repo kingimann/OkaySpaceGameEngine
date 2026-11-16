@@ -49,13 +49,15 @@ cd "$(dirname "$0")/.."
 DIST_DIR="${DIST_DIR:-build-win-dist}"
 KEEP="${KEEP:-3}"
 BUCKET="${BUCKET:-releases}"
-SUPABASE_URL="${SUPABASE_URL:-$(grep -m1 '^set(OKAY_DEFAULT_ACCOUNT_URL' CMakeLists.txt | grep -oE 'https://[a-z0-9]+\.supabase\.co')}"
+# The project URL is not stored in the repository: pass SUPABASE_URL, or set OKAY_DEFAULT_ACCOUNT_URL (the same value the build bakes in).
+SUPABASE_URL="${SUPABASE_URL:-${OKAY_DEFAULT_ACCOUNT_URL:-}}"
 SUPABASE_URL="${SUPABASE_URL%/}"
 REF="$(printf '%s' "$SUPABASE_URL" | sed -E 's#https://([a-z0-9]+)\.supabase\.co#\1#')"
 MAX_MB="${MAX_MB:-100}"   # per-file limit; the Supabase project and bucket limits were raised to 100 MB (project Settings > Storage)
 MAX_BYTES=$((MAX_MB * 1024 * 1024))
 
 die() { echo "publish-supabase: $*" >&2; exit 1; }
+[ -n "$SUPABASE_URL" ] || die "no SUPABASE_URL (or OKAY_DEFAULT_ACCOUNT_URL) is set: it is not stored in the repository any more (docs/accounts.md)"
 
 # The signing seed is read from the environment by scripts/sign_index.py only. Never trace commands while it can be in scope.
 # (-v tests that it is set without expanding the value, so even this check leaves nothing in a trace.)

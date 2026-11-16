@@ -131,7 +131,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Player customization: more options
 - Humanoid animation quality, procedural object holding, 2.5D controller improvements, backpedal and strafe animations, character joint hinges and detail (animation team)
 - Splitting the largest files: launcher `main.cpp`, the OkayScript VM, component serializer registry, editor `main.cpp` into panel files
-- Remove the hard-coded Supabase URL and key from CMake; stop committing dist binaries
+- ~~Remove the hard-coded Supabase URL and key from CMake; stop committing dist binaries~~ DONE on `claude/hygiene-1` (needs owner steps: add the repository variables `OKAY_DEFAULT_ACCOUNT_URL` and `OKAY_DEFAULT_ACCOUNT_KEY`, rotate the old key; the old key stays in git history, no history rewrite was done; `docs/accounts.md` "Where the server address and key come from")
 - Security plan SEC1: relay isolation, script file-path safety, updater signing, reactions privacy SQL; anti-cheat hardening
 - README matching reality and a component audit document
 

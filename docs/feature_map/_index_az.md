@@ -2266,6 +2266,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Launcher config folder (37.8.2)
 - Launcher crash page (48.1.3)
 - Launcher Create page (25.1.1)
+- Launcher drawing seam (17.17.7)
 - Launcher gate and handshake (15.15.3)
 - Launcher git jobs (28.1.1)
 - launcher handshake (15.15)

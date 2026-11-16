@@ -369,11 +369,11 @@ public:
     }
     void ShowCursor(bool show) override { if (show != m_cursorShown) { m_cursorShown = show; ::ShowCursor(show ? TRUE : FALSE); } }
     bool SetSystemCursor(SystemCursor c) override {
-        static const LPCWSTR kIds[] = {IDC_ARROW, IDC_IBEAM, IDC_HAND, IDC_SIZEALL, IDC_SIZENS, IDC_SIZEWE, IDC_SIZENESW,
+        static const LPCTSTR kIds[] = {IDC_ARROW, IDC_IBEAM, IDC_HAND, IDC_SIZEALL, IDC_SIZENS, IDC_SIZEWE, IDC_SIZENESW,
                                        IDC_SIZENWSE, IDC_NO, IDC_WAIT};
         const int i = (int)c;
         if (i < 0 || i >= (int)(sizeof(kIds) / sizeof(kIds[0]))) return false;
-        HCURSOR h = LoadCursorW(nullptr, kIds[i]);   // shared system cursor: never destroyed
+        HCURSOR h = LoadCursor(nullptr, kIds[i]);   // shared system cursor: never destroyed (TCHAR form: IDC_* follow UNICODE)
         if (!h) return false;
         m_shape = h;
         if (m_cursorShown && !m_relative) ::SetCursor(h);

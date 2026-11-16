@@ -27077,6 +27077,7 @@ int main(int argc, char** argv) {
             if (fy > ImGui::GetCursorPosY()) ImGui::SetCursorPosY(fy);
             ImGui::Separator();
             ImGui::TextDisabled("OkaySpace v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());
+            if (ownRenderer) { ImGui::SameLine(); ImGui::TextDisabled("(own renderer: %s)", painter.Name()); }   // OKAY_LAUNCHER_RENDERER=own is on (a GUI exe has no console for the log line)
             ImGui::SameLine();
             ImGui::TextDisabled("  -  ");
             ImGui::SameLine();

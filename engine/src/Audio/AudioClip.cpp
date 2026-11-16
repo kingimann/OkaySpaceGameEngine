@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <vector>
 
 namespace okay {
@@ -96,6 +97,24 @@ void ConvertWavFrames(const WavInfo& w, const unsigned char* raw, std::size_t fr
     }
 }
 
+bool ReadWholeFile(const std::string& path, std::vector<unsigned char>& out, std::string* error) {
+    out.clear();
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) { if (error) *error = "cannot open " + path; return false; }
+    const std::streamoff n = f.tellg();
+    if (n > 0 && f.seekg(0, std::ios::beg)) {
+        out.resize(static_cast<std::size_t>(n));
+        f.read(reinterpret_cast<char*>(out.data()), n);
+        out.resize(static_cast<std::size_t>(f.gcount()));   // a file cut while it was read: what was there
+        return true;
+    }
+    // Size unknown (not a regular file): read it as a stream.
+    f.clear();
+    f.seekg(0, std::ios::beg);
+    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
 void DownmixToMono(const float* in, std::size_t frames, int channels, float* out) {
     if (channels <= 1) { std::copy(in, in + frames, out); return; }
     const float k = 1.0f / static_cast<float>(channels);
@@ -134,10 +153,8 @@ AudioClip AudioClip::FromChannels(const std::vector<float>& left, const std::vec
 bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmix) {
     samples.clear();
     channels = 1;
-    std::ifstream f(path, std::ios::binary);
-    if (!f) { if (error) *error = "cannot open " + path; return false; }
-    std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
-                                   std::istreambuf_iterator<char>());
+    std::vector<unsigned char> buf;
+    if (!audio_detail::ReadWholeFile(path, buf, error)) return false;
     const bool own = wav::OwnWavEnabled();
     {   // one line per run, so a person can see which WAV reader is in use (docs/try_it.md, section 9)
         static std::atomic<bool> told{false};

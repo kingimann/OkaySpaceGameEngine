@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 #include <utility>
 
 namespace okay {
@@ -270,12 +271,24 @@ inline std::int16_t RoundS16(float v) {
     return std::int16_t(int((r + big) - big));
 }
 
+// RoundS16 without branches, for loops the compiler can vectorise: the clamp is a min and a max (the ends round to
+// themselves), the rounding the same 1.5 * 2^23 trick. Equal to RoundS16 for every float except NaN, which it must
+// not be given (checked on all 2^32 bit patterns, docs/own_wav_decoder.md).
+inline std::int16_t RoundS16NoNaN(float v) {
+    float r = v * 32768.0f;
+    r = r < -32768.0f ? -32768.0f : r;
+    r = r > 32767.0f ? 32767.0f : r;
+    const float big = 12582912.0f;
+    return std::int16_t(int((r + big) - big));
+}
+
 // 24-bit signed integer x to 16 bits, exactly what RoundS16(float(x / 2^23)) gives (that float is exact, and so is
-// x / 256): round half to even on the integer, then clamp.
+// x / 256): round half to even on the integer, then clamp. No branches (the low byte of real audio is noise, so a
+// branch on it is mispredicted half the time).
 inline std::int16_t Round24To16(std::int32_t x) {
     std::int32_t q = x >> 8;                 // floor (arithmetic shift)
     const std::int32_t r = x & 0xFF;
-    if (r > 128 || (r == 128 && (q & 1))) ++q;
+    q += std::int32_t(r > 128) | (std::int32_t(r == 128) & q & 1);
     return std::int16_t(q > 32767 ? 32767 : q);
 }
 
@@ -309,6 +322,20 @@ template <> struct IsS16<S16Sink> { static constexpr bool value = true; };
 template <class Sink> struct IsF32 { static constexpr bool value = false; };
 template <> struct IsF32<F32Sink> { static constexpr bool value = true; };
 
+// A float32 bit pattern with non-finite values (exponent all ones: infinity, NaN) made +0, as Sane() does.
+inline std::uint32_t SaneBits(std::uint32_t u) { return (u & 0x7F800000u) == 0x7F800000u ? 0u : u; }
+
+// DecodeWav's float output for packed (block align = one frame) PCM and float: one plain loop per
+// format with no per-sample calls, that the compiler can turn into vector code. Each gives exactly the value the
+// general loop gives (FloatSink): every scale is a power of two, so multiplying by its inverse is exact, and
+// float(x) * 2^-31 equals float(x / 2^31) because scaling by a power of two commutes with rounding to float.
+// Checked bit for bit by bench_wav_decoder --digest (docs/own_wav_decoder.md).
+bool DecodeFlatFloatPacked(const Plan& P, float* o);
+// The same for the 16-bit playback output, for the formats whose general loop goes through Wide() or RoundS16:
+// 24 and 32-bit PCM and float64. Same values as S16Sink; safe in place like DecodeFlat (each sample read before its
+// output is written; the output is narrower than the input).
+bool DecodeFlatS16Packed(const Plan& P, unsigned char* o);
+
 // PCM, float, A-law and mu-law. Each sample is read before it is written and output sample k never ends past the
 // start of input sample k + 1 when the output is no wider than the container, so this also works in place.
 template <class Sink>
@@ -317,14 +344,23 @@ void DecodeFlat(const Plan& P, Sink& s, unsigned char* raw) {
     const std::size_t ch = P.ch, sb = P.sb, stride = P.stride;
     const std::size_t frames = std::size_t(P.frames);
     const bool packed = stride == sb * ch;
+    if constexpr (std::is_same<Sink, FloatSink>::value) {
+        if (packed && DecodeFlatFloatPacked(P, s.o)) return;
+    }
+    if constexpr (std::is_same<Sink, S16Sink>::value) {
+        if (packed && DecodeFlatS16Packed(P, s.o)) return;
+    }
     if (P.isFloat) {
         if (sb == 4) {
             if (IsF32<Sink>::value && packed) {
-                // Float32 to float32: the bytes as they are, then non-finite values (exponent all ones) become +0.
-                if (raw != d) std::memmove(raw, d, std::size_t(P.total) * 4);
-                for (std::size_t k = 0; k < std::size_t(P.total); ++k) {
-                    std::uint32_t u; std::memcpy(&u, raw + 4 * k, 4);
-                    if ((u & 0x7F800000u) == 0x7F800000u) { u = 0; std::memcpy(raw + 4 * k, &u, 4); }
+                // Float32 to float32: the bytes as they are with non-finite values made +0, in one pass. In place
+                // (raw == d) or front to back with raw before d (one buffer): sample k is read before it is written,
+                // and writing it never reaches a sample not yet read.
+                const std::size_t n = std::size_t(P.total);
+                for (std::size_t k = 0; k < n; ++k) {
+                    std::uint32_t u; std::memcpy(&u, d + 4 * k, 4);
+                    u = SaneBits(u);
+                    std::memcpy(raw + 4 * k, &u, 4);
                 }
                 return;
             }
@@ -368,6 +404,100 @@ void DecodeFlat(const Plan& P, Sink& s, unsigned char* raw) {
             else x = std::int32_t(U32(q));
             s.Wide(i * ch + c, x, sb);
         }
+}
+
+bool DecodeFlatFloatPacked(const Plan& P, float* o) {
+    const unsigned char* d = P.d;
+    const std::size_t n = std::size_t(P.total);
+    if (P.isFloat) {
+        if (P.sb == 4) {
+            for (std::size_t k = 0; k < n; ++k) {
+                std::uint32_t u; std::memcpy(&u, d + 4 * k, 4);
+                u = SaneBits(u);
+                std::memcpy(o + k, &u, 4);
+            }
+            return true;
+        }
+        for (std::size_t k = 0; k < n; ++k) {   // float64: non-finite (exponent all ones) becomes 0
+            std::uint64_t u; std::memcpy(&u, d + 8 * k, 8);
+            double x; std::memcpy(&x, &u, 8);
+            o[k] = (u & 0x7FF0000000000000ull) == 0x7FF0000000000000ull ? 0.0f : float(x);
+        }
+        return true;
+    }
+    if (P.isA || P.isMu) return false;   // the general packed loop (16-bit table, then scale) measured faster than a float table
+    switch (P.sb) {
+    case 1:   // unsigned 8 bit: (v - 128) * 256 / 32768
+        for (std::size_t k = 0; k < n; ++k) o[k] = float(int(d[k]) - 128) * (1.0f / 128.0f);
+        return true;
+    case 2:
+        if (!kLittleEndianHost) return false;
+        for (std::size_t k = 0; k < n; ++k) { std::int16_t v; std::memcpy(&v, d + 2 * k, 2); o[k] = float(v) * (1.0f / 32768.0f); }
+        return true;
+    case 3: {
+        // Little-endian hosts read 4 bytes at once (the sample and the next sample's first byte, shifted out); the
+        // last sample is read byte by byte so nothing past the data chunk is touched.
+        std::size_t k = 0;
+        if (kLittleEndianHost && n > 0)
+            for (; k + 1 < n; ++k) {
+                std::uint32_t u; std::memcpy(&u, d + 3 * k, 4);
+                o[k] = float(std::int32_t(u << 8) >> 8) * (1.0f / 8388608.0f);
+            }
+        for (; k < n; ++k) {
+            const unsigned char* q = d + 3 * k;
+            const std::int32_t x = std::int32_t((std::uint32_t(q[0]) << 8) | (std::uint32_t(q[1]) << 16) | (std::uint32_t(q[2]) << 24)) >> 8;
+            o[k] = float(x) * (1.0f / 8388608.0f);
+        }
+        return true;
+    }
+    case 4:
+        if (!kLittleEndianHost) return false;
+        for (std::size_t k = 0; k < n; ++k) { std::int32_t v; std::memcpy(&v, d + 4 * k, 4); o[k] = float(v) * (1.0f / 2147483648.0f); }
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool DecodeFlatS16Packed(const Plan& P, unsigned char* o) {
+    if (!kLittleEndianHost) return false;
+    const unsigned char* d = P.d;
+    const std::size_t n = std::size_t(P.total);
+    if (P.isFloat) {
+        if (P.sb != 8) return false;
+        for (std::size_t k = 0; k < n; ++k) {   // float64: non-finite becomes 0, then as RoundS16
+            std::uint64_t u; std::memcpy(&u, d + 8 * k, 8);
+            double x; std::memcpy(&x, &u, 8);
+            const float f = (u & 0x7FF0000000000000ull) == 0x7FF0000000000000ull ? 0.0f : float(x);
+            const std::int16_t v = RoundS16NoNaN(f);
+            std::memcpy(o + 2 * k, &v, 2);
+        }
+        return true;
+    }
+    if (P.isA || P.isMu) return false;
+    if (P.sb == 3) {
+        std::size_t k = 0;
+        for (; k + 1 < n; ++k) {   // 4 bytes at once (see DecodeFlatFloatPacked); the last sample byte by byte
+            std::uint32_t u; std::memcpy(&u, d + 3 * k, 4);
+            const std::int16_t v = Round24To16(std::int32_t(u << 8) >> 8);
+            std::memcpy(o + 2 * k, &v, 2);
+        }
+        for (; k < n; ++k) {
+            const unsigned char* q = d + 3 * k;
+            const std::int16_t v = Round24To16(std::int32_t((std::uint32_t(q[0]) << 8) | (std::uint32_t(q[1]) << 16) | (std::uint32_t(q[2]) << 24)) >> 8);
+            std::memcpy(o + 2 * k, &v, 2);
+        }
+        return true;
+    }
+    if (P.sb == 4) {   // 32-bit container: float(x) / 2^31, then as RoundS16
+        for (std::size_t k = 0; k < n; ++k) {
+            std::int32_t x; std::memcpy(&x, d + 4 * k, 4);
+            const std::int16_t v = RoundS16NoNaN(float(x) * (1.0f / 2147483648.0f));
+            std::memcpy(o + 2 * k, &v, 2);
+        }
+        return true;
+    }
+    return false;
 }
 
 // Microsoft ADPCM. Writes samples in order; on a bad predictor index it stops and *written says how many it wrote.

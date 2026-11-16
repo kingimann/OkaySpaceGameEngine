@@ -33,6 +33,10 @@ inline int KeptChannels(int fileChannels, bool downmix) { return (downmix || fil
 /// channels each (1 averages every file channel).
 void ConvertWavFrames(const WavInfo& w, const unsigned char* raw, std::size_t frames, float* out, int outCh);
 
+/// The whole file into `out`: one sized read when the size is known (a byte-at-a-time stream iterator took 51 ms
+/// for a 20 MB WAV against 3 ms). False with "cannot open <path>" when it cannot be opened.
+bool ReadWholeFile(const std::string& path, std::vector<unsigned char>& out, std::string* error);
+
 /// Averages `in` (interleaved, `channels` per frame) to mono.
 void DownmixToMono(const float* in, std::size_t frames, int channels, float* out);
 

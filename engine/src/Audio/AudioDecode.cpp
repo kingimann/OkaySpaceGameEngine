@@ -26,10 +26,7 @@ namespace okay {
 namespace {
 
 bool ReadFile(const std::string& path, std::vector<unsigned char>& out, std::string* error) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) { if (error) *error = "cannot open " + path; return false; }
-    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    return true;
+    return audio_detail::ReadWholeFile(path, out, error);
 }
 
 std::string LowerExt(const std::string& path) {

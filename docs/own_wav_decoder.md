@@ -90,6 +90,30 @@ Files: the repository's 13 WAV files (`tests/data/audio/wav_ffmpeg`, encoded by 
 
 **How "output identical" was checked.** `bench_wav_decoder --digest` hashes, per file, `DecodeWav`'s whole result (samples bit for bit, warnings, error, header fields), `DecodeForPlayback`'s and `LoadForPlayback`'s bytes; for each of the 13 small files it also hashes every truncation and 2,000 random byte mutations (both decoders, results and error messages). The 40 hash lines are the same before and after, also in a build with AddressSanitizer and UndefinedBehaviorSanitizer (no report). `wav_playback` gained a check that `LoadForPlayback` (two buffers, in place) equals `DecodeForPlayback` (one buffer) and `ToS16(DecodeWav)` on files over 64 KiB with every chunk layout, width and widening format, odd sizes and refusals (245 checks); two deliberate breakages of the in-place layout each make it fail (one with a wrong value, one with a heap error). `own_wav` (22,163 checks; the `audioop` differential skipped, no `audioop` on this Python), `wav_ffmpeg_diff`, `audio_formats`, `wav` and `wav_seam_wiring` pass unchanged.
 
+**Second speed pass, after the flip (2026-11-16, output identical).** Same machine, Release build, 60 s stereo files at 44.1 kHz (5.3 million samples). Times are the fastest of 41 runs (the machine is shared and noisy; the median moves by up to 30%).
+
+| Path | File | Before | After |
+|---|---|---|---|
+| `DecodeWav` alone (float out, file already in memory) | PCM 32-bit | 7.3 ms | 2.1 ms |
+| | float32 | 5.1 ms | 2.1 ms |
+| | PCM 24-bit | 7.3 ms | 3.9 ms |
+| | float64 | 5.5 ms | 4.1 ms |
+| | PCM 16-bit, 8-bit, A-law, mu-law | 1.6 to 2.2 ms | unchanged (already one plain loop) |
+| `DecodeForPlayback` (16-bit out, the launcher's path) | PCM 24-bit | 36.3 ms | 6.6 ms |
+| | PCM 32-bit | 11.2 ms | 6.9 ms |
+| `AudioClip::LoadWAV` (the engine's whole load: read the file, decode) | PCM 16-bit | 36 to 41 ms | 3.0 ms |
+| | PCM 24-bit / 32-bit / float32 | 48 / 54 to 58 / 53 ms | 5.7 / 8.2 / 16.3 ms |
+| | A-law / IMA ADPCM | 11 / 18 ms | 2.9 / 14 ms |
+
+What changed:
+- `DecodeWav`, packed files (block align = one frame): one plain loop per format with no per-sample function call, which the compiler turns into vector code: 16 and 32-bit integers are loaded with one `memcpy` and multiplied by the inverse power of two, float32 is copied with its non-finite values made 0 in the same pass, 24-bit samples are loaded as 4 bytes and shifted (the last one byte by byte, so nothing past the data is read). Multiplying by 2^-15, 2^-23 or 2^-31 is exact, and `float(x) * 2^-31` equals `float(double(x) / 2^31)` (scaling by a power of two commutes with rounding to float): checked on **every** 32-bit and 24-bit integer, 0 differences.
+- The 16-bit playback output for 24 and 32-bit PCM and float64 got the same kind of loop, and the 24-bit rounding lost its branch (the low byte of real audio is noise, so the branch was mispredicted half the time: that was the 36 ms). The branch-free rounding and the min/max clamp were checked against the old code on all 2^24 24-bit values and all 4,278,190,082 non-NaN floats, 0 differences.
+- Float32 to float32 playback: one pass (copy and clean together) instead of a move and then a scan.
+- `AudioClip::LoadWAV`, and the OGG, MP3 and FLAC whole-file loads, read the file with one sized read instead of a byte-at-a-time stream iterator (that alone was 51 ms of a 20 MB file against 3 ms).
+- Tried and dropped: a float lookup table for A-law and mu-law (slower than the 16-bit table and a scale).
+
+`bench_wav_decoder`'s "own-raw" column moves less (32-bit PCM 26.5 to 21.1 ms, float32 22.4 to 17.9 ms) because most of it is the bench's own file read into a fresh 20 MB buffer, not the decoder. The "final" column (the launcher's load): 24-bit 40.6 to 8.4 ms (SDL 57.9), 32-bit 13.5 to 8.5 ms (SDL 52.7), 8-bit 4.1 to 2.6 ms, float32 4.7 to 3.2 ms; peaks unchanged. The `--digest` lines are the same as before the change; `own_wav`, `wav_playback`, `audio_stream` and the rest of the audio tests pass, and the decoder ran under AddressSanitizer and UndefinedBehaviorSanitizer on every generated and ffmpeg file and in `own_wav` and `wav_playback` (no report).
+
 **Not verified.** Windows: nothing was built or run there (the bench needs glibc for memory; time alone would work). Only one machine. Real voice clips from the launcher's chat were not in the corpus (they are 16-bit PCM, which the generated 16-bit files cover). `AudioClip::LoadWAV` (the engine's float path) was not compared with the engine's older reader.
 
 ## Specifications used (rule 19a)

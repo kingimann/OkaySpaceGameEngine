@@ -71,7 +71,7 @@ Say plainly what a user might trip over:
 - Animation: keys at the file's key times plus added ones (section "Animation keys"); a step jump becomes a key pair 0.2 ms apart (the engine merges keys closer than 0.1 ms), a ramp that short; between file keys at most 1/30 s apart nothing is added, so there the error is what linear playback between the file's own keys gives (as the 30 Hz bake gave on the same grid); we emit every channel of an animated node at every key (ufbx emits only animated channels); custom tangent weights and velocities are ignored; TCB tangents are treated like auto; auto-clamp is approximated; layer blending is simplified (first layer overrides, later layers add or lerp by weight, rotations are blended as Euler angles); only translation, rotation, scaling and `DeformPercent` are animated (not pivots, pre/post rotation or other properties); a take plays the span its `LocalStart` / `LocalStop` give (several takes can share one set of curves), else the range of its keys; ufbx keeps keys beyond the span in its clip, ours cuts there; a take whose curves animate only custom properties gives no clip (ufbx gives a constant one); no key reduction (ufbx reduces keys; the engine's `OptimizeClips` runs afterwards on both paths).
 - Left-handed source axis systems: the root node gets the (mirroring) axis matrix and nothing else is done about winding; untested against ufbx. `Transform` is assumed to be bone-relative as above; an exporter that writes the mesh's world matrix there instead would skin wrongly (ufbx makes the same assumption, but this has only been checked on our own fixtures).
 - No repair of damaged files. ufbx recovers from many malformed files; ours rejects them. Big-endian files, zlib checksums (Adler-32 is not verified), encrypted FBX and streaming are not supported.
-- Speed (section "Speed and memory" below; Linux only, a busy shared machine): since the triangulation and the clip keys moved into the import steps (2026-11-16), the reader alone is about 0.82 times ufbx's time on the real files together and 0.89 times on the large files, the whole import about 0.95 and 0.78 times, with less peak memory everywhere measured. Single files are still slower on the reader alone in some runs: the binary `pyramob.fbx` (1.04x to 1.22x, inflate) and the ASCII grid (up to 1.21x, number parsing).
+- Speed (section "Speed and memory" below; Linux only, a busy shared machine): since the triangulation and the clip keys moved into the import steps (2026-11-16), the reader alone is about 0.82 times ufbx's time on the real files together and 0.89 times on the large files, the whole import about 0.95 and 0.78 times, with less peak memory everywhere measured. After the fourth round (branch `claude2/own-fbx-faster-4`) the four single files that were still slower are at or below ufbx in alternating runs (the binary `pyramob.fbx` 0.93x to 0.95x, the ASCII grid 0.80x to 0.84x, the 3,000 nodes import 0.71x to 0.78x), except the import of `anims_with_full_rotations_between_keys.fbx`: 1.02x to 1.03x on the fastest runs, 0.99x to 1.03x on the medians (section "Speed and memory", "The four single files").
 
 ## Speed and memory
 
@@ -106,10 +106,26 @@ the first six fixes listed further down; each later row is a full bench run afte
 | 8 and 9. flat id tables, curve storage | 48.0 / 25.4 (1.89x) | 59.7 / 52.9 (1.13x) | 136.3 / 61.1 (2.23x) | 170.6 / 210.4 (0.81x) | 5.1 / 3.8; 28.4 / 29.3 | 8.8 / 24.1; 31.4 / 120.3 |
 | 10 to 14. exact ASCII numbers, curve sets, smaller tree, packed ASCII arrays, Base64 and Euler (**final**, branch `claude2/own-fbx-faster-2`; middle of three runs) | 43.7 / 25.2 (1.74x) | 56.4 / 52.2 (1.08x) | 129.4 / 65.3 (1.98x) | 176.3 / 215.4 (0.82x) | 3.8 / 3.8; 25.0 / 29.3 | 7.5 / 24.1; 28.0 / 120.3 |
 | 15. keys at the file's own key times (branch `claude2/own-fbx-file-keys`, **changes the clips**, section "Animation keys"; middle of three runs, against a re-run of row 14 that gave 1.14x) | 42.0 / 24.5 (1.72x) | 51.3 / 53.7 (**0.96x**) | 140.4 / 62.8 (2.24x) | 167.7 / 220.8 (0.76x) | 3.8 / 3.8; 25.0 / 29.3 | 7.5 / 24.1; 28.0 / 120.3 |
+| 22 to 26. inflate table entries with base and extra bits, ASCII digit runs by trailing zeros, pooled curves, 24-byte properties, file read without zero fill (branch `claude2/own-fbx-faster-4`; two full runs, same machine, busier) | 26.7 / 34.2 (**0.78x**); 31.3 / 34.4 (0.91x) | 58.9 / 66.2 (**0.89x**); 57.1 / 67.2 (0.85x) | 82.1 / 90.4 (**0.91x**); 73.6 / 87.8 (0.84x) | 211.7 / 304.2 (0.70x); 209.4 / 316.5 (0.66x) | 2.6 / 3.8; 21.4 / 29.3 | 3.7 / 24.1; 25.0 / 120.3 |
 | 16 to 21. triangles and clip keys made by the import, mesh arrays handed over, faster inflate (branch `claude2/own-fbx-faster-3`, **changes what `LoadMemory` returns**, see below; middle of three runs for each column, a machine with a load of 4 to 6 on 4 cores) | 27.1 / 33.1 (**0.82x**; 0.79x to 0.95x) | 57.5 / 60.7 (**0.95x**; 0.77x to 1.01x) | 66.4 / 74.6 (**0.89x**; 0.85x to 0.89x) | 225.3 / 290.5 (0.78x; 0.72x to 0.87x) | 2.6 / 3.8; 24.0 / 29.3 | 6.4 / 24.1; 28.1 / 120.3 |
 
 \* Step 2 alone made the reader slower on big meshes (it now finds equal corners, which the import used to do) and the
 import faster; the step after it won the time back.
+
+**The four single files after steps 22 to 26** (branch `claude2/own-fbx-faster-4`, 2026-11-16). The full table runs our
+side and ufbx's one after the other, and on this busy machine a single file moves by 10 to 20 % between them, so these
+were measured with `bench_fbx_reader --only ... --time`: the branch's start (`base`), this branch (`new`) and ufbx,
+alternated round by round (9 to 11 rounds of 5 to 9 runs), minimum and median of the rounds' minimums, two such runs:
+
+| File (what is timed) | Start / ufbx | Now / ufbx (fastest runs) | Now / ufbx (medians) | Met |
+|---|---:|---:|---:|---|
+| `pyramob.fbx` binary (reader alone) | 1.08x, 1.14x | 0.93x, 0.95x (4.90 and 5.01 against 5.26 ms) | 0.89x, 0.91x | **yes** |
+| ASCII grid, 51,200 triangles (reader alone) | 0.93x, 0.96x | 0.80x, 0.84x (8.62 and 8.70 against 10.32 and 10.81 ms) | 0.79x, 0.83x | **yes** |
+| `anims_with_full_rotations_between_keys.fbx` (import) | 1.24x, 1.26x | 1.02x, 1.03x (1.88 and 1.90 against 1.83 and 1.86 ms) | 0.99x, 1.03x | **not quite** (about 2 % over) |
+| 3,000 nodes and boxes (import) | 0.82x, 0.83x | 0.71x, 0.78x | 0.82x, 0.84x | **yes** |
+
+`pyramob.fbx` (ASCII), not a target, is 0.82x the same way. In the full table the ASCII grid can still show above 1x
+(1.16x in one run: 10.8 against 9.3 ms, measured a minute apart); alternated, it is below in every round.
 
 **Against the targets after steps 16 to 21** (branch `claude2/own-fbx-faster-3`, 2026-11-16; three full runs, the middle
 value of each; the machine was shared, so single files moved by up to 40 % between runs, ufbx's numbers as much as ours):
@@ -258,12 +274,41 @@ by `fbx_exact` (below).
     load from 184 to 136 million, `pyramob.fbx` (binary) from 46 to 38 million, the 3,000-node file from 178 to 133
     million.
 22. **Curve keys read directly** (step 20): `KeyTime` (int64) and `KeyValueFloat` (float) without the general accessor.
+23. **Inflate, fourth round** (step 22; shared with PNG and HTTP; `inflate_differential` and `own_http_inflate` pass, also
+    under ASan and UBSan): a table entry is 32 bits and carries the symbol, the code length and, for a length or
+    distance symbol, its base value and extra-bit count (RFC 1951 3.2.5), so a match needs no second table and no range
+    checks; the bit buffer is topped up every turn without a test (that test was the most mispredicted branch on the
+    FBX arrays); a match at distance 8 or more copies its first 16 bytes without a test; long literal codes are decoded
+    in the fast loop; the loop runs in rounds that cannot cross the input or output bound instead of testing both every
+    turn. `pyramob.fbx` (binary): 34.5 to 30.3 million instructions in inflate, conditional branches 5.0 to 2.8 million,
+    simulated mispredictions 297 to 172 thousand (cachegrind).
+24. **ASCII numbers, fourth round** (step 23): the first non-digit of 8 bytes is found by counting trailing zeros instead
+    of a multiply (a shorter path from one number to the next), the first group of up to 8 integer and fraction digits is
+    read before the loops, the separators come from a table, and the int32 / float32 check of an array runs without a
+    branch per value. `test_decimal_to_double` now also reads every input with text after it (the 8-byte loads at the end
+    of a token): 100 million inputs, 0 differ from `strtod`.
+25. **Import: fewer allocations and fresh pages** (step 24): `LoadFile` reads into a buffer that is not zero-filled first;
+    the curves' key arrays are runs in five pooled arrays (the animation-heavy file: 1,903 allocations in the reader down
+    to 791); a node's clip keys are collected in arrays kept from node to node and copied out once; a node whose channels
+    have one curve node each (one layer) reads its curves directly; the importer reuses its key arrays.
+26. **A property is 24 bytes** (step 25): the string or raw bytes of an S or R property share the union with the number
+    and the array (read through `Prop::s()`, empty for every other type, as the separate member was). The animation-heavy
+    file's tree is 196 KB smaller; repeated imports of it touch 204 fresh pages each instead of 252 (ufbx: 110), which
+    was most of what was left of its gap.
+27. **No error sums once an Euler step decides** (step 25): when an angle turns too far, `Subdivide` splits by that alone,
+    so `SegmentNeed` returns before working out quaternions and deviations it would not use.
 
 **What is still slower, and why:**
 
-- **The binary `pyramob.fbx` and the ASCII grid** are still at or above ufbx on the reader alone in some runs (1.04x to
-  1.22x and 0.93x to 1.21x). The first is all inflate: its arrays decode to many short matches, and ufbx's inflate is
-  faster than ours on them. The second is ASCII number parsing (17-digit numbers, about 10 ns each).
+- **The import of `anims_with_full_rotations_between_keys.fbx`** is about 2 % over ufbx's (1.88 against 1.83 ms).
+  It runs fewer instructions than the ufbx import (callgrind: 19.7 against 19.9 million) and our reader alone is 0.6x
+  ufbx's; what is left is the clip keys (the tolerance check evaluates every segment at 1/3 and 2/3, about 14,000 sine
+  and cosine calls; changing that arithmetic would change the keys) and fresh memory: repeated imports touch about 200
+  fresh 4 KB pages each against ufbx's 110 (glibc gives the freed tree and file buffer back to the system and takes them
+  again; with glibc's trim and mmap thresholds raised both imports stop faulting and ours is 1.76 against 1.70 ms). The
+  file buffer alone is 90 of those pages: ufbx reads the file in pieces, our tree points into the whole file.
+  Mapping the file instead of reading it brought ours to ufbx's page count and time in a test, and was left out: a file
+  that is cut short while it is mapped (an exporter still writing it while the editor reloads it) crashes the reader.
 - **The reader alone was about 2x ufbx** on files with meshes until steps 16 to 21, because our `LoadMemory` triangulated
   every polygon and found the distinct corners, which ufbx's load does not do. That work is now in the import step
   `BuildParts` (item 19).

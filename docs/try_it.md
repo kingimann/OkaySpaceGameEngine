@@ -1384,6 +1384,9 @@ build with tests on; the memory columns need glibc, elsewhere they print `-`):
    arrays included), `bench_fbx_reader --parts-digest <files>` the same after the import steps, hashed without the
    polygons (the triangles and keys), and `bench_fbx_reader --import-digest <files>` one hash of the whole imported scene;
    run them before and after a change to the reader to show the output did not change (the lines must be identical).
+   `bench_fbx_reader --only own-load --time --runs 31 <file>` (or `ufbx-load`, `import-own`, `import-ufbx`) times one
+   step on one file 31 times and prints the minimum and the median: steadier than the full table for a single file on a
+   busy machine. Alternate our side and ufbx's a few times and compare the minimums.
 6. `build/tests/test_fbx_exact` (about a second) checks the reader's shortcuts against the plain code (matrices, curves,
    Base64, ASCII numbers and arrays); expect `16 checks, 0 failures`.
 7. `build/tests/test_decimal_to_double` (about five seconds) checks our exact decimal-to-double conversion (used for every

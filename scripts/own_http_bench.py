@@ -2,6 +2,7 @@
 """Compare our own HTTP client's download (okay::ownhttp::DownloadToFile) with the curl program on a local server.
 
 Usage: python3 scripts/own_http_bench.py <path to test_own_http_download> [size in MB=200] [runs=3] [out dir=$TMPDIR]
+                                         [link speed in MB/s, 0 = as fast as loopback goes]
 
 The server is test_own_http_download --serve (our own, plain sockets, loopback only). Each client runs as its own
 process, so its wall time, CPU time (user + system, os.wait4) and peak resident memory (VmHWM, sampled) are its own.
@@ -65,7 +66,8 @@ def main():
     tool = os.path.abspath(sys.argv[1])
     mb = int(sys.argv[2]) if len(sys.argv) > 2 else 200
     runs = int(sys.argv[3]) if len(sys.argv) > 3 else 3
-    base = sys.argv[4] if len(sys.argv) > 4 else os.environ.get("TMPDIR", "/tmp")
+    base = (sys.argv[4] if len(sys.argv) > 4 else "") or os.environ.get("TMPDIR", "/tmp")
+    rate = float(sys.argv[5]) if len(sys.argv) > 5 else 0.0
     curl = shutil.which("curl")
     if not curl:
         raise SystemExit("curl is not installed")
@@ -73,7 +75,7 @@ def main():
     srv = subprocess.Popen([tool, "--serve"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     try:
         port = int(srv.stdout.readline())
-        url = "http://127.0.0.1:%d/file?size=%d" % (port, mb << 20)
+        url = "http://127.0.0.1:%d/file?size=%d" % (port, mb << 20) + ("&rate=%g" % rate if rate > 0 else "")
         own = lambda o, f="": run([tool, "--get", url, o] + ([f] if f else []))
         crl = lambda o: run([curl, "-s", "--noproxy", "*", "-o", o, url])
         clients = {
@@ -97,7 +99,8 @@ def main():
                 if d != digest:
                     raise SystemExit("%s produced different bytes" % name)
                 os.unlink(out)
-        print("download of %d MB from a local server, %d runs each (median; peak memory is the largest)" % (mb, runs))
+        print("download of %d MB from a local server%s, %d runs each (median; peak memory is the largest); load average %.1f" % (
+            mb, " paced at %g MB/s" % rate if rate > 0 else "", runs, os.getloadavg()[0]))
         print("%-26s %10s %10s %12s %10s" % ("client", "wall s", "CPU s", "peak MB", "MB/s"))
         med = {}
         for name, rows in res.items():

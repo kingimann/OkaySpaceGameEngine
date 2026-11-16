@@ -75,6 +75,7 @@ release job or the installer build for this change.
 | 7zm | Guided props: furniture, containers, tools, decorations (27 designs) | Modeling > **Guided** > Props; File > Examples > Guided modeling > `guided_props`; `examples\modeling\guided_props.okayscene` | New in this change; engine tested on Linux, panel never opened in a real window (unverified) |
 | 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
 | 7zo | Guided: no more lag when you change a slider, style or Detail; a live drag preview; a "Last change" time line | Modeling > **Guided**, select a guided model (File > Examples > Guided modeling > `guided_vehicles`), drag any slider, press Ultra | New in this change; timings measured headless on Linux (`test_guided_perf`), the editor panel compiles but was **never opened in a real window** (unverified) |
+| 7zq | Modeling: curves, bevel weights, Quad Remesh, reference images, mirror/undo/snapping fixes, faces keeping slots and UVs, slot remove and reorder | `examples\modeling_tools\curves_bevel.okayscene` (File > Open...), then the Modeling window > Edit Mesh | Linux headless tests only; editor window, Direct3D and OpenGL per-slot pictures unverified |
 | 14 | One SHA-256 (file checksums, account passwords, anti-cheat tag, voice key) | Nothing new to click: sign in with an existing local account (Account tab), use the launcher's update check, join an anti-cheat checked server, join a voice room; all must work exactly as before. For the checks themselves see `docs/sha256_comparison.md` section "How to try it" | Tests only (Linux); launcher, Windows and real accounts unverified |
 | 16 | Main menu bar clean-up: one Examples, Edit clipboard commands, GameObject categories, View, Help | The bar at the top of `Tools\OkayEngine.exe` | New in this change; see section 16 for what was and was not seen |
 | 17 | Hierarchy right-click menus: Create Child with every category, Add Component, Select Same Type, "Delete 3 Objects" | Right-click in the Hierarchy panel of `Tools\OkayEngine.exe` | New in this change; see section 17 |
@@ -1108,6 +1109,26 @@ once when you let go (one undo step), and a time line under the Undo buttons tel
 **Not done / unverified.** The panel was not run in a window, so the preview feel and the real frame times are unverified. The cape of the Hero human still hangs
 a few centimetres off the back (a design choice); `guided_pictures` renders were not re-made.
 
+## 7zq. Modeling: curves, bevel weights, remesh, undo and attribute fixes
+
+**What it is.** More of the modeler (same Modeling window as 7zh): Bezier curves to meshes, edge bevel weights, Quad Remesh, saved reference images, and fixes so edits keep material slots, UVs, vertex colours and seams.
+
+**Steps.** Open the Modeling window and follow these.
+
+More new steps (same branch):
+- **Curves and bevel weights example**: File > Open `examples\modeling_tools\curves_bevel.okayscene` (picture: `docs/images/modeling_more/curves_bevel.png`). You see a pipe, a flat ribbon, a swept square tube and a cube with only its top edges rounded, with three hint lines on screen. Press Play to look at it, Stop to edit. Select the cube, open Edit Mesh: its top edges are drawn green (bevel weights).
+- **Coloured edges**: in Edit Mesh, creased edges are pink and bevel-weighted edges are green. Select two edges, Ctrl+K, type "crease" or "bevel weight", run Set; the colours appear at once. Clear removes them.
+- **Quad Remesh**: add a Sphere, open Modeling > Edit Mesh, set "Quads target" to 300, press Ctrl+K and run "Quad Remesh". The Console says how many triangles became how many quads, and the sphere is now made of quads (switch on the wireframe to see them). Undo brings the old mesh back. Limits: it does not follow flow lines; slots, vertex colours and UVs are dropped.
+- **Reference images are saved**: Import page > Reference images: add a PNG, save the scene, reopen it: the picture plane is still there (path, plane, size, opacity, flip, visible).
+- **Direct3D per-slot pictures** (Windows, Direct3D 11 or 12 renderer): give two slots different pictures on the Material slots page; each slot should show its own picture. Written but never run on a GPU.
+- **Mirror and Undo fixes** (Edit Mesh): add a Mirror modifier to a half model that has UVs or material slots; the mirrored half now keeps its picture and colours. In Edit Mesh, add a modifier from the Inspector, change the mesh, then press Ctrl+Z: the modifier list goes back together with the mesh (Ctrl+Y brings both back). Edge snapping ignores the hidden diagonal inside a quad.
+- **Faces keep their look through edits**: in Edit Mesh on a mesh with two material slots (Material slots page) and UVs, select a face and Extrude, Inset, Subdivide, Poke or Duplicate it, or delete a face; the new faces keep the slot colour of the face they came from and the picture does not jump. The same holds for the Array, Solidify, Subdivision, Decimate and Displace modifiers (add one in the Inspector > Modifiers).
+- **Slots: remove and reorder; UVs survive edits** (Edit Mesh > Material slots page): with two or more slots, pick one and press `- Slot` (its faces fall back to slot 0, later slots move down) or `Up` / `Down` (faces keep their colour, the slot just changes place). Ctrl+Z undoes each. UVs: unwrap a mesh (UV page > Smart Unwrap), then Subdivide or Poke a few faces: the new faces keep the UV layout (no jump or stretch in the UV view) and marked seams stay seams, including through the Array and Subdivision modifiers.
+
+**What it is.** The 3D modeler can now give faces to numbered material slots. Each slot has a colour, and changing a slot's colour
+
+**Status.** The engine side is covered by the Linux tests `modeling_more`, `modeling_more_scene` and `modeling_fuzz` (headless). The editor buttons and menus here were not compiled with the editor on Linux and not clicked in the Windows editor; the Direct3D 11/12 and OpenGL per-slot drawing never ran on a GPU. The picture `docs/images/modeling_more/curves_bevel.png` is a headless software render.
+
 ## 16. Main menu bar (cleaned up)
 
 What changed and why: [editor_menus.md](editor_menus.md) (the map, and a table of every old item and where it went).
@@ -1382,6 +1403,25 @@ not compiled into Windows programs, and `OKAY_OWN_HTTP=1` does nothing there. It
 (`-DOKAY_OWN_HTTP=ON` at build time, then `OKAY_OWN_HTTP=1`; the line then says `http=own`). To try it on Windows we
 would need our own TLS, which is cryptography and waits for the outside review (rule 18). Tested on main on Linux only:
 its test programs (`own_http`, `own_http_net`).
+
+What was added on 2026-11-16 (retries with backoff and `Retry-After`, downloads to a temporary file with SHA-256 while
+streaming, resume after a dropped connection, atomic rename) is in the same place: Linux builds only, not in the
+Windows release. On Windows nothing changed; the launcher's Versions download and the editor's update check use WinHTTP
+and curl exactly as before.
+
+On a Linux build (`cmake -DOKAY_OWN_HTTP=ON`, launcher and editor built), to try it:
+
+1. Start the launcher with `OKAY_OWN_HTTP=1 ./OkaySpace` (the launcher). Open **Versions** and download a version. Expect:
+   the download runs, a `<file>.part` file grows next to the target and is renamed to the real name only when the whole
+   file has arrived; the version then installs as with curl. Pull the network cable (or stop Wi-Fi) for a few seconds
+   in the middle: the download continues where it stopped (up to two more tries) instead of starting over.
+2. Start the editor with `OKAY_OWN_HTTP=1 ./OkayEngine` and use **Engine > Check for Updates**. Expect: the version check and
+   (if there is an update) the download work as before. With `OKAY_HTTP_CURL=1` as well, curl is used instead.
+3. Without a desktop: build `test_own_http_download` and run it (`ctest -R own_http_download`), or compare with curl:
+   `python3 scripts/own_http_bench.py build/tests/test_own_http_download 200 3` (prints a table and MET or NOT MET).
+
+Unverified: steps 1 and 2 have not been run on a desktop here (the new code is covered by the loopback tests and the
+launcher and editor files were only syntax-checked).
 
 ### 11. Own platform layer (window, input, audio device)
 

@@ -189,7 +189,8 @@ static long long RangeFrom(const std::string& head) {
 /// Send version `v` of a `size` byte file from `from`, as 200 (from = 0) or 206. `cut` > 0 stops after that many body
 /// bytes (then the connection closes, or stays silent with `stall`). `pieceDelayMs` sends 4 KiB pieces with a pause.
 static void SendFile(Server& s, int c, uint64_t size, uint64_t from, int v, const std::string& etag, uint64_t cut = 0,
-                     bool stall = false, int pieceDelayMs = 0, bool chunked = false) {
+                     bool stall = false, int pieceDelayMs = 0, bool chunked = false, double rateMBps = 0) {
+    const auto t0 = std::chrono::steady_clock::now();
     std::string h;
     if (from == 0) h = "HTTP/1.1 200 OK\r\n";
     else h = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes " + std::to_string(from) + "-" + std::to_string(size - 1) + "/" + std::to_string(size) + "\r\n";
@@ -213,6 +214,10 @@ static void SendFile(Server& s, int c, uint64_t size, uint64_t from, int v, cons
             return;   // the connection closes when the handler returns
         }
         if (pieceDelayMs) std::this_thread::sleep_for(std::chrono::milliseconds(pieceDelayMs));
+        if (rateMBps > 0) {   // pace like a network link of that speed
+            const auto due = t0 + std::chrono::microseconds(int64_t(double(sent) / (rateMBps * 1048576.0) * 1e6));
+            std::this_thread::sleep_until(due);
+        }
     }
     if (chunked) SendAll(c, "0\r\n\r\n");
 }
@@ -224,7 +229,7 @@ static bool Route(Server& s, int c, Req& r) {
     const long long rf = RangeFrom(r.head);
     const uint64_t from = rf > 0 ? uint64_t(rf) : 0;
     const int hit = s.Hits(p);
-    if (p == "/file") { SendFile(s, c, size, from, 1, "\"v1\""); return false; }
+    if (p == "/file") { SendFile(s, c, size, from, 1, "\"v1\"", 0, false, 0, false, r.q.count("rate") ? std::atof(r.q["rate"].c_str()) : 0.0); return false; }
     if (p == "/chunked") { SendFile(s, c, size, 0, 1, "", 0, false, 0, true); return false; }
     if (p == "/slow") { SendFile(s, c, size, from, 1, "\"v1\"", 0, false, 3); return false; }
     if (p == "/drop" || p == "/stall") {   // the first `times` answers die after `cut` bytes

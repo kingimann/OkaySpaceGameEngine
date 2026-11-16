@@ -498,7 +498,9 @@ public:
             if (!m_embedChecked || m_embedAgain || fastFall) {
                 m_embedChecked = true; m_embedAgain = false;
                 const Vec3 p = transform->Position();
-                if (EmbeddedInSolid(*gameObject->scene(), gameObject, p + Vec3{0.0f, 0.9f, 0.0f})) {
+                // The probe is the body's own centre (a crouched or prone body is lower than 0.9 m: a low cover over it is not "inside").
+                const Collider3D* bodyCol = gameObject->GetComponent<Collider3D>();
+                if (EmbeddedInSolid(*gameObject->scene(), gameObject, bodyCol ? bodyCol->WorldCenter() : p + Vec3{0.0f, 0.9f, 0.0f})) {
                     transform->SetPosition(ClearFeetPosition(*gameObject->scene(), gameObject, p));
                     rb->velocity = Vec3{0.0f, 0.0f, 0.0f}; rb->WakeUp();
                     OnTeleported();
@@ -917,7 +919,7 @@ private:
     WallSense m_wall;                    // the wall the body is pressed against, if any
     GroundSense m_sense;                 // what the ground contacts say about the surface under the feet
     Vec3  m_inherit{0, 0, 0};            // horizontal speed taken from a moving platform on a jump, carried in the air
-    float m_sinceGroundS = 0.0f, m_sinceJump = 1.0f;
+    float m_sinceGroundS = 1.0f, m_sinceJump = 1.0f;   // 1: a body that starts in the air is not "just lost the ground" (no snap down)
     Vec3  m_hold{0, 0, 0}; bool m_holdOn = false;   // idle on a slope: where the body is held
     bool  m_frictionSet = false;
     bool  m_cutArmed = false;            // a jump that Space released early may still be cut short

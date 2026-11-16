@@ -520,6 +520,16 @@ void Physics3D::Step(Scene& scene, float dt) {
     // 1) Integrate dynamic / kinematic bodies.
     auto bodies = scene.FindObjectsOfType<Rigidbody3D>();
     m_stats = PhysicsStepStats{};
+    // A slider remembers where it started (the offset between its two ends) before anything moves it this step.
+    for (Joint3D* j : scene.FindObjectsOfType<Joint3D>()) {
+        if (j->initialized || (Joint3D::Mode)j->mode != Joint3D::Mode::Slider || !j->gameObject || !j->transform) continue;
+        GameObject* other = CachedPartner(scene, j);
+        j->pinOffset = j->transform->Position() - (other && other->transform ? other->transform->Position() : j->anchor);
+        j->restLen = j->autoConfigure ? j->pinOffset.Magnitude() : j->distance;
+        j->hingeLever = Vec3::Zero;
+        j->refRot = j->transform->localRotation;
+        j->initialized = true;
+    }
     const bool improved = quality == PhysicsQuality::Improved;   // the iterated contact step (see Physics3DImproved.inl)
     if (improved) {
         if (!m_solver) m_solver = std::make_unique<Solver>();
@@ -574,7 +584,7 @@ void Physics3D::Step(Scene& scene, float dt) {
     // 2) Broad + narrow phase over every collider pair.
     auto colliders = scene.FindObjectsOfType<Collider3D>();
     std::set<Pair> current;
-    std::set<Pair> restNow;   // (Classic) sleeping bodies resting on something without overlapping it
+    std::map<Pair, RestStamp> restNow;   // (Classic) sleeping bodies resting on something without overlapping it
     // Contact callbacks below may remove colliders / bodies (RemoveComponent frees
     // them at once); every raw pointer held across a callback is checked first.
     Scene::RemovalWatch gone(scene);
@@ -613,9 +623,11 @@ void Physics3D::Step(Scene& scene, float dt) {
 
             // Broad phase: AABB reject (precomputed AABBs).
             const Vec3 &aMin = aabbMin[i], &aMax = aabbMax[i], &bMin = aabbMin[j], &bMax = aabbMax[j];
-            if (aMax.x < bMin.x || aMin.x > bMax.x ||
-                aMax.y < bMin.y || aMin.y > bMax.y ||
-                aMax.z < bMin.z || aMin.z > bMax.z) continue;
+            // (Improved: solid pairs are looked at when they are within the contact skin of each other, not only when they overlap.)
+            const float pad = (improved && !a->isTrigger && !b->isTrigger) ? kImpSkin : 0.0f;
+            if (aMax.x + pad < bMin.x || aMin.x - pad > bMax.x ||
+                aMax.y + pad < bMin.y || aMin.y - pad > bMax.y ||
+                aMax.z + pad < bMin.z || aMin.z - pad > bMax.z) continue;
 
             bool trigger = a->isTrigger || b->isTrigger;
             // Trigger tag / layer filters: a filtered-out object passes through
@@ -634,9 +646,15 @@ void Physics3D::Step(Scene& scene, float dt) {
                 // went away or moved. Keep a quiet record of pairs that touch within the skin (no callbacks) and wake the sleeper
                 // when the pair ends or the other side moves.
                 if (!improved && !trigger && ((ra && ra->sleeping) || (rb && rb->sleeping))) {
-                    ImpManifold near; Contact nc = ImprovedContact(a, b, kImpSkin, near);
-                    if (nc.hit) {
-                        restNow.insert({a, b});
+                    // (a pair found resting last step with both objects still where they were is not tested again: that keeps
+                    // hundreds of sleeping crates as cheap as they were)
+                    const RestStamp stamp{a->transform ? a->transform->Position() : Vec3::Zero, b->transform ? b->transform->Position() : Vec3::Zero};
+                    bool resting = false;
+                    auto prevRest = m_restContacts.find({a, b});
+                    if (prevRest != m_restContacts.end() && prevRest->second.a == stamp.a && prevRest->second.b == stamp.b) resting = true;
+                    else { ImpManifold near; resting = ImprovedContact(a, b, kImpSkin, near).hit; }
+                    if (resting) {
+                        restNow[{a, b}] = stamp;
                         if (ra && ra->sleeping && CanWakeOthers(rb)) ra->WakeUp();
                         if (rb && rb->sleeping && CanWakeOthers(ra)) rb->WakeUp();
                     }
@@ -646,7 +664,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (improved && c.penetration < 0.0f) c.penetration = 0.0f;   // inside the skin: touching, not overlapping
 
             current.insert({a, b});
-            if (!improved && !trigger && ((ra && ra->sleeping) || (rb && rb->sleeping))) restNow.insert({a, b});   // (see the rest-contact note below)
+            if (!improved && !trigger && ((ra && ra->sleeping) || (rb && rb->sleeping))) restNow[{a, b}] = RestStamp{a->transform ? a->transform->Position() : Vec3::Zero, b->transform ? b->transform->Position() : Vec3::Zero};   // (see the rest-contact note below)
 
             // Relative velocity before the solver changes it (for impact speed).
             const Vec3 relVelBA = (rb ? rb->velocity : Vec3::Zero) - (ra ? ra->velocity : Vec3::Zero);
@@ -771,14 +789,15 @@ void Physics3D::Step(Scene& scene, float dt) {
     }
 
     if (!improved) {   // a sleeping body's support went away (moved, switched off, removed): wake it
-        for (const Pair& rp : m_restContacts) {
+        for (const auto& rpe : m_restContacts) {
+            const Pair& rp = rpe.first;
             if (restNow.count(rp) || current.count(rp)) continue;
             const bool la = aliveSet.count(rp.first) && !gone.Gone(rp.first), lb = aliveSet.count(rp.second) && !gone.Gone(rp.second);
             if (la) if (Rigidbody3D* r = rp.first->gameObject->GetComponent<Rigidbody3D>()) if (r->sleeping) r->WakeUp();
             if (lb) if (Rigidbody3D* r = rp.second->gameObject->GetComponent<Rigidbody3D>()) if (r->sleeping) r->WakeUp();
         }
         for (auto it = restNow.begin(); it != restNow.end();)
-            it = (gone.Gone(it->first) || gone.Gone(it->second)) ? restNow.erase(it) : std::next(it);
+            it = (gone.Gone(it->first.first) || gone.Gone(it->first.second)) ? restNow.erase(it) : std::next(it);
         m_restContacts.swap(restNow);
     }
     if (improved) {   // solve every queued pair, then move the bodies by their solved speeds
@@ -791,9 +810,23 @@ void Physics3D::Step(Scene& scene, float dt) {
         m_stats.sweeps = sweeps;
     }
 
-    // 5) Fire exit messages for contacts that ended.
-    for (const Pair& p : m_contacts) {
-        if (current.count(p)) continue;
+    // 5) Fire exit messages for contacts that ended. They go out in the order the scene lists the colliders (the contacts are
+    // kept in a set ordered by memory address, which is not the same from one run to the next: a replay or a rollback must
+    // see the same order every time).
+    std::vector<Pair> ended;
+    for (const Pair& p : m_contacts) if (!current.count(p)) ended.push_back(p);
+    if (ended.size() > 1) {
+        std::unordered_map<Collider3D*, std::size_t> rank;
+        rank.reserve(colliders.size() * 2 + 1);
+        for (std::size_t i = 0; i < colliders.size(); ++i) rank[colliders[i]] = i;
+        auto rankOf = [&](Collider3D* c) { auto it = rank.find(c); return it == rank.end() ? ~std::size_t(0) : it->second; };
+        std::stable_sort(ended.begin(), ended.end(), [&](const Pair& x, const Pair& y) {
+            const std::size_t xa = rankOf(x.first), ya = rankOf(y.first);
+            if (xa != ya) return xa < ya;
+            return rankOf(x.second) < rankOf(y.second);
+        });
+    }
+    for (const Pair& p : ended) {
         Collider3D* a = p.first;
         Collider3D* b = p.second;
         {   // what held a sleeping body up has moved away, been switched off or been removed: wake it (both qualities)
@@ -1151,14 +1184,21 @@ void Physics3D::Step(Scene& scene, float dt) {
     }
 
     // ---- Joints: positional constraints (after collisions) ----
-    for (Joint3D* j : scene.FindObjectsOfType<Joint3D>()) {
+    // (Improved: the constraint joints are solved several times, so a rope of balls or a heavy weight on a light chain stays
+    // near its length. A spring is a force and is applied once; a motor's limit is shared out over the passes.)
+    const std::vector<Joint3D*> allJoints = scene.FindObjectsOfType<Joint3D>();
+    const int jointPasses = (improved && allJoints.size() > 0) ? std::max(4, solverIterations) : 1;
+    for (int jointPass = 0; jointPass < jointPasses; ++jointPass)
+    for (Joint3D* j : allJoints) {
+        if (gone.Gone(j)) continue;
         if (j->broken || !j->gameObject || !j->transform) continue;
+        if (jointPass > 0 && (Joint3D::Mode)j->mode == Joint3D::Mode::Spring) continue;
         Rigidbody3D* ra = j->gameObject->GetComponent<Rigidbody3D>();
         if (!ra) continue;                          // the joint moves THIS body
         Transform* ta = j->transform;
         Rigidbody3D* rbB = nullptr; Transform* tb = nullptr;
         if (!j->connectedBody.empty())
-            if (GameObject* g = FindNearest(scene, j->connectedBody, j->gameObject)) { tb = g->transform; rbB = g->GetComponent<Rigidbody3D>(); }
+            if (GameObject* g = CachedPartner(scene, j)) { tb = g->transform; rbB = g->GetComponent<Rigidbody3D>(); }
         Vec3 pa = ta->Position();
         Vec3 pb = tb ? tb->Position() : j->anchor;
         if (!j->initialized) {
@@ -1208,7 +1248,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (j->useMotor && iiA > 0.0f) {
                 float cur = Vec3::Dot(ra->angularVelocity, axis);
                 float Cdot = cur - j->motorSpeed * Mathf::Deg2Rad;
-                float imp = Mathf::Clamp(-Cdot / iiA, -j->maxMotorTorque * dt, j->maxMotorTorque * dt);
+                float imp = Mathf::Clamp(-Cdot / iiA, -j->maxMotorTorque * dt / (float)jointPasses, j->maxMotorTorque * dt / (float)jointPasses);
                 ra->angularVelocity = ra->angularVelocity + axis * (imp * iiA);
             }
             // 3b) Angle limits (JointLimit.hpp). Off until useLimits, so an existing
@@ -1233,6 +1273,46 @@ void Physics3D::Step(Scene& scene, float dt) {
             Vec3 Cpos = anchorWorld - pb;
             MoveBodyWorld(ta, -Cpos);
             if (j->breakable && std::sqrt(Vec3::Dot(Cpos, Cpos)) > j->breakForce) j->broken = true;
+        } else if (m == Joint3D::Mode::Slider) {
+            // Prismatic joint: A may only move along `axis` (a world direction fixed at the start) relative to B or the anchor,
+            // and cannot turn. Limits (metres from the start position) and a motor (metres per second) are optional.
+            Vec3 axis = j->axis.SqrMagnitude() > 1e-10f ? j->axis.Normalized() : Vec3{1, 0, 0};
+            const Vec3 e = pa - pb - j->pinOffset;
+            const Vec3 perp = e - axis * Vec3::Dot(e, axis);                 // sideways drift: pulled back
+            MoveBodyWorld(ta, perp * (-imA / imSum));
+            if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, perp * (imB / imSum));
+            Vec3 vB = rbB ? rbB->velocity : Vec3::Zero;
+            const Vec3 vrel = ra->velocity - vB;
+            const Vec3 vperp = vrel - axis * Vec3::Dot(vrel, axis);
+            ra->velocity = ra->velocity - vperp * (imA / imSum);
+            if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity + vperp * (imB / imSum);
+            ra->angularVelocity = Vec3::Zero;
+            float along = Vec3::Dot(ta->Position() - (tb ? tb->Position() : j->anchor) - j->pinOffset, axis);
+            if (j->useLimits) {
+                const float clamped = Mathf::Clamp(along, j->minAngle, j->maxAngle);
+                if (clamped != along) {
+                    const Vec3 fix = axis * (clamped - along);
+                    MoveBodyWorld(ta, fix * (imA / imSum));
+                    if (tb && rbB && imB > 0.0f) MoveBodyWorld(tb, fix * (-imB / imSum));
+                    vB = rbB ? rbB->velocity : Vec3::Zero;
+                    const float vAlong = Vec3::Dot(ra->velocity - vB, axis);
+                    if ((clamped > along && vAlong < 0.0f) || (clamped < along && vAlong > 0.0f)) {   // moving further out: stop it
+                        ra->velocity = ra->velocity - axis * (vAlong * (imA / imSum));
+                        if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity + axis * (vAlong * (imB / imSum));
+                    }
+                    along = clamped;
+                }
+            }
+            if (j->useMotor) {
+                vB = rbB ? rbB->velocity : Vec3::Zero;
+                const float vAlong = Vec3::Dot(ra->velocity - vB, axis);
+                float push = (j->motorSpeed - vAlong) / imSum;
+                const float cap = j->maxMotorTorque * dt / (float)jointPasses;     // (max force)
+                push = Mathf::Clamp(push, -cap, cap);
+                ra->velocity = ra->velocity + axis * (push * imA);
+                if (rbB && imB > 0.0f) rbB->velocity = rbB->velocity - axis * (push * imB);
+            }
+            if (j->breakable && std::sqrt(Vec3::Dot(perp, perp)) > j->breakForce) j->broken = true;
         } else {
             Vec3 d = pb - pa; float len = std::sqrt(Vec3::Dot(d, d));
             Vec3 n = len > 1e-5f ? d * (1.0f / len) : Vec3{0, 1, 0};
@@ -1293,6 +1373,24 @@ void Physics3D::Step(Scene& scene, float dt) {
             }
         } else {
             rb->m_sleepTimer = 0.0f;
+        }
+    }
+
+    // Debug view: every moving body (a box around it, sleeping ones marked) and every joint (the line it holds).
+    if (PhysicsDebug::Collect()) {
+        for (Rigidbody3D* rb : bodies) {
+            if (gone.Gone(rb) || !rb->enabled || !rb->gameObject || !rb->gameObject->ActiveInHierarchy()) continue;
+            if (rb->bodyType == Rigidbody3D::BodyType::Static || (int)m_debugBodies.size() >= PhysicsDebug::kMaxBodies) continue;
+            Collider3D* col = rb->gameObject->GetComponent<Collider3D>();
+            if (!col) continue;
+            Vec3 mn, mx; col->WorldAABB(mn, mx);
+            if (!std::isfinite(mn.x + mn.y + mn.z + mx.x + mx.y + mx.z)) continue;
+            m_debugBodies.push_back({(mn + mx) * 0.5f, (mx - mn) * 0.5f, rb->sleeping});
+        }
+        for (Joint3D* j : scene.FindObjectsOfType<Joint3D>()) {
+            if (!j->gameObject || !j->transform || (int)m_debugJoints.size() >= PhysicsDebug::kMaxBodies) continue;
+            GameObject* other = CachedPartner(scene, j);
+            m_debugJoints.push_back({j->transform->Position(), other && other->transform ? other->transform->Position() : j->anchor, j->broken});
         }
     }
 

@@ -15,6 +15,8 @@ struct PhysicsDebug {
     /// Cap per frame so a script casting thousands of rays can't flood the overlay.
     static constexpr int kMaxRays = 512;
     static constexpr int kMaxContacts = 512;
+    /// Cap per frame on the bodies and joints the overlay draws.
+    static constexpr int kMaxBodies = 2000;
 };
 
 /// One query ray for the debug overlay. `radius` > 0 for sphere-style casts.

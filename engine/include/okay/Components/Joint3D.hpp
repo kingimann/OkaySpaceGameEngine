@@ -16,13 +16,14 @@
 #include "okay/Scene/Component.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
+#include <cstdint>
 #include <string>
 
 namespace okay {
 
 class Joint3D : public Component {
 public:
-    enum class Mode { Distance, Spring, Pin, Hinge };
+    enum class Mode { Distance, Spring, Pin, Hinge, Slider };
 
     int   mode = (int)Mode::Distance;
     std::string connectedBody;        ///< name of the other body (empty = world anchor)
@@ -38,11 +39,20 @@ public:
     // ---- Hinge (revolute): pins a point and locks rotation to `axis` ----
     Vec3  axis{0, 0, 1};              ///< world hinge axis the body may spin about
     bool  useMotor = false;           ///< drive the spin about the axis toward motorSpeed
-    float motorSpeed = 0.0f;          ///< target angular speed about the axis (deg/s)
-    float maxMotorTorque = 1000.0f;   ///< torque the motor can apply to reach it
+    float motorSpeed = 0.0f;          ///< target angular speed about the axis (deg/s); Slider: metres per second along the axis
+    float maxMotorTorque = 1000.0f;   ///< torque the motor can apply to reach it (Slider: the most force)
     bool  useLimits = false;          ///< clamp the hinge angle to [minAngle, maxAngle]
-    float minAngle = -45.0f;          ///< lower limit (deg, relative to the start angle)
-    float maxAngle = 45.0f;           ///< upper limit (deg, relative to the start angle)
+    float minAngle = -45.0f;          ///< lower limit (deg, relative to the start angle); Slider: metres of travel from the start position
+    float maxAngle = 45.0f;           ///< upper limit (deg, relative to the start angle); Slider: metres of travel from the start position
+
+    // ---- runtime: the partner found by name, remembered until the scene's objects change (not saved) ----
+    struct PartnerCache {               ///< (a copy of a joint starts with nothing remembered)
+        GameObject*   object = nullptr;
+        std::uint64_t version = 0;      ///< Scene::StructureVersion() when `object` was looked up (0 = never)
+        PartnerCache() = default;
+        PartnerCache(const PartnerCache&) {}
+        PartnerCache& operator=(const PartnerCache&) { object = nullptr; version = 0; return *this; }
+    } partner;
 
     // ---- runtime (set by Physics3D on the first solve) ----
     bool  initialized = false;

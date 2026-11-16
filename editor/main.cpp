@@ -32147,8 +32147,8 @@ void DrawInspector(EditorState& ed) {
     if (auto* jt = dynamic_cast<Joint3D*>(curComp)) {
         if (CompHeader("Joint 3D", jt, &toRemove)) {
             ImGui::TextDisabled("Constrains this body to an anchor or another body.");
-            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)"};
-            ImGui::Combo("Mode##jt", &jt->mode, modes, 4);
+            const char* modes[] = {"Distance (rigid)", "Spring", "Pin (weld)", "Hinge (revolute)", "Slider (prismatic)"};
+            ImGui::Combo("Mode##jt", &jt->mode, modes, 5);
             char cb[48]; std::strncpy(cb, jt->connectedBody.c_str(), sizeof(cb) - 1); cb[sizeof(cb) - 1] = '\0';
             if (ImGui::InputText("Connected Body##jt", cb, sizeof(cb))) { jt->connectedBody = cb; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Name of another object with a Rigidbody3D. Leave blank to anchor to a fixed world point below.");
@@ -32157,7 +32157,7 @@ void DrawInspector(EditorState& ed) {
                 if (ImGui::DragFloat3("Anchor##jt", a, 0.1f)) { jt->anchor = {a[0], a[1], a[2]}; ed.dirty = true; }
                 oked::FieldTip("Anchor##jt");
             }
-            if (jt->mode != (int)Joint3D::Mode::Pin && jt->mode != (int)Joint3D::Mode::Hinge) {
+            if (jt->mode != (int)Joint3D::Mode::Pin && jt->mode != (int)Joint3D::Mode::Hinge && jt->mode != (int)Joint3D::Mode::Slider) {
                 ImGui::Checkbox("Auto distance##jt", &jt->autoConfigure);
                 if (!jt->autoConfigure) ImGui::DragFloat("Distance##jt", &jt->distance, 0.05f, 0.0f, 1000.0f);
             }
@@ -32183,6 +32183,23 @@ void DrawInspector(EditorState& ed) {
                     oked::FieldTip("Min Angle##jt");
                     if (ImGui::DragFloat("Max Angle##jt", &jt->maxAngle, 1.0f, -360.0f, 360.0f)) ed.dirty = true;
                     oked::FieldTip("Max Angle##jt");
+                }
+            }
+            if (jt->mode == (int)Joint3D::Mode::Slider) {
+                ImGui::TextDisabled("Slides along the axis only and cannot turn (a drawer, a lift, a piston).");
+                float ax[3] = {jt->axis.x, jt->axis.y, jt->axis.z};
+                if (ImGui::DragFloat3("Axis##jtsl", ax, 0.05f)) { jt->axis = {ax[0], ax[1], ax[2]}; ed.dirty = true; }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The direction it slides in (world space, taken when Play starts).");
+                if (ImGui::Checkbox("Use Limits##jtsl", &jt->useLimits)) ed.dirty = true;
+                if (jt->useLimits) {
+                    if (ImGui::DragFloat("Min Travel (m)##jtsl", &jt->minAngle, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                    if (ImGui::DragFloat("Max Travel (m)##jtsl", &jt->maxAngle, 0.05f, -1000.0f, 1000.0f)) ed.dirty = true;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far it may slide from where it starts, in metres.");
+                }
+                if (ImGui::Checkbox("Use Motor##jtsl", &jt->useMotor)) ed.dirty = true;
+                if (jt->useMotor) {
+                    ImGui::DragFloat("Motor Speed (m/s)##jtsl", &jt->motorSpeed, 0.05f);
+                    ImGui::DragFloat("Max Motor Force##jtsl", &jt->maxMotorTorque, 1.0f, 0.0f, 100000.0f);
                 }
             }
             ImGui::Checkbox("Breakable##jt", &jt->breakable);
@@ -40300,7 +40317,7 @@ void DrawInspector(EditorState& ed) {
         { bool o = BeginCat("Physics 3D");
           if (o) {
             if (item(!go->GetComponent<Rigidbody3D>(), "Rigidbody3D")) { go->AddComponent<Rigidbody3D>(); ed.dirty = true; }
-            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
+            if (item(!go->GetComponent<Joint3D>(), "Joint 3D (distance/spring/pin/hinge/slider)")) { go->AddComponent<Joint3D>(); ed.dirty = true; }
             if (item(!go->GetComponent<BoxCollider3D>(), "Box Collider 3D")) { go->AddComponent<BoxCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<SphereCollider3D>(), "Sphere Collider 3D")) { go->AddComponent<SphereCollider3D>(); FitColliders(go); ed.dirty = true; }
             if (item(!go->GetComponent<CapsuleCollider3D>(), "Capsule Collider 3D")) { go->AddComponent<CapsuleCollider3D>(); FitColliders(go); ed.dirty = true; }
@@ -43636,7 +43653,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
     // Physics debug view (Scene AND Game view, so you can watch it while playing):
     // every 3D collider by its true shape (green solid, blue trigger, grey asleep),
-    // this frame's contacts (red dot + normal) and the rays scripts cast (green to
+    // joints (orange line, red when broken), this frame's contacts (red dot + normal) and the rays scripts cast (green to
     // the hit with a white normal, yellow on a miss). Off = nothing is drawn and the
     // physics records nothing.
     if (g_physDebug) {
@@ -43700,6 +43717,11 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             ImU32 kc = ct.trigger ? IM_COL32(90, 170, 255, 255) : IM_COL32(255, 80, 70, 255);
             line(ct.point, ct.point + ct.normal * 0.5f, kc, 2.0f);
             ImVec2 sp; if (toScreen(C(ct.point), sp)) dl->AddCircleFilled(sp, 3.5f, kc);
+        }
+        for (const PhysicsDebugJoint3D& jt : ed.scene().physics3D().DebugJoints()) {   // joints: orange line between what they hold, red when broken
+            const ImU32 jc = jt.broken ? IM_COL32(255, 60, 60, 255) : IM_COL32(255, 160, 40, 255);
+            line(jt.a, jt.b, jc, 2.0f);
+            ImVec2 sa, sb; if (toScreen(C(jt.a), sa)) dl->AddCircleFilled(sa, 3.0f, jc); if (toScreen(C(jt.b), sb)) dl->AddCircleFilled(sb, 3.0f, jc);
         }
         for (const PhysicsDebugRay3D& r : ed.scene().physics3D().DebugRays()) {
             if (r.hit) {

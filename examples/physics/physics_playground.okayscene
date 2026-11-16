@@ -1,0 +1,297 @@
+okayscene 3
+name "Physics playground"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+physicsquality 1 10 1 1 10
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Sun"
+  guid "b8aabc2d7ebb493a14bbe162101f731d"
+  active 1
+  parent -1
+  transform 0 0 0 0.39287746 -0.23644297 0.1052712 0.88241714 1 1 1
+  light 1 1 1 1 0.35 1.1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Main Camera"
+  guid "0768712153421a5725da7309529cdc48"
+  active 1
+  parent -1
+  transform 0 13 24 -0.23344536 0 0 0.9723699 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 2 "Ground"
+  guid "077e548086040aa2dc58a25c4f79a9f0"
+  active 1
+  parent -1
+  transform 0 -0.5 0 0 0 0 1 120 1 120
+  mesh "Cube" 0.5882353 0.6039216 0.5882353 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 3 "1 Tower crate 1"
+  guid "8af3224b1067d51d1d1d6a78be35d66b"
+  active 1
+  parent -1
+  transform -10 0.5 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.7058824 0.47058824 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 0 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 4 "1 Tower crate 2"
+  guid "1c621f18cd9c4d9a3d49d8f2a40a7eb7"
+  active 1
+  parent -1
+  transform -10 1.5 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.76862746 0.54901963 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 0 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 5 "1 Tower crate 3"
+  guid "6a2beeaf9984ee1715caa7e8b89e7c00"
+  active 1
+  parent -1
+  transform -10 2.5 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.7058824 0.47058824 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 0 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 6 "1 Tower crate 4"
+  guid "28d56d254b7adf4dbaaf2c2478f22b2d"
+  active 1
+  parent -1
+  transform -10 3.5 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.76862746 0.54901963 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 0 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 7 "1 Tower crate 5"
+  guid "f179b903b35407f6b148916261d489dd"
+  active 1
+  parent -1
+  transform -10 4.5 -6 0 0 0 1 1 1 1
+  mesh "Cube" 0.7058824 0.47058824 0.3137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 0 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 8 "1 Label"
+  guid "6dfc26c4c31d18f2a401efb399173fdf"
+  active 1
+  parent -1
+  transform -10 7.2 -6 0 0 0 1 1 1 1
+  text "1  TOWER: five crates stand still and fall asleep" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 9 "2 Ramp"
+  guid "cdfdc87d2cfc89cd8df291d223e202ed"
+  active 1
+  parent -1
+  transform -1 0.3184927 -6 0 0 -0.06975647 0.9975641 6 0.2 3
+  mesh "Cube" 0.27450982 0.27450982 0.29803923 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 10 "2 Ball"
+  guid "0e0d057de2f3b3999a3ae2643cac10c5"
+  active 1
+  parent -1
+  transform -3.3000982 1.1971557 -6 0 0 0 1 0.8 0.8 0.8
+  mesh "Sphere" 0.8235294 0.3137255 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0.5 0 0 0 0 0.5 0.05 0 1 0 0.03 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 11 "2 Label"
+  guid "b6beddfc5920127b15d96d88b6383e72"
+  active 1
+  parent -1
+  transform 1 4.6 -6 0 0 0 1 1 1 1
+  text "2  BALL: rolls down, bounces, rolls to a stop" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 12 "3 Ramp plain"
+  guid "2854d9f069f02b8223253ed8447d40df"
+  active 1
+  parent -1
+  transform 8 0.55 -6 0 0 0.1736482 0.9848078 3 0.2 2.4
+  mesh "Cube" 0.27450982 0.27450982 0.29803923 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 13 "3 Crate on plain"
+  guid "91291b0a8f5165a23dd5b608e38d6a26"
+  active 1
+  parent -1
+  transform 7.82899 1.0198463 -6 0 0 0.1736482 0.9848078 0.6 0.6 0.6
+  mesh "Cube" 0.3529412 0.74509805 0.43137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 14 "3 Ramp ice"
+  guid "300f6ce83f089ec93917f3530d38d1ab"
+  active 1
+  parent -1
+  transform 11.6 0.55 -6 0 0 0.1736482 0.9848078 3 0.2 2.4
+  mesh "Cube" 0.6666667 0.84313726 0.9411765 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  physmat3d 0 -1 0 0 0
+end
+gameobject 15 "3 Crate on ice"
+  guid "f485e8ad54c83873eacd0a0c6ae26231"
+  active 1
+  parent -1
+  transform 11.42899 1.0198463 -6 0 0 0.1736482 0.9848078 0.6 0.6 0.6
+  mesh "Cube" 0.3529412 0.74509805 0.43137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 16 "3 Ramp rubber"
+  guid "a5d07eb59ab34b623abb0599d705a723"
+  active 1
+  parent -1
+  transform 15.2 0.55 -6 0 0 0.1736482 0.9848078 3 0.2 2.4
+  mesh "Cube" 0.15686275 0.15686275 0.18039216 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  physmat3d 2 -1 0 0 0
+end
+gameobject 17 "3 Crate on rubber"
+  guid "e6e8b57099aa116a53f3021536c09236"
+  active 1
+  parent -1
+  transform 15.02899 1.0198463 -6 0 0 0.1736482 0.9848078 0.6 0.6 0.6
+  mesh "Cube" 0.3529412 0.74509805 0.43137255 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 18 "3 Label"
+  guid "89fe3a95847b7d817f92623914337c2b"
+  active 1
+  parent -1
+  transform 11.6 3.6 -6 0 0 0 1 1 1 1
+  text "3  RAMPS: plain holds, ice slides, rubber holds" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 19 "4 Thin wall"
+  guid "ab858c699b00c407eb7ed8d46404eba1"
+  active 1
+  parent -1
+  transform -7 1.5 6 0 0 0 1 0.05 3 4
+  mesh "Cube" 0.627451 0.6666667 0.7254902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 20 "4 Bullet"
+  guid "ceb91c8ec1710b70cb3289c0d4b93ef5"
+  active 1
+  parent -1
+  transform -13 1.5 6 0 0 0 1 0.2 0.2 0.2
+  mesh "Sphere" 0.8235294 0.3137255 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 0 0.05 0 0 0 0 0 0 0.5 0.05 1 1 0 0.03 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  visualscript ""
+  visualscriptpath "bullet.okayvs"
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D" "VisualScriptComponent"
+end
+gameobject 21 "4 Label"
+  guid "55b68f0892a3b85b16cceeda01feb6d0"
+  active 1
+  parent -1
+  transform -10 4.6 6 0 0 0 1 1 1 1
+  text "4  BULLET: 60 m/s into a 5 cm wall, and it stops" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 22 "5 Heavy crate (100 kg)"
+  guid "b817d9daf6855931c2a7075a014ceca0"
+  active 1
+  parent -1
+  transform -1.5 0.5 6 0 0 0 1 1 1 1
+  mesh "Cube" 0.627451 0.6666667 0.7254902 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 100 0 0 0 0 0 0 0.3 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  visualscript ""
+  visualscriptpath "push.okayvs"
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D" "VisualScriptComponent"
+end
+gameobject 23 "5 Light crate (1 kg)"
+  guid "3ec49583e4a9406f38088f7ea7cf39a4"
+  active 1
+  parent -1
+  transform 1.2 0.4 6 0 0 0 1 0.8 0.8 0.8
+  mesh "Cube" 0.76862746 0.54901963 0.3529412 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.3 0.05 1 1 0 0.03 0
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  comporder "MeshRenderer" "BoxCollider3D" "Rigidbody3D"
+end
+gameobject 24 "5 Label"
+  guid "77492a7ad45dce6ffc566b9c8f7b903e"
+  active 1
+  parent -1
+  transform 0 3.4 6 0 0 0 1 1 1 1
+  text "5  A 100 kg crate shoves a 1 kg crate ahead of it" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 25 "6 Plain pad"
+  guid "572bbccd33b41c5429b416d77b2e3a61"
+  active 1
+  parent -1
+  transform 8 0.1 6 0 0 0 1 2.6 0.2 2.6
+  mesh "Cube" 0.27450982 0.27450982 0.29803923 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+end
+gameobject 26 "6 Rubber pad"
+  guid "c5e23b1a9e4d4cd272d7a827849c13ef"
+  active 1
+  parent -1
+  transform 12 0.1 6 0 0 0 1 2.6 0.2 2.6
+  mesh "Cube" 0.15686275 0.15686275 0.18039216 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  boxcollider3d 1 1 1 0 0 0 0 0 0
+  physmat3d -1 0.92 0 0 0
+end
+gameobject 27 "6 Ball on plain"
+  guid "f0f402e0e0cbd92df8999be4efacca7c"
+  active 1
+  parent -1
+  transform 8 4 6 0 0 0 1 0.8 0.8 0.8
+  mesh "Sphere" 0.3529412 0.50980395 0.8235294 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 0 1 0 0.03 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 28 "6 Ball on rubber"
+  guid "9e92b70b26d222922c9aaa50807873f2"
+  active 1
+  parent -1
+  transform 12 4 6 0 0 0 1 0.8 0.8 0.8
+  mesh "Sphere" 0.3529412 0.50980395 0.8235294 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+  rigidbody3d 0 1 1 0 0 0 0 0 0 0.5 0.05 0 1 0 0.03 0
+  spherecollider3d 0.5 0 0 0 0 0 0
+  comporder "MeshRenderer" "SphereCollider3D" "Rigidbody3D"
+end
+gameobject 29 "6 Label"
+  guid "2c60b6f05c6e09818abf13122e5144b8"
+  active 1
+  parent -1
+  transform 10 7.6 6 0 0 0 1 1 1 1
+  text "6  PADS: the same ball on a dead pad and a rubber pad" 1 1 1 1 0.055 0 12 12 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 220 48 1 1 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end

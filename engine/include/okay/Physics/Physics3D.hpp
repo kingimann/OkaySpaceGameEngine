@@ -4,6 +4,7 @@
 #include "okay/Physics/PhysicsDebug.hpp"
 #include "okay/Physics/PhysicsQuality.hpp"
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <set>
 #include <utility>
@@ -202,7 +203,8 @@ private:
     using Pair = std::pair<Collider3D*, Collider3D*>;
     std::set<Pair> m_contacts;          // contacts from the previous step
     std::set<Pair> m_meshContacts;      // solid contacts against a static triangle mesh (body, mesh)
-    std::set<Pair> m_restContacts;      // Classic: pairs a sleeping body rests against without overlapping (no callbacks); a lost one wakes it
+    struct RestStamp { Vec3 a, b; };    // where the two objects were when the pair was last found resting
+    std::map<Pair, RestStamp> m_restContacts;   // Classic: pairs a sleeping body rests against without overlapping (no callbacks); a lost one wakes it
     PhysicsStepStats m_stats;
     std::unique_ptr<Solver> m_solver;   // the Improved contact solver's memory between steps (Physics3DImproved.inl)
     std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)

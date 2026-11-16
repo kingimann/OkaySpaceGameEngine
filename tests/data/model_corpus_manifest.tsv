@@ -438,7 +438,7 @@ q3d	models/Q3D/WusonOrange.q3s	ok	area=9.0258	meshes=1	tris=3732	bones=0	skinned
 q3d	models/Q3D/earth.q3o	ok	area=399.5139	meshes=2	tris=2937	bones=0	skinned=0	clips=0	dur=0.000	mat=2	bbox=-4.990,-4.990,-4.986,4.973,4.990,4.986	verts=2231	tex=0	nodes=2	uv=0	nrm=1
 # lws: own LightWave scene reader (the objects through the own LWO reader); QuickDraw v.2.2.lws reads since object paths may name a LightWave object one folder up and PivotPosition is applied
 lws	models/LWS/move_x.lws	ok	area=26.2652	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.333	mat=1	bbox=-1.421,-0.040,-0.859,1.225,1.643,1.146	verts=24	tex=0	nodes=6	uv=0	nrm=1
-lws	models/LWS/move_x_oldformat_56.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=0	dur=0.000	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
+lws	models/LWS/move_x_oldformat_56.lws	ok	area=26.2652	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.333	mat=1	bbox=-1.421,-0.040,-0.859,1.225,1.643,1.146	verts=24	tex=0	nodes=6	uv=0	nrm=1
 lws	models/LWS/move_x_oldformat_6.lws	ok	area=26.2652	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.333	mat=1	bbox=-1.421,-0.040,-0.859,1.225,1.643,1.146	verts=24	tex=0	nodes=6	uv=0	nrm=1
 lws	models/LWS/move_x_post_constant.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.300	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1
 lws	models/LWS/move_x_post_linear.lws	ok	area=29.5800	meshes=1	tris=12	bones=0	skinned=0	clips=1	dur=1.300	mat=1	bbox=-1.450,0.000,-0.900,1.250,1.900,1.200	verts=24	tex=0	nodes=6	uv=0	nrm=1

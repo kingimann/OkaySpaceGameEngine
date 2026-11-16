@@ -2506,7 +2506,10 @@ static bool beginChildImpl(const char* id, float w, float h, bool border, float 
                     line(cx[q] + sx[q] * a * k[i][0], cy[q] + sy[q] * a * k[i][1], cx[q] + sx[q] * a * k[i + 1][0], cy[q] + sy[q] * a * k[i + 1][1], 1.0f, bc);
         }
     }
-    PushClipRect(rx, ry, rw, rh);
+    // With a pushed ScrollbarSize the content is clipped where the bar starts while there is one (Dear ImGui's: a row running past the
+    // content region is cut at the bar, not drawn under it); otherwise the whole child.
+    const float sbClip = g_sbSize > 0.0f && (reserveBar || *maxSlot > 0.0f) ? g_sbSize + (outline ? 1.0f : 0.0f) : 0.0f;
+    PushClipRect(rx, ry, std::max(0.0f, rw - sbClip), rh);
 
     // Save the parent layout, then set up the child's inner layout (scrolled).
     if (g_childTop < 8) {

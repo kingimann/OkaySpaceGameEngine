@@ -862,7 +862,8 @@ int main() {
             UI::PushStyleVar(UI::StyleVar_WindowPadding, UI::Vec2{16.0f, 12.0f});
             UI::BeginChild("##list", UI::Vec2{300.0f, 200.0f}, UI::ChildFlags_Borders);
             availIn = UI::GetContentRegionAvail().x;
-            for (int i = 0; i < rows; ++i) { char t[16]; std::snprintf(t, sizeof t, "row %d", i); UI::Text(t); }
+            UI::Button("a row wider than the list", UI::Vec2{400.0f, 0.0f});   // cut where the bar starts
+            for (int i = 1; i < rows; ++i) { char t[16]; std::snprintf(t, sizeof t, "row %d", i); UI::Text(t); }
             UI::EndChild();
             child = UI::GetItemRect();
             UI::PopStyleVar(2);
@@ -872,7 +873,9 @@ int main() {
         CHECK(std::abs(availIn - (300.0f - 32.0f - 14.0f)) < 0.5f);
         const Bitmap& b = sim.Draw(0, 0, 0);
         CHECK(PixelAt(b, (int)(child.x + 300.0f - 1.0f - 7.0f), (int)(child.y + 20.0f)) != Rgba(0, 0, 0));   // the grab, inside the outline
-        CHECK(PixelAt(b, (int)(child.x + 300.0f - 1.0f - 1.0f), (int)(child.y + 20.0f)) == Rgba(0, 0, 0));   // 2 pixels of bar either side
+        CHECK(PixelAt(b, (int)(child.x + 300.0f - 1.0f - 1.0f), (int)(child.y + 20.0f)) == Rgba(0, 0, 0));   // 2 pixels of bar either side,
+        CHECK(PixelAt(b, (int)(child.x + 300.0f - 1.0f - 13.0f), (int)(child.y + 20.0f)) == Rgba(0, 0, 0));  // and the wide row cut at the bar
+        CHECK(PixelAt(b, (int)(child.x + 300.0f - 1.0f - 16.0f), (int)(child.y + 20.0f)) != Rgba(0, 0, 0));  // (it is drawn up to it)
         rows = 2; sim.Frames(3, ui);
         CHECK(std::abs(availIn - (300.0f - 32.0f)) < 0.5f);                                                      // no overflow: no bar
         rows = 20; sb = 0.0f; sim.Frames(3, ui);

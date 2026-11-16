@@ -7,6 +7,9 @@ OkaySpace ships on two channels.
 | **Latest** | Every normal release (`2.855.0`, `2.856.0`, ...). New features and fixes. | Everyone who wants the newest editor. |
 | **LTS** | One chosen version line that only receives fixes, as patch releases (`2.850.1`, `2.850.2`, ...). | People who want a project to stay on a stable editor. |
 
+(A **test build** is a third, separate thing: one branch built for the owner to try, published to a `dev/` folder and offered only to a launcher with
+"Get test builds" switched on. It never changes these two channels: see [Test builds](#test-builds-for-the-owner-to-try-a-branch-not-a-channel-for-players).)
+
 Releases are numbered `2.<build>.<patch>`. Every normal release has patch `0` and a new build number. The first two
 numbers (`2.850`) are the **line**. An LTS line is cut from one normal release and keeps its build number; only the patch
 number moves. A **patch never changes a file format** and never adds a feature, so two patches of one line always open each
@@ -43,7 +46,8 @@ Files at the root of the bucket:
 | `versions.json.sig` | every publish made with a signing key | The ed25519 signature of `versions.json` (see [Signed releases](#signed-releases)). |
 
 An LTS patch never writes `VERSION.txt` or `NOTES.txt`, never becomes GitHub's "latest release" (the in-app updater
-downloads `releases/latest/download/<name>`), and never prunes anything.
+downloads `releases/latest/download/<name>`), and never prunes anything. The `dev/` folder (test builds, below) is not part of this list: no
+release publish reads or writes it.
 
 ## versions.json (what the launcher reads)
 
@@ -112,6 +116,111 @@ What the launcher still wants from the release tooling:
 What an LTS accepts: crashes, data loss, security problems, and anything that stops a project of that line from opening or
 saving. Nothing else. One LTS line is supported at a time; promoting a new line makes the old one an ordinary line that is
 pruned like any other (its versions stay on GitHub).
+
+## Test builds (for the owner to try a branch; not a channel for players)
+
+A **test build** is a build of one branch (or tag, or commit) that the owner can try in the launcher in about **15 to 30 minutes**, without a pull
+request, without a GitHub Release and without a normal release. It exists so the owner can test unmerged work faster ("send releases directly through
+Supabase without waiting for GitHub"). It is **not** a third channel: nobody gets one unless they switch it on, and it never touches "latest" or LTS.
+
+**Who starts one.** The coordinator, when the owner asks ("ask the coordinator to start a test build of walk-vs-run"). Anyone who can run workflows can:
+
+```bash
+gh workflow run dev-build.yml --ref main -f ref=claude/walk-vs-run -f note="try the new run speed"
+```
+
+or Actions > **Test build (dev channel)** > Run workflow > *Use workflow from: main*, *ref*: the branch, *note*: one line. It must be started from
+`main` (the reviewed copy of the workflow; a run started from another branch stops at once and says so). The workflow file has to be on `main` before it
+can be started at all (GitHub only starts workflows from the default branch). One test build at a time publishes; a second waits.
+
+**What happens.** (1) The build job checks out the ref, numbers it, and builds the Windows launcher, editor and player exactly like the release job.
+(2) The publish job uploads them to the `dev/` folder of the release bucket and writes the list. (3) The run page says in plain words which version, which
+branch and what the owner does next. There is no GitHub Release, no tag, no installer, no Linux server, no zip and no Windows code signing.
+
+### The number
+
+`<newest published release>.<run number>`, for example **2.876.0.17**: the 17th test build, made on top of release 2.876.0. A fourth number is used
+because the version parser the launcher already has orders it correctly (a `-dev` suffix would be ignored and compare **equal** to the release):
+
+```
+2.876.0   <   2.876.0.17   <   2.876.0.18   <   2.876.1   <   2.877.0
+```
+
+A test build sorts just above the release it was made on (so a launcher on that release is offered it) and below every later release (so the next
+real release always replaces it). The fourth number is never 0 (`2.876.0.0` would equal the release). The base is the release that is published
+**when the build starts** (read from `VERSION.txt`, never written); if a newer release comes out while the build runs, the publish refuses ("start a
+new test build"), because the number would be older than what people run and nobody would be offered it. A test build is numbered after the newest
+release whatever branch it was made from (an `lts/` branch included). Shared rules: `shared/TestBuild.hpp`; test: `tests/test_dev_channel.cpp`.
+
+### Where the files live
+
+| Path (bucket `releases`) | Written by | What |
+|---|---|---|
+| `dev/v<version>/OkaySpace.exe`, `OkayEngine.exe`, `OkaySpacePlayer.exe` | a test build | The programs. Uploaded without overwrite: the storage service itself refuses to replace one. |
+| `dev/versions.json` | a test build | The list of test builds with the size and SHA-256 of the three programs, and the branch, commit and note of each. The only file the launcher trusts. Same format as `versions.json`, no `latest`, `lts` or `archive`. |
+| `dev/versions.json.sig` | a test build made with a signing key | The same ed25519 signature rule as the real list ([Signed releases](#signed-releases)). |
+| `dev/NOTES-DEV.txt` | a test build | "Test build of walk-vs-run (abc1234)", the note, the base release: the launcher's "what's new" lines. |
+| `dev/DEV.txt` | a test build, **last** | The newest test version (for people and scripts). |
+
+Nothing else is written, ever: not `VERSION.txt`, `NOTES.txt`, `LTS.txt`, `versions.json` or a `v<version>/` folder at the root, and not the bucket
+itself. The publisher is its own script, `scripts/publish-supabase-dev.sh` (index: `scripts/dev_index.py`); `scripts/publish-supabase.sh` has no
+test-build code at all and refuses `CHANNEL=dev` and any version with four numbers (so a test build can never be published as a release by mistake).
+The normal publisher's pruning only looks at `v<digits>` folders at the root, so it never sees `dev/`. Only the newest `DEV_KEEP` (3) test builds stay in
+the bucket; older ones are deleted, stay in the list as "not in the bucket", and their numbers are never used again.
+
+### What is the same and what is not
+
+| | Normal release | Test build |
+|---|---|---|
+| Who gets it | everyone | only a launcher with **Get test builds** switched on |
+| GitHub Release, tag, installer, zip, Linux server | yes | no |
+| `VERSION.txt`, `versions.json`, "latest" | written | never touched |
+| Checksums for every program, refused when missing | yes | yes (same rule, same code) |
+| Signed list | when a key exists | when a key exists (same key) |
+| Update flow (stage, verify, swap, self-check, rollback) | yes | the same flow |
+| Windows code signing | when configured | never |
+| Kept in the bucket | the newest 3 and the LTS line | the newest 3 |
+
+**Two limits to know.** (1) A test build replaces only the three programs (launcher, editor, player), like any in-app update: example scenes, templates
+files or assets that a branch adds to the zip or the installer are **not** in it, so an example that is meant to be tried from `examples\` is not there
+until a real release. (2) Signing: with the repository secret `OKAY_UPDATE_SIGNING_SEED` set, the test list is signed like a release; without it the
+list is published unsigned (a warning), which a launcher built with `OKAY_UPDATE_TRUSTED_KEYS` refuses. Nothing is signed today, so that is fine
+now, but once launchers trust a key the seed has to be available to this workflow too, or test builds cannot be installed.
+
+### In the launcher
+
+**Settings > Behavior > Startup & updates > Get test builds** (off by default; saved as `test_builds=1` in `launcher.cfg`, and not written at all
+while it is off). While it is off the launcher never reads the `dev/` folder: it behaves exactly as before. When it is on, the update check also reads
+`dev/versions.json` (signature checked like the real list) and offers the **newer** of the newest release and the newest test build. A test build
+shows up as "Test build of walk-vs-run (abc1234)" in the update toast, the sidebar card and the update window, and its version carries "(test
+build)" in About, the Versions page and the editor's About and title bar. The long-term-support channel never gets test builds.
+
+**Turning it off.** Switch **Get test builds** off: nothing new is offered. A test build stays installed until you go back: Settings > Behavior shows
+"You are running a test build" with **Go back to the stable version**, which installs the newest normal release over it with the same updater (the one
+deliberate downgrade; the launcher checks it is really that version after the restart and rolls back if not). When the next normal release comes out
+it replaces a test build by itself.
+
+### Safety rules, and what checks each
+
+| Rule | Checked by |
+|---|---|
+| The normal reader ignores test versions (`ParseIndex`, `ParseVersionTxt`, `LoadIndex` never list or fetch one, never ask for `dev/`) | `dev_channel` |
+| The test reader reads only `dev/`, keeps only well-formed test builds, needs the same signature | `dev_channel` |
+| A test version never equals a release and sorts below every later one | `dev_channel` (thousands of random versions) |
+| The setting is off by default and writes nothing when off | `dev_channel` |
+| Going back is exact: the test build coming up again is not "confirmed" | `self_update` |
+| The publisher writes only under `dev/`, in order, and the real files stay byte for byte | `dev_publish_script` (fake storage server) |
+| A version that exists, leftovers, a damaged list, a stale base, a missing checksum, a bad branch or key are refused with nothing written | `dev_publish_script` |
+| The key and the signing seed never appear in output, logs or objects | `dev_publish_script` |
+| The real publisher refuses `CHANNEL=dev` and four-number versions | `dev_publish_script` |
+| The workflow has no write permission, no release or tag, no secret in the build job, publishes with the reviewed scripts, and its build steps equal `release.yml`'s | `dev_workflow_lint` |
+
+**Not verified:** the workflow has never run on GitHub, the publisher has never written to the real Supabase storage (only to a fake that mimics the
+calls the release publisher already uses), and nothing in the launcher or the editor was run on Windows. See `docs/UNFINISHED.md`.
+
+**Written from** (CLAUDE.md rule 19a): this repository's own release scripts and docs (`release.yml`, `publish-supabase.sh`, `versions_index.py`,
+`sign_index.py`, `updater.md`) and the storage calls they already make. No code, tests or text from another project; no new library or action (every
+workflow action is one `release.yml` or `ci.yml` already uses, at the same version).
 
 ## Signed releases
 

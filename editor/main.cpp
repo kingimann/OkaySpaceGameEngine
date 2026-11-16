@@ -909,6 +909,7 @@ static void RunEditorPlayKeyTest(int& failures) {
 #endif
 #include "AppRestart.hpp"   // detached self-update: wait, swap, relaunch once
 #include "UpdaterCore.hpp"   // the updater rules shared with the launcher: the checksum list is REQUIRED (docs/updater.md)
+#include "TestBuild.hpp"   // a test build says so in its version label (docs/release_channels.md "Test builds")
 #include "ProjectUpgradeUI.hpp"   // the project version question and File > Project Upgrade...
 #include "ProjectUpgrade.hpp"      // okayup::ProjectRootForScene (and okayver:: through it)
 #include "okay/Core/ThumbnailCache.hpp"   // Project panel thumbnails
@@ -7025,9 +7026,9 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
             : "Update check failed: " + g_update.error);
     }
     else if (id == "help.bug") {
-        ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION).c_str());   // so the report can say which version
+        ImGui::SetClipboardText((std::string("OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION)).c_str());   // so the report can say which version (and that it is a test build)
         extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/issues/new");
-        ConsoleLog(std::string("Opened the bug report page in your browser. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + ") is on the clipboard: paste it into the report.");
+        ConsoleLog(std::string("Opened the bug report page in your browser. The version line (OkaySpace v") + OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + ") is on the clipboard: paste it into the report.");
     }
     else if (id == "help.about") g_openAbout = true;
 }
@@ -19176,7 +19177,7 @@ void DrawAboutPopup() {
                         ImGui::GetColorU32(ImVec4(0.93f, 0.95f, 0.99f, 1.0f)), "OkaySpace");
             ImGui::Dummy(ImVec2(0, bsz + 4.0f));
         }
-        ImGui::TextDisabled("Game Engine  ·  v%s", OKAY_ENGINE_VERSION);
+        ImGui::TextDisabled("Game Engine  ·  v%s%s", OKAY_ENGINE_VERSION, okay::testbuild::Suffix(OKAY_ENGINE_VERSION).c_str());   // "(test build)" for a test build
         ImGui::EndGroup();
         ImGui::Spacing();
         ImGui::Separator();
@@ -49212,7 +49213,7 @@ int main(int argc, char** argv) {
         if (!ed.projectDir().empty()) title += std::filesystem::path(ed.projectDir()).filename().string() + "  /  ";
         title += ed.path().empty() ? ed.scene().Name() : std::filesystem::path(ed.path()).stem().string();
         if (ed.InPrefabMode()) { for (const auto& c : ed.PrefabCrumbs()) if (!c.path.empty()) title += "  >  " + c.label; }
-        title += std::string(ed.dirty && !ed.isPlaying() ? " *" : "") + "   [v" OKAY_ENGINE_VERSION "]";
+        title += std::string(ed.dirty && !ed.isPlaying() ? " *" : "") + "   [v" OKAY_ENGINE_VERSION + okay::testbuild::Suffix(OKAY_ENGINE_VERSION) + "]";
         if (title != lastTitle) { SDL_SetWindowTitle(window, title.c_str()); lastTitle = title; }
 
         // While the game is actually running, turn OFF ImGui keyboard navigation:

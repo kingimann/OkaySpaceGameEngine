@@ -1,5 +1,6 @@
 okayguided 1
 template wall 1
+param detail 1
 param door 1
 param doorHeight 2.1000000000000001
 param doorPos 0.5

@@ -136,9 +136,10 @@ bool SaveFiles(Host& h, MeshRenderer* mr, const gd::Recipe& r) {
     return true;
 }
 
-void SetMesh(MeshRenderer* mr, const PolyMesh& pm) {
+void SetMesh(MeshRenderer* mr, const PolyMesh& pm, int detail) {
     mr->mesh = pm.ToMesh();
     mr->mesh.name = "";
+    if (detail >= 2) mr->mesh.ComputeAutoSmoothNormals(40.0f);   // High and Ultra are drawn smooth-shaded
     mr->color = okay::Color{1, 1, 1, 1};   // faces carry their own colours
 }
 
@@ -157,7 +158,7 @@ bool CreateModel(Host& h, const gd::Recipe& recipe, const std::string& name) {
     ed.PushUndo();
     GameObject* go = ed.scene().CreateGameObject(name);
     MeshRenderer* mr = go->AddComponent<MeshRenderer>();
-    SetMesh(mr, pm);
+    SetMesh(mr, pm, gd::DetailOf(recipe));
     if (S().collide) { go->AddComponent<okay::MeshCollider3D>(); }
     mr->meshPath = path.string();
     if (!SaveFiles(h, mr, recipe)) { ed.scene().DestroyImmediate(go); return false; }
@@ -187,7 +188,7 @@ bool Apply(Host& h, GameObject* go, MeshRenderer* mr, const gd::Recipe& next, co
     gd::GuidedState before; before.mesh = cur; before.recipe = s.stored;
     s.history[s.path].Push(before);
     h.ed->PushUndo();
-    SetMesh(mr, r.mesh);
+    SetMesh(mr, r.mesh, gd::DetailOf(r.recipe));
     if (!SaveFiles(h, mr, r.recipe)) return false;
     s.stored = r.recipe; s.pending = r.recipe; s.analysisKey = 0;
     h.ed->dirty = true;
@@ -232,6 +233,33 @@ bool ParamWidget(const gd::ParamDef& p, gd::Recipe& r) {
     }
     if (!p.tip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.tip.c_str());
     ImGui::PopID();
+    return done;
+}
+
+// Detail level with the triangle count of every level next to it (Low to Ultra).
+bool DetailWidget(const gd::Template& t, gd::Recipe& pending, const gd::Recipe& stored) {
+    static std::string s_key;
+    static int s_tris[4] = {0, 0, 0, 0};
+    const std::string key = stored.Serialize();
+    if (key != s_key) {   // recount only when the model's settings change
+        s_key = key;
+        for (int lv = 0; lv < 4; ++lv) { gd::Recipe r = stored; r.params[gd::kDetailParam] = lv; s_tris[lv] = gd::TriangleCount(gd::Create(r)); }
+    }
+    bool done = false;
+    const char* names[4] = {"Low", "Medium", "High", "Ultra"};
+    int cur = std::min(std::max((int)pending.Param(gd::kDetailParam, 1), 0), 3);
+    char label[64];
+    std::snprintf(label, sizeof label, "%s (%d triangles)", names[cur], s_tris[cur]);
+    ImGui::SetNextItemWidth(260);
+    if (ImGui::BeginCombo("Detail", label)) {
+        for (int lv = 0; lv < 4; ++lv) {
+            std::snprintf(label, sizeof label, "%s (%d triangles)", names[lv], s_tris[lv]);
+            if (ImGui::Selectable(label, lv == cur)) { pending.params[gd::kDetailParam] = lv; done = true; }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Low: few flat blocky polygons for games. Medium: the standard shapes. High: rounder curves, bevelled edges, extra trim, smooth shading. Ultra: finer still.\nChanging it rebuilds the model; your own additions stay, and parts you edited by hand are asked about first.");
+    (void)t;
     return done;
 }
 
@@ -459,7 +487,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         if (ImGui::Button("Undo guided step")) {
             gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
             if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Undo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
+            if (hist.Undo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe)); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -467,7 +495,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         if (ImGui::Button("Redo guided step")) {
             gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
             if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Redo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
+            if (hist.Redo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe)); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -539,8 +567,12 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
     for (const auto& p : t.params) if (std::find(groups.begin(), groups.end(), p.group) == groups.end()) groups.push_back(p.group);
     bool commit = false;
     for (const std::string& g : groups) {
-        if (!ImGui::CollapsingHeader((g + "##grp").c_str(), g == "Size" ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
-        for (const auto& p : t.params) if (p.group == g && ParamWidget(p, s.pending)) commit = true;
+        if (!ImGui::CollapsingHeader((g + "##grp").c_str(), (g == "Size" || g == "Detail") ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
+        for (const auto& p : t.params) {
+            if (p.group != g) continue;
+            if (p.id == gd::kDetailParam) { if (DetailWidget(t, s.pending, s.stored)) commit = true; continue; }
+            if (ParamWidget(p, s.pending)) commit = true;
+        }
         if (g == "Size" && t.usesPath) {
             // The drawn path: a list of points the fence follows (height included, so it follows the ground).
             ImGui::TextDisabled("Path");

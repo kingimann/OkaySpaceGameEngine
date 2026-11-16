@@ -1,0 +1,46 @@
+okayguided 1
+template truck 1
+param cabHeight 2.3999999999999999
+param cabLength 3.3999999999999999
+param cargoHeight 2.3999999999999999
+param chassisHeight 1
+param detail 1
+param length 10
+param lightSize 0.25
+param rearAxles 2
+param wheelRadius 0.5
+param wheelWidth 0.32000000000000001
+param width 2.5
+slot bumper chrome
+slot cab conventional
+slot cargo flatbed
+slot chassis frame
+slot exhaust twin
+slot glass clear
+slot grille slats
+slot headlight round
+slot mirror box
+slot taillight box
+slot wheel rim
+color bumper 0.779999971 0.800000012 0.819999993 1
+color cab 0.75 0.119999997 0.119999997 1
+color cargo 0.5 0.519999981 0.550000012 1
+color chassis 0.100000001 0.100000001 0.109999999 1
+color exhaust 0.779999971 0.800000012 0.819999993 1
+color glass 0.550000012 0.75 0.819999993 1
+color grille 0.100000001 0.100000001 0.109999999 1
+color headlight 0.970000029 0.949999988 0.75 1
+color mirror 0.100000001 0.100000001 0.109999999 1
+color taillight 0.800000012 0.0500000007 0.0500000007 1
+color wheel 0.100000001 0.100000001 0.109999999 1
+material bumper 4
+material cab 0
+material cargo 9
+material chassis 10
+material exhaust 11
+material glass 7
+material grille 6
+material headlight 2
+material mirror 5
+material taillight 3
+material wheel 1

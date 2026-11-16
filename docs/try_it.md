@@ -74,6 +74,8 @@ release job or the installer build for this change.
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
+| 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zj | Guided vehicles (car, truck, bus, motorcycle, trailer, 6+ designs each) and a Detail level (Low to Ultra) on every guided model | Modeling > **Guided** > Vehicles; File > Examples > Guided modeling > `guided_vehicles`; `examples\modeling\guided_vehicles.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 
@@ -891,6 +893,31 @@ generated meshes, not editor screenshots.
 in the view (the model itself shows the result after each click); per-face materials: colours are drawn today and the material slot
 numbers are stored, and `claude/modeling-more` (not merged yet) adds per-face slots, which will pick the stored numbers up with no
 change here; Vehicles, Characters, Environment and Props are not built.
+## 7zj. Guided vehicles, and the Detail level
+
+**What it is.** Vehicles on the Modeling window's **Guided** page, built on the same rules as 7zg and 7zi, plus one new setting on
+every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle count of each level next to it.
+
+**Status.** Tested on Linux (`ctest -R "guided_vehicles|guided_detail"`: about 2300 and 980 checks: every design sound, parts never
+overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
+level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
+(`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. The motorcycles are the roughest models.
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_vehicles** (33 vehicles in rows: cars, trucks, buses, motorcycles, trailers; 16 m
+   apart). Click one in the Hierarchy, open Modeling > Guided.
+2. Change **Wheel radius**, **Wheelbase**, **Length**, **Cabin size**; under **Parts and materials** change **Wheels** to Eight spoke mesh,
+   **Headlights** to Twin lamps, **Bumpers** to Sport lip, **Spoiler** to Wing, **Roof fitting** to Light bar, **Exhaust** to Dual pipes.
+3. **Each part > Wheels**: give one wheel its own design (Select jumps to it in Edit Mesh).
+4. **Detail**: choose Low, then Ultra. The model rebuilds; the triangle count next to each level tells you the cost. High and Ultra are
+   smooth shaded. Your own additions stay; a part you edited by hand is asked about first.
+5. Modeling > Guided > Vehicles > Car/Truck/Bus/Motorcycle/Trailer: pick a design card, **Create**.
+
+**Not done / unverified.** Wheel arches, doors that open, interiors, chassis details, rigged wheels or vehicle physics are not built (the
+Vehicle components are separate: put them on a guided vehicle yourself). A box-only design has the same triangle count at Low and Medium.
+The editor's Detail control and smooth shading were never seen in a window.
 
 ---
 

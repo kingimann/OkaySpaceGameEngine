@@ -103,7 +103,8 @@ namespace {
 // of the sinks below (float for DecodeWav, 16-bit or float bytes for playback).
 struct Plan {
     Fmt f;
-    const unsigned char* d = nullptr;      // start of the data chunk
+    const unsigned char* d = nullptr;      // start of the data chunk (WavStream: its read window)
+    std::uint64_t dataOff = 0;             // file offset of the data chunk's first byte
     std::uint64_t dataLen = 0;
     std::size_t ch = 0;
     int kind = 0;                          // 0: PCM / float / A-law / mu-law, 1: MS ADPCM, 2: IMA ADPCM
@@ -123,14 +124,33 @@ struct View {
     const unsigned char* a = nullptr;
     const unsigned char* b = nullptr;
     std::uint64_t split = ~std::uint64_t(0);   // file offset of b[0]; never reached with one buffer
-    const unsigned char* At(std::uint64_t pos) const { return pos < split ? a + pos : b + (pos - split); }
+    const unsigned char* At(std::uint64_t pos, std::size_t = 0) const { return pos < split ? a + pos : b + (pos - split); }
+};
+
+// The header bytes as WavStream sees them: read from the source on demand. At(pos, n) gives `n` bytes at `pos`, or null
+// when the source gives fewer (a file cut under us). A chunk header (8 bytes) and a "fmt " body go into separate
+// buffers; MakePlan uses each pointer before it asks for the next one of the same kind.
+struct SourceView {
+    static constexpr std::size_t kFmtMax = 22 + 256 * 4;   // the largest "fmt " body MakePlan reads (MS ADPCM table)
+    AudioByteSource* src = nullptr;
+    mutable unsigned char hdr[8] = {};
+    mutable unsigned char body[kFmtMax] = {};
+    const unsigned char* At(std::uint64_t pos, std::size_t n) const {
+        if (n == 0) return body;                           // the data chunk's position only: nothing is read
+        unsigned char* b = n <= sizeof hdr ? hdr : body;
+        if (n > kFmtMax) return nullptr;
+        return src->Read(pos, b, n) == n ? b : nullptr;
+    }
 };
 
 // The chunk walk and every check that comes before decoding. Fills the same fields of `out` in the same order as the
 // decoder always has (so a refused file reports the same partial header). Never touches out.samples.
-bool MakePlan(const View& V, std::size_t size, const Limits& L, WavAudio& out, Plan& P, std::string* error) {
-    const unsigned char* data = V.a;
-    if (!data || size < 12) return Fail(error, "not a RIFF/WAVE file");
+// A template on the byte access: View (memory) for DecodeWav and playback, SourceView (reads) for WavStream.
+template <class V_>
+bool MakePlan(const V_& V, std::uint64_t size, const Limits& L, WavAudio& out, Plan& P, std::string* error) {
+    if (size < 12) return Fail(error, "not a RIFF/WAVE file");
+    const unsigned char* data = V.At(0, 12);
+    if (!data) return Fail(error, "not a RIFF/WAVE file");
     if (size > L.maxInputBytes) return Fail(error, "input larger than the size budget");
     if (std::memcmp(data, "RIFF", 4) != 0 || std::memcmp(data + 8, "WAVE", 4) != 0) return Fail(error, "not a RIFF/WAVE file");
 
@@ -142,13 +162,15 @@ bool MakePlan(const View& V, std::size_t size, const Limits& L, WavAudio& out, P
     int chunks = 0;
     while (pos + 8 <= size) {
         if (++chunks > L.maxChunks) return Fail(error, "too many chunks");
-        const unsigned char* hd = V.At(pos);
+        const unsigned char* hd = V.At(pos, 8);
+        if (!hd) return Fail(error, "file shorter than its size");
         const std::uint32_t sz = U32(hd + 4);
         const std::uint64_t body = pos + 8;
         if (std::memcmp(hd, "fmt ", 4) == 0 && !haveFmt) {
             if (sz < 16 || body + 16 > size) return Fail(error, "fmt chunk too short");
             const std::uint64_t avail = std::min<std::uint64_t>(sz, size - body);
-            const unsigned char* p = V.At(body);
+            const unsigned char* p = V.At(body, std::size_t(std::min<std::uint64_t>(avail, SourceView::kFmtMax)));
+            if (!p) return Fail(error, "file shorter than its size");
             f.tag = U16(p); f.channels = U16(p + 2); f.rate = U32(p + 4); f.blockAlign = U16(p + 12); f.bits = U16(p + 14);
             if (avail >= 18) {
                 const unsigned cb = U16(p + 16);
@@ -184,7 +206,8 @@ bool MakePlan(const View& V, std::size_t size, const Limits& L, WavAudio& out, P
     if (f.channels > L.maxChannels) return Fail(error, "too many channels");
     if (f.rate < 1 || f.rate > L.maxSampleRate) return Fail(error, "sample rate out of range");
 
-    P.d = V.At(dataOff);
+    P.d = V.At(dataOff, 0);
+    P.dataOff = dataOff;
     P.dataLen = dataLen;
     const std::size_t ch = std::size_t(f.channels);
     P.ch = ch;
@@ -738,6 +761,189 @@ std::uint64_t FindDataStart(const unsigned char* p, std::size_t n, std::uint64_t
     return 0;
 }
 } // namespace detail
+
+const char* ReaderLogLine(bool own) {
+    return own ? "audio: WAV files load with our own reader (set OKAY_OWN_WAV=0 for the old one)"
+               : "audio: WAV files load with the OLD reader (OKAY_OWN_WAV=0 or a -DOKAY_OWN_WAV=OFF build)";
+}
+
+Limits StreamLimits() {
+    Limits L;
+    L.maxInputBytes = ~std::size_t(0);
+    L.maxOutputSamples = ~std::uint64_t(0);
+    return L;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// WavStream. The header plan comes from MakePlan (through SourceView), exactly as DecodeWav's. Reading reuses DecodeWav's
+// own decode functions on a second plan, `piece`, that describes only the bytes in the read window:
+//   - PCM, float, A-law, mu-law: frames are independent, so frames [pos, pos + n) are the window's bytes
+//     [pos * stride, (pos + n) * stride) of the data chunk, decoded as a data chunk of n frames;
+//   - MS and IMA ADPCM: each block starts from its own header, so block b is decoded alone as a one-block data chunk
+//     (a full block, or the file's last, shorter block with the same rest fields DecodeWav uses). A seek into a block
+//     decodes the block and skips the frames before the target.
+// Each output sample therefore comes from the same bytes through the same code as in DecodeWav.
+// ---------------------------------------------------------------------------------------------------------------------
+struct WavStream::Impl {
+    std::shared_ptr<AudioByteSource> src;
+    Plan P;                              // the whole file, as DecodeWav plans it (P.d is not used)
+    Plan piece;                          // what is in `raw` right now
+    WavAudio meta;                       // rate, channels, encoding, bits and the header warnings (no samples)
+    std::uint64_t pos = 0;               // next frame
+    std::uint64_t limit = ~std::uint64_t(0);   // frames from here on are never given (damage found while reading)
+    std::vector<unsigned char> raw;      // the read window (at most kWindowBytes, or one ADPCM block)
+    std::vector<float> block;            // ADPCM: one decoded block
+    std::uint64_t blockIdx = ~std::uint64_t(0);
+    std::size_t blockFrames = 0;
+    std::vector<std::string> scratchWarnings;
+    bool failed = false;
+    std::string err;
+
+    // The read window grows to what a Read needs, up to this (AudioStream reads 2048 frames: 8 KiB of 16-bit stereo).
+    static constexpr std::size_t kWindowBytes = 16 * 1024;
+
+    void Stop(std::uint64_t at, const char* why) {
+        limit = std::min(limit, at);
+        failed = true;
+        if (err.empty()) err = why;
+    }
+
+    std::size_t FramesInBlock(std::uint64_t b) const {
+        if (b < P.full) return std::size_t(P.spb);
+        return P.kind == 1 ? std::size_t(P.restFrames) : std::size_t(1 + 8 * P.restGroups);
+    }
+
+    // Decodes block b into `out` (FramesInBlock(b) * channels floats). False when it cannot be read or is damaged;
+    // the stream then ends at the block's first frame.
+    bool DecodeBlock(std::uint64_t b, float* out) {
+        const std::size_t len = b < P.full ? std::size_t(P.f.blockAlign) : std::size_t(P.rest);
+        const std::uint64_t first = b * P.spb;
+        if (raw.size() < len) raw.resize(len);
+        if (src->Read(P.dataOff + b * P.f.blockAlign, raw.data(), len) != len) { Stop(first, "file shorter than its size"); return false; }
+        piece.d = raw.data();
+        if (b < P.full) { piece.full = 1; piece.rest = 0; piece.restFrames = 0; piece.restBlock = false; piece.restGroups = 0; }
+        else { piece.full = 0; piece.rest = P.rest; piece.restFrames = P.restFrames; piece.restBlock = P.restBlock; piece.restGroups = P.restGroups; }
+        piece.frames = FramesInBlock(b);
+        piece.total = piece.frames * P.ch;
+        FloatSink s{out};
+        if (P.kind == 1) {
+            std::size_t written = 0;
+            std::string e;
+            if (!DecodeMs(piece, s, &written, &e)) { Stop(first, "MS ADPCM predictor index out of range"); return false; }
+        } else {
+            scratchWarnings.clear();
+            DecodeIma(piece, s, &scratchWarnings);
+        }
+        return true;
+    }
+
+    std::size_t ReadFlat(float* dst, std::size_t want) {
+        const std::size_t ch = P.ch, stride = P.stride;
+        const std::size_t perWindow = std::max<std::size_t>(1, kWindowBytes / stride);
+        std::size_t done = 0;
+        while (done < want) {
+            const std::uint64_t end = std::min(P.frames, limit);
+            if (pos >= end) break;
+            const std::size_t n = std::size_t(std::min<std::uint64_t>({want - done, perWindow, end - pos}));
+            const std::size_t bytes = n * stride;
+            if (raw.size() < bytes) raw.resize(bytes);
+            const std::size_t got = src->Read(P.dataOff + pos * stride, raw.data(), bytes);
+            const std::size_t frames = got / stride;
+            if (frames > 0) {
+                piece.d = raw.data();
+                piece.frames = frames;
+                piece.total = std::uint64_t(frames) * ch;
+                FloatSink s{dst + done * ch};
+                DecodeFlat(piece, s, nullptr);
+                done += frames;
+                pos += frames;
+            }
+            if (got < bytes) { Stop(pos, "file shorter than its size"); break; }
+        }
+        return done;
+    }
+
+    std::size_t ReadAdpcm(float* dst, std::size_t want) {
+        const std::size_t ch = P.ch;
+        std::size_t done = 0;
+        while (done < want) {
+            const std::uint64_t end = std::min(P.frames, limit);
+            if (pos >= end) break;
+            const std::uint64_t b = pos / P.spb;
+            const std::size_t off = std::size_t(pos - b * P.spb);
+            const std::size_t inBlock = FramesInBlock(b);
+            if (b != blockIdx && off == 0 && want - done >= inBlock) {
+                // A whole block that fits: straight into the caller's buffer.
+                if (!DecodeBlock(b, dst + done * ch)) break;
+                done += inBlock;
+                pos += inBlock;
+                continue;
+            }
+            if (b != blockIdx) {
+                block.resize(std::size_t(P.spb) * ch);
+                blockIdx = ~std::uint64_t(0);
+                if (!DecodeBlock(b, block.data())) break;
+                blockIdx = b;
+                blockFrames = inBlock;
+            }
+            const std::size_t n = std::min(want - done, blockFrames - off);
+            std::memcpy(dst + done * ch, block.data() + off * ch, n * ch * sizeof(float));
+            done += n;
+            pos += n;
+        }
+        return done;
+    }
+};
+
+WavStream::WavStream() = default;
+WavStream::~WavStream() = default;
+
+bool WavStream::Open(std::shared_ptr<AudioByteSource> src, std::string* error, const Limits* limits) {
+    m_.reset();
+    if (!src) return Fail(error, "no source");
+    std::unique_ptr<Impl> m(new Impl);
+    m->src = std::move(src);
+    const Limits L = limits ? *limits : StreamLimits();
+    SourceView V;
+    V.src = m->src.get();
+    if (!MakePlan(V, m->src->Size(), L, m->meta, m->P, error)) return false;
+    m->P.d = nullptr;
+    m->piece = m->P;
+    m_ = std::move(m);
+    return true;
+}
+
+bool WavStream::IsOpen() const { return m_ != nullptr; }
+int WavStream::SampleRate() const { return m_ ? m_->meta.sampleRate : 0; }
+int WavStream::Channels() const { return m_ ? m_->meta.channels : 0; }
+Encoding WavStream::GetEncoding() const { return m_ ? m_->meta.encoding : Encoding::Pcm; }
+int WavStream::BitsPerSample() const { return m_ ? m_->meta.bitsPerSample : 0; }
+std::uint64_t WavStream::TotalFrames() const { return m_ ? m_->P.frames : 0; }
+const std::vector<std::string>& WavStream::Warnings() const {
+    static const std::vector<std::string> none;
+    return m_ ? m_->meta.warnings : none;
+}
+std::uint64_t WavStream::Position() const { return m_ ? m_->pos : 0; }
+bool WavStream::Failed() const { return m_ && m_->failed; }
+const std::string& WavStream::Error() const {
+    static const std::string none;
+    return m_ ? m_->err : none;
+}
+
+std::size_t WavStream::Read(float* dst, std::size_t maxFrames) {
+    if (!m_ || !dst || maxFrames == 0) return 0;
+    return m_->P.kind == 0 ? m_->ReadFlat(dst, maxFrames) : m_->ReadAdpcm(dst, maxFrames);
+}
+
+bool WavStream::Seek(std::uint64_t frame) {
+    if (!m_) return false;
+    m_->pos = std::min(frame, m_->P.frames);
+    return true;
+}
+
+std::size_t WavStream::MemoryBytes() const {
+    return sizeof(*this) + (m_ ? sizeof(Impl) + m_->raw.capacity() + m_->block.capacity() * sizeof(float) : 0);
+}
 
 } // namespace wav
 } // namespace okay

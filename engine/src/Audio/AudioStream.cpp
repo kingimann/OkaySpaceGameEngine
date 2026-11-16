@@ -4,6 +4,7 @@
 #include "okay/Audio/AudioByteSource.hpp"
 #include "okay/Audio/FlacDecoder.hpp"
 #include "okay/Audio/Mp3Decoder.hpp"
+#include "okay/Audio/WavDecoder.hpp"
 #include "okay/Core/ImportSidecar.hpp"
 #include "AudioInternal.hpp"
 
@@ -87,6 +88,42 @@ std::shared_ptr<AudioByteSource> AudioByteSource::FromFile(const std::string& pa
 namespace audio_detail {
 namespace {
 
+/// Streamed WAV with our own decoder (okay::wav::WavStream), the default: every format DecodeWav reads (PCM 8 to 32
+/// bit, float 32 and 64, A-law, mu-law, MS and IMA ADPCM, extensible), and the same samples as AudioClip::LoadWAV bit for
+/// bit. More than two channels are mixed to mono with the same sum-then-divide as LoadWAV.
+class OwnWavPcmDecoder : public PcmDecoder {
+public:
+    bool Open(std::shared_ptr<AudioByteSource> src, std::string* error) {
+        if (!w_.Open(std::move(src), error)) return false;
+        fileCh_ = w_.Channels();
+        sampleRate = w_.SampleRate();
+        channels = KeptChannels(fileCh_, false);
+        totalFrames = static_cast<std::int64_t>(w_.TotalFrames());
+        return true;
+    }
+    std::size_t Read(float* dst, std::size_t maxFrames) override {
+        if (channels == fileCh_) return w_.Read(dst, maxFrames);
+        tmp_.resize(kChunk * static_cast<std::size_t>(fileCh_));
+        std::size_t done = 0;
+        while (done < maxFrames) {
+            const std::size_t got = w_.Read(tmp_.data(), std::min(maxFrames - done, kChunk));
+            if (got == 0) break;
+            SumDivideToMono(tmp_.data(), got, fileCh_, dst + done);
+            done += got;
+        }
+        return done;
+    }
+    bool Seek(std::int64_t frame) override { return w_.Seek(static_cast<std::uint64_t>(std::max<std::int64_t>(0, frame))); }
+    std::size_t MemoryBytes() const override { return sizeof(*this) + w_.MemoryBytes() + tmp_.capacity() * sizeof(float); }
+private:
+    static constexpr std::size_t kChunk = 256;   // frames per mono mix step (6 KiB of 6-channel floats)
+    wav::WavStream w_;
+    int fileCh_ = 1;
+    std::vector<float> tmp_;
+};
+
+/// The old streamed WAV reader (PCM 8/16/24/32 and float32 only): used when OKAY_OWN_WAV=0 or in a -DOKAY_OWN_WAV=OFF
+/// build, for this one release (docs/own_wav_decoder.md).
 class WavPcmDecoder : public PcmDecoder {
 public:
     bool Open(std::shared_ptr<AudioByteSource> src, std::string* error) {
@@ -202,8 +239,15 @@ std::unique_ptr<PcmDecoder> MakeDecoder(std::shared_ptr<AudioByteSource> src, st
     std::string err;
     std::unique_ptr<PcmDecoder> d;
     if (got >= 12 && std::memcmp(head, "RIFF", 4) == 0 && std::memcmp(head + 8, "WAVE", 4) == 0) {
-        std::unique_ptr<WavPcmDecoder> w(new WavPcmDecoder);
-        if (w->Open(src, &err)) d = std::move(w);
+        const bool own = wav::OwnWavEnabled();
+        NoteWavReader(own);
+        if (own) {
+            std::unique_ptr<OwnWavPcmDecoder> w(new OwnWavPcmDecoder);
+            if (w->Open(src, &err)) d = std::move(w);
+        } else {
+            std::unique_ptr<WavPcmDecoder> w(new WavPcmDecoder);
+            if (w->Open(src, &err)) d = std::move(w);
+        }
     } else if (got >= 4 && std::memcmp(head, "OggS", 4) == 0) {
         d = MakeOggDecoder(src, &err);
     } else if (got >= 4 && std::memcmp(head, "fLaC", 4) == 0) {

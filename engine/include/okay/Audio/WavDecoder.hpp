@@ -13,8 +13,11 @@
 // A-law, mu-law, Microsoft ADPCM (tag 0x0002) and IMA ADPCM (tag 0x0011), any channel count up to
 // Limits::maxChannels. It is an OPT-IN replacement for SDL_LoadWAV and the older, narrower
 // AudioClip::LoadWAV path: see OwnWavEnabled() and docs/own_wav_decoder.md.
+#include "okay/Audio/AudioByteSource.hpp"
+
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -57,6 +60,59 @@ std::vector<std::int16_t> ToS16(const WavAudio& a);
 /// default (CMake option OKAY_OWN_WAV, ON since 2026-11-16) overridden by the environment variable OKAY_OWN_WAV=0
 /// (the old path, kept for one release) or 1. Anything else in the variable is ignored.
 bool OwnWavEnabled();
+
+/// The one line a program logs, once per run, to say which WAV reader is in use: the engine (AudioClip::LoadWAV and
+/// streamed WAV) and the launcher (voice clips) print the same text.
+const char* ReaderLogLine(bool own);
+
+/// Limits for WavStream when none are given: as Limits(), but with no input or output size budget (a stream never
+/// holds the whole file or its whole output; AudioStream refuses files over 2 GB itself).
+Limits StreamLimits();
+
+/// Our decoder, a piece at a time: for AudioStream (streamed music and long sounds). Open reads the header once with
+/// the same chunk walk and checks as DecodeWav, then Read decodes any number of frames from any position, using the
+/// same per-format code as DecodeWav on the bytes it reads. A streamed decode gives exactly DecodeWav's samples, bit for
+/// bit, whatever the piece sizes and seeks (test own_wav_stream): PCM, float, A-law and mu-law are read frame by frame
+/// at frame * block align; MS and IMA ADPCM a block at a time (a seek decodes from the start of its block and skips to
+/// the frame). Only one read window (up to 16 KiB, or one ADPCM block) and, for ADPCM, one decoded block are held.
+///
+/// Damage: a file DecodeWav refuses is refused by Open with the same message, except that the input and output size
+/// budgets are lifted (StreamLimits). An MS ADPCM block with a bad predictor index (DecodeWav: an error after the
+/// samples before it) ends the stream at the start of that block; Failed() is then true. A source that returns fewer
+/// bytes than its Size() promised (a file cut while it plays) ends the stream after the last whole frame or block read.
+/// Never reads outside what the source gives, never throws.
+class WavStream {
+public:
+    WavStream();
+    ~WavStream();
+    WavStream(const WavStream&) = delete;
+    WavStream& operator=(const WavStream&) = delete;
+
+    /// Reads and checks the header. False (with *error) for anything DecodeWav would refuse.
+    bool Open(std::shared_ptr<AudioByteSource> src, std::string* error = nullptr, const Limits* limits = nullptr);
+    bool IsOpen() const;
+    int SampleRate() const;
+    int Channels() const;                       ///< the file's channels (every one is kept: interleaved as DecodeWav)
+    Encoding GetEncoding() const;
+    int BitsPerSample() const;
+    std::uint64_t TotalFrames() const;          ///< what DecodeWav's FrameCount() gives for the file
+    const std::vector<std::string>& Warnings() const;   ///< the header's warnings (as DecodeWav's, in the same order)
+
+    /// Up to `maxFrames` frames (Channels() floats each) from Position() into `dst`; fewer only at the end. 0 at the end.
+    std::size_t Read(float* dst, std::size_t maxFrames);
+    /// Moves to `frame` (clamped to TotalFrames()). The next Read starts there.
+    bool Seek(std::uint64_t frame);
+    std::uint64_t Position() const;
+    /// True once damage found while reading (a bad MS ADPCM block, a short read) ended the stream early.
+    bool Failed() const;
+    const std::string& Error() const;
+    /// Bytes held: the read window, one decoded ADPCM block, the header plan.
+    std::size_t MemoryBytes() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> m_;
+};
 
 } // namespace wav
 } // namespace okay

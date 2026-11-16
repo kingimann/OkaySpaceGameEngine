@@ -115,6 +115,13 @@ bool ReadWholeFile(const std::string& path, std::vector<unsigned char>& out, std
     return true;
 }
 
+void NoteWavReader(bool own) {
+    // One line per run, so a person can see which WAV reader is in use (docs/try_it.md, section 9). The launcher's
+    // voice clips print the same text (wav::ReaderLogLine).
+    static std::atomic<bool> told{false};
+    if (!told.exchange(true)) OKAY_INFO(wav::ReaderLogLine(own));
+}
+
 void DownmixToMono(const float* in, std::size_t frames, int channels, float* out) {
     if (channels <= 1) { std::copy(in, in + frames, out); return; }
     const float k = 1.0f / static_cast<float>(channels);
@@ -156,12 +163,7 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
     std::vector<unsigned char> buf;
     if (!audio_detail::ReadWholeFile(path, buf, error)) return false;
     const bool own = wav::OwnWavEnabled();
-    {   // one line per run, so a person can see which WAV reader is in use (docs/try_it.md, section 9)
-        static std::atomic<bool> told{false};
-        if (!told.exchange(true))
-            OKAY_INFO(own ? "audio: WAV files load with our own reader (set OKAY_OWN_WAV=0 for the old one)"
-                          : "audio: WAV files load with the OLD reader (OKAY_OWN_WAV=0 or a -DOKAY_OWN_WAV=OFF build)");
-    }
+    audio_detail::NoteWavReader(own);
     if (own) {   // our own decoder, the default; OKAY_OWN_WAV=0 runs the old code below (one more release)
         wav::WavAudio a;
         std::string e;
@@ -173,13 +175,8 @@ bool AudioClip::LoadWAV(const std::string& path, std::string* error, bool downmi
             // Mono: the channels summed in order, then divided by the count, the same arithmetic as the WAV stream
             // (AudioStream, ConvertWavFrames), so a streamed and a whole-file load of one file are equal bit for bit
             // (test audio_stream; DownmixToMono multiplies by 1/channels, which differs in the last bit for 3, 5, 6...).
-            const std::size_t frames = a.FrameCount(), ch = static_cast<std::size_t>(a.channels);
-            samples.resize(frames);
-            for (std::size_t i = 0; i < frames; ++i) {
-                float acc = 0.0f;
-                for (std::size_t c = 0; c < ch; ++c) acc += a.samples[i * ch + c];
-                samples[i] = acc / static_cast<float>(a.channels);
-            }
+            samples.resize(a.FrameCount());
+            audio_detail::SumDivideToMono(a.samples.data(), a.FrameCount(), a.channels, samples.data());
         }
         return true;
     }

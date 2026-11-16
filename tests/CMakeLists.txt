@@ -109,6 +109,15 @@ foreach(_wd on off)
     endif()
     add_test(NAME own_wav_default_${_wd} COMMAND test_own_wav_default_${_wd})
 endforeach()
+# Streaming with our own WAV decoder (okay::wav::WavStream, AudioStream): streamed equals whole-file bit for bit on every
+# format under random piece sizes, seeks and loops, every truncation of the small files, a file cut while it plays, and
+# AudioStream against AudioClip::LoadWAV (and the OKAY_OWN_WAV=0 fallback). The file also builds on its own with
+# sanitizers (see its header).
+add_executable(test_own_wav_stream test_own_wav_stream.cpp)
+target_link_libraries(test_own_wav_stream PRIVATE okay::engine)
+target_compile_definitions(test_own_wav_stream PRIVATE OKAY_STREAM_TEST_ENGINE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_wav_stream COMMAND test_own_wav_stream WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(own_wav_stream PROPERTIES TIMEOUT 240)
 
 # FLAC decoding against known samples, and audio import settings (mono, stream).
 add_executable(test_flac_import test_flac_import.cpp)

@@ -4,8 +4,8 @@
 //    (examples/ and the ffmpeg-made fixtures in tests/data/audio/wav_ffmpeg/) and a few made here (the launcher's own
 //    16-bit mono recording format, 8-bit, 24-bit, float, an odd-sized extra chunk) are read both ways: with
 //    SDL_LoadWAV plus the conversion the launcher used to run on SDL's result, and with the new helper. Format,
-//    channels, rate and length must match; the samples must be equal (16-bit and float sources) or within a stated
-//    rounding tolerance (8/24/32-bit and ADPCM, where the old launcher truncated and ours rounds). Every truncation of
+//    channels, rate and length must match; the samples must be byte for byte equal, except 8-bit and 24-bit PCM, where
+//    the old launcher truncated and ours rounds (within 2 steps of 32,768). Every truncation of
 //    a small file must fail cleanly or return a shorter clip, never crash or read past the end.
 // 2. Window: okay::platform::WrapSdl2Window over a raw SDL_Window (the launcher still creates its windows with SDL)
 //    must answer size, position, minimum size, id, visible / minimised / focused exactly as the SDL calls the launcher
@@ -138,22 +138,21 @@ static void CompareOne(const std::string& label, const std::string& path, int to
 static void TestRepositoryWavs() {
     RUN_SUITE("WAV files in the repository: SDL_LoadWAV + old conversion vs our reader");
     struct F { const char* rel; int tol; };
-    // Tolerances (measured, then fixed here): 16-bit and float sources must be identical. 8-bit, 24-bit, A-law and
-    // mu-law: the old launcher truncated (v * 32767) where ours rounds the exact value, at most 1-2 steps apart.
-    // MS ADPCM: SDL and ours decode to 16-bit with the same predictor; IMA: the two decoders round the step
-    // differently, so within 32 of 32,768 (docs/own_wav_decoder.md measured 29 against ffmpeg).
+    // Tolerances (measured on Linux, SDL 2 from the system, then fixed here): everything SDL itself decodes to 16-bit or
+    // float (16-bit PCM, float, A-law, mu-law, MS and IMA ADPCM) must be byte for byte the same. 8-bit and 24-bit: the old
+    // launcher truncated (v * 32767) where ours rounds the exact value, so at most 2 steps apart (measured: 1 and 2).
     const F files[] = {
-        {"examples/own_wav/mulaw_tone.wav", 2},
-        {"examples/spatial_audio/tone.wav", 2},
-        {"tests/data/audio/wav_ffmpeg/alaw_stereo.wav", 2},
+        {"examples/own_wav/mulaw_tone.wav", 0},
+        {"examples/spatial_audio/tone.wav", 0},
+        {"tests/data/audio/wav_ffmpeg/alaw_stereo.wav", 0},
         {"tests/data/audio/wav_ffmpeg/f32_mono.wav", 0},
-        {"tests/data/audio/wav_ffmpeg/ima_mono.wav", 32},
-        {"tests/data/audio/wav_ffmpeg/ima_stereo.wav", 32},
-        {"tests/data/audio/wav_ffmpeg/ms_mono.wav", 2},
-        {"tests/data/audio/wav_ffmpeg/ms_mono_b256.wav", 2},
-        {"tests/data/audio/wav_ffmpeg/ms_stereo.wav", 2},
-        {"tests/data/audio/wav_ffmpeg/ms_stereo_b2048.wav", 2},
-        {"tests/data/audio/wav_ffmpeg/mulaw_mono.wav", 2},
+        {"tests/data/audio/wav_ffmpeg/ima_mono.wav", 0},
+        {"tests/data/audio/wav_ffmpeg/ima_stereo.wav", 0},
+        {"tests/data/audio/wav_ffmpeg/ms_mono.wav", 0},
+        {"tests/data/audio/wav_ffmpeg/ms_mono_b256.wav", 0},
+        {"tests/data/audio/wav_ffmpeg/ms_stereo.wav", 0},
+        {"tests/data/audio/wav_ffmpeg/ms_stereo_b2048.wav", 0},
+        {"tests/data/audio/wav_ffmpeg/mulaw_mono.wav", 0},
         {"tests/data/audio/wav_ffmpeg/s24_stereo.wav", 2},
         {"tests/data/audio/wav_ffmpeg/u8_mono.wav", 2},
     };

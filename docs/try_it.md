@@ -1142,8 +1142,8 @@ If a voice message does not play, plays as noise, or a window step behaves diffe
 is this change: report the step.
 
 **Status.** Tested on Linux only: `test_launcher_wav_window` (every WAV in the repository and five made-up ones read by
-SDL and by our reader give the same format and length, and the same samples, exactly for 16-bit and float, within 2 steps
-for 8/24-bit, A-law, mu-law and MS ADPCM, within 32 for IMA ADPCM; every truncation of a file fails or reads less; the
+SDL and by our reader give the same format and length and byte-for-byte the same samples, except 8-bit and 24-bit files,
+which are within 2 steps of 32,768 because the old launcher code truncated where ours rounds; every truncation of a file fails or reads less; the
 window view answers size, position, minimum size, id and the hidden / minimised / focused state like SDL, under SDL's
 dummy video driver), the launcher started under Xvfb with a screenshot, and `launcher/main.cpp` passed a MinGW (Windows)
 syntax check. Not run on Windows: the steps above are unverified until you run them.

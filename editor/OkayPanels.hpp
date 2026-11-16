@@ -1,6 +1,7 @@
 #pragma once
-// Editor windows hosted by OkayUI (the opt-in "OkayUI (preview)" UI backend, docs/own_ui_toolkit.md sections 6, 9 and 10): the Crash
-// Log, the Audio Mixer, the Problems, Stats, History and Profiler panels, and Project Settings' Tags and Layers and Physics sections. Each keeps its Dear ImGui window (the dock tab, title and close box) and hands the free area to the OkayUI screen in
+// Editor windows hosted by OkayUI (the opt-in "OkayUI (preview)" UI backend, docs/own_ui_toolkit.md sections 6, 9, 10 and 11): the Crash
+// Log, the Audio Mixer, the Problems, Stats, History and Profiler panels, Project Settings' Tags and Layers, Physics, Player and Rendering
+// sections, the Project panel's import settings and the Lighting window's Post-processing section. Each keeps its Dear ImGui window (the dock tab, title and close box) and hands the free area to the OkayUI screen in
 // okayui/screens/OkayUIPanels. Only compiled into the editor when OkayUI is (OKAY_HAVE_OKAYUI).
 #include "EditorPanelModels.hpp"
 
@@ -39,5 +40,13 @@ bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel& model, okaypanels::
 bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypanels::PhysicsSettingsIntent& intent);
 /// The Profiler window with OkayUI. It fills its model only while the window is visible, through `fill`.
 bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::ProfilerModel&)>& fill, okaypanels::ProfilerIntent& intent);
+/// Sections drawn inside the current ImGui window like Tags and Layers above: the Project panel's import settings, Lighting >
+/// Post-processing, and Project Settings > Player and > Rendering. `id` keeps two hosts of the same section apart (the import settings
+/// are shown in two places). Same return value as above.
+bool DrawImportSettingsOkayUI(const char* id, okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsState& state,
+                              okaypanels::ImportSettingsIntent& intent);
+bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::PostProcessIntent& intent);
+bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels::PlayerSettingsIntent& intent);
+bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent);
 
 } // namespace oked

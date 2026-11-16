@@ -1,4 +1,7 @@
 #include "ProjectPanelUI.hpp"
+#include "EditorPanelViews.hpp"   // the Dear ImGui body of the import settings
+#include "MainShared.hpp"         // UseOkayUIBackend
+#include "OkayPanels.hpp"         // its OkayUI port
 #include "okay/Render/SoftwareRenderer.hpp"   // InvalidateAllTextureCaches
 
 #include <imgui.h>
@@ -466,17 +469,6 @@ struct ImportEdit {
 };
 ImportEdit g_imp;
 
-bool Combo(const char* label, int& value, std::initializer_list<const char*> items) {
-    bool changed = false;
-    std::vector<const char*> v(items);
-    ImGui::SetNextItemWidth(160);
-    if (ImGui::BeginCombo(label, value >= 0 && value < (int)v.size() ? v[value] : "")) {
-        for (int i = 0; i < (int)v.size(); ++i)
-            if (ImGui::Selectable(v[i], value == i)) { value = i; changed = true; }
-        ImGui::EndCombo();
-    }
-    return changed;
-}
 } // namespace
 
 // Texture Filter / Wrap / Mipmaps work in the software and OpenGL renderers only. The Direct3D renderers (the
@@ -489,6 +481,32 @@ bool HasImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
     return k == okay::AssetType::Texture || k == okay::AssetType::Model || k == okay::AssetType::Audio;
 }
 
+namespace {
+// The panel's values (shared/EditorPanelModels.hpp) from and back to the engine's settings.
+okaypanels::ImportFields ToFields(const okay::ImportSettings& e) {
+    okaypanels::ImportFields f;
+    f.kind = e.kind == okay::AssetType::Texture ? okaypanels::ImportTexture : e.kind == okay::AssetType::Model ? okaypanels::ImportModel
+           : e.kind == okay::AssetType::Audio ? okaypanels::ImportAudio : okaypanels::ImportNone;
+    f.maxSize = e.texture.maxSize; f.filter = static_cast<int>(e.texture.filter); f.wrap = static_cast<int>(e.texture.wrap);
+    f.mipmaps = e.texture.mipmaps;
+    f.scale = e.model.scale; f.normals = static_cast<int>(e.model.normals); f.smoothingAngle = e.model.smoothingAngle;
+    f.importAnimations = e.model.importAnimations;
+    f.loadMode = e.audio.loadMode == okay::AudioImportSettings::LoadMode::Stream ? 1 : 0; f.forceMono = e.audio.forceMono;
+    return f;
+}
+void FromFields(const okaypanels::ImportFields& f, okay::ImportSettings& e) {
+    namespace ok = okay;
+    e.texture.maxSize = f.maxSize;
+    e.texture.filter = static_cast<ok::TextureImportSettings::Filter>(std::clamp(f.filter, 0, 2));
+    e.texture.wrap = static_cast<ok::TextureImportSettings::Wrap>(std::clamp(f.wrap, 0, 2));
+    e.texture.mipmaps = f.mipmaps;
+    e.model.scale = f.scale; e.model.normals = static_cast<ok::ModelImportSettings::Normals>(std::clamp(f.normals, 0, 2));
+    e.model.smoothingAngle = f.smoothingAngle; e.model.importAnimations = f.importAnimations;
+    e.audio.loadMode = f.loadMode == 1 ? ok::AudioImportSettings::LoadMode::Stream : ok::AudioImportSettings::LoadMode::Decode;
+    e.audio.forceMono = f.forceMono;
+}
+} // namespace
+
 bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) {
     namespace ok = okay;
     if (!HasImportSettings(browser, assetPath)) return false;
@@ -500,81 +518,29 @@ bool DrawImportSettings(okaypb::Browser& browser, const std::string& assetPath) 
         g_imp.loaded = true;
     }
     ok::ImportSettings& e = g_imp.edit;
-    ImGui::TextDisabled("IMPORT SETTINGS");
-    if (e.fromNewerVersion) {
-        ImGui::TextDisabled("Made by a newer editor. Shown, but not changed here.");
-        return false;
-    }
-    switch (e.kind) {
-        case ok::AssetType::Texture: {
-            static const int sizes[] = {0, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384};
-            int si = 7;
-            for (int i = 0; i < 11; ++i) if (sizes[i] == e.texture.maxSize) si = i;
-            if (Combo("Largest side", si, {"No limit", "32", "64", "128", "256", "512", "1024", "2048", "4096", "8192", "16384"})) e.texture.maxSize = sizes[si];
-            ImGui::TextDisabled("Bigger pictures are made smaller when loaded.");
-            if (kShowTextureSamplerSettings) {
-            int fi = static_cast<int>(e.texture.filter);
-            if (Combo("Filter", fi, {"Point (pixels)", "Bilinear (smooth)", "Trilinear (smooth + mips)"})) e.texture.filter = static_cast<ok::TextureImportSettings::Filter>(fi);
-            ImGui::TextDisabled("Point keeps hard pixel edges.");
-            int wi = static_cast<int>(e.texture.wrap);
-            if (Combo("Wrap", wi, {"Repeat", "Clamp", "Mirror"})) e.texture.wrap = static_cast<ok::TextureImportSettings::Wrap>(wi);
-            ImGui::TextDisabled("What is drawn past the picture's edge.");
-            ImGui::Checkbox("Mipmaps", &e.texture.mipmaps);
-            ImGui::TextDisabled("Smaller copies for far away. Off: always full size.");
-            ImGui::TextDisabled("Applies in the editor view and OpenGL / software games.");
-            }
-            break;
-        }
-        case ok::AssetType::Model: {
-            ImGui::SetNextItemWidth(160);
-            ImGui::DragFloat("Scale", &e.model.scale, 0.01f, 0.0001f, 10000.0f, "%.4f");
-            ImGui::TextDisabled("Multiplies its size when you add it to a scene.");
-            int ni = static_cast<int>(e.model.normals);
-            if (Combo("Normals", ni, {"From the file", "Calculate (smooth)", "Flat (faceted)"})) e.model.normals = static_cast<ok::ModelImportSettings::Normals>(ni);
-            if (e.model.normals == ok::ModelImportSettings::Normals::Calculate) {
-                ImGui::SetNextItemWidth(160);
-                ImGui::DragFloat("Smoothing angle", &e.model.smoothingAngle, 0.5f, 0.0f, 180.0f, "%.0f deg");
-                ImGui::TextDisabled("Sharper edges stay hard. Not for rigged parts.");
-            } else if (e.model.normals == ok::ModelImportSettings::Normals::Flat) {
-                ImGui::TextDisabled("Each face shaded alone. Not for rigged parts.");
-            }
-            ImGui::Checkbox("Import animations", &e.model.importAnimations);
-            ImGui::TextDisabled("Off: no clips, rest pose.");
-            ImGui::TextDisabled("Used when the model is next added to a scene.");
-            break;
-        }
-        case ok::AssetType::Audio: {
-            int mode = e.audio.loadMode == ok::AudioImportSettings::LoadMode::Stream ? 1 : 0;
-            if (Combo("Loading", mode, {"Load the whole file", "Read it while it plays"}))
-                e.audio.loadMode = mode == 1 ? ok::AudioImportSettings::LoadMode::Stream
-                                             : ok::AudioImportSettings::LoadMode::Decode;
-            ImGui::TextDisabled("Read while it plays keeps a long file in a small fixed amount of memory.");
-            ImGui::Checkbox("Mix down to one channel", &e.audio.forceMono);
-            ImGui::TextDisabled("Left and right become a single channel. Off keeps the recording as it is.");
-            ImGui::TextDisabled("Used the next time the file is loaded.");
-            break;
-        }
-        default: return false;
-    }
+    const bool known = e.kind == ok::AssetType::Texture || e.kind == ok::AssetType::Model || e.kind == ok::AssetType::Audio;
+    // Drawn from a model (shared/EditorPanelModels.hpp) by the Dear ImGui body (editor/EditorPanelViews.cpp) or, with the opt-in
+    // OkayUI backend, by its OkayUI port (editor/OkayPanels.cpp). Inside the Project panel's popup it is always the Dear ImGui one
+    // (OkayUI draws under ImGui popups, so the host falls back there).
+    okaypanels::ImportFields f = ToFields(e);
+    okaypanels::ImportSettingsModel m;
+    m.edit = &f; m.original = ToFields(g_imp.original); m.newer = e.fromNewerVersion; m.showSampler = kShowTextureSamplerSettings;
+    static okaypanels::ImportSettingsState st;
+    okaypanels::ImportSettingsIntent in;
+    if (!(UseOkayUIBackend() && DrawImportSettingsOkayUI("##okayui_import", m, st, in))) in = DrawImportSettingsBodyImGui(m, st, PanelViewHooks{});
+    if (e.fromNewerVersion || !known) return false;
+    FromFields(f, e);
     e.Clamp();
-    const bool dirty = !e.SameAs(g_imp.original);
     bool applied = false;
-    static std::string failMsg;
-    ImGui::BeginDisabled(!dirty);
-    if (ImGui::Button("Apply")) {
+    if (in.apply && !e.SameAs(g_imp.original)) {
         std::string err;
         if (browser.SetImportSettings(assetPath, e, &err)) {
             g_imp.original = e; applied = true;
             if (e.kind == ok::AssetType::Texture) ok::InvalidateAllTextureCaches();   // the scene view reads the picture again
         }
-        else { failMsg = err.empty() ? "The settings could not be saved." : err; ImGui::OpenPopup("##impfail"); }
+        else { st.failMsg = err.empty() ? "The settings could not be saved." : err; st.showFail = true; }
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Revert")) e = g_imp.original;
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::TextDisabled("Saved next to the asset.");
-    if (ImGui::BeginPopup("##impfail")) { ImGui::TextUnformatted(failMsg.c_str()); ImGui::EndPopup(); }
+    if (in.revert) e = g_imp.original;
     return applied;
 }
 

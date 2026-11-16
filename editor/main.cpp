@@ -12400,77 +12400,44 @@ static void DrawLookSections(EditorState& ed) {
     auto tip = [](const char* t) { if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t); };
 
     if (ImGui::CollapsingHeader("Post-processing", ImGuiTreeNodeFlags_DefaultOpen)) {
-        // Look presets fill sky / fog / post / weather in one go; Reset puts them back.
+        // Drawn from a model (shared/EditorPanelModels.hpp) by the Dear ImGui body (editor/EditorPanelViews.cpp) or, with the opt-in
+        // OkayUI backend, by its OkayUI port (editor/OkayPanels.cpp). The values are the scene's, copied in and back.
+        okaypanels::PostValues v;
+        v.filmic = rs.tonemap; v.exposure = post.exposure; v.tonemap = post.tonemap;
+        v.bloom = post.bloom; v.bloomThreshold = post.bloomThreshold; v.bloomIntensity = post.bloomIntensity;
+        v.bloomRadius = post.bloomRadius; v.bloomSoftness = post.bloomSoftness;
+        v.grading = post.grading; v.temperature = post.temperature; v.tint = post.tint; v.saturation = post.saturation; v.contrast = post.contrast;
+        const auto in3 = [](float d[3], const Vec3& s3) { d[0] = s3.x; d[1] = s3.y; d[2] = s3.z; };
+        in3(v.lift, post.lift); in3(v.gamma, post.gamma); in3(v.gain, post.gain);
+        v.vignette = rs.vignette; v.vignetteSmooth = post.vignetteSmooth; v.fxaa = post.fxaa;
+        v.ssao = post.ssao; v.ssaoRadius = post.ssaoRadius; v.ssaoIntensity = post.ssaoIntensity; v.ssaoPower = post.ssaoPower;
+        v.dof = post.dof; v.dofFocus = post.dofFocus; v.dofRange = post.dofRange;
+        okaypanels::PostProcessModel pm;
+        pm.v = &v;
         int presetCount = 0;
         const char* const* presets = okay::LookPresetNames(presetCount);
-        if (ImGui::BeginCombo("Look Preset", "Choose...")) {
-            for (int i = 0; i < presetCount; ++i)
-                if (ImGui::Selectable(presets[i])) ApplyLookPresetToScene(ed, presets[i]);
-            ImGui::EndCombo();
+        for (int i = 0; i < presetCount; ++i) pm.presets.push_back(presets[i]);
+        pm.chainActive = okay::PostActive(rs);
+        const auto noteOf = [](okay::RenderFeature f) { const char* n = okay::FeatureGapNote(f); return std::string(n ? n : ""); };
+        pm.vignetteNote = noteOf(okay::RenderFeature::VignetteSmoothness);
+        pm.ssaoNote = noteOf(okay::RenderFeature::SceneSsao);
+        pm.dofNote = noteOf(okay::RenderFeature::DepthOfField);
+        okaypanels::PostProcessIntent pin;
+        if (!(UseOkayUIBackend() && DrawPostProcessOkayUI(pm, pin))) pin = DrawPostProcessBodyImGui(pm, PanelViewHooks());
+        if (pin.changed) {
+            rs.tonemap = v.filmic; post.exposure = v.exposure; post.tonemap = v.tonemap;
+            post.bloom = v.bloom; post.bloomThreshold = v.bloomThreshold; post.bloomIntensity = v.bloomIntensity;
+            post.bloomRadius = v.bloomRadius; post.bloomSoftness = v.bloomSoftness;
+            post.grading = v.grading; post.temperature = v.temperature; post.tint = v.tint; post.saturation = v.saturation; post.contrast = v.contrast;
+            const auto out3 = [](Vec3& d3, const float s[3]) { d3.x = s[0]; d3.y = s[1]; d3.z = s[2]; };
+            out3(post.lift, v.lift); out3(post.gamma, v.gamma); out3(post.gain, v.gain);
+            rs.vignette = v.vignette; post.vignetteSmooth = v.vignetteSmooth; post.fxaa = v.fxaa;
+            post.ssao = v.ssao; post.ssaoRadius = v.ssaoRadius; post.ssaoIntensity = v.ssaoIntensity; post.ssaoPower = v.ssaoPower;
+            post.dof = v.dof; post.dofFocus = v.dofFocus; post.dofRange = v.dofRange;
+            ed.dirty = true;
         }
-        tip("Ready-made looks: fills the post-processing, sky, fog and weather settings\n(Sunset / Night / Foggy morning / Storm also aim the sun light).");
-        ImGui::SameLine();
-        if (ImGui::Button("Reset##look")) { ed.PushUndo(); okay::ResetLook(rs); ed.dirty = true; }
-        tip("Post-processing off, Colour sky, no fog, no weather. The sky gradient colours are kept.");
-        ImGui::TextDisabled(okay::PostActive(rs) ? "GPU post chain: on" : "GPU post chain: off (the frame is untouched)");
-
-        if (ImGui::Checkbox("Filmic Rendering (linear lighting + tonemap)", &rs.tonemap)) ed.dirty = true;
-        tip("Gamma-correct pipeline: lighting in linear space, a tonemap roll-off and sRGB output.\nOn by default; off gives the legacy flat response (and no tonemap curve).");
-        if (ImGui::SliderFloat("Exposure", &post.exposure, 0.1f, 4.0f, "%.2f")) ed.dirty = true;
-        {
-            const char* curves[] = {"None", "ACES", "Filmic"};
-            if (ImGui::Combo("Tonemap", &post.tonemap, curves, 3)) ed.dirty = true;
-            tip("How highlights above white roll off (needs Filmic Rendering).\nACES = punchy, Filmic = a softer shoulder, None = clip.");
-        }
-        if (ImGui::Checkbox("Bloom", &post.bloom)) ed.dirty = true;
-        if (post.bloom) {
-            if (ImGui::SliderFloat("Threshold##bloom", &post.bloomThreshold, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
-            tip("Brightness a pixel must exceed to glow (with Filmic Rendering, 1 = white).");
-            if (ImGui::SliderFloat("Intensity##bloom", &post.bloomIntensity, 0.0f, 3.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Radius##bloom", &post.bloomRadius, 0.25f, 3.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Softness##bloom", &post.bloomSoftness, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
-            tip("Softens the edge of the Threshold, so glow fades in instead of popping on.\n0 = the hard cut (the old look). OpenGL and Direct3D 11.");
-        }
-        if (ImGui::Checkbox("Colour Grading", &post.grading)) ed.dirty = true;
-        if (post.grading) {
-            if (ImGui::SliderFloat("Temperature", &post.temperature, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
-            tip("Cool (blue) to warm (orange).");
-            if (ImGui::SliderFloat("Tint", &post.tint, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Saturation", &post.saturation, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Contrast", &post.contrast, 0.5f, 2.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat3("Lift", &post.lift.x, -0.5f, 0.5f, "%.2f")) ed.dirty = true;
-            tip("Raises or lowers the blacks, per channel.");
-            if (ImGui::SliderFloat3("Gamma", &post.gamma.x, -1.0f, 1.0f, "%.2f")) ed.dirty = true;
-            tip("Brightens or darkens the mid-tones, per channel.");
-            if (ImGui::SliderFloat3("Gain", &post.gain.x, -0.5f, 0.5f, "%.2f")) ed.dirty = true;
-            tip("Scales the whites, per channel.");
-        }
-        if (ImGui::SliderFloat("Vignette", &rs.vignette, 0.0f, 1.0f, "%.2f")) ed.dirty = true;
-        tip("Darken the frame's edges and corners. 0 = off. Drawn by the post chain when it runs,\notherwise as an overlay that looks the same on every renderer.");
-        if (rs.vignette > 0.0f) {
-            if (ImGui::SliderFloat("Vignette Smoothness", &post.vignetteSmooth, 0.05f, 1.0f, "%.2f")) ed.dirty = true;
-            DrawRendererNote(okay::RenderFeature::VignetteSmoothness);
-        }
-        if (ImGui::Checkbox("Anti-aliasing (FXAA)", &post.fxaa)) ed.dirty = true;
-        if (ImGui::Checkbox("Ambient Occlusion (SSAO)", &post.ssao)) ed.dirty = true;
-        DrawRendererNote(okay::RenderFeature::SceneSsao);
-        if (post.ssao) {
-            if (ImGui::SliderFloat("Radius##ssao", &post.ssaoRadius, 0.05f, 3.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Intensity##ssao", &post.ssaoIntensity, 0.0f, 2.0f, "%.2f")) ed.dirty = true;
-            if (ImGui::SliderFloat("Power##ssao", &post.ssaoPower, 0.25f, 4.0f, "%.2f")) ed.dirty = true;
-            tip("Shapes the shadow. 1 = the old look. Higher: only deep creases get dark, edges stay crisp.\nLower: a wider, lighter shadow.");
-        }
-        if (ImGui::Checkbox("Depth of Field", &post.dof)) ed.dirty = true;
-        DrawRendererNote(okay::RenderFeature::DepthOfField);
-        if (post.dof) {
-            if (ImGui::DragFloat("Focus Distance", &post.dofFocus, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
-            if (ImGui::DragFloat("Focus Range", &post.dofRange, 0.1f, 0.1f, 500.0f, "%.1f")) ed.dirty = true;
-            tip("How far either side of the focus distance stays sharp.");
-        }
-        ImGui::Spacing();
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextDisabled("Linear lighting is not drawn on Direct3D 12 or the software renderer. Exposure, the tonemap curve, bloom, colour grading and anti-aliasing in this section are not drawn on Direct3D 12. The vignette amount is drawn on every renderer. The software renderer also has its own switches under Rendering below; the scene settings here take effect there too.");
-        ImGui::PopTextWrapPos();
+        if (pin.preset >= 0 && pin.preset < presetCount) ApplyLookPresetToScene(ed, presets[pin.preset]);
+        if (pin.reset) { ed.PushUndo(); okay::ResetLook(rs); ed.dirty = true; }
     }
 
     if (ImGui::CollapsingHeader("Sky", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -19700,11 +19667,14 @@ void DrawProjectSettings(EditorState& ed) {
     if (ImGui::Begin("Project Settings", &g_showProjectSettings)) {
         ImGui::TextDisabled("Defaults a new build/scene inherits. Saved with the project as you change it.");
         if (ImGui::CollapsingHeader("Player", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::InputText("Company##ps", g_project.company, sizeof(g_project.company));
-            ImGui::SetNextItemWidth(160);
-            ImGui::InputText("Version##ps", g_project.version, sizeof(g_project.version));
-            ImGui::SetNextItemWidth(110); ImGui::InputInt("Width##ps", &g_project.defaultWidth); ImGui::SameLine();
-            ImGui::SetNextItemWidth(110); ImGui::InputInt("Height##ps", &g_project.defaultHeight);
+            // Player, Physics and Rendering are drawn from models (shared/EditorPanelModels.hpp) by their Dear ImGui bodies
+            // (editor/EditorPanelViews.cpp) or, with the opt-in OkayUI backend, by their OkayUI ports (editor/OkayPanels.cpp).
+            okaypanels::PlayerSettingsModel plm;
+            plm.company = g_project.company; plm.companySize = sizeof(g_project.company);
+            plm.version = g_project.version; plm.versionSize = sizeof(g_project.version);
+            plm.width = &g_project.defaultWidth; plm.height = &g_project.defaultHeight;
+            okaypanels::PlayerSettingsIntent plin;
+            if (!(UseOkayUIBackend() && DrawPlayerSettingsOkayUI(plm, plin))) plin = DrawPlayerSettingsBodyImGui(plm, PanelViewHooks());
         }
         if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
             // Drawn from a model (shared/EditorPanelModels.hpp) by the Dear ImGui body (editor/EditorPanelViews.cpp) or, with the
@@ -19750,9 +19720,11 @@ void DrawProjectSettings(EditorState& ed) {
             }
         }
         if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::SliderFloat("Ambient##ps", &g_project.ambient, 0.0f, 1.0f);
-            ImGui::Checkbox("Skybox##ps", &g_project.skybox);
-            if (ImGui::Button("Apply to current scene##rend")) {
+            okaypanels::RenderingSettingsModel rm;
+            rm.ambient = &g_project.ambient; rm.skybox = &g_project.skybox;
+            okaypanels::RenderingSettingsIntent rin;
+            if (!(UseOkayUIBackend() && DrawRenderingSettingsOkayUI(rm, rin))) rin = DrawRenderingSettingsBodyImGui(rm, PanelViewHooks());
+            if (rin.apply) {
                 ed.scene().renderSettings.ambient = g_project.ambient;
                 ed.scene().renderSettings.skybox = g_project.skybox;
                 ed.dirty = true; ConsoleLog("Applied project rendering to the scene");

@@ -145,6 +145,39 @@ bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel& model, okaypane
     });
 }
 
+bool DrawImportSettingsOkayUI(const char* id, okaypanels::ImportSettingsModel& model, okaypanels::ImportSettingsState& state,
+                              okaypanels::ImportSettingsIntent& intent) {
+    return HostSection(id, [&](float x, float y, float w, float h) {
+        const okayuiscreens::ImportSettingsResult r = okayuiscreens::DrawImportSettings(model, state, x, y, w, h);
+        intent = r.intent;
+        return SectionDrawn{r.contentHeight, r.popup};
+    });
+}
+
+bool DrawPostProcessOkayUI(okaypanels::PostProcessModel& model, okaypanels::PostProcessIntent& intent) {
+    return HostSection("##okayui_post", [&](float x, float y, float w, float h) {
+        const okayuiscreens::PostProcessResult r = okayuiscreens::DrawPostProcess(model, x, y, w, h);
+        intent = r.intent;
+        return SectionDrawn{r.contentHeight, r.popup};
+    });
+}
+
+bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel& model, okaypanels::PlayerSettingsIntent& intent) {
+    return HostSection("##okayui_player", [&](float x, float y, float w, float h) {
+        const okayuiscreens::PlayerSettingsResult r = okayuiscreens::DrawPlayerSettings(model, x, y, w, h);
+        intent = r.intent;
+        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};
+    });
+}
+
+bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel& model, okaypanels::RenderingSettingsIntent& intent) {
+    return HostSection("##okayui_rendering", [&](float x, float y, float w, float h) {
+        const okayuiscreens::RenderingSettingsResult r = okayuiscreens::DrawRenderingSettings(model, x, y, w, h);
+        intent = r.intent;
+        return SectionDrawn{r.contentHeight, OkayUI::Rect{}};
+    });
+}
+
 bool DrawProfilerOkayUI(bool* open, const std::function<void(okaypanels::ProfilerModel&)>& fill, okaypanels::ProfilerIntent& intent) {
     return HostWindow("Profiler", open, "##okayui_profiler", [&](ImVec2 p, ImVec2 a) {
         okaypanels::ProfilerModel model;
@@ -168,5 +201,9 @@ bool DrawHistoryOkayUI(bool*, const okaypanels::HistoryModel&, okaypanels::Histo
 bool DrawTagsLayersOkayUI(const okaypanels::TagsLayersModel&, okaypanels::TagsLayersState&, okaypanels::TagsLayersIntent&) { return false; }
 bool DrawPhysicsSettingsOkayUI(okaypanels::PhysicsSettingsModel&, okaypanels::PhysicsSettingsIntent&) { return false; }
 bool DrawProfilerOkayUI(bool*, const std::function<void(okaypanels::ProfilerModel&)>&, okaypanels::ProfilerIntent&) { return false; }
+bool DrawImportSettingsOkayUI(const char*, okaypanels::ImportSettingsModel&, okaypanels::ImportSettingsState&, okaypanels::ImportSettingsIntent&) { return false; }
+bool DrawPostProcessOkayUI(okaypanels::PostProcessModel&, okaypanels::PostProcessIntent&) { return false; }
+bool DrawPlayerSettingsOkayUI(okaypanels::PlayerSettingsModel&, okaypanels::PlayerSettingsIntent&) { return false; }
+bool DrawRenderingSettingsOkayUI(okaypanels::RenderingSettingsModel&, okaypanels::RenderingSettingsIntent&) { return false; }
 }
 #endif

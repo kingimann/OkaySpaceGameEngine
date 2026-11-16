@@ -293,20 +293,40 @@ struct IdentTable {
 };
 const IdentTable kIdent;
 
-// Eight ASCII bytes at once (SWAR: plain 64-bit integer arithmetic). EightDigits tells whether all eight are '0'..'9'
-// (each byte is checked to be >= '0' by a subtraction and <= '9' by an addition whose high bit would show otherwise);
-// EightValue turns them into their value, first character most significant, by combining neighbours in three
-// multiply-and-shift steps (pairs, then fours, then the eight). Worked out here; FastDecimalScan was checked against
-// FastDecimal + strtod on millions of random tokens, and the digest of every ASCII file is unchanged.
+// Eight ASCII bytes at once (SWAR: plain 64-bit integer arithmetic). LeadingDigits finds the first byte that is not
+// '0'..'9' (each byte is checked to be >= '0' by a subtraction and <= '9' by an addition whose high bit would show
+// otherwise; a borrow or carry can only come from a byte that is itself flagged); EightValue turns eight digits into
+// their value, first character most significant, by combining neighbours in three multiply-and-shift steps (pairs,
+// then fours, then the eight). Worked out here; FastDecimalScan was checked against FastDecimal + strtod on millions
+// of random tokens, and the digest of every ASCII file is unchanged.
 inline std::uint64_t Load8(const char* p) { std::uint64_t w; std::memcpy(&w, p, 8); return w; }   // little endian
-inline bool EightDigits(std::uint64_t w) {
-    return (((w - 0x3030303030303030ull) | (w + 0x4646464646464646ull)) & 0x8080808080808080ull) == 0;
-}
 inline std::uint64_t EightValue(std::uint64_t w) {
     w -= 0x3030303030303030ull;                                    // bytes 0..9
     w = ((w * (10 * 256 + 1)) >> 8) & 0x00FF00FF00FF00FFull;        // 4 numbers 0..99
     w = ((w * (100 * 65536 + 1)) >> 16) & 0x0000FFFF0000FFFFull;    // 2 numbers 0..9999
     return (w * (10000ull * 4294967296ull + 1)) >> 32;             // 0..99999999
+}
+
+// How many of the 8 bytes (first byte = lowest) are digits before the first non-digit: 0 to 8.
+inline int LeadingDigits(std::uint64_t w) {
+    const std::uint64_t nd = ((w - 0x3030303030303030ull) | (w + 0x4646464646464646ull)) & 0x8080808080808080ull;
+    if (!nd) return 8;
+    // the lowest flag is bit 8k + 7; (1 << 8k) times 0x0001020304050607 has the byte 7 - (7 - k) = k on top
+    const std::uint64_t lowest = nd & (0 - nd);
+    return (int)(((lowest >> 7) * 0x0001020304050607ull) >> 56);
+}
+// Appends k (1..8) digits held in the low k bytes of w to m: m * 10^k + their value. Returns false when the result
+// would reach `limit` (FastDecimal's 15-digit rule; also keeps the product from overflowing).
+inline bool AppendDigits(std::uint64_t& m, std::uint64_t w, int k, std::uint64_t limit) {
+    static const std::uint64_t kP[9] = {1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000};
+    if (k < 8) {   // move the k digits to the top and fill the bottom with '0' bytes, which add nothing
+        const int sh = (8 - k) * 8;
+        w = (w << sh) | (0x3030303030303030ull >> (64 - sh));
+    }
+    const std::uint64_t p = kP[k];
+    if (m > limit / p) return false;   // then m * p + v >= limit
+    m = m * p + EightValue(w);
+    return m < limit;
 }
 
 const char* FastDecimalScan(const char* p, const char* end, double& out) {
@@ -319,10 +339,14 @@ const char* FastDecimalScan(const char* p, const char* end, double& out) {
     bool neg = false;
     if (p < end && (*p == '+' || *p == '-')) { neg = *p == '-'; ++p; }
     std::uint64_t m = 0; int scale = 0; bool any = false;
-    while (end - p >= 8 && EightDigits(Load8(p))) {
-        if (m >= 10000000ull) return nullptr;
-        m = m * 100000000ull + EightValue(Load8(p)); any = true; p += 8;
-        if (m >= kMax) return nullptr;
+    // Digit runs are taken up to 8 at a time while 8 bytes can be read; the last few bytes of the input one by one.
+    while (end - p >= 8) {
+        const std::uint64_t w = Load8(p);
+        const int k = LeadingDigits(w);
+        if (k == 0) break;
+        if (!AppendDigits(m, w, k, kMax)) return nullptr;
+        any = true; p += k;
+        if (k < 8) break;
     }
     while (p < end && (unsigned)(*p - '0') < 10u) {
         any = true;
@@ -331,10 +355,13 @@ const char* FastDecimalScan(const char* p, const char* end, double& out) {
     }
     if (p < end && *p == '.') {
         ++p;
-        while (end - p >= 8 && EightDigits(Load8(p))) {
-            if (m >= 10000000ull) return nullptr;
-            m = m * 100000000ull + EightValue(Load8(p)); any = true; p += 8; scale -= 8;
-            if (m >= kMax) return nullptr;
+        while (end - p >= 8) {
+            const std::uint64_t w = Load8(p);
+            const int k = LeadingDigits(w);
+            if (k == 0) break;
+            if (!AppendDigits(m, w, k, kMax)) return nullptr;
+            any = true; p += k; scale -= k;
+            if (k < 8) break;
         }
         while (p < end && (unsigned)(*p - '0') < 10u) {
             any = true;
@@ -434,8 +461,10 @@ struct Text {
         ++pos;
         if (cnt * 8 > lim->maxArrayBytes || arrayBytes + cnt * 8 > lim->maxArrayBytes) return Fail("arrays exceed the size limit");
         out.type = 'a';
-        std::vector<double> vals;
-        vals.reserve(cnt < (1u << 20) ? cnt : (1u << 20));
+        // Written through an index into a vector sized from the declared count (capped: a file can lie), grown by
+        // doubling if the file has more values than it declared, trimmed at the end.
+        std::vector<double> vals(cnt < (1u << 20) ? cnt : (1u << 20));
+        std::size_t nv = 0;
         const std::size_t cap = std::min<std::size_t>(lim->maxArrayBytes / 8, 0xFFFFFFFEu);
         for (;;) {
             // spaces, line ends and commas between values (comments too, as SkipSpace does)
@@ -450,8 +479,9 @@ struct Text {
             double d;
             if (const char* e = FastDecimalScan(s + pos, s + n, d)) {   // the usual case: one pass over the number
                 pos = (std::size_t)(e - s);
-                vals.push_back(d);
-                if (vals.size() > cap) return Fail("arrays exceed the size limit");
+                if (nv == vals.size()) vals.resize(vals.size() < 16 ? 16 : vals.size() * 2);
+                vals[nv++] = d;
+                if (nv > cap) return Fail("arrays exceed the size limit");
                 continue;
             }
             const std::size_t b = pos;
@@ -463,9 +493,11 @@ struct Text {
                 d = detail::StrToD(tok.c_str(), &end);
                 if (!end || *end) return Fail("bad number in array block");
             }
-            vals.push_back(d);
-            if (vals.size() > cap) return Fail("arrays exceed the size limit");
+            if (nv == vals.size()) vals.resize(vals.size() < 16 ? 16 : vals.size() * 2);
+            vals[nv++] = d;
+            if (nv > cap) return Fail("arrays exceed the size limit");
         }
+        vals.resize(nv);
         arrayBytes += vals.size() * 8;
         out.arr.type = 'd'; out.arr.count = (std::uint32_t)vals.size(); out.arr.data = (const std::uint8_t*)vals.data();
         doc->numbers.push_back(std::move(vals));   // the buffer stays where it is

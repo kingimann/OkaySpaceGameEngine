@@ -22,13 +22,13 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
   digits; hover for the whole GUID and the content hash), how many assets it uses (and how many through the whole graph), how
   many use it, its tags, and an orange warning when it names a file that is not there (hover to see which). The same warning
   shows as a small triangle on the tile or row.
-- **Create.** The **+** button and the right-click menu (grouped: folder, code, scenes and objects, looks and data)
-  create a folder, script, visual script, scene, prefab, material, data asset or item. Each one asks for a name first.
+- **Create.** The **+** button and the right-click menu (grouped: folder, code, scenes and objects, story and AI, looks and data)
+  create a folder, script, visual script, scene, prefab, dialogue, quest file, behavior tree, cutscene, material, data asset or item. Each one asks for a name first.
   A new visual script opens in the Visual Script editor under that name.
 - **Rename (F2).** Keeps the file type. Every scene, prefab, material and other text asset that used the old name is
   updated, the `.okaymeta` (the asset's GUID) moves with the file, colour labels follow, and the open scene is
   updated too.
-- **Move.** Drag onto a folder (in the tree or the grid). References are updated the same way. Several selected
+- **Move.** Drag onto a folder (in the tree or the grid), or right-click > **Move to...** and pick the folder. References are updated the same way. Several selected
   items move together.
 - **Copy, cut, paste, duplicate.** Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+D (or the menu). A name that is taken gets a number.
 - **Delete (Del).** Asks first and lists the assets that use it. Deleted items go to `<project>/.okay/trash` (the last
@@ -59,7 +59,7 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
   FAVOURITES on the left. They are kept in the project (`.okay/favourites.txt`) and follow renames and moves.
 - **Reimport** reads a file again after you changed it in another program.
 - **Keyboard.** Arrow keys move the selection (Shift adds), Enter opens, Backspace goes up a folder, Home and End jump,
-  Ctrl+A selects all. After you click in the folder tree, Up and Down walk the folders, Right opens a folder (then
+  Ctrl+A selects all, F5 refreshes. After you click in the folder tree, Up and Down walk the folders, Right opens a folder (then
   steps into it) and Left closes it (then goes up).
 - **Drag and drop.** Drag assets into the Scene view, the Hierarchy and the Inspector's asset fields (payload `ASSET_PATH`).
   Drop files or folders from your file manager onto the editor to import them into the folder you are looking at
@@ -68,6 +68,110 @@ The Project panel is the editor's asset browser: a folder tree on the left, the 
 - Changes made outside the editor show up on their own: the panel asks the database for an incremental scan every couple of
   seconds (longer on big projects; files whose size and time did not change are not read again, and nothing is rebuilt when
   nothing changed). There is no file watcher, so a change can take that long to appear.
+
+## Right-click menus
+
+Right-click an asset or folder in the grid or list, a folder in the tree on the left (the **Assets** folder too), a starred item
+under FAVOURITES, or the empty space of the folder you are looking at. The toolbar **+** shows the same Create list. Every item
+does the same thing wherever you reach it. The lists are made from a plain description (`editor/ProjectContextModel.hpp`, tested
+without any window), so the order, the labels and what is greyed follow rules:
+
+- An item that can never apply to what you clicked is left out (Find References on a folder). An item that applies but cannot run
+  right now stays in, greyed, and its tooltip says why ("Select one item to rename it.", "Nothing was copied or cut yet.", "Open a
+  project first.", "The Assets folder itself can't be changed.").
+- With several items selected the labels count them (**Delete 3 Items**, **Duplicate 3 Items**, **Cut / Copy 3 Items**,
+  **Reimport 3 Items**, **Add 3 Items to Favourites**), the first line says **3 items selected**, and items that only make sense for one
+  item (Open, Rename, Properties, Find References, Tags) are greyed or left out.
+- Hover any item for a line about what it does. The name of the file manager follows the system: **Show in Explorer** on Windows,
+  **Show in File Manager** elsewhere.
+- A menu in the folder tree or the Favourites list acts on the one folder or file you clicked. It does **not** select it (it may be in a
+  folder that is not on screen), so a later Del cannot reach something you cannot see. In the grid, right-click an item outside the
+  selection and the selection becomes that item; right-click one inside it and the whole selection is used.
+- If the folder on screen is renamed or moved (from the grid, the tree, Move to... or Ctrl+Z) the panel follows it; if it is deleted, or
+  vanishes behind the editor's back, the panel goes to the nearest folder above it that is still there. A folder that is gone has
+  Create, Paste and Import greyed ("This folder is not there any more.").
+
+**An asset** (one item or a selection)
+
+| Item | What it does |
+|---|---|
+| Open / Open Prefab | Opens it in its editor (scene: loads it; script: the Script Editor; a model: adds it to the scene; and so on). Enter does the same. One item only. Greyed for a type with no editor window (pictures, audio, fonts): "Use Open with Default App." |
+| Place in Scene, Place as Child of Selected, Create Variant, Validate Prefab | Prefab only. Place as Child is greyed until an object is selected in the Hierarchy. |
+| Add to Open Scene, **Set as Start Scene** | Scene only. Set as Start Scene puts the scene first in Scenes In Build and ticks it (the Scene Manager shows and saves the list), so a built game starts there. It is greyed when the scene already starts the game. |
+| Make Playable Character, Edit Script | Model and script. |
+| **Open in External Editor** | Text files (scripts, scenes, prefabs, materials, data, story and AI files): Visual Studio Code when it is installed, else Notepad on Windows (`open -t` on macOS, the first text editor found on Linux). The editor is named, never asked from the file type, so the file is only edited. Not offered for a type that runs code (below). |
+| **Open with Default App** | The program the system uses for that type. **Greyed for a type that runs code**: programs, installers, shortcuts and script files (`.exe .com .scr .bat .cmd .msi .lnk .url .reg .inf .dll .ps1 .vbs .vbe .js .jse .wsf .wsh .hta .jar .chm`, macro Office files, `.sh .command .app .pkg .desktop .appimage .py .rb .pl` and the rest of the list in `RunnableExtensions`; the last extension decides and Windows' trailing dots and spaces are cut, so `a.png.exe` and `setup.exe.` count; on Linux and macOS a file with no extension that has an execute bit counts too). The tooltip says "This file type can run code; open it from the file manager if you trust it." A project's assets come from outside (the marketplace, a zip), so the panel never starts them for you; Show in Explorer still works. The same check runs again inside the launcher as a last gate. |
+| Rename (F2), Duplicate (Ctrl+D), Cut (Ctrl+X), Copy (Ctrl+C), Paste (Ctrl+V), Delete (Del) | As in "What you can do" above. Paste shows how many items it will paste and is greyed with "Nothing was copied or cut yet." when the clipboard is empty. |
+| **Move to...** | Opens a folder picker over the project's folders. Folders the items cannot go to (the item itself, a folder inside it, where it already is) are greyed with the reason. Pressing Move moves them like a drag does: a taken name gets a number, links are updated, Ctrl+Z moves them back. |
+| Find References, Show Dependencies, Find References in Scene | One file. As above. |
+| Reimport | Reads the file again. For a folder it is **Reimport All in Folder** (every asset inside, below it too). |
+| Add / Remove Favourites, Tags, Label | As above. Favourites and Label apply to the whole selection. |
+| **Copy Text** | **Name**, **Relative Path** (`Assets/Models/Hero.fbx`, the way scenes write a path) or **Full Path**. With several items selected, one per line. |
+| Show in Explorer | Opens the folder; on Windows and macOS the file is picked there. No command line is built (Windows: `ShellExecuteW` with the wide path and Explorer named; macOS and Linux: the program is started directly, no shell), so no character in a name (`$`, `%`, a quote, a space, a backtick) matters. |
+| **Properties...** | A window with the type, folder, size, date (UTC, with "2 days ago"), GUID, whether a `.okaymeta` keeps it, how many assets it uses and how many use it, broken references (in orange), tags, label, favourite, and both paths. Copy Path puts the `Assets/...` path on the clipboard. For a folder: how many files and folders it holds and how big it is. |
+
+**A folder** gets the same items plus **Create** (the submenu, made inside that folder, then the panel goes there; **Standard Folders**
+is made all together or not at all, inside Assets only, and one Ctrl+Z takes them away),
+**Paste Into**, **Reimport All in Folder**, and for the tree **Expand All Subfolders**, **Collapse All Subfolders** and **Collapse Other
+Folders** (they only change what the tree on the left shows). The **Assets** folder in the tree has the same menu with Rename,
+Duplicate, Cut, Move, Delete and Favourites greyed ("The Assets folder itself can't be changed.").
+
+**Favourites** list: **Open Folder** / **Show in Project**, **Remove from Favourites**, Copy Text, Show in Explorer, Properties.
+
+**Empty space**
+
+| Item | What it does |
+|---|---|
+| Create | The list below, made in the folder being shown. |
+| Paste, Undo (Ctrl+Z) | Paste shows the count. Undo names the last operation ("Undo Rename Hero.png") and is greyed when there is nothing to undo. |
+| **Import New Asset...** | The same file picker as the toolbar's Import button; the files are copied into this folder. |
+| **Refresh** (F5) | Looks at the disk now (the panel also does it every few seconds). |
+| **Select All** (Ctrl+A) | Selects everything listed. |
+| View | Grid, List, and **Small / Medium / Large Tiles** (the tile sizes are for the grid). |
+| Sort By | Name, Type, Size, Date Modified (ticked). |
+| Up One Folder, Add / Remove Folder from Favourites, Copy Text, Show in Explorer | For the folder being shown. |
+| **Open Project Folder in Explorer** | The folder that holds `Assets` and `project.okayproj`. |
+| **Properties...** | Of the folder being shown. |
+
+While a smart filter is showing (All Models, Recently Changed, ...) the list is not one folder, so Create, Paste, Import, Up and the
+folder's Favourites are greyed and the reason says how to leave the smart view (the **x** next to the path at the top).
+
+**Create** (the submenu of a folder, the empty space and the toolbar **+**): Folder; Code: Script, Visual Script; Scenes and objects:
+Scene, Prefab (or **Prefab from Selection** while an object is selected in the Hierarchy); **Story and AI**: **Dialogue** (a conversation
+graph with one starting line, opens in the Dialogue window), **Quest File** (one example quest, opens in the Dialogue window's Quests tab),
+**Behavior Tree** (a Selector with a Wait under it, opens in the Behavior Tree window), **Cutscene (Timeline)** (an empty sequence, opens in the
+Timeline window); Looks and data: Material, Data Asset, Item, Loot Table, Recipe Book; Standard Folders. Everything except the last four asks
+for a name first (a name that is taken starts at "Name 2"); nothing is written over an existing file. The last four are made by the
+Items window: **Loot Table** and **Recipe Book** make a file in the folder whose menu you used, named "Loot Table" (then "Loot Table 2", ...)
+with no name prompt (rename it with F2), and open it there; **Item** adds an item to the project's item list and makes no file in the
+folder. **Standard Folders** makes Scenes, Scripts, Prefabs, Materials, Models, Textures and Audio, leaving any that exist alone.
+
+**Not in the menus, on purpose:** *Export Package* (the editor has no package exporter yet; Build Settings builds a game, not a package),
+*Select Dependencies* (the grid shows one folder, and a selection that reached into other folders could delete files you
+cannot see; **Show Dependencies** lists them and a click shows each one), a *Localization table* in Create (a project has one string table,
+`strings.okayloc`, edited in the Localization window) and *Animation* (animation clips come from a model or are captured on a model, not
+made empty). *Read-only package folders* do not exist in a project today, so nothing is greyed for them.
+
+**Pictures.** `docs/images/project_menus/` holds renders of these menus. They are **not screenshots of the editor window**: the real item
+lists (`ProjectContextModel.hpp`) are drawn by the real menu code (`ProjectMenuDraw.cpp`) with Dear ImGui into a software surface, using
+ImGui's default dark look and built-in font (made by `tools/project_menu_shots.cpp`, steps in its first lines), so colours and fonts differ
+from the editor's skin. The items, their order, what is greyed and the tooltips are the real ones.
+
+| Picture | What it shows |
+|---|---|
+| ![An asset](images/project_menus/asset-menu-picture.png) | Right-click a picture: Open greyed (no editor window for pictures), Open with Default App, the edit items, Move to..., Reimport, Tags, Label, Copy Text, Show in Explorer, Properties. |
+| ![Several items](images/project_menus/asset-menu-three-selected.png) | Three pictures selected, two files copied earlier: "Delete 3 Items", "Paste 2 Items", Rename greyed. |
+| ![A script](images/project_menus/asset-menu-script.png) | A script: Edit Script, **Open in External Editor** (an editor is named, never "open") and Open with Default App. |
+| ![A program](images/project_menus/asset-menu-program-or-script.png) | `tool.bat`: **Open with Default App is greyed** with the reason in its tooltip, and there is no Open in External Editor. |
+| ![A folder](images/project_menus/folder-menu-create.png) | A folder in the grid with **Create** open (grouped; Loot Table and Recipe Book make a file in this folder). |
+| ![The Assets folder](images/project_menus/tree-assets-menu.png) | **Assets** in the folder tree: Rename, Duplicate, Cut, Copy, Move to..., Delete and Favourites are greyed. |
+| ![Empty space](images/project_menus/empty-space-menu-view.png) | Empty space with **View** open (Grid, List, tile sizes ticked), Undo naming the last operation. |
+| ![A smart view](images/project_menus/empty-space-smart-view.png) | Empty space while a smart filter shows: Create, Paste, Undo, Import and Properties are greyed. |
+| ![The Create list](images/project_menus/create-menu.png) | The Create list (also the toolbar **+**). |
+| ![Favourites](images/project_menus/favourites-menu.png) | A starred folder under FAVOURITES. |
+| ![Properties of a picture](images/project_menus/properties-window.png) | **Properties...** of a picture: size, date in UTC with "2 days ago", GUID, uses, tags, label, both paths. |
+| ![Properties of a scene](images/project_menus/properties-scene.png) | A scene with broken references (orange) and a start scene note. |
+| ![Properties of a folder](images/project_menus/properties-folder.png) | A folder: how many files and folders it holds and how big it is. |
 
 ## Safety
 
@@ -82,9 +186,20 @@ spaces and non-English letters are fine; names the operating system would refuse
   lists, favourites, import from outside, the clipboard. The index, GUIDs, the dependency graph, labels and import settings are
   `okay::AssetDatabase`'s and the pictures `okay::ThumbnailCache`'s (see `asset_database.md`); this class owns one of each per project.
   There is no scan of the folder of its own. A test hook makes any file step fail.
-- `editor/ProjectPanelUI.hpp/.cpp`: the name prompt, delete confirmation, references list and import-settings editor.
-- `DrawProject` in `editor/main.cpp` draws the panel and calls the above.
-- Tests: `tests/test_project_panel.cpp` (ctest name `project_panel`: file operations, references, failure injection) and `tests/test_project_panel_db.cpp` (`project_panel_db`: the listing against a folder as files change, search and filters, find references, thumbnails, rename / move / delete keeping GUIDs, and the refresh time of a 5,000-asset project).
+- `editor/ProjectPanelUI.hpp/.cpp`: the name prompt, delete confirmation, references list, import-settings editor, the **Move to...** folder
+  picker and the **Properties** window.
+- `editor/ProjectMenuDraw.cpp`: `DrawContextMenu` (draws a menu list with ticks, shortcuts, submenus and the tooltips) and `DrawPropertyRows`;
+  ImGui only, so the screenshots below are drawn with this very code.
+- `editor/ProjectContextModel.hpp`: the right-click menus as plain data (header-only, no window code), plus the pure helpers behind them:
+  Copy Text, the `Assets/...` path, which file types run code, the Move to... rule, Set as Start Scene and the Properties rows. These checks
+  only decide what is greyed: the file operations check every path again, with links resolved, before they touch anything.
+- `editor/ProjectPaths.hpp`: path text helpers shared by the menus and `ProjectBrowser.cpp` (`Normalize`, `SameOrInside`, `Outermost` of a
+  selection in n log n time, `NearestFolder`); header-only, tested without the engine.
+- `editor/LaunchFile.hpp/.cpp`: starting other programs on purpose, with no shell (`OpenWithDefaultApp`, `OpenInTextEditor`, `Reveal`).
+- `editor/ProjectNewAssets.hpp`: the starting text of a new dialogue, quest file, behavior tree and cutscene (written by the same classes the
+  windows save with).
+- `DrawProject` in `editor/main.cpp` draws the panel and calls the above; one function (`runAction`) runs the chosen id for every menu.
+- Tests: `tests/test_project_panel.cpp` (ctest name `project_panel`: file operations, references, failure injection) and `tests/test_project_panel_db.cpp` (`project_panel_db`: the listing against a folder as files change, search and filters, find references, thumbnails, rename / move / delete keeping GUIDs, and the refresh time of a 5,000-asset project). The menus: `tests/test_project_context_model.cpp` (`project_context_model`: order, labels, plurals, greyed items and their reasons, no doubled separators, Copy Text, the `Assets/...` path, which file types run code, path text, the Move to... rule, Set as Start Scene, dates, the Properties rows; header-only, no engine; includes the types that run code, `Outermost` of a nested selection, `NearestFolder`, the Move to... rule on a 20,000-item selection) and `tests/test_project_menu_ops.cpp` (`project_menu_ops`: the new Create files read back and validated, Standard Folders, Reimport All in Folder, folder numbers, Duplicate of a whole selection (one undo, nothing copied twice), Paste on a selection, which types are text (`.js` is not), and that the Move to... picker's rule and `Browser::Move` agree)) and `tests/test_launch_file.cpp` (`launch_file`, Linux only: the launcher with fake `xdg-open` and `code` programs on PATH; a file name with `$(...)`, backticks, quotes or `;` arrives as one argument, a name that starts with `-` is not an option, programs and scripts are refused before anything starts, the text editor is named, a missing file or program is said in words, a relative PATH entry is ignored).
 
 ## Things to know
 

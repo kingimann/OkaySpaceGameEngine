@@ -83,7 +83,7 @@ void RegisterUIButton() {
 
 void RegisterTextRenderer() {
     PropertyBuilder<TextRenderer> b("TextRenderer", "text", "UI");
-    b.AddBool("richText", &TextRenderer::richText).Tooltip("Read [color=#ff0000]...[/color], [b]...[/b] and [i]...[/i] in the text. Screen-space text only: 3D text ignores it")
+    b.AddBool("richText", &TextRenderer::richText).Tooltip("Read [color=#ff0000]...[/color], [b]...[/b], [i]...[/i] and [size=150]...[/size] in the text (screen-space and world text)")
      .AddString("text", &TextRenderer::text).Tooltip("The text shown")
      .AddAssetPath("fontPath", &TextRenderer::fontPath, "font").Tooltip("TTF or OTF font file (empty = the built-in bitmap font)")
      .AddColor("color", &TextRenderer::color).Range(0, 1, 0.01).Tooltip("Main colour")

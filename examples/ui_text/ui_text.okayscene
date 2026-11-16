@@ -1,0 +1,194 @@
+okayscene 3
+name "Nameplates and a rich-text sign"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Main Camera"
+  guid "d9d78255fca781ad25adcc0b4f1aae05"
+  active 1
+  parent -1
+  transform 0 0 -10 0 0 0 1 1 1 1
+  camera 0 5 60 0.47058824 0.65882355 0.8392157 1 1 1 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end
+gameobject 1 "Ground"
+  guid "046348e7bfb38c771837641059f3f3d0"
+  active 1
+  parent -1
+  transform 0 -3.9 0 0 0 0 1 1 1 1
+  sprite 35 0.2901961 0.50980395 0.25882354 1 24 2.2 "" 0 0 1 1 0 0 0 0 0
+end
+gameobject 2 "Sign Post"
+  guid "3e1a5f6391171bde13f38bf09ca4773b"
+  active 1
+  parent -1
+  transform 0 -0.65 0 0 0 0 1 1 1 1
+  sprite 35 0.36078432 0.23529412 0.14117648 1 0.5 4.3 "" 0 0 1 1 0 0 0 0 0
+end
+gameobject 3 "Sign Board"
+  guid "4b2c8a987dfbb266959d53828b6bd851"
+  active 1
+  parent -1
+  transform 0 2.7 0 0 0 0 1 1 1 1
+  sprite 35 0.27450982 0.1764706 0.10980392 1 10.2 2.4 "" 0 0 1 1 1 0 0 0 0
+end
+gameobject 4 "Sign Text"
+  guid "de9040f1c91689a9d83a28bbd639dc8b"
+  active 1
+  parent -1
+  transform -4.6 3.65 0 0 0 0 1 1 1 1
+  text "[size=160][b]OKAY TOWN[/b][/size]
+[color=#ffd040]Goblins and orcs ahead[/color]
+[color=#ff6060][b]Danger![/b][/color] [i]watch the bars[/i]
+[size=70]1 2 hurt   3 level up   H heal[/size]" 0.9607843 0.9411765 0.88235295 1 0.045 0 12 12 0 1 0.078431375 0.047058824 0.023529412 0.8627451 1 1 0 0 0 0 0 0.9019608 0 220 48 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+  uix rich=1
+end
+gameobject 5 "Goblin Scout"
+  guid "70ff3c924081f5424abe3e5c984b3aeb"
+  active 1
+  parent -1
+  transform -6.2 -1.8 0 0 0 0 1 1 1 1
+  sprite 35 0.34509805 0.6509804 0.29803923 1 1.5 2 "" 0 0 1 1 2 0 0 0 0
+  stats 40 40 50 50 3 0 100 10 0 5 5
+end
+gameobject 6 "Nameplate"
+  guid "74edcbab854f257a3b267b62c11d4a4f"
+  active 1
+  parent 5
+  transform 0 1.25 0 0 0 0 1 1 1 1
+  worldui3d 100 1 1 1
+end
+gameobject 7 "SwatchPlate"
+  guid "9f07ce74b3d23fc32a92f3017e48ffb6"
+  active 1
+  parent 6
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel -110 -62 220 62 0.0627451 0.07058824 0.09411765 0.74509805 0 12 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 1 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+end
+gameobject 8 "Name"
+  guid "1083b656b53b985ed9ded816438826b3"
+  active 1
+  parent 7
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Goblin Scout" 0.9098039 0.92156863 0.9411765 1 2.5 1 12 6 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 1 124 30 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 1 0.6 2.5
+  uibind "{owner.name|Goblin}"
+end
+gameobject 9 "SwatchLevel"
+  guid "61cfc89f7d595b296f02ef37235ad406"
+  active 1
+  parent 7
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel -12 9 64 26 0.9411765 0.7058824 0.27450982 0.22 2 13 1 0.9411765 0.7058824 0.27450982 0.55 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 3 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+end
+gameobject 10 "Label"
+  guid "299a4b9c79c723351bcf051464860664"
+  active 1
+  parent 9
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Lv 3" 0.9764706 0.88235295 0.70980394 1 1.875 1 0 0 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 64 26 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 1 0.6 1.875
+  uibind "Lv {owner.level|1}"
+end
+gameobject 11 "Health"
+  guid "bc85f44d478339f6263460d8cb75ae58"
+  active 1
+  parent 7
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibarbind "owner.healthFrac" 0 1
+  uiprogress 12 44 196 10 1 1 1 1 0.10980392 0.8862745 0.32156864 0.32156864 1 0 3 0 1 1 1 1 0 3 0 0.8235294 0.78431374 0.3529412 1 0 3 0 0.8627451 0.3529412 0.3137255 1 0 0.8862745 0.32156864 0.32156864 1 0.28235295 0.76862746 0.5019608 1 ""
+  uivariant variant=3
+  comporder "UIStyleVariant" "UIProgressBar" "UIBarBind"
+end
+gameobject 12 "Orc Chief"
+  guid "ea0ca142cbd245d9de550ba7ab787202"
+  active 1
+  parent -1
+  transform 6.2 -1.5 0 0 0 0 1 1 1 1
+  sprite 35 0.6509804 0.32941177 0.2509804 1 2.2 2.6 "" 0 0 1 1 2 0 0 0 0
+  stats 120 120 50 50 12 0 100 10 0 5 5
+end
+gameobject 13 "Nameplate"
+  guid "5679b8a786967e5e0e242146784cf95d"
+  active 1
+  parent 12
+  transform 0 1.55 0 0 0 0 1 1 1 1
+  worldui3d 100 1 1 1
+end
+gameobject 14 "SwatchPlate"
+  guid "4a8777bfbf9f0a0c129aedf0974d93eb"
+  active 1
+  parent 13
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel -110 -62 220 62 0.0627451 0.07058824 0.09411765 0.74509805 0 12 1 1 1 1 0.08627451 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 1 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+end
+gameobject 15 "Name"
+  guid "b6cf0809c7f06b6a6438b28f7290640f"
+  active 1
+  parent 14
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Orc Chief" 0.9098039 0.92156863 0.9411765 1 2.5 1 12 6 0 0 0 0 0 0.78431374 1 1 0 0 0 0 0 0.9019608 1 124 30 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 1 0.6 2.5
+  uibind "{owner.name|Goblin}"
+end
+gameobject 16 "SwatchLevel"
+  guid "cf5ec9b3b35b871658a7dc1ca596e1cc"
+  active 1
+  parent 14
+  transform 0 0 0 0 0 0 1 1 1 1
+  uipanel -12 9 64 26 0.9411765 0.7058824 0.27450982 0.22 2 13 1 0.9411765 0.7058824 0.27450982 0.55 0 0.039215688 0.047058824 0.07058824 0.78431374 0 0 0 0 0.47058824 6 6 3 0 0 0 0 0.47058824 0.7058824 1 0.7058824 0 1 1 1 0.15686275 15
+end
+gameobject 17 "Label"
+  guid "11b247a546067b244332ae6705431b74"
+  active 1
+  parent 16
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Lv 12" 0.9764706 0.88235295 0.70980394 1 1.875 1 0 0 0 0 0 0 0 0.78431374 1 1 1 0 0 0 0 0.9019608 0 64 26 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 1 0.6 1.875
+  uibind "Lv {owner.level|1}"
+end
+gameobject 18 "Health"
+  guid "3c5d6040d0b5486f7dcb76d633e08c17"
+  active 1
+  parent 14
+  transform 0 0 0 0 0 0 1 1 1 1
+  uibarbind "owner.healthFrac" 0 1
+  uiprogress 12 44 196 10 1 1 1 1 0.10980392 0.8862745 0.32156864 0.32156864 1 0 3 0 1 1 1 1 0 3 0 0.8235294 0.78431374 0.3529412 1 0 3 0 0.8627451 0.3529412 0.3137255 1 0 0.8862745 0.32156864 0.32156864 1 0.28235295 0.76862746 0.5019608 1 ""
+  uivariant variant=3
+  comporder "UIStyleVariant" "UIProgressBar" "UIBarBind"
+end
+gameobject 19 "Canvas"
+  guid "a8fb23fe9ca252fc20e29e0aac41c90c"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  canvas 1 1280 720 0.5 1 0 1 1 0 1280 720 100 1 1
+end
+gameobject 20 "EventSystem"
+  guid "2e92a3847963fbd424d3abe90fdce626"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  eventsystem
+end
+gameobject 21 "Hints"
+  guid "c4364b356606123a1070f4cf76f5d277"
+  active 1
+  parent 19
+  transform 0 0 0 0 0 0 1 1 1 1
+  text "Press Play.   1 hurts the Goblin    2 hurts the Orc    3 levels the Goblin up    H heals both" 0.98039216 0.9647059 0.9098039 1 2.25 1 0 -14 7 1 0.039215688 0.078431375 0.039215688 0.9019608 1 1 1 0 0 0 0 0.9019608 1 1200 30 1 0 0 0 0 0.54901963 0 0 0 0 0 0 0.47058824 0.627451 1 1 -1 0 0 "" 0 0.02 4
+end
+gameobject 22 "Director"
+  guid "c4e38142f4bc057183c40d9e301e2359"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  script "okayscript" "var t = 0;
+var hits = 0;
+function update(dt) {
+  t = t + dt;
+  if (key_down(\"1\")) { hurt(\"Goblin Scout\", 8); }
+  if (key_down(\"2\")) { hurt(\"Orc Chief\", 12); }
+  if (key_down(\"3\")) { add_xp(\"Goblin Scout\", 100); }
+  if (key_down(\"h\")) { heal(\"Goblin Scout\", 100); heal(\"Orc Chief\", 200); }
+  if (hits < 4) { if (t > 1.2 + hits * 1.2) { hurt(\"Goblin Scout\", 6); hits = hits + 1; } }
+}
+" "" 0
+end

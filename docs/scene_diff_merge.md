@@ -194,14 +194,21 @@ fixture to `tests/test_scene_migration.cpp`.
 | `test_scene_canonical` | whitespace, strings, numbers, ordering, numbering, untouched input; random scenes messed up and canonicalized (the result loads as the same scene), truncation and byte-damage fuzzing |
 | `test_scene_diff` | each kind of change, record and field names, JSON validity, determinism, diff-then-apply equals the other side on random edits, 5000 objects under a time bound, fuzzing |
 | `test_scene_merge` | each auto-merge and each conflict, policies, `merge(base,x,x) == x`, `merge(base,base,x) == x`, `merge(base,x,base) == x` (also with the shortcuts off), random non-overlapping edits merge cleanly, completely and symmetrically, random overlapping edits always load, 5000 objects, fuzzing |
+| `test_merge_idless_rename` | a base without ids (`examples/physics/step_and_parent.okayscene`) opened and saved on both sides: a move against a rename, a rename against an edit of the same object, a real deletion against a real edit, and the same edits on a base with ids |
 | `test_scene_migration` | hand-written version 1 and 2 files, a real version 1 file from `tests/export`, engine-applied upgrades, refusal of newer files, a registry exercised with SYNTHETIC steps registered only in the test, fuzzing |
 
 Set `OKAY_TEST_SEEDS=n` to run the property tests over `n` random seeds instead of the default.
 
 ## Limits
 
-- Objects are paired by guid, or by name path without ids. A renamed object in a file without
-  ids is one removal and one addition for merge purposes unless its content is unchanged.
+- Objects are paired by guid, or by name path without ids. When the base has no ids, the loader
+  gives every object a new id each time the file is opened, so both saved sides carry ids the
+  base does not have: merge does not count an id that a side only added as an edit, and keeps
+  the preferred side's id (ours by default) without a warning. A renamed object is still paired
+  with its base object (and its children with theirs) when its content is unchanged on the
+  renaming side; the other side may edit it, and the merge keeps both the new name and the
+  edit. A renamed object whose content also changed on the same side is one removal and one
+  addition for merge purposes.
 - Fields of a record merge individually only when all three versions have the same number of
   values (or are `key=value`); otherwise a record that both sides changed is one conflict.
 - Component order inside an object is not merged as a conflict: the order is the base's with each

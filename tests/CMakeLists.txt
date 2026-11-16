@@ -2722,6 +2722,12 @@ add_executable(test_scene_merge test_scene_merge.cpp)
 target_link_libraries(test_scene_merge PRIVATE okay::engine)
 add_test(NAME scene_merge COMMAND test_scene_merge)
 
+# Issue #888 finding 44: merging an id-less scene where one side renames an object.
+add_executable(test_merge_idless_rename test_merge_idless_rename.cpp)
+target_link_libraries(test_merge_idless_rename PRIVATE okay::engine)
+target_compile_definitions(test_merge_idless_rename PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME merge_idless_rename COMMAND test_merge_idless_rename)
+
 add_executable(test_scene_migration test_scene_migration.cpp)
 target_link_libraries(test_scene_migration PRIVATE okay::engine)
 target_compile_definitions(test_scene_migration PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

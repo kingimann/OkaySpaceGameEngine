@@ -320,6 +320,53 @@ struct Entity {
     int keptSide = kNone;             // the side whose version was taken whole (deleted on the other)
 };
 
+// A base whose objects have no ids, and a side written by a build that gives every object a
+// fresh id each time the file is loaded. MatchObjects pairs those by name path, but its rename
+// detection only looks at objects without ids on both sides, so a renamed object (and every
+// object under it, whose path changed with it) stays unpaired and would read as a deletion plus
+// an addition. Pair them here, one level of the hierarchy per round: first an unpaired object
+// with the same name under the same (already paired) parent, which is a child of a renamed
+// object; then one with the same content under the same parent and a new name, which is the
+// rename itself. The guid record is not part of `records`, so an id the side only added never
+// stops a pair. Only a pair that is unique on both sides is taken.
+void PairIdlessRenames(const SceneText::Model& b, const SceneText::Model& s, Matching& m) {
+    for (std::size_t round = 0; round <= b.objects.size(); ++round) {
+        bool progress = false;
+        for (int rule = 0; rule < 2; ++rule) {
+            auto sig = [&](const SceneText::ModelObject& o, int parentInBase) {
+                std::string k = std::to_string(parentInBase) + "\x01";
+                if (rule == 0) return k + o.name;
+                for (const auto& r : o.records) { k += r.text; k += '\n'; }
+                return k;
+            };
+            std::unordered_map<std::string, std::vector<std::size_t>> bsig, ssig;
+            for (std::size_t i = 0; i < b.objects.size(); ++i) {
+                const auto& o = b.objects[i];
+                if (m.aToB[i] >= 0 || !o.guid.empty()) continue;
+                if (o.parent >= 0 && m.aToB[(std::size_t)o.parent] < 0) continue;
+                bsig[sig(o, o.parent)].push_back(i);
+            }
+            for (std::size_t j = 0; j < s.objects.size(); ++j) {
+                const auto& o = s.objects[j];
+                if (m.bToA[j] >= 0) continue;
+                const int pa = o.parent >= 0 ? m.bToA[(std::size_t)o.parent] : -1;
+                if (o.parent >= 0 && pa < 0) continue;
+                ssig[sig(o, pa)].push_back(j);
+            }
+            for (const auto& kv : bsig) {
+                auto it = ssig.find(kv.first);
+                if (kv.second.size() != 1 || it == ssig.end() || it->second.size() != 1) continue;
+                const std::size_t i = kv.second[0], j = it->second[0];
+                if (rule == 1 && b.objects[i].name == s.objects[j].name) continue;
+                m.aToB[i] = (int)j;
+                m.bToA[j] = (int)i;
+                progress = true;
+            }
+        }
+        if (!progress) break;
+    }
+}
+
 std::string SnapshotOf(const SceneText::Model& m, int idx) {
     const auto& o = m.objects[(std::size_t)idx];
     std::string s = "name " + SceneText::Quote(o.name);
@@ -400,7 +447,9 @@ SceneMerge::Result SceneMerge::Merge(const std::string& baseText, const std::str
     const std::size_t nb = B.objects.size(), no = O.objects.size(), nt = T.objects.size();
 
     // ---- identity: one entity per object across the three versions ----
-    const Matching mo = MatchObjects(B, O, true), mt = MatchObjects(B, T, true);
+    Matching mo = MatchObjects(B, O, true), mt = MatchObjects(B, T, true);
+    PairIdlessRenames(B, O, mo);
+    PairIdlessRenames(B, T, mt);
     std::vector<Entity> ents;
     std::unordered_set<std::string> usedKeys;
     std::vector<int> entB(nb, -1), entO(no, -1), entT(nt, -1);
@@ -491,7 +540,10 @@ SceneMerge::Result SceneMerge::Merge(const std::string& baseText, const std::str
         const int idx = side == kOurs ? e.o : e.t;
         const auto& ob = B.objects[(std::size_t)e.b];
         const auto& os = m.objects[(std::size_t)idx];
-        if (ob.name != os.name || ob.guid != os.guid || ob.headerTail != os.headerTail) return true;
+        // An id the side only added to an object the base had without one is not an edit:
+        // the loader gives such objects a new id every time the file is opened.
+        const bool guidEdited = !ob.guid.empty() && ob.guid != os.guid;
+        if (ob.name != os.name || guidEdited || ob.headerTail != os.headerTail) return true;
         if (parentEnt(B, entB, e.b) != parentEnt(m, entOf, idx)) return true;
         return !SameRecords(ob.records, os.records);
     };
@@ -535,8 +587,11 @@ SceneMerge::Result SceneMerge::Merge(const std::string& baseText, const std::str
         if (conflict)
             AddConflict(cx, who, Kind::RenamedDifferently, "", "", inBase ? B.objects[(std::size_t)e.b].name : "(none)", os.name, ts.name,
                         cx.Name(cx.Pref()));
+        // When the base had no id for it, both sides' ids are ones their loaders made up: keep
+        // the preferred side's without a warning.
+        const bool baseHadGuid = inBase && !B.objects[(std::size_t)e.b].guid.empty();
         e.guid = Scalar3<std::string>(inBase ? B.objects[(std::size_t)e.b].guid : std::string(), os.guid, ts.guid, inBase, cx.Pref(), conflict, from);
-        if (conflict) res.warnings.push_back("object " + e.key + " has different ids on the two sides; kept the preferred one");
+        if (conflict && (baseHadGuid || !inBase)) res.warnings.push_back("object " + e.key + " has different ids on the two sides; kept the preferred one");
         e.headerTail = Scalar3<std::string>(inBase ? B.objects[(std::size_t)e.b].headerTail : std::string(), os.headerTail, ts.headerTail, inBase,
                                             cx.Pref(), conflict, from);
         const int pb = inBase ? parentEnt(B, entB, e.b) : -1;

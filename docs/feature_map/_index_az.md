@@ -1828,6 +1828,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Grid pathfinding (older) (9.3)
 - grid snap (44.1, 44.1.2)
 - grip (4.5, 5.9)
+- Ground sense, slope hold, wall slide, stair snap, platform speed on a jump, player numbers (F3) (4.2.8)
 - group (15.1)
 - group chat (17.4)
 - Group chats (17.4.2)

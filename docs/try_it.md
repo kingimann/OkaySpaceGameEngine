@@ -65,6 +65,8 @@ release job or the installer build for this change.
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
+| 7w | Player obstacle course: slopes, stairs, steps, moving platforms, water, voxel hill, with the player numbers on F3 | `examples\player\player_obstacle_course.okayscene`, Play, press F3 | New in this branch (`claude/player-deep`); tested headless on Linux, never run on Windows |
+| 7wa | Player feel lab: five controller presets (Classic, Modern, Arcade, Realistic, Shooter), stick look ramp, F3 systems page | `examples\player\player_feel_lab.okayscene`, Play, press 1 to 5, press F3 twice | New in `claude/player-feel`; tested headless on Linux, never run on Windows |
 | 7z | First-person arm: looks normal to you and to others; presets to compare | Editor: File > Examples or open `examples\fp_hand\fp_hand_test.okayscene`, Play; select Player > First Person Hands > Preset | New in this change; headless renders only, nothing run on Windows or a GPU |
 | 7zg | Guided modeling: make a fence from designs, customise it, swap parts, keep editing by hand | Modeling window > **Guided** page; `examples\modeling\guided_fences.okayscene` | New in this change; the engine rules are tested on Linux, the editor page compiles but was **never opened in a real window** (unverified) |
 | 7zh | Modeling: material slots, Repair Mesh, Spin, Extrude Along Path, Array Along Curve, measuring, snapping, modifier cost and Copy, material library, Add to scene | `examples\modeling_tools\material_slots.okayscene` and `spin_path_curve.okayscene` (File > Open...), then the Modeling window | New in this change; real window and GPU renderers unverified |
@@ -775,6 +777,87 @@ is written, in order, the real release files are byte for byte unchanged, and ev
 `dev_workflow_lint` (the workflow read and its shell steps run offline). The launcher and editor files were compiled with `g++ -fsyntax-only` and
 the MinGW win32 compiler; they were not built or run. **Never run:** the workflow on GitHub, a write to the real Supabase storage, anything on Windows,
 and every screen above (no screenshot: the launcher was not built here). The wording in step 3 to 7 is what the code says; tell us what you actually see.
+
+## 7w. Player obstacle course and the player's own numbers
+
+Where: `examples\player\player_obstacle_course.okayscene` (next to the other examples, see "Where the files are"). Open it in
+`Tools\OkayEngine.exe` with **File > Open...** and press **Play**, or open it in `Tools\OkaySpacePlayer.exe`. You start on the ground
+with a third-person player. **WASD** walk, **Shift** run, **Space** jump, **Ctrl** crouch, **V** switches to the eyes and back.
+**Press F3**: below the frame numbers you see the player's lines (grounded or in the air, slope in degrees against the limit,
+speed, velocity, the ground normal, what you stand on). In the editor the same lines are in the Game view stats.
+
+Walk -Z (straight ahead) past the signs. Each sign says what to try; what you should see:
+
+| Station | Try | You should see |
+|---|---|---|
+| 1 Ramps 15, 30, 45, 55, 65 degrees | walk up each, stop half way up | 15 to 45: you walk up and stand still on it with no creeping (F3: "held on slope"). 55 and 65: you slide back down; F3 says TOO STEEP |
+| 2 Stairs | walk up, turn, walk down | you stay on the steps going down (F3 stays "grounded"), no hopping |
+| 3 Steps 0.10, 0.25, 0.35, 0.60 m | walk into each | the first three you climb in one go, the 0.60 m block stops you |
+| 4 Plank over a gap | walk along it, step off the side | you fall into the gap, nothing sticks |
+| 5 Tunnel 1.3 m | crouch (Ctrl), go in, press Ctrl again inside | you fit when crouched; standing up inside is refused until you are out |
+| 6 Moving platform and turning bridge | stand on the platform, jump off sideways | you ride it with no slipping; jumping off keeps the platform's speed; the bridge carries you round |
+| 7 Thin wall (2 cm) | hold Shift and run into it | you stop; you do not get through |
+| 8 Water | walk into the shallow end, then the deep end | shallow: you wade; deep: you swim (Space up, Ctrl down). (Swim into the stone edge on the east side to climb out.) |
+| 9 Voxel terrain patch | walk over the hill and the hole | you follow the ground without bouncing |
+| 10 Ladder tower | walk into the ladder and hold W; let go; press Space | you climb at 2.5 m/s, hang still when you let go, Space jumps off; the jump down from the top is a "hard landing" (F3 shows "last landing ... hard landings N") |
+| 11 Pool bank (east edge of the pool) | swim to the stone edge and keep pushing W | you climb out onto the bank (before, you stayed in the water) |
+| Variable jump (the course player has it on) | tap Space, then hold Space | a tap is a short hop, holding is the full jump. Off in a fresh player (Inspector: Variable Jump) |
+| Gizmo | in the editor select the player | a blue ring at the feet, four orange spokes rising at the Slope Limit, a green ring at the Step Offset height (Scene view, Gizmos on) |
+
+**Compare with the old player**: close the game, set the environment variable `OKAY_OLD_PLAYER=1` (for example in a command
+prompt: `set OKAY_OLD_PLAYER=1` then start `OkaySpacePlayer.exe` from that prompt, or start the editor from it), and walk the same
+stations. F3 then adds "[old player path]" to the first player line. With it set: standing on ramps 25 to 49 degrees creeps, the
+stairs down hop, a jump from the platform loses its speed, and every frame costs more (see `docs/player_audit.md`).
+
+Settings you can now change and that are saved: select the player, the **Player Controller** panel, **Step Offset** and **Slope
+Limit** (first and third person).
+
+**Pictures** (headless software render, flat shading, no signs or water shine, made by `tests/render_course.cpp`): `docs/images/player_course/` (`02_ramps.png`, `07_f3_player_lines_on_30_degree_ramp.png` shows the F3 lines as the 8x8 font draws them; the real F3 panel was not seen).
+
+**Checks run here (Linux, headless)**: `tests/test_player_deep.cpp` (860 checks, each fails with `OKAY_OLD_PLAYER=1`),
+`tests/test_player_course.cpp` (the shipped file is what the code writes, and a player walks stations 1, 3, 7), and the older player,
+controller, stance, character and multiplayer prediction tests: all pass. Frame numbers: `docs/player_audit.md`.
+**Not seen:** Windows, a window, a picture of the course (none was made), the F3 text on screen, the Inspector fields, real feel.
+
+## 7wa. Player feel lab: compare five controller feels, and see which system costs the frame
+
+Where: `examples\player\player_feel_lab.okayscene`. Open it in `Tools\OkayEngine.exe` (**File > Open...**, **Play**) or in
+`Tools\OkaySpacePlayer.exe`. You start in third person at the start sign. **WASD** walk, **Shift** run, **Space** jump, **Ctrl** crouch,
+**V** switches to the eyes and back.
+
+**Switch the feel.** Press **1 Classic, 2 Modern, 3 Arcade, 4 Realistic, 5 Shooter**. The sign at the start changes to
+"PRESET: <name>", and **F3** shows "feel preset: <name>" under the player lines. Walk the stations after each pick:
+
+| Station | Try | You should see (numbers are from the headless tests, `tests/test_player_feel.cpp`) |
+|---|---|---|
+| A Run track, markers every 5 m | hold W + Shift, let go at the red line | Arcade stops in about 0.14 m, Classic 0.27 m, Realistic 0.50 m (it also takes longer to get going) |
+| B Slalom | weave through the posts | Arcade and Shooter turn sharply; Realistic turns slowly (third person turn speed) |
+| C Gaps 2, 3, 4 m | run and jump | Arcade has a double jump, Realistic has the least air steering (about 1.0 m/s sideways against 2.6 for Arcade). A miss drops into the pit and returns you to the start |
+| D Towers 2, 4, 8 m | climb the stairs, step off | the camera dips on landing (Realistic most, Arcade least); the 8 m drop is a hard landing (F3 counts them) |
+| E Corridor | walk through in third person | the camera pulls in at the walls and eases back out |
+
+**In your own scene.** Select the player, the **Player Controller** panel, **Controller Preset** drop-down: one pick sets speeds,
+acceleration, stopping, air control, jump timing, head bob (first person) or turn speed and camera follow (third person). Edit any
+value afterwards; the scene saves the numbers. The same panel has **Stick Look Ramp** (gamepad camera acceleration: seconds from 45%
+to full look speed at full stick; 0 = off, the default) and, on **Player View**, **Preset Hotkeys (1-5)** (off by default; the lab
+has it on; it needs the player to have both views).
+
+**Systems page (F3, second press).** In `OkaySpacePlayer.exe` press F3 once for the frame numbers, again for **Systems**:
+milliseconds per system (Physics, Scripts, Animation, Audio, UI, Render, Terrain, Other CPU, Idle/wait) averaged over the last 120
+frames with their peaks, and a graph of the last 120 frame times. A third press closes it. In the editor, **Game view > Stats overlay**
+shows the same rows while playing (Audio and Render rows are filled by the player only; the editor shows UI and the scene's own
+scopes). It measures only while the page is open.
+
+**Compare with before.** `set OKAY_OLD_PLAYER=1` brings back the old player behaviour. `set OKAY_OLD_SCENE_QUERIES=1` brings back
+the old scene-wide searches (see the numbers below).
+
+**Checks run here (Linux, headless):** `tests/test_player_feel.cpp` (127 checks: presets, saved, hotkeys, stick ramp, camera
+steadiness at 30/60/144/240 fps, eye bob range, foot sliding of the real controller for all presets walking and running, system
+rows), `tests/test_player_feel_lab.cpp` (the shipped scene is what the code writes; 1-5 switch the preset), and the player,
+controller, net prediction, character and locomotion tests. Frame numbers of the busy scene: `docs/player_audit.md` (section
+"Busy scene").
+**Not seen:** Windows, a window, the Inspector drop-down, the F3 systems page on a screen, the lab scene on a screen, gamepad
+feel with a real pad, whether the preset numbers feel right (they were chosen by measurement and by reasoning, not by playing).
 
 ## 7z. First-person arm: normal for you and for everyone else
 

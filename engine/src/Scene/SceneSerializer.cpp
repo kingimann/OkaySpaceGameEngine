@@ -2588,7 +2588,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
              ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
              ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
              ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
-             ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+             ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset).b("presetKeys", pv->presetHotkeys);
         }
         out << "\n";
     }
@@ -2634,7 +2634,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("pad", fp->stanceGamepadButton)("hold", fp->proneHoldTime)
          ("walkA", fp->walkAcceleration)("steer", fp->steerRate)
          .b("dive", fp->diveOnProneWhileSprinting)("diveHop", fp->diveHop)("diveSlide", fp->diveSlideTime)
-         ("capSens", fp->capturedSensitivity)("capPx", fp->capturedPixelCap);
+         ("capSens", fp->capturedSensitivity)("capPx", fp->capturedPixelCap)
+         ("slope", fp->slopeLimit)("step", fp->stepOffset)("fallY", fp->fallResetY)   // settings that were never saved
+         ("swim", fp->swimSpeed)("swimUp", fp->swimUpSpeed)("swimDown", fp->swimDownSpeed)
+         .b("varJump", fp->variableJump)("jumpCut", fp->jumpCut)("climb", fp->climbSpeed)("hardLand", fp->hardLandSpeed)("preset", fp->controllerPreset)("stickRamp", fp->stickLookRamp);
         if (fp->stance() != std::remove_pointer_t<decltype(fp)>::Stance::Stand) k("stance", (int)fp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -2674,7 +2677,10 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("pad", tp->stanceGamepadButton)("hold", tp->proneHoldTime)
          ("walkA", tp->walkAcceleration)("steer", tp->steerRate)
          .b("dive", tp->diveOnProneWhileSprinting)("diveHop", tp->diveHop)("diveSlide", tp->diveSlideTime)
-         ("capSens", tp->capturedSensitivity)("capPx", tp->capturedPixelCap);
+         ("capSens", tp->capturedSensitivity)("capPx", tp->capturedPixelCap)
+         ("slope", tp->slopeLimit)("step", tp->stepOffset)("fallY", tp->fallResetY)   // settings that were never saved
+         ("swim", tp->swimSpeed)("swimUp", tp->swimUpSpeed)("swimDown", tp->swimDownSpeed)
+         .b("varJump", tp->variableJump)("jumpCut", tp->jumpCut)("climb", tp->climbSpeed)("hardLand", tp->hardLandSpeed)("preset", tp->controllerPreset)("stickRamp", tp->stickLookRamp);
         if (tp->stance() != std::remove_pointer_t<decltype(tp)>::Stance::Stand) k("stance", (int)tp->stance());   // saved crouched / prone
         out << "\n";
     }
@@ -2703,7 +2709,7 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
          ("pad", pv->toggleGamepadButton)("blend", pv->blendTime)
          ("ease", (int)pv->switchEase).b("snap", pv->snapSwitch)
          ("ex", pv->eyeOffset.x)("ey", pv->eyeOffset.y)("ez", pv->eyeOffset.z)
-         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset);
+         ("dist", pv->thirdPersonDistance)("shoulder", pv->shoulderOffset).b("presetKeys", pv->presetHotkeys);
         out << "\n";
     }
     // grok/ui-theme. Own record so older scenes skip it. apply=1 bakes on play.
@@ -4244,6 +4250,7 @@ static void ReadPlayerViewKeys(KvIn& k, PlayerView* pv, const char* viewKey) {
     k.f("ex", pv->eyeOffset.x); k.f("ey", pv->eyeOffset.y); k.f("ez", pv->eyeOffset.z);
     k.f("dist", pv->thirdPersonDistance);
     k.f("shoulder", pv->shoulderOffset);
+    k.b("presetKeys", pv->presetHotkeys);
 }
 
 // Files from before version 3 came from starters whose First Person and Third
@@ -6976,6 +6983,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         k.f("walkA", c->walkAcceleration); k.f("steer", c->steerRate);
                         k.b("dive", c->diveOnProneWhileSprinting); k.f("diveHop", c->diveHop); k.f("diveSlide", c->diveSlideTime);
                         k.f("capSens", c->capturedSensitivity); k.f("capPx", c->capturedPixelCap);
+                        k.f("slope", c->slopeLimit); k.f("step", c->stepOffset); k.f("fallY", c->fallResetY);
+                        k.f("swim", c->swimSpeed); k.f("swimUp", c->swimUpSpeed); k.f("swimDown", c->swimDownSpeed);
+                        k.b("varJump", c->variableJump); k.f("jumpCut", c->jumpCut); k.f("climb", c->climbSpeed); k.f("hardLand", c->hardLandSpeed); k.i("preset", c->controllerPreset); k.f("stickRamp", c->stickLookRamp);
                         // Saved crouched / prone: start that way (the collider was saved standing).
                         int st = 0; k.i("stance", st);
                         using S = typename std::remove_pointer_t<decltype(c)>::Stance;

@@ -63,9 +63,11 @@
 #include "okay/Render/GLRenderer.hpp"   // optional GPU (OpenGL) 3D renderer
 #include "okay/Render/Culling.hpp"     // frustum culling toggle + drawn/culled counts (Stats)
 #include "okay/Render/D3D11Renderer.hpp" // optional GPU (Direct3D 11) 3D renderer (Windows)
-#include "okay/Core/Profiler.hpp"
+#include "okay/Core/Profiler.hpp"        // CPU/GPU frame profiler
+#include "okay/Core/SystemCost.hpp"      // Game view Stats: ms per system
+#include "okay/Components/ControllerPresets.hpp"   // Controller Preset combo
 #include "okay/Core/FrameOverlay.hpp"
-#include "okay/Render/OcclusionOverlay.hpp"        // CPU/GPU frame profiler
+#include "okay/Render/OcclusionOverlay.hpp"
 #include "okay/Animation/HumanoidLibrary.hpp"  // built-in clip names in the Animator clip slot
 #include "okay/Animation/PlayerSetup.hpp"      // controller: wire missing animation and IK
 #include "okay/Animation/ClipGraph.hpp"       // an Animator graph from an imported model's clips
@@ -37017,6 +37019,30 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Drive Animation##fp");
             if (ImGui::Checkbox("Foot IK##fp", &fp->footIK)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plant the Character's feet on the ground (foot IK) at Play.");
+            if (ImGui::DragFloat("Step Offset##fp", &fp->stepOffset, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
+            if (ImGui::DragFloat("Slope Limit##fp", &fp->slopeLimit, 0.5f, 0.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepest ground (degrees) the player can stand on and climb. Steeper ground slides the body back down. 0 = no limit.");
+            {   // Controller preset: one pick sets speeds, acceleration, air control, jump timing, bob and camera follow
+                const int cur = fp->controllerPreset;
+                if (ImGui::BeginCombo("Controller Preset##fp", ControllerPresets::Name(cur))) {
+                    for (int pi = 0; pi < ControllerPresets::Count; ++pi) {
+                        if (ImGui::Selectable(ControllerPresets::Name(pi), pi == cur)) { ControllerPresets::Apply(*fp, pi); ed.dirty = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ControllerPresets::About(pi));
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Classic / Modern / Arcade / Realistic / Shooter. Sets the whole feel block (speed, acceleration, stopping, air control, jump timing, head bob / camera follow). Edit any value after.");
+                if (ImGui::DragFloat("Stick Look Ramp##fp", &fp->stickLookRamp, 0.05f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad camera acceleration: seconds the right stick takes from 45% to full look speed at full throw. 0 = constant speed.");
+            }
+            if (ImGui::Checkbox("Variable Jump##fp", &fp->variableJump)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let go of Space early and the jump ends early.");
+            if (fp->variableJump && ImGui::DragFloat("Jump Cut##fp", &fp->jumpCut, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Climb Speed##fp", &fp->climbSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed up and down a ladder: a box trigger on an object tagged Climbable. 0 = no climbing.");
+            if (ImGui::DragFloat("Hard Landing Speed##fp", &fp->hardLandSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A landing this fast (m/s) calls onHardLand and sends the message player_hard_land. 0 = off.");
             if (ImGui::Checkbox("Lock + Hide Cursor##fp", &fp->lockCursor)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing (mouse-look). Off keeps a normal pointer for clicking UI.");
 
@@ -37238,6 +37264,28 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Foot IK##tp");
             if (ImGui::DragFloat("Step Offset##tp", &tp->stepOffset, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
+            if (ImGui::DragFloat("Slope Limit##tp", &tp->slopeLimit, 0.5f, 0.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepest ground (degrees) the player can stand on and climb. Steeper ground slides the body back down. 0 = no limit.");
+            {   // Controller preset: one pick sets speeds, acceleration, air control, jump timing, bob and camera follow
+                const int cur = tp->controllerPreset;
+                if (ImGui::BeginCombo("Controller Preset##tp", ControllerPresets::Name(cur))) {
+                    for (int pi = 0; pi < ControllerPresets::Count; ++pi) {
+                        if (ImGui::Selectable(ControllerPresets::Name(pi), pi == cur)) { ControllerPresets::Apply(*tp, pi); ed.dirty = true; }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ControllerPresets::About(pi));
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Classic / Modern / Arcade / Realistic / Shooter. Sets the whole feel block (speed, acceleration, stopping, air control, jump timing, head bob / camera follow). Edit any value after.");
+                if (ImGui::DragFloat("Stick Look Ramp##tp", &tp->stickLookRamp, 0.05f, 0.0f, 3.0f, "%.2f s")) ed.dirty = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamepad camera acceleration: seconds the right stick takes from 45% to full look speed at full throw. 0 = constant speed.");
+            }
+            if (ImGui::Checkbox("Variable Jump##tp", &tp->variableJump)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Let go of Space early and the jump ends early.");
+            if (tp->variableJump && ImGui::DragFloat("Jump Cut##tp", &tp->jumpCut, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::DragFloat("Climb Speed##tp", &tp->climbSpeed, 0.1f, 0.0f, 20.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Speed up and down a ladder: a box trigger on an object tagged Climbable. 0 = no climbing.");
+            if (ImGui::DragFloat("Hard Landing Speed##tp", &tp->hardLandSpeed, 0.5f, 0.0f, 100.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("A landing this fast (m/s) calls onHardLand and sends the message player_hard_land. 0 = off.");
             {
                 const char* modes[] = {"None", "Locked", "Confined"};
                 int mode = tp->cursorMode;
@@ -37522,6 +37570,8 @@ void DrawInspector(EditorState& ed) {
             if (ImGui::DragFloat("Third Person Distance##pv", &pv->thirdPersonDistance, 0.05f, -1.0f, 40.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Orbit distance while this view is driving. -1 uses the controller's own distance.");
             if (ImGui::DragFloat("Shoulder Offset##pv", &pv->shoulderOffset, 0.01f, -3.0f, 3.0f)) ed.dirty = true;
+            if (ImGui::Checkbox("Preset Hotkeys (1-5)##pv", &pv->presetHotkeys)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("While playing, keys 1-5 apply Classic / Modern / Arcade / Realistic / Shooter feel to this player, to compare. Off by default.");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Over-the-shoulder shift while this view is driving.");
             ImGui::TextDisabled("V eases between the eyes and the orbit.");
             if (!owned && ImGui::SmallButton("Remove##pv")) toRemove = pv;
@@ -45085,6 +45135,8 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             return t->Forward();
         };
         auto C = [&](const Vec3& p) { return vp * Vec4{p.x, p.y, p.z, 1.0f}; };
+        for (const PlayerGizmo::Seg& sg : PlayerGizmo::Lines(sel))   // a selected player: feet ring, slope limit spokes, step height ring
+            clipLine(C(sg.a), C(sg.b), sg.kind == 1 ? IM_COL32(255, 190, 60, 230) : sg.kind == 2 ? IM_COL32(120, 220, 120, 230) : IM_COL32(90, 200, 255, 230), 1.5f);
         auto drawRay = [&](const ActionList::Item& it) {
             if (it.op.rfind("raycast", 0) != 0) return;
             std::size_t dirIdx = (it.op == "raycast_tag" || it.op == "raycast_name") ? 1 : 0;
@@ -48551,6 +48603,8 @@ void DrawGameView(EditorState& ed) {
         if ((ov.stamp < 0.0 || nowT - ov.stamp > 0.25 || nowT < ov.stamp) && !g_gameFiber.Suspended()) {
             ov.stamp = nowT;
             ov.perf = ed.PerfLines();
+            if (playingNow && okay::Prof().enabled)   // which system eats the frame (physics, scripts, animation, ...)
+                for (const std::string& sl : okay::SystemCost::Lines(okay::Prof())) ov.perf.push_back(sl);
             if (!playingNow) {
                 char fl[64];
                 const float fr = ImGui::GetIO().Framerate > 1e-3f ? ImGui::GetIO().Framerate : 1.0f;
@@ -50152,7 +50206,7 @@ int main(int argc, char** argv) {
             }
         }
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
-        okay::Prof().enabled = g_showProfiler || kPerfDump;   // gate timers; set before BeginFrame/Tick this frame
+        okay::Prof().enabled = g_showProfiler || kPerfDump || (g_gameStatsOverlay && ed.isPlaying());   // the Game view Stats overlay lists ms per system   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();
         // Pick up the background update check when it finishes (once).
         if (!g_autoCheckDone && g_updateCheck.valid() &&

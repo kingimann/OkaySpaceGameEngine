@@ -371,8 +371,19 @@ private:
 
     GameObject* Target() const {
         Scene* s = gameObject ? gameObject->scene() : nullptr;
-        return s ? s->Find(targetName) : nullptr;
+        if (!s) return nullptr;
+        if (Scene::OldSceneQueries()) return s->Find(targetName);   // OKAY_OLD_SCENE_QUERIES=1: the old per-frame name search
+        // The name search walks every object, and every NPC did it every frame. Ask again only when the scene's
+        // structure changed, the target name changed, or the object found no longer has that name.
+        const std::uint64_t sv = s->StructureVersion(), uid = s->Uid();
+        const bool stale = uid != m_targetUid || sv != m_targetStructure || targetName != m_targetKey ||
+                           (m_targetCache && m_targetCache->name != targetName);
+        if (stale) { m_targetCache = s->Find(targetName); m_targetUid = uid; m_targetStructure = sv; m_targetKey = targetName; }
+        return m_targetCache;
     }
+    mutable GameObject* m_targetCache = nullptr;
+    mutable std::uint64_t m_targetUid = 0, m_targetStructure = 0;
+    mutable std::string m_targetKey;
     Vec3 TP(GameObject* t) const { return t && t->transform ? t->transform->Position() : Vec3{0, 0, 0}; }
 
     void FaceToward(const Vec3& dir, float dt) {

@@ -77,6 +77,8 @@ release job or the installer build for this change.
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7zj | Guided vehicles (car, truck, bus, motorcycle, trailer, 6+ designs each) and a Detail level (Low to Ultra) on every guided model | Modeling > **Guided** > Vehicles; File > Examples > Guided modeling > `guided_vehicles`; `examples\modeling\guided_vehicles.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 | 7zk | Guided characters (human, robot, creature) with swappable head, hair, clothes, hands, feet, hats, glasses, backpacks, capes and proportion sliders | Modeling > **Guided** > Characters; File > Examples > Guided modeling > `guided_characters`; `examples\modeling\guided_characters.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
+| 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
 | 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 
@@ -912,13 +914,40 @@ small rasteriser (the detail pictures show triangle edges), not editor screensho
 2. Change **Wheel radius**, **Wheelbase**, **Length**, **Cabin size**; under **Parts and materials** change **Wheels** to Eight spoke mesh,
    **Headlights** to Twin lamps, **Bumpers** to Sport lip, **Spoiler** to Wing, **Roof fitting** to Light bar, **Exhaust** to Dual pipes.
 3. **Each part > Wheels**: give one wheel its own design (Select jumps to it in Edit Mesh).
-4. **Detail**: choose Low, then Ultra. The model rebuilds; the triangle count next to each level tells you the cost. High and Ultra are
-   smooth shaded. Your own additions stay; a part you edited by hand is asked about first.
+4. **Detail**: drag the **Detail** slider (0% blocky low poly to 100% finest) or press Low, Medium, High or Ultra. The model rebuilds when you let
+   go, and "N triangles now" shows the cost. Above 250,000 triangles a window asks before it builds. High and Ultra are smooth shaded.
+   Your own additions stay; a part you edited by hand is asked about first.
+4a. **Car styles side by side**: File > Examples > Guided modeling > `guided_car_styles` (sedan, hatchback, coupe, SUV, pickup, sports, van at the
+   same size; only the shape differs). Wheels sit in round arches on axles; the mirrors and bumpers are joined to the body.
+4b. Open **Variation and check**: it shows whether the model is one connected object with no bad faces. Under **Each part**, **Remove** takes a part off;
+   it appears under **Removed parts** with **Add back**.
 5. Modeling > Guided > Vehicles > Car/Truck/Bus/Motorcycle/Trailer: pick a design card, **Create**.
 
-**Not done / unverified.** Wheel arches, doors that open, interiors, chassis details, rigged wheels or vehicle physics are not built (the
+**Not done / unverified.** Doors that open, interiors, chassis details, rigged wheels or vehicle physics are not built (the
 Vehicle components are separate: put them on a guided vehicle yourself). A box-only design has the same triangle count at Low and Medium.
-The editor's Detail control and smooth shading were never seen in a window.
+The editor's Detail slider, Variation and check, and Remove/Add back controls compile but were never seen in a window (unverified).
+
+---
+
+## 7zn. Guided: randomise within a style, and the save-edit-reopen round trip
+
+**What it is.** On the **Guided** page, **Variation and check** has a **Seed** field, **How different** and **Randomise within style** (and **Next seed**).
+The same seed and the same starting model always give the same result. The check line shows the validator's verdict.
+
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_roundtrip"`): 1000 seeds on each of 15 templates (15,000 models) with 0 validation
+failures; the round trip (generate, customise, edit by hand, save, reopen, edit again, regenerate) passes. The buttons themselves compile but were never
+clicked in a real window (unverified).
+
+**Try it.**
+
+1. Open **File > Examples > Guided modeling > guided_car_styles**, click a car, Modeling > Guided.
+2. Open **Variation and check**, type a seed (say 7), press **Randomise within style**. The car changes size and parts but stays that style. Press it
+   again with the same seed on the same car: the same result. **Next seed** tries another. **Undo guided step** goes back.
+3. Round trip: in Edit Mesh pull a headlight forward and add a box on the roof. Change **Wheels** to Eight spoke mesh. Both edits stay and nothing
+   asks. Change **Headlights**: it asks first about the headlight you pulled. Save the scene, close, reopen, click the car: the edits are listed
+   ("edited by you", "faces of your own"). Open **My parts and templates**, name it and press **Save as template**: it shows with the starting designs.
+
+**Not done / unverified.** Randomise has compatibility rules only for cars so far.
 
 ---
 

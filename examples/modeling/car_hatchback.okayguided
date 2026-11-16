@@ -12,6 +12,7 @@ param wheelRadius 0.33000000000000002
 param wheelWidth 0.22
 param wheelbase 2.5
 param width 1.8
+slot axle bar
 slot bed open
 slot body hatchback
 slot bumper plain
@@ -25,6 +26,7 @@ slot roof none
 slot spoiler none
 slot taillight strip
 slot wheel steel
+color axle 0.100000001 0.100000001 0.109999999 1
 color bed 0.5 0.519999981 0.550000012 1
 color body 0.180000007 0.319999993 0.620000005 1
 color bumper 0.779999971 0.800000012 0.819999993 1
@@ -38,6 +40,7 @@ color roof 0.5 0.519999981 0.550000012 1
 color spoiler 0.100000001 0.100000001 0.109999999 1
 color taillight 0.800000012 0.0500000007 0.0500000007 1
 color wheel 0.100000001 0.100000001 0.109999999 1
+material axle 12
 material bed 8
 material body 0
 material bumper 4

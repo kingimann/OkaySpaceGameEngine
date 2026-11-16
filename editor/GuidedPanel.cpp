@@ -136,7 +136,7 @@ bool SaveFiles(Host& h, MeshRenderer* mr, const gd::Recipe& r) {
     return true;
 }
 
-void SetMesh(MeshRenderer* mr, const PolyMesh& pm, float detail, bool smoothFromMedium) {
+void SetMesh(MeshRenderer* mr, const PolyMesh& pm, float detail, bool smoothFromMedium = false) {
     mr->mesh = pm.ToMesh();
     mr->mesh.name = "";
     if (detail >= (smoothFromMedium ? 0.9f : 1.5f)) mr->mesh.ComputeAutoSmoothNormals(40.0f);   // organic characters are smooth from Medium; other models from High
@@ -158,7 +158,7 @@ bool CreateModel(Host& h, const gd::Recipe& recipe, const std::string& name) {
     ed.PushUndo();
     GameObject* go = ed.scene().CreateGameObject(name);
     MeshRenderer* mr = go->AddComponent<MeshRenderer>();
-    SetMesh(mr, pm, gd::DetailOf(recipe));
+    SetMesh(mr, pm, gd::DetailOf(recipe), recipe.templateId == "human");
     if (S().collide) { go->AddComponent<okay::MeshCollider3D>(); }
     mr->meshPath = path.string();
     if (!SaveFiles(h, mr, recipe)) { ed.scene().DestroyImmediate(go); return false; }
@@ -188,7 +188,7 @@ bool Apply(Host& h, GameObject* go, MeshRenderer* mr, const gd::Recipe& next, co
     gd::GuidedState before; before.mesh = cur; before.recipe = s.stored;
     s.history[s.path].Push(before);
     h.ed->PushUndo();
-    SetMesh(mr, r.mesh, gd::DetailOf(r.recipe));
+    SetMesh(mr, r.mesh, gd::DetailOf(r.recipe), r.recipe.templateId == "human");
     if (!SaveFiles(h, mr, r.recipe)) return false;
     s.stored = r.recipe; s.pending = r.recipe; s.analysisKey = 0;
     h.ed->dirty = true;
@@ -236,30 +236,47 @@ bool ParamWidget(const gd::ParamDef& p, gd::Recipe& r) {
     return done;
 }
 
-// Detail level with the triangle count of every level next to it (Low to Ultra).
+// Detail: one slider from blocky low poly (0%) to finest (100%), four presets, the live triangle count, and a question
+// before anything above ~250,000 triangles is built.
+constexpr int kBigTriangles = 250000;
+int TrianglesFor(const gd::Recipe& base, float detail) {
+    gd::Recipe r = base; r.params[gd::kDetailParam] = detail;
+    return gd::TriangleCount(gd::Create(r));
+}
 bool DetailWidget(const gd::Template& t, gd::Recipe& pending, const gd::Recipe& stored) {
     static std::string s_key;
-    static int s_tris[4] = {0, 0, 0, 0};
-    const std::string key = stored.Serialize();
-    if (key != s_key) {   // recount only when the model's settings change
-        s_key = key;
-        for (int lv = 0; lv < 4; ++lv) { gd::Recipe r = stored; r.params[gd::kDetailParam] = lv; s_tris[lv] = gd::TriangleCount(gd::Create(r)); }
-    }
+    static int s_tris = 0;
+    static float s_ask = -1.0f;   // a value waiting for the "this is big" answer
+    static int s_askTris = 0;
+    float cur = std::min(std::max((float)pending.Param(gd::kDetailParam, 1), 0.0f), 3.0f);
+    const std::string key = pending.Serialize();
+    if (key != s_key) { s_key = key; s_tris = TrianglesFor(pending, cur); }   // recount only when a setting changes
     bool done = false;
+    auto choose = [&](float v) {
+        const int n = TrianglesFor(pending, v);
+        if (n > kBigTriangles && v > cur) { s_ask = v; s_askTris = n; ImGui::OpenPopup("Very detailed model##big"); }
+        else { pending.params[gd::kDetailParam] = v; done = true; }
+    };
+    float pct = cur * 100.0f / 3.0f;
+    ImGui::SetNextItemWidth(220);
+    if (ImGui::SliderFloat("Detail##slider", &pct, 0.0f, 100.0f, "%.0f%%")) pending.params[gd::kDetailParam] = pct * 3.0f / 100.0f;   // preview number only
+    if (ImGui::IsItemDeactivatedAfterEdit()) { const float v = (float)pending.Param(gd::kDetailParam, 1); pending.params[gd::kDetailParam] = cur; choose(v); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("0%% is simple blocky low poly, 100%% is the finest detail (smooth curves, trim, bolts, tread, window frames, fingers). The model is rebuilt when you let go.");
     const char* names[4] = {"Low", "Medium", "High", "Ultra"};
-    int cur = std::min(std::max((int)pending.Param(gd::kDetailParam, 1), 0), 3);
-    char label[64];
-    std::snprintf(label, sizeof label, "%s (%d triangles)", names[cur], s_tris[cur]);
-    ImGui::SetNextItemWidth(260);
-    if (ImGui::BeginCombo("Detail", label)) {
-        for (int lv = 0; lv < 4; ++lv) {
-            std::snprintf(label, sizeof label, "%s (%d triangles)", names[lv], s_tris[lv]);
-            if (ImGui::Selectable(label, lv == cur)) { pending.params[gd::kDetailParam] = lv; done = true; }
-        }
-        ImGui::EndCombo();
+    for (int lv = 0; lv < 4; ++lv) {
+        if (lv) ImGui::SameLine();
+        if (ImGui::SmallButton((std::string(names[lv]) + "##detailpreset").c_str())) choose((float)lv);
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Low: few flat blocky polygons for games. Medium: the standard shapes. High: rounder curves, bevelled edges, extra trim, smooth shading. Ultra: finer still.\nChanging it rebuilds the model; your own additions stay, and parts you edited by hand are asked about first.");
-    (void)t;
+    ImGui::TextDisabled("%d triangles now", s_tris);
+    if (ImGui::BeginPopupModal("Very detailed model##big", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("This detail level makes about %d triangles.", s_askTris);
+        ImGui::TextWrapped("That can make the editor and the game slower. You can go back to a lower level at any time.");
+        if (ImGui::Button("Build it")) { pending.params[gd::kDetailParam] = s_ask; done = true; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##big")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    (void)t; (void)stored;
     return done;
 }
 
@@ -360,6 +377,13 @@ void DrawPartRow(Host& h, GameObject* go, MeshRenderer* mr, const gd::Template& 
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Choose another design for just this part.");
     }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Remove")) {
+        gd::Recipe next = s.stored;
+        next.partDesign[p.id] = "none";
+        Apply(h, go, mr, next, {}, "Removed " + p.id);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Take this part off the model. It shows in 'Removed parts' below, where you can add it back.");
     ImGui::SameLine();
     if (ImGui::SmallButton("Detach")) {
         gd::Recipe next = s.stored;
@@ -487,7 +511,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         if (ImGui::Button("Undo guided step")) {
             gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
             if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Undo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe)); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
+            if (hist.Undo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human"); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -495,7 +519,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         if (ImGui::Button("Redo guided step")) {
             gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
             if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Redo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe)); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
+            if (hist.Redo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human"); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -653,6 +677,46 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
     }
     if (commit) Apply(h, go, mr, s.pending, {}, "Updated " + go->name);
 
+    // Variation: a repeatable random model inside this style, and the validator's verdict on the model.
+    if (ImGui::CollapsingHeader("Variation and check##grp")) {
+        static int s_seed = 1;
+        static float s_strength = 0.15f;
+        ImGui::SetNextItemWidth(110);
+        ImGui::InputInt("Seed##rand", &s_seed);
+        ImGui::SetNextItemWidth(160);
+        ImGui::SliderFloat("How different##rand", &s_strength, 0.02f, 0.6f, "%.2f");
+        if (ImGui::Button("Randomise within style")) {
+            gd::Recipe next = gd::Randomise(t, s.stored, (uint32_t)s_seed, s_strength);
+            Apply(h, go, mr, next, {}, "Randomised (seed " + std::to_string(s_seed) + ")");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Moves the sizes and picks other designs inside the ranges that suit this style. The same seed and the same starting model always give the same result. Undo guided step goes back.");
+        ImGui::SameLine();
+        if (ImGui::Button("Next seed##rand")) {
+            ++s_seed;
+            gd::Recipe next = gd::Randomise(t, s.stored, (uint32_t)s_seed, s_strength);
+            Apply(h, go, mr, next, {}, "Randomised (seed " + std::to_string(s_seed) + ")");
+        }
+        static std::string s_vkey; static gd::ValidationReport s_rep;
+        const std::string vk = s.stored.Serialize();
+        if (vk != s_vkey) { s_vkey = vk; s_rep = gd::Validate(gd::Generate(s.stored), gd::DetailOf(s.stored) < 2.5f); }
+        if (s_rep.Ok() && s_rep.components == 1) ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.55f, 1), "Check: %d parts, one connected model, no bad faces.", s_rep.parts);
+        else ImGui::TextColored(ImVec4(0.93f, 0.78f, 0.45f, 1), "Check: %d parts in %d separate group(s), %d problem(s).", s_rep.parts, s_rep.components, (int)s_rep.problems.size());
+        for (size_t i = 0; i < s_rep.problems.size() && i < 4; ++i) ImGui::BulletText("%s", s_rep.problems[i].c_str());
+        ImGui::TextDisabled("The check is of the generated design, not of your hand edits.");
+    }
+    // Parts you removed can be added back.
+    {
+        std::vector<std::string> gone;
+        for (const auto& kv : s.stored.partDesign) if (kv.second == "none") gone.push_back(kv.first);
+        if (!gone.empty() && ImGui::CollapsingHeader("Removed parts##grp", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (const std::string& id : gone) {
+                ImGui::PushID(id.c_str());
+                ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted(id.c_str()); ImGui::SameLine();
+                if (ImGui::SmallButton("Add back")) { gd::Recipe next = s.stored; next.partDesign.erase(id); Apply(h, go, mr, next, {}, "Added back " + id); }
+                ImGui::PopID();
+            }
+        }
+    }
     // Individual parts.
     if (s.analysis.ok && ImGui::CollapsingHeader("Each part##grp")) {
         for (const auto& slot : t.slots) {

@@ -1,0 +1,68 @@
+okayscene 3
+name "Guided car styles"gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Ground"
+  active 1
+  parent -1
+  transform 20 -0.5 0 0 0 0 1 80 1 40
+  mesh "Cube" 0.32941177 0.5019608 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "Car sedan"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "carstyle_sedan.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Car hatchback"
+  active 1
+  parent -1
+  transform 6 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "carstyle_hatchback.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Car coupe"
+  active 1
+  parent -1
+  transform 12 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "carstyle_coupe.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Car suv"
+  active 1
+  parent -1
+  transform 18 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "carstyle_suv.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "Car pickup"
+  active 1
+  parent -1
+  transform 24 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "carstyle_pickup.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Car sports"
+  active 1
+  parent -1
+  transform 30 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "carstyle_sports.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Car van"
+  active 1
+  parent -1
+  transform 36 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "carstyle_van.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end

@@ -803,6 +803,21 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
         return false;
     }
     ImportBackend use = which == ImportBackend::Default ? EffectiveImportBackend(ext) : which;
+    // Assimp 5.4.3's RAW importer leaves null child pointers in the scene when a file has two or more groups of triangles, and the
+    // import crashed on them (RawFileUnsafeForAssimp, RawReader.cpp). Such a file is never handed to Assimp: with the default
+    // choice (or the per-format switch set to Assimp) our RAW reader reads it, and an explicit request for Assimp is refused.
+    bool assimpUnsafe = false;
+#ifdef OKAY_HAVE_ASSIMP
+    if (use == ImportBackend::Assimp && ext == ".raw" && RawFileUnsafeForAssimp(path)) {
+        assimpUnsafe = true;
+        if (which == ImportBackend::Assimp) {
+            if (err) *err = "RAW: this file has more than one group of triangles, which crashes Assimp 5.4.3's RAW importer; read it with our own RAW reader (OKAY_OWN_RAW=1)";
+            return false;
+        }
+        Log::Warning("model import '", path, "': more than one group of triangles, which Assimp 5.4.3's RAW importer cannot read safely; reading it with our own RAW reader");
+        use = ImportBackend::Own;
+    }
+#endif
     if (use == ImportBackend::Assimp) {
 #ifdef OKAY_HAVE_ASSIMP
         return assimp_backend::Read(path, flatten, out, err);
@@ -868,7 +883,7 @@ bool ImportModelData(const std::string& path, ImportedModel& out, ImportBackend 
             return true;
         }
         // Our reader said no. With the default choice, give Assimp a go when the build has it.
-        if (which == ImportBackend::Default && AssimpAvailable()) {
+        if (which == ImportBackend::Default && AssimpAvailable() && !assimpUnsafe) {
 #ifdef OKAY_HAVE_ASSIMP
             if (assimp_backend::Read(path, flatten, out, nullptr)) return true;
 #endif

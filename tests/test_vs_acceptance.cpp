@@ -250,9 +250,9 @@ entry OnStart 0
         Input::FeedKeys({}); Input::FeedKeys({});
     }
 
-    // ---- On Fixed Update: 50 steps a second, Delta Time = 0.02 ----------------
+    // ---- On Fixed Update: once per physics step (50 a second, as Play runs it), Delta Time = 0.02 ----
     {
-        Scene s("Fixed"); GameObject* go = s.CreateGameObject("F");
+        Scene s("Fixed"); s.UseFixedStepPhysics(true); GameObject* go = s.CreateGameObject("F");
         auto* v = Attach(go, "node 0 OnFixedUpdate\nnode 1 AddVar steps\nnode 2 Const 1\nnode 3 DeltaTime\nnode 4 SetVar dt\n"
                              "data 1 0 2 0\ndata 4 0 3 0\nexec 0 0 1\nexec 1 0 4\nentry OnFixedUpdate 0\n");
         s.Start();

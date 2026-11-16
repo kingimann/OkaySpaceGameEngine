@@ -673,6 +673,8 @@ void Scene::UseFixedStepPhysics(bool on) {
 }
 
 void Scene::RunFixedUpdate(float step) {
+    // Every component's FixedUpdate, once per physics step and just before it (StepPhysics). Text
+    // scripts' FixedUpdate() and visual scripts' On Physics Update come through here too.
     // Index loop: a FixedUpdate may remove components (slots are nulled) or add them (they wait in m_pending).
     for (std::size_t i = 0; i < m_active.size(); ++i) {
         Component* c = m_active[i];
@@ -691,6 +693,8 @@ void Scene::StepPhysics(float deltaTime) {
         m_physicsSteps = 1; m_physicsAlpha = 0.0f;
         return;
     }
+    // Time.fixedDeltaTime (scripts) reads the step that FixedUpdate and the physics really use.
+    Time::SetFixedDeltaTime(step);
     const auto bodies3 = FindObjectsOfType<Rigidbody3D>();
     const auto bodies2 = FindObjectsOfType<Rigidbody2D>();
     if (interpolatePhysics) {

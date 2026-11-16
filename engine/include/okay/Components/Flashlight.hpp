@@ -6,6 +6,7 @@
 #include "okay/Components/Camera.hpp"
 #include "okay/Components/Light.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include <vector>
 
 namespace okay {
@@ -30,7 +31,10 @@ public:
 
     void Update(float) override {
         if (!m_light) { EnsureLight(); }
-        if (toggleKey && Input::GetKeyDown(toggleKey)) { on = !on; Sync(); }
+        // Not while a text field has focus: typing an "f" in a chat box is not a torch press.
+        if (toggleKey && Input::GetKeyDown(toggleKey) && !GameInputBlocked(GetScene(), (unsigned)GameInputMask::Text)) {
+            on = !on; Sync();
+        }
         Sync();
     }
 

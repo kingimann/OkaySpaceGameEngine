@@ -12,6 +12,7 @@
 #include "okay/Components/UIToast.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Inventory/InventoryEvents.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include "okay/Scripting/ScriptUI.hpp"
@@ -572,7 +573,10 @@ void QuestLog::Update(float) {
             else r.progress[i] = std::max(0, have);
         }
     }
-    if (allowJournal && journalKey && Input::GetKeyDown(journalKey)) journalOpen = !journalOpen;
+    // Not while a text field has focus (typing a "j" does not open the journal).
+    if (allowJournal && journalKey && Input::GetKeyDown(journalKey) &&
+        !GameInputBlocked(GetScene(), (unsigned)GameInputMask::Text))
+        journalOpen = !journalOpen;
     if (!allowJournal) journalOpen = false;
     if (journalOpen) Input::SetUICaptured(true);
     if (!drawUI) return;

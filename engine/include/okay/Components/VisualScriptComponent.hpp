@@ -79,8 +79,9 @@ public:
     /// switched back on) / "OnDisable" (switched off during play).
     void OnEnable() override  { if (m_started) Fire("OnEnable", nullptr); }
     void OnDisable() override { if (m_started) Fire("OnDisable", nullptr); }
-    /// "OnFixedUpdate" runs at this fixed rate (steps per second), before On Update.
-    static constexpr float kFixedStep = 1.0f / 50.0f;
+    /// "OnFixedUpdate" (On Physics Update): once per physics step, just before the step,
+    /// with Delta Time = the step (the project's physics rate; 50 a second by default).
+    void FixedUpdate(float step) override;
     void OnMouseEnter() override { Fire("OnMouseEnter", gameObject); }
     void OnMouseExit() override { Fire("OnMouseExit", gameObject); }
     /// Clip events run "OnAnimEvent:<name>" (an On Anim Event node filtered to
@@ -129,7 +130,6 @@ public:
 
 private:
     bool m_started = false;         // Start() ran (OnStart fired)
-    float m_fixedAcc = 0.0f;        // time banked toward the next OnFixedUpdate
     bool m_startDeferred = false;   // Start() arrived while scripts were off
     void SetContact(const Vec3& point, const Vec3& normal, float impactSpeed) {
         m_ctx.variables["contact_point"]  = vs::VsValue(point);

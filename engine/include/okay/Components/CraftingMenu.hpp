@@ -6,6 +6,7 @@
 #include "okay/Components/UIButton.hpp"
 #include "okay/Components/UIAnchor.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -32,7 +33,10 @@ public:
     void Update(float) override {
         auto* craft = gameObject ? gameObject->GetComponent<Crafting>() : nullptr;
         if (Signature(craft) != m_signature) Rebuild();
-        if (toggleKey && Input::GetKeyDown(toggleKey)) { open = !open; ApplyVisible(); }
+        // Not while a text field has focus (typing a "k" does not open the menu).
+        if (toggleKey && Input::GetKeyDown(toggleKey) && !GameInputBlocked(GetScene(), (unsigned)GameInputMask::Text)) {
+            open = !open; ApplyVisible();
+        }
         if (craft)
             for (int i = 0; i < (int)m_buttons.size(); ++i)
                 if (m_buttons[i])

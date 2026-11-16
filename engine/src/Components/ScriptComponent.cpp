@@ -111,15 +111,21 @@ void ScriptComponent::Update(float dt) {
     if (m_startDeferred) Start();
     ConsoleSourceScope scope(ScriptLogSource(gameObject, Path()));
     m_host.transform = transform;
-    // FixedUpdate(): whole fixed steps for the time that passed (at most 5 per frame
-    // so a long hitch can't snowball), before this frame's Update.
-    m_fixedAcc = std::min(m_fixedAcc + dt, kFixedStep * 5.0f);
-    if (m_fixedAcc >= kFixedStep) {
-        m_host.deltaTime = kFixedStep;
-        while (m_fixedAcc >= kFixedStep) { m_fixedAcc -= kFixedStep; m_vm->CallEvent("on_fixed_update"); }
-    }
     m_host.deltaTime = dt;
     m_vm->CallUpdate(dt);
+}
+
+void ScriptComponent::FixedUpdate(float step) {
+    // Called by the scene once per physics step, just before the step (Scene::StepPhysics), so the
+    // script's FixedUpdate() follows the project's physics rate and a force it adds is used by the
+    // very next step. Time.deltaTime reads the step's length while it runs.
+    if (!m_vm || m_startDeferred || !ScriptsRun(gameObject)) return;
+    ConsoleSourceScope scope(ScriptLogSource(gameObject, Path()));
+    m_host.transform = transform;
+    const float frameDt = m_host.deltaTime;
+    m_host.deltaTime = step;
+    m_vm->CallEvent("on_fixed_update");
+    m_host.deltaTime = frameDt;   // LateUpdate and contact events read the frame's dt again
 }
 
 void ScriptComponent::LateUpdate(float) {
@@ -147,7 +153,6 @@ void ScriptComponent::OnPoolReuse() {
     if (!LoadSource(source, &error)) return;   // it compiled before, so this does not fail
     m_started = false;
     m_startDeferred = true;   // start() runs before the next update()
-    m_fixedAcc = 0.0f;
 }
 
 void ScriptComponent::OnDisable() {

@@ -63,8 +63,9 @@ public:
     /// variables are the ones it started with, the inspector overrides are applied again) and its start() runs
     /// before the next update(), as for a new object. Does nothing for a script that never ran.
     void OnPoolReuse() override;
-    /// FixedUpdate() runs at this fixed rate (steps per second), however fast the game draws.
-    static constexpr float kFixedStep = 1.0f / 50.0f;
+    /// The script's FixedUpdate(): once per physics step, just before the step, with
+    /// Time.deltaTime = the step (the project's physics rate; 50 a second by default).
+    void FixedUpdate(float step) override;
 
     // Forward engine messages to optional script handlers. A script just defines a
     // function with the matching name to react. Physics overlaps/contacts and
@@ -105,7 +106,6 @@ public:
 private:
     bool  m_started = false;         // Start() ran the script's Awake/OnEnable/Start
     bool  m_startDeferred = false;   // Start() arrived while scripts were off
-    float m_fixedAcc = 0.0f;   // time banked toward the next FixedUpdate()
     void Fire(const char* event) { if (m_vm && ScriptsRun(gameObject)) m_vm->CallEvent(event); }
     void FireOther(const char* event, Collider2D* c);
     void FireOther(const char* event, Collider3D* c);

@@ -111,7 +111,7 @@ IEnumerator Hop()
 |---|---|
 | `Awake()`, `OnEnable()`, `Start()` | Once each, in that order, when the scene starts. |
 | `Update()` / `LateUpdate()` | Every frame (`Time.deltaTime` is the seconds since the last). |
-| `FixedUpdate()` | 50 times a second, however fast the game draws. |
+| `FixedUpdate()` | Once per physics step, just before the step, with `Time.deltaTime` (and `Time.fixedDeltaTime`) set to the step's length. The rate is the project's **Physics > Steps per second** (50 by default), so a force added here has the same effect at any frame rate and any physics rate. It runs after this frame's `Update()`. A scene with no fixed step (a bare test scene) takes one physics step per frame, so `FixedUpdate()` runs once a frame there; a scene with physics switched off (an editor preview) does not run it. Key presses are per frame: at a high frame rate most frames have no physics step, and at a low one a frame has several, so `key_down` read in `FixedUpdate()` can miss a press or see it twice. Read presses in `Update()` and keep the result for `FixedUpdate()`, or use the buffered / consume input calls from the input upgrade when they are available. |
 | `OnDisable()`, `OnDestroy()` | When the object is destroyed. |
 | `OnCollisionEnter/Stay/Exit(string other)`, `OnTriggerEnter/Stay/Exit(string other)` | Physics contacts, 2D and 3D. `other` is the other object (`other.name`, `other.CompareTag(..)`, `other.transform.position`). |
 | `OnMouseDown/Up/Enter/Exit/Over()`, `OnClick()` | Pointer events on the object. |

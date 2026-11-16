@@ -537,7 +537,7 @@ entry OnKey:space 0
 
 | Node | Runs |
 |---|---|
-| On Fixed Update | 50 times a second of game time (at most 5 per frame), before On Update. Delta Time reads 0.02. |
+| On Fixed Update | Once per physics step, just before the step, at the project's physics rate (50 a second by default). Delta Time reads the step (0.02 at 50). Runs after this frame's On Update. Key presses are per frame, so an On Key check here can miss a press or see it twice: read keys in On Update, or use the buffered / consume input nodes from the input upgrade when they are available. |
 | On Enable | When the object starts (before On Start) and each time it is switched back on. |
 | On Disable | When the object is switched off during play (detected the next frame). |
 | On Destroy | When the object is destroyed, while it still exists. It may spawn effects. |
@@ -1132,7 +1132,7 @@ Script-binding nodes are the generated list in [engine_api.md](engine_api.md): o
 - **On Start** (`OnStart`)
 - **On Every Frame** (`OnUpdate`) — was On Update
 - **On Late Update** (`OnLateUpdate`)
-- **On Physics Update** (`OnFixedUpdate`) — was On Fixed Update. Runs 50 times a second, before On Every Frame, so a long frame does not speed it up
+- **On Physics Update** (`OnFixedUpdate`) — was On Fixed Update. Runs once per physics step (the project's physics rate, 50 a second by default), just before the step, so a long frame does not speed it up and a force added here is the same at any rate
 - **On Enabled** (`OnEnable`) — was On Enable
 - **On Disabled** (`OnDisable`) — was On Disable
 - **On Destroyed** (`OnDestroy`) — was On Destroy

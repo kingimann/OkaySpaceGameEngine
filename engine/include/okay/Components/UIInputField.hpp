@@ -155,7 +155,13 @@ public:
                 if (sc->VM()) sc->VM()->CallEvent("on_submit");
     }
 
+    /// True from the frame Esc took focus away from this field until the field's next Update. The
+    /// game treats the field as still owning the keyboard then, so the same Esc does not also open
+    /// the pause menu, whichever of the two components updates first.
+    bool LeftWithEscape() const { return m_leftWithEscape; }
+
     void Update(float dt) override {
+        m_leftWithEscape = false;
         if (Input::GetMouseButtonDown(0)) {
             bool was = focused;
             focused = Contains(Input::MousePosition());
@@ -186,7 +192,7 @@ public:
         if (Input::GetKeyDown('\r') || Input::GetKeyDown('\n')) {
             if (!multiline) { focused = false; Submit(); }
             else if ((int)utf8::Length(text) < maxLength) { text.push_back('\n'); m_blink = 0.0f; }
-        } else if (Input::GetKeyDown((char)27)) focused = false;
+        } else if (Input::GetKeyDown((char)27)) { focused = false; m_leftWithEscape = true; }
 
         m_blink += dt;
         if (m_blink >= 1.1f) m_blink -= 1.1f;
@@ -194,6 +200,7 @@ public:
 
 private:
     float m_blink = 0.0f;
+    bool  m_leftWithEscape = false;   // see LeftWithEscape()
 };
 
 } // namespace okay

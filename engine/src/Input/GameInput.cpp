@@ -32,7 +32,10 @@ bool BagOpen(const InventoryUI* ui) { return ui && ui->enabled && ui->open; }
 bool GridOpen(const GridInventory* g) { return g && g->enabled && g->open; }
 bool ChestOpen(const ChestInventory* c) { return c && c->enabled && c->open; }
 bool CraftOpen(const CraftingStation* c) { return c && c->enabled && c->open; }
-bool FieldOn(const UIInputField* f) { return f && f->enabled && f->focused && f->gameObject && f->gameObject->active; }
+// A field that Esc just un-focused still counts for that frame, so the Esc is not also a pause press.
+bool FieldOn(const UIInputField* f) {
+    return f && f->enabled && (f->focused || f->LeftWithEscape()) && f->gameObject && f->gameObject->active;
+}
 bool MapOpen(const Minimap* m) { return m && m->enabled && m->fullscreen; }
 
 bool PointerOnUI(const Scene* scene) {

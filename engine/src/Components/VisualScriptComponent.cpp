@@ -197,6 +197,20 @@ void VisualScriptComponent::Start() {
     CheckWatches();
 }
 
+void VisualScriptComponent::FixedUpdate(float step) {
+    // Called by the scene once per physics step, just before the step (Scene::StepPhysics), so On
+    // Physics Update follows the project's physics rate. Delta Time reads the step while it runs.
+    if (!m_graph || m_startDeferred || !ScriptsRun(gameObject)) return;
+    if (m_graph->Entries("OnFixedUpdate").empty()) return;
+    ConsoleSourceScope scope(GraphLogSource(gameObject, Path()));
+    const float frameDt = m_ctx.deltaTime;
+    m_ctx.deltaTime = step;
+    m_ctx.gameObject = gameObject;
+    m_ctx.transform = transform;
+    m_graph->RunEntries("OnFixedUpdate", m_ctx);
+    m_ctx.deltaTime = frameDt;   // On Late Update and contact events read the frame's dt again
+}
+
 void VisualScriptComponent::Update(float dt) {
     ApplyPendingGraph();
     if (!m_graph || !ScriptsRun(gameObject)) return;
@@ -216,19 +230,7 @@ void VisualScriptComponent::Update(float dt) {
     }
     m_graph->Resume(m_ctx);   // chains parked by Delay / Wait / Actions steps carry on
     if (!m_graph) return;
-    // On Fixed Update: whole fixed steps for the time that passed (at most 5 per
-    // frame so a hitch can't snowball), before this frame's On Update - the same
-    // rule as a text script's FixedUpdate(). Delta Time reads the fixed step.
-    if (!m_graph->Entries("OnFixedUpdate").empty()) {
-        m_fixedAcc = std::min(m_fixedAcc + dt, kFixedStep * 5.0f);
-        while (m_fixedAcc >= kFixedStep && m_graph) {
-            m_fixedAcc -= kFixedStep;
-            m_ctx.deltaTime = kFixedStep;
-            m_graph->RunEntries("OnFixedUpdate", m_ctx);
-        }
-        m_ctx.deltaTime = dt;
-        if (!m_graph) return;
-    }
+    // On Fixed Update (On Physics Update) runs from FixedUpdate below, once per physics step.
     m_graph->RunEntries("OnUpdate", m_ctx);
     // On Click also covers UI buttons (they don't get scene mouse picks).
     if (!m_graph->Entries("OnClick").empty())

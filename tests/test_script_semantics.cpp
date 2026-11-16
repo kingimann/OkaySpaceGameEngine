@@ -158,10 +158,12 @@ int main() {
               "void Awake() { order += \"A\"; }\nvoid OnEnable() { order += \"E\"; }\nvoid Start() { order += \"S\"; }\n"
               "void FixedUpdate() { fixedSteps++; }\n");
         CHECK(r.Get("order").AsString() == "AES");
+        r.scene.UseFixedStepPhysics(true);                      // as Play does: FixedUpdate follows the physics step
         r.Frames(60);                                           // one second at 60 fps
         const float steps = r.Get("fixedSteps").AsFloat();
         CHECK(steps >= 49.0f && steps <= 51.0f);                // 50 fixed steps per second
         Run slow("int fixedSteps = 0;\nvoid FixedUpdate() { fixedSteps++; }\n");
+        slow.scene.UseFixedStepPhysics(true);
         slow.Frames(10, 0.1f);                                  // 10 fps: 5 steps a frame
         CHECK(slow.Get("fixedSteps").AsFloat() >= 49.0f);
     }

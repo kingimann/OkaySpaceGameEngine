@@ -99,7 +99,7 @@ inline const char* VsNodeHelp(const char* type) {
         {"OnDestroy",      "Runs once, just before this object is removed from the scene."},
         {"OnUpdate",       "Runs every frame. Put movement and checks that must happen all the time here."},
         {"OnLateUpdate",   "On Late Update. Runs every frame after On Every Frame. Good for a camera that follows something."},
-        {"OnFixedUpdate", "On Physics Update. Runs on a steady clock, 50 times a second, before On Every Frame. A long or a short frame does not change how often it runs, so movement here does not speed up when the game stutters."},
+        {"OnFixedUpdate", "On Physics Update. Runs once per physics step, just before the step, at the project's physics rate (50 a second by default). A long or a short frame does not change how often it runs, so movement here does not speed up when the game stutters, and a force added here is the same at any physics rate."},
         {"OnEnable",      "On Enabled. Runs when this object is switched on."},
         {"OnDisable",     "On Disabled. Runs when this object is switched off during play."},
         {"OnDestroy",      "Runs when this object is about to be destroyed."},

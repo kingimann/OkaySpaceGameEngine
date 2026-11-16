@@ -255,6 +255,7 @@ int main() {
             "    void FixedUpdate() { fixedSteps++; fixedDt = Time.deltaTime; }\n"
             "    void Update() { updates++; if (updates == 30) enabled = false; }\n"
             "    void LateUpdate() { lates++; }\n"));
+        w.scene.UseFixedStepPhysics(true);   // as Play does: FixedUpdate follows the 50 Hz physics step
         CHECK(w.Get("order").AsString() == "AES");
         w.Frames(60);
         CHECK_NEAR(w.Get("updates").AsFloat(), 30.0f, 1e-4f);       // turned itself off

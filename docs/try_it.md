@@ -1086,6 +1086,37 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## FixedUpdate follows the physics rate; typing in a text box no longer fires hotkeys (branch `claude2/fixedupdate-on-physics-step`, not merged or released yet)
+
+Bug fixes from issue #888 (Findings 84 and 68).
+
+**FixedUpdate.** A script's `FixedUpdate()` and the visual-script **On Physics Update** now run once per physics step,
+just before the step, with `Time.deltaTime` set to the step. Before, they ran on their own 50-a-second clock, so with
+Project Settings > Physics > Steps per second at 100 a force added in `FixedUpdate()` was half as strong, and at 25 twice
+as strong.
+
+1. In the editor use File > Open and pick `examples\physics\fixed_step_push.okayscene`, then press **Play**.
+2. A ball is pushed sideways with 10 N. Watch the **Console**: after 1, 2 and 3 seconds it prints
+   a line like `after 2 s: speed 20 (expected 20) at 50 steps a second`.
+3. Click the game view and press **1** (25 steps a second), **2** (50) or **3** (100). Each restarts the ball at that rate.
+   You should see about the same speeds (10, 20, 30, give or take a few tenths) at every rate. Before this fix, 100 steps a second printed half (10 after 2 s)
+   and 25 printed double (40).
+
+**Typing.** While a text box (a `UIInputField`: chat, a name entry, a console) has focus:
+- the Flashlight (`f`), Grid Inventory (`i`), Crafting Menu (`k`) and Quest Log journal (`j`) keys do nothing;
+- the First Person and Third Person players do not jump, sprint, crouch, go prone, lean or dodge (they already did not walk);
+- Esc only leaves the text box; it does not also open the pause menu. The next Esc pauses as usual.
+
+To try it: make a scene with a Canvas, a UIInputField and a First Person player with a Flashlight (and a Pause Menu),
+press Play, click the text box and type `find kit` and a space, then press Esc. The torch should stay as it was, the
+player should not jump, and the game should not pause.
+
+Not changed here: scripts' `key_down` / `action_down` and the visual-script key events still see typed keys. The
+`claude/input-upgrade` branch (not merged yet) fixes those with its text-focus check.
+
+**Status.** Tested headless on Linux (`test_fixedupdate_step`, which also loads and runs the example scene). Not run on
+Windows. The editor was not built, so the help text change for On Physics Update was not compiled.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

@@ -366,7 +366,7 @@ public:
         Vec2 pad = Input::GamepadAxis();
         if (Mathf::Abs(pad.x) + Mathf::Abs(pad.y) > 0.15f) in.move = pad;   // left stick overrides
         auto key = [&](char k, std::uint32_t bit) {
-            if (!k) return;
+            if (!k || uiBlocked) return;   // typing in a text field or an open bag: no jump, sprint, crouch or lean
             if ((bit == PlayerInput::LeanLeft || bit == PlayerInput::LeanRight) &&
                 LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k)) return;   // a use or bag press, not a lean
             if (Input::GetKey(k))     in.held |= bit;
@@ -376,7 +376,7 @@ public:
         key(sprintKey, PlayerInput::Sprint);
         key(crouchKey, PlayerInput::Crouch);
         key(proneKey, PlayerInput::Prone);
-        m_dodgeEdge = dodge.canDodge && dodge.key && Input::GetKeyDown(dodge.key);
+        m_dodgeEdge = !uiBlocked && dodge.canDodge && dodge.key && Input::GetKeyDown(dodge.key);
         key(leanLeftKey, PlayerInput::LeanLeft);
         key(leanRightKey, PlayerInput::LeanRight);
         if (stanceGamepadButton >= 0 && Input::GetGamepadButton(stanceGamepadButton)) in.held |= PlayerInput::StanceButton;

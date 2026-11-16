@@ -41,7 +41,8 @@ void Update() {
 }
 
 void FixedUpdate() {
-    // 50 times a second, however fast the game draws
+    // once per physics step (the project's physics rate, 50 a second by default),
+    // just before the step; Time.deltaTime is the step's length
 }
 ```
 

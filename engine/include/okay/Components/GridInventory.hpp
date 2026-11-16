@@ -1,6 +1,7 @@
 #pragma once
 #include "okay/Scene/Component.hpp"
 #include "okay/Input/Input.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Inventory/ItemDatabase.hpp"
 #include <cmath>
 #include <string>
@@ -211,7 +212,9 @@ public:
     }
 
     void Update(float) override {
-        if (toggleKey && Input::GetKeyDown(toggleKey)) open = !open;
+        // Not while a text field has focus (typing an "i" does not open the bag).
+        if (toggleKey && Input::GetKeyDown(toggleKey) && !GameInputBlocked(GetScene(), (unsigned)GameInputMask::Text))
+            open = !open;
     }
 
 private:

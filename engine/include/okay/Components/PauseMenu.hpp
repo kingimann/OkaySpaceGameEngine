@@ -13,6 +13,7 @@
 #include "okay/Audio/AudioMixer.hpp"
 #include "okay/Input/Input.hpp"
 #include "okay/Input/InputActions.hpp"
+#include "okay/Input/GameInput.hpp"
 #include "okay/Input/Cursor.hpp"
 #include "okay/Core/Localization.hpp"
 #include <string>
@@ -95,7 +96,8 @@ public:
 
     void Update(float) override {
         if (!m_built) EnsureBuilt();
-        if (Input::GetKeyDown(toggleKey)) Toggle();
+        // A focused text field takes Esc first (it only leaves the field), whichever updates first.
+        if (Input::GetKeyDown(toggleKey) && !GameInputBlocked(GetScene(), (unsigned)GameInputMask::Text)) Toggle();
         // Keep the overlay synced to the pause state (another source un-pausing also
         // closes it). Only touch it on a change so we don't fight other systems.
         bool paused = Game::Paused();

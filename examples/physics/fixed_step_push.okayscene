@@ -1,0 +1,50 @@
+okayscene 3
+name "Fixed step push"
+gravity 0 -9.81
+gravity3 0 -9.81 0
+gameobject 0 "Ball"
+  active 1
+  parent -1
+  transform 0 1 0 0 0 0 1 1 1 1
+  spherecollider3d 0.5 0 0 0 0
+  rigidbody3d 0 0 1 0 0 0 0 0
+  mesh "Sphere" 0.9 0.45 0.2 1 0 "" 0
+  material 0 0 0 0 16 1 "" 1 1
+  script "okayscript" "// Pushes the ball with 10 N in FixedUpdate. FixedUpdate runs once per physics step,
+// so the speed after N seconds is 10 x N at any physics rate.
+// Keys: 1 = 25 steps a second, 2 = 50, 3 = 100. Each restarts the ball.
+float t = 0;
+int report = 1;
+void FixedUpdate() { add_force(10, 0, 0); }
+void Restart(float hz) {
+    set_physics_steps(hz);
+    set_velocity(0, 0, 0);
+    transform.position.x = 0;
+    t = 0;
+    report = 1;
+    print(\"physics rate \" + physics_steps() + \" steps a second\");
+}
+void Update() {
+    if (key_down(\"1\")) Restart(25);
+    if (key_down(\"2\")) Restart(50);
+    if (key_down(\"3\")) Restart(100);
+    t += Time.deltaTime;
+    if (report <= 3 && t >= report) {
+        print(\"after \" + report + \" s: speed \" + velocity_x() + \" (expected \" + (10 * report) + \") at \" + physics_steps() + \" steps a second\");
+        report++;
+    }
+}
+"
+end
+gameobject 1 "Directional Light"
+  active 1
+  parent -1
+  transform 0 6 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 2 "Main Camera"
+  active 1
+  parent -1
+  transform 20 4 30 -0.13485 0 0 0.99086 1 1 1
+  camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
+end

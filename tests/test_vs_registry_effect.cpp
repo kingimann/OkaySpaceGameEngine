@@ -549,7 +549,9 @@ static std::vector<Ev> BuildEvents() {
         return [=](Scene& s, GameObject*, VC* vc) { vc->RaiseEvent(VsEntryName(type, arg).c_str(), s.Find("Other"), "n", vs::VsValue(1.0f)); };
     };
     e.push_back({"OnStart", "", "real", "Me", [](Scene&, GameObject*, VC*) {}});
-    for (const char* t : {"OnUpdate", "OnLateUpdate", "OnFixedUpdate"}) e.push_back({t, "", "real", "Me", [=](Scene& s, GameObject*, VC*) { for (int i = 0; i < 3; ++i) s.Update(0.1f); }});
+    for (const char* t : {"OnUpdate", "OnLateUpdate"}) e.push_back({t, "", "real", "Me", [=](Scene& s, GameObject*, VC*) { for (int i = 0; i < 3; ++i) s.Update(0.1f); }});
+    // On Physics Update runs once per physics step, so it needs the physics on (these scenes switch it off).
+    e.push_back({"OnFixedUpdate", "", "real", "Me", [=](Scene& s, GameObject*, VC*) { s.physicsEnabled = true; for (int i = 0; i < 3; ++i) s.Update(0.1f); }});
     e.push_back({"OnEnable", "", "real", "Me", [=](Scene& s, GameObject* me, VC*) { me->active = false; s.Update(0.1f); me->active = true; s.Update(0.1f); }});
     e.push_back({"OnDisable", "", "real", "Me", [=](Scene& s, GameObject* me, VC*) { me->active = false; s.Update(0.1f); }});
     e.push_back({"OnDestroy", "", "real", "Me", [=](Scene& s, GameObject* me, VC*) { s.Destroy(me); s.Update(0.1f); }});

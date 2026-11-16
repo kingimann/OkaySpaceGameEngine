@@ -3727,3 +3727,10 @@ add_executable(walk_vs_run_strips walk_vs_run_strips.cpp)
 target_link_libraries(walk_vs_run_strips PRIVATE okay::engine)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
 add_test(NAME walk_vs_run_strips COMMAND walk_vs_run_strips ${CMAKE_CURRENT_BINARY_DIR}/walk_vs_run_pictures)
+
+# A script's FixedUpdate and the visual-script On Physics Update run once per physics step,
+# and component hotkeys stay quiet while a text field has focus (issue #888, Findings 84 and 68).
+add_executable(test_fixedupdate_step test_fixedupdate_step.cpp)
+target_link_libraries(test_fixedupdate_step PRIVATE okay::engine)
+target_compile_definitions(test_fixedupdate_step PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME fixedupdate_step COMMAND test_fixedupdate_step)

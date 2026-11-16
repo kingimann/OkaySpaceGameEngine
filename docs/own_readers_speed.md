@@ -56,7 +56,7 @@ to run; the instruction counts quoted below (callgrind) do not move.
 | amf | 11 | 11 | 0.86x -> 0.84x (0.4 / 0.5 ms) | met | 0.04 / 0.13 -> 0.04 / 0.13 | met | 0.80x | 0.06 / 0.13 MB | 2 / 0 |
 | ase | 17 | 16 | 1.05x -> 0.72x (5.5 / 7.6 ms) | met | 1.99 / 2.40 -> 1.99 / 2.40 | met | 0.69x | 1.99 / 2.40 MB | 0 / 0 |
 | b3d | 3 | 3 | 0.35x -> 0.35x (1.4 / 4.1 ms) | met | 1.02 / 1.75 -> 1.02 / 1.75 | met | 0.75x | 1.52 / 1.75 MB | 0 / 0 |
-| blend | 28 | 27 | 0.12x -> 0.09x (55.3 / 591.5 ms) | met | 4.00 / 84.07 -> 4.00 / 84.07 | met | 0.10x | 4.00 / 84.07 MB | 1 / 11 |
+| blend | 28 | 27 | 0.12x -> 0.09x -> 0.24x with modifiers (122.8 / 517.0 ms) | met | 4.00 / 84.07 -> 4.00 / 84.07 -> 33.22 / 84.07 with modifiers | met | 0.22x | 33.22 / 84.07 MB | 1 / 11 |
 | bvh | 3 | 3 | 0.40x -> 0.39x (27.8 / 72.1 ms) | met | 7.66 / 14.53 -> 7.66 / 14.53 | met | 0.94x | 8.89 / 14.53 MB | 0 / 0 |
 | cob | 8 | 6 | 0.92x -> 0.92x (6.2 / 6.8 ms) | met | 1.19 / 1.31 -> 1.19 / 1.31 | met | 0.90x | 1.19 / 1.31 MB | 2 / 1 |
 | csm | 1 | 1 | 1.45x -> 0.90x (5.8 / 6.4 ms) | met | 6.22 / 6.73 -> 5.11 / 6.73 | met | 0.96x | 5.88 / 7.21 MB | 0 / 0 |
@@ -258,9 +258,26 @@ Differences that are not by design, or that are worth a second look (counts are 
   `molecule_ascii.cob`, NFF `cone.nff`, AC3D `SphereWithLight_UTF16LE.ac` and Blender `BlenderDefault_262.blend`** are read
   by ours and refused by Assimp. PLY `ant-half.ply` (truncated), OFF `invalid.off`, X3D `IndexedLineSet.x3d` and the three
   line-only AC3D files are refused by ours and read by Assimp (as meshes without triangles); all known and documented.
-- **Blender: modifiers.** Assimp applies subdivision and mirror modifiers, ours does not (documented): `SuzanneSubdiv_252`
-  968 / 251,904 triangles, `yxa_1` 1,808 / 115,712, `HUMAN` 267 / 8,560, `MirroredCube_252` 24 / 36, `CubeHierarchy_248`
-  122 / 86.
+- **Blender: modifiers (closed for the triangle counts).** Ours now applies Mirror and Subdivision Surface like Assimp
+  (`docs/own_blend_reader.md`, section Modifiers): `SuzanneSubdiv_252` 251,904 / 251,904 triangles, `yxa_1` 115,712 /
+  115,712, `HUMAN` 8,560 / 8,560, boxes equal. Left: `MirroredCube_252` 108 / 36 (the file mirrors on all three axes around
+  a mirror object; ours makes the eight copies, Assimp one copy that stays inside the original box), the Suzanne's open
+  boundaries (Assimp does not use the Catmull-Clark boundary rule; 85 of 2,010 points at level 1 differ by up to 0.02), and
+  `CubeHierarchy_248` 122 / 86 (Assimp drops three cubes; not a modifier). Speed with the modifiers: `SuzanneSubdiv_252`
+  56 / 269 ms, `yxa_1` 19 / 101 ms (ours / Assimp), after replacing the reader's per-vertex hash map with a flat table
+  (the read of that Suzanne was 240 ms before; the output is bit for bit the same). The blend row above went from 0.12x to
+  0.24x and its largest peak from 4.0 to 33.2 MB because ours now makes the 251,904-triangle Suzanne too (Assimp: 84 MB);
+  both still met. Digests of the other 351 corpus files (24 of them `.blend`) are unchanged.
+- **Blender: Subdivision Surface options of 2.9+ (2026-11-16).** The subdivision now also reads UV Smooth, Boundary
+  Smooth, the limit surface and DeRose's crease rules (`docs/own_blend_reader.md`). No corpus file has these options (the
+  corpus is Blender 2.41 to 2.93; its Subsurf files are 2.5x), so all 355 corpus digests are unchanged, the `.blend`
+  ones included. Speed rerun (`bench_model_readers`, 15 runs, median; the machine was shared with other builds, load
+  about 6 on 4 cores, so all times are higher than the quiet run above): `SuzanneSubdiv_252` 73 / 404 ms (0.18x),
+  `yxa_1` 21 / 119 ms (0.18x), `HUMAN` 12 / 23 ms (ours / Assimp); the whole `.blend` row 0.30x in a 5-run pass under the
+  same load (0.24x quiet before); peaks unchanged (33.2 / 84.1 MB). Ours still beats Assimp on every file with modifiers.
+  The new options only cost time when a file turns them on: the limit surface adds one pass over the finished mesh
+  (a cube at level 7, 98,304 quads, positions only: about 5.5 ms without and 11 ms with it, same load; UVs smoothed with
+  a mode add one more), measured with a scratch program, not a committed bench.
 - **Skeleton-only files** (BVH, CSM, MD5 `.md5anim`, Collada `cameras.dae` and `lights.dae`): Assimp adds a stand-in mesh
   (164, 352 and 200 triangles), ours adds none (deliberate).
 - **Triangle counts that differ by a few per cent**: concave polygons (Collada, OBJ and LWO `ConcavePolygon` 64 / 58,

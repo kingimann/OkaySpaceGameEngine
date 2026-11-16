@@ -106,11 +106,14 @@ struct Recipe {
 struct Template {
     std::string id, name, description, category;   ///< category: Architecture, Vehicles, Characters, Environment, Props
     int version = 1;
+    bool usesPath = false;   ///< follows Recipe::path when it has two or more points (fence, wall)
     std::vector<ParamDef> params;
     std::vector<SlotDef> slots;
     std::vector<StartDesign> starts;
     /// Build every part for a recipe whose params are already filled in and clamped.
     std::function<void(const Recipe&, std::vector<GeneratedPart>&)> generate;
+    /// Optional compatibility rule applied after a random change (for example: no wing spoiler on a pickup).
+    std::function<void(Recipe&)> constrain;
 };
 
 class Registry {
@@ -138,6 +141,24 @@ std::vector<GeneratedPart> Generate(const Recipe& r, std::string* error = nullpt
 PolyMesh Assemble(const std::vector<GeneratedPart>& parts);
 /// Generate + Assemble.
 PolyMesh Create(const Recipe& r, std::string* error = nullptr);
+
+// ---- Validation and variation ----------------------------------------------------------------------------------
+
+/// What is wrong, if anything, with a generated model.
+struct ValidationReport {
+    int parts = 0;
+    int components = 0;        ///< groups of parts that touch or overlap (1 = one connected object)
+    int nonFinite = 0, degenerate = 0, openParts = 0, invertedParts = 0, badIndices = 0;
+    std::vector<std::string> problems;
+    bool Ok() const { return nonFinite == 0 && degenerate == 0 && openParts == 0 && badIndices == 0; }
+};
+/// Checks every part: finite positions, no degenerate faces, closed (watertight), outward faces (positive volume), valid indices;
+/// and counts the connected groups of parts (bounding boxes that touch). `checkVolume` is off for subdivided (Ultra) models.
+ValidationReport Validate(const std::vector<GeneratedPart>& parts, bool checkVolume = true);
+
+/// A repeatable variation of `base` (the start design's recipe): every setting moves within +-`strength` of its range (default 15 percent),
+/// some parts get another design, then the template's compatibility rule runs. Same seed, same result.
+Recipe Randomise(const Template& t, const Recipe& base, uint32_t seed, float strength = 0.15f);
 
 // ---- Analysis and regeneration ----------------------------------------------------------------------------
 
@@ -211,9 +232,23 @@ private:
     std::vector<GuidedState> undo_, redo_;
 };
 
+/// Number of triangles a mesh turns into (a face with n corners makes n - 2).
+int TriangleCount(const PolyMesh& m);
+/// The core "Detail" setting every template gets: Low, Medium, High, Ultra (Medium when a recipe has none).
+extern const char* const kDetailParam;
+inline float DetailOf(const Recipe& r) { return (float)r.Param("detail", 1); }
+
 // ---- Shape helpers (also used by templates in other files) --------------------------------------------------
 
 namespace shapes {
+/// The detail the parts being generated are built at, 0 to 3 continuous: 0 Low (blocky, few segments), 1 Medium (rounded),
+/// 2 High (smooth, fine detail parts), 3 Ultra (subdivided, finest detail). Detail() is the nearest whole level.
+/// Set for the duration of Generate() from the recipe's "detail" setting; the shape helpers below follow it
+/// (fewer or more segments on curves, bevelled edges from High up). Templates can read it for extra detail parts.
+int Detail();
+float DetailF();
+/// `base` segments at Medium: half at Low, double at High, four times at Ultra (never below `minimum`).
+int Scale(int base, int minimum = 3);
 /// A box filling the frame: 6 quads, outward.
 PolyMesh Box(const Frame& f);
 /// A prism with `sides` corners along the frame's up axis, fitted to the frame (cx, cz radius = size/2).
@@ -225,6 +260,11 @@ PolyMesh Ball(const Frame& f, int rings, int sectors);
 /// A flat profile (counter-clockwise corners in a,b = along t and up, within the frame's box) pushed through the frame's n size.
 PolyMesh ExtrudeProfile(const Frame& f, const std::vector<Vec2>& profile);
 void Append(PolyMesh& dst, const PolyMesh& src);
+/// A closed solid: `profile` (counter-clockwise in the a,b plane, positions o + a*pa + b*pb) pushed along `nrm`
+/// from -depth/2 to +depth/2. Faces are wound outward whatever the handedness of (a, b, nrm).
+PolyMesh ExtrudeAxes(const Vec3& o, const Vec3& a, const Vec3& b, const Vec3& nrm, const std::vector<Vec2>& profile, float depth);
+/// Flip faces whose normal points toward `centre` (right for convex shapes only).
+void OrientOutward(PolyMesh& m, const Vec3& centre);
 void Paint(PolyMesh& m, int material, const Color& color);
 }
 

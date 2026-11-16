@@ -75,7 +75,13 @@ release job or the installer build for this change.
 | 7t | Voxel terrain digs like real life: materials, debris you pick up, building from what you hold, Ctrl+Z | `examples\voxel\voxel_realistic.okayscene` | New in this change; Linux headless tests and pictures only, Windows and the editor click path unverified |
 | 7r | The character walks when you walk and runs when you hold Shift | New Project > Third Person (or First Person, press V), Play, W then Shift+W; older project: Player Controller > Use natural walk and run speeds | New in this change; the stride is measured by a test and drawn in pictures, the feel in the real editor and on Windows is unverified |
 | 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
+| 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zj | Guided vehicles (car, truck, bus, motorcycle, trailer, 6+ designs each) and a Detail level (Low to Ultra) on every guided model | Modeling > **Guided** > Vehicles; File > Examples > Guided modeling > `guided_vehicles`; `examples\modeling\guided_vehicles.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zk | Guided characters (human, robot, creature) with swappable head, hair, clothes, hands, feet, hats, glasses, backpacks, capes and proportion sliders | Modeling > **Guided** > Characters; File > Examples > Guided modeling > `guided_characters`; `examples\modeling\guided_characters.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
+| 7zn | Guided: Randomise within a style (seed), validation check, save-edit-reopen round trip | Modeling > **Guided** > Variation and check; File > Examples > Guided modeling > `guided_car_styles` | New in this change; tested on Linux, buttons never clicked in a window (unverified) |
+| 7u | Physics: Improved quality, physics playground, materials, slider joint, debris emitter | Open `examples\physics\physics_playground.okayscene` in `Tools\OkayEngine.exe` and press Play | New in this change; the physics is tested headless, the editor menus and the feel are unverified |
 | 7v | Test builds: try a branch in the launcher in about 30 minutes, before it is released | Ask the coordinator for a test build; then Launcher > Settings > Behavior > Startup & updates > **Get test builds** (off by default) | New in this change; the rules and the publisher are tested, the workflow, the real server and the launcher screens were never run (see section 7v) |
+| 7zi | Guided architecture: walls, stairs, doors, windows, roofs and a building you can take apart and swap | Modeling > **Guided** > Architecture; File > Examples > Guided modeling > `guided_architecture`; `examples\modeling\guided_architecture.okayscene` | New in this change; engine rules tested on Linux, editor page compiles but was never opened in a real window (unverified) |
 
 ---
 
@@ -928,6 +934,126 @@ is written, in order, the real release files are byte for byte unchanged, and ev
 `dev_workflow_lint` (the workflow read and its shell steps run offline). The launcher and editor files were compiled with `g++ -fsyntax-only` and
 the MinGW win32 compiler; they were not built or run. **Never run:** the workflow on GitHub, a write to the real Supabase storage, anything on Windows,
 and every screen above (no screenshot: the launcher was not built here). The wording in step 3 to 7 is what the code says; tell us what you actually see.
+
+## 7zi. Guided architecture: walls, stairs, doors, windows, roofs, buildings
+
+**What it is.** More things on the Modeling window's **Guided** page, built on the same rules as the fence (7zg): every
+model is an ordinary mesh, parts have names, and rebuilding never overwrites your hand edits without asking.
+
+- **Wall** along a straight run or a path with windows and a door cut in and filled with real windows and doors (corners are
+  butt-joined, best at right angles). **Stairs**: straight, L, U and spiral with side boards and railings (landing edges have no
+  railing). **Door**: flat, panelled, glazed, planks, double; frame, handle, can stand open. **Window**: five bar layouts, three
+  frames, sill, shutters. **Roof**: gable, hip, shed, flat, with an overhang and trim. **Building**: walls, windows, a door and a roof
+  composed as parts, 1 to 6 floors.
+
+**Status.** Generation and rebuild rules are tested on Linux (`ctest -R guided_architecture`, about 1400 checks:
+every design sound and closed, parts never overlap, every setting at its limits, a fuzz, swapping windows, door and roof of a
+building, your edits and your own additions surviving). The page itself was never opened in a real window; nothing ran on Windows.
+Pictures in `docs/images/guided_modeling/architecture_*.png` and `building_part_swap_before_after.png` are headless renders of the
+generated meshes, not editor screenshots.
+
+**Try it.**
+
+1. **File > Examples > Guided modeling (fences, buildings, stairs...) > guided_architecture** (or File > Open... on
+   `examples\modeling\guided_architecture.okayscene`). A grid of 29 models, one row per kind: walls, stairs, doors, windows, roofs,
+   buildings (the rows are 14 m apart; use the Hierarchy and F to find them).
+2. Click a building in the Hierarchy, open Modeling > Guided. Drag **Floors**, **Roof pitch**, **Width**: the building rebuilds.
+3. Under **Parts and materials** change **Roof** from Hip to Gable, **Windows** to Colonial, **Front door** to Planks. Or open **Each
+   part**, pick **Windows**, and give one window its own design. Press **Select** to jump into Edit Mesh with just that window selected,
+   move it with G, return to Guided: its row says "[edited by you]". Change the roof: it asks nothing (the window is not touched).
+   Change that window's design: it asks (Keep my edits / Discard my edits / Convert to regular mesh).
+4. Click a wall, set **Door** on, **Windows** to 3. Draw your own wall: **Size > Draw in the Scene view**, then click points on the
+   ground in the Scene view (they snap to the **Snap to grid** step). **Finish** or Esc ends. The same works for fences.
+5. Click a staircase, switch **Shape** between Straight, L, U and Spiral; change **Steps** and **Total height**.
+6. **Collision**: **Exact (mesh)** / **None** on the page (new models also get a "Solid (exact collider)" tick when you press Create).
+7. To make your own: Modeling > Guided with nothing selected, Architecture, pick a thing, a starting design card, Create.
+
+**Not done or not verified (said plainly).** No landing railings; wall corners are not mitred; click-to-draw has no preview line
+in the view (the model itself shows the result after each click); per-face materials: colours are drawn today and the material slot
+numbers are stored, and `claude/modeling-more` (not merged yet) adds per-face slots, which will pick the stored numbers up with no
+change here; Vehicles, Characters, Environment and Props are not built.
+## 7zj. Guided vehicles, and the Detail level
+
+**What it is.** Vehicles on the Modeling window's **Guided** page, built on the same rules as 7zg and 7zi, plus one new setting on
+every guided model: **Detail** (Low, Medium, High, Ultra) with the triangle count of each level next to it.
+
+**Status.** Tested on Linux (`ctest -R "guided_vehicles|guided_detail"`: about 2300 and 980 checks: every design sound, parts never
+overlap, every setting at its limits, fuzz, swapping wheels, headlights and bumpers, your edits surviving, the triangle counts and
+level changes). The page was never opened in a real window; nothing ran on Windows. Pictures
+(`docs/images/guided_modeling/vehicle_*.png`, `vehicles_*.png`, `detail_*.png`) are headless renders of the generated meshes by our own
+small rasteriser (the detail pictures show triangle edges), not editor screenshots. The motorcycles are the roughest models.
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_vehicles** (33 vehicles in rows: cars, trucks, buses, motorcycles, trailers; 16 m
+   apart). Click one in the Hierarchy, open Modeling > Guided.
+2. Change **Wheel radius**, **Wheelbase**, **Length**, **Cabin size**; under **Parts and materials** change **Wheels** to Eight spoke mesh,
+   **Headlights** to Twin lamps, **Bumpers** to Sport lip, **Spoiler** to Wing, **Roof fitting** to Light bar, **Exhaust** to Dual pipes.
+3. **Each part > Wheels**: give one wheel its own design (Select jumps to it in Edit Mesh).
+4. **Detail**: drag the **Detail** slider (0% blocky low poly to 100% finest) or press Low, Medium, High or Ultra. The model rebuilds when you let
+   go, and "N triangles now" shows the cost. Above 250,000 triangles a window asks before it builds. High and Ultra are smooth shaded.
+   Your own additions stay; a part you edited by hand is asked about first.
+4a. **Car styles side by side**: File > Examples > Guided modeling > `guided_car_styles` (sedan, hatchback, coupe, SUV, pickup, sports, van at the
+   same size; only the shape differs). Wheels sit in round arches on axles; the mirrors and bumpers are joined to the body.
+4b. Open **Variation and check**: it shows whether the model is one connected object with no bad faces. Under **Each part**, **Remove** takes a part off;
+   it appears under **Removed parts** with **Add back**.
+5. Modeling > Guided > Vehicles > Car/Truck/Bus/Motorcycle/Trailer: pick a design card, **Create**.
+
+**Not done / unverified.** Doors that open, interiors, chassis details, rigged wheels or vehicle physics are not built (the
+Vehicle components are separate: put them on a guided vehicle yourself). A box-only design has the same triangle count at Low and Medium.
+The editor's Detail slider, Variation and check, and Remove/Add back controls compile but were never seen in a window (unverified).
+
+---
+
+## 7zn. Guided: randomise within a style, and the save-edit-reopen round trip
+
+**What it is.** On the **Guided** page, **Variation and check** has a **Seed** field, **How different** and **Randomise within style** (and **Next seed**).
+The same seed and the same starting model always give the same result. The check line shows the validator's verdict.
+
+**Status.** Tested on Linux (`ctest -R "guided_quality|guided_roundtrip"`): 1000 seeds on each of 15 templates (15,000 models) with 0 validation
+failures; the round trip (generate, customise, edit by hand, save, reopen, edit again, regenerate) passes. The buttons themselves compile but were never
+clicked in a real window (unverified).
+
+**Try it.**
+
+1. Open **File > Examples > Guided modeling > guided_car_styles**, click a car, Modeling > Guided.
+2. Open **Variation and check**, type a seed (say 7), press **Randomise within style**. The car changes size and parts but stays that style. Press it
+   again with the same seed on the same car: the same result. **Next seed** tries another. **Undo guided step** goes back.
+3. Round trip: in Edit Mesh pull a headlight forward and add a box on the roof. Change **Wheels** to Eight spoke mesh. Both edits stay and nothing
+   asks. Change **Headlights**: it asks first about the headlight you pulled. Save the scene, close, reopen, click the car: the edits are listed
+   ("edited by you", "faces of your own"). Open **My parts and templates**, name it and press **Save as template**: it shows with the starting designs.
+
+**Not done / unverified.** Randomise has compatibility rules only for cars so far.
+
+---
+
+## 7zk. Guided characters
+
+**What it is.** Characters on the Modeling window's **Guided** page, same rules as 7zg to 7zj, including the **Detail** level (Low to Ultra).
+
+**Status.** Tested on Linux (`ctest -R guided_characters`, about 2000 checks: every design of every part sound and non-overlapping, every
+setting at its limits, fuzz, swapping hands, hair, hats, proportions, creature body plans, your edits and your own additions surviving). The page
+was never opened in a real window; nothing ran on Windows. Pictures (`docs/images/guided_modeling/characters_*.png` sheets and
+`character_<type>_<design>.png`, 26 files, plus `detail_human.png`) are headless renders by our own small rasteriser, not editor screenshots.
+The characters are blocky and rough (no skin weights, no skeleton, no animation; they are static meshes), spiders and insects have crude legs.
+
+**Try it.**
+
+1. **File > Examples > Guided modeling > guided_characters** (26 characters: humans, robots and creatures in rows, 4 m apart). Click one in the
+   Hierarchy, open Modeling > Guided.
+2. **Proportions**: drag Height, Shoulder width, Head size, Leg length, Limb thickness; **Pose**: Arm angle, Elbow bend, Leg spread.
+3. **Parts and materials**: change Hair, Hat, Glasses, Top, Bottoms, Hands, Feet, Backpack, Belt, Cape, Shoulder pads; change a colour.
+4. **Each part > Hands**: give one hand its own design (Select jumps to it in Edit Mesh; move it with G, return: "[edited by you]"; change the
+   Hands design for all: it asks first). Add your own geometry in Edit Mesh: it stays when you change settings.
+5. **Creatures**: pick the Dragon, change **Wing span**, **Tail** and **Horns**; pick a Dog and change **Ears**; **Body plan** switches the layout.
+6. **Detail**: Low, Medium, High, Ultra (triangle counts shown). Collision: Exact (mesh) / None.
+7. To make your own: Modeling > Guided with nothing selected, Characters, pick a design card, Create. Select faces and **Save selection as part**
+   to keep a hat or hand of your own as a design.
+
+**Not done / unverified.** No rig, no skinning, no animation or facial expressions; clothes are shells around the body, not cloth; hands have
+no individual finger joints; the page's Detail control and smooth shading were never seen in a window.
+
+---
 
 ## Switches that are off by default (own code)
 

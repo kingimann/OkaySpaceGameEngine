@@ -27,4 +27,11 @@ struct Host {
 
 void DrawGuidedPage(Host& host);
 
+// Click-to-draw path (fence and wall): while this is on for the selected object, each click on the ground in the Scene view
+// adds a point (snapped to the grid step on the page), Esc or the page's Finish button ends it. main.cpp calls these
+// from the Scene view's click handling.
+bool PathDrawing(okay::GameObject* selected);
+void PathDrawClick(const okay::Vec3& worldPoint);
+void PathDrawStop();
+
 } // namespace oked::guided_ui

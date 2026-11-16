@@ -67,6 +67,7 @@ bool WritePng(const std::string& path, const Img& im) {
     return f.good();
 }
 
+static bool g_edges = false;   // draw triangle edges (the detail pictures)
 struct Cam { Vec3 eye, target; float fov = 0.9f; };
 
 void Raster(Img& im, const PolyMesh& m, const Cam& cam, int x0, int y0, int w, int h) {
@@ -105,13 +106,14 @@ void Raster(Img& im, const PolyMesh& m, const Cam& cam, int x0, int y0, int w, i
                     const float l1 = ((sy[2] - sy[0]) * (px - sx[2]) + (sx[0] - sx[2]) * (py - sy[2])) / den;
                     const float l2 = 1 - l0 - l1;
                     if (l0 < -1e-4f || l1 < -1e-4f || l2 < -1e-4f) continue;
-                    const float z = l0 * d[0] + l1 * d[1] + l2 * d[2];
+                    const float z = 1.0f / (l0 / d[0] + l1 / d[1] + l2 / d[2]);   // perspective-correct depth
                     const size_t idx = (size_t)y * im.w + x;
                     if (z >= im.z[idx]) continue;
                     im.z[idx] = z;
-                    im.px[idx * 3] = (uint8_t)std::min(255.0f, c.r * lit * 255);
-                    im.px[idx * 3 + 1] = (uint8_t)std::min(255.0f, c.g * lit * 255);
-                    im.px[idx * 3 + 2] = (uint8_t)std::min(255.0f, c.b * lit * 255);
+                    const float edge = g_edges && std::min({l0, l1, l2}) < 0.07f ? 0.45f : 1.0f;
+                    im.px[idx * 3] = (uint8_t)std::min(255.0f, c.r * lit * 255 * edge);
+                    im.px[idx * 3 + 1] = (uint8_t)std::min(255.0f, c.g * lit * 255 * edge);
+                    im.px[idx * 3 + 2] = (uint8_t)std::min(255.0f, c.b * lit * 255 * edge);
                 }
         }
     }
@@ -158,6 +160,21 @@ int main(int argc, char** argv) {
     RegisterBuiltinTemplates();
     const Template& T = *Registry::Instance().Find("fence");
 
+    if (argc > 3 && std::string(argv[3]) == "cars") {   // quick run: only the car silhouette and 3/4 sheets
+        const Template& C = *Registry::Instance().Find("car");
+        const int cols = 3, tw = 440, th = 220;
+        const int rows = ((int)C.starts.size() + cols - 1) / cols;
+        Img side(cols * tw, rows * th), q3(cols * tw, rows * 280);
+        side.Clear(40, 42, 48); q3.Clear(40, 42, 48);
+        for (int i = 0; i < (int)C.starts.size(); ++i) {
+            const PolyMesh m = Create(DefaultRecipe(C, C.starts[i].id));
+            Scene(side, m, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 0.0f);
+            Scene(q3, m, (i % cols) * tw + 4, (i / cols) * 280 + 4, tw - 8, 272, 0.7f);
+        }
+        Save(dir, "cars_side_views.png", side);
+        Save(dir, "cars_three_quarter.png", q3);
+        return 0;
+    }
     // 1. The design browser's thumbnails (what the Guided page shows), and one picture per style.
     {
         const int cols = 4, tw = 360, th = 230;
@@ -235,6 +252,87 @@ int main(int argc, char** argv) {
         Scene(im, r.mesh, 600, 0, 600, 360);
         Save(dir, "manual_edit_survives_regeneration.png", im);
     }
+    // 5. Architecture: a contact sheet per template, and a building with a window, the door and the roof swapped.
+    {
+        for (const char* id : {"wall", "stairs", "door", "window", "roof", "building"}) {
+            const Template& A = *Registry::Instance().Find(id);
+            const int cols = 3, tw = 400, th = 280;
+            const int rows = ((int)A.starts.size() + cols - 1) / cols;
+            Img sheet(cols * tw, rows * th);
+            sheet.Clear(40, 42, 48);
+            for (int i = 0; i < (int)A.starts.size(); ++i) {
+                const PolyMesh m = Create(DefaultRecipe(A, A.starts[i].id));
+                Scene(sheet, m, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 0.7f);
+            }
+            Save(dir, std::string("architecture_") + id + ".png", sheet);
+        }
+        const Template& B = *Registry::Instance().Find("building");
+        const Recipe base = DefaultRecipe(B, "townhouse");
+        Recipe swapped = base;
+        swapped.slotDesign["roof"] = "gable";
+        swapped.slotDesign["door"] = "panelled";
+        swapped.partDesign["window/0/0/0"] = "colonial";
+        swapped.partDesign["window/1/0/1"] = "colonial";
+        Img im(1200, 420);
+        im.Clear(0, 0, 0);
+        Scene(im, Create(base), 0, 0, 600, 420, 0.6f);
+        Scene(im, Regenerate(Create(base), base, swapped).mesh, 600, 0, 600, 420, 0.6f);
+        Save(dir, "building_part_swap_before_after.png", im);
+    }
+    // 6. Vehicles: a contact sheet per type, one picture per design.
+    for (const char* id : {"car", "truck", "bus", "motorcycle", "trailer"}) {
+        const Template& A = *Registry::Instance().Find(id);
+        const int cols = 3, tw = 400, th = 260;
+        const int rows = ((int)A.starts.size() + cols - 1) / cols;
+        Img sheet(cols * tw, rows * th);
+        sheet.Clear(40, 42, 48);
+        for (int i = 0; i < (int)A.starts.size(); ++i) {
+            const PolyMesh m = Create(DefaultRecipe(A, A.starts[i].id));
+            Scene(sheet, m, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 0.8f);
+            Img one(640, 360);
+            Scene(one, m, 0, 0, 640, 360, 0.8f);
+            Save(dir, std::string("vehicle_") + id + "_" + A.starts[i].id + ".png", one);
+        }
+        Save(dir, std::string("vehicles_") + id + ".png", sheet);
+    }
+    // 6b. Characters: a contact sheet per template, and one picture per design (seen from the front-left).
+    for (const char* id : {"human", "robot", "creature"}) {
+        const Template& A = *Registry::Instance().Find(id);
+        const int cols = 4, tw = 300, th = 340;
+        const int rows = ((int)A.starts.size() + cols - 1) / cols;
+        Img sheet(cols * tw, rows * th);
+        sheet.Clear(40, 42, 48);
+        for (int i = 0; i < (int)A.starts.size(); ++i) {
+            const PolyMesh m = Create(DefaultRecipe(A, A.starts[i].id));
+            Scene(sheet, m, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 0.5f);
+            Img one(480, 540);
+            Scene(one, m, 0, 0, 480, 540, 0.5f);
+            Save(dir, std::string("character_") + id + "_" + A.starts[i].id + ".png", one);
+        }
+        Save(dir, std::string("characters_") + id + ".png", sheet);
+    }
+    // 7. Detail levels: the same model at Low, Medium, High and Ultra, with the triangle count.
+    {
+        struct Item { const char* tpl; const char* start; const char* name; float yaw; };
+        for (const Item& it : {Item{"car", "sports", "car", 0.8f}, Item{"fence", "wrought_iron", "fence", 0.55f}, Item{"building", "townhouse", "building", 0.6f},
+                               Item{"motorcycle", "cruiser", "motorcycle", 0.9f}, Item{"human", "adventurer", "human", 0.5f}}) {
+            const Template& A = *Registry::Instance().Find(it.tpl);
+            Img im(1600, 360);
+            im.Clear(0, 0, 0);
+            g_edges = true;
+            std::string counts;
+            for (int lv = 0; lv < 4; ++lv) {
+                Recipe r = DefaultRecipe(A, it.start);
+                r.params["detail"] = lv;
+                const PolyMesh m = Create(r);
+                Scene(im, m, lv * 400, 0, 400, 360, it.yaw);
+                counts += " " + std::to_string(TriangleCount(m));
+            }
+            g_edges = false;
+            Save(dir, std::string("detail_") + it.name + ".png", im);
+            std::printf("detail %s triangles (Low Medium High Ultra):%s\n", it.name, counts.c_str());
+        }
+    }
     if (argc > 2) {
         const std::string ex = argv[2];
         std::filesystem::create_directories(ex);
@@ -263,8 +361,107 @@ int main(int argc, char** argv) {
                      "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
         }
         scene += CameraRecord(id++, -3.0, 6.0, 26.0);
-        std::ofstream("" + ex + "/guided_fences.okayscene", std::ios::binary) << scene;
+        std::ofstream(ex + "/guided_fences.okayscene", std::ios::binary) << scene;
         std::printf("wrote the example folder %s (%d fences)\n", ex.c_str(), (int)items.size());
+
+        // The architecture examples: every start design of every architecture template, a row per template.
+        std::string arch = scene.substr(0, scene.find("gameobject 1 ")) +
+            "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 40 -0.5 40 0 0 0 1 200 1 200\n"
+            "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+        arch.replace(arch.find("name \"Guided fences\""), 21, "name \"Guided architecture\"");
+        int aid = 2, row = 0, total = 0;
+        for (const char* tid : {"wall", "stairs", "door", "window", "roof", "building"}) {
+            const Template& A = *Registry::Instance().Find(tid);
+            for (size_t i = 0; i < A.starts.size(); ++i) {
+                const std::string base = std::string(tid) + "_" + A.starts[i].id;
+                const Recipe r = DefaultRecipe(A, A.starts[i].id);
+                Create(r).Save(ex + "/" + base + ".okaymesh");
+                SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                char tr[160];
+                std::snprintf(tr, sizeof tr, "  transform %g 0 %g 0 0 0 1 1 1 1\n", (double)i * 12.0, (double)row * 14.0);
+                arch += "gameobject " + std::to_string(aid++) + " \"" + A.name + " " + A.starts[i].name + "\"\n  active 1\n  parent -1\n" + tr +
+                        "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                ++total;
+            }
+            ++row;
+        }
+        arch += CameraRecord(aid++, 45.0, 40.0, 160.0);
+        std::ofstream(ex + "/guided_architecture.okayscene", std::ios::binary) << arch;
+
+        // The vehicle examples: every start design of every vehicle type.
+        std::string veh = scene.substr(0, scene.find("gameobject 1 ")) +
+            "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 40 -0.5 40 0 0 0 1 200 1 200\n"
+            "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+        veh.replace(veh.find("name \"Guided fences\""), 21, "name \"Guided vehicles\"");
+        int vid = 2, vrow = 0, vtotal = 0;
+        for (const char* tid : {"car", "truck", "bus", "motorcycle", "trailer"}) {
+            const Template& A = *Registry::Instance().Find(tid);
+            for (size_t i = 0; i < A.starts.size(); ++i) {
+                const std::string base = std::string(tid) + "_" + A.starts[i].id;
+                const Recipe r = DefaultRecipe(A, A.starts[i].id);
+                Create(r).Save(ex + "/" + base + ".okaymesh");
+                SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                char tr[160];
+                std::snprintf(tr, sizeof tr, "  transform %g 0 %g 0 0 0 1 1 1 1\n", (double)i * 16.0, (double)vrow * 8.0);
+                veh += "gameobject " + std::to_string(vid++) + " \"" + A.name + " " + A.starts[i].name + "\"\n  active 1\n  parent -1\n" + tr +
+                       "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                ++vtotal;
+            }
+            ++vrow;
+        }
+        veh += CameraRecord(vid++, 80.0, 50.0, 190.0);
+        std::ofstream(ex + "/guided_vehicles.okayscene", std::ios::binary) << veh;
+        std::printf("wrote %d vehicle models\n", vtotal);
+
+        {   // Car body styles side by side at the same size, so only the shape differs.
+            std::string cs = scene.substr(0, scene.find("gameobject 1 ")) +
+                "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 20 -0.5 0 0 0 0 1 80 1 40\n"
+                "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+            cs.replace(cs.find("name \"Guided fences\""), 21, "name \"Guided car styles\"");
+            const Template& C = *Registry::Instance().Find("car");
+            int cid = 2, ci = 0;
+            for (const char* st : {"sedan", "hatchback", "coupe", "suv", "pickup", "sports", "van"}) {
+                Recipe r = DefaultRecipe(C, st);
+                r.params["length"] = 4.4; r.params["height"] = 1.45; r.params["width"] = 1.8; r.params["groundClear"] = 0.18; r.params["wheelbase"] = 2.7; r.params["wheelRadius"] = 0.33;
+                const std::string base = std::string("carstyle_") + st;
+                Create(r).Save(ex + "/" + base + ".okaymesh");
+                SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                char tr[160];
+                std::snprintf(tr, sizeof tr, "  transform %g 0 0 0 0 0 1 1 1 1\n", (double)ci * 6.0);
+                cs += "gameobject " + std::to_string(cid++) + " \"Car " + st + "\"\n  active 1\n  parent -1\n" + tr +
+                      "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                ++ci;
+            }
+            cs += CameraRecord(cid++, 18.0, 5.0, 24.0);
+            std::ofstream(ex + "/guided_car_styles.okayscene", std::ios::binary) << cs;
+            std::printf("wrote the car styles example\n");
+        }
+
+        // The character examples: every start design of human, robot and creature.
+        std::string chr = scene.substr(0, scene.find("gameobject 1 ")) +
+            "gameobject 1 \"Ground\"\n  active 1\n  parent -1\n  transform 10 -0.5 10 0 0 0 1 100 1 100\n"
+            "  mesh \"Cube\" 0.32941177 0.5019608 0.27450982 1 0 \"\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+        chr.replace(chr.find("name \"Guided fences\""), 21, "name \"Guided characters\"");
+        int cid = 2, crow = 0, ctotal = 0;
+        for (const char* tid : {"human", "robot", "creature"}) {
+            const Template& A = *Registry::Instance().Find(tid);
+            for (size_t i = 0; i < A.starts.size(); ++i) {
+                const std::string base = std::string(tid) + "_" + A.starts[i].id;
+                const Recipe r = DefaultRecipe(A, A.starts[i].id);
+                Create(r).Save(ex + "/" + base + ".okaymesh");
+                SaveRecipe(SidecarPath(ex + "/" + base + ".okaymesh"), r);
+                char tr[160];
+                std::snprintf(tr, sizeof tr, "  transform %g 0 %g 0 0 0 1 1 1 1\n", (double)i * 4.0, (double)crow * 5.0);
+                chr += "gameobject " + std::to_string(cid++) + " \"" + A.name + " " + A.starts[i].name + "\"\n  active 1\n  parent -1\n" + tr +
+                       "  mesh \"\" 1 1 1 1 0 \"" + base + ".okaymesh\" 0\n  material 0 0 0 0 16 0 \"\" 1 1\nend\n";
+                ++ctotal;
+            }
+            ++crow;
+        }
+        chr += CameraRecord(cid++, 22.0, 7.0, 36.0);
+        std::ofstream(ex + "/guided_characters.okayscene", std::ios::binary) << chr;
+        std::printf("wrote %d character models\n", ctotal);
+        std::printf("wrote %d architecture models\n", total);
     }
     return 0;
 }

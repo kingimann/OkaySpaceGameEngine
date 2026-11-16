@@ -3,6 +3,7 @@
 #include "imgui.h"
 #include "okay/Components/MeshRenderer.hpp"
 #include "okay/Modeling/Guided.hpp"
+#include "okay/Physics/Collider3D.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
 #include "okay/Modeling/PolyMesh.hpp"
 #include <algorithm>
@@ -60,6 +61,10 @@ struct State {
     char saveName[64] = "My fence";
     char partName[64] = "My part";
     int partSlot = 0;
+    bool drawing = false;               // click-to-draw path is on
+    GameObject* drawObj = nullptr;
+    float snap = 0.25f;                 // path points snap to this grid (0 = off)
+    bool collide = true;                // new models get an exact mesh collider
 };
 State& S() { static State s; return s; }
 
@@ -131,9 +136,10 @@ bool SaveFiles(Host& h, MeshRenderer* mr, const gd::Recipe& r) {
     return true;
 }
 
-void SetMesh(MeshRenderer* mr, const PolyMesh& pm) {
+void SetMesh(MeshRenderer* mr, const PolyMesh& pm, float detail, bool smoothFromMedium = false) {
     mr->mesh = pm.ToMesh();
     mr->mesh.name = "";
+    if (detail >= (smoothFromMedium ? 0.9f : 1.5f)) mr->mesh.ComputeAutoSmoothNormals(40.0f);   // organic characters are smooth from Medium; other models from High
     mr->color = okay::Color{1, 1, 1, 1};   // faces carry their own colours
 }
 
@@ -152,7 +158,8 @@ bool CreateModel(Host& h, const gd::Recipe& recipe, const std::string& name) {
     ed.PushUndo();
     GameObject* go = ed.scene().CreateGameObject(name);
     MeshRenderer* mr = go->AddComponent<MeshRenderer>();
-    SetMesh(mr, pm);
+    SetMesh(mr, pm, gd::DetailOf(recipe), recipe.templateId == "human");
+    if (S().collide) { go->AddComponent<okay::MeshCollider3D>(); }
     mr->meshPath = path.string();
     if (!SaveFiles(h, mr, recipe)) { ed.scene().DestroyImmediate(go); return false; }
     ed.SettleSpawn(go);
@@ -181,7 +188,7 @@ bool Apply(Host& h, GameObject* go, MeshRenderer* mr, const gd::Recipe& next, co
     gd::GuidedState before; before.mesh = cur; before.recipe = s.stored;
     s.history[s.path].Push(before);
     h.ed->PushUndo();
-    SetMesh(mr, r.mesh);
+    SetMesh(mr, r.mesh, gd::DetailOf(r.recipe), r.recipe.templateId == "human");
     if (!SaveFiles(h, mr, r.recipe)) return false;
     s.stored = r.recipe; s.pending = r.recipe; s.analysisKey = 0;
     h.ed->dirty = true;
@@ -226,6 +233,50 @@ bool ParamWidget(const gd::ParamDef& p, gd::Recipe& r) {
     }
     if (!p.tip.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.tip.c_str());
     ImGui::PopID();
+    return done;
+}
+
+// Detail: one slider from blocky low poly (0%) to finest (100%), four presets, the live triangle count, and a question
+// before anything above ~250,000 triangles is built.
+constexpr int kBigTriangles = 250000;
+int TrianglesFor(const gd::Recipe& base, float detail) {
+    gd::Recipe r = base; r.params[gd::kDetailParam] = detail;
+    return gd::TriangleCount(gd::Create(r));
+}
+bool DetailWidget(const gd::Template& t, gd::Recipe& pending, const gd::Recipe& stored) {
+    static std::string s_key;
+    static int s_tris = 0;
+    static float s_ask = -1.0f;   // a value waiting for the "this is big" answer
+    static int s_askTris = 0;
+    float cur = std::min(std::max((float)pending.Param(gd::kDetailParam, 1), 0.0f), 3.0f);
+    const std::string key = pending.Serialize();
+    if (key != s_key) { s_key = key; s_tris = TrianglesFor(pending, cur); }   // recount only when a setting changes
+    bool done = false;
+    auto choose = [&](float v) {
+        const int n = TrianglesFor(pending, v);
+        if (n > kBigTriangles && v > cur) { s_ask = v; s_askTris = n; ImGui::OpenPopup("Very detailed model##big"); }
+        else { pending.params[gd::kDetailParam] = v; done = true; }
+    };
+    float pct = cur * 100.0f / 3.0f;
+    ImGui::SetNextItemWidth(220);
+    if (ImGui::SliderFloat("Detail##slider", &pct, 0.0f, 100.0f, "%.0f%%")) pending.params[gd::kDetailParam] = pct * 3.0f / 100.0f;   // preview number only
+    if (ImGui::IsItemDeactivatedAfterEdit()) { const float v = (float)pending.Param(gd::kDetailParam, 1); pending.params[gd::kDetailParam] = cur; choose(v); }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("0%% is simple blocky low poly, 100%% is the finest detail (smooth curves, trim, bolts, tread, window frames, fingers). The model is rebuilt when you let go.");
+    const char* names[4] = {"Low", "Medium", "High", "Ultra"};
+    for (int lv = 0; lv < 4; ++lv) {
+        if (lv) ImGui::SameLine();
+        if (ImGui::SmallButton((std::string(names[lv]) + "##detailpreset").c_str())) choose((float)lv);
+    }
+    ImGui::TextDisabled("%d triangles now", s_tris);
+    if (ImGui::BeginPopupModal("Very detailed model##big", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("This detail level makes about %d triangles.", s_askTris);
+        ImGui::TextWrapped("That can make the editor and the game slower. You can go back to a lower level at any time.");
+        if (ImGui::Button("Build it")) { pending.params[gd::kDetailParam] = s_ask; done = true; ImGui::CloseCurrentPopup(); }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel##big")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    (void)t; (void)stored;
     return done;
 }
 
@@ -327,6 +378,13 @@ void DrawPartRow(Host& h, GameObject* go, MeshRenderer* mr, const gd::Template& 
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Choose another design for just this part.");
     }
     ImGui::SameLine();
+    if (ImGui::SmallButton("Remove")) {
+        gd::Recipe next = s.stored;
+        next.partDesign[p.id] = "none";
+        Apply(h, go, mr, next, {}, "Removed " + p.id);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Take this part off the model. It shows in 'Removed parts' below, where you can add it back.");
+    ImGui::SameLine();
     if (ImGui::SmallButton("Detach")) {
         gd::Recipe next = s.stored;
         if (gd::DetachPart(next, p.id)) {
@@ -363,7 +421,10 @@ void DrawCreate(Host& h) {
     if (s.templateId.empty() || !reg.Find(s.templateId) || reg.Find(s.templateId)->category != cats[s.category]) s.templateId = tpls.front()->id;
     ImGui::SeparatorText("2. Pick a thing");
     for (size_t i = 0; i < tpls.size(); ++i) {
-        if (i) ImGui::SameLine();
+        if (i) {
+            const float w = ImGui::CalcTextSize((tpls[i]->name).c_str()).x + 30.0f;
+            if (ImGui::GetContentRegionAvail().x > w + ImGui::GetStyle().ItemSpacing.x + 8) ImGui::SameLine();
+        }
         if (AccentToggleButton((tpls[i]->name + "##tpl" + tpls[i]->id).c_str(), s.templateId == tpls[i]->id)) { s.templateId = tpls[i]->id; s.startId.clear(); s.userStart = -1; }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tpls[i]->description.c_str());
     }
@@ -412,6 +473,8 @@ void DrawCreate(Host& h) {
         ImGui::PopID();
     }
     ImGui::Spacing();
+    ImGui::Checkbox("Solid (exact collider)##guidedcol", &s.collide);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add a Mesh Collider so the new model blocks and can be walked on. You can change it later on this page.");
     ImGui::SetNextItemWidth(180);
     ImGui::InputText("Name##objname", s.objName, sizeof(s.objName));
     ImGui::SameLine();
@@ -448,7 +511,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         if (ImGui::Button("Undo guided step")) {
             gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
             if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Undo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
+            if (hist.Undo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human"); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -456,7 +519,7 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
         if (ImGui::Button("Redo guided step")) {
             gd::GuidedState cur; cur.mesh = PolyMesh::FromMesh(mr->mesh, {false, true, 1.0f}); cur.recipe = s.stored;
             if (h.leaveEditMode) h.leaveEditMode(go);
-            if (hist.Redo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
+            if (hist.Redo(cur)) { h.ed->PushUndo(); SetMesh(mr, cur.mesh, gd::DetailOf(cur.recipe), cur.recipe.templateId == "human"); s.stored = cur.recipe; s.pending = cur.recipe; SaveFiles(h, mr, cur.recipe); s.analysisKey = 0; h.ed->dirty = true; }
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -478,6 +541,24 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
     }
     if (!s.hasRecipe) return;
 
+    {   // Collision: the model is an ordinary mesh, so it can have the usual colliders.
+        bool hasMesh = go->GetComponent<okay::MeshCollider3D>() != nullptr;
+        bool any = go->GetComponent<okay::Collider3D>() != nullptr;
+        ImGui::Text("Collision:"); ImGui::SameLine();
+        if (AccentToggleButton("Exact (mesh)##guidedcol", hasMesh)) {
+            h.ed->PushUndo();
+            for (auto* c : go->GetComponents<okay::Collider3D>()) go->RemoveComponent(c);
+            go->AddComponent<okay::MeshCollider3D>();
+            h.ed->dirty = true;
+        }
+        ImGui::SameLine();
+        if (AccentToggleButton("None##guidedcol", !any)) {
+            h.ed->PushUndo();
+            for (auto* c : go->GetComponents<okay::Collider3D>()) go->RemoveComponent(c);
+            h.ed->dirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("An exact collider follows the model's triangles and stays up to date when the model is rebuilt.");
+    }
     // What is intact, edited, custom (cached until the mesh or recipe changes).
     const std::uint64_t key = okay::modeling::GeometryHash(mr->mesh) * 31u + std::hash<std::string>()(s.stored.Serialize());
     if (key != s.analysisKey) {
@@ -510,11 +591,29 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
     for (const auto& p : t.params) if (std::find(groups.begin(), groups.end(), p.group) == groups.end()) groups.push_back(p.group);
     bool commit = false;
     for (const std::string& g : groups) {
-        if (!ImGui::CollapsingHeader((g + "##grp").c_str(), g == "Size" ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
-        for (const auto& p : t.params) if (p.group == g && ParamWidget(p, s.pending)) commit = true;
-        if (g == "Size") {
+        if (!ImGui::CollapsingHeader((g + "##grp").c_str(), (g == "Size" || g == "Detail") ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
+        for (const auto& p : t.params) {
+            if (p.group != g) continue;
+            if (p.id == gd::kDetailParam) { if (DetailWidget(t, s.pending, s.stored)) commit = true; continue; }
+            if (ParamWidget(p, s.pending)) commit = true;
+        }
+        if (g == "Size" && t.usesPath) {
             // The drawn path: a list of points the fence follows (height included, so it follows the ground).
             ImGui::TextDisabled("Path");
+            if (s.drawing && s.drawObj == go) {
+                ImGui::TextWrapped("Drawing: click on the ground in the Scene view to add points. Esc or Finish ends.");
+                if (ImGui::SmallButton("Finish##pathdraw")) s.drawing = false;
+            } else {
+                if (ImGui::SmallButton("Draw in the Scene view##pathdraw")) {
+                    s.drawing = true; s.drawObj = go;
+                    s.pending.path.clear();
+                    commit = false;
+                    Log(h, "Click on the ground in the Scene view to place the first point. Esc ends.");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear the path and click points on the ground. Each click rebuilds the model.");
+            }
+            ImGui::SetNextItemWidth(80);
+            ImGui::DragFloat("Snap to grid##pathsnap", &s.snap, 0.05f, 0.0f, 2.0f, "%.2f");
             if (s.pending.path.size() < 2) {
                 if (ImGui::SmallButton("Draw a path instead of a straight run##path")) {
                     const float len = (float)s.pending.Param("length", 6);
@@ -578,6 +677,46 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
     }
     if (commit) Apply(h, go, mr, s.pending, {}, "Updated " + go->name);
 
+    // Variation: a repeatable random model inside this style, and the validator's verdict on the model.
+    if (ImGui::CollapsingHeader("Variation and check##grp")) {
+        static int s_seed = 1;
+        static float s_strength = 0.15f;
+        ImGui::SetNextItemWidth(110);
+        ImGui::InputInt("Seed##rand", &s_seed);
+        ImGui::SetNextItemWidth(160);
+        ImGui::SliderFloat("How different##rand", &s_strength, 0.02f, 0.6f, "%.2f");
+        if (ImGui::Button("Randomise within style")) {
+            gd::Recipe next = gd::Randomise(t, s.stored, (uint32_t)s_seed, s_strength);
+            Apply(h, go, mr, next, {}, "Randomised (seed " + std::to_string(s_seed) + ")");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Moves the sizes and picks other designs inside the ranges that suit this style. The same seed and the same starting model always give the same result. Undo guided step goes back.");
+        ImGui::SameLine();
+        if (ImGui::Button("Next seed##rand")) {
+            ++s_seed;
+            gd::Recipe next = gd::Randomise(t, s.stored, (uint32_t)s_seed, s_strength);
+            Apply(h, go, mr, next, {}, "Randomised (seed " + std::to_string(s_seed) + ")");
+        }
+        static std::string s_vkey; static gd::ValidationReport s_rep;
+        const std::string vk = s.stored.Serialize();
+        if (vk != s_vkey) { s_vkey = vk; s_rep = gd::Validate(gd::Generate(s.stored), gd::DetailOf(s.stored) < 2.5f); }
+        if (s_rep.Ok() && s_rep.components == 1) ImGui::TextColored(ImVec4(0.5f, 0.9f, 0.55f, 1), "Check: %d parts, one connected model, no bad faces.", s_rep.parts);
+        else ImGui::TextColored(ImVec4(0.93f, 0.78f, 0.45f, 1), "Check: %d parts in %d separate group(s), %d problem(s).", s_rep.parts, s_rep.components, (int)s_rep.problems.size());
+        for (size_t i = 0; i < s_rep.problems.size() && i < 4; ++i) ImGui::BulletText("%s", s_rep.problems[i].c_str());
+        ImGui::TextDisabled("The check is of the generated design, not of your hand edits.");
+    }
+    // Parts you removed can be added back.
+    {
+        std::vector<std::string> gone;
+        for (const auto& kv : s.stored.partDesign) if (kv.second == "none") gone.push_back(kv.first);
+        if (!gone.empty() && ImGui::CollapsingHeader("Removed parts##grp", ImGuiTreeNodeFlags_DefaultOpen)) {
+            for (const std::string& id : gone) {
+                ImGui::PushID(id.c_str());
+                ImGui::AlignTextToFramePadding(); ImGui::TextUnformatted(id.c_str()); ImGui::SameLine();
+                if (ImGui::SmallButton("Add back")) { gd::Recipe next = s.stored; next.partDesign.erase(id); Apply(h, go, mr, next, {}, "Added back " + id); }
+                ImGui::PopID();
+            }
+        }
+    }
     // Individual parts.
     if (s.analysis.ok && ImGui::CollapsingHeader("Each part##grp")) {
         for (const auto& slot : t.slots) {
@@ -636,7 +775,10 @@ void DrawCustomise(Host& h, GameObject* go, MeshRenderer* mr) {
 
 } // namespace
 
+static Host s_lastHost;
+
 void DrawGuidedPage(Host& h) {
+    s_lastHost = h;   // the click-to-draw path handler runs from the Scene view and needs the same lenders
     State& s = S();
     GameObject* go = h.ed->selected();
     MeshRenderer* mr = go ? go->GetComponent<MeshRenderer>() : nullptr;
@@ -653,6 +795,23 @@ void DrawGuidedPage(Host& h) {
         ImGui::TextDisabled("Pick something below to get an editable model. Select a model made here to customise it.");
     }
     DrawCreate(h);
+}
+
+bool PathDrawing(GameObject* selected) { return S().drawing && selected && S().drawObj == selected; }
+void PathDrawStop() { S().drawing = false; }
+void PathDrawClick(const okay::Vec3& world) {
+    State& s = S();
+    Host& h = s_lastHost;
+    if (!s.drawing || !s.drawObj || !h.ed) return;
+    GameObject* go = s.drawObj;
+    MeshRenderer* mr = go->GetComponent<MeshRenderer>();
+    if (!mr || !s.hasRecipe) { s.drawing = false; return; }
+    okay::Vec3 p = go->transform->InverseTransformPoint(world);
+    if (s.snap > 0.0f) { p.x = std::round(p.x / s.snap) * s.snap; p.z = std::round(p.z / s.snap) * s.snap; }
+    gd::Recipe next = s.stored;
+    next.path.push_back(p);
+    if (next.path.size() < 2) { s.stored.path = next.path; s.pending.path = next.path; Log(h, "First point placed. Click the next one."); return; }
+    Apply(h, go, mr, next, {}, "Added a path point");
 }
 
 } // namespace oked::guided_ui

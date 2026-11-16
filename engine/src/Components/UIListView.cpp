@@ -92,6 +92,7 @@ void UIListView::Layout() {
         row->transform->SetParent(gameObject->transform, false);
         row->transient = true;
         row->name = tpl->name + " row " + std::to_string(m_rows.size());
+        scene.NoteRenamed();
         m_rows.push_back(row);
         m_rowIndex.push_back(-1);
     }

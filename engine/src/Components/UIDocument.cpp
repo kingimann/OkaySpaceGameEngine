@@ -296,7 +296,7 @@ GameObject* Spawn(Scene& scene, const Token& t, Vec2 offset) {
     }
     // `name=` makes the widget addressable by the ui_* script API (ui_set_text,
     // ui_slider_value, …); `active=0` starts it hidden.
-    if (t.Has("name") && !t.Get("name").empty()) go->name = t.Get("name");
+    if (t.Has("name") && !t.Get("name").empty()) { go->name = t.Get("name"); if (Scene* rs = go->scene()) rs->NoteRenamed(); }
     if (t.Has("active")) go->active = ParseBool(t.Get("active"));
     return go;
 }

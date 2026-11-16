@@ -2292,7 +2292,7 @@ bool Runtime::SetDotted(const std::string& name, const Value& v) {
             { t->localRotation = Quat::Euler({0, 0, v.AsVec3().z}); return true; }
     }
     if (g && selfClass.empty()) {
-        if (name == "gameObject.name")       { g->name = v.AsString(); return true; }
+        if (name == "gameObject.name")       { g->name = v.AsString(); if (Scene* rs = g->scene()) rs->NoteRenamed(); return true; }
         if (name == "gameObject.activeSelf" || name == "gameObject.active") { g->active = v.AsBool(); return true; }
         if (name == "gameObject.tag")        { g->tag = v.AsString(); return true; }
     }
@@ -9125,7 +9125,7 @@ struct OkayScriptVM::Impl {
             GameObject* g = go(); return Value{g ? g->name : std::string{}};
         };
         b["set_name"] = [go](std::vector<Value>& a) {
-            if (GameObject* g = go()) g->name = a.empty() ? std::string{} : a[0].AsString();
+            if (GameObject* g = go()) { g->name = a.empty() ? std::string{} : a[0].AsString(); if (Scene* rs = g->scene()) rs->NoteRenamed(); }
             return Value{};
         };
         b["tag"] = [go](std::vector<Value>&) -> Value {

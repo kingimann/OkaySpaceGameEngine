@@ -291,6 +291,14 @@ public:
     void MarkStructureChanged() { ++m_structureVersion; }
     /// Bumped whenever a component is added to or removed from any object.
     std::uint64_t ComponentVersion() const { return m_componentVersion; }
+    /// Bumped by NoteRenamed(): an object was renamed while the scene runs. Only by-name caches read it
+    /// (NPCController's target); it is separate from StructureVersion so a rename does not make every
+    /// animator, nav agent and physics cache rebuild. GameObject::name is a plain field, so only writers
+    /// that call NoteRenamed() are seen: the editor Inspector and editor script rename, OkayScript
+    /// `gameObject.name =` and its rename built-in, ActionList `set_name`, UIDocument, UIListView rows,
+    /// prefab keepNames and the prefab-instance root rename. Code that writes `go->name` itself should call it.
+    std::uint64_t NameVersion() const { return m_nameVersion; }
+    void NoteRenamed() { ++m_nameVersion; }
     /// A process-unique id for this scene (never reused), for caches keyed by scene.
     std::uint64_t Uid() const { return m_uid; }
     /// How many times Update has delivered OnEnable / OnDisable to the components that were switched on or
@@ -636,6 +644,7 @@ private:
     std::vector<std::unique_ptr<GameObject>> m_graveyard;
     std::uint64_t m_structureVersion = 1;
     std::uint64_t m_componentVersion = 1;
+    std::uint64_t m_nameVersion = 1;
     std::uint64_t m_uid = 0;
     bool m_hasOrdered = false;   // some component has a non-zero ExecutionOrder
     std::vector<Component*>  m_pending;   // awaiting Awake/Start

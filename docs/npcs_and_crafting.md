@@ -37,9 +37,11 @@ name. The answer is remembered and checked again only when an object or componen
 the target is destroyed or renamed, or `targetName` changes; with no such object it searches every frame,
 so an object that appears or is renamed to the name is found at once. 600 NPCs whose target comes after
 10,000 level objects went from about 9x the cost of a target at the start of the scene to about the same.
-One case it does not notice by itself: while it has a target, a different object earlier in the scene
-renamed to the same name. It switches at the next spawn, destroy or component change; call
-`Scene::MarkStructureChanged()` after such a rename to switch at once.
+A rename is noticed too: the Inspector, editor scripts, OkayScript `gameObject.name =` and `set_name`,
+ActionList `set_name`, UI lists and prefab updates call `Scene::NoteRenamed()`, so an object renamed to
+the target's name switches the NPCs at once, as before. The one remaining gap is C++ code that writes
+`go->name` directly without calling `scene->NoteRenamed()`: then a different object earlier in the scene
+renamed to the same name is picked up at the next spawn, destroy, component change or noted rename.
 
 ## Player attacks (Melee Attacker)
 

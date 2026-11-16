@@ -10163,6 +10163,7 @@ GameObject* SceneSerializer::ReapplyPrefab(Scene& scene, GameObject& instanceRoo
     // The new instance takes the old one's place: same name, parent, sibling slot, and
     // the same persistent ids object for object (so references by id stay valid).
     fresh->name = instanceRoot.name;
+    scene.NoteRenamed();
     std::vector<GameObject*> oldSub, newSub;
     CollectSubtree(&instanceRoot, oldSub);
     CollectSubtree(fresh, newSub);

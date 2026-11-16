@@ -1417,7 +1417,7 @@ void ActionList::Update(float dt) {
         }
         else if (op == "activate")   { if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) g->active = true; }
         else if (op == "deactivate") { if (scene) if (GameObject* g = scene->Find(ObjName(it, 0))) g->active = false; }
-        else if (op == "set_name")   { if (gameObject) gameObject->name = Str(it, 0); }
+        else if (op == "set_name")   { if (gameObject) { gameObject->name = Str(it, 0); if (scene) scene->NoteRenamed(); } }
         else if (op == "destroy_all_tag") {   // clear a whole tag: every bullet, every coin
             if (scene) { std::string tg = Str(it, 0);
                 for (auto& up : scene->Objects()) if (up && up->active && up->tag == tg) scene->Destroy(up.get()); }

@@ -17,6 +17,7 @@
 #include "test_framework.hpp"
 #include <Okay.hpp>
 #include "okay/Animation/AnimationClip.hpp"
+#include "okay/Components/ActionList.hpp"
 #include "okay/Components/ModelAnimator.hpp"
 #include "okay/Components/NPCController.hpp"
 #include <algorithm>
@@ -347,11 +348,19 @@ int main() {
             n->turnSpeed = 360.0f;
             npcs.push_back(n);
         }
+        // Level5 renames itself to "Player" through a real writer (ActionList set_name) at frame 100, while
+        // the NPCs hold C: it is earlier in the scene, so a by-name search switches to it at once.
+        GameObject* lvl5 = s.Find("Level5");
+        lvl5->transform->localPosition = {-8.0f, 0.0f, -6.0f};
+        auto* renamer = lvl5->AddComponent<ActionList>();
+        renamer->trigger = ActionList::Trigger::OnMessage;
+        renamer->triggerKey = "rename_me";
+        renamer->instructions = {ActionList::Item{"set_name", {"Player"}}};
         s.Start();
         GameObject* b = nullptr;
         GameObject* c = nullptr;
         GameObject* lvl3 = s.Find("Level3");
-        for (int f = 0; f < 120; ++f) {
+        for (int f = 0; f < 140; ++f) {
             const float t = (float)f / 60.0f;
             a->transform->localPosition = {6.0f * std::cos(t), 0.0f, 6.0f * std::sin(t)};
             if (f == 15) { b = s.CreateGameObject("Player"); b->transform->localPosition = {-6.0f, 0, 4.0f}; }  // A still first
@@ -361,6 +370,7 @@ int main() {
             if (f == 65) { c = s.CreateGameObject("Player"); c->transform->localPosition = {0.0f, 0, 9.0f}; }  // Level3 still first
             if (f == 75) npcs[0]->targetName = "Gone";           // one NPC follows A again
             if (f == 90) lvl3->name = "Level3";                  // renamed away: C now
+            if (f == 100) renamer->ReceiveMessage("rename_me");  // another object renamed TO the name: Level5 now
             s.Update(1.0f / 60.0f);
         }
         std::vector<float> got;
@@ -371,14 +381,14 @@ int main() {
             got.push_back(p.x); got.push_back(p.z);
         }
         std::printf("  target golden hash %016llx\n", (unsigned long long)h);
-        // Recorded from the old code (Scene::Find every frame), before the target cache.
+        // Recorded from the old code (Scene::Find every frame, commit 6487b816), before the target cache.
         static const float golden[] = {
-            -2.540854f, -1.422561f,
-            -0.820224f, -1.522829f,
-            -0.391913f, -2.387288f,
-            0.495974f, -1.429344f,
-            1.664743f, -2.215282f,
-            1.722296f, -0.958107f,
+            -2.625784f, -0.763727f,
+            -3.615752f, -4.104361f,
+            -1.623706f, -3.495510f,
+            -2.181797f, -3.861733f,
+            0.520904f, -3.242073f,
+            -0.782500f, -3.365281f,
         };
         const std::size_t n = sizeof(golden) / sizeof(golden[0]);
         CHECK(got.size() == n);

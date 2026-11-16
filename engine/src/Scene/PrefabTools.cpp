@@ -1285,7 +1285,7 @@ GameObject* RebuildInstance(Scene& scene, GameObject& old, const RebuildMods& mo
         for (std::size_t i = 0; i < m.size(); ++i)
             if (m[i] >= 0 && newL[i].go && oldL[(std::size_t)m[i]].go) {
                 newL[i].go->SetGuid(oldL[(std::size_t)m[i]].go->Guid());
-                if (mods.keepNames) newL[i].go->name = oldL[(std::size_t)m[i]].go->name;
+                if (mods.keepNames) { newL[i].go->name = oldL[(std::size_t)m[i]].go->name; scene.NoteRenamed(); }
             }
         if (mods.keepAdded) {
             for (std::size_t i = 1; i < oldL.size(); ++i) {

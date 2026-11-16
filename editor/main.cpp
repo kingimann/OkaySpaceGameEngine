@@ -9172,7 +9172,7 @@ static void RegisterPluginBuiltins(okay::OkayScriptVM& vm) {
             std::string m = kind; m[0] = (char)std::toupper((unsigned char)m[0]); g = ed()->CreateMesh(m);
         } else if (kind == "light") { g = ed()->CreateEmpty("Light"); g->AddComponent<Light>(); }
         else g = ed()->CreateEmpty();
-        if (g && !name.empty()) g->name = name;
+        if (g && !name.empty()) { g->name = name; if (Scene* rs = g->scene()) rs->NoteRenamed(); }
         ed()->Select(nullptr);
         for (GameObject* m : prevMulti) if (m != prevSel) ed()->ToggleSelect(m);
         if (prevSel) ed()->ToggleSelect(prevSel);
@@ -9186,7 +9186,7 @@ static void RegisterPluginBuiltins(okay::OkayScriptVM& vm) {
     });
     vm.AddBuiltin("editor_rename", [ed, str](std::vector<V>& a) {
         GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
-        g->name = str(a, 1); if (ed()) ed()->dirty = true; return V{1.0f};
+        g->name = str(a, 1); if (Scene* rs = g->scene()) rs->NoteRenamed(); if (ed()) ed()->dirty = true; return V{1.0f};
     });
     vm.AddBuiltin("editor_set_active", [ed, str, num](std::vector<V>& a) {
         GameObject* g = PluginFind(str(a, 0)); if (!g) return V{0.0f};
@@ -29080,7 +29080,7 @@ void DrawInspector(EditorState& ed) {
     // Narrow Inspector: the name gets the whole row and Static / Lock drop below it.
     const bool narrowHdr = ImGui::GetContentRegionAvail().x - staticW < 120.0f;
     ImGui::SetNextItemWidth(narrowHdr ? -1.0f : ImGui::GetContentRegionAvail().x - staticW);
-    if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; ed.dirty = true; }
+    if (ImGui::InputText("##name", nameBuf, sizeof(nameBuf))) { go->name = nameBuf; if (Scene* rs = go->scene()) rs->NoteRenamed(); ed.dirty = true; }
     oked::FieldTip("##name");
     if (!narrowHdr) ImGui::SameLine();
     if (ImGui::Checkbox("Static", &go->isStatic)) ed.dirty = true;

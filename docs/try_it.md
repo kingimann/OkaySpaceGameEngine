@@ -798,6 +798,23 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Visual Script: type a Vector3 or a Color into a pin (branch `claude2/vs-vec3-color-text`, not merged or released yet)
+
+Before this, `0,5,0` typed into a Vector3 pin was read as (0, 0, 0) and any Color you typed was black.
+
+1. Open the editor, select an object (for example a Cube) and give it a Visual Script
+   (Add Component > Scripts > **New Visual Script**), then open it in the node editor.
+2. Add **On Start** and **Set Position (Vector)**, and wire On Start's exec out into Set Position.
+3. In Set Position's value box type `0,5,0` (or `0 5 0`, or `(0, 5, 0)`). Hover the box: the tooltip lists these formats.
+4. Press **Play**. The object jumps to (0, 5, 0): 5 units up. Stop.
+5. Type `up a bit` in the box instead and press **Check Graph**: one warning says the value can't be read and
+   would be (0, 0, 0).
+6. Colors: a **Split Color** node with `#ff8000`, `1,0.5,0` or `255,128,0` typed into it gives R 1, G about 0.5, B 0
+   (wire its outputs into Print to see them).
+
+**Status.** Tested headless (`test_vs_vec3_text`, on Linux). The tooltip change in `editor/VisualScriptEditor.hpp`
+was only syntax-checked, not run; it is unverified until you look.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

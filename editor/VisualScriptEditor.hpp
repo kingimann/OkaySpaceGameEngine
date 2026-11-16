@@ -4607,8 +4607,18 @@ inline void Draw(EditorState& ed, bool* open) {
                     char vb[128]; std::snprintf(vb, sizeof(vb), "%s", dv.c_str());
                     char bid[16]; std::snprintf(bid, sizeof(bid), "##pd%d", i);
                     if (ImGui::InputTextWithHint(bid, "value", vb, sizeof(vb))) { dv = vb; g.dirty = true; }
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
+                    if (ImGui::IsItemHovered()) {
+                        // The formats VsParseVec3Text / VsParseColorText (VsValue.hpp) read.
+                        if (pt == okay::vs::PinType::Vec3)
+                            ImGui::SetTooltip("%s: type x,y,z - like 0,5,0 or 0 5 0 or (0, 5, 0).\n"
+                                              "x,y leaves z at 0; one number sets all three.\nOr wire a node in.", d->dataIn[i]);
+                        else if (pt == okay::vs::PinType::Color)
+                            ImGui::SetTooltip("%s: type #rrggbb or #rrggbbaa (like #ff8000), or r,g,b or r,g,b,a\n"
+                                              "from 0 to 1 (like 1,0.5,0). If any number is above 1, all are 0 to 255\n"
+                                              "(like 255,128,0). One number is a grey. Or wire a node in.", d->dataIn[i]);
+                        else
+                            ImGui::SetTooltip("%s: type a value (text, a number, true/false), or wire a node in", d->dataIn[i]);
+                    }
                     if (dv.empty()) n.pinDefault.erase(i);
                 }
                 ImGui::PopStyleVar(2);

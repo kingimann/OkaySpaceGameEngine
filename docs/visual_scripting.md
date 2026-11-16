@@ -323,6 +323,21 @@ Component ▸ Scripts lists `.okayvs` files and **New Visual Script**), by dragg
 (`void Start()`, `void Update()`, `void OnCollisionEnter(Collision other)` ...)
 that you can copy or save as a `.okay` script.
 
+**Typing a Vector3 or a Color into a pin box** (issue #888 finding 30; before this,
+these read as (0, 0, 0) and black with no warning):
+
+- **Vector3:** `0,5,0`, `0 5 0` or `(0, 5, 0)` (commas, spaces or both, brackets
+  optional). `x,y` leaves z at 0. One number sets all three (`5` is (5, 5, 5)).
+- **Color:** `#rrggbb` or `#rrggbbaa` (`#ff8000`), or `r,g,b` / `r,g,b,a` from 0 to 1
+  (`1,0.5,0`). If any number is above 1, all of them (alpha too) count as 0 to 255
+  (`255,128,0`, `255,128,0,255`). Values are clamped to 0..1. One number is a grey.
+- Anything else, and numbers that aren't finite (`nan,0,0`), reads as zero (black for a
+  Color). **Check Graph** warns once for each such box: "input #1 (Vector3): "up a bit"
+  can't be read ...". The box's tooltip lists the formats.
+- One parser does this for every node: `VsParseVec3Text` / `VsParseColorText` in
+  `engine/include/okay/VisualScript/VsValue.hpp` (Follow Path's point list uses it too).
+  Tested by `tests/test_vs_vec3_text.cpp`.
+
 ## Fourth wave: events between objects, keys, timers and more
 
 **Several event nodes of one kind.** A graph may now contain any number of

@@ -75,28 +75,19 @@ inline float GpEase(float t, const std::string& mode) {
     return t * t * (3.0f - 2.0f * t);
 }
 
-inline bool GpParseVec(const std::string& s, Vec3& o) {
-    float x = 0, y = 0, z = 0;
-    if (std::sscanf(s.c_str(), "%f,%f,%f", &x, &y, &z) == 3 ||
-        std::sscanf(s.c_str(), "%f %f %f", &x, &y, &z) == 3) {
-        o = {x, y, z};
-        return true;
-    }
-    return false;
-}
-
+// Points "x,y,z; x,y,z | ..." (each read by VsParseVec3Text in VsValue.hpp).
 inline std::vector<Vec3> GpPoints(const std::string& arg) {
     std::vector<Vec3> out;
     std::string cur;
     for (char c : arg) {
         if (c == ';' || c == '|') {
             Vec3 v;
-            if (GpParseVec(cur, v)) out.push_back(v);
+            if (VsParseVec3Text(cur, v)) out.push_back(v);
             cur.clear();
         } else cur.push_back(c);
     }
     Vec3 v;
-    if (GpParseVec(cur, v)) out.push_back(v);
+    if (VsParseVec3Text(cur, v)) out.push_back(v);
     return out;
 }
 

@@ -1463,6 +1463,11 @@ add_executable(test_vs_pin_defaults test_vs_pin_defaults.cpp)
 target_link_libraries(test_vs_pin_defaults PRIVATE okay::engine)
 add_test(NAME vs_pin_defaults COMMAND test_vs_pin_defaults)
 
+# Vector3 / Color values typed into pins as text ("0,5,0", "#ff8000"; issue #888 finding 30)
+add_executable(test_vs_vec3_text test_vs_vec3_text.cpp)
+target_link_libraries(test_vs_vec3_text PRIVATE okay::engine)
+add_test(NAME vs_vec3_text COMMAND test_vs_vec3_text)
+
 add_executable(test_vs_variables test_vs_variables.cpp)
 target_link_libraries(test_vs_variables PRIVATE okay::engine)
 target_compile_definitions(test_vs_variables PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

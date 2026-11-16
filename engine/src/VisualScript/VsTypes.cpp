@@ -1203,6 +1203,30 @@ std::vector<VsIssue> ValidateGraphText(const std::string& text, const std::strin
             issues.push_back({1, kv.first, "Required: " + std::string(t == "LoadScene" ? "scene" : "variable name") + "."});
     }
 
+    {   // 4d) A Vector3 / Color typed into a pin box that can't be read (issue #888 finding 30):
+        // the node would get (0, 0, 0) / black. A wire into the pin wins, so it isn't checked.
+        for (const auto& kv : typed) {
+            const int id = kv.first.first, pin = kv.first.second;
+            if (!nodes.count(id)) continue;
+            bool wiredIn = false;
+            for (const Data& d : datas) if (d.consumer == id && d.inPin == pin) { wiredIn = true; break; }
+            if (wiredIn) continue;
+            const PinType pt = inType(id, pin);
+            if (pt != PinType::Vec3 && pt != PinType::Color) continue;
+            const std::string& v = kv.second;
+            if (v.find_first_not_of(" \t") == std::string::npos) continue;   // blank: nothing typed
+            float num = 0.0f; Vec3 v3; VsColor col;
+            if (VsParseFinite(v, num)) continue;
+            if (pt == PinType::Vec3 ? VsParseVec3Text(v, v3) : VsParseColorText(v, col)) continue;
+            const std::string shown = v.size() > 40 ? v.substr(0, 37) + "..." : v;
+            issues.push_back({1, id, "input #" + std::to_string(pin + 1) + " (" + PinTypeName(pt) + "): \"" + shown +
+                                     "\" can't be read, so it is " +
+                                     (pt == PinType::Vec3 ? "(0, 0, 0). Type x,y,z like 0,5,0 or (0, 5, 0)"
+                                                          : "black. Type #rrggbb like #ff8000, or r,g,b like 1,0.5,0 or 255,128,0"),
+                              pin, 0});
+        }
+    }
+
     // 5) Prefabs that aren't there.
     if (!baseDir.empty())
         for (const auto& kv : nodes)

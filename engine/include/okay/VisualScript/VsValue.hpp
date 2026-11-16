@@ -33,6 +33,82 @@ struct VsObject { std::uint64_t id = 0; };
 /// An RGBA colour, each channel 0..1 (not clamped on store; Make Color and the
 /// literal parser clamp). Prints as #rrggbbaa.
 struct VsColor { float r = 0, g = 0, b = 0, a = 1; };
+
+/// Read 1..`maxN` finite numbers from text like "0,5,0", "0 5 0" or "(0, 5, 0)":
+/// separated by a comma, by spaces or by both, optionally inside one pair of round
+/// brackets. Returns how many were read, or 0 when the text isn't such a list (an
+/// empty field like "1,,2", a trailing comma, a word, nan / inf, more than maxN).
+/// The one parser behind typed Vector3 / Color values (issue #888 finding 30).
+inline int VsParseNumberList(const std::string& s, float* out, int maxN) {
+    auto space = [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; };
+    std::size_t b = 0, e = s.size();
+    while (b < e && space(s[b])) ++b;
+    while (e > b && space(s[e - 1])) --e;
+    const bool open = b < e && s[b] == '(', close = b < e && s[e - 1] == ')';
+    if (open != close) return 0;
+    if (open) { if (e - b < 2) return 0; ++b; --e; }
+    const std::string body = s.substr(b, e - b);
+    const char* p = body.c_str();
+    const char* end = p + body.size();
+    int n = 0;
+    for (;;) {
+        while (p < end && space(*p)) ++p;
+        if (p >= end) return 0;   // nothing, or nothing after a comma
+        char* q = nullptr;
+        const float v = std::strtof(p, &q);
+        if (q == p || !std::isfinite(v) || n >= maxN) return 0;
+        out[n++] = v;
+        p = q;
+        bool gap = false;
+        while (p < end && space(*p)) { ++p; gap = true; }
+        if (p >= end) return n;
+        if (*p == ',') { ++p; continue; }
+        if (!gap) return 0;   // "1a", "1;2"
+    }
+}
+
+/// A Vector3 typed as text: "x,y,z", "x y z" or "(x, y, z)"; "x,y" gives z = 0.
+/// False for anything else (a single number is the caller's choice: AsVec3 makes it (n, n, n)).
+inline bool VsParseVec3Text(const std::string& s, Vec3& out) {
+    float v[3] = {0, 0, 0};
+    const int n = VsParseNumberList(s, v, 3);
+    if (n < 2) return false;
+    out = Vec3{v[0], v[1], n == 3 ? v[2] : 0.0f};
+    return true;
+}
+
+/// A colour typed as text: "#rrggbb" / "#rrggbbaa", or "r,g,b" / "r,g,b,a" (any of the
+/// Vector3 separators). Numbers are 0..1, but if ANY of them is above 1 all of them
+/// (alpha too) are 0..255. Channels are clamped to 0..1; alpha is 1 when left out.
+inline bool VsParseColorText(const std::string& s, VsColor& out) {
+    std::size_t b = 0, e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    float ch[4] = {0, 0, 0, 1};
+    if (b < e && s[b] == '#') {
+        const std::size_t n = e - b - 1;
+        if (n != 6 && n != 8) return false;
+        for (std::size_t k = 0; k < n; k += 2) {
+            int byte = 0;
+            for (std::size_t j = 0; j < 2; ++j) {
+                const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(s[b + 1 + k + j])));
+                const int h = (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : -1;
+                if (h < 0) return false;
+                byte = byte * 16 + h;
+            }
+            ch[k / 2] = static_cast<float>(byte) / 255.0f;
+        }
+    } else {
+        const int n = VsParseNumberList(s, ch, 4);
+        if (n < 3) return false;
+        bool bytes = false;
+        for (int k = 0; k < n; ++k) if (ch[k] > 1.0f) bytes = true;
+        if (bytes) for (int k = 0; k < n; ++k) ch[k] /= 255.0f;
+        for (float& c : ch) c = std::fmin(std::fmax(c, 0.0f), 1.0f);
+    }
+    out = VsColor{ch[0], ch[1], ch[2], ch[3]};
+    return true;
+}
 /// The name of a referenced object ("" when it no longer exists). NodeGraph.cpp.
 std::string VsObjectName(std::uint64_t id);
 /// True while the referenced object exists. NodeGraph.cpp.
@@ -64,10 +140,20 @@ public:
     /// A colour value.
     static VsValue Color(float r, float g, float b, float a = 1.0f) { return VsValue(VsColor{r, g, b, a}); }
     bool IsColor() const { return std::holds_alternative<VsColor>(m_data); }
-    /// The colour (opaque black when this isn't one).
+    /// The colour. A Vector3 gives its x, y, z as r, g, b; a number n (clamped to 0..1) is
+    /// the grey (n, n, n); text is read by VsParseColorText ("#ff8000", "1,0.5,0",
+    /// "255,128,0") or as one number. Anything else is opaque black.
     VsColor AsColor() const {
         if (auto* c = std::get_if<VsColor>(&m_data)) return *c;
         if (auto* v = std::get_if<Vec3>(&m_data)) return VsColor{v->x, v->y, v->z, 1.0f};
+        auto grey = [](float f) { const float g = std::fmin(std::fmax(f, 0.0f), 1.0f); return VsColor{g, g, g, 1.0f}; };
+        if (auto* f = std::get_if<float>(&m_data)) return std::isnan(*f) ? VsColor{} : grey(*f);
+        if (auto* s = std::get_if<std::string>(&m_data)) {
+            VsColor c;
+            if (VsParseColorText(*s, c)) return c;
+            float n = 0.0f;
+            if (VsParseFinite(*s, n)) return grey(n);
+        }
         return VsColor{};
     }
 
@@ -136,6 +222,12 @@ public:
         if (auto* v = std::get_if<Vec3>(&m_data)) return *v;
         if (auto* f = std::get_if<float>(&m_data)) return Vec3{*f};
         if (auto* c = std::get_if<VsColor>(&m_data)) return Vec3{c->r, c->g, c->b};
+        if (auto* s = std::get_if<std::string>(&m_data)) {   // typed into a pin: "0,5,0", "(0, 5, 0)", "5"
+            Vec3 v;
+            if (VsParseVec3Text(*s, v)) return v;
+            float n = 0.0f;
+            if (VsParseFinite(*s, n)) return Vec3{n};
+        }
         return Vec3::Zero;
     }
     bool IsString() const { return std::holds_alternative<std::string>(m_data); }

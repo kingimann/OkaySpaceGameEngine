@@ -31,8 +31,15 @@ What the scene's Post-processing section actually draws:
 |---|---|---|---|---|
 | Linear lighting, exposure, tonemap, bloom, colour grading, FXAA | yes | yes | no | no |
 | Vignette amount | yes | yes | yes | yes |
-| Ambient occlusion in this section | yes | yes (new, unrun on a GPU) | no | no |
-| Depth of field | yes | yes (new, unrun on a GPU) | no | no |
+| Ambient occlusion in this section | yes | yes (new, unrun on a GPU) | no | yes (lit meshes; its own algorithm) |
+| Depth of field | yes | yes (new, unrun on a GPU) | no | yes (a fixed-width blur; not pixel for pixel the GPU's) |
+
+**Which renderer am I looking at?** On Windows the editor and the player draw 3D with Direct3D 11 (the GPU) and
+fall back to the software renderer only when no GPU can be used. The web player is always software. To look at the
+software renderer on purpose, use *View → Rendering & Performance → Use the software renderer (CPU)* in the editor (the
+line above it then says `Renderer: software`), or start the editor or the player with the environment variable
+`OKAY_SOFTWARE_RENDER=1` (the player's window title then ends in `[software renderer]`). The step-by-step try-out of
+depth of field and ambient occlusion is in [try_it.md](try_it.md), with the scene `examples/render_effects`.
 
 Fog is drawn on all four. The vignette amount is an overlay when the post chain
 itself does not run, so it still shows on Direct3D 12 and the software renderer.

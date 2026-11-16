@@ -26,8 +26,8 @@ asks for a scene path: type or paste it, or press **Browse...**. A scene finds t
 sequences) next to itself, so the folder works from any install path.
 
 What is in `examples\` (about 0.5 MB, all small): `vehicle`, `own_wav`, `own_readers`, `obj_texture_paths`,
-`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`.
-Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
+`spatial_audio`, `cutscene`, `behavior_trees`, `node_playground`, `physics`, `physics2d`, `weapons`, `touch_controls`,
+`render_effects` (depth of field and ambient occlusion, item 14). Left out on purpose: `account-server` (a Python server), `netdemo` and `physicsdemo` (C++ sources), `editor-plugins` and
 `visual_script` (not scenes). The packaging is checked by reading and by running the copy step of
 `scripts/build-windows-dist.sh` on Linux (see "How the packaging was checked" at the end); nobody has run the whole
 release job or the installer build for this change.
@@ -50,6 +50,7 @@ release job or the installer build for this change.
 | 11 | Own platform layer (off by default) | `OKAY_PLATFORM_BACKEND=own` | Unverified on Windows, never run there |
 | 12 | OkayUI instead of Dear ImGui (off by default) | `OKAY_UI_BACKEND=okayui` | Unverified, only a few screens |
 | 13 | Own crypto | none, on purpose | **Cannot and must not be tried** |
+| 14 | Depth of field and ambient occlusion in the software renderer | `examples\render_effects\render_effects.okayscene`, View > Panels > Lighting > Post-processing, View > Rendering & Performance > Use the software renderer (CPU), or `OKAY_SOFTWARE_RENDER=1` | New in this change; headless software renders checked here, the editor, the player and Windows unverified; the Windows default (Direct3D 11) is a different, unrun code path |
 
 ---
 
@@ -343,6 +344,73 @@ the line stays `ui=imgui`. Nothing was run in a real window.
 Not switchable, by owner decision (2026-11-14, CLAUDE.md rule 18). libsodium is the only crypto in a release, the
 environment variable `OKAY_OWN_CRYPTO` does nothing at run time, and the startup line must say `crypto=libsodium`.
 Nothing to try.
+
+## 14. Depth of field and ambient occlusion (the software renderer, and the sample scene)
+
+**Read this first: which renderer you see.** On Windows the editor and the player draw 3D on the GPU with Direct3D 11.
+Direct3D 11 has its own depth of field and ambient occlusion, but nobody has ever run them on a GPU, so on a default
+install you look at code we have not seen work. The software renderer (the CPU one) now draws both effects too, and it is
+the one our tests check. It is also what the web player shows and what a PC without a usable GPU falls back to. This change
+adds a way to switch to it, so you can see the effects and compare the two. If an effect looks wrong with the GPU renderer
+and right with the software one, that is the unrun Direct3D 11 code: tell us.
+
+**What it is.**
+* **Depth of field** blurs everything nearer or farther than a focus distance, like a camera lens. Settings: Focus Distance
+  (the sharpest point) and Focus Range (how wide the sharp zone is).
+* **Ambient occlusion** (SSAO) darkens creases and contacts: the foot of a wall, the floor under a box. Settings: Radius (how
+  far the darkening reaches), Intensity (how dark) and Power.
+
+Both are scene settings, saved with the scene, off by default. The sample scene has both on.
+
+**Steps (editor).**
+1. Start the editor (`Tools\OkayEngine.exe`).
+2. **File > Open...**, paste `<install folder>\examples\render_effects\render_effects.okayscene` (installer:
+   `%LOCALAPPDATA%\OkaySpace\examples\render_effects\render_effects.okayscene`) and open it. The Game panel shows what the scene's
+   camera sees: a stack of orange crates in the middle with a blue and a green crate beside it, an L-shaped nook with a red box
+   on the left, two rows of pillars going away (round ones on the right, square ones behind the nook), a line of stepping
+   stones, and two small boxes close to the lens (yellow, pink). Both effects are on when it opens.
+3. **View > Rendering & Performance > Use the software renderer (CPU).** The line above it now reads `Renderer: software`.
+   (To start that way instead, open a Command Prompt, `cd %LOCALAPPDATA%\OkaySpace`, `set OKAY_SOFTWARE_RENDER=1`, then
+   `Tools\OkayEngine.exe`, as in "How to set one (Windows)" above.)
+4. **View > Panels > Lighting**, section **Post-processing**: **Ambient Occlusion (SSAO)** and **Depth of Field** are ticked.
+   * Untick **Ambient Occlusion**: the soft dark shadow at the foot of the crates, in the corner of the nook and under the red box
+     goes away. Tick it again: it comes back. Drag **Radius** up: the dark area grows. Drag **Intensity** to 0: nothing.
+   * Untick **Depth of Field**: the pillars, the stones and the two small boxes near the lens turn sharp. Tick it again: the crates
+     (6 units from the camera) stay sharp, the pillars and the small boxes go soft. Set **Focus Distance** to 14.5: the second
+     stepping stone (about 14.5 away) becomes the sharp part and the crates go soft. **Focus Range** is how deep the sharp zone is.
+5. To compare with what you get by default, untick **Use the software renderer (CPU)** again. The line reads
+   `Renderer: Direct3D 11` and the same two switches drive the GPU passes (which we have not seen run).
+
+**Steps (player).** In a Command Prompt:
+
+```
+cd %LOCALAPPDATA%\OkaySpace
+set OKAY_SOFTWARE_RENDER=1
+Tools\OkaySpacePlayer.exe examples\render_effects\render_effects.okayscene
+```
+
+The window title ends in `[software renderer]`. The scene opens with both effects on. Leave out the `set` line to get Direct3D 11.
+A game you build yourself can ship on the software renderer for good: **File > Build Settings...** (Ctrl+B) > **Graphics**, untick
+**GPU renderer (Direct3D 11 / OpenGL)**, then build (that writes `gpu=0` into the game's config; unchanged by this change).
+
+**How you know it worked.** Compare the four pictures below (headless software renders; yours should look alike): with both
+off everything is crisp and flat; with ambient occlusion on the creases darken softly; with depth of field on only the crates stay
+sharp; with both on you get both. In the editor the sure signs are `Renderer: software` in the menu and the player's window title.
+
+| both off | ambient occlusion on |
+|---|---|
+| ![both off](images/render_effects/render_effects_off.png) | ![ambient occlusion](images/render_effects/render_effects_ssao.png) |
+| **depth of field on** | **both on** |
+| ![depth of field](images/render_effects/render_effects_dof.png) | ![both](images/render_effects/render_effects_both.png) |
+
+**Status.** Verified here (Linux, headless): the scene file loads and equals the scene the test builds; ambient occlusion darkens
+the floor beside the crates and leaves open floor alone; depth of field leaves the crate in focus bit for bit and blurs the far
+pillars; the pictures above were rendered by that test (`render_effects_example`, with `OKAY_SHOT_DIR=<folder>`). Unverified, never
+run: the menu item, the tooltips and the environment variable in the real editor and player (they were compiled with a
+syntax-only check and read, not clicked), anything on Windows, and Direct3D 11's own passes. The software versions do not match the
+GPU's pixel for pixel. Known limits: with ambient occlusion on, lit meshes are drawn per pixel (a little slower), and Unlit, matcap
+and see-through meshes are not darkened and hide nothing; the depth of field blur has a fixed width. Details and numbers:
+[render_status.md](render_status.md), "Software depth of field and scene ambient occlusion".
 
 ---
 

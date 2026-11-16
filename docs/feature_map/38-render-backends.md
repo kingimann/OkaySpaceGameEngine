@@ -94,14 +94,14 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
   - 38.5.1 Rasterizer - `Render/SoftwareRenderer` - `Raster`: W-buffer depth, perspective-correct textured triangles with mip maps, flat or per-pixel lighting (per-pixel is chosen automatically while a shadow map exists, `ShadowsUsePerPixel`)
   - 38.5.2 Scene draw - `Render/SoftwareRenderer` - `RenderMeshes` and `RenderMeshesSS` (supersampled), frustum culling, camera culling mask, row-parallel passes (`ParallelRows`)
   - 38.5.3 Shadows - `Render/SoftwareRenderer` - cascaded sun shadow maps with soft filtering (`ShadowMap`, `ShadowFactor`), plus spot, point and area light shadow maps (`RenderLocalShadowMaps`, `LocalShadowFactor`, `LocalShadowMath.hpp`); drawn by default (the per-pixel path is used while a shadow map exists)
-  - 38.5.4 Post passes - `Render/SoftwareRenderer` - SSAO, bloom, tonemap, colour grade, vignette, FXAA; the process-wide switches (see 2.5.3) and, for everything but SSAO, the scene's Post-processing section (`PlanScenePost`, `ApplyScenePost`)
+  - 38.5.4 Post passes - `Render/SoftwareRenderer` - SSAO, depth of field, bloom, tonemap, colour grade, vignette, FXAA; the process-wide switches (see 2.5.3) and the scene's Post-processing section (`PlanScenePost`, `ApplyScenePost`, `ApplySSAO`, `ApplyDof`)
   - 38.5.5 Texture caches - `Render/SoftwareRenderer` - `RegisterTexture`, `GetCachedTexture`, mip chains; the GPU backends reuse this cache, including `proc:` textures
   - 38.5.6 Occlusion depth - `Render/SoftwareRenderer` - `SceneOcclusionDepth` lets particles and lines hide behind geometry
 - **Code:** `Render/SoftwareRenderer`
 - **API:** `Raster`, `RenderMeshes`, `RenderMeshesSS`, `Shadows()`, `ShadowsEnabled()`, `PerPixelLighting()`, `SceneOcclusionDepth`
-- **Editor:** the fallback for the Scene and Game views; Lighting panel > Rendering section switches
+- **Editor:** the fallback for the Scene and Game views; Lighting panel > Rendering section switches; View > Rendering & Performance > Use the software renderer (CPU) forces it (or `OKAY_SOFTWARE_RENDER=1`, editor and player)
 - **Docs:** `docs/rendering.md`, `docs/lighting.md`
-- **Tests:** `software_renderer`, `shadows`, `light_shadows`, `software_local_shadows`, `software_default_shadows`, `software_scene_post`, `ssao_math`, `shaders`, `lighting`, `frustum_culling`
+- **Tests:** `software_renderer`, `shadows`, `light_shadows`, `software_local_shadows`, `software_default_shadows`, `software_scene_post`, `software_scene_ssao`, `software_ssao_quality`, `software_dof`, `render_effects_example`, `ssao_math`, `shaders`, `lighting`, `frustum_culling`
 - **Status:** Works - read the header (1.9k lines, header-only) and tests such as the depth-test one
 - **Open:** slow on big imported models (the editor drops the render scale by triangle load); per-pixel lighting (without shadows), SSAO and bloom are off by default; no procedural sky or clouds; the scene's SSAO switch is read (`software_scene_ssao`, per-pixel-lit meshes only); depth of field is a CPU pass (`ApplyDof`, fixed blur radius, about 21 ms at 1080p on 4 threads)
 - **Related:** 38.1, 38.10, 2.3, 2.5, 2.8
@@ -139,7 +139,7 @@ Split out of 2.1 so each backend can be targeted ("fix shadows on Direct3D 11").
 - **Docs:** `docs/web_mobile.md`
 - **Tests:** -
 - **Status:** Basic - the build and the software path exist (read `build-web.sh` and the `__EMSCRIPTEN__` guards); 3D in the browser is the CPU rasterizer
-- **Open:** no WebGL or WebGPU backend, so GPU-only effects (SSAO, procedural sky and clouds) are missing in the browser (depth of field now has a software pass); possible doc mismatch in `docs/rendering.md` ("OpenGL in the editor and the Linux / web player"); software speed limits web scenes
+- **Open:** no WebGL or WebGPU backend, so GPU-only effects (the procedural sky and clouds) are missing in the browser (depth of field and the scene's ambient occlusion now have software passes, headless-tested only); possible doc mismatch in `docs/rendering.md` ("OpenGL in the editor and the Linux / web player"); software speed limits web scenes
 - **Related:** 18.2, 38.1, 38.5, 2.5
 - **Words:** WebGL, WASM, Emscripten, web player, browser, HTML5 build, okay-player.html
 - **Seen as:** web export looks flatter or runs slowly than desktop; no clouds or bloom in the browser

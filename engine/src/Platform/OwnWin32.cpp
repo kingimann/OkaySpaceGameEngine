@@ -337,7 +337,9 @@ public:
     void PumpEvents() override {          // the message loop of PollEvent, without taking an event
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) { Event e; e.type = EventType::Quit; m_pending.push_back(e); continue; }
+            // WM_QUIT only comes when no other message is waiting. Put it back for PollEvent, which turns it into the Quit
+            // event, so no event is lost and this function does not touch the pending-event queue itself.
+            if (msg.message == WM_QUIT) { PostQuitMessage((int)msg.wParam); break; }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }

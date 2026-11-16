@@ -319,7 +319,7 @@ compile at a time (a Release tree for the runs, an `-O1` tree for the sanitizers
 | After the test and comment fixes (`02fa0a34`): `ctest -R platform_state` | `platform_state_sdl2` **76 checks, 0 failures**; `platform_state_own` **58 checks, 0 failures**. Three more runs of each, the same: no flakiness seen |
 | The whole platform set in the same tree: `ctest -R '^(platform\|platform_default_env_.*\|platform_window_.*\|platform_state_.*)$'` (the five older tests and the two new ones; `platform_painter_window` and `platform_gamepad` were not built in this small tree) | 7 of 7 passed |
 | ASan + UBSan (`-fsanitize=address,undefined -fno-sanitize-recover=undefined`, `-O1`) on `test_platform_state` | Both backends: no ASan or UBSan error, 76 / 0 and 58 / 0 with `ASAN_OPTIONS=detect_leaks=0`. With leak detection on, own is clean; sdl2 reports one leak of 1032 bytes made inside libdbus, called from `SDL_Init` (SDL's own start-up; no function of ours is on that stack) |
-| MinGW `x86_64-w64-mingw32-g++-win32` (GCC 13, the "win32" thread model the Windows build uses), `-std=c++17 -fsyntax-only -Wall -Wextra -Wpedantic -DOKAY_PLATFORM_HAVE_OWN` | `OwnWin32.cpp` and `Platform.cpp`: no warning, no error. Syntax only: nothing was linked, **none of the Win32 code ran** |
+| MinGW `x86_64-w64-mingw32-g++-win32` (GCC 13, the "win32" thread model the Windows build uses), `-std=c++17 -fsyntax-only -Wall -Wextra -Wpedantic -DOKAY_PLATFORM_HAVE_OWN` | `OwnWin32.cpp` and `Platform.cpp`: no warning, no error (run again after the last change to `OwnWin32.cpp`, see the next-to-`claude/platform-gaps2` note in `docs/sdl_removal_plan.md`, step 1). Syntax only: nothing was linked, **none of the Win32 code ran** |
 | `launcher/main.cpp` with `g++ -std=c++17 -fsyntax-only` and the launcher's include paths, before and after the five conversions | No error either way (about 6 s each). A control with a made-up function name at a converted line did fail, so the check does reach the converted lines. **The launcher was not built, linked or run** |
 | `python3 scripts/tests/test_sdl_inventory.py` (ctest `sdl_inventory_script`) | 12 tests, OK |
 
@@ -339,7 +339,8 @@ Adding `xvfb xdotool` to the "Build & test (Ubuntu)" job's `apt-get install` lin
 
 * The own X11 `IsMinimized()` reads the window manager's properties; a window manager that sets neither `WM_STATE` nor `_NET_WM_STATE_HIDDEN` on a minimised window is not noticed.
   A window hidden by another client (not by `Hide()`) is not noticed by `IsVisible()` either (it tracks what the app asked, as `SDL_WINDOW_HIDDEN` does).
-* The own X11 `PumpEvents()` does not poll game-pad hot-plug (that is done in `PollEvent`).
+* The own X11 `PumpEvents()` does not poll game-pad hot-plug (that is done in `PollEvent`). The Win32 `PumpEvents()` puts a `WM_QUIT` it meets back with `PostQuitMessage`, so `PollEvent`
+  still makes the Quit event (never run; it does not touch the pending-event queue, which is a different type on `claude/platform-gaps2`).
 * Not written (still GAPs in the inventory): the monitor list and DPI, the flash request, cursor shapes, IME composition events, drop begin and complete, the current GL window and context, `SDL_GetWindowWMInfo`
   for the tray icon, exclusive video modes, render targets. `claude/platform-gaps2` has versions of some of them (see the inventory, section 4).
 * `WrapSdl2Window` is transitional: it goes away when the launcher and editor create their windows with `Backend::MakeWindow` (step 6 of `docs/sdl_removal_plan.md`).

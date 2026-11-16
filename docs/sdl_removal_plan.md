@@ -39,6 +39,10 @@ lines of seam work that is not on main: X11 drag-and-drop receive, RandR monitor
 X11 message box, input-method preedit, Win32 clipboard formats, an OLE drop target, `FlashWindowEx`, IME composition events, `DisplayInfo` and
 `DisplayCount`, a pad mapping table, `docs/own_platform_status.md`, and tests. A dry-run merge into `05feef3b` conflicts only in the generated
 `docs/feature_map/_index_az.md`. It was **not built or run by us**; its own page says Windows ran only under Wine.
+**Next to the stage 4 work of this branch** (checked on 2026-11-16 by merging this branch with tip `33da9e1d` in a scratch tree): no code conflict. The first compile of the merge failed in one place: this
+branch's Win32 `PumpEvents` pushed the quit event with `m_pending.push_back`, and there `m_pending` is an `EventQueue`. `PumpEvents` now puts `WM_QUIT` back for `PollEvent` and does not touch the queue.
+With that, MinGW (syntax only) accepts `OwnWin32.cpp`, `OwnWin32Audio.cpp` and `Platform.cpp` of the merge, and `test_platform_state`, built from the merged Linux sources by hand (not by CMake), passes on
+both backends (sdl2 76 checks, own 58, no failures). Text conflicts are in docs only: the SDL2 row of `docs/own_code_roadmap.md` and the generated `_index_az.md`. Nothing else of the merge was built or run.
 **Why first.** It is the GAP list's answer for displays, flash, cursors, IME events and drop begin / complete, and the next steps need those.
 **Size.** Small to medium: merge main into it, regenerate the feature map, build, run its tests under Xvfb and Wine, get CI green, one PR.
 **Real Windows.** Nothing changes by default (the own backend is off). To see it: `set OKAY_PLATFORM_BACKEND=own`, run the player (see `docs/try_it.md`

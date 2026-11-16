@@ -113,6 +113,10 @@ your projects were made with that release line: "3 of your projects were made wi
 install it." (`CountProjectsMadeWith`; the project versions are the ones the launcher already reads for the card badges). `Remove` itself looks again,
 so a project that arrives while the window is open is still refused. There is no bulk "remove copies no project needs" yet (audit item 5).
 
+Headless renders of the two states (Dear ImGui into a software surface on Linux, the real `VersionsUI.cpp` drawing code, a made-up folder, not the launcher program and not Windows):
+[with a project inside](images/versions_safety/remove_refused_project_inside.png) and
+[after the project was moved out](images/versions_safety/remove_confirm_after_moving_out.png).
+
 ## Project cards and Open with (Create page)
 
 * Each card shows the project's version (`okayver::ReadProjectVersion`; "version unknown" when there is none) and a small badge when it is

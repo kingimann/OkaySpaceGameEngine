@@ -234,14 +234,6 @@ void BeginInstall(const Host& h, const std::string& version) {
     StartJob(h, plan);   // (a version without checksums never gets a plan: PlanInstall refuses it with the reason)
 }
 
-/// The Remove button: look in the folder now (not every frame), count the projects made with that version, and open the confirmation.
-void AskRemove(const Host& h, const std::string& version) {
-    State& st = S();
-    st.removeAsk = version;
-    st.removeCheck = CheckBeforeDelete(okayver::VersionsDir(h.launcherDir) / version);
-    st.removeProjects = h.projectVersions ? CountProjectsMadeWith(h.projectVersions(), version) : 0;
-}
-
 RemoveGuards MakeGuards(const Host& h) {
     RemoveGuards g;
     g.running = h.currentVersion;
@@ -663,7 +655,7 @@ void DrawModals(const Host& h) {
         const DeleteCheck& chk = st.removeCheck;
         std::uint64_t bytes = 0;
         for (const Installed& i : st.installed) if (i.version == v) bytes = i.bytes;
-        ImGui::PushTextWrapPos(460.0f);
+        ImGui::PushTextWrapPos(chk.ok() ? 460.0f : 640.0f);      // (wider when a path has to fit: a project's path is long)
         ImGui::Text("Remove %s?", V(v).c_str());
         ImGui::TextDisabled("%s", dir.string().c_str());
         ImGui::Dummy(ImVec2(0, 4));
@@ -702,6 +694,13 @@ void DrawModals(const Host& h) {
 }  // namespace
 
 // ---- the interface ---------------------------------------------------------------------------------------------------------------------
+
+void AskRemove(const Host& h, const std::string& version) {
+    State& st = S();
+    st.removeAsk = version;
+    st.removeCheck = CheckBeforeDelete(okayver::VersionsDir(h.launcherDir) / version);       // looked at now, once, not every frame
+    st.removeProjects = h.projectVersions ? CountProjectsMadeWith(h.projectVersions(), version) : 0;
+}
 
 void RequestPage(const std::string& version) {
     State& st = S();

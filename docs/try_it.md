@@ -316,11 +316,12 @@ What you should see:
    File > New Project, and leave the Location on its default.
 3. Press **Remove** on that version. The **Remove this version?** window shows, in amber, "This version folder has a project of yours:
    `<install>\Versions\<v>\Tools\Projects\MyTest`. Move it out first." There is **no Remove button**: only **Open folder** and **Close**. Press **Open folder**:
-   Explorer shows `...\Tools\Projects` with `MyTest` in it.
+   Explorer shows `...\Tools\Projects` with `MyTest` in it. (What it should look like: `docs/images/versions_safety/remove_refused_project_inside.png`, a headless render, see Status.)
 4. Check that `MyTest` and everything in it is still there and the version is still listed.
 5. Cut `MyTest` and paste it into `<install>\Projects`. Press **Remove** again. The window now says "This frees ... MB. Your projects are not touched." and one
    more line about your projects ("None of your projects were made with v2.700.x." or "3 of your projects were made with v2.850.x. You can open them with that
-   version again after you install it."). Press **Remove**: the version goes, and `MyTest` in `<install>\Projects` is untouched.
+   version again after you install it."). Press **Remove**: the version goes, and `MyTest` in `<install>\Projects` is untouched. (Look:
+   `docs/images/versions_safety/remove_confirm_after_moving_out.png`.)
 
 Also: **Remove them now** (shown when more kept copies exist than "Keep previous versions: N") and the clean-up after every update skip a version that has
 a project inside, and the message says which. A folder that has a link to another folder in it (a symbolic link or a junction, not an ordinary `.lnk` shortcut), or is too big to check, is refused the same way.
@@ -329,8 +330,9 @@ a project inside, and the message says which. A folder that has a link to anothe
 failures), with `project_version` 301, `launcher_versions` 15534 and `editor_hooks` 198 still green (run by hand against the engine libraries of another
 branch's build, so CI is the real check). The real `VersionsManager.cpp` was also cross-compiled with MinGW and run in a scratch program under wine 9.0:
 Windows paths and case folding, Remove refused with a project in `Tools\Projects`, an `.okay`-only folder removed. **Unverified:** everything on real Windows;
-the two new windows (**Remove this version?** with a project inside, and **Kept copy**) have never been drawn or seen (the launcher and editor were only
-syntax-checked); the **Open folder** button; links and Windows junctions (wine here could not make one); and a kept copy made by an older release, which
+the **Kept copy** window has never been drawn (the editor was only syntax-checked); the **Remove this version?** window was drawn headless for the two
+screenshots (Dear ImGui into a software surface on Linux, the real `launcher/VersionsUI.cpp` drawing code with a made-up folder, forward slashes because it ran
+on Linux; not the launcher program, not Windows, not a screenshot of your screen); the **Open folder** button (only its call was seen); links and Windows junctions (wine here could not make one); and a kept copy made by an older release, which
 still updates itself. Details: `docs/launcher_versions.md` ("Removing a version never deletes a project", "Kept copies never update themselves").
 
 ---

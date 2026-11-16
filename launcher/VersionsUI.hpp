@@ -34,6 +34,10 @@ struct Host {
     okayversions::FetchTextFn fetchText;         ///< a small text file ("" url or unreachable: false)
 };
 
+/// What a row's **Remove** button does: look through that version's folder now (once, not every frame: a project of the person's inside, a link, too big
+/// to check), count the projects made with it, and open the "Remove this version?" window. The window then offers Remove, or only Open folder when
+/// something of the person's is in the way. Public so a screenshot or a test can open it without a click.
+void AskRemove(const Host& host, const std::string& version);
 /// `--versions <version>` (or the editor's "Open launcher"): the page is shown and that version highlighted. "" = just the page.
 void RequestPage(const std::string& version);
 /// True once after RequestPage: the caller switches to the Versions page.

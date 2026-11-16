@@ -120,6 +120,14 @@ inline bool Parse(const std::string& s, Doc& x, std::string& err, const Limits& 
     std::vector<int> stack;
     bool haveRoot = false, rootClosed = false;
     std::size_t textBytes = 0;
+    {   // room for every element at once (the array grew by doubling, holding old and new copies while it moved): count
+        // the '<' that can open one; comments and CDATA make this a little high, never more than the element cap
+        std::size_t starts = 0;
+        for (const char* c = s.data() + p, *e = s.data() + n; (c = (const char*)std::memchr(c, '<', (std::size_t)(e - c))) != nullptr; ++c)
+            if (c + 1 < e && c[1] != '/' && c[1] != '!' && c[1] != '?') ++starts;
+        x.n.reserve(std::min(starts, lim.maxElements));
+    }
+    std::vector<std::pair<std::string, std::string>> attrs;   // one element's attributes, then moved in at their exact size
     while (p < n) {
         if (s[p] != '<') {
             std::size_t e = s.find('<', p);
@@ -196,6 +204,7 @@ inline bool Parse(const std::string& s, Doc& x, std::string& err, const Limits& 
         Node node;
         node.name = StripPrefix(s.substr(b, q - b));
         bool selfClose = false;
+        attrs.clear();
         for (;;) {
             while (q < n && IsWs(s[q])) ++q;
             if (q >= n) return fail("XML: unterminated tag");
@@ -218,14 +227,18 @@ inline bool Parse(const std::string& s, Doc& x, std::string& err, const Limits& 
             const std::size_t ve = s.find(quote, q);
             if (ve == std::string::npos) return fail("XML: unterminated attribute value");
             if (std::memchr(s.data() + q, '<', ve - q) != nullptr) return fail("XML: '<' in an attribute value");
-            if ((int)node.attrs.size() >= lim.maxAttrs) return fail("XML: too many attributes on one element");
+            if ((int)attrs.size() >= lim.maxAttrs) return fail("XML: too many attributes on one element");
             std::string av;
             if (!Decode(av, s, q, ve)) return fail("XML: unknown or malformed entity reference");
             const std::string key = StripPrefix(an);
             if (an != "xmlns" && an.compare(0, 6, "xmlns:") != 0) {
-                node.attrs.emplace_back(key, std::move(av));
+                attrs.emplace_back(key, std::move(av));
             }
             q = ve + 1;
+        }
+        if (!attrs.empty()) {
+            node.attrs.reserve(attrs.size());
+            for (auto& a : attrs) node.attrs.push_back(std::move(a));
         }
         const int idx = (int)x.n.size();
         x.n.push_back(std::move(node));

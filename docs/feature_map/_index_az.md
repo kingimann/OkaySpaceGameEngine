@@ -171,6 +171,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Apply to Selection (26.2)
 - Arabic (31.2)
 - Arcade vehicle (4.5.1)
+- Architecture templates (3.11.6)
 - area cost (9.6)
 - area light (2.3)
 - area mask (9.6)

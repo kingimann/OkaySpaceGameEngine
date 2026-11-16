@@ -361,6 +361,7 @@ void Fence(const Recipe& r, std::vector<GeneratedPart>& out) {
 
 Template MakeFence() {
     Template t;
+    t.usesPath = true;
     t.id = "fence"; t.name = "Fence"; t.category = "Architecture"; t.version = 1;
     t.description = "A fence along a straight run or a drawn path: posts, rails, pickets or bars, an optional gate.";
     using K = ParamDef::Kind;

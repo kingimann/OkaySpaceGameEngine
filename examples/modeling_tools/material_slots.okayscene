@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "b423ec5e2e9940cb2b6941b2f9600c14"
+  guid "62acac5b2f4d43c7614f5d8d6424bc6a"
   active 1
   parent -1
   transform 0 1.6 5 0 0 0 1 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Sun"
-  guid "1b340032f3d9c20f43333af7519d0d74"
+  guid "fb888f8d18b65245cedc3f70f0e65ac5"
   active 1
   parent -1
   transform 0 0 0 0.3303661 -0.24321036 0.08852133 0.9076734 1 1 1
   light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
 end
 gameobject 2 "Slot House"
-  guid "c25b87d085f627ad58b961aac63e89f1"
+  guid "a44da6e6a9cc69d90099c977705f7a63"
   active 1
   parent -1
   transform -1.3 0 0 0 0 0 1 1 1 1
@@ -33,7 +33,7 @@ gameobject 2 "Slot House"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Slot Ball"
-  guid "fd91d54cac75bafa31f66f0fb5491cda"
+  guid "7f8cae4d93d3729192bceeef8c969694"
   active 1
   parent -1
   transform 1.6 0.6 0 0 0 0 1 1 1 1

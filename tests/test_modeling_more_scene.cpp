@@ -296,14 +296,14 @@ int main() {
         // Draw it, lit (per-pixel and per-vertex paths) and unlit: the left is red, the right blue, the middle both.
         for (int mode = 0; mode < 3; ++mode) {
             Scene t("draw");
-            GameObject* cam = t.CreateGameObject("Cam"); cam->transform->localPosition = {0, 0, 5};
+            GameObject* cam = t.CreateGameObject("Cam"); cam->transform->localPosition = {0, 0, 2.5f};
             cam->AddComponent<Camera>()->projection = Camera::Projection::Perspective;
             auto* tm = t.CreateGameObject("Strip")->AddComponent<MeshRenderer>();
             tm->mesh = m; tm->mesh.name = ""; tm->doubleSided = true;
             if (mode == 2) tm->unlit = true;
             t.CreateGameObject("Sun")->AddComponent<Light>();
             t.Start();
-            const Vec3 eye{0, 0, 5};
+            const Vec3 eye{0, 0, 2.5f};
             const Mat4 vp = Mat4::Perspective(40.0f, 4.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, {0, 0, 0}, Vec3::Up);
             ApplySceneLight(t);
             const bool before = PerPixelLighting();
@@ -312,11 +312,11 @@ int main() {
             RenderMeshes(rr, t, vp, eye);
             PerPixelLighting() = before;
             auto px = [&](int x) { const std::uint32_t c = rr.color[50 * 400 + x]; return std::array<int, 3>{(int)(c & 255), (int)((c >> 8) & 255), (int)((c >> 16) & 255)}; };
-            const auto L = px(70), Mi = px(200), R = px(330);
+            const auto L = px(100), Mi = px(200), R = px(300);
             CHECK(L[0] > L[2] * 2 && L[0] > 40);                 // left: red dominates
             CHECK(R[2] > R[0] * 2 && R[2] > 40);                 // right: blue dominates
             CHECK(Mi[0] > 20 && Mi[2] > 20);                     // middle: a mix of both
-            CHECK(px(120)[0] > px(280)[0] && px(280)[2] > px(120)[2]);   // red fades left to right, blue grows
+            CHECK(px(130)[0] > px(270)[0] && px(270)[2] > px(130)[2]);   // red fades left to right, blue grows
         }
     }
     RUN_SUITE("hidden faces survive save, load and a mesh asset");

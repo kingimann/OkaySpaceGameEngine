@@ -6,21 +6,21 @@ rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295
 fog 0 0.5882353 0.7254902 0.88235295 20 90
 tonemap 1
 gameobject 0 "Main Camera"
-  guid "284c5eb2f4e895327ff362739d88fd9c"
+  guid "cbf9627c0eafd85a54a4a8ea765def11"
   active 1
   parent -1
   transform 1.4 2.4 16 0 0 0 1 1 1 1
   camera 1 5 60 0.19215687 0.3019608 0.4745098 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.3 2 18 1.5
 end
 gameobject 1 "Sun"
-  guid "9e896701688614964ebbd56dfe1d4fda"
+  guid "652851a115cb7283581b31886714b67d"
   active 1
   parent -1
   transform 0 0 0 0.3303661 -0.24321036 0.08852133 0.9076734 1 1 1
   light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
 end
 gameobject 2 "Spun Vase"
-  guid "6ffef5e95900f1d0b978fdd8024a566d"
+  guid "55c6deb57f52db0ee461aa8071bdb012"
   active 1
   parent -1
   transform -3 0 0 0 0 0 1 1 1 1
@@ -33,7 +33,7 @@ gameobject 2 "Spun Vase"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 3 "Bent Horn"
-  guid "f879e2b4f9d40ce5ccce3c492cf192ce"
+  guid "84aa9c5695f558a3f98c5ec39cfcda1f"
   active 1
   parent -1
   transform -1 0 0 0 0 0 1 1 1 1
@@ -43,7 +43,7 @@ gameobject 3 "Bent Horn"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 4 "Table"
-  guid "3bd13be4594279ef0a5abad2af1edde5"
+  guid "47d69c4b5c864e523b15af72d9bcc0a3"
   active 1
   parent -1
   transform 6 0 0 0 0 0 1 1 1 1
@@ -55,7 +55,7 @@ gameobject 4 "Table"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 5 "Window Wall"
-  guid "f1985015d82a6a5bea638bc6be7cd2e7"
+  guid "32677e8985c93152afb11720c0bbfa4d"
   active 1
   parent -1
   transform -5.6 0.6 0 0 0 0 1 1 1 1
@@ -64,7 +64,7 @@ gameobject 5 "Window Wall"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 6 "House Roof Hidden"
-  guid "09c4d76c8ebc39678c1f1d0bd8449a6b"
+  guid "d0d185d6f2fdeaadb1ce365c3bb09160"
   active 1
   parent -1
   transform 8.6 0 0 0 0 0 1 1 1 1
@@ -78,7 +78,7 @@ gameobject 6 "House Roof Hidden"
   material 0 0 0 0 16 0 "" 1 1
 end
 gameobject 7 "Curve Array"
-  guid "c3ff64981ffe70cfd2a13b927944dd1d"
+  guid "57fd459a0cd55c13736d8158e94fe284"
   active 1
   parent -1
   transform 0.8 0.4 0 0 0 0 1 1 1 1

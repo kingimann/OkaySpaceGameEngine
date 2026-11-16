@@ -458,14 +458,14 @@ struct Mesh {
                 Vec3 n = gSum[g]; float m = n.Magnitude();
                 n = m > 1e-12f ? n * (1.0f / m) : Vec3{0, 1, 0};
                 // One output vertex per (group, uv) so texture seams keep their UVs.
-                // (Corners are matched by exact position as well as UV: vertices a few thousandths apart share a smoothing group,
+                // (Corners are matched by exact position and exact UV: vertices a few thousandths apart share a smoothing group,
                 // but each keeps its own position, so thin features such as wiper blades are not squeezed flat.)
-                struct Made { long ux, uy; Vec3 p; int vi; };
+                struct Made { float ux, uy; Vec3 p; int vi; };
                 std::vector<Made> made;
                 for (auto& tk : gMembers[g]) {
                     int src = triangles[tk.first * 3 + tk.second];
-                    long ux = 0, uy = 0;
-                    if (hasUV) { ux = std::lround(uvs[src].x * 4096.0f); uy = std::lround(uvs[src].y * 4096.0f); }
+                    float ux = 0, uy = 0;
+                    if (hasUV) { ux = uvs[src].x; uy = uvs[src].y; }   // exact: a corner keeps the UV it had
                     const Vec3& sp = vertices[src];
                     int vi = -1;
                     for (const Made& m : made)

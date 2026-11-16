@@ -534,7 +534,32 @@ std::vector<GeneratedPart> GenerateUncached(const Recipe& in, std::string* error
                 for (Vec3& v : p.mesh.verts) v = v + shift;
                 ++g_stats.instanced;
             } else {
+                Vec3 hi{-1e30f, -1e30f, -1e30f};
+                for (const Vec3& v : p.mesh.verts) hi = {std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)};
                 p.mesh = CatmullClark(p.mesh, lv);
+                // Subdividing pulls a part in (a box becomes a rounded, smaller box). Parts that touched at the lower levels (windows on a
+                // bus body, a bumper on a car) would come apart, so the result is stretched back to the box the part had: the surface
+                // stays rounded, the extent and the contact points stay where the design put them. It only ever grows a part.
+                Vec3 nlo{1e30f, 1e30f, 1e30f}, nhi{-1e30f, -1e30f, -1e30f};
+                for (const Vec3& v : p.mesh.verts) {
+                    nlo = {std::min(nlo.x, v.x), std::min(nlo.y, v.y), std::min(nlo.z, v.z)};
+                    nhi = {std::max(nhi.x, v.x), std::max(nhi.y, v.y), std::max(nhi.z, v.z)};
+                }
+                // A hair inside the old box (two thousandths of the size, at least half a millimetre) so that parts that only touched
+                // at the lower levels do not end up sharing corner positions.
+                auto fit = [](float olo, float ohi, float nlo2, float nhi2, float& scale, float& shift) {
+                    const float oe = ohi - olo, ne = nhi2 - nlo2;
+                    const float want = oe - std::max(0.0005f, 0.002f * oe);
+                    scale = (ne > 1e-6f && want > ne) ? want / ne : 1.0f;
+                    const float oc = 0.5f * (olo + ohi), nc = 0.5f * (nlo2 + nhi2);
+                    shift = oc - nc * scale;   // the centre stays where it was
+                };
+                float sx, tx, sy, ty, sz, tz;
+                fit(lo.x, hi.x, nlo.x, nhi.x, sx, tx);
+                fit(lo.y, hi.y, nlo.y, nhi.y, sy, ty);
+                fit(lo.z, hi.z, nlo.z, nhi.z, sz, tz);
+                if (sx != 1.0f || sy != 1.0f || sz != 1.0f)
+                    for (Vec3& v : p.mesh.verts) v = {v.x * sx + tx, v.y * sy + ty, v.z * sz + tz};
                 shapesDone[key] = {p.mesh, lo};
             }
         }

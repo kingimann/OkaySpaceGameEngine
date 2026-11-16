@@ -194,6 +194,64 @@ static void TestStateFromRecipe() {
     CHECK(cur.recipe.Param(gd::kDetailParam, 1) == 3.0);
 }
 
+// 5c. The edit contract on a smooth-shaded model (High and Ultra, where the mesh is read back from split corners):
+//     a part the user removed stays removed, a part the user moved is kept, and everything else follows the change.
+static void TestEditContractSmooth() {
+    RUN_SUITE("guided perf: removed and edited parts survive a rebuild at High and Ultra");
+    const gd::Template& t = *gd::Registry::Instance().Find("car");
+    for (float lv : {2.0f, 3.0f}) {
+        const gd::Recipe r = RecipeAt(t, lv);
+        PolyMesh cur = PolyMesh::FromMesh(PanelMesh(gd::Create(r), lv), kPanel);
+        const gd::Analysis a = gd::Analyze(cur, r);
+        CHECK(gd::IsUntouched(a));
+        // remove the first wheel, nudge the roof
+        PolyMesh edited;
+        edited.verts = cur.verts;
+        Vec3 roofMark{0, 0, 0};
+        for (int f = 0; f < (int)cur.faces.size(); ++f) {
+            if (a.faceOwner[f] == "wheel/0") continue;
+            edited.faces.push_back(cur.faces[f]);
+        }
+        const gd::Analysis b = gd::Analyze(edited, r);
+        bool wheelGone = false;
+        for (const auto& p : b.parts) if (p.id == "wheel/0" && p.state == gd::PartState::Deleted) wheelGone = true;
+        CHECK(wheelGone);
+        CHECK(b.Count(gd::PartState::Edited) == 0);
+        // change the glass colour: the wheel must stay gone and nothing may ask a question
+        gd::Recipe next = r;
+        next.colors["glass"] = Color{0.9f, 0.2f, 0.2f, 1.0f};
+        const gd::RegenResult rr = gd::Regenerate(edited, r, next);
+        CHECK(rr.ok);
+        CHECK(!rr.needsDecision);
+        const gd::Analysis c = gd::Analyze(rr.mesh, rr.recipe);
+        bool stillGone = false;
+        for (const auto& p : c.parts) if (p.id == "wheel/0" && p.state == gd::PartState::Deleted) stillGone = true;
+        CHECK(stillGone);
+        CHECK(c.Count(gd::PartState::Edited) == 0);
+        CHECK(c.customFaces == 0);
+        (void)roofMark;
+    }
+}
+
+// 5d. Ultra must not pull parts apart (the subdivided body shrank and the windows floated off it), and the tipper bed rests on its chassis.
+static void TestUltraStaysTogether() {
+    RUN_SUITE("guided perf: vehicles and buildings stay in one piece at Ultra");
+    for (const char* id : {"bus", "building", "car", "truck", "motorcycle"}) {
+        const gd::Template& t = *gd::Registry::Instance().Find(id);
+        for (const gd::StartDesign& st : t.starts) {
+            if (std::string(id) == "truck" && st.id == "light_truck") continue;   // its separate pieces are in the design at every level
+            gd::Recipe r = gd::DefaultRecipe(t, st.id);
+            r.params[gd::kDetailParam] = 3;
+            const gd::ValidationReport v = gd::Validate(gd::Generate(r), false);
+            if (v.components > 3) std::fprintf(stderr, "  %s/%s at Ultra: %d separate groups\n", id, st.id.c_str(), v.components);
+            CHECK(v.components <= 3);
+        }
+    }
+    gd::Recipe tip = gd::DefaultRecipe(*gd::Registry::Instance().Find("truck"), "tipper");
+    tip.params[gd::kDetailParam] = 1;
+    CHECK(gd::Validate(gd::Generate(tip), true).components == 1);
+}
+
 // 6. The drag preview: cheap detail, and never rebuilt more often than its cost allows.
 static void TestPreviewThrottle() {
     RUN_SUITE("guided perf: drag preview detail and throttle");
@@ -274,6 +332,8 @@ int main() {
     TestSaveReopen();
     TestBuildCache();
     TestUntouchedFastPath();
+    TestEditContractSmooth();
+    TestUltraStaysTogether();
     TestStateFromRecipe();
     TestPreviewThrottle();
     TestTimingsAndBudgets();

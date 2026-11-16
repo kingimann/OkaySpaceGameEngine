@@ -108,8 +108,8 @@ no editor in it, which used to be deleted whole); discarding a kept copy after a
 
 **The Remove window** looks when it opens (not every frame). With a project inside it shows the message and an **Open folder** button (the
 same opener as "Open install folder"; it shows the folder that holds the project) and **Close**: there is no Remove button until the project is
-moved out (cut it and paste it into your Projects folder). Otherwise it says "This frees 41.2 MB. Your projects are not touched." and how many of
-your projects were made with that release line: "3 of your projects were made with v2.850.x. You can open them with that version again after you
+moved out (cut it and paste it into your Projects folder). Either way it says how many of your projects were made with that release line (after "This frees 41.2 MB.
+Your projects are not touched." when nothing is in the way): "3 of your projects were made with v2.850.x. You can open them with that version again after you
 install it." (`CountProjectsMadeWith`; the project versions are the ones the launcher already reads for the card badges). `Remove` itself looks again,
 so a project that arrives while the window is open is still refused. There is no bulk "remove copies no project needs" yet (audit item 5).
 

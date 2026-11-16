@@ -315,8 +315,8 @@ What you should see:
    folder with `Assets` and `project.okayproj`; for example copy a folder from `<install>\Projects`). If you have a real older editor you can instead start it,
    File > New Project, and leave the Location on its default.
 3. Press **Remove** on that version. The **Remove this version?** window shows, in amber, "This version folder has a project of yours:
-   `<install>\Versions\<v>\Tools\Projects\MyTest`. Move it out first." There is **no Remove button**: only **Open folder** and **Close**. Press **Open folder**:
-   Explorer shows `...\Tools\Projects` with `MyTest` in it. (What it should look like: `docs/images/versions_safety/remove_refused_project_inside.png`, a headless render, see Status.)
+   `<install>\Versions\<v>\Tools\Projects\MyTest`. Move it out first." There is **no Remove button**: only **Open folder** and **Close**. Under the message is a line saying how many of your projects were made with that
+   version's release line. Press **Open folder**: Explorer shows `...\Tools\Projects` with `MyTest` in it. (What it should look like: `docs/images/versions_safety/remove_refused_project_inside.png`, a headless render, see Status.)
 4. Check that `MyTest` and everything in it is still there and the version is still listed.
 5. Cut `MyTest` and paste it into `<install>\Projects`. Press **Remove** again. The window now says "This frees ... MB. Your projects are not touched." and one
    more line about your projects ("None of your projects were made with v2.700.x." or "3 of your projects were made with v2.850.x. You can open them with that
@@ -326,7 +326,7 @@ What you should see:
 Also: **Remove them now** (shown when more kept copies exist than "Keep previous versions: N") and the clean-up after every update skip a version that has
 a project inside, and the message says which. A folder that has a link to another folder in it (a symbolic link or a junction, not an ordinary `.lnk` shortcut), or is too big to check, is refused the same way.
 
-**Status.** Tested headless on Linux: `versions_safety` 184 checks and `project_upgrade` 490 checks (the new cases were red before the fix: 110 and 11
+**Status.** Tested headless on Linux: `versions_safety` 184 checks (185 when not run as root) and `project_upgrade` 490 checks (the new cases were red before the fix: 110 and 11
 failures), with `project_version` 301, `launcher_versions` 15534 and `editor_hooks` 198 still green (run by hand against the engine libraries of another
 branch's build, so CI is the real check). The real `VersionsManager.cpp` was also cross-compiled with MinGW and run in a scratch program under wine 9.0:
 Windows paths and case folding, Remove refused with a project in `Tools\Projects`, an `.okay`-only folder removed. **Unverified:** everything on real Windows;

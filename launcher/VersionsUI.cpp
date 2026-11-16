@@ -666,8 +666,8 @@ void DrawModals(const Host& h) {
                                                                               : "Nothing is removed.");
         } else {
             ImGui::Text("This frees %s. Your projects are not touched.", HumanSize(bytes).c_str());
-            ImGui::TextUnformatted(ProjectsMadeWithSentence(st.removeProjects, v).c_str());
         }
+        ImGui::TextUnformatted(ProjectsMadeWithSentence(st.removeProjects, v).c_str());   // how many of your projects were made with this version's line
         if (h.editorRunning) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber), "An editor is open. A version that editor is using can't be removed.");
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, 6));

@@ -203,8 +203,9 @@ private:
     using Pair = std::pair<Collider3D*, Collider3D*>;
     std::set<Pair> m_contacts;          // contacts from the previous step
     std::set<Pair> m_meshContacts;      // solid contacts against a static triangle mesh (body, mesh)
-    struct RestStamp { Vec3 a, b; };    // where the two objects were when the pair was last found resting
+    struct RestStamp { Vec3 a, b; std::uint64_t step; };    // where the two objects were when the pair was last found resting, and in which step
     std::map<Pair, RestStamp> m_restContacts;   // Classic: pairs a sleeping body rests against without overlapping (no callbacks); a lost one wakes it
+    std::uint64_t m_restStep = 0;
     PhysicsStepStats m_stats;
     std::unique_ptr<Solver> m_solver;   // the Improved contact solver's memory between steps (Physics3DImproved.inl)
     std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)

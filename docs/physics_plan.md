@@ -219,14 +219,87 @@ Everything below is gated by one scene setting, **Physics quality** (Classic or 
 |---|---|
 | `Physics/PhysicsMaterial.hpp` | the plain idea that a contact needs one friction and one bounce number; the combine rules are the usual four (average, smaller, larger, product) |
 | `Physics/PhysicsQuality.hpp` | this engine's own setting |
-| `Physics3DSolver.cpp`, `Physics2DSolver.cpp` (to be written) | sequential impulses (projected Gauss-Seidel on the contact constraints, accumulated impulses clamped, warm starting), the box-face clipping idea from *Real-Time Collision Detection* (C. Ericson, 2005, chapter 5: Sutherland-Hodgman clipping of the incident face against the reference face's side planes), rigid body inertia of boxes, spheres, cylinders and capsules from any mechanics textbook, the parallel-axis theorem for compound bodies, union-find for groups of touching bodies |
+| `Physics/ContactSolver.hpp`, `Physics/BoxManifold.hpp`, `Physics/Physics3DImproved.inl` (`Physics2DSolver` is not written yet) | sequential impulses (projected Gauss-Seidel on the contact constraints, accumulated impulses clamped, warm starting), the box-face clipping idea from *Real-Time Collision Detection* (C. Ericson, 2005, chapter 5: Sutherland-Hodgman clipping of the incident face against the reference face's side planes), rigid body inertia of boxes, spheres, cylinders and capsules from any mechanics textbook, the parallel-axis theorem for compound bodies, union-find for groups of touching bodies |
 | spring change | the standard damped harmonic oscillator solved implicitly: the constraint's softness (gamma) and bias come from stiffness k, damping c and the step h as gamma = 1/(h(c + hk)), beta = hk/(c + hk) |
+| `Physics/DebrisPool.hpp`, `Components/DebrisEmitter.hpp` | this engine's `ObjectPool`, `Rigidbody3D` and `Scene`: a capped list of pooled boxes with an age, a sleep timer and a shrink at the end |
+| Slider joint | the textbook prismatic constraint: remove the relative motion across the axis (position and speed), clamp the travel to the limits, drive the speed along the axis with a force-limited motor |
+| joint passes | repeating the constraint solve (Gauss-Seidel); the spring stays a force and is applied once |
 | continuous collision | the existing conservative sampled sweep in `Physics3D.cpp`, restricted to the colliders near the swept path |
 
 ## Results
 
-(Filled in as each batch lands; see the sections at the end of this page.)
+Status of every finding at the end of this change. "Tested" names the test file (all in `tests/`, run on Linux with g++, Release engine
+library). Numbers are medians or single runs as said; the machine is shared (load 2 to 3 on 4 cores while timing), so differences under
+about 10 percent mean nothing.
+
+| Finding | Status | Evidence |
+|---|---|---|
+| 1 Stacks fall over or sink | Fixed in Improved | `physics_deep_improved`: 3 crates drift 1.2 mm, tilt 0.03 degrees, asleep 3 of 3; 5 crates drift 7.9 mm, tilt 0.16 degrees; frozen 5-stack top 4.496 (start 4.5; was 16 cm too low); frozen 10-stack top 9.491 (start 9.5; was 3.7 m too low); crates with 100 kg under 1 kg and 1 kg under 100 kg stand (`physics_deep_solver`) |
+| 2 Resting boxes buzz, never sleep | Fixed in Improved | free-rotation box wobble 0 mm; 500 resting free-rotation crates: all 500 asleep (was 0), 1.09 ms a step (was 3.6) |
+| 3 Bodies stick on slopes | Fixed in both | `physics_deep_bugs`: 30 degree ramp slid 11.44 m in 2 s (Classic) and 11.35 m (Improved), theory 11.30 m (was 0.23 m of 5.8 m for the same 2 s without the run-up); a grippy 20 degree ramp holds in Improved (0 m), Classic creeps 13 cm in 2 s as the 2D step always did |
+| 4 Fast bodies tunnel | Fixed in Improved (automatic sweep) | ball at 60 m/s against a 0.1 m wall stops at x 9.87 at 30, 50 and 144 steps a second without ticking Continuous Collision |
+| 5 Sleepers not woken | Fixed in both | support removed, teleported, collider disabled, object deactivated: the upper crate falls to y 0.5 (was 1.49 for ever); a box asleep on a platform moving at 2 m/s is carried to x 2.7 of 3.0 in 1.5 s |
+| 6 Springs blow up | Spring fixed (both); ropes better (Improved) | spring joint tests in `physics_joints` stay green, stiff springs no longer NaN; rope of 8 balls hangs 8.03 m (was 10.9), rope with a 50 kg end hangs 13.2 m (was 64; true 8, **not fully fixed**) |
+| 7 A ball never stops rolling | Fixed in Improved | rolling ball stops after 10.9 s having travelled 26.7 m (was 47 m in 10 s and still rolling at 120 s) |
+| 8 Inertia wrong | Fixed in Improved | torque 1 for 1 s: cube 5.99996 rad/s (true 6), 4 x 0.2 x 0.2 plank 149.98 rad/s (true 150) |
+| 9 Child collider does not carry its parent | Fixed in Improved (tick Use Child Colliders) | a table (top and four legs) rests at y 0.545 with no tilt |
+| 10 Ray from inside a box, per-collider materials, exit order, debug view | Fixed | ray normal is unit length; materials: icy collider slides 20 m, rough floor 2.28 m; a rubber floor bounces a 0-bounce ball to 1.78 m from 2 m; exit callbacks arrive in scene order in both qualities (written after the fix; **not run against the old code**); debug view lists bodies and joints (`physics_deep_more`) |
+| Joint partner looked up by name every step | Fixed (both) | 300 joints in a 2000-object scene: 0.84 ms before, 0.47 ms after |
+| Heightmap terrain takes 18 percent of the sideways speed per step | Not fixed (terrain lane); reported | read only |
+
+Found while finishing, and fixed (each has a test that failed first):
+
+* A bouncing ball in Improved lost its bounce: the old floor rescue (`CatchTunneledFloor`) lifted it and cleared its speed the step it
+  crossed the floor surface. The rescue is skipped when automatic continuous collision is on. (`physics_deep_improved`: rubber floor test, peak 0 before, 1.78 m after.)
+* A scaled or small body was never held by the Improved solver once it moved fast: pairs that are apart by less than the contact skin were
+  dropped by the broad-phase test before the skin was looked at, so a body that stopped 2 mm above the floor fell on for ever (found with
+  `DebrisPool`: small chunks reached 30 m/s while "resting"). The broad phase now allows for the skin.
+* A heavy crate shoving a light one was slowed as if it were only 8 times heavier: the mass-ratio limit now applies to up-down contacts only.
+* In Classic, a first version of "wake a sleeper when its support goes" made a box that rests exactly touching wake, fall, sleep and
+  wake again (8 enters and 7 exits in 4 seconds, 28 percent slower). A pair that is still resting no longer counts as lost
+  (`physics_deep_more`: one enter, one exit, asleep).
+
+### Frame rate (Release, one thread, median of 100 steps, `Physics3D::Step` only)
+
+Same program built against `main` (unchanged code), this branch with the scene on Classic, and this branch on Improved. Load average was 2.2 to 3.2.
+
+| Scene | main | Classic (this branch) | Improved |
+|---|---|---|---|
+| 500 resting boxes, free rotation (sleep allowed) | 3.60 ms (0 asleep) | 3.66 ms (0 asleep) | **1.09 ms (500 asleep)** |
+| 500 resting boxes, free rotation, sleeping off | 3.55 ms | 3.68 ms | 3.54 ms |
+| 500 resting boxes, frozen rotation, 1.5 m apart | 0.78 ms | 0.81 ms | 1.13 ms |
+| 500 frozen boxes touching each other | 0.90 ms | 1.22 ms | 2.56 ms |
+| 500 touching frozen boxes, sleeping off | 1.13 ms | 1.24 ms | 7.92 ms |
+| 100 moving balls (5 s) | 0.113 ms (p95 0.24) | 0.117 (p95 0.26) | 0.262 (p95 0.45); 51 asleep at the end |
+| 100 moving boxes (5 s) | 0.284 ms | 0.292 | **0.140**; all 100 asleep at the end |
+| 300 moving balls (5 s) | 0.552 ms (p95 1.9) | 0.572 | 1.171 (p95 2.3) |
+| 300 joints (20 chains) in a 2000-object scene | 0.84 ms | **0.47** | 0.47 |
+
+Honest reading: Classic costs what `main` costs (the 36 percent on the touching sleeping pile comes from the new rest tracking and is
+the one Classic regression left; see "what is not done"). Improved wins by a lot where bodies can sleep (the resting pile: 3.3 times
+cheaper; 100 boxes: twice) and costs about twice as much while bodies are awake and moving (the iterated solver), and a touching pile that
+may not sleep costs 7 times as much (4 contact points per pair, 10 passes). The O(n squared) pair loop is untouched here; `claude/perf-pass-1`
+replaces it.
+
+### Merge with `claude/perf-pass-1` (not merged here)
+
+A trial merge (`git merge-tree`) conflicts in `engine/src/Physics/Physics3D.cpp` (seven places) and `docs/try_it.md` (the new 7u row and
+section next to other branches' rows). The `Physics3D.cpp` spots, in the merged file's order: the include list at the top; where `Step` gathers
+`bodies` and `colliders` (cached components); the pair loop header (the sort-and-sweep broad phase replaces the double loop: the Improved
+contact skin `pad` and `improved ? BodyOfCollider : GetComponent` lines must be carried into the new loop); the contact branch inside the
+loop; the end of the pair loop (my exit-order sort over `ended`, and the Classic rest tracking); `CatchTunneledFloor` and the end of `Step`
+(debug body and joint lists, the `improved && autoContinuous` skip); and `Sweep` / `QueryLists` (my `only` list argument and the
+bounds-before-overlap reorder, which `perf-pass-1` also touches). `Physics2D.cpp` merges cleanly.
 
 ## What is not done
 
-(Filled in at the end.)
+* **The 2D Improved solver.** The setting is saved for 2D but the 2D step is unchanged (`Physics2DImproved.inl` only holds the offset fix). 2D stacks
+  still sink and tip, and 2D has no slider, joint passes, debug joints or lost-support wake. The 3D solver core (`ContactSolver.hpp`) is written to be reused:
+  a 2D body is a 3D body that turns about z only; the 2D box contact needs a two-point clip. Listed in `docs/UNFINISHED.md`.
+* A long chain with a large mass ratio (50 kg on 1 kg links): 13 m instead of 8 m. Needs the joints solved together with the contacts.
+* A touching pile of sleeping bodies costs more in Improved (2.56 ms for 500) than in Classic, because every sleeping pair still runs the contact
+  test to send `OnCollisionStay`.
+* Heightmap terrain ground-follow friction (18 percent per step): reported, not fixed (terrain lane).
+* Not verified: Windows, a real window, a real GPU, the feel in a real game, the new Inspector rows and menu items (`editor/main.cpp` passes `g++ -fsyntax-only` with 0 errors; the editor was not linked
+  or opened), and the exit-order fix against the old code.
+* `DebrisPool` is not used by the voxel terrain yet: the voxel agent decides how to call it (`DebrisPool pool(scene); pool.Spawn(...); pool.Update(dt);`).

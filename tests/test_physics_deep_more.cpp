@@ -60,6 +60,13 @@ public:
     void OnCollisionExit3D(const Collision3D&) override { Log().push_back(gameObject->name); }
 };
 
+class Counts : public Behaviour {
+public:
+    int enter = 0, exit = 0;
+    void OnCollisionEnter3D(const Collision3D&) override { ++enter; }
+    void OnCollisionExit3D(const Collision3D&) override { ++exit; }
+};
+
 } // namespace
 
 int main() {
@@ -159,6 +166,23 @@ int main() {
         std::cout << "  exit callbacks (" << (q == PhysicsQuality::Improved ? "Improved" : "Classic") << "): " << ExitLog::Log().size() << " of 12\n";
         CHECK(ExitLog::Log().size() == 12);
         CHECK(ExitLog::Log() == want);
+    }
+
+    // ---- A box that comes to rest and sleeps does not flicker: one enter, at most one exit, no wake-and-sleep cycles
+    //      (waking a body whose support is "lost" must not trigger on a sleeper that rests exactly touching).
+    for (PhysicsQuality q : {PhysicsQuality::Classic, PhysicsQuality::Improved}) {
+        World w(q);
+        w.Floor();
+        GameObject* c = w.s.CreateGameObject("Crate");
+        c->transform->localPosition = {0, 0.5f, 0};
+        c->AddComponent<BoxCollider3D>();
+        auto* r = c->AddComponent<Rigidbody3D>(); r->freezeRotation = true;
+        auto* n = c->AddComponent<Counts>();
+        w.Steps(5.0f);
+        std::cout << "  resting box (" << (q == PhysicsQuality::Improved ? "Improved" : "Classic") << "): enter " << n->enter << ", exit " << n->exit << ", asleep " << r->sleeping << "\n";
+        CHECK(n->enter == 1);
+        CHECK(n->exit <= 1);
+        CHECK(r->sleeping);
     }
 
     // ---- The debug view lists bodies (sleeping marked) and joints while it collects.

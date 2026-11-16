@@ -464,11 +464,17 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
             }
             std::map<std::pair<int, std::string>, std::size_t> groups;
             std::vector<std::string> pt;   // refilled line after line
+            std::vector<std::uint32_t> ix;   // reused polygon after polygon
+            std::vector<Vec3> poly;
+            std::vector<std::array<int, 3>> tr;
+            std::size_t lastGroup = 0;       // the group of the polygon before (the same material id and texture: no map lookup)
+            int lastMatid = -2;
+            std::string lastTex;
             for (long pi = 0; pi < pcount; ++pi) {
                 if (!tokens(pt)) return Fail(err, "the file ends after " + std::to_string(pi) + " of " + std::to_string(pcount) + " polygons");
                 long long nv;
                 if (!detail::txt::ToInt(pt[0], nv) || nv < 0 || nv > kMaxPolyVerts || (std::size_t)nv + 1 > pt.size()) return Fail(err, "bad polygon on line " + std::to_string(lines.number));
-                std::vector<std::uint32_t> ix;
+                ix.clear();
                 for (long long j = 0; j < nv; ++j) {
                     long long v;
                     if (!detail::txt::ToInt(pt[(std::size_t)j + 1], v) || v < 0 || v >= (long long)pos.size()) return Fail(err, "polygon vertex index out of range on line " + std::to_string(lines.number));
@@ -484,19 +490,21 @@ static bool ReadNffImpl(std::string text, const std::string& baseDir, ImportedMo
                     else tex = pt[j];
                 }
                 if (nv < 3) { ++badPolys; continue; }
-                const auto key = std::make_pair(matid, tex);
-                auto it = groups.find(key);
-                if (it == groups.end()) {
-                    Prim p; p.crease = 0;
-                    p.mat = matid; p.name = tex;   // reused as: material id and texture name, resolved below
-                    prims.push_back(std::move(p));
-                    if (prims.size() > kMaxPrims) return Fail(err, "too many primitives");
-                    it = groups.emplace(key, prims.size() - 1).first;
+                if (matid != lastMatid || tex != lastTex) {
+                    const auto key = std::make_pair(matid, tex);
+                    auto it = groups.find(key);
+                    if (it == groups.end()) {
+                        Prim p; p.crease = 0;
+                        p.mat = matid; p.name = tex;   // reused as: material id and texture name, resolved below
+                        prims.push_back(std::move(p));
+                        if (prims.size() > kMaxPrims) return Fail(err, "too many primitives");
+                        it = groups.emplace(key, prims.size() - 1).first;
+                    }
+                    lastGroup = it->second; lastMatid = matid; lastTex = tex;
                 }
-                Prim& p = prims[it->second];
-                std::vector<Vec3> poly;
+                Prim& p = prims[lastGroup];
+                poly.clear();
                 for (std::uint32_t v : ix) poly.push_back(pos[v]);
-                std::vector<std::array<int, 3>> tr;
                 detail::TriangulatePolygon(poly, tr);
                 const std::uint32_t base = (std::uint32_t)p.soup.pos.size();
                 for (std::uint32_t v : ix) { p.soup.pos.push_back(pos[v]); }

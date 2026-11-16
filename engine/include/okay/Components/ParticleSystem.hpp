@@ -252,7 +252,7 @@ public:
     /// maxParticles) can't trigger length_error / bad_alloc.
     int SafeMax() const { return maxParticles < 0 ? 0 : (maxParticles > 100000 ? 100000 : maxParticles); }
 
-    void Awake() override { m_rng.Seed(seed); m_particles.assign(SafeMax(), Particle{}); m_age = 0.0f; m_burstFired = false; m_hasLast = false; m_playOnReuse = playing; m_awake = true; }
+    void Awake() override { m_rng.Seed(seed); m_particles.assign(SafeMax(), Particle{}); m_firstFree = 0; m_age = 0.0f; m_burstFired = false; m_hasLast = false; m_playOnReuse = playing; m_awake = true; }
     /// A pooled effect that is reused starts again: no particle of the last use is left and it plays if it did at the start.
     void OnPoolReuse() override { if (!m_awake) return; Restart(); m_hasLast = false; playing = m_playOnReuse; }
 
@@ -260,7 +260,7 @@ public:
     void Play()  { playing = true; }
     void Stop()  { playing = false; }
     /// Clear all particles and restart the cycle from zero.
-    void Restart() { for (Particle& p : m_particles) p.alive = false; m_age = 0.0f; m_burstFired = false; m_accum = 0.0f; }
+    void Restart() { for (Particle& p : m_particles) p.alive = false; m_firstFree = 0; m_age = 0.0f; m_burstFired = false; m_accum = 0.0f; }
 
     // ---- Presets: one-call classic effects (every value stays editable after) ----
     enum class Preset { Fire, Smoke, Sparks, Explosion, Rain, Snow, Magic, Dust, Count };
@@ -400,7 +400,10 @@ public:
     }
 
     void Update(float dt) override {
-        if (m_particles.empty()) m_particles.assign(SafeMax(), Particle{});
+        if (m_particles.empty()) { m_particles.assign(SafeMax(), Particle{}); m_firstFree = 0; }
+        // A NaN or infinite step would poison the clocks (and, through the noise
+        // field, a float -> int conversion); it counts as no time at all.
+        if (!std::isfinite(dt)) dt = 0.0f;
 
         // Track the emitter's motion: its velocity (for inheritVelocity) and, in
         // Local space, carry live particles along by this frame's move + turn.
@@ -439,10 +442,27 @@ public:
             }
         }
 
-        // Steady-rate emission.
+        // Steady-rate emission. The whole particles come off the accumulator in one
+        // step, not one at a time, so a frame costs at most one pass over the pool
+        // whatever the rate. Below 2^24 a float holds whole numbers exactly, so this
+        // leaves the same remainder as taking 1 off at a time did. At or above it
+        // (a rate of inf, or above about 1e9/s at 60 fps, where `accum - 1 == accum`
+        // and the old loop never ended) every free slot is filled and the
+        // accumulator starts again from 0. NaN (inf * a zero step) also restarts it.
         if (emitting && emissionRate > 0.0f) {
             m_accum += emissionRate * dt;
-            while (m_accum >= 1.0f) { m_accum -= 1.0f; Emit(); }
+            if (m_accum >= 1.0f) {
+                if (m_accum < kAccumWholeLimit) {
+                    const float whole = std::floor(m_accum);
+                    m_accum -= whole;
+                    Emit(static_cast<int>(whole));
+                } else {
+                    m_accum = 0.0f;
+                    Emit(static_cast<int>(m_particles.size()));
+                }
+            } else if (!(m_accum > -kAccumWholeLimit)) {
+                m_accum = 0.0f;   // NaN, or a runaway negative from negative steps
+            }
         }
 
         // Integrate.
@@ -466,7 +486,7 @@ public:
         for (Particle& p : m_particles) {
             if (!p.alive) continue;
             p.life -= dt;
-            if (p.life <= 0.0f) { p.alive = false; continue; }
+            if (p.life <= 0.0f) { p.alive = false; NoteFreed(p); continue; }
             p.velocity += gravity * (gravityModifier * dt);
             if (windy) {
                 p.velocity.x += (wind.x - p.velocity.x) * windK;
@@ -540,83 +560,101 @@ public:
     }
     const std::vector<Particle>& Particles() const { return m_particles; }
 
-    /// Spawn a burst of `count` particles immediately.
-    void Emit(int count) { for (int i = 0; i < count; ++i) Emit(); }
+    /// Spawn a burst of `count` particles immediately. Only free slots are used
+    /// (lowest first; a full pool drops the rest), in one pass that starts at the
+    /// first free slot, so any count, even INT_MAX, costs at most one walk over
+    /// the pool. A count of 0 or less spawns nothing.
+    void Emit(int count) {
+        const int n = static_cast<int>(m_particles.size());
+        int i = (m_firstFree >= 0 && m_firstFree <= n) ? m_firstFree : 0;
+        while (count > 0 && i < n) {
+            Particle& p = m_particles[static_cast<std::size_t>(i)];
+            if (!p.alive) { Spawn(p); --count; }
+            ++i;
+        }
+        m_firstFree = i;   // every slot below i is alive now
+    }
 
 private:
-    void Emit() {
-        // Find a free slot (reuse dead particles).
-        for (Particle& p : m_particles) {
-            if (p.alive) continue;
-            p.alive = true;
-            p.maxLife = p.life = startLifetime + (startLifetimeRandom > 0.0f
-                                  ? m_rng.Range(-startLifetimeRandom, startLifetimeRandom) : 0.0f);
-            if (p.life < 0.01f) p.life = p.maxLife = 0.01f;
-            p.size0 = p.size = startSize + (startSizeRandom > 0.0f
-                               ? m_rng.Range(-startSizeRandom, startSizeRandom) : 0.0f);
-            if (p.size0 < 0.0f) p.size0 = p.size = 0.0f;
-            p.rotation = startRotation + (startRotationRandom > 0.0f
-                         ? m_rng.Range(-startRotationRandom, startRotationRandom) : 0.0f);
-            p.angularVel = rotationSpeed + (rotationSpeedRandom > 0.0f
-                           ? m_rng.Range(-rotationSpeedRandom, rotationSpeedRandom) : 0.0f);
-            p.color = startColor;
+    /// Whole particles a float accumulator can count one by one (2^24).
+    static constexpr float kAccumWholeLimit = 16777216.0f;
 
-            Vec3 origin = transform ? transform->Position() : Vec3::Zero;
-            Vec3 off{0.0f, 0.0f, 0.0f};
-            Vec3 vel = startVelocity;
-            const float spd = VLen(startVelocity);
-            switch (shape) {
-                case Shape::Point: break;
-                case Shape::Circle: {
-                    // Ring laid flat on the ground (XZ plane), flung outward — reads
-                    // as a 3D ripple/shockwave from any camera angle.
-                    float a = m_rng.Range(0.0f, 6.2831853f);
-                    Vec3 dir{std::cos(a), 0.0f, std::sin(a)};
-                    off = dir * shapeRadius;
-                    vel = dir * spd + Vec3{0.0f, startVelocity.y, 0.0f};
-                } break;
-                case Shape::Sphere: {
-                    // Filled 3D ball, pushed radially outward (a real burst, not a disc).
-                    Vec3 dir = RandUnitVec();
-                    float r = shapeRadius * std::cbrt(m_rng.Range(0.0f, 1.0f));
-                    off = dir * r;
-                    vel = dir * spd;
-                } break;
-                case Shape::Box: {
-                    off = Vec3{m_rng.Range(-boxSize.x * 0.5f, boxSize.x * 0.5f),
-                               m_rng.Range(-boxSize.y * 0.5f, boxSize.y * 0.5f),
-                               m_rng.Range(-boxSize.z * 0.5f, boxSize.z * 0.5f)};
-                } break;
-                case Shape::Cone: {
-                    // Spray within a 3D cone around the start-velocity axis.
-                    Vec3 axis = spd > 1e-5f ? startVelocity * (1.0f / spd) : Vec3{0, 1, 0};
-                    float half = shapeAngle * 0.0174532925f;
-                    float cosT = std::cos(half);
-                    float ct = m_rng.Range(cosT, 1.0f);            // cosine of the polar angle
-                    float st = std::sqrt(std::fmax(0.0f, 1.0f - ct * ct));
-                    float phi = m_rng.Range(0.0f, 6.2831853f);
-                    // Build an orthonormal frame around the cone axis.
-                    Vec3 up = std::fabs(axis.y) < 0.99f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
-                    Vec3 t1 = Vec3::Cross(up, axis); { float l = VLen(t1); t1 = l > 1e-5f ? t1 * (1.0f / l) : Vec3{1, 0, 0}; }
-                    Vec3 t2 = Vec3::Cross(axis, t1);
-                    Vec3 dir = axis * ct + (t1 * std::cos(phi) + t2 * std::sin(phi)) * st;
-                    vel = dir * (spd > 1e-5f ? spd : 1.0f);
-                } break;
-                case Shape::Edge: {
-                    off = Vec3{m_rng.Range(-shapeRadius, shapeRadius), 0.0f, 0.0f};
-                } break;
-            }
-            if (speedRandom > 0.0f) vel *= (1.0f + m_rng.Range(-speedRandom, speedRandom));
-            if (velocityRandom > 0.0f)
-                vel += Vec3{m_rng.Range(-velocityRandom, velocityRandom),
-                            m_rng.Range(-velocityRandom, velocityRandom),
-                            m_rng.Range(-velocityRandom, velocityRandom)};
-            if (inheritVelocity != 0.0f) vel += m_emitterVel * inheritVelocity;
+    /// A particle died: the free-slot search may have to start at its slot again.
+    void NoteFreed(const Particle& p) {
+        const int i = static_cast<int>(&p - m_particles.data());
+        if (i < m_firstFree) m_firstFree = i;
+    }
 
-            p.position = origin + off;
-            p.velocity = vel;
-            return;
+    /// Bring a free slot to life with the start values (the emission shape,
+    /// randomness and inherited velocity).
+    void Spawn(Particle& p) {
+        p.alive = true;
+        p.maxLife = p.life = startLifetime + (startLifetimeRandom > 0.0f
+                              ? m_rng.Range(-startLifetimeRandom, startLifetimeRandom) : 0.0f);
+        if (p.life < 0.01f) p.life = p.maxLife = 0.01f;
+        p.size0 = p.size = startSize + (startSizeRandom > 0.0f
+                           ? m_rng.Range(-startSizeRandom, startSizeRandom) : 0.0f);
+        if (p.size0 < 0.0f) p.size0 = p.size = 0.0f;
+        p.rotation = startRotation + (startRotationRandom > 0.0f
+                     ? m_rng.Range(-startRotationRandom, startRotationRandom) : 0.0f);
+        p.angularVel = rotationSpeed + (rotationSpeedRandom > 0.0f
+                       ? m_rng.Range(-rotationSpeedRandom, rotationSpeedRandom) : 0.0f);
+        p.color = startColor;
+
+        Vec3 origin = transform ? transform->Position() : Vec3::Zero;
+        Vec3 off{0.0f, 0.0f, 0.0f};
+        Vec3 vel = startVelocity;
+        const float spd = VLen(startVelocity);
+        switch (shape) {
+            case Shape::Point: break;
+            case Shape::Circle: {
+                // Ring laid flat on the ground (XZ plane), flung outward — reads
+                // as a 3D ripple/shockwave from any camera angle.
+                float a = m_rng.Range(0.0f, 6.2831853f);
+                Vec3 dir{std::cos(a), 0.0f, std::sin(a)};
+                off = dir * shapeRadius;
+                vel = dir * spd + Vec3{0.0f, startVelocity.y, 0.0f};
+            } break;
+            case Shape::Sphere: {
+                // Filled 3D ball, pushed radially outward (a real burst, not a disc).
+                Vec3 dir = RandUnitVec();
+                float r = shapeRadius * std::cbrt(m_rng.Range(0.0f, 1.0f));
+                off = dir * r;
+                vel = dir * spd;
+            } break;
+            case Shape::Box: {
+                off = Vec3{m_rng.Range(-boxSize.x * 0.5f, boxSize.x * 0.5f),
+                           m_rng.Range(-boxSize.y * 0.5f, boxSize.y * 0.5f),
+                           m_rng.Range(-boxSize.z * 0.5f, boxSize.z * 0.5f)};
+            } break;
+            case Shape::Cone: {
+                // Spray within a 3D cone around the start-velocity axis.
+                Vec3 axis = spd > 1e-5f ? startVelocity * (1.0f / spd) : Vec3{0, 1, 0};
+                float half = shapeAngle * 0.0174532925f;
+                float cosT = std::cos(half);
+                float ct = m_rng.Range(cosT, 1.0f);            // cosine of the polar angle
+                float st = std::sqrt(std::fmax(0.0f, 1.0f - ct * ct));
+                float phi = m_rng.Range(0.0f, 6.2831853f);
+                // Build an orthonormal frame around the cone axis.
+                Vec3 up = std::fabs(axis.y) < 0.99f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+                Vec3 t1 = Vec3::Cross(up, axis); { float l = VLen(t1); t1 = l > 1e-5f ? t1 * (1.0f / l) : Vec3{1, 0, 0}; }
+                Vec3 t2 = Vec3::Cross(axis, t1);
+                Vec3 dir = axis * ct + (t1 * std::cos(phi) + t2 * std::sin(phi)) * st;
+                vel = dir * (spd > 1e-5f ? spd : 1.0f);
+            } break;
+            case Shape::Edge: {
+                off = Vec3{m_rng.Range(-shapeRadius, shapeRadius), 0.0f, 0.0f};
+            } break;
         }
+        if (speedRandom > 0.0f) vel *= (1.0f + m_rng.Range(-speedRandom, speedRandom));
+        if (velocityRandom > 0.0f)
+            vel += Vec3{m_rng.Range(-velocityRandom, velocityRandom),
+                        m_rng.Range(-velocityRandom, velocityRandom),
+                        m_rng.Range(-velocityRandom, velocityRandom)};
+        if (inheritVelocity != 0.0f) vel += m_emitterVel * inheritVelocity;
+
+        p.position = origin + off;
+        p.velocity = vel;
     }
 
     static float VLen(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
@@ -649,6 +687,7 @@ private:
     }
 
     std::vector<Particle> m_particles;
+    int  m_firstFree = 0;      // every slot below this is alive: where the free-slot search starts
     bool m_playOnReuse = true, m_awake = false;   // `playing` as the object was made (a pool puts it back)
     float m_accum = 0.0f;
     float m_age = 0.0f;        // seconds into the current cycle

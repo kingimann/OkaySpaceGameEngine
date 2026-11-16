@@ -500,6 +500,29 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Particle System: no freeze from a huge rate or burst (bug fix, #888 finding 39)
+
+A Particle System with a very large **Rate / sec** or **Burst Count** froze the game. A burst of 100000 into 100000 slots
+took about 9 seconds for one frame. A rate of 1000000000 (or `inf` from a script or a hand-edited scene) never finished its
+first frame. Fixed: a frame now spawns at most the free slots, in one pass over the pool, so the count stops at
+**Max Particles** and the frame stays short.
+
+1. Windows editor: open or create a scene, then **GameObject > Effects > Particle System**. Select it.
+2. In the Inspector, **Particle System**: Ctrl+click **Rate / sec**, type `1000000000`, press Enter. Leave **Max Particles**
+   at 300.
+3. Press **Play**. You should see a dense cloud at once, the editor keeps responding, and the header next to
+   **Particle System** shows `(300 live)`. The count never goes above Max Particles. (It can dip for one frame when a whole
+   wave of particles reaches the end of its life together.)
+4. Stop. Set **Rate / sec** back to `20` and press Play: the normal thin stream comes back.
+5. A second way that stays inside the Inspector's ranges (use it if the typed rate snaps back to 10000): set **Rate / sec**
+   to `0`, **Max Particles** to `100000` and **Burst Count** to `100000`, press Play. Before the fix the first frame froze
+   for seconds. Now it starts at once and the header shows `(100000 live)`.
+6. A scene file with `particles 3e+09 ...` (or a negative rate) now loads with the rate clamped to 0..100000, like the Inspector.
+7. Test: `ctest -R particle_emission_limits` (rates of inf, NaN, 1e9 and 3e9, a burst of 1e9, the cost check, the scene loader,
+   script `emit`, the Particle Burst node and the Action List `emit` step).
+
+**Status.** Engine change tested headless on Linux (see the PR). The editor steps above were not run on Windows.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

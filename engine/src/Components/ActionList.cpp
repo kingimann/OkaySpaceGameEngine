@@ -9,6 +9,7 @@
 #include "okay/Components/TextRenderer.hpp"
 #include "okay/Components/SpriteRenderer.hpp"
 #include "okay/Components/ParticleSystem.hpp"
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Components/SpriteAnimator.hpp"
 #include "okay/Components/Character.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
@@ -1260,7 +1261,7 @@ void ActionList::Update(float dt) {
         }
         else if (op == "emit") {
             if (gameObject) if (auto* ps = gameObject->GetComponent<ParticleSystem>())
-                ps->Emit(it.args.empty() ? 8 : (int)Num(it, 0));
+                ps->Emit(it.args.empty() ? 8 : SafeInt(Num(it, 0)));   // "nan" -> 0, "inf" / huge -> fills the pool
         }
         else if (op == "play_anim") {
             if (gameObject) if (auto* an = gameObject->GetComponent<SpriteAnimator>()) an->Restart();

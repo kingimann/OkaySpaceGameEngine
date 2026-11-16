@@ -12,6 +12,7 @@
 #include "okay/Scene/SceneManager.hpp"
 #include "okay/Core/SaveData.hpp"
 #include "okay/Core/Log.hpp"
+#include "okay/Core/SafeCast.hpp"
 #include "okay/Core/Localization.hpp"
 #include "okay/Components/AnimStateMachine.hpp"
 #include "okay/Components/SequencePlayer.hpp"
@@ -671,7 +672,7 @@ struct ParticleBurstNode : VsNode {   // in0 = count (unwired: 20)
     int ExecOutCount() const override { return 1; }
     int Exec(NodeGraph& g, VsContext& ctx) override {
         if (auto* ps = ctx.gameObject ? ctx.gameObject->GetComponent<ParticleSystem>() : nullptr)
-            ps->Emit((int)In(0, g, ctx, VsValue{20.0f}).AsFloat());
+            ps->Emit(SafeInt(In(0, g, ctx, VsValue{20.0f}).AsFloat()));   // NaN -> 0, inf / huge -> fills the pool
         return 0;
     }
 };

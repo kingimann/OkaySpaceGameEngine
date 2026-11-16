@@ -8548,6 +8548,10 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                     ps->playing = (playing != 0);
                     ps->fadeOverLife = (fade != 0);
                     ps->seed = static_cast<std::uint64_t>(seed);
+                    // A hand-edited or damaged line (3e9, a negative rate) is brought back
+                    // into the Inspector's range, 0..100000; NaN reads as 0.
+                    if (!(ps->emissionRate >= 0.0f)) ps->emissionRate = 0.0f;
+                    else if (ps->emissionRate > 100000.0f) ps->emissionRate = 100000.0f;
                     // Appended v2 fields (older scenes simply stop here).
                     in >> std::ws;
                     int pk = in.peek();
@@ -8563,6 +8567,9 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         ps->colorOverLife = (colLife != 0);
                         ps->sizeOverLife = (szLife != 0);
                         ps->loop = (loopI != 0);
+                        // The burst too: the Inspector's 0..100000.
+                        if (ps->burstCount < 0) ps->burstCount = 0;
+                        else if (ps->burstCount > 100000) ps->burstCount = 100000;
                         ps->shape = (ParticleSystem::Shape)shapeI;
                         // Appended v3 fields: 3D z-components (older v2 scenes stop here,
                         // leaving z at its 0/1 default so they still load flat-but-valid).

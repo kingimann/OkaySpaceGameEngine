@@ -377,6 +377,10 @@ add_executable(test_particles_fx test_particles_fx.cpp)
 target_link_libraries(test_particles_fx PRIVATE okay::engine)
 add_test(NAME particles_fx COMMAND test_particles_fx)
 
+add_executable(test_particle_emission_limits test_particle_emission_limits.cpp)
+target_link_libraries(test_particle_emission_limits PRIVATE okay::engine)
+add_test(NAME particle_emission_limits COMMAND test_particle_emission_limits)
+
 add_executable(test_profiler test_profiler.cpp)
 target_link_libraries(test_profiler PRIVATE okay::engine)
 add_test(NAME profiler COMMAND test_profiler)

@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -924,6 +925,10 @@ inline bool& ShadowsEnabled()    { static bool v = true; return v; }   // on by 
 /// default. Turn off to get the faster per-vertex path back (it draws no shadows).
 inline bool& ShadowsUsePerPixel() { static bool v = true; return v; }
 inline int&  ShadowMapResolution(){ static int s = 2048; return s; }   // per-cascade texels
+/// The software renderer never builds a cascade larger than this many texels a side, whatever ShadowMapResolution() says (the GPU
+/// renderers do not use this). Three 2048 x 2048 cascades took about 200 ms a frame on the CPU, which is the whole frame of a machine that
+/// fell back to the software renderer; 1024 is about four times cheaper and still reads as a shadow. Set 4096 to get the old sharpness back.
+inline int&  SoftwareShadowCap()  { static int s = [] { const char* e = std::getenv("OKAY_SOFTWARE_SHADOW_CAP"); const int v = e ? std::atoi(e) : 0; return v >= 64 ? v : 1024; }(); return s; }
 
 /// How far (world units) cascaded shadows reach in front of the camera. The near
 /// cascade hugs a small slice of this so its shadows stay crisp no matter how big
@@ -1062,7 +1067,7 @@ inline void RenderShadowMap(const Scene& scene, const Mat4& vp, const Vec3& eye)
     if (!any) { sm.enabled = false; return; }
 
     Vec3 L = SceneLight::Direction(); { float m = L.Magnitude(); L = m > 1e-6f ? L * (1.0f / m) : Vec3{0, -1, 0}; }
-    const int S = ShadowMapResolution();
+    const int S = std::min(ShadowMapResolution(), std::max(64, SoftwareShadowCap()));
     // Depth padding = the scene's vertical extent, so a caster anywhere above a
     // cascade region is still inside the light frustum's depth range.
     float depthPad = (hi.y - lo.y) + (hi.x - lo.x) + (hi.z - lo.z);
@@ -2406,7 +2411,13 @@ inline void FillOcclusionDepth(Raster& work, std::vector<std::uint32_t>& out,
                                int w, int h, const GameObject* ignore = nullptr) {
     const CullCounters saved = LastCullCounters();
     const bool vigSaved = PostVignetteHandled();   // this pass is never shown: it must not change who paints the vignette
+    // Only the depth is wanted: shadow maps (three 2048 x 2048 cascades) were about 90 percent of this pass and change no depth.
+    const bool shadowsSaved = ShadowsEnabled(), aaSaved = FXAAEnabled(), ssaoSaved = SSAOEnabled(), bloomSaved = BloomEnabled(),
+               toneSaved = ToneMapEnabled(), gradeSaved = ColorGradeEnabled();
+    ShadowsEnabled() = false; FXAAEnabled() = false; SSAOEnabled() = false; BloomEnabled() = false; ToneMapEnabled() = false; ColorGradeEnabled() = false;
     RenderMeshesSS(work, out, scene, vp, eye, w, h, 1, ignore);
+    ShadowsEnabled() = shadowsSaved; FXAAEnabled() = aaSaved; SSAOEnabled() = ssaoSaved; BloomEnabled() = bloomSaved;
+    ToneMapEnabled() = toneSaved; ColorGradeEnabled() = gradeSaved;
     LastCullCounters() = saved;
     PostVignetteHandled() = vigSaved;
 }

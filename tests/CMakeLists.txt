@@ -3420,6 +3420,14 @@ add_executable(test_own_dispatch_c test_own_dispatch_c.cpp)
 target_link_libraries(test_own_dispatch_c PRIVATE okay::engine)
 add_test(NAME own_dispatch_c COMMAND test_own_dispatch_c WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+# Every own model reader has a sample in examples/own_readers (shipped in the Windows download), and each sample imports with
+# OUR reader forced on (flip proposal Step 0 row 0.6; docs/try_it.md section 8). Samples: scripts/gen_own_reader_samples.py.
+add_executable(test_own_reader_samples test_own_reader_samples.cpp)
+target_include_directories(test_own_reader_samples PRIVATE ${CMAKE_SOURCE_DIR}/shared)
+target_link_libraries(test_own_reader_samples PRIVATE okay::engine)
+target_compile_definitions(test_own_reader_samples PRIVATE OKAY_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+add_test(NAME own_reader_samples COMMAND test_own_reader_samples WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
 # Real-file corpus check for the own FBX / COLLADA / 3DS / BVH readers. Needs OKAY_MODEL_CORPUS (a directory of
 # real exporter files, not in this repo; docs/model_corpus.md); without it the test prints "skipped" and passes.
 add_executable(test_model_corpus test_model_corpus.cpp)

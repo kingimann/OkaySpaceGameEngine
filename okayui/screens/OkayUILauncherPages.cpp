@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <unordered_map>
 
 namespace UI = OkayUI;
 
@@ -158,6 +159,23 @@ bool FlatButton(const char* id, const char* label, float x, float y, float w, fl
     if (cut) dl.PopClipRect();
     if (hov) UI::SetMouseCursor(UI::MouseCursor_Hand);
     return clicked;
+}
+
+// A 1 px rounded outline drawn cheaply (it is on every download row every frame): the four straight sides as bars and each
+// corner as three short chords of its quarter circle.
+void HairlineBox(const UI::DrawList& dl, UI::Vec2 mn, UI::Vec2 mx, UI::Color32 col, float r) {
+    r = std::min(r, std::min(mx.x - mn.x, mx.y - mn.y) * 0.5f);
+    dl.AddRectFilled(V(mn.x + r, mn.y), V(mx.x - r, mn.y + 1.0f), col);
+    dl.AddRectFilled(V(mn.x + r, mx.y - 1.0f), V(mx.x - r, mx.y), col);
+    dl.AddRectFilled(V(mn.x, mn.y + r), V(mn.x + 1.0f, mx.y - r), col);
+    dl.AddRectFilled(V(mx.x - 1.0f, mn.y + r), V(mx.x, mx.y - r), col);
+    const float rr = r - 0.5f;
+    static const float k[4][2] = {{1.0f, 0.0f}, {0.8660254f, 0.5f}, {0.5f, 0.8660254f}, {0.0f, 1.0f}};   // cos, sin of 0, 30, 60, 90 degrees
+    const UI::Vec2 c[4] = {V(mn.x + r, mn.y + r), V(mx.x - r, mn.y + r), V(mx.x - r, mx.y - r), V(mn.x + r, mx.y - r)};
+    const float sx[4] = {-1, 1, 1, -1}, sy[4] = {-1, -1, 1, 1};
+    for (int q = 0; q < 4; ++q)
+        for (int i = 0; i < 3; ++i)
+            dl.AddLine(V(c[q].x + sx[q] * k[i][0] * rr, c[q].y + sy[q] * k[i][1] * rr), V(c[q].x + sx[q] * k[i + 1][0] * rr, c[q].y + sy[q] * k[i + 1][1] * rr), col, 1.0f);
 }
 
 // One line of text centred in `width` from x.
@@ -416,7 +434,7 @@ DownloadsResult DrawDownloads(const DownloadsModel& m, float x, float y, float w
             const UI::Vec2 rp = V(o.x, ly);
             res.rows[i] = UI::Rect{rp.x, rp.y, cw, rowH};
             const bool hov = UI::IsMouseHoveringRect(rp, V(rp.x + cw, rp.y + rowH));
-            dl.AddRect(rp, V(rp.x + cw, rp.y + rowH), CBorder(), 8.0f, 1.0f);
+            HairlineBox(dl, rp, V(rp.x + cw, rp.y + rowH), CBorder(), 8.0f);
             if (hov) dl.AddRect(rp, V(rp.x + cw, rp.y + rowH), Col(th.accent), 7.0f, 2.0f);
             const float ix = rp.x + padX, inW = cw - 2.0f * padX;
             float iy = rp.y + padY;
@@ -498,6 +516,21 @@ void NotifEmptyText(int total, int filter, std::string& title, std::string& hint
          : filter == 4 ? "No update notifications."
                        : "No system notifications.";
 }
+
+namespace {
+// The feed's two body lines are measured again only when the text, the width or the text size changed (wrapping measures
+// many prefixes of the text; the feed is the same frame after frame). A small cache, cleared when it grows past 256 entries.
+void WrapTwoLinesCached(const std::string& body, float maxW, std::string& l1, std::string& l2) {
+    struct Wrapped { float w, fs; std::string l1, l2; };
+    static std::unordered_map<std::string, Wrapped> cache;
+    const float fs = UI::GetTextLineHeight();
+    auto it = cache.find(body);
+    if (it != cache.end() && it->second.w == maxW && it->second.fs == fs) { l1 = it->second.l1; l2 = it->second.l2; return; }
+    WrapTwoLines(body, maxW, l1, l2);
+    if (cache.size() > 256) cache.clear();
+    cache[body] = Wrapped{maxW, fs, l1, l2};
+}
+} // namespace
 
 NotificationsResult DrawNotifications(const NotificationsModel& m, NotificationsState& st, float x, float y, float w, float h) {
     NotificationsResult res;
@@ -624,7 +657,7 @@ NotificationsResult DrawNotifications(const NotificationsModel& m, Notifications
                 const float icD = 36.0f, tx = rp.x + 10.0f + icD + 12.0f;
                 const float textW = rw - (tx - rp.x) - 46.0f;
                 std::string b1, b2;
-                WrapTwoLines(n.body, textW, b1, b2);
+                WrapTwoLinesCached(n.body, textW, b1, b2);
                 const int bodyLines = n.body.empty() ? 0 : (b2.empty() ? 1 : 2);
                 const float rh = std::max(58.0f, 11.0f + tl + 3.0f + bodyLines * (tl + 1.0f) + 10.0f);
                 const float rx = rp.x + rw - 12.0f;

@@ -481,7 +481,7 @@ inline float fMeasure(const char* s) {
             for (const char* p = s; *p;) {
                 const unsigned cp = fontatlas::NextCodepoint(&p);
                 const fontatlas::Glyph* g = zp.Find(cp); if (!g) g = zp.Find('?');
-                if (g) w += exact ? SDL_floorf(g->advance * k + 0.5f) : g->advance * k;
+                if (g) w += exact ? std::floor(g->advance * k + 0.5f) : g->advance * k;
             }
             return w / g_theme.textScale;
         }
@@ -826,9 +826,9 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
         const fontatlas::Size& z = g_ttf->Pick(px);
         const float k = px / z.px;
         const bool exact = k > 0.97f && k < 1.03f;
-        float pen = exact ? SDL_floorf(x + 0.5f) : x;
+        float pen = exact ? std::floor(x + 0.5f) : x;
         const float base = !exact ? y + z.ascent * k
-                         : g_theme.ascentRoundsUp ? SDL_floorf(y + 0.5f) + SDL_ceilf(z.ascent * k - 0.001f) : SDL_floorf(y + z.ascent * k + 0.5f);
+                         : g_theme.ascentRoundsUp ? std::floor(y + 0.5f) + std::ceil(z.ascent * k - 0.001f) : std::floor(y + z.ascent * k + 0.5f);
         SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
         int*        I = g_toOverlay ? g_ovIdx   : g_idx;
         int&        nv = g_toOverlay ? g_onv : g_nv;
@@ -849,7 +849,7 @@ void drawText(float x, float y, const char* str, float s, const unsigned char c[
                 v.position.x = x0; v.position.y = y1; v.tex_coord.x = g->u0; v.tex_coord.y = g->v1; V[nv++] = v;
                 I[ni++] = b0; I[ni++] = b0 + 1; I[ni++] = b0 + 2; I[ni++] = b0; I[ni++] = b0 + 2; I[ni++] = b0 + 3;
             }
-            pen += (exact && g_theme.snapAdvances) ? SDL_floorf(g->advance * k + 0.5f) : g->advance * k;
+            pen += (exact && g_theme.snapAdvances) ? std::floor(g->advance * k + 0.5f) : g->advance * k;
         }
         return;
     }
@@ -5029,14 +5029,22 @@ int roundedRectPath(Vec2* out, float x0, float y0, float x1, float y1, float rad
         out[n++] = Vec2{ x0, y0 }; out[n++] = Vec2{ x1, y0 }; out[n++] = Vec2{ x1, y1 }; out[n++] = Vec2{ x0, y1 };
         return n;
     }
-    const float PI = 3.14159265f;
     const float cx[4] = { x0 + rad, x1 - rad, x1 - rad, x0 + rad }, cy[4] = { y0 + rad, y0 + rad, y1 - rad, y1 - rad };
-    const float a0[4] = { PI, 1.5f * PI, 0.0f, 0.5f * PI };
+    // The corner points on a unit circle, worked out once (the same float angles as always, so the outline is unchanged).
+    static float unit[4][7][2];
+    static bool ready = false;
+    if (!ready) {
+        const float PI = 3.14159265f;
+        const float a0[4] = { PI, 1.5f * PI, 0.0f, 0.5f * PI };
+        for (int k = 0; k < 4; ++k)
+            for (int i = 0; i <= 6; ++i) {
+                const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f;
+                unit[k][i][0] = SDL_cosf(a); unit[k][i][1] = SDL_sinf(a);
+            }
+        ready = true;
+    }
     for (int k = 0; k < 4; ++k)
-        for (int i = 0; i <= 6; ++i) {
-            const float a = a0[k] + (0.5f * PI) * (float)i / 6.0f;
-            out[n++] = Vec2{ cx[k] + rad * SDL_cosf(a), cy[k] + rad * SDL_sinf(a) };
-        }
+        for (int i = 0; i <= 6; ++i) out[n++] = Vec2{ cx[k] + rad * unit[k][i][0], cy[k] + rad * unit[k][i][1] };
     return n;
 }
 

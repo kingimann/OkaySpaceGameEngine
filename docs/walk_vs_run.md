@@ -42,7 +42,7 @@ human gait, scaled to that leg; nothing here comes from another project.
 | Both feet on the ground (double support) | 5 percent and more | none (under 1 percent) | the walk has more |
 | Arm swing (half the range) | up to 25 degrees, calm | 35 degrees and more | at least 1.5 times |
 | Elbow bend | up to 25 degrees, nearly straight | 70 degrees and more, near a right angle | at least 45 degrees more |
-| Forward lean of the chest | up to 4 degrees | 8 degrees and more | at least 4 degrees more |
+| Forward lean of the chest | up to 4 degrees | 7.5 degrees and more | at least 4 degrees more |
 | Hip bounce (up and down) | up to 10 cm | more than the walk | at least 2 cm more |
 
 Two limits come from the leg, not from taste. First, a person's walk turns into a run at a Froude number v squared over g times

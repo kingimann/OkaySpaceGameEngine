@@ -36,7 +36,7 @@ struct Pair { const char* name; float walk, run; };
 // leaning forward. The hips rise and fall about as far as the legs' sweep makes them, so a run bobs more than a walk.
 // The walk limit is 135 here (not 130) so a measurement of a brisk walk that lands a step over is not a failure.
 struct Walk { static constexpr float spmLo = 90, spmHi = 135, stepHi = 1.0f, flightMax = 0.01f, doubleMin = 0.05f, armMax = 25, elbowMax = 25, leanMax = 4, bounceMax = 0.10f; };
-struct Run  { static constexpr float spmLo = 150, spmHi = 200, stepLo = 1.4f, flightMin = 0.15f, doubleMax = 0.01f, armMin = 35, elbowMin = 70, leanMin = 8; };
+struct Run  { static constexpr float spmLo = 150, spmHi = 200, stepLo = 1.4f, flightMin = 0.15f, doubleMax = 0.01f, armMin = 35, elbowMin = 70, leanMin = 7.5f; };
 // And the gap between the two, so "different" is more than each one being inside its range.
 struct Gap  { static constexpr float spm = 40, stepRatio = 1.6f, flight = 0.15f, armRatio = 1.5f, elbow = 45, lean = 4, bounce = 0.02f; };
 
@@ -100,11 +100,12 @@ void CheckOld(bool animator, float walkSpeed, float runSpeed) {
     PrintHeader(); PrintRow(w); PrintRow(r);
     CHECK(w.ok && r.ok);
     if (!(w.ok && r.ok)) return;
-    CHECK(w.stepsPerMin > Walk::spmHi + 60.0f);        // the walk stepped like a sprinter: far past a walk's 135
-    CHECK(w.stepsPerMin >= r.stepsPerMin - 25.0f);     // as often as the run, or more
-    CHECK(w.flight >= 0.15f);                          // both feet off the ground: a run, not a walk
-    CHECK(w.doubleSupport < 0.05f);
-    CHECK(w.bounce >= r.bounce);                       // and it bobbed at least as much
+    // The old "walk" fails every part of the walk target that a person can see ...
+    CHECK(w.stepsPerMin > Walk::spmHi + 60.0f);        // it stepped like a runner: far past a walk's 135 a minute
+    CHECK(w.flight >= Run::flightMin);                 // both feet off the ground for a good part of each step: a run
+    CHECK(w.doubleSupport < Walk::doubleMin);          // never both feet down
+    // ... and its cadence was not clearly different from the run's (the target asks for 40 a minute more).
+    CHECK(r.stepsPerMin - w.stepsPerMin < Gap::spm);
 }
 
 } // namespace

@@ -949,6 +949,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | the character never levels | [11.9](11-gameplay-systems.md#119-rpg-stats-and-xp) RPG stats and XP |
 | the character slides inside its capsule or walks without the capsule | [5.5](05-animation-ik.md#55-root-motion-and-skinning) Root motion and skinning |
 | the character snaps instead of blending | [5.1](05-animation-ik.md#51-animator-and-state-machines) Animator and state machines |
+| the character walking looks like running | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | the chest dips when reaching just past the hand | [5.7](05-animation-ik.md#57-look-at-aim-and-full-body-ik) Look-at, aim and full-body IK |
 | the chest shows items to players who are not near | [11.8](11-gameplay-systems.md#118-server-authoritative-inventory) Server-authoritative inventory |
 | the client's ECS world differs from the server's | [1.9](01-core-scene.md#19-events-and-ecs) Events and ECS |
@@ -1198,6 +1199,7 @@ Find the window, page or symptom, then say the number. Back to the [overview](..
 | View as OkayScript names a node it cannot export | [14.8](14-visual-scripting.md#148-converting-between-graphs-and-scripts) Converting between graphs and scripts |
 | vignette drawn twice | [2.5](02-rendering-world.md#25-post-processing) Post-processing |
 | Wait skips | [14.6](14-visual-scripting.md#146-action-framework) Action framework |
+| walk and run look alike | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | walk hips snap at every footfall | [5.4](05-animation-ik.md#54-humanoid-retarget-and-library) Humanoid retarget and library |
 | walk-only file has no idle | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |
 | walking animation feels off, feet slide or the wrong speed | [5.3](05-animation-ik.md#53-model-clip-player-and-locomotion) Model clip player and locomotion |

@@ -2957,7 +2957,8 @@ endif()
 # rasterisation of the same draw data: headless on the software painter, and under Xvfb on our OpenGL painter
 # (engine/src/Platform/GlPainter.cpp) on an sdl2 and an own window. Own code, off by default; the tests only check it.
 if(TARGET launcher_imgui AND TARGET okay_ui_soft)
-    add_executable(test_launcher_imgui_renderer test_launcher_imgui_renderer.cpp ${PROJECT_SOURCE_DIR}/launcher/ImGuiOwnBackend.cpp)
+    add_executable(test_launcher_imgui_renderer test_launcher_imgui_renderer.cpp ${PROJECT_SOURCE_DIR}/launcher/ImGuiOwnBackend.cpp
+        ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp)
     target_include_directories(test_launcher_imgui_renderer PRIVATE ${PROJECT_SOURCE_DIR}/launcher ${PROJECT_SOURCE_DIR}/shared)
     target_link_libraries(test_launcher_imgui_renderer PRIVATE launcher_imgui okay_ui_soft)
     add_test(NAME launcher_imgui_renderer COMMAND test_launcher_imgui_renderer)
@@ -2966,6 +2967,31 @@ if(TARGET launcher_imgui AND TARGET okay_ui_soft)
                  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_launcher_imgui_renderer> --gl)
         set_tests_properties(launcher_imgui_renderer_gl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
     endif()
+endif()
+
+# The editor's platform seam (editor/EditorPlatform.*, OKAY_EDITOR_PLATFORM=own, docs/sdl_removal_plan.md stage E1) without the
+# editor: the main window, the views' GL context (3.2 compatibility) handed back to SDL_Renderer, ImGui fed through the seam,
+# clipboard, cursor shape and a dropped file, for the sdl and own sides; and the shared ImGui glue (shared/ImGuiOwnPlatform.*)
+# against ImGui's SDL2 backend on the same SDL events. Under Xvfb; the _own entry makes the GL window with our own X11 / GLX code.
+# Own code, off by default; the test only checks it. Needs Dear ImGui with its SDL2 backends (the editor's or the launcher's).
+set(_okay_ep_imgui "")
+if(TARGET okay_imgui)
+    set(_okay_ep_imgui okay_imgui)
+elseif(TARGET launcher_imgui)
+    set(_okay_ep_imgui launcher_imgui)
+endif()
+if(_okay_ep_imgui AND TARGET okay::platform AND TARGET SDL2::SDL2 AND NOT WIN32 AND NOT EMSCRIPTEN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_editor_platform test_editor_platform.cpp ${PROJECT_SOURCE_DIR}/editor/EditorPlatform.cpp
+        ${PROJECT_SOURCE_DIR}/editor/EditorPlatformSdl.cpp ${PROJECT_SOURCE_DIR}/shared/ImGuiOwnPlatform.cpp)
+    target_include_directories(test_editor_platform PRIVATE ${PROJECT_SOURCE_DIR}/editor ${PROJECT_SOURCE_DIR}/shared)
+    target_link_libraries(test_editor_platform PRIVATE ${_okay_ep_imgui} okay::platform SDL2::SDL2)
+    add_test(NAME editor_platform
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_platform>)
+    add_test(NAME editor_platform_own
+             COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/run_under_xvfb.sh $<TARGET_FILE:test_editor_platform>)
+    set_tests_properties(editor_platform editor_platform_own PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+    set_tests_properties(editor_platform PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=sdl2")
+    set_tests_properties(editor_platform_own PROPERTIES ENVIRONMENT "OKAY_PLATFORM_BACKEND=own")
 endif()
 
 # The controller -> Input bridge (Input/PlatformGamepad.hpp) with a fake okay::platform::Gamepad.

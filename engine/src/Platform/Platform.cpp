@@ -86,6 +86,15 @@ std::unique_ptr<Window> WrapSdl2Window(void* sdlWindow) {
 #endif
 }
 
+bool TranslateSdl2Event(const void* sdlEvent, Event& out) {
+#ifdef OKAY_PLATFORM_HAVE_SDL2
+    return sdlEvent ? TranslateSdl2EventImpl(sdlEvent, out) : false;
+#else
+    (void)sdlEvent; (void)out;
+    return false;
+#endif
+}
+
 // ---- Backend defaults (shared by both backends) ----------------------------------
 Key Backend::KeyForChar(char c) {
     // US layout: the HID numbering puts a..z at 4.., 1..9 at 30.., 0 at 39.

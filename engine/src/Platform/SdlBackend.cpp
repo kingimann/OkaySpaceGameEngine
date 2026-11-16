@@ -207,7 +207,7 @@ public:
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             Event r;
-            if (Translate(e, r)) { out = std::move(r); return true; }
+            if (Translate(e, r, true)) { out = std::move(r); return true; }
         }
         return false;
     }
@@ -345,10 +345,9 @@ public:
         return c ? std::unique_ptr<Gamepad>(new SdlGamepad(c)) : nullptr;
     }
 
-private:
-    SDL_Cursor* m_cursors[10] = {};   // one per SystemCursor, made on first use
-
-    static bool Translate(const SDL_Event& e, Event& r) {
+    /// One SDL_Event as ours. `freeDrop`: free SDL's dropped-file string (PollEvent owns the event); false when the app read the
+    /// event itself and frees it (TranslateSdl2Event).
+    static bool Translate(const SDL_Event& e, Event& r, bool freeDrop) {
         r.timestampMs = e.common.timestamp;
         switch (e.type) {
         case SDL_QUIT: r.type = EventType::Quit; return true;
@@ -387,19 +386,29 @@ private:
             r.fingerId = (long long)e.tfinger.fingerId; r.fx = e.tfinger.x; r.fy = e.tfinger.y; return true;
         case SDL_DROPFILE:
             r.type = EventType::DropFile; r.text = e.drop.file ? e.drop.file : "";
-            if (e.drop.file) SDL_free(e.drop.file);
+            if (e.drop.file && freeDrop) SDL_free(e.drop.file);
             return true;
         case SDL_CONTROLLERDEVICEADDED:   r.type = EventType::GamepadAdded;   r.deviceId = e.cdevice.which; return true;
         case SDL_CONTROLLERDEVICEREMOVED: r.type = EventType::GamepadRemoved; r.deviceId = e.cdevice.which; return true;
         default: return false;
         }
     }
+
+private:
+    SDL_Cursor* m_cursors[10] = {};   // one per SystemCursor, made on first use
     Uint32 m_started = 0;
 };
 
 } // namespace
 
 std::unique_ptr<Backend> CreateSdl2Backend() { return std::unique_ptr<Backend>(new SdlBackend()); }
+
+bool TranslateSdl2EventImpl(const void* sdlEvent, Event& out) {
+    Event r;
+    if (!SdlBackend::Translate(*static_cast<const SDL_Event*>(sdlEvent), r, false)) return false;
+    out = std::move(r);
+    return true;
+}
 
 std::unique_ptr<Window> WrapSdl2WindowImpl(void* sdlWindow) {
     return std::unique_ptr<Window>(new SdlWindow(static_cast<SDL_Window*>(sdlWindow), false));

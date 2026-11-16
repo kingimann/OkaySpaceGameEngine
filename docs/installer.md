@@ -92,7 +92,8 @@ code use `Uninstall.exe /S _?=<folder>` (then `Uninstall.exe` itself stays, beca
 It refuses a distribution without `OkaySpace.exe`, `VERSION.txt`, `Tools\OkayEngine.exe` or `Tools\OkaySpacePlayer.exe`, an empty `.exe`, `.dll` or
 `VERSION.txt`, a link, and a file name with a character an installer script would read as something else (`$`, `"`, non-ASCII letters, ...).
 `build-windows-dist.sh` runs it with `--check` at the end, so a bad distribution fails there. Run it by hand:
-`python3 scripts/gen-installer-filelist.py build-win-dist --check`. `makensis -DFILELIST=<file>` uses a list made beforehand; `-DSPACE_MARGIN_KB=<n>`
+`python3 scripts/gen-installer-filelist.py build-win-dist --check`. Building the installer needs `python3` on the PATH (the release job and `scripts/release-local.sh` have it): `makensis` runs the generator with the script's own
+folder as the current folder, so give `-DDISTDIR` as an absolute path (a relative one is read from the `scripts` folder; the release job already passes an absolute one). `makensis -DFILELIST=<file>` uses a list made beforehand; `-DSPACE_MARGIN_KB=<n>`
 changes the extra free space asked for (default 16384; the test lowers it).
 
 ## Defaults picked for the owner decisions (rule 1)

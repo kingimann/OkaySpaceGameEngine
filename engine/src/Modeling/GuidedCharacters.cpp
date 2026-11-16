@@ -171,7 +171,19 @@ void GenerateBiped(const Recipe& r, std::vector<GeneratedPart>& parts) {
             if (d == "curly") for (int k = 0; k < 7; ++k) { const float a = 2 * kPi * (float)k / 7.0f; shapes::Append(m, Ell({std::cos(a) * hs * 0.42f, top - hs * 0.1f - 0.003f * (float)k, std::sin(a) * hs * 0.42f - hs * 0.02f}, hs * 0.2f, hs * 0.2f, hs * 0.2f, 4, 8)); }
             if (d == "sidepart") shapes::Append(m, BoxAA({-hs * 0.1f, top - hs * 0.27f, hs * 0.1f}, {hs * 0.55f, top - hs * 0.05f, hs * 0.54f}));
             if (d == "braid") for (int k = 0; k < 4; ++k) shapes::Append(m, Ell({0.002f * (float)k, top - hs * (0.4f + 0.34f * (float)k), -hs * (0.55f + 0.02f * (float)k)}, hs * 0.11f, hs * 0.2f, hs * 0.11f, 4, 8));
-            if (d == "long") shapes::Append(m, BoxAA({-hs * 0.5f, shoulderY - 0.1f, -hs * 0.6f}, {hs * 0.5f, top - hs * 0.3f, -hs * 0.33f}));
+            if (d == "long") {   // hair falling down the back in a smooth flare, with a lock beside each cheek
+                std::vector<Vec2> prof = {{-hs * 0.30f, top - hs * 0.32f}, {-hs * 0.62f, top - hs * 0.55f}, {-hs * 0.80f, hb - hs * 0.1f}, {-hs * 0.86f, shoulderY - 0.09f}, {-hs * 0.55f, shoulderY - 0.12f}, {-hs * 0.40f, hb}, {-hs * 0.40f, top - hs * 0.6f}};
+                double area = 0;
+                for (size_t i = 0; i < prof.size(); ++i) { const Vec2& a = prof[i]; const Vec2& b = prof[(i + 1) % prof.size()]; area += (double)a.x * b.y - (double)b.x * a.y; }
+                if (area < 0) std::reverse(prof.begin(), prof.end());
+                for (int it = std::min(3, (int)std::lround(shapes::DetailF())); it > 0; --it) {
+                    std::vector<Vec2> q;
+                    for (size_t i = 0; i < prof.size(); ++i) { const Vec2 a = prof[i], b = prof[(i + 1) % prof.size()]; q.push_back({a.x * 0.75f + b.x * 0.25f, a.y * 0.75f + b.y * 0.25f}); q.push_back({a.x * 0.25f + b.x * 0.75f, a.y * 0.25f + b.y * 0.75f}); }
+                    prof = q;
+                }
+                shapes::Append(m, shapes::ExtrudeAxes({0, 0, 0}, {0, 0, 1}, {0, 1, 0}, {1, 0, 0}, prof, hs * 1.0f));
+                for (int sgn = -1; sgn <= 1; sgn += 2) shapes::Append(m, Limb({sgn * hs * 0.5f, top - hs * 0.45f, -hs * 0.1f}, {sgn * hs * 0.52f, shoulderY - 0.05f, hs * 0.08f}, hs * 0.07f, true));
+            }
             if (d == "bun") shapes::Append(m, Ell({0, top + hs * 0.12f, -hs * 0.36f}, hs * 0.2f, hs * 0.2f, hs * 0.2f, 4, 8));
             if (d == "spiky") for (int k = 0; k < 5; ++k) { const float a = 2 * kPi * (float)k / 5.0f; shapes::Append(m, Cone({std::cos(a) * hs * 0.3f, top - hs * 0.12f, std::sin(a) * hs * 0.3f}, {std::cos(a) * hs * 0.38f, top + hs * 0.3f, std::sin(a) * hs * 0.38f}, hs * 0.1f, 4)); }
             return m;
@@ -569,6 +581,7 @@ Template MakeHuman() {
     b.S("glasses", "Glasses", {{"none", "None"}, {"round", "Round"}, {"square", "Square"}, {"visor", "Visor"}}, kBlack, 6);
     b.S("backpack", "Backpack", {{"none", "None"}, {"small", "Small"}, {"large", "Large"}}, kLeather, 7);
     b.S("belt", "Belt", {{"none", "None"}, {"belt", "Belt"}}, kLeather, 8);
+    b.S("fitting", "Fine fittings", {{"fine", "Buttons, placket and pockets (High and up)"}, {"none", "None"}}, kGrey, 17);
     b.S("scarf", "Scarf", {{"none", "None"}, {"scarf", "Scarf"}, {"long", "Long scarf"}}, kRed, 16);
     b.S("cape", "Cape", {{"none", "None"}, {"short", "Short cape"}, {"long", "Long cape"}}, kRed, 9);
     b.S("shoulder", "Shoulder pads", {{"none", "None"}, {"round", "Round"}, {"plate", "Plate"}, {"spike", "Spike"}}, kSteel, 10);

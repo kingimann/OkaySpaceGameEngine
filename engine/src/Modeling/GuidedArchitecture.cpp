@@ -327,6 +327,81 @@ PolyMesh BuildRoof(const std::string& type, float w, float d, float pitchDeg, fl
     return shapes::ExtrudeAxes({0, 0, 0}, {0, 0, 1}, {0, 1, 0}, {1, 0, 0}, {{-hz, 0}, {hz, 0}, {0, rise}}, 2 * hx);
 }
 
+// Roof tiles and gutters (High and Ultra): a row of tiles along every slope, a gutter along each low edge. Same local frame as BuildRoof.
+PolyMesh RoofRod(Vec3 a, Vec3 b, float r, bool round, int sides) {
+    const Vec3 d = b - a;
+    const float len = d.Magnitude();
+    if (len < 1e-4f) return PolyMesh();
+    Frame f;
+    f.u = d / len;
+    const Vec3 ref = std::fabs(f.u.y) < 0.9f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+    f.t = Vec3::Cross(ref, f.u).Normalized();
+    f.n = Vec3::Cross(f.t, f.u);
+    f.origin = a; f.sx = r * 2; f.sz = r * 2; f.sy = len;
+    return round ? shapes::Prism(f, sides) : shapes::Box(f);
+}
+std::vector<PolyMesh> RoofTiles(const std::string& type, float w, float d, float pitchDeg, float o, float thick) {   // one mesh per slope, then the gutters
+    std::vector<PolyMesh> res;
+    PolyMesh m;
+    if (type == "flat") return res;
+    const float hx = w * 0.5f + o, hz = d * 0.5f + o;
+    const float tn = std::tan(std::min(std::max(pitchDeg, 1.0f), 70.0f) * kPi / 180.0f);
+    struct Quad { Vec3 eL, eR, rL, rR; };
+    std::vector<Quad> planes;
+    if (type == "shed") {
+        const float hh = 2 * hz * tn;
+        planes.push_back({{-hx, thick, -hz}, {hx, thick, -hz}, {-hx, thick + hh, hz}, {hx, thick + hh, hz}});
+    } else if (type == "hip") {
+        const bool alongX = hx >= hz;
+        const float rise = std::min(hx, hz) * tn, half = std::max(std::fabs(hx - hz), 0.01f);
+        const Vec3 pa = alongX ? Vec3{-half, rise, 0} : Vec3{0, rise, -half}, pb = alongX ? Vec3{half, rise, 0} : Vec3{0, rise, half};
+        if (alongX) {
+            planes.push_back({{-hx, 0, hz}, {hx, 0, hz}, {-half, rise, 0}, {half, rise, 0}});
+            planes.push_back({{hx, 0, -hz}, {-hx, 0, -hz}, {half, rise, 0}, {-half, rise, 0}});
+            planes.push_back({{hx, 0, hz}, {hx, 0, -hz}, pb, pb});
+            planes.push_back({{-hx, 0, -hz}, {-hx, 0, hz}, pa, pa});
+        } else {
+            planes.push_back({{hx, 0, hz}, {-hx, 0, hz}, {0, rise, half}, {0, rise, half}});
+            planes.push_back({{-hx, 0, -hz}, {hx, 0, -hz}, {0, rise, -half}, {0, rise, -half}});
+            planes.push_back({{hx, 0, -hz}, {hx, 0, hz}, {0, rise, -half}, {0, rise, half}});
+            planes.push_back({{-hx, 0, hz}, {-hx, 0, -hz}, {0, rise, half}, {0, rise, -half}});
+        }
+    } else {   // gable, ridge along x
+        const float rise = hz * tn;
+        planes.push_back({{-hx, 0, hz}, {hx, 0, hz}, {-hx, rise, 0}, {hx, rise, 0}});
+        planes.push_back({{hx, 0, -hz}, {-hx, 0, -hz}, {hx, rise, 0}, {-hx, rise, 0}});
+    }
+    const int sd = 8;
+    for (const Quad& q : planes) {
+        PolyMesh pm;
+        const Vec3 mid = (q.eL + q.eR + q.rL + q.rR) * 0.25f;
+        Vec3 nrm = Vec3::Cross(q.eR - q.eL, q.rL - q.eL);
+        if (nrm.Magnitude() < 1e-5f) nrm = Vec3::Cross(q.eR - q.eL, q.rR - q.eL);
+        nrm = nrm.Normalized();
+        if (Vec3::Dot(nrm, {0, 1, 0}) < 0) nrm = nrm * -1.0f;
+        const float slope = ((q.rL + q.rR) * 0.5f - (q.eL + q.eR) * 0.5f).Magnitude();
+        const int rows = std::max(3, std::min(60, (int)(slope / 0.17f)));
+        for (int k = 0; k < rows; ++k) {
+            const float t = ((float)k + 0.62f) / (float)rows;
+            const Vec3 a = q.eL + (q.rL - q.eL) * t, b = q.eR + (q.rR - q.eR) * t;
+            const Vec3 dirv = (b - a);
+            if (dirv.Magnitude() < 0.25f) continue;
+            const Vec3 u = dirv.Normalized();
+            const Vec3 a2 = a + u * 0.05f + nrm * 0.016f, b2 = b - u * 0.05f + nrm * 0.004f;
+            shapes::Append(pm, RoofRod(a2, b2, 0.02f, false, sd));
+        }
+        (void)mid;
+        if (!pm.faces.empty()) res.push_back(std::move(pm));
+    }
+    // gutters along the low edges
+    auto gutter = [&](Vec3 a, Vec3 b) { shapes::Append(m, RoofRod(a + Vec3{0, -0.012f, 0}, b + Vec3{0, -0.012f, 0}, 0.045f, true, 8)); };
+    if (type == "shed") gutter({-hx, thick - 0.0f, -hz - 0.02f}, {hx, thick - 0.0f, -hz - 0.02f});
+    else if (type == "hip") { gutter({-hx - 0.02f, 0, -hz}, {-hx - 0.02f, 0, hz}); gutter({hx + 0.02f, 0, -hz}, {hx + 0.02f, 0, hz}); gutter({-hx, 0, hz + 0.02f}, {hx, 0, hz + 0.02f}); gutter({-hx, 0, -hz - 0.02f}, {hx, 0, -hz - 0.02f}); }
+    else { gutter({-hx, 0, hz + 0.02f}, {hx, 0, hz + 0.02f}); gutter({-hx, 0, -hz - 0.02f}, {hx, 0, -hz - 0.02f}); }
+    if (!m.faces.empty()) res.push_back(std::move(m));
+    return res;
+}
+
 PolyMesh RoofTrim(const std::string& type, float w, float d, float pitchDeg, float o, float thick) {
     PolyMesh m;
     const float hx = w * 0.5f + o, hz = d * 0.5f + o;
@@ -528,6 +603,7 @@ void GenerateRoof(const Recipe& r, std::vector<GeneratedPart>& out) {
         if (body.faces.empty()) body = BuildRoof("gable", w, d, pitch, o, th);
     }
     out.push_back({"roof/0", "roof", body});
+    if (shapes::DetailF() >= 1.99f && Design(r, "tiles", "tiles/0") == "fine" && !user) { int k = 0; for (PolyMesh& t : RoofTiles(type, w, d, pitch, o, th)) out.push_back({"tiles/" + std::to_string(k++), "tiles", std::move(t)}); }
     if (Design(r, "trim", "trim/0") == "edge") out.push_back({"trim/0", "trim", RoofTrim(user ? "gable" : type, w, d, pitch, o, th)});
 }
 
@@ -542,10 +618,12 @@ Template MakeRoof() {
     b.P("thickness", "Slab thickness", Builder::K::Float, 0.2, 0.05, 0.6, "Size", "Thickness of a flat roof or the low edge of a shed roof.");
     b.S("roof", "Roof shape", RoofDesigns(), kRoofRed, 0);
     b.S("trim", "Trim", {{"none", "None"}, {"edge", "Ridge cap / parapet / fascia"}}, kSlate, 1);
+    b.S("tiles", "Tiles and gutters", {{"fine", "Rows of tiles and gutters (High and up)"}, {"none", "None"}}, kSlate, 5);
     b.St("gable", "Gable roof", "Two slopes meeting at a ridge.", {{"pitch", 32}}, {{"roof", "gable"}, {"trim", "edge"}}, {});
     b.St("hip", "Hip roof", "Four slopes.", {{"pitch", 28}}, {{"roof", "hip"}, {"trim", "edge"}}, {});
     b.St("shed", "Shed roof", "One slope.", {{"pitch", 15}}, {{"roof", "shed"}, {"trim", "edge"}}, {{"roof", kSlate}});
     b.St("flat", "Flat roof", "A slab with a parapet.", {{"overhang", 0.1}, {"thickness", 0.25}}, {{"roof", "flat"}, {"trim", "edge"}}, {{"roof", kStone}});
+    b.t.noSubdivisionSlots = {"roof"};   // a roof is flat planes meeting at hard edges; subdividing would round it into a dome
     b.t.generate = GenerateRoof;
     return b.t;
 }
@@ -987,6 +1065,17 @@ void GenerateBuilding(const Recipe& r, std::vector<GeneratedPart>& out) {
     }
     out.push_back({"roof/0", "roof", roof});
     out.push_back({"trim/0", "trim", trim});
+    if (shapes::DetailF() >= 1.99f && Design(r, "tiles", "tiles/0") == "fine" && roofD.rfind("user:", 0) != 0) {
+        int tk = 0;
+        for (PolyMesh& tiles : RoofTiles(rtype, rw, rd, Pf(r, "roofPitch"), Pf(r, "overhang"), Pf(r, "roofThickness"))) {
+            if (alongZ) for (Vec3& v : tiles.verts) { const float x = v.x; v.x = v.z; v.z = -x; }
+            for (Vec3& v : tiles.verts) v.y += topY;
+            out.push_back({"tiles/" + std::to_string(tk++), "tiles", std::move(tiles)});
+        }
+        // a down pipe from the gutter to the ground at the front right corner
+        const float pipeX = W / 2 - 0.01f, pipeZ = D / 2 + 0.03f;
+        out.push_back({"downpipe/0", "tiles", RoofRod({pipeX, topY - 0.05f, pipeZ}, {pipeX, 0.05f, pipeZ}, 0.035f, true, 8)});
+    }
 }
 
 Template MakeBuilding() {
@@ -1016,6 +1105,7 @@ Template MakeBuilding() {
     b.S("door", "Front door", DoorLeafDesigns(), kWood, 2);
     b.S("roof", "Roof", RoofDesigns(), kRoofRed, 3);
     b.S("trim", "Roof trim", {{"none", "None"}, {"edge", "Ridge cap / parapet / fascia"}}, kSlate, 4);
+    b.S("tiles", "Tiles and gutters", {{"fine", "Rows of tiles, gutters and a down pipe (High and up)"}, {"none", "None"}}, kSlate, 6);
     b.S("foundation", "Foundation", {{"slab", "Stone base"}}, kStone, 5);
     b.S("floor", "Floors", {{"slab", "Floor slabs"}}, kWood, 6);
     b.St("cottage", "Cottage", "One floor, a gable roof, a panelled door.", {{"floors", 1}, {"windowsFront", 2}, {"windowsSide", 1}, {"width", 7}, {"depth", 5}},
@@ -1029,6 +1119,7 @@ Template MakeBuilding() {
          {{"wall", "plain"}, {"window", "single"}, {"door", "ledged"}, {"roof", "shed"}, {"trim", "edge"}}, {{"wall", kWood}});
     b.St("flat_block", "Flat-roofed block", "Three floors, a flat roof with a parapet.", {{"floors", 3}, {"windowsFront", 4}, {"windowsSide", 2}, {"width", 10}, {"depth", 7}, {"overhang", 0.1}, {"roofThickness", 0.25}},
          {{"wall", "plain"}, {"window", "casement"}, {"door", "glazed"}, {"roof", "flat"}, {"trim", "edge"}}, {{"wall", kStone}});
+    b.t.noSubdivisionSlots = {"roof"};   // a roof is flat planes meeting at hard edges; subdividing would round it into a dome
     b.t.generate = GenerateBuilding;
     return b.t;
 }

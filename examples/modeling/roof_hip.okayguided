@@ -7,8 +7,11 @@ param pitch 28
 param thickness 0.20000000000000001
 param width 8
 slot roof hip
+slot tiles fine
 slot trim edge
 color roof 0.550000012 0.219999999 0.159999996 1
+color tiles 0.300000012 0.319999993 0.360000014 1
 color trim 0.300000012 0.319999993 0.360000014 1
 material roof 0
+material tiles 5
 material trim 1

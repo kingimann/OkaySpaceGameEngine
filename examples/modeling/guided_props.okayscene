@@ -1,0 +1,214 @@
+okayscene 3
+name "Guided props"gravity 0 -9.81
+gravity3 0 -9.81 0
+rendersettings 1 0.27450982 0.47058824 0.78431374 0.5882353 0.7254902 0.88235295 0.47058824 0.47058824 0.50980395 0.15
+fog 0 0.5882353 0.7254902 0.88235295 20 90
+tonemap 1
+gameobject 0 "Directional Light"
+  active 1
+  parent -1
+  transform 0 0 0 0.40821794 -0.23456973 0.10938166 0.8754261 1 1 1
+  light 1 1 1 1 0.3 1 0 10 45 0.5 0 6500 1 1 1 0
+end
+gameobject 1 "Ground"
+  active 1
+  parent -1
+  transform 40 -0.5 40 0 0 0 1 400 1 400
+  mesh "Cube" 0.32941177 0.5019608 0.27450982 1 0 "" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 2 "Furniture Dining chair"
+  active 1
+  parent -1
+  transform 0 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "furniture_chair.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 3 "Furniture Dining table"
+  active 1
+  parent -1
+  transform 3 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "furniture_table.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 4 "Furniture Round table"
+  active 1
+  parent -1
+  transform 6 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "furniture_round_table.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 5 "Furniture Armchair"
+  active 1
+  parent -1
+  transform 9 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "furniture_armchair.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 6 "Furniture Sofa"
+  active 1
+  parent -1
+  transform 12 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "furniture_sofa.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 7 "Furniture Bed"
+  active 1
+  parent -1
+  transform 15 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "furniture_bed.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 8 "Furniture Bookshelf"
+  active 1
+  parent -1
+  transform 18 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "furniture_bookshelf.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 9 "Furniture Desk"
+  active 1
+  parent -1
+  transform 21 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "furniture_desk.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 10 "Furniture Wardrobe"
+  active 1
+  parent -1
+  transform 24 0 0 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "furniture_wardrobe.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 11 "Container Wooden crate"
+  active 1
+  parent -1
+  transform 0 0 3.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "container_crate.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 12 "Container Barrel"
+  active 1
+  parent -1
+  transform 3 0 3.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "container_barrel.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 13 "Container Treasure chest"
+  active 1
+  parent -1
+  transform 6 0 3.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "container_chest.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 14 "Container Bucket"
+  active 1
+  parent -1
+  transform 9 0 3.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "container_bucket.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 15 "Container Clay jar"
+  active 1
+  parent -1
+  transform 12 0 3.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "container_jar.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 16 "Container Grain sack"
+  active 1
+  parent -1
+  transform 15 0 3.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "container_sack.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 17 "Tool Hammer"
+  active 1
+  parent -1
+  transform 0 0 7 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tool_hammer.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 18 "Tool Axe"
+  active 1
+  parent -1
+  transform 3 0 7 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tool_axe.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 19 "Tool Pickaxe"
+  active 1
+  parent -1
+  transform 6 0 7 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tool_pickaxe.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 20 "Tool Shovel"
+  active 1
+  parent -1
+  transform 9 0 7 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tool_shovel.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 21 "Tool Wrench"
+  active 1
+  parent -1
+  transform 12 0 7 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tool_wrench.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 22 "Tool Sword"
+  active 1
+  parent -1
+  transform 15 0 7 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "tool_sword.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 23 "Decoration Signpost"
+  active 1
+  parent -1
+  transform 0 0 10.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "decoration_signpost.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 24 "Decoration Direction sign"
+  active 1
+  parent -1
+  transform 3 0 10.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "decoration_arrow_sign.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 25 "Decoration Flagpole"
+  active 1
+  parent -1
+  transform 6 0 10.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "decoration_flagpole.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 26 "Decoration Statue"
+  active 1
+  parent -1
+  transform 9 0 10.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "decoration_statue.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 27 "Decoration Garden lantern"
+  active 1
+  parent -1
+  transform 12 0 10.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "decoration_garden_lantern.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 28 "Decoration Fountain"
+  active 1
+  parent -1
+  transform 15 0 10.5 0 0 0 1 1 1 1
+  mesh "" 1 1 1 1 0 "decoration_fountain.okaymesh" 0
+  material 0 0 0 0 16 0 "" 1 1
+end
+gameobject 29 "Main Camera"
+  active 1
+  parent -1
+  transform 12 12.8 42.9 -0.13 0 0 0.9915 1 1 1
+  camera 1 5 50 0.55 0.72 0.88 1 1 0 0 0.3 4000 0 0 0 1 1 -1 0 50 24 1 0 0 0 0 32 0.4 3 14 1.5
+end

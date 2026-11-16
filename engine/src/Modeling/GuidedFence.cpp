@@ -446,6 +446,7 @@ Template MakeFence() {
 void RegisterArchitectureTemplates();
 void RegisterVehicleTemplates();
 void RegisterCharacterTemplates();
+void RegisterEnvironmentTemplates();
 
 void RegisterBuiltinTemplates() {
     static bool done = false;
@@ -455,6 +456,7 @@ void RegisterBuiltinTemplates() {
     RegisterArchitectureTemplates();
     RegisterVehicleTemplates();
     RegisterCharacterTemplates();
+    RegisterEnvironmentTemplates();
 }
 
 } // namespace okay::modeling::guided

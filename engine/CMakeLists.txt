@@ -144,6 +144,7 @@ add_library(okay_engine
     src/Components/UITooltip.cpp
     src/Components/UITextBind.cpp
     src/Components/UIBarBind.cpp
+    src/Components/UIOwnerData.cpp
     src/Components/UIDamageNumbers.cpp
     src/Components/UIDialogueBox.cpp
     src/Components/UIThemeAsset.cpp
@@ -154,6 +155,8 @@ add_library(okay_engine
     src/Components/Cable.cpp
     src/Components/Decal.cpp
     src/Components/VoxelTerrain.cpp
+    src/Components/VoxelEdit.cpp
+    src/Components/VoxelFluid.cpp
     src/Components/Character.cpp
     src/Components/ModelAnimatorPose.cpp
     src/Components/PlayerView.cpp
@@ -276,11 +279,21 @@ add_library(okay_engine
     src/Render/PmxReader.cpp
     src/Render/LwsReader.cpp
     src/Modeling/EditTransform.cpp
+    src/Modeling/Measure.cpp
+    src/Modeling/SelectOps.cpp
+    src/Modeling/ScreenSelect.cpp
+    src/Modeling/MeshLibrary.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
     src/Modeling/PolyOps.cpp
     src/Modeling/Modifiers.cpp
     src/Modeling/UVUnwrap.cpp
+    src/Modeling/Guided.cpp
+    src/Modeling/GuidedFence.cpp
+    src/Modeling/GuidedArchitecture.cpp
+    src/Modeling/GuidedVehicles.cpp
+    src/Modeling/GuidedCharacters.cpp
+    src/Modeling/GuidedHuman.cpp
     src/Components/LODGroup.cpp
     src/Render/Visibility.cpp
     src/Render/SurfaceRaycast.cpp

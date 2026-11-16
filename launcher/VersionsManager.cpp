@@ -14,6 +14,7 @@
 #include <sstream>
 
 #include "OfficialGame.hpp"   // the strict JSON reader and the bundled SHA-256
+#include "TestBuild.hpp"      // test builds (four-number versions): the real list ignores them, the dev list keeps only them
 
 namespace okayversions {
 namespace {
@@ -187,10 +188,11 @@ std::string ParseVersionTxt(std::string_view text) {
         static_cast<unsigned char>(line[2]) == 0xBF) line.erase(0, 3);
     if (line.empty() || line.size() > 24 || line.find('.') == std::string::npos) return {};
     for (char c : line) if (!(c == '.' || (c >= '0' && c <= '9'))) return {};
-    return okayver::NormalizeVersion(line);
+    const std::string v = okayver::NormalizeVersion(line);
+    return okay::testbuild::IsReleaseShaped(v) ? v : std::string();   // VERSION.txt and LTS.txt name releases: never a test build (four numbers)
 }
 
-Index ParseIndex(std::string_view text) {
+Index ParseIndex(std::string_view text, IndexKind kind) {
     Index idx;
     auto bad = [&](const std::string& why) {
         idx.ok = false;
@@ -213,11 +215,15 @@ Index ParseIndex(std::string_view text) {
     if (schema != 1)
         return bad("The version list is in format " + Num(schema) + ", which this launcher does not read. Update the launcher.");
 
+    // Each kind of list names only its own kind of version (a real list never a test build, the test builds' list only test builds).
+    auto ofThisList = [&](const std::string& version) {
+        return kind == IndexKind::Stable ? okay::testbuild::IsReleaseShaped(version) : okay::testbuild::IsTestVersion(version);
+    };
     auto head = [&](const char* key) -> std::string {
         const Value* v = root.get(key);
         if (!v || v->kind != Value::String) return {};
         const std::string n = okayver::NormalizeVersion(v->str);
-        return n == v->str ? n : std::string();
+        return n == v->str && ofThisList(n) ? n : std::string();
     };
     idx.latest = head("latest");
     idx.lts = head("lts");
@@ -240,12 +246,21 @@ Index ParseIndex(std::string_view text) {
             const Value* ver = ev.get("version");
             if (!ver || ver->kind != Value::String) continue;
             const std::string v = okayver::NormalizeVersion(ver->str);
-            if (v.empty() || v != ver->str || !seen.insert(v).second) continue;
+            if (v.empty() || v != ver->str || !ofThisList(v) || !seen.insert(v).second) continue;
             Entry e;
             e.version = v;
             if (const Value* c = ev.get("channel"); c && c->kind == Value::String && (c->str == "latest" || c->str == "lts")) e.channel = c->str;
             if (const Value* d = ev.get("date"); d && d->kind == Value::String && d->str.size() <= 32 && PlainText(d->str, 32)) e.date = d->str;
             if (const Value* b = ev.get("inBucket"); b && b->kind == Value::Bool) e.inBucket = b->b;
+            if (kind == IndexKind::TestBuilds) {   // where the build came from: cleaned, display-only (anything unusable is simply left out)
+                auto text = [&](const char* key) -> std::string_view {
+                    const Value* t = ev.get(key);
+                    return t && t->kind == Value::String && t->str.size() <= 512 ? std::string_view(t->str) : std::string_view();
+                };
+                e.branch = okay::testbuild::CleanBranch(text("branch"));
+                e.sha = okay::testbuild::CleanSha(text("sha"));
+                e.note = okay::testbuild::CleanLine(text("note"));
+            }
             if (const Value* fs_ = ev.get("files"); fs_ && fs_->kind == Value::Object) {
                 for (const auto& kv : fs_->obj) {
                     if (e.files.size() >= 16) break;
@@ -362,6 +377,45 @@ Index LoadIndex(const Sources& src, const FetchTextFn& fetch) {
         return idx;
     }
     idx.note = why + " Only the newest versions are shown, and their downloads can't be checked automatically.";
+    return idx;
+}
+
+namespace {
+/// A size and a 64-hex SHA-256 for every program the in-place updater replaces: the only test builds that are ever offered.
+bool HasAllChecksums(const Entry& e) {
+    for (const char* name : {"OkayEngine.exe", "OkaySpacePlayer.exe", "OkaySpace.exe"}) {
+        const auto it = e.files.find(name);
+        if (it == e.files.end() || it->second.size == 0 || it->second.sha256.size() != 64) return false;
+    }
+    return true;
+}
+}  // namespace
+
+Index LoadDevIndex(const Sources& src, const FetchTextFn& fetch) {
+    Index out;
+    auto refuse = [&](const std::string& why) { out.ok = false; out.error = why; return out; };
+    std::string base = src.bucketBase;
+    if (!base.empty() && base.back() != '/') base += '/';
+    if (!IsAcceptableUrl(base + "x")) return refuse("No update server is configured, so there are no test builds.");
+    base += std::string(okay::testbuild::kArea) + "/";                  // <bucket>/dev/ : the only place this function ever reads
+    const std::string body = Fetch(fetch, base + okay::testbuild::kIndexName);
+    if (body.empty()) return refuse("The list of test builds could not be downloaded (none may be published yet).");
+    // The same signature rule as the real list, and a refusal is final: nothing softer to fall back to.
+    okayupdate::Verdict sig;
+    if (!src.trustedKeys.empty()) sig = okayupdate::Check(src.trustedKeys, body, Fetch(fetch, base + okayupdate::kSigName));
+    if (!sig.Accepts()) {
+        out.signatureRefused = true;
+        out.error = sig.message;
+        return out;
+    }
+    Index idx = ParseIndex(body, IndexKind::TestBuilds);
+    idx.signedByPublisher = sig.kind == okayupdate::Kind::Valid;
+    if (!idx.ok) return idx;
+    idx.archive.clear();                                                 // a test build is only ever downloaded from the bucket's dev/ folder
+    idx.lts.clear();
+    idx.latest.clear();
+    for (const Entry& e : idx.versions)                                  // newest first
+        if (e.inBucket && HasAllChecksums(e)) { idx.latest = e.version; break; }
     return idx;
 }
 
@@ -830,6 +884,7 @@ bool ApplySettingLine(Settings& s, const std::string& key, const std::string& va
     }
     if (key == "default_editor") { s.defaultEditor = okayver::NormalizeVersion(value); return true; }
     if (key == "lts_line") { s.ltsLine = okayver::LineOf(value); return true; }
+    if (key == "test_builds") { s.testBuilds = value == "1"; return true; }   // only an exact 1 turns it on
     return false;
 }
 void WriteSettings(const Settings& s, std::ostream& out) {
@@ -837,6 +892,7 @@ void WriteSettings(const Settings& s, std::ostream& out) {
     out << "keep_previous=" << std::clamp(s.keepPrevious, 0, kMaxKeepPrevious) << "\n";
     if (!s.defaultEditor.empty()) out << "default_editor=" << s.defaultEditor << "\n";
     if (!s.ltsLine.empty()) out << "lts_line=" << s.ltsLine << "\n";
+    if (s.testBuilds) out << "test_builds=1\n";   // written only when on: a launcher.cfg that never used test builds stays exactly as it was
 }
 
 // ---- projects and "Open with" ----------------------------------------------------------------------------------------------

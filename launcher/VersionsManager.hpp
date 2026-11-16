@@ -67,6 +67,8 @@ struct Entry {
     std::string date;
     bool inBucket = false;               ///< downloadable from the releases bucket (otherwise only from GitHub)
     std::map<std::string, FileInfo> files;   ///< by index name
+    // Test builds only (dev/versions.json, never in a real list): where the build came from. Cleaned text, only ever drawn, never used in a path or command.
+    std::string branch, sha, note;       ///< the branch, its commit (7 to 40 hex digits) and the one-line note of whoever started the build ("" = not given)
 };
 struct Index {
     bool ok = false;                     ///< a usable list (schema known, versions read)
@@ -83,10 +85,17 @@ struct Index {
     const Entry* Find(const std::string& version) const;
 };
 
+/// Which list a versions.json is: the real one (releases), or the test builds' (dev/versions.json, docs/release_channels.md "Test builds").
+/// Each reader sees only its own kind: a version with more than three numbers (a test build, shared/TestBuild.hpp) is skipped in a real list, and
+/// only versions with exactly four numbers are kept in the test builds' list, so neither list can name the other's versions.
+enum class IndexKind { Stable, TestBuilds };
+
 /// Read versions.json. Tolerant of what it does not know (extra fields, an entry that is unusable is skipped), strict about
 /// what it relies on: the schema must be exactly 1, versions are canonical, sizes are whole numbers under 4 GiB, checksums
 /// are 64 hex digits, template text has no way out of its folder. Never throws; garbage gives `ok = false` and a reason.
-Index ParseIndex(std::string_view text);
+Index ParseIndex(std::string_view text, IndexKind kind);
+/// The real list (IndexKind::Stable).
+inline Index ParseIndex(std::string_view text) { return ParseIndex(text, IndexKind::Stable); }
 /// An index made from the two small text files when versions.json is not available: the heads only, no checksums.
 /// `archiveTemplate` is the GitHub address pattern ("" = none); `bucketAvailable` says whether the bucket can be used.
 Index FallbackIndex(const std::string& latestTxt, const std::string& ltsTxt, const std::string& archiveTemplate, bool bucketAvailable);
@@ -113,6 +122,12 @@ struct Sources {
 /// index the heads of VERSION.txt (every place) and LTS.txt make a FallbackIndex, with `note` saying why. `ok` is false only when
 /// nothing at all could be read.
 Index LoadIndex(const Sources& sources, const FetchTextFn& fetch);
+/// The test builds that exist: <bucket>/dev/versions.json (and its signature, checked exactly like the real list's). It reads nothing outside
+/// <bucket>/dev/ and never falls back to anything: no usable list, no test build (a test build without a checksum cannot be installed). `versions`
+/// holds the well-formed test builds, newest first; `latest` is the newest one that can really be installed (in the bucket, with a size and
+/// SHA-256 for the editor, the player and the launcher), "" when there is none; `lts` and `archive` are always empty (a test build has no GitHub
+/// release). Install one with PlanInstall(index, version, <bucket>/dev/, ...): its files are dev/v<version>/<file>.
+Index LoadDevIndex(const Sources& sources, const FetchTextFn& fetch);
 
 /// The version a launch with `--versions <requested>` should highlight: the exact version when the index lists it, else the
 /// newest listed version of the same line (the LTS head when that is of the line), else "".
@@ -269,9 +284,10 @@ struct Settings {
     int keepPrevious = kDefaultKeepPrevious;
     std::string defaultEditor;           ///< a version under Versions/ used for projects with no stamp ("" = this launcher's editor)
     std::string ltsLine;                 ///< the LTS line last seen ("2.850"): lets pruning protect it while offline
+    bool testBuilds = false;             ///< "Get test builds": also offer builds made for testing (off by default: the dev area is never read while this is off)
 };
 Settings& GlobalSettings();
-/// launcher.cfg lines: update_channel, keep_previous, default_editor, lts_line. True when the key was one of ours.
+/// launcher.cfg lines: update_channel, keep_previous, default_editor, lts_line, test_builds. True when the key was one of ours.
 bool ApplySettingLine(Settings& s, const std::string& key, const std::string& value);
 void WriteSettings(const Settings& s, std::ostream& out);
 

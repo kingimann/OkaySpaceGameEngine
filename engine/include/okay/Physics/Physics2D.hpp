@@ -1,7 +1,9 @@
 #pragma once
 #include "okay/Math/Vec2.hpp"
 #include "okay/Physics/PhysicsDebug.hpp"
+#include "okay/Physics/PhysicsQuality.hpp"
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <utility>
 #include <vector>
@@ -63,9 +65,22 @@ class Physics2D {
 public:
     static constexpr std::uint32_t kAllLayers = 0xFFFFFFFFu;
 
-    Physics2D() { for (int i = 0; i < 32; ++i) m_layerMask[i] = 0xFFFFFFFFu; }
+    Physics2D();          // (out of line: the solver memory is an incomplete type here)
+    ~Physics2D();
+    Physics2D(const Physics2D&) = delete;
+    Physics2D& operator=(const Physics2D&) = delete;
 
     Vec2 gravity{0.0f, -9.81f};
+
+    /// Classic (the original single-pass step, what old scenes use) or Improved (iterated contacts with two points per box
+    /// face, stacks that stand, bodies that sleep together, rolling resistance; see PhysicsQuality.hpp and docs/physics.md).
+    /// Saved in the scene file as `physicsquality`; a scene without the record is Classic.
+    PhysicsQuality quality = PhysicsQuality::Classic;
+    /// Improved: how many times the contact solver repeats per step (more = stiffer stacks, slower). 4 to 30.
+    int solverIterations = 10;
+    /// What the last Step did.
+    const PhysicsStepStats& Stats() const { return m_stats; }
+    struct Solver;                      // (the Improved step's memory; defined in Physics2DImproved.inl)
 
     /// Advance the simulation for `scene` by `dt` seconds.
     void Step(Scene& scene, float dt);
@@ -145,20 +160,27 @@ public:
 
     // ---- Debug view ----------------------------------------------------
     /// Forget last frame's debug rays / contacts (Scene::Update calls this).
-    void BeginDebugFrame() { m_debugRays.clear(); m_debugContacts.clear(); }
+    void BeginDebugFrame() { m_debugRays.clear(); m_debugContacts.clear(); m_debugBodies.clear(); m_debugJoints.clear(); }
     /// Record a query ray for the debug overlay (no-op unless the debug view is
     /// collecting rays from scripts).
     void RecordQueryRay(const Vec2& origin, const Vec2& direction, float maxDistance,
                         const RaycastHit2D& hit, float radius = 0.0f);
     const std::vector<PhysicsDebugRay2D>& DebugRays() const { return m_debugRays; }
     const std::vector<PhysicsDebugContact2D>& DebugContacts() const { return m_debugContacts; }
+    /// Bodies and joints of the last step (filled only while the debug view collects).
+    const std::vector<PhysicsDebugBody2D>& DebugBodies() const { return m_debugBodies; }
+    const std::vector<PhysicsDebugJoint2D>& DebugJoints() const { return m_debugJoints; }
 
 private:
     using Pair = std::pair<Collider2D*, Collider2D*>;
     std::set<Pair> m_contacts;          // contacts from the previous step
+    PhysicsStepStats m_stats;
+    std::unique_ptr<Solver> m_solver;   // the Improved contact solver's memory between steps (Physics2DImproved.inl)
     std::uint32_t  m_layerMask[32];     // layer collision matrix (bit b of a)
     std::vector<PhysicsDebugRay2D>     m_debugRays;      // this frame (debug view only)
     std::vector<PhysicsDebugContact2D> m_debugContacts;
+    std::vector<PhysicsDebugBody2D>    m_debugBodies;
+    std::vector<PhysicsDebugJoint2D>   m_debugJoints;
     /// Continuous collision for one fast body: sweep it along this step's motion
     /// and stop it at the first solid it would otherwise pass through.
     void SweepBody(Scene& scene, Rigidbody2D* rb, float dt);

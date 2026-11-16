@@ -46,4 +46,19 @@ inline GameObject* FindNearest(const Scene& scene, const std::string& name, cons
     return scene.Find(name);
 }
 
+
+/// The partner a joint names, found with FindNearest once and remembered on the joint until the scene's objects change
+/// (Scene::StructureVersion), so a scene with hundreds of joints does not search by name every physics step. `J` is Joint2D
+/// or Joint3D (it has connectedBody, gameObject and a partner cache). A name that finds nothing is searched again next time.
+template <class J>
+inline GameObject* CachedPartner(const Scene& scene, J* j) {
+    if (j->connectedBody.empty()) return nullptr;
+    const std::uint64_t version = scene.StructureVersion();
+    auto& c = j->partner;
+    if (c.object && c.version == version && c.object->name == j->connectedBody) return c.object;
+    c.object = FindNearest(scene, j->connectedBody, j->gameObject);
+    c.version = c.object ? version : 0;
+    return c.object;
+}
+
 } // namespace okay

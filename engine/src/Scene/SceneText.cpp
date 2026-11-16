@@ -87,7 +87,7 @@ const std::unordered_set<std::string>& KnownObjectKeys() {
     "character", "charbind", "charctrl2d", "charctrl3d", "charenabled", "charext", "chestinventory",
     "circlecollider2d", "cmbrain", "collectible", "compoff", "comporder", "consumables", "crafting", "craftingstation",
     "craftmenu", "crosshair", "ctmctrl", "ctmstance", "cylindercollider3d", "damagetouch", "daynight",
-    "destructible", "dialoguerunner", "dollycart", "dollypath", "draggable", "dropzone", "edgecollider2d",
+    "debrisemitter", "destructible", "dialoguerunner", "dollycart", "dollypath", "draggable", "dropzone", "edgecollider2d",
     "equipment", "eventsystem", "fbik", "fbikx", "flashlight", "follow2d", "footik",
     "fpctrl", "fpfeel", "fphand", "fphands", "fphands2", "fphands3", "fpstance", "frctrl",
     "gridinventory", "gridinventoryui", "groundshadow", "guid", "gun", "holdable", "holdprompt", "humretarget",

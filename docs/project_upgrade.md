@@ -93,6 +93,13 @@ checked against what was backed up), a project.okayproj the stamp had to create 
 done about it. The backup is kept. Because the stamp is written last, a crash or power loss in the middle leaves a project that still asks
 next time, and running the upgrade again finishes the job (a second run finds nothing to rewrite).
 
+### What the upgrade does not change: your numbers
+
+The upgrade rewrites a scene's **format** (the registered `okayscene N -> N+1` steps), never the values you set in it. A player's Walk Speed and Run Speed
+stay as saved, so an older project looks the same after an upgrade even though new projects now start with a real walk (2.0) and run (5.5 m/s). The
+Inspector's **Use natural walk and run speeds** button on the Player Controller moves a project over when you want it (Ctrl+Z undoes it). Doing it in the upgrade would
+need a format bump and an opt-in; see [walk_vs_run.md](walk_vs_run.md), "Older projects".
+
 ### What the backup holds and leaves out
 
 Everything in the project folder, byte for byte, dates kept, empty folders too. Left out: `.okay/backups` (the restore copies), build

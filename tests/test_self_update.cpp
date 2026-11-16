@@ -95,6 +95,26 @@ int main() {
         CHECK(v.kind == su::StartupKind::Confirmed && v.clearState);
         // A dev build ("dev" is older than every release) never crashes the rule.
         CHECK(su::EvaluateStartup(sw, "dev").kind == su::StartupKind::NotApplied);
+
+        // Going back from a test build to the release it was made on (docs/release_channels.md "Test builds") is the one deliberate downgrade. Its target is
+        // OLDER than what was running, so "the running version is the target or newer" would call a launcher that did not change "confirmed".
+        su::State back; back.phase = su::Phase::Swapped; back.from = "2.876.0.17"; back.to = "2.876.0"; back.attempts = 1;
+        v = su::EvaluateStartup(back, "2.876.0");                                  // the release is running: done
+        CHECK(v.kind == su::StartupKind::Confirmed && v.clearState && v.removeBackup && v.message.empty());
+        v = su::EvaluateStartup(back, "2.876.0.17");                               // the test build came up again: it did NOT apply
+        CHECK(v.kind == su::StartupKind::NotApplied && !v.clearState && v.showDialog && v.resetVersionFile && Has(v.message, "v2.876.0 did not apply") && Has(v.message, "still v2.876.0.17"));
+        v = su::EvaluateStartup(back, "2.877.0");                                  // something newer than where it started: not the old program, done
+        CHECK(v.kind == su::StartupKind::Confirmed && v.clearState);
+        CHECK(su::EvaluateStartup(back, "dev").kind == su::StartupKind::NotApplied);
+        su::State backFailed = back; backFailed.phase = su::Phase::Failed; backFailed.reason = "The new version did not pass its start-up check.";
+        CHECK(su::EvaluateStartup(backFailed, "2.876.0.17").kind == su::StartupKind::FailedBefore);   // rolled back: the test build is what runs, and the person is told
+        CHECK(su::EvaluateStartup(backFailed, "2.876.0").kind == su::StartupKind::Confirmed);
+        // Nothing changes for an ordinary update: a target that is newer than where it started.
+        su::State fwd = back; fwd.from = "2.876.0"; fwd.to = "2.876.0.17";
+        CHECK(su::EvaluateStartup(fwd, "2.876.0").kind == su::StartupKind::NotApplied && su::EvaluateStartup(fwd, "2.876.0.17").kind == su::StartupKind::Confirmed);
+        // The update helper's check (`--okay-selfcheck <version>`) is exact in both directions already.
+        const char* argvBack[] = {"prog", "--okay-selfcheck", "2.876.0"};
+        CHECK(su::SelfCheck(3, const_cast<char**>(argvBack), "2.876.0") == su::kSelfCheckOk && su::SelfCheck(3, const_cast<char**>(argvBack), "2.876.0.17") == su::kSelfCheckWrongVersion);
     }
 
     RUN_SUITE("self-update: retry rule (no loop)");

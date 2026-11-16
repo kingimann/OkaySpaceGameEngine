@@ -1,5 +1,38 @@
 OkaySpace Game Engine — Changelog
 
+v2.878.0
+  Walking, physics and digging
+  - Walking looks like walking and running looks like running. The default
+    speeds are now 2 m/s walking and 5.5 m/s running (they were close to each
+    other), and the legs, arms and body follow the speed. Old projects keep
+    the speeds they saved. To switch one over, select the player and press
+    "Natural walk and run speeds" in the Inspector.
+  - Voxel terrain: digging or adding ground no longer drops the frame rate
+    (only the touched part of the terrain is rebuilt; set
+    OKAY_VOXEL_OLD_REMESH=1 to bring the old way back). Digging can now work
+    like real life, all of it off until you tick it: ground made of materials
+    (dirt, sand, stone, ore), dug ground becomes pieces you can pick up and
+    build with, wide tunnel roofs can cave in, water and lava can be poured
+    into holes, footprints press into soft ground, and a pickaxe is needed
+    for stone. Try examples\voxel\voxel_realistic.okayscene and
+    voxel_tools.okayscene.
+  - Physics: a new "Physics quality" setting (Project Settings > Physics).
+    Improved keeps crate towers standing and lets resting things sleep,
+    stops fast bullets going through thin walls, and fixes ramps and
+    springs. Classic is the old physics with the bug fixes. Old scenes stay
+    Classic, new scenes are Improved. There is also a slider joint and a
+    joint and body debug view (View > Scene Overlays > Physics Debug). Try
+    examples\physics\physics_playground.okayscene.
+
+  Editor and launcher
+  - Test builds: in the launcher, Settings > Behavior > Startup & updates >
+    "Get test builds" (off by default) lets you try a branch before it is
+    released. "Go back to the stable version" undoes it.
+  - Every template and example scene is now tested, and the ones that were
+    broken are fixed.
+  - Nameplates stay on their own character, and world text accepts
+    [size=N].
+
 v2.877.0
   Editor
   - Visual Script: the Add Node menu (right-click the canvas or press Space)

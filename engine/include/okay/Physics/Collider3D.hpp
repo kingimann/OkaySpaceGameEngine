@@ -4,6 +4,7 @@
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Mathf.hpp"
 #include "okay/Math/Mat4.hpp"
+#include "okay/Physics/PhysicsMaterial.hpp"
 #include "okay/Physics/TriMesh.hpp"
 #include <cstdint>
 #include <string>
@@ -33,13 +34,22 @@ public:
     /// Trigger filter: which collider layers set this trigger off (bit n = layer n).
     std::uint32_t triggerLayers = 0xFFFFFFFFu;
 
+    // ---- Physics material (per collider) ----
+    /// This collider's friction coefficient. -1 (the default) means "use the Rigidbody's friction", exactly as before;
+    /// a number >= 0 overrides it. This is how a static floor (no Rigidbody) is made icy or sticky.
+    float friction = -1.0f;
+    /// This collider's bounciness [0,1]. -1 means "use the Rigidbody's bounciness"; >= 0 overrides it.
+    float bounciness = -1.0f;
+    /// How this collider's friction is combined with the one it touches (see PhysicsMaterial.hpp). Default = geometric mean.
+    CombineMode frictionCombine = CombineMode::Default;
+    /// How this collider's bounciness is combined with the one it touches. Default = the larger of the two.
+    CombineMode bounceCombine = CombineMode::Default;
+
     virtual Shape shape() const = 0;
 
-    /// World-space center of the collider.
-    Vec3 WorldCenter() const {
-        Vec3 p = transform ? transform->Position() : Vec3::Zero;
-        return p + offset;
-    }
+    /// World-space center of the collider. With the Improved physics quality the offset turns and scales with the object
+    /// (as a child at that local position would); Classic adds it to the position unturned and unscaled, as it always did.
+    Vec3 WorldCenter() const;
     /// World-space axis-aligned bounds (broad phase).
     virtual void WorldAABB(Vec3& outMin, Vec3& outMax) const = 0;
 };

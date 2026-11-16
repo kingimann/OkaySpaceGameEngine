@@ -4,6 +4,7 @@
 #include "okay/Modeling/Modifiers.hpp"
 #include "okay/Modeling/PolyOps.hpp"
 #include "okay/Modeling/SelectOps.hpp"
+#include "okay/Optimize/MeshSimplify.hpp"
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -153,8 +154,12 @@ int main() {
     POLYOP("SpinEdges", SpinEdges(pm, el, Vec3{a, 0, 0}, Vec3{0, 1, 0}, a * 180.0f, R(40) - 2, &err));
     POLYOP("ExtrudeAlongPath", ExtrudeAlongPath(pm, t, std::vector<Vec3>{Vec3{0, 0, 0}, Vec3{a, 1, 0}, Vec3{0, 2, a}}, &err));
     POLYOP("CompactVerts", CompactVerts(pm));
+    POLYOP("Creased CatmullClark", { for (const auto& ed : pm.Edges()) if (R(2)) pm.SetCrease(ed.a, ed.b, F(0.0f, 3.0f)); pm = CatmullClark(pm, R(3)); });
     POLYOP("KnifeCut", KnifeCut(pm, std::vector<KnifePoint>{{R(8), R(8), a}, {R(8), -1, 0}}, &err));
     RUN_SUITE("fuzz: selection, recipes, modifiers");
+    MESHOP("Shrinkwrap", Shrinkwrap(m, v, RandomMesh(), R(2) ? WrapMode::Nearest : WrapMode::Project, a, a, Vec3{a, 1, 0}));
+    MESHOP("SetCrease", { for (const auto& ed : e) m.SetCrease(ed.first, ed.second, a); });
+    MESHOP("SimplifyMesh", { okay::optimize::SimplifyOptions so; so.targetRatio = a; m = okay::optimize::SimplifyMesh(m, so).mesh; });
     MESHOP("GrowFaces", GrowFaces(m, t));
     MESHOP("ShrinkFaces", ShrinkFaces(m, t));
     MESHOP("SelectSimilar", SelectSimilar(m, t, (SimilarKind)R(4), a));

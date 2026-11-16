@@ -5135,6 +5135,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Versioning and release prep (41.9)
 - vertex buffer (38.9)
 - vertex colour (3.8)
+- Vertex colours, creases, shrinkwrap, mesh library (3.5.15)
 - vertex snap (44.1)
 - vibration (8.6)
 - Video playback (50.4)

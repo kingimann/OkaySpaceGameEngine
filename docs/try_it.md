@@ -731,6 +731,13 @@ headless software render of it.
 5. Press **Sym Y** (or **Z**) in the toolbar, select a vertex, press **G** and move: the partners across that plane move mirrored. In Edit Mesh tick **Start with symmetry on: X**, leave edit mode and enter it again: Symmetry X is already on.
 6. Ctrl+click two or more mesh objects in the Hierarchy, press **Ctrl+K**, type `join` and Enter: they become one object. Type `align` for Align Objects, `separate` on a mesh of several pieces to split it into objects, `cursor` then Enter to add a cube where the mouse pointed.
 
+**Vertex colours, creases, shrinkwrap, reduce, library (same section; real window unverified).** Open `examples\modeling_tools\vertex_paint_creases.okayscene`: a **Gradient Bar** already painted red to blue with vertex colours, a **Creased Cube** (its edges are pink in Edit Mesh) next to a plain cube, both with the Subdivision modifier, and a **Wrap Target** sphere.
+1. **Vertex colours.** Click **Gradient Bar**: it shows a smooth red-to-blue gradient. Tick Edit Mesh, Paint section, tick **Paint Brush (drag on mesh)** and **Vertex colours (smooth)**, pick green, drag over the bar: the colour blends in smoothly. Ctrl+Z undoes a stroke. Try **Smooth Colours** and **Clear Vertex Colours**. Switch the renderer in the editor's rendering settings (OpenGL, Direct3D 11, software) and look again.
+2. **Creases.** Click **Creased Cube** (it has a Subdivision modifier): it stays boxy; the plain cube beside it rounds into a blob. In Edit Mesh press key **2**, click an edge of the plain cube, set **Crease sharpness** to 2, press **Ctrl+K**, type `crease`, Enter: that edge turns pink and stays sharp after subdivision.
+3. **Shrinkwrap.** In the Hierarchy click **Gradient Bar**, Ctrl+click **Wrap Target**, tick Edit Mesh on the bar, select a few vertices (key 1), press Ctrl+K, type `snap`, Enter: those vertices jump onto the sphere. Try `shrinkwrap` for the whole mesh and change **Surface offset**.
+4. **Reduce Polygons.** Click the **Wrap Target** sphere (many triangles), Edit Mesh, set **Reduce to %** to 25, Ctrl+K, type `reduce`, Enter: the Console shows the triangle count dropping to about a quarter and the sphere still looks round.
+5. **Mesh library.** Use **Save as Mesh Asset** on a model, then Modeling > Import page > **Mesh library**: it appears (press Refresh); **Add** puts a copy in the scene.
+
 **Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
 
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,

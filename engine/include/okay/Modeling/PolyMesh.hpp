@@ -49,6 +49,11 @@ public:
     std::vector<Color> vertColors;
     /// UV seams: edges (a < b) the unwrapper cuts the surface open along.
     std::vector<std::pair<int, int>> seams;
+    /// Subdivision creases (see EdgeCrease): saved as "crease a b w" lines.
+    std::vector<EdgeCrease> creases;
+    float CreaseOf(int a, int b) const;
+    /// Set the sharpness of an edge (0 or less clears it).
+    void SetCrease(int a, int b, float w);
     bool IsSeam(int a, int b) const;
     /// Mark (on) or clear an edge as a seam.
     void SetSeam(int a, int b, bool on);

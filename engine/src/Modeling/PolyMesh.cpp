@@ -196,6 +196,22 @@ void PolyMesh::SetSeam(int a, int b, bool on) {
     else if (!on && it != seams.end()) seams.erase(it);
 }
 
+float PolyMesh::CreaseOf(int a, int b) const {
+    if (a > b) std::swap(a, b);
+    for (const EdgeCrease& c : creases) if (c.a == a && c.b == b) return c.w;
+    return 0.0f;
+}
+void PolyMesh::SetCrease(int a, int b, float w) {
+    if (a == b || a < 0 || b < 0) return;
+    if (a > b) std::swap(a, b);
+    for (std::size_t i = 0; i < creases.size(); ++i)
+        if (creases[i].a == a && creases[i].b == b) {
+            if (w > 0.0f) creases[i].w = w; else creases.erase(creases.begin() + i);
+            return;
+        }
+    if (w > 0.0f) creases.push_back({a, b, w});
+}
+
 PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::vector<int>* triFace) {
     PolyMesh pm;
     if (triFace) triFace->assign(mesh.TriangleCount(), -1);
@@ -227,6 +243,8 @@ PolyMesh PolyMesh::FromMesh(const Mesh& mesh, const FromMeshOptions& opt, std::v
     }
     for (const auto& e : mesh.seams)
         if (e.first >= 0 && e.second >= 0 && e.first < nv && e.second < nv) pm.SetSeam(remap[e.first], remap[e.second], true);
+    for (const EdgeCrease& c : mesh.creases)
+        if (c.a >= 0 && c.b >= 0 && c.a < nv && c.b < nv && remap[c.a] != remap[c.b]) pm.SetCrease(remap[c.a], remap[c.b], std::max(c.w, pm.CreaseOf(remap[c.a], remap[c.b])));
     const bool hasGroups = (int)mesh.polyFace.size() == mesh.TriangleCount() && !mesh.polyFace.empty();
     const bool hasSlots = mesh.HasSlots();
     if (hasSlots) pm.slotColors = mesh.slotColors;
@@ -445,6 +463,11 @@ Mesh PolyMesh::ToMesh(std::vector<int>* triFace, bool splitSeams) const {
             for (std::size_t c = 0; c < f.verts.size(); ++c) edges.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
         for (const auto& e : seams) if (edges.count(Key(e.first, e.second))) m.seams.push_back(Key(e.first, e.second));
     }
+    if (!creases.empty()) {                              // creases that are still edges of some face
+        std::set<std::pair<int, int>> edgeSet;
+        for (const PolyFace& f : faces) for (std::size_t c = 0; c < f.verts.size(); ++c) edgeSet.insert(Key(f.verts[c], f.verts[(c + 1) % f.verts.size()]));
+        for (const EdgeCrease& c : creases) if (edgeSet.count(Key(c.a, c.b))) m.creases.push_back(c);
+    }
     if (triFace) *triFace = m.polyFace;
     return m;
 }
@@ -474,6 +497,7 @@ std::string PolyMesh::Serialize() const {
         if (c.r == 1 && c.g == 1 && c.b == 1 && c.a == 1) continue;     // white is the default: only the painted vertices are written
         o << "vcolor " << i << " " << c.r << " " << c.g << " " << c.b << " " << c.a << "\n";
     }
+    for (const EdgeCrease& c : creases) o << "crease " << c.a << " " << c.b << " " << c.w << "\n";
     for (const auto& e : seams) o << "seam " << e.first << " " << e.second << "\n";
     return o.str();
 }
@@ -537,6 +561,10 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
                 } else return fail(lineNo, "unknown face field '" + key + "'");
             }
             pm.faces.push_back(f);
+        } else if (tag == "crease") {
+            int a = -1, b = -1; float w = 0;
+            if (!(ls >> a >> b >> w) || a < 0 || b < 0) return fail(lineNo, "a crease needs two vertex numbers and a sharpness");
+            if (std::isfinite(w) && w > 0.0f) pm.SetCrease(a, b, std::min(w, 10.0f));
         } else if (tag == "vcolor") {
             int idx = -1; Color c;
             if (!(ls >> idx >> c.r >> c.g >> c.b >> c.a) || idx < 0) return fail(lineNo, "vcolor needs a vertex number and r g b a");
@@ -562,6 +590,8 @@ bool PolyMesh::Parse(const std::string& text, PolyMesh& out, std::string* error)
             if (v < 0 || v >= (int)pm.verts.size())
                 return fail(lineNo, "face " + std::to_string(i) + " uses vertex " + std::to_string(v) + ", which doesn't exist");
     if (pm.vertColors.size() > pm.verts.size()) return fail(lineNo, "a vcolor uses vertex " + std::to_string(pm.vertColors.size() - 1) + ", which doesn't exist");
+    for (const EdgeCrease& c : pm.creases)
+        if (c.b >= (int)pm.verts.size()) return fail(lineNo, "a crease uses vertex " + std::to_string(c.b) + ", which doesn't exist");
     for (const auto& e : pm.seams)
         if (e.second >= (int)pm.verts.size())
             return fail(lineNo, "a seam uses vertex " + std::to_string(e.second) + ", which doesn't exist");

@@ -43,6 +43,8 @@
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
+#include "okay/Modeling/MeshLibrary.hpp"        // browse .okaymesh parts in the project
+#include "okay/Optimize/MeshSimplify.hpp"      // edge-collapse polygon reduction
 #include "okay/Modeling/Arrange.hpp"          // align / distribute objects
 #include "okay/Modeling/ScreenSelect.hpp"      // box / circle / lasso select
 #include "okay/Modeling/SelectOps.hpp"      // grow / shrink / select similar, apply scale, how-do-I recipes
@@ -3550,6 +3552,9 @@ static bool g_cmdPaletteRequest = false;   // Ctrl+K, the Find button or the rig
 static int  g_cmdPaletteSel = 0;
 static char g_cmdFilter[64] = "";
 static float g_quickBevelW = 0.1f;
+static float g_reduceRatio = 50.0f;    // Reduce Polygons: percent of the triangles to keep
+static float g_creaseW = 2.0f;         // crease sharpness: levels of subdivision the edge stays sharp
+static float g_wrapOffset = 0.0f;      // shrinkwrap / snap to surface: how far to stay off the surface
 static bool s_insActive = false; static Mesh s_insStart; static std::vector<int> s_insFaces; static ImVec2 s_insC; static float s_insD0 = 100.0f;   // live inset state
 static bool s_selDrag = false; static ImVec2 s_selStart; static std::vector<ImVec2> s_lasso;                                    // box / lasso drag state
 static int   g_quickBevelSeg = 3;
@@ -3624,6 +3629,31 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         g_meshSelMode = 1; g_meshSelFaces = pmo::SelectByArea(mr->mesh, 0.0f, avg * 0.1f);
     });
     // Editing
+    add("Set Crease on Selected Edges", "", "Edit", "Keep the selected edges sharp when the Subdivision modifier rounds the mesh (sharpness set in Edit Mesh; shown pink).", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+        EditUndoPoint(ed, mr);
+        for (const auto& e : edges) mr->mesh.SetCrease(e.first, e.second, g_creaseW);
+        ed.dirty = true;
+    });
+    add("Clear Crease on Selected Edges", "", "Edit", "Remove the crease from the selected edges.", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+        EditUndoPoint(ed, mr);
+        for (const auto& e : edges) mr->mesh.SetCrease(e.first, e.second, 0.0f);
+        ed.dirty = true;
+    });
+    add("Reduce Polygons (Quality)", "", "Edit", "Cut the triangle count to the Reduce % in Edit Mesh by collapsing the least visible edges (keeps borders, UV seams and the shape; colours kept per face). Slots and vertex colours are dropped.", mr->mesh.TriangleCount() > 8, "The mesh is too small to reduce.", [&ed, mr] {
+        EditUndoPoint(ed, mr);
+        okay::optimize::SimplifyOptions o; o.targetRatio = std::clamp(g_reduceRatio * 0.01f, 0.02f, 1.0f); o.lockBoundary = false;
+        const int before = mr->mesh.TriangleCount();
+        okay::optimize::SimplifyResult res = okay::optimize::SimplifyMesh(mr->mesh, o);
+        res.mesh.name = "";
+        res.mesh.hiddenPos = mr->mesh.hiddenPos; res.mesh.hiddenUV = mr->mesh.hiddenUV; res.mesh.hiddenSlot = mr->mesh.hiddenSlot;
+        res.mesh.hiddenPoly = mr->mesh.hiddenPoly; res.mesh.hiddenColor = mr->mesh.hiddenColor;
+        mr->mesh = std::move(res.mesh);
+        g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+        ConsoleLog("Reduce Polygons: " + std::to_string(before) + " -> " + std::to_string(mr->mesh.TriangleCount()) + " triangles (error " + std::to_string(res.error) + ")" + (res.reachedTarget ? "" : ", stopped early by borders or seams"));
+        ed.dirty = true;
+    });
     add("Extrude Faces", "", "Edit", "Push the selected faces out by the Extrude distance.", anyFaces, needFaces, edit([](Mesh& m) { m.ExtrudeFaces(g_meshSelFaces, g_extrudeDist); }));
     add("Inset Faces", "", "Edit", "Shrink the selected faces into a border plus a smaller face.", anyFaces, needFaces, edit([](Mesh& m) { m.InsetFaces(g_meshSelFaces, g_insetAmt); }));
     add("Subdivide Selection", "", "Edit", "Split the selected faces into smaller ones.", anyFaces, needFaces, edit([](Mesh& m) { m.SubdivideFaces(g_meshSelFaces); g_meshSelFaces.clear(); }));
@@ -3825,6 +3855,35 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
             for (GameObject* g : gone) ed.scene().Destroy(g);
             ConsoleLog("Joined " + std::to_string(gone.size() + 1) + " objects"); ed.dirty = true;
         });
+    }
+    // ---- Shrinkwrap / snap to surface (the other selected mesh object is the target) ----
+    {
+        GameObject* target = nullptr;
+        for (GameObject* g : ed.MultiSelection()) if (g && g != mr->gameObject && g->GetComponent<MeshRenderer>() && !g->GetComponent<MeshRenderer>()->DisplayMesh().triangles.empty()) target = g;
+        const char* needTarget = "Ctrl+click a second mesh object (the surface to wrap onto) in the Hierarchy, keeping this one selected.";
+        auto wrap = [&ed, mr, target](pmo::WrapMode mode, bool selectionOnly) {
+            return [&ed, mr, target, mode, selectionOnly] {
+                const auto* tmr = target->GetComponent<MeshRenderer>();
+                Mesh tm = tmr->DisplayMesh();
+                const Mat4 toLocal = mr->gameObject->transform->LocalToWorldMatrix().Inverse() * target->transform->LocalToWorldMatrix();
+                for (Vec3& v : tm.vertices) v = toLocal.MultiplyPoint(v);
+                std::vector<int> vs;
+                if (selectionOnly) {
+                    if (g_meshSelMode == 0) vs = g_meshSelVerts;
+                    else if (g_meshSelMode == 2) for (const auto& e : g_meshSelEdges) { vs.push_back(e.first); vs.push_back(e.second); }
+                    else for (int t : g_meshSelFaces) if (t >= 0 && t < mr->mesh.TriangleCount()) for (int k = 0; k < 3; ++k) vs.push_back(mr->mesh.triangles[t * 3 + k]);
+                    if (vs.empty()) { ConsoleLog("Shrinkwrap: select some vertices first (or use Shrinkwrap Whole Mesh)", 1); return; }
+                }
+                const Vec3 down = mr->gameObject->transform->LocalToWorldMatrix().Inverse().MultiplyVector(Vec3{0, -1, 0});
+                EditUndoPoint(ed, mr);
+                const pmo::WrapReport r = pmo::Shrinkwrap(mr->mesh, vs, tm, mode, g_wrapOffset, 0.0f, down);
+                ConsoleLog("Shrinkwrap: moved " + std::to_string(r.moved) + " vertices onto '" + target->name + "'" + (r.missed ? ", " + std::to_string(r.missed) + " found nothing" : ""));
+                ed.dirty = true;
+            };
+        };
+        add("Snap Selection to Surface", "", "Object", "Move the selected vertices onto the nearest point of the other selected object's surface (offset in Edit Mesh).", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Nearest, true));
+        add("Shrinkwrap Whole Mesh to Other Object", "", "Object", "Wrap every vertex of this mesh onto the other selected object's surface (nearest point).", target != nullptr, needTarget, wrap(pmo::WrapMode::Nearest, false));
+        add("Project Selection Down onto Other Object", "", "Object", "Drop the selected vertices straight down (along world Y) onto the other selected object.", target != nullptr && (anyVerts || anyFaces || !g_meshSelEdges.empty()), target ? "Select vertices, edges or faces first." : needTarget, wrap(pmo::WrapMode::Project, true));
     }
     // ---- Quick primitives dropped where the mouse points ----
     {
@@ -28999,6 +29058,12 @@ void DrawModeling(EditorState& ed) {
                 ImGui::SameLine(); ImGui::SetNextItemWidth(70);
                 ImGui::DragFloat("##msnapr", &g_rotSnapDeg, 0.5f, 1.0f, 90.0f, "turn %.0f deg");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate snaps to multiples of this angle. Scale snaps to 0.1.");
+                ImGui::SetNextItemWidth(110); ImGui::DragFloat("Reduce to %##mereduce", &g_reduceRatio, 0.5f, 2.0f, 100.0f, "%.0f%%");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reduce Polygons (Ctrl+K, type reduce) keeps this percent of the triangles.");
+                ImGui::SetNextItemWidth(110); ImGui::DragFloat("Crease sharpness##mecrease", &g_creaseW, 0.05f, 0.1f, 10.0f, "%.1f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Used by Set Crease on Selected Edges (Ctrl+K, type crease): how many levels of subdivision the edge stays sharp.");
+                ImGui::SetNextItemWidth(110); ImGui::DragFloat("Surface offset##msnapo", &g_wrapOffset, 0.005f, -5.0f, 5.0f, "%.3f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap to Surface and Shrinkwrap (Ctrl+K, type shrinkwrap) leave the vertices this far off the other object's surface.");
                 const char* targets[] = {"Grid (increments)", "Vertex", "Edge", "Face"};
                 ImGui::SetNextItemWidth(150); ImGui::Combo("Snap to##msnapt", &g_snapTarget, targets, 4);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("What a Move (G) sticks to when Snap is on: grid steps, or the nearest vertex, edge or face of this mesh\n(the vertices you are moving are ignored).");
@@ -29570,6 +29635,46 @@ void DrawModeling(EditorState& ed) {
         if (ImGui::Button("Load##modelobj") && mr->meshPath[0]) LoadMeshFileInto(ed, mr);
         SaveMeshAssetButton(ed, go, mr);
 
+        // Mesh library: the .okaymesh parts in the project's Assets folder, ready to drop into the scene.
+        {
+            SectionHeader("Mesh library (project Assets)");
+            static std::vector<okay::modeling::MeshAssetInfo> s_lib; static bool s_libLoaded = false; static char s_libFilter[64] = "";
+            namespace fsl = std::filesystem;
+            const fsl::path assetsDir = ed.projectDir().empty() ? fsl::path("Assets") : fsl::path(ed.projectDir()) / "Assets";
+            const bool libRefresh = ImGui::Button("Refresh##meshlib");
+            if (!s_libLoaded || libRefresh) { s_lib = okay::modeling::ListMeshAssets(assetsDir.string()); s_libLoaded = true; }
+            ImGui::SameLine(); ImGui::SetNextItemWidth(150); ImGui::InputTextWithHint("##libfilter", "filter by name", s_libFilter, sizeof(s_libFilter));
+            const auto shown = okay::modeling::FilterMeshAssets(s_lib, s_libFilter);
+            if (s_lib.empty()) ImGui::TextDisabled("No .okaymesh files under %s yet. Save a model with Save as Mesh Asset and it appears here.", assetsDir.string().c_str());
+            ImGui::BeginChild("##meshlibbox", ImVec2(0, std::min(180.0f, 24.0f * (float)std::max<std::size_t>(1, shown.size()) + 8.0f)), true);
+            int shownRows = 0;
+            for (const auto& a : shown) {
+                if (++shownRows > 200) { ImGui::TextDisabled("... %d more (use the filter)", (int)shown.size() - 200); break; }
+                ImGui::PushID(shownRows);
+                ImGui::BeginDisabled(!a.readable);
+                if (ImGui::SmallButton("Add")) {
+                    Mesh loaded; std::string lerr;
+                    if (okay::modeling::LoadMeshAsset(a.path, loaded, nullptr, &lerr)) {
+                        ed.PushUndo();
+                        GameObject* o = ed.scene().CreateGameObject(a.name);
+                        auto* nmr = o->AddComponent<MeshRenderer>();
+                        nmr->mesh = std::move(loaded);
+                        std::error_code rec; const fsl::path rel = ed.projectDir().empty() ? fsl::path(a.path) : fsl::relative(fsl::path(a.path), fsl::path(ed.projectDir()), rec);
+                        nmr->meshPath = (rec || rel.empty()) ? a.path : rel.generic_string();
+                        nmr->meshPathHash = okay::modeling::GeometryHash(nmr->mesh);
+                        ed.Select(o); ed.dirty = true;
+                        ConsoleLog("Added '" + a.name + "' from the library");
+                    } else ConsoleLog("Mesh library: " + lerr, 1);
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip(a.readable ? "Put a copy in the scene, linked to this file." : "This file has no valid .okaymesh header.");
+                ImGui::SameLine();
+                ImGui::Text("%s%s%s", a.folder.empty() ? "" : (a.folder + "/").c_str(), a.name.c_str(), a.readable ? "" : "  (unreadable)");
+                if (a.readable) { ImGui::SameLine(); ImGui::TextDisabled("%d verts, %d faces", a.vertices, a.faces); }
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+        }
         // Add a finished model to the scene as its own object, with the collision you want.
         {
             SectionHeader("Add to scene as object");
@@ -45085,10 +45190,14 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
 
         // The polygon wireframe: the edges of the quads and n-gons, not the triangles
         // they're drawn with.
+        std::set<std::pair<int, int>> creaseSet;
+        for (const EdgeCrease& c : mesh.creases) creaseSet.insert({std::min(c.a, c.b), std::max(c.a, c.b)});
         for (const auto& e : EditPolyEdges(mesh)) {
             ImVec2 a, b;
-            if (vScreen(e.first, a) && vScreen(e.second, b))
-                dl->AddLine(a, b, IM_COL32(150, 172, 205, 150), 1.0f);
+            if (vScreen(e.first, a) && vScreen(e.second, b)) {
+                const bool cr = !creaseSet.empty() && creaseSet.count({std::min(e.first, e.second), std::max(e.first, e.second)});
+                dl->AddLine(a, b, cr ? IM_COL32(235, 90, 200, 235) : IM_COL32(150, 172, 205, 150), cr ? 2.5f : 1.0f);   // creases are pink
+            }
         }
         // UV seams, in red (Modeling > Edit Mesh > UVs & Seams).
         for (const auto& e : mesh.seams) {

@@ -92,3 +92,7 @@ Nothing here measures the editor window itself (selection, drawing): unmeasured.
 
 Per-frame work that was removed before it shipped: the command list now guesses "are edges selected" from the selection counts instead
 of working out the real edges every frame (that took milliseconds on big meshes). Not measured: drawing, selection picking, G / R / S in the real window.
+
+## Operator fuzz test (tests/test_modeling_fuzz.cpp, `modeling_fuzz`)
+
+Every Mesh and polygon tool, the selection helpers, the recipes and every modifier are run on random meshes (cube, sphere, cylinder, torus, joined, open, degenerate, empty) with hostile selections (nothing, everything, out-of-range numbers, repeats) and hostile amounts (0, negative, 1e9, NaN, infinity). Nothing may crash or leave a non-finite vertex or a triangle outside the vertex list. At 3000 rounds per operator it found and I fixed: NaN or infinite amounts turning every vertex into NaN in Poke, Bevel Vertices, Snap Grid, Soft Move, Smooth, Spherify, Twist, Taper, Bend, Stretch, Solidify, Displace (also absurd amounts overflowing its noise), Loop Cut position, Edge Slide, Split Edge, Merge Verts, Extrude Along Path; modifiers loaded with a NaN setting (every modifier now refuses with "A setting is not a number"); and Fill, Grid Fill and Bridge accepting edges that name vertices that do not exist (a face with a bad index). Default run is 120 rounds; set OKAY_FUZZ_ROUNDS for more. Undo restoring is by whole-mesh copy, so it is not fuzzed separately.

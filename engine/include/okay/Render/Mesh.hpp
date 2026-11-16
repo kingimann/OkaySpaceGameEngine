@@ -27,6 +27,9 @@ namespace okay {
 /// describe 3D geometry; the editor renders these as wireframes and a future
 /// GPU backend can upload them directly. `name` tags built-in primitives so they
 /// can be serialized compactly.
+/// A subdivision crease: the edge between vertices a and b stays sharp for `w` levels of subdivision (1 = one level).
+struct EdgeCrease { int a = 0, b = 0; float w = 0.0f; };
+
 struct Mesh {
     std::string       name;       // "Cube"/"Pyramid"/"Quad" for primitives
     std::vector<Vec3> vertices;
@@ -46,6 +49,8 @@ struct Mesh {
     std::vector<std::pair<int, int>> seams;  // UV seam edges (vertex index pairs): unwrapping
                                   // cuts the surface open along them. A pair that isn't an
                                   // edge of the mesh is ignored.
+    std::vector<EdgeCrease> creases; // subdivision creases (vertex pairs + sharpness); the Subdivision modifier keeps those edges sharp.
+                                  // A pair that isn't an edge of the mesh is ignored.
     std::vector<Color> vertexColors; // optional per-vertex colours (parallel to vertices); the renderers blend them smoothly
                                   // across each face and multiply them with the face colour and material colour.
                                   // Ignored when its size doesn't match the vertex count.
@@ -68,6 +73,14 @@ struct Mesh {
 
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
     bool HasFaceColors() const { return (int)triColors.size() == TriangleCount() && !triColors.empty(); }
+    /// Set (w > 0) or clear (w <= 0) the subdivision crease on the edge between vertices a and b.
+    void SetCrease(int a, int b, float w) {
+        if (a == b || a < 0 || b < 0 || !std::isfinite(w)) return;
+        if (a > b) std::swap(a, b);
+        for (std::size_t i = 0; i < creases.size(); ++i)
+            if (creases[i].a == a && creases[i].b == b) { if (w > 0.0f) creases[i].w = std::min(w, 10.0f); else creases.erase(creases.begin() + i); return; }
+        if (w > 0.0f) creases.push_back({a, b, std::min(w, 10.0f)});
+    }
     bool HasVertexColors() const { return !vertexColors.empty() && vertexColors.size() == vertices.size(); }
     /// Colour of corner vertex `v` (white without vertex colours).
     Color VertexColorOf(int v) const {
@@ -2433,6 +2446,19 @@ public:
             if (std::find(sm.begin(), sm.end(), std::make_pair(a, b)) == sm.end()) sm.push_back({a, b});
         }
         seams = std::move(sm);
+        {   // creases follow their vertices the same way (two that land on the same edge keep the sharper one)
+            std::vector<EdgeCrease> cr;
+            for (const EdgeCrease& c : creases) {
+                if (c.a < 0 || c.b < 0 || c.a >= (int)remap.size() || c.b >= (int)remap.size()) continue;
+                int a = remap[c.a], b = remap[c.b];
+                if (a == b) continue;
+                if (a > b) std::swap(a, b);
+                bool merged = false;
+                for (EdgeCrease& e : cr) if (e.a == a && e.b == b) { e.w = std::max(e.w, c.w); merged = true; break; }
+                if (!merged) cr.push_back({a, b, c.w});
+            }
+            creases = std::move(cr);
+        }
         vertices = std::move(unique);
         triangles = std::move(tris);
         if (hadUV) uvs = std::move(uniqueUV); else uvs.clear();

@@ -48,4 +48,13 @@ int RoundEdges(Mesh& m, const std::vector<std::pair<int, int>>& edges, float wid
 /// A four-legged table: a top slab and four legs, slot 0 for the top and slot 1 for the legs. Sizes are clamped to sensible values.
 Mesh MakeTable(float width = 1.6f, float depth = 0.9f, float height = 0.75f, float legSize = 0.07f, float topThickness = 0.06f);
 
+// ---- Shrinkwrap / snap to surface ------------------------------------------------------------------
+enum class WrapMode { Nearest, Project };   ///< Nearest: the closest point on the target; Project: along `dir` (either way) to where it hits
+struct WrapReport { int moved = 0, missed = 0; float maxMove = 0; };
+/// Move vertices of `m` onto the surface of `target` (both in the same space; the editor converts). `verts` = which vertices (empty = all),
+/// `offset` pushes the result away from the surface along its normal, `maxDistance` (> 0) leaves vertices farther than that where they are
+/// (0 = no limit). Project mode casts along `dir` in both directions and takes the nearer hit. Vertices that find nothing are counted in `missed`.
+WrapReport Shrinkwrap(Mesh& m, const std::vector<int>& verts, const Mesh& target, WrapMode mode, float offset = 0.0f,
+                      float maxDistance = 0.0f, const Vec3& dir = Vec3{0, -1, 0});
+
 } // namespace okay::modeling

@@ -120,7 +120,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 - Improve the blocky character's arms, especially in first person
 - Script language phases 2 to 5: classes, physics and events, visual-script shared layer, tooling and debugger, export, replace the old VM
 - Per-face materials, the rest (renderer submeshes): material slots with a colour each are built (see [modeling.md](modeling.md), Material slots); slots can also carry a picture in the software renderer; per-slot pictures in OpenGL / Direct3D 11 / Direct3D 12, per-slot shaders, and separate draw calls per slot, are not built
-- Per-vertex colours (smooth colour painting): not built (asked for in the 2026-11-16 speed-features round, left undone on purpose: it needs a vertex colour stream in the software renderer and each GPU renderer, none of which can be run here); only per-face colours and slot colours exist, and every renderer would need a vertex colour stream first
+- Per-vertex colours: built (software, OpenGL, Direct3D 11, Direct3D 12 vertex paths; the three GPU paths were written but never run on a GPU); still open: a GPU look at them, per-slot textures and submeshes in the GPU renderers, reference images / blueprint planes, curve objects (bezier / NURBS) and text-to-mesh, live-preview booleans and bevel weights, quad remesh, retopology brushes; only per-face colours and slot colours exist, and every renderer would need a vertex colour stream first
 - Script editor: classes, default templates, no random script on New Script
 - Prone for first and third person
 - Player customization: more options

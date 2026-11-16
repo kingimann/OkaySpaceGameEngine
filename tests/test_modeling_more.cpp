@@ -4,6 +4,8 @@
 #include "okay/Modeling/MaterialLibrary.hpp"
 #include "okay/Modeling/Arrange.hpp"
 #include "okay/Modeling/EditTransform.hpp"
+#include "okay/Modeling/MeshLibrary.hpp"
+#include "okay/Optimize/MeshSimplify.hpp"
 #include "okay/Modeling/Measure.hpp"
 #include "okay/Modeling/ScreenSelect.hpp"
 #include "okay/Modeling/Modifiers.hpp"
@@ -14,6 +16,8 @@
 #include <set>
 #include <tuple>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 
 using namespace okay;
 using namespace okay::modeling;
@@ -812,6 +816,170 @@ int main() {
         // A stack's identity changes when only a colour changes (so it is rebuilt).
         Mesh k1 = Mesh::Cube(), k2 = Mesh::Cube(); k1.FillVertexColors({0}, red); k2.FillVertexColors({0}, Color{0, 0, 1, 1});
         CHECK(ModifierInputHash(k1, {}, ModifierContext()) != ModifierInputHash(k2, {}, ModifierContext()));
+    }
+    RUN_SUITE("shrinkwrap and snap to surface");
+    {
+        const Mesh cube = Mesh::Cube();                                                  // faces at +-0.5
+        auto onCube = [](const Vec3& p) { return std::fabs(std::max(std::fabs(p.x), std::max(std::fabs(p.y), std::fabs(p.z))) - 0.5f) < 1e-4f; };
+        Mesh sph = Mesh::Sphere(1.2f, 10, 14);
+        const WrapReport r = Shrinkwrap(sph, {}, cube, WrapMode::Nearest);
+        CHECK(r.moved == (int)sph.vertices.size() && r.missed == 0 && r.maxMove > 0.3f);
+        bool all = true; for (const Vec3& v : sph.vertices) if (!onCube(v)) all = false;
+        CHECK(all);                                                                      // every vertex now lies on the cube's surface
+        // An offset pushes the result away from the surface (along the triangle normal).
+        Mesh off = Mesh::Sphere(1.2f, 10, 14);
+        Shrinkwrap(off, {}, cube, WrapMode::Nearest, 0.1f);
+        float far = 0; for (const Vec3& v : off.vertices) far = std::max(far, std::max(std::fabs(v.x), std::max(std::fabs(v.y), std::fabs(v.z))));
+        CHECK(far > 0.59f && far < 0.61f);
+        // Only the chosen vertices move; a repeated or bad number is harmless.
+        Mesh part = Mesh::Sphere(1.2f, 10, 14); const Mesh before = part;
+        const WrapReport rp = Shrinkwrap(part, {3, 3, -1, 99999, 5}, cube, WrapMode::Nearest);
+        CHECK(rp.moved == 2 && part.vertices[3] != before.vertices[3] && part.vertices[5] != before.vertices[5] && part.vertices[4] == before.vertices[4]);
+        // maxDistance leaves far vertices alone (and counts them as missed).
+        Mesh near = Mesh::Sphere(3.0f, 8, 10);
+        const WrapReport rn = Shrinkwrap(near, {}, cube, WrapMode::Nearest, 0.0f, 0.5f);
+        CHECK(rn.moved == 0 && rn.missed == (int)near.vertices.size());
+        // Project: a flat sheet above the cube falls onto its top where it is over the cube, and misses elsewhere.
+        Mesh sheet = Mesh::Plane(4.0f);
+        for (Vec3& v : sheet.vertices) v.y += 2.0f;
+        const WrapReport rj = Shrinkwrap(sheet, {}, cube, WrapMode::Project, 0.0f, 0.0f, Vec3{0, -1, 0});
+        bool top = false, same = false;
+        for (const Vec3& v : sheet.vertices) { if (std::fabs(v.y - 0.5f) < 1e-4f) top = true; if (std::fabs(v.y - 2.0f) < 1e-4f) same = true; }
+        CHECK(rj.moved + rj.missed == (int)sheet.vertices.size() && (top || rj.moved == 0) && (same || rj.missed == 0));
+        // Nothing to wrap onto, NaN, or an empty mesh does nothing.
+        Mesh e = Mesh::Sphere(1, 6, 6); const Mesh e0 = e;
+        CHECK(Shrinkwrap(e, {}, Mesh{}, WrapMode::Nearest).moved == 0 && Shrinkwrap(e, {}, cube, WrapMode::Nearest, std::nanf("")).moved == 0 && e.vertices == e0.vertices);
+        CHECK(Shrinkwrap(*new Mesh(), {}, cube, WrapMode::Nearest).moved == 0);
+        // A big mesh stays fast (the grid keeps it from comparing every vertex with every triangle).
+        Mesh big = Mesh::Sphere(1.3f, 100, 140); const Mesh target = Mesh::Sphere(1.0f, 100, 140);
+        const auto t0 = std::chrono::steady_clock::now();
+        const WrapReport rb = Shrinkwrap(big, {}, target, WrapMode::Nearest);
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        CHECK(rb.moved == (int)big.vertices.size() && secs < 20.0);
+        for (const Vec3& v : big.vertices) { CHECK(std::fabs(v.Magnitude() - 1.0f) < 0.02f); break; }
+    }
+    RUN_SUITE("subdivision creases");
+    {
+        PolyMesh cube = PolyMesh::FromMesh(Mesh::Cube());
+        auto maxAbs = [](const PolyMesh& p) { return MeasureMesh(p.ToMesh()).volume; };   // the volume: 1 for the cube, less as it rounds off
+        const PolyMesh smooth = CatmullClark(cube, 2);
+        CHECK(maxAbs(smooth) < 0.75f);                                                    // a plain cube rounds off and shrinks
+        // Every edge creased for two levels: the cube stays a (finer) cube.
+        PolyMesh sharp = cube;
+        for (const auto& e : sharp.Edges()) sharp.SetCrease(e.a, e.b, 2.0f);
+        const PolyMesh keep = CatmullClark(sharp, 2);
+        CHECK(maxAbs(keep) > 0.99f && keep.faces.size() == smooth.faces.size() && keep.Check().Closed());
+        // Sharpness is used up one level at a time: 1 level of sharpness, 2 levels of subdivision, ends up rounder than 2 / 2.
+        PolyMesh one = cube;
+        for (const auto& e : one.Edges()) one.SetCrease(e.a, e.b, 1.0f);
+        const float m1 = maxAbs(CatmullClark(one, 2));
+        CHECK(m1 > maxAbs(smooth) && m1 < maxAbs(keep));
+        // The edges of one face only: that face stays flat and the rest rounds off.
+        PolyMesh topOnly = cube;
+        int top = -1; for (int f = 0; f < (int)topOnly.faces.size(); ++f) if (topOnly.FaceNormal(f).y > 0.9f) top = f;
+        const PolyFace tf = topOnly.faces[top];
+        for (std::size_t k = 0; k < tf.verts.size(); ++k) topOnly.SetCrease(tf.verts[k], tf.verts[(k + 1) % tf.verts.size()], 1.0f);
+        const PolyMesh t1 = CatmullClark(topOnly, 1);
+        int flat = 0; for (const Vec3& v : t1.verts) if (v.y > 0.5f - 1e-5f) ++flat;
+        CHECK(flat >= 9);                                                                 // the 4 corners, 4 edge middles and the face point
+        int flatPlain = 0; for (const Vec3& v : CatmullClark(cube, 1).verts) if (v.y > 0.5f - 1e-5f) ++flatPlain;
+        CHECK(flatPlain <= 1);                                                            // (only the face point lies in the plane)
+        // SetCrease: order does not matter, 0 clears, nonsense is ignored.
+        PolyMesh c; c.SetCrease(5, 2, 1.5f);
+        CHECK(c.CreaseOf(2, 5) == 1.5f && c.creases.size() == 1);
+        c.SetCrease(2, 5, 3.0f); CHECK(c.CreaseOf(5, 2) == 3.0f && c.creases.size() == 1);
+        c.SetCrease(2, 2, 1.0f); c.SetCrease(-1, 4, 1.0f); CHECK(c.creases.size() == 1);
+        c.SetCrease(2, 5, 0.0f); CHECK(c.creases.empty() && c.CreaseOf(2, 5) == 0.0f);
+        // Through Mesh <-> PolyMesh, the .okaymesh file and compacting.
+        Mesh cm = Mesh::Cube(); cm.creases = {{0, 1, 2.0f}};
+        const PolyMesh fromM = PolyMesh::FromMesh(cm);
+        CHECK(fromM.creases.size() == 1 && fromM.creases[0].w == 2.0f);
+        PolyMesh two = PolyMesh::FromMesh(Mesh::Cube()); const auto e0 = two.Edges()[0]; two.SetCrease(e0.a, e0.b, 2.5f);
+        CHECK(two.ToMesh().creases.size() == 1 && two.ToMesh().creases[0].w == 2.5f);
+        PolyMesh round; std::string err;
+        CHECK(PolyMesh::Parse(two.Serialize(), round, &err) && round.CreaseOf(e0.a, e0.b) == 2.5f);
+        CHECK(two.Serialize().find("crease ") != std::string::npos && PolyMesh::FromMesh(Mesh::Cube()).Serialize().find("crease") == std::string::npos);
+        CHECK(!PolyMesh::Parse("okaymesh 1\nverts 0\nfaces 0\ncrease 4 5\n", round, &err) && !PolyMesh::Parse("okaymesh 1\nverts 0\nfaces 0\ncrease 4 5 1\n", round, &err));
+        CHECK(PolyMesh::Parse("okaymesh 1\nverts 0\nfaces 0\n", round, &err) && round.creases.empty());
+        PolyMesh cp = PolyMesh::FromMesh(Mesh::Cube()); cp.verts.push_back(Vec3{9, 9, 9}); cp.SetCrease(7, 6, 1.0f);
+        const std::vector<int> rm = CompactVerts(cp);
+        CHECK(cp.creases.size() == 1 && cp.creases[0].a == std::min(rm[6], rm[7]));
+        Mesh sc = Mesh::Cube();
+        sc.SetCrease(3, 1, 2.0f); sc.SetCrease(1, 3, 5.0f); sc.SetCrease(0, 0, 1.0f); sc.SetCrease(0, 2, std::nanf(""));
+        CHECK(sc.creases.size() == 1 && sc.creases[0].a == 1 && sc.creases[0].b == 3 && sc.creases[0].w == 5.0f);
+        sc.SetCrease(1, 3, 99.0f); CHECK(sc.creases[0].w == 10.0f);
+        sc.SetCrease(3, 1, 0.0f); CHECK(sc.creases.empty());
+        // The modifier stack's Subdivision keeps creased edges sharp, and a change to a crease rebuilds it.
+        Mesh sub = Mesh::Cube();
+        { PolyMesh pc = PolyMesh::FromMesh(sub); for (const auto& e : pc.Edges()) pc.SetCrease(e.a, e.b, 3.0f); sub = pc.ToMesh(); }
+        MeshModifier mod = MeshModifier::Make(MeshModifier::Type::Subdivision); mod.levels = 2;
+        Mesh out; std::string merr;
+        CHECK(ApplyModifier(sub, mod, ModifierContext(), out, &merr));
+        Vec3 lo, hi; out.Bounds(lo, hi);
+        CHECK(hi.x > 0.499f && out.TriangleCount() > 12);
+        Mesh plainSub = Mesh::Cube(), plainOut;
+        CHECK(ApplyModifier(plainSub, mod, ModifierContext(), plainOut, &merr));
+        plainOut.Bounds(lo, hi); CHECK(hi.x < 0.46f);
+        Mesh h1 = Mesh::Cube(), h2 = Mesh::Cube(); h1.creases = {{0, 1, 1.0f}}; h2.creases = {{0, 1, 2.0f}};
+        CHECK(ModifierInputHash(h1, {}, ModifierContext()) != ModifierInputHash(h2, {}, ModifierContext()));
+        // Weld renumbers vertices: the crease follows.
+        Mesh w = Mesh::Cube(); const Vec3 pa = w.vertices[2];
+        w.vertices.push_back(pa); w.triangles.insert(w.triangles.end(), {8, 0, 1});
+        w.creases = {{8, 1, 2.0f}};
+        w.WeldVertices();
+        CHECK(w.creases.size() == 1 && w.creases[0].a >= 0 && w.creases[0].b < (int)w.vertices.size() && w.creases[0].w == 2.0f);
+    }
+    RUN_SUITE("mesh library: browsing .okaymesh parts");
+    {
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / "okay_mesh_library_test";
+        fs::remove_all(dir); fs::create_directories(dir / "props" / "deep"); fs::create_directories(dir / "walls");
+        std::string err;
+        CHECK(PolyMesh::FromMesh(Mesh::Cube()).Save((dir / "Crate.okaymesh").string(), &err));
+        CHECK(PolyMesh::FromMesh(Mesh::Sphere(1, 6, 8)).Save((dir / "props" / "Ball.okaymesh").string(), &err));
+        CHECK(PolyMesh::FromMesh(Mesh::Cylinder(0.5f, 1.0f, 8)).Save((dir / "props" / "deep" / "Barrel.okaymesh").string(), &err));
+        CHECK(PolyMesh::FromMesh(Mesh::Cube()).Save((dir / "walls" / "UPPER.OKAYMESH").string(), &err));
+        { std::ofstream o(dir / "notes.txt"); o << "okaymesh 1\n"; }                                  // not a mesh file
+        { std::ofstream o(dir / "Broken.okaymesh"); o << "this is not a mesh\n"; }                   // listed, but flagged unreadable
+        { std::ofstream o(dir / "walls" / "Empty.okaymesh"); }
+        const auto all = ListMeshAssets(dir.string());
+        CHECK(all.size() == 6);
+        // Sorted by folder, then name; "" (the top folder) first.
+        CHECK(all[0].folder.empty() && all[1].folder.empty() && all[0].name == "Broken" && all[1].name == "Crate");
+        const auto crate = std::find_if(all.begin(), all.end(), [](const MeshAssetInfo& a) { return a.name == "Crate"; });
+        CHECK(crate != all.end() && crate->readable && crate->vertices == 8 && crate->faces == 6 && crate->bytes > 20);
+        const auto barrel = std::find_if(all.begin(), all.end(), [](const MeshAssetInfo& a) { return a.name == "Barrel"; });
+        CHECK(barrel != all.end() && barrel->folder == "props/deep" && barrel->readable && barrel->faces > 8);
+        const auto brk = std::find_if(all.begin(), all.end(), [](const MeshAssetInfo& a) { return a.name == "Broken"; });
+        CHECK(brk != all.end() && !brk->readable && brk->vertices == 0);
+        const auto up = std::find_if(all.begin(), all.end(), [](const MeshAssetInfo& a) { return a.name == "UPPER"; });
+        CHECK(up != all.end() && up->readable);                                                         // the extension is matched in any case
+        // A listed file really loads.
+        PolyMesh loaded; CHECK(PolyMesh::Load(crate->path, loaded, &err) && loaded.faces.size() == 6);
+        // Filtering by name or folder, in any case; limits; missing and empty folders.
+        CHECK(FilterMeshAssets(all, "ball").size() == 1 && FilterMeshAssets(all, "PROPS").size() == 2 && FilterMeshAssets(all, "").size() == 6 && FilterMeshAssets(all, "zzz").empty());
+        CHECK(ListMeshAssets(dir.string(), 2).size() == 2);
+        CHECK(ListMeshAssets(dir.string(), 500, 1).size() == 5);                                       // depth 1: the props/deep file is too deep
+        CHECK(ListMeshAssets((dir / "nope").string()).empty() && ListMeshAssets("").empty() && ListMeshAssets((dir / "Crate.okaymesh").string()).empty());
+        fs::remove_all(dir);
+    }
+    RUN_SUITE("reduce polygons (edge collapse) as the modeler uses it");
+    {
+        Mesh sph = Mesh::Sphere(1.0f, 40, 56);
+        const int before = sph.TriangleCount();
+        const float vol0 = MeasureMesh(sph).volume;
+        okay::optimize::SimplifyOptions o; o.targetRatio = 0.25f;
+        const okay::optimize::SimplifyResult r = okay::optimize::SimplifyMesh(sph, o);
+        CHECK(r.reachedTarget && r.mesh.TriangleCount() < before * 0.3f && r.mesh.TriangleCount() > before * 0.2f);
+        CHECK(r.mesh.Topology().Closed());                                                  // still a closed solid
+        CHECK(std::fabs(MeasureMesh(r.mesh).volume - vol0) < vol0 * 0.08f);               // and still about the same size
+        // The same quality-versus-clustering check: the old Decimate (vertex clustering) at a similar count is rougher.
+        CHECK(r.error < 0.05f);
+        okay::optimize::SimplifyOptions ones; ones.targetRatio = 1.0f;
+        CHECK(okay::optimize::SimplifyMesh(sph, ones).mesh.TriangleCount() == before);
+        Mesh tiny = Mesh::Cube();
+        CHECK(okay::optimize::SimplifyMesh(tiny, o).mesh.TriangleCount() >= 4);
+        CHECK(okay::optimize::SimplifyMesh(Mesh{}, o).mesh.TriangleCount() == 0);
     }
     TEST_MAIN_RESULT();
 }

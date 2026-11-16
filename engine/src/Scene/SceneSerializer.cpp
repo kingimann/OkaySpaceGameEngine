@@ -981,6 +981,12 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             for (const Color& c : mr->mesh.slotColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
         }
+        // Subdivision creases (vertex pairs + sharpness), optional record.
+        if (!mr->mesh.creases.empty() && !generated) {
+            out << "  meshcreases " << mr->mesh.creases.size();
+            for (const EdgeCrease& c : mr->mesh.creases) out << " " << c.a << " " << c.b << " " << c.w;
+            out << "\n";
+        }
         // Per-vertex colours (smooth painting): optional record, follows the geometry so the count lines up.
         if (mr->mesh.HasVertexColors() && !generated) {
             out << "  meshvcolors " << mr->mesh.vertexColors.size();
@@ -4723,6 +4729,13 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int sl = 0; in >> sl;
                         mr->mesh.triSlot.push_back(sl < 0 ? 0 : (sl > 255 ? 255 : sl));
                     }
+                } else if (field == "meshcreases") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int cn = 0; in >> cn;
+                    if (!in || cn < 0 || !countOk(cn, 6)) return bad("meshcreases: bad count");
+                    mr->mesh.creases.clear();
+                    for (int i = 0; i < cn && in; ++i) { EdgeCrease c; in >> c.a >> c.b >> c.w; if (c.a >= 0 && c.b >= 0 && std::isfinite(c.w) && c.w > 0.0f) mr->mesh.creases.push_back(c); }
                 } else if (field == "meshvcolors") {
                     auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();

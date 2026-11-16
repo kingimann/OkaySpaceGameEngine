@@ -1,4 +1,5 @@
 #include "okay/Modeling/SelectOps.hpp"
+#include "okay/Modeling/Measure.hpp"
 #include "okay/Modeling/PolyOps.hpp"
 #include <algorithm>
 #include <array>
@@ -241,6 +242,102 @@ Mesh MakeTable(float width, float depth, float height, float legSize, float topT
     t.ApplySlotColors();
     t.RefreshNormals();
     return t;
+}
+
+namespace {
+// A uniform grid over the target's triangles, so each vertex only looks at nearby ones.
+struct TriGrid {
+    const Mesh& t; Vec3 lo{0, 0, 0}, cell{1, 1, 1}; int n[3] = {1, 1, 1};
+    std::vector<std::vector<int>> cells;
+    explicit TriGrid(const Mesh& target) : t(target) {
+        Vec3 hi{0, 0, 0}; bool any = false;
+        for (const Vec3& v : t.vertices) {
+            if (!any) { lo = hi = v; any = true; }
+            else { lo = Vec3{std::min(lo.x, v.x), std::min(lo.y, v.y), std::min(lo.z, v.z)}; hi = Vec3{std::max(hi.x, v.x), std::max(hi.y, v.y), std::max(hi.z, v.z)}; }
+        }
+        const int nt = t.TriangleCount();
+        const int res = std::clamp((int)std::cbrt((float)std::max(1, nt) * 0.5f) + 1, 1, 48);
+        for (int a = 0; a < 3; ++a) {
+            n[a] = res;
+            const float ext = (&hi.x)[a] - (&lo.x)[a];
+            (&cell.x)[a] = std::max(ext / (float)res, 1e-6f);
+        }
+        cells.assign((std::size_t)n[0] * n[1] * n[2], {});
+        for (int k = 0; k < nt; ++k) {
+            if (!Ok(k)) continue;
+            Vec3 bl = t.vertices[t.triangles[k * 3]], bh = bl;
+            for (int c = 1; c < 3; ++c) { const Vec3& v = t.vertices[t.triangles[k * 3 + c]]; bl = Vec3{std::min(bl.x, v.x), std::min(bl.y, v.y), std::min(bl.z, v.z)}; bh = Vec3{std::max(bh.x, v.x), std::max(bh.y, v.y), std::max(bh.z, v.z)}; }
+            int c0[3], c1[3];
+            for (int a = 0; a < 3; ++a) { c0[a] = idx((&bl.x)[a], a); c1[a] = idx((&bh.x)[a], a); }
+            for (int x = c0[0]; x <= c1[0]; ++x) for (int y = c0[1]; y <= c1[1]; ++y) for (int z = c0[2]; z <= c1[2]; ++z) cells[(std::size_t)(x * n[1] + y) * n[2] + z].push_back(k);
+        }
+    }
+    bool Ok(int k) const { for (int c = 0; c < 3; ++c) { const int v = t.triangles[k * 3 + c]; if (v < 0 || v >= (int)t.vertices.size()) return false; } return true; }
+    int idx(float v, int a) const { return std::clamp((int)std::floor((v - (&lo.x)[a]) / (&cell.x)[a]), 0, n[a] - 1); }
+    // Nearest surface point to p within `limit` (<= 0: anywhere). Returns the triangle or -1.
+    int Nearest(const Vec3& p, float limit, Vec3& out) const {
+        if (t.TriangleCount() == 0) return -1;
+        int best = -1; float bestD = limit > 0 ? limit : 1e30f;
+        const int c[3] = {idx(p.x, 0), idx(p.y, 1), idx(p.z, 2)};
+        std::vector<char> seen((std::size_t)t.TriangleCount(), 0);
+        const int maxRing = std::max(n[0], std::max(n[1], n[2]));
+        for (int ring = 0; ring <= maxRing; ++ring) {
+            for (int x = std::max(0, c[0] - ring); x <= std::min(n[0] - 1, c[0] + ring); ++x)
+                for (int y = std::max(0, c[1] - ring); y <= std::min(n[1] - 1, c[1] + ring); ++y)
+                    for (int z = std::max(0, c[2] - ring); z <= std::min(n[2] - 1, c[2] + ring); ++z) {
+                        if (std::max(std::abs(x - c[0]), std::max(std::abs(y - c[1]), std::abs(z - c[2]))) != ring) continue;   // only the new shell
+                        for (int k : cells[(std::size_t)(x * n[1] + y) * n[2] + z]) {
+                            if (seen[k]) continue;
+                            seen[k] = 1;
+                            const Vec3 q = ClosestOnTriangle(p, t.vertices[t.triangles[k * 3]], t.vertices[t.triangles[k * 3 + 1]], t.vertices[t.triangles[k * 3 + 2]]);
+                            const float d = (q - p).Magnitude();
+                            if (d <= bestD) { bestD = d; best = k; out = q; }
+                        }
+                    }
+            // Cells in the next ring are at least `ring * cell` away: stop once the best hit is closer than that.
+            const float minCell = std::min(cell.x, std::min(cell.y, cell.z));
+            if (best >= 0 && bestD <= (float)ring * minCell) break;
+        }
+        return best;
+    }
+};
+Vec3 TriNormal(const Mesh& t, int k) {
+    const Vec3& a = t.vertices[t.triangles[k * 3]];
+    const Vec3 n = Vec3::Cross(t.vertices[t.triangles[k * 3 + 1]] - a, t.vertices[t.triangles[k * 3 + 2]] - a);
+    return n.SqrMagnitude() > 1e-20f ? n.Normalized() : Vec3{0, 1, 0};
+}
+} // namespace
+
+WrapReport Shrinkwrap(Mesh& m, const std::vector<int>& verts, const Mesh& target, WrapMode mode, float offset, float maxDistance, const Vec3& dir) {
+    WrapReport r;
+    if (m.vertices.empty() || target.triangles.empty() || !std::isfinite(offset + maxDistance + dir.x + dir.y + dir.z)) return r;
+    std::vector<int> list = verts;
+    if (list.empty()) for (int i = 0; i < (int)m.vertices.size(); ++i) list.push_back(i);
+    const TriGrid grid(target);
+    const bool projecting = mode == WrapMode::Project && dir.SqrMagnitude() > 1e-12f;
+    const Vec3 d = projecting ? dir.Normalized() : Vec3{0, -1, 0};
+    std::vector<char> done(m.vertices.size(), 0);
+    for (int v : list) {
+        if (v < 0 || v >= (int)m.vertices.size() || done[v]) continue;
+        done[v] = 1;
+        const Vec3 p = m.vertices[v];
+        Vec3 hit{0, 0, 0}; int tri = -1;
+        if (projecting) {
+            const RayHit a = RayMeshHit(target, p, d), b = RayMeshHit(target, p, d * -1.0f);
+            const RayHit* pick = (a.found && (!b.found || a.t <= b.t)) ? &a : (b.found ? &b : nullptr);
+            if (pick && (maxDistance <= 0 || pick->t <= maxDistance)) { hit = pick->point; tri = pick->tri; }
+        } else {
+            tri = grid.Nearest(p, maxDistance, hit);
+        }
+        if (tri < 0) { ++r.missed; continue; }
+        Vec3 q = hit;
+        if (offset != 0.0f) q = hit + TriNormal(target, tri) * offset;
+        r.maxMove = std::max(r.maxMove, (q - p).Magnitude());
+        m.vertices[v] = q;
+        ++r.moved;
+    }
+    if (r.moved) { m.name = ""; m.RefreshNormals(); }
+    return r;
 }
 
 } // namespace okay::modeling

@@ -5,6 +5,7 @@
 #include <Okay.hpp>
 #include "okay/Components/MeshModifiers.hpp"
 #include "okay/Modeling/MeshAsset.hpp"
+#include "okay/Modeling/Measure.hpp"
 #include "okay/Modeling/PolyOps.hpp"
 #include "okay/Modeling/SelectOps.hpp"
 #include "okay/Render/SoftwareRenderer.hpp"
@@ -103,6 +104,34 @@ void BuildToolsScene(Scene& s) {
     auto* mm = arr->AddComponent<MeshModifiers>();
     mm->modifiers.push_back(MeshModifier::Make(MeshModifier::Type::CurveArray));
     mm->modifiers.back().count = 9;
+}
+// A strip painted red to blue with vertex colours, a creased cube and a plain cube (both with the Subdivision modifier), a sphere to wrap onto.
+Mesh MakeStrip() {
+    Mesh m;
+    const int N = 8;
+    for (int i = 0; i <= N; ++i) { const float x = -2.0f + 4.0f * (float)i / N; m.vertices.push_back({x, -0.5f, 0}); m.vertices.push_back({x, 0.5f, 0}); }
+    for (int i = 0; i < N; ++i) { const int a = i * 2; m.triangles.insert(m.triangles.end(), {a, a + 2, a + 3, a, a + 3, a + 1}); }
+    for (int i = 0; i <= N; ++i) { const float t = (float)i / N; for (int k = 0; k < 2; ++k) m.vertexColors.push_back(Color{1 - t, 0, t, 1}); }
+    return m;
+}
+void BuildVertexScene(Scene& s) {
+    GameObject* cam = s.CreateGameObject("Main Camera");
+    cam->transform->localPosition = {0.5f, 1.6f, 9.0f};
+    cam->AddComponent<Camera>()->projection = Camera::Projection::Perspective;
+    GameObject* sun = s.CreateGameObject("Sun");
+    sun->transform->localRotation = Quat::Euler(40, -30, 0);
+    sun->AddComponent<Light>();
+    Put(s, "Gradient Bar", MakeStrip(), {-2.6f, 0.6f, 0});
+    PolyMesh creased = PolyMesh::FromMesh(Mesh::Cube());
+    for (const auto& e : creased.Edges()) creased.SetCrease(e.a, e.b, 3.0f);
+    Put(s, "Creased Cube", creased.ToMesh(), {1.0f, 0.5f, 0});
+    Put(s, "Plain Cube", Mesh::Cube(), {2.8f, 0.5f, 0});
+    for (const char* nm : {"Creased Cube", "Plain Cube"}) {
+        auto* mm = s.Find(nm)->AddComponent<MeshModifiers>();
+        mm->modifiers.push_back(MeshModifier::Make(MeshModifier::Type::Subdivision));
+        mm->modifiers.back().levels = 2;
+    }
+    Put(s, "Wrap Target", Mesh::Sphere(0.7f, 24, 32), {5.0f, 0.7f, 0});
 }
 int Count(const Raster& r, const Color& c, int tol) {
     int n = 0;
@@ -362,7 +391,38 @@ int main() {
             std::string err;
             CHECK(vase.Save(std::string(out) + "/spun_vase.okaymesh", &err));
         }
+        if (const char* out = std::getenv("OKAY_WRITE_MODELING_EXAMPLES")) {
+            Scene v("Vertex colours, creases and shrinkwrap");
+            BuildVertexScene(v);
+            CHECK(SceneSerializer::SaveToFile(v, std::string(out) + "/vertex_paint_creases.okayscene"));
+        }
+        {   // the vertex / crease scene round-trips and the creased cube stays boxier than the plain one after subdivision
+            Scene v("vc2"); BuildVertexScene(v); v.Start();
+            for (const auto& go : v.Objects()) if (auto* m2 = go->GetComponent<MeshModifiers>()) m2->Refresh(true);
+            const std::string vp2 = (dir / "vc2.okayscene").string();
+            CHECK(SceneSerializer::SaveToFile(v, vp2));
+            { std::ifstream f(vp2); std::stringstream ss; ss << f.rdbuf(); CHECK(ss.str().find("meshcreases") != std::string::npos && ss.str().find("meshvcolors") != std::string::npos); }
+            Scene vr("vr"); CHECK(SceneSerializer::LoadFromFile(vr, vp2));
+            CHECK(!vr.Find("Creased Cube")->GetComponent<MeshRenderer>()->mesh.creases.empty());
+            CHECK(vr.Find("Gradient Bar")->GetComponent<MeshRenderer>()->mesh.HasVertexColors());
+            for (const auto& go : vr.Objects()) if (auto* m2 = go->GetComponent<MeshModifiers>()) m2->Refresh(true);
+            const float vc = MeasureMesh(vr.Find("Creased Cube")->GetComponent<MeshRenderer>()->DisplayMesh()).volume;
+            const float vp = MeasureMesh(vr.Find("Plain Cube")->GetComponent<MeshRenderer>()->DisplayMesh()).volume;
+            CHECK(vc > 0.95f && vp < 0.75f);
+        }
         if (const char* pic = std::getenv("OKAY_MODELING_PICTURE_DIR")) {
+            {   // picture of the vertex / crease scene
+                Scene t("pic2"); BuildVertexScene(t); t.Start();
+                for (const auto& go : t.Objects()) if (auto* m2 = go->GetComponent<MeshModifiers>()) m2->Refresh(true);
+                const Vec3 eye{0.5f, 1.6f, 9.0f}; const int W = 640, H = 360;
+                const Mat4 vpm = Mat4::Perspective(40.0f, (float)W / H, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.5f, 0.7f, 0}, Vec3::Up);
+                ApplySceneLight(t);
+                Raster rr; rr.Resize(W, H); rr.Clear(0xFF3A2A22u);
+                RenderMeshes(rr, t, vpm, eye);
+                Image img(W, H); std::memcpy(img.Data(), rr.color.data(), (std::size_t)W * H * 4);
+                fs::create_directories(pic);
+                CHECK(img.SavePNG(std::string(pic) + "/vertex_paint_creases.png"));
+            }
             Scene t("pic"); BuildToolsScene(t); t.Start();
             for (const auto& go : t.Objects()) if (auto* m2 = go->GetComponent<MeshModifiers>()) m2->Refresh(true);
             const Vec3 eye{1.4f, 2.8f, 16.5f}; const int W = 640, H = 360;

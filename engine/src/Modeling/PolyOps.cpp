@@ -1076,6 +1076,15 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
         if (a >= 0 && b >= 0 && a != b) seams.push_back(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
     }
     pm.seams = std::move(seams);
+    {
+        std::vector<EdgeCrease> cr;
+        for (const EdgeCrease& c : pm.creases) {
+            if (c.a < 0 || c.b < 0 || c.a >= (int)remap.size() || c.b >= (int)remap.size()) continue;
+            const int a = remap[c.a], b = remap[c.b];
+            if (a >= 0 && b >= 0 && a != b) cr.push_back({std::min(a, b), std::max(a, b), c.w});
+        }
+        pm.creases = std::move(cr);
+    }
     return remap;
 }
 
@@ -1122,6 +1131,8 @@ PolyMesh CatmullClarkOnce(const PolyMesh& pm) {
             edgePt[e] = (pm.verts[ed.a] + pm.verts[ed.b] + facePt[ed.faces[0]] + facePt[ed.faces[1]]) * 0.25f;
         else
             edgePt[e] = mid;
+        const float cw = std::clamp(pm.CreaseOf(ed.a, ed.b), 0.0f, 1.0f);   // a creased edge is cut at its middle: the crease stays sharp
+        if (cw > 0.0f) edgePt[e] = edgePt[e] + (mid - edgePt[e]) * cw;
     }
     // Vertex points.
     std::vector<std::vector<int>> vEdges(nv), vFaces(nv);
@@ -1154,6 +1165,22 @@ PolyMesh CatmullClarkOnce(const PolyMesh& pm) {
         R = R * (1.0f / (float)vEdges[v].size());
         vertPt[v] = (F + R * 2.0f + P * (n - 3.0f)) * (1.0f / n);
     }
+    // Creases: a vertex on two creased edges slides along the crease (1/8, 3/4, 1/8); on three or more it is a corner and stays.
+    if (!pm.creases.empty()) {
+        for (int v = 0; v < nv; ++v) {
+            std::vector<std::pair<int, float>> cs;                       // (the other end, its sharpness)
+            for (int e : vEdges[v]) {
+                const float w = pm.CreaseOf(edges[e].a, edges[e].b);
+                if (w > 0.0f) cs.push_back({edges[e].a == v ? edges[e].b : edges[e].a, std::min(w, 1.0f)});
+            }
+            if (cs.size() < 2) continue;
+            const Vec3& P = pm.verts[v];
+            Vec3 target = P; float k = 1.0f;
+            if (cs.size() == 2) { target = P * 0.75f + (pm.verts[cs[0].first] + pm.verts[cs[1].first]) * 0.125f; k = std::min(cs[0].second, cs[1].second); }
+            else for (const auto& c : cs) k = std::min(k, c.second);
+            vertPt[v] = vertPt[v] + (target - vertPt[v]) * k;
+        }
+    }
     // New mesh: original verts (moved), then edge points, then face points.
     PolyMesh out;
     out.verts = vertPt;
@@ -1163,6 +1190,10 @@ PolyMesh CatmullClarkOnce(const PolyMesh& pm) {
     if (vcol) { out.vertColors.assign(out.verts.size(), Color{1, 1, 1, 1}); for (int v = 0; v < nv; ++v) out.vertColors[v] = vcOf(v); }
     const int edgeBase = (int)out.verts.size();
     out.verts.insert(out.verts.end(), edgePt.begin(), edgePt.end());
+    for (std::size_t e = 0; e < edges.size(); ++e) {      // each level uses up one unit of sharpness; the halves of the edge keep what is left
+        const float w = pm.CreaseOf(edges[e].a, edges[e].b) - 1.0f;
+        if (w > 0.0f) { out.SetCrease(edges[e].a, edgeBase + (int)e, w); out.SetCrease(edgeBase + (int)e, edges[e].b, w); }
+    }
     if (vcol) for (const auto& ed : edges) {            // an edge point is halfway between its ends' colours
         const Color a = vcOf(ed.a), b = vcOf(ed.b);
         out.vertColors.push_back(Color{(a.r + b.r) * 0.5f, (a.g + b.g) * 0.5f, (a.b + b.b) * 0.5f, (a.a + b.a) * 0.5f});

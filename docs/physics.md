@@ -61,6 +61,43 @@ does.
 `examples/physics2d/casts_and_blast.okayscene` is a small Play scene: the near
 crate flies, the far crate does not, and a lookout's box cast names the wall.
 
+## Bad numbers in queries and spring joints
+
+A position can become NaN ("not a number") or infinite after a bug elsewhere, for
+example a division by zero in a script. These rules keep that one bad number from
+turning into a wrong answer.
+
+**Queries (2D and 3D).** A ray, line cast, shape cast or overlap whose origin,
+end point, size, radius, half-extents, rotation or direction is NaN or infinite
+reports **no hit** (an overlap returns nothing). Before this, in 3D a sphere, box
+or capsule cast from `(0, NaN, 0)` said "hit at distance 0" with a NaN point, and in
+2D a ray from a NaN origin could hit a box 100 units away and an overlap box with
+NaN half-extents returned colliders (Grok findings 20 and 21, issue #888). A NaN
+reach (`maxDistance`) also gives no hit. An **infinite reach** with a finite origin
+is still a normal query, as before (the 2D box and capsule casts already refused it
+and still do). Finite queries are unchanged.
+
+**Spring joints (Joint 2D and Joint 3D, Mode Spring).** Each step the spring may
+at most remove the whole stretch, and the damper may at most stop the stretching
+motion; it can no longer reverse it. In numbers: with `imSum = 1/massA + 1/massB`
+and the step `dt`, the damping is capped at `1 / (dt * imSum)` and the stiffness at
+`1 / (dt * dt * imSum)`. Before this, a light body (0.05 kg with damper 8, or
+0.01 kg with the default damper 2) at 60 steps a second was flung to about 1e19 m/s
+and then NaN within about a second (Grok finding 16). The caps only act when the
+spring was beyond what one step can follow, so an ordinary body (1 kg, spring 30,
+damper 2) moves exactly as it did before. A very light body on a stiff spring now
+settles in a few steps instead of exploding.
+
+How to try it:
+
+- Text script: `sphere_cast3`, `box_cast3` or `capsule_cast3` (3D), or `raycast`,
+  `box_cast` or `capsule_cast` (2D), from an origin with a NaN in it (for example
+  `sqrt(-1)`) returns no hit.
+- Put a **Joint 3D** in Spring mode on a 0.05 kg body (no gravity, anchor 2 m away,
+  rest length 1, damper 8) and press Play: it swings in to 1 m and stops, instead of
+  vanishing.
+- Tests: `grok_nan_queries` and `grok_spring_stability`.
+
 ## Physics step rate and parented bodies
 
 Physics can run at its own rate, and a rigidbody can live under another object.

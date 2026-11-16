@@ -143,6 +143,14 @@ add_test(NAME physics_layers COMMAND test_layers)
 add_executable(test_physics_nan test_physics_nan.cpp)
 target_link_libraries(test_physics_nan PRIVATE okay::engine)
 add_test(NAME physics_nan COMMAND test_physics_nan)
+# Grok findings 20/21 (#888): 2D and 3D rays, casts and overlaps with a NaN / infinite origin, size or direction say "no hit"
+add_executable(test_grok_nan_queries test_grok_nan_queries.cpp)
+target_link_libraries(test_grok_nan_queries PRIVATE okay::engine)
+add_test(NAME grok_nan_queries COMMAND test_grok_nan_queries)
+# Grok finding 16 (#888): a Spring joint on a light body stays stable at 60 fps (2D and 3D)
+add_executable(test_grok_spring_stability test_grok_spring_stability.cpp)
+target_link_libraries(test_grok_spring_stability PRIVATE okay::engine)
+add_test(NAME grok_spring_stability COMMAND test_grok_spring_stability)
 
 add_executable(test_physics3d test_physics3d.cpp)
 target_link_libraries(test_physics3d PRIVATE okay::engine)
@@ -2221,6 +2229,10 @@ add_test(NAME navmesh_areas COMMAND test_navmesh_areas)
 add_executable(test_navmesh_carving test_navmesh_carving.cpp)
 target_link_libraries(test_navmesh_carving PRIVATE okay::engine)
 add_test(NAME navmesh_carving COMMAND test_navmesh_carving)
+# Grok findings 23/29 (#888): agents, BT move tasks and Jump links never write NaN into a position
+add_executable(test_grok_nan_navmesh test_grok_nan_navmesh.cpp)
+target_link_libraries(test_grok_nan_navmesh PRIVATE okay::engine)
+add_test(NAME grok_nan_navmesh COMMAND test_grok_nan_navmesh)
 # Dialogue graphs: parse / write, traversal (lines, choices, conditions, sets, events,
 # items, quests), validation, the runner's Advance / Choose, the StoryState record
 add_executable(test_dialogue test_dialogue.cpp)

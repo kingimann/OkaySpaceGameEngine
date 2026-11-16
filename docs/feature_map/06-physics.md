@@ -52,11 +52,11 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
   - 6.3.1 Distance, spring and pin - `Components/Joint2D`, `Components/Joint3D` - rod, damped spring and weld solved by impulse plus position correction after contacts
   - 6.3.2 Hinge - `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit` - pins a point and lets the body spin; motor in both; angle limits in both (degrees from the start pose; the 3D stop uses `ClampHingeRotation`)
   - 6.3.3 Breakable joints - `Components/Joint2D`, `Components/Joint3D` - `breakable` and `breakForce` snap the joint when stretched, `broken` stops it
-- **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
+- **Code:** `Components/Joint2D`, `Components/Joint3D`, `Math/JointLimit`, `Physics/JointSpring` (per-step cap that keeps a light spring stable), `Physics/Physics2D`, `Physics/Physics3D` (the joint pass in Step), `editor/main.cpp` (Joint inspectors)
 - **API:** `Joint2D`, `Joint3D`, `Joint2D::Mode`, `connectedBody`, `anchor`, `spring`, `damper`, `breakable`, `useMotor`, `motorSpeed`, `useLimits`, `minAngle`, `maxAngle`
 - **Editor:** Add Component > "Joint 2D (distance/spring/pin)" and "Joint 3D (distance/spring/pin/hinge)"; inspectors for all four modes, with Use Limits / Min Angle / Max Angle on a hinge
 - **Docs:** -
-- **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`
+- **Tests:** `physics_joints`, `2d_expand`, `hinge2d`, `hinge3d`, `grok_spring_stability`
 - **Status:** Works - joint solver pass in Physics3D::Step and the two headers read; distance, spring, pin and hinge covered by the tests above
 - **Open:** Joint2D's header still says "no angular/hinge yet" and its Add Component row still says "(distance/spring/pin)" although a Hinge mode exists; joints connect by body name, not by object reference
 - **Related:** 6.1, 6.2, 5.8
@@ -92,7 +92,7 @@ Since #575 (scene hierarchy) both step functions skip bodies under an inactive p
 - **API:** `Physics3D::Raycast`, `RaycastAll`, `Linecast`, `SphereCast`, `BoxCast`, `CapsuleCast`, `OverlapSphere`, `Physics2D::Raycast`, `OverlapCircle`, `Physics2D::BoxCast`, `Physics2D::CapsuleCast`, `Physics2D::OverlapCapsule`, `RaycastHit3D`, `RaycastHit2D`, `PhysicsDebug::Collect`, script builtins `raycast_hit`, `box_cast`, `capsule_cast` and `overlap` (registered in area 13)
 - **Editor:** View > Scene Overlays > Physics Debug > Show physics, Rays cast from scripts
 - **Docs:** `docs/scripting.md`; demo `examples/physics2d/casts_and_blast.okayscene`
-- **Tests:** `queries`, `physics_queries_ext`, `physics2d_casts`, `script_physics`, `phys_math`, `physics_nan`
+- **Tests:** `queries`, `physics_queries_ext`, `physics2d_casts`, `script_physics`, `phys_math`, `physics_nan`, `grok_nan_queries`
 - **Status:** Works - query signatures and the debug record structs read; extended queries and debug recording covered by `physics_queries_ext`; 2D box and capsule casts, overlaps and their script and visual-script nodes covered by `physics2d_casts`; shape casts always end (a NaN or infinite reach is a miss, and a cast far from the origin stops after a fixed number of samples; `physics_nan`)
 - **Open:** no physics doc, so the query list is only in the headers and `docs/engine_api.md`; 3D shape casts skip triggers by default while rays include them (by design, per the header)
 - **Related:** 6.7, 13.6, 14.4, 9.5

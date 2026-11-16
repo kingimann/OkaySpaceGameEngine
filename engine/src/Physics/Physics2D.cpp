@@ -8,6 +8,8 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include "okay/Math/Mathf.hpp"
+#include "okay/Math/IKMath.hpp"
+#include "okay/Physics/JointSpring.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -626,7 +628,8 @@ void Physics2D::Step(Scene& scene, float dt) {
             Vec2 va = ra->velocity, vb = rbB ? rbB->velocity : Vec2::Zero;
             float vrelN = Vec2::Dot(vb - va, n);
             if (m == Joint2D::Mode::Spring) {
-                float f = j->spring * C + j->damper * vrelN;   // restore + damp, along n (A->B)
+                // restore + damp, along n (A->B), capped to what one step can follow (JointSpring.hpp)
+                float f = JointSpringForce(j->spring, j->damper, C, vrelN, imSum, dt);
                 Vec2 imp = n * (f * dt);
                 ra->velocity += imp * imA;
                 if (rbB && imB > 0.0f) rbB->velocity -= imp * imB;
@@ -798,6 +801,9 @@ RaycastHit2D Physics2D::Raycast(Scene& scene, const Vec2& origin, const Vec2& di
                                 std::uint32_t layerMask, bool queryTriggers) {
     RaycastHit2D best;
     best.distance = maxDistance;
+    // A NaN or infinite origin or direction, or a NaN reach, is no ray: no hit. A NaN origin used
+    // to pass the box and capsule slab tests and "hit" at distance 0, even 100 units away (Grok finding 21).
+    if (!Finite(origin) || !Finite(direction) || std::isnan(maxDistance)) return best;
     Vec2 dir = direction.Normalized();
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
         if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
@@ -818,6 +824,7 @@ std::vector<RaycastHit2D> Physics2D::RaycastAll(Scene& scene, const Vec2& origin
                                                 float maxDistance, GameObject* ignore,
                                                 std::uint32_t layerMask, bool queryTriggers) {
     std::vector<RaycastHit2D> hits;
+    if (!Finite(origin) || !Finite(direction) || std::isnan(maxDistance)) return hits;   // see Raycast
     Vec2 dir = direction.Normalized();
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
         if (!Passes(c, ignore, layerMask, queryTriggers)) continue;
@@ -834,6 +841,7 @@ std::vector<RaycastHit2D> Physics2D::RaycastAll(Scene& scene, const Vec2& origin
 }
 
 Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p, std::uint32_t layerMask, bool queryTriggers) {
+    if (!Finite(p)) return nullptr;   // a NaN / infinite point is inside nothing
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
         if (!Passes(c, nullptr, layerMask, queryTriggers)) continue;
         if (c->shape() == Collider2D::Shape::Box) {
@@ -861,6 +869,7 @@ Collider2D* Physics2D::OverlapPoint(Scene& scene, const Vec2& p, std::uint32_t l
 std::vector<Collider2D*> Physics2D::OverlapCircle(Scene& scene, const Vec2& center, float radius,
                                                   std::uint32_t layerMask, bool queryTriggers) {
     std::vector<Collider2D*> out;
+    if (!Finite(center) || !std::isfinite(radius)) return out;   // a NaN / infinite circle overlaps nothing
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
         if (!Passes(c, nullptr, layerMask, queryTriggers)) continue;
         bool hit = false;
@@ -890,6 +899,11 @@ struct Query2 {
     Vec2 a{}, b{};
     float r = 0.0f;
     Vec2 Center() const { return kind == Box ? box.c : (a + b) * 0.5f; }
+    // Every number that places or sizes the shape is finite; otherwise it is no shape at all.
+    bool AllFinite() const {
+        if (kind == Box) return okay::Finite(box.c) && okay::Finite(box.h) && okay::Finite(box.ax) && okay::Finite(box.ay);
+        return okay::Finite(a) && okay::Finite(b) && std::isfinite(r);
+    }
     // Half-size of the shape's bounds, for inflating a slab test.
     Vec2 Extent() const {
         if (kind == Box) {
@@ -1000,6 +1014,7 @@ bool QueryTouch(Collider2D* col, const Query2& q, Vec2& n, Vec2& point) {
 std::vector<Collider2D*> OverlapOf(Scene& scene, const Query2& q, std::uint32_t mask,
                                    bool queryTriggers, GameObject* ignore) {
     std::vector<Collider2D*> out;
+    if (!q.AllFinite()) return out;   // a NaN / infinite shape overlaps nothing
     for (Collider2D* c : scene.FindObjectsOfType<Collider2D>()) {
         if (!Passes(c, ignore, mask, queryTriggers)) continue;
         Vec2 n, p;
@@ -1013,6 +1028,7 @@ std::vector<Collider2D*> OverlapOf(Scene& scene, const Query2& q, std::uint32_t 
 RaycastHit2D SweepQuery(Scene& scene, const Query2& q, const Vec2& dir, float maxDist,
                         GameObject* ignore, std::uint32_t mask, bool queryTriggers) {
     RaycastHit2D best;
+    if (!q.AllFinite() || !Finite(dir) || std::isnan(maxDist)) return best;   // no shape, no hit (Grok finding 21)
     struct Cand { Collider2D* c; float t0, t1; };
     std::vector<Cand> cands;
     const Vec2 o = q.Center(), ext = q.Extent();
@@ -1084,6 +1100,8 @@ Query2 CapsuleQuery(const Vec2& a, const Vec2& b, float r) {
 std::vector<Collider2D*> Physics2D::OverlapBox(Scene& scene, const Vec2& center, const Vec2& half,
                                                std::uint32_t layerMask, bool queryTriggers,
                                                GameObject* ignore, float angle) {
+    // NaN half-extents used to pass the bounds test and return colliders (Grok finding 21).
+    if (!Finite(center) || !Finite(half) || !std::isfinite(angle)) return {};
     if (Mathf::Abs(angle) > 1e-5f)
         return OverlapOf(scene, BoxQuery(center, half, angle), layerMask, queryTriggers, ignore);
     std::vector<Collider2D*> out;
@@ -1147,6 +1165,8 @@ RaycastHit2D SweepCircle(Scene& scene, const Vec2& origin, float radius, const V
                          float maxDist, GameObject* ignore, std::uint32_t mask,
                          bool queryTriggers, bool skipStartOverlaps) {
     RaycastHit2D best;
+    // A NaN / infinite centre, radius or direction, or a NaN reach: no circle, no hit (Grok finding 21).
+    if (!Finite(origin) || !std::isfinite(radius) || !Finite(dir) || std::isnan(maxDist)) return best;
     struct Cand { Collider2D* c; float t0, t1; };
     std::vector<Cand> cands;
     float lo = 1e30f, hi = -1e30f;
@@ -1215,6 +1235,7 @@ RaycastHit2D SweepCircle(Scene& scene, const Vec2& origin, float radius, const V
 RaycastHit2D Physics2D::CircleCast(Scene& scene, const Vec2& origin, const Vec2& direction,
                                    float radius, float maxDistance, GameObject* ignore,
                                    std::uint32_t layerMask, bool queryTriggers) {
+    if (!std::isfinite(radius)) return RaycastHit2D{};   // NaN / infinite radius: no circle, no hit
     Vec2 dir = direction.Normalized();
     if (radius <= 0.0f) return Raycast(scene, origin, dir, maxDistance, ignore, layerMask, queryTriggers);
     return SweepCircle(scene, origin, radius, dir, maxDistance, ignore, layerMask, queryTriggers, false);
@@ -1223,6 +1244,7 @@ RaycastHit2D Physics2D::CircleCast(Scene& scene, const Vec2& origin, const Vec2&
 std::vector<Collider2D*> Physics2D::OverlapCapsule(Scene& scene, const Vec2& a, const Vec2& b, float radius,
                                                    std::uint32_t layerMask, bool queryTriggers,
                                                    GameObject* ignore) {
+    if (!std::isfinite(radius)) return {};   // CapsuleQuery would turn a NaN radius into 0
     return OverlapOf(scene, CapsuleQuery(a, b, radius), layerMask, queryTriggers, ignore);
 }
 
@@ -1240,6 +1262,7 @@ RaycastHit2D Physics2D::BoxCast(Scene& scene, const Vec2& center, const Vec2& ha
 RaycastHit2D Physics2D::CapsuleCast(Scene& scene, const Vec2& a, const Vec2& b, float radius,
                                     const Vec2& direction, float maxDistance, GameObject* ignore,
                                     std::uint32_t layerMask, bool queryTriggers) {
+    if (!std::isfinite(radius)) return RaycastHit2D{};   // Max(NaN, 0) would make it a thin capsule
     Vec2 dir = direction.Normalized();
     float r = Mathf::Max(radius, 0.0f);
     if (r <= 1e-6f && (a - b).SqrMagnitude() <= 1e-12f)

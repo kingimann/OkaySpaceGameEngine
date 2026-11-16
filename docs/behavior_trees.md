@@ -111,6 +111,13 @@ How the body moves depends on what else is on the object:
 The runner ticks before the controllers (execution order -20), so an order
 given this tick moves the body this frame.
 
+A movement goal that is not a finite point (a waypoint object whose position
+is NaN, for example) counts as blocked: Patrol moves on to the next waypoint,
+Wander picks a new point, MoveTo and Chase fail. Wander's **radius** is kept
+between 0.1 and 100000 m, so `radius = inf` (or `1e999`) roams 100 km instead of
+writing NaN into the position. Before this, both put NaN in the NPC's position
+on the first frame (Grok finding 23, issue #888). Test: `grok_nan_navmesh`.
+
 ## Sub-trees
 
 A **Run Sub-Tree** node runs a second `.okaybt` as a task. The sub-tree starts

@@ -8,6 +8,7 @@
 #include "okay/Components/NPCController.hpp"
 #include "okay/Components/NavMeshLink.hpp"
 #include "okay/Components/NavMeshObstacle.hpp"
+#include "okay/Math/IKMath.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Net/NetOwnership.hpp"
 #include "okay/Physics/Rigidbody3D.hpp"
@@ -27,6 +28,13 @@ inline float Dist2D(const Vec3& a, const Vec3& b) {
 }
 inline float Len2D(const Vec3& v) { return std::sqrt(v.x * v.x + v.z * v.z); }
 inline Vec3 Flat(const Vec3& v) { return Vec3{v.x, 0.0f, v.z}; }
+// Fields a script can set to anything (Grok finding 23): a NaN or a value below zero counts as 0,
+// so it can never reach the position. +infinity is kept (an infinite speed still means "at once").
+inline float NonNegative(float v) { return v >= 0.0f ? v : 0.0f; }
+inline float FiniteOrZero(float v) { return std::isfinite(v) ? v : 0.0f; }
+// The agent is there within this much of the goal, whatever the stopping distance: a stopping
+// distance of 0 used to leave it a few micrometres short with a path for ever.
+constexpr float kArriveSlack = 1e-3f;
 // Seconds until two discs touch, given the other's position / velocity relative to
 // us; a large value when they never do, 0 when they already overlap.
 float TimeToCollision(const Vec3& pRel, const Vec3& vRel, float R) {
@@ -47,6 +55,17 @@ NPCController* NavMeshAgent::Npc() const { return gameObject ? gameObject->GetCo
 ClickToMoveController* NavMeshAgent::Ctm() const { return gameObject ? gameObject->GetComponent<ClickToMoveController>() : nullptr; }
 
 void NavMeshAgent::SetDestination(const Vec3& worldPoint) {
+    if (!Finite(worldPoint)) {
+        // Not a place: refuse it like a goal that cannot be reached. Drop what was being pursued and
+        // stand still (HasPath() and Arrived() false). It used to be stored and, with no baked mesh,
+        // walked to, writing NaN into the position (Grok finding 23).
+        m_hasDest = false; m_arrived = false;
+        m_path.clear(); m_pathLinks.clear(); m_corner = 0; m_remaining = 0.0f;
+        if (NPCController* n = Npc()) n->CancelCommand();
+        else if (ClickToMoveController* c = Ctm()) c->ClearDestination();
+        m_drivenHadDest = false;
+        return;
+    }
     m_dest = worldPoint;
     m_hasDest = true; m_stopped = false; m_arrived = false;
     m_path.clear(); m_pathLinks.clear(); m_corner = 0; m_repath = 0.0f; m_stuckT = 0.0f; m_stuckCount = 0;
@@ -110,9 +129,9 @@ bool NavMeshAgent::Replan(Scene& scene, const Vec3& pos) {
 void NavMeshAgent::BeginLink(Scene& scene, const Vec3& pos, NavMeshLink* link, const Vec3& landing) {
     m_link = link;
     m_linkFrom = pos;
-    m_linkTo = Vec3{landing.x, landing.y + baseOffset, landing.z};
+    m_linkTo = Vec3{landing.x, landing.y + FiniteOrZero(baseOffset), landing.z};
     m_linkT = 0.0f;
-    m_linkDur = link->Duration(m_linkFrom, m_linkTo, speed);
+    m_linkDur = link->Duration(m_linkFrom, m_linkTo, NonNegative(speed));
     m_velocity = Vec3{0, 0, 0};
     if (onLinkStart) onLinkStart(*this, *link);
     Broadcast(scene, "nav_link_start");
@@ -203,8 +222,9 @@ void NavMeshAgent::Move(Scene& scene, const Vec3& pos, const Vec3& vel, float dt
     if (!transform) return;
     Vec3 np = pos + Vec3{vel.x * dt, 0.0f, vel.z * dt};
     if (const NavMesh* mesh = Navigation::Mesh(scene)) {
-        const Vec3 feet{np.x, np.y - baseOffset, np.z};
-        np.y = mesh->SampleHeight(feet, feet.y, 1.0f) + baseOffset;
+        const float off = FiniteOrZero(baseOffset);
+        const Vec3 feet{np.x, np.y - off, np.z};
+        np.y = mesh->SampleHeight(feet, feet.y, 1.0f) + off;
     }
     transform->SetPosition(np);
 }
@@ -212,7 +232,7 @@ void NavMeshAgent::Move(Scene& scene, const Vec3& pos, const Vec3& vel, float dt
 void NavMeshAgent::Face(const Vec3& vel, float dt) {
     if (!faceMovement || !transform || vel.x * vel.x + vel.z * vel.z < 0.01f) return;
     const Quat want = Quat::LookRotation(Vec3{vel.x, 0.0f, vel.z});
-    if (angularSpeed <= 0.0f) { transform->localRotation = want; return; }
+    if (!(angularSpeed > 0.0f)) { transform->localRotation = want; return; }   // 0, below 0 or NaN: snap
     float t = (angularSpeed * dt) / 180.0f;
     if (t > 1.0f) t = 1.0f;
     transform->localRotation = Quat::Slerp(transform->localRotation, want, t);
@@ -229,7 +249,7 @@ void NavMeshAgent::Animate(float dt) {
     lo.velocity = m_velocity;
     lo.facing = transform->localRotation * Vec3{0, 0, -1};
     lo.onGround = true;
-    lo.walkSpeed = speed; lo.runSpeed = speed * 2.0f;
+    lo.walkSpeed = NonNegative(speed); lo.runSpeed = lo.walkSpeed * 2.0f;
     lo.dt = dt;
     ch->DriveLocomotion(lo);
 }
@@ -311,7 +331,8 @@ void NavMeshAgent::Update(float dt) {
 
     bool linkAhead = false;   // a crossing still to make: not there yet, however short the rest looks
     for (std::size_t i = (std::size_t)m_corner + 1; i < m_pathLinks.size(); ++i) if (m_pathLinks[i]) { linkAhead = true; break; }
-    if (m_remaining <= stoppingDistance && !linkAhead) {   // there
+    const float stopDist = std::max(NonNegative(stoppingDistance), kArriveSlack);
+    if (m_remaining <= stopDist && !linkAhead) {   // there
         m_hasDest = false; m_arrived = true; m_path.clear(); m_pathLinks.clear(); m_corner = 0;
         m_velocity = Vec3{0, 0, 0};
         Move(scene, pos, m_velocity, dt);
@@ -322,8 +343,8 @@ void NavMeshAgent::Update(float dt) {
     Vec3 dir = Flat(target - pos);
     const float dl = Len2D(dir);
     dir = dl > 1e-5f ? dir * (1.0f / dl) : Vec3{0, 0, 0};
-    float want = speed;
-    if (autoBraking) want *= std::clamp((m_remaining - stoppingDistance) / 1.0f, 0.2f, 1.0f);
+    float want = NonNegative(speed);   // NaN or below 0: stand still (it used to run off, or go NaN)
+    if (autoBraking) want *= std::clamp((m_remaining - NonNegative(stoppingDistance)) / 1.0f, 0.2f, 1.0f);
     if (want * dt > m_remaining) want = m_remaining / dt;   // never step past the destination
     Vec3 desired = dir * want;
     desired = Avoid(scene, pos, desired);

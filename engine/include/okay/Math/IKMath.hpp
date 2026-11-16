@@ -3,7 +3,8 @@
 // IKMath — the small helpers every IK solver shares, so each one bends, blends
 // and guards the same way:
 //
-//   * Finite / SafeNormalize: a NaN or infinite goal never reaches a bone;
+//   * Finite / SafeNormalize: a NaN or infinite goal never reaches a bone (Finite is
+//     also the one finite check the physics queries and navigation use);
 //   * AimBone: the world rotation that turns a bone so its child lands on a
 //     goal direction, keeping the bone's roll (what FromToRotation does);
 //   * BlendWorldRotation: weight a solved rotation against the animated one
@@ -11,6 +12,7 @@
 //   * IKPole: one pole convention for every solver. The result is always a world
 //     DIRECTION from the limb's root, whichever way it was asked for.
 // ---------------------------------------------------------------------------
+#include "okay/Math/Vec2.hpp"
 #include "okay/Math/Vec3.hpp"
 #include "okay/Math/Quat.hpp"
 #include "okay/Scene/Transform.hpp"
@@ -19,6 +21,7 @@
 
 namespace okay {
 
+inline bool Finite(const Vec2& v) { return std::isfinite(v.x) && std::isfinite(v.y); }
 inline bool Finite(const Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
 inline bool Finite(const Quat& q) { return std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z) && std::isfinite(q.w); }
 

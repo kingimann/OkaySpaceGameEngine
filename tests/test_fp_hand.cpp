@@ -674,6 +674,7 @@ int main() {
         CHECK(!armActive(ch));
 
         auto* hands = player->AddComponent<FirstPersonHands>();
+        hands->UseOldLook();   // this block checks the old behaviour (fp_hand_normal checks the new default)
         for (int i = 0; i < 6; ++i) scene.Update(1.0f / 60.0f);
         CHECK(!armActive(ch));
         hands->showWhenEmpty = true;                 // a live edit, the way the inspector writes it
@@ -838,7 +839,7 @@ int main() {
         auto* got = player->GetComponent<FirstPersonHands>();
         CHECK(got);
         if (got) {
-            CHECK(!got->showWhenEmpty);          // ResetPlayerView put it back
+            CHECK(got->showWhenEmpty);           // ResetPlayerView put it back to the Normal default
             CHECK(got->holdMode == FirstPersonHands::HoldMode::Right);
             CHECK_NEAR(got->bobAmount, 1.0f, 1e-4f);
         }
@@ -849,7 +850,7 @@ int main() {
         if (got) {
             CHECK_NEAR(got->othersArmLift, 0.2f, 1e-4f);
             CHECK(got->left.sleeve);
-            CHECK_NEAR(got->right.position.x, 0.0f, 1e-4f);
+            CHECK_NEAR(got->right.position.x, -0.05f, 1e-4f);   // the Normal look sits the hand a little in from the edge
         }
     }
 

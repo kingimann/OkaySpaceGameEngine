@@ -1,6 +1,7 @@
 // okay::fbx layer 1: inflate + binary / ASCII FBX element tree. See FbxReader.hpp.
 // Written from the public description of the format; no third-party code.
 #include "NumParse.hpp"
+#include "okay/Core/Inflate.hpp"
 #include "okay/Render/FbxReader.hpp"
 
 #include <algorithm>
@@ -22,137 +23,11 @@ const Elem* Elem::Find(const char* n) const {
 // ============================================================================
 // Inflate (RFC 1950 wrapper around RFC 1951 deflate)
 // ============================================================================
-namespace {
-
-struct BitIn {
-    const std::uint8_t* p; std::size_t n, pos = 0; std::uint32_t buf = 0; int cnt = 0; bool bad = false;
-    BitIn(const std::uint8_t* d, std::size_t len) : p(d), n(len) {}
-    std::uint32_t Bits(int need) {
-        while (cnt < need) {
-            if (pos >= n) { bad = true; return 0; }
-            buf |= (std::uint32_t)p[pos++] << cnt; cnt += 8;
-        }
-        const std::uint32_t v = need ? (buf & ((1u << need) - 1u)) : 0u;
-        buf >>= need; cnt -= need;
-        return v;
-    }
-};
-
-struct Huff {
-    std::uint16_t count[16];
-    std::uint16_t sym[320];
-    bool Build(const std::uint8_t* len, int n) {
-        std::memset(count, 0, sizeof(count));
-        for (int i = 0; i < n; ++i) ++count[len[i]];
-        if (count[0] == n) return true;      // no codes: legal for an unused distance tree
-        int left = 1;
-        for (int l = 1; l < 16; ++l) { left <<= 1; left -= count[l]; if (left < 0) return false; }   // over-subscribed
-        std::uint16_t offs[16]; offs[1] = 0;
-        for (int l = 1; l < 15; ++l) offs[l + 1] = (std::uint16_t)(offs[l] + count[l]);
-        for (int i = 0; i < n; ++i) if (len[i]) sym[offs[len[i]]++] = (std::uint16_t)i;
-        return true;
-    }
-    int Decode(BitIn& in) const {
-        int code = 0, first = 0, index = 0;
-        for (int l = 1; l < 16; ++l) {
-            code |= (int)in.Bits(1);
-            if (in.bad) return -1;
-            const int c = count[l];
-            if (code - c < first) return sym[index + (code - first)];
-            index += c; first += c; first <<= 1; code <<= 1;
-        }
-        return -1;
-    }
-};
-
-const std::uint16_t kLenBase[29] = {3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258};
-const std::uint8_t  kLenExtra[29] = {0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0};
-const std::uint16_t kDistBase[30] = {1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577};
-const std::uint8_t  kDistExtra[30] = {0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13};
-
-bool InflateBlock(BitIn& in, const Huff& lit, const Huff& dist, std::vector<std::uint8_t>& out, std::size_t maxOut) {
-    for (;;) {
-        const int s = lit.Decode(in);
-        if (s < 0) return false;
-        if (s < 256) {
-            if (out.size() >= maxOut) return false;
-            out.push_back((std::uint8_t)s);
-        } else if (s == 256) {
-            return true;
-        } else {
-            const int li = s - 257;
-            if (li >= 29) return false;
-            const std::size_t len = kLenBase[li] + in.Bits(kLenExtra[li]);
-            const int ds = dist.Decode(in);
-            if (ds < 0 || ds >= 30) return false;
-            const std::size_t d = kDistBase[ds] + in.Bits(kDistExtra[ds]);
-            if (in.bad || d > out.size() || out.size() + len > maxOut) return false;
-            const std::size_t from = out.size() - d;
-            for (std::size_t k = 0; k < len; ++k) out.push_back(out[from + k]);   // may overlap: byte by byte
-        }
-    }
-}
-
-} // namespace
-
+// The decoder is the engine's one inflate (okay/Core/Inflate.hpp). Binary FBX arrays keep the forgiving
+// behaviour they always had: the Adler-32 and bytes after the stream are not checked (Options::Lenient).
 bool Inflate(const std::uint8_t* data, std::size_t n, std::vector<std::uint8_t>& out, std::size_t maxOut) {
-    out.clear();
-    if (n < 2) return false;
-    if ((data[0] & 0x0F) != 8 || ((data[0] << 8) | data[1]) % 31 != 0 || (data[1] & 0x20)) return false;   // deflate, no preset dictionary
-    BitIn in(data + 2, n - 2);
-    for (;;) {
-        const std::uint32_t last = in.Bits(1), type = in.Bits(2);
-        if (in.bad) return false;
-        if (type == 0) {
-            in.buf = 0; in.cnt = 0;                       // drop the partial byte
-            if (in.pos + 4 > in.n) return false;
-            const std::size_t len = in.p[in.pos] | (in.p[in.pos + 1] << 8);
-            const std::size_t nlen = in.p[in.pos + 2] | (in.p[in.pos + 3] << 8);
-            in.pos += 4;
-            if ((len ^ 0xFFFF) != nlen || in.pos + len > in.n || out.size() + len > maxOut) return false;
-            out.insert(out.end(), in.p + in.pos, in.p + in.pos + len);
-            in.pos += len;
-        } else if (type == 1) {
-            Huff lit, dist;
-            std::uint8_t l[288];
-            for (int i = 0; i < 144; ++i) l[i] = 8;
-            for (int i = 144; i < 256; ++i) l[i] = 9;
-            for (int i = 256; i < 280; ++i) l[i] = 7;
-            for (int i = 280; i < 288; ++i) l[i] = 8;
-            lit.Build(l, 288);
-            std::uint8_t dl[30]; for (int i = 0; i < 30; ++i) dl[i] = 5;
-            dist.Build(dl, 30);
-            if (!InflateBlock(in, lit, dist, out, maxOut)) return false;
-        } else if (type == 2) {
-            const int nlen = (int)in.Bits(5) + 257, ndist = (int)in.Bits(5) + 1, ncode = (int)in.Bits(4) + 4;
-            if (in.bad || nlen > 286 || ndist > 30) return false;
-            static const std::uint8_t order[19] = {16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15};
-            std::uint8_t cl[19] = {0};
-            for (int i = 0; i < ncode; ++i) cl[order[i]] = (std::uint8_t)in.Bits(3);
-            Huff ch;
-            if (in.bad || !ch.Build(cl, 19)) return false;
-            std::uint8_t lens[320] = {0};
-            int idx = 0;
-            while (idx < nlen + ndist) {
-                const int s = ch.Decode(in);
-                if (s < 0) return false;
-                if (s < 16) { lens[idx++] = (std::uint8_t)s; continue; }
-                int rep, val = 0;
-                if (s == 16) { if (idx == 0) return false; val = lens[idx - 1]; rep = 3 + (int)in.Bits(2); }
-                else if (s == 17) rep = 3 + (int)in.Bits(3);
-                else rep = 11 + (int)in.Bits(7);
-                if (in.bad || idx + rep > nlen + ndist) return false;
-                while (rep--) lens[idx++] = (std::uint8_t)val;
-            }
-            if (lens[256] == 0) return false;               // no end-of-block code
-            Huff lit, dist;
-            if (!lit.Build(lens, nlen) || !dist.Build(lens + nlen, ndist)) return false;
-            if (!InflateBlock(in, lit, dist, out, maxOut)) return false;
-        } else {
-            return false;
-        }
-        if (last) return true;
-    }
+    std::string why;
+    return okay::inflate::Zlib(data, n, out, okay::inflate::Options::Lenient(maxOut), why);
 }
 
 // ============================================================================

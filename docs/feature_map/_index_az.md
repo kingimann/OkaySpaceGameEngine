@@ -57,6 +57,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - Add Component (15.2)
 - Add Component menu (15.2.3)
 - Add library and procedural props (3.10)
+- Add Node topics (14.1.11)
 - add-ons (47.1)
 - add_test (19.2)
 - AddExplosionForce (6.8)

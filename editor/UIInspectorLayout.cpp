@@ -122,7 +122,7 @@ void DrawUILayoutComponentInspector(Component* comp, EditorState& ed, Component*
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Share of the line's spare room this widget takes (0 = keep its size).");
             if (ImGui::DragFloat("Shrink##ufi", &fi->shrink, 0.05f, 0.0f, 100.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Share of an overflow it gives up (0 = never shrinks).");
-            float bs[2] = {fi->baseSize.x, fi->baseSize.y};
+            float bs[2] = {fi->baseSize.x + 0.0f, fi->baseSize.y + 0.0f};   // a taken 0 is -0: show it as 0
             if (ImGui::DragFloat2("Base Size##ufi", bs, 1.0f, 0.0f, 8000.0f)) { fi->baseSize = {bs[0], bs[1]}; ed.dirty = true; }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Size before growing, shrinking or stretching (0 = its size when first laid out).");
             const char* align[] = {"Auto (layout's)", "Start", "Center", "End", "Stretch"};

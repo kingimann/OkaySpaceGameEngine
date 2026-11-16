@@ -4,6 +4,7 @@
 #include "okay/Scene/GameObject.hpp"
 #include "okay/Scene/Transform.hpp"
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace okay {
@@ -14,6 +15,16 @@ struct FlexChild {
     UIFlexItem* item = nullptr;
     float main = 0.0f, cross = 0.0f;   // laid-out size along / across the line
 };
+// Takes a flex item's base size from the widget the first time it is laid out.
+// A base of +0 (or below 0) means "not taken yet". A widget that is 0 long has a real
+// basis of 0, and that is stored as -0: it still reads as 0 everywhere and saves as
+// "-0" in the same field, but it is not taken again. Without the mark, the next
+// layout would take the size this layout wrote into the widget (its grown size) as
+// the basis (issue #888 finding 43). Any other value is stored as before.
+void TakeBase(float& base, float widget) {
+    if (!(base <= 0.0f) || (base == 0.0f && std::signbit(base))) return;   // authored, or already taken
+    base = widget == 0.0f ? -0.0f : widget;
+}
 // Flex layout in the box's own frame (children of a layout group resolve inside its
 // rect): main axis = x for a row, y for a column.
 void ArrangeFlex(UILayoutGroup& lg, float& contentSize) {
@@ -30,10 +41,11 @@ void ArrangeFlex(UILayoutGroup& lg, float& contentSize) {
         k.item = child->gameObject->GetComponent<UIFlexItem>();
         const float ownMain = row ? k.rect.size.x : k.rect.size.y, ownCross = row ? k.rect.size.y : k.rect.size.x;
         if (k.item && k.rect.sizePtr) {   // resizable: grow/shrink start from the base size, taken once
-            if (k.item->baseSize.x <= 0.0f) k.item->baseSize.x = k.rect.size.x;
-            if (k.item->baseSize.y <= 0.0f) k.item->baseSize.y = k.rect.size.y;
-            k.main = row ? k.item->baseSize.x : k.item->baseSize.y;
-            k.cross = row ? k.item->baseSize.y : k.item->baseSize.x;
+            TakeBase(k.item->baseSize.x, k.rect.size.x);
+            TakeBase(k.item->baseSize.y, k.rect.size.y);
+            // + 0.0f turns a taken zero (-0) back into a plain 0 for the arithmetic below.
+            k.main = (row ? k.item->baseSize.x : k.item->baseSize.y) + 0.0f;
+            k.cross = (row ? k.item->baseSize.y : k.item->baseSize.x) + 0.0f;
         } else {
             k.item = nullptr;             // no flex item (or a fixed-size widget): positioned only
             k.main = ownMain;

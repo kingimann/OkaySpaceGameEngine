@@ -838,6 +838,11 @@ add_executable(test_ui_layout_containers test_ui_layout_containers.cpp)
 target_link_libraries(test_ui_layout_containers PRIVATE okay::engine)
 add_test(NAME ui_layout_containers COMMAND test_ui_layout_containers)
 
+# A flex item with a zero basis keeps it after the first layout (issue #888 finding 43).
+add_executable(test_flex_zero_basis test_flex_zero_basis.cpp)
+target_link_libraries(test_flex_zero_basis PRIVATE okay::engine)
+add_test(NAME flex_zero_basis COMMAND test_flex_zero_basis)
+
 # UIFrame conversion and mirroring; also drives the editor's (ImGui-free) undo stack.
 add_executable(test_ui_frame test_ui_frame.cpp ${PROJECT_SOURCE_DIR}/editor/EditorState.cpp ${PROJECT_SOURCE_DIR}/shared/FileDialog.cpp)
 target_include_directories(test_ui_frame PRIVATE ${PROJECT_SOURCE_DIR}/editor)

@@ -938,6 +938,27 @@ next to each other. `hp 10` and `hp 9` stay two rows. The pill counts still coun
 **Status.** Logic tested headless (`test_debug_console`, 136 checks, run on Linux). `editor/ConsolePanel.cpp` and
 `editor/main.cpp` were NOT compiled (no SDL in this environment); the button and label are unverified until you look.
 
+## Flex Item with a zero width keeps its share (bug fix, issue #888 finding 43)
+
+A widget inside a Flex Row that is 0 wide and has a **UI Flex Item** with **Grow** 1 was laid out right for one frame,
+then all items became equal. Fixed: a zero basis stays zero.
+
+1. Windows editor: open or create a scene, then **GameObject > UI > Layout & Overlays > Flex Box**. In its **UI Layout
+   Group** card, check **Direction** is **Flex Row**, set **Box Size** to 400 and 100 and **Spacing** to 0.
+2. With the Flex Box selected, add three **GameObject > UI > Basic > Panel** (they go inside it). In each panel's
+   **UI Frame** card set **Size** to 0 and 100, 0 and 100, and 100 and 100 (the first number is the width).
+3. On each panel, **Add Component > UI Flex Item (grow / shrink)** and set **Grow** to 1.
+4. You should see the panels 100, 100 and 200 wide side by side (the first two share the spare room with the third).
+   Before the fix they jumped to 133 each after one frame. Press **Play**: they stay 100, 100 and 200. Save the scene,
+   reopen it and press **Play** again: still 100, 100 and 200.
+5. The panels' **UI Flex Item** card shows **Base Size** 0 for the first two and 100 for the third.
+
+The same holds for a **Flex Column** (heights) and for a 0-tall item with **Align** set to **Stretch**: switching the
+align back to **Start** returns it to 0 tall.
+
+**Status.** Tested headless on Linux: `test_flex_zero_basis` (41 checks; 19 failed before the fix) and the UI layout suites. The editor steps were not run (no Windows here),
+and the one-line Inspector change (show a stored "-0" as 0) was not compiled.
+
 ## Team tooling (not part of the Windows release)
 
 How to try the collaboration tools ([collaboration.md](collaboration.md)); these run on a Linux checkout and on GitHub, not in

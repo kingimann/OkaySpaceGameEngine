@@ -69,6 +69,13 @@ When you add several screens to one scene:
 - **Wrap in Panel** puts the selected widgets on a new card that fits around
   them.
 - **Fit to Children** shrinks or grows a card to wrap what's on it.
+- **Flex Box** (a Layout Group in Flex Row / Flex Column mode) sizes children
+  that have a **UI Flex Item**: **Grow** shares the spare room, **Shrink** gives
+  back an overflow. **Base Size** 0 means "use the widget's own size the first
+  time it is laid out". A widget that is 0 long keeps a basis of 0 for good, so
+  widths 0, 0 and 100 that all grow by 1 in a 400 px row stay 100, 100 and 200
+  on every frame and after save and load. Such a basis is saved as `-0` in the
+  scene file (the same field; older builds read it as 0).
 - With several widgets selected, the UI view's **Align** menu can also
   **Match width / height / size**, **Stack in a column / row** with a gap, and
   **Wrap in panel**.

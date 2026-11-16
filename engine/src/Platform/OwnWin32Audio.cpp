@@ -21,14 +21,36 @@
 #include <mmreg.h>
 #include <atomic>
 #include <cstring>
-#include <mutex>
-#include <thread>
 #include <vector>
 
 namespace okay::platform::win32 {
 namespace {
 
 constexpr int kBuffers = 4;
+
+// The Windows programs are built with MinGW's "win32" thread model, which has no std::thread or std::mutex
+// (CLAUDE.md rule 21a), so this file uses the Win32 calls directly: a CRITICAL_SECTION for the lock and
+// CreateThread for the worker. A critical section may be entered again by the thread that holds it.
+class CsLock {
+public:
+    CsLock() { InitializeCriticalSection(&m_cs); }
+    ~CsLock() { DeleteCriticalSection(&m_cs); }
+    CsLock(const CsLock&) = delete;
+    CsLock& operator=(const CsLock&) = delete;
+    void lock() { EnterCriticalSection(&m_cs); }
+    void unlock() { LeaveCriticalSection(&m_cs); }
+private:
+    CRITICAL_SECTION m_cs;
+};
+class CsHold {
+public:
+    explicit CsHold(CsLock& l) : m_l(l) { m_l.lock(); }
+    ~CsHold() { m_l.unlock(); }
+    CsHold(const CsHold&) = delete;
+    CsHold& operator=(const CsHold&) = delete;
+private:
+    CsLock& m_l;
+};
 constexpr size_t kCaptureCap = (size_t)1 << 20;
 
 std::string MmError(bool capture, MMRESULT r) {
@@ -46,8 +68,8 @@ public:
     ~WaveDevice() override {
         m_stop = true;
         if (m_event) SetEvent(m_event);
-        if (m_thread.joinable()) m_thread.join();
-        std::lock_guard<std::mutex> lk(m_mu);
+        if (m_thread) { WaitForSingleObject(m_thread, INFINITE); CloseHandle(m_thread); m_thread = nullptr; }
+        CsHold lk(m_mu);
         if (m_capture) { if (m_in) waveInReset(m_in); } else if (m_out) waveOutReset(m_out);   // returns every buffer as done
         for (int i = 0; i < kBuffers; ++i) {
             if (!m_hdr[i].lpData) continue;
@@ -81,13 +103,14 @@ public:
             m_hdr[i].dwFlags |= WHDR_DONE;   // idle: the worker queues it when the device is first un-paused
         }
         if (!m_capture) waveOutPause(m_out);   // a device starts paused
-        m_thread = std::thread([this] { Run(); });
+        m_thread = CreateThread(nullptr, 0, &WaveDevice::ThreadMain, this, 0, nullptr);
+        if (!m_thread) { err = "CreateThread failed"; return false; }
         return true;
     }
 
     const AudioSpec& Spec() const override { return m_spec; }
     void Pause(bool p) override {
-        std::lock_guard<std::mutex> lk(m_mu);
+        CsHold lk(m_mu);
         if (p == m_paused) return;
         m_paused = p;
         if (!p) {
@@ -99,28 +122,29 @@ public:
     }
     bool Queue(const void* d, uint32_t n) override {
         if (m_capture || m_spec.callback) return false;
-        std::lock_guard<std::mutex> lk(m_mu);
+        CsHold lk(m_mu);
         m_ring.Push(d, n);
         return true;
     }
     uint32_t QueuedBytes() const override {
-        std::lock_guard<std::mutex> lk(m_mu);
+        CsHold lk(m_mu);
         size_t n = m_ring.Size();
         if (!m_capture && !m_spec.callback) for (int i = 0; i < kBuffers; ++i) if (m_started && !(m_hdr[i].dwFlags & WHDR_DONE)) n += m_valid[i];
         return (uint32_t)n;
     }
-    void ClearQueued() override { std::lock_guard<std::mutex> lk(m_mu); m_ring.Clear(); }
+    void ClearQueued() override { CsHold lk(m_mu); m_ring.Clear(); }
     uint32_t Dequeue(void* out, uint32_t max) override {
-        std::lock_guard<std::mutex> lk(m_mu);
+        CsHold lk(m_mu);
         return (uint32_t)m_ring.Pop(out, max);
     }
 
 private:
+    static DWORD WINAPI ThreadMain(LPVOID self) { static_cast<WaveDevice*>(self)->Run(); return 0; }
     void Run() {
         while (!m_stop) {
             WaitForSingleObject(m_event, 20);   // the timeout also covers a lost wake-up
             if (m_stop) break;
-            std::lock_guard<std::mutex> lk(m_mu);
+            CsHold lk(m_mu);
             if (m_started && !m_paused) Service(false);
         }
     }
@@ -164,9 +188,9 @@ private:
     bool m_filled[kBuffers] = {false, false, false, false};
     bool m_started = false, m_paused = true;
     std::atomic<bool> m_stop{false};
-    mutable std::mutex m_mu;
+    mutable CsLock m_mu;
     AudioRing m_ring;
-    std::thread m_thread;
+    HANDLE m_thread = nullptr;   // the worker (CreateThread)
 };
 
 } // namespace

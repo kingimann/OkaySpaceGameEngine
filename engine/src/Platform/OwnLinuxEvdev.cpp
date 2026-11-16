@@ -55,7 +55,7 @@ bool LooksLikeGamepad(const std::string& path) {
     return ok;
 }
 
-std::mutex g_dbMu;
+std::mutex g_dbMu;   // lint-allow: win32-thread (this file is built on Linux only, cmake/OkayPlatform.cmake)
 pad::MappingDb& Db() {   // built-in table + $OKAY_PAD_MAPPINGS; callers hold g_dbMu
     static pad::MappingDb db = [] {
         pad::MappingDb d;
@@ -85,7 +85,7 @@ public:
         : m_fd(fd), m_caps(caps), m_name(std::move(name)), m_path(std::move(path)) {
         for (int c = 0; c < 64; ++c) { m_absPresent[c] = caps.abs[c].present; m_absMin[c] = caps.abs[c].min; m_absMax[c] = caps.abs[c].max; }
         if (caps.vendor || caps.product) {
-            std::lock_guard<std::mutex> dk(g_dbMu);
+            std::lock_guard<std::mutex> dk(g_dbMu);   // lint-allow: win32-thread (Linux only)
             if (const pad::Mapping* m = pad::FindForEvdev(Db(), caps.bus, caps.vendor, caps.product, caps.version)) { m_map = *m; m_mapped = true; }
         }
         std::lock_guard<std::mutex> lk(g_mu);
@@ -247,7 +247,7 @@ std::vector<std::string> GamepadNodes() {
 } // namespace
 
 size_t EvdevAddMappings(const std::string& text) {
-    std::lock_guard<std::mutex> dk(g_dbMu);
+    std::lock_guard<std::mutex> dk(g_dbMu);   // lint-allow: win32-thread (Linux only)
     return Db().AddText(text);
 }
 bool EvdevPadUsesMapping(const Gamepad* g) {

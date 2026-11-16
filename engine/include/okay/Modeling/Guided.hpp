@@ -112,6 +112,8 @@ struct Template {
     std::vector<StartDesign> starts;
     /// Build every part for a recipe whose params are already filled in and clamped.
     std::function<void(const Recipe&, std::vector<GeneratedPart>&)> generate;
+    /// Optional compatibility rule applied after a random change (for example: no wing spoiler on a pickup).
+    std::function<void(Recipe&)> constrain;
 };
 
 class Registry {
@@ -139,6 +141,24 @@ std::vector<GeneratedPart> Generate(const Recipe& r, std::string* error = nullpt
 PolyMesh Assemble(const std::vector<GeneratedPart>& parts);
 /// Generate + Assemble.
 PolyMesh Create(const Recipe& r, std::string* error = nullptr);
+
+// ---- Validation and variation ----------------------------------------------------------------------------------
+
+/// What is wrong, if anything, with a generated model.
+struct ValidationReport {
+    int parts = 0;
+    int components = 0;        ///< groups of parts that touch or overlap (1 = one connected object)
+    int nonFinite = 0, degenerate = 0, openParts = 0, invertedParts = 0, badIndices = 0;
+    std::vector<std::string> problems;
+    bool Ok() const { return nonFinite == 0 && degenerate == 0 && openParts == 0 && badIndices == 0; }
+};
+/// Checks every part: finite positions, no degenerate faces, closed (watertight), outward faces (positive volume), valid indices;
+/// and counts the connected groups of parts (bounding boxes that touch). `checkVolume` is off for subdivided (Ultra) models.
+ValidationReport Validate(const std::vector<GeneratedPart>& parts, bool checkVolume = true);
+
+/// A repeatable variation of `base` (the start design's recipe): every setting moves within +-`strength` of its range (default 15 percent),
+/// some parts get another design, then the template's compatibility rule runs. Same seed, same result.
+Recipe Randomise(const Template& t, const Recipe& base, uint32_t seed, float strength = 0.15f);
 
 // ---- Analysis and regeneration ----------------------------------------------------------------------------
 

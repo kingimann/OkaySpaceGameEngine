@@ -152,6 +152,21 @@ int main(int argc, char** argv) {
     RegisterBuiltinTemplates();
     const Template& T = *Registry::Instance().Find("fence");
 
+    if (argc > 3 && std::string(argv[3]) == "cars") {   // quick run: only the car silhouette and 3/4 sheets
+        const Template& C = *Registry::Instance().Find("car");
+        const int cols = 3, tw = 440, th = 220;
+        const int rows = ((int)C.starts.size() + cols - 1) / cols;
+        Img side(cols * tw, rows * th), q3(cols * tw, rows * 280);
+        side.Clear(40, 42, 48); q3.Clear(40, 42, 48);
+        for (int i = 0; i < (int)C.starts.size(); ++i) {
+            const PolyMesh m = Create(DefaultRecipe(C, C.starts[i].id));
+            Scene(side, m, (i % cols) * tw + 4, (i / cols) * th + 4, tw - 8, th - 8, 0.0f);
+            Scene(q3, m, (i % cols) * tw + 4, (i / cols) * 280 + 4, tw - 8, 272, 0.7f);
+        }
+        Save(dir, "cars_side_views.png", side);
+        Save(dir, "cars_three_quarter.png", q3);
+        return 0;
+    }
     // 1. The design browser's thumbnails (what the Guided page shows), and one picture per style.
     {
         const int cols = 4, tw = 360, th = 230;

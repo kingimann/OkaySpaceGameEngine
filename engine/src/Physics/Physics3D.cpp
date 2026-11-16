@@ -646,6 +646,7 @@ void Physics3D::Step(Scene& scene, float dt) {
             if (improved && c.penetration < 0.0f) c.penetration = 0.0f;   // inside the skin: touching, not overlapping
 
             current.insert({a, b});
+            if (!improved && !trigger && ((ra && ra->sleeping) || (rb && rb->sleeping))) restNow.insert({a, b});   // (see the rest-contact note below)
 
             // Relative velocity before the solver changes it (for impact speed).
             const Vec3 relVelBA = (rb ? rb->velocity : Vec3::Zero) - (ra ? ra->velocity : Vec3::Zero);
@@ -795,11 +796,12 @@ void Physics3D::Step(Scene& scene, float dt) {
         if (current.count(p)) continue;
         Collider3D* a = p.first;
         Collider3D* b = p.second;
-        if (improved) {   // what held a sleeping body up has moved away, been switched off or been removed: wake it
+        {   // what held a sleeping body up has moved away, been switched off or been removed: wake it (both qualities)
             const bool la = aliveSet.count(a) && !gone.Gone(a), lb = aliveSet.count(b) && !gone.Gone(b);
             if (!((la && a->isTrigger) || (lb && b->isTrigger))) {
-                if (la) if (Rigidbody3D* r = BodyOfCollider(a)) if (r->sleeping) r->WakeUp();
-                if (lb) if (Rigidbody3D* r = BodyOfCollider(b)) if (r->sleeping) r->WakeUp();
+                auto bodyOf = [&](Collider3D* c) { return improved ? BodyOfCollider(c) : c->gameObject->GetComponent<Rigidbody3D>(); };
+                if (la) if (Rigidbody3D* r = bodyOf(a)) if (r->sleeping) r->WakeUp();
+                if (lb) if (Rigidbody3D* r = bodyOf(b)) if (r->sleeping) r->WakeUp();
             }
         }
         if (!aliveSet.count(a) || !aliveSet.count(b)) continue;
@@ -1296,7 +1298,9 @@ void Physics3D::Step(Scene& scene, float dt) {
 
     // A box floor has no swept catch of its own. Do this before prevPos is stored
     // so the next step sees the recovered feet.
-    for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
+    // (Improved with automatic continuous collision does not need it: a fast body is swept, and the rescue would also lift a ball
+    // that is about to bounce and clear its speed, so the bounce was lost.)
+    if (!(improved && autoContinuous)) for (Rigidbody3D* rb : scene.FindObjectsOfType<Rigidbody3D>()) {
         if (gone.Gone(rb)) continue;
         CatchTunneledFloor(scene, rb);
     }
@@ -1916,7 +1920,12 @@ void Physics3D::SweepBodyBy(Scene& scene, Rigidbody3D* rb, const Vec3& motion, b
     float travel = len;
     // Stop just inside the surface so this step's narrow phase sees the contact
     // and bounces / stops the body as usual.
-    if (h.hit) travel = Mathf::Min(len, h.distance + Mathf::Min(0.02f, r * 0.2f));
+    if (h.hit) {
+        // Classic stops just inside the surface so this step's narrow phase sees an overlap. Improved stops just short of it: the
+        // contact skin finds it next step with the full approach speed, so a bouncy ball bounces and nothing is lifted or slowed.
+        if (quality == PhysicsQuality::Improved) travel = Mathf::Max(0.0f, Mathf::Min(len, h.distance - 0.002f));
+        else travel = Mathf::Min(len, h.distance + Mathf::Min(0.02f, r * 0.2f));
+    }
     MoveBodyWorld(t, dir * travel);
 }
 

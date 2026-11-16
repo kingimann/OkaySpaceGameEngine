@@ -276,7 +276,7 @@ int main() {
         GameObject* light = p.Crate({1.5f, 0.5f, 0}, 1.0f, true, 0.0f);
         RB(heavy)->velocity = {5.0f, 0, 0};
         p.Steps(0.8f);
-        CHECK(RB(light)->velocity.x > 5.0f);                  // pushed ahead, at least as fast as the pusher
+        CHECK(RB(light)->velocity.x > 4.5f);                  // carried along at nearly the pusher's speed (no bounce: they end together)
         CHECK(RB(heavy)->velocity.x > 4.5f);                  // barely slowed
     }
     // ---- Frame cost: stepping 500 sleeping crates and 100 moving balls stays cheap (a loose bound: shared machine).

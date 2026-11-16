@@ -66,7 +66,7 @@ struct Settings {
     float warmStart = 1.0f;              // 0 switches warm starting off (tests)
     float maxMassRatio = 8.0f;           // a body more than this many times heavier than the one it touches answers pushes as if it were
                                          // only this much heavier (a 100 kg crate on a 1 kg box would otherwise sink through it);
-                                         // 0 switches the limit off
+                                         // 0 switches the limit off. Applies to contacts that are more up-down than sideways.
     bool alternateOrder = true;          // every other pass visits the pairs in reverse (spreads a push both ways along a stack)
 };
 
@@ -91,7 +91,7 @@ inline void Prepare(std::vector<Body>& bodies, std::vector<Manifold>& ms, float 
         Body& A = bodies[(std::size_t)m.a];
         Body& B = bodies[(std::size_t)m.b];
         m.sA = m.sB = 1.0f;
-        if (s.maxMassRatio > 0.0f && A.invMass > 0.0f && B.invMass > 0.0f) {
+        if (s.maxMassRatio > 0.0f && A.invMass > 0.0f && B.invMass > 0.0f && std::fabs(m.n.y) > 0.5f) {   // (only where one body sits on the other: a sideways push keeps the true masses)
             const float ratio = A.invMass > B.invMass ? A.invMass / B.invMass : B.invMass / A.invMass;   // heavier : lighter
             if (ratio > s.maxMassRatio) (A.invMass > B.invMass ? m.sB : m.sA) = ratio / s.maxMassRatio;
         }
@@ -105,7 +105,12 @@ inline void Prepare(std::vector<Body>& bodies, std::vector<Manifold>& ms, float 
             p.t1Mass = EffectiveMass(A, B, p.rA, p.rB, m.t1, m.sA, m.sB);
             p.t2Mass = EffectiveMass(A, B, p.rA, p.rB, m.t2, m.sA, m.sB);
             const float vn = Vec3::Dot(PointVelocity(B, p.rB) - PointVelocity(A, p.rA), m.n);
-            if (p.depth < 0.0f) p.target = p.depth / dt;                         // may close the gap, no more
+            if (p.depth < 0.0f) {
+                // May close the gap, no more. A bouncy body that would arrive this step bounces now (at most a step early),
+                // otherwise the gap clamp would swallow its speed before it ever touched.
+                p.target = p.depth / dt;
+                if (m.restitution > 0.0f && vn < -s.restitutionThreshold && -p.depth < -vn * dt) p.target = -m.restitution * vn;
+            }
             else p.target = (vn < -s.restitutionThreshold) ? -m.restitution * vn : 0.0f;
             if (s.warmStart > 0.0f) {
                 Vec3 P = (m.n * p.jn + m.t1 * p.jt1 + m.t2 * p.jt2) * s.warmStart;

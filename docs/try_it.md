@@ -995,6 +995,10 @@ small rasteriser (the detail pictures show triangle edges), not editor screensho
 4. **Detail**: drag the **Detail** slider (0% blocky low poly to 100% finest) or press Low, Medium, High or Ultra. The model rebuilds when you let
    go, and "N triangles now" shows the cost. Above 250,000 triangles a window asks before it builds. High and Ultra are smooth shaded.
    Your own additions stay; a part you edited by hand is asked about first.
+4c. **Fine detail**: set Detail to High or Ultra on a car. Under **Parts and materials** the new **Fine fittings** (door handles, seams, window rubber,
+   wipers, grille bars, lamp lenses, mirror glass, plate, exhaust tips, underbody, brake discs, tyre ridges) appear and can be switched off. A building has
+   **Tiles and gutters** (rows of roof tiles, gutters, a down pipe); a human with a top has **Fine fittings** (buttons, placket, pockets). Ultra is about 100k
+   triangles for a car, 30k to 115k for a building and 115k to 125k for a human (table in docs/guided_detail.md).
 4a. **Car styles side by side**: File > Examples > Guided modeling > `guided_car_styles` (sedan, hatchback, coupe, SUV, pickup, sports, van at the
    same size; only the shape differs). Wheels sit in round arches on axles; the mirrors and bumpers are joined to the body.
 4b. Open **Variation and check**: it shows whether the model is one connected object with no bad faces. Under **Each part**, **Remove** takes a part off;

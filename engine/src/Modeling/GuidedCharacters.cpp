@@ -581,6 +581,7 @@ Template MakeHuman() {
     b.S("glasses", "Glasses", {{"none", "None"}, {"round", "Round"}, {"square", "Square"}, {"visor", "Visor"}}, kBlack, 6);
     b.S("backpack", "Backpack", {{"none", "None"}, {"small", "Small"}, {"large", "Large"}}, kLeather, 7);
     b.S("belt", "Belt", {{"none", "None"}, {"belt", "Belt"}}, kLeather, 8);
+    b.S("fitting", "Fine fittings", {{"fine", "Buttons, placket and pockets (High and up)"}, {"none", "None"}}, kGrey, 17);
     b.S("scarf", "Scarf", {{"none", "None"}, {"scarf", "Scarf"}, {"long", "Long scarf"}}, kRed, 16);
     b.S("cape", "Cape", {{"none", "None"}, {"short", "Short cape"}, {"long", "Long cape"}}, kRed, 9);
     b.S("shoulder", "Shoulder pads", {{"none", "None"}, {"round", "Round"}, {"plate", "Plate"}, {"spike", "Spike"}}, kSteel, 10);

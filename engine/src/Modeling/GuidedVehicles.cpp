@@ -4,6 +4,7 @@
 // no code, models or assets from other projects. Forward is +x, up is +y, the vehicle is centred on z = 0 and stands on y = 0.
 // Parts are closed solids that never share a corner position, so the rebuild rules in Guided.hpp can tell them apart.
 #include "okay/Modeling/Guided.hpp"
+#include "GuidedKit.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -255,6 +256,7 @@ Poly Chaikin(const Poly& p, int iters, bool closed) {
     return q;
 }
 
+PolyMesh Rod(Vec3 a, Vec3 b, float r, int sides);
 void GenerateCar(const Recipe& r, std::vector<GeneratedPart>& parts) {
     Out o{r, parts};
     const float L = Pf(r, "length"), W = Pf(r, "width"), H = Pf(r, "height"), gc = Pf(r, "groundClear");
@@ -435,6 +437,147 @@ void GenerateCar(const Recipe& r, std::vector<GeneratedPart>& parts) {
             if (d == "dual") shapes::Append(m, CylX(x0 - 0.1f, x0 + 0.3f, gc + 0.08f, -Wb * 0.28f, 0.1f, 0.1f, 10));
             return m;
         });
+    }
+    // Fine detail (High and Ultra): door handles and panel seams, window rubber, wipers, grille bars, lamp lenses, mirror glass, a plate and its
+    // frame, exhaust tips, underbody parts, brake discs and calipers and the ridges on the tyre walls. Each is its own part (slot "fitting")
+    // that can be removed; all touch the body or a wheel, so the car stays one piece.
+    if (shapes::DetailF() >= 1.99f) {
+        const int sd = 12;   // Prism scales the side count with the Detail level itself
+        const float zb = Wb * 0.5f, zc = Wc * 0.5f;
+        auto fit = [&](const std::string& id, const Frame& f, const std::function<PolyMesh()>& build) { o.Add(id, "fitting", f, [&](const std::string&) { return build(); }); };
+        const float cw = bx1 - bx0;
+        // door handles: two a side
+        for (int side = 0; side < 2; ++side) {
+            const float sg = side ? 1.0f : -1.0f;
+            for (int k = 0; k < 2; ++k) {
+                const float hx = bx0 + cw * (k ? 0.7f : 0.3f), hy = beltY - 0.12f;
+                const float za = sg * (zb - 0.012f), zbb = sg * (zb + 0.022f);
+                fit("handle/" + std::to_string(side * 2 + k), FrameAA({hx - 0.08f, hy - 0.02f, std::min(za, zbb)}, {hx + 0.08f, hy + 0.02f, std::max(za, zbb)}),
+                    [&] { PolyMesh m = BoxAA({hx - 0.075f, hy - 0.016f, std::min(za, zbb)}, {hx + 0.075f, hy + 0.016f, std::max(za, zbb)}); shapes::Append(m, BoxAA({hx - 0.05f, hy - 0.007f + 0.0f, sg * (zb + 0.0225f) - (sg > 0 ? 0.0f : 0.012f)}, {hx + 0.05f, hy + 0.007f, sg * (zb + 0.0225f) + (sg > 0 ? 0.012f : 0.0f)})); return m; });
+            }
+        }
+        // panel seams: door cuts and the belt line, a thin raised line on each side
+        for (int side = 0; side < 2; ++side) {
+            const float sg = side ? 1.0f : -1.0f;
+            const float za = sg * (zb - 0.006f), zbb = sg * (zb + 0.006f);
+            fit("seam/" + std::to_string(side), FrameAA({bx0, gc + 0.2f, std::min(za, zbb)}, {bx1, beltY, std::max(za, zbb)}), [&] {
+                PolyMesh m;
+                for (float f : {0.0f, 0.55f}) shapes::Append(m, BoxAA({bx0 + cw * f - 0.004f, gc + 0.22f, std::min(za, zbb)}, {bx0 + cw * f + 0.004f, beltY - 0.02f, std::max(za, zbb)}));
+                shapes::Append(m, BoxAA({bx0, beltY - 0.034f, std::min(za, zbb)}, {bx1, beltY - 0.026f, std::max(za, zbb)}));
+                shapes::Append(m, BoxAA({bx0 - 0.3f, gc + 0.25f, std::min(za, zbb)}, {bx1 + 0.3f, gc + 0.258f, std::max(za, zbb)}));
+                return m;
+            });
+        }
+        // window rubber: a thin frame around each side window
+        for (int side = 0; side < 2; ++side) {
+            const float sg = side ? 1.0f : -1.0f;
+            const float za = sg * (zc - 0.004f), zbb = sg * (zc + 0.016f);
+            fit("rubber/" + std::to_string(side), FrameAA({bx0, beltY, std::min(za, zbb)}, {bx1, roof, std::max(za, zbb)}), [&] {
+                PolyMesh m;
+                const float lo = std::min(za, zbb), hi = std::max(za, zbb);
+                const float xa = bx0 + cw * 0.08f, xb = bx1 - cw * 0.08f, ya = beltY + 0.03f, yb = roof - 0.05f;
+                shapes::Append(m, BoxAA({xa, ya, lo}, {xb, ya + 0.016f, hi}));
+                shapes::Append(m, BoxAA({xa, yb - 0.016f, lo}, {xb, yb, hi}));
+                shapes::Append(m, BoxAA({xa, ya, lo}, {xa + 0.016f, yb, hi}));
+                shapes::Append(m, BoxAA({xb - 0.016f, ya, lo}, {xb, yb, hi}));
+                shapes::Append(m, BoxAA({(xa + xb) * 0.5f - 0.01f, ya, lo}, {(xa + xb) * 0.5f + 0.01f, yb, hi}));   // the door pillar
+                return m;
+            });
+        }
+        // wipers on the windscreen
+        for (int side = 0; side < 2; ++side) {
+            const float sg = side ? 1.0f : -1.0f, wz = sg * Wc * 0.18f;
+            fit("wiper/" + std::to_string(side), FrameAA({bx1 - 0.3f, beltY, wz - 0.3f}, {bx1 + 0.05f, beltY + 0.3f, wz + 0.3f}), [&] {
+                const Vec3 a{bx1 + 0.012f, beltY + 0.015f, wz}, b{bx1 - 0.14f, beltY + 0.26f, wz + sg * 0.28f};
+                PolyMesh m = Rod(a, b, 0.008f, 6);
+                shapes::Append(m, Rod({a.x - 0.002f, a.y + 0.004f, wz + sg * 0.002f}, {b.x - 0.01f, b.y + 0.004f, b.z + sg * 0.01f}, 0.004f, 6));
+                return m;
+            });
+        }
+        // grille bars across the nose
+        fit("gbar/0", FrameAA({L / 2 - 0.03f, std::max(gc + 0.12f, ly - 0.1f), -Wb * 0.17f}, {L / 2 + 0.06f, noseY - 0.02f, Wb * 0.17f}), [&] {
+            PolyMesh m;
+            const float y0g = std::max(gc + 0.12f, ly - 0.1f) + 0.01f, y1g = noseY - 0.03f;
+            for (int k = 0; k < 9; ++k) {
+                const float z = -Wb * 0.15f + Wb * 0.3f * (float)k / 8.0f;
+                shapes::Append(m, BoxAA({L / 2 + 0.004f, y0g, z - 0.006f}, {L / 2 + 0.05f, y1g, z + 0.006f}));
+            }
+            shapes::Append(m, BoxAA({L / 2 + 0.01f, (y0g + y1g) * 0.5f - 0.007f, -Wb * 0.16f}, {L / 2 + 0.06f, (y0g + y1g) * 0.5f + 0.007f, Wb * 0.16f}));
+            return m;
+        });
+        // lamp lenses and reflectors (a ring and a dome in front of each headlight, ribs on each tail light)
+        const float ls = Pf(r, "lightSize");
+        for (int side = 0; side < 2; ++side) {
+            const float sg = side ? 1.0f : -1.0f;
+            fit("lens/" + std::to_string(side), FrameAA({L / 2 - 0.02f, ly - ls * 0.4f, sg * Wb * 0.33f - ls * 0.4f}, {L / 2 + 0.07f, ly + ls * 0.4f, sg * Wb * 0.33f + ls * 0.4f}), [&] {
+                PolyMesh m = CylX(L / 2 + 0.03f, L / 2 + 0.06f, ly, sg * Wb * 0.33f, ls * 0.62f, ls * 0.62f, sd);
+                shapes::Append(m, shapes::Ball(FrameAA({L / 2 + 0.02f, ly - ls * 0.18f, sg * Wb * 0.33f - ls * 0.18f}, {L / 2 + 0.08f, ly + ls * 0.18f, sg * Wb * 0.33f + ls * 0.18f}), 4, 6));
+                return m;
+            });
+            fit("rib/" + std::to_string(side), FrameAA({x0 - 0.05f, deckY - 0.1f - ls * 0.3f, sg * Wb * 0.36f - ls * 0.6f}, {x0 + 0.04f, deckY - 0.1f + ls * 0.3f, sg * Wb * 0.36f + ls * 0.6f}), [&] {
+                PolyMesh m;
+                for (int k = 0; k < 3; ++k) shapes::Append(m, BoxAA({x0 - 0.048f, deckY - 0.1f - ls * 0.25f, sg * Wb * 0.36f - ls * 0.5f + ls * 0.3f * (float)k}, {x0 - 0.03f, deckY - 0.1f + ls * 0.25f, sg * Wb * 0.36f - ls * 0.5f + ls * 0.3f * (float)k + 0.012f}));
+                return m;
+            });
+        }
+        // mirror glass (on the outer face of each mirror)
+        for (int side = 0; side < 2; ++side) {
+            const float sg = side ? 1.0f : -1.0f;
+            const float mx = bx1 - 0.15f, my = beltY + 0.08f;
+            fit("mirrorglass/" + std::to_string(side), FrameAA({mx - 0.07f, my, sg * (zb + 0.19f) - 0.03f}, {mx + 0.07f, my + 0.14f, sg * (zb + 0.22f) + 0.03f}), [&] {
+                const float za = sg * (zb + 0.195f), zbb = sg * (zb + 0.215f);
+                return CylZ(std::min(za, zbb), std::max(za, zbb), mx, my + 0.07f, 0.1f, 8);
+            });
+        }
+        // number plate and its frame on the tail
+        fit("plate/0", FrameAA({x0 - 0.03f, gc + 0.2f, -0.28f}, {x0 + 0.01f, gc + 0.3f, 0.28f}), [&] {
+            PolyMesh m = BoxAA({x0 - 0.016f, gc + 0.215f, -0.24f}, {x0 + 0.004f, gc + 0.285f, 0.24f});
+            shapes::Append(m, BoxAA({x0 - 0.028f, gc + 0.2f, -0.265f}, {x0 - 0.012f, gc + 0.3f, -0.245f}));
+            shapes::Append(m, BoxAA({x0 - 0.028f, gc + 0.2f, 0.245f}, {x0 - 0.012f, gc + 0.3f, 0.265f}));
+            shapes::Append(m, BoxAA({x0 - 0.028f, gc + 0.2f, -0.245f}, {x0 - 0.012f, gc + 0.212f, 0.245f}));
+            shapes::Append(m, BoxAA({x0 - 0.028f, gc + 0.288f, -0.245f}, {x0 - 0.012f, gc + 0.3f, 0.245f}));
+            return m;
+        });
+        // exhaust tips
+        for (int side = 0; side < 2; ++side) {
+            const float sg = side ? 1.0f : -1.0f;
+            fit("tip/" + std::to_string(side), FrameAA({x0 - 0.14f, gc + 0.03f, sg * Wb * 0.28f - 0.06f}, {x0 - 0.06f, gc + 0.14f, sg * Wb * 0.28f + 0.06f}), [&] {
+                return CylX(x0 - 0.13f, x0 - 0.05f, gc + 0.085f, sg * Wb * 0.28f, 0.12f, 0.12f, 8);
+            });
+        }
+        // underbody: gearbox tunnel, fuel tank, silencer and a propeller shaft
+        fit("under/0", FrameAA({x0 + L * 0.15f, gc, -Wb * 0.2f}, {x0 + L * 0.85f, gc + 0.14f, Wb * 0.2f}), [&] {
+            PolyMesh m = BoxAA({-L * 0.12f, gc + 0.004f, -Wb * 0.09f}, {L * 0.18f, gc + 0.13f, Wb * 0.09f});
+            shapes::Append(m, BoxAA({x0 + L * 0.2f, gc + 0.004f, -Wb * 0.24f}, {x0 + L * 0.38f, gc + 0.11f, Wb * 0.24f}));
+            shapes::Append(m, CylX(x0 + L * 0.1f, x0 + L * 0.3f, gc + 0.06f, Wb * 0.15f, 0.12f, 0.12f, sd));
+            shapes::Append(m, CylX(xrr, xf, gc + 0.07f, 0.0f, 0.045f, 0.045f, 8));
+            return m;
+        });
+        // brake discs and calipers, and the ridges moulded into the tyre walls
+        int wk = 0;
+        for (float x : {xf, xrr})
+            for (int side = 0; side < 2; ++side) {
+                const float sg = side ? 1.0f : -1.0f, zcw = sg * track / 2;
+                const std::string n = std::to_string(wk++);
+                const float xj = x + 0.0071f * (float)(wk - 1);   // the wheel's own offset (see Wheel)
+                fit("disc/" + n, FrameAA({xj - wr * 0.6f, wr * 0.4f, zcw - ww * 0.4f}, {xj + wr * 0.6f, wr * 1.6f, zcw + ww * 0.1f}), [&] {
+                    const float za = zcw - sg * ww * 0.36f, zbb = zcw - sg * ww * 0.28f;
+                    PolyMesh m = CylZ(std::min(za, zbb), std::max(za, zbb), xj, wr, wr * 1.05f, 8);
+                    const float cz0 = zcw - sg * ww * 0.4f, cz1 = zcw - sg * ww * 0.2f;
+                    shapes::Append(m, BoxAA({xj + wr * 0.38f, wr * 0.85f, std::min(cz0, cz1)}, {xj + wr * 0.52f, wr * 1.2f, std::max(cz0, cz1)}));
+                    return m;
+                });
+                fit("ridge/" + n, FrameAA({xj - wr, 0, zcw - ww * 0.5f}, {xj + wr, wr * 2, zcw + ww * 0.5f}), [&] {
+                    PolyMesh m;
+                    const float zo = zcw + sg * ww * 0.5f;
+                    for (int k = 0; k < 2; ++k) {
+                        const float rk = wr * (0.93f - 0.09f * (float)k);
+                        const float za = zo - sg * 0.002f, zbb = zo + sg * 0.004f;
+                        shapes::Append(m, CylZ(std::min(za, zbb), std::max(za, zbb), xj, wr, rk * 2.0f, 8));
+                    }
+                    return m;
+                });
+            }
     }
 }
 
@@ -620,6 +763,17 @@ PolyMesh SmoothSide(Poly p, float z0, float z1) {
     return Side(p, z0, z1);
 }
 
+// A smooth body along x made from elliptical sections (x, centre y, half height, half width): tanks, seats and fairings.
+PolyMesh LoftX(const std::vector<std::array<float, 4>>& st) {
+    std::vector<kit::Station> s;
+    for (const auto& q : st) s.push_back({{q[0], q[1], 0.0f}, std::max(q[2], 0.004f), std::max(q[3], 0.004f)});
+    return kit::Loft(s, {0, 1, 0}, shapes::Scale(12, 6), true, true);
+}
+float Bump(float t, float peak) {   // 0 at both ends, 1 at `peak`, smooth
+    const float u = t < peak ? t / peak : (1.0f - t) / (1.0f - peak);
+    return std::sin(0.5f * kPi * std::min(1.0f, std::max(0.0f, u)));
+}
+
 void GenerateBike(const Recipe& r, std::vector<GeneratedPart>& parts) {
     Out o{r, parts};
     const float wb = Pf(r, "wheelbase"), fr = Pf(r, "frontWheelRadius"), rr = Pf(r, "rearWheelRadius"), ww = Pf(r, "wheelWidth");
@@ -795,9 +949,25 @@ void GenerateBike(const Recipe& r, std::vector<GeneratedPart>& parts) {
     {
         Frame ft = FrameAA({tx0, ty0, -0.17f}, {tx1, ty1, 0.17f});
         o.Add("tank/0", "tank", ft, [&](const std::string& d) {
-            if (d == "round") return shapes::Ball(ft, 5, 10);
-            if (d == "teardrop") return SmoothSide({{tx0, ty0 + 0.05f}, {tx0 + 0.12f, ty0}, {tx1 - 0.05f, ty0 + 0.02f}, {tx1, ty0 + 0.12f}, {tx1 - 0.02f, ty1 - 0.04f}, {tx0 + tankLen * 0.55f, ty1}, {tx0 + 0.1f, ty1 - 0.07f}, {tx0, ty0 + 0.12f}}, -0.16f, 0.16f);
-            if (d == "slim") return SmoothSide({{tx0, ty0 + 0.06f}, {tx1, ty0 + 0.03f}, {tx1, ty1 - 0.08f}, {tx0 + 0.15f, ty0 + 0.17f}}, -0.12f, 0.12f);
+            if (d == "round" || d == "teardrop") {   // lofted from elliptical sections: widest about half way, narrowing to the neck and the tail
+                std::vector<std::array<float, 4>> st;
+                const int n = 8;
+                const float peak = d == "round" ? 0.5f : 0.4f;
+                for (int i = 0; i <= n; ++i) {
+                    const float t = (float)i / (float)n, e = 0.35f + 0.65f * Bump(t, peak);
+                    const float hh = (ty1 - ty0) * 0.5f * (d == "round" ? 1.0f : (0.55f + 0.45f * Bump(t, 0.3f))) * e;
+                    const float yc = d == "round" ? (ty0 + ty1) * 0.5f : ty0 + 0.03f + hh + (1.0f - t) * 0.0f;
+                    st.push_back({tx0 + tankLen * t, yc, hh, 0.17f * e});
+                }
+                return LoftX(st);
+            }
+            if (d == "teardrop_flat") return SmoothSide({{tx0, ty0 + 0.05f}, {tx0 + 0.12f, ty0}, {tx1 - 0.05f, ty0 + 0.02f}, {tx1, ty0 + 0.12f}, {tx1 - 0.02f, ty1 - 0.04f}, {tx0 + tankLen * 0.55f, ty1}, {tx0 + 0.1f, ty1 - 0.07f}, {tx0, ty0 + 0.12f}}, -0.16f, 0.16f);
+            if (d == "slim") {   // a long narrow tank lofted from low ellipses
+                std::vector<std::array<float, 4>> st;
+                for (int i = 0; i <= 6; ++i) { const float t = (float)i / 6.0f, e = 0.45f + 0.55f * Bump(t, 0.45f); st.push_back({tx0 + tankLen * t, ty0 + 0.1f + (ty1 - ty0) * 0.2f * e + t * 0.03f, (ty1 - ty0) * 0.34f * e, 0.12f * e}); }
+                return LoftX(st);
+            }
+            if (d == "slim_flat") return SmoothSide({{tx0, ty0 + 0.06f}, {tx1, ty0 + 0.03f}, {tx1, ty1 - 0.08f}, {tx0 + 0.15f, ty0 + 0.17f}}, -0.12f, 0.12f);
             return BoxAA({tx0, ty0, -0.17f}, {tx1, ty1, 0.17f});
         });
     }
@@ -807,8 +977,19 @@ void GenerateBike(const Recipe& r, std::vector<GeneratedPart>& parts) {
         o.Add("seat/0", "seat", fs, [&](const std::string& d) {
             const float len = sx1 - sx0;
             if (d == "stepped") { PolyMesh m = BoxAA({sx0, seatH - 0.1f, -0.15f}, {sx0 + len * 0.4f, seatH + 0.12f, 0.15f}); shapes::Append(m, BoxAA({sx0 + len * 0.35f, seatH - 0.1f, -0.15f}, {sx1, seatH + 0.04f, 0.15f})); return m; }
-            if (d == "sport") return SmoothSide({{sx0, seatH - 0.1f}, {sx1, seatH - 0.1f}, {sx1, seatH + 0.04f}, {sx0 + len * 0.55f, seatH + 0.06f}, {sx0 + len * 0.22f, seatH + 0.17f}, {sx0, seatH + 0.15f}}, -0.13f, 0.13f);
-            if (d == "saddle") return SmoothSide({{sx0, seatH - 0.1f}, {sx1, seatH - 0.1f}, {sx1, seatH + 0.07f}, {sx0 + len * 0.6f, seatH - 0.02f}, {sx0 + len * 0.25f, seatH + 0.0f}, {sx0, seatH + 0.1f}}, -0.17f, 0.17f);
+            if (d == "sport" || d == "saddle") {   // a lofted seat: narrow at the nose, wide at the rear; a tail hump (sport) or a dip (saddle)
+                std::vector<std::array<float, 4>> st;
+                const int n = 7;
+                for (int i = 0; i <= n; ++i) {
+                    const float t = (float)i / (float)n;   // 0 = tail, 1 = nose
+                    const float hump = d == "sport" ? 0.1f * Bump(1.0f - t, 0.35f) : -0.03f * Bump(t, 0.5f);
+                    const float hw = (d == "sport" ? 0.11f : 0.16f) * (0.55f + 0.45f * (1.0f - t * 0.7f)) * (0.6f + 0.4f * Bump(t < 0.97f ? t + 0.03f : 1.0f, 0.5f));
+                    st.push_back({sx0 + (sx1 - sx0) * t, seatH - 0.02f + hump * 0.5f, 0.07f + hump * 0.5f, hw});
+                }
+                return LoftX(st);
+            }
+            if (d == "sport_flat") return SmoothSide({{sx0, seatH - 0.1f}, {sx1, seatH - 0.1f}, {sx1, seatH + 0.04f}, {sx0 + len * 0.55f, seatH + 0.06f}, {sx0 + len * 0.22f, seatH + 0.17f}, {sx0, seatH + 0.15f}}, -0.13f, 0.13f);
+            if (d == "saddle_flat") return SmoothSide({{sx0, seatH - 0.1f}, {sx1, seatH - 0.1f}, {sx1, seatH + 0.07f}, {sx0 + len * 0.6f, seatH - 0.02f}, {sx0 + len * 0.25f, seatH + 0.0f}, {sx0, seatH + 0.1f}}, -0.17f, 0.17f);
             if (d == "touring") { PolyMesh m = BoxAA({sx0, seatH - 0.1f, -0.16f}, {sx1, seatH + 0.07f, 0.16f}); shapes::Append(m, BoxAA({sx0 + 0.01f, seatH + 0.06f, -0.15f}, {sx0 + 0.1f, seatH + 0.3f, 0.15f})); return m; }
             return BoxAA({sx0, seatH - 0.1f, -0.15f}, {sx1, seatH + 0.08f, 0.15f});
         });
@@ -854,9 +1035,20 @@ void GenerateBike(const Recipe& r, std::vector<GeneratedPart>& parts) {
     {
         Frame fa = FrameAA({Hl.x - 0.2f, ey, -0.2f}, {Hl.x + 0.2f, H.y + 0.3f, 0.2f});
         o.Add("fairing/0", "fairing", fa, [&](const std::string& d) {
-            if (d == "half") return SmoothSide({{Hl.x - 0.12f, Hl.y - 0.15f}, {Hl.x + 0.14f, Hl.y - 0.13f}, {Hl.x + 0.16f, Hl.y + 0.06f}, {Hl.x + 0.04f, Hl.y + 0.2f}, {Hl.x - 0.12f, Hl.y + 0.2f}}, -0.18f, 0.18f);
+            if (d == "half") return LoftX({{Hl.x - 0.12f, Hl.y + 0.02f, 0.12f, 0.12f}, {Hl.x, Hl.y + 0.03f, 0.17f, 0.17f}, {Hl.x + 0.1f, Hl.y, 0.14f, 0.15f}, {Hl.x + 0.17f, Hl.y - 0.01f, 0.07f, 0.09f}});
+            if (d == "half_flat") return SmoothSide({{Hl.x - 0.12f, Hl.y - 0.15f}, {Hl.x + 0.14f, Hl.y - 0.13f}, {Hl.x + 0.16f, Hl.y + 0.06f}, {Hl.x + 0.04f, Hl.y + 0.2f}, {Hl.x - 0.12f, Hl.y + 0.2f}}, -0.18f, 0.18f);
             if (d == "full") {   // nose, screen and side panels down to the engine, ending about half way along the tank
                 const float fx = std::max(tx0 + tankLen * 0.45f, Hl.x - 0.5f);
+                std::vector<std::array<float, 4>> st;   // a streamlined shell over the engine: pointed nose, widest by the knees, tapering at the tank
+                const int n = 7;
+                const float xn = Hl.x + 0.17f;
+                for (int i = 0; i <= n; ++i) {
+                    const float t = (float)i / (float)n;
+                    const float x = xn + (fx - xn) * t, e = 0.25f + 0.75f * Bump(t, 0.45f);
+                    const float top = Hl.y + 0.3f + (ty1 - 0.02f - (Hl.y + 0.3f)) * t, bot = ey + 0.3f;
+                    st.push_back({x, (top + bot) * 0.5f, std::max(0.05f, (top - bot) * 0.5f * (0.4f + 0.6f * e)), 0.2f * e});
+                }
+                return LoftX(st);
                 return SmoothSide({{Hl.x + 0.17f, Hl.y - 0.02f}, {Hl.x + 0.05f, ey + 0.3f}, {fx, ey + 0.3f}, {fx, ty1 - 0.02f}, {Hl.x - 0.14f, Hl.y + 0.3f}, {Hl.x + 0.0f, Hl.y + 0.24f}}, -0.18f, 0.18f);
             }
             if (d == "screen") return Side({{Hl.x - 0.02f, Hl.y + 0.1f}, {Hl.x + 0.0f, Hl.y + 0.1f}, {Hl.x - 0.12f, Hl.y + 0.36f}, {Hl.x - 0.14f, Hl.y + 0.36f}}, -0.14f, 0.14f);
@@ -1070,6 +1262,7 @@ Template MakeCar() {
         if (r.slotDesign["spoiler"] == "wing" && (body == "pickup" || body == "suv" || body == "van")) r.slotDesign["spoiler"] = "lip";
         if (r.slotDesign["roof"] == "sign" && body == "pickup") r.slotDesign["roof"] = "rack";
     };
+    b.S("fitting", "Fine fittings", {{"fine", "Handles, seams, wipers, lenses, discs, tyre ridges"}, {"none", "None"}}, kGrey, 15);   // drawn from High upwards
     b.t.noSubdivisionSlots = {"body", "cabin"};   // the outline is already spline-smoothed; subdividing would round away the wheel arches
     b.t.generate = GenerateCar;
     return b.t;
@@ -1168,13 +1361,13 @@ Template MakeBike() {
     b.S("exhaust", "Exhaust", {{"single", "Single"}, {"dual", "Dual"}, {"upswept", "Upswept"}, {"stub", "Short underseat"}, {"none", "None"}}, kChrome, 9);
     b.S("fender", "Mudguards", {{"short", "Short"}, {"none", "None"}}, kRed, 10);
     b.St("standard", "Standard", "A middleweight road bike.", {},
-         {{"wheel", "rim"}, {"frame", "tube"}, {"fork", "telescopic"}, {"swingarm", "dual"}, {"shock", "mono"}, {"engine", "single"}, {"tank", "box"}, {"seat", "flat"}, {"handlebar", "straight"}, {"fairing", "none"}, {"luggage", "none"}, {"headlight", "round"}, {"exhaust", "single"}}, {{"tank", kRed}, {"fairing", kRed}});
+         {{"wheel", "rim"}, {"frame", "tube"}, {"fork", "telescopic"}, {"swingarm", "dual"}, {"shock", "mono"}, {"engine", "single"}, {"tank", "teardrop"}, {"seat", "saddle"}, {"handlebar", "straight"}, {"fairing", "none"}, {"luggage", "none"}, {"headlight", "round"}, {"exhaust", "single"}}, {{"tank", kRed}, {"fairing", kRed}});
     b.St("cruiser", "Cruiser", "Long and low with a V-twin, a teardrop tank and swept-back bars.", {{"wheelbase", 1.75}, {"seatHeight", 0.68}, {"tankLength", 0.55}, {"wheelWidth", 0.17}, {"rake", 35}, {"forkLength", 0.78}, {"frontWheelRadius", 0.34}, {"rearWheelRadius", 0.31}},
          {{"wheel", "spoke"}, {"frame", "tube"}, {"fork", "springer"}, {"swingarm", "dual"}, {"shock", "dual"}, {"engine", "twin"}, {"tank", "teardrop"}, {"seat", "saddle"}, {"handlebar", "cruiser"}, {"fairing", "none"}, {"luggage", "none"}, {"headlight", "round"}, {"exhaust", "dual"}}, {{"tank", kBlack}});
     b.St("sport", "Sport", "Short and tight: steep rake, twin spar frame, clip-ons, a fairing and a short pipe.", {{"wheelbase", 1.38}, {"seatHeight", 0.82}, {"rearWheelRadius", 0.32}, {"frontWheelRadius", 0.31}, {"tankLength", 0.45}, {"rake", 23}, {"forkLength", 0.62}, {"wheelWidth", 0.17}},
          {{"wheel", "mesh"}, {"frame", "spar"}, {"fork", "inverted"}, {"swingarm", "single"}, {"shock", "mono"}, {"engine", "inline"}, {"tank", "slim"}, {"seat", "sport"}, {"handlebar", "clipon"}, {"fairing", "full"}, {"luggage", "none"}, {"headlight", "slim"}, {"taillight", "strip"}, {"exhaust", "stub"}}, {{"tank", kBlue}, {"fairing", kBlue}});
     b.St("scooter", "Scooter", "Small wheels, a step-through frame, a swinging engine unit and body panels.", {{"wheelbase", 1.2}, {"seatHeight", 0.74}, {"frontWheelRadius", 0.17}, {"rearWheelRadius", 0.17}, {"wheelWidth", 0.1}, {"rake", 26}, {"forkLength", 0.5}, {"tankLength", 0.15}},
-         {{"wheel", "steel"}, {"frame", "step"}, {"fork", "telescopic"}, {"swingarm", "none"}, {"shock", "dual"}, {"engine", "unit"}, {"tank", "none"}, {"seat", "flat"}, {"handlebar", "straight"}, {"fairing", "legshield"}, {"luggage", "none"}, {"headlight", "square"}, {"exhaust", "none"}}, {{"fairing", kWhite}, {"tank", kWhite}});
+         {{"wheel", "steel"}, {"frame", "step"}, {"fork", "telescopic"}, {"swingarm", "none"}, {"shock", "dual"}, {"engine", "unit"}, {"tank", "none"}, {"seat", "saddle"}, {"handlebar", "straight"}, {"fairing", "legshield"}, {"luggage", "none"}, {"headlight", "square"}, {"exhaust", "none"}}, {{"fairing", kWhite}, {"tank", kWhite}});
     b.St("dirt", "Dirt bike", "Tall and light, with a long upside-down fork, a flat bar, a slim tank and an upswept pipe.", {{"wheelbase", 1.46}, {"seatHeight", 0.96}, {"frontWheelRadius", 0.36}, {"rearWheelRadius", 0.33}, {"wheelWidth", 0.09}, {"tankLength", 0.32}, {"rake", 28}, {"forkLength", 0.92}},
          {{"wheel", "mesh"}, {"frame", "tube"}, {"fork", "inverted"}, {"swingarm", "dual"}, {"shock", "mono"}, {"engine", "single"}, {"tank", "slim"}, {"seat", "flat"}, {"handlebar", "straight"}, {"fairing", "none"}, {"luggage", "none"}, {"headlight", "square"}, {"exhaust", "upswept"}, {"fender", "none"}}, {{"tank", kYellow}});
     b.St("touring", "Touring bike", "A long bike with a big tank, a touring seat, wide bars, a screen and panniers.", {{"wheelbase", 1.68}, {"seatHeight", 0.8}, {"tankLength", 0.65}, {"wheelWidth", 0.19}, {"rake", 30}, {"forkLength", 0.72}},

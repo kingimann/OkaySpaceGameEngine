@@ -19,6 +19,25 @@ normal rebuild, so part swaps stay, your own added geometry is copied through un
 Known limit: a wall panel (one shell with holes) and the box-like parts cannot get fewer polygons at Low than a box has, so a
 box-only design (for example the picket fence) has the same triangle count at Low and Medium.
 
+### Fine detail added in this round (Ultra triangles, before and after)
+
+Cars at High and Ultra now carry purposeful small parts instead of subdivided arches: door handles and panel seams, window rubber and door pillar, wipers, grille bars, lamp lenses and tail-light ribs, mirror glass, number plate and frame, exhaust tips, underbody parts (gearbox tunnel, tank, silencer, propeller shaft), brake discs with calipers and ridges on the tyre walls. Buildings get rows of roof tiles on every slope, gutters and a down pipe. Humans get buttons, a placket, pockets and a hem band on the top. All of them are parts of their own (slot "Fine fittings" / "Tiles and gutters") that can be removed. Cars and roofs are no longer subdivided at Ultra (their outlines are already smooth or have hard edges that subdivision would melt).
+
+| Model | Ultra before | Ultra after |
+|---|---|---|
+| car sedan | 32200 | 107272 |
+| car sports | 45512 | 120584 |
+| car police | 39864 | 114936 |
+| building cottage | 34964 | 46732 |
+| building townhouse | 65352 | 90176 |
+| building barn | 38924 | 52996 |
+| building shed | 25296 | 32412 |
+| building flat_block | 113080 | 113908 |
+| human average | 114976 | 119584 |
+| human hero | 120832 | 122944 |
+| roof gable | 912 | 12680 |
+| roof hip | 912 | 23432 |
+
 ## Triangle counts (every start design of every template, regenerated with the picture tool's counting; Windows and Linux give the same numbers)
 
 | Template | Start design | Low | Medium | High | Ultra |
@@ -50,24 +69,24 @@ box-only design (for example the picket fence) has the same triangle count at Lo
 | window | cross | 132 | 132 | 308 | 8448 |
 | window | colonial | 240 | 240 | 560 | 10176 |
 | window | tall_ornate | 756 | 756 | 1764 | 17280 |
-| roof | gable | 20 | 20 | 36 | 912 |
-| roof | hip | 20 | 20 | 36 | 912 |
-| roof | shed | 24 | 24 | 40 | 960 |
-| roof | flat | 60 | 60 | 140 | 3840 |
-| building | cottage | 1024 | 1024 | 4004 | 34964 |
-| building | townhouse | 3032 | 3032 | 11900 | 65352 |
-| building | barn | 1816 | 1816 | 6672 | 38924 |
-| building | shed | 432 | 432 | 2132 | 25296 |
-| building | flat_block | 5128 | 5128 | 20076 | 113080 |
-| car | sedan | 528 | 916 | 5636 | 32200 |
-| car | hatchback | 612 | 1120 | 6320 | 36664 |
-| car | coupe | 788 | 1160 | 6216 | 34168 |
-| car | suv | 584 | 1012 | 5844 | 29112 |
-| car | pickup | 552 | 884 | 5588 | 31432 |
-| car | sports | 1008 | 1460 | 7140 | 45512 |
-| car | van | 584 | 1012 | 5844 | 29112 |
-| car | taxi | 656 | 1140 | 6116 | 36024 |
-| car | police | 688 | 1212 | 6268 | 39864 |
+| roof | gable | 20 | 20 | 1444 | 12680 |
+| roof | hip | 20 | 20 | 2684 | 23432 |
+| roof | shed | 24 | 24 | 1248 | 4776 |
+| roof | flat | 60 | 60 | 140 | 3132 |
+| building | cottage | 1024 | 1024 | 5248 | 46732 |
+| building | townhouse | 3032 | 3032 | 14720 | 90176 |
+| building | barn | 1816 | 1816 | 8252 | 52996 |
+| building | shed | 432 | 432 | 2868 | 32412 |
+| building | flat_block | 5128 | 5128 | 20136 | 113908 |
+| car | sedan | 528 | 916 | 8928 | 107272 |
+| car | hatchback | 612 | 1120 | 9612 | 111736 |
+| car | coupe | 788 | 1160 | 9508 | 109240 |
+| car | suv | 584 | 1012 | 9136 | 104184 |
+| car | pickup | 552 | 884 | 8880 | 106504 |
+| car | sports | 1008 | 1460 | 10432 | 120584 |
+| car | van | 584 | 1012 | 9136 | 104184 |
+| car | taxi | 656 | 1140 | 9408 | 111096 |
+| car | police | 688 | 1212 | 9560 | 114936 |
 | truck | box_truck | 656 | 1180 | 7836 | 37224 |
 | truck | semi_cab | 652 | 1148 | 7796 | 49296 |
 | truck | tanker | 892 | 1680 | 10680 | 55328 |
@@ -80,27 +99,27 @@ box-only design (for example the picket fence) has the same triangle count at Lo
 | bus | school | 636 | 1108 | 6164 | 44528 |
 | bus | shuttle | 500 | 836 | 5332 | 36224 |
 | bus | long_city | 808 | 1352 | 8224 | 47640 |
-| motorcycle | standard | 492 | 1252 | 6404 | 45600 |
-| motorcycle | cruiser | 712 | 1748 | 8068 | 54296 |
-| motorcycle | sport | 696 | 1452 | 6628 | 43872 |
-| motorcycle | scooter | 496 | 1228 | 5916 | 36956 |
-| motorcycle | dirt | 600 | 1316 | 6604 | 40608 |
-| motorcycle | touring | 676 | 1744 | 8096 | 55152 |
+| motorcycle | standard | 672 | 1636 | 7164 | 50976 |
+| motorcycle | cruiser | 868 | 2052 | 8668 | 55832 |
+| motorcycle | sport | 920 | 1888 | 7488 | 47136 |
+| motorcycle | scooter | 580 | 1408 | 6272 | 39452 |
+| motorcycle | dirt | 672 | 1456 | 6880 | 41952 |
+| motorcycle | touring | 764 | 1880 | 8168 | 57280 |
 | trailer | box | 228 | 396 | 2612 | 12392 |
 | trailer | open | 340 | 596 | 4836 | 23648 |
 | trailer | flatbed | 372 | 708 | 5044 | 19984 |
 | trailer | tanker | 540 | 1084 | 7604 | 30648 |
 | trailer | caravan | 232 | 368 | 2552 | 15184 |
 | trailer | utility | 196 | 284 | 1964 | 14584 |
-| human | average | 436 | 2756 | 11536 | 114976 |
-| human | athletic | 418 | 2770 | 12174 | 119662 |
-| human | heavy | 392 | 2628 | 10972 | 114400 |
-| human | child | 400 | 2788 | 12368 | 120592 |
-| human | tall_slim | 544 | 3200 | 13004 | 114774 |
-| human | adventurer | 556 | 3196 | 12620 | 125174 |
-| human | hero | 416 | 2892 | 12164 | 120832 |
-| human | casual | 512 | 3000 | 12408 | 116678 |
-| human | dress | 436 | 2636 | 11432 | 128496 |
+| human | average | 436 | 2756 | 11716 | 119584 |
+| human | athletic | 418 | 2770 | 12354 | 124270 |
+| human | heavy | 392 | 2628 | 11300 | 116512 |
+| human | child | 400 | 2788 | 12548 | 125200 |
+| human | tall_slim | 588 | 3312 | 13648 | 119662 |
+| human | adventurer | 556 | 3196 | 13032 | 129590 |
+| human | hero | 416 | 2892 | 12492 | 122944 |
+| human | casual | 556 | 3112 | 13052 | 121566 |
+| human | dress | 436 | 2636 | 11612 | 133104 |
 | robot | standard | 312 | 312 | 680 | 18432 |
 | robot | heavy_bot | 356 | 564 | 1476 | 34752 |
 | robot | scout | 412 | 784 | 1916 | 39856 |

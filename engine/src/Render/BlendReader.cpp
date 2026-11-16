@@ -592,7 +592,7 @@ struct Reader {
     Ref scene;
 
     std::map<std::string, int> skippedMods;   // "'Name' (Type)" -> objects
-    int cntModDisabled = 0, cntModCapped = 0, cntMirrorBisect = 0, cntMirrorNoObj = 0;
+    int cntModDisabled = 0, cntModCapped = 0, cntMirrorBisect = 0, cntMirrorNoObj = 0, cntSubsurfUnknownUv = 0;
     std::size_t subdivFaceBudget = 4000000;    // faces made by subdivision over the whole file
     int cntCurves = 0, cntLamps = 0, cntCameras = 0, cntOtherTypes = 0, cntModifiers = 0, cntConstraints = 0, cntDupli = 0;
     int cntShapeKeys = 0, cntVertexCol = 0, cntAutoSmooth = 0, cntBadFaces = 0, cntVertexParent = 0, cntBoneParent = 0;
@@ -1141,6 +1141,9 @@ struct Reader {
     void BuildPartsOf(ObjRec& o, int oi);
     std::shared_ptr<MeshData> EvaluateModifiers(ObjRec& o, const std::shared_ptr<MeshData>& base, std::uint64_t meshAddr);
     void ReadCreases(std::uint64_t meshAddr, MeshData& md);
+    // Up to 2.8x every Subdivision Surface uses creases; from 2.90 (the DNA with the "quality" field) only with flag 16
+    // ("Use Creases"; the bit value is from memory of the DNA headers, unverified).
+    bool SubsurfUsesCreases(const Ref& md) const { return (md.Has("quality") || f.version >= 290) ? (md.Int("flags") & 16) != 0 : true; }
     std::vector<std::string> GroupNames(const ObjRec& o, const Ref& me);
     void Notes();
 };
@@ -1573,7 +1576,7 @@ std::shared_ptr<MeshData> Reader::EvaluateModifiers(ObjRec& o, const std::shared
             const StructInfo& si = f.structs[(std::size_t)sp.st];
             if (si.name == "SubsurfModifierData" && sp.n >= si.size) {
                 Ref md; md.f = &f; md.p = sp.p; md.avail = sp.n; md.st = sp.st;
-                if (md.Int("subdivType") != 1 && (f.version < 290 || (md.Int("flags") & 16))) wantCreases = true;
+                if (md.Int("subdivType") != 1 && SubsurfUsesCreases(md)) wantCreases = true;
             }
             b = f.PtrAt(sp.p);
         }
@@ -1639,11 +1642,28 @@ std::shared_ptr<MeshData> Reader::EvaluateModifiers(ObjRec& o, const std::shared
             ss.levels = levels;
             ss.simple = md.Int("subdivType") == 1;
             const int flags = md.Int("flags");
-            ss.smoothUv = md.Has("uv_smooth") ? md.Int("uv_smooth") != 0 : (flags & 8) != 0;
-            ss.useCreases = f.version >= 290 ? (flags & 16) != 0 : true;
+            // Every option is found by its field name in the file's own SubsurfModifierData. The SDNA names fields but
+            // holds no enum or flag values, so the meanings of the numbers below are from memory of Blender's DNA
+            // headers (unverified; docs/own_blend_reader.md "Subdivision Surface options").
+            if (md.Has("uv_smooth")) {   // 2.8+: 0 none, 1 keep corners, 2 + junctions, 3 + concave, 4 keep boundaries, 5 all
+                static const blendmod::UvSmooth kUv[] = {blendmod::UvSmooth::Linear, blendmod::UvSmooth::KeepCorners,
+                                                         blendmod::UvSmooth::KeepCornersJunctions, blendmod::UvSmooth::KeepCornersJunctionsConcave,
+                                                         blendmod::UvSmooth::KeepBoundaries, blendmod::UvSmooth::All};
+                const int u = md.Int("uv_smooth");
+                if (u >= 0 && u <= 5) ss.uvSmooth = kUv[u];
+                else { ss.uvSmooth = blendmod::UvSmooth::All; ++cntSubsurfUnknownUv; }
+                ss.smoothUv = ss.uvSmooth != blendmod::UvSmooth::Linear;
+            } else {
+                ss.smoothUv = (flags & 8) != 0;   // up to 2.7x: "Subdivide UVs"
+                ss.uvSmooth = blendmod::UvSmooth::All;
+            }
+            ss.useCreases = SubsurfUsesCreases(md);
+            // 2.9+: boundary smooth 1 = "Keep Corners" (0 = "All"); "Use Limit Surface" is on unless flag 64 is set
+            ss.keepCorners = md.Has("boundary_smooth") && md.Int("boundary_smooth") == 1;
+            ss.limitSurface = md.Has("quality") && !(flags & 64);
             MeshData& m = own();
-            // a crease of 1 is sharp at every level; a partial crease c is sharp for c * levels levels (our choice)
-            for (blendmod::Crease& c : m.creases) c.sharpness = c.sharpness >= 1.0f ? std::numeric_limits<float>::infinity() : c.sharpness * (float)levels;
+            // Blender's 0..1 crease as a DeRose sharpness: 10 c^2 from 2.80 on (OpenSubdiv), c * levels before
+            for (blendmod::Crease& c : m.creases) c.sharpness = blendmod::CreaseToSharpness(c.sharpness, levels, f.version >= 280);
             const std::size_t before = m.faceStart.size();
             const int done = blendmod::Subdivide(m, ss, std::min(subdivFaceBudget, kMaxFaces));
             if (done < levels) ++cntModCapped;
@@ -1977,6 +1997,7 @@ void Reader::Notes() {
         }
     }
     if (cntModDisabled) note(n(cntModDisabled) + " Mirror / Subdivision modifier(s) switched off for the viewport: not applied, like Blender's viewport");
+    if (cntSubsurfUnknownUv) note(n(cntSubsurfUnknownUv) + " Subdivision modifier(s) with an unknown UV Smooth value: UVs smoothed everywhere");
     if (cntModCapped) note(n(cntModCapped) + " Subdivision modifier(s) stopped at a lower level: the result would pass the face limit (4 M faces per file)");
     if (cntMirrorBisect) note(n(cntMirrorBisect) + " Mirror modifier(s) with bisect set: the mesh is mirrored without cutting it at the mirror plane");
     if (cntMirrorNoObj) note(n(cntMirrorNoObj) + " Mirror modifier(s) whose mirror object is not in the scene: mirrored in the object's own space");

@@ -74,13 +74,95 @@ void BuildTopo(const std::vector<int>& fs, const std::vector<int>& fc, const std
     t.nE = (int)t.e0.size();
 }
 
+// DeRose et al.'s variable-sharpness rule for the half of a creased edge at one end: (s_neighbour + 3 s) / 4 - 1,
+// where the neighbour is the other creased edge at that end (the edge itself when the end has not exactly two).
+inline float ChildSharp(float s, float neighbour) {
+    if (std::isinf(s)) return s;
+    if (std::isinf(neighbour)) neighbour = s;
+    return std::max(0.0f, (neighbour + 3.0f * s) * 0.25f - 1.0f);
+}
+
+// Per-vertex options of one refinement step.
+struct RefineOpts {
+    const std::vector<float>* edgeSharp = nullptr;   // DeRose sharpness per edge (null or empty: no creases)
+    bool linear = false;                             // simple subdivision / linear UVs
+    bool keepCorners = false;                        // a boundary vertex with one face is a corner (stays)
+    const std::vector<char>* hold = nullptr;         // per vertex: stays where it is (UV smoothing modes)
+};
+
+// The vertex rule by number of sharp edges (DeRose et al. 1998): fewer than 2 smooth, 2 crease, more corner.
+inline int RuleOf(int sharpEdges) { return sharpEdges < 2 ? 0 : (sharpEdges == 2 ? 1 : 2); }
+
+// What Refine and Limit need to know about the sharp edges around each vertex.
+template <int D>
+struct VertexSharp {
+    std::vector<int> faces, edges, sharp0, sharp1;   // faces and edges around v; edges with s > 0; edges still creased one level down
+    std::vector<int> boundary;                       // edges around v not shared by exactly two faces
+    std::vector<float> other0, other1;               // sum of the far ends of those two edge sets, D per vertex
+    std::vector<float> finSum;                       // sum of the finite sharpnesses s > 0 around v
+    std::vector<int> finCnt;
+    std::vector<char> anyInf;
+};
+
+template <int D>
+void GatherSharp(const Topo& t, const std::vector<int>& fs, const std::vector<int>& fc, const std::vector<int>& lv, const float* vals,
+                 const std::vector<int>& eCnt, const std::vector<float>* edgeSharp, VertexSharp<D>& vs) {
+    const std::size_t nV = (std::size_t)t.nV, nE = (std::size_t)t.nE;
+    vs.faces.assign(nV, 0); vs.edges.assign(nV, 0); vs.sharp0.assign(nV, 0); vs.sharp1.assign(nV, 0); vs.boundary.assign(nV, 0);
+    vs.other0.assign(nV * D, 0.0f); vs.other1.assign(nV * D, 0.0f); vs.finSum.assign(nV, 0.0f); vs.finCnt.assign(nV, 0); vs.anyInf.assign(nV, 0);
+    for (std::size_t f = 0; f < fs.size(); ++f)
+        for (std::size_t l = (std::size_t)fs[f]; l < (std::size_t)fs[f] + (std::size_t)fc[f]; ++l) ++vs.faces[(std::size_t)lv[l]];
+    const bool creases = edgeSharp && !edgeSharp->empty();
+    // creased (not boundary) edges per vertex and the first two of them, for the child sharpness at each end
+    std::vector<int> cCnt, cFirst, cSecond;
+    if (creases) {
+        cCnt.assign(nV, 0); cFirst.assign(nV, -1); cSecond.assign(nV, -1);
+        for (std::size_t e = 0; e < nE; ++e) {
+            if (!((*edgeSharp)[e] > 0.0f) || t.e0[e] == t.e1[e]) continue;
+            for (const int v : {t.e0[e], t.e1[e]}) {
+                const std::size_t vi = (std::size_t)v;
+                if (cCnt[vi] == 0) cFirst[vi] = (int)e; else if (cCnt[vi] == 1) cSecond[vi] = (int)e;
+                ++cCnt[vi];
+            }
+        }
+    }
+    for (std::size_t e = 0; e < nE; ++e) {
+        const std::size_t ia = (std::size_t)t.e0[e], ib = (std::size_t)t.e1[e];
+        if (ia == ib) continue;
+        ++vs.edges[ia]; ++vs.edges[ib];
+        const bool bnd = eCnt[e] != 2;
+        if (bnd) { ++vs.boundary[ia]; ++vs.boundary[ib]; }
+        const float s = bnd ? kSharp : (creases ? (*edgeSharp)[e] : 0.0f);
+        if (!(s > 0.0f)) continue;
+        const float* a = vals + ia * D;
+        const float* b = vals + ib * D;
+        ++vs.sharp0[ia]; ++vs.sharp0[ib];
+        for (int d = 0; d < D; ++d) { vs.other0[ia * D + d] += b[d]; vs.other0[ib * D + d] += a[d]; }
+        // is the half of this edge at each end still creased on the next level?
+        for (int end = 0; end < 2; ++end) {
+            const std::size_t v = end == 0 ? ia : ib;
+            const float* far = end == 0 ? b : a;
+            float child = s;
+            if (!std::isinf(s)) {
+                float nb = s;
+                if (creases && cCnt[v] == 2) nb = (*edgeSharp)[(std::size_t)(cFirst[v] == (int)e ? cSecond[v] : cFirst[v])];
+                child = ChildSharp(s, nb);
+            }
+            if (child > 0.0f) { ++vs.sharp1[v]; for (int d = 0; d < D; ++d) vs.other1[v * D + d] += far[d]; }
+        }
+        if (std::isinf(s)) { vs.anyInf[ia] = vs.anyInf[ib] = 1; }
+        else { vs.finSum[ia] += s; vs.finSum[ib] += s; ++vs.finCnt[ia]; ++vs.finCnt[ib]; }
+    }
+}
+
 // One Catmull-Clark (or linear) step of a D-dimensional value per vertex. `vals` has nV * D floats; the result has
-// (nV + nE + nF) * D floats: vertex points, edge points, face points. edgeSharp (nE, may be empty) is the DeRose
-// sharpness of each edge; edges that are not shared by exactly two faces are always sharp.
+// (nV + nE + nF) * D floats: vertex points, edge points, face points. Edges that are not shared by exactly two faces
+// are always sharp.
 template <int D>
 void Refine(const Topo& t, const std::vector<int>& fs, const std::vector<int>& fc, const std::vector<int>& lv, const float* vals,
-            const std::vector<float>& edgeSharp, bool linear, std::vector<float>& out) {
+            const RefineOpts& op, std::vector<float>& out) {
     const std::size_t nV = (std::size_t)t.nV, nE = (std::size_t)t.nE, nF = fs.size();
+    const bool linear = op.linear;
     out.assign((nV + nE + nF) * D, 0.0f);
     float* VP = out.data();
     float* EP = VP + nV * D;
@@ -104,11 +186,12 @@ void Refine(const Topo& t, const std::vector<int>& fs, const std::vector<int>& f
             if (!linear) for (int d = 0; d < D; ++d) eSum[e * D + d] += FP[f * D + d];
         }
     }
+    const bool creases = op.edgeSharp && !op.edgeSharp->empty();
     auto sharpOf = [&](std::size_t e) -> float {
         if (eCnt[e] != 2) return kSharp;
-        return edgeSharp.empty() ? 0.0f : edgeSharp[e];
+        return creases ? (*op.edgeSharp)[e] : 0.0f;
     };
-    // edge points
+    // edge points: s >= 1 midpoint, 0 < s < 1 the smooth point moved towards the midpoint by s
     for (std::size_t e = 0; e < nE; ++e) {
         const float* a = vals + (std::size_t)t.e0[e] * D;
         const float* b = vals + (std::size_t)t.e1[e] * D;
@@ -120,13 +203,13 @@ void Refine(const Topo& t, const std::vector<int>& fs, const std::vector<int>& f
     }
     if (linear) { std::memcpy(VP, vals, nV * D * sizeof(float)); return; }
     // vertex points
-    std::vector<float> vFace(nV * D, 0.0f), vMid(nV * D, 0.0f), vSharpOther(nV * D, 0.0f), vSharpSum(nV, 0.0f);
-    std::vector<int> vFaceCnt(nV, 0), vEdgeCnt(nV, 0), vSharpCnt(nV, 0);
+    VertexSharp<D> vs;
+    GatherSharp<D>(t, fs, fc, lv, vals, eCnt, op.edgeSharp, vs);
+    std::vector<float> vFace(nV * D, 0.0f), vMid(nV * D, 0.0f);
     for (std::size_t f = 0; f < nF; ++f) {
         const std::size_t s = (std::size_t)fs[f], n = (std::size_t)fc[f];
         for (std::size_t l = s; l < s + n; ++l) {
             const std::size_t v = (std::size_t)lv[l];
-            ++vFaceCnt[v];
             for (int d = 0; d < D; ++d) vFace[v * D + d] += FP[f * D + d];
         }
     }
@@ -135,29 +218,88 @@ void Refine(const Topo& t, const std::vector<int>& fs, const std::vector<int>& f
         if (ia == ib) continue;
         const float* a = vals + ia * D;
         const float* b = vals + ib * D;
-        ++vEdgeCnt[ia]; ++vEdgeCnt[ib];
         for (int d = 0; d < D; ++d) { const float m = 0.5f * (a[d] + b[d]); vMid[ia * D + d] += m; vMid[ib * D + d] += m; }
-        const float s = sharpOf(e);
-        if (s > 0.0f) {
-            const float w = std::min(s, 1.0f);
-            ++vSharpCnt[ia]; ++vSharpCnt[ib]; vSharpSum[ia] += w; vSharpSum[ib] += w;
-            for (int d = 0; d < D; ++d) { vSharpOther[ia * D + d] += b[d]; vSharpOther[ib * D + d] += a[d]; }
-        }
     }
     for (std::size_t v = 0; v < nV; ++v) {
         const float* S = vals + v * D;
         float* o = VP + v * D;
-        const int n = vEdgeCnt[v], k = vFaceCnt[v], sc = vSharpCnt[v];
-        if (n == 0 || k == 0) { for (int d = 0; d < D; ++d) o[d] = S[d]; continue; }
-        float smooth[D];
-        const float invK = 1.0f / (float)k, invN = 1.0f / (float)n;
-        for (int d = 0; d < D; ++d) smooth[d] = (vFace[v * D + d] * invK + 2.0f * vMid[v * D + d] * invN + (float)(n - 3) * S[d]) * invN;
-        if (sc < 2) { for (int d = 0; d < D; ++d) o[d] = smooth[d]; continue; }   // smooth vertex or dart
-        float sharp[D];
-        if (sc == 2) for (int d = 0; d < D; ++d) sharp[d] = (vSharpOther[v * D + d] + 6.0f * S[d]) * 0.125f;   // crease / boundary curve
-        else for (int d = 0; d < D; ++d) sharp[d] = S[d];                                                       // corner
-        const float w = std::min(1.0f, vSharpSum[v] / (float)sc);
-        for (int d = 0; d < D; ++d) o[d] = w >= 1.0f ? sharp[d] : (1.0f - w) * smooth[d] + w * sharp[d];
+        const int n = vs.edges[v], k = vs.faces[v];
+        const bool held = (op.hold && (*op.hold)[v]) || (op.keepCorners && k == 1 && vs.boundary[v] > 0);
+        if (n == 0 || k == 0 || held) { for (int d = 0; d < D; ++d) o[d] = S[d]; continue; }
+        const int P = RuleOf(vs.sharp0[v]), C = RuleOf(vs.sharp1[v]);
+        float res[2][D];
+        for (int which = 0; which < 2; ++which) {
+            const int rule = which == 0 ? P : C;
+            if (which == 1 && C == P) break;
+            const float* other = which == 0 ? &vs.other0[v * D] : &vs.other1[v * D];
+            float* r = res[which];
+            if (rule == 0) {
+                const float invK = 1.0f / (float)k, invN = 1.0f / (float)n;
+                for (int d = 0; d < D; ++d) r[d] = (vFace[v * D + d] * invK + 2.0f * vMid[v * D + d] * invN + (float)(n - 3) * S[d]) * invN;
+            } else if (rule == 1) {
+                for (int d = 0; d < D; ++d) r[d] = (other[d] + 6.0f * S[d]) * 0.125f;   // crease / boundary curve
+            } else {
+                for (int d = 0; d < D; ++d) r[d] = S[d];                                 // corner
+            }
+        }
+        if (C == P) { for (int d = 0; d < D; ++d) o[d] = res[0][d]; continue; }
+        // the rule changes on the way to the next level: blend by the vertex sharpness (the mean of its finite
+        // crease sharpnesses, clamped to 1; DeRose et al. 1998)
+        const float w = vs.finCnt[v] > 0 ? std::min(1.0f, vs.finSum[v] / (float)vs.finCnt[v]) : 1.0f;
+        for (int d = 0; d < D; ++d) o[d] = w * res[0][d] + (1.0f - w) * res[1][d];
+    }
+}
+
+// Moves every vertex of an all-quad mesh to its Catmull-Clark limit position (Halstead, Kass and DeRose 1993):
+// smooth (n^2 S + 4 sum(edge neighbours) + sum(diagonal corners)) / (n (n + 5)); crease (a + 4 S + b) / 6; corner S.
+// A vertex whose creases are only partly sharp (0 < s < 1 left) blends the sharp and the smooth limit by that
+// sharpness (an approximation: the exact limit of a semi-sharp crease needs the remaining sharp levels).
+template <int D>
+void Limit(const Topo& t, const std::vector<int>& fs, const std::vector<int>& fc, const std::vector<int>& lv, const float* vals,
+           const RefineOpts& op, std::vector<float>& out) {
+    const std::size_t nV = (std::size_t)t.nV, nE = (std::size_t)t.nE, nF = fs.size();
+    out.assign(vals, vals + nV * D);
+    std::vector<int> eCnt(nE, 0);
+    for (std::size_t f = 0; f < nF; ++f)
+        for (std::size_t l = (std::size_t)fs[f]; l < (std::size_t)fs[f] + (std::size_t)fc[f]; ++l) ++eCnt[(std::size_t)t.loopEdge[l]];
+    VertexSharp<D> vs;
+    GatherSharp<D>(t, fs, fc, lv, vals, eCnt, op.edgeSharp, vs);
+    std::vector<float> nbr(nV * D, 0.0f), diag(nV * D, 0.0f);
+    std::vector<char> quadsOnly(nV, 1);
+    for (std::size_t e = 0; e < nE; ++e) {
+        const std::size_t ia = (std::size_t)t.e0[e], ib = (std::size_t)t.e1[e];
+        if (ia == ib) continue;
+        for (int d = 0; d < D; ++d) { nbr[ia * D + d] += vals[ib * D + d]; nbr[ib * D + d] += vals[ia * D + d]; }
+    }
+    for (std::size_t f = 0; f < nF; ++f) {
+        const std::size_t s = (std::size_t)fs[f];
+        if (fc[f] != 4) { for (std::size_t l = s; l < s + (std::size_t)fc[f]; ++l) quadsOnly[(std::size_t)lv[l]] = 0; continue; }
+        for (std::size_t i = 0; i < 4; ++i) {
+            const std::size_t v = (std::size_t)lv[s + i], o = (std::size_t)lv[s + (i + 2) % 4];
+            for (int d = 0; d < D; ++d) diag[v * D + d] += vals[o * D + d];
+        }
+    }
+    for (std::size_t v = 0; v < nV; ++v) {
+        const float* S = vals + v * D;
+        float* o = &out[v * D];
+        const int n = vs.edges[v], k = vs.faces[v];
+        const bool held = (op.hold && (*op.hold)[v]) || (op.keepCorners && k == 1 && vs.boundary[v] > 0);
+        if (n == 0 || k == 0 || held) continue;
+        const int rule = RuleOf(vs.sharp0[v]);
+        float sharp[D], smooth[D];
+        bool haveSmooth = false;
+        if (n == k && quadsOnly[v]) {
+            const float inv = 1.0f / (float)(n * (n + 5));
+            for (int d = 0; d < D; ++d) smooth[d] = ((float)(n * n) * S[d] + 4.0f * nbr[v * D + d] + diag[v * D + d]) * inv;
+            haveSmooth = true;
+        }
+        if (rule == 0) { if (haveSmooth) for (int d = 0; d < D; ++d) o[d] = smooth[d]; continue; }
+        if (rule == 1) for (int d = 0; d < D; ++d) sharp[d] = (vs.other0[v * D + d] + 4.0f * S[d]) * (1.0f / 6.0f);
+        else for (int d = 0; d < D; ++d) sharp[d] = S[d];
+        float w = 1.0f;
+        if (!vs.anyInf[v] && vs.finCnt[v] > 0) w = std::min(1.0f, vs.finSum[v] / (float)vs.finCnt[v]);
+        if (w >= 1.0f || !haveSmooth) { for (int d = 0; d < D; ++d) o[d] = sharp[d]; continue; }
+        for (int d = 0; d < D; ++d) o[d] = w * sharp[d] + (1.0f - w) * smooth[d];
     }
 }
 
@@ -184,6 +326,86 @@ void BlendWeights(const PolyMesh& m, const int* src, const float* coef, int n, s
     start.push_back((std::uint32_t)grp.size());
 }
 
+// Per-edge sharpness from the mesh's crease list (empty when no edge is creased).
+void EdgeSharpness(const PolyMesh& m, const Topo& t, std::vector<float>& edgeSharp) {
+    edgeSharp.clear();
+    if (m.creases.empty()) return;
+    std::unordered_map<std::uint64_t, float> creaseOf;
+    creaseOf.reserve(m.creases.size() * 2);
+    for (const Crease& c : m.creases) if (c.sharpness > 0.0f && c.v0 != c.v1) { float& s = creaseOf[EdgeKey(c.v0, c.v1)]; s = std::max(s, c.sharpness); }
+    if (creaseOf.empty()) return;
+    edgeSharp.assign((std::size_t)t.nE, 0.0f);
+    for (std::size_t e = 0; e < (std::size_t)t.nE; ++e) { auto it = creaseOf.find(EdgeKey(t.e0[e], t.e1[e])); if (it != creaseOf.end()) edgeSharp[e] = it->second; }
+}
+
+// UV topology: corners welded by vertex and UV bits (bucket by vertex, then sort by UV inside the bucket), so a seam
+// is a boundary. uvLoopVert[l] is loop l's UV vertex; uvOwner[u] the mesh vertex of UV vertex u.
+void WeldUv(const PolyMesh& m, std::vector<int>& uvLoopVert, std::vector<Vec2>& uvVals, std::vector<int>& uvOwner) {
+    const std::size_t L = m.loopVert.size();
+    const int nV = (int)m.pos.size();
+    std::vector<int> start((std::size_t)nV + 1, 0);
+    for (std::size_t l = 0; l < L; ++l) ++start[(std::size_t)m.loopVert[l] + 1];
+    for (int v = 0; v < nV; ++v) start[(std::size_t)v + 1] += start[(std::size_t)v];
+    std::vector<std::pair<std::uint64_t, int>> items(L);
+    std::vector<int> fill(start.begin(), start.end() - 1);
+    for (std::size_t l = 0; l < L; ++l) {
+        std::uint32_t ux, uy; std::memcpy(&ux, &m.loopUv[l].x, 4); std::memcpy(&uy, &m.loopUv[l].y, 4);
+        items[(std::size_t)fill[(std::size_t)m.loopVert[l]]++] = {((std::uint64_t)ux << 32) | uy, (int)l};
+    }
+    uvLoopVert.assign(L, 0);
+    uvVals.clear(); uvOwner.clear();
+    uvVals.reserve((std::size_t)nV + nV / 4 + 4); uvOwner.reserve(uvVals.capacity());
+    for (int v = 0; v < nV; ++v) {
+        auto b = items.begin() + start[(std::size_t)v], e = items.begin() + start[(std::size_t)v + 1];
+        if (e - b > 1) std::sort(b, e);
+        std::uint64_t prevKey = 0; bool first = true;
+        for (auto it = b; it != e; ++it) {
+            if (first || it->first != prevKey) { uvVals.push_back(m.loopUv[(std::size_t)it->second]); uvOwner.push_back(v); prevKey = it->first; first = false; }
+            uvLoopVert[(std::size_t)it->second] = (int)uvVals.size() - 1;
+        }
+    }
+}
+
+// The UV vertices a smoothing mode holds where they are (empty: none). Definitions (ours, from the mode names):
+// boundary = on an edge of the UV topology with other than two faces; corner = boundary with one face around it;
+// junction = its mesh vertex has 3 or more distinct UVs; concave = boundary whose corner angles in UV space add up to
+// more than 180 degrees.
+void UvHold(UvSmooth mode, const PolyMesh& m, const Topo& tu, const std::vector<int>& uvLoopVert, const std::vector<Vec2>& uvVals,
+            const std::vector<int>& uvOwner, std::vector<char>& hold) {
+    hold.clear();
+    if (mode == UvSmooth::All || mode == UvSmooth::Linear) return;
+    const std::size_t nU = uvVals.size(), nF = m.faceStart.size();
+    std::vector<int> eCnt((std::size_t)tu.nE, 0), faces(nU, 0);
+    std::vector<char> bnd(nU, 0);
+    for (std::size_t f = 0; f < nF; ++f)
+        for (std::size_t l = (std::size_t)m.faceStart[f]; l < (std::size_t)(m.faceStart[f] + m.faceCount[f]); ++l) { ++eCnt[(std::size_t)tu.loopEdge[l]]; ++faces[(std::size_t)uvLoopVert[l]]; }
+    for (std::size_t e = 0; e < (std::size_t)tu.nE; ++e) if (eCnt[e] != 2) { bnd[(std::size_t)tu.e0[e]] = 1; bnd[(std::size_t)tu.e1[e]] = 1; }
+    hold.assign(nU, 0);
+    if (mode == UvSmooth::KeepBoundaries) { for (std::size_t u = 0; u < nU; ++u) hold[u] = bnd[u]; return; }
+    for (std::size_t u = 0; u < nU; ++u) hold[u] = bnd[u] && faces[u] == 1;
+    if (mode == UvSmooth::KeepCorners) return;
+    std::vector<int> perVert(m.pos.size(), 0);
+    for (std::size_t u = 0; u < nU; ++u) ++perVert[(std::size_t)uvOwner[u]];
+    for (std::size_t u = 0; u < nU; ++u) if (perVert[(std::size_t)uvOwner[u]] >= 3) hold[u] = 1;
+    if (mode != UvSmooth::KeepCornersJunctionsConcave) return;
+    std::vector<double> angle(nU, 0.0);
+    for (std::size_t f = 0; f < nF; ++f) {
+        const std::size_t s = (std::size_t)m.faceStart[f], n = (std::size_t)m.faceCount[f];
+        for (std::size_t i = 0; i < n; ++i) {
+            const std::size_t l = s + i, nx = s + (i + 1) % n, pv = s + (i + n - 1) % n;
+            const std::size_t u = (std::size_t)uvLoopVert[l];
+            if (!bnd[u]) continue;
+            const double ax = (double)m.loopUv[nx].x - m.loopUv[l].x, ay = (double)m.loopUv[nx].y - m.loopUv[l].y;
+            const double bx = (double)m.loopUv[pv].x - m.loopUv[l].x, by = (double)m.loopUv[pv].y - m.loopUv[l].y;
+            const double la = std::sqrt(ax * ax + ay * ay), lb = std::sqrt(bx * bx + by * by);
+            if (!(la > 0.0) || !(lb > 0.0) || !std::isfinite(la * lb)) continue;
+            angle[u] += std::acos(std::max(-1.0, std::min(1.0, (ax * bx + ay * by) / (la * lb))));
+        }
+    }
+    const double kPi = 3.14159265358979323846;
+    for (std::size_t u = 0; u < nU; ++u) if (bnd[u] && angle[u] > kPi + 1e-4) hold[u] = 1;
+}
+
 // One subdivision level. False (mesh unchanged) when the result would pass maxFaces.
 bool SubdivideOnce(PolyMesh& m, const SubsurfSettings& st, std::size_t maxFaces, int levelsLeft) {
     const std::size_t L = m.loopVert.size(), nF = m.faceStart.size();
@@ -195,20 +417,13 @@ bool SubdivideOnce(PolyMesh& m, const SubsurfSettings& st, std::size_t maxFaces,
     const std::size_t nE = (std::size_t)t.nE;
     if ((std::size_t)nV + nE + nF > (std::size_t)std::numeric_limits<int>::max() / 2) return false;
 
-    // creases -> per edge sharpness
     std::vector<float> edgeSharp;
-    std::unordered_map<std::uint64_t, float> creaseOf;
-    if (st.useCreases && !m.creases.empty() && !st.simple) {
-        creaseOf.reserve(m.creases.size() * 2);
-        for (const Crease& c : m.creases) if (c.sharpness > 0.0f && c.v0 != c.v1) { float& s = creaseOf[EdgeKey(c.v0, c.v1)]; s = std::max(s, c.sharpness); }
-        if (!creaseOf.empty()) {
-            edgeSharp.assign(nE, 0.0f);
-            for (std::size_t e = 0; e < nE; ++e) { auto it = creaseOf.find(EdgeKey(t.e0[e], t.e1[e])); if (it != creaseOf.end()) edgeSharp[e] = it->second; }
-        }
-    }
+    if (st.useCreases && !st.simple) EdgeSharpness(m, t, edgeSharp);
 
     std::vector<float> outPos;
-    Refine<3>(t, m.faceStart, m.faceCount, m.loopVert, &m.pos[0].x, edgeSharp, st.simple, outPos);
+    RefineOpts po;
+    po.edgeSharp = &edgeSharp; po.linear = st.simple; po.keepCorners = st.keepCorners && !st.simple;
+    Refine<3>(t, m.faceStart, m.faceCount, m.loopVert, &m.pos[0].x, po, outPos);
     static_assert(sizeof(Vec3) == 3 * sizeof(float), "Vec3 is three packed floats");
     static_assert(sizeof(Vec2) == 2 * sizeof(float), "Vec2 is two packed floats");
 
@@ -233,10 +448,10 @@ bool SubdivideOnce(PolyMesh& m, const SubsurfSettings& st, std::size_t maxFaces,
         }
     }
 
-    // UVs: linear, or Catmull-Clark on the UV topology (corners welded by vertex and UV; seams become boundaries)
+    // UVs: linear, or Catmull-Clark on the UV topology (seams are boundaries), with the mode's held vertices
     if (!m.loopUv.empty()) {
         r.loopUv.resize(L * 4);
-        if (st.simple || !st.smoothUv) {
+        if (st.simple || !st.smoothUv || st.uvSmooth == UvSmooth::Linear) {
             for (std::size_t f = 0; f < nF; ++f) {
                 const std::size_t s = (std::size_t)m.faceStart[f], n = (std::size_t)m.faceCount[f];
                 Vec2 c{0, 0};
@@ -249,32 +464,17 @@ bool SubdivideOnce(PolyMesh& m, const SubsurfSettings& st, std::size_t maxFaces,
                 }
             }
         } else {
-            // weld corners: bucket by vertex, then by UV bits inside the bucket
-            std::vector<int> start((std::size_t)nV + 1, 0);
-            for (std::size_t l = 0; l < L; ++l) ++start[(std::size_t)m.loopVert[l] + 1];
-            for (int v = 0; v < nV; ++v) start[(std::size_t)v + 1] += start[(std::size_t)v];
-            std::vector<std::pair<std::uint64_t, int>> items(L);
-            std::vector<int> fill(start.begin(), start.end() - 1);
-            for (std::size_t l = 0; l < L; ++l) {
-                std::uint32_t ux, uy; std::memcpy(&ux, &m.loopUv[l].x, 4); std::memcpy(&uy, &m.loopUv[l].y, 4);
-                items[(std::size_t)fill[(std::size_t)m.loopVert[l]]++] = {((std::uint64_t)ux << 32) | uy, (int)l};
-            }
-            std::vector<int> uvLoopVert(L);
+            std::vector<int> uvLoopVert, uvOwner;
             std::vector<Vec2> uvVals;
-            uvVals.reserve((std::size_t)nV + nV / 4 + 4);
-            for (int v = 0; v < nV; ++v) {
-                auto b = items.begin() + start[(std::size_t)v], e = items.begin() + start[(std::size_t)v + 1];
-                if (e - b > 1) std::sort(b, e);
-                std::uint64_t prevKey = 0; bool first = true;
-                for (auto it = b; it != e; ++it) {
-                    if (first || it->first != prevKey) { uvVals.push_back(m.loopUv[(std::size_t)it->second]); prevKey = it->first; first = false; }
-                    uvLoopVert[(std::size_t)it->second] = (int)uvVals.size() - 1;
-                }
-            }
+            WeldUv(m, uvLoopVert, uvVals, uvOwner);
             Topo tu;
             BuildTopo(m.faceStart, m.faceCount, uvLoopVert, (int)uvVals.size(), tu);
+            std::vector<char> hold;
+            UvHold(st.uvSmooth, m, tu, uvLoopVert, uvVals, uvOwner, hold);
+            RefineOpts uo;
+            uo.hold = hold.empty() ? nullptr : &hold;
             std::vector<float> outUv;
-            Refine<2>(tu, m.faceStart, m.faceCount, uvLoopVert, &uvVals[0].x, std::vector<float>(), false, outUv);
+            Refine<2>(tu, m.faceStart, m.faceCount, uvLoopVert, &uvVals[0].x, uo, outUv);
             const Vec2* uvV = reinterpret_cast<const Vec2*>(outUv.data());
             const Vec2* uvE = uvV + uvVals.size();
             const Vec2* uvF = uvE + (std::size_t)tu.nE;
@@ -304,17 +504,64 @@ bool SubdivideOnce(PolyMesh& m, const SubsurfSettings& st, std::size_t maxFaces,
         }
     }
 
-    // creases one level down: both halves of a creased edge keep sharpness s - 1
-    if (!creaseOf.empty() && levelsLeft > 1) {
+    // creases one level down (DeRose et al.'s variable-sharpness rule; s - 1 along a uniform crease). Also kept after
+    // the last level when the limit surface needs them.
+    if (!edgeSharp.empty() && (levelsLeft > 1 || st.limitSurface)) {
+        // per vertex: how many creased (0 < s, not a boundary) edges, and the first two of them
+        std::vector<int> cnt((std::size_t)nV, 0), first((std::size_t)nV, -1), second((std::size_t)nV, -1);
         for (std::size_t e = 0; e < nE; ++e) {
-            if (edgeSharp[e] <= 1.0f) continue;
-            const float s = std::isinf(edgeSharp[e]) ? edgeSharp[e] : edgeSharp[e] - 1.0f;
-            r.creases.push_back(Crease{t.e0[e], eBase + (int)e, s});
-            r.creases.push_back(Crease{eBase + (int)e, t.e1[e], s});
+            if (!(edgeSharp[e] > 0.0f) || t.e0[e] == t.e1[e]) continue;
+            for (const int v : {t.e0[e], t.e1[e]}) {
+                const std::size_t vi = (std::size_t)v;
+                if (cnt[vi] == 0) first[vi] = (int)e; else if (cnt[vi] == 1) second[vi] = (int)e;
+                ++cnt[vi];
+            }
+        }
+        auto neighbour = [&](int v, std::size_t e) -> float {
+            const std::size_t vi = (std::size_t)v;
+            if (cnt[vi] != 2) return edgeSharp[e];
+            const int o = first[vi] == (int)e ? second[vi] : first[vi];
+            return edgeSharp[(std::size_t)o];
+        };
+        for (std::size_t e = 0; e < nE; ++e) {
+            const float s = edgeSharp[e];
+            if (!(s > 0.0f) || t.e0[e] == t.e1[e]) continue;
+            const float s0 = ChildSharp(s, neighbour(t.e0[e], e)), s1 = ChildSharp(s, neighbour(t.e1[e], e));
+            if (s0 > 0.0f) r.creases.push_back(Crease{t.e0[e], eBase + (int)e, s0});
+            if (s1 > 0.0f) r.creases.push_back(Crease{eBase + (int)e, t.e1[e], s1});
         }
     }
     m = std::move(r);
     return true;
+}
+
+// After the last level: every point to its limit position (positions, and UVs when they are smoothed).
+void ApplyLimit(PolyMesh& m, const SubsurfSettings& st) {
+    if (m.faceStart.empty() || m.pos.empty()) return;
+    for (int c : m.faceCount) if (c != 4) return;   // only after at least one Catmull-Clark level
+    Topo t;
+    BuildTopo(m.faceStart, m.faceCount, m.loopVert, (int)m.pos.size(), t);
+    std::vector<float> edgeSharp;
+    if (st.useCreases) EdgeSharpness(m, t, edgeSharp);
+    RefineOpts po;
+    po.edgeSharp = &edgeSharp; po.keepCorners = st.keepCorners;
+    std::vector<float> out;
+    Limit<3>(t, m.faceStart, m.faceCount, m.loopVert, &m.pos[0].x, po, out);
+    std::memcpy(&m.pos[0].x, out.data(), m.pos.size() * sizeof(Vec3));
+    if (m.loopUv.empty() || m.loopUv.size() != m.loopVert.size() || !st.smoothUv || st.uvSmooth == UvSmooth::Linear) return;
+    std::vector<int> uvLoopVert, uvOwner;
+    std::vector<Vec2> uvVals;
+    WeldUv(m, uvLoopVert, uvVals, uvOwner);
+    Topo tu;
+    BuildTopo(m.faceStart, m.faceCount, uvLoopVert, (int)uvVals.size(), tu);
+    std::vector<char> hold;
+    UvHold(st.uvSmooth, m, tu, uvLoopVert, uvVals, uvOwner, hold);
+    RefineOpts uo;
+    uo.hold = hold.empty() ? nullptr : &hold;
+    std::vector<float> outUv;
+    Limit<2>(tu, m.faceStart, m.faceCount, uvLoopVert, &uvVals[0].x, uo, outUv);
+    const Vec2* uvV = reinterpret_cast<const Vec2*>(outUv.data());
+    for (std::size_t l = 0; l < m.loopUv.size(); ++l) m.loopUv[l] = uvV[uvLoopVert[l]];
 }
 
 // Keeps only loops that belong to faces, in face order, and drops faces that name a vertex outside the vertex list or
@@ -382,6 +629,7 @@ int Subdivide(PolyMesh& m, const SubsurfSettings& s, std::size_t maxFaces) {
         if (!SubdivideOnce(m, s, maxFaces, s.levels - lv)) break;
         ++done;
     }
+    if (s.limitSurface && !s.simple && done > 0) ApplyLimit(m, s);
     m.creases.clear();
     return done;
 }
@@ -456,6 +704,12 @@ int Mirror(PolyMesh& m, const MirrorSettings& s) {
         }
     }
     return merged;
+}
+
+float CreaseToSharpness(float crease, int levels, bool openSubdiv) {
+    if (!(crease > 0.0f)) return 0.0f;
+    if (crease >= 1.0f) return std::numeric_limits<float>::infinity();
+    return openSubdiv ? 10.0f * crease * crease : crease * (float)std::max(0, levels);
 }
 
 std::string FlipSideName(const std::string& name) {

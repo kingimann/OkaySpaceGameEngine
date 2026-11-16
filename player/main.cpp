@@ -2243,7 +2243,11 @@ int main(int argc, char** argv) {
                 okay::DisplaySettings::ApplyQuality();
             }
         }
+#ifdef OKAY_HAVE_OKAYUI
         okay::Prof().enabled = g_statsUI && g_statsPage == 1;   // only measured while the systems page is open
+#else
+        okay::Prof().enabled = false;   // the F3 page is an OkayUI panel: builds without OkayUI (web) never measure
+#endif
         okay::Prof().BeginFrame();
         if (!loop.BeginFrame(tick ? (double)measuredDt : 0.0)) running = false;   // false: a PauseMenu / script asked to quit
         if (acGuard.Tick()) {   // only ever true in enforce mode

@@ -130,7 +130,7 @@ int main() {
         CHECK(T.starts.size() >= 5);
         CHECK(T.slots.size() >= 5);
         RegisterBuiltinTemplates();
-        CHECK(Registry::Instance().All().size() == 1);   // registering twice does not duplicate
+        CHECK(Registry::Instance().All().size() == 7);   // fence + 6 architecture templates; registering twice does not duplicate
     }
 
     // ---- guided_styles: every start design makes sound, distinct, disjoint parts -------------------------

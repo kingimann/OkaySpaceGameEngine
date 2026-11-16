@@ -441,11 +441,14 @@ Template MakeFence() {
 
 } // namespace
 
+void RegisterArchitectureTemplates();
+
 void RegisterBuiltinTemplates() {
     static bool done = false;
     if (done) return;
     done = true;
     Registry::Instance().Register(MakeFence());
+    RegisterArchitectureTemplates();
 }
 
 } // namespace okay::modeling::guided

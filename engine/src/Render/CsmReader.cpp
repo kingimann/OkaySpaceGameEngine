@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -45,7 +46,7 @@ static bool ReadCsmImpl(const std::string& text, ImportedModel& out, std::string
     using namespace csm;
     out = ImportedModel{};
     detail::txt::Lines lines(text);
-    std::string line;
+    std::string_view line;   // a view into the text
     enum Section { kHeader, kComments, kOrder, kPoints } section = kHeader;
     std::vector<std::string> names;
     bool haveOrder = false, havePoints = false, haveRate = false;

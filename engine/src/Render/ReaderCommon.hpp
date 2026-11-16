@@ -23,13 +23,15 @@ namespace rc {
 
 constexpr double kMaxCoord = 1e15;   // larger coordinates would overflow the float arithmetic that follows
 
-inline bool Ws(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v'; }
+inline bool Ws(char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; }   // ' ' and '\t' '\n' '\v' '\f' '\r' (9 to 13)
 
 // One number from the whole of [b, e) (no trailing junk). Finite, |v| <= kMaxCoord.
 inline bool ParseNumber(const char* b, const char* e, double& v) {
     while (b < e && Ws(*b)) ++b;
     while (e > b && Ws(e[-1])) --e;
     if (b >= e || e - b > 63) return false;
+    // the fast way first: it reads only plain decimal numbers (the characters the check below allows), whole
+    if (DecimalWithoutStrtod(b, e, v)) return std::isfinite(v) && std::fabs(v) <= kMaxCoord;
     char buf[64];
     std::memcpy(buf, b, (std::size_t)(e - b));
     buf[e - b] = 0;

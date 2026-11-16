@@ -21,7 +21,7 @@ namespace okay {
 namespace detail {
 namespace txt {
 
-inline bool IsWs(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v'; }
+inline bool IsWs(char c) { return c == ' ' || (unsigned char)(c - 9) < 5u; }   // ' ' and '\t' '\n' '\v' '\f' '\r' (9 to 13)
 
 inline std::string Lower(std::string s) {
     for (char& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');

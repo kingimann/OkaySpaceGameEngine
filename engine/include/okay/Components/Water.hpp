@@ -80,10 +80,15 @@ public:
 
     /// The deepest water the body at `feet` (height `bodyHeight`) is standing in.
     static Probe ProbeAt(const Scene* scene, const Vec3& feet, float bodyHeight) {
+        if (!scene) return Probe{};
+        return ProbeIn(scene->FindObjectsOfType<Water>(), feet, bodyHeight);
+    }
+    /// ProbeAt over a list of volumes the caller already has (a controller keeps the scene's list between
+    /// frames instead of searching every object every frame).
+    static Probe ProbeIn(const std::vector<Water*>& volumes, const Vec3& feet, float bodyHeight) {
         Probe best;
-        if (!scene) return best;
         const float top = feet.y + std::max(0.2f, bodyHeight);
-        for (Water* w : scene->FindObjectsOfType<Water>()) {
+        for (Water* w : volumes) {
             if (!w || !w->enabled || !w->gameObject || !w->gameObject->active) continue;
             float surf = 0.0f, floorY = 0.0f;
             if (!w->Column(feet, surf, floorY, 0.35f)) continue;

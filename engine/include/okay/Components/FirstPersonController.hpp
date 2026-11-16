@@ -29,6 +29,7 @@
 #include "okay/Components/DodgeAction.hpp"
 #include "okay/Animation/HumanoidActions.hpp"
 #include "okay/Components/Traversal.hpp"
+#include "okay/Components/PlayerPerf.hpp"
 #include "okay/Math/Mathf.hpp"
 #include <cmath>
 
@@ -173,6 +174,8 @@ public:
     DodgeMove dodge;   // key dodge stays off until canDodge is set
     bool  IsZooming() const { return m_zoom; }
     bool  IsGrounded() const { return m_grounded; }
+    /// The numbers the player debug lines show (valid once the controller has simulated).
+    const PlayerDebugState& debugState() const { return m_dbg; }
     /// This controller has simulated at least once (a view switch can copy its look).
     bool  HasDriven() const { return m_drove; }
     /// The other view just became this one. Look, stance and lean come across;
@@ -260,9 +263,10 @@ public:
         // Fell out of the world? Teleport home instead of falling forever (a
         // floor without a collider, a hole in the map). fallResetY = 0 disables.
         // Water holds you, so a deep lake is not a fall off the map.
-        const bool inWater = gameObject && gameObject->scene() &&
-            Water::ProbeAt(gameObject->scene(), transform->Position(), 1.8f).inWater;
-        if (m_haveSpawn && fallResetY != 0.0f && transform->Position().y < fallResetY && !inWater) {
+        // (The water probe only matters once the body is below the line: ask then, not every frame.)
+        if (m_haveSpawn && fallResetY != 0.0f && transform->Position().y < fallResetY &&
+            !(gameObject && gameObject->scene() &&
+              ProbeWater(gameObject->scene(), transform->Position(), 1.8f).inWater)) {
             transform->SetPosition(m_spawn);
             if (auto* frb = gameObject ? gameObject->GetComponent<Rigidbody3D>() : nullptr)
                 frb->velocity = Vec3{0, 0, 0};
@@ -353,6 +357,9 @@ public:
         in.move = uiBlocked ? Vec2{0, 0} : Input::AxisWASD();   // freeze while a bag is open
         auto key = [&](char k, std::uint32_t bit) {
             if (!k) return;
+            // A key that is neither down nor just pressed sets no bit, whoever owns it: do not search the scene
+            // (every use prompt, pickup and bag) for who that is, twice a frame.
+            if (!OldPlayerPath() && !Input::GetKey(k) && !Input::GetKeyDown(k)) return;
             if ((bit == PlayerInput::LeanLeft || bit == PlayerInput::LeanRight) &&
                 LeanKeyTaken(gameObject ? gameObject->scene() : nullptr, k)) return;   // a use or bag press, not a lean
             if (Input::GetKey(k))     in.held |= bit;
@@ -412,7 +419,7 @@ public:
         // Water: waist-deep is a swim. Shallower is wading, so a shore still walks
         // and steps out. Crouch and prone dive instead of changing stance.
         {
-            const Water::Probe wp = Water::ProbeAt(gameObject ? gameObject->scene() : nullptr, transform->Position(), 1.8f);
+            const Water::Probe wp = ProbeWater(gameObject ? gameObject->scene() : nullptr, transform->Position(), 1.8f);
             m_inWater = wp.inWater;
             m_waterY = wp.surfaceY;
             m_swimming = wp.inWater && wp.feetDepth >= (m_swimming ? 0.70f : 0.95f);
@@ -453,6 +460,12 @@ public:
         // callbacks have gone quiet can jump — but not at the apex of a jump, which
         // used to read as ground (coyote, accel, the animator, the eye).
         m_groundContact = Mathf::Max(0.0f, m_groundContact - dt);
+        m_sense.Step(dt);
+        m_wall.Step(dt);
+        if (rb && !m_frictionSet) {   // a body that sets its own speed needs no contact friction: it slowed every slide along a wall
+            m_frictionSet = true;
+            if (!OldPlayerPath() && rb->friction == 0.5f) rb->friction = 0.0f;
+        }
         // Heightmap terrain has no collider, so it never fires collision callbacks;
         // Physics3D flags resting-on-terrain on the body instead. Treat it as a real
         // ground contact so the jump counter refills (otherwise you get exactly one
@@ -464,6 +477,17 @@ public:
         // double (or more) jumps.
         if (m_groundContact > 0.0f || terrainGround) m_jumpsUsed = 0;
         m_grounded = grounded;
+        if (rb) {
+            m_sinceJump += dt;
+            m_sinceGroundS = grounded ? 0.0f : m_sinceGroundS + dt;
+            // Just lost the ground without jumping, with ground one step down: stay on it (stairs, curbs, slopes).
+            if (!OldPlayerPath() && !grounded && !m_swimming && m_sinceGroundS < 0.15f && m_sinceJump > 0.3f &&
+                rb->velocity.y <= 0.5f && stepOffset > 0.0f && gameObject->scene() &&
+                SnapToGroundBelow(*gameObject->scene(), gameObject, rb, stepOffset + 0.25f)) {
+                grounded = true; m_grounded = true; m_groundContact = 0.10f;
+                m_ground.left = false; m_ground.fell = false;
+            }
+        }
         if (m_swimming) m_slideT = 0.0f;
         // Slide: crouching while sprinting on the ground launches a slide that
         // decays into a crouch. Jumping out of it stands you up (slide-jump).
@@ -488,9 +512,15 @@ public:
             const bool plant = grounded || m_swimming;
             const float auth = plant ? 1.0f : airControl;
             const float accel = (running ? acceleration : walkAcceleration) * auth;
-            StepPlanarVelocity(rb->velocity.x, rb->velocity.z,
-                               moving ? dir.x * speed : 0.0f, moving ? dir.z * speed : 0.0f,
+            if (!OldPlayerPath()) {   // the platform's speed taken on a jump rides along in the air, apart from the player's own
+                rb->velocity.x -= m_inherit.x; rb->velocity.z -= m_inherit.z;
+                if (plant) m_inherit = Vec3::Zero;
+            }
+            float wishX = moving ? dir.x * speed : 0.0f, wishZ = moving ? dir.z * speed : 0.0f;
+            if (!OldPlayerPath() && moving) m_wall.SlideAlong(wishX, wishZ);   // pushing into a wall: ask for the slide along it
+            StepPlanarVelocity(rb->velocity.x, rb->velocity.z, wishX, wishZ,
                                moving, plant, accel, deceleration * auth, steerRate * auth, dt);
+            if (!OldPlayerPath()) { rb->velocity.x += m_inherit.x; rb->velocity.z += m_inherit.z; }
             if (m_slideT > 0.0f && grounded) {
                 // Slide velocity: a burst that eases down to crouch speed.
                 float k = Mathf::Clamp(m_slideT / Mathf::Max(0.01f, slideTime), 0.0f, 1.0f);
@@ -514,6 +544,12 @@ public:
                 bool extraOk = (m_jumpsUsed >= 1) && (m_jumpsUsed < Mathf::Max(1, maxJumps));
                 if (firstOk || extraOk) {
                     rb->velocity.y = jumpForce;
+                    m_sinceJump = 0.0f;
+                    if (!OldPlayerPath() && m_platRide.platform && m_jumpsUsed == 0) {   // leaving a moving platform: keep its speed
+                        const Vec3 pv = m_platRide.velocity;
+                        m_inherit = {pv.x, 0.0f, pv.z};
+                        rb->velocity.x += pv.x; rb->velocity.z += pv.z; rb->velocity.y += pv.y;
+                    }
                     ++m_jumpsUsed;
                     m_jumped = true;
                     if (onJump) onJump();
@@ -570,8 +606,8 @@ public:
         }
         // Slope limit: on terrain steeper than slopeLimit, cancel the uphill
         // velocity component and accelerate a downhill slide.
-        if (!m_swimming && rb && (grounded || rb->groundedOnTerrain) && slopeLimit > 0.0f && rb->groundNormal.y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
-            Vec3 n = rb->groundNormal;
+        if (!m_swimming && rb && (grounded || rb->groundedOnTerrain) && slopeLimit > 0.0f && SlopeGroundNormal(rb).y < std::cos(slopeLimit * Mathf::Deg2Rad)) {
+            Vec3 n = SlopeGroundNormal(rb);
             float hl = std::sqrt(n.x * n.x + n.z * n.z);
             if (hl > 1e-4f) {
                 Vec3 dh{n.x / hl, 0.0f, n.z / hl};                       // downhill direction
@@ -587,7 +623,26 @@ public:
             TryStepUp(*gameObject->scene(), gameObject, rb, dir, grounded || m_swimming, moving, stepOffset);
         // Moving platforms: ride whatever we stand on (elevators, movers).
         if (gameObject && gameObject->scene()) {
-            RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded);
+            RideMovingPlatform(*gameObject->scene(), gameObject, m_platRide, grounded, dt);
+            if (!OldPlayerPath() && rb) {
+                // The ground went away under a sleeping body (a floor destroyed, switched off): wake it so it falls.
+                if (rb->sleeping && grounded && !m_platRide.supported && !rb->groundedOnTerrain) rb->WakeUp();
+                // Idle on a slope: hold the spot. A slope the controller allows must not creep while nobody asks for it.
+                const float gny = SlopeGroundNormal(rb).y;
+                const bool tilted = (m_sense.Fresh() || rb->groundedOnTerrain) && gny < 0.9995f &&
+                                    (slopeLimit <= 0.0f || gny >= std::cos(slopeLimit * Mathf::Deg2Rad));   // only a slope it may stand on
+                if (grounded && !moving && !m_swimming && m_slideT <= 0.0f && tilted && !m_platRide.platformMoves()) {
+                    const Vec3 p = transform->Position();
+                    if (!m_holdOn) { m_hold = p; m_holdOn = true; }
+                    else {
+                        const float dx = p.x - m_hold.x, dz = p.z - m_hold.z;
+                        if (dx * dx + dz * dz < 0.09f) {
+                            if (dx * dx + dz * dz > 2.5e-7f) transform->SetPosition({m_hold.x, p.y, m_hold.z});
+                            rb->velocity.x = 0.0f; rb->velocity.z = 0.0f;
+                        } else m_hold = p;
+                    }
+                } else m_holdOn = false;
+            }
             yaw += m_platRide.appliedYaw;   // a turntable turns the rider with it
         }
 
@@ -685,6 +740,17 @@ public:
             f.swim = m_swimming; f.dived = dived;
             m_anim.Apply(gameObject, f);
         }
+        if (!OldPlayerPath()) {   // the numbers behind the on-screen player lines
+            m_dbg.valid = true; m_dbg.grounded = grounded; m_dbg.moving = moving; m_dbg.running = running;
+            m_dbg.swimming = m_swimming; m_dbg.stance = (int)m_stance;
+            m_dbg.velocity = rb ? rb->velocity : Vec3{0, 0, 0};
+            m_dbg.speed = rb ? std::sqrt(rb->velocity.x * rb->velocity.x + rb->velocity.z * rb->velocity.z) : 0.0f;
+            m_dbg.groundNormal = rb ? SlopeGroundNormal(rb) : Vec3{0, 1, 0};
+            m_dbg.slopeDeg = std::acos(Mathf::Clamp(m_dbg.groundNormal.y, 0.0f, 1.0f)) * Mathf::Rad2Deg;
+            m_dbg.slopeLimit = slopeLimit;
+            m_dbg.platform = m_platRide.platform; m_dbg.platformMoves = m_platRide.platformMoves();
+            m_dbg.held = m_holdOn; m_dbg.terrainGround = terrainGround;
+        }
         m_jumped = false;
         // Full Body IK: the head (and some chest) follow where the camera looks, so
         // other players and shadows see you look up/down/around.
@@ -705,7 +771,9 @@ public:
     /// angles; movement and the input sent to a server keep the exact ones.
     /// Camera only: Simulate never reads any of it.
     void LateUpdate(float dt) override {
-        if (SimActive()) EaseOutOfSolids(gameObject, dt, m_separate, m_wish);
+        // A copy of someone else's avatar is placed by the network only: easing it out of a wall here moved it
+        // (and cost six queries a frame per avatar). A body this peer simulates keeps it.
+        if (SimActive() && (OldPlayerPath() || !IsRemoteProxy(gameObject))) EaseOutOfSolids(gameObject, dt, m_separate, m_wish);
         if (!transform || !m_haveEyeBase) return;   // the eye starts once this peer has simulated the player
         // Settled third person leaves the orbit on the camera. During a blend the
         // eye is written so Player View can read it, then the blend overwrites.
@@ -794,8 +862,28 @@ private:
     bool  m_haveBodyYaw = false;
 
     Vec3 m_spawn{0, 0, 0}; bool m_haveSpawn = false;   // fall-reset home position
+    WallSense m_wall;                    // the wall the body is pressed against, if any
+    GroundSense m_sense;                 // what the ground contacts say about the surface under the feet
+    Vec3  m_inherit{0, 0, 0};            // horizontal speed taken from a moving platform on a jump, carried in the air
+    float m_sinceGroundS = 0.0f, m_sinceJump = 1.0f;
+    Vec3  m_hold{0, 0, 0}; bool m_holdOn = false;   // idle on a slope: where the body is held
+    bool  m_frictionSet = false;
+    PlayerDebugState m_dbg;
 
+    /// The normal the slope limit judges: the terrain's, else the one the ground contacts reported.
+    Vec3 SlopeGroundNormal(const Rigidbody3D* rb) const {
+        if (!OldPlayerPath() && rb->groundNormal.y > 0.9999f && m_sense.Fresh()) return m_sense.normal;
+        return rb->groundNormal;
+    }
     void NoteGround(const Collision3D& c) {
+        // The contact normal says what the other thing is to this body: ground has a normal pointing down. (The
+        // old test compared the other object's pivot height with ours, which fails for a floor whose pivot is not
+        // below the player: such a floor refilled no jump.)
+        if (!OldPlayerPath()) {
+            if (m_sense.Note(c.normal)) m_groundContact = 0.10f;
+            else if (c.normal.y > -0.5f && c.normal.y < 0.5f) m_wall.Note(c.normal);
+            return;
+        }
         bool vertical = Mathf::Abs(c.normal.y) > 0.5f;
         bool below = c.gameObject && c.gameObject->transform && transform &&
                      c.gameObject->transform->Position().y < transform->Position().y;

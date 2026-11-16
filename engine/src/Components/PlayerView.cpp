@@ -414,6 +414,7 @@ PlayerView* PlayerView::FindForScript(GameObject* self, bool create) {
 
 void PlayerView::Update(float dt) {
     if (!transform || Game::Paused()) return;
+    if (!OldPlayerPath() && !IsLocallyControlled(gameObject)) return;   // another player's avatar: not this peer's view or V key
     if (allowToggle && !Input::UICaptured()) {
         const bool key = toggleKey && Input::GetKeyDown(toggleKey);
         const bool pad = toggleGamepadButton >= 0 && Input::GetGamepadButtonDown(toggleGamepadButton);
@@ -690,6 +691,7 @@ void PlayerView::KeepLensClear(Camera* cam) const {
 
 void PlayerView::LateUpdate(float dt) {
     if (!Driving()) return;
+    if (!OldPlayerPath() && !IsLocallyControlled(gameObject)) return;
     // Place the lens first. The head is skipped once that lens is within a
     // head of the skull, which PlaceCamera has just done.
     PlaceCamera(dt);

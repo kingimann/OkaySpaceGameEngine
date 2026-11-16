@@ -12,6 +12,7 @@
 #include "okay/Physics/ColliderFit.hpp"
 #include "okay/Scene/ClearSpawn.hpp"
 #include "okay/Core/FrameOverlay.hpp"
+#include "okay/Components/PlayerDebug.hpp"
 #include "okay/Core/TimerDebug.hpp"
 #include "okay/Scene/PrefabTools.hpp"
 #include <map>
@@ -1233,7 +1234,10 @@ bool EditorState::RunFrames(int frames, float frameSeconds) {
 }
 
 std::vector<std::string> EditorState::PerfLines() const {
-    return m_playing ? FrameOverlay::Lines(m_loop) : std::vector<std::string>();
+    if (!m_playing) return std::vector<std::string>();
+    std::vector<std::string> lines = FrameOverlay::Lines(m_loop);
+    for (const std::string& l : PlayerDebug::Lines(m_scene)) lines.push_back(l);   // the local player's ground, slope and speed
+    return lines;
 }
 
 std::vector<std::string> EditorState::SceneLines(int maxComponentTypes) const {

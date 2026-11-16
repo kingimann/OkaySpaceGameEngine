@@ -156,6 +156,14 @@ share these movement niceties:
 - **Fall Reset Y** (default -100): falling below this world height teleports
   the player back to spawn (with a console hint about missing colliders).
 
+**Slopes, steps and the player numbers.** Select the player and open the Player Controller panel: **Slope Limit** is the steepest
+ground (degrees, 50 by default) the body may stand on and climb (box, mesh and heightmap ground all count; steeper ground slides it
+back; 0 = no limit) and **Step Offset** is the highest step it climbs by itself (0.35 m; 0 = off). Both are saved with the scene. A
+body standing still on ground it may stand on is held still, walking down stairs keeps it on the treads, a jump off a moving platform
+keeps the platform's speed, and walking into a wall at an angle slides you along it. Press **F3** in the player (or open the Game view
+stats in the editor) to see grounded or in the air, the slope, speed and what you stand on. `OKAY_OLD_PLAYER=1` brings the old
+behaviour back for comparing. Details and numbers: `docs/player_audit.md`; the course to walk: `examples/player`.
+
 ## Crouch and prone
 
 - **Crouch Key** (default Ctrl) and **Prone Key** (default Z) — tap to toggle

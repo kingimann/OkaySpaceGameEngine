@@ -2772,7 +2772,8 @@ int main(int argc, char** argv) {
         // not the 0.1 s the game stepped), plus the time scale, hit stop, debug scale and pause reasons. The
         // editor's Game view shows the same lines.
         if (g_statsUI) {
-            const std::vector<std::string> overlayLines = okay::FrameOverlay::Lines(loop);
+            std::vector<std::string> overlayLines = okay::FrameOverlay::Lines(loop);
+            for (const std::string& pl : okay::PlayerDebug::Lines(scene)) overlayLines.push_back(pl);   // the local player's ground, slope and speed
             const std::vector<float> plot = okay::FrameOverlay::RecentFps(loop.Stats(), 90);   // chronological
 
             OkayUI::Begin("Performance  (F3)", 24.0f, 24.0f, 340.0f, 556.0f);   // tall enough for the overlay lines, the graph and a short object list

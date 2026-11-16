@@ -35553,6 +35553,10 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Drive Animation##fp");
             if (ImGui::Checkbox("Foot IK##fp", &fp->footIK)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Plant the Character's feet on the ground (foot IK) at Play.");
+            if (ImGui::DragFloat("Step Offset##fp", &fp->stepOffset, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
+            if (ImGui::DragFloat("Slope Limit##fp", &fp->slopeLimit, 0.5f, 0.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepest ground (degrees) the player can stand on and climb. Steeper ground slides the body back down. 0 = no limit.");
             if (ImGui::Checkbox("Lock + Hide Cursor##fp", &fp->lockCursor)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide and lock the mouse to the window while playing (mouse-look). Off keeps a normal pointer for clicking UI.");
 
@@ -35768,6 +35772,8 @@ void DrawInspector(EditorState& ed) {
             oked::FieldTip("Foot IK##tp");
             if (ImGui::DragFloat("Step Offset##tp", &tp->stepOffset, 0.01f, 0.0f, 1.0f)) ed.dirty = true;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Max step height climbed automatically (stairs/curbs). 0 = off.");
+            if (ImGui::DragFloat("Slope Limit##tp", &tp->slopeLimit, 0.5f, 0.0f, 89.0f, "%.0f deg")) ed.dirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steepest ground (degrees) the player can stand on and climb. Steeper ground slides the body back down. 0 = no limit.");
             {
                 const char* modes[] = {"None", "Locked", "Confined"};
                 int mode = tp->cursorMode;

@@ -5,6 +5,7 @@
 #include "okay/Physics/Rigidbody3D.hpp"
 #include "okay/Physics/Collider3D.hpp"
 #include "okay/Components/Stance.hpp"
+#include "okay/Components/PlayerPerf.hpp"
 #include <cmath>
 
 namespace okay {
@@ -50,6 +51,15 @@ inline void TryStepUp(Scene& sc, GameObject* go, Rigidbody3D* rb, const Vec3& di
     float fl = std::sqrt(fw.x * fw.x + fw.z * fw.z);
     if (fl < 1e-4f) return;
     fw.x /= fl; fw.z /= fl;
+    // Nothing solid within the five face rays' reach (0.45 m ahead, from the feet up to the step height): none of
+    // them could hit, so the answer is the "nothing in the way" return below. Asked of the scene's collider bounds
+    // instead of casting. A heightmap terrain is hit by rays and has no bounds in that list: such scenes keep the rays.
+    if (!OldPlayerPath() && !SceneHasTerrain(sc)) {
+        const float lo = pos.y + kMinStepHeight - 0.002f, hi = pos.y + std::max(kMinStepHeight, stepOffset - 0.01f) + 0.002f;
+        const float ex = pos.x + fw.x * reach, ez = pos.z + fw.z * reach;
+        if (!AnySolidNear(sc, go, {std::min(pos.x, ex) - 0.01f, lo, std::min(pos.z, ez) - 0.01f},
+                                   {std::max(pos.x, ex) + 0.01f, hi, std::max(pos.z, ez) + 0.01f})) return;
+    }
     Physics3D::IgnoreHierarchy own(go);
     auto& ph = sc.physics3D();
     // The face can sit anywhere in the step band. One ray at 5 mm misses a tread
@@ -100,22 +110,30 @@ struct PlatformRide {
     Vec3 applied{0.0f, 0.0f, 0.0f};   ///< translation added to the rider this call
     Quat lastRot = Quat::Identity;    ///< the platform's rotation last call
     float appliedYaw = 0.0f;          ///< degrees the platform turned about Y this call
+    bool  supported = true;           ///< the last probe found something under the feet (any collider or terrain)
+    Vec3  velocity{0.0f, 0.0f, 0.0f}; ///< how fast the ridden platform moved over its last call (world, m/s); 0 on static ground
+    /// The ridden platform moved or turned in the last call (ground that stands still is not "moving").
+    bool platformMoves() const {
+        return applied.x != 0.0f || applied.y != 0.0f || applied.z != 0.0f || appliedYaw != 0.0f;
+    }
 };
 /// The turn about the up axis (degrees) carried by `q` (its twist about Y).
 inline float TwistYawDeg(Quat q) {
     if (q.w < 0.0f) { q.x = -q.x; q.y = -q.y; q.z = -q.z; q.w = -q.w; }   // q and -q are one rotation: take the short way
     return 2.0f * std::atan2(q.y, q.w) * Mathf::Rad2Deg;
 }
-inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool grounded) {
+inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool grounded, float dt = 0.0f) {
     st.applied = {0.0f, 0.0f, 0.0f};
     st.appliedYaw = 0.0f;
     if (!go || !go->transform) { st.platform = nullptr; return; }
     GameObject* plat = nullptr;
+    st.supported = true;
     if (grounded) {
         Vec3 pos = go->transform->Position();
         Physics3D::IgnoreHierarchy own(go);
         RaycastHit3D hit = sc.physics3D().Raycast(sc, {pos.x, pos.y + 0.1f, pos.z},
                                                   {0.0f, -1.0f, 0.0f}, 1.4f, go, Physics3D::kAllLayers, false);
+        st.supported = hit.hit;
         if (hit.hit && hit.gameObject && hit.gameObject->transform) {
             const auto* prb = hit.gameObject->GetComponent<Rigidbody3D>();
             if (!prb || prb->bodyType != Rigidbody3D::BodyType::Dynamic) plat = hit.gameObject;
@@ -138,15 +156,55 @@ inline void RideMovingPlatform(Scene& sc, GameObject* go, PlatformRide& st, bool
             go->transform->SetPosition(go->transform->Position() + d);
             st.applied = d;
         }
+        if (dt > 1e-5f) st.velocity = d * (1.0f / dt);
         st.lastPos = cur;
         st.lastRot = rot;
     } else if (plat) {
         st.platform = plat;
         st.lastPos = plat->transform->Position();
         st.lastRot = plat->transform->Rotation();
+        st.velocity = {0.0f, 0.0f, 0.0f};
     } else {
         st.platform = nullptr;
+        st.velocity = {0.0f, 0.0f, 0.0f};
     }
+}
+
+/// Walking down stairs, or off a curb, a body that has just been on the ground falls from one tread to the next
+/// and is "airborne" half the time: the eye bobs, the animation flickers, the feet never settle. If the body left
+/// the ground a moment ago without jumping and solid ground is within one step below, put it back on it.
+/// Returns true when it did (the caller counts the body as grounded this frame). Costs one downward ray, only
+/// on the frame after the ground was lost.
+inline bool SnapToGroundBelow(Scene& sc, GameObject* go, Rigidbody3D* rb, float maxDrop) {
+    if (!go || !go->transform || !rb || maxDrop <= 0.0f) return false;
+    Collider3D* col = go->GetComponent<BoxCollider3D>();
+    if (!col) col = go->GetComponent<CapsuleCollider3D>();
+    if (!col || col->isTrigger) return false;
+    // How far the whole body (not just the point under its pivot) can move straight down before it touches
+    // something. A body resting on a slope or a stair edge has no gap, so it is left alone.
+    Physics3D::IgnoreHierarchy own(go);
+    const float reach = maxDrop + 0.02f;
+    RaycastHit3D hit;
+    if (auto* b = dynamic_cast<BoxCollider3D*>(col)) {
+        Vec3 h = b->HalfExtents();
+        h.x = std::max(0.02f, h.x - 0.02f); h.z = std::max(0.02f, h.z - 0.02f); h.y = std::max(0.02f, h.y - 0.03f);
+        Vec3 c = b->WorldCenter(); c.y += 0.03f;
+        hit = sc.physics3D().BoxCast(sc, c, h, {0.0f, -1.0f, 0.0f}, go->transform->Rotation(), reach + 0.03f, go,
+                                     Physics3D::kAllLayers, false);
+    } else {
+        auto* k = static_cast<CapsuleCollider3D*>(col);
+        Vec3 a0, a1; k->Segment(a0, a1);
+        a0.y += 0.03f; a1.y += 0.03f;
+        hit = sc.physics3D().CapsuleCast(sc, a0, a1, std::max(0.02f, k->WorldRadius() - 0.02f), {0.0f, -1.0f, 0.0f},
+                                         reach + 0.03f, go, Physics3D::kAllLayers, false);
+    }
+    if (!hit.hit || hit.normal.y < 0.5f) return false;
+    const float gap = hit.distance - 0.03f - 0.03f;   // the probe was lifted and shrunk by 3 cm each
+    if (gap < 0.01f || gap > reach) return false;
+    Vec3 pos = go->transform->Position();
+    go->transform->SetPosition({pos.x, pos.y - gap, pos.z});
+    if (rb->velocity.y < 0.0f) rb->velocity.y = 0.0f;
+    return true;
 }
 
 /// Stance body shared by the controllers: crouching and lying prone really make

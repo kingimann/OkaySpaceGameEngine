@@ -46,6 +46,17 @@ jobs:
           cat collision.md >> "$GITHUB_STEP_SUMMARY"
           exit $rc
 
+      - name: "Try-it entries are valid (fatal)"
+        if: always()
+        run: python3 scripts/gen_try_it.py --check-entries
+
+      - name: "Do not commit the generated docs/try_it.md (warning)"
+        if: always()
+        run: |
+          if [ -n "$(git diff --name-only origin/main...HEAD -- docs/try_it.md)" ]; then
+            echo "::warning title=docs/try_it.md::docs/try_it.md is generated. Add or edit a file in docs/try_it/ instead (see docs/try_it/README.md); the coordinator regenerates the page. Committing it makes PRs conflict."
+          fi
+
       - name: "Docs changed with the code (warning)"
         if: always()
         run: python3 scripts/branch_lint.py docs --base origin/main --head HEAD

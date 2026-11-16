@@ -115,7 +115,7 @@ def check_docs(root, base, head, rev=None):
     docs = [f for f in files if f.startswith("docs/") and f.endswith(".md")]
     if code and not docs:
         return [{"sev": "warning", "file": code[0], "line": 1, "text": "",
-                 "msg": f"{len(code)} code files changed under engine/ editor/ launcher/ but no docs/*.md changed. Add or update the matching guide, docs/try_it.md and the feature map (rule 5, rule 4a)."}]
+                 "msg": f"{len(code)} code files changed under engine/ editor/ launcher/ but no docs/*.md changed. Add or update the matching guide, a docs/try_it/<id>-<slug>.md entry (not the generated docs/try_it.md) and the feature map (rule 5, rule 4a)."}]
     return []
 
 

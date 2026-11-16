@@ -8,7 +8,8 @@
 // Run:  bench_model_readers [--runs N] [--format F] [--quiet] [--digest | --import-digest | --compare | --only WHAT]
 //                           <file | directory> ...
 //       (a directory is searched recursively; with no file argument it reads $OKAY_MODEL_CORPUS)
-//   --format F   only the files of one format (the extension without the dot: dae, 3ds, x, ...; "ogre" for .mesh.xml)
+//   --format F   only the files of one reader: the extension without the dot (dae, 3ds, x, ...), "ogre" for .mesh.xml, and
+//                ac (.ac .acc .ac3d), md5 (.md5mesh .md5anim), q3d (.q3o .q3s), xgl (.xgl .zgl), nff (.nff .enff), lws (.lws .mot)
 //   --runs N     at least N timed runs per measurement (default 7); small files run more often, until about 50 ms
 //                have passed, so their median is not timer noise
 //
@@ -161,6 +162,10 @@ std::string FormatOf(const fs::path& p) {
     const std::string ext = Lower(p.extension().string());
     if (ext.size() < 2 || ext == ".fbx" || ext == ".gltf" || ext == ".glb" || ext == ".xml") return std::string();
     if (!HasOwnReader(ext)) return std::string();
+    // one row per reader: the extensions one reader takes share a key
+    static const char* const kSame[][2] = {{".acc", "ac"}, {".ac3d", "ac"}, {".md5mesh", "md5"}, {".md5anim", "md5"}, {".q3o", "q3d"},
+                                           {".q3s", "q3d"}, {".zgl", "xgl"}, {".enff", "nff"}, {".mot", "lws"}};
+    for (const auto& k : kSame) if (ext == k[0]) return k[1];
     return ext.substr(1);
 }
 

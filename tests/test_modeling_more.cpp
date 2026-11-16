@@ -5,6 +5,7 @@
 #include "okay/Modeling/Measure.hpp"
 #include "okay/Modeling/Modifiers.hpp"
 #include "okay/Modeling/PolyOps.hpp"
+#include "okay/Modeling/SelectOps.hpp"
 #include <chrono>
 #include <cmath>
 #include <set>
@@ -441,6 +442,98 @@ int main() {
         for (size_t i = 0; i < pal.slots.size(); ++i) m.slotColors[i] = pal.slots[i].color;
         m.ApplySlotColors();
         CHECK(m.triColors[0].r == pal.slots[3].color.r);
+    }
+    RUN_SUITE("faster selecting: grow, shrink, similar, by direction, by area");
+    {
+        const Mesh sph = Mesh::Sphere(1.0f, 12, 16);
+        std::vector<int> one = {40};
+        const auto g1 = GrowFaces(sph, one);
+        CHECK(g1.size() > 1 && std::find(g1.begin(), g1.end(), 40) != g1.end());
+        const auto g2 = GrowFaces(sph, g1);
+        CHECK(g2.size() > g1.size());                                           // keeps growing
+        const auto back = ShrinkFaces(sph, g1);
+        CHECK(!back.empty() && back.size() < g1.size());                        // shrinking peels the rim
+        for (int t : back) CHECK(std::find(g1.begin(), g1.end(), t) != g1.end());
+        CHECK(ShrinkFaces(sph, one).empty());                                    // a lone face has only a rim
+        std::vector<int> all; for (int t = 0; t < sph.TriangleCount(); ++t) all.push_back(t);
+        CHECK(GrowFaces(sph, all).size() == all.size() && ShrinkFaces(sph, all).size() == all.size());   // a closed mesh has no rim
+        CHECK(GrowFaces(sph, {}).empty() && GrowFaces(sph, {-1, 99999}).empty() && ShrinkFaces(sph, {-4}).empty());
+        // Similar and by-direction on a cube: 12 triangles, 2 per side.
+        const Mesh cube = Mesh::Cube();
+        const auto up = SelectByNormal(cube, Vec3{0, 1, 0}, 10.0f);
+        CHECK(up.size() == 2);
+        CHECK(SelectByNormal(cube, Vec3{0, 1, 0}, 100.0f).size() == 2 + 8);    // 90 degrees away counts inside 100
+        CHECK(SelectByNormal(cube, Vec3{0, 0, 0}, 10.0f).empty() && SelectByNormal(cube, Vec3{std::nanf(""), 1, 0}, 10.0f).empty());
+        CHECK(SelectSimilar(cube, {up[0]}, SimilarKind::Normal, 5.0f) == up);
+        CHECK(SelectSimilar(cube, {up[0]}, SimilarKind::Coplanar, 0.01f) == up);
+        CHECK(SelectSimilar(cube, {up[0]}, SimilarKind::Area, 0.1f).size() == 12);   // every cube triangle has the same area
+        CHECK(SelectSimilar(cube, {}, SimilarKind::Normal, 5.0f).empty());
+        Mesh sl = Mesh::Cube(); sl.AssignSlot({0, 1, 2}, 1);
+        CHECK(SelectSimilar(sl, {1}, SimilarKind::Slot, 0.0f).size() == 3);
+        CHECK(SelectSimilar(sl, {5}, SimilarKind::Slot, 0.0f).size() == 9);
+        // Coplanar only picks faces on the same plane: a stepped mesh has two levels facing up.
+        Mesh step = Mesh::Cube(); step.Add(Mesh::Cube(), {2, 0.5f, 0});             // a second cube whose top is higher
+        const auto top0 = SelectByNormal(step, Vec3{0, 1, 0}, 5.0f);
+        CHECK(top0.size() == 4);
+        CHECK(SelectSimilar(step, {top0[0]}, SimilarKind::Coplanar, 0.01f).size() == 2);
+        CHECK(SelectSimilar(step, {top0[0]}, SimilarKind::Normal, 5.0f).size() == 4);
+        CHECK(SelectByArea(cube, 0.4f, 0.6f).size() == 12 && SelectByArea(cube, 0.6f, -1.0f).empty() && SelectByArea(cube, 0.0f, 0.1f).empty());
+    }
+    RUN_SUITE("apply scale and rotation");
+    {
+        Mesh m = Mesh::Cube();
+        m.vertices[0] = Vec3{-0.5f, -0.5f, -0.5f};
+        CHECK(BakeTransform(m, Vec3{2, 3, 4}, Quat::Identity));
+        Vec3 lo, hi; m.Bounds(lo, hi);
+        CHECK_NEAR(hi.x - lo.x, 2.0f, 1e-4); CHECK_NEAR(hi.y - lo.y, 3.0f, 1e-4); CHECK_NEAR(hi.z - lo.z, 4.0f, 1e-4);
+        Mesh r = Mesh::Cube(1.0f);
+        CHECK(BakeTransform(r, Vec3{1, 1, 1}, Quat::AngleAxis(90.0f, Vec3{0, 0, 1})));
+        r.Bounds(lo, hi);
+        CHECK_NEAR(hi.x - lo.x, 1.0f, 1e-4);                                      // still a unit cube, turned
+        // A mirror (one negative axis) flips the winding so the volume stays positive.
+        Mesh f = Mesh::Cube();
+        CHECK(BakeTransform(f, Vec3{-1, 1, 1}, Quat::Identity));
+        CHECK(MeasureMesh(f).volume > 0.9f);
+        // Normals follow: a non-uniform scale on a smooth sphere keeps unit normals pointing out.
+        Mesh sp = Mesh::Sphere(1.0f, 8, 12); sp.ComputeSmoothNormals();
+        CHECK(BakeTransform(sp, Vec3{3, 1, 1}, Quat::Identity));
+        bool unit = true; for (const Vec3& n : sp.normals) if (std::fabs(n.Magnitude() - 1.0f) > 1e-3f) unit = false;
+        CHECK(unit);
+        Mesh bad = Mesh::Cube();
+        CHECK(!BakeTransform(bad, Vec3{0, 1, 1}, Quat::Identity) && !BakeTransform(bad, Vec3{std::nanf(""), 1, 1}, Quat::Identity));
+        CHECK(MeasureMesh(bad).volume > 0.9f);                                    // untouched on refusal
+    }
+    RUN_SUITE("how-do-I recipes");
+    {
+        Mesh wall = Mesh::Cube();
+        const auto front = SelectByNormal(wall, Vec3{0, 0, 1}, 5.0f);
+        CHECK(front.size() == 2);
+        const int before = wall.TriangleCount();
+        std::string err;
+        CHECK(MakeWindowHole(wall, front, 0.3f, &err));
+        CHECK(wall.TriangleCount() > before - 2);                                 // a frame is left around the opening
+        CHECK(!wall.Topology().Closed());                                         // and the opening is a real hole
+        CHECK(wall.Topology().boundaryEdges >= 4);
+        Mesh none = Mesh::Cube();
+        CHECK(!MakeWindowHole(none, {}, 0.3f, &err) && !err.empty() && none.TriangleCount() == 12);
+        Mesh e = Mesh::Cube();
+        PolyMesh pm = PolyMesh::FromMesh(e);
+        std::vector<std::pair<int, int>> edges;
+        for (const auto& ed : pm.Edges()) edges.push_back({ed.a, ed.b});
+        CHECK(RoundEdges(e, edges, 0.1f, 3, &err) > 0);
+        CHECK(e.TriangleCount() > 12 && e.Topology().Closed());
+        const Measurement rm = MeasureMesh(e);
+        CHECK(rm.volume > 0.7f && rm.volume < 1.0f);                              // rounding takes a little off the corners
+        Mesh e2 = Mesh::Cube();
+        CHECK(RoundEdges(e2, {}, 0.1f, 3, &err) == 0 && !err.empty() && e2.TriangleCount() == 12);
+        CHECK(RoundEdges(e2, {{0, 1}}, std::nanf(""), 3, &err) == 0);
+        const Mesh table = MakeTable();
+        CHECK(table.TriangleCount() == 60 && table.HasSlots() && table.TrianglesInSlot(0).size() == 12 && table.TrianglesInSlot(1).size() == 48);
+        Vec3 tlo, thi; table.Bounds(tlo, thi);
+        CHECK_NEAR(thi.y, 0.75f, 1e-4); CHECK_NEAR(tlo.y, 0.0f, 1e-4); CHECK_NEAR(thi.x - tlo.x, 1.6f, 1e-4);
+        const Mesh huge = MakeTable(1e9f, -5.0f, std::nanf(""), 0.0f, 0.0f);       // sizes are clamped to something sound
+        Vec3 hlo, hhi; huge.Bounds(hlo, hhi);
+        CHECK(std::isfinite(hhi.x + hhi.y + hhi.z) && hhi.x - hlo.x <= 20.01f);
     }
     TEST_MAIN_RESULT();
 }

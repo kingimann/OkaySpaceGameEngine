@@ -101,6 +101,7 @@ No open pull request touches `Modeling/*`. The animation PR #554 (Grok's session
   - 3.5.10 Measure and snap - `Modeling/Measure` - MeasureMesh / MeasureSelection readouts, SnapToGeometry (vertex, edge, face) used by the G move; Edit Mesh > Snapping and measuring
   - 3.5.11 Material library and palettes - `Modeling/MaterialLibrary` - ready slot colours; Edit Mesh > Material Slots
   - 3.5.12 Slot pictures - `Components/MeshRenderer`, `Render/SoftwareRenderer` - slotTextures drawn per triangle slot (software renderer only), `slottex` scene record
+  - 3.5.13 Faster modeling - `Modeling/SelectOps`, `editor/main.cpp` - GrowFaces / ShrinkFaces / SelectSimilar / SelectByNormal / SelectByArea, BakeTransform, recipes (MakeWindowHole, RoundEdges, MakeTable); one command list behind the quick toolbar, right-click menu, Ctrl+K palette, Shift+R, undo history
   - 3.5.8 Repair Mesh - `Render/Mesh` - Mesh::Repair: merge doubles, drop collapsed triangles, cap holes, orient outward; Edit Mesh > Repair Mesh
   - 3.5.6 OBJ export and import helpers - `Render/Mesh` - SaveOBJ, LoadOBJ (UVs, vn normals), RecenterToOrigin, ScaleToFit, NormalizeImportScale
 - **Code:** `Render/Mesh`, `Modeling/MeshAsset`, `Modeling/PolyMesh`, `editor/EditorState.*`

@@ -1447,6 +1447,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - False-positive protection (39.12.6)
 - far agents (45.3)
 - far view (45.4)
+- Faster modeling (3.5.13)
 - Favorites (17.15, 20.1)
 - Fbm (36.7)
 - FBO (38.2)

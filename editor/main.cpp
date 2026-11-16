@@ -43,6 +43,7 @@
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
+#include "okay/Modeling/SelectOps.hpp"      // grow / shrink / select similar, apply scale, how-do-I recipes
 #include "okay/Modeling/Measure.hpp"         // measuring and snapping to vertices, edges and faces
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
 #include "okay/Modeling/PolyMesh.hpp"        // polygon mesh (quads, n-gons)
@@ -3237,11 +3238,13 @@ okay::modeling::Ray g_meModalRay0{};
 // selection it works on is there, instead of a button that silently does nothing.
 // The last few modeling tools that were used (newest first), shown as a plain list in Edit Mesh.
 static std::vector<std::string> g_recentTools;
+static std::string g_nextUndoLabel;   // the name the next mesh undo step is filed under (the tool just pressed)
 static void NoteRecentTool(const char* label) {
     std::string n = label;
     const std::size_t hash = n.find("##");
     if (hash != std::string::npos) n.resize(hash);
     if (n.empty()) return;
+    g_nextUndoLabel = n;
     g_recentTools.erase(std::remove(g_recentTools.begin(), g_recentTools.end(), n), g_recentTools.end());
     g_recentTools.insert(g_recentTools.begin(), n);
     if (g_recentTools.size() > 6) g_recentTools.resize(6);
@@ -3323,6 +3326,7 @@ struct MeshUndoStep {
     Mesh mesh;
     std::vector<int> verts, faces;
     std::vector<std::pair<int, int>> edges;
+    std::string label;   // what was done after this state (the Undo history list shows it)
 };
 std::vector<MeshUndoStep> g_meshUndo, g_meshRedo;
 Mesh g_meshEditStart;            // the mesh as it was when edit mode began
@@ -3338,6 +3342,8 @@ static MeshRenderer* EditedRenderer() { return g_meshEdit && g_meshEditObj ? g_m
 static void EditUndoPoint(EditorState& ed, MeshRenderer* mr) {
     if (!mr || mr != EditedRenderer()) { ed.PushUndo(); return; }
     g_meshUndo.push_back(MeshUndoCapture(mr->mesh));
+    g_meshUndo.back().label = g_nextUndoLabel.empty() ? std::string("Edit") : g_nextUndoLabel;
+    g_nextUndoLabel.clear();
     g_meshRedo.clear();
     // Keep it bounded: at most 100 steps and about 4 million stored vertices.
     std::size_t total = 0;
@@ -3484,6 +3490,136 @@ static void EndPolyTool(bool keep) {
     g_knifePts.clear(); g_knifePos.clear();
     g_slideLoop.clear(); g_slideFrom.clear();
     g_slideAfterCut = false;
+}
+
+// ---- Every modeling command in one list: the toolbar, the right-click menu, the Ctrl+K palette and
+// Shift+R (repeat last) all run these, so they can never drift apart from what the buttons do. ----
+struct ModelCmd {
+    std::string name, keys, group, hint;
+    bool ok = true;                  // can it run on the current selection?
+    std::string why;                 // what to do first, when it cannot
+    std::function<void()> run;
+};
+static std::string g_lastCmdName;    // the last command run (Shift+R runs it again)
+static bool g_cmdPaletteRequest = false;   // Ctrl+K, the Find button or the right-click menu asks for the palette
+static int  g_cmdPaletteSel = 0;
+static char g_cmdFilter[64] = "";
+static float g_quickBevelW = 0.1f;
+static int   g_quickBevelSeg = 3;
+static float g_windowBorder = 0.3f;
+static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
+    namespace pmo = okay::modeling;
+    std::vector<ModelCmd> v;
+    if (!mr) return v;
+    const bool anyFaces = !g_meshSelFaces.empty(), anyVerts = !g_meshSelVerts.empty();
+    // A quick guess is enough to grey a button out (the tool itself checks again); working out the real edges every frame cost milliseconds on big meshes.
+    const bool anyEdges = g_meshSelMode == 2 ? !g_meshSelEdges.empty() : (g_meshSelMode == 1 ? anyFaces : g_meshSelVerts.size() >= 2);
+    auto add = [&](const char* name, const char* keys, const char* group, const char* hint, bool ok, const char* why, std::function<void()> run) {
+        ModelCmd c; c.name = name; c.keys = keys; c.group = group; c.hint = hint; c.ok = ok; c.why = ok ? "" : why; c.run = std::move(run);
+        v.push_back(std::move(c));
+    };
+    auto edit = [&](const std::function<void(Mesh&)>& f) { return [&ed, mr, f] { EditUndoPoint(ed, mr); f(mr->mesh); ed.dirty = true; }; };
+    auto clearSel = [] { g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); };
+    const char* needFaces = "Select faces first (Face mode, key 3).";
+    const char* needEdges = "Select edges first (Edge mode, key 2).";
+    // Selection
+    add("Select All", "", "Select", "Select every vertex, edge or face (whichever mode you are in).", true, "", [mr] {
+        g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+        if (g_meshSelMode == 0) for (int i = 0; i < (int)mr->mesh.vertices.size(); ++i) g_meshSelVerts.push_back(i);
+        else if (g_meshSelMode == 2) for (const auto& e : EditPolyEdges(mr->mesh)) g_meshSelEdges.push_back(e);
+        else for (int i = 0; i < mr->mesh.TriangleCount(); ++i) g_meshSelFaces.push_back(i);
+    });
+    add("Select None", "", "Select", "Clear the selection.", true, "", clearSel);
+    add("Grow Selection", "", "Select", "Add everything touching the selection (faces or vertices).", g_meshSelMode == 1 ? anyFaces : (g_meshSelMode == 0 && anyVerts), "Select some faces (key 3) or vertices (key 1) first.", [mr] {
+        if (g_meshSelMode == 1) g_meshSelFaces = pmo::GrowFaces(mr->mesh, g_meshSelFaces);
+        else g_meshSelVerts = mr->mesh.GrownVertexSelection(g_meshSelVerts);
+    });
+    add("Shrink Selection", "", "Select", "Take the outer rim off the selection (faces or vertices).", g_meshSelMode == 1 ? anyFaces : (g_meshSelMode == 0 && anyVerts), "Select some faces (key 3) or vertices (key 1) first.", [mr] {
+        if (g_meshSelMode == 1) g_meshSelFaces = pmo::ShrinkFaces(mr->mesh, g_meshSelFaces);
+        else g_meshSelVerts = mr->mesh.ShrunkVertexSelection(g_meshSelVerts);
+    });
+    add("Select Similar: Facing", "", "Select", "Select every face that points the same way as the selected faces.", anyFaces, needFaces, [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectSimilar(mr->mesh, g_meshSelFaces, pmo::SimilarKind::Normal, 5.0f); });
+    add("Select Similar: Same Plane", "", "Select", "Select the faces lying flat on the same plane (all the floor faces, all of one wall).", anyFaces, needFaces, [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectSimilar(mr->mesh, g_meshSelFaces, pmo::SimilarKind::Coplanar, 0.01f); });
+    add("Select Similar: Area", "", "Select", "Select the faces about as big as the selected ones (within 10 percent).", anyFaces, needFaces, [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectSimilar(mr->mesh, g_meshSelFaces, pmo::SimilarKind::Area, 0.1f); });
+    add("Select Similar: Material Slot", "", "Select", "Select every face in the same material slot as the selected faces.", anyFaces && mr->mesh.HasSlots(), "Select faces that have a material slot (Paint > Material Slots).", [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectSimilar(mr->mesh, g_meshSelFaces, pmo::SimilarKind::Slot, 0.0f); });
+    add("Select Up-Facing Faces", "", "Select", "Select every face that points up (floors, roofs, tabletops).", true, "", [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectByNormal(mr->mesh, Vec3{0, 1, 0}, 30.0f); });
+    add("Select Down-Facing Faces", "", "Select", "Select every face that points down.", true, "", [mr] { g_meshSelMode = 1; g_meshSelFaces = pmo::SelectByNormal(mr->mesh, Vec3{0, -1, 0}, 30.0f); });
+    add("Select Small Faces", "", "Select", "Select the smallest faces (a tenth of the average area or less): usually leftover slivers.", true, "", [mr] {
+        const pmo::Measurement w = pmo::MeasureMesh(mr->mesh);
+        const float avg = mr->mesh.TriangleCount() ? w.area / (float)mr->mesh.TriangleCount() : 0.0f;
+        g_meshSelMode = 1; g_meshSelFaces = pmo::SelectByArea(mr->mesh, 0.0f, avg * 0.1f);
+    });
+    // Editing
+    add("Extrude Faces", "", "Edit", "Push the selected faces out by the Extrude distance.", anyFaces, needFaces, edit([](Mesh& m) { m.ExtrudeFaces(g_meshSelFaces, g_extrudeDist); }));
+    add("Inset Faces", "", "Edit", "Shrink the selected faces into a border plus a smaller face.", anyFaces, needFaces, edit([](Mesh& m) { m.InsetFaces(g_meshSelFaces, g_insetAmt); }));
+    add("Subdivide Selection", "", "Edit", "Split the selected faces into smaller ones.", anyFaces, needFaces, edit([](Mesh& m) { m.SubdivideFaces(g_meshSelFaces); g_meshSelFaces.clear(); }));
+    add("Poke Faces", "", "Edit", "Fan each selected face from a centre point.", anyFaces, needFaces, edit([](Mesh& m) { m.PokeFaces(g_meshSelFaces, 0.15f); g_meshSelFaces.clear(); }));
+    add("Delete Faces", "", "Edit", "Remove the selected faces (leaves a hole).", anyFaces, needFaces, edit([](Mesh& m) { m.DeleteFaces(g_meshSelFaces); g_meshSelFaces.clear(); }));
+    add("Duplicate Faces", "", "Edit", "Copy the selected faces in place; the copies stay selected.", anyFaces, needFaces, edit([](Mesh& m) { g_meshSelFaces = m.DuplicateFaces(g_meshSelFaces); g_meshSelVerts.clear(); g_meshSelEdges.clear(); }));
+    add("Flip Normals", "", "Edit", "Turn every face the other way round.", true, "", edit([](Mesh& m) { m.FlipNormals(); }));
+    add("Recalculate Normals Outside", "", "Edit", "Make every face point outward (fixes dark or inside-out faces).", true, "", edit([](Mesh& m) { m.OrientFacesOutward(); }));
+    add("Merge by Distance", "", "Edit", "Join vertices that sit on top of each other.", true, "", edit([clearSel](Mesh& m) { m.WeldVertices(); g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); }));
+    add("Repair Mesh", "", "Edit", "Merge doubles, drop collapsed triangles, cap holes, point faces outward.", true, "", [&ed, mr] {
+        EditUndoPoint(ed, mr);
+        const Mesh::RepairReport r = mr->mesh.Repair();
+        g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+        ConsoleLog("Repair Mesh: merged " + std::to_string(r.mergedVerts) + " verts, capped " + std::to_string(r.holesFilled) + " holes, flipped " + std::to_string(r.flippedFaces) + " faces");
+        ed.dirty = true;
+    });
+    add("Fill Holes", "", "Edit", "Cap every open hole.", true, "", edit([](Mesh& m) { m.FillHoles(); }));
+    add("Dissolve Edges", "", "Edit", "Remove the selected edges, merging the faces beside them.", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh);
+        ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { const int n = pmo::DissolveEdges(p, edges); g_meshSelEdges.clear(); return n > 0; });
+    });
+    add("Bevel Edges", "Ctrl+B", "Edit", "Chamfer the selected edges (Ctrl+B in the 3D view for the live version).", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh); std::string err;
+        if (ApplyPoly(ed, mr, [&](pmo::PolyMesh& p) { return pmo::BevelEdges(p, edges, g_quickBevelW, &err, g_quickBevelSeg, 0.5f) > 0; })) { g_meshSelEdges.clear(); g_meshSelVerts.clear(); }
+        else ConsoleLog("Bevel: " + err, 1);
+    });
+    add("Round Edges (how do I)", "", "How do I", "Round the selected edges with a smooth curved bevel (3 steps).", anyEdges, needEdges, [&ed, mr] {
+        const pmo::EdgeList edges = SelectedPolyEdges(mr->mesh); std::string err;
+        EditUndoPoint(ed, mr);
+        const int n = pmo::RoundEdges(mr->mesh, edges, g_quickBevelW, 3, &err);
+        if (n > 0) { g_meshSelEdges.clear(); g_meshSelVerts.clear(); g_meshSelFaces.clear(); ed.dirty = true; ConsoleLog("Rounded " + std::to_string(n) + " edge(s)"); }
+        else { if (!g_meshUndo.empty()) { MeshUndo(false); g_meshRedo.clear(); } ConsoleLog("Round Edges: " + err, 1); }
+    });
+    add("Make a Window Hole (how do I)", "", "How do I", "Cut an opening with a frame in the selected wall faces: inset, then delete the middle.", anyFaces, needFaces, [&ed, mr] {
+        std::string err;
+        EditUndoPoint(ed, mr);
+        if (pmo::MakeWindowHole(mr->mesh, g_meshSelFaces, g_windowBorder, &err)) { g_meshSelFaces.clear(); g_meshSelVerts.clear(); g_meshSelEdges.clear(); ed.dirty = true; ConsoleLog("Cut a window hole"); }
+        else ConsoleLog("Window hole: " + err, 1);
+    });
+    add("Add a Table (how do I)", "", "How do I", "Add a four-legged table (top and legs in two material slots) as a new object you can keep editing.", true, "", [&ed] {
+        ed.PushUndo();
+        GameObject* t = ed.scene().CreateGameObject("Table");
+        auto* tmr = t->AddComponent<MeshRenderer>();
+        tmr->mesh = pmo::MakeTable();
+        ed.Select(t);
+        ConsoleLog("Added a table: Modeling > Edit Mesh to change it, Material Slots to recolour it");
+        ed.dirty = true;
+    });
+    add("Apply Scale and Rotation", "", "Object", "Bake the object's scale and rotation into its mesh and reset them (so sizes read true).", mr->gameObject->transform->ChildCount() == 0, "Not available while the object has children (their placement would change).", [&ed, mr] {
+        Transform* tr = mr->gameObject->transform;
+        ed.PushUndo();
+        if (pmo::BakeTransform(mr->mesh, tr->localScale, tr->localRotation)) {
+            tr->localScale = Vec3{1, 1, 1}; tr->localRotation = Quat::Identity;
+            ConsoleLog("Applied scale and rotation"); ed.dirty = true;
+        } else ConsoleLog("Apply Scale: the scale has a zero or invalid axis", 1);
+    });
+    // Switches
+    add("Toggle Symmetry X", "", "Switch", "Mirror every move across the local X = 0 plane.", true, "", [] { g_meshSymX = !g_meshSymX; });
+    add("Toggle Snap", "Ctrl", "Switch", "Snap moves, turns and scales (also while Ctrl is held).", true, "", [] { g_snap = !g_snap; });
+    add("Toggle Soft Select", "", "Switch", "Let nearby vertices follow a move with a falloff.", true, "", [] { g_meshSoftSel = !g_meshSoftSel; });
+    add("Undo", "Ctrl+Z", "Switch", "Undo the last mesh edit.", !g_meshUndo.empty(), "Nothing to undo.", [] { MeshUndo(false); });
+    add("Redo", "Ctrl+Y", "Switch", "Redo.", !g_meshRedo.empty(), "Nothing to redo.", [] { MeshUndo(true); });
+    return v;
+}
+// Run one command: names the undo step, remembers it for Shift+R and the recent list.
+static void RunModelCmd(const ModelCmd& c) {
+    if (!c.ok) { ConsoleLog(c.name + ": " + c.why, 1); return; }
+    g_nextUndoLabel = c.name;
+    c.run();
+    if (c.group != "Switch") { NoteRecentTool(c.name.c_str()); g_lastCmdName = c.name; }
 }
 
 // Enter or leave mesh edit mode on `go` (the panel's Edit Mesh checkbox and Tab).
@@ -28480,13 +28616,33 @@ void DrawModeling(EditorState& ed) {
                     ImGui::TextDisabled("%s", line.c_str());
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("The last tools you used, newest first (a reminder; press the tool's own button to use it again).");
                 } else ImGui::TextDisabled("Recent: (none yet)");
+                if (ImGui::Button("Find a Tool... (Ctrl+K)##mecmd")) g_cmdPaletteRequest = true;
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Search every modeling tool by name (bevel, extrude, similar, table...) and run it. Also in the 3D view: Ctrl+K, or right-click for the tools that fit the selection.");
+                ImGui::SameLine();
+                if (ImGui::Button("Repeat Last (Shift+R)##mecmd") && !g_lastCmdName.empty()) {
+                    const auto cmdsNow = BuildModelCmds(ed, mr);
+                    for (const ModelCmd& c : cmdsNow) if (c.name == g_lastCmdName) { RunModelCmd(c); break; }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", g_lastCmdName.empty() ? "Run a tool first; then this runs it again." : ("Run " + g_lastCmdName + " again.").c_str());
+                if (ImGui::TreeNode("Undo history##mhist")) {
+                    if (g_meshUndo.empty()) ImGui::TextDisabled("Nothing to undo yet.");
+                    int jump = -1;
+                    for (int hi = 0, n = (int)g_meshUndo.size(); hi < n && hi < 12; ++hi) {
+                        const MeshUndoStep& st = g_meshUndo[n - 1 - hi];
+                        if (ImGui::Selectable((std::to_string(hi + 1) + ".  " + (st.label.empty() ? std::string("Edit") : st.label) + "##hist" + std::to_string(hi)).c_str())) jump = hi;
+                    }
+                    if (ImGui::IsItemHovered() && !g_meshUndo.empty()) ImGui::SetTooltip("Click a step to go back to before it (Ctrl+Y goes forward again).");
+                    if (jump >= 0) for (int k = 0; k <= jump; ++k) MeshUndo(false);
+                    ImGui::TreePop();
+                }
                 if (ImGui::TreeNode("Keys in the 3D view##mkeys")) {
                     const char* rows[][2] = {
                         {"1 / 2 / 3", "Vertex / edge / face select mode"}, {"G, R, S", "Move, rotate, scale the selection"},
                         {"X, Y, Z", "Lock to an axis while moving (Shift: the plane)"}, {"Ctrl", "Snap while moving, rotating, scaling"},
                         {"type a number", "Exact value during G / R / S"}, {"Enter / Esc", "Confirm / cancel"},
                         {"G, G", "Edge slide"}, {"Ctrl+R", "Loop cut"}, {"Ctrl+B", "Bevel"}, {"K", "Knife"},
-                        {"Ctrl+Z / Ctrl+Y", "Undo / redo mesh edits"},
+                        {"Ctrl+Z / Ctrl+Y", "Undo / redo mesh edits"}, {"Ctrl+K", "Find and run any modeling tool"},
+                        {"Shift+R", "Repeat the last tool"}, {"Right-click", "Tools for the current selection"},
                     };
                     for (const auto& r : rows) { ImGui::TextUnformatted(r[0]); ImGui::SameLine(130); ImGui::TextDisabled("%s", r[1]); }
                     ImGui::TreePop();
@@ -28518,10 +28674,17 @@ void DrawModeling(EditorState& ed) {
                         const Mat4 W = go->transform->LocalToWorldMatrix();
                         sc = Vec3{W.MultiplyVector({1, 0, 0}).Magnitude(), W.MultiplyVector({0, 1, 0}).Magnitude(), W.MultiplyVector({0, 0, 1}).Magnitude()};
                     }
-                    const pmo::Measurement whole = pmo::MeasureMesh(mr->mesh, sc);
+                    // Measured twice a second, not every frame (a 100k-triangle mesh takes a couple of milliseconds).
+                    static pmo::Measurement s_whole, s_sel; static double s_measT = -1.0; static const Mesh* s_measMesh = nullptr; static std::size_t s_measN = 0;
+                    if (s_measT < 0.0 || ImGui::GetTime() - s_measT > 0.5 || s_measMesh != &mr->mesh || s_measN != mr->mesh.triangles.size() + g_meshSelVerts.size() + g_meshSelFaces.size() + g_meshSelEdges.size()) {
+                        s_whole = pmo::MeasureMesh(mr->mesh, sc);
+                        s_sel = pmo::MeasureSelection(mr->mesh, g_meshSelVerts, g_meshSelFaces, g_meshSelEdges, sc);
+                        s_measT = ImGui::GetTime(); s_measMesh = &mr->mesh; s_measN = mr->mesh.triangles.size() + g_meshSelVerts.size() + g_meshSelFaces.size() + g_meshSelEdges.size();
+                    }
+                    const pmo::Measurement& whole = s_whole;
                     ImGui::TextDisabled("Whole mesh: %.3f x %.3f x %.3f, area %.3f, volume %.3f", whole.size.x, whole.size.y, whole.size.z, whole.area, whole.volume);
                     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Width x height x depth in world units (the object's scale included), surface area and volume.");
-                    const pmo::Measurement sel = pmo::MeasureSelection(mr->mesh, g_meshSelVerts, g_meshSelFaces, g_meshSelEdges, sc);
+                    const pmo::Measurement& sel = s_sel;
                     if (sel.verts + sel.edges + sel.faces > 0) ImGui::Text("Selection: %s", sel.Summary().c_str());
                     else ImGui::TextDisabled("Selection: nothing (select two vertices to read the distance between them).");
                 }
@@ -44730,9 +44893,142 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 g_uiHandled = true;
             }
 
+            // ---- Faster modeling: quick toolbar, right-click menu, command palette (Ctrl+K), repeat last (Shift+R), hint bar ----
+            {
+                MeshRenderer* cmr = meo->GetComponent<MeshRenderer>();
+                const std::vector<ModelCmd> cmds = BuildModelCmds(ed, cmr);
+                auto findCmd = [&](const std::string& n) -> const ModelCmd* { for (const ModelCmd& c : cmds) if (c.name == n) return &c; return nullptr; };
+                const bool idle = g_ptool == PolyTool::None && !g_meModal.Active() && !g_meEditGrab;
+                if (ImGui::IsPopupOpen("##meshcmdpal") || ImGui::IsPopupOpen("##meshctx")) g_uiHandled = true;   // a click in the menu must not select or orbit
+                if (idle && hovered && !io.WantTextInput) {
+                    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_K, false)) g_cmdPaletteRequest = true;
+                    if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+                        if (const ModelCmd* c = findCmd(g_lastCmdName)) RunModelCmd(*c);
+                        else ConsoleLog("Repeat Last: nothing to repeat yet (use a tool first)", 1);
+                        g_uiHandled = true;
+                    }
+                }
+                // The quick toolbar under the mode pills: the most-used tools for the current select mode.
+                {
+                    std::vector<std::string> names;
+                    if (g_meshSelMode == 1) names = {"Extrude Faces", "Inset Faces", "Subdivide Selection", "Delete Faces", "Grow Selection", "Select Similar: Facing"};
+                    else if (g_meshSelMode == 2) names = {"Bevel Edges", "Round Edges (how do I)", "Dissolve Edges"};
+                    else names = {"Grow Selection", "Shrink Selection", "Merge by Distance"};
+                    names.push_back("Repair Mesh");
+                    struct Q { std::string label, tip; bool ok, on; std::string cmd; int act; };
+                    std::vector<Q> qs;
+                    for (const std::string& n : names) if (const ModelCmd* c = findCmd(n)) {
+                        std::string lab = n; const std::size_t pr = lab.find(" (how do I)"); if (pr != std::string::npos) lab.resize(pr);
+                        qs.push_back({lab, c->hint + (c->ok ? "" : "  [" + c->why + "]"), c->ok, false, n, 0});
+                    }
+                    qs.push_back({"Sym X", "Mirror every move across the local X = 0 plane (Y and Z symmetry are not built).", true, g_meshSymX, "Toggle Symmetry X", 0});
+                    qs.push_back({"Snap", "Snap moves, turns and scales (Ctrl also snaps while held). Set what it snaps to in Edit Mesh > Snapping and measuring.", true, g_snap, "Toggle Snap", 0});
+                    qs.push_back({"Repeat", "Run the last tool again (Shift+R): " + (g_lastCmdName.empty() ? std::string("none yet") : g_lastCmdName), !g_lastCmdName.empty(), false, "", 1});
+                    qs.push_back({"Find... (Ctrl+K)", "Search every modeling tool by name and run it.", true, false, "", 2});
+                    const float pad = 7.0f, gap = 4.0f, lh2 = ImGui::GetTextLineHeight(), hgt2 = lh2 + 6.0f;
+                    float x2 = canvasPos.x + 8.0f, y2 = canvasPos.y + 8.0f + lh2 + 14.0f;
+                    for (const Q& q : qs) {
+                        const float w = ImGui::CalcTextSize(q.label.c_str()).x + pad * 2.0f;
+                        if (x2 + w > canvasPos.x + canvasSize.x - 8.0f) { x2 = canvasPos.x + 8.0f; y2 += hgt2 + gap; }
+                        const ImVec2 a(x2, y2), b(x2 + w, y2 + hgt2);
+                        const bool over = io.MousePos.x >= a.x && io.MousePos.x < b.x && io.MousePos.y >= a.y && io.MousePos.y < b.y;
+                        dl->AddRectFilled(a, b, q.on ? ImGui::GetColorU32(AccentCol(0.92f)) : over && q.ok ? IM_COL32(70, 74, 86, 230) : IM_COL32(32, 35, 42, 205), 4.0f);
+                        dl->AddText(ImVec2(a.x + pad, a.y + 3.0f), q.ok ? IM_COL32(225, 228, 235, 255) : IM_COL32(120, 124, 134, 255), q.label.c_str());
+                        if (over && hovered && idle) {
+                            ImGui::SetTooltip("%s", q.tip.c_str());
+                            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                                g_uiHandled = true;
+                                if (q.act == 2) g_cmdPaletteRequest = true;
+                                else if (q.act == 1) { if (const ModelCmd* c = findCmd(g_lastCmdName)) RunModelCmd(*c); }
+                                else if (const ModelCmd* c = findCmd(q.cmd)) RunModelCmd(*c);
+                            }
+                        }
+                        x2 += w + gap;
+                    }
+                }
+                // Right-click (a click, not a drag, which orbits the camera): the tools that fit the selection.
+                if (idle && hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right) && ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).x * ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).x +
+                        ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).y * ImGui::GetMouseDragDelta(ImGuiMouseButton_Right).y < 16.0f)
+                    ImGui::OpenPopup("##meshctx");
+                if (ImGui::BeginPopup("##meshctx")) {
+                    const char* modeName = g_meshSelMode == 0 ? "Vertices" : g_meshSelMode == 2 ? "Edges" : "Faces";
+                    ImGui::TextDisabled("%s: %d verts, %d edges, %d faces selected", modeName, (int)g_meshSelVerts.size(), (int)g_meshSelEdges.size(), (int)g_meshSelFaces.size());
+                    ImGui::Separator();
+                    bool anyShown = false;
+                    for (const ModelCmd& c : cmds) {
+                        if (c.group == "Switch" || !c.ok || (c.group == "Select" && c.name != "Select All" && c.name != "Select None" && c.name.find("Grow") == std::string::npos
+                                                              && c.name.find("Shrink") == std::string::npos && c.name.find("Similar") == std::string::npos)) continue;
+                        if (c.group == "Select" && (c.name == "Select All" || c.name == "Select None")) continue;
+                        anyShown = true;
+                        if (ImGui::MenuItem(c.name.c_str(), c.keys.empty() ? nullptr : c.keys.c_str())) RunModelCmd(c);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", c.hint.c_str());
+                    }
+                    if (!anyShown) ImGui::TextDisabled("Select something to see tools for it.");
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Find a tool...", "Ctrl+K")) g_cmdPaletteRequest = true;
+                    if (ImGui::MenuItem("Repeat last", "Shift+R", false, !g_lastCmdName.empty())) { if (const ModelCmd* c = findCmd(g_lastCmdName)) RunModelCmd(*c); }
+                    ImGui::EndPopup();
+                }
+                // The command palette: type part of a name ("bevel", "extrude"), Enter runs the first match.
+                if (g_cmdPaletteRequest) { g_cmdPaletteRequest = false; g_cmdFilter[0] = '\0'; g_cmdPaletteSel = 0; ImGui::OpenPopup("##meshcmdpal"); }
+                ImGui::SetNextWindowPos(ImVec2(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + 60.0f), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
+                ImGui::SetNextWindowSize(ImVec2(std::min(460.0f, canvasSize.x - 20.0f), 0.0f));
+                if (ImGui::BeginPopup("##meshcmdpal")) {
+                    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputTextWithHint("##cmdfilter", "Type a tool: bevel, extrude, similar, table...", g_cmdFilter, sizeof(g_cmdFilter));
+                    auto lower = [](std::string t) { for (char& ch : t) ch = (char)std::tolower((unsigned char)ch); return t; };
+                    const std::string f = lower(g_cmdFilter);
+                    std::vector<const ModelCmd*> hits;
+                    for (const ModelCmd& c : cmds) {
+                        if (f.empty() || lower(c.name).find(f) != std::string::npos || lower(c.group).find(f) != std::string::npos || lower(c.hint).find(f) != std::string::npos)
+                            hits.push_back(&c);
+                    }
+                    // Names that start with the text come first, then enabled ones.
+                    std::stable_sort(hits.begin(), hits.end(), [&](const ModelCmd* a, const ModelCmd* b) {
+                        const bool pa = lower(a->name).find(f) == 0, pb = lower(b->name).find(f) == 0;
+                        if (pa != pb) return pa;
+                        return a->ok && !b->ok;
+                    });
+                    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) ++g_cmdPaletteSel;
+                    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true)) --g_cmdPaletteSel;
+                    g_cmdPaletteSel = hits.empty() ? 0 : std::clamp(g_cmdPaletteSel, 0, (int)hits.size() - 1);
+                    const ModelCmd* run = nullptr;
+                    ImGui::BeginChild("##cmdlist", ImVec2(0, std::min(320.0f, 22.0f * (float)std::max<std::size_t>(1, hits.size()) + 6.0f)), false);
+                    for (int hi = 0; hi < (int)hits.size(); ++hi) {
+                        const ModelCmd* c = hits[hi];
+                        ImGui::BeginDisabled(!c->ok);
+                        if (ImGui::Selectable((c->name + "##cmd" + std::to_string(hi)).c_str(), hi == g_cmdPaletteSel, ImGuiSelectableFlags_AllowOverlap)) run = c;
+                        ImGui::EndDisabled();
+                        if (!c->keys.empty()) { ImGui::SameLine(ImGui::GetWindowWidth() - 90.0f); ImGui::TextDisabled("%s", c->keys.c_str()); }
+                        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s%s", c->hint.c_str(), c->ok ? "" : ("\n[" + c->why + "]").c_str());
+                        if (hi == g_cmdPaletteSel && ImGui::IsKeyPressed(ImGuiKey_Enter) && c->ok) run = c;
+                    }
+                    if (hits.empty()) ImGui::TextDisabled("No tool matches \"%s\".", g_cmdFilter);
+                    ImGui::EndChild();
+                    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+                    if (run) { ImGui::CloseCurrentPopup(); RunModelCmd(*run); }
+                    ImGui::EndPopup();
+                }
+                // Hint bar: what to do now, and the keys.
+                if (idle && !ImGui::IsPopupOpen("##meshcmdpal")) {
+                    const char* mode = g_meshSelMode == 1 ? "Face mode: click faces (Shift+click adds)" : g_meshSelMode == 2 ? "Edge mode: click edges (Alt+click a whole loop)" : "Vertex mode: click vertices (Shift+click adds)";
+                    std::string hint = mode;
+                    const bool any = !g_meshSelFaces.empty() || !g_meshSelVerts.empty() || !g_meshSelEdges.empty();
+                    hint += any ? ".  G move, R rotate, S scale.  Right-click for tools for this selection." : ".  Select something, then G / R / S, or Ctrl+K and type a tool name.";
+                    if (!g_lastCmdName.empty()) hint += "  Shift+R repeats " + g_lastCmdName + ".";
+                    const float lh3 = ImGui::GetTextLineHeight();
+                    const ImVec2 ts = ImGui::CalcTextSize(hint.c_str());
+                    const ImVec2 p0(canvasPos.x + 8.0f, canvasPos.y + canvasSize.y - lh3 - 14.0f);
+                    dl->AddRectFilled(p0, ImVec2(p0.x + std::min(ts.x, canvasSize.x - 16.0f) + 12.0f, p0.y + lh3 + 8.0f), IM_COL32(20, 22, 28, 170), 4.0f);
+                    dl->PushClipRect(p0, ImVec2(canvasPos.x + canvasSize.x - 8.0f, p0.y + lh3 + 8.0f), true);
+                    dl->AddText(ImVec2(p0.x + 6.0f, p0.y + 4.0f), IM_COL32(205, 210, 220, 235), hint.c_str());
+                    dl->PopClipRect();
+                }
+            }
             if (g_ptool == PolyTool::None && !g_meModal.Active() && !g_meEditGrab && hovered && keysFree && !affected.empty()) {
                 if (ImGui::IsKeyPressed(ImGuiKey_G, false)) beginModal(mdl::EditXform::Move);
-                else if (ImGui::IsKeyPressed(ImGuiKey_R, false)) beginModal(mdl::EditXform::Rotate);
+                else if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !io.KeyShift) beginModal(mdl::EditXform::Rotate);
                 else if (ImGui::IsKeyPressed(ImGuiKey_S, false)) beginModal(mdl::EditXform::Scale);
             } else if (g_ptool == PolyTool::None && !g_meModal.Active() && hovered && keysFree && affected.empty() &&
                        (ImGui::IsKeyPressed(ImGuiKey_G, false) || ImGui::IsKeyPressed(ImGuiKey_R, false) || ImGui::IsKeyPressed(ImGuiKey_S, false))) {

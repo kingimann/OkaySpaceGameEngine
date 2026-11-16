@@ -367,6 +367,21 @@ multiply with the material color, save with the scene, and work on
 primitives without turning them into custom geometry (Symmetry X mirrors
 paint strokes too).
 
+### Model faster: toolbar, right-click, Ctrl+K, repeat, recipes (Edit Mesh)
+
+All of these run the same tools as the buttons (one shared list of commands), so they cannot drift apart.
+
+- **Quick toolbar** (top of the 3D view, under Object / Edit / Vertex / Edge / Face): the most-used tools for the current select mode (faces: Extrude, Inset, Subdivide, Delete, Grow, Select Similar; edges: Bevel, Round, Dissolve; vertices: Grow, Shrink, Merge by Distance; always Repair Mesh), the **Sym X** and **Snap** switches, **Repeat** and **Find**. Greyed-out tools say what to select first when you hover them.
+- **Right-click** in the 3D view (a click, not a drag, which still orbits): the tools that fit the current selection, plus Find and Repeat.
+- **Ctrl+K** (or the Find button, or the Edit Mesh button **Find a Tool**): a searchable list of every modeling command with its shortcut. Type part of a name ("bevel", "extrude", "similar"); Up / Down move, **Enter** runs the highlighted one, Esc closes.
+- **Shift+R** repeats the last tool; the **Recent** line and the **Undo history** list (Edit Mesh > Shortcuts and recent tools) show what you did, and clicking a history step goes back to before it.
+- **Hint bar** (bottom-left of the 3D view): what to do now in the current mode and the keys.
+- **Select** tools: Grow / Shrink (faces and vertices), Select Similar (facing, same plane, area, material slot), Select Up-Facing / Down-Facing, Select Small Faces, plus the existing Select All, Invert, Linked and Loop.
+- **Apply Scale and Rotation** bakes the object's scale and rotation into its mesh (so the sizes in Measure read true); not available when the object has children.
+- **How do I** recipes (they run real tools and are one undo step): **Make a Window Hole** (select wall faces: inset, then delete the middle), **Round Edges** (select edges: a 3-step bevel), **Add a Table** (a new four-legged table in two material slots).
+
+Not built: box, lasso and circle select, X-ray select-through, hide / reveal / isolate, select-loop by double click, Shift+D (use Duplicate Faces then G), instances, join / separate / set pivot / align / distribute as commands (Recenter and Split in two objects exist), quick primitives at the cursor, mirror-edit for Y and Z (only X), "symmetry by default", live mouse-drag extrude / inset (Ctrl+B bevel has it).
+
 ### Spin, Extrude Along Path, measuring, snapping (Edit Mesh)
 
 - **Spin** (Edit Mesh, under the edge-loop tools): select edges (a profile you drew), pick the axis, the angle and the steps, press **Spin**. The edges are turned around the axis through the object's origin (or the **Spin centre** point) and every step is filled with faces: a lathe of whatever you selected. 360 deg closes into a ring; a vertex on the axis becomes one point (a cap). If the faces point inward, press **Flip Normals**.

@@ -684,6 +684,17 @@ headless software render of it.
 8. **Add to scene as object.** Modeling window > **Import** page > **Add to scene as object**: choose **Exact mesh** and press **Add Copy to Scene**: a copy appears next to the object, with a Mesh Collider (choose **Box** or **No collider** for the others).
 9. **Shortcuts and recent tools.** Edit Mesh > **Shortcuts and recent tools** lists the keys and the last tools you used.
 
+
+**Model faster (same section; real window unverified).** Open `examples\modeling_tools\spin_path_curve.okayscene`: it now also has a **Table** and a **Window Wall** made by the "how do I" recipes.
+1. Click **Window Wall**, Modeling window, tick **Edit Mesh** (or press Tab). At the top of the 3D view, under the Object / Edit / Vertex / Edge / Face buttons, you should see a row of small tool buttons (Extrude Faces, Inset Faces, ... Repair Mesh, Sym X, Snap, Repeat, Find...). At the bottom-left a grey line says what to do.
+2. Press key **3** (faces), click a face of the wall. Hover **Extrude Faces**: the tooltip says what it does. Click it: the face is pushed out. Press **Shift+R**: it extrudes again. Ctrl+Z twice.
+3. **Right-click** (click, do not drag) in the 3D view: a menu of tools that fit the selection appears. Click **Inset Faces**.
+4. Press **Ctrl+K**: a box opens. Type `bevel`: *Bevel Edges* is first (greyed out until edges are selected; hover for why). Clear it and type `window`: *Make a Window Hole (how do I)*. Select a wall face, press Ctrl+K, type `window`, press **Enter**: an opening with a frame is cut.
+5. Select a few faces and press Ctrl+K, type `similar`, Enter on *Select Similar: Facing*: every face pointing the same way is selected. Try *Grow Selection*, *Shrink Selection*, *Select Up-Facing Faces*.
+6. Edge mode (key **2**), click an edge, Ctrl+K, `round`, Enter: the edge is rounded. Ctrl+K, `table`, Enter: a new **Table** object appears (Edit Mesh, Material Slots recolours top and legs).
+7. Open Edit Mesh > **Shortcuts and recent tools**: the **Recent** line lists your tools; **Undo history** lists them with names. Click an older step: the mesh goes back to before it.
+8. Scale an object (the Inspector scale to 2, 1, 1), then Ctrl+K, `apply scale`, Enter: the scale returns to 1 and the mesh is as wide as before (the Measure line stays the same).
+
 **Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
 
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,

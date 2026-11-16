@@ -581,6 +581,8 @@ inline SDL_Color toColor(const unsigned char c[4]) {
     return sc;
 }
 
+inline bool aaOn() { return g_theme.antiAliased; }   // Theme::antiAliased (the anti-aliased shapes are further down)
+
 // Append an axis-aligned rectangle (two triangles) in a flat color, to whichever
 // batch is active (main, or overlay when g_toOverlay is set).
 void quad(float x, float y, float w, float h, const unsigned char c[4]) {
@@ -667,7 +669,9 @@ void gradQuad(float x, float y, float w, float h,
 }
 
 // A straight line of thickness `th` between two points, as a thin rotated quad.
+void lineAA(float x0, float y0, float x1, float y1, float th, const unsigned char c[4]);
 void line(float x0, float y0, float x1, float y1, float th, const unsigned char c[4]) {
+    if (aaOn()) { lineAA(x0, y0, x1, y1, th, c); return; }
     float dx = x1 - x0, dy = y1 - y0;
     float len = dx * dx + dy * dy;
     if (len <= 0.0001f) { quad(x0 - th * 0.5f, y0 - th * 0.5f, th, th, c); return; }
@@ -677,8 +681,13 @@ void line(float x0, float y0, float x1, float y1, float th, const unsigned char 
     quadPts(x0 + px, y0 + py, x1 + px, y1 + py, x1 - px, y1 - py, x0 - px, y0 - py, c);
 }
 
-// A single filled triangle.
-void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]) {
+// A single filled triangle (anti-aliased when the theme says so).
+void triFlat(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]);
+void triAA(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]);
+inline void tri(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]) {
+    if (aaOn()) triAA(ax, ay, bx, by, cx, cy, c); else triFlat(ax, ay, bx, by, cx, cy, c);
+}
+void triFlat(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]) {
     SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
@@ -709,7 +718,9 @@ const float* unitCircle(int n) {
 }
 // A filled circle as a triangle fan of `segments` wedges that share the centre and rim vertices (the same triangles as one
 // tri() per wedge, with a third of the vertices).
+void fillCircleAA(float cx, float cy, float radius, const unsigned char c[4], int segments);
 void fillCircle(float cx, float cy, float radius, const unsigned char c[4], int segments = 24) {
+    if (aaOn()) { fillCircleAA(cx, cy, radius, c, segments); return; }
     if (segments < 3) segments = 3;
     if (segments > 128) segments = 128;
     SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
@@ -740,9 +751,10 @@ struct CornerTable {
         }
     }
 };
+const CornerTable& cornerTable() { static const CornerTable T; return T; }
 // One corner as a fan that shares its centre and rim points (7 vertices, 5 triangles): the same triangles arcFan emits.
 void cornerFan(float cx, float cy, float r, int q, const unsigned char c[4]) {
-    static const CornerTable T;
+    static const CornerTable& T = cornerTable();
     SDL_Vertex* V = g_toOverlay ? g_ovVerts : g_verts;
     int*        I = g_toOverlay ? g_ovIdx   : g_idx;
     int&        nv = g_toOverlay ? g_onv : g_nv;
@@ -756,10 +768,162 @@ void cornerFan(float cx, float cy, float r, int q, const unsigned char c[4]) {
     for (int i = 1; i <= 5; ++i) { I[ni++] = base; I[ni++] = base + i; I[ni++] = base + i + 1; }
 }
 
+// ---- Anti-aliased edges (Theme::antiAliased) ----------------------------------------------------------------------------
+// Written for OkayUI from the general idea of edge fringes: a shape is drawn with its edge pulled in by half a pixel at full
+// colour, plus a ring one pixel wide (the fringe) whose inner rim has the shape's colour and whose outer rim, half a pixel
+// outside the true edge, has alpha 0. The rasteriser blends the alpha across the ring, so a pixel on the edge gets about the
+// share of the colour that the shape covers of it. A stroke is the same with a fringe on both sides of a core of width
+// thickness - 1 (a stroke under one pixel has no core and fades its alpha by its thickness).
+// Every function takes per-point normals that are already worked out: for circles and rounded corners these are the
+// unit-circle tables above (no square roots per call); for a general polygon polyNormals computes them once per call.
+
+struct AaOut { SDL_Vertex* V; int* I; int* nv; int* ni; };
+// The batch to write into, with room for `verts` vertices and `idx` indices (false: culled, or full and counted as dropped).
+inline bool aaReserve(AaOut& o, int verts, int idx) {
+    if (g_cullRow && !g_toOverlay) return false;
+    o.V = g_toOverlay ? g_ovVerts : g_verts; o.I = g_toOverlay ? g_ovIdx : g_idx;
+    o.nv = g_toOverlay ? &g_onv : &g_nv;     o.ni = g_toOverlay ? &g_oni : &g_ni;
+    if (*o.nv + verts > kMaxVerts || *o.ni + idx > kMaxIdx) { noteDrop(); return false; }
+    return true;
+}
+inline void aaQuadIdx(int* I, int& ni, int a, int b, int c, int d) {
+    I[ni++] = a; I[ni++] = b; I[ni++] = c; I[ni++] = a; I[ni++] = c; I[ni++] = d;
+}
+
+// A convex polygon of n points (either winding). nrm[i] is point i's outward normal scaled so that moving the point by it moves
+// both of its edges out by one pixel (on a circle: the unit radius). `cols` holds one colour per point when `perPoint`, else
+// one colour. Vertex 2i is point i pulled in by half a pixel; vertex 2i+1 is it pushed out by half a pixel with alpha 0.
+void aaFill(const Vec2* p, const Vec2* nrm, int n, const SDL_Color* cols, bool perPoint) {
+    if (n < 3) return;
+    AaOut o;
+    if (!aaReserve(o, n * 2, (n - 2) * 3 + n * 6)) return;
+    SDL_Vertex* V = o.V; int* I = o.I; int& nv = *o.nv; int& ni = *o.ni;
+    const int base = nv;
+    SDL_Vertex v; v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    for (int i = 0; i < n; ++i) {
+        const float hx = nrm[i].x * 0.5f, hy = nrm[i].y * 0.5f;
+        v.color = cols[perPoint ? i : 0];
+        v.position.x = p[i].x - hx; v.position.y = p[i].y - hy; V[nv++] = v;
+        v.color.a = 0;
+        v.position.x = p[i].x + hx; v.position.y = p[i].y + hy; V[nv++] = v;
+    }
+    for (int i = 1; i + 1 < n; ++i) { I[ni++] = base; I[ni++] = base + 2 * i; I[ni++] = base + 2 * i + 2; }
+    for (int i = 0; i < n; ++i) {
+        const int j = i + 1 < n ? i + 1 : 0;
+        aaQuadIdx(I, ni, base + 2 * i, base + 2 * j, base + 2 * j + 1, base + 2 * i + 1);
+    }
+}
+
+// A stroke of thickness `th` along m points. mu[i] moves point i one pixel sideways from both of its segments (the mitred
+// normal). Columns across the stroke: outer fringe, core edge, core edge, outer fringe (three columns when there is no core).
+void aaStroke(const Vec2* p, const Vec2* mu, int m, bool closed, float th, const unsigned char c[4]) {
+    if (m < 2) return;
+    const float core = th > 1.0f ? (th - 1.0f) * 0.5f : 0.0f;
+    SDL_Color sc = toColor(c);
+    if (th < 1.0f) sc.a = (unsigned char)(sc.a * th + 0.5f);
+    const int cols = core > 0.0f ? 4 : 3;
+    const float offs4[4] = { -(core + 1.0f), -core, core, core + 1.0f }, offs3[3] = { -1.0f, 0.0f, 1.0f };
+    const float* offs = cols == 4 ? offs4 : offs3;
+    const int segs = closed ? m : m - 1;
+    AaOut o;
+    if (!aaReserve(o, m * cols, segs * (cols - 1) * 6)) return;
+    SDL_Vertex* V = o.V; int* I = o.I; int& nv = *o.nv; int& ni = *o.ni;
+    const int base = nv;
+    SDL_Vertex v; v.tex_coord.x = g_whiteU; v.tex_coord.y = g_whiteV;
+    for (int i = 0; i < m; ++i)
+        for (int k = 0; k < cols; ++k) {
+            v.color = sc; if (k == 0 || k == cols - 1) v.color.a = 0;
+            v.position.x = p[i].x + mu[i].x * offs[k]; v.position.y = p[i].y + mu[i].y * offs[k]; V[nv++] = v;
+        }
+    for (int i = 0; i < segs; ++i) {
+        const int j = i + 1 < m ? i + 1 : 0;
+        for (int k = 0; k + 1 < cols; ++k)
+            aaQuadIdx(I, ni, base + i * cols + k, base + j * cols + k, base + j * cols + k + 1, base + i * cols + k + 1);
+    }
+}
+
+// Outward normals of a convex polygon, scaled as aaFill wants (a corner sharper than about 60 degrees is clamped). Repeated
+// points are dropped; returns the number kept (under 3: nothing to fill).
+int polyNormals(const Vec2* in, int n, Vec2* p, Vec2* nrm) {
+    int m = 0;
+    for (int i = 0; i < n; ++i) {
+        if (m > 0 && std::fabs(in[i].x - p[m - 1].x) + std::fabs(in[i].y - p[m - 1].y) < 1.0e-4f) continue;
+        p[m++] = in[i];
+    }
+    while (m > 1 && std::fabs(p[0].x - p[m - 1].x) + std::fabs(p[0].y - p[m - 1].y) < 1.0e-4f) --m;
+    if (m < 3) return m;
+    float area = 0.0f;
+    for (int i = 0; i < m; ++i) { const int j = i + 1 < m ? i + 1 : 0; area += p[i].x * p[j].y - p[j].x * p[i].y; }
+    const float sgn = area >= 0.0f ? 1.0f : -1.0f;   // positive (clockwise on screen): (dy, -dx) points out
+    Vec2 e[256];
+    for (int i = 0; i < m; ++i) {
+        const int j = i + 1 < m ? i + 1 : 0;
+        const float dx = p[j].x - p[i].x, dy = p[j].y - p[i].y, l = sgn / SDL_sqrtf(dx * dx + dy * dy);
+        e[i] = Vec2{ dy * l, -dx * l };
+    }
+    for (int i = 0; i < m; ++i) {
+        const Vec2 a = e[i > 0 ? i - 1 : m - 1], b = e[i];
+        const float mx = (a.x + b.x) * 0.5f, my = (a.y + b.y) * 0.5f;
+        float d = mx * mx + my * my; if (d < 0.25f) d = 0.25f;
+        nrm[i] = Vec2{ mx / d, my / d };
+    }
+    return m;
+}
+void fillConvexAA(const Vec2* pts, int n, const SDL_Color* cols, bool perPoint) {
+    Vec2 p[256], nrm[256];
+    if (n > 256) n = 256;
+    const int m = polyNormals(pts, n, p, nrm);
+    if (m < 3) return;
+    if (perPoint && m != n) return;   // points were merged: the colours no longer line up (a degenerate gradient polygon)
+    aaFill(p, nrm, m, cols, perPoint);
+}
+void triAA(float ax, float ay, float bx, float by, float cx, float cy, const unsigned char c[4]) {
+    const Vec2 p[3] = { Vec2{ax, ay}, Vec2{bx, by}, Vec2{cx, cy} };
+    const SDL_Color sc = toColor(c);
+    fillConvexAA(p, 3, &sc, false);
+}
+// A straight line, anti-aliased: a two-point stroke whose normal is worked out once.
+void lineAA(float x0, float y0, float x1, float y1, float th, const unsigned char c[4]) {
+    const float dx = x1 - x0, dy = y1 - y0, l2 = dx * dx + dy * dy;
+    if (l2 <= 0.0001f) { quad(x0 - th * 0.5f, y0 - th * 0.5f, th, th, c); return; }
+    const float l = 1.0f / SDL_sqrtf(l2);
+    const Vec2 p[2] = { Vec2{x0, y0}, Vec2{x1, y1} }, mu[2] = { Vec2{-dy * l, dx * l}, Vec2{-dy * l, dx * l} };
+    aaStroke(p, mu, 2, false, th, c);
+}
+// A filled circle, anti-aliased: the rim from the unit-circle table, which is also each rim point's normal.
+void fillCircleAA(float cx, float cy, float radius, const unsigned char c[4], int segments) {
+    if (segments < 3) segments = 3;
+    if (segments > 128) segments = 128;
+    const float* u = unitCircle(segments);
+    Vec2 p[128], nrm[128];
+    for (int i = 0; i < segments; ++i) {
+        nrm[i] = Vec2{ u[i * 2], u[i * 2 + 1] };
+        p[i] = Vec2{ cx + radius * nrm[i].x, cy + radius * nrm[i].y };
+    }
+    const SDL_Color sc = toColor(c);
+    aaFill(p, nrm, segments, &sc, false);
+}
+// A filled rounded rectangle, anti-aliased: 24 rim points (6 per corner) from the corner table, which also gives their normals.
+void rrectAA(float x, float y, float w, float h, float rad, const unsigned char c[4]) {
+    static const CornerTable& T = cornerTable();
+    const float cx[4] = { x + rad, x + w - rad, x + w - rad, x + rad }, cy[4] = { y + rad, y + rad, y + h - rad, y + h - rad };
+    Vec2 p[24], nrm[24];
+    int n = 0;
+    for (int q = 0; q < 4; ++q)
+        for (int i = 0; i <= 5; ++i, ++n) { nrm[n] = Vec2{ T.c[q][i], T.s[q][i] }; p[n] = Vec2{ cx[q] + rad * nrm[n].x, cy[q] + rad * nrm[n].y }; }
+    const SDL_Color sc = toColor(c);
+    aaFill(p, nrm, 24, &sc, false);
+}
+
 // A filled rounded rectangle (falls back to a plain quad when rad <= 0). Decomposed
 // into three bars + four quarter-circle corners so translucent fills never overlap.
 void rrect(float x, float y, float w, float h, float rad, const unsigned char c[4]) {
     if (rad <= 0.5f || w <= 0.0f || h <= 0.0f) { quad(x, y, w, h, c); return; }
+    if (aaOn()) {
+        if (rad > w * 0.5f) rad = w * 0.5f;
+        if (rad > h * 0.5f) rad = h * 0.5f;
+        rrectAA(x, y, w, h, rad, c); return;
+    }
     if (rad > w * 0.5f) rad = w * 0.5f;
     if (rad > h * 0.5f) rad = h * 0.5f;
     quad(x, y + rad, w, h - 2 * rad, c);            // middle band (full width)
@@ -4987,7 +5151,8 @@ void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned cha
     if (closed && m > 2) { const float dx = p[0].x - p[m - 1].x, dy = p[0].y - p[m - 1].y; if (dx * dx + dy * dy < 1.0e-6f) --m; }
     if (m < 2) { if (m == 1) quad(p[0].x - th * 0.5f, p[0].y - th * 0.5f, th, th, c); return; }
     if (m == 2) closed = false;
-    const float half = th * 0.5f;
+    const bool aa = aaOn();
+    const float half = aa ? 1.0f : th * 0.5f;   // anti-aliased: the unit mitred normals, for aaStroke
     Vec2 off[kMaxPath];
     auto segNormal = [&](int a, int b) {
         float dx = p[b].x - p[a].x, dy = p[b].y - p[a].y;
@@ -5006,6 +5171,7 @@ void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned cha
         if (k < 0.34f) k = 0.34f;                         // mitre limit about 3x
         off[i] = Vec2{ mx * half / k, my * half / k };
     }
+    if (aa) { aaStroke(p, off, m, closed, th, c); return; }
     const int segs = closed ? m : m - 1;
     for (int i = 0; i < segs; ++i) {
         const int j = (i + 1) % m;
@@ -5016,7 +5182,8 @@ void strokePath(const Vec2* in, int n, bool closed, float th, const unsigned cha
 
 void fillConvex(const Vec2* p, int n, const unsigned char c[4]) {
     if (n < 3) return;
-    for (int i = 1; i + 1 < n; ++i) tri(p[0].x, p[0].y, p[i].x, p[i].y, p[i + 1].x, p[i + 1].y, c);
+    if (aaOn()) { const SDL_Color sc = toColor(c); fillConvexAA(p, n, &sc, false); return; }
+    for (int i = 1; i + 1 < n; ++i) triFlat(p[0].x, p[0].y, p[i].x, p[i].y, p[i + 1].x, p[i + 1].y, c);
 }
 
 // The rounded-rectangle outline as a closed path (corner radius `rad`, arcs of 6 segments).
@@ -5116,6 +5283,13 @@ void DrawList::AddCircle(Vec2 center, float radius, Color32 col, int segments, f
     float r = radius - th * 0.5f; if (r < 0.0f) r = 0.0f;   // the stroke sits inside `radius`
     if (th >= radius) { fillCircle(center.x, center.y, radius, c, n); return; }
     Vec2 pts[128];
+    if (aaOn()) {   // the ring's points and normals straight from the unit-circle table
+        const float* u = unitCircle(n);
+        Vec2 nrm[128];
+        for (int i = 0; i < n; ++i) { nrm[i] = Vec2{ u[i * 2], u[i * 2 + 1] }; pts[i] = Vec2{ center.x + r * nrm[i].x, center.y + r * nrm[i].y }; }
+        aaStroke(pts, nrm, n, true, th, c);
+        return;
+    }
     for (int i = 0; i < n; ++i) {
         const float a = 6.2831853f * (float)i / (float)n;
         pts[i] = Vec2{ center.x + r * SDL_cosf(a), center.y + r * SDL_sinf(a) };
@@ -5162,6 +5336,12 @@ void DrawList::AddConvexPolyFilledMultiColor(const Vec2* pts, const Color32* col
     int&        nv = g_toOverlay ? g_onv : g_nv;
     int&        ni = g_toOverlay ? g_oni : g_ni;
     if (g_cullRow && !g_toOverlay) return;
+    if (aaOn()) {
+        SDL_Color sc[kMaxPath];
+        for (int i = 0; i < count; ++i) { unsigned char c[4]; unpack(cols[i], c); sc[i] = toColor(c); }
+        fillConvexAA(pts, count, sc, true);
+        return;
+    }
     if (nv + count > kMaxVerts || ni + (count - 2) * 3 > kMaxIdx) { noteDrop(); return; }
     // A fan over shared vertices, each with its own colour: the rasteriser blends the colours across every triangle.
     const int base = nv;

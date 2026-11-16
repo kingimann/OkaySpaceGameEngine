@@ -65,7 +65,7 @@ public:
         UI::Theme& t = UI::Style();
         m_tipOffX = t.tooltipOffsetX; m_tipOffY = t.tooltipOffsetY; m_tipPadX = t.tooltipPadX; m_tipPadY = t.tooltipPadY;
         m_tipGap = t.tooltipLineGap; m_tipRound = t.tooltipRounding; std::memcpy(m_tipBg, t.tooltipBg, 4); m_combo = t.comboArrowBox;
-        m_ascent = t.ascentRoundsUp; m_snap = t.snapAdvances;
+        m_ascent = t.ascentRoundsUp; m_snap = t.snapAdvances; m_aa = t.antiAliased;
         // Its tooltips: 25 px right of and 10 px below the mouse, padded as its windows (14 x 12), lines touching, 8 px corners,
         // the popup colour; its combo: a frame-coloured box with an arrow button.
         t.tooltipOffsetX = 25.0f; t.tooltipOffsetY = 10.0f; t.tooltipPadX = 14.0f; t.tooltipPadY = 12.0f;
@@ -74,6 +74,7 @@ public:
         t.comboArrowBox = true;
         t.ascentRoundsUp = true;   // its text sits where the launcher's sits (the ascent rounded up)
         t.snapAdvances = true;     // and steps by whole pixels, as the launcher's font does
+        t.antiAliased = true;      // its shapes have smooth (anti-aliased) edges, as the launcher's do
         const float base = UI::GetTextLineHeight();   // 16 px times the UI scale
         UI::PushTextScale(std::max(1.0f, std::round(base * 17.0f / 16.0f)) / std::max(1.0f, base));
         UI::PushStyleVar(UI::StyleVar_FramePadding, V(kFrameX, kFrameY));
@@ -84,14 +85,14 @@ public:
         UI::Theme& t = UI::Style();
         t.tooltipOffsetX = m_tipOffX; t.tooltipOffsetY = m_tipOffY; t.tooltipPadX = m_tipPadX; t.tooltipPadY = m_tipPadY;
         t.tooltipLineGap = m_tipGap; t.tooltipRounding = m_tipRound; std::memcpy(t.tooltipBg, m_tipBg, 4); t.comboArrowBox = m_combo;
-        t.ascentRoundsUp = m_ascent; t.snapAdvances = m_snap;
+        t.ascentRoundsUp = m_ascent; t.snapAdvances = m_snap; t.antiAliased = m_aa;
     }
     LauncherLook(const LauncherLook&) = delete;
     LauncherLook& operator=(const LauncherLook&) = delete;
 private:
     float m_tipOffX, m_tipOffY, m_tipPadX, m_tipPadY, m_tipGap, m_tipRound;
     unsigned char m_tipBg[4];
-    bool m_combo, m_ascent, m_snap;
+    bool m_combo, m_ascent, m_snap, m_aa;
 };
 
 // A child region the way the launcher's children are: no padding inside, a thin 8 px (or `bar`) scrollbar that takes room only

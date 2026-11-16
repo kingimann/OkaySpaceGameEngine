@@ -120,6 +120,10 @@ struct Theme {
     // Text drawn at a baked size steps from glyph to glyph by whole pixels (Dear ImGui's pixel-snapped advance), and
     // CalcTextSize measures it the same way. False keeps the exact fractional steps.
     bool  snapAdvances = false;
+    // Anti-aliased edges: rounded rectangles, circles, lines, outlines and convex polygons get a one-pixel ring outside their
+    // edge that fades to alpha 0, so curves and slanted edges are smooth instead of stair-stepped. Plain axis-aligned
+    // rectangles are not affected. Off by default (the classic look and its golden images); the launcher pages turn it on.
+    bool  antiAliased = false;
     // Colours beyond the eight fields above (the Col_* ids from Col_TextDisabled up), kept by PushStyleColor / SetStyleColor:
     // colors[id] holds the value and bit `id` of colorSet says it is in force. A bit that is clear means "follow the base fields".
     unsigned char      colors[64][4] = {};

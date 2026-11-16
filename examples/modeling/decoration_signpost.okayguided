@@ -1,0 +1,15 @@
+okayguided 1
+template decoration 1
+param detail 1
+param height 1.8
+param postRadius 0.050000000000000003
+param width 0.80000000000000004
+slot base none
+slot shaft post
+slot top sign
+color base 0.620000005 0.620000005 0.600000024 1
+color shaft 0.550000012 0.379999995 0.219999999 1
+color top 0.75 0.150000006 0.150000006 1
+material base 0
+material shaft 1
+material top 2

@@ -1,0 +1,18 @@
+okayguided 1
+template tool 1
+param detail 1
+param handleRadius 0.017999999999999999
+param headSize 0.10000000000000001
+param length 0.45000000000000001
+slot end cap
+slot guard straight
+slot handle round
+slot head hammer
+color end 0.349999994 0.219999999 0.140000001 1
+color guard 0.620000005 0.649999976 0.699999988 1
+color handle 0.550000012 0.379999995 0.219999999 1
+color head 0.620000005 0.649999976 0.699999988 1
+material end 3
+material guard 2
+material handle 0
+material head 1

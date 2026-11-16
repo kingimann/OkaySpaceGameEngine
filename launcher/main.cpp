@@ -1676,12 +1676,12 @@ void LaunchEditor(const std::string& exe, const std::string& tmpl = "",
 }
 
 // Open `scene` with an installed editor of another version, the way the editor expects (docs/project_upgrade.md):
-// --launcher <pid> --open <scene> --keep-version. False when that version's editor is not there.
+// --launcher <pid> --open <scene> --keep-version=<version> (the flag names the version: only that editor trusts it). False when that version's editor is not there.
 bool LaunchEditorVersion(const std::string& version, const std::string& scene) {
     const fs::path exe = okayver::InstalledEditorPath(LauncherDirPath(), version);
     std::error_code ec;
     if (exe.empty() || scene.empty() || !fs::is_regular_file(exe, ec)) return false;
-    if (!SpawnTracked(exe.string(), okayversions::JoinArgs(okayversions::OpenWithArgs(CurrentPid(), scene)), "editor", "OkaySpace Editor")) return false;
+    if (!SpawnTracked(exe.string(), okayversions::JoinArgs(okayversions::OpenWithArgs(CurrentPid(), scene, version)), "editor", "OkaySpace Editor")) return false;
     g_editorStartedVersion = okayver::NormalizeVersion(version);
     return true;
 }
@@ -17896,6 +17896,17 @@ static void DrawOfficialAdmin(okay::account::AccountService& account) {
 
 } // namespace
 
+// The engine_version of every project the Create page lists ("" = none recorded): the Versions page's Remove window counts the ones made with a version.
+static std::vector<std::string> ListedProjectVersions() {
+    std::vector<std::string> out;
+    const fs::path dir = g_projectsDir.empty() ? fs::path(g_exeDir) / "Projects" : fs::path(g_projectsDir);   // the Create page's own default
+    for (const auto& lp : okayproj::ScanProjects(dir, g_hiddenProjects, g_extraProjects)) {
+        std::error_code e;
+        if (fs::exists(fs::path(lp.scene), e)) out.push_back(okayver::ReadProjectVersion(okayproj::RootOfScene(fs::path(lp.scene)).string()));   // read only
+    }
+    return out;
+}
+
 // What the Versions page needs from the launcher: where things are, the look, and the launcher's own helpers (toast, folder opener, HTTP).
 // Rebuilt about once a second (it asks the file system and the process list); the colours follow the theme every frame.
 static const okayversionsui::Host& VersionsHost() {
@@ -17907,6 +17918,7 @@ static const okayversionsui::Host& VersionsHost() {
         wired = true;
         h.toast = [](const std::string& m, int kind) { Toast(m, kind); };
         h.openFolder = [](const std::string& path) { OpenExternal(path); };
+        h.projectVersions = [] { return ListedProjectVersions(); };
         h.savePrefs = [] { SavePrefs(); };
         h.startUpdate = [] { StartUpdateCheck(true); };
         h.channelChanged = [] { g_upAvailable.clear(); g_launcherRefocused = true; };   // look for updates on the new channel now

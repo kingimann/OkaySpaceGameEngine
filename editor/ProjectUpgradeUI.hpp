@@ -41,8 +41,17 @@ std::string EditorVersionLabel(const std::string& projectDir);
 bool ProjectGateBusy();
 /// A hand-over from another editor instance said --keep-version (`version` is the version it was started as).
 void NoteKeepVersionHandoff(const std::string& scene, const std::string& version);
-/// True when this process was started with --keep-version (its hand-off to a running editor must say so).
+/// True when this process was started with a --keep-version that it trusts for the project it was asked to open (a bare flag: only a kept copy trusts
+/// it; a flag that names a version: only that version's editor), so its hand-off to a running editor may say so.
 bool KeepVersionRequested();
+/// True when this editor runs from a kept copy (<launcher dir>/Versions/<v>/Tools, okayver::IsKeptCopyDir). The launcher owns that folder, so a kept
+/// copy never checks for updates, never shows the Engine Update window, never installs an update and never offers automatic updates: it says
+/// "This is a kept copy of v2.850.1. Update OkaySpace from the launcher." (OpenKeptCopyNotice) with the Open launcher button.
+bool IsKeptCopy();
+/// The line a kept copy shows instead of an update ("" when this editor is not a kept copy).
+std::string KeptCopyUpdateText();
+/// Help > Check for Updates... and the version question's "Update OkaySpace", in a kept copy: opens the window with that one line.
+void OpenKeptCopyNotice();
 /// Every frame, after the other dialogs: advances the upgrade and draws the windows.
 void ProjectUpgradeDraw(okay::editor::EditorState& ed);
 /// True once an answer has asked the editor to close (Keep started another version's editor, or a restore wants a restart):

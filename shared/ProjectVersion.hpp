@@ -425,7 +425,12 @@ inline std::vector<std::string> InstalledVersions(const fs::path& launcherDir) {
 }
 // ---- the keep flag, and editors that run from a kept copy -----------------------------------------------------------------
 //
-// STUB (test first): these have the old behaviour, so tests/test_versions_safety.cpp fails until the real code replaces them.
+// An editor the launcher keeps (an older version, in Versions/<v>/Tools) is started with `--keep-version=<its version>`: "the person chose this
+// version for this project, do not ask". Two rules keep that from being turned against the person (docs/install_audit.md, finding 1):
+//   * a flag that NAMES a version is trusted only by an editor of exactly that version, so an old editor that replaced itself with the newest
+//     one (and restarted with the same arguments) does not make the newest one open an old project with no question and no backup;
+//   * a BARE flag (what older launchers passed to every editor) is trusted only by a kept copy, never by the current editor.
+// And an editor that runs from a kept copy never updates itself: the launcher owns that folder.
 
 /// True when `arg` is the keep flag (`--keep-version` or `--keep-version=<text>`). `forVersion` gets the text after '=' ("" for the bare flag).
 inline bool ParseKeepFlag(const std::string& arg, std::string* forVersion = nullptr) {
@@ -438,12 +443,17 @@ inline bool ParseKeepFlag(const std::string& arg, std::string* forVersion = null
     return false;
 }
 
-/// Does an editor honour the keep flag? (old rule: a bare flag is trusted by every editor.)
+/// Does the editor of version `runningVersion` (`runningIsKeptCopy`: it runs from a kept copy) trust a keep flag that says `forVersion`
+/// ("" or blanks = the bare flag)? A named flag: only an editor of exactly that version (spelling and missing zeros do not matter); text that is
+/// not a version: nobody. A bare flag: only a kept copy.
 inline bool HonoursKeepFlag(std::string_view forVersion, std::string_view runningVersion, bool runningIsKeptCopy) {
-    (void)runningIsKeptCopy;
-    return TrimSpace(forVersion).empty() || CompareVersions(forVersion, runningVersion) == 0;
+    const std::string_view named = TrimSpace(forVersion);
+    if (named.empty()) return runningIsKeptCopy;
+    const std::string want = NormalizeVersion(named);
+    return !want.empty() && want == NormalizeVersion(runningVersion);
 }
 
+/// Whether paths are compared without regard to case (Windows file systems are, the others are not).
 constexpr bool kFoldPathCase =
 #if defined(_WIN32)
     true;
@@ -451,20 +461,62 @@ constexpr bool kFoldPathCase =
     false;
 #endif
 
-/// The version of the kept copy an editor runs from ("" when it is not a kept copy). (old behaviour: nothing is.)
-inline std::string KeptCopyVersion(std::string_view exeDir, bool foldCase = kFoldPathCase) { (void)exeDir; (void)foldCase; return {}; }
+namespace detail {
+/// The parts of a path given as text with either kind of slash: empty parts and "." are dropped, ".." takes the part before it away (text only,
+/// the disk is not asked). A drive ("C:"), a network name or a long-path prefix are just parts.
+inline std::vector<std::string> PathParts(std::string_view path) {
+    std::vector<std::string> parts;
+    std::string cur;
+    auto flush = [&]() {
+        if (cur == "..") { if (!parts.empty()) parts.pop_back(); }
+        else if (!cur.empty() && cur != ".") parts.push_back(cur);
+        cur.clear();
+    };
+    for (char c : path) {
+        if (c == '/' || c == '\\') flush();
+        else cur.push_back(c);
+    }
+    flush();
+    return parts;
+}
+inline bool SameName(std::string_view a, std::string_view b, bool foldCase) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        unsigned char x = static_cast<unsigned char>(a[i]), y = static_cast<unsigned char>(b[i]);
+        if (foldCase) { x = static_cast<unsigned char>(std::tolower(x)); y = static_cast<unsigned char>(std::tolower(y)); }
+        if (x != y) return false;
+    }
+    return true;
+}
+}  // namespace detail
+
+/// The version of the kept copy that an editor runs from, given the folder its exe is in: `<anything>/Versions/<version>/Tools` -> "<version>"
+/// (the canonical spelling the launcher writes, "2.850.1"); "" when the folder is anything else: the install's own `Tools`, a folder that is only
+/// called Versions, a name that is not a version, a Tools folder inside Tools. Pure text, so it holds for both kinds of slash and a trailing one;
+/// `foldCase` (Windows) ignores the case of Versions and Tools. A lookalike with a real version name is taken for a kept copy: the safe side.
+inline std::string KeptCopyVersion(std::string_view exeDir, bool foldCase = kFoldPathCase) {
+    const std::vector<std::string> p = detail::PathParts(exeDir);
+    const std::size_t n = p.size();
+    if (n < 3) return {};
+    if (!detail::SameName(p[n - 1], ToolsDirName(), foldCase) || !detail::SameName(p[n - 3], VersionsDirName(), foldCase)) return {};
+    const std::string v = NormalizeVersion(p[n - 2]);
+    return !v.empty() && v == p[n - 2] ? v : std::string();
+}
+/// True when the editor in `exeDir` is a kept copy (see KeptCopyVersion).
 inline bool IsKeptCopyDir(std::string_view exeDir, bool foldCase = kFoldPathCase) { return !KeptCopyVersion(exeDir, foldCase).empty(); }
-/// The one plain line a kept copy shows where the update window would be.
+/// The one plain line a kept copy shows where an update window would be.
 inline std::string KeptCopyNotice(const std::string& version) {
     const std::string v = NormalizeVersion(version);
     return "This is a kept copy" + (v.empty() ? std::string() : " of v" + v) + ". Update OkaySpace from the launcher.";
 }
 
 /// The command line (after the program) that opens `scene` and says the version was chosen on purpose:
-/// `--open "<scene>" --keep-version`. The launcher adds `--launcher <pid>` itself. (old behaviour: `version` is ignored.)
+/// `--open "<scene>" --keep-version=<version>` (the flag that names the version), or the bare `--keep-version` when `version` is not a version.
+/// The launcher adds `--launcher <pid>` itself.
 inline std::vector<std::string> KeepVersionArgs(const std::string& scene, const std::string& version = {}) {
-    (void)version;
-    return {"--open", scene, KeepVersionFlag()};
+    const std::string v = NormalizeVersion(version);
+    const std::string flag = KeepVersionFlag();
+    return {"--open", scene, v.empty() ? flag : flag + "=" + v};
 }
 
 }  // namespace okayver

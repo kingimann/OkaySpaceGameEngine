@@ -27,6 +27,7 @@ struct Host {
     ImVec4 accent{0.26f, 0.59f, 0.98f, 1.0f}, accentDim{0.19f, 0.43f, 0.72f, 1.0f}, cardBg{0.15f, 0.163f, 0.2f, 1.0f};
     std::function<void(const std::string& message, int kind)> toast;        ///< kind: 0 info, 1 done, 2 error
     std::function<void(const std::string& path)> openFolder;
+    std::function<std::vector<std::string>()> projectVersions;   ///< the `engine_version` of every project the Create page lists ("" = none recorded): the Remove window counts them
     std::function<void()> savePrefs;
     std::function<void()> startUpdate;           ///< the launcher's own update (the sidebar's "Install now")
     std::function<void()> channelChanged;        ///< the channel was switched: look for updates again

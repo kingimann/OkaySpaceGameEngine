@@ -31,6 +31,7 @@ std::string g_restoreSummary;                     // the "Restored" window's tex
 okayup::BackupInfo g_restoreAsk;                  // the backup the confirm window is about
 bool g_restoreAskOpen = false;
 bool g_exitNow = false;                           // the editor leaves now (Keep started another one, or a restore asked for a restart)
+bool g_keptNoticeWanted = false, g_keptNoticeOpen = false;   // the kept-copy window (Help > Check for Updates... in a kept copy)
 
 const ImVec4 kRed(0.96f, 0.55f, 0.50f, 1.0f), kAmber(0.95f, 0.80f, 0.35f, 1.0f), kGreen(0.45f, 0.82f, 0.56f, 1.0f);
 
@@ -96,6 +97,7 @@ std::vector<std::string> OutputDirs(const std::string& projectDir) {
 okayup::GateEnv MakeEnv(const std::vector<std::string>& args) {
     okayup::GateEnv env;
     env.running = RunningVersion();
+    env.keptCopy = IsKeptCopy();                  // only a kept copy trusts a bare --keep-version
     env.launcherDir = [] {
         const fs::path self = okay::restart::CurrentExecutable();
         return self.empty() ? fs::path() : okayver::LauncherDirOf(self.parent_path());
@@ -146,6 +148,12 @@ void OpenLauncherVersions(const std::string& version) {
     req.logFile = fs::temp_directory_path(ec) / "okayspace_editor_launch.log";
     std::string err;
     if (!okay::restart::StartHelper(req, err)) std::fprintf(stderr, "Couldn't open the launcher: %s\n", err.c_str());
+}
+
+// The "Open launcher" button (nothing when no launcher is around this editor): the launcher's Versions page with `version` highlighted. The version
+// question's "not installed" window and the kept-copy window both use it.
+void OpenLauncherButton(bool& first, const std::string& version) {
+    if (!LauncherExe().empty() && Btn("Open launcher", first)) OpenLauncherVersions(version);
 }
 
 std::string FirstSceneOf(const std::string& projectDir) {
@@ -229,7 +237,7 @@ void DrawGatePrompt() {
             ImGui::TextWrapped("Nothing was changed. The launcher keeps earlier versions side by side, so a project can be opened with the editor it was made with.");
             ImGui::Dummy(ImVec2(0, 8));
             if (Btn("Back", first, true)) g_gate.Answer(Choice::Back);
-            if (!LauncherExe().empty() && Btn("Open launcher", first)) OpenLauncherVersions(pr.projectVersion);   // the launcher's Versions page, that version highlighted
+            OpenLauncherButton(first, pr.projectVersion);   // the launcher's Versions page, that version highlighted
             if (Btn("Cancel", first) || esc) g_gate.Answer(Choice::Cancel);
             break;
         }
@@ -418,6 +426,22 @@ void DrawUpgradeWindow(okay::editor::EditorState& ed) {
     ImGui::EndPopup();
 }
 
+// A kept copy never updates itself: where the update window would be, it says so in one line and points at the launcher.
+void DrawKeptCopyNotice() {
+    if (g_keptNoticeWanted) { g_keptNoticeWanted = false; ImGui::OpenPopup("Kept copy"); }
+    g_keptNoticeOpen = ImGui::IsPopupOpen("Kept copy");
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(560, 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Kept copy", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) return;
+    ImGui::TextDisabled("KEPT COPY");
+    Heading(KeptCopyUpdateText().c_str(), ImVec4(1, 1, 1, 1));
+    ImGui::Dummy(ImVec2(0, 8));
+    bool first = true;
+    OpenLauncherButton(first, std::string());
+    if (Btn("Close", first, true) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 void DrawRestored() {
     if (g_restoreSummary.empty()) return;
     if (!ImGui::IsPopupOpen("Backup restored")) ImGui::OpenPopup("Backup restored");
@@ -449,14 +473,16 @@ void ProjectUpgradeInit(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) if (argv[i]) args.emplace_back(argv[i]);
     g_gate.SetEnv(MakeEnv(args));
     std::string open, keepFor;
+    bool keepGiven = false;
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
         if (a == "--open" && i + 1 < args.size()) open = args[++i];
         else if (a.rfind("--open=", 0) == 0) open = a.substr(7);
-        else if (a == okayver::KeepVersionFlag()) g_keepFlag = true;
-        else if (a.rfind(std::string(okayver::KeepVersionFlag()) + "=", 0) == 0) { g_keepFlag = true; keepFor = a.substr(std::strlen(okayver::KeepVersionFlag()) + 1); }
+        else if (okayver::ParseKeepFlag(a, &keepFor)) keepGiven = true;
     }
-    if (g_keepFlag && !open.empty()) g_gate.NoteKeepRequest(open, keepFor);
+    // Only a flag this editor trusts counts (a bare one: a kept copy only; one that names a version: that version's editor only). That is also all
+    // that is passed on to an editor that is already open (KeepVersionRequested).
+    g_keepFlag = keepGiven && !open.empty() && g_gate.NoteKeepRequest(open, keepFor);
     okay::editor::EditorState::beforeLoad = [](const std::string& path, std::string* why) { return g_gate.MayLoad(path, why); };
 }
 
@@ -486,21 +512,37 @@ std::string EditorVersionLabel(const std::string& projectDir) {
     static unsigned cachedRevision = ~0u;
     if (cachedRevision == g_gate.revision() && cachedDir == projectDir && !cachedLabel.empty()) return cachedLabel;
     std::string s = okayver::DisplayVersion(RunningVersion());
-    if (!projectDir.empty() && g_gate.IsKept(projectDir)) s += " (kept)";
+    if ((!projectDir.empty() && g_gate.IsKept(projectDir)) || IsKeptCopy()) s += " (kept)";
     cachedDir = projectDir; cachedLabel = s; cachedRevision = g_gate.revision();
     return s;
 }
 
-bool ProjectGateBusy() { return g_gate.Busy(); }
+bool ProjectGateBusy() { return g_gate.Busy() || g_keptNoticeWanted || g_keptNoticeOpen; }
 
 void NoteKeepVersionHandoff(const std::string& scene, const std::string& version) { g_gate.NoteKeepRequest(scene, version); }
 
 bool KeepVersionRequested() { return g_keepFlag; }
 
+namespace {
+// The version of the kept copy this editor runs from, from the folder its exe is in ("" = not a kept copy). Looked at once.
+const std::string& KeptVersionOfThisEditor() {
+    static const std::string version = [] {
+        const fs::path self = okay::restart::CurrentExecutable();
+        return self.empty() ? std::string() : okayver::KeptCopyVersion(okay::restart::Utf8(self.parent_path()));
+    }();
+    return version;
+}
+}  // namespace
+
+bool IsKeptCopy() { return !KeptVersionOfThisEditor().empty(); }
+std::string KeptCopyUpdateText() { return IsKeptCopy() ? okayver::KeptCopyNotice(KeptVersionOfThisEditor()) : std::string(); }
+void OpenKeptCopyNotice() { g_keptNoticeWanted = true; }
+
 void ProjectUpgradeDraw(okay::editor::EditorState& ed) {
     g_gate.Tick(std::chrono::milliseconds(10));
     DrawGatePrompt();
     DrawUpgradeWindow(ed);
+    DrawKeptCopyNotice();
     DrawRestored();
     // what the answers asked for (taken after the windows, so an answer is acted on in the frame it was given)
     if (auto l = g_gate.TakeLaunch()) QueueLaunch(l->exe, l->args, l->workDir);

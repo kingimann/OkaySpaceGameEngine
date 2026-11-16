@@ -8,12 +8,23 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <fstream>
 #include <ostream>
 #include <set>
 #include <sstream>
 
 #include "OfficialGame.hpp"   // the strict JSON reader and the bundled SHA-256
+
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>   // only for the reparse-point check below (a junction is not a symlink to std::filesystem on every compiler)
+#endif
 
 namespace okayversions {
 namespace {
@@ -114,6 +125,27 @@ void ReadMarker(const fs::path& versionDir, std::string* source, std::string* da
 void SetExecutable(const fs::path& p) {
     std::error_code ec;
     fs::permissions(p, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
+}
+
+/// A folder that is really a link to another one: a symbolic link (also a loop, or one that can't be told), and on Windows a junction or a
+/// directory symbolic link. Never walked into and never deleted through, because deleting could reach what it points at.
+bool IsDirectoryLink(const fs::path& p, const fs::file_status& st) {
+    std::error_code ec;
+    if (fs::is_symlink(st)) {
+        if (fs::is_directory(p, ec)) return true;           // follows it once, only to learn what it points at
+        return ec && ec != std::errc::no_such_file_or_directory;   // a loop (or any link that can't be resolved) counts; a link to a file, or to nowhere, does not
+    }
+#if defined(_WIN32)
+    if (fs::is_directory(st)) {                             // (unverified on Windows: written from the Win32 documentation)
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW(p.c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        FindClose(h);
+        return (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 &&
+               (fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT);
+    }
+#endif
+    return false;
 }
 
 }  // namespace
@@ -478,6 +510,12 @@ Result Install(const fs::path& launcherDir, const InstallPlan& plan, const Insta
         for (const PlanFile& f : plan.files)
             if (!IsSafeFileName(f.indexName) || !IsSafeFileName(f.diskName)) return done(Outcome::Failed, "The version list names a file that is not allowed.");
         if (okayver::IsInstalled(launcherDir, v)) { r.path = VersionsRoot(launcherDir) / v; return done(Outcome::AlreadyInstalled, "v" + v + " is already installed."); }
+        // A folder of that name with no editor in it is "in the way" and is cleared at the very end. Never one that holds a project of the person's:
+        // say so now, before anything is downloaded.
+        if (const DeleteCheck chk = CheckBeforeDelete(VersionsRoot(launcherDir) / v, io.scan); !chk.ok()) {
+            r.path = chk.folder;
+            return done(Outcome::Refused, "v" + v + " can't be installed: its folder in Versions is in the way and can't be cleared. " + chk.message + " Nothing was changed.");
+        }
         for (const PlanFile& f : plan.files) {
             // Defence in depth: PlanInstall never plans a downloaded file without a checksum, but a plan is a plain struct.
             if (f.localCopy.empty() && (!f.verified || f.sha256.size() != 64 || f.size == 0))
@@ -566,6 +604,10 @@ Result Install(const fs::path& launcherDir, const InstallPlan& plan, const Insta
 
         const fs::path finalDir = versions / v;
         if (Hook(io, "commit")) return done(Outcome::Failed, "Couldn't move the new version into place.");
+        if (const DeleteCheck chk = CheckBeforeDelete(finalDir, io.scan); !chk.ok()) {      // (looked at again: it can have changed while the download ran)
+            r.path = chk.folder;
+            return done(Outcome::Refused, "v" + v + " can't be installed: its folder in Versions is in the way and can't be cleared. " + chk.message + " Nothing was changed.");
+        }
         fs::remove_all(finalDir, ec);                              // an incomplete folder of that name (no editor in it) is in the way
         ec.clear();
         fs::rename(scratch.path, finalDir, ec);
@@ -618,6 +660,7 @@ int CleanStale(const fs::path& launcherDir) {
         if (name.rfind(".partial-", 0) == 0 || name.rfind(".removing-", 0) == 0) stale.push_back(it->path());
     }
     for (const fs::path& p : stale) {
+        if (!CheckBeforeDelete(p).ok()) continue;                   // a half-deleted folder of an older launcher with a project in it: left for the person
         std::error_code e2;
         fs::remove_all(p, e2);
         if (!e2) ++removed;
@@ -625,12 +668,112 @@ int CleanStale(const fs::path& launcherDir) {
     return removed;
 }
 
-// ---- never delete a folder that holds the person's work (STUBS: test first, they still say "nothing is in the way") ------------
+// ---- never delete a folder that holds the person's work --------------------------------------------------------------------
 
-FolderScan ScanFolderForProjects(const fs::path& dir, const ScanLimits& limits) { (void)dir; (void)limits; return {}; }
-DeleteCheck CheckBeforeDelete(const fs::path& dir, const ScanLimits& limits) { (void)dir; (void)limits; return {}; }
-int CountProjectsMadeWith(const std::vector<std::string>& projectVersions, const std::string& version) { (void)projectVersions; (void)version; return 0; }
-std::string ProjectsMadeWithSentence(int count, const std::string& version) { (void)count; (void)version; return {}; }
+FolderScan ScanFolderForProjects(const fs::path& dir, const ScanLimits& limits) {
+    FolderScan out;
+    std::error_code ec;
+    const fs::file_status top = fs::symlink_status(dir, ec);
+    if (top.type() == fs::file_type::not_found) return out;                    // nothing there: nothing to lose
+    if (!ec && IsDirectoryLink(dir, top)) { out.link = dir; return out; }      // the folder itself is a link: not walked into
+    struct Item { fs::path path; int depth; fs::path assetsRoot; };           // assetsRoot: the folder that holds the nearest Assets folder above, "" = none
+    std::deque<Item> queue;
+    queue.push_back({dir, 0, {}});
+    auto unchecked = [&](const std::string& why) { if (!out.unchecked) { out.unchecked = true; out.uncheckedWhy = why; } };
+    auto addProject = [&](const fs::path& root) {
+        for (const fs::path& have : out.projects) if (have == root) return;
+        if (out.projects.size() >= limits.maxReported) { out.moreProjects = true; return; }
+        out.projects.push_back(root);
+    };
+    auto endsWith = [](const std::string& s, const char* tail) {
+        const std::size_t n = std::strlen(tail);
+        return s.size() >= n && s.compare(s.size() - n, n, tail) == 0;
+    };
+    bool stop = false;
+    while (!queue.empty() && !stop) {
+        const Item item = queue.front();
+        queue.pop_front();
+        bool hasProjectFile = false, hasScene = false, hasFile = false;
+        std::vector<Item> children;
+        std::error_code lec;
+        for (fs::directory_iterator it(item.path, lec), end; !lec && it != end; it.increment(lec)) {
+            if (++out.entries > limits.maxEntries) {
+                unchecked("it holds more than " + std::to_string(limits.maxEntries) + " files and folders");
+                stop = true;
+                break;
+            }
+            const fs::directory_entry& e = *it;
+            std::error_code e1;
+            const fs::file_status st = e.symlink_status(e1);
+            if (e1) { unchecked("a folder could not be read (" + e.path().string() + ")"); continue; }
+            const std::string name = Lower(e.path().filename().string());
+            if (IsDirectoryLink(e.path(), st)) { if (out.link.empty()) out.link = e.path(); continue; }
+            if (fs::is_directory(st)) {
+                if (item.depth + 1 > limits.maxDepth) { unchecked("it is nested more than " + std::to_string(limits.maxDepth) + " folders deep"); continue; }
+                children.push_back({e.path(), item.depth + 1, item.assetsRoot.empty() && name == "assets" ? item.path : item.assetsRoot});
+            } else if (fs::is_regular_file(st)) {
+                hasFile = true;
+                if (name == "project.okayproj") hasProjectFile = true;
+                else if (endsWith(name, ".okayscene")) hasScene = true;
+            }
+        }
+        if (lec && !stop) unchecked("a folder could not be read (" + item.path.string() + ")");
+        if (hasProjectFile) addProject(item.path);                                       // the project's own file
+        if (hasScene) addProject(item.assetsRoot.empty() ? item.path : item.assetsRoot);    // a scene, in a project or loose
+        if (hasFile && !item.assetsRoot.empty()) addProject(item.assetsRoot);             // anything at all inside an Assets folder
+        if (out.moreProjects) stop = true;                                                // the answer is already no, and the list is full
+        std::sort(children.begin(), children.end(), [](const Item& a, const Item& b) { return a.path < b.path; });   // the same order on every file system
+        for (Item& c : children) queue.push_back(std::move(c));
+    }
+    return out;
+}
+
+DeleteCheck CheckBeforeDelete(const fs::path& dir, const ScanLimits& limits) {
+    DeleteCheck c;
+    const FolderScan s = ScanFolderForProjects(dir, limits);
+    if (!s.projects.empty()) {
+        c.kind = DeleteCheck::HoldsProject;
+        c.projects = s.projects;
+        c.folder = s.projects.front().parent_path().empty() ? dir : s.projects.front().parent_path();
+        c.message = "This version folder has a project of yours: " + s.projects.front().string() + ". Move it out first.";
+        const std::size_t more = s.projects.size() - 1;
+        if (s.moreProjects) c.message += " There are others in it too.";
+        else if (more == 1) c.message += " 1 more project is in it too.";
+        else if (more > 1) c.message += " " + std::to_string(more) + " more projects are in it too.";
+        return c;
+    }
+    if (!s.link.empty()) {
+        c.kind = DeleteCheck::HasLink;
+        c.folder = s.link.parent_path().empty() ? dir : s.link.parent_path();
+        c.message = "This version folder has a link to another folder: " + s.link.string() +
+                    ". Removing it could delete what the link points to. Delete the link yourself first.";
+        return c;
+    }
+    if (s.unchecked) {
+        c.kind = DeleteCheck::Unchecked;
+        c.folder = dir;
+        c.message = "This version folder can't be checked for your projects (" + s.uncheckedWhy +
+                    "). Open the folder and delete it yourself if you are sure.";
+        return c;
+    }
+    return c;
+}
+
+int CountProjectsMadeWith(const std::vector<std::string>& projectVersions, const std::string& version) {
+    if (okayver::LineOf(version).empty()) return 0;
+    int n = 0;
+    for (const std::string& pv : projectVersions)
+        if (okayver::SameLine(pv, version)) ++n;
+    return n;
+}
+
+std::string ProjectsMadeWithSentence(int count, const std::string& version) {
+    const std::string line = okayver::LineLabel(version);
+    const std::string label = line.empty() ? std::string("this version") : line;
+    if (count <= 0) return "None of your projects were made with " + label + ".";
+    if (count == 1) return "1 of your projects was made with " + label + ". You can open it with that version again after you install it.";
+    return std::to_string(count) + " of your projects were made with " + label + ". You can open them with that version again after you install it.";
+}
 
 Result Remove(const fs::path& launcherDir, const std::string& versionIn, const RemoveGuards& g, const IO& io) {
     Result r;
@@ -647,6 +790,11 @@ Result Remove(const fs::path& launcherDir, const std::string& versionIn, const R
             if (okayver::NormalizeVersion(k.first) == v) return done(Outcome::Refused, "v" + v + " can't be removed: " + k.second);
         if (g.inUse && g.inUse(v)) return done(Outcome::Refused, "An editor of v" + v + " is open. Close it first.");
         const fs::path dir = VersionsRoot(launcherDir) / v;
+        // Look before anything is deleted: a project made in the kept editor's default folder (Versions/<v>/Tools/Projects) is the person's.
+        if (const DeleteCheck chk = CheckBeforeDelete(dir, io.scan); !chk.ok()) {
+            r.path = chk.folder;
+            return done(Outcome::Refused, chk.message + " Nothing was removed.");
+        }
         const fs::path trash = VersionsRoot(launcherDir) / ScratchName(".removing-", v);
         std::error_code ec;
         if (Hook(io, "remove-rename")) return done(Outcome::Failed, "Couldn't remove v" + v + ". Is one of its files in use?");
@@ -668,6 +816,7 @@ void DiscardKept(const fs::path& launcherDir, const std::string& versionIn) {
     std::string source;
     ReadMarker(VersionsRoot(launcherDir) / v, &source, nullptr);
     if (source != "kept") return;                                   // only ever a copy the update itself made
+    if (!CheckBeforeDelete(VersionsRoot(launcherDir) / v).ok()) return;   // and never one that has something of the person's in it
     std::error_code ec;
     const fs::path trash = VersionsRoot(launcherDir) / ScratchName(".removing-", v);
     fs::rename(VersionsRoot(launcherDir) / v, trash, ec);
@@ -702,6 +851,10 @@ Result KeepCurrent(const fs::path& launcherDir, const std::string& currentVersio
         const std::string v = okayver::NormalizeVersion(currentVersion);
         if (v.empty()) return done(Outcome::Skipped, "This is a development build; it has no version to keep.");
         if (okayver::IsInstalled(launcherDir, v)) { r.path = VersionsRoot(launcherDir) / v; return done(Outcome::AlreadyInstalled, "v" + v + " is already kept."); }
+        if (const DeleteCheck chk = CheckBeforeDelete(VersionsRoot(launcherDir) / v, io.scan); !chk.ok()) {   // a folder with no editor in it is cleared before the copy is moved in
+            r.path = chk.folder;
+            return done(Outcome::Skipped, "Couldn't keep v" + v + ": its folder in Versions is in the way and can't be cleared. " + chk.message + " The update goes on without keeping it.");
+        }
         std::error_code ec;
         if (cur.editor.empty() || !fs::is_regular_file(cur.editor, ec)) return done(Outcome::Skipped, "The current editor was not found, so there is nothing to keep.");
         const bool havePlayer = !cur.player.empty() && fs::is_regular_file(cur.player, ec);
@@ -740,6 +893,10 @@ Result KeepCurrent(const fs::path& launcherDir, const std::string& currentVersio
         if (Hook(io, "keep-marker") || !WriteMarker(scratch.path, v, "kept")) return done(Outcome::Failed, "Couldn't keep v" + v + ": its folder could not be finished.");
         if (Hook(io, "keep-commit")) return done(Outcome::Failed, "Couldn't keep v" + v + ": it could not be moved into place.");
         const fs::path finalDir = versions / v;
+        if (const DeleteCheck chk = CheckBeforeDelete(finalDir, io.scan); !chk.ok()) {      // (looked at again just before the delete)
+            r.path = chk.folder;
+            return done(Outcome::Skipped, "Couldn't keep v" + v + ": its folder in Versions is in the way and can't be cleared. " + chk.message + " The update goes on without keeping it.");
+        }
         fs::remove_all(finalDir, ec);
         ec.clear();
         fs::rename(scratch.path, finalDir, ec);

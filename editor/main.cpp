@@ -2125,6 +2125,7 @@ bool FetchVerified(const std::string& version, const std::string& asset, const f
 // relaunch. Returns a human-readable status. Only call when an update is known
 // to be available (so this never loops on an already-current build).
 std::string InstallUpdate(const std::string& latest, const std::string& ref = "main") {
+    if (oked::IsKeptCopy()) return oked::KeptCopyUpdateText();   // a kept copy never replaces itself: the launcher owns its folder (docs/launcher_versions.md)
     std::error_code ec;
     fs::path self = okay::restart::CurrentExecutable();
     if (self.empty()) {
@@ -7177,6 +7178,7 @@ static void RunMenuAction(EditorState& ed, const std::string& id) {
     else if (id == "help.shortcuts") g_showShortcuts = true;
     else if (id == "help.docs") extide::RevealInFiles("https://github.com/kingimann/OkaySpaceGameEngine/tree/main/docs");
     else if (id == "help.updates") {
+        if (oked::IsKeptCopy()) { oked::OpenKeptCopyNotice(); return; }   // a kept copy never updates itself: one line and the Open launcher button
         g_update = updater::CheckLatest();
         g_openUpdatePopup = true;
         ConsoleLog(g_update.error.empty()
@@ -19307,6 +19309,7 @@ void DrawProjectSettings(EditorState& ed) {
 }
 
 void DrawUpdatePopup(EditorState& ed) {
+    if (oked::IsKeptCopy()) { g_openUpdatePopup = false; return; }   // never the Engine Update window, and so never its "install future updates" box
     if (g_openUpdatePopup) { ImGui::OpenPopup("Engine Update"); g_openUpdatePopup = false; }
     ImGui::SetNextWindowSizeConstraints(ImVec2(420, 0), ImVec2(560, 520));
     if (ImGui::BeginPopupModal("Engine Update", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -48164,6 +48167,7 @@ int main(int argc, char** argv) {
     };
     EditorState::onSceneLoaded = [] { g_lastSaveError.clear(); };   // a scene opened from disk starts without a failed-save note
     g_upgradeHooks.openUpdateDialog = [] {   // the version question's "Update OkaySpace": the same window as Engine > Check for Updates
+        if (oked::IsKeptCopy()) { oked::OpenKeptCopyNotice(); return; }
         g_update = updater::CheckLatest();
         g_openUpdatePopup = true;
     };
@@ -48208,7 +48212,7 @@ int main(int argc, char** argv) {
     // Automatically check for a newer build at startup, in the background so it
     // never blocks the editor. The result is picked up in the main loop and, if
     // an update is available, the Update window pops up on its own.
-    g_updateCheck = std::async(std::launch::async, updater::CheckLatest);
+    if (!oked::IsKeptCopy()) g_updateCheck = std::async(std::launch::async, updater::CheckLatest);   // (a kept copy never checks: see ProjectUpgradeUI.hpp)
 
     bool running = true;
     std::string lastTitle;

@@ -92,6 +92,8 @@ struct State {
     std::unique_ptr<InstallJob> job;
     std::map<std::string, std::pair<std::string, int>> notes;   // per version: the last message and its kind (2 = error)
     std::string removeAsk;                              // a Remove confirmation is open for this version
+    DeleteCheck removeCheck;                            // what was found in that folder when the window opened (a project of the person's, a link, too big to check)
+    int removeProjects = 0;                             // how many of the person's projects were made with that version's line
     bool showAllAvailable = false;
     bool staleCleaned = false;
 };
@@ -230,6 +232,14 @@ void BeginInstall(const Host& h, const std::string& version) {
         return;
     }
     StartJob(h, plan);   // (a version without checksums never gets a plan: PlanInstall refuses it with the reason)
+}
+
+/// The Remove button: look in the folder now (not every frame), count the projects made with that version, and open the confirmation.
+void AskRemove(const Host& h, const std::string& version) {
+    State& st = S();
+    st.removeAsk = version;
+    st.removeCheck = CheckBeforeDelete(okayver::VersionsDir(h.launcherDir) / version);
+    st.removeProjects = h.projectVersions ? CountProjectsMadeWith(h.projectVersions(), version) : 0;
 }
 
 RemoveGuards MakeGuards(const Host& h) {
@@ -496,7 +506,7 @@ void DrawInstalled(const Host& h) {
         if (ImGui::Button(isDefault ? "Default" : "Make default", ImVec2(120, 30))) { set.defaultEditor = in.version; if (h.savePrefs) h.savePrefs(); Toast(h, V(in.version) + " is now your default editor.", 1); }
         ImGui::EndDisabled();
         ImGui::SameLine(0, 8);
-        if (DangerButton("Remove", ImVec2(96, 30))) st.removeAsk = in.version;
+        if (DangerButton("Remove", ImVec2(96, 30))) AskRemove(h, in.version);
         RowEnd(r, &in != &st.installed.back());
         ImGui::PopID();
     }
@@ -536,8 +546,10 @@ void DrawInstalled(const Host& h) {
         if (ImGui::Button("Remove them now")) {
             const PruneResult pr = Prune(h.launcherDir, keep, ltsHead, MakeGuards(h));
             st.installedDirty = true;
+            // A version with a project of the person's inside stays; the reason says which (the first one is shown, the rest are in the Remove window).
             Toast(h, pr.failed.empty() ? "Removed " + std::to_string(pr.removed.size()) + " older " + (pr.removed.size() == 1 ? "version" : "versions") + "."
-                                       : "Some versions could not be removed.", pr.failed.empty() ? 1 : 2);
+                                       : "Removed " + std::to_string(pr.removed.size()) + ", kept " + std::to_string(pr.failed.size()) + ". v" + pr.notRemoved.front().first + ": " + pr.notRemoved.front().second,
+                  pr.failed.empty() ? 1 : 2);
         }
     }
     CardEnd();
@@ -648,25 +660,41 @@ void DrawModals(const Host& h) {
     if (ImGui::BeginPopupModal("Remove this version?", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
         const std::string v = st.removeAsk;
         const fs::path dir = okayver::VersionsDir(h.launcherDir) / v;
+        const DeleteCheck& chk = st.removeCheck;
         std::uint64_t bytes = 0;
         for (const Installed& i : st.installed) if (i.version == v) bytes = i.bytes;
         ImGui::PushTextWrapPos(460.0f);
         ImGui::Text("Remove %s?", V(v).c_str());
         ImGui::TextDisabled("%s", dir.string().c_str());
         ImGui::Dummy(ImVec2(0, 4));
-        ImGui::Text("This frees %s. Your projects are not touched; projects made with %s can be opened with it again after you install it.", HumanSize(bytes).c_str(), okayver::LineLabel(v).c_str());
+        if (!chk.ok()) {
+            // Something of the person's is in this folder (or it can't be checked): nothing is removed, and the window says what and where.
+            ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber), "%s", chk.message.c_str());
+            ImGui::TextDisabled("%s", chk.kind == DeleteCheck::HoldsProject ? "Nothing is removed. Move the project out of this folder, then press Remove again."
+                                                                              : "Nothing is removed.");
+        } else {
+            ImGui::Text("This frees %s. Your projects are not touched.", HumanSize(bytes).c_str());
+            ImGui::TextUnformatted(ProjectsMadeWithSentence(st.removeProjects, v).c_str());
+        }
         if (h.editorRunning) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(kAmber), "An editor is open. A version that editor is using can't be removed.");
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, 6));
-        if (DangerButton("Remove", ImVec2(120, 0))) {
-            const Result r = Remove(h.launcherDir, v, MakeGuards(h));
-            Toast(h, r.message, r.ok() ? 1 : 2);
-            st.removeAsk.clear();
-            st.installedDirty = true;
-            ImGui::CloseCurrentPopup();
+        bool close = false;
+        if (!chk.ok()) {
+            if (ImGui::Button("Open folder", ImVec2(120, 0)) && h.openFolder) h.openFolder(chk.folder.string());   // the same helper as "Open install folder"
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) close = true;
+        } else {
+            if (DangerButton("Remove", ImVec2(120, 0))) {
+                const Result r = Remove(h.launcherDir, v, MakeGuards(h));      // (it looks again: the folder can have changed since the window opened)
+                Toast(h, r.message, r.ok() ? 1 : 2);
+                st.installedDirty = true;
+                close = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) close = true;
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { st.removeAsk.clear(); ImGui::CloseCurrentPopup(); }
+        if (close) { st.removeAsk.clear(); ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     } else if (!ImGui::IsPopupOpen("Remove this version?")) st.removeAsk.clear();
 }

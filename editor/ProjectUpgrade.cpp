@@ -820,8 +820,9 @@ bool ProjectGate::IsKept(const std::string& root) const { return !root.empty() &
 
 bool ProjectGate::NoteKeepRequest(const std::string& scene, const std::string& forVersion) {
     const std::string root = ProjectRootForScene(scene);
-    if (root.empty()) return false;
-    if (!forVersion.empty() && okayver::CompareVersions(forVersion, env_.running) != 0) return false;   // meant for another version's editor
+    // A flag that names a version is for the editor of exactly that version; a bare flag is trusted only by a kept copy (okayver::HonoursKeepFlag):
+    // an old kept editor that updated itself restarts with the same arguments, and the newest editor must then ask its question, not open silently.
+    if (root.empty() || !okayver::HonoursKeepFlag(forVersion, env_.running, env_.keptCopy)) return false;
     kept_.insert(RootKey(root));
     ++revision_;
     return true;
@@ -931,7 +932,7 @@ void ProjectGate::KeepVersion() {
         Launch l;
         const fs::path exe = okayver::InstalledEditorPath(launcher, target);
         l.exe = exe.string();
-        l.args = okayver::KeepVersionArgs(prompt_.scene);
+        l.args = okayver::KeepVersionArgs(prompt_.scene, target);   // names the version: only that editor trusts the flag
         for (const std::string& a : env_.forwardArgs) l.args.push_back(a);
         l.workDir = exe.parent_path().string();
         launch_ = std::move(l);

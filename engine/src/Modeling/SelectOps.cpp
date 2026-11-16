@@ -160,6 +160,28 @@ std::vector<int> SelectByArea(const Mesh& m, float minArea, float maxArea) {
     return out;
 }
 
+std::vector<std::vector<int>> LooseParts(const Mesh& m) {
+    std::vector<std::vector<int>> parts;
+    const Adj a = Build(m);
+    const int nt = m.TriangleCount();
+    std::vector<int> comp((std::size_t)nt, -1);
+    for (int t = 0; t < nt; ++t) {
+        if (comp[t] >= 0 || a.corner[t][0] < 0) continue;
+        const int id = (int)parts.size();
+        parts.emplace_back();
+        std::vector<int> stack = {t};
+        comp[t] = id;
+        while (!stack.empty()) {
+            const int c = stack.back(); stack.pop_back();
+            parts[id].push_back(c);
+            for (int k = 0; k < 3; ++k) for (int n : a.around[a.corner[c][k]]) if (comp[n] < 0) { comp[n] = id; stack.push_back(n); }
+        }
+        std::sort(parts[id].begin(), parts[id].end());
+    }
+    std::stable_sort(parts.begin(), parts.end(), [](const std::vector<int>& x, const std::vector<int>& y) { return x.size() > y.size(); });
+    return parts;
+}
+
 bool BakeTransform(Mesh& m, const Vec3& scale, const Quat& rotation) {
     if (!std::isfinite(scale.x + scale.y + scale.z) || std::fabs(scale.x) < 1e-9f || std::fabs(scale.y) < 1e-9f || std::fabs(scale.z) < 1e-9f) return false;
     for (Vec3& v : m.vertices) v = rotation * Vec3{v.x * scale.x, v.y * scale.y, v.z * scale.z};
@@ -195,6 +217,7 @@ int RoundEdges(Mesh& m, const std::vector<std::pair<int, int>>& edges, float wid
     const float ang = m.autoSmoothAngle;
     Mesh out = pm.ToMesh();
     out.name = "";
+    out.hiddenPos = m.hiddenPos; out.hiddenUV = m.hiddenUV; out.hiddenSlot = m.hiddenSlot; out.hiddenPoly = m.hiddenPoly; out.hiddenColor = m.hiddenColor;
     if (smooth) { if (ang > 0) out.ComputeAutoSmoothNormals(ang); else out.ComputeSmoothNormals(); }
     m = std::move(out);
     return n;

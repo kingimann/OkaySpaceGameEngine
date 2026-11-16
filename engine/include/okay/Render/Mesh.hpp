@@ -50,6 +50,14 @@ struct Mesh {
                                   // Ignored when its size doesn't match the triangle count.
     std::vector<Color> slotColors;// the colour of each material slot (slot i -> slotColors[i]).
                                   // ApplySlotColors() paints triColors from the two lists.
+    // Hidden geometry (Hide / Isolate in mesh edit mode): triangles taken out of the mesh and kept here by
+    // value (corner positions, not vertex numbers, so later edits that renumber the vertices cannot break
+    // them). Renderers, colliders and tools never see them; RevealHidden() puts them back.
+    std::vector<Vec3>  hiddenPos;    // 3 per hidden triangle
+    std::vector<Vec2>  hiddenUV;     // 3 per hidden triangle, or empty when the mesh had no UVs
+    std::vector<int>   hiddenSlot;   // 1 per hidden triangle (-1 = none)
+    std::vector<int>   hiddenPoly;   // 1 per hidden triangle: its polygon id (-1 = none)
+    std::vector<Color> hiddenColor;  // 1 per hidden triangle, or empty when the mesh had no face colours
     std::vector<Vec3> normals;    // optional per-vertex normals (parallel to vertices);
                                   // when present the renderer smooth (Gouraud) shades.
     float autoSmoothAngle = 0.0f; // >0: normals came from ComputeAutoSmoothNormals(angle)
@@ -57,6 +65,125 @@ struct Mesh {
 
     int TriangleCount() const { return static_cast<int>(triangles.size() / 3); }
     bool HasFaceColors() const { return (int)triColors.size() == TriangleCount() && !triColors.empty(); }
+    int HiddenTriangleCount() const { return (int)(hiddenPos.size() / 3); }
+    bool HasHidden() const { return !hiddenPos.empty(); }
+    /// True when the hidden lists are consistent with each other (a damaged file could break that).
+    bool HiddenConsistent() const {
+        const std::size_t n = hiddenPos.size() / 3;
+        return hiddenPos.size() % 3 == 0 && hiddenSlot.size() == n && hiddenPoly.size() == n &&
+               (hiddenUV.empty() || hiddenUV.size() == n * 3) && (hiddenColor.empty() || hiddenColor.size() == n);
+    }
+    /// Take the given triangles out of the mesh and keep them hidden. Returns how many were hidden.
+    /// Vertices only they used stay in the vertex list (nothing is renumbered), unused.
+    int HideTriangles(const std::vector<int>& tris) {
+        if (!HiddenConsistent()) { hiddenPos.clear(); hiddenUV.clear(); hiddenSlot.clear(); hiddenPoly.clear(); hiddenColor.clear(); }
+        const int nt = TriangleCount();
+        std::vector<char> hide((std::size_t)nt, 0);
+        int count = 0;
+        for (int t : tris) {
+            if (t < 0 || t >= nt || hide[t]) continue;
+            bool ok = true;
+            for (int k = 0; k < 3; ++k) { const int v = triangles[t * 3 + k]; if (v < 0 || v >= (int)vertices.size()) ok = false; }
+            if (!ok) continue;
+            hide[t] = 1; ++count;
+        }
+        if (!count) return 0;
+        const bool uvv = HasUVs(), cuv = HasCornerUVs(), fc = HasFaceColors(), sl = HasSlots();
+        const bool pf = (int)polyFace.size() == nt && !polyFace.empty();
+        // Keep the UV list in step: it is either complete (every hidden triangle has it) or empty.
+        const bool keepUV = uvv || cuv;
+        if (keepUV && hiddenUV.empty() && !hiddenPos.empty()) hiddenUV.assign(hiddenPos.size(), Vec2{0, 0});
+        if (!keepUV && !hiddenUV.empty()) hiddenUV.insert(hiddenUV.end(), (std::size_t)count * 3, Vec2{0, 0});
+        if (fc && hiddenColor.empty() && !hiddenPos.empty()) hiddenColor.assign(hiddenPos.size() / 3, Color{1, 1, 1, 1});
+        std::vector<int> tri2, slot2, poly2; std::vector<Color> col2; std::vector<Vec2> cuv2;
+        for (int t = 0; t < nt; ++t) {
+            if (hide[t]) {
+                for (int k = 0; k < 3; ++k) {
+                    const int v = triangles[t * 3 + k];
+                    hiddenPos.push_back(vertices[v]);
+                    if (keepUV) hiddenUV.push_back(cuv ? cornerUVs[t * 3 + k] : uvs[v]);
+                }
+                hiddenSlot.push_back(sl ? triSlot[t] : -1);
+                hiddenPoly.push_back(pf ? polyFace[t] : -1);
+                if (fc || !hiddenColor.empty()) hiddenColor.push_back(fc ? triColors[t] : Color{1, 1, 1, 1});
+                continue;
+            }
+            tri2.insert(tri2.end(), {triangles[t * 3], triangles[t * 3 + 1], triangles[t * 3 + 2]});
+            if (sl) slot2.push_back(triSlot[t]);
+            if (pf) poly2.push_back(polyFace[t]);
+            if (fc) col2.push_back(triColors[t]);
+            if (cuv) cuv2.insert(cuv2.end(), {cornerUVs[t * 3], cornerUVs[t * 3 + 1], cornerUVs[t * 3 + 2]});
+        }
+        triangles = std::move(tri2);
+        if (sl) triSlot = std::move(slot2);
+        if (pf) polyFace = std::move(poly2);
+        if (fc) triColors = std::move(col2);
+        if (cuv) cornerUVs = std::move(cuv2);
+        name = "";
+        return count;
+    }
+    /// Hide every triangle except the given ones (local view). Returns how many were hidden.
+    int IsolateTriangles(const std::vector<int>& keep) {
+        const int nt = TriangleCount();
+        std::vector<char> k((std::size_t)nt, 0);
+        for (int t : keep) if (t >= 0 && t < nt) k[t] = 1;
+        std::vector<int> rest;
+        for (int t = 0; t < nt; ++t) if (!k[t]) rest.push_back(t);
+        return HideTriangles(rest);
+    }
+    /// Put every hidden triangle back (appended after the visible ones). Corners that match an existing
+    /// vertex position reuse it, so the revealed faces join up with what is there. Returns the numbers of the
+    /// triangles it added (so the editor can select them).
+    std::vector<int> RevealHidden() {
+        std::vector<int> added;
+        if (!HiddenConsistent() || hiddenPos.empty()) { hiddenPos.clear(); hiddenUV.clear(); hiddenSlot.clear(); hiddenPoly.clear(); hiddenColor.clear(); return added; }
+        const int n = HiddenTriangleCount();
+        std::map<std::tuple<long, long, long>, int> at;
+        auto key = [](const Vec3& p) { return std::make_tuple((long)std::lround(p.x * 1e5f), (long)std::lround(p.y * 1e5f), (long)std::lround(p.z * 1e5f)); };
+        for (int v = 0; v < (int)vertices.size(); ++v) at.emplace(key(vertices[v]), v);
+        const bool uvv = HasUVs(), cuvWanted = HasCornerUVs(), sl = HasSlots(), fc = HasFaceColors();
+        const bool hadPoly = (int)polyFace.size() == TriangleCount() && !polyFace.empty();
+        int polyBase = 0;
+        if (hadPoly) for (int id : polyFace) polyBase = std::max(polyBase, id + 1);
+        const bool hasHidUV = !hiddenUV.empty();
+        if (!uvv && !uvs.empty()) uvs.clear();
+        const bool padUV = uvv;                               // new vertices need a UV entry too
+        const bool padNrm = HasNormals();
+        const int firstNew = TriangleCount();
+        std::map<int, int> polyMap;                            // hidden polygon id -> id in this mesh
+        const bool anyHiddenPoly = std::any_of(hiddenPoly.begin(), hiddenPoly.end(), [](int p) { return p >= 0; });
+        for (int t = 0; t < n; ++t) {
+            for (int k = 0; k < 3; ++k) {
+                const Vec3& p = hiddenPos[t * 3 + k];
+                auto it = at.find(key(p));
+                int v;
+                if (it == at.end()) {
+                    v = (int)vertices.size();
+                    vertices.push_back(p);
+                    if (padUV) uvs.push_back(hasHidUV ? hiddenUV[t * 3 + k] : Vec2{0, 0});
+                    if (padNrm) normals.push_back(Vec3{0, 1, 0});
+                    at.emplace(key(p), v);
+                } else v = it->second;
+                triangles.push_back(v);
+                if (cuvWanted) cornerUVs.push_back(hasHidUV ? hiddenUV[t * 3 + k] : Vec2{0, 0});
+            }
+            if (sl) triSlot.push_back(hiddenSlot[t] >= 0 ? hiddenSlot[t] : 0);
+            if (fc) triColors.push_back(hiddenColor.empty() ? Color{1, 1, 1, 1} : hiddenColor[t]);
+            if (hadPoly || anyHiddenPoly) {
+                int id = hiddenPoly[t];
+                if (id >= 0) { auto it = polyMap.find(id); if (it == polyMap.end()) it = polyMap.emplace(id, polyBase + (int)polyMap.size()).first; id = it->second; }
+                else id = polyBase + 100000 + t;
+                if ((int)polyFace.size() == TriangleCount() - 1) polyFace.push_back(id);
+            }
+            added.push_back(firstNew + t);
+        }
+        // A mesh whose polygon list could not be kept in step falls back to recovering quads from the triangles.
+        if (!polyFace.empty() && (int)polyFace.size() != TriangleCount()) polyFace.clear();
+        hiddenPos.clear(); hiddenUV.clear(); hiddenSlot.clear(); hiddenPoly.clear(); hiddenColor.clear();
+        name = "";
+        RefreshNormals();
+        return added;
+    }
     bool HasSlots() const { return !triSlot.empty() && (int)triSlot.size() == TriangleCount(); }
     /// Number of material slots in use: the table size, or one past the highest slot assigned.
     int SlotCount() const {
@@ -1834,10 +1961,58 @@ public:
     /// Append another mesh into this one (re-indexing its triangles) — build a
     /// compound model (e.g. a snowman) from primitive parts.
     void Combine(const Mesh& other) {
-        int base = (int)vertices.size();
+        const int base = (int)vertices.size();
+        const int tBase = TriangleCount();
+        const bool uvBoth = HasUVs() || other.HasUVs();
+        const bool fcBoth = HasFaceColors() || other.HasFaceColors();
+        const bool slBoth = HasSlots() || other.HasSlots();
+        const bool pfThis = (int)polyFace.size() == tBase && !polyFace.empty();
+        const bool pfOther = (int)other.polyFace.size() == other.TriangleCount() && !other.polyFace.empty();
+        // What each side carries per triangle is filled in for the other so the lists stay in step.
+        std::vector<Color> col;
+        if (fcBoth) {
+            col.reserve((std::size_t)tBase + other.TriangleCount());
+            for (int t = 0; t < tBase; ++t) col.push_back(HasFaceColors() ? triColors[t] : Color{1, 1, 1, 1});
+            for (int t = 0; t < other.TriangleCount(); ++t) col.push_back(other.HasFaceColors() ? other.triColors[t] : Color{1, 1, 1, 1});
+        }
+        std::vector<int> slot;
+        int slotOffset = 0;
+        if (slBoth) {
+            slotOffset = (int)slotColors.size();
+            if (!HasSlots()) slotOffset = std::max(1, (int)slotColors.size());   // this mesh's faces are all slot 0
+            for (int t = 0; t < tBase; ++t) slot.push_back(HasSlots() ? triSlot[t] : 0);
+            for (int t = 0; t < other.TriangleCount(); ++t) slot.push_back(slotOffset + (other.HasSlots() ? other.triSlot[t] : 0));
+        }
+        std::vector<int> poly;
+        if (pfThis && pfOther) {
+            poly = polyFace;
+            int hi = 0; for (int id : polyFace) hi = std::max(hi, id + 1);
+            for (int id : other.polyFace) poly.push_back(id + hi);
+        }
+        std::vector<Vec2> uv2;
+        if (uvBoth) {
+            uv2 = HasUVs() ? uvs : std::vector<Vec2>(vertices.size(), Vec2{0, 0});
+            if (other.HasUVs()) uv2.insert(uv2.end(), other.uvs.begin(), other.uvs.end());
+            else uv2.insert(uv2.end(), other.vertices.size(), Vec2{0, 0});
+        }
+        std::vector<Color> tbl = slotColors;
+        if (slBoth) {
+            if (tbl.empty()) tbl.push_back(Color{1, 1, 1, 1});
+            while ((int)tbl.size() < slotOffset) tbl.push_back(Color{1, 1, 1, 1});
+            tbl.insert(tbl.end(), other.slotColors.begin(), other.slotColors.end());
+            const int need = slotOffset + std::max(1, other.SlotCount());
+            while ((int)tbl.size() < need) tbl.push_back(Color{1, 1, 1, 1});
+        }
         name = "";
         vertices.insert(vertices.end(), other.vertices.begin(), other.vertices.end());
         for (int t : other.triangles) triangles.push_back(t + base);
+        triColors = std::move(col);
+        triSlot = std::move(slot);
+        slotColors = std::move(tbl);
+        polyFace = std::move(poly);
+        uvs = std::move(uv2);
+        cornerUVs.clear();
+        normals.clear();
         RefreshNormals();
     }
     static Mesh Combined(const Mesh& a, const Mesh& b) { Mesh m = a; m.Combine(b); return m; }
@@ -2522,7 +2697,9 @@ public:
                 out.triangles.push_back(nv);
             }
             if (hadColors && f < (int)triColors.size()) out.triColors.push_back(triColors[f]);
+            if (HasSlots()) out.triSlot.push_back(triSlot[f]);
         }
+        if (HasSlots() && (int)out.triSlot.size() == out.TriangleCount()) out.slotColors = slotColors; else out.triSlot.clear();
         out.RefreshNormals();
         DeleteFaces(faces);
         return out;

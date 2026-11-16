@@ -965,6 +965,19 @@ void WriteComponentRecords(std::ostream& out, GameObject* go) {
             for (const Color& c : mr->mesh.slotColors) out << " " << c.r << " " << c.g << " " << c.b << " " << c.a;
             out << "\n";
         }
+        // Hidden faces (Hide / Isolate in edit mode): kept with the mesh so a saved scene still has them to reveal.
+        if (mr->mesh.HasHidden() && mr->mesh.HiddenConsistent() && !generated) {
+            const int hn = mr->mesh.HiddenTriangleCount();
+            const bool huv = !mr->mesh.hiddenUV.empty(), hco = !mr->mesh.hiddenColor.empty();
+            out << "  meshhidden " << hn << " " << (huv ? 1 : 0) << " " << (hco ? 1 : 0);
+            for (int t = 0; t < hn; ++t) {
+                for (int k = 0; k < 3; ++k) { const Vec3& p = mr->mesh.hiddenPos[t * 3 + k]; out << " " << p.x << " " << p.y << " " << p.z; }
+                out << " " << mr->mesh.hiddenSlot[t] << " " << mr->mesh.hiddenPoly[t];
+                if (huv) for (int k = 0; k < 3; ++k) out << " " << mr->mesh.hiddenUV[t * 3 + k].x << " " << mr->mesh.hiddenUV[t * 3 + k].y;
+                if (hco) { const Color& c = mr->mesh.hiddenColor[t]; out << " " << c.r << " " << c.g << " " << c.b << " " << c.a; }
+            }
+            out << "\n";
+        }
         // A picture per material slot (optional record; empty entries mean "no picture for this slot").
         {
             bool any = false;
@@ -4648,6 +4661,20 @@ static bool ParseStep(Scene& scene, ParseSession& S, bool clear,
                         int sl = 0; in >> sl;
                         mr->mesh.triSlot.push_back(sl < 0 ? 0 : (sl > 255 ? 255 : sl));
                     }
+                } else if (field == "meshhidden") {
+                    auto* mr = LastOf(go->GetComponents<MeshRenderer>());
+                    if (!mr) mr = go->AddComponent<MeshRenderer>();
+                    int hn = 0, huv = 0, hco = 0; in >> hn >> huv >> hco;
+                    if (!in || hn < 0 || hn > 2000000 || !countOk(hn, 20)) return bad("meshhidden: bad count");
+                    Mesh& hm = mr->mesh;
+                    hm.hiddenPos.clear(); hm.hiddenUV.clear(); hm.hiddenSlot.clear(); hm.hiddenPoly.clear(); hm.hiddenColor.clear();
+                    for (int t = 0; t < hn && in; ++t) {
+                        for (int k = 0; k < 3; ++k) { Vec3 p; in >> p.x >> p.y >> p.z; hm.hiddenPos.push_back(p); }
+                        int sl = -1, pl = -1; in >> sl >> pl; hm.hiddenSlot.push_back(sl); hm.hiddenPoly.push_back(pl);
+                        if (huv) for (int k = 0; k < 3; ++k) { Vec2 u; in >> u.x >> u.y; hm.hiddenUV.push_back(u); }
+                        if (hco) { Color c; in >> c.r >> c.g >> c.b >> c.a; hm.hiddenColor.push_back(c); }
+                    }
+                    if (!in || !hm.HiddenConsistent()) { hm.hiddenPos.clear(); hm.hiddenUV.clear(); hm.hiddenSlot.clear(); hm.hiddenPoly.clear(); hm.hiddenColor.clear(); return bad("meshhidden: damaged"); }
                 } else if (field == "slottex") {
                     auto* mr = LastOf(go->GetComponents<MeshRenderer>());
                     if (!mr) mr = go->AddComponent<MeshRenderer>();

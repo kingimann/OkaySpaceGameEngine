@@ -279,6 +279,7 @@ add_library(okay_engine
     src/Modeling/EditTransform.cpp
     src/Modeling/Measure.cpp
     src/Modeling/SelectOps.cpp
+    src/Modeling/ScreenSelect.cpp
     src/Modeling/PolyMesh.cpp
     src/Modeling/MeshAsset.cpp
     src/Modeling/PolyOps.cpp

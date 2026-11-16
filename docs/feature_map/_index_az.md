@@ -1890,6 +1890,7 @@ Word, then the number(s) to say. Back to the [overview](../FEATURE_MAP.md).
 - hidden objects (27.2)
 - hide cursor (8.4)
 - hide UI (50.2)
+- Hide, drag-select, symmetry, arrange (3.5.14)
 - HiDPI (37.1)
 - hierarchy (1.3, 15.1)
 - hierarchy active (1.17)

@@ -2,7 +2,10 @@
 // Written from the spec in docs/modeling.md and docs/modeling_audit.md.
 #include "test_framework.hpp"
 #include "okay/Modeling/MaterialLibrary.hpp"
+#include "okay/Modeling/Arrange.hpp"
+#include "okay/Modeling/EditTransform.hpp"
 #include "okay/Modeling/Measure.hpp"
+#include "okay/Modeling/ScreenSelect.hpp"
 #include "okay/Modeling/Modifiers.hpp"
 #include "okay/Modeling/PolyOps.hpp"
 #include "okay/Modeling/SelectOps.hpp"
@@ -534,6 +537,187 @@ int main() {
         const Mesh huge = MakeTable(1e9f, -5.0f, std::nanf(""), 0.0f, 0.0f);       // sizes are clamped to something sound
         Vec3 hlo, hhi; huge.Bounds(hlo, hhi);
         CHECK(std::isfinite(hhi.x + hhi.y + hhi.z) && hhi.x - hlo.x <= 20.01f);
+    }
+    RUN_SUITE("hide, reveal, isolate");
+    {
+        Mesh m = Mesh::Cube();
+        m.AssignSlot({0, 1, 2, 3}, 1); m.slotColors[1] = Color{1, 0, 0, 1}; m.ApplySlotColors();   // two whole quads
+        PolyMesh pm0 = PolyMesh::FromMesh(m);
+        m = pm0.ToMesh();                                                          // a mesh with polygon ids, like edit mode has
+        const int before = m.TriangleCount();
+        const Measurement w0 = MeasureMesh(m);
+        const int hid = m.HideTriangles({0, 1, 1, -4, 9999});
+        CHECK(hid == 2 && m.TriangleCount() == before - 2 && m.HiddenTriangleCount() == 2 && m.HasHidden());
+        CHECK(m.HiddenConsistent());
+        CHECK(MeasureMesh(m).area < w0.area);                                       // hidden faces are not in the mesh any more
+        // Hiding the same thing twice, or nothing, does nothing more.
+        CHECK(m.HideTriangles({}) == 0 && m.HiddenTriangleCount() == 2);
+        // Undo is a copy: a copy taken while hidden comes back hidden; one taken before comes back whole.
+        Mesh whileHidden = m;
+        CHECK(whileHidden.HiddenTriangleCount() == 2);
+        const std::vector<int> back = m.RevealHidden();
+        CHECK(back.size() == 2 && m.TriangleCount() == before && !m.HasHidden());
+        CHECK_NEAR(MeasureMesh(m).area, w0.area, 1e-4); CHECK_NEAR(MeasureMesh(m).volume, w0.volume, 1e-4);
+        CHECK(m.Topology().Closed());                                               // the revealed faces joined up again
+        CHECK(m.vertices.size() == Mesh::Cube().vertices.size());                    // no duplicate vertices were made
+        CHECK(m.HasSlots() && m.TrianglesInSlot(1).size() == 4 && m.HasFaceColors());
+        CHECK(PolyMesh::FromMesh(m).CountFaces(4) == 6);                             // the quads stayed quads
+        CHECK(whileHidden.RevealHidden().size() == 2 && whileHidden.TriangleCount() == before);
+        // Isolate keeps only the chosen faces, Reveal gives the rest back.
+        Mesh iso = Mesh::Cube();
+        CHECK(iso.IsolateTriangles({4, 5}) == iso.HiddenTriangleCount() && iso.TriangleCount() == 2 && iso.HiddenTriangleCount() == 10);
+        CHECK(iso.RevealHidden().size() == 10 && iso.TriangleCount() == 12);
+        // Edits made while faces were hidden: a moved shared vertex drags the revealed faces along; a vertex only a
+        // hidden face used can be gone (renumbered away) and is rebuilt from the stored position.
+        Mesh e = Mesh::Cube();
+        e.HideTriangles({0, 1});
+        PolyMesh pm = PolyMesh::FromMesh(e, {false, true, 1.0f});
+        CompactVerts(pm);
+        Mesh renumbered = pm.ToMesh();
+        renumbered.hiddenPos = e.hiddenPos; renumbered.hiddenUV = e.hiddenUV; renumbered.hiddenSlot = e.hiddenSlot;
+        renumbered.hiddenPoly = e.hiddenPoly; renumbered.hiddenColor = e.hiddenColor;
+        const int vBefore = (int)renumbered.vertices.size();
+        CHECK(renumbered.RevealHidden().size() == 2 && renumbered.TriangleCount() == 12);
+        CHECK(renumbered.vertices.size() >= (size_t)vBefore && renumbered.Topology().Closed());
+        // Hide everything: an empty visible mesh, reveal gives it all back. UVs survive.
+        Mesh uvm = Mesh::Cube(); uvm.ProjectUVBox(1.0f);
+        const Vec2 uv0 = uvm.uvs[uvm.triangles[3]];
+        std::vector<int> all; for (int t = 0; t < uvm.TriangleCount(); ++t) all.push_back(t);
+        CHECK(uvm.HideTriangles(all) == 12 && uvm.TriangleCount() == 0);
+        CHECK(uvm.RevealHidden().size() == 12 && uvm.TriangleCount() == 12 && uvm.HasUVs());
+        bool sawUV = false; for (const Vec2& u : uvm.uvs) if (std::fabs(u.x - uv0.x) < 1e-5f && std::fabs(u.y - uv0.y) < 1e-5f) sawUV = true;
+        CHECK(sawUV);
+        // A damaged hidden list is dropped, not trusted.
+        Mesh bad = Mesh::Cube(); bad.hiddenPos = {Vec3{0, 0, 0}, Vec3{1, 0, 0}};
+        CHECK(!bad.HiddenConsistent() && bad.RevealHidden().empty() && !bad.HasHidden() && bad.TriangleCount() == 12);
+    }
+    RUN_SUITE("box, circle and lasso select, X-ray");
+    {
+        // A cube seen from the front (+Z), flattened onto the screen: x, y as they are.
+        const Mesh cube = Mesh::Cube();
+        const Vec3 eye{0, 0, 5};
+        std::vector<ScreenPoint> proj;
+        for (const Vec3& v : cube.vertices) proj.push_back({v.x * 100.0f, v.y * 100.0f, true});
+        const SelectShape all = SelectShape::Box({-80, -80}, {80, 80});
+        // Without X-ray only the front four corners (z = +0.5) can be picked, with it all eight.
+        CHECK(SelectVerticesIn(cube, proj, all, false, eye).size() == 4);
+        CHECK(SelectVerticesIn(cube, proj, all, true, eye).size() == 8);
+        for (int v : SelectVerticesIn(cube, proj, all, false, eye)) CHECK(cube.vertices[v].z > 0);
+        // A box around one corner picks just that corner; a corner box can be dragged in any direction.
+        CHECK(SelectVerticesIn(cube, proj, SelectShape::Box({60, 60}, {40, 40}), true, eye).size() == 2);   // two corners project there (front and back)
+        CHECK(SelectVerticesIn(cube, proj, SelectShape::Box({60, 60}, {40, 40}), false, eye).size() == 1);
+        // Circle and lasso.
+        CHECK(SelectVerticesIn(cube, proj, SelectShape::Circle({50, 50}, 5.0f), false, eye).size() == 1);
+        CHECK(SelectVerticesIn(cube, proj, SelectShape::Circle({0, 0}, 20.0f), true, eye).empty());
+        const SelectShape tri = SelectShape::Lasso({{-100, -100}, {100, -100}, {0, 100}});               // a triangle with its base at the bottom
+        const auto inTri = SelectVerticesIn(cube, proj, tri, true, eye);
+        CHECK(!inTri.empty());
+        for (int v : inTri) CHECK(cube.vertices[v].y <= 0.5f);
+        CHECK(!SelectShape::Lasso({{0, 0}, {1, 1}}).Valid() && !SelectShape::Circle({0, 0}, 0).Valid());
+        CHECK(SelectVerticesIn(cube, proj, SelectShape::Lasso({{0, 0}, {1, 1}}), true, eye).empty());
+        // Faces: a whole quad at a time, only the ones facing the camera without X-ray.
+        const auto faces = SelectFacesIn(cube, proj, all, false, eye);
+        CHECK(faces.size() == 2);                                                                        // the front quad
+        const Vec3 n = Vec3::Cross(cube.vertices[cube.triangles[faces[0] * 3 + 1]] - cube.vertices[cube.triangles[faces[0] * 3]],
+                                   cube.vertices[cube.triangles[faces[0] * 3 + 2]] - cube.vertices[cube.triangles[faces[0] * 3]]);
+        CHECK(n.z > 0);
+        CHECK(SelectFacesIn(cube, proj, all, true, eye).size() >= 4);                                    // through the mesh: front and back
+        Mesh pf = PolyMesh::FromMesh(cube).ToMesh();                                                     // with polygon ids a quad is picked whole
+        std::vector<ScreenPoint> p2; for (const Vec3& v : pf.vertices) p2.push_back({v.x * 100.0f, v.y * 100.0f, true});
+        const auto f2 = SelectFacesIn(pf, p2, all, false, eye);
+        CHECK(f2.size() == 2 && pf.polyFace[f2[0]] == pf.polyFace[f2[1]]);
+        // Edges need both ends inside.
+        std::vector<std::pair<int, int>> edges;
+        for (const auto& ed : PolyMesh::FromMesh(cube).Edges()) edges.push_back({ed.a, ed.b});
+        CHECK(SelectEdgesIn(cube, edges, proj, all, false, eye).size() == 4);                            // the front square's four edges
+        CHECK(SelectEdgesIn(cube, edges, proj, all, true, eye).size() == 12);
+        CHECK(SelectEdgesIn(cube, edges, proj, SelectShape::Box({40, 40}, {60, 60}), true, eye).size() == 1);   // front and back corner project together: the edge between them
+        // A vertex behind the camera (ok = false) is never picked.
+        std::vector<ScreenPoint> behind = proj; for (auto& q : behind) q.ok = false;
+        CHECK(SelectVerticesIn(cube, behind, all, true, eye).empty() && SelectFacesIn(cube, behind, all, true, eye).empty());
+        // Wrong-sized projection lists and NaN are ignored, never a crash.
+        CHECK(SelectVerticesIn(cube, {}, all, true, eye).empty());
+        CHECK(SelectVerticesIn(cube, proj, SelectShape::Box({std::nanf(""), 0}, {1, 1}), true, eye).empty());
+    }
+    RUN_SUITE("loose parts, join, align, distribute, drop on a surface");
+    {
+        Mesh two = Mesh::Cube(); Mesh far = Mesh::Cube(0.5f); far = far.Transformed({1, 1, 1}, {5, 0, 0});
+        two.Combine(far);
+        const auto parts = LooseParts(two);
+        CHECK(parts.size() == 2 && parts[0].size() == 12 && parts[1].size() == 12 && parts[0][0] == 0);
+        Mesh three = two; three.Combine(Mesh::Cube(0.2f).Transformed({1, 1, 1}, {0, 5, 0}));
+        CHECK(LooseParts(three).size() == 3);
+        CHECK(LooseParts(Mesh{}).empty());
+        // Join keeps colours, slots, UVs and polygon ids of both sides.
+        Mesh a = Mesh::Cube(); a.AssignSlot({0, 1}, 1); a.slotColors[1] = Color{1, 0, 0, 1}; a.ApplySlotColors(); a.ProjectUVBox(1.0f);
+        Mesh b = Mesh::Cube(); b.AssignSlot({0}, 1); b.slotColors[1] = Color{0, 0, 1, 1}; b.ApplySlotColors();
+        Mesh j = a; j.Combine(b.Transformed({1, 1, 1}, {3, 0, 0}));
+        CHECK(j.TriangleCount() == 24 && j.HasSlots() && j.HasFaceColors() && j.HasUVs() && j.uvs.size() == j.vertices.size());
+        CHECK(j.SlotCount() == 4);                                                     // a's two slots, then b's two after them
+        CHECK(j.TrianglesInSlot(1).size() == 2 && j.TrianglesInSlot(3).size() == 1);
+        CHECK(j.triColors[12].b > 0.9f || j.triColors[12].r > 0.9f);                   // b's first triangle is coloured by its own slot
+        Mesh plain = Mesh::Cube(), plain2 = Mesh::Cube();
+        plain.Combine(plain2);
+        CHECK(!plain.HasSlots() && !plain.HasFaceColors() && plain.TriangleCount() == 24);
+        // Separate keeps slots.
+        Mesh sep = a; Mesh piece = sep.SeparateFaces({0, 1});
+        CHECK(piece.TriangleCount() == 2 && piece.HasSlots() && piece.TrianglesInSlot(1).size() == 2 && sep.TriangleCount() == 10 && sep.HasSlots());
+        // Align and distribute.
+        const std::vector<Range1D> r = {{0, 2}, {5, 6}, {10, 14}};
+        const auto lo = AlignShifts(r, AlignTo::Min), hi = AlignShifts(r, AlignTo::Max), mid = AlignShifts(r, AlignTo::Centre);
+        CHECK(lo[0] == 0 && lo[1] == -5 && lo[2] == -10);
+        CHECK(hi[0] == 12 && hi[1] == 8 && hi[2] == 0);
+        CHECK_NEAR(mid[2], -5.0f, 1e-5); CHECK_NEAR(mid[0], 6.0f, 1e-5);
+        const auto d = DistributeShifts({{0, 1}, {1, 2}, {9, 10}});                  // equal gaps between the three
+        CHECK_NEAR(d[0], 0.0f, 1e-5); CHECK_NEAR(d[2], 0.0f, 1e-5); CHECK_NEAR(d[1], 3.5f, 1e-5);
+        CHECK(AlignShifts({{0, 1}}, AlignTo::Min)[0] == 0 && DistributeShifts({{0, 1}, {2, 3}})[1] == 0);
+        CHECK(AlignShifts({{0, 1}, {std::nanf(""), 2}}, AlignTo::Max)[0] == 0);
+        // A ray down onto the top of a cube lands on its top face; one that misses finds nothing.
+        const RayHit hit = RayMeshHit(Mesh::Cube(), Vec3{0.1f, 5, 0.2f}, Vec3{0, -1, 0});
+        CHECK(hit.found && std::fabs(hit.point.y - 0.5f) < 1e-4 && std::fabs(hit.t - 4.5f) < 1e-4 && hit.normal.y > 0.99f);
+        CHECK(!RayMeshHit(Mesh::Cube(), Vec3{3, 5, 0}, Vec3{0, -1, 0}).found && !RayMeshHit(Mesh::Cube(), Vec3{0, 5, 0}, Vec3{0, 0, 0}).found);
+        CHECK(RayMeshHit(Mesh::Cube(), Vec3{0, 0.4f, 0}, Vec3{0, 1, 0}).normal.y < 0);   // from inside: the normal faces the ray
+    }
+    RUN_SUITE("mirror edit on Y and Z");
+    {
+        // Four vertices of a symmetric square in the XZ plane at y = +-1: moving one moves its partners.
+        Mesh m;
+        m.vertices = {{1, 1, 1}, {-1, 1, 1}, {1, -1, 1}, {1, 1, -1}, {-1, -1, -1}, {0, 0, 0}};
+        m.triangles = {0, 1, 2, 0, 3, 1, 4, 5, 2};
+        auto run = [&](bool x, bool y, bool z) {
+            Mesh c = m; EditTransformSession s; EditTransformOptions o; o.mirrorX = x; o.mirrorY = y; o.mirrorZ = z;
+            s.Begin(c, EditXform::Move, {0}, Mat4::Identity(), o);
+            s.Apply(c, Mat4::Translate(Vec3{0.5f, 0.25f, 0.125f}));
+            return c;
+        };
+        Mesh none = run(false, false, false);
+        CHECK(none.vertices[0].x == 1.5f && none.vertices[1].x == -1.0f && none.vertices[2].y == -1.0f);
+        Mesh y = run(false, true, false);                                              // the vertex under it (y mirrored) follows, mirrored
+        CHECK_NEAR(y.vertices[2].x, 1.5f, 1e-5); CHECK_NEAR(y.vertices[2].y, -1.25f, 1e-5); CHECK_NEAR(y.vertices[2].z, 1.125f, 1e-5);
+        CHECK_NEAR(y.vertices[1].x, -1.0f, 1e-5);                                      // the X partner stays put with only Y on
+        Mesh z = run(false, false, true);
+        CHECK_NEAR(z.vertices[3].z, -1.125f, 1e-5); CHECK_NEAR(z.vertices[3].x, 1.5f, 1e-5);
+        Mesh xyz = run(true, true, true);                                              // the opposite corner moves point-mirrored
+        CHECK_NEAR(xyz.vertices[4].x, -1.5f, 1e-5); CHECK_NEAR(xyz.vertices[4].y, -1.25f, 1e-5); CHECK_NEAR(xyz.vertices[4].z, -1.125f, 1e-5);
+        CHECK_NEAR(xyz.vertices[1].x, -1.5f, 1e-5); CHECK_NEAR(xyz.vertices[1].y, 1.25f, 1e-5);
+        CHECK_NEAR(xyz.vertices[5].x, 0.0f, 1e-6);                                     // a vertex on every plane is its own partner: untouched
+        // Cancel puts everything back.
+        Mesh c = m; EditTransformSession s; EditTransformOptions o; o.mirrorY = true; o.mirrorZ = true;
+        s.Begin(c, EditXform::Move, {0}, Mat4::Identity(), o); s.Apply(c, Mat4::Translate(Vec3{1, 1, 1})); s.Cancel(c);
+        CHECK(c.vertices == m.vertices);
+    }
+    RUN_SUITE("extrude and move: a zero extrude is a sound start");
+    {
+        Mesh m = Mesh::Cube();
+        const auto top = SelectByNormal(m, Vec3{0, 1, 0}, 5.0f);
+        m.ExtrudeFaces(top, 0.0f);
+        CHECK(m.TriangleCount() > 12 && m.Topology().Closed());
+        CHECK(MeasureMesh(m).volume > 0.99f && MeasureMesh(m).volume < 1.01f);
+        // The extruded (selected) faces can then be moved up and the solid grows by exactly that much.
+        std::set<int> up; for (int t : top) for (int k = 0; k < 3; ++k) up.insert(m.triangles[t * 3 + k]);
+        for (int v : up) m.vertices[v].y += 0.5f;
+        CHECK_NEAR(MeasureMesh(m).volume, 1.5f, 1e-3);
+        CHECK(m.Topology().Closed());
     }
     TEST_MAIN_RESULT();
 }

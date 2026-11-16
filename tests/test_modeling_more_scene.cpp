@@ -81,7 +81,7 @@ PolyMesh MakeHorn() {
 }
 void BuildToolsScene(Scene& s) {
     GameObject* cam = s.CreateGameObject("Main Camera");
-    cam->transform->localPosition = {0.2f, 2.2f, 13.0f};
+    cam->transform->localPosition = {1.4f, 2.4f, 16.0f};
     cam->AddComponent<Camera>()->projection = Camera::Projection::Perspective;
     GameObject* sun = s.CreateGameObject("Sun");
     sun->transform->localRotation = Quat::Euler(40, -30, 0);
@@ -94,6 +94,9 @@ void BuildToolsScene(Scene& s) {
     std::string werr;
     MakeWindowHole(wall, SelectByNormal(wall, Vec3{0, 0, 1}, 5.0f), 0.3f, &werr);      // the "Make a Window Hole" recipe
     Put(s, "Window Wall", wall, {-5.6f, 0.6f, 0});
+    Mesh hiddenRoof = MakeHouse().ToMesh();                                      // roof faces hidden: Edit Mesh, Alt+H brings them back
+    hiddenRoof.HideTriangles(hiddenRoof.TrianglesInSlot(1));
+    Put(s, "House Roof Hidden", hiddenRoof, {8.6f, 0, 0});
     Put(s, "Curve Array", Mesh::Cube(0.35f), {0.8f, 0.4f, 0});
     GameObject* arr = s.Find("Curve Array");
     auto* mm = arr->AddComponent<MeshModifiers>();
@@ -192,7 +195,7 @@ int main() {
             if (withTexture) mr->slotTextures = {"", "@slot_magenta"};      // slot 1 (the roof) gets the picture, slot 0 none
             s.Start();
             const Vec3 eye{0.2f, 1.8f, 5.5f};
-            const Mat4 vp = Mat4::Perspective(40.0f, 640.0f / 360.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.2f, 0.7f, 0}, Vec3::Up);
+            const Mat4 vp = Mat4::Perspective(40.0f, 640.0f / 360.0f, 0.1f, 100.0f) * Mat4::LookAt(eye, {1.4f, 0.7f, 0}, Vec3::Up);
             ApplySceneLight(s);
             Raster r; r.Resize(640, 360); r.Clear(0xFF3A2A22u);
             RenderMeshes(r, s, vp, eye);
@@ -227,6 +230,43 @@ int main() {
         bool listed = false;
         for (const auto& a : SceneSerializer::CollectAssetPaths(s)) if (a == "Assets/brick.png") listed = true;
         CHECK(listed);                                        // packaged with the game
+    }
+    RUN_SUITE("hidden faces survive save, load and a mesh asset");
+    {
+        Scene s("hid");
+        auto* mr = s.CreateGameObject("Box")->AddComponent<MeshRenderer>();
+        mr->mesh = Mesh::Cube(); mr->mesh.ProjectUVBox(1.0f);
+        mr->mesh.AssignSlot({0, 1}, 1); mr->mesh.slotColors[1] = Color{0, 1, 0, 1}; mr->mesh.ApplySlotColors();
+        mr->mesh.name = "";
+        CHECK(mr->mesh.HideTriangles({0, 1, 6}) == 3);
+        const std::string p = (dir / "hid.okayscene").string();
+        CHECK(SceneSerializer::SaveToFile(s, p));
+        { std::ifstream f(p); std::stringstream ss; ss << f.rdbuf(); CHECK(ss.str().find("meshhidden 3 1 1") != std::string::npos); }
+        Scene r("x");
+        CHECK(SceneSerializer::LoadFromFile(r, p));
+        Mesh& lm = r.Find("Box")->GetComponent<MeshRenderer>()->mesh;
+        CHECK(lm.TriangleCount() == 9 && lm.HiddenTriangleCount() == 3 && lm.HiddenConsistent());
+        CHECK(lm.hiddenSlot[0] == 1 && lm.hiddenSlot[2] == 0);
+        CHECK(lm.RevealHidden().size() == 3 && lm.TriangleCount() == 12 && lm.Topology().Closed());
+        CHECK(lm.HasSlots() && lm.TrianglesInSlot(1).size() == 2 && lm.HasUVs());
+        // A scene with nothing hidden writes no record, and a damaged record is refused, not trusted.
+        Scene plain("p"); plain.CreateGameObject("C")->AddComponent<MeshRenderer>()->mesh = Mesh::Cube();
+        const std::string pp = (dir / "plain2.okayscene").string();
+        CHECK(SceneSerializer::SaveToFile(plain, pp));
+        { std::ifstream f(pp); std::stringstream ss; ss << f.rdbuf(); CHECK(ss.str().find("meshhidden") == std::string::npos); }
+        { std::ifstream f(p); std::stringstream ss; ss << f.rdbuf(); std::string t = ss.str();
+          const std::size_t at = t.find("meshhidden 3 1 1"); t.replace(at, 16, "meshhidden 3 1 7");
+          std::ofstream o((dir / "dmg.okayscene").string()); o << t; }
+        Scene dm("d"); std::string err;
+        const bool ok = SceneSerializer::LoadFromFile(dm, (dir / "dmg.okayscene").string(), &err);
+        if (ok) { const Mesh& m2 = dm.Find("Box")->GetComponent<MeshRenderer>()->mesh; CHECK(m2.HiddenConsistent()); }
+        // Saving the mesh as an asset includes the hidden faces.
+        const std::string asset = (dir / "hidden.okaymesh").string();
+        Mesh withHidden = Mesh::Cube(); withHidden.HideTriangles({0, 1, 2, 3});
+        CHECK(SaveMeshAsset(asset, withHidden, &err));
+        PolyMesh back; CHECK(PolyMesh::Load(asset, back, &err) && back.CountFaces(4) == 6);
+        Mesh allHidden = Mesh::Cube(); std::vector<int> every; for (int t = 0; t < 12; ++t) every.push_back(t); allHidden.HideTriangles(every);
+        CHECK(SaveMeshAsset((dir / "all.okaymesh").string(), allHidden, &err));
     }
     RUN_SUITE("spin, path and curve array: objects, save and load, Copy");
     {
@@ -266,7 +306,7 @@ int main() {
         if (const char* pic = std::getenv("OKAY_MODELING_PICTURE_DIR")) {
             Scene t("pic"); BuildToolsScene(t); t.Start();
             for (const auto& go : t.Objects()) if (auto* m2 = go->GetComponent<MeshModifiers>()) m2->Refresh(true);
-            const Vec3 eye{0.2f, 2.6f, 13.5f}; const int W = 640, H = 360;
+            const Vec3 eye{1.4f, 2.8f, 16.5f}; const int W = 640, H = 360;
             const Mat4 vp = Mat4::Perspective(40.0f, (float)W / H, 0.1f, 100.0f) * Mat4::LookAt(eye, {0.2f, 0.7f, 0}, Vec3::Up);
             ApplySceneLight(t);
             Raster rr; rr.Resize(W, H); rr.Clear(0xFF3A2A22u);

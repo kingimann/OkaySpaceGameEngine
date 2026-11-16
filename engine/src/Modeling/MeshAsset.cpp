@@ -41,8 +41,11 @@ bool LoadMeshAsset(const std::string& path, Mesh& out, std::string* texture, std
 }
 
 bool SaveMeshAsset(const std::string& path, const Mesh& mesh, std::string* error) {
-    if (mesh.vertices.empty() || mesh.triangles.empty()) { if (error) *error = "the mesh is empty"; return false; }
-    return PolyMesh::FromMesh(mesh).Save(path, error);
+    // Hidden faces are part of the model: the file gets them too.
+    Mesh whole = mesh;
+    if (whole.HasHidden()) whole.RevealHidden();
+    if (whole.vertices.empty() || whole.triangles.empty()) { if (error) *error = "the mesh is empty"; return false; }
+    return PolyMesh::FromMesh(whole).Save(path, error);
 }
 
 std::uint64_t GeometryHash(const Mesh& mesh) {

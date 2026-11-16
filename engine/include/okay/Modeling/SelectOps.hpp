@@ -29,6 +29,10 @@ std::vector<int> SelectByNormal(const Mesh& m, const Vec3& dir, float angleDegre
 /// Triangles with an area between `minArea` and `maxArea` (negative max = no limit).
 std::vector<int> SelectByArea(const Mesh& m, float minArea, float maxArea);
 
+/// The separate pieces of the mesh: triangles that touch (share a corner position) are one piece. Each piece is a
+/// list of triangle numbers; pieces come biggest first (ties: lowest triangle number first).
+std::vector<std::vector<int>> LooseParts(const Mesh& m);
+
 /// Bake an object's scale and rotation into its mesh (Blender's Apply Scale / Rotation): the vertices
 /// become scale * rotation * vertex and normals turn with them. A negative scale on an odd number of axes
 /// flips the winding so faces still point out. Returns false (mesh unchanged) for a zero or non-finite scale.

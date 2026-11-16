@@ -721,6 +721,14 @@ headless software render of it.
 7. Open Edit Mesh > **Shortcuts and recent tools**: the **Recent** line lists your tools; **Undo history** lists them with names. Click an older step: the mesh goes back to before it.
 8. Scale an object (the Inspector scale to 2, 1, 1), then Ctrl+K, `apply scale`, Enter: the scale returns to 1 and the mesh is as wide as before (the Measure line stays the same).
 
+**Hide, drag-select and more (same section; real window unverified).** In `examples\modeling_tools\spin_path_curve.okayscene` the **House Roof Hidden** object has its roof faces hidden.
+1. Click **House Roof Hidden**, tick Edit Mesh (Tab). Press **Alt+H**: the red roof faces appear and are selected. Press **H**: they hide again. Select a wall and press **/**: only that wall shows (local view); **/** again shows everything. Ctrl+Z steps back through these.
+2. Press **B** and drag a rectangle round some vertices (Vertex mode, key 1): they are selected; try **C** (paint with the circle, wheel = size, Esc ends) and **L** (draw a loop). Without X-ray only the front side is picked; press **Alt+Z** (or the X-ray button) and drag again to select through the mesh.
+3. Face mode (key 3), select a face, press **Shift+D**: a copy appears and follows the mouse; Enter keeps it. Press **E** on a face: it is dragged out along its normal; type `0.5` and Enter for an exact distance. Press **I**: move the mouse toward the middle of the face; click to keep the inset.
+4. Edge mode (key 2): double-click an edge: its whole loop is selected.
+5. Press **Sym Y** (or **Z**) in the toolbar, select a vertex, press **G** and move: the partners across that plane move mirrored. In Edit Mesh tick **Start with symmetry on: X**, leave edit mode and enter it again: Symmetry X is already on.
+6. Ctrl+click two or more mesh objects in the Hierarchy, press **Ctrl+K**, type `join` and Enter: they become one object. Type `align` for Align Objects, `separate` on a mesh of several pieces to split it into objects, `cursor` then Enter to add a cube where the mouse pointed.
+
 **Picture.** `docs/images/modeling_more/material_slots.png` is a headless software render of the example scene (not a GPU render, not the editor window).
 
 **What was and was not checked.** The tests `modeling_more` and `modeling_more_scene` ran on Linux (slots through scene save/load, `.okaymesh` files,

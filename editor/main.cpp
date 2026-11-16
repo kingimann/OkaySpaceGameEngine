@@ -43,6 +43,8 @@
 #include "okay/Render/Lightmap.hpp"    // offline lightmap/shadow/AO baking
 #include "okay/Modeling/EditTransform.hpp"   // G / R / S modal transforms in mesh edit mode
 #include "okay/Modeling/MaterialLibrary.hpp"   // ready colours and slot palettes
+#include "okay/Modeling/Arrange.hpp"          // align / distribute objects
+#include "okay/Modeling/ScreenSelect.hpp"      // box / circle / lasso select
 #include "okay/Modeling/SelectOps.hpp"      // grow / shrink / select similar, apply scale, how-do-I recipes
 #include "okay/Modeling/Measure.hpp"         // measuring and snapping to vertices, edges and faces
 #include "okay/Modeling/MeshAsset.hpp"       // .okaymesh / .obj mesh files
@@ -2187,6 +2189,7 @@ int  g_theme = 0;                // 0 = Dark, 1 = Light, 2 = Classic
 float g_uiScale = 1.00f;         // global UI scale (1.0 keeps the font crisp)
 bool  g_firstRun = false;        // true when no settings file existed at load (brand-new install)
 int  g_gameResPreset = 0;        // Game-view resolution preset (persisted)
+int  g_symDefaultMask = 0;       // mesh edit: symmetry planes switched on whenever edit mode starts (1 = X, 2 = Y, 4 = Z); saved
 bool g_gameStatsOverlay = false; // Game-view in-view Stats overlay (persisted)
 bool g_gameStatsGraph  = true;   // ... with the frame-rate graph under the performance lines (persisted)
 bool g_gameStatsScene  = true;   // ... and the scene's counts: objects, components, the biggest types (persisted)
@@ -2437,6 +2440,7 @@ void LoadSettings() {
         else if (k == "accent") g_accent = (v < 0 ? 0 : (v >= kAccentCount ? 0 : v));
         else if (k == "uiscalepct") g_uiScale = (v < 70 ? 70 : (v > 200 ? 200 : v)) / 100.0f;
         else if (k == "gameres") g_gameResPreset = (v < 0 ? 0 : v);
+        else if (k == "meshsymdefault") g_symDefaultMask = (v < 0 ? 0 : (v > 7 ? 7 : v));
         else if (k == "gamestats") g_gameStatsOverlay = (v != 0);
         else if (k == "gamestatsgraph") g_gameStatsGraph = (v != 0);
         else if (k == "gamestatsscene") g_gameStatsScene = (v != 0);
@@ -2501,6 +2505,7 @@ void SaveSettings() {
       << "accent " << g_accent << "\n"
       << "uiscalepct " << (int)(g_uiScale * 100 + 0.5f) << "\n"
       << "gameres " << g_gameResPreset << "\n"
+      << "meshsymdefault " << g_symDefaultMask << "\n"
       << "gamestats " << (g_gameStatsOverlay ? 1 : 0) << "\n"
       << "gamestatsgraph " << (g_gameStatsGraph ? 1 : 0) << "\n"
       << "gamestatsscene " << (g_gameStatsScene ? 1 : 0) << "\n"
@@ -3202,6 +3207,11 @@ bool  g_meshSculpt  = false;          // sculpt brush active (instead of select/
 int   g_sculptMode  = 0;              // 0 Grab, 1 Inflate, 2 Smooth
 float g_sculptRadius = 0.5f, g_sculptStrength = 0.08f;
 bool  g_meshSymX    = false;          // X symmetry: mirror every edit across local X=0
+bool  g_meshSymY    = false;          // ... across local Y=0 (G / R / S)
+bool  g_meshSymZ    = false;          // ... across local Z=0 (G / R / S)
+bool  g_meshXray    = false;          // box / circle / lasso select picks through the mesh
+int   g_selTool     = 0;              // 0 none, 1 box, 2 circle, 3 lasso (the active drag-select tool)
+float g_circleRadius = 40.0f;         // circle select radius in screen pixels (mouse wheel changes it)
 bool  g_meshSoftSel = false;          // proportional editing: moves fall off around selection
 float g_meshSoftRadius = 0.5f;        // falloff radius for soft selection
 bool  g_meshPaint   = false;          // face-paint brush active (instead of select/sculpt)
@@ -3450,6 +3460,8 @@ static bool ApplyPoly(EditorState& ed, MeshRenderer* mr, const std::function<boo
     // Keep the welded vertices (and exact per-corner UVs) the edit works on.
     Mesh out = pm.ToMesh(nullptr, mr != EditedRenderer());
     out.name = "";
+    out.hiddenPos = mr->mesh.hiddenPos; out.hiddenUV = mr->mesh.hiddenUV; out.hiddenSlot = mr->mesh.hiddenSlot;   // hidden faces ride along
+    out.hiddenPoly = mr->mesh.hiddenPoly; out.hiddenColor = mr->mesh.hiddenColor;
     if (smooth) { if (autoAngle > 0.0f) out.ComputeAutoSmoothNormals(autoAngle); else out.ComputeSmoothNormals(); }
     mr->mesh = std::move(out);
     auto rv = [&](int v) { return v >= 0 && v < (int)remap.size() ? remap[v] : -1; };
@@ -3505,8 +3517,37 @@ static bool g_cmdPaletteRequest = false;   // Ctrl+K, the Find button or the rig
 static int  g_cmdPaletteSel = 0;
 static char g_cmdFilter[64] = "";
 static float g_quickBevelW = 0.1f;
+static bool s_insActive = false; static Mesh s_insStart; static std::vector<int> s_insFaces; static ImVec2 s_insC; static float s_insD0 = 100.0f;   // live inset state
+static bool s_selDrag = false; static ImVec2 s_selStart; static std::vector<ImVec2> s_lasso;                                    // box / lasso drag state
 static int   g_quickBevelSeg = 3;
 static float g_windowBorder = 0.3f;
+static std::vector<int> SelectedTriangles(const Mesh& m) {
+    if (g_meshSelMode == 1) return g_meshSelFaces;
+    std::set<int> vs;
+    if (g_meshSelMode == 0) vs.insert(g_meshSelVerts.begin(), g_meshSelVerts.end());
+    else for (const auto& e : g_meshSelEdges) { vs.insert(e.first); vs.insert(e.second); }
+    std::vector<int> out;
+    if (vs.empty()) return out;
+    for (int t = 0; t < m.TriangleCount(); ++t)
+        if (vs.count(m.triangles[t * 3]) && vs.count(m.triangles[t * 3 + 1]) && vs.count(m.triangles[t * 3 + 2])) out.push_back(t);
+    return out;
+}
+static bool g_isolating = false;                    // local view is on (the hidden faces are the ones outside it)
+static int  g_pendingMove = 0;                      // 1: start a Move (G) next frame; 2: ... locked to the selection's normal axis
+static Vec3 g_cursorOrigin{0, 0, 0}, g_cursorDir{0, 0, -1};   // the mouse ray in the 3D view, last seen while the pointer was over it
+static void SetActiveRecursive(GameObject* go, bool on);   // defined with the Hierarchy
+static std::vector<GameObject*> g_hiddenObjects;    // objects hidden with H in object mode (Alt+H brings them back)
+static void WorldRange(const GameObject* go, int axis, float& lo, float& hi, bool& ok) {
+    ok = false;
+    const MeshRenderer* r = go ? go->GetComponent<MeshRenderer>() : nullptr;
+    if (!r || r->DisplayMesh().vertices.empty()) return;
+    const Mat4 W = go->transform->LocalToWorldMatrix();
+    for (const Vec3& v : r->DisplayMesh().vertices) {
+        const Vec3 wp = W.MultiplyPoint(v);
+        const float c = (&wp.x)[axis];
+        if (!ok) { lo = hi = c; ok = true; } else { lo = std::min(lo, c); hi = std::max(hi, c); }
+    }
+}
 static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
     namespace pmo = okay::modeling;
     std::vector<ModelCmd> v;
@@ -3607,7 +3648,195 @@ static std::vector<ModelCmd> BuildModelCmds(EditorState& ed, MeshRenderer* mr) {
         } else ConsoleLog("Apply Scale: the scale has a zero or invalid axis", 1);
     });
     // Switches
-    add("Toggle Symmetry X", "", "Switch", "Mirror every move across the local X = 0 plane.", true, "", [] { g_meshSymX = !g_meshSymX; });
+    // ---- Hide, reveal, isolate (faces) ----
+    {
+        const bool haveSel = !SelectedTriangles(mr->mesh).empty();
+        add("Hide Selected", "H", "Hide", "Hide the selected faces (they stay in the file; Reveal brings them back).", haveSel, "Select faces first (key 3).", [&ed, mr] {
+            const std::vector<int> t = SelectedTriangles(mr->mesh);
+            EditUndoPoint(ed, mr);
+            const int n = mr->mesh.HideTriangles(t);
+            g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+            ConsoleLog("Hid " + std::to_string(n) + " face(s) (Alt+H reveals)"); ed.dirty = true;
+        });
+        add("Reveal Hidden", "Alt+H", "Hide", "Bring every hidden face back and select it.", mr->mesh.HasHidden(), "Nothing is hidden.", [&ed, mr] {
+            EditUndoPoint(ed, mr);
+            const std::vector<int> back = mr->mesh.RevealHidden();
+            g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_meshSelFaces = back; g_meshSelMode = 1; g_isolating = false;
+            ConsoleLog("Revealed " + std::to_string(back.size()) + " face(s)"); ed.dirty = true;
+        });
+        add("Isolate Selection (Local View)", "/", "Hide", "Show only the selected faces; run it again to bring the rest back.", haveSel || g_isolating, "Select faces first (key 3).", [&ed, mr] {
+            EditUndoPoint(ed, mr);
+            if (g_isolating && mr->mesh.HasHidden()) {
+                const std::vector<int> back = mr->mesh.RevealHidden();
+                g_isolating = false; g_meshSelVerts.clear(); g_meshSelEdges.clear();
+                ConsoleLog("Local view off: " + std::to_string(back.size()) + " face(s) back");
+            } else {
+                const std::vector<int> keep = SelectedTriangles(mr->mesh);
+                const int n = mr->mesh.IsolateTriangles(keep);
+                g_isolating = n > 0; g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+                ConsoleLog("Local view: hid " + std::to_string(n) + " other face(s) (/ again to leave)");
+            }
+            ed.dirty = true;
+        });
+        add("Hide Unselected", "Shift+H", "Hide", "Hide every face that is not selected (stays hidden after / is pressed again).", haveSel, "Select faces first (key 3).", [&ed, mr] {
+            EditUndoPoint(ed, mr);
+            const int n = mr->mesh.IsolateTriangles(SelectedTriangles(mr->mesh));
+            g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear(); ed.dirty = true;
+            ConsoleLog("Hid " + std::to_string(n) + " unselected face(s)");
+        });
+    }
+    // ---- Drag-select tools ----
+    add("Box Select", "B", "Select", "Drag a rectangle to select what is inside it (Shift adds). Esc cancels.", true, "", [] { g_selTool = 1; });
+    add("Circle Select", "C", "Select", "Paint a circle over what you want selected; the mouse wheel changes its size; Esc or Enter ends.", true, "", [] { g_selTool = 2; });
+    add("Lasso Select", "L", "Select", "Draw a loop round what you want selected (Shift adds).", true, "", [] { g_selTool = 3; });
+    add("Toggle X-ray Select", "Alt+Z", "Switch", "Let Box, Circle and Lasso select through the mesh (also what is behind).", true, "", [] { g_meshXray = !g_meshXray; });
+    // ---- Duplicate, join, separate, pivot ----
+    add("Duplicate and Move", "Shift+D", "Edit", "Copy the selected faces and start moving the copies (Enter confirms, Esc leaves them in place).", anyFaces, needFaces, [&ed, mr] {
+        EditUndoPoint(ed, mr);
+        g_meshSelFaces = mr->mesh.DuplicateFaces(g_meshSelFaces);
+        g_meshSelVerts.clear(); g_meshSelEdges.clear(); g_pendingMove = 1; ed.dirty = true;
+    });
+    add("Extrude and Move", "E", "Edit", "Extrude the selected faces and start dragging them out along their normal (type a number for an exact distance).", anyFaces, needFaces, [&ed, mr] {
+        EditUndoPoint(ed, mr);
+        mr->mesh.ExtrudeFaces(g_meshSelFaces, 0.0f);
+        g_pendingMove = 2; ed.dirty = true;
+    });
+    add("Separate Loose Parts", "", "Object", "Split every disconnected piece of this mesh into its own object (the biggest stays here).", mr->gameObject->transform->ChildCount() == 0, "Not available while the object has children.", [&ed, mr] {
+        const std::vector<std::vector<int>> parts = pmo::LooseParts(mr->mesh);
+        if (parts.size() < 2) { ConsoleLog("Separate Loose Parts: the mesh is one piece", 1); return; }
+        ed.PushUndo();
+        const Mesh src = mr->mesh;
+        GameObject* go = mr->gameObject;
+        const std::string baseName = go->name;
+        for (std::size_t i = 1; i < parts.size(); ++i) {
+            GameObject* clone = ed.scene().Duplicate(*go);
+            if (!clone) continue;
+            clone->transform->SetPosition(go->transform->Position());   // exactly in place, not nudged
+            clone->name = baseName + " part " + std::to_string(i + 1);
+            if (auto* cmr = clone->GetComponent<MeshRenderer>()) { Mesh tmp = src; cmr->mesh = tmp.SeparateFaces(parts[i]); cmr->mesh.name = ""; }
+        }
+        Mesh keep = src;
+        std::vector<int> drop;
+        for (std::size_t i = 1; i < parts.size(); ++i) drop.insert(drop.end(), parts[i].begin(), parts[i].end());
+        keep.DeleteFaces(drop);
+        mr->mesh = std::move(keep);
+        g_meshSelVerts.clear(); g_meshSelFaces.clear(); g_meshSelEdges.clear();
+        ConsoleLog("Separated " + std::to_string(parts.size()) + " pieces into objects"); ed.dirty = true;
+    });
+    add("Set Origin to Selection", "", "Object", "Move the object's pivot to the middle of the selection without moving the model.", (anyFaces || anyVerts || !g_meshSelEdges.empty()) && mr->gameObject->transform->ChildCount() == 0, "Select something first (and not on an object with children).", [&ed, mr] {
+        std::set<int> vs;
+        if (g_meshSelMode == 0) vs.insert(g_meshSelVerts.begin(), g_meshSelVerts.end());
+        else if (g_meshSelMode == 2) for (const auto& e : g_meshSelEdges) { vs.insert(e.first); vs.insert(e.second); }
+        else for (int t : g_meshSelFaces) if (t >= 0 && t < mr->mesh.TriangleCount()) for (int k = 0; k < 3; ++k) vs.insert(mr->mesh.triangles[t * 3 + k]);
+        Vec3 c{0, 0, 0}; int n = 0;
+        for (int v : vs) if (v >= 0 && v < (int)mr->mesh.vertices.size()) { c += mr->mesh.vertices[v]; ++n; }
+        if (!n) return;
+        c = c * (1.0f / (float)n);
+        Transform* tr = mr->gameObject->transform;
+        const Vec3 world = tr->LocalToWorldMatrix().MultiplyPoint(c);
+        ed.PushUndo();
+        for (Vec3& v : mr->mesh.vertices) v = v - c;
+        for (Vec3& v : mr->mesh.hiddenPos) v = v - c;
+        mr->mesh.name = "";
+        tr->SetPosition(world);
+        ConsoleLog("Origin moved to the selection"); ed.dirty = true;
+    });
+    {
+        const auto& multi = ed.MultiSelection();
+        int withMesh = 0;
+        for (GameObject* g : multi) if (g && g->GetComponent<MeshRenderer>()) ++withMesh;
+        const bool two = withMesh >= 2, three = withMesh >= 3;
+        auto aligner = [&ed](int axis, pmo::AlignTo to) {
+            return [&ed, axis, to] {
+                std::vector<GameObject*> objs; std::vector<pmo::Range1D> rs;
+                for (GameObject* g : ed.MultiSelection()) { float lo = 0, hi = 0; bool ok = false; WorldRange(g, axis, lo, hi, ok); if (ok) { objs.push_back(g); rs.push_back({lo, hi}); } }
+                const std::vector<float> sh = pmo::AlignShifts(rs, to);
+                ed.PushUndo();
+                for (std::size_t i = 0; i < objs.size(); ++i) { Vec3 p = objs[i]->transform->Position(); (&p.x)[axis] += sh[i]; objs[i]->transform->SetPosition(p); }
+                ed.dirty = true;
+            };
+        };
+        const char* ax[3] = {"X", "Y", "Z"};
+        for (int a = 0; a < 3; ++a) {
+            add((std::string("Align Objects ") + ax[a] + " (Centre)").c_str(), "", "Object", "Line the selected objects up on their common centre along this axis (select two or more objects first).", two, "Select two or more mesh objects (Ctrl+click in the Hierarchy).", aligner(a, pmo::AlignTo::Centre));
+            add((std::string("Align Objects ") + ax[a] + " (Min)").c_str(), "", "Object", "Line the selected objects up on their lowest edge along this axis.", two, "Select two or more mesh objects (Ctrl+click in the Hierarchy).", aligner(a, pmo::AlignTo::Min));
+        }
+        for (int a = 0; a < 3; ++a)
+            add((std::string("Distribute Objects ") + ax[a]).c_str(), "", "Object", "Space the selected objects evenly along this axis (the outer two stay put; needs three or more).", three, "Select three or more mesh objects.", [&ed, a] {
+                std::vector<GameObject*> objs; std::vector<pmo::Range1D> rs;
+                for (GameObject* g : ed.MultiSelection()) { float lo = 0, hi = 0; bool ok = false; WorldRange(g, a, lo, hi, ok); if (ok) { objs.push_back(g); rs.push_back({lo, hi}); } }
+                const std::vector<float> sh = pmo::DistributeShifts(rs);
+                ed.PushUndo();
+                for (std::size_t i = 0; i < objs.size(); ++i) { Vec3 p = objs[i]->transform->Position(); (&p.x)[a] += sh[i]; objs[i]->transform->SetPosition(p); }
+                ed.dirty = true;
+            });
+        add("Join Selected Objects", "", "Object", "Merge the selected mesh objects into the main selected one (colours, slots and UVs are kept).", two, "Select two or more mesh objects; the last one clicked is the one that stays.", [&ed] {
+            GameObject* keep = ed.selected();
+            auto* kmr = keep ? keep->GetComponent<MeshRenderer>() : nullptr;
+            if (!kmr) return;
+            ed.PushUndo();
+            const Mat4 inv = keep->transform->LocalToWorldMatrix().Inverse();
+            std::vector<GameObject*> gone;
+            for (GameObject* g : ed.MultiSelection()) {
+                auto* r = g != keep ? g->GetComponent<MeshRenderer>() : nullptr;
+                if (!r || r->DisplayMesh().vertices.empty()) continue;
+                Mesh m = r->DisplayMesh();
+                const Mat4 toKeep = inv * g->transform->LocalToWorldMatrix();
+                for (Vec3& v : m.vertices) v = toKeep.MultiplyPoint(v);
+                m.normals.clear(); m.cornerUVs.clear();
+                kmr->mesh.Combine(m);
+                gone.push_back(g);
+            }
+            kmr->mesh.name = "";
+            ed.Select(keep);
+            for (GameObject* g : gone) ed.scene().Destroy(g);
+            ConsoleLog("Joined " + std::to_string(gone.size() + 1) + " objects"); ed.dirty = true;
+        });
+    }
+    // ---- Quick primitives dropped where the mouse points ----
+    {
+        auto prim = [&ed](const char* nm, const Mesh& m) {
+            return [&ed, nm, m] {
+                // The mouse ray hits the nearest mesh in the scene (or the ground at y = 0); the new object sits on that spot.
+                Vec3 point = g_cursorOrigin + g_cursorDir * 6.0f, normal{0, 1, 0};
+                float bestT = 1e30f; bool hit = false;
+                for (const auto& up : ed.scene().Objects()) {
+                    if (!up) continue;
+                    auto* r = up->GetComponent<MeshRenderer>();
+                    if (!r || !r->enabled || r->DisplayMesh().triangles.empty()) continue;
+                    const Mat4 W = up->transform->LocalToWorldMatrix(), Wi = W.Inverse();
+                    const pmo::RayHit h = pmo::RayMeshHit(r->DisplayMesh(), Wi.MultiplyPoint(g_cursorOrigin), Wi.MultiplyVector(g_cursorDir));
+                    if (!h.found) continue;
+                    const Vec3 wp = W.MultiplyPoint(h.point);
+                    const float t = (wp - g_cursorOrigin).Magnitude();
+                    if (t < bestT) {
+                        bestT = t; hit = true; point = wp;
+                        Vec3 wn = W.MultiplyVector(h.normal);          // (a rough normal is enough for placing)
+                        normal = wn.SqrMagnitude() > 1e-12f ? wn.Normalized() : Vec3{0, 1, 0};
+                    }
+                }
+                if (!hit && std::fabs(g_cursorDir.y) > 1e-4f) {
+                    const float t = -g_cursorOrigin.y / g_cursorDir.y;
+                    if (t > 0.0f && t < 500.0f) { point = g_cursorOrigin + g_cursorDir * t; normal = Vec3{0, 1, 0}; hit = true; }
+                }
+                ed.PushUndo();
+                GameObject* o = ed.scene().CreateGameObject(nm);
+                auto* mr2 = o->AddComponent<MeshRenderer>();
+                mr2->mesh = m;
+                o->transform->SetPosition(point + normal * 0.5f);
+                ed.Select(o);
+                ConsoleLog(std::string("Added ") + nm + (hit ? " on the surface under the cursor" : " in front of the camera")); ed.dirty = true;
+            };
+        };
+        add("Add Cube at Cursor", "", "Add", "Add a cube where the mouse points (on a surface, or on the ground).", true, "", prim("Cube", Mesh::Cube()));
+        add("Add Sphere at Cursor", "", "Add", "Add a sphere where the mouse points.", true, "", prim("Sphere", Mesh::Sphere(0.5f, 16, 24)));
+        add("Add Cylinder at Cursor", "", "Add", "Add a cylinder where the mouse points.", true, "", prim("Cylinder", Mesh::Cylinder(0.5f, 1.0f, 24)));
+        add("Add Cone at Cursor", "", "Add", "Add a cone where the mouse points.", true, "", prim("Cone", Mesh::Cone(0.5f, 1.0f, 24)));
+        add("Add Plane at Cursor", "", "Add", "Add a flat plane where the mouse points.", true, "", prim("Plane", Mesh::Plane(1.0f)));
+    }
+    add("Toggle Symmetry Y", "", "Switch", "Mirror every G / R / S move across the local Y = 0 plane.", true, "", [] { g_meshSymY = !g_meshSymY; });
+    add("Toggle Symmetry Z", "", "Switch", "Mirror every G / R / S move across the local Z = 0 plane.", true, "", [] { g_meshSymZ = !g_meshSymZ; });
+    add("Toggle Symmetry X", "", "Switch", "Mirror every G / R / S move across the local X = 0 plane.", true, "", [] { g_meshSymX = !g_meshSymX; });
     add("Toggle Snap", "Ctrl", "Switch", "Snap moves, turns and scales (also while Ctrl is held).", true, "", [] { g_snap = !g_snap; });
     add("Toggle Soft Select", "", "Switch", "Let nearby vertices follow a move with a falloff.", true, "", [] { g_meshSoftSel = !g_meshSoftSel; });
     add("Undo", "Ctrl+Z", "Switch", "Undo the last mesh edit.", !g_meshUndo.empty(), "Nothing to undo.", [] { MeshUndo(false); });
@@ -3631,6 +3860,7 @@ static void SetMeshEditMode(EditorState& ed, GameObject* go, bool on) {
         else g_meModal.Confirm();
         g_meModalObj = nullptr;
     }
+    if (on && !g_meshEdit) { g_meshSymX = (g_symDefaultMask & 1) != 0; g_meshSymY = (g_symDefaultMask & 2) != 0; g_meshSymZ = (g_symDefaultMask & 4) != 0; }   // "symmetry by default"
     if (g_ptool != PolyTool::None) {   // a bevel / slide / knife half done: put it back
         bool alive = false;
         for (const auto& up : ed.scene().Objects()) if (up.get() == g_meshEditObj) { alive = true; break; }
@@ -17693,6 +17923,21 @@ void HandleShortcuts(EditorState& ed) {
     if (!animKeys && !ctrl && ImGui::IsKeyPressed(ImGuiKey_F, false) && ed.selected()) FocusSelected(ed);
     // Shift+Space maximizes the Scene view (the other panels hide); again brings them back.
     if (!ctrl && ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Space, false)) g_maxToggle = true;
+    // H hides the selected objects (like switching them off in the Hierarchy); Alt+H brings back the ones hidden this way.
+    if (!animKeys && !ctrl && !g_meshEdit && !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_H, false)) {
+        if (ImGui::GetIO().KeyAlt) {
+            int n = 0;
+            for (GameObject* g : g_hiddenObjects)
+                for (const auto& up : ed.scene().Objects()) if (up.get() == g) { if (!n) ed.PushUndo(); SetActiveRecursive(g, true); ++n; break; }
+            g_hiddenObjects.clear();
+            ConsoleLog(n ? "Revealed " + std::to_string(n) + " hidden object(s)" : "No objects were hidden with H"); ed.dirty = true;
+        } else if (ed.selected()) {
+            ed.PushUndo();
+            std::vector<GameObject*> targets = ed.MultiSelection().empty() ? std::vector<GameObject*>{ed.selected()} : ed.MultiSelection();
+            for (GameObject* g : targets) { SetActiveRecursive(g, false); g_hiddenObjects.push_back(g); }
+            ConsoleLog("Hid " + std::to_string(targets.size()) + " object(s) (Alt+H brings them back)"); ed.dirty = true;
+        }
+    }
     // Shift+I toggles Isolate mode on the selection.
     if (!ctrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_I, false)) {
         g_isolate = g_isolate ? nullptr : ed.selected();
@@ -28454,6 +28699,17 @@ void DrawModeling(EditorState& ed) {
 
             ImGui::Checkbox("Symmetry X##me", &g_meshSymX);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror every move and sculpt stroke across the local X = 0 plane (edit half, get both).");
+            ImGui::SameLine(); ImGui::Checkbox("Y##mesymy", &g_meshSymY);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror G / R / S moves across the local Y = 0 plane (sculpt and paint strokes still mirror across X only).");
+            ImGui::SameLine(); ImGui::Checkbox("Z##mesymz", &g_meshSymZ);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mirror G / R / S moves across the local Z = 0 plane.");
+            {
+                bool dx = (g_symDefaultMask & 1) != 0, dy = (g_symDefaultMask & 2) != 0, dz = (g_symDefaultMask & 4) != 0;
+                ImGui::TextDisabled("Start with symmetry on:"); ImGui::SameLine();
+                bool ch = ImGui::Checkbox("X##symdx", &dx); ImGui::SameLine(); ch |= ImGui::Checkbox("Y##symdy", &dy); ImGui::SameLine(); ch |= ImGui::Checkbox("Z##symdz", &dz);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Edit mode starts with these planes already switched on (remembered between sessions).");
+                if (ch) { g_symDefaultMask = (dx ? 1 : 0) | (dy ? 2 : 0) | (dz ? 4 : 0); SaveSettings(); }
+            }
             ImGui::SameLine();
             ImGui::Checkbox("Soft Select##me", &g_meshSoftSel);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Proportional editing: nearby unselected vertices follow the move with a smooth falloff.");
@@ -44610,7 +44866,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
             auto beginModal = [&](mdl::EditXform kind) {
                 mdl::EditTransformOptions o;
                 o.softRadius = g_meshSoftSel ? g_meshSoftRadius : 0.0f;
-                o.mirrorX = g_meshSymX;
+                o.mirrorX = g_meshSymX; o.mirrorY = g_meshSymY; o.mirrorZ = g_meshSymZ;
                 g_meModal.Begin(mesh, kind, affected, M, o);
                 if (!g_meModal.Active()) return;
                 g_meModalObj = meo;
@@ -44900,6 +45156,39 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                 auto findCmd = [&](const std::string& n) -> const ModelCmd* { for (const ModelCmd& c : cmds) if (c.name == n) return &c; return nullptr; };
                 const bool idle = g_ptool == PolyTool::None && !g_meModal.Active() && !g_meEditGrab;
                 if (ImGui::IsPopupOpen("##meshcmdpal") || ImGui::IsPopupOpen("##meshctx")) g_uiHandled = true;   // a click in the menu must not select or orbit
+                if (hovered) { const mdl::Ray cr = mouseRay(io.MousePos); g_cursorOrigin = cr.origin; g_cursorDir = cr.direction; }   // where "at cursor" adds go
+                if (idle && hovered && !io.WantTextInput && g_selTool == 0) {
+                    // Single keys (no Ctrl): the commands that have one.
+                    auto key = [&](ImGuiKey k) { return ImGui::IsKeyPressed(k, false); };
+                    const char* want = nullptr;
+                    if (!io.KeyCtrl && !io.KeyAlt && !io.KeyShift) {
+                        if (key(ImGuiKey_H)) want = "Hide Selected";
+                        else if (key(ImGuiKey_Slash)) want = "Isolate Selection (Local View)";
+                        else if (key(ImGuiKey_B)) want = "Box Select";
+                        else if (key(ImGuiKey_C)) want = "Circle Select";
+                        else if (key(ImGuiKey_L)) want = "Lasso Select";
+                        else if (key(ImGuiKey_E)) want = "Extrude and Move";
+                    } else if (!io.KeyCtrl && !io.KeyAlt && io.KeyShift) {
+                        if (key(ImGuiKey_D)) want = "Duplicate and Move";
+                        else if (key(ImGuiKey_H)) want = "Hide Unselected";
+                    } else if (!io.KeyCtrl && io.KeyAlt && !io.KeyShift) {
+                        if (key(ImGuiKey_H)) want = "Reveal Hidden";
+                        else if (key(ImGuiKey_Z)) want = "Toggle X-ray Select";
+                    }
+                    if (want) { if (const ModelCmd* c = findCmd(want)) RunModelCmd(*c); g_uiHandled = true; }
+                    if (!io.KeyCtrl && !io.KeyAlt && !io.KeyShift && key(ImGuiKey_I)) {
+                        if (g_meshSelFaces.empty()) ConsoleLog("Inset (drag): select faces first (key 3)", 1);
+                        else {
+                            s_insActive = true; s_insStart = mesh; s_insFaces = g_meshSelFaces;
+                            Vec3 c{0, 0, 0};
+                            for (int t : s_insFaces) if (t >= 0 && t < mesh.TriangleCount()) for (int k = 0; k < 3; ++k) c += vWorld(mesh.triangles[t * 3 + k]);
+                            c = c * (1.0f / (3.0f * (float)s_insFaces.size()));
+                            ImVec2 sc; s_insC = toScreen(vp * Vec4{c, 1}, sc) ? sc : io.MousePos;
+                            s_insD0 = std::max(30.0f, std::hypot(io.MousePos.x - s_insC.x, io.MousePos.y - s_insC.y));
+                            g_uiHandled = true;
+                        }
+                    }
+                }
                 if (idle && hovered && !io.WantTextInput) {
                     if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_K, false)) g_cmdPaletteRequest = true;
                     if (io.KeyShift && !io.KeyCtrl && !io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_R, false)) {
@@ -44907,6 +45196,87 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         else ConsoleLog("Repeat Last: nothing to repeat yet (use a tool first)", 1);
                         g_uiHandled = true;
                     }
+                }
+                // ---- Live inset (I): move the mouse towards the middle of the faces to inset them, click or Enter to keep ----
+                if (s_insActive) {
+                    g_uiHandled = true;
+                    const float d = std::hypot(io.MousePos.x - s_insC.x, io.MousePos.y - s_insC.y);
+                    const float amt = std::clamp((s_insD0 - d) / s_insD0, 0.0f, 0.95f);
+                    mesh = s_insStart;
+                    mesh.InsetFaces(s_insFaces, amt);
+                    ed.dirty = true;
+                    char b2[96]; std::snprintf(b2, sizeof(b2), "Inset %.0f%%  -  move toward the middle for more, click or Enter to keep, Esc to cancel", amt * 100.0f);
+                    dl->AddText(ImVec2(canvasPos.x + 12.0f, canvasPos.y + canvasSize.y - 40.0f), IM_COL32(255, 200, 90, 255), b2);
+                    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))) { mesh = s_insStart; s_insActive = false; }
+                    else if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
+                        const Mesh result = mesh;
+                        mesh = s_insStart; g_nextUndoLabel = "Inset (drag)"; EditUndoPoint(ed, meo->GetComponent<MeshRenderer>());
+                        mesh = result; s_insActive = false;
+                    }
+                }
+                // ---- Box / circle / lasso select (B, C, L): drag in the 3D view; Shift adds; Alt+Z turns X-ray on or off ----
+                if (g_selTool != 0) {
+                    g_uiHandled = true;
+                    std::vector<mdl::ScreenPoint> proj(mesh.vertices.size());
+                    for (int i = 0; i < (int)mesh.vertices.size(); ++i) { ImVec2 sp; const bool ok = vScreen(i, sp); proj[i] = {sp.x, sp.y, ok}; }
+                    const Vec3 eyeL = Minv.MultiplyPoint(eye);
+                    auto apply = [&](const mdl::SelectShape& sh, bool add) {
+                        if (g_meshSelMode == 0) {
+                            std::vector<int> r = mdl::SelectVerticesIn(mesh, proj, sh, g_meshXray, eyeL);
+                            if (add) for (int v : g_meshSelVerts) r.push_back(v);
+                            std::sort(r.begin(), r.end()); r.erase(std::unique(r.begin(), r.end()), r.end());
+                            g_meshSelVerts = r;
+                        } else if (g_meshSelMode == 1) {
+                            EditPoly(mesh);                                // keeps polyFace current so a quad is picked whole
+                            std::vector<int> r = mdl::SelectFacesIn(mesh, proj, sh, g_meshXray, eyeL);
+                            if (add) for (int f : g_meshSelFaces) r.push_back(f);
+                            std::sort(r.begin(), r.end()); r.erase(std::unique(r.begin(), r.end()), r.end());
+                            g_meshSelFaces = r;
+                        } else {
+                            std::vector<std::pair<int, int>> r = mdl::SelectEdgesIn(mesh, EditPolyEdges(mesh), proj, sh, g_meshXray, eyeL);
+                            if (add) for (const auto& e : g_meshSelEdges) if (std::find(r.begin(), r.end(), e) == r.end()) r.push_back(e);
+                            g_meshSelEdges = r;
+                        }
+                    };
+                    const char* toolName = g_selTool == 1 ? "Box select" : g_selTool == 2 ? "Circle select" : "Lasso select";
+                    std::string tip = std::string(toolName) + (g_meshXray ? " (X-ray: through the mesh)" : " (front faces only; Alt+Z for X-ray)") +
+                                      (g_selTool == 2 ? "  -  paint with the mouse, wheel = size, Enter or Esc to finish" : "  -  drag, Shift adds, Esc cancels");
+                    dl->AddText(ImVec2(canvasPos.x + 12.0f, canvasPos.y + canvasSize.y - 40.0f), IM_COL32(255, 200, 90, 255), tip.c_str());
+                    const bool cancel = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right));
+                    if (cancel || (g_selTool == 2 && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) { g_selTool = 0; s_selDrag = false; s_lasso.clear(); }
+                    else if (g_selTool == 2) {
+                        if (hovered && io.MouseWheel != 0.0f) g_circleRadius = std::clamp(g_circleRadius * (io.MouseWheel > 0 ? 1.1f : 0.9f), 6.0f, 400.0f);
+                        dl->AddCircle(io.MousePos, g_circleRadius, IM_COL32(255, 220, 120, 230), 48, 1.5f);
+                        if (hovered && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                            const bool first = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                            apply(mdl::SelectShape::Circle({io.MousePos.x, io.MousePos.y}, g_circleRadius), io.KeyShift || !first);
+                        }
+                    } else {
+                        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { s_selDrag = true; s_selStart = io.MousePos; s_lasso.clear(); }
+                        if (s_selDrag) {
+                            if (g_selTool == 3) { if (s_lasso.empty() || std::hypot(io.MousePos.x - s_lasso.back().x, io.MousePos.y - s_lasso.back().y) > 3.0f) s_lasso.push_back(io.MousePos); }
+                            if (g_selTool == 1) dl->AddRect(s_selStart, io.MousePos, IM_COL32(255, 220, 120, 240), 0.0f, 0, 1.5f);
+                            else for (std::size_t i = 0; i + 1 < s_lasso.size(); ++i) dl->AddLine(s_lasso[i], s_lasso[i + 1], IM_COL32(255, 220, 120, 240), 1.5f);
+                            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                                if (g_selTool == 1) apply(mdl::SelectShape::Box({s_selStart.x, s_selStart.y}, {io.MousePos.x, io.MousePos.y}), io.KeyShift);
+                                else { std::vector<Vec2> o; for (const ImVec2& q : s_lasso) o.push_back({q.x, q.y}); apply(mdl::SelectShape::Lasso(o), io.KeyShift); }
+                                s_selDrag = false; s_lasso.clear(); g_selTool = 0;
+                            }
+                        }
+                    }
+                }
+                // Shift+D / E asked for a move to start: begin it now that the new selection is in place.
+                if (g_pendingMove && idle && !affected.empty()) {
+                    beginModal(mdl::EditXform::Move);
+                    if (g_pendingMove == 2 && g_meModal.Active()) {       // E: slide along the selection's normal when that is (nearly) a world axis
+                        Vec3 n{0, 0, 0};
+                        for (int t : g_meshSelFaces) if (t >= 0 && t < mesh.TriangleCount()) n += M.MultiplyVector(mesh.FaceNormal(t));
+                        if (n.SqrMagnitude() > 1e-12f) {
+                            n = n.Normalized();
+                            for (int a = 0; a < 3; ++a) if (std::fabs((&n.x)[a]) > 0.95f) g_meModal.lock.axis = a;
+                        }
+                    }
+                    g_pendingMove = 0;
                 }
                 // The quick toolbar under the mode pills: the most-used tools for the current select mode.
                 {
@@ -44921,7 +45291,18 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                         std::string lab = n; const std::size_t pr = lab.find(" (how do I)"); if (pr != std::string::npos) lab.resize(pr);
                         qs.push_back({lab, c->hint + (c->ok ? "" : "  [" + c->why + "]"), c->ok, false, n, 0});
                     }
-                    qs.push_back({"Sym X", "Mirror every move across the local X = 0 plane (Y and Z symmetry are not built).", true, g_meshSymX, "Toggle Symmetry X", 0});
+                    qs.push_back({"Box", "Box select (B): drag a rectangle.", true, g_selTool == 1, "Box Select", 0});
+                    qs.push_back({"Circle", "Circle select (C): paint with a circle, wheel changes the size.", true, g_selTool == 2, "Circle Select", 0});
+                    qs.push_back({"Lasso", "Lasso select (L): draw a loop round what you want.", true, g_selTool == 3, "Lasso Select", 0});
+                    qs.push_back({"X-ray", "Select through the mesh with Box / Circle / Lasso (Alt+Z).", true, g_meshXray, "Toggle X-ray Select", 0});
+                    for (const char* nm : {"Hide Selected", "Reveal Hidden", "Isolate Selection (Local View)"})
+                        if (const ModelCmd* c = findCmd(nm)) {
+                            std::string lab = nm; if (lab == "Hide Selected") lab = "Hide"; else if (lab == "Reveal Hidden") lab = "Reveal"; else lab = "Isolate";
+                            qs.push_back({lab, c->hint + (c->ok ? "  [" + c->keys + "]" : "  [" + c->why + "]"), c->ok, nm == std::string("Isolate Selection (Local View)") && g_isolating, nm, 0});
+                        }
+                    qs.push_back({"Sym X", "Mirror every G / R / S move across the local X = 0 plane.", true, g_meshSymX, "Toggle Symmetry X", 0});
+                    qs.push_back({"Y", "Symmetry across the local Y = 0 plane.", true, g_meshSymY, "Toggle Symmetry Y", 0});
+                    qs.push_back({"Z", "Symmetry across the local Z = 0 plane.", true, g_meshSymZ, "Toggle Symmetry Z", 0});
                     qs.push_back({"Snap", "Snap moves, turns and scales (Ctrl also snaps while held). Set what it snaps to in Edit Mesh > Snapping and measuring.", true, g_snap, "Toggle Snap", 0});
                     qs.push_back({"Repeat", "Run the last tool again (Shift+R): " + (g_lastCmdName.empty() ? std::string("none yet") : g_lastCmdName), !g_lastCmdName.empty(), false, "", 1});
                     qs.push_back({"Find... (Ctrl+K)", "Search every modeling tool by name and run it.", true, false, "", 2});
@@ -45272,7 +45653,7 @@ void DrawScene3D(EditorState& ed, ImDrawList* dl, ImVec2 canvasPos, ImVec2 canva
                     }
                     if (!add) g_meshSelEdges.clear();
                     if (pe.first >= 0) {
-                        if (io.KeyAlt) {
+                        if (io.KeyAlt || ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {   // double-click does the same as Alt+click
                             // Alt+Click: the edge loop through this edge (across 4-way
                             // vertices); Ctrl+Alt+Click: the ring of edges across the
                             // quads beside it. Where the polygons give no loop (a

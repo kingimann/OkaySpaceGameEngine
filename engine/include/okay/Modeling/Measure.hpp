@@ -51,4 +51,8 @@ SnapHit SnapToGeometry(const Mesh& m, const Vec3& p, SnapTarget target, float ra
 Vec3 ClosestOnSegment(const Vec3& p, const Vec3& a, const Vec3& b);
 Vec3 ClosestOnTriangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c);
 
+/// Where a ray (origin + direction, in the mesh's own space) first hits the mesh, for dropping new objects onto a surface.
+struct RayHit { bool found = false; float t = 0; Vec3 point{0, 0, 0}; Vec3 normal{0, 1, 0}; int tri = -1; };
+RayHit RayMeshHit(const Mesh& m, const Vec3& origin, const Vec3& dir);
+
 } // namespace okay::modeling

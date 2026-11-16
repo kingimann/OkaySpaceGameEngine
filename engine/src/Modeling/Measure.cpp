@@ -144,4 +144,36 @@ SnapHit SnapToGeometry(const Mesh& m, const Vec3& p, SnapTarget target, float ra
     return best;
 }
 
+RayHit RayMeshHit(const Mesh& m, const Vec3& o, const Vec3& dir) {
+    RayHit best;
+    if (!std::isfinite(o.x + o.y + o.z + dir.x + dir.y + dir.z) || dir.SqrMagnitude() < 1e-20f) return best;
+    const Vec3 d = dir.Normalized();
+    float bestT = 1e30f;
+    for (int t = 0; t < m.TriangleCount(); ++t) {
+        const int i0 = m.triangles[t * 3], i1 = m.triangles[t * 3 + 1], i2 = m.triangles[t * 3 + 2];
+        if (!Ok(m, i0) || !Ok(m, i1) || !Ok(m, i2)) continue;
+        const Vec3& a = m.vertices[i0];
+        const Vec3 e1 = m.vertices[i1] - a, e2 = m.vertices[i2] - a;
+        const Vec3 p = Vec3::Cross(d, e2);
+        const float det = Vec3::Dot(e1, p);
+        if (std::fabs(det) < 1e-12f) continue;                  // parallel or collapsed
+        const float inv = 1.0f / det;
+        const Vec3 tv = o - a;
+        const float u = Vec3::Dot(tv, p) * inv;
+        if (u < 0.0f || u > 1.0f) continue;
+        const Vec3 q = Vec3::Cross(tv, e1);
+        const float v = Vec3::Dot(d, q) * inv;
+        if (v < 0.0f || u + v > 1.0f) continue;
+        const float tt = Vec3::Dot(e2, q) * inv;
+        if (tt > 1e-6f && tt < bestT) {
+            bestT = tt; best.found = true; best.t = tt; best.tri = t;
+            Vec3 n = Vec3::Cross(e1, e2);
+            n = n.SqrMagnitude() > 1e-20f ? n.Normalized() : Vec3{0, 1, 0};
+            best.normal = Vec3::Dot(n, d) > 0.0f ? n * -1.0f : n;   // facing the ray
+        }
+    }
+    if (best.found) best.point = o + d * best.t;
+    return best;
+}
+
 } // namespace okay::modeling

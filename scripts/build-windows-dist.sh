@@ -151,9 +151,17 @@ fi
 
 # Example scenes and sample files to try in the editor (docs/try_it.md). A curated list: only folders whose
 # scenes are self-contained (every file a scene names sits beside it, and scenes find their files relative to
+<<<<<<< HEAD
 # the scene file, so the folder works from any install path). About 0.5 MB. Left out on purpose: account-server
 # (a Python server), netdemo and physicsdemo (C++ sources), editor-plugins and visual_script (not scenes).
 EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls ui_text"
+=======
+# the scene file, so the folder works from any install path). About 1 MB. visual_script/playground is the folder
+# File > Examples > Visual Script Node Playground opens its scenes from (tests/test_examples_work.cpp checks that every
+# folder a File > Examples entry needs is listed here). Left out on purpose: account-server (a Python server), netdemo
+# and physicsdemo (C++ sources), editor-plugins, and the loose graphs in visual_script itself (not scenes).
+EXAMPLE_DIRS="vehicle own_wav own_readers obj_texture_paths spatial_audio cutscene behavior_trees node_playground physics physics2d weapons touch_controls visual_script/playground"
+>>>>>>> origin/main
 for d in $EXAMPLE_DIRS; do
     [ -d "examples/$d" ] || { echo "error: examples/$d is missing (edit EXAMPLE_DIRS in $0)" >&2; exit 1; }
     mkdir -p "$OUT_DIR/examples/$d"

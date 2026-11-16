@@ -137,3 +137,20 @@ player is the real runtime, with about 2,670 lines of its own. Nobody is touchin
 - **Words:** starter assets, textures, grass, dirt, stone, grid, DejaVu Sans, sample assets
 - **Seen as:** I need a quick texture; text looks like the pixel font
 - **Ask me like:** "add a starter water texture to the pack"
+
+### 42.8 Example scenes and their check
+- **What:** The `.okayscene` files under `examples/` that File > Examples, File > Open and `docs/try_it.md` point at, and the test that runs every one.
+- **Parts:**
+  - 42.8.1 The scenes - `examples/` - 52 scenes in vehicle, own_wav, spatial_audio, cutscene, behavior_trees, node_playground, physics, physics2d, weapons, touch_controls and visual_script/playground (the Node Playground demos)
+  - 42.8.2 The check - `tests/test_examples_work.cpp` - copies the folder, then for every scene: loads with no skipped record, no Problems error, the camera shows something, 60 Play frames; also File > Examples > UI Gallery, the Node Playground lists, and that `scripts/build-windows-dist.sh` ships the folders the menu needs
+- **Code:** `examples/`, `editor/ExampleScenes.cpp`, `editor/VsPlayground.hpp`, `editor/NodePlayground.hpp`, `scripts/build-windows-dist.sh`
+- **API:** `oked::BuildUIGalleryExample`, `okay::editor::NodePlaygroundScenes`, `okay::editor::vsed::VsPlaygroundDemos`
+- **Editor:** File > Examples, File > Open
+- **Docs:** `docs/templates_check.md`, `docs/try_it.md`
+- **Tests:** `examples_work`, `example_scenes`, `vs_playground`, `play_start_bench`
+- **Status:** Works - every scene loads, plays headless and has something in view (tested on Linux, headless; the first run found 42 scenes whose camera looked away from their content, two with a bad `gravity` line, one with no camera, and a Windows release that left out the Node Playground folder; all fixed)
+- **Open:** where the editor finds `examples/` on Windows when it is started from another folder is unverified; nothing was run in a real window
+- **Related:** 1.6, 14, 42.7
+- **Words:** example scenes, examples folder, File > Examples, Node Playground, UI Gallery, EXAMPLE_DIRS, camera looks away, shipped examples
+- **Seen as:** an example opens and shows only text; File > Examples says scenes were not found; an example has no camera
+- **Ask me like:** "Add an example scene and make sure the test passes"; "Why does this example show an empty picture"

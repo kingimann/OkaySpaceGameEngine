@@ -9,6 +9,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "EditorState.hpp"
 #include "OwnStack.hpp"   // OKAY_OWN_STACK=1 dogfood switch + the one-line startup stack report
+#include "CrashHandler.hpp"   // crash handlers + the crash context that fills okay_crash.txt (docs/crash_reports.md)
 #include "ActionExport.hpp"
 #include "MenuBarModel.hpp"          // the main menu bar and the Hierarchy menus as data (docs/editor_menus.md)
 #include "HierarchyContextModel.hpp"
@@ -25,6 +26,7 @@
 #include "okay/Components/BehaviorTreeRunner.hpp"
 #include "okay/Net/DetectInspector.hpp"   // Anti-Cheat Config > Detection engine (fields, observe mode, text)
 #include "okay/Core/Game.hpp"
+#include "okay/Core/AssetManager.hpp"   // CachedCount() for the crash report
 #include "LocalizationWindow.hpp"      // the Localization window (string table), preview language, Localized fields
 #include "ContentEditors.hpp"          // Items, Loot & Recipes (items.okayitems, .okayloot, .okayrecipes)
 #include "WeaponEditor.hpp"            // the Weapons window (weapon definitions)
@@ -963,176 +965,14 @@ ImU32 ToColor(const Color& c) {
 }
 
 // ---- Crash diagnostics -------------------------------------------------
-// A single "which step are we on" breadcrumb + (on Windows) an unhandled-exception
-// handler that reports it. The UI-editing crash reproduces only on some real Windows
-// GPUs (Direct3D) — never under Linux ASan/UBSan or Wine — so this captures the exact
-// step and faulting address on the user's machine. OKAY_BREADCRUMB is near-free (a copy
-// into a static buffer). In a release build ImGui's IM_ASSERT is a no-op, so a UI bug
-// surfaces as a real access violation, which the SEH filter below catches.
-char g_okayTrace[256] = "startup";
-inline void OkayTrace(const char* s) {
-    std::strncpy(g_okayTrace, s, sizeof(g_okayTrace) - 1);
-    g_okayTrace[sizeof(g_okayTrace) - 1] = '\0';
-}
+// OKAY_BREADCRUMB("step") records which step the editor is on: a ring of the last 64 distinct steps (shared/CrashContext.hpp), so a crash
+// report shows the trail, not only the last step. It is near-free (a bounded copy). The crash handlers (Windows exception filter,
+// std::terminate and abort hooks, Linux/macOS signal handlers) are shared/CrashHandler.hpp: they write okay_crash.txt and
+// okay_crashlog.txt beside the editor with the OS, CPU, RAM, GPU, scene, Console lines and a backtrace, and the launcher sends it
+// (docs/crash_reports.md). The UI-editing crash that only shows on some real Windows GPUs (Direct3D) is why the breadcrumbs exist.
+// In a release build ImGui's IM_ASSERT is a no-op, so a UI bug surfaces as a real access violation, which the filter catches.
+inline void OkayTrace(const char* s) { okaycrash::ctx::Breadcrumb(s); }
 #define OKAY_BREADCRUMB(s) OkayTrace(s)
-
-#if defined(_WIN32)
-// On an unhandled access violation, report the last breadcrumb + faulting module and
-// offset (both to a MessageBox the user can read back, and to okay_crash.txt beside
-// the editor with a full module+offset backtrace we can resolve with addr2line).
-static LONG WINAPI OkayCrashFilter(EXCEPTION_POINTERS* ep) {
-    unsigned long long addr = (ep && ep->ExceptionRecord) ? (unsigned long long)(uintptr_t)ep->ExceptionRecord->ExceptionAddress : 0;
-    unsigned long      code = (ep && ep->ExceptionRecord) ? ep->ExceptionRecord->ExceptionCode : 0;
-    auto modInfo = [](unsigned long long a, char* name, size_t cap, unsigned long long& base) {
-        base = 0; if (name && cap) name[0] = '\0';
-        HMODULE m = nullptr;
-        if (a && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                    (LPCSTR)(uintptr_t)a, &m) && m) {
-            GetModuleFileNameA(m, name, (DWORD)cap); base = (unsigned long long)(uintptr_t)m;
-        }
-    };
-    char modName[MAX_PATH] = "?"; unsigned long long modBase = 0;
-    modInfo(addr, modName, sizeof(modName), modBase);
-#ifndef OKAY_ENGINE_VERSION
-#  define OKAY_ENGINE_VERSION "?"
-#endif
-    // Timestamp so multiple reports are distinguishable.
-    SYSTEMTIME st; GetLocalTime(&st);
-    char when[32];
-    std::snprintf(when, sizeof(when), "%04d-%02d-%02d %02d:%02d:%02d",
-                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-    // Write the report NEXT TO THE EXE (not the cwd, which may be the launcher's), so
-    // it's always found in the same folder as OkayEngine.exe.
-    char crashPath[MAX_PATH]; char exePath[MAX_PATH] = "";
-    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-    std::snprintf(crashPath, sizeof(crashPath), "%s", exePath);
-    if (char* slash = std::strrchr(crashPath, '\\')) std::strcpy(slash + 1, "okay_crash.txt");
-    else std::strcpy(crashPath, "okay_crash.txt");
-    char msg[1400];
-    std::snprintf(msg, sizeof(msg),
-        "OkaySpace crashed.\n\nVersion: %s\nLast step: %s\nException: 0x%08lX\nAt: %s + 0x%llX\n\n"
-        "A report was saved to okay_crash.txt next to the editor.\n"
-        "Please send that file (or the \"Last step\" line above) to support.",
-        OKAY_ENGINE_VERSION, g_okayTrace, code, modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
-    if (FILE* f = std::fopen(crashPath, "w")) {
-        std::fprintf(f, "OkaySpace crash report\nVersion: %s\nWhen: %s\nExe: %s\nLast step: %s\n"
-                        "Exception: 0x%08lX\nFault module: %s + 0x%llX\n\nBacktrace:\n",
-                     OKAY_ENGINE_VERSION, when, exePath[0] ? exePath : "?", g_okayTrace, code,
-                     modName[0] ? modName : "?", modBase ? (addr - modBase) : addr);
-        // Symbolize on-device via dbghelp so the report is human-readable (function
-        // names + file:line where DWARF line info is present). Each line ALSO carries
-        // the raw module + offset as a fallback we can resolve with addr2line.
-        HANDLE proc = GetCurrentProcess();
-        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-        bool symOk = SymInitialize(proc, nullptr, TRUE);
-        void* frames[48];
-        USHORT n = CaptureStackBackTrace(0, 48, frames, nullptr);
-        // SYMBOL_INFO + room for the name.
-        char symBuf[sizeof(SYMBOL_INFO) + 512];
-        for (USHORT i = 0; i < n; ++i) {
-            unsigned long long a = (unsigned long long)(uintptr_t)frames[i];
-            char mn[MAX_PATH]; unsigned long long mb = 0;
-            modInfo(a, mn, sizeof(mn), mb);
-            const char* modShort = mn[0] ? mn : "?";
-            if (const char* s = std::strrchr(modShort, '\\')) modShort = s + 1;
-            char fnName[540] = ""; char fileLine[560] = "";
-            if (symOk) {
-                SYMBOL_INFO* si = (SYMBOL_INFO*)symBuf;
-                std::memset(si, 0, sizeof(SYMBOL_INFO));
-                si->SizeOfStruct = sizeof(SYMBOL_INFO); si->MaxNameLen = 500;
-                DWORD64 disp = 0;
-                if (SymFromAddr(proc, (DWORD64)a, &disp, si))
-                    std::snprintf(fnName, sizeof(fnName), "  %s +0x%llX", si->Name, (unsigned long long)disp);
-                IMAGEHLP_LINE64 line; std::memset(&line, 0, sizeof(line));
-                line.SizeOfStruct = sizeof(line); DWORD ld = 0;
-                if (SymGetLineFromAddr64(proc, (DWORD64)a, &ld, &line) && line.FileName)
-                    std::snprintf(fileLine, sizeof(fileLine), "  (%s:%lu)", line.FileName, line.LineNumber);
-            }
-            std::fprintf(f, "  #%02d %s + 0x%llX%s%s\n", i, modShort,
-                         mb ? (a - mb) : a, fnName, fileLine);
-        }
-        if (symOk) SymCleanup(proc);
-        std::fclose(f);
-    }
-    // Also APPEND this report to a rolling history (okay_crashlog.txt) next to the exe,
-    // so the editor's Crash Log tab can show every past report — not just the latest.
-    char logPath[MAX_PATH];
-    std::snprintf(logPath, sizeof(logPath), "%s", exePath);
-    if (char* slash = std::strrchr(logPath, '\\')) std::strcpy(slash + 1, "okay_crashlog.txt");
-    else std::strcpy(logPath, "okay_crashlog.txt");
-    if (FILE* src = std::fopen(crashPath, "r")) {
-        if (FILE* hist = std::fopen(logPath, "a")) {
-            std::fprintf(hist, "\n========== crash @ %s (v%s) ==========\n", when, OKAY_ENGINE_VERSION);
-            char buf[1024]; size_t r;
-            while ((r = std::fread(buf, 1, sizeof(buf), src)) > 0) std::fwrite(buf, 1, r, hist);
-            std::fprintf(hist, "\n");
-            std::fclose(hist);
-        }
-        std::fclose(src);
-    }
-    MessageBoxA(nullptr, msg, "OkaySpace crash", MB_OK | MB_ICONERROR);
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-#elif defined(__linux__) || defined(__APPLE__)
-// Linux / macOS: the same okay_crash.txt + okay_crashlog.txt reports beside the
-// editor (the launcher's Crash reports page reads them), from a fatal-signal
-// handler. Best effort: stdio in a signal handler isn't async-safe, but the
-// process is going down anyway; the default action runs afterwards.
-#include <execinfo.h>
-#include <signal.h>
-#include <unistd.h>
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
-static void OkayCrashSignal(int sig) {
-    signal(sig, SIG_DFL);   // a second fault inside the handler just ends the process
-#ifndef OKAY_ENGINE_VERSION
-#  define OKAY_ENGINE_VERSION "?"
-#endif
-    char exePath[4096] = "";
-#if defined(__APPLE__)
-    uint32_t sz = sizeof(exePath);
-    if (_NSGetExecutablePath(exePath, &sz) != 0) exePath[0] = '\0';
-#else
-    ssize_t n = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
-    exePath[n > 0 ? n : 0] = '\0';
-#endif
-    std::string dir = exePath;
-    std::size_t slash = dir.find_last_of('/');
-    dir = slash == std::string::npos ? std::string(".") : dir.substr(0, slash);
-    std::time_t now = std::time(nullptr);
-    char when[32]; std::strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-    const char* name = sig == SIGSEGV ? "SIGSEGV" : sig == SIGABRT ? "SIGABRT" : sig == SIGFPE ? "SIGFPE"
-                     : sig == SIGILL ? "SIGILL" : sig == SIGBUS ? "SIGBUS" : "signal";
-    void* frames[48];
-    const int nf = backtrace(frames, 48);
-    const std::string crashPath = dir + "/okay_crash.txt", logPath = dir + "/okay_crashlog.txt";
-    if (FILE* f = std::fopen(crashPath.c_str(), "w")) {
-        std::fprintf(f, "OkaySpace crash report\nVersion: %s\nWhen: %s\nExe: %s\nLast step: %s\n"
-                        "Exception: %s (signal %d)\nFault module: %s\n\nBacktrace:\n",
-                     OKAY_ENGINE_VERSION, when, exePath[0] ? exePath : "?", g_okayTrace, name, sig,
-                     exePath[0] ? exePath : "?");
-        std::fflush(f);
-        backtrace_symbols_fd(frames, nf, fileno(f));
-        std::fclose(f);
-    }
-    if (FILE* src = std::fopen(crashPath.c_str(), "r")) {
-        if (FILE* hist = std::fopen(logPath.c_str(), "a")) {
-            std::fprintf(hist, "\n========== crash @ %s (v%s) ==========\n", when, OKAY_ENGINE_VERSION);
-            char buf[1024]; std::size_t r;
-            while ((r = std::fread(buf, 1, sizeof(buf), src)) > 0) std::fwrite(buf, 1, r, hist);
-            std::fprintf(hist, "\n");
-            std::fclose(hist);
-        }
-        std::fclose(src);
-    }
-    std::fprintf(stderr, "OkaySpace crashed (%s). Last step: %s. Report: %s\n", name, g_okayTrace, crashPath.c_str());
-    raise(sig);
-}
-static void InstallCrashSignals() {
-    for (int s : {SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS}) signal(s, OkayCrashSignal);
-}
-#endif
 
 SDL_Renderer* g_sdlRenderer = nullptr;
 // GPU (OpenGL) 3D rendering. The scene is rasterized by the GPU
@@ -2330,6 +2170,7 @@ std::string g_uiBackendSetting;
 okayuibackend::Backend g_uiBackend = okayuibackend::Backend::ImGui;
 void ResolveUiBackend() { g_uiBackend = okayuibackend::Resolve(std::getenv("OKAY_UI_BACKEND"), g_uiBackendSetting, okayuibackend::DevMode(std::getenv("OKAY_DEV"))); }
 bool UseOkayUIBackend() { return g_uiBackend == okayuibackend::Backend::OkayUI; }
+
 #ifdef OKAY_HAVE_OKAYUI
 okayuihost::InputCollector g_okayInput;   // typed text, key edges and wheel from the SDL events, for hosted OkayUI panels
 okayuihost::Region g_okayRegion;          // where the hosted panel was last frame: who owns the mouse there
@@ -7713,6 +7554,7 @@ void DrawCrashLog() {
     static bool loaded = false;
     static std::uint64_t revision = 0;   // raised whenever `text` changes (the OkayUI port re-reads it then)
     fs::path dir      = OkayExeDir();
+    if (const char* dev = std::getenv("OKAY_CRASH_DIR"); dev && *dev) { std::error_code de; if (fs::is_directory(dev, de)) dir = dev; }   // (dev/test: where the handler writes, see docs/crash_reports.md)
     fs::path histPath = dir / "okay_crashlog.txt";   // rolling history (all reports)
     fs::path lastPath = dir / "okay_crash.txt";       // most recent report
     auto readAll = [](const fs::path& p, std::string& out) -> bool {
@@ -48014,6 +47856,22 @@ static int RunBuildGameCli(int argc, char** argv) {
     return rep.ok ? 0 : 1;
 }
 
+// What the crash report says about the open scene and the editor mode; refreshed a few times a second from the main loop (a handful
+// of stores, no allocation). `slow` also re-reads the things that need a file or a lookup.
+static void UpdateCrashContext(EditorState& ed, bool slow) {
+    static int s_assets = -1;   // CachedCount() takes the asset manager's lock and walks its cache: only the slow refresh asks
+    if (slow) s_assets = (int)okay::AssetManager::Instance().CachedCount();
+    okaycrash::ctx::SetMode(ed.isPlaying(), ed.InPrefabMode());
+    okaycrash::ctx::SetSceneStats((int)ed.scene().Objects().size(), s_assets);
+    if (!slow) return;
+    okaycrash::ctx::SetSceneName(ed.path().c_str());
+    okaycrash::ctx::SetUiBackend(UseOkayUIBackend() ? "okayui" : "imgui");
+    // "Recovery copy": did this session write a recovery autosave (the recovery folder), or does the scene have an older-style .autosave beside it?
+    std::error_code ec;
+    const bool recovered = DocRecovery().AutosaveCount() > 0 || (!ed.path().empty() && std::filesystem::exists(ed.path() + ".autosave", ec));
+    okaycrash::ctx::SetAutosave(recovered ? 1 : 0);
+}
+
 int RunVsGraphShot(int argc, char** argv);
 
 int main(int argc, char** argv) {
@@ -48021,20 +47879,25 @@ int main(int argc, char** argv) {
     if (int code = okay::selfupdate::SelfCheck(argc, argv, OKAY_ENGINE_VERSION); code >= 0) return code;   // `--okay-selfcheck <v>`: the updater asks the new file who it is
     okay::restart::RememberArguments(argc, argv);
     okay::ownstack::Startup();   // OKAY_OWN_STACK=1 sets the own-backend switches; logs which parts are ours (docs/own_stack_rollout.md)
-#if defined(_WIN32)
-    SetUnhandledExceptionFilter(OkayCrashFilter);   // report crashes (esp. the UI-view one)
-#elif defined(__linux__) || defined(__APPLE__)
-    InstallCrashSignals();                          // same reports on Linux / macOS
-#endif
+    okaycrash::handler::Install(OKAY_ENGINE_VERSION, __DATE__ " " __TIME__);   // report crashes: Windows exception filter / Linux and macOS signals / std::terminate
+    {   // the own-code line goes into every crash report (what is ours and what is third party in THIS run), with the OKAY_* switches that are on
+        std::string line = okay::ownstack::Describe();
+        if (const std::size_t at = line.find("stack: "); at != std::string::npos) line = line.substr(at + 7);
+        if (okaycrash::ctx::g_state.ownCode[0]) line += " | " + std::string(okaycrash::ctx::g_state.ownCode);
+        okaycrash::ctx::SetOwnCode(line.c_str());
+    }
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--selftest") return RunSelfTest();
         if (std::string(argv[i]) == "--build-game") return RunBuildGameCli(argc, argv);
         if (std::string(argv[i]) == "--vs-shot") return RunVsGraphShot(argc, argv);
     }
-    // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end.
+    // Dev/test: crash on purpose after a breadcrumb, to check the crash reports end to end (docs/try_it.md, docs/crash_reports.md).
+    //   OKAY_TEST_CRASH=<step>       crash right now, before the window opens (the report has the OS, CPU and RAM but no scene or GPU yet)
+    //   OKAY_TEST_CRASH_LATE=<step>  crash on the 120th frame of the running editor (the report has the GPU, the scene, the Console and the steps)
     if (const char* c = std::getenv("OKAY_TEST_CRASH"); c && *c) {
         OKAY_BREADCRUMB(c);
-        volatile int* bad = nullptr;
+        int* bad = nullptr;
+        asm volatile("" : "+r"(bad));   // the compiler must not see the null, or it drops the store and nothing crashes
         *bad = 1;
     }
 
@@ -48400,13 +48263,30 @@ int main(int argc, char** argv) {
                     g_glRenderer = new okay::GLRenderer();
                     g_glReady = true;
                     ConsoleLog("GPU renderer available (View > GPU Renderer).");
+                    {   // the GPU, the vendor and the OpenGL version go into every crash report (the UI crash shows on some drivers only)
+                        using GetStringFn = const unsigned char* (SDLCALL*)(unsigned int);   // GL_VENDOR 0x1F00, GL_RENDERER 0x1F01, GL_VERSION 0x1F02
+                        std::string gpu;
+                        if (auto gs = (GetStringFn)SDL_GL_GetProcAddress("glGetString")) {
+                            auto str = [&](unsigned int what) { const unsigned char* t = gs(what); return t ? std::string((const char*)t) : std::string("?"); };
+                            gpu = str(0x1F01) + " | " + str(0x1F00) + " | OpenGL " + str(0x1F02);
+                        }
+                        SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
+                        if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(gpu.empty() ? "" : " | ") + "SDL renderer " + ri.name;
+                        okaycrash::ctx::SetGpu(gpu.c_str());
+                    }
                 }
             }
         }
         // Restore whatever context SDL_Renderer had current (its own on the GL backend,
         // or none on the D3D backend) so the editor UI keeps drawing normally.
         SDL_GL_MakeCurrent(prevWin, prevCtx);
-        if (!g_glReady) ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
+        if (!g_glReady) {
+            ConsoleLog("GPU renderer unavailable; using the software renderer.", 1);
+            SDL_RendererInfo ri; std::memset(&ri, 0, sizeof(ri));
+            std::string gpu = "OpenGL renderer unavailable";
+            if (SDL_GetRendererInfo(renderer, &ri) == 0 && ri.name) gpu += std::string(" | SDL renderer ") + ri.name;
+            okaycrash::ctx::SetGpu(gpu.c_str());
+        }
     }
 
 #if defined(_WIN32)
@@ -48533,6 +48413,20 @@ int main(int argc, char** argv) {
     if (DocRecovery().StartSession()) g_docRecover = DocRecovery().FindRecoverable();
     while (running) {
         Uint64 g_frameT0 = okay::platform::PerfCounter();
+        okaycrash::ctx::NextFrame();
+        {   // the crash report's picture of the editor: cheap every 8th frame, the file lookups every 300th
+            static unsigned s_crashCtxTick = 0;
+            if ((s_crashCtxTick & 7) == 0) UpdateCrashContext(ed, (s_crashCtxTick % 300) == 0);
+            ++s_crashCtxTick;
+            static const char* const kLate = std::getenv("OKAY_TEST_CRASH_LATE");   // dev/test: see OKAY_TEST_CRASH above
+            if (kLate && *kLate && s_crashCtxTick == 120) {
+                ConsoleLog(std::string("OKAY_TEST_CRASH_LATE: crashing on purpose at step ") + kLate, 2);
+                OKAY_BREADCRUMB(kLate);
+                int* bad = nullptr;
+                asm volatile("" : "+r"(bad));
+                *bad = 1;
+            }
+        }
         static const bool kPerfDump = std::getenv("OKAY_PERF_DUMP") != nullptr;   // dev: print frame breakdown to stdout
         okay::Prof().enabled = g_showProfiler || kPerfDump;   // gate timers; set before BeginFrame/Tick this frame
         okay::Prof().BeginFrame();

@@ -210,7 +210,7 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 |---|---|---|---|
 | [22.1](feature_map/20-35-planned.md#221-undo-history) | Undo history | Partial | each snapshot is a full scene text (memory grows with scene size); three separate stacks can confuse Ctrl+Z; behaviour of the... |
 | [22.2](feature_map/20-35-planned.md#222-autosave) | Autosave | Partial | a leftover `.autosave` from an older editor can still sit beside the scene until it is recovered or discarded; a project under... |
-| [22.3](feature_map/20-35-planned.md#223-crash-recovery) | Crash recovery | Partial | the report format is only parsed by the launcher; no upload; the player has no handler. |
+| [22.3](feature_map/20-35-planned.md#223-crash-recovery) | Crash recovery | Partial | the player has no handler; the Windows handler has never run on real Windows (MinGW compile only); a stripped release gives offsets and mangled names, not file and line. |
 | [22.4](feature_map/20-35-planned.md#224-backups) | Backups | Partial | a scene save still keeps one `.bak` beside the scene, and a leftover `.autosave` from an older editor may too; a project under... |
 
 ### 23. Profiling & debugging (Critical)
@@ -396,10 +396,10 @@ These are "-style" subsets, not the real languages: code written for the real Lu
 
 | ID | Feature | Status | Open |
 |---|---|---|---|
-| [48.1](feature_map/43-proposals.md#481-crash-reports) | Crash reports | Partial | first step: reuse the editor's handler in the player (report next to the game, plus last Console lines); then an optional upload... |
+| [48.1](feature_map/43-proposals.md#481-crash-reports) | Crash reports | Partial | the editor writes detailed reports and the launcher sends them (scrubbed, default on, after a one-time notice) and makes GitHub issues once the owner runs the table SQL and sets the repository variable `CRASH_ISSUES_ENABLED`; next: reuse the handler in the player; file and line for a stripped release... |
 | [48.2](feature_map/43-proposals.md#482-opt-in-analytics-events) | Opt-in analytics events | Planned | first step: an `Analytics::Event(name, fields)` API that does nothing unless consent is on, writes to a local file first, and a... |
-| [48.3](feature_map/43-proposals.md#483-consent-and-privacy) | Consent and privacy | Planned | first step: a first-run consent dialog component and a settings toggle bound to one Prefs key that all senders check. |
-| [48.4](feature_map/43-proposals.md#484-collection-backend-and-dashboards) | Collection backend and dashboards | Planned | first step: `crash_reports` and `events` tables with row-level security and an upload function that only inserts; a simple web... |
+| [48.3](feature_map/43-proposals.md#483-consent-and-privacy) | Consent and privacy | Partial | crash reports have a switch (on by default) with a disclosure, a one-time notice before the first send and a preview; no general consent dialog component, no switch for analytics events. |
+| [48.4](feature_map/43-proposals.md#484-collection-backend-and-dashboards) | Collection backend and dashboards | Partial | the `crash_reports` table (insert-only) is written and tested locally, not yet on the real project; the `events` table and a web view are not built. | |
 
 ### 49. Cloud services
 

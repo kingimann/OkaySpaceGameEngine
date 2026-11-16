@@ -162,11 +162,16 @@ Recent additions (v2.12–2.14):
   still offered on open when it is newer than the scene; new sessions do not
   write that sidecar.
 - **Crash reports**: if the editor crashes, it saves a report beside the editor
-  executable. The report records what the editor was doing, the error, and a
-  backtrace (Windows, Linux and macOS). The launcher then notifies you and lists
-  every report in **Settings ▸ Crash reports**. From there you can copy a report
-  for support or a Forums post, open the folder, or clear the list. The editor's
-  own **View ▸ Crash Log** shows the same reports.
+  executable. The report records what the editor was doing (the last 64 steps),
+  the error, the OS, CPU, memory and graphics card, the open scene's name, the last
+  200 Console lines and a backtrace (Windows, Linux and macOS). The launcher then
+  notifies you and lists every report in **Settings ▸ Crash reports**. From there
+  you can copy a report for support or a Forums post, preview exactly what would be
+  sent, open a prefilled GitHub issue, open the folder, or clear the list. The
+  launcher also sends each report for you (names, folders, emails and addresses
+  removed first) unless you turn that off there; see
+  [crash_reports.md](crash_reports.md). The editor's own **View ▸ Crash Log**
+  shows the same reports.
 - **Keyframe Animator** — add it from *Animation*, then play/scrub and **Record**
   the transform into keyframe tracks.
 

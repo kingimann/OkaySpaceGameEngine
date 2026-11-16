@@ -185,6 +185,17 @@ Differences that are not by design, or that are worth a second look (counts are 
 
 The full per-file list: run `bench_model_readers --compare` (one tab-separated line per file, `DIFF` and the fields).
 
+## Tests run (Linux, 2026-11-16)
+
+- `ctest -R "model|import|collada|reader|obj|gltf|mesh|anim"` with `OKAY_MODEL_CORPUS` set, in a Release build with
+  `OKAY_USE_ASSIMP=ON`: 104 of 104 passed (`model_corpus`: 3871 checks, 0 failures, 380 read, 34 recorded failing). Five of
+  them (`3mf_reader`, `amf_reader`, `x3d_reader`, `dxf_reader`, `lwo_reader`) failed in such a build before this branch:
+  a check meant for builds without Assimp ran in builds with it; it now runs only when no backend reads the format.
+- Under ASan + UBSan + float-cast-overflow (no Assimp): `model_readers_fuzz`, `collada_reader`, the hostile and mutation
+  tests of every reader changed here (`3ds_bvh_hostile`, `off_hostile`, `smd_hostile`, `md5_hostile`, `ms3d_hostile`,
+  `ase_hostile`, `batchb_hostile` to `batche_hostile`, `pmxlws_hostile`, `terragen_hostile`) and `model_corpus` on the
+  corpus: 15 of 15 passed, no sanitizer report.
+
 ## Not verified
 
 - Windows. Nothing here ran on Windows: not the timings, not the MinGW or MSVC build of `std::from_chars` for floats (the

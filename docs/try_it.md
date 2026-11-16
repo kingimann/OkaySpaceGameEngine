@@ -1445,6 +1445,17 @@ code changed). Compiling the editor and launcher (`EditorState::NewVehicleSeats3
 and the new Console line in `NavigationWindow.cpp` were written by copying neighbouring code and were not compiled).
 Anything on Windows. The NSIS installer and the zip.
 
+## Five starter templates removed from New Project
+
+Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are no longer offered when you create a project. Projects and scenes
+already made from them still open and play, and the scene builders stay in the engine (still tested).
+
+1. Windows launcher: open the **Templates** page (or **Create**, then the New Project wizard). The list now has 17 templates:
+   Coin Collector, Snake, Brick Breaker, Inventory and Humanoid are gone; Main Menu, Platformer, First Person and the rest are still there.
+2. Pick Main Menu (or any other) and create a project: the editor opens with the starter scene.
+3. In the editor, **File > New Project** shows the same list.
+4. Test: `ctest -R templates_work` checks the launcher list, the editor table and the builders agree.
+
 ## How the packaging was checked (and what was not)
 
 * `scripts/build-windows-dist.sh` now copies the `examples\` folders listed in `EXAMPLE_DIRS` (and `grid.png` for the OBJ

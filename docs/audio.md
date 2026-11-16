@@ -134,7 +134,7 @@ session; players set their own (below).
 
 ## Reverb zones
 
-A **Reverb** volume (GameObject > Volume, or Add Component > Volume: Reverb) puts an echo on **3D** sounds while the listener is inside it. 2D sounds, including music and UI, stay dry. There is no echo at all until a Reverb volume exists, so an old scene stays dry.
+A **Reverb** volume (GameObject > Effects > Volume, or Add Component > Volume: Reverb) puts an echo on **3D** sounds while the listener is inside it. 2D sounds, including music and UI, stay dry. There is no echo at all until a Reverb volume exists, so an old scene stays dry.
 
 The echo is a **feedback delay network** (`RoomReverb` in `engine/src/Audio/SpatialFx.cpp`; the old name `SchroederReverb` still works). Eight delay lines feed back into each other through a lossless mixing matrix (an 8 x 8 Hadamard matrix divided by the square root of 8). Each line loses just enough on every pass to fall 60 dB in the decay time the room asks for, and a gentle low-pass in every loop makes high notes die sooner. Two all-pass filters smear a sound before it enters, so a click becomes a soft wash instead of a rattle. Left and right listen to the lines with two different sign patterns, so a wide tail is different in each ear.
 

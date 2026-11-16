@@ -18,7 +18,7 @@ class GameObject;
 
 struct MeshModifier {
     // Append-only: the number is what scenes store.
-    enum class Type { Mirror, Array, Subdivision, Solidify, Bevel, Boolean, Decimate, Displace, Count };
+    enum class Type { Mirror, Array, Subdivision, Solidify, Bevel, Boolean, Decimate, Displace, CurveArray, Count };
     Type type = Type::Mirror;
     bool enabled = true;
     bool showInEditMode = true;   ///< off = hidden while the object is in mesh edit mode
@@ -52,6 +52,11 @@ struct MeshModifier {
     float frequency = 3.0f;
     int   seed = 1;
 
+    // Curve Array: `count` copies placed evenly (by length) along the polyline `path`, in the
+    // object's local space. `align` turns each copy so the mesh's +X axis follows the path.
+    std::vector<Vec3> path;
+    bool  align = true;
+
     static const char* TypeName(Type t);
     static MeshModifier Make(Type t);   ///< sensible settings for a new modifier
 };
@@ -71,8 +76,13 @@ bool ApplyModifier(const Mesh& in, const MeshModifier& mod, const ModifierContex
                    Mesh& out, std::string* error = nullptr);
 /// Run every enabled modifier in order. `errors` gets one entry per modifier
 /// ("" = fine). The result is `base` when nothing is enabled.
+/// `costMs`, if given, gets one entry per modifier: how long it took (0 for a disabled or skipped one).
 Mesh EvaluateModifiers(const Mesh& base, const std::vector<MeshModifier>& stack, const ModifierContext& ctx,
-                       std::vector<std::string>* errors = nullptr);
+                       std::vector<std::string>* errors = nullptr, std::vector<float>* costMs = nullptr);
+
+/// `count` points spaced evenly by length along the polyline (a lone point stays put), each with the
+/// unit direction of the path there. Fewer than two path points give the origin and +X.
+void SamplePath(const std::vector<Vec3>& path, int count, std::vector<Vec3>& pos, std::vector<Vec3>& dir);
 /// A fingerprint of everything that decides a stack's result: the base mesh, the
 /// settings, and each Boolean target's mesh and placement relative to the owner.
 std::uint64_t ModifierInputHash(const Mesh& base, const std::vector<MeshModifier>& stack, const ModifierContext& ctx);

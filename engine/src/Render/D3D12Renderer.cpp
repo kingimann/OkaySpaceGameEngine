@@ -865,7 +865,8 @@ const std::uint32_t* D3D12Renderer::RenderToPixels(const Scene& scene, const Mat
                 p->verts.push_back(pos.x); p->verts.push_back(pos.y); p->verts.push_back(pos.z);
                 p->verts.push_back(nrm.x); p->verts.push_back(nrm.y); p->verts.push_back(nrm.z);
                 p->verts.push_back(uu[k]); p->verts.push_back(vvv[k]);
-                p->verts.push_back(cr); p->verts.push_back(cg); p->verts.push_back(cb);
+                { float vr = 1, vg = 1, vb = 1; if (mesh.HasVertexColors()) { const Color& vc = mesh.vertexColors[idx[k]]; vr = vc.r; vg = vc.g; vb = vc.b; }
+                  p->verts.push_back(cr * vr); p->verts.push_back(cg * vg); p->verts.push_back(cb * vb); }
                 p->verts.push_back(tan.x); p->verts.push_back(tan.y); p->verts.push_back(tan.z);
             }
         }

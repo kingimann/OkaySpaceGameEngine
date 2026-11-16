@@ -129,9 +129,10 @@ is rebuilt. Nothing is lost until you press **Apply**.
 | **Boolean** | Union / Subtract / Intersect with another mesh object (by name), using its *modified* mesh. Moving or editing the cutter updates the result. **Show cutter** hides or shows the cutter object. | object, operation, voxel size |
 | **Decimate** | Merges vertices within cells of the given size. | cell size |
 | **Displace** | Roughens along the normals with noise. | strength, frequency, seed |
+| **Array Along Curve** | Places `count` copies evenly (by length) along a curve you edit as a list of points (presets: Arc, Wave, Helix). Each copy turns so the mesh's +X axis follows the curve (switch **Follow the curve** off to keep them upright). Slots and colours carry to every copy. | count, follow, curve points |
 
-Each modifier has an on/off checkbox and a **...** menu (or right-click its
-name) with **Move Up** / **Move Down**, **Apply** (bake just that one into the
+Each modifier shows how long it took (`0.42 ms`) under its name, has an on/off checkbox and a **...** menu (or right-click its
+name) with **Move Up** / **Move Down**, **Copy** (a second modifier with the same settings right below), **Apply** (bake just that one into the
 base — it runs on the base mesh, as in Blender, so apply from the top) and
 **Remove**. **Show in edit mode** off hides it while you edit the base in Edit
 Mesh, where the base's vertices are shown as a cage over the result. Every
@@ -264,7 +265,10 @@ to the first selected vertex (grab one island of a combined mesh), and
   face's winding consistent with its neighbours and points closed shells
   outward — the one-click fix for dark/inside-out faces after welds,
   bridges, booleans, mirrored halves or imports),
-  **Merge by Distance**, **Duplicate Sel** (copy the selected faces in
+  **Merge by Distance**, **Repair Mesh** (one click: merge doubled vertices,
+  drop collapsed triangles, cap holes, make every face point outward; keeps
+  paint and material slots; the Console says what changed),
+  **Duplicate Sel** (copy the selected faces in
   place, copies stay selected — drag them away).
 - Per-face detailing (Blender's Individual ops): **Poke** fans each face
   from a raised centre (spikes, pyramids, dimples); **Extrude Indiv** pushes
@@ -363,6 +367,74 @@ multiply with the material color, save with the scene, and work on
 primitives without turning them into custom geometry (Symmetry X mirrors
 paint strokes too).
 
+### Model faster: toolbar, right-click, Ctrl+K, repeat, recipes (Edit Mesh)
+
+All of these run the same tools as the buttons (one shared list of commands), so they cannot drift apart.
+
+- **Quick toolbar** (top of the 3D view, under Object / Edit / Vertex / Edge / Face): the most-used tools for the current select mode (faces: Extrude, Inset, Subdivide, Delete, Grow, Select Similar; edges: Bevel, Round, Dissolve; vertices: Grow, Shrink, Merge by Distance; always Repair Mesh), the **Sym X** and **Snap** switches, **Repeat** and **Find**. Greyed-out tools say what to select first when you hover them.
+- **Right-click** in the 3D view (a click, not a drag, which still orbits): the tools that fit the current selection, plus Find and Repeat.
+- **Ctrl+K** (or the Find button, or the Edit Mesh button **Find a Tool**): a searchable list of every modeling command with its shortcut. Type part of a name ("bevel", "extrude", "similar"); Up / Down move, **Enter** runs the highlighted one, Esc closes.
+- **Shift+R** repeats the last tool; the **Recent** line and the **Undo history** list (Edit Mesh > Shortcuts and recent tools) show what you did, and clicking a history step goes back to before it.
+- **Hint bar** (bottom-left of the 3D view): what to do now in the current mode and the keys.
+- **Select** tools: Grow / Shrink (faces and vertices), Select Similar (facing, same plane, area, material slot), Select Up-Facing / Down-Facing, Select Small Faces, plus the existing Select All, Invert, Linked and Loop.
+- **Apply Scale and Rotation** bakes the object's scale and rotation into its mesh (so the sizes in Measure read true); not available when the object has children.
+- **How do I** recipes (they run real tools and are one undo step): **Make a Window Hole** (select wall faces: inset, then delete the middle), **Round Edges** (select edges: a 3-step bevel), **Add a Table** (a new four-legged table in two material slots).
+
+Not built: box, lasso and circle select, X-ray select-through, hide / reveal / isolate, select-loop by double click, Shift+D (use Duplicate Faces then G), instances, join / separate / set pivot / align / distribute as commands (Recenter and Split in two objects exist), quick primitives at the cursor, mirror-edit for Y and Z (only X), "symmetry by default", live mouse-drag extrude / inset (Ctrl+B bevel has it).
+
+### Vertex colours, creases, shrinkwrap, reduce, library (Edit Mesh)
+
+- **Vertex colours (smooth painting).** Paint section > tick **Vertex colours (smooth)**: the brush paints colours onto the vertices (radius, blend and hardness shape it; Symmetry X mirrors it) and the colour blends smoothly across each face. Also **Fill Vertices** (selected vertices or the corners of selected faces), **Smooth Colours**, **Clear Vertex Colours**. They multiply with the face colour and material colour. They are saved in the scene (`meshvcolors`), in `.okaymesh` files (`vcolor i r g b a` lines, only for painted vertices), and survive Weld, Join, Separate, Hide/Reveal, the polygon tools, Subdivision (new points take the average colour of their neighbours), Array and Curve Array. Drawn by the software renderer (flat, smooth, textured and per-pixel paths), OpenGL, Direct3D 11 and Direct3D 12. A tool that adds vertices (extrude, inset) pads the list with white; tools that renumber vertices without going through the polygon mesh may drop the paint (Reduce Polygons does).
+- **Creases for subdivision.** Select edges, set **Crease sharpness** in Edit Mesh, then Ctrl+K > **Set Crease on Selected Edges** (**Clear Crease on Selected Edges** removes it). Creased edges are drawn pink and stay sharp when the Subdivision modifier (or Catmull-Clark) rounds the mesh: a sharpness of 2 stays sharp for two levels, a fraction blends. Saved in the scene (`meshcreases`) and `.okaymesh` (`crease a b w` lines).
+- **Shrinkwrap and snap to surface.** Select the mesh you are editing and Ctrl+click a second mesh object (the surface), then Ctrl+K and type `shrinkwrap` or `snap`: **Snap Selection to Surface** moves the selected vertices to the nearest point of the other object, **Shrinkwrap Whole Mesh to Other Object** does every vertex, **Project Selection Down onto Other Object** drops them straight down. **Surface offset** (Edit Mesh) keeps them off the surface. Uses a grid so big meshes stay fast.
+- **Reduce Polygons (Quality).** Ctrl+K > `reduce`: cuts the triangle count to **Reduce to %** by collapsing the least visible edges (quadric error, keeps borders and UV seams; closed meshes stay closed). The older **Decimate** button merges vertices in cells and is rougher. Material slots and vertex colours are dropped by this tool (per-face colours stay).
+- **Mesh library** (Modeling > Import page): lists every `.okaymesh` under the project's `Assets` folder (with filter, vertex and face counts) and **Add** puts a linked copy in the scene.
+
+### Spin, Extrude Along Path, measuring, snapping (Edit Mesh)
+
+- **Spin** (Edit Mesh, under the edge-loop tools): select edges (a profile you drew), pick the axis, the angle and the steps, press **Spin**. The edges are turned around the axis through the object's origin (or the **Spin centre** point) and every step is filled with faces: a lathe of whatever you selected. 360 deg closes into a ring; a vertex on the axis becomes one point (a cap). If the faces point inward, press **Flip Normals**.
+- **Extrude Along Path**: select faces, pick Straight, Arc, S-Curve or Spiral with a length, a bend and a number of steps, press **Extrude Along Path**. The faces are pushed along a curve that starts in the middle of the selection and heads along its average normal; the face turns with the curve (no twist), walls join each step, and the original faces become the end caps. Slots and colours carry over.
+- **Array Along Curve** is a modifier (see the table above).
+- **Snapping and measuring** (Edit Mesh): **Snap (Ctrl)**, the grid size, the turn step, and **Snap to**: Grid, Vertex, Edge or Face. With Vertex, Edge or Face chosen, a Move (G) sticks the middle of the selection to the nearest vertex, edge point or face point of the mesh within **reach** (a percent of the camera distance); a yellow ring shows where, and the status line says "snapping to Edge". The vertices you are moving never snap to themselves. Below, **Whole mesh** shows width x height x depth (the object's scale included), area and volume, and **Selection** shows what is selected: two vertices give their distance and x/y/z difference, edges their total length, faces their area, any selection its size.
+- **Shortcuts and recent tools**: a list of the keys in the 3D view and the last six tools you used (a reminder list, not buttons).
+- **Material library** and **Palette** (under Material Slots): ready colours (wood, stone, metal, cloth, nature, paint, glass) for the chosen slot, and palettes (House, Castle, Barn, Workshop, Forest, Desert, Winter, Primary) that set several slots at once.
+- **Add to scene as object** (Modeling window, Import page): makes an independent copy of the object next to it with the collider you pick: none, a fitted box, or the exact mesh.
+
+### Material slots
+
+Under Paint, **Material Slots** gives a mesh several named-by-number
+materials (each is a colour) and lets you hand faces to them:
+
+1. Select faces (key 3, then click faces).
+2. Pick a slot (the round button), press **Assign Sel**. The faces take the
+   slot's colour. **+ Slot** adds another slot; the colour box next to a slot
+   recolours every face in it at once; **Select Slot** selects its faces;
+   **Clear Slots** removes them all (and the colours they gave).
+
+Slots live on the mesh (`Mesh::triSlot` per triangle and `Mesh::slotColors`),
+so they survive edit-mode tools, undo (one step per assignment or colour
+drag), the modifier stack (Subdivision, Mirror and the others carry each face's
+slot to its children), scene save/load (`meshslots` / `slotcolors` records) and
+`.okaymesh` files (`slot N r g b a` lines; the `mat k` on a face is the slot).
+Older scenes and `.okaymesh` files have none and load unchanged. All four
+renderers (OpenGL, Direct3D 11, Direct3D 12, software) already draw per-face
+colours, so slots show everywhere without renderer changes.
+
+Changing a slot's colour repaints that slot's faces (it replaces hand-painted colour on them); a face you paint after assigning it keeps its paint through the other tools.
+
+Each slot row also has a **picture path** box: the software renderer draws that
+image on the slot's faces (`MeshRenderer::slotTextures`, saved as a `slottex`
+record, and packaged with the game).
+
+**What slots are not (yet):** a slot is a colour (and, in the software renderer,
+a picture), not a full material. OpenGL, Direct3D 11 and Direct3D 12 show the slot
+colour but not the slot picture; per-slot shaders and separate draw calls per slot
+(real renderer submeshes) are not built; they are listed in `docs/UNFINISHED.md`. A few older
+triangle-level tools (Split by plane, Extrude Individual and similar) rebuild
+triangles without carrying slots; the colours they leave stay, and the faces
+fall back to no slot. Tools that go through the polygon mesh (loop cut,
+bevel, dissolve, bridge, subdivision, mirror) keep them.
+
 ## Import
 
 Load an `.obj` or `.okaymesh` file into the renderer by path (the **Mesh File** field), and one-click **Add Physics**
@@ -394,6 +466,7 @@ f 4 6 7 4 5 uv ...     # optional: per-corner UVs, color r g b a, mat k
 - **Faces:** a face can have any number of corners (quads and n-gons included).
 - **Vertex order:** stays the same when you edit, so vertex 5 is still vertex 5 after a save.
 - **What a face can carry:** per-corner UVs, a face color and a material slot.
+- **Slot colours:** `slot N r g b a` lines (after the faces) give slot N its colour; a face's `mat k` picks the slot. A file without `slot` lines is read as before.
 
 ## How edits are saved
 

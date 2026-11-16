@@ -1,4 +1,6 @@
 #include "okay/Modeling/PolyOps.hpp"
+#include <unordered_map>
+#include <cstdint>
 
 #include <algorithm>
 #include <cmath>
@@ -28,6 +30,13 @@ Vec2 UVOf(const PolyFace& f, int v) {
 }
 Vec2 Lerp2(const Vec2& a, const Vec2& b, float t) { return Vec2{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t}; }
 Vec3 Lerp3(const Vec3& a, const Vec3& b, float t) { return a + (b - a) * t; }
+// Edges whose two ends are real, different vertices (a hand-built or stale selection can name ones that are not).
+EdgeList ValidEdges(const PolyMesh& pm, const EdgeList& in) {
+    EdgeList out;
+    for (const auto& e : in) if (e.first >= 0 && e.second >= 0 && e.first < (int)pm.verts.size() && e.second < (int)pm.verts.size() && e.first != e.second) out.push_back(e);
+    return out;
+}
+
 
 // Remove repeated corners and back-and-forth spikes (x v x) left by merging faces.
 void CleanFace(PolyFace& f) {
@@ -272,6 +281,7 @@ std::vector<EdgeChain> OrderChains(const EdgeList& edges) {
 
 // ---------------------------------------------------------------------------
 EdgeList LoopCut(PolyMesh& pm, int a, int b, int cuts, float position) {
+    if (!std::isfinite(position)) return {};
     if (cuts < 1) cuts = 1;
     PolyTopology T(pm);
     const Ring r = RingWalk(pm, T, a, b);
@@ -342,6 +352,7 @@ EdgeList LoopCut(PolyMesh& pm, int a, int b, int cuts, float position) {
 
 // ---------------------------------------------------------------------------
 int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vector<Vec3>* from) {
+    if (!std::isfinite(amount)) return 0;
     const std::vector<Vec3> start = from ? *from : pm.verts;
     if (start.size() < pm.verts.size()) return 0;
     const float t = std::clamp(std::fabs(amount), 0.0f, 1.0f);
@@ -379,16 +390,105 @@ int EdgeSlide(PolyMesh& pm, const EdgeList& loop, float amount, const std::vecto
 
 // ---------------------------------------------------------------------------
 int DissolveEdges(PolyMesh& pm, const EdgeList& edges, bool cleanVerts) {
+    // Works on a directed-edge -> face table kept up to date as faces merge, so the cost
+    // grows with the number of edges, not edges x faces (audit: dissolving every edge of a
+    // 100k-triangle mesh took minutes with the old whole-mesh scan per edge).
+    const int nv = (int)pm.verts.size();
+    auto key = [&](int a, int b) { return (std::int64_t)a * (nv + 1) + b; };
+    std::unordered_map<std::int64_t, int> owner;
+    owner.reserve(pm.faces.size() * 4);
+    for (int f = 0; f < (int)pm.faces.size(); ++f) {
+        const PolyFace& F = pm.faces[f];
+        for (int k = 0; k < F.Size(); ++k) {
+            const int a = F.verts[k], b = F.verts[(k + 1) % F.Size()];
+            if (a >= 0 && b >= 0 && a < nv && b < nv) owner[key(a, b)] = f;
+        }
+    }
+    std::vector<char> dead(pm.faces.size(), 0);
+    auto find = [&](int a, int b) {
+        if (a < 0 || b < 0 || a >= nv || b >= nv) return -1;
+        auto it = owner.find(key(a, b));
+        if (it == owner.end() || dead[it->second] || !Runs(pm.faces[it->second], a, b)) return -1;
+        return it->second;
+    };
     int done = 0;
     std::set<int> ends;
-    for (const auto& e : edges)
-        if (MergeAcross(pm, e.first, e.second)) { ++done; ends.insert(e.first); ends.insert(e.second); }
-    if (cleanVerts) {
-        // A vertex left with two edges sits in the middle of a side: take it out.
-        for (int v : ends) {
-            PolyTopology T(pm);
-            if (T.Neighbours(v).size() == 2) RemoveVertexFromFaces(pm, v);
+    for (const auto& e : edges) {
+        const int f0 = find(e.first, e.second), f1 = find(e.second, e.first);
+        if (f0 < 0 || f1 < 0 || f0 == f1) continue;
+        PolyFace A = pm.faces[f0];
+        const PolyFace B = pm.faces[f1];
+        const int a = e.first, b = e.second;
+        const bool uv = HasUV(A) && HasUV(B);
+        PolyFace m;
+        m.material = A.material; m.hasColor = A.hasColor; m.color = A.color;
+        const int ib = CornerIn(A, b), n = A.Size();
+        for (int k = 0; k < n; ++k) {
+            const int c = (ib + k) % n;
+            m.verts.push_back(A.verts[c]);
+            if (uv) m.uvs.push_back(A.uvs[c]);
         }
+        const int ia = CornerIn(B, a), nb = B.Size();
+        for (int k = 1; k < nb - 1; ++k) {
+            const int c = (ia + k) % nb;
+            m.verts.push_back(B.verts[c]);
+            if (uv) m.uvs.push_back(B.uvs[c]);
+        }
+        CleanFace(m);
+        if (m.Size() < 3) continue;       // the two faces together enclose nothing: keep them
+        dead[f1] = 1;
+        pm.faces[f0] = m;
+        for (int k = 0; k < m.Size(); ++k) owner[key(m.verts[k], m.verts[(k + 1) % m.Size()])] = f0;
+        ++done; ends.insert(a); ends.insert(b);
+    }
+    {
+        std::vector<PolyFace> kept;
+        kept.reserve(pm.faces.size());
+        for (int f = 0; f < (int)pm.faces.size(); ++f) if (!dead[f]) kept.push_back(std::move(pm.faces[f]));
+        pm.faces = std::move(kept);
+    }
+    if (cleanVerts && done > 0) {
+        // A vertex left with two edges sits in the middle of a side: take it out, as long as
+        // every face around it keeps at least three corners (so dissolving can never erase
+        // the whole mesh; audit: 4 edges of a cube used to leave 0 faces).
+        std::unordered_map<int, std::vector<int>> vf;      // faces around each end vertex
+        std::unordered_map<int, std::set<int>> nbr;
+        for (int f = 0; f < (int)pm.faces.size(); ++f) {
+            const PolyFace& F = pm.faces[f];
+            for (int k = 0; k < F.Size(); ++k) {
+                const int v = F.verts[k];
+                if (!ends.count(v)) continue;
+                vf[v].push_back(f);
+                nbr[v].insert(F.verts[(k + 1) % F.Size()]);
+                nbr[v].insert(F.verts[(k + F.Size() - 1) % F.Size()]);
+            }
+        }
+        std::vector<char> gone(pm.faces.size(), 0);
+        for (int v : ends) {
+            auto it = nbr.find(v);
+            if (it == nbr.end() || it->second.size() != 2) continue;
+            bool ok = true;
+            for (int f : vf[v]) if (gone[f] || pm.faces[f].Size() <= 3) ok = false;
+            if (!ok) continue;
+            const int p = *it->second.begin(), q = *it->second.rbegin();
+            for (int f : vf[v]) {
+                PolyFace& F = pm.faces[f];
+                const bool uv = HasUV(F);
+                for (int i = F.Size() - 1; i >= 0; --i)
+                    if (F.verts[i] == v) { F.verts.erase(F.verts.begin() + i); if (uv) F.uvs.erase(F.uvs.begin() + i); }
+                CleanFace(F);
+                if (F.Size() < 3) gone[f] = 1;
+            }
+            for (int w : {p, q}) {
+                auto nw = nbr.find(w);
+                if (nw == nbr.end()) continue;
+                nw->second.erase(v);
+                nw->second.insert(w == p ? q : p);
+            }
+        }
+        std::vector<PolyFace> kept;
+        for (int f = 0; f < (int)pm.faces.size(); ++f) if (!gone[f]) kept.push_back(std::move(pm.faces[f]));
+        pm.faces = std::move(kept);
     }
     return done;
 }
@@ -419,7 +519,7 @@ int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error) {
     PolyTopology T(pm);
     for (const auto& e : edges)
         if (!T.IsBoundary(e.first, e.second)) return fail("Bridge needs edges on an open border of the mesh (select the rims of two holes or tube ends).");
-    std::vector<EdgeChain> chains = OrderChains(edges);
+    std::vector<EdgeChain> chains = OrderChains(ValidEdges(pm, edges));
     if (chains.size() != 2) return fail("Select exactly two separate edge loops to bridge.");
     EdgeChain A = chains[0], B = chains[1];
     if (A.closed != B.closed) return fail("Both loops need to be closed, or both open.");
@@ -456,11 +556,18 @@ int BridgeEdgeLoops(PolyMesh& pm, const EdgeList& edges, std::string* error) {
 
 // ---------------------------------------------------------------------------
 int SplitEdge(PolyMesh& pm, int a, int b, float t) {
+    if (!std::isfinite(t)) return -1;
     bool any = false;
     for (const PolyFace& f : pm.faces) if (Runs(f, a, b) || Runs(f, b, a)) any = true;
     if (!any) return -1;
     const int nv = (int)pm.verts.size();
     pm.verts.push_back(Lerp3(pm.verts[a], pm.verts[b], t));
+    if (!pm.vertColors.empty()) {                       // the new vertex blends its two neighbours' colours
+        pm.vertColors.resize(nv, Color{1, 1, 1, 1});
+        const Color ca = a < (int)pm.vertColors.size() ? pm.vertColors[a] : Color{1, 1, 1, 1};
+        const Color cb = b < (int)pm.vertColors.size() ? pm.vertColors[b] : Color{1, 1, 1, 1};
+        pm.vertColors.push_back(Color{ca.r + (cb.r - ca.r) * t, ca.g + (cb.g - ca.g) * t, ca.b + (cb.b - ca.b) * t, ca.a + (cb.a - ca.a) * t});
+    }
     if (pm.IsSeam(a, b)) { pm.SetSeam(a, b, false); pm.SetSeam(a, nv, true); pm.SetSeam(nv, b, true); }
     for (PolyFace& f : pm.faces) {
         const bool ab = Runs(f, a, b), ba = Runs(f, b, a);
@@ -562,7 +669,7 @@ EdgeList KnifeCut(PolyMesh& pm, const std::vector<KnifePoint>& points, std::stri
 // ---------------------------------------------------------------------------
 int BevelEdges(PolyMesh& pm, const EdgeList& edgesIn, float width, std::string* error, int segments, float profile) {
     auto fail = [&](const std::string& why) { if (error) *error = why; return 0; };
-    if (width <= 0) return fail("Bevel width must be more than 0.");
+    if (!(width > 0) || !std::isfinite(width)) return fail("Bevel width must be a number more than 0.");
     segments = std::clamp(segments, 1, 64);
     profile = std::clamp(profile, 0.0f, 1.0f);
     PolyTopology T(pm);
@@ -839,7 +946,7 @@ void OrientAgainstNeighbours(const PolyMesh& pm, std::vector<int>& vs) {
 int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
     auto fail = [&](const char* why) { if (error) *error = why; return 0; };
     PolyTopology T(pm);
-    std::vector<EdgeChain> chains = OrderChains(edges);
+    std::vector<EdgeChain> chains = OrderChains(ValidEdges(pm, edges));
     if (chains.empty()) return fail("Select the edges round a hole (or a chain of three or more vertices).");
     const bool uv = MeshHasUV(pm);
     int made = 0;
@@ -865,7 +972,7 @@ int FillFaces(PolyMesh& pm, const EdgeList& edges, std::string* error) {
 int GridFill(PolyMesh& pm, const EdgeList& edges, int span, std::string* error) {
     auto fail = [&](const std::string& why) { if (error) *error = why; return 0; };
     PolyTopology T(pm);
-    std::vector<EdgeChain> chains = OrderChains(edges);
+    std::vector<EdgeChain> chains = OrderChains(ValidEdges(pm, edges));
     if (chains.size() != 1 || !chains[0].closed) return fail("Grid Fill needs one closed loop of edges round a hole.");
     std::vector<int> L = chains[0].verts;
     const int n = (int)L.size();
@@ -931,7 +1038,7 @@ int GridFill(PolyMesh& pm, const EdgeList& edges, int span, std::string* error) 
 }
 
 int MergeVerts(PolyMesh& pm, const std::vector<int>& verts, const Vec3& at) {
-    if (verts.size() < 2) return 0;
+    if (verts.size() < 2 || !std::isfinite(at.x + at.y + at.z)) return 0;
     const int keep = verts[0];
     if (keep < 0 || keep >= (int)pm.verts.size()) return 0;
     std::set<int> gone(verts.begin() + 1, verts.end());
@@ -956,6 +1063,11 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
     for (std::size_t i = 0; i < pm.verts.size(); ++i)
         if (used[i]) { remap[i] = (int)kept.size(); kept.push_back(pm.verts[i]); }
     pm.verts = std::move(kept);
+    if (!pm.vertColors.empty()) {                       // the colours follow their vertices
+        std::vector<Color> vc;
+        for (std::size_t i = 0; i < used.size(); ++i) if (used[i]) vc.push_back(i < pm.vertColors.size() ? pm.vertColors[i] : Color{1, 1, 1, 1});
+        pm.vertColors = std::move(vc);
+    }
     for (PolyFace& f : pm.faces) for (int& v : f.verts) v = remap[v];
     std::vector<std::pair<int, int>> seams;
     for (const auto& e : pm.seams) {
@@ -964,6 +1076,15 @@ std::vector<int> CompactVerts(PolyMesh& pm) {
         if (a >= 0 && b >= 0 && a != b) seams.push_back(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
     }
     pm.seams = std::move(seams);
+    {
+        std::vector<EdgeCrease> cr;
+        for (const EdgeCrease& c : pm.creases) {
+            if (c.a < 0 || c.b < 0 || c.a >= (int)remap.size() || c.b >= (int)remap.size()) continue;
+            const int a = remap[c.a], b = remap[c.b];
+            if (a >= 0 && b >= 0 && a != b) cr.push_back({std::min(a, b), std::max(a, b), c.w});
+        }
+        pm.creases = std::move(cr);
+    }
     return remap;
 }
 
@@ -1010,6 +1131,8 @@ PolyMesh CatmullClarkOnce(const PolyMesh& pm) {
             edgePt[e] = (pm.verts[ed.a] + pm.verts[ed.b] + facePt[ed.faces[0]] + facePt[ed.faces[1]]) * 0.25f;
         else
             edgePt[e] = mid;
+        const float cw = std::clamp(pm.CreaseOf(ed.a, ed.b), 0.0f, 1.0f);   // a creased edge is cut at its middle: the crease stays sharp
+        if (cw > 0.0f) edgePt[e] = edgePt[e] + (mid - edgePt[e]) * cw;
     }
     // Vertex points.
     std::vector<std::vector<int>> vEdges(nv), vFaces(nv);
@@ -1042,17 +1165,51 @@ PolyMesh CatmullClarkOnce(const PolyMesh& pm) {
         R = R * (1.0f / (float)vEdges[v].size());
         vertPt[v] = (F + R * 2.0f + P * (n - 3.0f)) * (1.0f / n);
     }
+    // Creases: a vertex on two creased edges slides along the crease (1/8, 3/4, 1/8); on three or more it is a corner and stays.
+    if (!pm.creases.empty()) {
+        for (int v = 0; v < nv; ++v) {
+            std::vector<std::pair<int, float>> cs;                       // (the other end, its sharpness)
+            for (int e : vEdges[v]) {
+                const float w = pm.CreaseOf(edges[e].a, edges[e].b);
+                if (w > 0.0f) cs.push_back({edges[e].a == v ? edges[e].b : edges[e].a, std::min(w, 1.0f)});
+            }
+            if (cs.size() < 2) continue;
+            const Vec3& P = pm.verts[v];
+            Vec3 target = P; float k = 1.0f;
+            if (cs.size() == 2) { target = P * 0.75f + (pm.verts[cs[0].first] + pm.verts[cs[1].first]) * 0.125f; k = std::min(cs[0].second, cs[1].second); }
+            else for (const auto& c : cs) k = std::min(k, c.second);
+            vertPt[v] = vertPt[v] + (target - vertPt[v]) * k;
+        }
+    }
     // New mesh: original verts (moved), then edge points, then face points.
     PolyMesh out;
     out.verts = vertPt;
+    out.slotColors = pm.slotColors;
+    const bool vcol = !pm.vertColors.empty();
+    auto vcOf = [&](int v) { return v < (int)pm.vertColors.size() ? pm.vertColors[v] : Color{1, 1, 1, 1}; };
+    if (vcol) { out.vertColors.assign(out.verts.size(), Color{1, 1, 1, 1}); for (int v = 0; v < nv; ++v) out.vertColors[v] = vcOf(v); }
     const int edgeBase = (int)out.verts.size();
     out.verts.insert(out.verts.end(), edgePt.begin(), edgePt.end());
+    for (std::size_t e = 0; e < edges.size(); ++e) {      // each level uses up one unit of sharpness; the halves of the edge keep what is left
+        const float w = pm.CreaseOf(edges[e].a, edges[e].b) - 1.0f;
+        if (w > 0.0f) { out.SetCrease(edges[e].a, edgeBase + (int)e, w); out.SetCrease(edgeBase + (int)e, edges[e].b, w); }
+    }
+    if (vcol) for (const auto& ed : edges) {            // an edge point is halfway between its ends' colours
+        const Color a = vcOf(ed.a), b = vcOf(ed.b);
+        out.vertColors.push_back(Color{(a.r + b.r) * 0.5f, (a.g + b.g) * 0.5f, (a.b + b.b) * 0.5f, (a.a + b.a) * 0.5f});
+    }
     const int faceBase = (int)out.verts.size();
     std::vector<int> faceIdx(pm.faces.size(), -1);
     for (int f = 0; f < (int)pm.faces.size(); ++f) {
         if (!faceOk[f]) continue;
         faceIdx[f] = (int)out.verts.size();
         out.verts.push_back(facePt[f]);
+        if (vcol) {                                      // a face point takes the average colour of its corners
+            float r = 0, g = 0, b = 0, a = 0;
+            for (int v : pm.faces[f].verts) { const Color c = vcOf(v); r += c.r; g += c.g; b += c.b; a += c.a; }
+            const float k = 1.0f / (float)pm.faces[f].verts.size();
+            out.vertColors.push_back(Color{r * k, g * k, b * k, a * k});
+        }
     }
     (void)faceBase;
     auto edgeIndex = [&](int a, int b) {
@@ -1089,6 +1246,135 @@ PolyMesh CatmullClark(const PolyMesh& pm, int levels) {
     PolyMesh cur = pm;
     for (int i = 0; i < levels; ++i) cur = CatmullClarkOnce(cur);
     return cur;
+}
+
+// ---------------------------------------------------------------------------
+int SpinEdges(PolyMesh& pm, const EdgeList& edges, const Vec3& center, const Vec3& axis, float angleDegrees,
+              int steps, std::string* error, bool merge) {
+    auto fail = [&](const char* why) { if (error) *error = why; return 0; };
+    if (edges.empty()) return fail("Select some edges to spin first.");
+    if (!(axis.SqrMagnitude() > 1e-12f) || !std::isfinite(axis.x + axis.y + axis.z)) return fail("The spin axis has no direction.");
+    if (!std::isfinite(angleDegrees) || std::fabs(angleDegrees) < 1e-3f) return fail("The angle is zero.");
+    if (!std::isfinite(center.x + center.y + center.z)) return fail("The spin centre is not a number.");
+    steps = std::clamp(steps, 1, 512);
+    const int nv = (int)pm.verts.size();
+    std::vector<int> used;                            // the vertices the edges touch, in order
+    std::map<int, int> slot;
+    for (const auto& e : edges) {
+        if (e.first < 0 || e.second < 0 || e.first >= nv || e.second >= nv || e.first == e.second) continue;
+        for (int v : {e.first, e.second}) if (!slot.count(v)) { slot[v] = (int)used.size(); used.push_back(v); }
+    }
+    if (used.empty()) return fail("None of the selected edges exist.");
+    const bool full = std::fabs(angleDegrees) >= 359.999f;
+    const int rings = full ? steps : steps + 1;       // ring 0 is the original vertices
+    const Vec3 ax = axis.Normalized();
+    const float stepRad = (full ? (angleDegrees < 0 ? -6.28318530718f : 6.28318530718f) : angleDegrees * 0.01745329252f) / (float)steps;
+    // ring[r][k]: vertex index of used[k] at step r. A vertex on the axis does not move: it is kept as one vertex.
+    std::vector<std::vector<int>> ring((std::size_t)rings, std::vector<int>(used.size(), -1));
+    for (std::size_t k = 0; k < used.size(); ++k) ring[0][k] = used[k];
+    for (int r = 1; r < rings; ++r) {
+        const Quat q = Quat::AngleAxis(stepRad * (float)r * 57.29577951f, ax);
+        for (std::size_t k = 0; k < used.size(); ++k) {
+            const Vec3 rel = pm.verts[used[k]] - center;
+            const Vec3 along = ax * Vec3::Dot(rel, ax);
+            const bool onAxis = (rel - along).SqrMagnitude() < 1e-10f;
+            if (merge && onAxis) { ring[r][k] = used[k]; continue; }
+            ring[r][k] = (int)pm.verts.size();
+            pm.verts.push_back(center + along + q * (rel - along));
+        }
+    }
+    int made = 0;
+    for (const auto& e : edges) {
+        auto ia = slot.find(e.first), ib = slot.find(e.second);
+        if (ia == slot.end() || ib == slot.end()) continue;
+        for (int r = 0; r < steps; ++r) {
+            const int r2 = (r + 1) % rings;
+            const int a0 = ring[r][ia->second], b0 = ring[r][ib->second];
+            const int a1 = ring[r2][ia->second], b1 = ring[r2][ib->second];
+            PolyFace f;
+            for (int v : {a0, a1, b1, b0}) if (f.verts.empty() || f.verts.back() != v) f.verts.push_back(v);
+            if (f.verts.size() > 1 && f.verts.front() == f.verts.back()) f.verts.pop_back();
+            if (f.verts.size() < 3) continue;           // collapsed onto the axis
+            pm.faces.push_back(f);
+            ++made;
+        }
+    }
+    if (made == 0) return fail("The spin made no faces (the edges lie on the axis).");
+    return made;
+}
+
+// ---------------------------------------------------------------------------
+int ExtrudeAlongPath(PolyMesh& pm, const std::vector<int>& faces, const std::vector<Vec3>& path, std::string* error) {
+    auto fail = [&](const char* why) { if (error) *error = why; return 0; };
+    if (path.size() < 2) return fail("The path needs at least two points.");
+    for (const Vec3& q : path) if (!std::isfinite(q.x + q.y + q.z)) return fail("A point of the path is not a number.");
+    std::vector<int> sel;
+    for (int f : faces) if (f >= 0 && f < (int)pm.faces.size() && std::find(sel.begin(), sel.end(), f) == sel.end()) sel.push_back(f);
+    if (sel.empty()) return fail("Select some faces to extrude first.");
+    // Directed edges of the selection that have no partner inside it are the walls.
+    std::set<std::pair<int, int>> directed;
+    std::vector<int> used;
+    std::map<int, int> slot;
+    Vec3 centre{0, 0, 0};
+    for (int f : sel) {
+        const PolyFace& F = pm.faces[f];
+        for (int k = 0; k < F.Size(); ++k) {
+            const int a = F.verts[k], b = F.verts[(k + 1) % F.Size()];
+            directed.insert({a, b});
+            if (!slot.count(a)) { slot[a] = (int)used.size(); used.push_back(a); centre += pm.verts[a]; }
+        }
+    }
+    centre = centre * (1.0f / (float)used.size());
+    // Step transforms: the path's first segment is the starting direction; each later segment
+    // turns the face by the smallest rotation from the previous direction (parallel transport).
+    std::vector<Vec3> dir;
+    for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+        Vec3 d = path[i + 1] - path[i];
+        dir.push_back(d.SqrMagnitude() < 1e-12f ? (dir.empty() ? Vec3{0, 1, 0} : dir.back()) : d.Normalized());
+    }
+    Vec3 nsum{0, 0, 0};
+    for (int f : sel) nsum += pm.FaceNormal(f);
+    const bool againstNormal = Vec3::Dot(nsum, dir[0]) < 0.0f;   // pushing into the face: walls must turn round
+    const int K = (int)path.size() - 1;                 // number of new rings
+    std::vector<std::vector<int>> ring((std::size_t)K + 1, std::vector<int>(used.size(), -1));
+    for (std::size_t k = 0; k < used.size(); ++k) ring[0][k] = used[k];
+    Quat acc = Quat::Identity;
+    Vec3 prev = dir[0];
+    for (int r = 1; r <= K; ++r) {
+        // The ring at path point r turns by the average of the segments around it (a mitre).
+        Vec3 d = dir[r - 1];
+        if (r < K) { Vec3 m = dir[r - 1] + dir[r]; if (m.SqrMagnitude() > 1e-9f) d = m.Normalized(); }
+        acc = Quat::FromToRotation(dir[0], d);
+        (void)prev;
+        for (std::size_t k = 0; k < used.size(); ++k) {
+            const Vec3 rel = pm.verts[used[k]] - centre;
+            ring[r][k] = (int)pm.verts.size();
+            pm.verts.push_back(centre + (path[r] - path[0]) + acc * rel);
+        }
+    }
+    int made = 0;
+    for (int f : sel) {
+        const PolyFace F = pm.faces[f];
+        for (int k = 0; k < F.Size(); ++k) {
+            const int a = F.verts[k], b = F.verts[(k + 1) % F.Size()];
+            if (directed.count({b, a})) continue;       // shared with another selected face: no wall
+            for (int r = 0; r < K; ++r) {
+                PolyFace w;
+                w.verts = {ring[r][slot[a]], ring[r][slot[b]], ring[r + 1][slot[b]], ring[r + 1][slot[a]]};
+                if (againstNormal) std::reverse(w.verts.begin(), w.verts.end());
+                w.material = F.material; w.hasColor = F.hasColor; w.color = F.color;
+                pm.faces.push_back(w);
+                ++made;
+            }
+        }
+    }
+    // The selected faces become the end caps.
+    for (int f : sel) {
+        PolyFace& F = pm.faces[f];
+        for (int& v : F.verts) v = ring[K][slot[v]];
+        F.uvs.clear();                                  // stretched caps keep no stale UVs
+    }
+    return made + (int)sel.size();
 }
 
 } // namespace okay::modeling

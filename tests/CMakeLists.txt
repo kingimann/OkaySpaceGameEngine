@@ -2204,6 +2204,17 @@ add_executable(test_guided_characters test_guided_characters.cpp)
 target_link_libraries(test_guided_characters PRIVATE okay::engine)
 add_test(NAME guided_characters COMMAND test_guided_characters)
 
+# Modeling "more": per-face material slots, dissolve fixes (docs/modeling_audit.md)
+add_executable(test_modeling_more test_modeling_more.cpp)
+target_link_libraries(test_modeling_more PRIVATE okay::engine)
+add_test(NAME modeling_more COMMAND test_modeling_more)
+add_executable(test_modeling_more_scene test_modeling_more_scene.cpp)
+target_link_libraries(test_modeling_more_scene PRIVATE okay::engine)
+add_test(NAME modeling_more_scene COMMAND test_modeling_more_scene)
+add_executable(test_modeling_fuzz test_modeling_fuzz.cpp)
+target_link_libraries(test_modeling_fuzz PRIVATE okay::engine)
+add_test(NAME modeling_fuzz COMMAND test_modeling_fuzz)
+
 # Robustness: Mesh::PropRand without signed overflow (UBSan), same values
 add_executable(test_mesh_variant_hash test_mesh_variant_hash.cpp)
 target_link_libraries(test_mesh_variant_hash PRIVATE okay::engine)

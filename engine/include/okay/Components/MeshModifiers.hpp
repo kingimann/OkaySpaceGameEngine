@@ -43,6 +43,9 @@ public:
     bool editCage = false;
     /// Runtime: per modifier, why it failed last time ("" = fine).
     std::vector<std::string> errors;
+    /// Runtime: per modifier, how many milliseconds it took the last time the stack ran
+    /// (0 = off or not run yet). The Inspector shows it next to each modifier.
+    std::vector<float> costMs;
 
     void Start() override { Refresh(); }
     void Update(float) override { Refresh(); }
@@ -59,6 +62,7 @@ public:
         for (const auto& m : modifiers) if (m.enabled && (!editCage || m.showInEditMode)) { any = true; break; }
         if (!enabled || !any) {
             errors.assign(modifiers.size(), std::string());
+            costMs.assign(modifiers.size(), 0.0f);
             m_hash = 0;
             if (force) mr->modifiedHash = 0;
             return RefreshSeamSplit(*mr);
@@ -71,8 +75,8 @@ public:
         // Re-evaluate into the same Mesh object: renderers cache GPU buffers per mesh
         // object, so a fresh allocation every change would pile up stale buffers.
         // A welded mesh with per-corner UVs (edit mode) is split at its seams first.
-        Mesh result = mr->mesh.HasCornerUVs() ? EvaluateModifiers(mr->mesh.SplitCornerUVs(), modifiers, ctx, &errors)
-                                              : EvaluateModifiers(mr->mesh, modifiers, ctx, &errors);
+        Mesh result = mr->mesh.HasCornerUVs() ? EvaluateModifiers(mr->mesh.SplitCornerUVs(), modifiers, ctx, &errors, &costMs)
+                                              : EvaluateModifiers(mr->mesh, modifiers, ctx, &errors, &costMs);
         if (mr->modifiedMesh) *mr->modifiedMesh = std::move(result);
         else mr->modifiedMesh = std::make_shared<Mesh>(std::move(result));
         return true;
@@ -98,6 +102,13 @@ public:
         mr->mesh = EvaluateModifiers(mr->mesh, modifiers, ctx, &errors);
         modifiers.clear();
         Refresh(true);
+    }
+    /// Copy modifier `index` (same settings) and put the copy right after it. Returns its index, or -1.
+    int Duplicate(int index) {
+        if (index < 0 || index >= (int)modifiers.size()) return -1;
+        MeshModifier copy = modifiers[index];
+        modifiers.insert(modifiers.begin() + index + 1, copy);
+        return index + 1;
     }
     void Move(int from, int to) {
         if (from < 0 || to < 0 || from >= (int)modifiers.size() || to >= (int)modifiers.size() || from == to) return;

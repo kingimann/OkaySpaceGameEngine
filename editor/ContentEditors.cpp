@@ -1211,13 +1211,19 @@ void ContentAddItem(EditorState& ed) {
     SaveTab(ed, 0, false);
 }
 
-void ContentCreateLoot(EditorState& ed) {
+void ContentCreateLoot(EditorState& ed, const std::string& inFolder) {
     g_showItemDatabase = true;
     s_forceTab = 1;
-    const fs::path dir = SaveDir(ed);
+    const fs::path dir = inFolder.empty() ? SaveDir(ed) : fs::path(fs::u8path(inFolder));
+    std::error_code dirErr;
     if (dir.empty()) {
         ConsoleLog("Open a project before adding a loot table.", 1);
         s_status = "Open a project to add a loot table.";
+        return;
+    }
+    if (!fs::is_directory(dir, dirErr)) {
+        ConsoleLog("Can't add a loot table: the folder is not there any more.", 1);
+        s_status = "That folder is not there any more.";
         return;
     }
     const std::string path = UniquePath(dir, "Loot Table", ".okayloot");
@@ -1249,13 +1255,19 @@ void ContentCreateLoot(EditorState& ed) {
     s_status = "Saved " + ShortPath(ed, s_lootPath);
 }
 
-void ContentCreateRecipe(EditorState& ed) {
+void ContentCreateRecipe(EditorState& ed, const std::string& inFolder) {
     g_showItemDatabase = true;
     s_forceTab = 2;
-    const fs::path dir = SaveDir(ed);
+    const fs::path dir = inFolder.empty() ? SaveDir(ed) : fs::path(fs::u8path(inFolder));
+    std::error_code dirErr;
     if (dir.empty()) {
         ConsoleLog("Open a project before adding a recipe book.", 1);
         s_status = "Open a project to add a recipe book.";
+        return;
+    }
+    if (!fs::is_directory(dir, dirErr)) {
+        ConsoleLog("Can't add a recipe book: the folder is not there any more.", 1);
+        s_status = "That folder is not there any more.";
         return;
     }
     const std::string path = UniquePath(dir, "Recipe Book", ".okayrecipes");

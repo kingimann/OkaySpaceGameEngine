@@ -23,8 +23,11 @@ void OpenContentFile(const std::string& path);
 void OpenContentTab(int tab);
 // + New Item, the same action as the Items tab and the Project panel's Item command.
 void ContentAddItem(okay::editor::EditorState& ed);
-void ContentCreateLoot(okay::editor::EditorState& ed);
-void ContentCreateRecipe(okay::editor::EditorState& ed);
+// Make a loot table / recipe book file and open it in the Items window. `inFolder` is the folder to make it in (the Project panel
+// passes the folder whose menu was used); empty means the project's Assets folder. The name is "Loot Table" / "Recipe Book",
+// numbered when taken; there is no name prompt (rename it in the Project panel with F2).
+void ContentCreateLoot(okay::editor::EditorState& ed, const std::string& inFolder = std::string());
+void ContentCreateRecipe(okay::editor::EditorState& ed, const std::string& inFolder = std::string());
 
 // Dev screenshots: OKAY_UI_CONTENT=1 (or OKAY_UI_ITEMS=1) opens the window,
 // OKAY_UI_CONTENT_TAB=0|1|2 picks a tab, OKAY_UI_CONTENT_DIR is a folder of sample files.

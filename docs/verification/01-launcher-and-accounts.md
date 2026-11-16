@@ -195,7 +195,7 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
     - 17.13 Play page: library, web games, collections, playtime [Works].
     - 17.14 Official game: install, update, publish [Works]. Where: File > Build Settings (Windows) builds the folder that gets published
     - 17.15 Multiplayer page and game link [Works].
-    - 17.16 Crash reports (launcher side) [Works]. Where: the editor writes the reports (15.9)
+    - 17.16 Crash reports (launcher side) [Partial]. Where: the editor writes the reports (15.9, 22.3.2)
     - 17.17 Platform layer ('okay::platform') and the own backend [Works].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
   - **Known gaps:** see [docs/feature_map/17-launcher-platform.md](../feature_map/17-launcher-platform.md) (area 17, sections 17.1, 17.2, 17.3, 17.4, 17.5, 17.6, 17.7, 17.8, 17.9, 17.10, 17.11, 17.12, 17.13, 17.14, 17.15, 17.16, 17.17): the Open line of each section. Not copied here so it cannot go stale.
@@ -213,13 +213,15 @@ Areas: 17, 25, 48, 49. Rows ids start `V-LA-`. `V-LA-S<area>` rows are smoke tes
   - **Not built yet (skip):** 25.4
 
 - [ ] **V-LA-S48** Area 48: Crash reporting and telemetry (smoke test, steps unverified)
-  - **Map:** [48](../feature_map/43-proposals.md), 4 sub-areas, 1 built.
+  - **Map:** [48](../feature_map/43-proposals.md), 4 sub-areas, 3 built.
   - **Steps:** (steps unverified: taken from the map, not clicked) open the program or window named for each sub-area below and try its main action.
     - 48.1 Crash reports [Partial]. Where: View > Crash Log
+    - 48.3 Consent and privacy [Partial].
+    - 48.4 Collection backend and dashboards [Partial].
   - **You should see:** each listed thing opens and does what its name says (expected, not yet seen on Windows).
-  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 48, sections 48.1): the Open line of each section. Not copied here so it cannot go stale.
+  - **Known gaps:** see [docs/feature_map/43-proposals.md](../feature_map/43-proposals.md) (area 48, sections 48.1, 48.3, 48.4): the Open line of each section. Not copied here so it cannot go stale.
   - **Ask me like:** "add a crash handler and report file to the player"; "add a Send report button with the last log lines"
-  - **Not built yet (skip):** 48.2, 48.3, 48.4
+  - **Not built yet (skip):** 48.2
 
 - [ ] **V-LA-S49** Area 49: Cloud services (smoke test, steps unverified)
   - **Map:** [49](../feature_map/43-proposals.md), 4 sub-areas, 3 built.

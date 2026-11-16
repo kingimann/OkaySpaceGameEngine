@@ -91,13 +91,14 @@ Line ranges for `editor/main.cpp` are approximate (as of 2026-11-08) and move wh
   - 15.4.4 Import Model - `editor/main.cpp` (~2407-2512) - OS file picker first, then a settings dialog
   - 15.4.5 Asset Manager window - `editor/main.cpp` (`DrawAssetManager` ~7643-7935) - lists marketplace downloads by type (sidecar `.okayasset`) and imports them into Assets
   - 15.4.6 Opening assets - `editor/main.cpp` - double-click routes to Script Editor, Material, Data Asset, Behavior Tree, Dialogue, Timeline, Localization windows
-- **Code:** `editor/main.cpp`
+  - 15.4.7 Project panel right-click menus - `editor/ProjectContextModel.hpp`, `editor/ProjectPaths.hpp`, `editor/ProjectMenuDraw.cpp`, `editor/ProjectPanelUI.*`, `editor/ProjectNewAssets.hpp`, `editor/LaunchFile.*`, `editor/main.cpp` (`DrawProject`, `runAction`) - one tested item list per place (asset or selection, folder, tree folder and the Assets root, Favourites, empty space, Create); counts for a selection, greyed items with a reason, Move to... folder picker, Properties window, Copy Text (names, `Assets/` paths, full paths, one per line), Set as Start Scene, Open in External Editor and Default App (never a program or script type, and no shell: `LaunchFile`), Reimport All in Folder, Expand / Collapse tree folders, Import, Refresh (F5), Create Dialogue, Quest File, Behavior Tree and Cutscene
+- **Code:** `editor/main.cpp`, `editor/ProjectContextModel.hpp`, `editor/ProjectPaths.hpp`, `editor/ProjectPanelUI.cpp`, `editor/ProjectMenuDraw.cpp`, `editor/ProjectNewAssets.hpp`, `editor/LaunchFile.cpp`, `tools/project_menu_shots.cpp` (headless pictures in `docs/images/project_menus/`)
 - **API:** View > Panels > Project, View > Panels > Asset Manager, File > Import Model
 - **Editor:** Project panel, Asset Manager window
-- **Docs:** `docs/editor.md` (Drag & drop from Project)
-- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`
+- **Docs:** `docs/editor.md` (Drag & drop from Project), `docs/project_panel.md` (Right-click menus), `docs/try_it.md`
+- **Tests:** `assetmanager`, `asset_database`, `project_panel`, `project_panel_db`, `project_context_model`, `project_menu_ops`, `launch_file`
 - **Status:** Works - the panel reads from the asset database and thumbnail cache; the window itself is only checked by running the editor (screenshots), the model has tests
-- **Open:** colour labels are still the editor's own list (`.okaylabels`), separate from the tags in `.okaymeta`; changes made outside the editor show up on the next poll (2 s or more), not at once; thumbnails are made on the main thread within a frame budget
+- **Open:** colour labels are still the editor's own list (`.okaylabels`), separate from the tags in `.okaymeta`; changes made outside the editor show up on the next poll (2 s or more), not at once; thumbnails are made on the main thread within a frame budget; the right-click menus have no Export Package (no package exporter exists), no Select Dependencies (a selection cannot reach into other folders), no Localization table or Animation in Create, and their drawing, the Move to... and Properties windows and the Explorer and default-app launches were never seen in a running editor
 - **Related:** 20, 3.6, 1.6, 17.6, 15.2
 - **Words:** Project panel, assets, Assets folder, import, asset browser, asset manager, marketplace downloads, thumbnails, labels, unused assets, drag from project
 - **Seen as:** an asset does not show or has the wrong icon; import fails; dragging into the scene does nothing; the panel is slow on a big project; marketplace download is not listed

@@ -97,6 +97,9 @@ then this file gets updated. Keep this file short and true.
     hard: write the replacement.
 18. **Cryptography cannot be replaced on our word.** It needs an outside review first. The owner has decided not to hire a reviewer (2026-11-14), so libsodium stays the default in every release and `okay::crypto` stays off by default. AI reviews (an internal agent, a second AI such as Grok through the `claude/crypto-review-grok` branch) are extra assurance and are reported as "not independently reviewed"; they do not unlock the switch. Releases refuse own-crypto builds.
 19. Do not switch to an own version until you are sure it is finished. Say honestly how close each one is.
+    Switch only when ours is **faster and up to par**: at least as fast (and no heavier on memory) as the library it
+    replaces on the same real files or real use, and at least as good in what it handles and how well. (Owner rule,
+    2026-11-16: "We only switch when it's faster and up to par".) Measure it, and put the numbers in the PR.
 
 19a. **Code: write everything yourself. Assets and data: only with permission.**
     - **Code.** Do not copy, port, translate or closely follow code, shader text, comments or tests from any other

@@ -15,7 +15,8 @@ Our replacements stay **off by default** until the owner declares them ready and
    2. Platform tests pass on **Windows and Linux** (the platforms CI covers; macOS and the web where the library is used there).
    3. Soak or fuzz: fuzzing under ASan/UBSan for parsers, a long soak run for anything stateful, with no crash and no hang.
    4. No known bugs in our replacement.
-   5. **Owner approval**, written down in the PR. Nobody else declares a replacement ready.
+   5. **Faster and up to par** (owner rule, 2026-11-16): measured at least as fast as the library, and no heavier on memory, on the same real files or real use, and at least as good in what it handles and how well. The numbers go in the PR.
+   6. **Owner approval**, written down in the PR. Nobody else declares a replacement ready.
 4. **Flip the default** in one release the owner approves, with a release note one release ahead. The library is still compiled and selectable with the old option for that one release.
 5. **Delete** the third-party code, its CMake option, its FetchContent block and its CI download, **one release after the flip**. Then update this page and `docs/THIRD_PARTY.md`.
 | Library | Seam | Our backend, in order | Status |
